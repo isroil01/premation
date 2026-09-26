@@ -134,8 +134,3 @@ export function installTransitionCommands(): void {
   const registry = getCommandRegistry();
   for (const command of buildTransitionCommands()) registry.register(command);
 }
-
-/** Test seam — forget that the commands were installed. */
-export function resetTransitionCommandsForTest(): void {
-  installed = false;
-}

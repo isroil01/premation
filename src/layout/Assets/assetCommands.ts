@@ -151,8 +151,3 @@ export function installAssetCommands(): void {
   for (const command of buildAssetCommands()) registry.register(command);
   getShortcutManager().rehydrateFromRegistry();
 }
-
-/** Test seam. */
-export function resetAssetCommandsForTest(): void {
-  installed = false;
-}

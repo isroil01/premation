@@ -136,11 +136,3 @@ function makePoster(src: string): Promise<string | null> {
     attachVideoSrc(v, src);
   });
 }
-
-/** Test seam. */
-export function resetVideoPostersForTest(): void {
-  posters.clear();
-  waiting.clear();
-  queue.length = 0;
-  active = 0;
-}

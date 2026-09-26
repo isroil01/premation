@@ -115,7 +115,3 @@ export function registerMediaKeyIpc(): void {
 
   handle('mediaKeys:available', () => safeStorage.isEncryptionAvailable());
 }
-
-export function resetMediaVaultCacheForTests(): void {
-  cached = undefined;
-}

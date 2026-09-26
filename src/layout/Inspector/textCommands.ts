@@ -153,8 +153,3 @@ export function installTextCommands(): void {
   for (const command of buildTextCommands()) registry.register(command);
   getShortcutManager().rehydrateFromRegistry();
 }
-
-/** Test seam — forget that the commands were installed. */
-export function resetTextCommandsForTest(): void {
-  installed = false;
-}

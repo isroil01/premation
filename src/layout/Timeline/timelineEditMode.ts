@@ -191,9 +191,3 @@ export function installTimelineEditModeCommands(): void {
   for (const command of buildTimelineEditModeCommands()) registry.register(command);
   getShortcutManager().rehydrateFromRegistry();
 }
-
-/** Test seam — forget that the commands were installed. */
-export function resetTimelineEditModeCommandsForTest(): void {
-  installed = false;
-  useTimelineEditModeStore.getState().reset();
-}

@@ -146,8 +146,3 @@ async function followJob(id: string, onProgress: (p: number) => void): Promise<R
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
 }
-
-/** Test seam. */
-export function resetRenderCapabilitiesForTest(): void {
-  capsPromise = null;
-}

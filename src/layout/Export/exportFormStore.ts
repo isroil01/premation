@@ -65,8 +65,3 @@ export const useExportFormStore = create<ExportFormState>((set, get) => ({
   setProgress: (progress) => set({ progress }),
   end: () => set({ abort: null, progress: null }),
 }));
-
-/** Test seam. */
-export function resetExportFormForTest(): void {
-  useExportFormStore.setState({ seeded: false, progress: null, abort: null });
-}

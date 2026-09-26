@@ -301,9 +301,3 @@ export function subscribeLiveFrame(fn: () => void): () => void {
     liveListeners.delete(fn);
   };
 }
-
-/** Test seam: drop the live copy and its listeners. */
-export function resetLiveFrameForTest(): void {
-  liveCanvas = null;
-  liveListeners.clear();
-}

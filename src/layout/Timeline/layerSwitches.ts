@@ -86,10 +86,6 @@ export function collapseSwitchKind(nodeId: string): CollapseSwitchKind | null {
   return mirrorCollapseSwitchKind(documentMirror(), nodeId);
 }
 
-export function readCollapseSwitch(nodeId: string): boolean {
-  return documentMirror().layer(nodeId)?.switches.collapse === true;
-}
-
 export function toggleCollapseSwitch(nodeId: string): void {
   const layer = documentMirror().layer(nodeId);
   if (!layer) return;
@@ -99,11 +95,6 @@ export function toggleCollapseSwitch(nodeId: string): void {
 /** Layers with pixels to sample: everything but the chrome-only kinds. */
 export function qualitySwitchAvailable(nodeId: string): boolean {
   return mirrorSwitchAvailable(documentMirror(), nodeId, 'quality');
-}
-
-/** The layer's Quality switch position. */
-export function readQualitySwitch(nodeId: string): LayerQuality {
-  return documentMirror().layer(nodeId)?.switches.quality ?? 'best';
 }
 
 /** Advance the Quality switch one position: Best → Draft → Wireframe → Best. */
@@ -118,10 +109,6 @@ export function toggleQualitySwitch(nodeId: string): LayerQuality | null {
 /** Frame blending only means something on a layer with source frames. */
 export function frameBlendSwitchAvailable(nodeId: string): boolean {
   return mirrorSwitchAvailable(documentMirror(), nodeId, 'frameBlend');
-}
-
-export function readFrameBlendSwitch(nodeId: string): boolean {
-  return frameBlendOn(documentMirror().layer(nodeId));
 }
 
 /** Off → Frame Mix; any mode → Off (AE's switch cycles the same way). */

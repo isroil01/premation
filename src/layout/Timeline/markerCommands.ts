@@ -171,7 +171,3 @@ export function installTimelineMarkerCommands(): void {
   const registry = getCommandRegistry();
   for (const command of buildTimelineMarkerCommands()) registry.register(command);
 }
-
-export function resetTimelineMarkerCommandsForTest(): void {
-  installed = false;
-}

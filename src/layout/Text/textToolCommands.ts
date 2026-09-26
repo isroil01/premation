@@ -121,8 +121,3 @@ export function installTextToolCommands(): void {
   installMissingFontsWatcher();
   installSourceTextProvider();
 }
-
-/** Test seam. */
-export function resetTextToolCommandsForTest(): void {
-  installed = false;
-}

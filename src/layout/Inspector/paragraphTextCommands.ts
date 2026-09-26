@@ -309,8 +309,3 @@ export function installParagraphTextCommands(): void {
   for (const command of buildParagraphTextCommands()) registry.register(command);
   getShortcutManager().rehydrateFromRegistry();
 }
-
-/** Test seam — forget that the commands were installed. */
-export function resetParagraphTextCommandsForTest(): void {
-  installed = false;
-}

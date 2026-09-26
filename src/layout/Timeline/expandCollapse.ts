@@ -117,8 +117,3 @@ export function installTimelineExpandCommands(): void {
   for (const command of buildTimelineExpandCommands()) registry.register(command);
   getShortcutManager().rehydrateFromRegistry();
 }
-
-export function resetTimelineExpandCommandsForTest(): void {
-  installed = false;
-  actions = null;
-}

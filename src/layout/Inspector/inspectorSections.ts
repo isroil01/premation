@@ -107,14 +107,6 @@ type PerNode<T> = T | ((nodeId: string) => T);
  */
 export type InspectorCategory = 'pinned' | 'transform' | 'style' | 'layer' | 'animation';
 
-export const INSPECTOR_CATEGORIES: ReadonlyArray<{ id: InspectorCategory; label: string }> = [
-  { id: 'pinned', label: 'Pinned' },
-  { id: 'transform', label: 'Transform' },
-  { id: 'style', label: 'Style' },
-  { id: 'layer', label: 'Layer' },
-  { id: 'animation', label: 'Animation' },
-];
-
 export interface InspectorSectionDef {
   /**
    * Accordion id AND the key into the persisted open/closed preference. Not

@@ -98,7 +98,3 @@ export function installGraphNormalizeCommands(): void {
   const registry = getCommandRegistry();
   for (const command of buildGraphNormalizeCommands()) registry.register(command);
 }
-
-export function resetGraphNormalizeCommandsForTest(): void {
-  installed = false;
-}

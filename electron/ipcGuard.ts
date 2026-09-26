@@ -35,9 +35,6 @@ import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 /** Channels registered through this module. Read by the registration test. */
 const registered = new Set<string>();
 
-/** Refusals, for a diagnostic — the count is a signal on its own. */
-let refusedCount = 0;
-
 /**
  * Where our own renderer can legitimately be loaded from.
  *
@@ -96,7 +93,6 @@ export function checkFrame(event: { senderFrame?: unknown; sender?: unknown }): 
 }
 
 function refuse(channel: string, reason: string): Error {
-  refusedCount += 1;
   // Named, not silent. A refusal here is either an attack or a bug in our own
   // window management, and both need to be visible in a log.
   console.warn(`[ipc] refused ${channel} from a ${reason}`);
@@ -139,14 +135,4 @@ export function on(
     if (!check.ok) { refuse(channel, check.reason ?? 'disallowed frame'); return; }
     fn(event, ...(args as never[]));
   });
-}
-
-/** Every channel registered so far. For diagnostics and the registration test. */
-export function registeredChannels(): string[] {
-  return [...registered].sort();
-}
-
-/** How many invocations have been refused this session. */
-export function refusedInvocations(): number {
-  return refusedCount;
 }

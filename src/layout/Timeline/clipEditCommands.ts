@@ -224,7 +224,3 @@ export function installTimelineClipEditCommands(): void {
   const registry = getCommandRegistry();
   for (const command of buildTimelineClipEditCommands()) registry.register(command);
 }
-
-export function resetTimelineClipEditCommandsForTest(): void {
-  installed = false;
-}

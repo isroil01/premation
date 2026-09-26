@@ -173,8 +173,3 @@ export function installPreviewCacheCommands(): void {
   // carry a chord today; the re-scan keeps that free to change.
   getShortcutManager().rehydrateFromRegistry();
 }
-
-/** Test seam — forget that the commands were installed. */
-export function resetPreviewCacheCommandsForTest(): void {
-  installed = false;
-}

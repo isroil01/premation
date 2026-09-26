@@ -51,7 +51,6 @@ const EMBEDDED: Readonly<Record<string, string>> = {
   StylePresetsSection: 'LayerStylesWithPresetsSection (the Layer Styles section)',
   TransformSection: 'TransformWithThreeDSection (the Transform section, with the 3D switch)',
   // Mounted by a panel other than the inspector accordion.
-  AlignSection: 'AlignPanel — dedicated dock panel',
   ClonerSection: 'EffectControlsPanel — attached from Effects ▸ Simulation',
   PhysicsSection: 'EffectControlsPanel — attached from Effects ▸ Simulation',
   TrackMotionSection: 'TrackerPanel — dedicated dock panel',

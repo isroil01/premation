@@ -264,11 +264,6 @@ export function status(): AuthStatus {
   };
 }
 
-/** Record the plan the backend reported, so `status()` can carry it. */
-export function setPlan(next: string | null): void {
-  plan = next;
-}
-
 /**
  * Adopt a refresh token the renderer found in its own `localStorage`.
  *

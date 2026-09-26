@@ -45,8 +45,3 @@ export function installLayerSettingsCommands(): void {
   for (const command of buildLayerSettingsCommands()) registry.register(command);
   getShortcutManager().rehydrateFromRegistry();
 }
-
-/** Test seam — forget that the commands were installed. */
-export function resetLayerSettingsCommandsForTest(): void {
-  installed = false;
-}

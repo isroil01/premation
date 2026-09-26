@@ -133,8 +133,3 @@ export function installEffectMenuCommands(): void {
   for (const command of buildEffectMenuCommands()) registry.register(command);
   getShortcutManager().rehydrateFromRegistry();
 }
-
-/** Test seam. */
-export function resetEffectMenuCommandsForTest(): void {
-  installed = false;
-}
