@@ -941,10 +941,79 @@ api::QueryResult Session::run_query(const api::Query& q) {
     if (!comp.empty() && comp != layerErrorsComp_) return std::vector<api::LayerError>{};
     return layerErrors_;
   };
+  if (frameBuilder_ != nullptr) {
+    c.hitTest = [this](const std::string& comp, api::Time time, api::Vec2 point, std::vector<std::string>& out) {
+      frameBuilder_->set_media_base(media_base());
+      return frameBuilder_->hit_test(doc_, view_, exprEnv_, exprCache_, comp, time, point, out);
+    };
+  }
+  c.still = [this](const doc::StillRequest& r) { return render_still(r); };
+  c.viewportSlot = [this](std::uint32_t viewport) -> std::optional<std::pair<std::uint32_t, std::uint32_t>> {
+    if (!viewport_.open || viewport_.viewport != viewport || viewport_.width == 0 || viewport_.height == 0) return std::nullopt;
+    return std::pair{viewport_.width, viewport_.height};
+  };
+  c.readPixels = [this](std::uint32_t viewport, PixelRegion region) {
+    return await_render<WorkingPixels>(sink_.read_pixels(viewport, region), "readPixels");
+  };
+  if (mediaClock_ != nullptr) {
+    c.waveform = [this](std::string_view src, double fromSec, double durationSec, std::uint32_t buckets,
+                        api::WaveformPeaks& out) { return mediaClock_->peaks(src, fromSec, durationSec, buckets, out); };
+  }
   // Queries never write the document: bar lookups come from an index for the
   // duration (timeline.hpp TlReadScope).
   const doc::TlReadScope readOnly;
   return doc::run_query(q, c);
+}
+
+std::string Session::media_base() const {
+  // project_open.cpp's rule: a bundle holds its media; a JSON file's sit beside it.
+  if (projectPath_.empty()) return {};
+  if (!bundleRoot_.empty() && bundleRoot_ == projectPath_) return projectPath_;
+  // The folder, by the UTF-8 string itself (a std::filesystem::path from a
+  // narrow string is the ANSI code page on Windows).
+  const std::size_t slash = projectPath_.find_last_of("/\\");
+  return slash == std::string::npos ? std::string() : projectPath_.substr(0, slash);
+}
+
+template <class T>
+T Session::await_render(std::future<T> result, std::string_view what) {
+  // The render thread answers between frames; a device-lost recovery or a
+  // heavy frame in hand can hold it — the query says `busy` rather than block
+  // the document core longer.
+  if (result.wait_for(kRenderQueryTimeout) != std::future_status::ready) {
+    T out;
+    out.answer = HookAnswer::pending;
+    out.error = std::string(what) + ": the renderer is busy; ask again";
+    return out;
+  }
+  try {
+    return result.get();
+  } catch (const std::future_error&) {
+    T out;
+    out.answer = HookAnswer::failed;
+    out.error = std::string(what) + ": the renderer stopped";
+    return out;
+  }
+}
+
+StillImage Session::render_still(const doc::StillRequest& r) {
+  if (frameBuilder_ == nullptr) {
+    StillImage out;
+    out.error = "getThumbnail needs the engine's scene builder (D2w); this engine draws C2 quads only";
+    return out;
+  }
+  frameBuilder_->set_media_base(media_base());
+  std::shared_ptr<BuiltFrame> frame =
+      r.footageSrc.empty()
+          ? frameBuilder_->build_still(doc_, view_, exprEnv_, exprCache_, r.comp, r.time, r.width, r.height, r.isolateLayer)
+          : frameBuilder_->build_footage_still(doc_, r.footageSrc, r.video, r.sourceSec, r.sourceWidth, r.sourceHeight,
+                                               r.width, r.height);
+  if (!frame) {
+    StillImage out;
+    out.error = "the scene builder cannot build this still";
+    return out;
+  }
+  return await_render<StillImage>(sink_.render_still(std::move(frame), r.width, r.height), "getThumbnail");
 }
 
 // ── transport ───────────────────────────────────────────────────────────────
@@ -1212,6 +1281,7 @@ void Session::submit_frame(std::uint32_t clockDropped) {
     // outside the port come back as layerErrors, never as a blank frame.
     std::vector<api::LayerError> errors;
     const auto t0 = Clock::now();
+    frameBuilder_->set_media_base(media_base());
     job.built = frameBuilder_->build(doc_, view_, exprEnv_, exprCache_, *c, time_, viewport_, playing_, errors);
     // Measurement only (RenderStats.cpuFrameMs): an exponential moving average.
     const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();

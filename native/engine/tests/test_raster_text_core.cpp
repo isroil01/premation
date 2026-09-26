@@ -298,3 +298,44 @@ TEST_CASE("optical kerning: vertical pairs match opticalKernVerticalPx exactly",
               profiles.size(), pairsExact, pairs.size(), kerned);
   REQUIRE(fixture.finish());
 }
+
+TEST_CASE("line breaks: CJK paragraph wrap, inserted breaks and shifted runs (cjk_wrap_parity.json)", "[raster][linebreak][cjk]") {
+  std::ifstream probe(std::string(PREMATION_ENGINE_TEST_DATA) + "/cjk_wrap_parity.json", std::ios::binary);
+  if (!probe.good()) {
+    WARN("cjk_wrap_parity.json not generated yet (GEN_NATIVE_CJKWRAP=1 npx jest cjkWrapCrossEngine)");
+    return;
+  }
+  const auto fx = load_fixture("cjk_wrap_parity.json");
+  set_word_segmenter_disabled_for_test(true);  // the fixture is written without Intl.Segmenter
+  for (const auto& row : fx["rows"].items()) {
+    INFO(row["text"].str());
+    std::string wrapped;
+    bool firstParagraph = true;
+    for (const auto& p : row["paragraphs"].items()) {
+      const auto units = strings(p["units"]);
+      std::vector<double> lengths;
+      for (const auto& l : p["lengths"].items()) lengths.push_back(l.num());
+      const double limit = p["limit"].num();
+      const double indent = p["firstLineIndent"].num();
+      const auto starts = wrap_units(units, lengths, [&](std::size_t line) { return limit - (line == 0 ? indent : 0); });
+      CHECK(starts == indices(p["starts"]));
+      const std::string joined = join_wrapped(units, starts);
+      CHECK(joined == p["joined"].str());
+      if (!firstParagraph) wrapped += '\n';
+      wrapped += joined;
+      firstParagraph = false;
+    }
+    CHECK(wrapped == row["wrapped"].str());
+    const auto inserted = inserted_break_indices(split_graphemes(row["text"].str()), split_graphemes(wrapped));
+    CHECK(inserted == indices(row["inserted"]));
+    const auto& runs = row["runs"].items();
+    const auto& shifted = row["shifted"].items();
+    REQUIRE(runs.size() == shifted.size());
+    for (std::size_t i = 0; i < runs.size(); ++i) {
+      const auto [s, e] = shift_span_for_inserted_breaks(runs[i]["start"].num(), runs[i]["end"].num(), inserted);
+      CHECK(s == shifted[i]["start"].num());
+      CHECK(e == shifted[i]["end"].num());
+    }
+  }
+  set_word_segmenter_disabled_for_test(false);
+}

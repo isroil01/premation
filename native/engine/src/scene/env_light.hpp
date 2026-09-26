@@ -65,6 +65,9 @@ struct EnvPixels {
 /// RGBA (or RGB) samples: box average, sRGB linearised before averaging.
 [[nodiscard]] EnvPixels resample_equirect(std::span<const std::uint8_t> pixels, int width, int height, int outWidth, int outHeight,
                                           bool isLinear);
+/// The same over float RGBA (or RGB) samples — an EXR sky's linear planes (scale 1).
+[[nodiscard]] EnvPixels resample_equirect(std::span<const float> pixels, int width, int height, int outWidth, int outHeight,
+                                          bool isLinear);
 /// `shProject(px)`.
 [[nodiscard]] std::array<float, 27> sh_project(const EnvPixels& px);
 /// envAtlasCache.ts `hashEnvPixels(px)` (FNV-1a over the float words, base 36).

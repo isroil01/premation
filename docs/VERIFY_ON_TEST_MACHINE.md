@@ -11,7 +11,7 @@ every preset (the Windows RTX 4060 box, or a Mac with 16 GB+ and Docker off).
 - [ ] `npx tsc --noEmit` (use `NODE_OPTIONS=--max-old-space-size=8192`).
 - [ ] `npm run lint`, `lint:engine-reads`, `lint:engine-writes`, `lint:automation-writes`.
 - [ ] Native: `macos-clang`, `macos-clang-engine`, `windows-clang-cl-engine`, `linux-clang-engine`, the ASan/TSan presets, `native:tidy`, `native:wasm`.
-- [ ] Apple clang: `engine_effects` uses `std::jthread` (`thread_pool.hpp`) — needs a fix or `-fexperimental-library` (predates this work).
+- [ ] Apple clang: `engine_effects`, `engine_export`, `engine_scene` build without `-fexperimental-library` (d2w-round2 replaced `std::jthread` with `core/joining_thread.hpp`).
 
 ## Parity fixtures to generate, then run their C++ tests
 
@@ -88,3 +88,11 @@ Nothing below was compiled into a binary or run here: the Mac could only run `cl
 - [ ] New `test_migrations.cpp` (in `engine_tests`): 45 frozen pairs under `tests/data/migrations/` (TS migration tests' inputs through the TS chain). Never run against `migrate_document`; a mismatch is either a C++ migration bug or a TS/C++ key-order difference — fix the C++ or re-bless with a reviewed diff.
 - [ ] Golden gate: `npm run native-golden -w @motion/render-tests` (or `node packages/render-tests/scripts/native-golden.mjs`) with the engine preset's `premation-scene`. Expect `not-ported` frames and mismatches on the first run; then `--update-baseline` writes `native-golden-baseline.json` (the debt list) for review. The `alpha-*` scenes' textures were PNG-encoded by Skia, not Chromium (same pixels intended).
 - [ ] TS side (still present until phase 4): the `*CrossEngine.test.ts`, `d1EvalParity`, `undoParity`, `crossEngineCatalog` now only check the TS engine against the frozen data; they pass on a tree where no fixture was re-blessed.
+### d2w-round2 (syntax-checked only)
+- [ ] Builds: `engine_scene_core` now links zlib (`zlib_inflate_ffi.cpp`); `engine_frames` links `engine_export_core` (PNG thumbnails). Windows (clang-cl) and Linux presets too.
+- [ ] Tests link and pass: `engine_tests` (`test_engine_queries.cpp`), `engine_scene_core_tests` (`test_frame_hit`, `test_exr_read`, the CJK case in `test_raster_text_core` after the fixture), `engine_scene_tests` (`test_rig_coverage`, the footage case in `test_bake_chain`, the soft-break case in `test_text_port_parity`), `engine_media_tests` / GPU (`test_media_gpu`: `#u`/`#l` hashes, the deinterlace pass, `convert_frame`), `engine_effects` (ThreadPool shutdown under TSan).
+- [ ] Queries in the real app (engine owner on): `getWaveform` on an audio layer and a footage item (busy while conforming, then peaks); `getThumbnail` of a comp, a layer (alone), a still and a video item (PNG, ≤ maxSize); `hitTest` clicks select the layer under the pointer (rotated, corner-pinned, collapsed precomp → the precomp layer, locked skipped); `readPixels` in the Info panel / eyedropper matches the viewport colour (working space, straight alpha).
+- [ ] Render-tests native gate: fewer `unported` reasons — CJK paragraphs, Fit Text to Box, Pixel Motion, interlaced / pulldown footage, EXR skies (needs an .exr on disk), SVG / relative-path image rigs, footage with Canvas2D-only styles. Compare visually against the TS where there is no fixture (Fit Text to Box, Pixel Motion's CPU warp vs the TS GPU warp, footage bakes).
+- [ ] Viewport: a project opened from disk resolves relative footage / image paths (the texture feed now gets `mediaBase` in the viewport, not only in export).
+- [ ] Perf: Pixel Motion playback (two readbacks + CPU warp per new weight) and footage bakes (baked on the render thread, one frame at a time) — note the HUD cost; a GPU warp / pooled bake is follow-up.
+

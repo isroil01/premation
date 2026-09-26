@@ -10,8 +10,11 @@
 // asset id and a non-image asset fall back to the default 'studio' preset
 // (null, `why` empty). What only the engine cannot do is reported (`why` set):
 // an asset the document does not list, a source that is not in the document
-// (blob:, a relative path with no project folder), an EXR (the TS projects its
-// float planes, which the engine does not decode yet).
+// (blob:, a relative path with no project folder), an .exr src that does not
+// decode. An EXR sky projects its linear float planes (exr_read.hpp) from the
+// .exr file — the src, or the asset's original path when the src is the
+// import's tone-mapped PNG; with no .exr reachable it falls back to that PNG,
+// as the TS does once its session float cache is gone.
 #pragma once
 
 #include <array>

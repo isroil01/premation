@@ -5,9 +5,11 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace premation::raster {
@@ -23,6 +25,24 @@ namespace premation::raster {
 [[nodiscard]] bool kinsoku_allows(const std::vector<std::string>& units, std::size_t i);
 [[nodiscard]] std::vector<bool> break_opportunities(const std::vector<std::string>& units);
 [[nodiscard]] std::vector<std::size_t> wrap_units(const std::vector<std::string>& units, const std::vector<double>& lengths, double limit);
+/// wrapUnits with a limit per line number (a first-line indent).
+[[nodiscard]] std::vector<std::size_t> wrap_units(const std::vector<std::string>& units, const std::vector<double>& lengths,
+                                                  const std::function<double(std::size_t line)>& limitOf);
+
+// ── Inserted soft breaks (horizontal CJK paragraphs) ─────────────────────────
+
+/// lineBreak.ts joinWrapped: one paragraph's clusters with '\n' soft breaks at
+/// `starts` — a break after a space REPLACES it, a break between CJK
+/// characters INSERTS one.
+[[nodiscard]] std::string join_wrapped(const std::vector<std::string>& clusters, const std::vector<std::size_t>& starts);
+/// lineBreak.ts insertedBreakIndices: grapheme indices (in the wrapped text) of
+/// the '\n's the wrap INSERTED (neither a newline nor a replaced space under them).
+[[nodiscard]] std::vector<std::size_t> inserted_break_indices(const std::vector<std::string>& rawClusters,
+                                                              const std::vector<std::string>& wrappedClusters);
+/// lineBreak.ts shiftSpansForInsertedBreaks for one raw-indexed [start, end):
+/// the span in the wrapped text's indices.
+[[nodiscard]] std::pair<double, double> shift_span_for_inserted_breaks(double start, double end,
+                                                                       const std::vector<std::size_t>& inserted);
 
 // ── Intl.Segmenter word segmentation (word_break_ffi.cpp) ───────────────────
 

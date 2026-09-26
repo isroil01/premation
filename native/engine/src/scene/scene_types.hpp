@@ -200,6 +200,12 @@ struct RLayer {
   std::optional<std::string> contentAwareFillSrc;
   std::optional<std::array<double, 4>> uvRect;
   bool premultipliedSource = false;
+  /// Interpret Footage ▸ Remove Pulldown (buildSnapshot `pulldownSource`): the
+  /// 3:2 phase (0–4) the frames are rebuilt from fields with.
+  std::optional<int> pulldownSource;
+  /// Interpret Footage ▸ Fields without pulldown (`fieldsSource`): the field
+  /// kept, 'u' upper / 'l' lower (the other is rebuilt); 0 = progressive.
+  char fieldsSource = 0;
   // ── rigs ──
   std::optional<DeformedMeshData> deformedMesh;
   // ── 3D (threed_port.cpp) ──

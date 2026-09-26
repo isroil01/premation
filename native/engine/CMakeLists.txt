@@ -492,9 +492,13 @@ add_library(engine_scene_core STATIC
   src/scene/pixel_motion.cpp  # pixelMotionFlow.ts + deinterlace.ts (footage pixel kernels)
   src/scene/extrusion_faces.cpp  # extrusion.ts extrusionGeometry (the fallback body faces)
   src/scene/alpha_mesh.cpp  # puppet.ts coverage mask + alphaMesh.ts (image-layer rig meshes)
+  src/scene/frame_hit.cpp  # hitTest over a built frame's renderables
+  src/scene/exr_read.cpp  # exr.ts decodeExr + exrToFloatRgba (EXR environment skies)
+  src/scene/zlib_inflate_ffi.cpp  # the EXR reader's zlib inflate
 )
 target_include_directories(engine_scene_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
-target_link_libraries(engine_scene_core PUBLIC engine_core engine_contours motion::jsmath PRIVATE motion::options)
+find_package(ZLIB REQUIRED)  # exr_read's inflate (zlib_inflate_ffi.cpp)
+target_link_libraries(engine_scene_core PUBLIC engine_core engine_contours motion::jsmath PRIVATE motion::options ZLIB::ZLIB)
 if(MSVC)
   target_compile_options(engine_scene_core PRIVATE /bigobj)
 endif()
@@ -506,7 +510,8 @@ if(MOTION_BUILD_TESTS)
                                          tests/test_env_asset_parity.cpp tests/test_styled_surface_parity.cpp
                                          tests/test_corner_pin_parity.cpp tests/test_write_on_trail_parity.cpp
                                          tests/test_model_deform_parity.cpp tests/test_pixel_motion_parity.cpp
-                                         tests/test_extrusion_faces_parity.cpp tests/test_alpha_mesh_parity.cpp)
+                                         tests/test_extrusion_faces_parity.cpp tests/test_alpha_mesh_parity.cpp
+                                         tests/test_frame_hit.cpp tests/test_exr_read.cpp)
   target_link_libraries(engine_scene_core_tests PRIVATE engine_scene_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_scene_core_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   add_test(NAME engine_scene_core_tests COMMAND engine_scene_core_tests --reporter compact)
@@ -1022,7 +1027,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   if(MOTION_BUILD_TESTS)
     add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp
                                       tests/test_threed_models.cpp tests/test_time_comp_parity.cpp tests/test_particle_parity.cpp
-                                      tests/test_polygon_clipping_parity.cpp tests/test_cover_crop.cpp tests/test_source_text.cpp)
+                                      tests/test_polygon_clipping_parity.cpp tests/test_cover_crop.cpp tests/test_source_text.cpp
+                                      tests/test_rig_coverage.cpp)
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)
     if(MSVC)
@@ -1037,6 +1043,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   if(TARGET engine_gpu AND TARGET premation-engine)
     add_library(engine_frames STATIC src/scene/engine_frames.cpp)
     target_link_libraries(engine_frames PUBLIC engine_scene engine_gpu engine_plugins_gpu PRIVATE motion::options)
+    # getThumbnail encodes its still as PNG (png_write, GPU-free; defined below).
+    target_link_libraries(engine_frames PRIVATE engine_export_core)
     if(TARGET engine_audio)
       target_link_libraries(engine_frames PUBLIC engine_audio)
       target_compile_definitions(engine_frames PRIVATE PREMATION_HAVE_AUDIO=1)
@@ -1052,7 +1060,7 @@ else()
 endif()
 # The Session's scene / audio-clock hooks (session_hooks.hpp) are engine_core: tested with fakes.
 if(MOTION_BUILD_TESTS AND TARGET engine_tests)
-  target_sources(engine_tests PRIVATE tests/test_session_hooks.cpp)
+  target_sources(engine_tests PRIVATE tests/test_session_hooks.cpp tests/test_engine_queries.cpp)
 endif()
 
 # ── F1: export from the engine (src/export; kept in its own block) ──────────

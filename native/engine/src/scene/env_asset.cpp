@@ -3,9 +3,14 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <span>
+#include <system_error>
 #include <map>
 #include <mutex>
 
+#include "exr_read.hpp"
 #include "image_decode.hpp"
 #include "jsmath.hpp"
 #include "native_effects.hpp"
@@ -36,6 +41,63 @@ bool ends_with_ci(std::string_view s, std::string_view suffix) {
   return true;
 }
 
+/// An EXR sky from `src` (when it is an .exr file) or the asset's original
+/// `path`: decoded (exr_read), converted to linear RGBA (exrToFloatRgba),
+/// resampled to the 256×128 equirect as linear data, projected and
+/// prefiltered like an 8-bit sky. Null (with `why` when a file was found but
+/// did not read) when no .exr file is reachable.
+std::shared_ptr<const EnvAsset> exr_sky(const std::string& assetId, const std::string& src, const std::string& path,
+                                        std::string& why) {
+  std::filesystem::path file;
+  for (const std::string* cand : {&src, &path}) {
+    if (!ends_with_ci(*cand, ".exr") || cand->starts_with("data:") || cand->starts_with("blob:") || cand->starts_with("http")) continue;
+    const std::string p = file_url_path(*cand);
+    std::filesystem::path fp{std::u8string(p.begin(), p.end())};
+    if (fp.is_relative()) continue;
+    if (std::error_code ec; std::filesystem::is_regular_file(fp, ec)) {
+      file = std::move(fp);
+      break;
+    }
+  }
+  if (file.empty()) return nullptr;
+  const FileStamp st = file_stamp(file);
+  const std::string key = assetId + "|exr|" + file.lexically_normal().string() + "|" + std::to_string(st.size) + "|" +
+                          std::to_string(st.modified);
+  {
+    const std::scoped_lock lock(cache().mu);
+    if (const auto it = cache().skies.find(key); it != cache().skies.end()) return it->second;
+  }
+  std::vector<std::uint8_t> bytes;
+  {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+      why = "the EXR sky did not open";
+      return nullptr;
+    }
+    bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  std::string err;
+  const std::optional<exr::Image> img = exr::decode(bytes, exr::zlib_inflate(), err);
+  if (!img) {
+    why = "the EXR sky did not decode: " + err;
+    return nullptr;
+  }
+  const std::optional<exr::FloatRgba> rgba = exr::to_float_rgba(*img);
+  if (!rgba) {
+    why = "the EXR sky has no displayable color channels";
+    return nullptr;
+  }
+  auto out = std::make_shared<EnvAsset>();
+  // shProjectEquirect(float.rgba, …, {isLinear: true}) and resampleEquirect to
+  // ENV_SPEC: both 256×128, the same box average — one resample feeds both.
+  const EnvPixels base = resample_equirect(std::span<const float>(rgba->rgba), rgba->width, rgba->height, kEnvSpecWidth,
+                                           kEnvSpecHeight, true);
+  out->sh = sh_project(base);
+  out->specular = build_env_specular_atlas(base, env_atlas_key("asset:" + assetId + "#" + hash_env_pixels(base)));
+  const std::scoped_lock lock(cache().mu);
+  return cache().skies.emplace(key, std::move(out)).first->second;
+}
+
 }  // namespace
 
 std::shared_ptr<const EnvAsset> environment_asset(const doc::Document& d, std::string_view sky, std::string& why) {
@@ -51,8 +113,19 @@ std::shared_ptr<const EnvAsset> environment_asset(const doc::Document& d, std::s
   const std::string& src = asset->at("src").str();
   const std::string name = asset->at("name").is_string() ? asset->at("name").str() : std::string();
   if (ends_with_ci(name, ".exr") || ends_with_ci(src, ".exr")) {
-    why = "an EXR sky (the TS projects its float planes; the engine does not decode EXR yet)";
-    return nullptr;
+    // environmentImage.ts projects an EXR's LINEAR float planes (floatExr.ts),
+    // not the tone-mapped PNG import leaves as the asset's src — the sun keeps
+    // its energy. The planes come from the .exr file: the src when it is one,
+    // else the asset's original path. Only when neither is reachable does the
+    // sky fall back to the PNG, as the TS does once its float cache is gone.
+    std::string exrWhy;
+    if (auto sky = exr_sky(assetId, src, asset->at("path").is_string() ? asset->at("path").str() : std::string(), exrWhy)) {
+      return sky;
+    }
+    if (ends_with_ci(src, ".exr")) {
+      why = exrWhy.empty() ? "the EXR sky could not be read" : exrWhy;
+      return nullptr;
+    }
   }
   if (asset->at("type").is_string() && asset->at("type").str() != "image") return nullptr;  // the TS: failed → default preset
 

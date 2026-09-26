@@ -7,6 +7,7 @@
 
 #include "image_decode.hpp"
 #include "native_effects.hpp"
+#include "svg_layer.hpp"
 #include "raster/canvas.hpp"
 
 namespace premation::scene {
@@ -52,19 +53,51 @@ std::shared_ptr<const rig::CoverageMask> mask_of(const DecodedImage& img) {
 
 }  // namespace
 
-CoverageLookup image_coverage_mask(std::string_view key, std::string_view src) {
+CoverageLookup image_coverage_mask(std::string_view key, std::string_view src, const std::filesystem::path& mediaBase) {
   CoverageLookup out;
   if (src.empty()) return out;
   std::string cacheKey(key);
   DecodedImage img;
   std::string error;
   bool decoded = false;
-  if (src.starts_with("data:image/svg")) {
-    // The TS decodes an SVG through the browser's <img>; here it would need the SVG renderer.
-    out.unreachable = "the image is an SVG document (its alpha is not rasterized for the mesh yet)";
+  if (src.starts_with("blob:") || src.starts_with("http:") || src.starts_with("https:")) {
+    out.unreachable = "the image is a session / remote URL, not in the document";
     return out;
   }
-  if (src.starts_with("data:")) {
+  if (is_svg_src(src)) {
+    // The TS decodes an SVG through the browser's <img> at its intrinsic size;
+    // here the SVG renderer draws it at the size the texture feed draws it
+    // (rasterizeSvg), and only its alpha is read.
+    std::string path;
+    if (!src.starts_with("data:")) {
+      std::filesystem::path p = file_url_path(src);
+      if (p.is_relative()) {
+        if (mediaBase.empty()) {
+          out.unreachable = "the image is a relative path (no project folder to resolve it against)";
+          return out;
+        }
+        p = mediaBase / p;
+      }
+      const FileStamp st = file_stamp(p);
+      path = p.lexically_normal().string();
+      cacheKey += '|' + path + '|' + std::to_string(st.size) + '|' + std::to_string(st.modified);
+    }
+    {
+      const std::scoped_lock lock(cache().mu);
+      if (const auto it = cache().masks.find(cacheKey); it != cache().masks.end()) {
+        out.mask = it->second;
+        return out;
+      }
+    }
+    raster::RasterOutput svg = rasterize_svg_src(src, std::nullopt, path);
+    if (svg.ok && svg.width > 0 && svg.height > 0) {
+      // Premultiplied colour, straight alpha: the mask reads alpha only.
+      img.width = svg.width;
+      img.height = svg.height;
+      img.rgba = std::move(svg.rgba);
+      decoded = true;
+    }
+  } else if (src.starts_with("data:")) {
     const auto comma = src.find(',');
     const std::string_view head = src.substr(0, comma == std::string_view::npos ? 0 : comma);
     {
@@ -77,14 +110,14 @@ CoverageLookup image_coverage_mask(std::string_view key, std::string_view src) {
     if (comma != std::string_view::npos && head.find(";base64") != std::string_view::npos) {
       if (const auto bytes = doc::native_unbase64(src.substr(comma + 1))) decoded = decode_image_bytes(*bytes, img, error);
     }
-  } else if (src.starts_with("blob:") || src.starts_with("http:") || src.starts_with("https:")) {
-    out.unreachable = "the image is a session / remote URL, not in the document";
-    return out;
   } else {
-    const std::filesystem::path p = file_url_path(src);
+    std::filesystem::path p = file_url_path(src);
     if (p.is_relative()) {
-      out.unreachable = "the image is a relative path (no project folder to resolve it against)";
-      return out;
+      if (mediaBase.empty()) {
+        out.unreachable = "the image is a relative path (no project folder to resolve it against)";
+        return out;
+      }
+      p = mediaBase / p;
     }
     const FileStamp st = file_stamp(p);
     cacheKey += '|' + p.lexically_normal().string() + '|' + std::to_string(st.size) + '|' + std::to_string(st.modified);

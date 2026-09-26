@@ -100,6 +100,7 @@ class CanvasMeasurer final : public TextMeasurer {
 
  private:
   static constexpr std::size_t kMemoMax = 8192;
+  std::unordered_map<std::string, double> fitMemo_;  // fit_scale_of by style (under m_)
 
   static std::string style_key(const MeasuredStyle& s) {
     std::string k;
@@ -135,6 +136,13 @@ class CanvasMeasurer final : public TextMeasurer {
     k += s.tateChuYokoDigits ? static_cast<char>('0' + *s.tateChuYokoDigits) : '-';
     opt(s.boxWidth);
     opt(s.boxHeight);
+    // keyOf: `|bh…|valign|autoSize|fitScale` — the fit search and a fitted wrap.
+    k += s.boxVerticalAlign;
+    k += s.boxFit ? "|fit|" : "|-|";
+    opt(s.fitScale);
+    opt(s.leftIndent);
+    opt(s.rightIndent);
+    opt(s.firstLineIndent);
     k += s.fontFamily;
     k += '\x02';
     k += s.fontWeight;
@@ -228,33 +236,36 @@ class CanvasMeasurer final : public TextMeasurer {
   std::optional<MeasuredStyle> wrapped_style(const MeasuredStyle& s, std::string* why) override {
     // wrappedStyle: vertical type breaks its columns at layout time.
     if (!s.boxWidth || s.vertical) return s;
-    if (s.boxFit && s.boxHeight) {
-      if (why != nullptr) *why = "paragraph text: Fit Text to Box";
-      return std::nullopt;
-    }
     if (s.softBreakLines) return s;  // idempotent: already wrapped
     const std::scoped_lock lock(m_);
-    const auto wrapped = wrap_text(s, why);
-    if (!wrapped) return std::nullopt;
-    MeasuredStyle out = s;
-    out.softBreakLines = soft_break_lines(s.content, *wrapped);
-    if (!out.softBreakLines) {
-      if (why != nullptr) *why = "paragraph text: inserted line breaks";
-      return std::nullopt;
+    // Fit Text to Box decides its scale on the UNWRAPPED content, once; the
+    // scale then rides on the style (re-wrapping never searches again).
+    MeasuredStyle fitted = s;
+    if (s.boxFit && s.boxHeight && !s.fitScale) {
+      if (s.hasLineRuns) {
+        // boxPlacementOf's run branch (paragraphLineMetrics): outside the port.
+        if (why != nullptr) *why = "paragraph text: Fit Text to Box with runs that change line height";
+        return std::nullopt;
+      }
+      const auto k = fit_scale_of(s, why);
+      if (!k) return std::nullopt;
+      fitted.fitScale = *k;
     }
+    const auto wrapped = wrap_text(fitted, why);
+    if (!wrapped) return std::nullopt;
+    MeasuredStyle out = std::move(fitted);
+    out.softBreakLines = soft_break_lines(out.content, *wrapped);
     out.content = *wrapped;
     return out;
   }
 
  private:
-  /// measureText.ts wrapText: greedy word wrap at the box (less the indents);
-  /// each break REPLACES one space, so the wrapped string keeps its length.
-  std::optional<std::string> wrap_text(const MeasuredStyle& s, std::string* why) {
-    if (!ctx_) ctx_ = raster::Canvas2D::make(1, 1, opts_);
-    raster::Canvas2D& g = *ctx_;
+  /// Font + variations + kerning of `s` on the measuring canvas (cssFont +
+  /// applyFontVariations); false when the font does not parse.
+  bool set_measure_font(raster::Canvas2D& g, const MeasuredStyle& s) {
     const std::string style = s.fontStyle == "italic" ? "italic " : "";
     const std::string font = style + s.fontWeight + " " + css_number(s.fontSize) + "px \"" + s.fontFamily + "\", Inter, system-ui, sans-serif";
-    if (!g.setFont(font)) return std::nullopt;
+    if (!g.setFont(font)) return false;
     std::string variation = "normal";
     {
       const auto parsedWeight = js::parse(s.fontWeight);
@@ -263,21 +274,115 @@ class CanvasMeasurer final : public TextMeasurer {
     }
     g.setFontVariationSettings(variation);
     g.setFontKerning(!s.opticalKerning);
+    return true;
+  }
+
+  /// measureText.ts fitScaleOf: the largest type scale ≤ 1 at which the fixed
+  /// box holds all of its text — every line inside the box height and none
+  /// wider than the box. A binary search on the real wrap (shrinking the type
+  /// re-wraps it); 1 when it already fits, kMinFitScale when nothing does.
+  /// Memoised by the style, as the TS's fitCache. Called under m_.
+  std::optional<double> fit_scale_of(const MeasuredStyle& s, std::string* why) {
+    if (!s.boxWidth || !s.boxHeight) return 1.0;
+    const std::string key = style_key(s);
+    if (const auto it = fitMemo_.find(key); it != fitMemo_.end()) return it->second;
+    bool failed = false;
+    const auto fits = [&](double k) {
+      MeasuredStyle trial = s;
+      trial.fitScale = k;
+      trial.softBreakLines.reset();
+      const auto wrapped = wrap_text(trial, why);
+      if (!wrapped) {
+        failed = true;
+        return false;
+      }
+      // boxPlacementOf (no line runs): the lines' stack against the box height / k.
+      const std::vector<int> soft = soft_break_lines(s.content, *wrapped);
+      std::vector<std::string> lines;
+      for (std::size_t start = 0;;) {
+        const std::size_t nl = wrapped->find('\n', start);
+        lines.push_back(wrapped->substr(start, nl == std::string::npos ? std::string::npos : nl - start));
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+      }
+      const double lineHeightPx = s.fontSize * (s.lineHeight != 0 ? s.lineHeight : kDefaultLineHeight);
+      const auto [offsets, total] = raster::line_offsets(raster::hard_ends_of(lines.size(), soft), lineHeightPx + s.paragraphSpacing,
+                                                         s.spaceBefore.value_or(0), s.spaceAfter.value_or(0));
+      std::vector<double> ys;
+      ys.reserve(offsets.size());
+      for (const double o : offsets) ys.push_back(o - total / 2);  // centredLineYs
+      if (raster::place_lines_in_box(ys, {lineHeightPx}, *s.boxHeight / k, s.boxVerticalAlign).overflow) return false;
+      raster::Canvas2D& g = *ctx_;
+      if (!set_measure_font(g, s)) {
+        failed = true;
+        return false;
+      }
+      const std::string style = s.fontStyle == "italic" ? "italic " : "";
+      const double inner = *s.boxWidth / k - s.leftIndent.value_or(0) - s.rightIndent.value_or(0);
+      for (const std::string& line : lines) {
+        const auto chars = static_cast<double>(raster::split_graphemes(line).size());
+        const double w = g.measureText(line).width + (chars > 0 ? (chars - 1) * s.letterSpacing : 0) + optical_line_delta(s, style, line);
+        if (w > inner + 0.5) return false;
+      }
+      return true;
+    };
+    double result = 1;
+    if (!fits(1)) {
+      double lo = kMinFitScale;
+      double hi = 1;
+      if (!failed && fits(lo)) {
+        for (int i = 0; i < 16 && !failed; ++i) {
+          const double mid = (lo + hi) / 2;
+          if (fits(mid)) lo = mid;
+          else hi = mid;
+        }
+      }
+      result = std::floor(lo * 1e4) / 1e4;
+    }
+    if (failed) return std::nullopt;
+    if (fitMemo_.size() >= kMemoMax) fitMemo_.clear();
+    fitMemo_.emplace(key, result);
+    return result;
+  }
+
+  /// measureText.ts wrapText: greedy word wrap at the box (less the indents);
+  /// each break REPLACES one space, so the wrapped string keeps its length —
+  /// except in a paragraph with an ideographic character, which breaks between
+  /// characters under kinsoku shori (lineBreak.ts) and INSERTS its breaks.
+  /// A Fit Text to Box style wraps at boxWidth / fitScale (drawn scaled).
+  std::optional<std::string> wrap_text(const MeasuredStyle& s, std::string* why) {
+    if (!ctx_) ctx_ = raster::Canvas2D::make(1, 1, opts_);
+    raster::Canvas2D& g = *ctx_;
+    const double boxWidth = s.boxWidth && s.fitScale && *s.fitScale > 0 ? *s.boxWidth / *s.fitScale : s.boxWidth.value_or(0);
+    if (!(boxWidth > 0)) return s.content;
+    if (!set_measure_font(g, s)) {
+      if (why != nullptr) *why = "paragraph text: the font does not parse";
+      return std::nullopt;
+    }
+    const std::string style = s.fontStyle == "italic" ? "italic " : "";
     const auto advance = [&](const std::string& text) {
       const auto chars = static_cast<double>(raster::split_graphemes(text).size());
       return g.measureText(text).width + (chars > 0 ? (chars - 1) * s.letterSpacing : 0) + optical_line_delta(s, style, text);
     };
-    const double inner = *s.boxWidth - s.leftIndent.value_or(0) - s.rightIndent.value_or(0);
+    const double inner = boxWidth - s.leftIndent.value_or(0) - s.rightIndent.value_or(0);
     std::vector<std::string> out;
     std::size_t start = 0;
     for (;;) {
       const std::size_t nl = s.content.find('\n', start);
       const std::string paragraph = s.content.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
-      for (const std::string& c : raster::split_graphemes(paragraph)) {
-        if (raster::is_ideographic_unit(c)) {
-          if (why != nullptr) *why = "paragraph text: CJK line breaking";
-          return std::nullopt;
-        }
+      const std::vector<std::string> clusters = raster::split_graphemes(paragraph);
+      if (std::ranges::any_of(clusters, [](const std::string& c) { return raster::is_ideographic_unit(c); })) {
+        // CJK: each cluster's own advance plus the tracking after it.
+        std::vector<double> widths;
+        widths.reserve(clusters.size());
+        for (const std::string& c : clusters) widths.push_back(g.measureText(c).width + s.letterSpacing);
+        const double firstIndent = s.firstLineIndent.value_or(0);
+        const auto starts =
+            raster::wrap_units(clusters, widths, [&](std::size_t lineNo) { return inner - (lineNo == 0 ? firstIndent : 0); });
+        out.push_back(raster::join_wrapped(clusters, starts));
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+        continue;
       }
       std::vector<std::string> words;
       {
@@ -498,10 +603,31 @@ std::optional<MeasuredStyle> read_measured_text_style(const doc::Node& n,
   return s;
 }
 
-std::optional<std::vector<int>> soft_break_lines(std::string_view raw, std::string_view wrapped) {
-  if (raw.size() > wrapped.size()) return std::vector<int>{};
-  if (raw.size() < wrapped.size()) return std::nullopt;  // inserted breaks (CJK): not ported
+std::vector<int> soft_break_lines(std::string_view raw, std::string_view wrapped) {
+  // UTF-8 bytes stand for the TS's UTF-16 units: '\n' and ' ' are one unit in
+  // both, and every other character is copied through unchanged, so the walk
+  // meets the same breaks.
   std::vector<int> out;
+  if (raw.size() > wrapped.size()) return out;
+  if (raw.size() < wrapped.size()) {
+    std::size_t i = 0;
+    int ln = 0;
+    for (const char w : wrapped) {
+      if (w != '\n') {
+        ++i;
+        continue;
+      }
+      const char r = i < raw.size() ? raw[i] : '\0';
+      if (r == '\n') {
+        ++i;
+      } else {
+        out.push_back(ln);
+        if (r == ' ') ++i;
+      }
+      ++ln;
+    }
+    return out;
+  }
   int line = 0;
   for (std::size_t i = 0; i < wrapped.size(); ++i) {
     if (wrapped[i] != '\n') continue;

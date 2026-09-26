@@ -2,14 +2,20 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cstring>
+#include <span>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <thread>
 
+#include "core/joining_thread.hpp"
 #include "bake_chain.hpp"
 #include "image_decode.hpp"
 #include "json.hpp"
+#include "pixel_motion.hpp"
 #include "light_wash.hpp"
 #include "native_effects.hpp"
 #include "particle_port.hpp"
@@ -297,7 +303,7 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
     for (std::size_t i = 0; i < misses.size(); ++i) work(i);
   } else {
     std::atomic<std::size_t> next{0};
-    std::vector<std::jthread> pool;
+    std::vector<JoiningThread> pool;
     pool.reserve(threads);
     for (unsigned t = 0; t < threads; ++t) {
       pool.emplace_back([&] {
@@ -381,11 +387,16 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   // Still footage decodes to sRGB-encoded RGBA8 (PNG / JPEG / WebP without a profile).
   space = api::RenderColorSpace::srgb;
   if (r.src.empty()) return {};
+  // A still's CPU-baked effect chain runs on its decoded bitmap (setImage's bake).
+  const auto baked_still = [&](std::string hash) {
+    if (!r.bake || r.video || hash.empty()) return hash;
+    return footage_bake_ref(r, hash, stats);
+  };
   // SVG footage and SVG layers: AppTextureProvider.rasterizeSvg, on the C++ SVG renderer (svg_layer.cpp).
-  if (is_svg_src(r.src)) return svg_ref(r, stats);
+  if (is_svg_src(r.src)) return baked_still(svg_ref(r, stats));
   // An imported model's images (gltf_model.hpp): decoded out of the model file.
   if (r.src.starts_with("gltf:")) return model_ref(r, stats);
-  if (r.src.starts_with("data:image/") && !r.video) return data_image_ref(r, stats);
+  if (r.src.starts_with("data:image/") && !r.video) return baked_still(data_image_ref(r, stats));
   if (r.src.starts_with("data:") || r.src.starts_with("blob:") || r.src.starts_with("http:") ||
       r.src.starts_with("https:")) {
     stats.unsupported.emplace_back(r.key, "footage that is not a file on disk");
@@ -393,7 +404,7 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   }
   std::filesystem::path p = file_url_path(r.src);
   if (p.is_relative() && !opts_.mediaBase.empty()) p = opts_.mediaBase / p;
-  if (is_still_image_path(p)) return image_ref(r, p, stats);
+  if (is_still_image_path(p)) return baked_still(image_ref(r, p, stats));
 #if defined(PREMATION_HAVE_MEDIA)
   if (media_ == nullptr) return {};
   const std::string key = p.lexically_normal().string();
@@ -435,17 +446,326 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
     }
   }
   media::FootageInterpretation interp;
+  interp.pulldownPhase = r.pulldownPhase;  // Remove Pulldown: plan_frames weaves the film frame back
   const media::FramePlan plan =
       media::plan_frames(*index, r.sourceTime, interp, media::FrameBlend::none, probeFps, r.compFps);
   ++stats.mediaRefs;
   // Playback: the source's worker decodes ahead of the playhead (MediaSystem::playhead).
   if (playing_) media_->playhead(id, plan.a.index, 1);
-  if (plan.a.bottom) return media::media_hash(id, plan.a.index, *plan.a.bottom);
-  return media::media_hash(id, plan.a.index);
+  if (r.bake) return video_bake_ref(r, id, plan.a, stats);
+  if (r.pixelMotion) {
+    const media::FramePlan second =
+        media::plan_frames(*index, r.blendTime, interp, media::FrameBlend::none, probeFps, r.compFps);
+    return pixel_motion_ref(r, id, plan.a, second.a, stats);
+  }
+  return media::media_hash(id, plan.a.index, plan.a.bottom, r.fields);
 #else
   stats.unsupported.emplace_back(r.key, "footage (built without E1 media)");
   return {};
 #endif
+}
+
+#if defined(PREMATION_HAVE_MEDIA)
+namespace {
+
+float half_bits_to_float(std::uint16_t h) noexcept {
+  const std::uint32_t sign = (h & 0x8000U) << 16U;
+  const std::uint32_t exp = (h >> 10U) & 0x1FU;
+  std::uint32_t mant = h & 0x3FFU;
+  std::uint32_t bits = 0;
+  if (exp == 0) {
+    if (mant == 0) {
+      bits = sign;
+    } else {  // subnormal: normalise
+      int e = -1;
+      do {
+        ++e;
+        mant <<= 1U;
+      } while ((mant & 0x400U) == 0);
+      bits = sign | (static_cast<std::uint32_t>(127 - 15 - e) << 23U) | ((mant & 0x3FFU) << 13U);
+    }
+  } else if (exp == 31) {
+    bits = sign | 0x7F800000U | (mant << 13U);
+  } else {
+    bits = sign | ((exp + (127 - 15)) << 23U) | (mant << 13U);
+  }
+  return std::bit_cast<float>(bits);
+}
+
+/// Pixel Motion's flow raster: the frame box-averaged down to fw × fh
+/// (pixelMotion.ts draws it through a canvas at FLOW_MAX_DIM).
+std::vector<std::uint8_t> box_downscale(const std::vector<std::uint8_t>& rgba, int w, int h, int fw, int fh) {
+  std::vector<std::uint8_t> out(static_cast<std::size_t>(fw) * static_cast<std::size_t>(fh) * 4);
+  for (int y = 0; y < fh; ++y) {
+    const int y0 = y * h / fh;
+    const int y1 = std::max(y0 + 1, (y + 1) * h / fh);
+    for (int x = 0; x < fw; ++x) {
+      const int x0 = x * w / fw;
+      const int x1 = std::max(x0 + 1, (x + 1) * w / fw);
+      std::array<std::uint32_t, 4> sum{};
+      for (int yy = y0; yy < y1; ++yy) {
+        for (int xx = x0; xx < x1; ++xx) {
+          const std::size_t i = (static_cast<std::size_t>(yy) * static_cast<std::size_t>(w) + static_cast<std::size_t>(xx)) * 4;
+          for (std::size_t c = 0; c < 4; ++c) sum.at(c) += rgba[i + c];
+        }
+      }
+      const auto n = static_cast<std::uint32_t>((y1 - y0) * (x1 - x0));
+      const std::size_t o = (static_cast<std::size_t>(y) * static_cast<std::size_t>(fw) + static_cast<std::size_t>(x)) * 4;
+      for (std::size_t c = 0; c < 4; ++c) out[o + c] = static_cast<std::uint8_t>((sum.at(c) + n / 2) / n);
+    }
+  }
+  return out;
+}
+
+}  // namespace
+
+bool SceneTextures::read_frame_rgba8(const media::ConvertedFrame& f, std::vector<std::uint8_t>& rgba, std::string& error) {
+  if (dev_ == nullptr || f.texture == nullptr) {
+    error = "no device";
+    return false;
+  }
+  const wgpu::TextureFormat format = f.texture.GetFormat();
+  std::uint32_t bpp = 0;
+  if (format == wgpu::TextureFormat::RGBA16Float) bpp = 8;
+  else if (format == wgpu::TextureFormat::RGBA8Unorm) bpp = 4;
+  else if (format == wgpu::TextureFormat::RGBA32Float) bpp = 16;
+  if (bpp == 0) {
+    error = "unexpected converted-frame format";
+    return false;
+  }
+  const std::uint32_t rowBytes = f.width * bpp;
+  const std::uint32_t bytesPerRow = (rowBytes + 255) / 256 * 256;
+  wgpu::BufferDescriptor bd{};
+  bd.size = std::uint64_t{bytesPerRow} * f.height;
+  bd.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
+  const wgpu::Buffer staging = dev_->device().CreateBuffer(&bd);
+  wgpu::CommandEncoder enc = dev_->device().CreateCommandEncoder();
+  wgpu::TexelCopyTextureInfo src{};
+  src.texture = f.texture;
+  wgpu::TexelCopyBufferInfo dst{};
+  dst.buffer = staging;
+  dst.layout.bytesPerRow = bytesPerRow;
+  dst.layout.rowsPerImage = f.height;
+  const wgpu::Extent3D size{f.width, f.height, 1};
+  enc.CopyTextureToBuffer(&src, &dst, &size);
+  const wgpu::CommandBuffer cb = enc.Finish();
+  dev_->queue().Submit(1, &cb);
+  bool mapped = false;
+  dev_->instance().WaitAny(staging.MapAsync(wgpu::MapMode::Read, 0, staging.GetSize(), wgpu::CallbackMode::WaitAnyOnly,
+                                            [&mapped](wgpu::MapAsyncStatus st, wgpu::StringView) {
+                                              mapped = st == wgpu::MapAsyncStatus::Success;
+                                            }),
+                           UINT64_MAX);
+  if (!mapped) {
+    error = "frame readback failed";
+    return false;
+  }
+  const auto* bytes = static_cast<const std::uint8_t*>(staging.GetConstMappedRange(0, staging.GetSize()));
+  const std::span<const std::uint8_t> all(bytes, staging.GetSize());
+  rgba.resize(std::size_t{f.width} * f.height * 4);
+  const auto to8 = [](float v) {
+    // The canvas bytes pixelMotion.ts reads: round-to-nearest, clamped.
+    return pixmo::to_uint8_clamp(static_cast<double>(v) * 255.0);
+  };
+  for (std::uint32_t y = 0; y < f.height; ++y) {
+    const auto row = all.subspan(std::size_t{y} * bytesPerRow, rowBytes);
+    std::uint8_t* out = rgba.data() + std::size_t{y} * f.width * 4;  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    for (std::uint32_t i = 0; i < f.width * 4; ++i) {
+      if (bpp == 4) {
+        out[i] = row[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      } else if (bpp == 8) {
+        std::uint16_t hv = 0;
+        std::memcpy(&hv, row.subspan(std::size_t{i} * 2, 2).data(), 2);
+        out[i] = to8(half_bits_to_float(hv));  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      } else {
+        float fv = 0;
+        std::memcpy(&fv, row.subspan(std::size_t{i} * 4, 4).data(), 4);
+        out[i] = to8(fv);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      }
+    }
+  }
+  staging.Unmap();
+  return true;
+}
+
+std::string SceneTextures::video_bake_ref(const TextureRequest& r, std::uint32_t id, const media::FramePick& pick,
+                                          PrepareStats& stats) {
+  // setVideoBaked: the decoded frame (fields rebuilt), the mask and the chain,
+  // at the size it will be shown. While the exact frame is still decoding the
+  // stand-in frame is baked under its own key (the TS's `:seeking` signature),
+  // so the settled frame bakes again.
+  const std::string plain = media::media_hash(id, pick.index, std::nullopt, 0);
+  if (dev_ == nullptr || mediaFrames_ == nullptr) return media::media_hash(id, pick.index, std::nullopt, r.fields);
+  media::ConvertedFrame f;
+  bool exact = false;
+  std::string error;
+  if (!mediaFrames_->convert_frame(id, pick.index, f, exact, error)) return media::media_hash(id, pick.index, std::nullopt, r.fields);
+  std::shared_ptr<RasterEntry> frame = std::make_shared<RasterEntry>();
+  frame->width = f.width;
+  frame->height = f.height;
+  const bool read = read_frame_rgba8(f, frame->rgba, error);
+  mediaFrames_->recycle(std::move(f));
+  if (!read) {
+    stats.unsupported.emplace_back(r.key, "baked footage: " + error);
+    return media::media_hash(id, pick.index, std::nullopt, r.fields);
+  }
+  return footage_bake_ref(r, exact ? plain : plain + "~near", stats, frame);
+}
+
+std::string SceneTextures::pixel_motion_ref(const TextureRequest& r, std::uint32_t id, const media::FramePick& a,
+                                            const media::FramePick& b, PrepareStats& stats) {
+  const double t = std::clamp(r.blendWeight, 0.0, 1.0);
+  // The nearer bracket frame: what draws while either frame is still decoding
+  // (MotionRendererBackend.feedPixelMotion — nearest, never a half-warped guess),
+  // for a pair that is one frame, and for woven (pulldown) frames.
+  const media::FramePick& near = t < 0.5 ? a : b;
+  const std::string nearest = media::media_hash(id, near.index, near.bottom, r.fields);
+  if (a.index == b.index || a.bottom || b.bottom || dev_ == nullptr || mediaFrames_ == nullptr) return nearest;
+  std::array<char, 96> sig{};
+  std::snprintf(sig.data(), sig.size(), "img:pm:%u:%lld:%lld:%.4f:%c", id, static_cast<long long>(a.index),  // NOLINT(cppcoreguidelines-pro-type-vararg)
+                static_cast<long long>(b.index), t, r.fields != 0 ? r.fields : '-');
+  std::string hash(sig.data());
+  if (find(hash)) return hash;
+
+  media::ConvertedFrame fa;
+  media::ConvertedFrame fb;
+  bool exactA = false;
+  bool exactB = false;
+  std::string error;
+  const bool okA = mediaFrames_->convert_frame(id, a.index, fa, exactA, error);
+  const bool okB = okA && mediaFrames_->convert_frame(id, b.index, fb, exactB, error);
+  std::vector<std::uint8_t> pa;
+  std::vector<std::uint8_t> pb;
+  bool ok = okA && okB && exactA && exactB && fa.width == fb.width && fa.height == fb.height && fa.width >= 8 && fa.height >= 8;
+  if (ok) ok = read_frame_rgba8(fa, pa, error) && read_frame_rgba8(fb, pb, error);
+  const int w = static_cast<int>(fa.width);
+  const int h = static_cast<int>(fa.height);
+  if (fa.texture != nullptr) mediaFrames_->recycle(std::move(fa));
+  if (fb.texture != nullptr) mediaFrames_->recycle(std::move(fb));
+  if (!ok) {
+    if (!error.empty() && okA && okB) stats.unsupported.emplace_back(r.key, "Pixel Motion: " + error);
+    return nearest;
+  }
+
+  // The flow is a function of the frame PAIR (every comp frame inside the
+  // bracket reuses it), estimated at ≤ 384 px; the warp runs per weight at
+  // full resolution (pixelMotion.ts). Render thread only, like the feed.
+  const std::string pairKey = std::to_string(id) + "|" + std::to_string(a.index) + "|" + std::to_string(b.index);
+  auto flowIt = std::ranges::find(flows_, pairKey, &FlowEntry::key);
+  if (flowIt == flows_.end()) {
+    constexpr double kFlowMaxDim = 384;
+    const double scale = std::min(1.0, kFlowMaxDim / std::max(w, h));
+    const int fw = std::max(8, static_cast<int>(std::lround(w * scale)));
+    const int fh = std::max(8, static_cast<int>(std::lround(h * scale)));
+    const std::vector<std::uint8_t> sa = box_downscale(pa, w, h, fw, fh);
+    const std::vector<std::uint8_t> sb = box_downscale(pb, w, h, fw, fh);
+    FlowEntry fe;
+    fe.key = pairKey;
+    fe.flow = pixmo::compute_flow(pixmo::luma_int_of(sa, fw, fh), pixmo::luma_int_of(sb, fw, fh), fw, fh);
+    fe.fw = fw;
+    fe.fh = fh;
+    flows_.push_front(std::move(fe));
+    constexpr std::size_t kFlowCacheMax = 4;  // FLOW_CACHE_MAX
+    while (flows_.size() > kFlowCacheMax) flows_.pop_back();
+    flowIt = flows_.begin();
+  } else {
+    flows_.splice(flows_.begin(), flows_, flowIt);  // recency
+    flowIt = flows_.begin();
+  }
+  auto e = std::make_shared<RasterEntry>();
+  e->width = static_cast<std::uint32_t>(w);
+  e->height = static_cast<std::uint32_t>(h);
+  e->rgba.resize(pa.size());
+  pixmo::warp_blend(pa, pb, w, h, flowIt->flow, static_cast<double>(w) / flowIt->fw, static_cast<double>(h) / flowIt->fh, t,
+                    e->rgba);
+  // A Fields interpretation treats the in-between as it treats any frame (setFrame's fields).
+  if (r.fields != 0) pixmo::deinterlace_data(e->rgba, w, h, r.fields == 'u');
+  insert(hash, std::move(e));
+  return hash;
+}
+#endif
+
+std::string SceneTextures::footage_bake_ref(const TextureRequest& r, const std::string& baseHash, PrepareStats& stats,
+                                            std::shared_ptr<const RasterEntry> base) {
+  if (!base) base = find(baseHash);
+  if (!base || base->width == 0 || base->height == 0) return baseHash;
+  const double srcW = base->width;
+  const double srcH = base->height;
+  const double lw = r.spec.at("width").is_number() ? r.spec.at("width").num() : 0;
+  const double lh = r.spec.at("height").is_number() ? r.spec.at("height").num() : 0;
+  double w = srcW;
+  double h = srcH;
+  if (r.video) {
+    // bakeSize: the layer box's device px, the limiting axis decides; never above native.
+    const double ts = r.bakeTargetScale;
+    if (ts > 0 && std::isfinite(ts)) {
+      const double boxW = std::max(1.0, lw) * ts;
+      const double boxH = std::max(1.0, lh) * ts;
+      const double factor = std::min(1.0, std::max(boxW / srcW, boxH / srcH));
+      w = std::max(1.0, std::round(srcW * factor));
+      h = std::max(1.0, std::round(srcH * factor));
+    }
+  } else {
+    // bakeImageBitmap: the displayed width × BAKE_HEADROOM, 0.05..1 of the source, ≤ the max raster dimension.
+    constexpr double kBakeHeadroom = 1.5;
+    constexpr double kMaxRasterDimension = 8192;  // DEFAULT_MAX_RASTER_DIMENSION
+    const double needW = lw > 0 ? lw * r.resolutionScale * kBakeHeadroom : srcW;
+    const double factor = std::min(1.0, std::max(0.05, needW / srcW));
+    w = std::max(1.0, std::round(srcW * factor));
+    h = std::max(1.0, std::round(srcH * factor));
+    if (w > kMaxRasterDimension || h > kMaxRasterDimension) {
+      const double clampScale = std::min(kMaxRasterDimension / w, kMaxRasterDimension / h);
+      w = std::max(1.0, std::round(w * clampScale));
+      h = std::max(1.0, std::round(h * clampScale));
+    }
+  }
+  const auto bw = static_cast<std::uint32_t>(w);
+  const auto bh = static_cast<std::uint32_t>(h);
+  std::array<char, 48> dims{};
+  std::snprintf(dims.data(), dims.size(), "|%ux%u|%c", bw, bh, r.fields != 0 ? r.fields : '-');  // NOLINT(cppcoreguidelines-pro-type-vararg)
+  const std::string hash = "img:bake:" + hex64(fnv1a(js::stringify(r.spec), fnv1a(dims.data(), fnv1a(baseHash))));
+  if (const std::shared_ptr<const RasterEntry> hit = find(hash)) {
+    ++stats.rasterHits;
+    for (const std::string& u : hit->unsupported) stats.unsupported.emplace_back(r.key, u);
+    return hash;
+  }
+  const auto t0 = std::chrono::steady_clock::now();
+  // The frame into a canvas (straight alpha, as a canvas holds it), drawn at the bake size.
+  std::vector<std::uint8_t> straight = base->rgba;
+  for (std::size_t i = 0; i + 3 < straight.size(); i += 4) {
+    const unsigned a = straight[i + 3];
+    if (a == 0 || a == 255) continue;
+    for (std::size_t c = 0; c < 3; ++c) straight[i + c] = static_cast<std::uint8_t>(std::min(255U, (straight[i + c] * 255U + a / 2) / a));
+  }
+  const auto canvas = raster::Canvas2D::make(bw, bh, opts_.canvas);
+  if (!canvas) return baseHash;
+  if (bw == base->width && bh == base->height) {
+    canvas->putImageData(straight, bw, bh, 0, 0);
+  } else {
+    const auto src = raster::Canvas2D::make(base->width, base->height, opts_.canvas);
+    if (!src) return baseHash;
+    src->putImageData(straight, base->width, base->height, 0, 0);
+    canvas->setImageSmoothing(true);
+    canvas->drawImage(*src, 0, 0, srcW, srcH, 0, 0, w, h);
+  }
+  if (r.fields != 0) {
+    // Before the chain: effects sampling a combed frame would smear the comb into their output.
+    std::vector<std::uint8_t> px = canvas->getImageData(0, 0, bw, bh);
+    pixmo::deinterlace_data(px, static_cast<int>(bw), static_cast<int>(bh), r.fields == 'u');
+    canvas->putImageData(px, bw, bh, 0, 0);
+  }
+  std::vector<std::string> unsupported;
+  bake::bake_footage(*canvas, r.spec, unsupported, bake::SharedPool{bakePool_.get(), &bakePoolM_});
+  auto e = std::make_shared<RasterEntry>();
+  e->width = bw;
+  e->height = bh;
+  e->rgba = canvas->pixels();
+  e->unsupported = unsupported;
+  for (const std::string& u : unsupported) stats.unsupported.emplace_back(r.key, u);
+  insert(hash, std::move(e));
+  ++stats.rasterMisses;
+  stats.rasterMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  return hash;
 }
 
 std::string SceneTextures::data_image_ref(const TextureRequest& r, PrepareStats& stats) {

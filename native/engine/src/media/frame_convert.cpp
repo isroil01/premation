@@ -97,6 +97,31 @@ constexpr std::string_view kWeaveWgsl = R"(
 }
 )";
 
+// deinterlace.ts deinterlaceData on the converted frame. KEEP is the kept
+// field's row parity (0 upper, 1 lower); a frame under two rows passes through.
+constexpr std::string_view kDeinterlaceWgsl = R"(
+@group(0) @binding(0) var tex_in: texture_2d<f32>;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  var p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+  return vec4f(p[i], 0.0, 1.0);
+}
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let p = vec2i(pos.xy);
+  let h = i32(textureDimensions(tex_in).y);
+  if (h < 2 || (p.y & 1) == KEEP) { return textureLoad(tex_in, p, 0); }
+  if (p.y - 1 < 0) { return textureLoad(tex_in, vec2i(p.x, p.y + 1), 0); }
+  if (p.y + 1 >= h) { return textureLoad(tex_in, vec2i(p.x, p.y - 1), 0); }
+  return (textureLoad(tex_in, vec2i(p.x, p.y - 1), 0) + textureLoad(tex_in, vec2i(p.x, p.y + 1), 0)) * 0.5;
+}
+)";
+
+std::string deinterlace_variant(bool keepUpper) {
+  std::string s(kDeinterlaceWgsl);
+  const std::size_t at = s.find("KEEP");
+  s.replace(at, 4, keepUpper ? "0" : "1");
+  return s;
+}
+
 std::string variant(bool floatPlanes) {
   std::string s(kConvertWgsl);
   auto replace_all = [&s](std::string_view from, std::string_view to) {
@@ -234,6 +259,19 @@ FrameConverter::FrameConverter(wgpu::Device device, wgpu::TextureFormat output)
     bd.entryCount = e.size();
     bd.entries = e.data();
     weavePipeline_ = pipeline(device_, module(device_, kWeaveWgsl), device_.CreateBindGroupLayout(&bd), output_);
+  }
+  {
+    wgpu::BindGroupLayoutEntry e{};
+    e.binding = 0;
+    e.visibility = wgpu::ShaderStage::Fragment;
+    e.texture.sampleType = wgpu::TextureSampleType::UnfilterableFloat;
+    wgpu::BindGroupLayoutDescriptor bd{};
+    bd.entryCount = 1;
+    bd.entries = &e;
+    for (std::size_t k = 0; k < 2; ++k) {
+      deinterlacePipelines_.at(k) =
+          pipeline(device_, module(device_, deinterlace_variant(k == 0)), device_.CreateBindGroupLayout(&bd), output_);
+    }
   }
   wgpu::BufferDescriptor bd{};
   bd.size = 80;
@@ -456,6 +494,39 @@ bool FrameConverter::weave(const ConvertedFrame& top, const ConvertedFrame& bott
   rpd.colorAttachments = &ca;
   wgpu::RenderPassEncoder pass = enc.BeginRenderPass(&rpd);
   pass.SetPipeline(weavePipeline_);
+  pass.SetBindGroup(0, bg);
+  pass.Draw(3);
+  pass.End();
+  const wgpu::CommandBuffer cb = enc.Finish();
+  queue_.Submit(1, &cb);
+  return true;
+}
+
+bool FrameConverter::deinterlace(const ConvertedFrame& in, bool keepUpper, ConvertedFrame& out, std::string& error) {
+  if (in.texture == nullptr || in.width == 0 || in.height == 0) {
+    error = "deinterlace: no frame";
+    return false;
+  }
+  const wgpu::RenderPipeline& pipe = deinterlacePipelines_.at(keepUpper ? 0 : 1);
+  out = target(in.width, in.height);
+  wgpu::BindGroupEntry e{};
+  e.binding = 0;
+  e.textureView = in.view;
+  wgpu::BindGroupDescriptor bgd{};
+  bgd.layout = pipe.GetBindGroupLayout(0);
+  bgd.entryCount = 1;
+  bgd.entries = &e;
+  const wgpu::BindGroup bg = device_.CreateBindGroup(&bgd);
+  wgpu::CommandEncoder enc = device_.CreateCommandEncoder();
+  wgpu::RenderPassColorAttachment ca{};
+  ca.view = out.view;
+  ca.loadOp = wgpu::LoadOp::Clear;
+  ca.storeOp = wgpu::StoreOp::Store;
+  wgpu::RenderPassDescriptor rpd{};
+  rpd.colorAttachmentCount = 1;
+  rpd.colorAttachments = &ca;
+  wgpu::RenderPassEncoder pass = enc.BeginRenderPass(&rpd);
+  pass.SetPipeline(pipe);
   pass.SetBindGroup(0, bg);
   pass.Draw(3);
   pass.End();

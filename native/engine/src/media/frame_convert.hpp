@@ -19,6 +19,7 @@
 
 #include <webgpu/webgpu_cpp.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -71,6 +72,10 @@ class FrameConverter {
   bool convert(const DecodedFrame& f, AlphaMode alpha, ConvertedFrame& out, std::string& error);
   /// Pulldown weave: even rows from `top`, odd rows from `bottom`.
   bool weave(const ConvertedFrame& top, const ConvertedFrame& bottom, ConvertedFrame& out, std::string& error);
+  /// Interpret Footage ▸ Fields (deinterlace.ts deinterlaceData): keep the
+  /// upper (even rows) or lower field, each other row the mean of its
+  /// neighbours (an edge row copies its one neighbour).
+  bool deinterlace(const ConvertedFrame& in, bool keepUpper, ConvertedFrame& out, std::string& error);
   /// Give a texture back for reuse (same size + format).
   void recycle(ConvertedFrame&& f);
 
@@ -99,6 +104,7 @@ class FrameConverter {
   wgpu::RenderPipeline uintPipeline_;
   wgpu::RenderPipeline floatPipeline_;
   wgpu::RenderPipeline weavePipeline_;
+  std::array<wgpu::RenderPipeline, 2> deinterlacePipelines_;  // [0] keep upper, [1] keep lower
   wgpu::Buffer uniforms_;
   std::array<PlaneTex, 4> planes_{};
   wgpu::TextureView dummyUint_;

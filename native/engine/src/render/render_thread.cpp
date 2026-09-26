@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <span>
+#include <string>
 #include <utility>
 
 #include "log.hpp"
@@ -241,7 +242,7 @@ void RenderThread::run(std::promise<std::string>& ready) {
   std::unique_lock<std::mutex> lock(m_);
   for (;;) {
     cv_.wait_for(lock, std::chrono::milliseconds(500), [this] {
-      return quit_ || configDirty_ || (pending_ && config_.open && slots_ && ring_.any_free());
+      return quit_ || configDirty_ || !tasks_.empty() || (pending_ && config_.open && slots_ && ring_.any_free());
     });
     if (quit_) break;
     if (gpu_->device_lost()) {
@@ -272,6 +273,12 @@ void RenderThread::run(std::promise<std::string>& ready) {
       lock.lock();
       continue;
     }
+    if (!tasks_.empty()) {
+      // Queries between frames: a still or a pixel read never waits behind a
+      // playing viewport for more than the frame in hand.
+      run_tasks(lock);
+      continue;
+    }
     if (!pending_ || !config_.open || !slots_) continue;
     const std::optional<std::uint32_t> slot = ring_.acquire();
     if (!slot) continue;  // every slot is with the host: keep the newest job until one returns
@@ -285,9 +292,98 @@ void RenderThread::run(std::promise<std::string>& ready) {
     lastJob_ = std::move(job);
     lock.lock();
   }
+  // Queries still queued are dropped: their futures report a broken promise,
+  // which the core answers as an internal error (the engine is stopping).
+  tasks_.clear();
   lock.unlock();
   // Tear down on this thread, which created everything.
   close_gpu();
+}
+
+void RenderThread::post(std::function<void()> task) {
+  {
+    const std::lock_guard<std::mutex> lock(m_);
+    if (quit_) return;  // the task (and its promise) is dropped: a broken promise
+    tasks_.push_back(std::move(task));
+  }
+  cv_.notify_all();
+}
+
+void RenderThread::run_tasks(std::unique_lock<std::mutex>& lock) {
+  while (!tasks_.empty()) {
+    std::function<void()> task = std::move(tasks_.front());
+    tasks_.pop_front();
+    lock.unlock();
+    task();
+    lock.lock();
+  }
+}
+
+std::future<StillImage> RenderThread::render_still(std::shared_ptr<BuiltFrame> frame, std::uint32_t width,
+                                                   std::uint32_t height) {
+  // shared_ptr: std::function needs a copyable closure; the promise is set
+  // exactly once, on the render thread, and read through its future.
+  auto promise = std::make_shared<std::promise<StillImage>>();
+  std::future<StillImage> result = promise->get_future();
+  post([this, promise, frame = std::move(frame), width, height] {
+    StillImage out;
+    if (!frame || !drawer_) {
+      out.answer = HookAnswer::unsupported;
+      out.error = frame ? "the render graph did not start on this GPU (C2 quads only)" : "no frame to draw";
+    } else if (width == 0 || height == 0) {
+      out.answer = HookAnswer::failed;
+      out.error = "an empty still";
+    } else {
+      std::string error;
+      if (drawer_->draw_still(*frame, width, height, out, error)) {
+        out.answer = HookAnswer::ready;
+      } else {
+        out = StillImage{};
+        out.answer = HookAnswer::failed;
+        out.error = std::move(error);
+        PREMATION_LOG(warn, "still_failed").kv("error", out.error);
+      }
+    }
+    promise->set_value(std::move(out));
+  });
+  return result;
+}
+
+std::future<WorkingPixels> RenderThread::read_pixels(std::uint32_t viewport, PixelRegion region) {
+  // shared_ptr: as render_still.
+  auto promise = std::make_shared<std::promise<WorkingPixels>>();
+  std::future<WorkingPixels> result = promise->get_future();
+  post([this, promise, viewport, region] {
+    WorkingPixels out;
+    if (!lastJob_ || lastJob_->viewport != viewport || !slots_) {
+      out.answer = HookAnswer::pending;
+      out.error = "viewport " + std::to_string(viewport) + " has shown no frame yet";
+    } else if (!lastJob_->built || !drawer_) {
+      out.answer = HookAnswer::unsupported;
+      out.error = "the viewport shows C2 quads: there is no working-space frame to read";
+    } else {
+      // The ring may have been rebuilt since the core clamped the region.
+      PixelRegion r = region;
+      r.x = std::min(r.x, slots_->width);
+      r.y = std::min(r.y, slots_->height);
+      r.width = std::min(r.width, slots_->width - r.x);
+      r.height = std::min(r.height, slots_->height - r.y);
+      std::string error;
+      if (r.width == 0 || r.height == 0) {
+        out.answer = HookAnswer::failed;
+        out.error = "the region is outside the viewport";
+      } else if (drawer_->read_working(*lastJob_->built, slots_->width, slots_->height, r, out, error)) {
+        out.answer = HookAnswer::ready;
+      } else {
+        out = WorkingPixels{};
+        out.answer = HookAnswer::failed;
+        out.error = std::move(error);
+        PREMATION_LOG(warn, "read_pixels_failed").kv("error", out.error);
+      }
+    }
+    promise->set_value(std::move(out));
+  });
+  return result;
 }
 
 void RenderThread::rebuild(const ViewportConfig& config, bool shared, bool copy) {

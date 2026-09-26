@@ -333,8 +333,8 @@ remap keys, reverse, freeze, a remapped precomp) and *B3z: plugin properties*.
 - **Remaining for D1:** the render-side evaluation — the engine producing its
   own FrameScene from the C++ document (`scene/snapshot_build`, buildSnapshot's
   port) — is gated by the D2 golden suite, not by this fixture, and still
-  reports paragraph text's Fit Text to Box and CJK line breaking (the inserted
-  soft breaks; `text_measure.cpp`). Shape operators were already built
+  reported paragraph text's Fit Text to Box and CJK line breaking until the
+  d2w-round2 port (2026-09-27, below). Shape operators were already built
   (`path_ops`, nothing reports them); image-layer rig culling and 3D
   `getLayerTransforms` landed 2026-09-26 (see "D2w leftovers, d2w-cpp-ports"
   below); the corpus
@@ -466,8 +466,8 @@ from the editor's own code:
 - `env_asset` handles `asset:` skies: decode, draw to at most 1024 px wide,
   `resampleEquirect`, SH9, and the reflection atlas under
   `asset:<id>#<hashEnvPixels>` (`env_asset_parity.json`). It mirrors the TS
-  fallback to 'studio'. An EXR sky is reported, because the TS projects float
-  planes the engine does not decode yet.
+  fallback to 'studio'. An EXR sky projects its linear float planes
+  (`exr_read`, d2w-round2) from the .exr file.
 - `corner_pin` ports readNodeCornerPin, resolveCornerPin and Homography.ts. A
   pinned 3D layer stays on the 2D pinned path (`corner_pin_parity.json`).
 - `styled_surface` ports styledSurfaceFill for extrusion walls under a Colour /
@@ -487,7 +487,7 @@ and 0 differing pixels against webgpu. `harness/scenes/modelMaps.ts` now stores
 pair ports. The displaced sphere stays pinned by the fixture only; porting that
 golden needs an image-backed field, which means re-blessing it.
 
-**Remaining:** EXR skies. Per-character 3D text, the extrusion slice stack and
+**Remaining:** none of the 3D leftovers (EXR skies landed in d2w-round2). Per-character 3D text, the extrusion slice stack and
 geometric faces, and glTF morph targets / skinning landed 2026-09-26 ("D2w
 leftovers, d2w-cpp-ports" below). Sealed-precomp 3D scopes landed with
 composition instances (D2w time/comp: `comp_instance`'s `precompScene3d`).
@@ -657,11 +657,8 @@ on a 3D layer rebuild that ghost's matrix and `world3d` at the echoed time
 the TypeScript). Energy Beam on a mask flattens the path after its expansion.
 Both are in the time/comp fixture (`ghosts-3d`, `energy-beam-paths`).
 
-**Still reported, and why:** Pixel Motion frame blending (optical flow + warp
-over the two decoded frames — the decoded frames are GPU textures in
-`MediaTextures`, so the warp belongs in the render graph; the flow / warp
-kernels themselves are ported, `scene/pixel_motion.cpp`), interlaced fields
-(same seam: `deinterlace_data` is ported, the feed does not call it yet); the audio waveform
+**Still reported, and why:** (Pixel Motion, interlaced fields and pulldown
+removal were wired into the media feed in d2w-round2, 2026-09-27.) The audio waveform
 generator draws once the referenced layer's source has conformed
 (`MediaClock::waveform`, 1024 mono buckets). Until then the layer still
 reports it. Energy Beam on text, point or paragraph, traces the painted runs.
@@ -698,9 +695,44 @@ none of the fixtures has been generated or run yet.
 - **getLayerTransforms 3D** — both engines answer a 3D layer's / camera's /
   light's layer → world 4×4 (`world3DAt` / `world_3d_at`, split out of
   layerSpaceAt), at its comp's size.
-Still reported: paragraph Fit Text to Box and CJK wrapping, Pixel Motion and
-interlaced-field wiring, EXR skies, SVG-sourced image rigs, footage bakes;
-channelView is the viewport's channel display, not part of the frame.
+Still reported after d2w-round2: see below. channelView is the viewport's
+channel display, not part of the frame.
+
+**d2w-round2 (2026-09-27): the D2w leftovers and four queries, in C++.**
+Written and syntax-checked on the 8 GB machine (headless flags); nothing was
+built or run — docs/VERIFY_ON_TEST_MACHINE.md lists what to check.
+- **Apple clang** — no `std::jthread` / `std::stop_token` (libc++ gates them
+  behind -fexperimental-library): `core/joining_thread.hpp`; ThreadPool stops
+  on a flag under its mutex.
+- **Paragraph text** — CJK paragraphs break between characters (kinsoku,
+  first-line indent) with INSERTED soft breaks; soft_break_lines reads them
+  back; runs / animator glyphs are aligned to the wrap (alignIndicesToWrap);
+  Fit Text to Box searches its scale (fitScaleOf) and hands `fitScale` to the
+  painter (`cjk_wrap_parity.json`). Fit with runs that change line height is
+  still reported.
+- **Media feed** — Remove Pulldown weaves (plan_frames), Fields deinterlace on
+  the GPU (FrameConverter::deinterlace, `#u` / `#l` media hashes), Pixel Motion
+  warps the bracket pair on the CPU (convert_frame + readback, flow per pair at
+  ≤ 384 px, warp_blend at full res; nearest frame while decoding). A GPU warp
+  is follow-up (cost: two full-frame readbacks + a CPU warp per new weight).
+- **EXR skies** — `exr_read` ports decodeExr (scanline, NONE/RLE/ZIPS/ZIP)
+  and exrToFloatRgba; the sky reads the .exr (src or the asset's original
+  path) and projects the linear planes; no .exr reachable → the PNG, as the TS.
+- **Image-layer rigs** — SVG sources through the C++ SVG renderer; relative
+  paths against the project folder (BuildContext / BuiltFrame `mediaBase`,
+  which the viewport's texture feed now also uses). blob: stays reported.
+- **Footage bakes** — Canvas2D-only styles on stills and video bake on the
+  decoded frame (bakeImageBitmap / setVideoBaked sizes, fields first, the mask
+  in the layer's centred space, `bake_footage`), `img:bake:` rasters.
+- **Queries** — `getWaveform` (E2 peak pyramid, source-time range),
+  `getThumbnail` (comp / isolated layer / footage still → PNG via the render
+  thread's new task queue), `hitTest` (the built frame's quads, topmost first,
+  locks), `readPixels` (the viewport's last frame redrawn offscreen, the float
+  scene colour, straight alpha). getLayerBounds / getTextLayout /
+  getLayerTransforms are B4's.
+Still reported: paint strokes on footage; Fit Text to Box with runs that change
+line height; blob: / remote image-rig and sky sources; channelView (viewport
+only).
 
 **D4 (2026-09-25): the engine keeps finished viewport frames in VRAM, keyed by
 content.** A frame drawn before is a GPU copy into the slot instead of rasters,
@@ -1199,15 +1231,17 @@ Open work for E4:
   effects, 2026-09-25, see Phase D): `scene/bake_chain.cpp` builds the job from
   the document (`params_of` + `scaleEffectLengths`, the layer mask as a matte)
   and runs `apply_effect_chain` on the raster's Skia canvas; the golden gate
-  runs on whole frames. Left: footage bakes (`setImage` / `setVideo`) and the
-  24 fps exit (styles on a 1080p layer cost 0.4–0.9 s a frame on Skia's CPU
+  runs on whole frames. Footage bakes (`setImage` / `setVideo`) landed in
+  d2w-round2 (`bake_footage`, run on the render thread's prepare, one frame
+  at a time — not on the raster pool yet). Left: the 24 fps exit (styles on a 1080p layer cost 0.4–0.9 s a frame on Skia's CPU
   raster; see the D2w bench).
 - ~~Skia side~~: CSS filter lists (`css::parse_filter_list` → SkImageFilters)
   and Plexus' float16 scratch are in; accelerated canvases blur with the GPU
   canvas's algorithm. Pixel parity of all 27 drawn effects against Chromium on
   their own (`premation-raster`) is still to run; the golden effect scenes pass.
-- The non-effect CPU bake sites in `src/core/rendering` (`pixelMotion*`,
-  `deinterlace`, `channelView`, `frameTap`, `AppTextureProvider`'s read-backs).
+- The non-effect CPU bake sites in `src/core/rendering`: `pixelMotion*` and
+  `deinterlace` are ported (d2w-round2); `channelView`, `frameTap`,
+  `AppTextureProvider`'s read-backs remain.
 - Toolchain not checked here: clang-tidy (CI runs it on `native/libs` only),
   the sanitizers (this container has no compiler-rt runtime, which also stops
   `engine_fuzz` from linking), MSVC / clang-cl and WASM builds.
