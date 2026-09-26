@@ -1543,7 +1543,7 @@ export function insertAudio(asset: ImportedAsset): void {
 
 /** An SVG asset. Detected by extension — an object URL carries no mime type,
  *  and `ImportedAsset.metadata` records only width/height/duration. */
-function isSvgAsset(asset: ImportedAsset): boolean {
+export function isSvgAsset(asset: ImportedAsset): boolean {
   return asset.type === 'image' && /\.svg(\?|#|$)/i.test(asset.name);
 }
 
@@ -1612,7 +1612,7 @@ function isOversizedSvg(count: number, name: string): boolean {
 }
 
 /** Read an asset's SVG source. Object URLs and data URLs both fetch fine. */
-async function readSvgText(src: string): Promise<string | null> {
+export async function readSvgText(src: string): Promise<string | null> {
   try {
     const res = await fetch(src);
     if (!res.ok) return null;

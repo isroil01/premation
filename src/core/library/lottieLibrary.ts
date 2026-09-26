@@ -17,7 +17,7 @@
 import { unzipSync, strFromU8 } from 'fflate';
 import { planLottieImport, type LottieJson } from '@core/lottie/lottieImport';
 import { applyImportPlan, type AppliedTiming } from '@core/lottie/lottieImportApply';
-import { createLegacyDocumentContext } from '@core/ai/toolContext';
+import { createLegacyDocumentContext } from '@core/lottie/lottieDocumentContext';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene, batchScene } from '@stores/sceneStore';

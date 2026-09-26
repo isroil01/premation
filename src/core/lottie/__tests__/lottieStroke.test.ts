@@ -9,7 +9,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { createLegacyDocumentContext } from '@core/ai/toolContext';
+import { createLegacyDocumentContext } from '@core/lottie/lottieDocumentContext';
 import { readNodeStroke } from '@core/paint/stroke';
 import { planLottieImport, type LottieJson } from '../lottieImport';
 import { applyImportPlan } from '../lottieImportApply';

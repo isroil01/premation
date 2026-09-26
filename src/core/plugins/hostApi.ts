@@ -15,9 +15,10 @@
  *      1 MB layer name is a bug report against us, not against the plugin.
  *   2. **Writes are undoable, as one entry.** A plugin command the user did not
  *      like has to be one Ctrl-Z, not fifty — so each mutating call is ONE
- *      engine batch (`origin: plugin`, the same commands the UI sends — see
- *      `viaEngine` at the bottom) or, where the engine API cannot address it
- *      yet, one `runDocumentEdit`, labelled with the plugin's name either way.
+ *      engine batch (`origin: plugin`, the same commands the UI sends,
+ *      labelled with the plugin's name) and `scene.apply` is ONE engine
+ *      gesture (B5, docs/ENGINE_API.md §12, §15.6). Nothing here writes the
+ *      document around the engine; what the API cannot address is refused.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -30,7 +31,6 @@ import { amplitudeAt, type WaveformPeaks } from '@core/audio/waveform';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { useUIStore } from '@stores/uiStore';
 import { getTimelineController, keyframeToCompTime } from '@core/timeline/TimelineController';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import {
   secondsToFlicks, type Command, type CommandResult, type CompSettingsPatch, type Easing, type EngineError, type Keyframe,
   type PropRef, type Rational, type Value,
@@ -43,9 +43,13 @@ import { apiUnitFactor } from '@core/engine/props';
 import { engine } from '@core/engine/engineInstance';
 import { compItemIds, isCompItem, isLayer, layerSubtree } from '@core/engine/doc';
 import { describeEngineError } from '@core/engine/uiEdits';
+import { buildLayerFragment, OffDocumentError, type BuiltLayers } from '@core/engine/offDocument';
+import { assistantKeyframeCommands, type AssistantPlan } from '@core/engine/assistantKeys';
+import { compTime, propRefForTrack } from '@core/engine/propRefs';
 import { insertPrimitive } from '@core/scene/sceneInsert';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { bumpScene, batchScene } from '@stores/sceneStore';
+import { bumpScene } from '@stores/sceneStore';
+import { activeCompRootId } from '@core/scene/activeComp';
 import { insertImageNode } from '@core/scene/sceneInsert';
 import type { SceneKind } from '@core/scene/seedDefaultScene';
 import { checkOwnership } from './layerKindRegistry';
@@ -62,13 +66,11 @@ import type { PluginCommandSpec } from './protocol';
 import { clearPluginDrawList, setPluginDrawList, MAX_DRAW_ITEMS } from './uiCanvas';
 import { setPluginStatus } from './uiStatus';
 import { providePluginExpressionValue } from './uiExpressions';
-import { paramAxes, type PluginInspectorPanelContribution } from './uiParams';
-import { readPluginPanelValues, writePluginParam } from './uiParamValues';
+import { paramAxes, paramHoldsValue, type PluginInspectorPanelContribution } from './uiParams';
+import { readPluginPanelValues } from './uiParamValues';
+import { ensurePanelCommands, numericParamCommands, pluginParamApiPath, staticParamCommands } from './pluginParamCommands';
 import { createImageAsset, readAssetPixels, requireAsset } from './assets';
-import { reparentNode } from '@core/scene/parenting';
-import {
-  addEffect, removeEffect, updateEffectParam, getNodeEffects, effectDefFor,
-} from '@core/effects/effects';
+import { getNodeEffects, effectDefFor } from '@core/effects/effects';
 import { pluginEffectsCanRender } from '@core/effects/pluginEffectDefs';
 import { noteInertPluginEffect } from './pluginEffects';
 import {
@@ -88,18 +90,9 @@ const MAX_STRING = 500;
 const MAX_KEYFRAMES_PER_CALL = 5000;
 
 /**
- * Tell the app the scene changed.
- *
- * A thin alias for `bumpScene`, and the reason it exists is `scene.apply`:
- * every mutating handler goes through this name so a reader looking for "what
- * announces a change" finds one place. The coalescing itself is NOT here — see
- * `batchScene` in `sceneStore`, which the batch wraps around the whole run.
- *
- * A counter of my own was the first attempt and was wrong. `bumpScene` is not
- * the only thing that announces: `insertPrimitive` and the scene graph bump
- * independently, so suppressing calls made from this file alone left 82
- * notifications for a 40-op batch. `batchScene` holds the notification at the
- * store, which is the only place that sees all of them.
+ * Tell the app the project changed outside the document engine (a plugin's
+ * project-scoped storage — not a document edit, never undoable). Engine
+ * commands announce their own changes.
  */
 function notifyScene(): void {
   bumpScene();
@@ -117,7 +110,7 @@ type HostNode = NonNullable<ReturnType<typeof defaultSceneGraph.getNode>>;
 
 /** What a `scene.setProperty` call will write, decided before anything is. */
 type PropertyWritePlan =
-  | { kind: 'structured'; label: string; apply: () => void }
+  | { kind: 'structured'; node: HostNode; label: string; commands: () => Command[] }
   | { kind: 'plain'; node: HostNode; target: HostNode['components'][number]; prop: string; value: number | string | boolean };
 
 const str = (v: unknown, what: string): string => {
@@ -219,20 +212,50 @@ export function createHostApi(
     readPackageFile?: (path: unknown, as: unknown) => Promise<string | ArrayBuffer>;
   },
 ): Record<string, (...args: unknown[]) => unknown> {
-  const edit = <T>(what: string, fn: () => T): T => runDocumentEdit(`${manifest.name}: ${what}`, fn);
-
   /**
-   * A plugin's write through the ENGINE API (B3 / ENGINE_API.md §12): the
+   * A plugin's write through the ENGINE API (B3 / B5, ENGINE_API.md §12): the
    * same commands the UI sends, with `origin: plugin` and the plugin's name on
-   * the undo entry — one entry per call, as `edit` gives. A typed refusal
-   * rejects the call with the engine's message (or `explain`'s), and has
-   * changed nothing. The legacy `edit` stays for what the API cannot address.
+   * the undo entry — one entry per call. A typed refusal rejects the call with
+   * the engine's message (or `explain`'s), and has changed nothing.
    */
   const send = async (what: string, cmds: Command[], explain?: (e: EngineError) => string | undefined): Promise<CommandResult[]> => {
     const label = `${manifest.name}: ${what}`;
     const res = await engine().batch(label, cmds, { origin: 'plugin' });
     if (!res.ok) return fail(explain?.(res.error) ?? describeEngineError(label, res.error));
     return res.value;
+  };
+
+  /** The API addresses layers of compositions only; anything else is refused by name. */
+  const requireLayerNode = (n: HostNode): void => {
+    if (!isLayer(n.id)) fail(`"${n.name}" is not a layer of a composition, so it cannot be edited this way.`);
+  };
+
+  /** An off-document build (buildLayerFragment), its refusal as the plugin's error. */
+  const builtOrFail = (build: () => BuiltLayers | null): BuiltLayers | null => {
+    try {
+      return build();
+    } catch (err) {
+      if (err instanceof OffDocumentError) return fail(`The layer could not be created: ${err.message}`);
+      throw err;
+    }
+  };
+
+  /** Insert an off-document build with ONE `pasteLayers`; resolves to the new top layer's id. */
+  const pasteBuilt = async (what: string, comp: string, built: BuiltLayers | null): Promise<string> => {
+    if (!built) return fail('The layer could not be created.');
+    const r = await send(what, [{
+      type: 'pasteLayers', comp, fragment: built.fragment, index: built.index, ...(built.parent ? { parent: built.parent } : {}),
+    } as Command]);
+    const ids = (r[0] as { layers?: string[] } | undefined)?.layers ?? [];
+    const at = built.tops[0] ? built.scratchIds.indexOf(built.tops[0]) : 0;
+    return ids[at >= 0 ? at : 0] ?? fail('The layer could not be created.');
+  };
+
+  /** A keyframe helper's off-document result (assistantKeys.ts) as ONE entry; a track the API does not address is refused. */
+  const sendKeyPlan = async (what: string, plan: AssistantPlan<unknown>): Promise<boolean> => {
+    if (plan.unaddressed.length > 0) return fail(`${what}: that track is not a property the engine can key.`);
+    if (plan.cmds.length > 0) await send(what, plan.cmds);
+    return true;
   };
 
   /**
@@ -328,7 +351,7 @@ export function createHostApi(
     if (writeValue !== null && typeof writeValue === 'object') {
       const plan = planStructuredWrite(writeProp, writeValue, n.id);
       if (!plan.ok) return fail(plan.message);
-      return { kind: 'structured', label: p, apply: plan.apply };
+      return { kind: 'structured', node: n, label: p, commands: plan.commands };
     }
     if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean') {
       return fail(
@@ -424,7 +447,8 @@ export function createHostApi(
     },
     'params.set': (layerId, panelIdRaw, name, value) => {
       const panel = inspectorPanel(panelIdRaw);
-      const id = node(layerId).id;
+      const n = node(layerId);
+      const id = n.id;
       const paramName = str(name, 'parameter name');
       const schema = panel.params.find((p) => p.name === paramName);
       if (!schema) {
@@ -433,24 +457,35 @@ export function createHostApi(
           + `Declared: ${panel.params.map((p) => p.name).join(', ')}.`,
         );
       }
+      if (!paramHoldsValue(schema)) return true;
+      requireLayerNode(n);
+      // The Inspector's own commands (pluginParamCommands.ts): the panel's
+      // group seeded with every declared default the first time, then the
+      // param at the playhead (a key where it is animated) — ONE entry.
+      const label = `set ${schema.label ?? paramName}`;
+      const at = activePlayheadSeconds();
       const axes = paramAxes(schema);
-      return edit(`set ${schema.label ?? paramName}`, () => {
-        if (axes.length > 0) {
-          const v = (value ?? {}) as Record<string, unknown>;
-          for (const axis of axes) {
-            if (typeof v[axis] !== 'number' || !Number.isFinite(v[axis])) {
-              return fail(`"${paramName}" is a ${schema.type}; pass { ${axes.join(', ')} } of finite numbers.`);
-            }
+      if (axes.length > 0) {
+        const v = (value ?? {}) as Record<string, unknown>;
+        for (const axis of axes) {
+          if (typeof v[axis] !== 'number' || !Number.isFinite(v[axis])) {
+            return fail(`"${paramName}" is a ${schema.type}; pass { ${axes.join(', ')} } of finite numbers.`);
           }
-          for (const axis of axes) {
-            writePluginParam(id, manifest.id, panel, schema, v[axis], axis);
-          }
-        } else {
-          writePluginParam(id, manifest.id, panel, schema, value);
         }
-        notifyScene();
-        return true;
-      });
+        const nums = axes.map((axis) => v[axis] as number);
+        const point: Value = nums.length === 3
+          ? { kind: 'vec3', value: { x: nums[0]!, y: nums[1]!, z: nums[2]! } }
+          : { kind: 'vec2', value: { x: nums[0]!, y: nums[1]! } };
+        return send(label, [
+          ...ensurePanelCommands(id, manifest.id, panel),
+          { type: 'setProperty', prop: { layer: id, path: pluginParamApiPath(manifest.id, panel.id, schema.name) }, value: point, time: compTime(at) },
+        ]).then(() => true);
+      }
+      const cmds = typeof value === 'number'
+        ? numericParamCommands(manifest.id, panel, schema, undefined, [{ nodeId: id, value: finite(value, paramName) }], { seconds: at, autoKeyframe: false })
+        : staticParamCommands(manifest.id, panel, schema, [id], value);
+      if (cmds.length === 0) return fail(`"${paramName}" could not be set on "${n.name}".`);
+      return send(label, cmds).then(() => true);
     },
 
     /*
@@ -692,9 +727,20 @@ export function createHostApi(
     'scene.getLayer': (id) => layerView(str(id, 'layer id')),
 
     // ── Scene, write ─────────────────────────────────────────────────────
+    /*
+      Every write below is an ENGINE command (B5, ENGINE_API.md §12): the same
+      commands the UI sends, `origin: plugin`, one undo entry per call named
+      after the plugin. Validation runs first and synchronously, so a refusal
+      has changed nothing. A node that is not a layer of a composition (a
+      composition root, a node outside every composition) is not addressable
+      through the API and is refused by name.
+    */
     'scene.createLayer': (opts) => {
       const o = (opts ?? {}) as Record<string, unknown>;
       const kind = String(o.kind ?? 'shape') as SceneKind;
+      const comp = activeCompRootId() as string;
+      const x = o.x !== undefined ? finite(o.x, 'x') : undefined;
+      const y = o.y !== undefined ? finite(o.y, 'y') : undefined;
 
       /*
         A plugin's own layer kind.
@@ -705,6 +751,11 @@ export function createHostApi(
         argument crossed `postMessage` and is untrusted text — and a plugin
         that could create another's layers could forge the authored interface
         of software the user trusts differently.
+
+        Built off-document from the schema and inserted into the ACTIVE
+        composition with ONE `pasteLayers` (the menu's route): the TS engine's
+        `createLayer` has no plugin layer kind, and a layer outside every
+        composition is not a layer the API can address.
       */
       if (kind.includes('.')) {
         const check = checkOwnership(manifest.id, kind);
@@ -718,20 +769,18 @@ export function createHostApi(
           ? (o.props as Record<string, unknown>)
           : {};
 
-        return edit(`create ${name}`, () => {
-          const id = `n_${Math.random().toString(36).slice(2, 10)}`;
-          // `buildCustomLayerNode` seeds every declared prop from its default
-          // and validates each override against the schema, so a value the
-          // plugin sent that its own manifest forbids never reaches the graph.
-          defaultSceneGraph.addNode(buildCustomLayerNode(id, manifest.id, schema, {
-            name,
-            ...(o.x !== undefined ? { x: finite(o.x, 'x') } : {}),
-            ...(o.y !== undefined ? { y: finite(o.y, 'y') } : {}),
-            props: rawProps,
-          }));
-          notifyScene();
-          return id;
+        // `buildCustomLayerNode` seeds every declared prop from its default
+        // and validates each override against the schema, so a value the
+        // plugin sent that its own manifest forbids never reaches the graph.
+        const custom = buildCustomLayerNode(`n_${Math.random().toString(36).slice(2, 10)}`, manifest.id, schema, {
+          name,
+          ...(x !== undefined ? { x } : {}),
+          ...(y !== undefined ? { y } : {}),
+          props: rawProps,
         });
+        return pasteBuilt(`create ${name}`, comp, builtOrFail(() => buildLayerFragment(comp, () => {
+          defaultSceneGraph.addChild(comp, custom);
+        })));
       }
 
       if (!CREATABLE.includes(kind)) {
@@ -743,46 +792,35 @@ export function createHostApi(
       // source a plugin can name is an asset id it either read or created.
       if (kind === 'image') {
         const asset = requireAsset(str(o.assetId, 'assetId'));
-        return edit(`create ${name}`, () => {
+        return pasteBuilt(`create ${name}`, comp, builtOrFail(() => buildLayerFragment(comp, () => {
           const id = insertImageNode({
             name: name === 'image' ? asset.name : name,
             src: asset.src,
             width: asset.metadata?.width ?? 400,
             height: asset.metadata?.height ?? 400,
-            ...(o.x !== undefined ? { x: finite(o.x, 'x') } : {}),
-            ...(o.y !== undefined ? { y: finite(o.y, 'y') } : {}),
+            ...(x !== undefined ? { x } : {}),
+            ...(y !== undefined ? { y } : {}),
           });
-          // Bind the layer back to the library entry, exactly as a drag-drop
-          // import does — without this the picture works but is not the asset,
-          // so reinterpretation and proxying skip it.
-          //
-          // Through `writeProp`, NOT `t.props.assetId = …`. The node is already
-          // in the graph by this point, so `getNode` hands back a copy and a
-          // direct assignment is discarded in silence — the layer would render
-          // correctly and simply never be linked to the asset.
+          // Bound back to the library entry, exactly as a drag-drop import
+          // does — without this the picture works but is not the asset, so
+          // reinterpretation and proxying skip it. (A scratch write: the
+          // build runs off-document.)
           const n = defaultSceneGraph.getNode(id);
           const t = n?.components.find((c) => c.type === 'Transform');
           if (t) defaultSceneGraph.writeProp(id, t.id, 'assetId', asset.id);
-          notifyScene();
-          return id;
-        });
+        })));
       }
 
-      return edit(`create ${name}`, () => {
+      // The editor's primitive insert, off-document: it lands where a menu
+      // insert would (inside the selected group, else the composition).
+      return pasteBuilt(`create ${name}`, comp, builtOrFail(() => buildLayerFragment(comp, () => {
         insertPrimitive(kind, name);
         const id = useSelectionStore.getState().ids[0];
-        if (!id) return fail('The layer could not be created.');
-        if (o.x !== undefined || o.y !== undefined) {
-          const n = defaultSceneGraph.getNode(id)!;
-          const t = n.components.find((c) => c.type === 'Transform');
-          if (t) {
-            if (o.x !== undefined) defaultSceneGraph.writeProp(id, t.id, 'x', finite(o.x, 'x'));
-            if (o.y !== undefined) defaultSceneGraph.writeProp(id, t.id, 'y', finite(o.y, 'y'));
-          }
-        }
-        notifyScene();
-        return id;
-      });
+        const n = id ? defaultSceneGraph.getNode(id) : undefined;
+        const t = n?.components.find((c) => c.type === 'Transform');
+        if (n && t && x !== undefined) defaultSceneGraph.writeProp(n.id, t.id, 'x', x);
+        if (n && t && y !== undefined) defaultSceneGraph.writeProp(n.id, t.id, 'y', y);
+      })));
     },
 
     /**
@@ -803,6 +841,7 @@ export function createHostApi(
         return fail(`"${record.kind}" declares render: "${check.entry.kind.render}", so it has no generated children.`);
       }
       if (!Array.isArray(children)) return fail('`children` must be an array.');
+      requireLayerNode(n);
 
       const specs = children.map((raw, i) => {
         const c = (raw ?? {}) as Record<string, unknown>;
@@ -819,14 +858,15 @@ export function createHostApi(
         };
       });
 
-      const result = regenerateProxyChildren(n.id, manifest.id, manifest.name, specs, Date.now());
-      if (result.refused === 'detached') {
-        return fail(
-          'The user has edited these layers, so this plugin no longer manages them. '
-          + 'Silently overwriting them is what the ownership mark exists to prevent.',
-        );
-      }
-      return result;
+      return regenerateProxyChildren(n.id, manifest.id, manifest.name, specs, Date.now()).then((result) => {
+        if (result.refused === 'detached') {
+          return fail(
+            'The user has edited these layers, so this plugin no longer manages them. '
+            + 'Silently overwriting them is what the ownership mark exists to prevent.',
+          );
+        }
+        return result;
+      });
     },
 
     /**
@@ -844,26 +884,30 @@ export function createHostApi(
       return true;
     },
 
+    /*
+      A plain property write — a static field or one numeric member — is the
+      `setProperty` the Inspector sends (a key at the playhead when the
+      property is animated, After Effects' setValue). A structured value (a
+      path, a gradient, a stroke) is its field's command (structuredProps.ts).
+      What the catalog does not address exactly is refused.
+    */
     'scene.setProperty': (id, prop, value) => {
       const plan = planPropertyWrite(id, prop, value);
       if (plan.kind === 'structured') {
-        return edit(`set ${plan.label}`, () => {
-          plan.apply();
-          notifyScene();
-          return true;
-        });
+        requireLayerNode(plan.node);
+        return send(`set ${plan.label}`, plan.commands()).then(() => true);
       }
-      return edit(`set ${plan.prop}`, () => {
-        const ok = defaultSceneGraph.writeProp(plan.node.id, plan.target.id, plan.prop, plan.value);
-        notifyScene();
-        return ok;
-      });
+      requireLayerNode(plan.node);
+      const cmds = propWriteCommand(plan.node, plan.target.id, plan.prop, plan.value, activePlayheadSeconds());
+      if (!cmds) return fail(`"${plan.prop}" on "${plan.node.name}" is not a property the engine can set that way.`);
+      return send(`set ${plan.prop}`, cmds).then(() => true);
     },
 
     'scene.renameLayer': (id, name) => {
       const n = node(id);
       const nm = str(name, 'layer name').slice(0, 80);
-      return edit('rename layer', () => { n.name = nm; notifyScene(); return true; });
+      requireLayerNode(n);
+      return send('rename layer', [{ type: 'renameLayer', layer: n.id, name: nm }]).then(() => true);
     },
 
     'scene.deleteLayer': (id) => {
@@ -871,66 +915,50 @@ export function createHostApi(
       // A comp root is not a layer; deleting one would take the composition
       // with it, and no plugin asked for that.
       if (n.parent === null) return fail('That is a composition root, not a layer.');
-      return edit(`delete ${n.name}`, () => { defaultSceneGraph.removeNode(n.id); notifyScene(); return true; });
+      requireLayerNode(n);
+      // This verb removes the whole subtree (a group with its members, a custom
+      // layer with its proxy children): ONE `deleteLayers` of every layer in it
+      // (the doomed set — nothing is re-parented). A subtree that crosses a
+      // precomp barrier (a legacy nested precomp group) deletes the layer.
+      return send(`delete ${n.name}`, [{ type: 'deleteLayers', layers: layerSubtree(n.id) ?? [n.id] }]).then(() => true);
     },
 
     /**
      * Reparent a layer, or move it to the composition root with `null`.
      *
-     * The world pose is preserved: the child adopts whatever local transform
-     * reproduces where it already sits. Grouping a layer must not move it, and
-     * a plugin compensating by hand would get it wrong for anything rotated or
-     * scaled.
-     *
-     * `canReparent` owns the rules — no cycles, no self-parent, one composition
-     * — and it says in as many words that they live there rather than in the
-     * dropdown BECAUSE scripting paths call this directly. This is one.
+     * The world pose is preserved (`setParent` keepWorldTransform, AE's
+     * default): grouping a layer must not move it, and a plugin compensating by
+     * hand would get it wrong for anything rotated or scaled.
      */
     'scene.setParent': (id, parentId) => {
       const n = node(id);
       const target = parentId === null || parentId === undefined ? null : str(parentId, 'parent id');
       if (target !== null) node(target); // exists — same message as any bad id
-      return edit(`reparent ${n.name}`, () => {
-        // `reparentNode` returns false rather than throwing, and a false
-        // swallowed here is a plugin believing it built a hierarchy it did not.
-        if (!reparentNode(n.id, target)) {
-          return fail(
-            `"${n.name}" cannot be parented there — a layer cannot be its own ancestor, `
-            + 'and parenting only works within one composition.',
-          );
-        }
-        notifyScene();
-        return true;
-      });
+      requireLayerNode(n);
+      const refusal = `"${n.name}" cannot be parented there — a layer cannot be its own ancestor, `
+        + 'and parenting only works within one composition.';
+      if (target !== null && !isLayer(target)) return fail(refusal);
+      return send(
+        `reparent ${n.name}`,
+        [{ type: 'setParent', layers: [n.id], ...(target ? { parent: target } : {}), keepWorldTransform: true }],
+        (e) => (e.code === 'cycle' || e.code === 'invalidArgument' ? refusal : undefined),
+      ).then(() => true);
     },
 
-    /**
-     * Show or hide a layer.
-     *
-     * Assigned through the node VIEW, which writes through to the entity —
-     * unlike `components[].props`, which are rebuilt on read and need
-     * `writeProp`. Both come out of `getNode`, which is why the two look
-     * interchangeable and are not.
-     */
+    /** Show or hide a layer (the video switch). */
     'scene.setVisible': (id, visible) => {
       const n = node(id);
       if (typeof visible !== 'boolean') return fail('visible must be true or false.');
-      return edit(`${visible ? 'show' : 'hide'} ${n.name}`, () => {
-        n.visible = visible;
-        notifyScene();
-        return true;
-      });
+      requireLayerNode(n);
+      return send(`${visible ? 'show' : 'hide'} ${n.name}`, [{ type: 'setLayerSwitches', layers: [n.id], patch: { visible } }]).then(() => true);
     },
 
     /** Lock or unlock a layer. A locked layer refuses edits from the canvas. */
     'scene.setLocked': (id, locked) => {
       const n = node(id);
       if (typeof locked !== 'boolean') return fail('locked must be true or false.');
-      return edit(`${locked ? 'lock' : 'unlock'} ${n.name}`, () => {
-        n.locked = locked;
-        notifyScene();
-        return true;
-      });
+      requireLayerNode(n);
+      return send(`${locked ? 'lock' : 'unlock'} ${n.name}`, [{ type: 'setLayerSwitches', layers: [n.id], patch: { locked } }]).then(() => true);
     },
 
     // ── Effects ──────────────────────────────────────────────────────────
@@ -949,64 +977,38 @@ export function createHostApi(
     /**
      * Add an effect to a layer, returning its id.
      *
-     * ★ The type is checked HERE, before `addEffect` sees it.
-     *
-     * `addEffect` opens with `const def = DEF.get(type); if (!def) return;` — an
-     * unknown type is a silent no-op with no return value and no error. That is
-     * defensible for a menu which can only offer types it has, and exactly
-     * wrong for an API taking a string across `postMessage`: the plugin would
-     * report success, the user would see nothing, and the only evidence would be
-     * an effect stack that did not grow. It is also the shape of the bug that
-     * made plugin-contributed effects unaddable when they first shipped.
+     * ★ The type is checked HERE, before the engine sees it, so an unknown type
+     * is a named refusal rather than a stack that did not grow.
      */
     'effects.add': (id, type) => {
       const n = node(id);
       const t = str(type, 'effect type');
       if (!effectDefFor(t)) return fail(unknownEffectTypeMessage(t));
-      return edit(`add ${t}`, () => {
-        const before = new Set(getNodeEffects(n.id).map((e) => e.id));
-        addEffect(n.id, t as never);
-        // Read back rather than trusting a requested id: `addEffect` falls back
-        // to a generated one when the id it was given is taken, silently.
-        const added = getNodeEffects(n.id).find((e) => !before.has(e.id));
-        if (!added) return fail(`"${t}" could not be added to "${n.name}".`);
-        notifyScene();
-
+      requireLayerNode(n);
+      return send(`add ${t}`, [{ type: 'addEffect', layers: [n.id], effect: t, params: [] }]).then((r) => {
+        const addedId = (r[0] as { groups?: string[] } | undefined)?.groups?.[0]?.split('/')[1];
+        if (!addedId) return fail(`"${t}" could not be added to "${n.name}".`);
         /*
           Succeeds on the WebGL2 tier, and says it will not draw.
 
           Not a failure, deliberately. The effect IS in the document, it is
           saved with it, and it renders the moment that file is opened on a
-          WebGPU machine — refusing here would make a plugin that works
-          everywhere look broken on this laptop and, worse, would tempt an
-          author to strip the effect out of the document to "fix" it.
-
-          A bare id, though, leaves the plugin unable to tell its own user
-          anything, which is the defect: the effect appears in the stack, shows
-          its parameters, and does nothing. The flag is how a plugin says so in
-          its own words. The host says it too, once per session.
+          WebGPU machine. The flag is how a plugin says so in its own words.
+          The host says it too, once per session.
         */
         const inactive = t.includes('.') && !pluginEffectsCanRender();
         if (inactive) noteInertPluginEffect(manifest.name);
-        return inactive
-          ? { id: added.id, active: false, reason: 'webgpu-unavailable' }
-          : added.id;
+        return inactive ? { id: addedId, active: false, reason: 'webgpu-unavailable' } : addedId;
       });
     },
 
     'effects.remove': (id, effectId) => {
       const n = node(id);
       const fx = str(effectId, 'effect id');
-      // `removeEffect` filters, so removing something absent succeeds quietly.
       // A plugin removing the wrong id should hear about it.
-      if (!getNodeEffects(n.id).some((e) => e.id === fx)) {
-        return fail(`"${n.name}" has no effect "${fx}".`);
-      }
-      return edit('remove effect', () => {
-        removeEffect(n.id, fx);
-        notifyScene();
-        return true;
-      });
+      if (!getNodeEffects(n.id).some((e) => e.id === fx)) return fail(`"${n.name}" has no effect "${fx}".`);
+      requireLayerNode(n);
+      return send('remove effect', [{ type: 'removePropertyGroups', groups: [{ layer: n.id, path: `effects/${fx}` }] }]).then(() => true);
     },
 
     /**
@@ -1027,29 +1029,22 @@ export function createHostApi(
         return fail('Effect parameter values must be a number, string or boolean.');
       }
       const target = getNodeEffects(n.id).find((e) => e.id === fx);
-      if (!target) {
-        return fail(`"${n.name}" has no effect "${fx}".`);
-      }
+      if (!target) return fail(`"${n.name}" has no effect "${fx}".`);
       /*
         Checked against the effect's DEFINITION: the key must be one of its
-        params and the value must fit its type and min/max. Both used to be
-        stored as sent — a `blur` beside the real `softness`, a 0.5 where the
-        range is 0–100 — and reported as success.
-
-        Skipped only when the definition is not loaded (a plugin effect whose
-        plugin is stopped): there is nothing to check against, and refusing
-        would block editing a document that is otherwise fine.
+        params and the value must fit its type and min/max. Skipped only when
+        the definition is not loaded (a plugin effect whose plugin is stopped).
       */
       const def = effectDefFor(target.type);
       if (def) {
         const problem = effectParamProblem(def, k, value);
         if (problem) return fail(problem);
       }
-      return edit(`set ${k}`, () => {
-        updateEffectParam(n.id, fx, k, value as never);
-        notifyScene();
-        return true;
-      });
+      requireLayerNode(n);
+      // The same `setProperty` of `effects/<id>/<key>` the Effect Controls panel sends.
+      const cmds = effectParamCommand(n.id, fx, k, value, activePlayheadSeconds());
+      if (!cmds) return fail(`"${k}" of "${fx}" is not a parameter the engine can set to ${JSON.stringify(value)}.`);
+      return send(`set ${k}`, cmds).then(() => true);
     },
 
     // ── Animation, read ──────────────────────────────────────────────────
@@ -1064,16 +1059,19 @@ export function createHostApi(
 
     // ── Animation, write ─────────────────────────────────────────────────
     /*
-      Both keyframe writers go through `planKeyframeWrites`, which does two
-      things the old `finite(value)` could not:
+      Both keyframe writers go through `planKeyframeWrites`: TYPED values (a
+      colour becomes the four `<prop>_r/_g/_b/_a` channel tracks, a point its
+      axis tracks) and KNOWN tracks (an unknown name is refused, naming the
+      closest real one). The plan is complete before anything is sent.
 
-        • TYPED values. A colour becomes the four `<prop>_r/_g/_b/_a` channel
-          tracks and a point its axis tracks — the representation the renderer
-          and `ColorKfRow` already use — instead of "must be a finite number".
-        • KNOWN tracks. An unknown name is refused, naming the closest real one,
-          rather than creating a track nothing reads.
-
-      The plan is complete before `edit` opens, so a refusal has written nothing.
+      Keys arrive in LAYER time (the plugin API's axis, docs/PLUGINS.md). Each
+      output track that is ONE engine property on its own (a single-member
+      scalar, or a Position dimension — separated first) is `addKeyframes` /
+      `setKeyframes` at `keyframeToCompTime`; anything else (a colour channel,
+      another vector's member, a non-API easing) runs the per-track writer
+      off-document and sends each touched property's `setKeyframes`
+      (assistantKeys.ts) — so colour and vector keyframes from plugins are
+      engine commands too.
     */
     'animation.setKeyframe': (id, prop, time, value, easing) => {
       const n = node(id);
@@ -1082,13 +1080,15 @@ export function createHostApi(
       const writes = planKeyframeWrites(n, p, [
         { t, value, ...(typeof easing === 'string' ? { easing } : {}) },
       ]);
-      return edit(`keyframe ${p}`, () => {
+      requireLayerNode(n);
+      const cmds = keyframeCommands(n.id, writes, 'add');
+      if (cmds) return send(`keyframe ${p}`, cmds).then(() => true);
+      return sendKeyPlan(`keyframe ${p}`, assistantKeyframeCommands([n.id], () => {
         for (const w of writes) {
           const k = w.keyframes[0]!;
           defaultAnimation.setKeyframe(n.id, w.path as never, k.t, k.value, k.easing as never);
         }
-        return true;
-      });
+      }));
     },
 
     'animation.setKeyframes': (id, prop, kfs) => {
@@ -1107,35 +1107,55 @@ export function createHostApi(
         };
       });
       const writes = planKeyframeWrites(n, p, clean);
-      return edit(`animate ${p}`, () => {
-        // The bulk API: one sort, one notification PER TRACK. Writing these one
-        // at a time is what made generated tracks freeze the app.
+      requireLayerNode(n);
+      // An empty list clears the track: the per-track writer, sent as the stopwatch off.
+      const cmds = clean.length > 0 ? keyframeCommands(n.id, writes, 'replace') : null;
+      if (cmds) return send(`animate ${p}`, cmds).then(() => true);
+      return sendKeyPlan(`animate ${p}`, assistantKeyframeCommands([n.id], () => {
+        // The bulk writer: one sort, one notification PER TRACK.
         for (const w of writes) defaultAnimation.setKeyframes(n.id, w.path as never, w.keyframes as never);
-        return true;
-      });
+      }));
     },
 
     'animation.removeKeyframe': (id, prop, time) => {
       const n = node(id);
-      const p = str(prop, 'property') as never;
+      const p = str(prop, 'property');
       const t = finite(time, 'time');
-      return edit(`remove keyframe ${String(prop)}`, () => { defaultAnimation.removeKeyframe(n.id, p, t); return true; });
+      requireLayerNode(n);
+      const target = keyTargetFor(n.id, p);
+      // No stored key there: a silent no-op, as it always was.
+      const stored = defaultAnimation.getTrackKeyframes(n.id, p)?.some((k) => k.t === t) ?? false;
+      if (target && stored && keyAddressable(n.id, p, target)) {
+        return engineKeyIdAt(target.ref, keyframeToCompTime(n.id, t)).then((keyId) => {
+          if (!keyId) return true;
+          return send(`remove keyframe ${p}`, [{ type: 'deleteKeyframes', ids: [keyId] }]).then(() => true);
+        });
+      }
+      return sendKeyPlan(`remove keyframe ${p}`, assistantKeyframeCommands([n.id], () => {
+        defaultAnimation.removeKeyframe(n.id, p as never, t);
+      }));
     },
 
     'animation.setExpression': (id, prop, source) => {
       const n = node(id);
-      const p = str(prop, 'property') as never;
+      const p = str(prop, 'property');
       const src = str(source, 'expression source');
-      return edit(`expression ${String(prop)}`, () => {
-        // Stamped with the plugin id. This is the one API that writes text the
-        // engine will later EXECUTE, and what it writes outlives the plugin:
-        // the expression is saved into the document, survives uninstalling the
-        // plugin, and re-evaluates for collaborators who never had it. Without
-        // the stamp, a user looking at wrong animation cannot tell a formula
-        // they wrote from one a plugin left behind.
-        defaultAnimation.setExpression(n.id, p, src, manifest.id);
-        return true;
-      });
+      requireLayerNode(n);
+      const r = propRefForTrack(n.id, p);
+      if (!r || !r.members.includes(p)) return fail(`"${p}" is not a property of "${n.name}" the engine can put an expression on.`);
+      // A rewrite keeps the expression's enabled state, as the editor's does.
+      const enabled = defaultAnimation.hasExpression(n.id, p) ? defaultAnimation.isExpressionEnabled(n.id, p) : true;
+      // `owner`: stamped with the plugin id. This is the one API that writes
+      // text the engine will later EXECUTE, and what it writes outlives the
+      // plugin: the expression is saved into the document, survives
+      // uninstalling the plugin, and re-evaluates for collaborators who never
+      // had it. Without the stamp, a user looking at wrong animation cannot
+      // tell a formula they wrote from one a plugin left behind. One member of
+      // an unseparated vector is its per-dimension expression (`member`).
+      return send(`expression ${p}`, [{
+        type: 'setExpression', prop: r.ref, source: src, enabled, owner: manifest.id,
+        ...(r.members.length > 1 ? { member: r.member } : {}),
+      }]).then(() => true);
     },
 
     // ── Assets ───────────────────────────────────────────────────────────
@@ -1165,18 +1185,15 @@ export function createHostApi(
 
     'assets.createImage': async (opts) => {
       const o = (opts ?? {}) as Record<string, unknown>;
-      // NOT wrapped in `edit`: adding to the asset library is not a document
-      // mutation, and `addAsset` is async — an async body inside `runDocumentEdit`
-      // would close the undo entry before the work finished and produce an
-      // empty one. The undoable step is `scene.createLayer`, which is where the
-      // picture actually enters the composition.
+      // The engine's `importBytes` (B5): a footage item is document state, so
+      // the import is its own undoable entry, named after the plugin.
       return createImageAsset(manifest.id, {
         width: o.width,
         height: o.height,
         bytes: o.bytes,
         mime: o.mime,
         name: o.name,
-      });
+      }, `${manifest.name}: create image`);
     },
 
     // ── Network ──────────────────────────────────────────────────────────
@@ -1233,8 +1250,8 @@ export function createHostApi(
       /*
         A project write marks the document dirty, and is NOT undoable.
 
-        Deliberately outside `edit()`, which every other mutating verb here goes
-        through. Undo is a promise about the user's work, and a plugin
+        Deliberately NOT an engine edit, which every other mutating verb here
+        is. Undo is a promise about the user's work, and a plugin
         remembering a panel's scroll position must not make Ctrl+Z do nothing
         visible. A plugin that wants undoable state has layer props, which are
         exactly that.
@@ -1254,20 +1271,17 @@ export function createHostApi(
 
     // ── Batch ────────────────────────────────────────────────────────────
     /**
-     * Many mutations, one round trip, one undo entry, one notification.
+     * Many mutations, one round trip, one undo entry.
      *
      * Every op is dispatched through the SAME handler above that a single call
      * would reach. Re-implementing them here would be a second definition of
      * what `createLayer` means, free to drift from the first and certain to
      * eventually — and the drift would be invisible, because a plugin using the
      * batch and a plugin using the single call would each behave correctly
-     * against their own path.
-     *
-     * What differs is only bookkeeping: `notifyScene` is suppressed for the
-     * duration and fired once at the end, and `runDocumentEdit` nests, which it
-     * already handles by suspending inner history pushes.
+     * against their own path. What differs is only that they run inside one
+     * engine gesture.
      */
-    'scene.apply': (rawOps) => {
+    'scene.apply': async (rawOps) => {
       const { ops, permissions } = validateBatch(rawOps);
 
       /*
@@ -1289,264 +1303,63 @@ export function createHostApi(
       }
 
       /*
-        `batchScene` holds every scene notification until the whole run is
-        done, then fires one.
-
-        At the STORE, not here. Suppressing only the `notifyScene` calls this
-        file makes was the first attempt and left 82 notifications for a 40-op
-        batch: `insertPrimitive` and the scene graph announce independently, and
-        the store is the only place that sees all of them. The graph is still
-        mutated immediately, so an op reading the scene mid-batch sees the
-        truth — only the announcement waits.
+        ONE engine gesture (B5): every op is the single call's engine command,
+        sent inside a gesture named after the batch — one undo entry, one
+        replayable span of the command log. All or nothing: the first failing
+        op ABORTS the gesture (`endGesture{commit:false}`), which reverts every
+        op before it — a batch failing at op 4,999 leaves the document exactly
+        as it was, and the failure keeps travelling upward with its index.
       */
-      const value = batchScene(() => edit(`apply ${ops.length} operation${ops.length === 1 ? '' : 's'}`, () => {
-        {
-          /** Op index → the layer id it created. Only creating ops appear. */
-          const created = new Map<number, string>();
-          const resolve = (target: string | OpRef): string =>
-            typeof target === 'string'
-              ? target
-              // Validation already proved this ref points at an earlier
-              // `createLayer`. A miss means that op produced no id, which
-              // cannot happen without it having thrown — and a throw aborts.
-              : created.get(target.ref) ?? fail(`op ${target.ref} produced no layer.`);
+      const label = `${manifest.name}: apply ${ops.length} operation${ops.length === 1 ? '' : 's'}`;
+      const client = engine();
+      const begun = await client.beginGesture(label, { origin: 'plugin' });
+      if (!begun.ok) return fail(`The batch could not start: ${describeEngineError(label, begun.error)}`);
+      const gesture = begun.value.gesture;
 
-          /*
-            Where an unparented `createLayer` goes.
+      /** Op index → the layer id it created. Only creating ops appear. */
+      const created = new Map<number, string>();
+      const resolve = (target: string | OpRef): string =>
+        typeof target === 'string'
+          ? target
+          // Validation already proved this ref points at an earlier
+          // `createLayer`. A miss means that op produced no id, which
+          // cannot happen without it having thrown — and a throw aborts.
+          : created.get(target.ref) ?? fail(`op ${target.ref} produced no layer.`);
 
-            Wherever the FIRST created layer landed — learned, not chosen.
-
-            `insertPrimitive` puts a layer under whatever is selected and then
-            selects it, so inside a batch every create nests inside its
-            predecessor: "create a thousand layers" built a thousand-deep chain.
-            Nothing errored; the result was simply not what anyone would read
-            the batch as meaning.
-
-            Two anchors were tried and are worse. The selection's parent still
-            moves underneath the loop. The first scene ROOT is wrong in a
-            multi-composition project — it can name a composition the batch has
-            nothing to do with, and reparenting across compositions is refused,
-            so the batch fails with a message about ancestry that has no
-            relation to what the plugin asked for.
-
-            Letting op 0 land naturally and following it means a one-op batch is
-            identical to the single call it replaces, and every later op joins
-            it as a sibling rather than a descendant.
-          */
-          let defaultParent: string | null = null;
-
-          const results: unknown[] = [];
-          for (let i = 0; i < ops.length; i++) {
-            const op = ops[i]!;
-            try {
-              const result = runOp(table, op, resolve, defaultParent);
-              if (op.op === 'createLayer' && typeof result === 'string') {
-                created.set(i, result);
-                // The anchor, learned from op 0 and then fixed. `?? null` keeps
-                // a root-level layer's `undefined` parent from re-arming this.
-                defaultParent ??= defaultSceneGraph.getNode(result)?.parent ?? null;
-              }
-              results.push(result ?? null);
-            } catch (err) {
-              /*
-                Re-thrown with the index attached, and deliberately not caught.
-
-                `runDocumentEdit` snapshots before and after; an exception
-                escaping it restores the document, so nothing is applied. That
-                is the guarantee — a batch failing at op 4,999 leaves the
-                document byte-identical — and it is why the failure has to keep
-                travelling upward rather than becoming a partial result the
-                plugin has no way to interpret.
-              */
-              throw new BatchError(i, err instanceof Error ? err.message : String(err));
+      /*
+        Where an unparented `createLayer` goes: wherever the FIRST created
+        layer landed — learned, not chosen — so a one-op batch is identical to
+        the single call it replaces, and every later op joins it as a sibling
+        rather than a descendant.
+      */
+      let defaultParent: string | null = null;
+      const results: unknown[] = [];
+      try {
+        for (let i = 0; i < ops.length; i++) {
+          const op = ops[i]!;
+          try {
+            const result = await runOp(table, op, resolve, defaultParent);
+            if (op.op === 'createLayer' && typeof result === 'string') {
+              created.set(i, result);
+              // The anchor, learned from op 0 and then fixed.
+              defaultParent ??= defaultSceneGraph.getNode(result)?.parent ?? null;
             }
+            results.push(result ?? null);
+          } catch (err) {
+            throw new BatchError(i, err instanceof Error ? err.message : String(err));
           }
-          return results;
         }
-      }));
-
-      return value;
+      } catch (err) {
+        await client.endGesture(gesture, false, { origin: 'plugin' });
+        throw err;
+      }
+      const end = await client.endGesture(gesture, true, { origin: 'plugin' });
+      if (!end.ok) return fail(`The batch could not be committed: ${describeEngineError(label, end.error)}`);
+      return results;
     },
   };
 
-  /*
-    The single-call verbs that map 1:1 onto engine commands (ENGINE_API.md
-    §12), sent with `origin: plugin`: one undo entry per call, labelled with
-    the plugin's name, exactly like the UI's commands. Validation is the
-    legacy handler's, word for word, and runs first and synchronously. A node
-    that is not a layer of a composition — the only thing the API cannot
-    address here — falls through to the legacy handler.
-
-    `scene.apply` keeps dispatching to the LEGACY table (`runOp(table, …)`):
-    its all-or-nothing guarantee is a synchronous `runDocumentEdit` snapshot,
-    and its ops address layers a legacy `createLayer` made mid-batch.
-    B3-legacy: engine gap — as an engine gesture it needs `createLayer` for
-    plugin layer kinds (the TS engine refuses `component`), and an abort that
-    reverts the gesture on the first failing op.
-  */
-  const viaEngine: Record<string, (...args: unknown[]) => unknown> = {
-    'scene.renameLayer': (id, name) => {
-      const n = node(id);
-      const nm = str(name, 'layer name').slice(0, 80);
-      if (!isLayer(n.id)) return table['scene.renameLayer']!(id, name);
-      return send('rename layer', [{ type: 'renameLayer', layer: n.id, name: nm }]).then(() => true);
-    },
-
-    'scene.deleteLayer': (id) => {
-      const n = node(id);
-      if (n.parent === null) return fail('That is a composition root, not a layer.');
-      // This verb removes the whole subtree (a group with its members, a custom
-      // layer with its proxy children): ONE `deleteLayers` of every layer in it
-      // (the doomed set — nothing is re-parented). A subtree the API cannot
-      // name as one composition's layers (a legacy nested precomp group) keeps
-      // the legacy handler.
-      const subtree = layerSubtree(n.id);
-      if (!subtree) return table['scene.deleteLayer']!(id);
-      return send(`delete ${n.name}`, [{ type: 'deleteLayers', layers: subtree }]).then(() => true);
-    },
-
-    'scene.setParent': (id, parentId) => {
-      const n = node(id);
-      const target = parentId === null || parentId === undefined ? null : str(parentId, 'parent id');
-      if (target !== null) node(target);
-      if (!isLayer(n.id) || (target !== null && !isLayer(target))) return table['scene.setParent']!(id, parentId);
-      const refusal = `"${n.name}" cannot be parented there — a layer cannot be its own ancestor, `
-        + 'and parenting only works within one composition.';
-      // `setParent` keeps the world pose (AE's default), as `reparentNode` did.
-      return send(
-        `reparent ${n.name}`,
-        [{ type: 'setParent', layers: [n.id], ...(target ? { parent: target } : {}), keepWorldTransform: true }],
-        (e) => (e.code === 'cycle' || e.code === 'invalidArgument' ? refusal : undefined),
-      ).then(() => true);
-    },
-
-    'scene.setVisible': (id, visible) => {
-      const n = node(id);
-      if (typeof visible !== 'boolean') return fail('visible must be true or false.');
-      if (!isLayer(n.id)) return table['scene.setVisible']!(id, visible);
-      return send(`${visible ? 'show' : 'hide'} ${n.name}`, [{ type: 'setLayerSwitches', layers: [n.id], patch: { visible } }]).then(() => true);
-    },
-
-    'scene.setLocked': (id, locked) => {
-      const n = node(id);
-      if (typeof locked !== 'boolean') return fail('locked must be true or false.');
-      if (!isLayer(n.id)) return table['scene.setLocked']!(id, locked);
-      return send(`${locked ? 'lock' : 'unlock'} ${n.name}`, [{ type: 'setLayerSwitches', layers: [n.id], patch: { locked } }]).then(() => true);
-    },
-
-    'effects.add': (id, type) => {
-      const n = node(id);
-      const t = str(type, 'effect type');
-      if (!effectDefFor(t)) return fail(unknownEffectTypeMessage(t));
-      if (!isLayer(n.id)) return table['effects.add']!(id, type);
-      return send(`add ${t}`, [{ type: 'addEffect', layers: [n.id], effect: t, params: [] }]).then((r) => {
-        const addedId = (r[0] as { groups?: string[] } | undefined)?.groups?.[0]?.split('/')[1];
-        if (!addedId) return fail(`"${t}" could not be added to "${n.name}".`);
-        // The WebGL2-tier flag, exactly as the legacy handler reports it.
-        const inactive = t.includes('.') && !pluginEffectsCanRender();
-        if (inactive) noteInertPluginEffect(manifest.name);
-        return inactive ? { id: addedId, active: false, reason: 'webgpu-unavailable' } : addedId;
-      });
-    },
-
-    'effects.remove': (id, effectId) => {
-      const n = node(id);
-      const fx = str(effectId, 'effect id');
-      if (!getNodeEffects(n.id).some((e) => e.id === fx)) return fail(`"${n.name}" has no effect "${fx}".`);
-      if (!isLayer(n.id)) return table['effects.remove']!(id, effectId);
-      return send('remove effect', [{ type: 'removePropertyGroups', groups: [{ layer: n.id, path: `effects/${fx}` }] }]).then(() => true);
-    },
-
-    /*
-      B5: a plain property write — a static field or one numeric member — is
-      the `setProperty` the Inspector sends (a key at the playhead when the
-      property is animated, After Effects' setValue). Structured values (paths,
-      gradients, strokes) and what the catalog does not address exactly keep
-      the legacy handler.
-    */
-    'scene.setProperty': (id, prop, value) => {
-      const plan = planPropertyWrite(id, prop, value);
-      if (plan.kind === 'plain' && isLayer(plan.node.id)) {
-        const cmds = propWriteCommand(plan.node, plan.target.id, plan.prop, plan.value, activePlayheadSeconds());
-        if (cmds) return send(`set ${plan.prop}`, cmds).then(() => true);
-      }
-      return table['scene.setProperty']!(id, prop, value);
-    },
-
-    'effects.setParam': (id, effectId, key, value) => {
-      const n = node(id);
-      const fx = str(effectId, 'effect id');
-      const k = str(key, 'parameter name');
-      if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean') {
-        return fail('Effect parameter values must be a number, string or boolean.');
-      }
-      const target = getNodeEffects(n.id).find((e) => e.id === fx);
-      if (!target) return fail(`"${n.name}" has no effect "${fx}".`);
-      const def = effectDefFor(target.type);
-      if (def) {
-        const problem = effectParamProblem(def, k, value);
-        if (problem) return fail(problem);
-      }
-      // The same `setProperty` of `effects/<id>/<key>` the Effect Controls
-      // panel sends; a param the API does not take keeps the legacy handler.
-      const cmds = isLayer(n.id) ? effectParamCommand(n.id, fx, k, value, activePlayheadSeconds()) : null;
-      if (!cmds) return table['effects.setParam']!(id, effectId, key, value);
-      return send(`set ${k}`, cmds).then(() => true);
-    },
-
-    /*
-      Keyframes in LAYER time (the plugin API's axis, docs/PLUGINS.md) on the
-      API's comp-time axis: `keyframeToCompTime`, the inverse of the conversion
-      the engine applies to every key. Each output track of the typed plan
-      must be ONE engine property on its own (a single-member scalar, or a
-      Position dimension — separated first, AE's Separate Dimensions);
-      colour channels, other vector members and non-API easings keep the
-      legacy handler.
-    */
-    'animation.setKeyframe': (id, prop, time, value, easing) => {
-      const n = node(id);
-      const p = str(prop, 'property');
-      const t = finite(time, 'time');
-      const writes = planKeyframeWrites(n, p, [{ t, value, ...(typeof easing === 'string' ? { easing } : {}) }]);
-      const cmds = isLayer(n.id) ? keyframeCommands(n.id, writes, 'add') : null;
-      if (!cmds) return table['animation.setKeyframe']!(id, prop, time, value, easing);
-      return send(`keyframe ${p}`, cmds).then(() => true);
-    },
-
-    'animation.setKeyframes': (id, prop, kfs) => {
-      const n = node(id);
-      const p = str(prop, 'property');
-      if (!Array.isArray(kfs)) return fail('setKeyframes expects an array.');
-      if (kfs.length > MAX_KEYFRAMES_PER_CALL) {
-        return fail(`A single call may write at most ${MAX_KEYFRAMES_PER_CALL} keyframes.`);
-      }
-      const clean = kfs.map((k, i) => {
-        const o = (k ?? {}) as Record<string, unknown>;
-        return { t: finite(o.t, `keyframe[${i}].t`), value: o.value, ...(typeof o.easing === 'string' ? { easing: o.easing } : {}) };
-      });
-      const writes = planKeyframeWrites(n, p, clean);
-      // An empty list clears the track (legacy); the API's `setKeyframes` needs keys.
-      const cmds = isLayer(n.id) && clean.length > 0 ? keyframeCommands(n.id, writes, 'replace') : null;
-      if (!cmds) return table['animation.setKeyframes']!(id, prop, kfs);
-      return send(`animate ${p}`, cmds).then(() => true);
-    },
-
-    'animation.removeKeyframe': (id, prop, time) => {
-      const n = node(id);
-      const p = str(prop, 'property');
-      const t = finite(time, 'time');
-      const target = isLayer(n.id) ? keyTargetFor(n.id, p) : null;
-      // No stored key there: the legacy writer is a silent no-op, and so is this.
-      const stored = defaultAnimation.getTrackKeyframes(n.id, p)?.some((k) => k.t === t) ?? false;
-      if (!target || !stored || !keyAddressable(n.id, p, target)) return table['animation.removeKeyframe']!(id, prop, time);
-      return engineKeyIdAt(target.ref, keyframeToCompTime(n.id, t)).then((keyId) => {
-        if (!keyId) return table['animation.removeKeyframe']!(id, prop, time);
-        return send(`remove keyframe ${p}`, [{ type: 'deleteKeyframes', ids: [keyId] }]).then(() => true);
-      });
-    },
-  };
-
-  return { ...table, ...viaEngine };
+  return table;
 }
 
 /**
@@ -1606,16 +1419,16 @@ async function engineKeyIdAt(ref: PropRef, seconds: number): Promise<string | nu
  * ARGUMENT ORDER differs per op — a table would need a shaping function beside
  * every entry, at which point it is a switch with extra indirection.
  */
-function runOp(
+async function runOp(
   table: Record<string, (...args: unknown[]) => unknown>,
   op: BatchOp,
   resolve: (t: string | OpRef) => string,
   /** Where a `createLayer` with no `parent` belongs. See below. */
   defaultParent: string | null,
-): unknown {
+): Promise<unknown> {
   switch (op.op) {
     case 'createLayer': {
-      const id = table['scene.createLayer']!({
+      const id = await table['scene.createLayer']!({
         ...(op.kind !== undefined ? { kind: op.kind } : {}),
         ...(op.name !== undefined ? { name: op.name } : {}),
         ...(op.props !== undefined ? { props: op.props } : {}),
@@ -1641,18 +1454,14 @@ function runOp(
           ? resolve(op.parent)
           : defaultParent;
         /*
-          `reparentNode` directly, not through `scene.setParent`.
-
-          That handler re-validates the parent id with `node()`, and the
-          composition root is not a layer it can find — a batch anchored there
-          failed with "No layer with id comp_root", which is true and useless.
-          `reparentNode` already understands the root.
+          The composition root is not a layer: an anchor there means the top
+          level (`scene.setParent` with null — `setParent` without a parent).
 
           Skipped when the layer is already in the right place, so op 0 (which
           sets the anchor) and any op that landed correctly cost nothing.
         */
         const current = defaultSceneGraph.getNode(id)?.parent ?? null;
-        if (target !== null && target !== current) reparentNode(id, target);
+        if (target !== null && target !== current) await table['scene.setParent']!(id, isLayer(target) ? target : null);
       }
       return id;
     }

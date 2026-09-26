@@ -16,10 +16,11 @@
 import type { AiTool, ToolContext, ToolResult } from '@motion/ai-tools';
 import { bakeSpring, bindAlias, resolveSpring, thinSamples, type SpringParams, type SpringPresetName } from '@motion/ai-tools';
 import { refreshAfterLegacy } from './toolContext';
-import { makeStop, setNodeFill } from '@core/paint/fill';
-import { arrangeNodes } from '@core/scene/parenting';
+import { makeStop } from '@core/paint/fill';
+import { compOfLayer, layerIdsOfComp } from '@core/engine/doc';
 import { isAnimatableProp } from './toolContext';
 import { mapSeq, filterSeq } from './asyncList';
+import type { Command } from '@motion/engine-api';
 
 const ok = (content: string, data?: unknown): ToolResult => ({ ok: true, content, data });
 const fail = (content: string): ToolResult => ({ ok: false, content });
@@ -427,9 +428,11 @@ const addSurfaceTreatment: AiTool['handler'] = async (input, ctx) => {
  * the default because that is what the word means; `top` stays reachable for
  * the rare overlay wash.
  */
-function placeBackdrop(id: string, placement: 'bottom' | 'top' | undefined): string {
+async function placeBackdrop(ctx: ToolContext, id: string, placement: 'bottom' | 'top' | undefined): Promise<string> {
   if (placement === 'top') return 'on TOP of the layer stack (it covers everything beneath it)';
-  arrangeNodes([id], 'back');
+  // Layer ▸ Arrange ▸ Send to Back: `reorderLayers` to the end of the comp's stack.
+  const comp = compOfLayer(id);
+  if (comp) await ctx.engine.apply([{ type: 'reorderLayers', comp, layers: [id], toIndex: layerIdsOfComp(comp).length } as Command]);
   return 'at the BOTTOM of the layer stack, behind every existing layer';
 }
 
@@ -447,7 +450,7 @@ const createGradient: AiTool['handler'] = async (input, ctx) => {
   await ctx.scene.setProp(id, 'fill', i.stops[0]!);
 
   const kind = i.kind ?? 'linear';
-  const where = placeBackdrop(id, i.placement);
+  const where = await placeBackdrop(ctx, id, i.placement);
 
   // 4 stops map exactly onto the four-color-gradient effect, which is a genuine
   // 2D blend rather than two stacked ramps.
@@ -468,7 +471,8 @@ const createGradient: AiTool['handler'] = async (input, ctx) => {
   // centre and radius, and it rasterizes through the same path the UI uses.
   if (kind === 'radial') {
     const last = i.stops.length - 1;
-    setNodeFill(id, {
+    // The layer's primary fill paint (`layer/fillPaint`, Fill ▸ Type ▸ Radial).
+    const paint = {
       type: 'radial',
       // Schema speaks percent of the frame; the paint model speaks 0..1.
       cx: (i.centerX ?? 50) / 100,
@@ -478,7 +482,8 @@ const createGradient: AiTool['handler'] = async (input, ctx) => {
       // smaller leaves a flat band of the end colour around the frame.
       radius: (i.radius ?? 100) / 100,
       stops: i.stops.map((c, n) => makeStop(n / last, c)),
-    });
+    };
+    await ctx.engine.apply([{ type: 'setProperty', prop: { layer: id, path: 'layer/fillPaint' }, value: { kind: 'json', value: JSON.stringify(paint) } } as Command]);
     refreshAfterLegacy(ctx);
     return ok(
       `Created a ${i.stops.length}-stop radial gradient backdrop '${id}' (${i.stops.join(' → ')}, centre outward), ${where}. ` +

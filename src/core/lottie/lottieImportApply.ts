@@ -17,7 +17,7 @@
  * engine batch.
  */
 
-import type { LegacyDocumentContext as ToolContext } from '@core/ai/toolContext';
+import type { LegacyDocumentContext as ToolContext } from './lottieDocumentContext';
 import { defaultAnimation, type DataPoint, type EasingKind, type Keyframe } from '@motion/animation';
 import { insertPathNode, outlineExtent } from '@core/scene/sceneInsert';
 import { setNodeFill, makeStop, type FillPaint, type OpacityStop } from '@core/paint/fill';

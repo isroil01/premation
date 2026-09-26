@@ -368,7 +368,8 @@ export const propertyHandlers: HandlerTable = {
           for (const m of members) defaultAnimation.setExpressionState(layer, m, null);
           return { ok: true, diagnostics: [] };
         }
-        for (const m of members) defaultAnimation.setExpressionState(layer, m, { src: cmd.source, enabled: cmd.enabled });
+        // B5 `owner`: the plugin that wrote it (`authoredBy`); absent = the user's.
+        for (const m of members) defaultAnimation.setExpressionState(layer, m, { src: cmd.source, enabled: cmd.enabled, ...(cmd.owner ? { authoredBy: cmd.owner } : {}) });
         // After Effects (since CC 2019): a failing expression is stored as given
         // and stays on — the property shows its pre-expression value — and the
         // error is reported, not acted on.

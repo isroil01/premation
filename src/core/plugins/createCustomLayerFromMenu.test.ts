@@ -17,9 +17,10 @@ import { allLayerKinds, resetLayerKindsForTests } from './layerKindRegistry';
 import { createCustomLayerFromMenu } from './createCustomLayerFromMenu';
 import { readCustomLayer } from './customLayers';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { seedDefaultScene } from '@core/scene/seedDefaultScene';
-import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
 import { useSelectionStore } from '@stores/selectionStore';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 
 const PLUGIN = 'studio.acme.depth';
 const KIND = {
@@ -42,21 +43,23 @@ const pkg = (): ReturnType<typeof testPackage> =>
     activationEvents: ['onLayerKind:depthImage'],
   });
 
+let h: Harness & { engine: LocalEngine };
+
 beforeAll(async () => {
   useFakeWorkers();
   await usePluginStore.getState().hydrate();
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
   pluginHost.configure({ getSelection: () => [] });
 });
 afterAll(() => { pluginHost.setWorkerFactory(null); });
 
-beforeEach(() => {
+beforeEach(async () => {
+  // B5: the insert is an engine `pasteLayers` — the app's engine, a fresh project.
+  h = await setupAppEngine();
   for (const p of [...usePluginStore.getState().plugins]) pluginHost.uninstall(p.manifest.id);
   resetLayerKindsForTests();
-  defaultSceneGraph.clear();
-  seedDefaultScene();
   FakeWorker.last = null;
 });
+afterEach(async () => { await h.dispose(); });
 
 describe('the menu lists what can be created', () => {
   it('offers an INACTIVE plugin s kinds', () => {
@@ -81,8 +84,8 @@ describe('the menu lists what can be created', () => {
 describe('choosing one', () => {
   beforeEach(() => { pluginHost.install(pkg(), []); FakeWorker.last = null; });
 
-  it('creates the layer with every declared prop at its default', () => {
-    const id = createCustomLayerFromMenu(`${PLUGIN}.depthImage`)!;
+  it('creates the layer with every declared prop at its default', async () => {
+    const id = (await createCustomLayerFromMenu(`${PLUGIN}.depthImage`))!;
     const record = readCustomLayer(defaultSceneGraph.getNode(id)!)!;
     expect(record).toMatchObject({
       pluginId: PLUGIN,
@@ -92,10 +95,10 @@ describe('choosing one', () => {
     });
   });
 
-  it('ACTIVATES the plugin, which is the whole point', () => {
+  it('ACTIVATES the plugin, which is the whole point', async () => {
     // The plugin declares no `onStartup`. Before this, nothing could ever put
     // it in a state where it could produce its own output.
-    createCustomLayerFromMenu(`${PLUGIN}.depthImage`);
+    await createCustomLayerFromMenu(`${PLUGIN}.depthImage`);
     expect(FakeWorker.last).not.toBeNull();
 
     FakeWorker.last!.emit({ k: 'ready' });
@@ -103,31 +106,27 @@ describe('choosing one', () => {
     expect(pluginHost.info(PLUGIN).status).toBe('running');
   });
 
-  it('is one undo entry, named after the layer rather than the plugin', () => {
+  it('is one engine undo entry, named after the layer rather than the plugin', async () => {
     // The user chose "New Depth Image" from the Layer menu; that is what their
     // undo stack should say. The plugin's own regeneration is a separate entry.
-    const history = getCommandSystem().getHistory();
-    const pushed: string[] = [];
-    const real = history.push.bind(history);
-    (history as unknown as { push: (c: { label: string }) => void }).push = (c) => {
-      pushed.push(c.label);
-      real(c as never);
-    };
-
-    createCustomLayerFromMenu(`${PLUGIN}.depthImage`);
-
-    expect(pushed).toEqual(['New Depth Image']);
+    const before = h.doc();
+    const id = (await createCustomLayerFromMenu(`${PLUGIN}.depthImage`))!;
+    expect(historyLabels()).toEqual(['New Depth Image']);
+    // Inside the active composition, and undone exactly.
+    expect(defaultSceneGraph.getNode(id)!.parent).not.toBeNull();
+    await h.run({ type: 'undo' });
+    expect(h.doc()).toBe(before);
   });
 
-  it('selects it, so the inspector shows what was just made', () => {
-    const id = createCustomLayerFromMenu(`${PLUGIN}.depthImage`)!;
+  it('selects it, so the inspector shows what was just made', async () => {
+    const id = (await createCustomLayerFromMenu(`${PLUGIN}.depthImage`))!;
     expect(useSelectionStore.getState().ids).toEqual([id]);
   });
 
-  it('does nothing for a kind that is no longer registered', () => {
+  it('does nothing for a kind that is no longer registered', async () => {
     // The user disabled the plugin between the menu opening and the click. A
     // no-op, not an error: nothing has gone wrong from their point of view.
     pluginHost.setEnabled(PLUGIN, false);
-    expect(createCustomLayerFromMenu(`${PLUGIN}.depthImage`)).toBeNull();
+    expect(await createCustomLayerFromMenu(`${PLUGIN}.depthImage`)).toBeNull();
   });
 });

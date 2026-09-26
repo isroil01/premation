@@ -65,9 +65,18 @@ export class FakeWorker {
    * awaiting a promise the fake worker never sees.
    */
   async callAsync(method: string, ...args: unknown[]): Promise<Extract<HostMessage, { k: 'result' }>> {
+    return this.callAsyncWithin(50, method, ...args);
+  }
+
+  /**
+   * `callAsync` with a longer wait, in task turns: a call that sends many
+   * engine commands (`scene.apply` — one per op, inside one gesture) answers
+   * after as many turns as it has ops.
+   */
+  async callAsyncWithin(turns: number, method: string, ...args: unknown[]): Promise<Extract<HostMessage, { k: 'result' }>> {
     const id = this.nextId();
     this.emit({ k: 'call', id, method, args });
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < turns; i++) {
       const reply = this.replyTo(id);
       if (reply) return reply;
       await new Promise((r) => setTimeout(r, 0));

@@ -18,6 +18,7 @@ export type {
   ToolContext,
   SceneFacade,
   SceneNodeView,
+  LayerShapeSpec,
   AnimFacade,
   KeyframeView,
   CompFacade,

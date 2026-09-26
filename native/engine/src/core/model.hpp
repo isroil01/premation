@@ -133,6 +133,8 @@ struct DataTrack {
 struct ExprState {
   std::string src;
   bool enabled = true;
+  /// The plugin that wrote it (TS `ExpressionState.authoredBy`; B5 setExpression `owner`); absent = the user's.
+  std::optional<std::string> authored_by;
   friend bool operator==(const ExprState&, const ExprState&) = default;
 };
 

@@ -72,6 +72,13 @@ export interface AssistantPlan<T> {
   value: T;
   /** `setKeyframes` / `setAnimated` per changed property, in layer then path order. */
   cmds: Command[];
+  /**
+   * B5 — layers whose keyframe state the helper changed although no API
+   * property's keys differ: it wrote a track the catalog does not address, so
+   * `cmds` does not carry that change (an automation client refuses the write
+   * rather than lose it silently).
+   */
+  unaddressed: string[];
 }
 
 /**
@@ -102,9 +109,11 @@ export function assistantKeyframeCommands<T>(layers: readonly string[], build: (
     const stray = changed.filter((k) => !allowed.has(k));
     if (stray.length > 0) throw new OffDocumentError(`the assistant changed more than keyframes (${stray.slice(0, 3).join(', ')})`);
     const cmds: Command[] = [];
+    const unaddressed: string[] = [];
     for (const layer of ids) {
       const forced = forcedPaths(layer, opts.always?.get(layer));
       if (!changed.includes(`anim:${layer}`) && forced.size === 0) continue;
+      const sent = cmds.length;
       const was = before.get(layer)!;
       const now = keyLists(layer);
       for (const path of new Set([...was.keys(), ...now.keys(), ...forced])) {
@@ -115,8 +124,9 @@ export function assistantKeyframeCommands<T>(layers: readonly string[], build: (
         if (b && b.length > 0) cmds.push({ type: 'setKeyframes', prop: { layer, path }, keys: onePerTime(b) });
         else cmds.push({ type: 'setAnimated', prop: { layer, path }, animated: false, time: a?.[0]?.time ?? 0 });
       }
+      if (cmds.length === sent && changed.includes(`anim:${layer}`)) unaddressed.push(layer);
     }
-    return { value, cmds };
+    return { value, cmds, unaddressed };
   });
 }
 

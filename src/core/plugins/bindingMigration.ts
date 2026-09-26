@@ -30,11 +30,13 @@
  * Rewriting it to `#undefined` would make it permanently broken and untraceable;
  * dropping it would delete a plugin's output silently. It is left exactly as it
  * is and reported, so the editor can say which layer and which property.
+ *
+ * The load-time pass itself (`migratePluginBindings`) is part of opening a
+ * document — src/core/persistence/pluginBindingMigration.ts — not a plugin
+ * write: it runs on the document before the engine takes it over.
  */
 
-import { defaultAnimation, layerIdRef, mapLayerNameRefs } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { usePluginStore } from '@stores/pluginStore';
+import { layerIdRef, mapLayerNameRefs } from '@motion/animation';
 
 /**
  * Rewrite every `layer('<name>', …)` in `src` to `layer('#<id>', …)`.
@@ -60,61 +62,4 @@ export function rewriteNameRefsToIds(
     if (!target) { onUnresolved?.(name); return null; }
     return layerIdRef(target);
   });
-}
-
-export interface BindingMigrationReport {
-  /** Expressions rewritten to the id form. */
-  migrated: Array<{ nodeId: string; prop: string; from: string; to: string }>;
-  /** References naming a layer that does not exist. Left alone, reported. */
-  unresolved: Array<{ nodeId: string; prop: string; name: string }>;
-}
-
-/** Layer name → id, first match wins, exactly as the app's resolver does. */
-function buildNameIndex(): Map<string, string> {
-  const byName = new Map<string, string>();
-  defaultSceneGraph.traverse((n) => {
-    if (n.name && !byName.has(n.name)) byName.set(n.name, n.id);
-  });
-  return byName;
-}
-
-/**
- * Rewrite every plugin-authored name reference to `#<id>`.
- *
- * Idempotent: a reference already in the id form does not match `NAME_REF`'s
- * intent and is left alone, so running this on every load costs one regex pass
- * and changes nothing after the first time.
- */
-export function migratePluginBindings(): BindingMigrationReport {
-  const report: BindingMigrationReport = { migrated: [], unresolved: [] };
-  const byName = buildNameIndex();
-
-  for (const plugin of usePluginStore.getState().plugins) {
-    const pluginId = plugin.manifest.id;
-    for (const { nodeId, prop } of defaultAnimation.expressionsAuthoredBy(pluginId)) {
-      const src = defaultAnimation.getExpressionSrc(nodeId, prop);
-      if (!src) continue;
-
-      const { src: next, changed } = rewriteNameRefsToIds(
-        src,
-        (ref) => byName.get(ref) ?? null,
-        (ref) => report.unresolved.push({ nodeId, prop, name: ref }),
-      );
-
-      if (!changed) continue;
-      // Re-written with the SAME provenance, so a migrated binding is still
-      // attributable to the plugin that wrote it.
-      defaultAnimation.setExpression(nodeId, prop, next, pluginId);
-      report.migrated.push({ nodeId, prop, from: src, to: next });
-    }
-  }
-
-  if (report.unresolved.length > 0) {
-    console.warn(
-      `[plugins] ${report.unresolved.length} plugin binding(s) reference a layer that no longer exists. `
-      + 'They were left unchanged rather than dropped: '
-      + report.unresolved.map((u) => `${u.nodeId}.${u.prop} → "${u.name}"`).join(', '),
-    );
-  }
-  return report;
 }

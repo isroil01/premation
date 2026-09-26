@@ -913,7 +913,7 @@ export function shapePoints(b: BezierPath, prev: ReadonlyArray<MaskPoint> | unde
 }
 
 /** Stored outline points (a shape's Geometry points / `path.points` key) as a path value. */
-function shapePathValue(points: ReadonlyArray<Partial<MaskPoint> & { x: number; y: number }>, closed: boolean): BezierPath {
+export function shapePathValue(points: ReadonlyArray<Partial<MaskPoint> & { x: number; y: number }>, closed: boolean): BezierPath {
   const full = points.map((p) => ({ ...p, inX: p.inX ?? p.x, inY: p.inY ?? p.y, outX: p.outX ?? p.x, outY: p.outY ?? p.y }));
   return { ...maskToBezier({ points: full, closed } as unknown as MaskPath), featherPoints: [] };
 }
@@ -1360,6 +1360,15 @@ export function keyTimeToFlicks(layerId: string, b: PropBinding, t: number): num
 }
 
 /** API flicks (comp time) → stored seconds on the property's keyframe axis. */
+/**
+ * A READ for automation clients (B5): comp seconds → the layer's keyframe axis
+ * (what `evaluateNode` and the stored key times use) — this engine's seam
+ * conversion, the same one every keyframe command applies.
+ */
+export function keyAxisSeconds(layerId: string, compSeconds: number): number {
+  return compToKeyframeTime(layerId, compSeconds);
+}
+
 export function flicksToKeyTime(layerId: string, b: PropBinding, flicks: number): number {
   return compToKeyframeTime(layerId, flicksToSeconds(flicks), b.members[0] ?? b.dataTrack);
 }

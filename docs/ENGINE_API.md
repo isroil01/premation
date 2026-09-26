@@ -335,7 +335,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | Command | Semantics / inverse |
 |---|---|
 | `importFiles` | Import files (sequence detection, target folder, interpretation, optional comp). Inverse: remove the items (files untouched). |
-| `importBytes` | B3 — import from bytes (a browser-picked / dropped file, a bundled sound, a generated image): the media port stores the bytes and returns the record. Inverse: remove the items (stored bytes untouched). |
+| `importBytes` | B3 — import from bytes (a browser-picked / dropped file, a bundled sound, a generated image): the media port stores the bytes and returns the record. B5 `source` per file: who made the bytes, stored on the record (`user` = absent, `ai`, `derived` — an automation client's generated image, kept off the Assets shelf); anything else is `invalidArgument`. Inverse: remove the items (stored bytes untouched). |
 | `relinkItem` | Point an item at another file (relink / Replace Footage). Inverse: old path (+ old interpretation unless kept). |
 | `reloadItems` | control — re-read from disk. |
 | `removeItems` | Remove items; with `removeUsingLayers` also their layers, otherwise error `locked` if used. Inverse: items and layers restored with the same ids and positions. |
@@ -408,7 +408,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `resetProperty` | Default value (a key at `time` if animated). Inverse: previous value/key. |
 | `setAnimated` | The stopwatch. On: one key at `time` with the current value. Off: remove all keys; static value = value at `time`. Inverse: exact previous keys/value. |
 | `setDimensionsSeparated` | Split/merge dimensions and their keys as AE does. Inverse: the previous keys exactly. |
-| `setExpression` | Set/replace; empty source removes. Returns diagnostics; a failing expression is stored disabled (AE). Inverse: previous source + enabled flag. |
+| `setExpression` | Set/replace; empty source removes. Returns diagnostics; a failing expression is stored disabled (AE). B5 `owner`: the plugin that wrote it (provenance, the expression's `authoredBy`, saved with the document); authorship is replaced, never inherited — a write without `owner` clears a plugin's mark. Inverse: previous source + enabled flag + owner. |
 | `setExpressionEnabled` | Inverse: previous flags. |
 | `convertExpressionToKeyframes` | Bake over a range at a step. Inverse: previous keys + expression. |
 | `linkProperty` | Pickwhip: sets an expression reading `target`. Inverse: previous expression. |
@@ -424,7 +424,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 
 | Command | Semantics / inverse |
 |---|---|
-| `addEffect` | By match name, on several layers, at a stack index, with initial params. Returns `effects/<id>` per layer. Inverse: remove them. |
+| `addEffect` | By match name, on several layers, at a stack index, with initial params. Returns `effects/<id>` per layer. B5 `id`: a caller-chosen effect id used on every layer (an AI library emitter's handle — it keys `effects/<id>/<param>` before the call returns); letters, digits, `_`, `-` (`invalidArgument`), one a layer already has is `conflict`; absent = the engine mints `fx_<n>`. Inverse: remove them. |
 | `addMask` | Path, mode (none/add/subtract/intersect/lighten/darken/difference), name, index, inverted. Inverse: remove. |
 | `addPropertyGroup` | Any other group under a parent path by match name: text animators, selectors, shape contents (rect, ellipse, polystar, path, fill, stroke, gradient fill/stroke, trim, repeater, merge, offset, round corners, twist, wiggle, zig-zag, pucker/bloat), layer styles, paint strokes, puppet pins, expression controls. Inverse: remove. |
 | `removePropertyGroups` | With their keys and expressions. Inverse: back at their index with the same ids. |
@@ -1169,17 +1169,102 @@ and replays to a byte-identical saved project.
 
 What still writes AROUND the engine is pinned by the B5 ratchet
 (`npm run lint:automation-writes`, `scripts/lint/automationWritesReport.mjs`,
-`src/__tests__/automationWriteRatchet.{test.ts,json}`): 133 sites — ai 92, plugins 41,
-scripts/automation 0. Every one is a named fallback, not a default path: `LEGACY_GAPS`
-in toolContext.ts (kinds the layer factory lacks, caller-chosen effect ids, NTSC comp
-rates, puppet rigs, points data keys, per-member keys the API cannot address, a
-refusal); the plugin layer-kind machinery (`plugin:<id>/<kind>` creation, proxy
-subtrees, structured props, inspector params, param supervision — the TS engine
-refuses `component` layers); `scene.apply` (its all-or-nothing guarantee is a
-synchronous document snapshot; as an engine gesture it needs an abort that reverts
-on the first failing op); `animation.setExpression` from a plugin (the stored
-expression carries its owner plugin id; `setExpression` has no owner field); colour
-channel and non-Position vector keyframes from a plugin; composition-less nodes.
+`src/__tests__/automationWriteRatchet.{test.ts,json}`): 133 sites at B5's
+finish — ai 92, plugins 41. Every one was a named fallback, not a default path:
+`LEGACY_GAPS` in toolContext.ts (kinds the layer factory lacks, caller-chosen
+effect ids, NTSC comp rates, puppet rigs, points data keys, per-member keys the
+API cannot address, a refusal); the plugin layer-kind machinery
+(`plugin:<id>/<kind>` creation, proxy subtrees, structured props, inspector
+params, param supervision — the TS engine refuses `component` layers);
+`scene.apply` (its all-or-nothing guarantee is a synchronous document snapshot;
+as an engine gesture it needs an abort that reverts on the first failing op);
+`animation.setExpression` from a plugin (the stored expression carries its
+owner plugin id; `setExpression` has no owner field); colour channel and
+non-Position vector keyframes from a plugin; composition-less nodes.
+
+**B5 leftovers (2026-09-26).** The AI tool layer no longer writes around the
+engine (ratchet ai 92 → 1: the snapshot-commit recorder flush in
+`aiTransaction.ts`, which goes with the legacy recorder). A write the API cannot
+express EXACTLY is now REFUSED — a failed tool call addressed to the model,
+`LEGACY_GAPS` naming why — never made by a legacy writer; the pre-engine
+refusal fallbacks are gone. The routes:
+
+- **Inserts `createLayer` cannot carry** (a line or a parametric Polystar, a
+  contain-fitted footage layer, an SVG document or its editable shapes, a
+  model placeholder null) are built OFF-DOCUMENT with the legacy builder and
+  sent as ONE `pasteLayers` (`buildLayerFragment`, offDocument.ts — the UI's
+  own route); media bytes are `importBytes`. `src/core/ai/hostWrites.ts`.
+- **Keyframe writes a track the API does not key alone** (an easing without
+  an API name, a lone member's ease / handles, a member of an unseparated
+  vector) run the per-track writer off-document and send the property's
+  `setKeyframes` (`assistantKeyframeCommands`; `AssistantPlan.unaddressed`
+  refuses a track the catalog does not address instead of dropping it).
+- **Existing API the facades did not use yet:** `layer/puppet` /
+  `layer/skeleton` (whole rigs), `puppet/pins/<id>/position` keys (a pin's
+  Position), `layer/precompose` (a group's time-remap switch),
+  `setExpression.member` (a member of an unseparated vector),
+  `setCompositionSettings.frameRate` as an exact rational (NTSC through
+  `fpsToRational`), `addPropertyGroup` for text animators / path operators /
+  layer styles with `setProperties` of their params (`memberWrites`,
+  propRefs.ts: members of one property merge into ONE write), `addMask`,
+  `reorderLayers` (Send to Back), `trimLayers` (a scene's in-point),
+  `setLayerSwitches.threeD`, `layer/fillPaint`, `layer/strokes`.
+- **New:** `addEffect.id` — a caller-chosen effect id (both engines).
+
+**The plugin host** (ratchet plugins 41 → 1) no longer writes around the
+engine either (`src/core/plugins/hostApi.ts` has no legacy table):
+
+- `scene.createLayer` builds the layer off-document — a plugin layer kind
+  from its schema, an image layer bound to its asset, a primitive where the
+  menu insert puts it — and sends ONE `pasteLayers` into the ACTIVE
+  composition (a plugin layer used to be created as a composition-less root).
+  The menu's New ▸ <kind> is the same insert (`createCustomLayerFromMenu`).
+- `scene.apply` is ONE engine gesture: each op is the single call's command;
+  the first failing op aborts it (`endGesture{commit:false}`, which reverts
+  every op before it) and the error carries the op's index. One undo entry.
+- `animation.setExpression` → `setExpression` with **`owner`** (new, both
+  engines; the C++ `ExprState` gains `authored_by`, read and written as the
+  document's `authoredBy`). Colour-channel and other vector-member keyframes,
+  non-API easings and an empty `setKeyframes` run the per-track writer
+  off-document and send `setKeyframes` / `setAnimated` (assistantKeys.ts).
+- Structured `scene.setProperty` values are commands: `points` → the static
+  `layer/path.points` (or `setShapeOutline` on a layer with no outline yet),
+  `subpaths` → `setShapeOutline`, `fillPaint` → `layer/fillPaint`, `stroke` →
+  `layer/strokes` (structuredProps.ts).
+- `scene.setProxyChildren` → ONE batch: `deleteLayers` of the gone children,
+  `renameLayer` / `setProperty` / `setExpression{owner}` on the matched ones
+  (ids kept; a prop the API does not address refuses the regeneration), new
+  children built off-document and pasted into the proxy layer (engine ids).
+- `params.set` → the Inspector's own commands (pluginParamCommands.ts, moved
+  from layout/Inspector): the panel group seeded with its defaults, then the
+  param. Effect param supervision (`paramSupervision.ts`) → `setProperty` of
+  `effects/<id>/<param>`. `assets.createImage` → `importBytes` with
+  **`source: derived`** (new field, both engines).
+- A node that is not a layer of a composition is refused by name.
+- The load-time plugin-binding migration (`migratePluginBindings`) is part of
+  opening a document and moved to `src/core/persistence/pluginBindingMigration.ts`.
+
+What still writes around the engine (the ratchet: ai 1, plugins 1):
+`aiTransaction.ts`'s recorder flush before a snapshot commit (goes with the
+legacy recorder, below), and `proxySubtree.ts` `detachSubtree` — the ownership
+mark a USER edit clears on a generated subtree, from the write hook INSIDE the
+user's engine command (the `__ownedBy` mark is not an API property; it needs
+an engine-side rule in both engines: an authored write on an owned child
+clears the subtree's marks as part of the same command). The legacy debounce
+recorder (`LEGACY_DEBOUNCE_RECORDER`, `StoreSnapshotCommand`) cannot be
+deleted yet: the AI turn's snapshot commit still uses it for turns with a gap
+(`merge_paths`, `export_video`), and `runDocumentEdit` has callers outside the
+automation clients (src/core/scene, fonts, textTools, simulation, svg, and
+layout/Inspector/PolystarSection, layout/Scene/layerSwitchEdits).
+
+The Lottie importer's synchronous document context (`createLegacyDocumentContext`)
+moved to `src/core/lottie/lottieDocumentContext.ts`: it is an off-document
+builder, not an automation client. `export_video` writes no document state
+(the editor's render-job queue lives in the app's settings). The one tool
+still recorded as a gap wholesale (`buildAiTools`) is `merge_paths`: the
+live merge flags its operand layers in place (`fx.booleanOperand`), which
+no API property addresses yet — the same helper backs the canvas menu's
+Live Union / Subtract / Intersect.
 
 ### 15.7 G1 — static fields, optional properties and the data-model gaps
 

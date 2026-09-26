@@ -2295,6 +2295,7 @@ function encS_ImportBytesFile(w: Writer, v: T.ImportBytesFile): void {
   if (v.folder !== undefined) { w.byte(34); w.str(v.folder); }
   if (v.interpretation !== undefined) { w.byte(42); { const s = w.beginLd(); encS_InterpretationPatch(w, v.interpretation); w.endLd(s); } }
   if (v.originPath !== undefined) { w.byte(50); w.str(v.originPath); }
+  if (v.source !== undefined) { w.byte(58); w.str(v.source); }
 }
 function decS_ImportBytesFile(r: Reader, end: number, o: any): T.ImportBytesFile {
   let h_name = false;
@@ -2306,6 +2307,7 @@ function decS_ImportBytesFile(r: Reader, end: number, o: any): T.ImportBytesFile
   let v_folder: string | undefined;
   let v_interpretation: T.InterpretationPatch | undefined;
   let v_originPath: string | undefined;
+  let v_source: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -2315,6 +2317,7 @@ function decS_ImportBytesFile(r: Reader, end: number, o: any): T.ImportBytesFile
       case 34: v_folder = r.str(); break;
       case 42: v_interpretation = decS_InterpretationPatch(r, r.ldEnd(), {}); break;
       case 50: v_originPath = r.str(); break;
+      case 58: v_source = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -2328,6 +2331,7 @@ function decS_ImportBytesFile(r: Reader, end: number, o: any): T.ImportBytesFile
   if (v_folder !== undefined) o.folder = v_folder;
   if (v_interpretation !== undefined) o.interpretation = v_interpretation;
   if (v_originPath !== undefined) o.originPath = v_originPath;
+  if (v_source !== undefined) o.source = v_source;
   return o;
 }
 function encS_ImportBytes(w: Writer, v: T.ImportBytes): void {
@@ -5166,6 +5170,7 @@ function encS_SetExpression(w: Writer, v: T.SetExpression): void {
   w.byte(18); w.str(v.source);
   w.byte(24); w.bool(v.enabled);
   if (v.member !== undefined) { w.byte(32); w.u32(v.member); }
+  if (v.owner !== undefined) { w.byte(42); w.str(v.owner); }
 }
 function decS_SetExpression(r: Reader, end: number, o: any): T.SetExpression {
   let h_prop = false;
@@ -5175,6 +5180,7 @@ function decS_SetExpression(r: Reader, end: number, o: any): T.SetExpression {
   let v_source: string | undefined;
   let v_enabled: boolean | undefined;
   let v_member: number | undefined;
+  let v_owner: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5182,6 +5188,7 @@ function decS_SetExpression(r: Reader, end: number, o: any): T.SetExpression {
       case 18: v_source = r.str(); h_source = true; break;
       case 24: v_enabled = r.bool(); h_enabled = true; break;
       case 32: v_member = r.u32(); break;
+      case 42: v_owner = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -5193,6 +5200,7 @@ function decS_SetExpression(r: Reader, end: number, o: any): T.SetExpression {
   o.source = v_source;
   o.enabled = v_enabled;
   if (v_member !== undefined) o.member = v_member;
+  if (v_owner !== undefined) o.owner = v_owner;
   return o;
 }
 function encS_SetExpressionEnabled(w: Writer, v: T.SetExpressionEnabled): void {
@@ -5652,6 +5660,7 @@ function encS_AddEffect(w: Writer, v: T.AddEffect): void {
   w.byte(18); w.str(v.effect);
   if (v.index !== undefined) { w.byte(24); w.u32(v.index); }
   { const a = v.params; for (let i = 0; i < a.length; i++) { w.byte(34); { const s = w.beginLd(); encS_PropertyInit(w, a[i]!); w.endLd(s); } } }
+  if (v.id !== undefined) { w.byte(42); w.str(v.id); }
 }
 function decS_AddEffect(r: Reader, end: number, o: any): T.AddEffect {
   const l_layers: string[] = [];
@@ -5659,6 +5668,7 @@ function decS_AddEffect(r: Reader, end: number, o: any): T.AddEffect {
   let h_effect = false;
   let v_effect: string | undefined;
   let v_index: number | undefined;
+  let v_id: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5666,6 +5676,7 @@ function decS_AddEffect(r: Reader, end: number, o: any): T.AddEffect {
       case 18: v_effect = r.str(); h_effect = true; break;
       case 24: v_index = r.u32(); break;
       case 34: l_params.push(decS_PropertyInit(r, r.ldEnd(), {})); break;
+      case 42: v_id = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -5675,6 +5686,7 @@ function decS_AddEffect(r: Reader, end: number, o: any): T.AddEffect {
   o.effect = v_effect;
   if (v_index !== undefined) o.index = v_index;
   o.params = l_params;
+  if (v_id !== undefined) o.id = v_id;
   return o;
 }
 function encS_AddMask(w: Writer, v: T.AddMask): void {

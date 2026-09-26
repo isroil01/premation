@@ -15,8 +15,7 @@
 
 import type { ToolContext } from '@motion/ai-tools';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { set3DEnabled } from '@core/scene/threeD';
-import { addTextAnimator, updateAnimator, readAnimatorData } from '@core/text/textAnimators';
+import { addTextAnimatorGroup, patchTextAnimator, setThreeD } from './hostWrites';
 import type { MotionStyle } from './design';
 import {
   blurResolvePoints,
@@ -113,7 +112,7 @@ export async function applyEntrance(
   ];
   const params: EntranceParams = { start, dur: s.entranceDur, travelPx, cy, cx, curve: s.entranceCurve, direction };
 
-  if (arch === 'rise') set3DEnabled(id, true);
+  if (arch === 'rise') await setThreeD(ctx.engine, id, true);
   await setKfs(ctx, id, entranceTrackPlans(arch, params));
 
   if (arch === 'blur_resolve') {
@@ -126,11 +125,10 @@ export async function applyEntrance(
   if (arch === 'char_cascade') {
     const raw = defaultSceneGraph.getNode(id);
     if (raw) {
-      addTextAnimator(id);
-      const idx = readAnimatorData(raw).length - 1;
+      const idx = await addTextAnimatorGroup(ctx.engine, id);
       // Covered glyphs are invisible and offset down; sweeping the selector
       // window off the string (offset 0 → 100) reveals characters left→right.
-      updateAnimator(id, idx, { basedOn: 'characters', shape: 'rampUp', start: 0, end: 100, opacity: 0, y: 16, scale: 88 });
+      await patchTextAnimator(ctx.engine, id, idx, { basedOn: 'characters', shape: 'rampUp', start: 0, end: 100, opacity: 0, y: 16, scale: 88 });
       await setKfs(ctx, id, [
         { prop: `ta.${idx}.offset`, points: charCascadePoints(start, Math.max(0.4, s.entranceDur * 1.1)) },
       ]);
