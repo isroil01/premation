@@ -42,6 +42,13 @@ extraResources:
     filter:
       - premation-engine*
       - '*.dll'
+  # The Object Matte model pair (scripts/fetchObjectMatte.cjs) OUTSIDE app.asar
+  # too: the engine's objectMatte job reads the files itself (it cannot read an
+  # archive); main points it here with PREMATION_SAM_DIR (engineHost.ts).
+  - from: dist/models/object-matte
+    to: models/object-matte
+    filter:
+      - '*.onnx'
 
 beforePack: ./scripts/stageEngine.cjs
 

@@ -11,6 +11,10 @@
  * The decode happens once when the dialog opens; the three sliders then only
  * re-run the detector, which is milliseconds on samples already in memory. That
  * is why the parameters can be live rather than behind a "Preview" button.
+ *
+ * With an engine that runs jobs (the C++ engine as owner) the detector is the
+ * engine's audioAnalysis job: the readout is its summary (debounced), and
+ * Apply is the same job with `removeSilence` — the page never decodes.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -30,6 +34,7 @@ import {
   type SilenceRange,
 } from '@core/audio/silenceRemoval';
 import { removeSilencesEdit } from './audioEdits';
+import { previewEngineJob, runEngineJob } from '@core/engine/engineJobs';
 import styles from './AudioToolDialog.module.css';
 
 interface Props {
@@ -37,8 +42,8 @@ interface Props {
   onDone: () => void;
 }
 
-/** Samples, once, for the life of the dialog. */
-function useSource(nodeId: string): {
+/** Samples, once, for the life of the dialog (`enabled` false: the engine analyses, nothing is decoded here). */
+function useSource(nodeId: string, enabled: boolean): {
   samples: Float32Array | null;
   sampleRate: number;
   loading: boolean;
@@ -50,6 +55,10 @@ function useSource(nodeId: string): {
   });
   useEffect(() => {
     let alive = true;
+    if (!enabled) {
+      setState({ samples: null, sampleRate: 0, loading: false });
+      return;
+    }
     // Asked synchronously first: a layer with no sound is knowable without a
     // decode, and starting one only to throw it away is both a wasted round
     // trip and a "Decoding audio…" flash that resolves into "no audio".
@@ -67,7 +76,46 @@ function useSource(nodeId: string): {
     return (): void => {
       alive = false;
     };
-  }, [nodeId]);
+  }, [nodeId, enabled]);
+  return state;
+}
+
+interface EngineSilence {
+  silence?: { ranges: SilenceRange[]; gaps: number; secondsRemoved: number };
+}
+
+const silenceJob = (nodeId: string, o: { thresholdDb: number; minSilenceMs: number; paddingMs: number }, remove: boolean) => ({
+  kind: 'audioAnalysis' as const,
+  value: {
+    layer: nodeId, beats: false, amplitudeKeyframes: false, silence: true, removeSilence: remove, beatMarkers: false,
+    silenceThresholdDb: o.thresholdDb, silenceMinMs: o.minSilenceMs, silencePaddingMs: o.paddingMs,
+  },
+});
+
+/**
+ * The engine's detector, debounced: `undefined` while unknown, `null` when the
+ * engine does not run jobs (the page path), else its ranges.
+ */
+function useEngineSilences(nodeId: string, o: { thresholdDb: number; minSilenceMs: number; paddingMs: number }): SilenceRange[] | null | undefined {
+  const [state, setState] = useState<SilenceRange[] | null | undefined>(undefined);
+  const key = `${nodeId}|${o.thresholdDb}|${o.minSilenceMs}|${o.paddingMs}`;
+  useEffect(() => {
+    let alive = true;
+    const timer = setTimeout(() => {
+      void previewEngineJob<EngineSilence>(silenceJob(nodeId, o, false))
+        .then((out) => {
+          if (!alive) return;
+          if (!out) setState(null);
+          else setState(out.status === 'done' ? out.result?.silence?.ranges ?? [] : []);
+        })
+        .catch(() => { if (alive) setState(null); });
+    }, 250);
+    return (): void => {
+      alive = false;
+      clearTimeout(timer);
+    };
+    // `key` carries every input.
+  }, [key]);  // eslint-disable-line react-hooks/exhaustive-deps
   return state;
 }
 
@@ -77,7 +125,10 @@ export function SilenceRemovalDialog({ nodeId, onDone }: Props): JSX.Element {
   const [paddingMs, setPaddingMs] = useState(DEFAULT_SILENCE_OPTIONS.paddingMs);
   const [busy, setBusy] = useState(false);
 
-  const { samples, sampleRate, loading } = useSource(nodeId);
+  const engineRanges = useEngineSilences(nodeId, { thresholdDb, minSilenceMs, paddingMs });
+  const viaEngine = engineRanges !== null;
+  const { samples, sampleRate, loading: pageLoading } = useSource(nodeId, !viaEngine);
+  const loading = engineRanges === undefined || pageLoading;
 
   // Every layer the cut will touch — named, because "this also cuts your video
   // bar" is not something to discover after pressing Apply.
@@ -91,15 +142,23 @@ export function SilenceRemovalDialog({ nodeId, onDone }: Props): JSX.Element {
   );
 
   const ranges: SilenceRange[] = useMemo(
-    () => (samples ? detectSilences(samples, sampleRate, { thresholdDb, minSilenceMs, paddingMs }) : []),
-    [samples, sampleRate, thresholdDb, minSilenceMs, paddingMs],
+    () => engineRanges ?? (samples ? detectSilences(samples, sampleRate, { thresholdDb, minSilenceMs, paddingMs }) : []),
+    [engineRanges, samples, sampleRate, thresholdDb, minSilenceMs, paddingMs],
   );
   const total = totalSilenceSec(ranges);
 
   const apply = async (): Promise<void> => {
     setBusy(true);
     try {
-      const result = await removeSilencesEdit(paired, ranges);
+      let result: Awaited<ReturnType<typeof removeSilencesEdit>>;
+      const out = viaEngine ? await runEngineJob<EngineSilence>(silenceJob(nodeId, { thresholdDb, minSilenceMs, paddingMs }, true)) : null;
+      if (out) {
+        result = out.status === 'done'
+          ? { gaps: out.result?.silence?.gaps ?? 0, secondsRemoved: out.result?.silence?.secondsRemoved ?? 0, clipsDeleted: 0 }
+          : { gaps: 0, secondsRemoved: 0, clipsDeleted: 0, error: out.error?.message ?? 'The silences could not be removed.' };
+      } else {
+        result = await removeSilencesEdit(paired, ranges);
+      }
       useUIStore.getState().notify(
         result.error
           ? { level: 'warning', message: result.error, durationMs: 5000 }

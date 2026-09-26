@@ -353,6 +353,10 @@ export class EngineHost {
             env: {
               ...process.env,
               PREMATION_FFMPEG: resolveFfmpegBinary({ vars: process.env, resourcesPath: o.resourcesPath, platform: process.platform, exists: existsSync }),
+              // The objectMatte job's SAM pair: <resources>/models/object-matte when
+              // packaged (electron-builder extraResources), dist/ in development.
+              PREMATION_SAM_DIR: process.env.PREMATION_SAM_DIR
+                ?? (o.isPackaged ? path.join(o.resourcesPath, 'models', 'object-matte') : path.join(o.appPath, 'dist', 'models', 'object-matte')),
             },
           }) as unknown as EngineChild,
         resolveExe: () =>
