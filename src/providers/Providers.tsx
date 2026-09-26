@@ -103,6 +103,7 @@ import { buildSpeedRampCommands } from '@core/animation/speedRampCommands';
 import { buildLayerTimeCommands } from '@core/animation/layerTimeCommands';
 import { buildExpressionCommands } from '@core/animation/expressionCommands';
 import { buildLayerTransformCommands } from '@core/scene/layerTransformCommands';
+import { resetTransformEdit } from '@layout/Timeline/resetEdits';
 import { openTimeStretchDialog } from '@layout/Composition/TimeStretchDialog';
 import { openAutoOrientDialog } from '@layout/Composition/AutoOrientDialog';
 import { buildCameraCommands } from '@core/scene/cameraCommands';
@@ -1552,7 +1553,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildSpeedRampCommands(),
     ...buildLayerTimeCommands({ openTimeStretch: openTimeStretchDialog }),
     ...buildExpressionCommands(),
-    ...buildLayerTransformCommands({ openAutoOrient: openAutoOrientDialog }),
+    ...buildLayerTransformCommands({ openAutoOrient: openAutoOrientDialog, resetTransform: resetTransformEdit }),
     ...buildCameraCommands(),
     ...buildSmartAnimateCommands(),
     ...buildReframeCommands(),

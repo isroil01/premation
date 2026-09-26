@@ -20,7 +20,7 @@
  */
 
 import { getTimelineController } from './TimelineController';
-import { deleteSelectedLayers } from '@core/scene/sceneInsert';
+import { deleteLayerNode } from '@core/scene/deleteLayerNode';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useProjectStore } from '@stores/projectStore';
@@ -122,8 +122,8 @@ describe('split produces two independent layers', () => {
     const rightId = c.splitClip(original.id, 2)!;
     const rightNodeId = c.timeline.getLayer(rightId)!.sourceId!;
 
-    useSelectionStore.getState().set([rightNodeId]);
-    deleteSelectedLayers();
+    // The engine's deleteLayers primitive (what the Scene tree's delete runs).
+    deleteLayerNode(rightNodeId);
     c.syncFromScene('comp_root');
 
     expect(defaultSceneGraph.getNode(rightNodeId)).toBeUndefined();

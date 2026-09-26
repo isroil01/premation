@@ -1310,6 +1310,22 @@ Live Union / Subtract / Intersect.
   so undo re-attaches and a log replays it. The page-side `noteManualEdit` /
   `detachSubtree` (the plugin write hook) are gone; `setProxyChildren` sends
   origin `plugin` and never detaches its own writes.
+- **No `runDocumentEdit` caller outside automation is left.** Moved onto engine
+  commands: Flip Horizontal / Vertical (`flipLayersEdit`: an animated Scale's
+  keys negated off-document → `setKeyframes`, a static one `setProperties`),
+  the numpad rotate / scale nudges (`nudgeRotationEdit` / `nudgeScaleEdit`, a
+  key at the playhead where animated), the palette's Reset Transform (the
+  timeline's `resetTransformEdit`, injected), Revert to Original SVG
+  (svgLayerActions `revertSvgToLayer`: `buildRevertedSvgLayer` off-document,
+  `pasteLayers` at the group's slot + `deleteLayers` of the group), Bake
+  Physics (keys through `setKeyframes` + the `layer/physics` field off) and
+  Bake Particles (the layers pasted under the emitter + `setLayerSwitches`
+  hiding it), each ONE batch. Deleted as dead (the UI already used the engine
+  route): `convertSvgLayerToShapes`, `replaceAllInScope`, `createMasksFromText`,
+  `replaceFontFamilies`, the legacy `renameLayer`, `applyLayerSettings` /
+  `createSolidLayer`, `deleteSelectedLayers`, `toggleSelected*` /
+  `toggleNodeVisible`, `toggleLayerFlags`, the legacy resets. A composition
+  root's row in the Layers panel has no switches (refused with a note).
 
 ### 15.7 G1 — static fields, optional properties and the data-model gaps
 

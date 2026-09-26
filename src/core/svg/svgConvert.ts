@@ -8,23 +8,19 @@
  *
  * Conversion is destructive in the sense that the SVG layer stops existing —
  * but not in the sense that anything is lost. The original markup rides along
- * on the resulting group, so `revertSvgGroupToLayer` can put it back exactly,
+ * on the resulting group, so Revert (`buildRevertedSvgLayer`) can put it back exactly,
  * and a future release with a better parser can re-run the conversion against
  * the untouched source (§13).
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
-import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import { insertSvgShapeGroup, insertSvgLayer, measureSvgText, intersectSvgPaths } from '@core/scene/sceneInsert';
 import { parseSvgToShapes } from '../../utils/svgParser';
 import {
   readSvgLayer,
   readRetainedSvgSource,
-  forgetSvgLayerSrc,
   stripToRetainedSource,
   SVG_COMPONENT,
   type SvgLayerData,
@@ -214,57 +210,27 @@ export function notifySvgConverted(data: SvgLayerData, count: number): void {
 }
 
 /**
- * Legacy one-shot conversion (the AI tool handler and tests): build + remove
- * the SVG layer in one `runDocumentEdit`. The editor UI goes through the engine
- * (svgLayerActions.ts).
- */
-export function convertSvgLayerToShapes(nodeId: string): string | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const data = readSvgLayer(node);
-  if (!data) return null;
-
-  return runDocumentEdit('Convert SVG to Editable Shapes', () => {
-    const built = buildSvgShapeGroup(nodeId);
-    if (!built) {
-      notifyNoSvgGeometry(data.fileName);
-      return null;
-    }
-    const { groupId } = built;
-
-    forgetSvgLayerSrc(nodeId);
-    defaultSceneGraph.removeNode(nodeId);
-    useSelectionStore.getState().set([groupId]);
-    bumpScene();
-    notifySvgConverted(data, built.count);
-    return groupId;
-  });
-}
-
-/**
- * Put a converted group back to the original SVG layer.
+ * Revert to Original SVG, the BUILDER half: a converted group's retained
+ * source inserted again as an SVG layer carrying the group's transform. Writes
+ * the scratch document only — run it inside `buildLayerFragment` and send the
+ * layer with the group's removal as ONE engine batch (svgLayerActions.ts
+ * `revertSvgToLayer`). Null when the group retained no source or the
+ * sanitizer refused it.
  *
  * Only possible when the source was retained (§13) — which is why retention
  * defaults on: without it this is a one-way door, and "convert" is exactly the
  * kind of operation a user tries in order to see what it does.
  */
-export function revertSvgGroupToLayer(nodeId: string): string | null {
+export function buildRevertedSvgLayer(nodeId: string): string | null {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
   const retained = readRetainedSvgSource(node);
   if (!retained) return null;
-
   const carry = carryFrom(nodeId);
-
-  return runDocumentEdit('Revert to Original SVG', () => {
-    const id = insertSvgLayer(retained.markup, retained.fileName, { x: carry.x, y: carry.y });
-    if (!id) return null;
-    applyCarry(id, carry);
-    defaultSceneGraph.removeNode(nodeId);
-    useSelectionStore.getState().set([id]);
-    bumpScene();
-    return id;
-  });
+  const id = insertSvgLayer(retained.markup, retained.fileName, { x: carry.x, y: carry.y });
+  if (!id) return null;
+  applyCarry(id, carry);
+  return id;
 }
 
 /** True when this node keeps an original SVG it could be reverted to. */

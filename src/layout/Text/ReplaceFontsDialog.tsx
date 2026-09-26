@@ -4,7 +4,7 @@
  * One row per family the document uses: the family, a "Missing" badge when
  * this machine cannot draw it, the layers that use it, and a font picker for
  * its replacement. Replace applies every chosen substitution as ONE undo entry
- * (`replaceFontFamilies`), over layer fonts and rich-text runs alike.
+ * (`replaceFontFamiliesEdit`), over layer fonts and rich-text runs alike.
  *
  * Opened two ways: from the "N fonts missing" toast after a project opens
  * (missing families only), and from the `text.replaceFonts` command (every

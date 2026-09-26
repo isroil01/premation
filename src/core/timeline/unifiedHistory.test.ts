@@ -31,7 +31,8 @@
  */
 
 import { getTimelineController } from './TimelineController';
-import { deleteSelectedLayers } from '@core/scene/sceneInsert';
+import { deleteLayerNode } from '@core/scene/deleteLayerNode';
+import { runDocumentEdit } from '@core/commands/documentEdit';
 import { precomposeLayers, type PrecomposeOptions } from '@core/composition/precompose';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
@@ -113,7 +114,7 @@ function trimTo(nodeId: string, start: number, end: number): void {
 
 function selectAndDelete(...ids: string[]): void {
   useSelectionStore.getState().set(ids);
-  deleteSelectedLayers();
+  runDocumentEdit(ids.length === 1 ? 'Delete layer' : 'Delete layers', () => { for (const id of ids) deleteLayerNode(id); });
 }
 
 let subscriptions: Array<{ dispose(): void }> = [];

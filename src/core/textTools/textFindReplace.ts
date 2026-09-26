@@ -1,8 +1,8 @@
 /**
- * Find and Replace Text across layers — scope, counting and the one-undo write.
+ * Find and Replace Text across layers — scope and counting.
  *
  * The string/run rules live in `findReplaceText.ts`; this module decides WHICH
- * text is searched and writes the result.
+ * text is searched. Replace All is engine commands (layout/Text/textEdits.ts).
  *
  * What is searched, per text layer:
  *   • its static content (the Text component's `content`), with its rich-text
@@ -15,11 +15,9 @@ import { defaultAnimation, SOURCE_TEXT_PROP } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind, flattenComposition } from '@core/scene/sceneDerive';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { readRuns, writeRuns } from '@core/text/richText';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode } from '@core/types';
-import { findMatches, replaceAllInString, replaceAllWithRuns, type FindOptions } from './findReplaceText';
+import { findMatches, type FindOptions } from './findReplaceText';
 
 /** AE-style scopes: the selection, the active comp, or every comp in the project. */
 export type FindScope = 'selected' | 'comp' | 'all';
@@ -75,40 +73,4 @@ export function countInScope(scope: FindScope, find: string, opts: FindOptions):
     if (n > 0) layers += 1;
   }
   return { matches, layers };
-}
-
-/** Replace All in scope as ONE undo entry. Returns what changed. */
-export function replaceAllInScope(scope: FindScope, find: string, replacement: string, opts: FindOptions): ScopeCount {
-  if (!find) return { matches: 0, layers: 0 };
-  const targets = textLayersInScope(scope).filter((n) => countInLayer(n, find, opts) > 0);
-  if (targets.length === 0) return { matches: 0, layers: 0 };
-  return runDocumentEdit('Replace Text', () => {
-    let matches = 0;
-    for (const node of targets) {
-      const c = contentOf(node);
-      if (c) {
-        const r = replaceAllWithRuns(c.content, readRuns(node), find, replacement, opts);
-        if (r.count > 0) {
-          const hadRuns = readRuns(node).length > 0;
-          defaultSceneGraph.writeProp(node.id, c.compId, 'content', r.text);
-          if (hadRuns) writeRuns(node.id, r.runs);
-          matches += r.count;
-        }
-      }
-      const track = defaultAnimation.getDataTrack(node.id, SOURCE_TEXT_PROP);
-      if (track) {
-        let changed = false;
-        const keyframes = track.keyframes.map((kf) => {
-          if (typeof kf.value !== 'string') return kf;
-          const r = replaceAllInString(kf.value, find, replacement, opts);
-          if (r.count === 0) return kf;
-          changed = true;
-          matches += r.count;
-          return { ...kf, value: r.text };
-        });
-        if (changed) defaultAnimation.setDataTrack(node.id, SOURCE_TEXT_PROP, { ...track, keyframes });
-      }
-    }
-    return { matches, layers: targets.length };
-  });
 }

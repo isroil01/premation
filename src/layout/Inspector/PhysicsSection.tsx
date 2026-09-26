@@ -231,7 +231,7 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
           open
           onClose={() => setBakeOpen(false)}
           title="Bake Physics to Keyframes"
-          onBake={(opts) => runPhysicsBake([nodeId], opts)}
+          onBake={(opts) => { void runPhysicsBake([nodeId], opts); }}
         />
       )}
     </div>

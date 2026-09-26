@@ -84,8 +84,14 @@ export function selectedEmitterLayers(): string[] {
 }
 
 /** Run the physics bake and report it. Shared by the command and the dialog. */
-export function runPhysicsBake(nodeIds: ReadonlyArray<string>, opts: BakeRangeOptions): void {
-  const result = bakePhysicsToKeyframes(nodeIds, opts);
+export async function runPhysicsBake(nodeIds: ReadonlyArray<string>, opts: BakeRangeOptions): Promise<void> {
+  let result;
+  try {
+    result = await bakePhysicsToKeyframes(nodeIds, opts);
+  } catch (err) {
+    toast('warning', `Bake failed: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
   if (!result) {
     toast('warning', 'Nothing to bake: select a layer with an enabled DYNAMIC rigid body.');
     return;
@@ -100,11 +106,17 @@ export function runPhysicsBake(nodeIds: ReadonlyArray<string>, opts: BakeRangeOp
 
 /** Run the particle bake and report it — including the cap, which is a refusal
  *  the user has to know about, not a detail. */
-export function runParticleBake(
+export async function runParticleBake(
   emitterNodeId: string,
   opts: BakeRangeOptions & { maxParticles?: number },
-): void {
-  const result = bakeParticlesToLayers(emitterNodeId, opts);
+): Promise<void> {
+  let result;
+  try {
+    result = await bakeParticlesToLayers(emitterNodeId, opts);
+  } catch (err) {
+    toast('warning', `Bake failed: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
   if (!result) {
     toast('warning', 'Nothing to bake: that layer is not a particle emitter, or the range is empty.');
     return;
@@ -131,7 +143,7 @@ const bakePhysics: Command = {
       toast('warning', 'Select a layer with a rigid body first.');
       return;
     }
-    runPhysicsBake(ids, defaultBakeRange());
+    void runPhysicsBake(ids, defaultBakeRange());
   },
 };
 
@@ -146,7 +158,7 @@ const bakeParticles: Command = {
       toast('warning', 'Select a particle emitter first.');
       return;
     }
-    runParticleBake(id, { ...defaultBakeRange(), maxParticles: DEFAULT_PARTICLE_BAKE_CAP });
+    void runParticleBake(id, { ...defaultBakeRange(), maxParticles: DEFAULT_PARTICLE_BAKE_CAP });
   },
 };
 

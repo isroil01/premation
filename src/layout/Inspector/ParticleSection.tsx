@@ -446,7 +446,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
             onClose={() => setBakeOpen(false)}
             title="Bake Particles to Layers"
             withParticleCap
-            onBake={(opts) => runParticleBake(nodeId, opts)}
+            onBake={(opts) => { void runParticleBake(nodeId, opts); }}
           />
         )}
 

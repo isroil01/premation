@@ -17,7 +17,8 @@
 import { Button } from '@components/Button';
 import { documentMirror } from '@stores/documentMirror';
 import { childOrderOf } from '@core/mirror/layerTree';
-import { canRevertToSvg, revertSvgGroupToLayer } from '@core/svg/svgConvert';
+import { canRevertToSvg } from '@core/svg/svgConvert';
+import { revertSvgToLayer } from './svgLayerActions';
 import { useFocusStore } from '@stores/focusStore';
 import { PrecompControl } from './PrecompControl';
 import { RevertSvgRow } from './SvgSection';
@@ -55,7 +56,7 @@ export function PrecompGroupSection({ nodeId }: { nodeId: string }): JSX.Element
   return (
     <>
       <PrecompControl nodeId={nodeId} />
-      {canRevertToSvg(nodeId) && <RevertSvgRow onRevert={() => revertSvgGroupToLayer(nodeId)} />}
+      {canRevertToSvg(nodeId) && <RevertSvgRow onRevert={() => { void revertSvgToLayer(nodeId); }} />}
       <div className={styles.groupMeta}>
         <span className={styles.groupCount}>Children: {childrenCount}</span>
         <Button size="sm" variant="secondary" fullWidth onClick={() => enterFocus(nodeId)}>

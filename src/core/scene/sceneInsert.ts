@@ -17,7 +17,6 @@ import { writeTransformProps } from './transformWrite';
 import { SCENE_KIND_PROP, type SceneKind } from './seedDefaultScene';
 import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import type { SceneNode } from '@core/types';
 import type { ImportedAsset } from '@stores/assetStore';
 import {
@@ -29,7 +28,6 @@ import { measureTextSize, measureTextBoxes, DEFAULT_LINE_HEIGHT, type MeasuredTe
 import { scanSvgAnimations, type SvgShapeAnimation } from '../../utils/svgAnimation';
 import { defaultAnimation } from '@motion/animation';
 import { copyNodeAnimation } from '@core/animation/cloneNodeAnimation';
-import { deleteLayerNode } from './deleteLayerNode';
 import { bezierCorner as corner } from '@motion/workspace';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
@@ -1850,31 +1848,6 @@ export async function insertImageSequence(files: File[], fps = 30): Promise<bool
 }
 
 /**
- * Delete all currently selected layers (and their descendants recursively).
- * Locked layers are skipped. Clears the selection after deletion.
- */
-export function deleteSelectedLayers(): void {
-  const { ids } = useSelectionStore.getState();
-  if (ids.length === 0) return;
-
-  // Filter out locked nodes and roots.
-  const toDelete = ids.filter((id) => {
-    const node = defaultSceneGraph.getNode(id);
-    return node && !node.locked && node.parent !== null;
-  });
-  if (toDelete.length === 0) return;
-
-  runDocumentEdit(toDelete.length === 1 ? 'Delete layer' : 'Delete layers', () => {
-    // One primitive, shared with the timeline's clip context menu — see
-    // `deleteLayerNode`. The two routes used to delete different things, which
-    // is why deleting from the timeline appeared not to work at all.
-    for (const id of toDelete) deleteLayerNode(id);
-    useSelectionStore.getState().clear();
-    bumpScene();
-  });
-}
-
-/**
  * Duplicate all currently selected layers, offsetting each copy by +20px/+20px
  * (classic AE behaviour). The copies are added adjacent to the originals.
  */
@@ -1990,62 +1963,6 @@ export function ungroupSelected(): void {
     sel.set(freed);
     bumpScene();
   }
-}
-
-/**
- * Toggle a boolean layer flag across the whole selection (all follow ONE
- * node's inverse, so one click flips them together).
- *
- * `anchorId` names that node. It defaults to the first selected, which is
- * right for a keyboard shortcut — but a context menu labels its item after
- * the ROW that was right-clicked ("Unlock" on a locked row), and in a mixed
- * selection that row is not necessarily `ids[0]`: the menu said Unlock and
- * then locked everything. The menu passes the clicked id so the label and
- * the action agree.
- */
-function toggleSelectionFlag(flag: 'locked' | 'solo' | 'visible', anchorId?: string): void {
-  const selected = useSelectionStore.getState().ids;
-  // An anchor outside the selection toggles just itself (the Scene panel's
-  // per-row eye is a click on that row, not on the selection).
-  const ids = anchorId && !selected.includes(anchorId) ? [anchorId] : selected;
-  if (ids.length === 0) return;
-  const first = defaultSceneGraph.getNode(anchorId ?? ids[0]!);
-  if (!first) return;
-  const next = flag === 'visible' ? first.visible === false : !first[flag];
-  const label = flag === 'visible'
-    ? (next ? 'Show layer' : 'Hide layer')
-    : flag === 'locked'
-      ? (next ? 'Lock layer' : 'Unlock layer')
-      : (next ? 'Solo layer' : 'Unsolo layer');
-  runDocumentEdit(label, () => {
-    if (flag === 'visible') {
-      for (const id of ids) {
-        const node = defaultSceneGraph.getNode(id);
-        if (node) node.visible = next;
-      }
-    } else {
-      for (const id of ids) {
-        const node = defaultSceneGraph.getNode(id);
-        if (node) node[flag] = next;
-      }
-    }
-    bumpScene();
-  });
-}
-
-export const toggleSelectedLocked = (anchorId?: string): void => toggleSelectionFlag('locked', anchorId);
-export const toggleSelectedSolo = (anchorId?: string): void => toggleSelectionFlag('solo', anchorId);
-export const toggleSelectedVisible = (anchorId?: string): void => toggleSelectionFlag('visible', anchorId);
-
-/** Show/hide ONE layer as an undoable edit — the Scene panel's eye button. */
-export function toggleNodeVisible(id: string): void {
-  const node = defaultSceneGraph.getNode(id);
-  if (!node) return;
-  const next = node.visible === false;
-  runDocumentEdit(next ? 'Show layer' : 'Hide layer', () => {
-    node.visible = next;
-    bumpScene();
-  });
 }
 
 /**

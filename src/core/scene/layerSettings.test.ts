@@ -6,19 +6,16 @@ import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { insertSolid } from '@core/scene/sceneInsert';
 import { useSelectionStore } from '@stores/selectionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeFill } from '@core/paint/fill';
-import { getCommandSystem, setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import {
-  applyLayerSettings,
-  createSolidLayer,
+  buildSolidLayer,
   layerSettingsKind,
   readLayerSettings,
   sanitizeLayerSize,
 } from './layerSettings';
 
 beforeAll(() => {
-  // runDocumentEdit records through the command system's history — boot a
-  // minimal one, the same way the AI transaction tests do.
+  // The inserts reach the command system — boot a minimal one.
   const services = {
     undo: { push: () => {}, undo: () => {}, redo: () => {}, canUndo: () => false, canRedo: () => false },
     selection: { get: () => [], set: () => {}, clear: () => {} },
@@ -45,23 +42,9 @@ describe('Solid Settings', () => {
     expect(typeof read.values.width).toBe('number');
   });
 
-  it('applies name, size, colour and label colour — as ONE undo step', () => {
-    insertSolid();
-    const id = useSelectionStore.getState().ids[0]!;
-    const history = getCommandSystem().getHistory();
-    const before = history.getEntries().length;
-    applyLayerSettings(id, { name: 'Backdrop', width: 640, height: 360, color: '#ff0000', labelColor: '#5282b8' });
-    const node = defaultSceneGraph.getNode(id)!;
-    expect(node.name).toBe('Backdrop');
-    expect(sizeOf(id)).toEqual({ w: 640, h: 360 });
-    const fill = readNodeFill(node);
-    expect(fill && fill.type === 'solid' ? fill.color : null).toBe('#ff0000');
-    expect(node.color).toBe('#5282b8');
-    expect(history.getEntries().length - before).toBe(1);
-  });
-
-  it('New Solid creates the configured solid and selects it', () => {
-    const id = createSolidLayer({ name: 'Matte', width: 100, height: 50, color: '#00ff00' })!;
+  // The builder the New Solid insert runs off-document (the dialog's Apply is compositionEdits.ts, engine commands).
+  it('New Solid builds the configured solid and selects it', () => {
+    const id = buildSolidLayer({ name: 'Matte', width: 100, height: 50, color: '#00ff00' })!;
     expect(id).toBeTruthy();
     expect(useSelectionStore.getState().ids).toEqual([id]);
     const node = defaultSceneGraph.getNode(id)!;

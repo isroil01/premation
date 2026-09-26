@@ -7,10 +7,8 @@
  * it. What is pinned here is the part that copies get wrong:
  *   • a switch whose kind cannot carry it is refused, not lit (3D on a camera);
  *   • a composition root has no layer switches at all;
- *   • a multi-layer toggle is ANCHORED — the clicked row decides the direction
- *     for the whole set, so a mixed selection ends up matching rather than
- *     inverted layer by layer;
- *   • and it is ONE undo entry, not one per layer.
+ *   • (the anchored multi-layer toggle, ONE undo entry, is the engine route —
+ *     layout/Scene/layerSwitchEdits.test.ts).
  */
 
 import defaultSceneGraph from './DefaultSceneGraph';
@@ -22,11 +20,10 @@ import {
   layerFlagRefusalReason,
   readLayerFlag,
   toggleLayerFlag,
-  toggleLayerFlags,
 } from './layerFlags';
 import { readNodeQuality } from '@core/effects/layerQuality';
 import { SCENE_KIND_PROP } from './seedDefaultScene';
-import { CommandSystem, setCommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
+import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode } from '@core/types';
 
@@ -118,49 +115,6 @@ describe('read and toggle', () => {
   });
 });
 
-describe('toggling a selection', () => {
-  it('anchors the direction on the clicked row rather than inverting each layer', () => {
-    toggleLayerFlag('a', 'shy', true);
-    // Mixed: A is shy, B is not. Clicking B's switch means "make them like B's
-    // next state" — both on — not "flip each of them", which would leave the
-    // pair exactly as mixed as it started.
-    toggleLayerFlags(['a', 'b'], 'shy', 'b');
-    expect(readLayerFlag(get('a'), 'shy')).toBe(true);
-    expect(readLayerFlag(get('b'), 'shy')).toBe(true);
-  });
-
-  it('is ONE undo entry for the whole set', () => {
-    const history = getCommandSystem().getHistory();
-    const before = history.canUndo();
-    toggleLayerFlags(['a', 'b'], 'shy', 'a');
-    expect(readLayerFlag(get('a'), 'shy')).toBe(true);
-    expect(readLayerFlag(get('b'), 'shy')).toBe(true);
-
-    history.undo();
-    // Both come back, because both went in together.
-    expect(readLayerFlag(get('a'), 'shy')).toBe(false);
-    expect(readLayerFlag(get('b'), 'shy')).toBe(false);
-    void before;
-  });
-
-  it('skips the layers that cannot carry the flag and still applies to the rest', () => {
-    toggleLayerFlags(['a', 'cam'], 'threeD', 'a');
-    expect(readLayerFlag(get('a'), 'threeD')).toBe(true);
-    expect(readLayerFlag(get('cam'), 'threeD')).toBe(false);
-  });
-
-  it('does nothing at all when no layer in the set can carry the flag', () => {
-    toggleLayerFlags(['cam'], 'threeD', 'cam');
-    expect(readLayerFlag(get('cam'), 'threeD')).toBe(false);
-  });
-
-  it('falls back to the first eligible layer when the anchor is not one of them', () => {
-    // The camera cannot carry 3D, so it cannot decide the direction either.
-    toggleLayerFlags(['cam', 'a'], 'threeD', 'cam');
-    expect(readLayerFlag(get('a'), 'threeD')).toBe(true);
-  });
-});
-
 describe('the three switches the Layers panel could not reach', () => {
   /*
     Collapse / Quality / Frame Blending lived in `layout/Timeline/layerSwitches`
@@ -208,15 +162,6 @@ describe('the three switches the Layers panel could not reach', () => {
     toggleLayerFlag('a', 'quality');
     expect(readLayerFlag(get('a'), 'quality')).toBe(true);
     expect(describeLayerFlag(get('a'), 'quality').label).toBe('Quality: Draft');
-  });
-
-  it('lands a whole selection on the SAME quality, not each one further round', () => {
-    toggleLayerFlag('b', 'quality');           // b is at Draft, a is at Best
-    toggleLayerFlags(['a', 'b'], 'quality', 'a');
-    // Anchored on A: A advances Best → Draft, and B follows it there rather
-    // than advancing to Wireframe on its own.
-    expect(readNodeQuality(get('a'))).toBe('draft');
-    expect(readNodeQuality(get('b'))).toBe('draft');
   });
 
   it('gives no quality switch to the chrome-only kinds', () => {

@@ -16,15 +16,32 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { insertSvgLayer, insertSvgShapeGroup } from '@core/scene/sceneInsert';
 import { readSvgLayer, readRetainedSvgSource, svgLayerSrc, isSvgLayer } from './svgLayer';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { convertSvgLayerToShapes, canRevertToSvg, revertSvgGroupToLayer, describeConversion } from './svgConvert';
+import { buildSvgShapeGroup, buildRevertedSvgLayer, canRevertToSvg, describeConversion } from './svgConvert';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import * as svgParser from '../../utils/svgParser';
 
-// Convert/revert record ONE undo entry covering both the scene graph and the
-// animation engine, so they need a live history to push into.
 beforeAll(() => {
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
 });
+
+/*
+ * Convert / revert are ONE engine batch in the editor (svgLayerActions.ts:
+ * the builder runs off-document, then pasteLayers + deleteLayers). These tests
+ * pin the BUILDERS — what the batch pastes — applied in place.
+ */
+function convertSvgLayerToShapes(id: string): string | null {
+  const built = buildSvgShapeGroup(id);
+  if (!built) return null;
+  defaultSceneGraph.removeNode(id);
+  return built.groupId;
+}
+
+function revertSvgGroupToLayer(groupId: string): string | null {
+  const id = buildRevertedSvgLayer(groupId);
+  if (!id) return null;
+  defaultSceneGraph.removeNode(groupId);
+  return id;
+}
 
 /** A static illustration with `n` independent paths. */
 function manyPaths(n: number): string {

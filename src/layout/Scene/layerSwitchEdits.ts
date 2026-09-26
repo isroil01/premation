@@ -11,14 +11,13 @@
  * `runDocumentEdit`. The engine records the inverse, refreshes the panels and
  * refuses what it cannot do with a typed error (toasted by `edit`).
  *
- * A composition ROOT is not a layer in the API (it is an item), so its row's
- * switches keep the legacy writer until compositions migrate.
+ * A composition ROOT is not a layer in the API (it is an item): its row has no
+ * switches to toggle, and a click on one is refused with a note.
  */
 
 import type { Command, LayerSwitchesPatch } from '@motion/engine-api';
 import { isLayer } from '@core/engine/doc';
 import { edit } from '@core/engine/uiEdits';
-import { toggleSelectedLocked, toggleSelectedSolo, toggleSelectedVisible } from '@core/scene/sceneInsert';
 import { layerFlagDef, type LayerFlag } from '@core/scene/layerFlags';
 import { nextQuality, type LayerQuality } from '@core/effects/layerQuality';
 import { notifyGuideLayerChange } from '@core/effects/layerSwitchFeedback';
@@ -51,12 +50,6 @@ const LABELS: Record<LayerSwitch, [on: string, off: string]> = {
   shy: ['Enable Shy', 'Disable Shy'],
 };
 
-const LEGACY: Partial<Record<LayerSwitch, (anchorId: string) => void>> = {
-  visible: toggleSelectedVisible,
-  locked: toggleSelectedLocked,
-  solo: toggleSelectedSolo,
-};
-
 /**
  * The commands that set `sw` to `next` on every layer of `ids` (non-layers
  * skipped). Exported for tests and for callers that fold it into a bigger batch.
@@ -74,8 +67,8 @@ export async function toggleLayerSwitchAnchored(anchorId: string, sw: LayerSwitc
   const m = documentMirror();
   if (!m.layer(anchorId) && !m.comp(anchorId)) return;
   if (!isLayer(anchorId)) {
-    // A composition root's row: no API switch yet (see the header).
-    LEGACY[sw]?.(anchorId);
+    // A composition root's row: a composition has no layer switches (see the header).
+    notify('A composition has no layer switches — select its layers.');
     return;
   }
   const ids = anchoredLayerIds(anchorId);

@@ -10,15 +10,17 @@
  *   • Flip on an animated Scale must negate EVERY keyframe on the axis. Writing
  *     `-current` at the playhead would add one flipped keyframe between two
  *     unflipped ones, and the layer would turn inside out and back on playback.
- *   • Reset must REMOVE the tracks (AE's Reset on the Transform group clears the
- *     stopwatches), otherwise the renderer keeps reading the animated value and
- *     the static default written underneath it is invisible.
+ *   • Reset's defaults (`resetTransformWrites`) are sent by the timeline's
+ *     Reset (layout/Timeline/resetEdits.ts) — a key at the playhead on an
+ *     animated property, as AE does.
  *   • The numpad nudges are relative, so they must read the pose the RENDERER
  *     resolves (`readTransformProp`) — reading the base prop makes an animated
  *     layer teleport to its rest pose plus one degree.
  *
  * The pure halves (`negateKeyframes`, `resetTransformWrites`, `nudgedScale`,
- * `numpadStep`) carry the rules and are tested without a scene graph.
+ * `numpadStep`) carry the rules and are tested without a scene graph. Every
+ * verb is ONE engine entry (`flipLayersEdit`, `nudgeRotationEdit`,
+ * `nudgeScaleEdit`).
  *
  * Flip happens about the ANCHOR because scale does: the anchor is where the
  * layer's local origin sits (see `centreAnchorInContent`), so negating scale is
@@ -27,15 +29,12 @@
 
 import type { Keyframe } from '@motion/animation';
 import { defaultAnimation } from '@motion/animation';
-import { Matrix } from '@motion/scene';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { is3DEnabled } from '@core/scene/threeD';
-import { parentWorld2DAt } from '@core/scene/layerSpace';
-import { readTransformProp, writeTransformProps, writeTransformBase, type TransformWrite } from '@core/scene/transformWrite';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
-import { writeStaticPropertyValue } from '@core/inspector/propertyValue';
+import { readTransformProp, writeTransformBase, type TransformWrite } from '@core/scene/transformWrite';
+import type { Command, PropertyWrite } from '@motion/engine-api';
+import { assistantKeyframeCommands } from '@core/engine/assistantKeys';
+import { memberWrites } from '@core/engine/propRefs';
+import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { useProjectStore } from '@stores/projectStore';
 import type { SceneNode } from '@core/types';
 
@@ -61,8 +60,9 @@ function playheadCompTime(): number {
 }
 
 /**
- * Flip one layer's scale on `axis`, keyframes included. No history of its own —
- * `flipLayers` wraps the whole selection in one document edit.
+ * Flip one layer's scale on `axis`, keyframes included — the SCRATCH builder:
+ * `flipCommands` runs it off-document for an animated layer and sends the
+ * negated keys (`setKeyframes`); a static layer's flip is a plain write.
  */
 export function flipLayer(nodeId: string, axis: FlipAxis): boolean {
   const node = defaultSceneGraph.getNode(nodeId);
@@ -91,13 +91,59 @@ export function flipLayer(nodeId: string, axis: FlipAxis): boolean {
   return true;
 }
 
-/** Flip every layer in `ids` — one undo step for the lot. Returns how many flipped. */
-export function flipLayers(ids: ReadonlyArray<string>, axis: FlipAxis): number {
-  let n = 0;
-  runDocumentEdit(axis === 'horizontal' ? 'Flip Horizontal' : 'Flip Vertical', () => {
-    for (const id of ids) if (flipLayer(id, axis)) n += 1;
+function scaleAnimated(nodeId: string, prop: string): boolean {
+  return (defaultAnimation.getTrackKeyframes(nodeId, prop)?.length ?? 0) > 0
+    || (defaultAnimation.getTrackKeyframes(nodeId, 'scale')?.length ?? 0) > 0;
+}
+
+/**
+ * Flip Horizontal / Vertical as engine commands: an animated Scale gets EVERY
+ * key on the axis negated (`flipLayer` run off-document, sent as
+ * `setKeyframes`), a static one its value negated. Locked layers are skipped.
+ * Null when a layer's scale animation is on a track the API does not address
+ * (refused rather than half-flipped).
+ */
+export function flipCommands(ids: ReadonlyArray<string>, axis: FlipAxis): Command[] | null {
+  const prop = axis === 'horizontal' ? 'scaleX' : 'scaleY';
+  const targets = ids.filter((id) => {
+    const n = defaultSceneGraph.getNode(id);
+    return !!n && !n.locked && !!transformComponentOf(n);
   });
-  return n;
+  const animated = targets.filter((id) => scaleAnimated(id, prop));
+  const out: Command[] = [];
+  if (animated.length > 0) {
+    const plan = assistantKeyframeCommands(animated, () => { for (const id of animated) flipLayer(id, axis); }, { allowNodeChanges: true });
+    if (plan.unaddressed.length > 0) return null;
+    out.push(...plan.cmds);
+  }
+  const at = playheadCompTime();
+  const writes: PropertyWrite[] = [];
+  for (const id of targets) {
+    if (animated.includes(id)) continue;
+    const w = memberWrites(id, { [prop]: -readTransformProp(id, prop, 1) }, at);
+    if (!w) return null;
+    writes.push(...w);
+  }
+  if (writes.length > 0) out.push({ type: 'setProperties', writes } as Command);
+  return out;
+}
+
+/** Flip every layer in `ids` — ONE engine entry. Resolves to whether it applied. */
+export async function flipLayersEdit(ids: ReadonlyArray<string>, axis: FlipAxis): Promise<boolean> {
+  const label = axis === 'horizontal' ? 'Flip Horizontal' : 'Flip Vertical';
+  let cmds: Command[] | null;
+  try {
+    cmds = flipCommands(ids, axis);
+  } catch (err) {
+    reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
+    return false;
+  }
+  if (!cmds) {
+    reportEngineError(label, { code: 'unsupported', message: 'a layer animates its scale on a track the engine cannot flip' });
+    return false;
+  }
+  if (cmds.length === 0) return false;
+  return (await edit(label, cmds)).ok;
 }
 
 // ── Reset Transform ─────────────────────────────────────────────────────────
@@ -139,61 +185,6 @@ export function resetTransformWrites(input: ResetTransformInput): TransformWrite
   return out;
 }
 
-/** Tracks a reset clears besides the ones it writes — the uniform scale shorthand. */
-const RESET_ALIASES: Readonly<Record<string, readonly string[]>> = { scaleX: ['scale'] };
-
-/**
- * Reset one layer's Transform group: remove its keyframes and write the
- * defaults. Expressions are left alone — AE's Reset keeps them too.
- */
-export function resetInputFor(nodeId: string, node: SceneNode, comp: { width: number; height: number }): ResetTransformInput {
-  // Comp centre → parent space: `x`/`y` are parent-space values. Identity on an
-  // unparented layer.
-  const inv = Matrix.invert(parentWorld2DAt(nodeId, playheadCompTime()));
-  const centre = Matrix.transformPoint(inv, { x: comp.width / 2, y: comp.height / 2 });
-  return {
-    kind: readNodeKind(node),
-    is3D: is3DEnabled(node),
-    hasOpacity: node.components.some((c) => c.type === 'Style' || c.type === 'Text'),
-    centre,
-  };
-}
-
-export function resetLayerTransform(nodeId: string, comp: { width: number; height: number }): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || node.locked) return false;
-  const t = transformComponentOf(node);
-  if (!t) return false;
-
-  const writes = resetTransformWrites(resetInputFor(nodeId, node, comp));
-
-  for (const { prop, value } of writes) {
-    defaultAnimation.removeTrack(nodeId, prop);
-    for (const alias of RESET_ALIASES[prop] ?? []) defaultAnimation.removeTrack(nodeId, alias);
-    // Opacity lives on whichever component already carries it (Style / Text);
-    // everything else on the Transform component.
-    const home = prop === 'opacity'
-      ? node.components.find((c) => typeof (c.props as Record<string, unknown>).opacity === 'number') ?? t
-      : t;
-    // Tracks were removed just above, so a base write is the whole story.
-    writeTransformBase(nodeId, [{ prop, value }], home.id);
-  }
-  // A stale uniform `scale` would fight the per-axis defaults in readers that
-  // fall back to it.
-  if (typeof (t.props as Record<string, unknown>).scale === 'number') {
-    writeTransformBase(nodeId, [{ prop: 'scale', value: 1 }], t.id);
-  }
-  return true;
-}
-
-export function resetTransforms(ids: ReadonlyArray<string>, comp: { width: number; height: number }): number {
-  let n = 0;
-  runDocumentEdit('Reset Transform', () => {
-    for (const id of ids) if (resetLayerTransform(id, comp)) n += 1;
-  });
-  return n;
-}
-
 // ── Reset one property (the timeline row's right-click Reset) ───────────────
 
 /**
@@ -210,56 +201,6 @@ export function propertyResetValue(
   const t = transformDefaults.find((w) => w.prop === prop);
   if (t) return t.value;
   return typeof registryDefault === 'number' ? registryDefault : undefined;
-}
-
-/** True when every prop behind a row has a numeric rest value to reset to. */
-export function canResetProperties(nodeId: string, props: ReadonlyArray<string>): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || node.locked || props.length === 0) return false;
-  const defaults = resetTransformWrites(resetInputFor(nodeId, node, { width: 0, height: 0 }));
-  return props.every((p) => propertyResetValue(p, defaults, resolvePropertyMeta(p, nodeId).defaultValue) !== undefined);
-}
-
-/**
- * Reset the props behind ONE timeline row: remove their keyframes and write the
- * default. No history of its own — `resetProperties` wraps it. Expressions are
- * kept, as with the group Reset.
- */
-export function resetLayerProperties(
-  nodeId: string,
-  props: ReadonlyArray<string>,
-  comp: { width: number; height: number },
-): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || node.locked) return false;
-  const defaults = resetTransformWrites(resetInputFor(nodeId, node, comp));
-  let any = false;
-  for (const prop of props) {
-    const value = propertyResetValue(prop, defaults, resolvePropertyMeta(prop, nodeId).defaultValue);
-    if (value === undefined) continue;
-    defaultAnimation.removeTrack(nodeId, prop);
-    for (const alias of RESET_ALIASES[prop] ?? []) defaultAnimation.removeTrack(nodeId, alias);
-    if (!writeStaticPropertyValue(nodeId, prop, value)) {
-      const t = transformComponentOf(node);
-      if (t) writeTransformBase(nodeId, [{ prop, value }], t.id);
-    }
-    any = true;
-  }
-  return any;
-}
-
-/** One undo step: Reset the props behind a timeline row. */
-export function resetProperties(
-  nodeId: string,
-  props: ReadonlyArray<string>,
-  comp: { width: number; height: number },
-  label = 'Reset Property',
-): boolean {
-  let ok = false;
-  runDocumentEdit(label, () => {
-    ok = resetLayerProperties(nodeId, props, comp);
-  });
-  return ok;
 }
 
 // ── Numpad rotate / scale ───────────────────────────────────────────────────
@@ -281,38 +222,32 @@ export function nudgedScale(current: number, deltaPercent: number): number {
 }
 
 /**
- * One burst of presses is one undo step, like the arrow-key nudge: presses less
- * than this far apart share a merge key.
+ * Rotate each layer by `degrees` — ONE engine entry. Animated Rotation gets a
+ * key at the playhead (AE); a static one is set. The step is added to the
+ * value ON SCREEN (`readTransformProp`), so an animated layer does not jump to
+ * its rest pose plus one degree. Resolves to whether it applied.
  */
-const BURST_MS = 700;
-let burstSeq = 0;
-let lastPress = 0;
-function burstKey(kind: string, nodeId: string, now: number): string {
-  if (now - lastPress > BURST_MS) burstSeq += 1;
-  lastPress = now;
-  return `numpad:${kind}:${nodeId}:${burstSeq}`;
+export function nudgeRotationEdit(ids: ReadonlyArray<string>, degrees: number): Promise<boolean> {
+  return nudgeEdit('Rotate', ids, (id) => ({ rotation: readTransformProp(id, 'rotation', 0) + degrees }));
 }
 
-/**
- * Rotate each layer by `degrees`. Animated Rotation gets a keyframe at the
- * playhead (AE); a static one is set. Returns how many layers changed.
- */
-export function nudgeRotation(ids: ReadonlyArray<string>, degrees: number, now = Date.now()): number {
-  let n = 0;
-  for (const id of ids) {
-    const current = readTransformProp(id, 'rotation', 0);
-    if (writeTransformProps(id, [{ prop: 'rotation', value: current + degrees }], 'Rotate', burstKey('rotate', id, now))) n += 1;
-  }
-  return n;
+/** Scale each layer by `deltaPercent` on both axes, keyframe-aware like rotation — ONE engine entry. */
+export function nudgeScaleEdit(ids: ReadonlyArray<string>, deltaPercent: number): Promise<boolean> {
+  return nudgeEdit('Scale', ids, (id) => ({
+    scaleX: nudgedScale(readTransformProp(id, 'scaleX', 1), deltaPercent),
+    scaleY: nudgedScale(readTransformProp(id, 'scaleY', 1), deltaPercent),
+  }));
 }
 
-/** Scale each layer by `deltaPercent` on both axes, keyframe-aware like rotation. */
-export function nudgeScale(ids: ReadonlyArray<string>, deltaPercent: number, now = Date.now()): number {
-  let n = 0;
+async function nudgeEdit(label: string, ids: ReadonlyArray<string>, values: (id: string) => Record<string, number>): Promise<boolean> {
+  const at = playheadCompTime();
+  const writes: PropertyWrite[] = [];
   for (const id of ids) {
-    const sx = nudgedScale(readTransformProp(id, 'scaleX', 1), deltaPercent);
-    const sy = nudgedScale(readTransformProp(id, 'scaleY', 1), deltaPercent);
-    if (writeTransformProps(id, [{ prop: 'scaleX', value: sx }, { prop: 'scaleY', value: sy }], 'Scale', burstKey('scale', id, now))) n += 1;
+    const n = defaultSceneGraph.getNode(id);
+    if (!n || n.locked || !transformComponentOf(n)) continue;
+    const w = memberWrites(id, values(id), at);
+    if (w) writes.push(...w);
   }
-  return n;
+  if (writes.length === 0) return false;
+  return (await edit(label, [{ type: 'setProperties', writes } as Command])).ok;
 }

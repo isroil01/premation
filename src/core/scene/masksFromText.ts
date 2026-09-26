@@ -27,9 +27,7 @@ import { makeNode } from '@core/scene/sceneInsert';
 import { activeCompRootId, activeCompSize } from '@core/scene/activeComp';
 import { layerSpaceAt } from '@core/scene/layerSpace';
 import { addMaskPath } from '@core/effects/mask';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode } from '@core/types';
 import { outlineTextNode, canCreateShapesFromText, type ShapesFromTextSource } from './shapesFromText';
 import { glyphContoursToMaskPaths } from './masksFromTextGeometry';
@@ -117,29 +115,4 @@ export function buildMasksFromTextSolid(plan: MasksFromTextPlan): MasksFromTextR
   );
   for (const p of paths) addMaskPath(solid.id, p);
   return { id: solid.id, source: outlines.source, masks: paths.length };
-}
-
-/**
- * Legacy one-shot form (pre-API callers): build the solid and its masks, hide
- * the text, one `runDocumentEdit`. The editor's command goes through the
- * engine (`masksFromTextEdit`).
- */
-export async function createMasksFromText(
-  nodeId: string,
-  compTime: number = getTimelineController().currentSeconds,
-): Promise<MasksFromTextResult | null> {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || readNodeKind(node) !== 'text') return null;
-  const plan = await planMasksFromText(nodeId, compTime);
-  if (!plan) return null;
-  return runDocumentEdit('Create Masks from Text', () => {
-    const made = buildMasksFromTextSolid(plan);
-    if (!made) return null;
-    // AE hides the source text rather than deleting it: the text is still the
-    // editable truth, the masks a derivative of one moment of it.
-    const src = defaultSceneGraph.getNode(nodeId);
-    if (src) src.visible = false;
-    useSelectionStore.getState().set([made.id]);
-    return made;
-  });
 }

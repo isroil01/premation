@@ -22,7 +22,7 @@
  */
 
 import { getTimelineController } from './TimelineController';
-import { deleteSelectedLayers } from '@core/scene/sceneInsert';
+import { deleteLayerNode } from '@core/scene/deleteLayerNode';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useProjectStore } from '@stores/projectStore';
@@ -145,8 +145,8 @@ describe('deleting a layer from a clip bar', () => {
     c.syncFromScene('comp_root');
 
     c.deleteLayerForClip(c.getLayersForNode('via_timeline')[0]!.id);
-    useSelectionStore.getState().set(['via_sidebar']);
-    deleteSelectedLayers();
+    // The Scene tree's delete is the engine's deleteLayers, whose primitive is this.
+    deleteLayerNode('via_sidebar');
     c.syncFromScene('comp_root');
 
     expect(defaultSceneGraph.getNode('via_timeline')).toBeUndefined();
