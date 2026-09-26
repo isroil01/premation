@@ -107,8 +107,10 @@ describe('engineIneligible', () => {
     expect(engineIneligible(spec(), exe)).toBeNull();
     expect(engineIneligible(spec({ format: 'gif' }), exe)).toBeNull();
     expect(engineIneligible(spec(), null)).toMatch(/not available/);
-    expect(engineIneligible(spec({ format: 'png-sequence' }), exe)).toMatch(/png-sequence/);
+    expect(engineIneligible(spec({ format: 'png-sequence' }), exe)).toBeNull();
+    expect(engineIneligible(spec({ format: 'jpg-sequence' }), exe)).toMatch(/jpg-sequence/);
     expect(engineIneligible(spec({ chapters: [{ t: 0, title: 'A' }] }), exe)).toMatch(/chapters/);
+    expect(engineIneligible(spec({ chapters: [{ startMs: 0, endMs: 1000, title: 'Intro' }] }), exe)).toBeNull();
     expect(engineIneligible(spec({ videoEncoder: 'h264_nvenc' }), exe)).toMatch(/h264_nvenc/);
     expect(engineIneligible(spec({ videoEncoder: 'libx264' }), exe)).toBeNull();
   });
@@ -119,6 +121,8 @@ describe('the job file and the encoder command line', () => {
     const job = engineJobFile(spec(), abs('w'));
     expect(job).toMatchObject({ projectPath: spec().projectPath, workDir: abs('w'), comp: 'comp_1', startFrame: 0, endFrame: 47, fps: 24, width: 1920, height: 1080, transparent: false, audio: true });
     expect(engineJobFile(spec({ format: 'gif' }), abs('w')).audio).toBe(false);
+    expect(engineJobFile(spec({ format: 'png-sequence' }), abs('w'))).toMatchObject({ sequence: 'png-zip', audio: false });
+    expect(engineJobFile(spec({ chapters: [{ startMs: 0, endMs: 1000, title: 'Intro' }] }), abs('w')).chapters).toEqual([{ startMs: 0, endMs: 1000, title: 'Intro' }]);
   });
 
   it('is render:openStream\'s command line, byte for byte', () => {

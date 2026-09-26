@@ -653,9 +653,10 @@ Both are in the time/comp fixture (`ghosts-3d`, `energy-beam-paths`).
 **Still reported, and why:** Pixel Motion frame blending (optical flow + warp
 over the two decoded frames — the decoded frames are GPU textures in
 `MediaTextures`, so the warp belongs in the render graph); the audio waveform
-generator (needs the engine's decoded audio peaks — `audio::query_peaks` —
-reachable from the scene builder); Energy Beam on a paragraph text box. Point
-text is traced through the extrusion run cache; that path is not in the fixture.
+generator draws once the referenced layer's source has conformed
+(`MediaClock::waveform`, 1024 mono buckets). Until then the layer still
+reports it. Energy Beam on a paragraph text box. Point text is traced through
+the extrusion run cache; that path is not in the fixture.
 
 **D4 (2026-09-25): the engine keeps finished viewport frames in VRAM, keyed by
 content.** A frame drawn before is a GPU copy into the slot instead of rasters,
@@ -1339,7 +1340,9 @@ only; not yet exposed in the Export UI.
 **Open:**
 - The engine's own native-plugin host and the remaining preflight fallbacks
   (D2w/E4 ports).
-- Hardware encoders: `encoderProbe` lives in main's render IPC.
+- Hardware encoders: `encoderProbe` lives in main's render IPC. PNG and EXR
+  sequences, and chapters already resolved to `{startMs, endMs, title}`, run
+  in the engine when the export flag is on. JPEG sequences stay on the window path.
 - Partial-alpha unpremultiply is modelled on Skia's float path and is only
   unit-tested; the alpha golden scenes cannot run in the CLI because their
   harness footage is not resolvable there.

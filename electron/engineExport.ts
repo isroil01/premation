@@ -19,8 +19,10 @@
  *
  *  - Off unless `PREMATION_EXPORT_ENGINE=1` (CLAUDE.md: every native
  *    replacement ships behind a flag with the TypeScript path intact).
- *  - Ineligible specs (`engineIneligible`): image sequences, chapters, a
- *    hardware encoder, no engine executable — the window path, unchanged.
+ *  - Ineligible specs (`engineIneligible`): JPEG sequences, a hardware encoder,
+ *    chapters that are not already resolved `{startMs,endMs,title}` records,
+ *    or no engine executable — the window path, unchanged. PNG and EXR
+ *    sequences and resolved chapters run in the engine.
  *  - The engine's PREFLIGHT builds every frame of the range with the C++ scene
  *    builder first; one frame that uses a feature the builder has not ported
  *    (or audio it does not mix) reports `fallback`, and the supervisor renders
@@ -111,8 +113,24 @@ export interface EngineExportDeps {
   log?(message: string): void;
 }
 
-/** The formats the engine path writes: the raw pipe's streamable set. */
-const ENGINE_FORMATS: ReadonlySet<string> = new Set<EncodeFormat>(['mp4', 'webm', 'mov', 'gif']);
+/** The formats the engine path writes: the raw pipe, plus zipped image sequences. */
+const ENGINE_FORMATS: ReadonlySet<string> = new Set<string>(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'exr-sequence']);
+
+function isSequence(format: string): boolean {
+  return format === 'png-sequence' || format === 'exr-sequence';
+}
+
+function resolvedChapters(raw: unknown): Array<{ startMs: number; endMs: number; title: string }> | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: Array<{ startMs: number; endMs: number; title: string }> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') return null;
+    const c = item as { startMs?: unknown; endMs?: unknown; title?: unknown };
+    if (typeof c.startMs !== 'number' || typeof c.endMs !== 'number' || typeof c.title !== 'string') return null;
+    out.push({ startMs: c.startMs, endMs: c.endMs, title: c.title });
+  }
+  return out;
+}
 
 /** Exit codes premation-engine --export documents (native/engine/src/export/export_job.hpp). */
 export const EXPORT_EXIT = { ok: 0, failed: 1, fallback: 3, cancelled: 4, usage: 64 } as const;
@@ -124,7 +142,7 @@ export const EXPORT_EXIT = { ok: 0, failed: 1, fallback: 3, cancelled: 4, usage:
 export function engineIneligible(spec: EngineExportSpec, enginePath: string | null): string | null {
   if (!enginePath) return 'premation-engine is not available';
   if (!ENGINE_FORMATS.has(spec.format)) return `the engine does not write "${spec.format}"`;
-  if (Array.isArray(spec.chapters) && spec.chapters.length > 0) return 'chapters are formatted by the editor';
+  if (Array.isArray(spec.chapters) && spec.chapters.length > 0 && !resolvedChapters(spec.chapters)) return 'chapters are formatted by the editor';
   if (spec.videoEncoder && spec.videoEncoder !== 'libx264') return `hardware encoder ${spec.videoEncoder} is probed by the Chromium path`;
   return null;
 }
@@ -139,7 +157,11 @@ export function engineJobFile(spec: EngineExportSpec, workDir: string): Record<s
   if (typeof spec.transparent === 'boolean') job.transparent = spec.transparent;
   if (spec.bitDepth === 16) job.depth = 16;
   // A GIF carries no sound (buildEncodeArgs drops it), so the engine skips the mix.
-  job.audio = spec.format !== 'gif';
+  job.audio = spec.format !== 'gif' && !isSequence(spec.format);
+  if (spec.format === 'png-sequence') job.sequence = 'png-zip';
+  if (spec.format === 'exr-sequence') job.sequence = 'exr-zip';
+  const chapters = resolvedChapters(spec.chapters);
+  if (chapters) job.chapters = chapters;
   return job;
 }
 
@@ -152,7 +174,9 @@ export function engineEncodeArgs(spec: EngineExportSpec, pre: EnginePreflight, o
     quality: spec.quality,
     proresProfile: spec.proresProfile,
     audio: pre.audio,
-    chaptersFile: null,
+    chaptersFile: resolvedChapters(spec.chapters) && (spec.format === 'mp4' || spec.format === 'mov')
+      ? path.join(path.dirname(out), 'chapters.ffmeta')
+      : null,
     alpha: pre.alpha,
     videoEncoder: 'libx264',
     tagSrgb: true,
@@ -162,6 +186,8 @@ export function engineEncodeArgs(spec: EngineExportSpec, pre: EnginePreflight, o
 
 /** Where the engine writes the encode before it is delivered. */
 export function engineOutputFile(workDir: string, format: string): string {
+  if (format === 'png-sequence') return path.join(workDir, 'frames.png.zip');
+  if (format === 'exr-sequence') return path.join(workDir, 'frames.exr.zip');
   return path.join(workDir, `out.${format}`);
 }
 
@@ -257,8 +283,10 @@ export function startEngineExport(
             compName: String(msg.compName ?? ''),
           };
           cb.started?.(preflight);
-          const encode = { bin: deps.ffmpegPath(), args: engineEncodeArgs(spec, preflight, out) };
-          proc.stdin?.write(`${JSON.stringify({ encode })}\n`);
+          if (!isSequence(spec.format)) {
+            const encode = { bin: deps.ffmpegPath(), args: engineEncodeArgs(spec, preflight, out) };
+            proc.stdin?.write(`${JSON.stringify({ encode })}\n`);
+          }
           return;
         }
         case 'progress': {
