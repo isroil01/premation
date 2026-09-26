@@ -1,0 +1,38 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/expressionEnabled.migration.test.ts › boundaries — what the clean fixture excludes an empty source is DROPPED, not promoted to an enabled empty expression",
+ "input": {
+  "version": "1.5.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": []
+  },
+  "animation": {
+   "tracks": {},
+   "expressions": {
+    "n1": {
+     "x": "",
+     "y": "value + 1"
+    }
+   }
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": []
+  },
+  "animation": {
+   "tracks": {},
+   "expressions": {
+    "n1": {
+     "y": {
+      "src": "value + 1",
+      "enabled": true
+     }
+    }
+   }
+  }
+ }
+}

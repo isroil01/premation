@@ -1,0 +1,184 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/pathOpChain.migration.test.ts › 1.2.0 → 1.3.0 — path operators become a chain brings the document to the current version",
+ "input": {
+  "version": "1.2.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "shape_a",
+     "components": [
+      {
+       "type": "fx",
+       "props": {
+        "pathOp": {
+         "type": "zigzag",
+         "amount": 20,
+         "detail": 4,
+         "wigglesPerSecond": 0,
+         "seed": 0
+        }
+       }
+      }
+     ],
+     "children": [
+      {
+       "id": "shape_child",
+       "components": [
+        {
+         "type": "fx",
+         "props": {
+          "pathOp": {
+           "type": "roughen",
+           "amount": 9,
+           "detail": 2
+          }
+         }
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "shape_plain",
+     "components": [
+      {
+       "type": "fx",
+       "props": {}
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {
+    "shape_a": {
+     "pathop.amount": {
+      "keys": [
+       {
+        "t": 0,
+        "v": 0
+       },
+       {
+        "t": 2,
+        "v": 40
+       }
+      ]
+     },
+     "rotation": {
+      "keys": [
+       {
+        "t": 0,
+        "v": 0
+       }
+      ]
+     }
+    },
+    "shape_child": {
+     "pathop.detail": {
+      "keys": [
+       {
+        "t": 0,
+        "v": 2
+       }
+      ]
+     }
+    }
+   },
+   "expressions": {}
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "shape_a",
+     "components": [
+      {
+       "type": "fx",
+       "props": {
+        "pathOps": [
+         {
+          "type": "zigzag",
+          "amount": 20,
+          "detail": 4,
+          "wigglesPerSecond": 0,
+          "seed": 0,
+          "id": "op_shape_a"
+         }
+        ]
+       }
+      }
+     ],
+     "children": [
+      {
+       "id": "shape_child",
+       "components": [
+        {
+         "type": "fx",
+         "props": {
+          "pathOps": [
+           {
+            "type": "roughen",
+            "amount": 9,
+            "detail": 2,
+            "id": "op_shape_child"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "shape_plain",
+     "components": [
+      {
+       "type": "fx",
+       "props": {}
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {
+    "shape_a": {
+     "rotation": {
+      "keys": [
+       {
+        "t": 0,
+        "v": 0
+       }
+      ]
+     },
+     "pathop.op_shape_a.amount": {
+      "keys": [
+       {
+        "t": 0,
+        "v": 0
+       },
+       {
+        "t": 2,
+        "v": 40
+       }
+      ]
+     }
+    },
+    "shape_child": {
+     "pathop.op_shape_child.detail": {
+      "keys": [
+       {
+        "t": 0,
+        "v": 2
+       }
+      ]
+     }
+    }
+   },
+   "expressions": {}
+  }
+ }
+}

@@ -1,0 +1,238 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/keyframeIds.migration.test.ts › deterministic and idempotent",
+ "input": {
+  "version": "1.8.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": [
+    {
+     "id": "comp_root",
+     "parent": null,
+     "children": [
+      "n1"
+     ],
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": []
+    },
+    {
+     "id": "n1",
+     "parent": "comp_root",
+     "children": [],
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "n1_fx",
+       "type": "fx",
+       "props": {
+        "maskAnim": [
+         {
+          "t": 0,
+          "mask": {
+           "paths": []
+          },
+          "id": "k11"
+         },
+         {
+          "t": 1,
+          "mask": {
+           "paths": []
+          },
+          "id": "k12"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {
+    "n1": {
+     "x": {
+      "nodeId": "n1",
+      "prop": "x",
+      "keyframes": [
+       {
+        "t": 0,
+        "value": 0,
+        "id": "k8"
+       },
+       {
+        "t": 1,
+        "value": 10,
+        "id": "k7"
+       }
+      ]
+     },
+     "y": {
+      "nodeId": "n1",
+      "prop": "y",
+      "keyframes": [
+       {
+        "t": 0,
+        "value": 0,
+        "id": "k9"
+       }
+      ]
+     }
+    }
+   },
+   "expressions": {},
+   "data": {
+    "n1": {
+     "text.source": {
+      "nodeId": "n1",
+      "prop": "text.source",
+      "kind": "text",
+      "keyframes": [
+       {
+        "t": 0,
+        "value": "a",
+        "id": "k10"
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": [
+    {
+     "id": "comp_root",
+     "parent": null,
+     "children": [
+      "n1"
+     ],
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": []
+    },
+    {
+     "id": "n1",
+     "parent": "comp_root",
+     "children": [],
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "n1_fx",
+       "type": "fx",
+       "props": {
+        "maskAnim": [
+         {
+          "t": 0,
+          "mask": {
+           "paths": []
+          },
+          "id": "k11"
+         },
+         {
+          "t": 1,
+          "mask": {
+           "paths": []
+          },
+          "id": "k12"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {
+    "n1": {
+     "x": {
+      "nodeId": "n1",
+      "prop": "x",
+      "keyframes": [
+       {
+        "t": 0,
+        "value": 0,
+        "id": "k8"
+       },
+       {
+        "t": 1,
+        "value": 10,
+        "id": "k7"
+       }
+      ]
+     },
+     "y": {
+      "nodeId": "n1",
+      "prop": "y",
+      "keyframes": [
+       {
+        "t": 0,
+        "value": 0,
+        "id": "k9"
+       }
+      ]
+     }
+    }
+   },
+   "expressions": {},
+   "data": {
+    "n1": {
+     "text.source": {
+      "nodeId": "n1",
+      "prop": "text.source",
+      "kind": "text",
+      "keyframes": [
+       {
+        "t": 0,
+        "value": "a",
+        "id": "k10"
+       }
+      ]
+     }
+    }
+   }
+  }
+ }
+}

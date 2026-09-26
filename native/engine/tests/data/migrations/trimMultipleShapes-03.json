@@ -1,0 +1,140 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/trimMultipleShapes.migration.test.ts › v1_6_0_to_v1_7_0 — shape is IDEMPOTENT — re-running on its own output changes nothing",
+ "input": {
+  "version": "1.6.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "a",
+     "name": "a",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "a_fx",
+       "type": "fx",
+       "props": {
+        "pathOps": [
+         {
+          "id": "seq",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 50,
+          "offset": 0,
+          "trimMultipleShapes": "individually"
+         },
+         {
+          "id": "same",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 50,
+          "offset": 0,
+          "trimMultipleShapes": "simultaneously"
+         },
+         {
+          "id": "bare",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 50,
+          "offset": 0
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {}
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "a",
+     "name": "a",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "a_fx",
+       "type": "fx",
+       "props": {
+        "pathOps": [
+         {
+          "id": "seq",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 50,
+          "offset": 0,
+          "trimMultipleShapes": "individually"
+         },
+         {
+          "id": "same",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 50,
+          "offset": 0,
+          "trimMultipleShapes": "simultaneously"
+         },
+         {
+          "id": "bare",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 50,
+          "offset": 0
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {}
+  }
+ }
+}

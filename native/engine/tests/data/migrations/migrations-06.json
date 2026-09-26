@@ -1,0 +1,31 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/migrations.test.ts › migrateDocument — failing loudly rejects a document newer than this build, before any restore work",
+ "input": {
+  "version": "99.0.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": [
+    {
+     "id": "n1",
+     "name": "Rect",
+     "kind": "shape",
+     "components": []
+    },
+    {
+     "id": "n2",
+     "name": "Text",
+     "kind": "text",
+     "components": []
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {},
+   "expressions": {}
+  }
+ },
+ "error": {
+  "message": "This project was saved by a newer version of Premation (document 99.0.0; this build understands 1.9.0). Update the app to open it."
+ }
+}

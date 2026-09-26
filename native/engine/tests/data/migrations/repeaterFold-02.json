@@ -1,0 +1,223 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/repeaterFold.migration.test.ts › v1_4_0_to_v1_5_0 — shape leaves a document with no repeater completely alone",
+ "input": {
+  "version": "1.4.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "rect",
+     "name": "rect",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 200,
+       "y": 300
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "rect_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "shape",
+        "x": 200,
+        "y": 300,
+        "rotation": 0
+       }
+      },
+      {
+       "id": "rect_s",
+       "type": "Style",
+       "props": {
+        "opacity": 100,
+        "fill": "#2b7eff"
+       }
+      },
+      {
+       "id": "rect_fx",
+       "type": "fx",
+       "props": {
+        "pathOps": [
+         {
+          "id": "z1",
+          "type": "zigzag",
+          "amount": 16,
+          "detail": 5
+         },
+         {
+          "id": "trimop_rect",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 100,
+          "offset": 0
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {
+    "rect": {
+     "rep.offsetRotation": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 0
+       },
+       {
+        "t": 2,
+        "v": 90
+       }
+      ]
+     },
+     "rep.copies": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 1
+       },
+       {
+        "t": 2,
+        "v": 8
+       }
+      ]
+     },
+     "pathop.z1.amount": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 4
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "rect",
+     "name": "rect",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 200,
+       "y": 300
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "rect_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "shape",
+        "x": 200,
+        "y": 300,
+        "rotation": 0
+       }
+      },
+      {
+       "id": "rect_s",
+       "type": "Style",
+       "props": {
+        "opacity": 100,
+        "fill": "#2b7eff"
+       }
+      },
+      {
+       "id": "rect_fx",
+       "type": "fx",
+       "props": {
+        "pathOps": [
+         {
+          "id": "z1",
+          "type": "zigzag",
+          "amount": 16,
+          "detail": 5
+         },
+         {
+          "id": "trimop_rect",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 100,
+          "offset": 0
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {
+    "rect": {
+     "rep.offsetRotation": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 0,
+        "id": "k1"
+       },
+       {
+        "t": 2,
+        "v": 90,
+        "id": "k2"
+       }
+      ]
+     },
+     "rep.copies": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 1,
+        "id": "k3"
+       },
+       {
+        "t": 2,
+        "v": 8,
+        "id": "k4"
+       }
+      ]
+     },
+     "pathop.z1.amount": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 4,
+        "id": "k5"
+       }
+      ]
+     }
+    }
+   }
+  }
+ }
+}

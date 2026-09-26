@@ -1,0 +1,49 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/expressionEnabled.migration.test.ts › IDEMPOTENCE — the case every load actually takes a MIXED document converts the string and leaves the object alone",
+ "input": {
+  "version": "1.5.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": []
+  },
+  "animation": {
+   "tracks": {},
+   "expressions": {
+    "old": {
+     "x": "wiggle(2, 30)"
+    },
+    "new": {
+     "y": {
+      "src": "time * 90",
+      "enabled": false
+     }
+    }
+   }
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": []
+  },
+  "animation": {
+   "tracks": {},
+   "expressions": {
+    "old": {
+     "x": {
+      "src": "wiggle(2, 30)",
+      "enabled": true
+     }
+    },
+    "new": {
+     "y": {
+      "src": "time * 90",
+      "enabled": false
+     }
+    }
+   }
+  }
+ }
+}
