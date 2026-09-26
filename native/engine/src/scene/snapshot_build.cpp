@@ -1640,7 +1640,7 @@ void Walk::build_node(const doc::Node& n) {
     // bitmap's alpha (rig_coverage.cpp; key = assetId ?? src).
     CoverageLookup coverage;
     if (layerKind == LayerKind::image && l.src && !l.src->empty() && !pathSilhouette) {
-      coverage = image_coverage_mask(l.assetId.value_or(*l.src), *l.src);
+      coverage = image_coverage_mask(l.assetId.value_or(*l.src), *l.src, c_.mediaBase);
     }
     if (!coverage.unreachable.empty()) {
       unported(l, n, "rigs on image layers (" + coverage.unreachable + ")");

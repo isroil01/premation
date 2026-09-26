@@ -187,9 +187,15 @@ struct DocCopy {
     env = std::make_unique<doc::DocExprEnv>(d, view, cache);
     fonts = std::make_unique<Fonts>(job.fontsManifest, job.chromiumProfile, families);
     measurer = sc::make_canvas_measurer(fonts->canvas);
+    mediaBase = p.mediaBase;
     return true;
   }
-  [[nodiscard]] sc::BuildContext ctx() { return sc::BuildContext{d, view, *env, cache, measurer.get(), {}}; }
+  std::filesystem::path mediaBase;  // relative media (image-layer rigs) resolve here, as the texture feed's
+  [[nodiscard]] sc::BuildContext ctx() {
+    sc::BuildContext c{d, view, *env, cache, measurer.get(), {}};
+    c.mediaBase = mediaBase;
+    return c;
+  }
 };
 
 // ── what the job renders (headlessRender.ts + offlineRenderer.ts) ───────────

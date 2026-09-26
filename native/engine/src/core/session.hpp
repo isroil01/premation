@@ -155,6 +155,8 @@ class Session {
 
   // ── queries ──
   api::QueryResult run_query(const api::Query& q);
+  /// The folder relative media resolve against (FrameBuilder::set_media_base).
+  [[nodiscard]] std::string media_base() const;
   /// getThumbnail: build (frame builder) and draw (render thread) a still.
   StillImage render_still(const doc::StillRequest& r);
   /// A render-thread answer, waited for at most kRenderQueryTimeout.

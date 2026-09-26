@@ -54,6 +54,9 @@ class FrameBuilder {
                                                           const ViewportConfig& viewport, bool playing,
                                                           std::vector<api::LayerError>& errors) = 0;
   virtual void bind_audio(MediaClock* /*clock*/) {}
+  /// The folder relative media paths resolve against — the project's (its
+  /// bundle, or the folder of its file); '' = none. Set before every build.
+  virtual void set_media_base(std::string_view /*dir*/) {}
 
   /// getThumbnail: a still of `comp` at `time`, contain-fitted into a
   /// width × height surface over a transparent void, for FrameSink::render_still.

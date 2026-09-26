@@ -928,6 +928,7 @@ api::QueryResult Session::run_query(const api::Query& q) {
   };
   if (frameBuilder_ != nullptr) {
     c.hitTest = [this](const std::string& comp, api::Time time, api::Vec2 point, std::vector<std::string>& out) {
+      frameBuilder_->set_media_base(media_base());
       return frameBuilder_->hit_test(doc_, view_, exprEnv_, exprCache_, comp, time, point, out);
     };
   }
@@ -947,6 +948,16 @@ api::QueryResult Session::run_query(const api::Query& q) {
   // duration (timeline.hpp TlReadScope).
   const doc::TlReadScope readOnly;
   return doc::run_query(q, c);
+}
+
+std::string Session::media_base() const {
+  // project_open.cpp's rule: a bundle holds its media; a JSON file's sit beside it.
+  if (projectPath_.empty()) return {};
+  if (!bundleRoot_.empty() && bundleRoot_ == projectPath_) return projectPath_;
+  // The folder, by the UTF-8 string itself (a std::filesystem::path from a
+  // narrow string is the ANSI code page on Windows).
+  const std::size_t slash = projectPath_.find_last_of("/\\");
+  return slash == std::string::npos ? std::string() : projectPath_.substr(0, slash);
 }
 
 template <class T>
@@ -976,6 +987,7 @@ StillImage Session::render_still(const doc::StillRequest& r) {
     out.error = "getThumbnail needs the engine's scene builder (D2w); this engine draws C2 quads only";
     return out;
   }
+  frameBuilder_->set_media_base(media_base());
   std::shared_ptr<BuiltFrame> frame =
       r.footageSrc.empty()
           ? frameBuilder_->build_still(doc_, view_, exprEnv_, exprCache_, r.comp, r.time, r.width, r.height, r.isolateLayer)
@@ -1254,6 +1266,7 @@ void Session::submit_frame(std::uint32_t clockDropped) {
     // outside the port come back as layerErrors, never as a blank frame.
     std::vector<api::LayerError> errors;
     const auto t0 = Clock::now();
+    frameBuilder_->set_media_base(media_base());
     job.built = frameBuilder_->build(doc_, view_, exprEnv_, exprCache_, *c, time_, viewport_, playing_, errors);
     // Measurement only (RenderStats.cpuFrameMs): an exponential moving average.
     const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();

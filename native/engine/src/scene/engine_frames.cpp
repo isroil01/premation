@@ -8,6 +8,7 @@
 #include <cstring>
 #include <span>
 #include <exception>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <thread>
@@ -53,6 +54,9 @@ namespace premation::scene {
 namespace {
 
 using Json = js::Json;
+
+/// A UTF-8 path string as a path (not the ANSI code page on Windows).
+std::filesystem::path utf8_path(const std::string& s) { return {std::u8string(s.begin(), s.end())}; }
 
 // ── fonts ─────────────────────────────────────────────────────────────────
 
@@ -125,6 +129,9 @@ class EngineFrameBuilder final : public FrameBuilder {
  public:
   explicit EngineFrameBuilder(const EngineFramesOptions& o) : fonts_(o), measurer_(make_canvas_measurer(fonts_.canvas)) {}
   void bind_audio(MediaClock* clock) override { audio_ = clock; }
+  void set_media_base(std::string_view dir) override {
+    if (dir != mediaBase_) mediaBase_ = std::string(dir);
+  }
 
   std::shared_ptr<BuiltFrame> build(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
                                     doc::ExprCache& cache, std::string_view comp, api::Time time,
@@ -135,6 +142,7 @@ class EngineFrameBuilder final : public FrameBuilder {
     try {
       // Fonts the text names, registered before measuring (and forwarded to the render thread).
       out->fontFamilies = register_fonts(d);
+      out->mediaBase = mediaBase_;
       const BuildContext ctx = context(d, view, expr, cache);
       const SnapshotComp sc = snapshot_comp_of(d, comp);
       // The comp contain-fitted into the slot, centred, over black — C2's
@@ -195,6 +203,7 @@ class EngineFrameBuilder final : public FrameBuilder {
                                           std::string_view isolateLayer) override {
     auto out = std::make_shared<BuiltFrame>();
     out->fontFamilies = register_fonts(d);
+    out->mediaBase = mediaBase_;
     BuildContext ctx = context(d, view, expr, cache);
     ctx.isolateLayer = std::string(isolateLayer);
     const SnapshotComp sc = snapshot_comp_of(d, comp);
@@ -237,6 +246,7 @@ class EngineFrameBuilder final : public FrameBuilder {
     vs.clear = api::Color{0, 0, 0, 0};
     vs.surfaceFormat = api::RenderTextureFormat::rgba8unorm;
     auto out = std::make_shared<BuiltFrame>();
+    out->mediaBase = mediaBase_;
     const double w = snap.width;
     const double h = snap.height;
     NativeFrame nf = native_frame_of(d, std::move(snap), vs, w, h);
@@ -278,6 +288,7 @@ class EngineFrameBuilder final : public FrameBuilder {
   BuildContext context(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
                        doc::ExprCache& cache) {
     BuildContext ctx{d, view, expr, cache, measurer_.get(), {}};
+    ctx.mediaBase = utf8_path(mediaBase_);
     if (audio_ != nullptr) {
       ctx.waveform = [this](std::string_view layerId, std::vector<float>& peaks, double& duration) {
         return audio_->waveform(layerId, peaks, duration);
@@ -291,6 +302,7 @@ class EngineFrameBuilder final : public FrameBuilder {
   std::unique_ptr<TextMeasurer> measurer_;
   MediaClock* audio_ = nullptr;
   std::uint64_t builtFrames_ = 0;
+  std::string mediaBase_;
 };
 
 // ── the render-thread drawer ──────────────────────────────────────────────
@@ -433,6 +445,7 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
       h.bytes(t.pixels);
     }
     for (const std::string& f : frame.fontFamilies) h.str(f);
+    h.str(frame.mediaBase);
     return h.value();
   }
 
@@ -447,6 +460,11 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
     bool added = false;
     for (const std::string& f : frame.fontFamilies) added = fonts_.add(f) || added;
     if (added) textures_->clear();
+    // Relative media follow the project the frame was built for.
+    if (frame.mediaBase != mediaBase_) {
+      mediaBase_ = frame.mediaBase;
+      textures_->set_media_base(utf8_path(mediaBase_));
+    }
 #if defined(PREMATION_HAVE_MEDIA)
     // Paused: the exact frame (short wait); playing: never block, nearest frame.
     mediaTex_->set_mode(frame.playing ? media::MediaTextures::Mode::preview : media::MediaTextures::Mode::exact);
@@ -519,6 +537,7 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
   mutable wire::Writer keyWriter_;
   bool exact_ = false;
   std::uint32_t lastMediaRefs_ = 0;  // footage refs of the last prepare (D4 exactness)
+  std::string mediaBase_;             // the texture feed's (BuiltFrame::mediaBase)
   Fonts fonts_;
   std::unique_ptr<rg::SceneRenderer> renderer_;
   std::unique_ptr<SceneTextures> textures_;

@@ -12,6 +12,7 @@
 #pragma once
 
 #include <array>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -40,6 +41,9 @@ struct BuildContext {
   /// getThumbnail of a layer: only this layer (and what it holds) draws in the
   /// walk that holds it, as if it were the one soloed layer. '' = the comp.
   std::string isolateLayer{};
+  /// The project folder relative media paths resolve against (the texture
+  /// feed's mediaBase); empty = none (a relative path is reported).
+  std::filesystem::path mediaBase{};
 };
 
 /// The comp-level inputs the editor's viewport hands buildSnapshot for a
