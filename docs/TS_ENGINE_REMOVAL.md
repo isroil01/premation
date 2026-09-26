@@ -66,8 +66,9 @@ Data decisions:
 
 ## Gaps to close in C++ before cutting the UI over
 
-- Queries answering `unsupported`: `getWaveform`, `getThumbnail`, `hitTest`,
-  `getLayerBounds`, `getTextLayout`, `readPixels`; `listFonts` and `getJobs` empty.
+- Queries answering `unsupported`: `getLayerBounds`, `getTextLayout` (B4);
+  `listFonts` and `getJobs` empty. (`getWaveform`, `getThumbnail`, `hitTest`,
+  `readPixels` answer from the C++ engine since d2w-round2.)
 - Commands answering `unsupported`: `startJob` (trackMotion, stabilize,
   autoTrace, sceneDetect, objectMatte, transcribe, audioAnalysis, render,
   prerender), `convertLayer`, `separateLayer`, `autoTrace`, `collectFiles`,
