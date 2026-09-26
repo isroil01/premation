@@ -388,6 +388,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `splitLayers` | Original keeps the left part and its id; right parts get new ids (keyframes/markers split). Inverse: delete right parts, restore original out point. |
 | `rippleDeleteLayers` | Delete and close gaps. Inverse: restore layers and shifted timings. |
 | `rippleDeleteRange` | B3z — delete a comp TIME RANGE and close the gap (transcript editing): layers crossing an edge are split there, the parts inside deleted, later unlocked layers move left by the range's length. Inverse: every split, deleted and shifted layer. |
+| `liftRange` | B4 (id 971) — AE Lift: the same cut WITHOUT the ripple (the gap stays). Returns `TimeRangeEdit {layers, splits, deleted}`: the layers the splits created, the edges cut, the pieces removed. Inverse: every split and deleted layer. |
 | `shiftLayerKeyframes` | B3z — move every keyframe a layer owns by a layer-time delta (Stagger / Sequence animation), data tracks included, time remap / speed excluded. Inverse: shift back. |
 | `addTransition`, `setTransition` [c], `removeTransitions` | B3z — a transition on the cut between two layers (kind, whole-frame duration, alignment); refused with the frames the handles lack when a source cannot pay for the overlap. Remove puts each cut back exactly as it was before the transition. Inverse: the previous records and everything they materialised. Event: `transitionsChanged`. |
 | `editWorkArea` | Lift or extract the work area. Inverse: restore every trimmed/split/shifted layer. |
@@ -1716,6 +1717,9 @@ field); both engines report them from the same stored keys.
   keys, publish order, once each). Rides `compositionChanged` like the other
   root-stored settings (`responsiveTime`, `templateFields`); not in
   `CompSettingsPatch`.
+- **`liftRange`** (command 971, result `TimeRangeEdit`): Lift, `rippleDeleteRange`
+  without the ripple, reporting what it cut (the timeline's Lift Work Area
+  toast states it). Both engines run one shared plan for the two commands.
 
 ## 16. Files
 

@@ -655,64 +655,14 @@ export const layerTimeHandlers: HandlerTable = {
   },
 
   rippleDeleteRange: (cmd, ctx) => {
-    requireComp(cmd.comp);
-    checkTime(cmd.range.start, 'start');
-    checkTime(cmd.range.duration, 'duration');
-    if (cmd.range.duration <= 0 || cmd.range.start < 0) fail('outOfRange', 'the range must be a positive span of the composition');
-    if (cmd.layers.length > 0 && requireLayersInOneComp(cmd.layers) !== cmd.comp) fail('invalidArgument', 'the layers are not in that composition');
-    ensureTimeline(cmd.comp);
-    const fps = compFps(cmd.comp);
-    const s = flicksToFrames(cmd.range.start, fps);
-    const e = flicksToFrames(cmd.range.start + cmd.range.duration, fps);
-    const restrict = cmd.layers.length > 0 ? new Set(cmd.layers) : null;
-    const cuttable = (id: string): boolean => !graph.getNode(id)?.locked && (!restrict || restrict.has(id));
-    const newIds = new Map<string, string>();
-    if (e > s) {
-      for (const id of layerIdsOfComp(cmd.comp)) {
-        const g = geomsOf(id, cmd.comp);
-        if (g.length === 0 || !cuttable(id)) continue;
-        const sp = span(g);
-        if (sp.in < s && sp.out > e) newIds.set(id, ctx.mintId('layer_'));
-      }
-    }
-    return {
-      scope: documentScope(),
-      label: 'Delete Time Range',
-      apply: () => {
-        if (e <= s) return { layers: [] };
-        for (const id of layerIdsOfComp(cmd.comp)) {
-          if (!graph.getNode(id)) continue;
-          const g = geomsOf(id, cmd.comp);
-          if (g.length === 0 || !cuttable(id)) continue;
-          const sp = span(g);
-          if (sp.out <= s || sp.in >= e) continue;
-          if (sp.in >= s && sp.out <= e) {
-            deleteLayerNode(id);
-            continue;
-          }
-          if (sp.in < s && sp.out > e) {
-            const newId = newIds.get(id)!;
-            cloneLayerNode(id, newId);
-            remintKeyIds(newId, ctx);
-            getTimelineController().syncFromScene(cmd.comp);
-            writeGeoms(cmd.comp, id, trimOut(g, s));
-            writeGeoms(cmd.comp, newId, trimIn(g, e));
-            continue;
-          }
-          if (sp.in < s) writeGeoms(cmd.comp, id, trimOut(g, s));
-          else writeGeoms(cmd.comp, id, trimIn(g, e));
-        }
-        // The ripple, once, over every unlocked layer at/after the range end.
-        const width = e - s;
-        for (const id of layerIdsOfComp(cmd.comp)) {
-          if (graph.getNode(id)?.locked) continue;
-          const g = geomsOf(id, cmd.comp);
-          if (g.length === 0 || g[0]!.start < e) continue;
-          writeGeoms(cmd.comp, id, shift(g, -width));
-        }
-        return { layers: [...newIds.values()] };
-      },
-    };
+    const plan = deleteRangePlan(cmd, ctx, true);
+    return { scope: documentScope(), label: 'Delete Time Range', apply: () => ({ layers: plan.apply().layers }) };
+  },
+
+  // B4 — Lift: the same cut without the ripple, reporting what it did.
+  liftRange: (cmd, ctx) => {
+    const plan = deleteRangePlan(cmd, ctx, false);
+    return { scope: documentScope(), label: 'Lift', apply: () => plan.apply() };
   },
 
   shiftLayerKeyframes: (cmd) => {
@@ -741,3 +691,78 @@ export const layerTimeHandlers: HandlerTable = {
 };
 
 export type { HandlerCtx };
+
+/**
+ * rippleDeleteRange / liftRange: every cuttable layer crossing an edge of the range is split there, the parts
+ * inside are deleted, and (ripple) every unlocked layer at or after the range end moves left by its length.
+ * Validation and the ids the splits mint happen now; `apply` edits and reports what it did.
+ */
+function deleteRangePlan(
+  cmd: { comp: string; range: { start: number; duration: number }; layers: readonly string[] },
+  ctx: HandlerCtx,
+  ripple: boolean,
+): { apply: () => { layers: string[]; splits: number; deleted: number } } {
+  requireComp(cmd.comp);
+  checkTime(cmd.range.start, 'start');
+  checkTime(cmd.range.duration, 'duration');
+  if (cmd.range.duration <= 0 || cmd.range.start < 0) fail('outOfRange', 'the range must be a positive span of the composition');
+  if (cmd.layers.length > 0 && requireLayersInOneComp(cmd.layers) !== cmd.comp) fail('invalidArgument', 'the layers are not in that composition');
+  ensureTimeline(cmd.comp);
+  const fps = compFps(cmd.comp);
+  const s = flicksToFrames(cmd.range.start, fps);
+  const e = flicksToFrames(cmd.range.start + cmd.range.duration, fps);
+  const restrict = cmd.layers.length > 0 ? new Set(cmd.layers) : null;
+  const cuttable = (id: string): boolean => !graph.getNode(id)?.locked && (!restrict || restrict.has(id));
+  const newIds = new Map<string, string>();
+  if (e > s) {
+    for (const id of layerIdsOfComp(cmd.comp)) {
+      const g = geomsOf(id, cmd.comp);
+      if (g.length === 0 || !cuttable(id)) continue;
+      const sp = span(g);
+      if (sp.in < s && sp.out > e) newIds.set(id, ctx.mintId('layer_'));
+    }
+  }
+  return {
+    apply: () => {
+      let splits = 0;
+      let deleted = 0;
+      if (e <= s) return { layers: [], splits, deleted };
+      for (const id of layerIdsOfComp(cmd.comp)) {
+        if (!graph.getNode(id)) continue;
+        const g = geomsOf(id, cmd.comp);
+        if (g.length === 0 || !cuttable(id)) continue;
+        const sp = span(g);
+        if (sp.out <= s || sp.in >= e) continue;
+        deleted += 1;
+        if (sp.in >= s && sp.out <= e) {
+          deleteLayerNode(id);
+          continue;
+        }
+        if (sp.in < s && sp.out > e) {
+          const newId = newIds.get(id)!;
+          cloneLayerNode(id, newId);
+          remintKeyIds(newId, ctx);
+          getTimelineController().syncFromScene(cmd.comp);
+          writeGeoms(cmd.comp, id, trimOut(g, s));
+          writeGeoms(cmd.comp, newId, trimIn(g, e));
+          splits += 2;
+          continue;
+        }
+        splits += 1;
+        if (sp.in < s) writeGeoms(cmd.comp, id, trimOut(g, s));
+        else writeGeoms(cmd.comp, id, trimIn(g, e));
+      }
+      if (ripple) {
+        // The ripple, once, over every unlocked layer at/after the range end.
+        const width = e - s;
+        for (const id of layerIdsOfComp(cmd.comp)) {
+          if (graph.getNode(id)?.locked) continue;
+          const g = geomsOf(id, cmd.comp);
+          if (g.length === 0 || g[0]!.start < e) continue;
+          writeGeoms(cmd.comp, id, shift(g, -width));
+        }
+      }
+      return { layers: [...newIds.values()], splits, deleted };
+    },
+  };
+}

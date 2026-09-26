@@ -1280,43 +1280,49 @@ ResultOf<api::TimeStretchLayers> handle(const api::TimeStretchLayers& c, HCtx& x
   return {};
 }
 
-ResultOf<api::RippleDeleteRange> handle(const api::RippleDeleteRange& c, HCtx& x) {
+namespace {
+
+/// rippleDeleteRange / liftRange (model.ts `deleteRangePlan`): every cuttable layer crossing an edge of the range is
+/// split there, the parts inside are deleted and (ripple) every unlocked layer at or after the range end moves left
+/// by its length. Returns the layers the splits created, the edges cut and the pieces removed.
+api::TimeRangeEdit delete_time_range(const api::ItemId& comp, const api::TimeRange& range, const std::vector<api::LayerId>& layers,
+                                     bool ripple, HCtx& x) {
   Document& d = x.d;
-  require_comp(d, c.comp);
-  if (c.range.duration <= 0 || c.range.start < 0) fail(ErrorCode::out_of_range, "the range must be a positive span of the composition");
-  if (!c.layers.empty() && require_layers_in_one_comp(d, c.layers) != c.comp) {
+  require_comp(d, comp);
+  if (range.duration <= 0 || range.start < 0) fail(ErrorCode::out_of_range, "the range must be a positive span of the composition");
+  if (!layers.empty() && require_layers_in_one_comp(d, layers) != comp) {
     fail(ErrorCode::invalid_argument, "the layers are not in that composition");
   }
-  ensure_timeline(d, c.comp);
-  const double fps = comp_fps(d, c.comp);
-  const double s = flicks_to_frames(c.range.start, fps);
-  const double e = flicks_to_frames(c.range.start + c.range.duration, fps);
-  const std::set<std::string, std::less<>> only(c.layers.begin(), c.layers.end());
+  ensure_timeline(d, comp);
+  const double fps = comp_fps(d, comp);
+  const double s = flicks_to_frames(range.start, fps);
+  const double e = flicks_to_frames(range.start + range.duration, fps);
+  const std::set<std::string, std::less<>> only(layers.begin(), layers.end());
   const auto cuttable = [&](const std::string& id) {
     const Node* n = d.node(id);
     return n != nullptr && !n->locked && (only.empty() || only.contains(id));
   };
   std::vector<std::pair<std::string, std::string>> newIds;
   if (e > s) {
-    for (const auto& id : layer_ids_of_comp(d, c.comp)) {
-      const auto g = geoms_of(d, id, c.comp);
+    for (const auto& id : layer_ids_of_comp(d, comp)) {
+      const auto g = geoms_of(d, id, comp);
       if (g.empty() || !cuttable(id)) continue;
       const Span sp = span(g);
       if (sp.in < s && sp.out > e) newIds.emplace_back(id, x.mint_id("layer_"));
     }
   }
-  x.label = "Delete Time Range";
-  api::LayerList out;
+  api::TimeRangeEdit out;
   if (e <= s) return out;
-  for (const auto& id : layer_ids_of_comp(d, c.comp)) {
+  for (const auto& id : layer_ids_of_comp(d, comp)) {
     if (d.node(id) == nullptr) continue;
-    const auto g = geoms_of(d, id, c.comp);
+    const auto g = geoms_of(d, id, comp);
     if (g.empty() || !cuttable(id)) continue;
     const Span sp = span(g);
     if (sp.out <= s || sp.in >= e) continue;
+    out.deleted += 1;
     if (sp.in >= s && sp.out <= e) {
       (void)delete_layer_node(d, id);
-      tl_sync_from_scene(d, c.comp);
+      tl_sync_from_scene(d, comp);
       continue;
     }
     if (sp.in < s && sp.out > e) {
@@ -1326,24 +1332,43 @@ ResultOf<api::RippleDeleteRange> handle(const api::RippleDeleteRange& c, HCtx& x
       }
       (void)clone_layer_node(d, id, newId);
       remint_key_ids(x, newId);
-      tl_sync_from_scene(d, c.comp);
-      write_geoms(d, c.comp, id, trim_out(g, s));
-      write_geoms(d, c.comp, newId, trim_in(g, e));
+      tl_sync_from_scene(d, comp);
+      write_geoms(d, comp, id, trim_out(g, s));
+      write_geoms(d, comp, newId, trim_in(g, e));
+      out.splits += 2;
       continue;
     }
-    if (sp.in < s) write_geoms(d, c.comp, id, trim_out(g, s));
-    else write_geoms(d, c.comp, id, trim_in(g, e));
+    out.splits += 1;
+    if (sp.in < s) write_geoms(d, comp, id, trim_out(g, s));
+    else write_geoms(d, comp, id, trim_in(g, e));
   }
-  const double width = e - s;
-  for (const auto& id : layer_ids_of_comp(d, c.comp)) {
-    const Node* n = d.node(id);
-    if (n == nullptr || n->locked) continue;
-    const auto g = geoms_of(d, id, c.comp);
-    if (g.empty() || g.front().start < e) continue;
-    write_geoms(d, c.comp, id, shift(g, -width));
+  if (ripple) {
+    const double width = e - s;
+    for (const auto& id : layer_ids_of_comp(d, comp)) {
+      const Node* n = d.node(id);
+      if (n == nullptr || n->locked) continue;
+      const auto g = geoms_of(d, id, comp);
+      if (g.empty() || g.front().start < e) continue;
+      write_geoms(d, comp, id, shift(g, -width));
+    }
   }
   for (const auto& [k, v] : newIds) out.layers.push_back(v);
   return out;
+}
+
+}  // namespace
+
+ResultOf<api::RippleDeleteRange> handle(const api::RippleDeleteRange& c, HCtx& x) {
+  x.label = "Delete Time Range";
+  api::TimeRangeEdit r = delete_time_range(c.comp, c.range, c.layers, true, x);
+  api::LayerList out;
+  out.layers = std::move(r.layers);
+  return out;
+}
+
+ResultOf<api::LiftRange> handle(const api::LiftRange& c, HCtx& x) {
+  x.label = "Lift";
+  return delete_time_range(c.comp, c.range, c.layers, false, x);
 }
 
 ResultOf<api::ShiftLayerKeyframes> handle(const api::ShiftLayerKeyframes& c, HCtx& x) {

@@ -1859,6 +1859,23 @@ export interface RippleDeleteRange {
   layers: LayerId[];
 }
 
+/** B4 — Lift (AE Lift Work Area): delete a composition TIME RANGE and LEAVE the gap — `rippleDeleteRange` without the ripple. Every unlocked layer of `layers` (empty = every layer of the comp) that crosses an edge of `range` is split there and the parts inside are deleted; nothing moves. Locked layers are never cut or deleted. Returns the layers the splits created, how many edges were cut and how many pieces were removed. Inverse: the layers and bars restored exactly. */
+export interface LiftRange {
+  comp: ItemId;
+  range: TimeRange;
+  layers: LayerId[];
+}
+
+/** B4 — what a range delete did (liftRange). */
+export interface TimeRangeEdit {
+  /** The layers the splits created (the part after the range of a layer that straddled it). */
+  layers: LayerId[];
+  /** Range edges a layer was cut at (a layer straddling the whole range counts two). */
+  splits: number;
+  /** Pieces removed: a layer wholly inside the range, or the part of a layer inside it. */
+  deleted: number;
+}
+
 /** One layer's keyframe shift (shiftLayerKeyframes). */
 export interface LayerKeyShift {
   layer: LayerId;
@@ -3979,6 +3996,7 @@ export type Command =
   | ({ type: 'timeStretchLayers' } & TimeStretchLayers)
   | ({ type: 'unfreezeLayers' } & UnfreezeLayers)
   | ({ type: 'rippleDeleteRange' } & RippleDeleteRange)
+  | ({ type: 'liftRange' } & LiftRange)
   | ({ type: 'shiftLayerKeyframes' } & ShiftLayerKeyframes)
   | ({ type: 'addTransition' } & AddTransition)
   | ({ type: 'setTransition' } & SetTransition)
@@ -4131,6 +4149,7 @@ export type CommandResult =
   | ({ type: 'timeStretchLayers' } & Empty)
   | ({ type: 'unfreezeLayers' } & Empty)
   | ({ type: 'rippleDeleteRange' } & LayerList)
+  | ({ type: 'liftRange' } & TimeRangeEdit)
   | ({ type: 'shiftLayerKeyframes' } & Empty)
   | ({ type: 'addTransition' } & TransitionRef)
   | ({ type: 'setTransition' } & Empty)
@@ -4396,6 +4415,7 @@ export interface CommandArgs {
   timeStretchLayers: TimeStretchLayers;
   unfreezeLayers: UnfreezeLayers;
   rippleDeleteRange: RippleDeleteRange;
+  liftRange: LiftRange;
   shiftLayerKeyframes: ShiftLayerKeyframes;
   addTransition: AddTransition;
   setTransition: SetTransition;
@@ -4548,6 +4568,7 @@ export interface CommandResults {
   timeStretchLayers: Empty;
   unfreezeLayers: Empty;
   rippleDeleteRange: LayerList;
+  liftRange: TimeRangeEdit;
   shiftLayerKeyframes: Empty;
   addTransition: TransitionRef;
   setTransition: Empty;

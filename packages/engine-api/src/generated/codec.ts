@@ -4751,6 +4751,62 @@ function decS_RippleDeleteRange(r: Reader, end: number, o: any): T.RippleDeleteR
   o.layers = l_layers;
   return o;
 }
+function encS_LiftRange(w: Writer, v: T.LiftRange): void {
+  w.byte(10); w.str(v.comp);
+  w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(26); w.str(a[i]!); } }
+}
+function decS_LiftRange(r: Reader, end: number, o: any): T.LiftRange {
+  const l_layers: string[] = [];
+  let h_comp = false;
+  let h_range = false;
+  let v_comp: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_comp = r.str(); h_comp = true; break;
+      case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 26: l_layers.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_comp) throw new DecodeError('LiftRange.comp: missing', 'missingField');
+  if (!h_range) throw new DecodeError('LiftRange.range: missing', 'missingField');
+  o.comp = v_comp;
+  o.range = v_range;
+  o.layers = l_layers;
+  return o;
+}
+function encS_TimeRangeEdit(w: Writer, v: T.TimeRangeEdit): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(16); w.u32(v.splits);
+  w.byte(24); w.u32(v.deleted);
+}
+function decS_TimeRangeEdit(r: Reader, end: number, o: any): T.TimeRangeEdit {
+  const l_layers: string[] = [];
+  let h_splits = false;
+  let h_deleted = false;
+  let v_splits: number | undefined;
+  let v_deleted: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      case 16: v_splits = r.u32(); h_splits = true; break;
+      case 24: v_deleted = r.u32(); h_deleted = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_splits) throw new DecodeError('TimeRangeEdit.splits: missing', 'missingField');
+  if (!h_deleted) throw new DecodeError('TimeRangeEdit.deleted: missing', 'missingField');
+  o.layers = l_layers;
+  o.splits = v_splits;
+  o.deleted = v_deleted;
+  return o;
+}
 function encS_LayerKeyShift(w: Writer, v: T.LayerKeyShift): void {
   w.byte(10); w.str(v.layer);
   w.byte(16); w.i64(v.delta);
@@ -13231,6 +13287,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'applyJobResult': w.varint(6818); { const s = w.beginLd(); encS_ApplyJobResult(w, v); w.endLd(s); } return;
     case 'setPluginEnabled': w.varint(6962); { const s = w.beginLd(); encS_SetPluginEnabled(w, v); w.endLd(s); } return;
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_SetPluginData(w, v); w.endLd(s); } return;
+    case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_LiftRange(w, v); w.endLd(s); } return;
     default: throw new RangeError('Command: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -13388,6 +13445,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 6818: out = decS_ApplyJobResult(r, r.ldEnd(), { type: 'applyJobResult' }) as T.Command; break;
       case 6962: out = decS_SetPluginEnabled(r, r.ldEnd(), { type: 'setPluginEnabled' }) as T.Command; break;
       case 6970: out = decS_SetPluginData(r, r.ldEnd(), { type: 'setPluginData' }) as T.Command; break;
+      case 7770: out = decS_LiftRange(r, r.ldEnd(), { type: 'liftRange' }) as T.Command; break;
       default: r.skip(key);
     }
   }
@@ -13545,6 +13603,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'applyJobResult': w.varint(6818); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
     case 'setPluginEnabled': w.varint(6962); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_TimeRangeEdit(w, v); w.endLd(s); } return;
     default: throw new RangeError('CommandResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -13702,6 +13761,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 6818: out = decS_ItemList(r, r.ldEnd(), { type: 'applyJobResult' }) as T.CommandResult; break;
       case 6962: out = decS_Empty(r, r.ldEnd(), { type: 'setPluginEnabled' }) as T.CommandResult; break;
       case 6970: out = decS_Empty(r, r.ldEnd(), { type: 'setPluginData' }) as T.CommandResult; break;
+      case 7770: out = decS_TimeRangeEdit(r, r.ldEnd(), { type: 'liftRange' }) as T.CommandResult; break;
       default: r.skip(key);
     }
   }
@@ -14128,6 +14188,8 @@ export const codecs = {
   TimeStretchLayers: mk<T.TimeStretchLayers>(encS_TimeStretchLayers, (r, e) => decS_TimeStretchLayers(r, e, {})),
   UnfreezeLayers: mk<T.UnfreezeLayers>(encS_UnfreezeLayers, (r, e) => decS_UnfreezeLayers(r, e, {})),
   RippleDeleteRange: mk<T.RippleDeleteRange>(encS_RippleDeleteRange, (r, e) => decS_RippleDeleteRange(r, e, {})),
+  LiftRange: mk<T.LiftRange>(encS_LiftRange, (r, e) => decS_LiftRange(r, e, {})),
+  TimeRangeEdit: mk<T.TimeRangeEdit>(encS_TimeRangeEdit, (r, e) => decS_TimeRangeEdit(r, e, {})),
   LayerKeyShift: mk<T.LayerKeyShift>(encS_LayerKeyShift, (r, e) => decS_LayerKeyShift(r, e, {})),
   ShiftLayerKeyframes: mk<T.ShiftLayerKeyframes>(encS_ShiftLayerKeyframes, (r, e) => decS_ShiftLayerKeyframes(r, e, {})),
   Transition: mk<T.Transition>(encS_Transition, (r, e) => decS_Transition(r, e, {})),

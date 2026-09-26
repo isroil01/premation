@@ -248,6 +248,18 @@ command timeStretchLayers = 330 { layers: LayerId[] = 1; stretch: f64 = 2; hold:
 command unfreezeLayers = 331 { layers: LayerId[] = 1; }
 /// B3z — delete a composition TIME RANGE and close the gap (transcript editing, a range extract): every unlocked layer of `layers` (empty = every layer of the comp) that crosses an edge of `range` is split there, the parts inside are deleted, then EVERY unlocked layer starting at or after the range end moves left by the range's length. Locked layers are never cut, deleted or moved. Returns the layers the splits created. Inverse: the layers, bars and every shifted timing restored exactly.
 command rippleDeleteRange = 332 { comp: ItemId = 1; range: TimeRange = 2; layers: LayerId[] = 3; } -> LayerList;
+/// B4 — Lift (AE Lift Work Area): delete a composition TIME RANGE and LEAVE the gap — `rippleDeleteRange` without the ripple. Every unlocked layer of `layers` (empty = every layer of the comp) that crosses an edge of `range` is split there and the parts inside are deleted; nothing moves. Locked layers are never cut or deleted. Returns the layers the splits created, how many edges were cut and how many pieces were removed. Inverse: the layers and bars restored exactly.
+command liftRange = 971 { comp: ItemId = 1; range: TimeRange = 2; layers: LayerId[] = 3; } -> TimeRangeEdit;
+
+/// B4 — what a range delete did (liftRange).
+struct TimeRangeEdit {
+  /// The layers the splits created (the part after the range of a layer that straddled it).
+  layers: LayerId[] = 1;
+  /// Range edges a layer was cut at (a layer straddling the whole range counts two).
+  splits: u32 = 2;
+  /// Pieces removed: a layer wholly inside the range, or the part of a layer inside it.
+  deleted: u32 = 3;
+}
 
 /// One layer's keyframe shift (shiftLayerKeyframes).
 struct LayerKeyShift {
