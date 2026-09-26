@@ -1249,9 +1249,12 @@ layout/Inspector/PolystarSection, layout/Scene/layerSwitchEdits).
 
 The Lottie importer's synchronous document context (`createLegacyDocumentContext`)
 moved to `src/core/lottie/lottieDocumentContext.ts`: it is an off-document
-builder, not an automation client. Tools still recorded as a gap wholesale
-(`buildAiTools`): `merge_paths` (the live merge edits source layers in place)
-and `export_video` (the editor's render-queue store, not `addRenderItems`).
+builder, not an automation client. `export_video` writes no document state
+(the editor's render-job queue lives in the app's settings). The one tool
+still recorded as a gap wholesale (`buildAiTools`) is `merge_paths`: the
+live merge flags its operand layers in place (`fx.booleanOperand`), which
+no API property addresses yet — the same helper backs the canvas menu's
+Live Union / Subtract / Intersect.
 
 ### 15.7 G1 — static fields, optional properties and the data-model gaps
 

@@ -1939,11 +1939,12 @@ const addPathMorph: AiTool['handler'] = async (input, ctx) => {
  * Mutating tools whose handlers write ONLY through the ToolContext facades,
  * engine commands and off-document builders sent as ONE engine command
  * (hostWrites.ts) — audited for B5. A write the API cannot express is REFUSED
- * (a failed tool call), never made around the engine. The two tools not listed
- * still write outside the document engine and are recorded as a gap wholesale
- * by `buildAiTools`: `merge_paths` (the live merge builder edits source layers
- * in place) and `export_video` (the editor's render queue store, not the
- * document's `addRenderItems`).
+ * (a failed tool call), never made around the engine. `export_video` writes
+ * no document state (the editor's render-job queue, persisted with the app's
+ * settings — not the project's `addRenderItems` queue). The one tool not
+ * listed, `merge_paths`, still edits source layers outside the engine (the
+ * live merge builder flags its operands in place) and is recorded as a gap
+ * wholesale by `buildAiTools`.
  */
 export const ENGINE_ROUTED_TOOLS: ReadonlySet<string> = new Set([
   'create_layer', 'delete_layer', 'reparent_layer', 'update_layer',
@@ -1958,7 +1959,7 @@ export const ENGINE_ROUTED_TOOLS: ReadonlySet<string> = new Set([
   'add_path_operator', 'create_skeleton_rig', 'apply_layer_style', 'recolor_lottie_vector', 'create_gradient',
   'add_surface_treatment', 'define_style', 'add_background', 'add_title', 'add_emblem', 'add_cards', 'stagger_in',
   'add_camera_move', 'add_kinetic_title', 'add_light_sweep', 'add_ambient_orbs', 'add_lower_third', 'add_scene',
-  'add_transition', 'add_logo_reveal', 'add_radial_burst', 'add_path_morph',
+  'add_transition', 'add_logo_reveal', 'add_radial_burst', 'add_path_morph', 'export_video',
 ]);
 
 const HANDLERS: Record<string, AiTool['handler']> = {
