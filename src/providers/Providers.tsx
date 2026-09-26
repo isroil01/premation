@@ -162,6 +162,8 @@ import { nullsFromPathEdit, shapesFromTextEdit } from '@layout/Scene/layerCreate
 import { buildPathCommands } from '@core/workspace/pathCommands';
 import { canCreateShapesFromText } from '@core/scene/shapesFromText';
 import { autoTraceLayer } from '@core/effects/autoTrace';
+import { runEngineJob } from '@core/engine/engineJobs';
+import { secondsToFlicks } from '@motion/engine-api';
 import { centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
@@ -1873,6 +1875,35 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         const endSec = range && wa ? (wa.start + wa.duration - 1) / fps : undefined;
         const noteId = useUIStore.getState().notify({ level: 'info', message: 'Auto-trace: rendering…', durationMs: 0 });
         try {
+          // The engine traces the layer's frames itself when it runs jobs (the autoTrace job).
+          const endS = endSec ?? startSec;
+          const viaEngine = await runEngineJob<{ pathsAdded: number; keyframes: number }>(
+            {
+              kind: 'autoTrace',
+              value: {
+                layer: id,
+                range: { start: secondsToFlicks(startSec), duration: secondsToFlicks(Math.max(0, endS - startSec) + 1 / Math.max(1, fps)) },
+                channel: 'alpha',
+                threshold: threshold / 255,
+                everyFrame: range,
+                invert: false,
+              },
+            },
+            { onProgress: (f) => { useUIStore.getState().notify({ level: 'info', message: `Auto-trace: ${Math.round(f * 100)}%`, durationMs: 600 }); } },
+          );
+          if (viaEngine) {
+            useUIStore.getState().dismissNotification(noteId);
+            const n = viaEngine.result?.pathsAdded ?? 0;
+            if (viaEngine.status === 'failed') notify(`Auto-trace failed: ${viaEngine.error?.message ?? 'unknown error'}`, 'error');
+            else if (viaEngine.status === 'done') {
+              notify(
+                n === 0 ? 'Auto-trace found nothing above the threshold'
+                  : `Auto-trace: ${n} mask path${n === 1 ? '' : 's'}${viaEngine.result?.keyframes ? `, ${viaEngine.result.keyframes} keyframes` : ''}`,
+                n === 0 ? 'warning' : 'success',
+              );
+            }
+            return;
+          }
           const r = await autoTraceLayer({
             nodeId: id, startSec, endSec, threshold,
             onProgress: (f) => {
