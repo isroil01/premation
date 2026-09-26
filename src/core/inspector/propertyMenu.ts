@@ -29,13 +29,10 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { formatChord } from '@core/commands/formatChord';
 import type { KeyChord } from '@app-types/common';
 import { resolvePropertyMeta } from './propertyMeta';
+import { documentMirror } from '@stores/documentMirror';
+import { mirrorCompositionRootOf, mirrorIsEssentialProp } from '@core/mirror/compOverrides';
 import { isPinnedProp, setPinnedProp } from './pinnedProps';
-import {
-  compositionRootOf,
-  isEssentialProp,
-  isOverridableProp,
-  setEssentialProp,
-} from '@core/scene/compInstanceOverrides';
+import { isOverridableProp, setEssentialProp } from '@core/scene/compInstanceOverrides';
 
 /** How close (seconds) the playhead must be to count as "on" a keyframe. */
 const EPS = 1e-4;
@@ -292,9 +289,11 @@ export function pinPropMenuItems(nodeId: string, prop: string): ContextMenuItem[
  */
 export function essentialPropMenuItems(nodeId: string, prop: string): ContextMenuItem[] {
   if (!isOverridableProp(prop)) return [];
-  const root = compositionRootOf(nodeId);
+  // B4: the composition and what it publishes from the document mirror (`CompSettings.essentialProps`).
+  const m = documentMirror();
+  const root = mirrorCompositionRootOf(m, nodeId);
   if (!root || root === nodeId) return [];
-  const promoted = isEssentialProp(root, nodeId, prop);
+  const promoted = mirrorIsEssentialProp(m, root, nodeId, prop);
   return [
     { id: 'sep-essential', separator: true },
     {

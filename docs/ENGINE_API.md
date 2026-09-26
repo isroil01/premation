@@ -1700,8 +1700,9 @@ field); both engines report them from the same stored keys.
   (`__ownedByPlugin`), '' when the user owns it.
 - **`LayerInfo.mographId`** (120): the library item an inserted
   motion-graphics element came from (`__mographId`, on its root group).
-- **`LayerTiming.freeze?`** (108): Freeze Frame's held comp time; absent =
-  not frozen. **`LayerTiming.bakedStretch?`** (109): the factor a
+- **`LayerTiming.freeze?`** (108): the time Freeze Frame holds, on the
+  layer's own time axis (keyframe / source time — what `freezeFrame` resolved
+  the comp time to); absent = not frozen. **`LayerTiming.bakedStretch?`** (109): the factor a
   `timeStretchLayers` bake left on a layer with no source (1 = 100 %, negative
   = reversed); absent = none. Footage and precomps keep reporting their live
   rate in `stretch`.

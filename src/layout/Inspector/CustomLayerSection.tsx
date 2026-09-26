@@ -29,7 +29,7 @@ import { Checkbox } from '@components/Checkbox';
 import { ColorPicker } from '@components/ColorPicker';
 import { AngleDial } from '@components/AngleDial';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useMirrorTree } from '@hooks/useMirror';
+import { useMirrorFootage, useMirrorTree } from '@hooks/useMirror';
 import { useComponentProp } from './useComponentProp';
 import {
   customLayerComponent,
@@ -43,7 +43,6 @@ import {
 import { findKindFor } from '@core/plugins/layerKindRegistry';
 import { openPluginTab } from '@layout/Plugins/openPluginTab';
 import { usePluginStore } from '@stores/pluginStore';
-import { useAssetStore } from '@stores/assetStore';
 import type { LayerPropSchema } from '@core/plugins/layerKindSchema';
 import { KeyframeRow as KfRow } from './KeyframeRow';
 import styles from './TransformSection.module.css';
@@ -385,10 +384,8 @@ function AssetPropRow({
   value: unknown;
   onPick: (v: string | null) => void;
 }): JSX.Element {
-  // B4-gap: an item's media type (a still image vs video / audio / svg footage) — `ItemInfo` is `footage` with no media
-  // type; closes with an `ItemInfo.mediaType` field (then `useMirrorItems()` filtered on it).
-  const assets = useAssetStore((s) => s.assets);
-  const images = useMemo(() => assets.filter((a) => a.type === 'image'), [assets]);
+  // B4: the project's still images (`ItemInfo.mediaType`).
+  const images = useMirrorFootage('image');
   const current = typeof value === 'string' && value ? value : '';
   const missing = current !== '' && !images.some((a) => a.id === current);
 

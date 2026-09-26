@@ -21,9 +21,9 @@
  *    position back from the colour, so the two controls stay one value.
  */
 
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import { MAX_LIGHTS3D } from '@motion/renderer';
-import { useMirrorLayer } from '@hooks/useMirror';
+import { useMirrorFootage, useMirrorLayer } from '@hooks/useMirror';
 import { useActiveCompLayers } from '@hooks/useMirrorFields';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { useActiveCompSize } from './inspectorMirror';
@@ -46,7 +46,6 @@ import {
   type EnvironmentSky,
 } from '@core/scene/environmentLight';
 import { ensureEnvironmentSh } from '@core/scene/environmentImage';
-import { useAssetStore } from '@stores/assetStore';
 import { kelvinToHex, nearestKelvin, KELVIN_MIN, KELVIN_MAX } from '@core/scene/colorTemperature';
 import {
   componentPropCommands,
@@ -128,9 +127,8 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   // The library, for the "Image…" sky. Selected as the whole array (a filtered
   // one would be a fresh reference on every store read, which re-renders
   // forever) and narrowed in a memo — the same shape the other asset rows use.
-  // B4-gap: an item's media type (still image vs video) — ItemInfo is `footage` with no still/moving flag (duration 0 is also "unknown")
-  const assets = useAssetStore((s) => s.assets);
-  const imageAssets = useMemo(() => assets.filter((a) => a.type === 'image'), [assets]);
+  // B4: the project's still images (`ItemInfo.mediaType`).
+  const imageAssets = useMirrorFootage('image');
   /**
    * The asset id this light's sky names, or null when it names a preset.
    *

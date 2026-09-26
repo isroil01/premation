@@ -121,7 +121,7 @@ api::LayerTiming layer_timing(const Document& d, std::string_view layer) {
   t.stretch = (cfg.stretch / 100) * (cfg.reverse ? -1 : 1);
   t.retime = read_retime_mode(d, layer);
   t.time_remap_enabled = anim_is_animated(d, layer, "timeRemap");
-  // B4: Freeze Frame (the held comp time) and a baked Time Stretch's factor (`fx.bakedStretch`, 100 = none) - model.ts layerTiming.
+  // B4: Freeze Frame (the held time, on the layer's own axis) and a baked Time Stretch's factor (`fx.bakedStretch`, 100 = none) - model.ts layerTiming.
   if (cfg.freeze) t.freeze = seconds_to_flicks(cfg.freezeTime);
   if (n != nullptr) {
     const Json& baked = n->fx().at("bakedStretch");

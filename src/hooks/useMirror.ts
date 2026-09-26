@@ -14,6 +14,7 @@
  *   useMirrorLayers(ids)                 (LayerInfo | undefined)[] — same array until one of them changes
  *   useMirrorComp(id)                    MirrorComp | undefined (settings, stack order, markers)
  *   useMirrorItems() / useMirrorItem(id) ItemInfo records
+ *   useMirrorFootage(mediaType)          footage items holding stills / video / audio
  *   useMirrorTree(layer)                 MirrorTree | undefined — retains (loads) the layer's property tree
  *   useMirrorProperty(layer, path)       PropertyInfo | undefined — retains the tree
  *   useMirrorKeyframes(layer, path)      readonly Keyframe[] (empty when not animated)
@@ -185,6 +186,15 @@ export function useActiveCompFps(fallback = 30): number {
 
 export function useMirrorItems(): ReadonlyMap<string, ItemInfo> {
   return useMirrorSelect(['items'], (m) => m.items);
+}
+
+/**
+ * The footage items whose file holds `mediaType` (`ItemInfo.mediaType`), in project order — the pickers that
+ * offer "a still image" (a sky, a sprite, a height map, a plugin's image param). Same array until the items change.
+ */
+export function useMirrorFootage(mediaType: ItemInfo['mediaType']): readonly ItemInfo[] {
+  const items = useMirrorItems();
+  return useMemo(() => [...items.values()].filter((i) => i.kind === 'footage' && i.mediaType === mediaType), [items, mediaType]);
 }
 
 export function useMirrorItem(id: string | null | undefined): ItemInfo | undefined {

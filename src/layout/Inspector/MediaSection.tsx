@@ -15,7 +15,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { InspectorRow } from '@components/Inspector';
 import { Switch } from '@components/Switch';
-import { useAssetStore } from '@stores/assetStore';
 import type { AlphaInterpretation } from '@core/source/sourceInfo';
 import { getTime } from '@stores/playbackClockStore';
 import { documentMirror } from '@stores/documentMirror';
@@ -26,7 +25,6 @@ import { plainValue } from '@core/mirror/trackIndex';
 import { staticLevelDb, staticPan } from '@core/mirror/audio';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { isLayer } from '@core/engine/doc';
-import { getNodeLayerTime } from '@core/scene/layerTime';
 import { values } from '@core/engine/propRefs';
 import { engine } from '@core/engine/engineInstance';
 import { audioEngine } from '@core/audio/AudioEngine';
@@ -94,18 +92,16 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
   // Alpha interpretation is per-FILE, so it keys off the footage item, not the layer.
   const alphaAssetId = sourceId && m.item(sourceId)?.kind !== 'composition' ? sourceId : null;
   const alphaMode: AlphaInterpretation = item?.interpretation?.alpha === 'premultiplied' ? 'premultiplied' : 'straight';
-  // B4-gap: the import probe's UNKNOWN state — `ItemInfo.hasAlpha` / `hasAudio`
-  // are two-valued (false = "no" or "never probed"), and these controls must
-  // not hide on an unprobed file. An optional `hasAlpha` / `hasAudioTrack` (or
-  // a `probed` flag) on ItemInfo closes it.
-  const probe = alphaAssetId ? useAssetStore.getState().assets.find((a) => a.id === alphaAssetId)?.metadata : undefined;
+  // The import probe's answers (`ItemInfo.alphaProbed` / `audioProbed`): these controls
+  // must not hide on a file nobody probed — false there means "never looked", not "no".
+  const probedItem = alphaAssetId ? item : undefined;
   // Only offered for footage that actually HAS an alpha channel. On opaque
   // footage the setting changes nothing, and a control that does nothing on
   // most of a project's media is the same noise as one nothing reads.
   // Undefined (browser build, or a still whose probe never ran) is treated as
   // "unknown" and the control is shown, because refusing to offer it would
   // leave a user with fringing and no recourse.
-  const showAlpha = !!alphaAssetId && probe?.hasAlpha !== false;
+  const showAlpha = !!alphaAssetId && !(probedItem?.alphaProbed === true && !probedItem.hasAlpha);
 
   const isVideo = uiKindOf(layer) === 'video';
   // The file the layer plays (the item's path; its name when the path is unknown).
@@ -139,16 +135,13 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
   // decode outcome, which is all a web import can offer. `probedAudio === false`
   // is the only case that justifies hiding the section outright — an unprobed
   // file that has simply not finished decoding must not look like a silent one.
-  const probedAudio = isVideo && typeof probe?.hasAudioTrack === 'boolean' ? probe.hasAudioTrack : null;
+  const probedAudio = isVideo && probedItem?.audioProbed === true ? probedItem.hasAudio : null;
   const decodeState = audioAssetId ? audioEngine.decodeState(audioAssetId) : 'pending';
   const silent = probedAudio === false || (probedAudio === null && decodeState === 'silent');
 
   // Freeze mutes audio (held frame). Time remap expands into varispeed
   // segments — see audioRetimeSegments. Stretch/reverse use playbackRate.
-  // B4-gap: the freeze-frame state — `LayerTiming` carries stretch / retime /
-  // time remap but not a freeze (`freezeFrame` / `unfreezeLayers` write it); a
-  // `LayerTiming.freeze?: Time` (the held layer time) closes it.
-  const speedAltered = layer ? getNodeLayerTime(nodeId).freeze === true : false;
+  const speedAltered = layer?.timing.freeze !== undefined;
 
   // Image sequences carry the per-LAYER loop field (`layer/sequenceLoop`).
   const sequenceLoop = tree?.nodes.get('layer/sequenceLoop');

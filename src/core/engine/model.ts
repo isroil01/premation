@@ -163,7 +163,7 @@ export function layerTiming(layerId: string): LayerTiming {
   const stretch = (cfg.stretch / 100) * (cfg.reverse ? -1 : 1);
   const retime: RetimeMode = readRetimeMode(defaultAnimation, layerId);
   const timeRemapEnabled = defaultAnimation.isAnimated(layerId, 'timeRemap');
-  // B4: Freeze Frame (the held comp time) and a baked Time Stretch's factor (`fx.bakedStretch`, 100 = none).
+  // B4: Freeze Frame (the held time, on the layer's own axis) and a baked Time Stretch's factor (`fx.bakedStretch`, 100 = none).
   const bakedRaw = (graph.getNode(layerId)?.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined)?.bakedStretch;
   const baked = typeof bakedRaw === 'number' && Number.isFinite(bakedRaw) && bakedRaw !== 0 ? bakedRaw : 100;
   const freezeAndBake: Partial<LayerTiming> = {

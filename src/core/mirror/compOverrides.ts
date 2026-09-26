@@ -9,14 +9,17 @@
  *   overrideSourceLayers(m, comp)              every layer of the referenced comp, walked back to front, parents first
  *   inheritedOverrideValue(m, source, prop, t) the value a source layer's property has WITHOUT an override
  *
- * Which properties a source comp PUBLISHES (`__essentialProps` on the comp
- * root) is not in the API yet — the section keeps that read (B4_MIRROR.md §4).
+ *   mirrorEssentialProps(m, comp)              the Essential Properties a comp PUBLISHES (`CompSettings.essentialProps`)
+ *   mirrorCompositionRootOf(m, layer)          the outermost composition a layer sits in (`compositionRootOf`)
+ *   mirrorEssentialPropsOf(m, layer)           the layer's own promoted properties (`pinnedProps.essentialPropsOf`)
  */
 
 import { flicksToSeconds, secondsToFlicks, type LayerInfo, type Value } from '@motion/engine-api';
 import {
   OVERRIDE_PROP_KINDS,
+  isOverridableProp,
   isValidOverrideValue,
+  overrideKey,
   parseOverrideKey,
   type OverridableProp,
   type OverrideValue,
@@ -111,4 +114,66 @@ export function inheritedOverrideValue(
   const v = info.animated ? m.valueAt(source, ref.path, secondsToFlicks(t)) : info.value;
   if (v?.kind !== 'color') return undefined;
   return `#${hex2(v.value.r)}${hex2(v.value.g)}${hex2(v.value.b)}`;
+}
+
+// ── Published Essential Properties (B4: `CompSettings.essentialProps`) ─────
+
+/** What these readers need from the mirror. `DocumentMirror` is one. */
+export interface MirrorEssentialRead {
+  layer(id: string): LayerInfo | undefined;
+  comp(id: string): { readonly settings: { readonly essentialProps?: readonly string[] } } | undefined;
+}
+
+const NO_KEYS: ReadonlySet<string> = new Set();
+const keyCache = new WeakMap<readonly string[], ReadonlySet<string>>();
+
+/**
+ * Every property published on this composition (the twin of `readEssentialProps`):
+ * `<origLayerId>/<prop>` keys whose property can be overridden. Empty when none.
+ */
+export function mirrorEssentialProps(m: MirrorEssentialRead, compId: string | null | undefined): ReadonlySet<string> {
+  const raw = compId ? m.comp(compId)?.settings.essentialProps : undefined;
+  if (!raw || raw.length === 0) return NO_KEYS;
+  const hit = keyCache.get(raw);
+  if (hit) return hit;
+  const out = new Set<string>();
+  for (const k of raw) {
+    const parsed = parseOverrideKey(k);
+    if (parsed && isOverridableProp(parsed.prop)) out.add(k);
+  }
+  keyCache.set(raw, out);
+  return out;
+}
+
+/**
+ * The OUTERMOST composition `id` sits in — through a legacy nested precomp group,
+ * which is both a layer and a composition — the twin of `compositionRootOf`
+ * (the scene graph's root). A composition id is its own root; null when unknown.
+ */
+export function mirrorCompositionRootOf(m: MirrorEssentialRead, id: string): string | null {
+  let layer = m.layer(id);
+  if (!layer) return m.comp(id) ? id : null;
+  for (let guard = 0; guard < 64; guard++) {
+    const host = m.layer(layer.comp);
+    if (!host) return layer.comp || null;
+    layer = host;
+  }
+  return null;
+}
+
+/** The properties of `layerId` promoted on its composition (the twin of `pinnedProps.essentialPropsOf`). */
+export function mirrorEssentialPropsOf(m: MirrorEssentialRead, layerId: string): string[] {
+  const root = mirrorCompositionRootOf(m, layerId);
+  if (!root || root === layerId) return [];
+  const out: string[] = [];
+  for (const key of mirrorEssentialProps(m, root)) {
+    const parsed = parseOverrideKey(key);
+    if (parsed && parsed.origNodeId === layerId) out.push(parsed.prop);
+  }
+  return out;
+}
+
+/** Whether `prop` of `layerId` is published on composition `root` (`isEssentialProp`). */
+export function mirrorIsEssentialProp(m: MirrorEssentialRead, root: string, layerId: string, prop: string): boolean {
+  return mirrorEssentialProps(m, root).has(overrideKey(layerId, prop));
 }

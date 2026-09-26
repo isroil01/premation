@@ -20,8 +20,9 @@ import { Input } from '@components/Input';
 import { ColorPicker } from '@components/ColorPicker';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flicksToSeconds, type Command } from '@motion/engine-api';
-import { documentMirror } from '@stores/documentMirror';
+import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
 import { childOrderOf } from '@core/mirror/layerTree';
+import { useMirrorKeys } from '@hooks/useMirror';
 import { fieldWrite } from '@core/engine/propRefs';
 import { getTime } from '@stores/playbackClockStore';
 import { useGesture } from '@hooks/useGesture';
@@ -29,7 +30,7 @@ import { sourceTextCommand } from '@layout/Text/textEdits';
 import { useEngineEdit } from './useEngineEdit';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
-import { findMographRoot, mographIdOf, readMographFields } from '@core/library/mographParams';
+import { readMographFields } from '@core/library/mographParams';
 import { getMographItem, mographDuration, mographRestTime } from '@core/library/mographLibrary';
 import { previewChoreography } from '@core/library/insertPreview';
 import type { TemplateField } from '@core/template/templateTypes';
@@ -39,26 +40,26 @@ export function MographParamsSection(): JSX.Element | null {
   const selected = useSelectionStore((s) => s.ids);
   // Field values live in the SCENE, not in a store — re-read them whenever the
   // scene changes so an edit made anywhere else (canvas, layers, AI) shows here.
-  // B4-gap: which group is an inserted element (`__mographId` on a component —
-  // no API field) and its fields (a child's Text / Style COMPONENT, skipped when
-  // Source Text is a data track): `findMographRoot` / `readMographFields` walk
-  // the scene graph. A `layer/mographId` field closes the root; the fields are
-  // then `text/sourceText` / `layer/fill` of the children.
+  // B4: which group is an inserted element is its mirror header (`LayerInfo.mographId`), found up the parent chain.
+  // B4-gap: its FIELDS are a child's Text / Style COMPONENT props (skipped when Source Text is a data track) —
+  // `readMographFields` walks the scene graph; they become `text/sourceText` / `layer/fill` of the children once the
+  // TemplateField target is path-addressed.
   const revision = useSceneRevision();
   const primary = selected[0] ?? null;
+  useMirrorKeys(['layers', ...(primary ? [`layer:${primary}`] : [])]);
+  const root = mirrorMographRoot(documentMirror(), primary);
 
-  // `revision` is a real dependency even though neither call takes it: both read
-  // the live SceneGraph, so the answer changes when the scene does and the memo
-  // has to be invalidated by the revision counter. eslint can only see the
-  // arguments, hence the disable.
+  // `revision` is a real dependency even though the call does not take it: it
+  // reads the live SceneGraph, so the answer changes when the scene does and
+  // the memo has to be invalidated by the revision counter. eslint can only see
+  // the arguments, hence the disable.
   /* eslint-disable react-hooks/exhaustive-deps */
-  const root = useMemo(() => findMographRoot(primary), [primary, revision]);
   const fields = useMemo(() => (root ? readMographFields(root) : []), [root, revision]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   if (!root || fields.length === 0) return null;
 
-  const itemId = mographIdOf(root);
+  const itemId = documentMirror().layer(root)?.mographId || null;
   const item = itemId ? getMographItem(itemId) : null;
   const name = documentMirror().layer(root)?.name ?? item?.name ?? 'Motion graphic';
 
@@ -103,6 +104,20 @@ export function MographParamsSection(): JSX.Element | null {
       ))}
     </div>
   );
+}
+
+/**
+ * The inserted-element root at or above `layerId` (the twin of `findMographRoot`): the nearest layer up the parent
+ * chain whose header names a motion-graphics item. Selecting a child layer still offers the element's fields — that
+ * is where a user lands after clicking the thing on canvas.
+ */
+function mirrorMographRoot(m: DocumentMirror, layerId: string | null): string | null {
+  let cursor = layerId ? m.layer(layerId) : undefined;
+  for (let guard = 0; cursor && guard < 64; guard++) {
+    if (cursor.mographId) return cursor.id;
+    cursor = cursor.parent ? m.layer(cursor.parent) : undefined;
+  }
+  return null;
 }
 
 /** Earliest keyframe time (seconds) anywhere in the element — where its

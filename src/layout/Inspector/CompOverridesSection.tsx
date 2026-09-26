@@ -21,7 +21,6 @@ import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { Input } from '@components/Input';
 import type { LayerInfo } from '@motion/engine-api';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useThrottledTime } from '@stores/playbackClockStore';
 import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
 import { useMirrorKeys, useMirrorLayer, useMirrorProperty, useMirrorTrackWatch } from '@hooks/useMirror';
@@ -32,11 +31,11 @@ import {
   inheritedOverrideValue,
   layerToCompSeconds,
   mirrorCompOverrides,
+  mirrorEssentialProps,
   overrideSourceLayers,
 } from '@core/mirror/compOverrides';
 import {
   OVERRIDABLE_PROPS,
-  readEssentialProps,
   overrideKey,
   parseOverrideKey,
   isOverridableProp,
@@ -139,8 +138,6 @@ function rowsForInstance(m: DocumentMirror, ref: string, promoted: ReadonlySet<s
 }
 
 export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  // B4-gap: which properties the source comp PUBLISHES (`__essentialProps` on its root) has no API datum — the scene revision re-reads it (a `CompInfo.essentialProps` would close it).
-  useSceneRevision((s) => s.rev);
   const eng = useEngineEdit();
   // A text override's typing session (first keystroke → blur) is one entry.
   const typing = useGesture();
@@ -152,8 +149,8 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
   // A placed composition's source item is the comp it references.
   const ref = uiKindOf(layer) === 'comp' ? layer?.source : undefined;
 
-  // B4-gap: the published Essential Properties (`__essentialProps`) — see above.
-  const promoted = readEssentialProps(ref);
+  // What the source comp PUBLISHES (`CompSettings.essentialProps`; the `comp:<ref>` key below wakes on it).
+  const promoted = mirrorEssentialProps(m, ref);
   const rows = ref ? rowsForInstance(m, ref, promoted) : [];
   // The referenced comp's stack, and every listed source layer's values.
   useMirrorKeys(ref ? [`comp:${ref}`, `order:${ref}`, 'layers'] : []);

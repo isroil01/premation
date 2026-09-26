@@ -16,7 +16,7 @@
  * member carries an expression (`memberExpressionOf`), whether the property is
  * pinned (`LayerInfo.pinned`); Add / Remove Expression are `setExpression`
  * commands like the row's own `=` toggle. The Essential Properties entry is
- * the shared builder (B4-gap below).
+ * the shared builder (it reads `CompSettings.essentialProps`).
  */
 
 import type { ContextMenuItem } from '@stores/contextMenuStore';
@@ -191,7 +191,7 @@ export function engineRowMenuItems(ctx: RowMenuContext): ContextMenuItem[] {
     items.push({ id: 'reset', label: `Reset ${label}`, icon: 'rotate', onSelect: () => ctx.setValue(def) });
   }
 
-  // B4-gap: a composition's Essential Properties list (`__essentialProps` on the comp root) — no API datum (CompInfo has none).
+  // The composition's Essential Properties from the mirror (`CompSettings.essentialProps`).
   items.push(...essentialPropMenuItems(nodeId, prop));
   items.push(...pinItems(mirror, nodeId, prop));
   return items;

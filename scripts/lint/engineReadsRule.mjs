@@ -178,6 +178,7 @@ const PURE_READS = new Set([
   'notifyGuideLayerChange', // core/effects/layerSwitchFeedback: a toast about the flag value given
   'styleOverRange', // core/text/richText: the shared style of a range over the runs given
   'remapRunFonts', // core/fonts/replaceFonts: maps the families of the runs given
+  'essentialPropMenuItems', // core/inspector/propertyMenu: reads the document MIRROR (CompSettings.essentialProps); its onSelect is the promotion writer (the write ratchet's)
 ]);
 
 /**

@@ -3,19 +3,17 @@ import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
 import { PickWhip } from '@components/PickWhip';
-import { useSceneRevision } from '@stores/sceneStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useActiveMotionBlur } from '@hooks/useMirrorFrame';
 import { activeCompIdNow } from '@hooks/useMirror';
-import type { Command, MotionBlurSettings as MotionBlurSettingsApi } from '@motion/engine-api';
+import { flicksToSeconds, type Command, type LayerInfo, type MotionBlurSettings as MotionBlurSettingsApi } from '@motion/engine-api';
 import { mirrorEligibleParents, mirrorParentOf } from '@core/mirror/parenting';
 import { mirrorMatte } from '@core/mirror/layerFacts';
 import { retimableLayerIds } from '@core/mirror/motionAssist';
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from './blendMenu';
 import { MATTE_OPTIONS, matteOptionId, applyMatteOption, setMatteSource } from '@components/MatteControl/matteMenu';
-import { getNodeLayerTime, FRAME_BLENDS, type FrameBlend } from '@core/scene/layerTime';
-import { stretchValueOf } from '@core/animation/layerTimeCommands';
+import { FRAME_BLENDS, type FrameBlend } from '@core/scene/layerTime';
 import type { LayerQuality } from '@core/effects/layerQuality';
 import { Segmented } from '@components/Segmented';
 import { cryptomatteForNode } from '@core/media/cryptomatteCommands';
@@ -31,6 +29,27 @@ import styles from './CompositingSection.module.css';
 
 /** The engine's frame-blend switch value for the stored one. */
 const API_FRAME_BLEND: Record<FrameBlend, 'off' | 'frameMix' | 'pixelMotion'> = { none: 'off', mix: 'frameMix', pixelMotion: 'pixelMotion' };
+const STORED_FRAME_BLEND: Record<'off' | 'frameMix' | 'pixelMotion', FrameBlend> = { off: 'none', frameMix: 'mix', pixelMotion: 'pixelMotion' };
+
+/** A percentage from an API factor (1 = 100 %), without float noise. */
+const percent = (factor: number): number => Math.round(factor * 100 * 1e6) / 1e6;
+
+/**
+ * The layer's time config from its mirror header (`LayerTiming` + the frame-blend switch): the stretch as a
+ * positive percentage with Reverse beside it (the API signs it), Freeze Frame and the time it holds, frame blending,
+ * and a baked Time Stretch's percentage on a layer with no source (100 when none).
+ */
+function timeConfigOf(layer: LayerInfo | undefined): { stretch: number; reverse: boolean; freeze: boolean; freezeTime: number; frameBlend: FrameBlend; baked: number } {
+  const t = layer?.timing;
+  return {
+    stretch: t ? percent(Math.abs(t.stretch)) || 100 : 100,
+    reverse: (t?.stretch ?? 1) < 0,
+    freeze: t?.freeze !== undefined,
+    freezeTime: t?.freeze !== undefined ? flicksToSeconds(t.freeze) : 0,
+    frameBlend: STORED_FRAME_BLEND[layer?.switches.frameBlend ?? 'off'] ?? 'none',
+    baked: t?.bakedStretch !== undefined ? percent(t.bakedStretch) : 100,
+  };
+}
 
 /** Set a switch from THIS section's Switch (its own on/off, not the selection-wide flip). */
 function setSwitch(nodeId: string, id: 'adjustment' | 'motionBlur', on: boolean): void {
@@ -63,11 +82,9 @@ function idMatteItems(nodeId: string): DropdownItem[] {
 }
 
 export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element {
-  // B4-gap: the layer's time config (Freeze Frame and its time, a footage layer's Reverse, a baked Time Stretch on a
-  // layer with no source — `fx.time`, `fx.__bakedStretch`) and an EXR's Cryptomatte set have no API datum
-  // (`LayerTiming` carries the signed stretch only): the scene revision re-reads them. Everything else below is the
-  // document mirror's: the header (parent, blend, matte, switches) and every layer of the comp (the pickers).
-  useSceneRevision((s) => s.rev);
+  // B4: everything below is the document mirror's — the header (parent, blend, matte, switches, the time config in
+  // `LayerTiming`) and every layer of the comp (the pickers). Only the ID-matte entries read the EXR's decoded
+  // Cryptomatte set (see idMatteItems).
   const e = useEngineEdit();
   // The composition's motion-blur settings from the mirror (`CompSettings.motionBlur`), written with
   // `setCompositionSettings` (one entry; a scrub is one gesture).
@@ -159,8 +176,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
   const retimable = retimableLayerIds(m, [nodeId]).length > 0;
 
   // 4. Time
-  // B4-gap: the time config (freeze, reverse, frame blend as stored) — see the section's header comment.
-  const time = getNodeLayerTime(nodeId);
+  const time = timeConfigOf(layer);
   const frameBlendItems: DropdownItem[] = FRAME_BLENDS.map((b) => ({
     type: 'item',
     id: b.value,
@@ -339,8 +355,8 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
             ) : (
               <ValueField
                 // The layer's stored, absolute stretch (e.g. 200 or −100).
-                // B4-gap: a BAKED stretch (`fx.__bakedStretch`, a layer with no source) — see the header comment.
-                value={stretchValueOf(nodeId)}
+                // A BAKED stretch (`LayerTiming.bakedStretch`, a layer with no source).
+                value={time.baked}
                 min={-1000}
                 max={1000}
                 precision={0}
