@@ -1,49 +1,199 @@
-// Cross-engine 3D parity (tests/data/threed_parity.json, written by
-// src/core/scene/threeDCrossEngine.test.ts): the snapshot's pure 3D readers and
-// shading — depth of field, Material Options, light props, falloff, per-quad
-// Lambert, the shader lights — must give the editor's doubles bit for bit.
+// Cross-engine 3D parity (tests/data/threed_parity.json, frozen from the
+// TypeScript engine's threeDCrossEngine.test.ts): the snapshot's pure 3D
+// readers and shading — depth of field, Material Options, light props,
+// falloff, per-quad Lambert, the shader lights — must give the editor's
+// doubles bit for bit. PARITY_REBLESS=1 writes the C++ answers instead
+// (parity_rebless.hpp).
+//
+// The TEST_CASEs share the fixture: each loads it, answers only its own
+// sections and writes it back, so a re-bless of any subset (or of all of them,
+// one after the other) leaves one complete, consistent file.
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
-#include <cstring>
-#include <fstream>
 #include <optional>
-#include <sstream>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "camera3d_port.hpp"
 #include "env_light.hpp"
 #include "json.hpp"
 #include "lights3d.hpp"
+#include "parity_rebless.hpp"
 
 namespace sc = premation::scene;
 using premation::js::Json;
+using premation::test::JsonFixture;
+using premation::test::json_numbers;
 
 namespace {
-
-Json load() {
-  std::ifstream f(std::string(PREMATION_ENGINE_TEST_DATA) + "/threed_parity.json", std::ios::binary);
-  REQUIRE(f.good());
-  std::stringstream ss;
-  ss << f.rdbuf();
-  auto j = premation::js::parse(ss.str());
-  REQUIRE(j.has_value());
-  return *j;
-}
-
-/// Bit equality (JSON cannot carry -0 or NaN, and the fixture holds neither).
-bool same(double a, double b) { return std::memcmp(&a, &b, sizeof a) == 0 || (a == 0 && b == 0); }
 
 std::optional<double> opt(const Json& o, std::string_view k) {
   return o.at(k).is_number() ? std::optional<double>(o.at(k).num()) : std::nullopt;
 }
 
-void check_opt(const std::optional<double>& mine, const Json& o, std::string_view k) {
-  INFO(std::string(k));
-  REQUIRE(mine.has_value() == o.at(k).is_number());
-  if (mine) CHECK(same(*mine, o.at(k).num()));
+/// fx.answer(holder, key, got), naming both values when they differ (compare
+/// mode). JSON number equality is exact — bit for bit but for -0 == 0 (JSON
+/// cannot carry -0 or NaN, and the fixture holds neither).
+void answer(JsonFixture& fx, Json& holder, std::string_view key, Json got) {
+  if (!fx.reblessing() && !(holder.at(key) == got)) {
+    FAIL_CHECK(std::string(key) << ":\n  fixture " << premation::js::stringify(holder.at(key)) << "\n  C++     "
+                                << premation::js::stringify(got));
+    return;
+  }
+  (void)fx.answer(holder, key, std::move(got));
+}
+
+/// A JSON object in the TypeScript's key order; `opt` members are present only
+/// when set (the TypeScript's conditional spreads / optional keys).
+class Obj {
+ public:
+  Obj& put(std::string key, Json v) {
+    o_.push_back({std::move(key), std::move(v)});
+    return *this;
+  }
+  Obj& num(std::string key, double v) { return put(std::move(key), Json::number(v)); }
+  Obj& str(std::string key, std::string v) { return put(std::move(key), Json::string(std::move(v))); }
+  Obj& flag(std::string key, bool v) { return put(std::move(key), Json::boolean(v)); }
+  Obj& opt(std::string key, const std::optional<double>& v) {
+    if (v) num(std::move(key), *v);
+    return *this;
+  }
+  [[nodiscard]] Json json() { return Json::object(std::move(o_)); }
+
+ private:
+  Json::Object o_;
+};
+
+Json xyz(const std::array<double, 3>& v) { return Obj().num("x", v[0]).num("y", v[1]).num("z", v[2]).json(); }
+
+/// DofConfig as camera3d.ts builds it (readNodeDof's key order).
+Json dof_json(const sc::DofConfig& d) {
+  return Obj()
+      .num("strength", d.strength)
+      .num("focus", d.focus)
+      .num("aperture", d.aperture)
+      .opt("focalLength", d.focalLength)
+      .opt("fStop", d.fStop)
+      .opt("irisBlades", d.irisBlades)
+      .opt("irisRoundness", d.irisRoundness)
+      .opt("highlightGain", d.highlightGain)
+      .opt("irisRotation", d.irisRotation)
+      .opt("irisAspect", d.irisAspect)
+      .opt("highlightThreshold", d.highlightThreshold)
+      .opt("highlightSaturation", d.highlightSaturation)
+      .opt("diffractionFringe", d.diffractionFringe)
+      .json();
+}
+
+Json iris_json(const sc::IrisParams& i) {
+  return Obj()
+      .opt("blades", i.blades)
+      .opt("roundness", i.roundness)
+      .opt("highlightGain", i.highlightGain)
+      .opt("rotationDeg", i.rotationDeg)
+      .opt("aspect", i.aspect)
+      .opt("highlightThreshold", i.highlightThreshold)
+      .opt("highlightSaturation", i.highlightSaturation)
+      .opt("fringe", i.fringe)
+      .json();
+}
+
+/// material.ts readNodeMaterial's object (no height map among the inputs).
+Json material_json(const sc::Material& m) {
+  return Obj()
+      .flag("castsShadows", m.castsShadows)
+      .str("castsShadowsMode", m.castsShadowsMode)
+      .str("acceptsShadowsMode", m.acceptsShadowsMode)
+      .flag("shadowOnly", m.shadowOnly)
+      .flag("acceptsLights", m.acceptsLights)
+      .flag("acceptsShadows", m.acceptsShadows)
+      .num("lightTransmission", m.lightTransmission)
+      .num("ambient", m.ambient)
+      .num("diffuse", m.diffuse)
+      .num("metal", m.metal)
+      .num("specular", m.specular)
+      .num("shininess", m.shininess)
+      .str("shading", m.shading)
+      .num("roughness", m.roughness)
+      .num("toonBands", m.toonBands)
+      .num("displacement", m.displacement)
+      .num("displacementSubdivisions", m.displacementSubdivisions)
+      .num("reflectionIntensity", m.reflectionIntensity)
+      .num("reflectionSharpness", m.reflectionSharpness)
+      .num("reflectionRolloff", m.reflectionRolloff)
+      .num("transparency", m.transparency)
+      .num("transparencyRolloff", m.transparencyRolloff)
+      .num("ior", m.ior)
+      .json();
+}
+
+/// light.ts readNodeLight's object.
+Json light_json(const sc::LightProps& l) {
+  return Obj()
+      .str("type", l.type)
+      .str("color", l.color)
+      .num("intensity", l.intensity)
+      .num("radius", l.radius)
+      .num("angle", l.angle)
+      .num("cone", l.cone)
+      .num("coneFeather", l.coneFeather)
+      .str("falloff", l.falloff)
+      .num("falloffDistance", l.falloffDistance)
+      .flag("shadows", l.shadows)
+      .flag("glow", l.glow)
+      .num("shadowDarkness", l.shadowDarkness)
+      .num("shadowDiffusion", l.shadowDiffusion)
+      .flag("shadowMap", l.shadowMap)
+      .num("shadowMapSize", l.shadowMapSize)
+      .num("shadowBias", l.shadowBias)
+      .num("shadowSoftness", l.shadowSoftness)
+      .put("poi", l.poi ? xyz(*l.poi) : Json::null())
+      .put("envPreset", l.envPreset)
+      .num("envRotation", l.envRotation)
+      .num("envReflections", l.envReflections)
+      .json();
+}
+
+/// lightShading.ts toShaderLights' entry (the shadow keys only when set).
+Json shader_json(const premation::api::RenderLight3D& g) {
+  Obj o;
+  o.str("type", std::string(premation::api::to_string(g.type)))
+      .put("color", Obj().num("r", g.color.at(0)).num("g", g.color.at(1)).num("b", g.color.at(2)).json())
+      .num("gain", g.gain)
+      .num("x", g.x)
+      .num("y", g.y)
+      .num("z", g.z)
+      .num("radius", g.radius)
+      .num("aimX", g.aim_x)
+      .num("aimY", g.aim_y)
+      .num("aimZ", g.aim_z)
+      .num("halfConeRad", g.half_cone_rad)
+      .num("coneFeatherRad", g.cone_feather_rad)
+      .num("falloffMode", g.falloff_mode)
+      .num("falloffDistance", g.falloff_distance);
+  if (g.shadow_map.value_or(false)) o.flag("shadowMap", true);
+  return o.opt("shadowMapSize", g.shadow_map_size)
+      .opt("shadowBias", g.shadow_bias)
+      .opt("shadowSoftness", g.shadow_softness)
+      .opt("shadowDarkness", g.shadow_darkness)
+      .json();
+}
+
+std::string fnv1a64(const std::vector<std::uint8_t>& bytes) {
+  std::uint64_t h = 0xcbf29ce484222325ULL;
+  for (const std::uint8_t b : bytes) {
+    h ^= b;
+    h *= 0x100000001b3ULL;
+  }
+  std::array<char, 17> hex{};
+  std::snprintf(hex.data(), hex.size(), "%016llx", static_cast<unsigned long long>(h));  // NOLINT(cppcoreguidelines-pro-type-vararg)
+  return std::string(hex.data());
 }
 
 sc::DofConfig dof_of(const Json& d) {
@@ -112,133 +262,77 @@ sc::SceneLight scene_light_of(const Json& o) {
 }  // namespace
 
 TEST_CASE("3D parity: depth of field", "[scene][threed][parity]") {
-  const Json fx = load();
-  const Json::Array& depths = fx.at("depths").arr();
-  const Json::Array& planarIn = fx.at("planarInputs").arr();
-  REQUIRE(fx.at("dof").arr().size() >= 8);
-  for (const Json& row : fx.at("dof").arr()) {
+  JsonFixture fx("threed_parity.json");
+  REQUIRE(fx.ok());
+  const Json::Array depths = fx.root().at("depths").arr();
+  const Json::Array planarIn = fx.root().at("planarInputs").arr();
+  auto& dofRows = fx.root().find_mut("dof")->arr_mut();
+  REQUIRE(dofRows.size() >= 8);
+  for (Json& row : dofRows) {
     const sc::DofConfig d = dof_of(row.at("dof"));
-    for (std::size_t i = 0; i < depths.size(); ++i) {
-      INFO("depth " << depths[i].num());
-      CHECK(same(sc::dof_blur_px(depths[i].num(), d), row.at("blur").arr()[i].num()));
-    }
-    const sc::IrisParams iris = sc::dof_iris_params(d);
-    const Json& ti = row.at("iris");
-    check_opt(iris.blades, ti, "blades");
-    check_opt(iris.roundness, ti, "roundness");
-    check_opt(iris.highlightGain, ti, "highlightGain");
-    check_opt(iris.rotationDeg, ti, "rotationDeg");
-    check_opt(iris.aspect, ti, "aspect");
-    check_opt(iris.highlightThreshold, ti, "highlightThreshold");
-    check_opt(iris.highlightSaturation, ti, "highlightSaturation");
-    check_opt(iris.fringe, ti, "fringe");
-    for (std::size_t p = 0; p < planarIn.size(); ++p) {
-      const Json::Array& c = planarIn[p].arr();
+    Json::Array blur;
+    for (const Json& z : depths) blur.push_back(Json::number(sc::dof_blur_px(z.num(), d)));
+    answer(fx, row, "blur", Json::array(std::move(blur)));
+    answer(fx, row, "iris", iris_json(sc::dof_iris_params(d)));
+    Json::Array planar;
+    for (const Json& corners : planarIn) {
+      const Json::Array& c = corners.arr();
       const auto plan = sc::plan_dof_coc_corners({c[0].num(), c[1].num(), c[2].num(), c[3].num()}, d);
-      const Json& want = row.at("planar").arr()[p];
-      REQUIRE(plan.has_value() == want.is_object());
-      if (!plan) continue;
-      for (std::size_t k = 0; k < 4; ++k) CHECK(same(plan->corners[k], want.at("corners").arr()[k].num()));
-      CHECK(same(plan->maxPx, want.at("maxPx").num()));
+      planar.push_back(plan ? Obj().put("corners", json_numbers(plan->corners)).num("maxPx", plan->maxPx).json() : Json::null());
     }
+    answer(fx, row, "planar", Json::array(std::move(planar)));
   }
-  for (const Json& row : fx.at("dofNodes").arr()) {
+  for (Json& row : fx.root().find_mut("dofNodes")->arr_mut()) {
     const auto n = node_of("camera", row.at("props"), Json());
     const auto d = sc::read_node_dof(n, row.at("width").num(), row.at("height").num(), {});
-    REQUIRE(d.has_value() == row.at("dof").is_object());
-    if (!d) continue;
-    const Json& w = row.at("dof");
-    CHECK(same(d->strength, w.at("strength").num()));
-    CHECK(same(d->focus, w.at("focus").num()));
-    CHECK(same(d->aperture, w.at("aperture").num()));
-    check_opt(d->focalLength, w, "focalLength");
-    check_opt(d->fStop, w, "fStop");
-    check_opt(d->irisBlades, w, "irisBlades");
-    check_opt(d->irisRoundness, w, "irisRoundness");
-    check_opt(d->highlightGain, w, "highlightGain");
-    check_opt(d->irisRotation, w, "irisRotation");
-    check_opt(d->irisAspect, w, "irisAspect");
-    check_opt(d->highlightThreshold, w, "highlightThreshold");
-    check_opt(d->highlightSaturation, w, "highlightSaturation");
-    check_opt(d->diffractionFringe, w, "diffractionFringe");
+    answer(fx, row, "dof", d ? dof_json(*d) : Json::null());
   }
+  REQUIRE(fx.finish());
 }
 
 TEST_CASE("3D parity: Material Options", "[scene][threed][parity]") {
-  const Json fx = load();
-  for (const Json& row : fx.at("materials").arr()) {
-    const sc::Material m = sc::read_node_material(node_of("shape", row.at("props"), Json()));
-    const Json& w = row.at("material");
-    CHECK(m.castsShadows == w.at("castsShadows").b());
-    CHECK(m.castsShadowsMode == w.at("castsShadowsMode").str());
-    CHECK(m.acceptsShadowsMode == w.at("acceptsShadowsMode").str());
-    CHECK(m.shadowOnly == w.at("shadowOnly").b());
-    CHECK(m.acceptsLights == w.at("acceptsLights").b());
-    CHECK(m.acceptsShadows == w.at("acceptsShadows").b());
-    CHECK(m.shading == w.at("shading").str());
-    for (const auto& [k, v] : std::initializer_list<std::pair<const char*, double>>{
-             {"lightTransmission", m.lightTransmission}, {"ambient", m.ambient}, {"diffuse", m.diffuse}, {"metal", m.metal},
-             {"specular", m.specular}, {"shininess", m.shininess}, {"roughness", m.roughness}, {"toonBands", m.toonBands},
-             {"displacement", m.displacement}, {"displacementSubdivisions", m.displacementSubdivisions},
-             {"reflectionIntensity", m.reflectionIntensity}, {"reflectionSharpness", m.reflectionSharpness},
-             {"reflectionRolloff", m.reflectionRolloff}, {"transparency", m.transparency},
-             {"transparencyRolloff", m.transparencyRolloff}, {"ior", m.ior}}) {
-      INFO(k);
-      CHECK(same(v, w.at(k).num()));
-    }
+  JsonFixture fx("threed_parity.json");
+  REQUIRE(fx.ok());
+  for (Json& row : fx.root().find_mut("materials")->arr_mut()) {
+    answer(fx, row, "material", material_json(sc::read_node_material(node_of("shape", row.at("props"), Json()))));
   }
+  REQUIRE(fx.finish());
 }
 
 TEST_CASE("3D parity: light props and falloff", "[scene][threed][parity]") {
-  const Json fx = load();
-  for (const Json& row : fx.at("lights").arr()) {
-    const sc::LightProps l = sc::read_node_light(node_of("light", row.at("props"), row.at("style")));
-    const Json& w = row.at("light");
-    CHECK(l.type == w.at("type").str());
-    CHECK(l.color == w.at("color").str());
-    CHECK(l.falloff == w.at("falloff").str());
-    CHECK(l.shadows == w.at("shadows").b());
-    CHECK(l.glow == w.at("glow").b());
-    CHECK(l.shadowMap == w.at("shadowMap").b());
-    CHECK(l.envPreset.str() == w.at("envPreset").str());
-    for (const auto& [k, v] : std::initializer_list<std::pair<const char*, double>>{
-             {"intensity", l.intensity}, {"radius", l.radius}, {"angle", l.angle}, {"cone", l.cone}, {"coneFeather", l.coneFeather},
-             {"falloffDistance", l.falloffDistance}, {"shadowDarkness", l.shadowDarkness}, {"shadowDiffusion", l.shadowDiffusion},
-             {"shadowMapSize", l.shadowMapSize}, {"shadowBias", l.shadowBias}, {"shadowSoftness", l.shadowSoftness},
-             {"envRotation", l.envRotation}, {"envReflections", l.envReflections}}) {
-      INFO(k);
-      CHECK(same(v, w.at(k).num()));
-    }
-    REQUIRE(l.poi.has_value() == w.at("poi").is_object());
-    if (l.poi) {
-      CHECK(same((*l.poi)[0], w.at("poi").at("x").num()));
-      CHECK(same((*l.poi)[1], w.at("poi").at("y").num()));
-      CHECK(same((*l.poi)[2], w.at("poi").at("z").num()));
-    }
+  JsonFixture fx("threed_parity.json");
+  REQUIRE(fx.ok());
+  for (Json& row : fx.root().find_mut("lights")->arr_mut()) {
+    answer(fx, row, "light", light_json(sc::read_node_light(node_of("light", row.at("props"), row.at("style")))));
   }
-  const Json::Array& dist = fx.at("distances").arr();
-  for (const Json& row : fx.at("falloff").arr()) {
+  const Json::Array dist = fx.root().at("distances").arr();
+  for (Json& row : fx.root().find_mut("falloff")->arr_mut()) {
     const Json& l = row.at("light");
     const std::optional<std::string> falloff = l.at("falloff").is_string() ? std::optional<std::string>(l.at("falloff").str()) : std::nullopt;
     const double radius = l.at("radius").num();
     const std::optional<double> fd = opt(l, "falloffDistance");
-    for (std::size_t i = 0; i < dist.size(); ++i) {
-      INFO("distance " << dist[i].num());
-      CHECK(same(sc::light_falloff_at(dist[i].num(), falloff, radius, fd), row.at("falloffAt").arr()[i].num()));
-      CHECK(same(sc::light_attenuation_at(dist[i].num(), falloff, radius, fd), row.at("attenuationAt").arr()[i].num()));
+    Json::Array falloffAt;
+    Json::Array attenuationAt;
+    for (const Json& x : dist) {
+      falloffAt.push_back(Json::number(sc::light_falloff_at(x.num(), falloff, radius, fd)));
+      attenuationAt.push_back(Json::number(sc::light_attenuation_at(x.num(), falloff, radius, fd)));
     }
-    CHECK(same(sc::light_reach(falloff, radius, fd), row.at("reach").num()));
+    answer(fx, row, "falloffAt", Json::array(std::move(falloffAt)));
+    answer(fx, row, "attenuationAt", Json::array(std::move(attenuationAt)));
+    answer(fx, row, "reach", Json::number(sc::light_reach(falloff, radius, fd)));
   }
+  REQUIRE(fx.finish());
 }
 
 TEST_CASE("3D parity: per-quad shading and shader lights", "[scene][threed][parity]") {
-  const Json fx = load();
-  const Json::Array& surfaces = fx.at("surfaces").arr();
-  const Json::Array& responses = fx.at("responses").arr();
-  for (const Json& row : fx.at("shading").arr()) {
+  JsonFixture fx("threed_parity.json");
+  REQUIRE(fx.ok());
+  const Json::Array surfaces = fx.root().at("surfaces").arr();
+  const Json::Array responses = fx.root().at("responses").arr();
+  for (Json& row : fx.root().find_mut("shading")->arr_mut()) {
     std::vector<sc::SceneLight> set;
     for (const Json& o : row.at("lights").arr()) set.push_back(scene_light_of(o));
-    std::size_t k = 0;
+    Json::Array shade;
     for (const Json& s : surfaces) {
       const std::array<double, 3> normal{s.at("normal").arr()[0].num(), s.at("normal").arr()[1].num(), s.at("normal").arr()[2].num()};
       const std::array<double, 3> pos{s.at("pos").at("x").num(), s.at("pos").at("y").num(), s.at("pos").at("z").num()};
@@ -246,95 +340,65 @@ TEST_CASE("3D parity: per-quad shading and shader lights", "[scene][threed][pari
         for (const bool oneSided : {false, true}) {
           const auto got = sc::shade_layer(normal, pos, set, m.is_object() ? opt(m, "ambient") : std::nullopt,
                                            m.is_object() ? opt(m, "diffuse") : std::nullopt, oneSided);
-          const Json& want = row.at("shade").arr()[k++];
-          REQUIRE(got.has_value() == want.is_array());
-          if (!got) continue;
-          for (std::size_t c = 0; c < 3; ++c) CHECK(same((*got)[c], want.arr()[c].num()));
+          shade.push_back(got ? json_numbers(*got) : Json::null());
         }
       }
     }
-    const auto shader = sc::to_shader_lights(set);
-    const Json::Array& want = row.at("shader").arr();
-    REQUIRE(shader.size() == want.size());
-    for (std::size_t i = 0; i < shader.size(); ++i) {
-      const auto& g = shader[i];
-      const Json& w = want[i];
-      CHECK(premation::api::to_string(g.type) == w.at("type").str());
-      CHECK(same(g.color[0], w.at("color").at("r").num()));
-      CHECK(same(g.color[1], w.at("color").at("g").num()));
-      CHECK(same(g.color[2], w.at("color").at("b").num()));
-      for (const auto& [key, v] : std::initializer_list<std::pair<const char*, double>>{
-               {"gain", g.gain}, {"x", g.x}, {"y", g.y}, {"z", g.z}, {"radius", g.radius}, {"aimX", g.aim_x}, {"aimY", g.aim_y},
-               {"aimZ", g.aim_z}, {"halfConeRad", g.half_cone_rad}, {"coneFeatherRad", g.cone_feather_rad},
-               {"falloffMode", g.falloff_mode}, {"falloffDistance", g.falloff_distance}}) {
-        INFO(key);
-        CHECK(same(v, w.at(key).num()));
-      }
-      CHECK(g.shadow_map.value_or(false) == (w.at("shadowMap").is_bool() && w.at("shadowMap").b()));
-      check_opt(g.shadow_map_size, w, "shadowMapSize");
-      check_opt(g.shadow_bias, w, "shadowBias");
-      check_opt(g.shadow_softness, w, "shadowSoftness");
-      check_opt(g.shadow_darkness, w, "shadowDarkness");
+    answer(fx, row, "shade", Json::array(std::move(shade)));
+    Json::Array shader;
+    for (const auto& g : sc::to_shader_lights(set)) shader.push_back(shader_json(g));
+    answer(fx, row, "shader", Json::array(std::move(shader)));
+    Json::Array aims;
+    for (const sc::SceneLight& l : set) {
+      const auto a = sc::light_aim_3d(l);
+      const auto deg = a ? sc::aim_to_comp_angle_deg(*a) : std::nullopt;
+      aims.push_back(Obj().put("aim", a ? json_numbers(*a) : Json::null()).put("compDeg", deg ? Json::number(*deg) : Json::null()).json());
     }
-    const Json::Array& aims = row.at("aims").arr();
-    for (std::size_t i = 0; i < set.size(); ++i) {
-      const auto a = sc::light_aim_3d(set[i]);
-      REQUIRE(a.has_value() == aims[i].at("aim").is_array());
-      if (!a) continue;
-      for (std::size_t c = 0; c < 3; ++c) CHECK(same((*a)[c], aims[i].at("aim").arr()[c].num()));
-      const auto deg = sc::aim_to_comp_angle_deg(*a);
-      REQUIRE(deg.has_value() == aims[i].at("compDeg").is_number());
-      if (deg) CHECK(same(*deg, aims[i].at("compDeg").num()));
-    }
+    answer(fx, row, "aims", Json::array(std::move(aims)));
   }
+  REQUIRE(fx.finish());
 }
 
 TEST_CASE("3D parity: environment reflection atlas", "[scene][threed][parity]") {
-  const Json fx = load();
-  REQUIRE(fx.at("specular").arr().size() == 3);
-  for (const Json& row : fx.at("specular").arr()) {
+  JsonFixture fx("threed_parity.json");
+  REQUIRE(fx.ok());
+  auto& rows = fx.root().find_mut("specular")->arr_mut();
+  REQUIRE(rows.size() == 3);
+  for (Json& row : rows) {
     INFO(row.at("sky").str());
     const auto m = sc::environment_specular_map(row.at("sky").str());
     REQUIRE(m.has_value());
-    CHECK(m->id == row.at("id").str());
-    CHECK(m->width == static_cast<std::uint32_t>(row.at("width").num()));
-    CHECK(m->height == static_cast<std::uint32_t>(row.at("height").num()));
-    CHECK(m->levels == static_cast<std::uint32_t>(row.at("levels").num()));
-    CHECK(same(m->scale, row.at("scale").num()));
-    std::uint64_t h = 0xcbf29ce484222325ULL;
-    for (const std::uint8_t b : m->data) {
-      h ^= b;
-      h *= 0x100000001b3ULL;
-    }
-    std::array<char, 17> hex{};
-    std::snprintf(hex.data(), hex.size(), "%016llx", static_cast<unsigned long long>(h));  // NOLINT(cppcoreguidelines-pro-type-vararg)
-    CHECK(std::string(hex.data()) == row.at("dataFnv").str());
+    answer(fx, row, "id", Json::string(m->id));
+    answer(fx, row, "width", Json::number(m->width));
+    answer(fx, row, "height", Json::number(m->height));
+    answer(fx, row, "levels", Json::number(m->levels));
+    answer(fx, row, "scale", Json::number(m->scale));
+    answer(fx, row, "dataFnv", Json::string(fnv1a64(m->data)));
   }
+  REQUIRE(fx.finish());
 }
 
 TEST_CASE("3D parity: environment light rig", "[scene][threed][parity]") {
-  const Json fx = load();
-  for (const Json& row : fx.at("sh").arr()) {
-    const auto sh = sc::preset_sh(row.at("id").str());
+  JsonFixture fx("threed_parity.json");
+  REQUIRE(fx.ok());
+  for (Json& row : fx.root().find_mut("sh")->arr_mut()) {
     INFO(row.at("id").str());
-    for (std::size_t k = 0; k < 27; ++k) CHECK(same(static_cast<double>(sh[k]), row.at("sh").arr()[k].num()));
+    answer(fx, row, "sh", json_numbers(sc::preset_sh(row.at("id").str())));
   }
-  REQUIRE(fx.at("env").arr().size() >= 16);
-  for (const Json& row : fx.at("env").arr()) {
+  auto& envRows = fx.root().find_mut("env")->arr_mut();
+  REQUIRE(envRows.size() >= 16);
+  for (Json& row : envRows) {
     INFO(row.at("sky").str() << " " << row.at("intensity").num() << " " << row.at("rotation").num());
     const auto rig = sc::environment_rig_for(row.at("sky").str(), row.at("intensity").num(), row.at("rotation").num());
     REQUIRE(rig.has_value());
-    const Json::Array& want = row.at("rig").arr();
-    REQUIRE(rig->size() == want.size());
-    for (std::size_t i = 0; i < want.size(); ++i) {
-      CHECK((*rig)[i].ambient == (want[i].at("kind").str() == "ambient"));
-      CHECK((*rig)[i].color == want[i].at("color").str());
-      CHECK(same((*rig)[i].intensity, want[i].at("intensity").num()));
-      if (!(*rig)[i].ambient) {
-        CHECK(same((*rig)[i].from[0], want[i].at("from").at("x").num()));
-        CHECK(same((*rig)[i].from[1], want[i].at("from").at("y").num()));
-        CHECK(same((*rig)[i].from[2], want[i].at("from").at("z").num()));
-      }
+    Json::Array got;
+    for (const sc::EnvRigLight& l : *rig) {
+      Obj o;
+      o.str("kind", l.ambient ? "ambient" : "parallel").str("color", l.color).num("intensity", l.intensity);
+      if (!l.ambient) o.put("from", xyz(l.from));
+      got.push_back(o.json());
     }
+    answer(fx, row, "rig", Json::array(std::move(got)));
   }
+  REQUIRE(fx.finish());
 }

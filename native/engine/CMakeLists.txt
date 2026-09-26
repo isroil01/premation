@@ -295,7 +295,6 @@ set(ENGINE_DOC_SOURCES
   src/core/handlers_properties.cpp
   src/core/handlers_strokes.cpp
   src/core/handlers_paths.cpp
-  src/core/json.cpp
   src/core/layer_clone.cpp
   src/core/meta.cpp
   src/core/model.cpp
@@ -313,7 +312,15 @@ set(ENGINE_DOC_SOURCES
   src/core/timeline.cpp
   src/core/worldxf.cpp
 )
+# The JavaScript value type (src/core/json.hpp) on its own, a leaf: the test
+# fixtures' re-bless mode (tests/parity_rebless.hpp) reads and writes JSON in
+# test targets that do not link the document core.
+add_library(engine_json STATIC src/core/json.cpp)
+target_compile_features(engine_json PUBLIC cxx_std_20)
+target_link_libraries(engine_json PUBLIC motion::jsmath PRIVATE motion::options)
+
 target_sources(engine_core PRIVATE ${ENGINE_DOC_SOURCES})
+target_link_libraries(engine_core PUBLIC engine_json)
 target_link_libraries(engine_core PUBLIC motion::expr motion::transform motion::jsmath)
 # ── G1: the native plugin SDK host (src/plugins, GPU-free half) ────────────
 #   engine_plugins   manifest scan, module load (module_ffi), per-call crash
@@ -503,7 +510,7 @@ if(TARGET engine_fuzz)
   # engine_fuzz compiles everything in (one static CRT, see above).
   set(_libs_dir ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
   file(GLOB _doc_fuzz_expr ${_libs_dir}/motion_expr/*.cpp)
-  target_sources(engine_fuzz PRIVATE ${ENGINE_DOC_SOURCES} ${_doc_fuzz_expr}
+  target_sources(engine_fuzz PRIVATE ${ENGINE_DOC_SOURCES} src/core/json.cpp ${_doc_fuzz_expr}
                  ${_libs_dir}/motion_jsmath/fdlibm.cpp ${_libs_dir}/motion_jsmath/numconv.cpp
                  ${_libs_dir}/motion_transform/transform.cpp ${_libs_dir}/motion_transform/motion_transform.cpp)
   target_include_directories(engine_fuzz PRIVATE ${_libs_dir}/motion_expr ${_libs_dir}/motion_jsmath
@@ -681,7 +688,7 @@ endif()
 if(MOTION_BUILD_TESTS)
   add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp tests/test_paint_raster.cpp
                  tests/test_svg_doc.cpp)
-  target_link_libraries(engine_raster_tests PRIVATE engine_raster_core motion::options Catch2::Catch2WithMain)
+  target_link_libraries(engine_raster_tests PRIVATE engine_raster_core engine_json motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_raster_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(TARGET engine_raster)
     target_sources(engine_raster_tests PRIVATE tests/test_raster_canvas.cpp)
@@ -753,7 +760,7 @@ endif()
 
 if(MOTION_BUILD_TESTS)
   add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp tests/test_effect_chain.cpp)
-  target_link_libraries(engine_effects_tests PRIVATE engine_effect_chain engine_effects engine_canvas_effects engine_raster_core motion::options Catch2::Catch2WithMain)
+  target_link_libraries(engine_effects_tests PRIVATE engine_effect_chain engine_effects engine_canvas_effects engine_raster_core engine_json motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_effects_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(MSVC)
     target_compile_definitions(engine_effects_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv
@@ -828,6 +835,9 @@ endif()
 if(MOTION_BUILD_TESTS)
   add_executable(engine_audio_tests tests/test_audio.cpp tests/test_audio_clock.cpp tests/test_audio_parity.cpp)
   target_link_libraries(engine_audio_tests PRIVATE engine_audio_core motion::jsmath motion::options Catch2::Catch2WithMain)
+  # tests/parity_rebless.hpp: the audio test only uses its file helpers, but the
+  # header's JSON half needs the value type.
+  target_link_libraries(engine_audio_tests PRIVATE engine_json)
   target_compile_definitions(engine_audio_tests PRIVATE
     PREMATION_AUDIO_PARITY="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/audio_parity.bin")
   if(TARGET engine_audio)

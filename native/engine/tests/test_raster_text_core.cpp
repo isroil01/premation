@@ -1,21 +1,23 @@
 // E3 text, Skia-free half, against the TS: line breaking + Intl word joins
-// (tests/data/line_break_parity.json, src/core/text/lineBreakCrossEngine.test.ts),
-// vertical optical kerning (optical_kerning_parity.json,
-// src/core/text/opticalKerningCrossEngine.test.ts) and fontconfig lookups.
+// (tests/data/line_break_parity.json, frozen from the TypeScript engine's
+// lineBreakCrossEngine.test.ts), vertical optical kerning
+// (optical_kerning_parity.json, frozen from the TypeScript engine's
+// opticalKerningCrossEngine.test.ts) and fontconfig lookups. For both fixtures
+// PARITY_REBLESS=1 writes the C++ answers instead (parity_rebless.hpp).
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <vector>
 
+#include "json.hpp"
+#include "parity_rebless.hpp"
 #include "raster/font_features.hpp"
-#include "raster/json.hpp"
 #include "raster/line_break.hpp"
 #include "raster/optical_math.hpp"
 #include "raster/system_fonts.hpp"
@@ -23,28 +25,15 @@
 #include "jsmath.hpp"
 
 using namespace premation::raster;
+namespace js = premation::js;
+using premation::test::JsonFixture;
+using premation::test::json_numbers;
 
 namespace {
 
-json::Value load_fixture(const char* name) {
-  std::ifstream in(std::string(PREMATION_ENGINE_TEST_DATA) + "/" + name, std::ios::binary);
-  std::stringstream ss;
-  ss << in.rdbuf();
-  json::Value v;
-  std::string err;
-  REQUIRE(json::parse(ss.str(), v, err));
-  return v;
-}
-
-std::vector<std::string> strings(const json::Value& a) {
+std::vector<std::string> strings(const js::Json& a) {
   std::vector<std::string> out;
-  for (const auto& s : a.items()) out.push_back(s.str());
-  return out;
-}
-
-std::vector<std::size_t> indices(const json::Value& a) {
-  std::vector<std::size_t> out;
-  for (const auto& s : a.items()) out.push_back(static_cast<std::size_t>(s.num()));
+  for (const auto& s : a.arr()) out.push_back(s.str());
   return out;
 }
 
@@ -73,50 +62,59 @@ std::u16string utf16_of(const std::vector<std::string>& units) {
 
 }  // namespace
 
-TEST_CASE("line breaks: lineBreak.ts parity without Intl.Segmenter", "[raster][linebreak]") {
-  const auto fx = load_fixture("line_break_parity.json");
+// line_break_parity.json is shared by the next two cases: each loads it, answers
+// its own keys (withoutSegmenter here; withSegmenter and wrap.starts below) and
+// finishes, so a re-bless of both rewrites the whole file in turn.
+TEST_CASE("line breaks: lineBreak.ts parity without Intl.Segmenter", "[raster][linebreak][parity]") {
+  JsonFixture fx("line_break_parity.json");
+  REQUIRE(fx.ok());
   set_word_segmenter_disabled_for_test(true);
-  for (const auto& row : fx["rows"].items()) {
-    INFO(row["text"].str());
-    CHECK(true_indices(break_opportunities(strings(row["units"]))) == indices(row["withoutSegmenter"]));
+  for (js::Json& row : fx.root().find_mut("rows")->arr_mut()) {
+    INFO(row.at("text").str());
+    CHECK(fx.answer(row, "withoutSegmenter", json_numbers(true_indices(break_opportunities(strings(row.at("units")))))));
   }
   set_word_segmenter_disabled_for_test(false);
+  REQUIRE(fx.finish());
 }
 
-TEST_CASE("line breaks: Intl.Segmenter word joins through ICU", "[raster][linebreak][icu]") {
-  const auto fx = load_fixture("line_break_parity.json");
+TEST_CASE("line breaks: Intl.Segmenter word joins through ICU", "[raster][linebreak][icu][parity]") {
+  JsonFixture fx("line_break_parity.json");
+  REQUIRE(fx.ok());
   const std::string info = word_segmenter_info();
   if (info.empty()) SKIP("no ICU on this machine: the engine takes lineBreak.ts's no-Segmenter branch");
-  std::printf("word segmenter: %s; fixture written with Node ICU %s\n", info.c_str(), fx["icu"].str().c_str());
+  std::printf("word segmenter: %s; fixture written with Node ICU %s\n", info.c_str(), fx.root().at("icu").str().c_str());
   int rows = 0;
   int segmentRowsExact = 0;
   int breakRowsExact = 0;
   int wrapRowsExact = 0;
-  for (const auto& row : fx["rows"].items()) {
-    INFO(row["text"].str());
-    const auto units = strings(row["units"]);
+  for (js::Json& row : fx.root().find_mut("rows")->arr_mut()) {
+    INFO(row.at("text").str());
+    const auto units = strings(row.at("units"));
     ++rows;
     const auto segs = word_segments(utf16_of(units));
     REQUIRE(segs);
     std::vector<std::pair<std::size_t, bool>> got;
     for (const auto& s : *segs) got.emplace_back(s.index, s.wordLike);
     std::vector<std::pair<std::size_t, bool>> want;
-    for (const auto& s : row["segments"].items()) want.emplace_back(static_cast<std::size_t>(s[0].num()), s[1].truthy());
+    for (const auto& s : row.at("segments").arr()) want.emplace_back(static_cast<std::size_t>(s.arr()[0].num()), s.arr()[1].b());
     // Raw segments may differ across ICU versions (Node's vs the OS's) where
-    // the joins do not: reported, not required.
+    // the joins do not: reported, not required — and not re-blessed (they,
+    // like "icu", record Node's ICU, not an engine answer).
     if (got == want) ++segmentRowsExact;
-    else std::printf("  segments differ (ICU version): %s\n", row["text"].str().c_str());
-    const auto breaks = true_indices(break_opportunities(units));
-    if (breaks == indices(row["withSegmenter"])) ++breakRowsExact;
-    CHECK(breaks == indices(row["withSegmenter"]));
+    else std::printf("  segments differ (ICU version): %s\n", row.at("text").str().c_str());
+    const js::Json breaks = json_numbers(true_indices(break_opportunities(units)));
+    if (breaks == row.at("withSegmenter")) ++breakRowsExact;
+    CHECK(fx.answer(row, "withSegmenter", breaks));
+    js::Json& wrap = *row.find_mut("wrap");
     std::vector<double> lengths;
-    for (const auto& l : row["wrap"]["lengths"].items()) lengths.push_back(l.num());
-    const auto starts = wrap_units(units, lengths, row["wrap"]["limit"].num());
-    if (starts == indices(row["wrap"]["starts"])) ++wrapRowsExact;
-    CHECK(starts == indices(row["wrap"]["starts"]));
+    for (const auto& l : wrap.at("lengths").arr()) lengths.push_back(l.num());
+    const js::Json starts = json_numbers(wrap_units(units, lengths, wrap.at("limit").num()));
+    if (starts == wrap.at("starts")) ++wrapRowsExact;
+    CHECK(fx.answer(wrap, "starts", starts));
   }
   std::printf("line breaks vs lineBreak.ts: segments %d/%d rows, break opportunities %d/%d, wraps %d/%d\n", segmentRowsExact,
               rows, breakRowsExact, rows, wrapRowsExact, rows);
+  REQUIRE(fx.finish());
 }
 
 TEST_CASE("line breaks: kinsoku and the greedy wrap", "[raster][linebreak]") {
@@ -193,12 +191,13 @@ TEST_CASE("system fonts: fontconfig lookups on this machine", "[raster][fonts][f
 namespace {
 
 /// opticalKerningCrossEngine.test.ts renderRects: exact-coverage rectangles.
-std::vector<std::uint8_t> render_rects(const json::Value& rects, std::uint32_t w, std::uint32_t h) {
+std::vector<std::uint8_t> render_rects(const js::Json& rects, std::uint32_t w, std::uint32_t h) {
   std::vector<std::uint8_t> out(static_cast<std::size_t>(w) * h * 4, 0);
   for (std::uint32_t y = 0; y < h; ++y) {
     for (std::uint32_t x = 0; x < w; ++x) {
       double a = 0;
-      for (const auto& r : rects.items()) {
+      for (const auto& rj : rects.arr()) {
+        const auto& r = rj.arr();
         const double ox = std::max(0.0, std::min(r[2].num(), x + 1.0) - std::max(r[0].num(), static_cast<double>(x)));
         const double oy = std::max(0.0, std::min(r[3].num(), y + 1.0) - std::max(r[1].num(), static_cast<double>(y)));
         a += motion::js::round(255 * ox * oy);
@@ -209,75 +208,93 @@ std::vector<std::uint8_t> render_rects(const json::Value& rects, std::uint32_t w
   return out;
 }
 
-bool same_number(double got, const json::Value& want) {
-  if (want.is_null()) return std::isnan(got);
-  return got == want.num();
-}
+/// A number as JSON.stringify writes it: NaN (and ±Infinity) become null.
+js::Json json_number(double v) { return std::isfinite(v) ? js::Json::number(v) : js::Json::null(); }
 
-bool same_profile(const optical::InkProfile& p, const json::Value& want) {
-  if (!same_number(p.advance, want["advance"]) || !same_number(p.top, want["top"])) return false;
-  for (std::size_t i = 0; i < p.left.size(); ++i) {
-    if (!same_number(p.left[i], want["left"][i]) || !same_number(p.right[i], want["right"][i])) return false;
-  }
-  return true;
+/// opticalKerningCrossEngine.test.ts `clean(profile)`: { advance, left, right, top }, NaN as null.
+js::Json profile_json(const optical::InkProfile& p) {
+  const auto bands = [](const std::vector<double>& v) {
+    js::Json::Array a;
+    for (const double x : v) a.push_back(json_number(x));
+    return js::Json::array(std::move(a));
+  };
+  js::Json o = js::Json::object();
+  o.set("advance", json_number(p.advance));
+  o.set("left", bands(p.left));
+  o.set("right", bands(p.right));
+  o.set("top", json_number(p.top));
+  return o;
 }
 
 }  // namespace
 
-TEST_CASE("optical kerning: vertical pairs match opticalKernVerticalPx exactly", "[raster][optical]") {
-  const auto fx = load_fixture("optical_kerning_parity.json");
+TEST_CASE("optical kerning: vertical pairs match opticalKernVerticalPx exactly", "[raster][optical][parity]") {
+  JsonFixture fixture("optical_kerning_parity.json");
+  REQUIRE(fixture.ok());
+  js::Json& fx = fixture.root();
   constexpr std::uint32_t kSide = 256;
   const double em0 = kSide / 2.0 - optical::kRefEmPx / 2;
+  const js::Json& rectsByFace = fx.at("rects");
   const auto raster = [&](const std::string& css, const std::string& cluster) -> std::optional<optical::InkProfile> {
-    const auto& rects = fx["rects"][css][cluster];
+    const auto& rects = rectsByFace.at(css).at(cluster);
     if (!rects.is_array()) return std::nullopt;
     return optical::vertical_profile_from_alpha(render_rects(rects, kSide, kSide), kSide, kSide, em0, em0, optical::kRefEmPx);
   };
 
   int profilesExact = 0;
-  for (const auto& key : fx["profiles"].keys()) {
+  js::Json::Object& profiles = fx.find_mut("profiles")->obj_mut();
+  for (js::Json::Member& m : profiles) {
+    const std::string& key = m.key;
     const auto bar = key.find('|');
     const auto p = raster(key.substr(0, bar), key.substr(bar + 1));
     REQUIRE(p);
     INFO(key);
-    const bool same = same_profile(*p, fx["profiles"][key]);
-    CHECK(same);
-    profilesExact += same ? 1 : 0;
+    const js::Json got = profile_json(*p);
+    profilesExact += got == m.value ? 1 : 0;
+    CHECK(fixture.answer(m.value, got));
   }
 
-  const auto horizontal = optical::profile_from_alpha(render_rects(fx["rects"]["128px FaceA"]["\xE3\x81\x82"], kSide, kSide), kSide,
+  const auto horizontal = optical::profile_from_alpha(render_rects(rectsByFace.at("128px FaceA").at("\xE3\x81\x82"), kSide, kSide), kSide,
                                                       kSide, 80, 170, optical::kRefEmPx, 90);
-  CHECK(same_profile(horizontal, fx["horizontal"]));
+  CHECK(fixture.answer(fx, "horizontal", profile_json(horizontal)));
 
   const auto pa = raster("128px FaceA", "\xE3\x81\x82");  // あ
   const auto pb = raster("128px FaceB", "\xE3\x80\x8C");  // 「
   REQUIRE(pa);
   REQUIRE(pb);
-  for (const auto& g : fx["gaps"].items()) {
-    const auto gap = optical::measure_pair_gap(*pa, g["sizeA"].num(), *pb, g["sizeB"].num(), g["xHeight"].num());
-    REQUIRE(gap.has_value() == g["gap"].is_object());
-    if (!gap) continue;
-    CHECK(gap->area == g["gap"]["area"].num());
-    CHECK(gap->dmin == g["gap"]["dmin"].num());
-    CHECK(optical::pair_adjustment(*gap, 0.1, 1) == g["adj"][0].num());
-    CHECK(optical::pair_adjustment(*gap, 0.3, 0.8) == g["adj"][1].num());
+  for (js::Json& g : fx.find_mut("gaps")->arr_mut()) {
+    const auto gap = optical::measure_pair_gap(*pa, g.at("sizeA").num(), *pb, g.at("sizeB").num(), g.at("xHeight").num());
+    js::Json gapJson = js::Json::null();
+    js::Json adjJson = js::Json::null();
+    if (gap) {
+      gapJson = js::Json::object();
+      gapJson.set("area", js::Json::number(gap->area));
+      gapJson.set("dmin", js::Json::number(gap->dmin));
+      adjJson = json_numbers(std::array{optical::pair_adjustment(*gap, 0.1, 1), optical::pair_adjustment(*gap, 0.3, 0.8)});
+    }
+    CHECK(fixture.answer(g, "gap", std::move(gapJson)));
+    CHECK(fixture.answer(g, "adj", std::move(adjJson)));
   }
 
   optical::VerticalKerner kerner(raster);
   int pairsExact = 0;
   int kerned = 0;
-  for (const auto& p : fx["pairs"].items()) {
+  js::Json::Array& pairs = fx.find_mut("pairs")->arr_mut();
+  for (js::Json& pj : pairs) {
+    js::Json::Array& p = pj.arr_mut();
     const double got = kerner.kern_px(p[0].str(), p[1].str(), p[2].num(), p[3].str(), p[4].str(), p[5].num());
     INFO(p[1].str() << " / " << p[4].str());
-    CHECK(got == p[6].num());
-    pairsExact += got == p[6].num() ? 1 : 0;
+    pairsExact += p[6].is_number() && got == p[6].num() ? 1 : 0;
+    CHECK(fixture.answer(p[6], js::Json::number(got)));
     kerned += p[6].num() < 0 ? 1 : 0;
   }
-  for (const auto& c : fx["proportional"].items()) {
+  for (js::Json& cj : fx.find_mut("proportional")->arr_mut()) {
+    js::Json::Array& c = cj.arr_mut();
     std::string s;
     append_utf8(s, static_cast<char32_t>(c[0].num()));
-    CHECK(optical::is_proportional_cjk(s) == c[1].truthy());
+    CHECK(fixture.answer(c[1], js::Json::boolean(optical::is_proportional_cjk(s))));
   }
   std::printf("vertical optical kerning vs opticalKerning.ts: profiles %d/%zu, pairs %d/%zu exact (%d kerned)\n", profilesExact,
-              fx["profiles"].size(), pairsExact, fx["pairs"].size(), kerned);
+              profiles.size(), pairsExact, pairs.size(), kerned);
+  REQUIRE(fixture.finish());
 }

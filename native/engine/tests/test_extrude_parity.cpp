@@ -1,21 +1,21 @@
-// Cross-engine extrusion parity (tests/data/extrude_parity.json, written by
-// src/core/geometry/extrudeCrossEngine.test.ts): every recipe — rect, rounded
-// rect, ellipse, Bézier runs with a hole, a traced bitmap — × extrusion options
-// through the C++ port must give the editor's mesh: same counts, ranges and
-// clamped bevel, and the same FNV-1a 64 over the exact vertex / index bytes.
+// Cross-engine extrusion parity (tests/data/extrude_parity.json, frozen from
+// the TypeScript engine's extrudeCrossEngine.test.ts): every recipe — rect,
+// rounded rect, ellipse, Bézier runs with a hole, a traced bitmap — × extrusion
+// options through the C++ port must give the editor's mesh: same counts, ranges
+// and clamped bevel, and the same FNV-1a 64 over the exact vertex / index
+// bytes. PARITY_REBLESS=1 writes the C++ answers instead (parity_rebless.hpp).
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <vector>
 
 #include "extrude_mesh.hpp"
 #include "json.hpp"
+#include "parity_rebless.hpp"
 
 namespace m = premation::scene::mesh;
 using premation::js::Json;
@@ -105,34 +105,24 @@ const char* role_name(m::MeshRole r) {
 }  // namespace
 
 TEST_CASE("extrusion parity: the C++ port builds the editor's extruded meshes", "[scene][extrude][parity]") {
-  std::ifstream f(std::string(PREMATION_ENGINE_TEST_DATA) + "/extrude_parity.json", std::ios::binary);
-  REQUIRE(f.good());
-  std::stringstream ss;
-  ss << f.rdbuf();
-  const auto fixture = premation::js::parse(ss.str());
-  REQUIRE(fixture.has_value());
-  const auto& rows = fixture->at("rows").arr();
+  premation::test::JsonFixture fx("extrude_parity.json");
+  REQUIRE(fx.ok());
+  auto& rows = fx.root().find_mut("rows")->arr_mut();
   REQUIRE(rows.size() >= 9);
-  for (const Json& row : rows) {
+  for (Json& row : rows) {
     INFO(row.at("name").str());
     const std::vector<m::Ring> rings = rings_of(row.at("outline"));
     const std::optional<m::ExtrudedMesh> mesh = m::extrude_outline(rings, options_of(row.at("opts")));
-    const Json& want = row.at("mesh");
-    REQUIRE(mesh.has_value() == want.is_object());
-    if (!mesh) continue;
-    CHECK(mesh->vertexCount == static_cast<std::uint32_t>(want.at("vertexCount").num()));
-    CHECK(mesh->indices.size() == static_cast<std::size_t>(want.at("indexCount").num()));
-    CHECK(mesh->index32 == want.at("index32").b());
-    CHECK(mesh->bevel == want.at("bevel").num());
-    const auto& wr = want.at("ranges").arr();
-    REQUIRE(mesh->ranges.size() == wr.size());
-    for (std::size_t i = 0; i < wr.size(); ++i) {
-      CHECK(std::string(role_name(mesh->ranges[i].role)) == wr[i].at("role").str());
-      CHECK(mesh->ranges[i].first == static_cast<std::uint32_t>(wr[i].at("first").num()));
-      CHECK(mesh->ranges[i].count == static_cast<std::uint32_t>(wr[i].at("count").num()));
+    if (!mesh) {
+      CHECK(fx.answer(row, "mesh", Json::null()));
+      continue;
     }
-    CHECK(fnv1a64(reinterpret_cast<const std::uint8_t*>(mesh->vertices.data()), mesh->vertices.size() * sizeof(float)) ==  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
-          want.at("verticesFnv").str());
+    Json::Array ranges;
+    for (const auto& r : mesh->ranges) {
+      ranges.push_back(Json::object(Json::Object{{"role", Json::string(role_name(r.role))},
+                                                 {"first", Json::number(r.first)},
+                                                 {"count", Json::number(r.count)}}));
+    }
     std::vector<std::uint8_t> idx;
     if (mesh->index32) {
       idx.resize(mesh->indices.size() * 4);
@@ -144,6 +134,16 @@ TEST_CASE("extrusion parity: the C++ port builds the editor's extruded meshes", 
         std::memcpy(idx.data() + i * 2, &v, 2);
       }
     }
-    CHECK(fnv1a64(idx.data(), idx.size()) == want.at("indicesFnv").str());
+    const std::string verticesFnv =
+        fnv1a64(reinterpret_cast<const std::uint8_t*>(mesh->vertices.data()), mesh->vertices.size() * sizeof(float));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    CHECK(fx.answer(row, "mesh",
+                    Json::object(Json::Object{{"vertexCount", Json::number(mesh->vertexCount)},
+                                              {"indexCount", Json::number(static_cast<double>(mesh->indices.size()))},
+                                              {"index32", Json::boolean(mesh->index32)},
+                                              {"bevel", Json::number(mesh->bevel)},
+                                              {"ranges", Json::array(std::move(ranges))},
+                                              {"verticesFnv", Json::string(verticesFnv)},
+                                              {"indicesFnv", Json::string(fnv1a64(idx.data(), idx.size()))}})));
   }
+  REQUIRE(fx.finish());
 }

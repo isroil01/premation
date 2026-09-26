@@ -1,19 +1,22 @@
-// glTF morph + skin parity (tests/data/model_deform_parity.json, written by
-// src/core/scene/modelDeformCrossEngine.test.ts): morphedMeshFor then
+// glTF morph + skin parity (tests/data/model_deform_parity.json, frozen from
+// the TypeScript engine's modelDeformCrossEngine.test.ts): morphedMeshFor then
 // skinnedMeshFor on the registered model — the buffer keys and every vertex
-// float equal the editor's.
+// float equal the editor's. PARITY_REBLESS=1 writes the C++ answers instead
+// (parity_rebless.hpp). The model bytes, its key (which the fixture's nodes
+// carry in their Model props) and the per-row nodes / weights / worlds are
+// inputs and stay.
 #include <catch2/catch_test_macros.hpp>
 
-#include <fstream>
 #include <map>
-#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "gltf_model.hpp"
 #include "json.hpp"
 #include "model_deform.hpp"
 #include "native_effects.hpp"
+#include "parity_rebless.hpp"
 
 namespace gl = premation::scene::gltf;
 namespace doc = premation::doc;
@@ -28,26 +31,23 @@ xf::Mat4 mat4_of(const Json& a) {
   return m;
 }
 
-void check_vertices(const Json& want, const std::vector<float>& got) {
-  REQUIRE(want.arr().size() == got.size());
-  for (std::size_t i = 0; i < got.size(); ++i) CHECK(static_cast<double>(got[i]) == want.arr()[i].num());
+/// modelDeformCrossEngine.test.ts' `{ key, tag?, vertices }` of a deformed mesh.
+Json deformed_json(const gl::Deformed& d, bool withTag) {
+  Json::Object o{{"key", Json::string(d.key)}};
+  if (withTag) o.push_back({"tag", Json::string(d.tag)});
+  o.push_back({"vertices", premation::test::json_numbers(d.vertices)});
+  return Json::object(std::move(o));
 }
 
 }  // namespace
 
 TEST_CASE("model deform parity: morph targets and skinning equal the editor's", "[scene][gltf][parity]") {
-  std::ifstream f(std::string(PREMATION_ENGINE_TEST_DATA) + "/model_deform_parity.json", std::ios::binary);
-  if (!f.good()) {
-    WARN("model_deform_parity.json not generated yet (GEN_NATIVE_DEFORM=1 npx jest modelDeformCrossEngine)");
-    return;
-  }
-  std::stringstream ss;
-  ss << f.rdbuf();
-  const auto fixture = premation::js::parse(ss.str());
-  REQUIRE(fixture.has_value());
-  const auto bytes = doc::native_unbase64(fixture->at("bytes").str());
+  premation::test::JsonFixture fx("model_deform_parity.json");
+  REQUIRE(fx.ok());
+  const auto bytes = doc::native_unbase64(fx.root().at("bytes").str());
   REQUIRE(bytes.has_value());
-  const std::string modelKey = fixture->at("modelKey").str();
+  // An input, not an answer: the rows' Model props name the model by it.
+  const std::string modelKey = fx.root().at("modelKey").str();
   CHECK(gl::model_key_for_bytes(*bytes) == modelKey);
   gl::clear_models();
   const auto model = gl::register_model(modelKey, *bytes);
@@ -57,7 +57,7 @@ TEST_CASE("model deform parity: morph targets and skinning equal the editor's", 
   REQUIRE(it != model->entries.end());
   const gl::Entry& entry = it->second;
 
-  for (const Json& row : fixture->at("rows").arr()) {
+  for (Json& row : fx.root().find_mut("rows")->arr_mut()) {
     INFO(row.at("name").str());
     std::map<std::string, doc::Node, std::less<>> nodes;
     for (const Json& ns : row.at("nodes").arr()) {
@@ -81,13 +81,7 @@ TEST_CASE("model deform parity: morph targets and skinning equal the editor's", 
     const doc::Node& mesh = nodes.at("mesh");
 
     const std::optional<gl::Deformed> morphed = entry.morphTargets > 0 ? gl::morphed_mesh_for(mesh, entry, &animated) : std::nullopt;
-    const Json& wantMorph = row.at("morphed");
-    REQUIRE(morphed.has_value() == wantMorph.is_object());
-    if (morphed) {
-      CHECK(morphed->key == wantMorph.at("key").str());
-      CHECK(morphed->tag == wantMorph.at("tag").str());
-      check_vertices(wantMorph.at("vertices"), morphed->vertices);
-    }
+    CHECK(fx.answer(row, "morphed", morphed ? deformed_json(*morphed, true) : Json::null()));
 
     const Json& worlds = row.at("jointWorlds");
     const gl::SkinResolvers r{
@@ -111,14 +105,10 @@ TEST_CASE("model deform parity: morph targets and skinning equal the editor's", 
         entry.skinned ? gl::skinned_mesh_for(mesh, modelKey, skinIdx, entry, model->skins, mat4_of(row.at("layerWorld")), r, cache,
                                              morphed ? &*morphed : nullptr)
                       : std::nullopt;
-    const Json& wantSkin = row.at("skinned");
-    REQUIRE(skinned.has_value() == wantSkin.is_object());
-    if (skinned) {
-      CHECK(skinned->key == wantSkin.at("key").str());
-      check_vertices(wantSkin.at("vertices"), skinned->vertices);
-    }
+    CHECK(fx.answer(row, "skinned", skinned ? deformed_json(*skinned, false) : Json::null()));
     const std::string deformedKey = skinned ? skinned->key : morphed ? morphed->key : entry.key;
-    CHECK(deformedKey == row.at("deformedKey").str());
+    CHECK(fx.answer(row, "deformedKey", Json::string(deformedKey)));
   }
   gl::clear_models();
+  REQUIRE(fx.finish());
 }

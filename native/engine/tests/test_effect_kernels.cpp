@@ -1,8 +1,10 @@
 // E4 cross-engine effect-kernel parity (tests/data/effect_kernel_parity.json,
-// written by src/core/effects/nativeKernelCrossEngine.test.ts): every ported
-// CPU kernel, run on the fixture's synthetic RGBA inputs with the recorded
-// arguments, must give the TypeScript kernel's output byte for byte (FNV-1a
-// 64) — on the calling thread alone and split across a thread pool.
+// frozen from the TypeScript engine's nativeKernelCrossEngine.test.ts;
+// PARITY_REBLESS=1 writes the C++ answers instead (parity_rebless.hpp)): every
+// ported CPU kernel, run on the fixture's synthetic RGBA inputs with the
+// recorded arguments, must give the TypeScript kernel's output byte for byte
+// (FNV-1a 64) — on the calling thread alone and split across a thread pool.
+// Re-blessing records the 1-thread hashes; the pool run is checked against them.
 //
 // EFFECT_KERNEL_DUMP=<dir> writes each C++ output as raw RGBA on mismatch.
 #include <catch2/catch_test_macros.hpp>
@@ -17,12 +19,13 @@
 #include <fstream>
 #include <map>
 #include <set>
-#include <sstream>
 #include <string>
 #include <vector>
 
 #include "effects/kernel_dispatch.hpp"
+#include "json.hpp"
 #include "jsmath.hpp"
+#include "parity_rebless.hpp"
 #include "raster/json.hpp"
 
 namespace fx = premation::effects;
@@ -62,14 +65,12 @@ std::vector<std::uint8_t> base64(std::string_view s) {
   return out;
 }
 
-json::Value load_fixture() {
-  std::ifstream f(std::string(PREMATION_ENGINE_TEST_DATA) + "/effect_kernel_parity.json", std::ios::binary);
-  REQUIRE(f.good());
-  std::stringstream ss;
-  ss << f.rdbuf();
+/// The kernels read raster::json: a read-only copy of the fixture's inputs
+/// (JSON.stringify's numbers parse back bit-identical).
+json::Value raster_copy(const premation::js::Json& root) {
   json::Value v;
   std::string err;
-  REQUIRE(json::parse(ss.str(), v, err));
+  REQUIRE(json::parse(premation::js::stringify(root), v, err));
   return v;
 }
 
@@ -81,8 +82,12 @@ struct Image {
 
 }  // namespace
 
+// Inputs only (the images' hashes are of the recorded input bytes): nothing to
+// re-bless, so this case reads the fixture and never writes it.
 TEST_CASE("effect kernels: the fixture's inputs decode to the TS bytes", "[effects][parity]") {
-  const json::Value fixture = load_fixture();
+  premation::test::JsonFixture fx_file("effect_kernel_parity.json");
+  REQUIRE(fx_file.ok());
+  const json::Value fixture = raster_copy(fx_file.root());
   REQUIRE(fixture["images"].size() >= 3);
   for (const json::Value& im : fixture["images"].items()) {
     const auto bytes = base64(im["rgba"].str());
@@ -92,7 +97,11 @@ TEST_CASE("effect kernels: the fixture's inputs decode to the TS bytes", "[effec
 }
 
 TEST_CASE("effect kernels: C++ equals the TS kernels byte for byte, 1 thread and N", "[effects][parity]") {
-  const json::Value fixture = load_fixture();
+  premation::test::JsonFixture fx_file("effect_kernel_parity.json");
+  REQUIRE(fx_file.ok());
+  const json::Value fixture = raster_copy(fx_file.root());
+  premation::js::Json::Array& answers = fx_file.root().find_mut("rows")->arr_mut();
+  REQUIRE(answers.size() == fixture["rows"].size());
   std::map<std::string, Image, std::less<>> images;
   for (const json::Value& im : fixture["images"].items()) {
     images[im["name"].str()] = Image{static_cast<int>(im["w"].num()), static_cast<int>(im["h"].num()), base64(im["rgba"].str())};
@@ -118,12 +127,17 @@ TEST_CASE("effect kernels: C++ equals the TS kernels byte for byte, 1 thread and
       std::vector<std::uint8_t> buf = im.rgba;
       REQUIRE(fx::run_kernel(effect, a, kl, fx::RgbaView{buf, im.w, im.h}, p));
       const std::string got = fnv1a64(buf);
-      if (got != row["fnv"].str() && dump != nullptr) {
+      premation::js::Json& answer = answers[static_cast<std::size_t>(index)];
+      if (got != answer.at("fnv").str() && dump != nullptr) {
         std::ofstream o(std::string(dump) + "/" + std::to_string(index) + "-" + effect + (p ? "-mt" : "") + ".rgba",
                         std::ios::binary);
         o.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(buf.size()));  // NOLINT
       }
-      CHECK(got == row["fnv"].str());
+      if (p == nullptr) {
+        CHECK(fx_file.answer(answer, "fnv", premation::js::Json::string(got)));
+      } else {
+        CHECK(got == answer.at("fnv").str());
+      }
     }
     covered.insert(effect);
     ++index;
@@ -133,6 +147,7 @@ TEST_CASE("effect kernels: C++ equals the TS kernels byte for byte, 1 thread and
     INFO(k);
     CHECK(covered.count(std::string(k)) == 1);
   }
+  REQUIRE(fx_file.finish());
 }
 
 TEST_CASE("effect kernels: jhypot2 is motion::js::hypot bit for bit", "[effects][math]") {

@@ -1,9 +1,11 @@
 // Cross-engine height displacement parity (tests/data/height_displacement_parity.json,
-// written by src/core/scene/heightDisplacementCrossEngine.test.ts): the C++
-// displace_mesh over the same mesh, field, amount and subdivision count must
-// give displacedMeshFor's key, vertices and indices byte for byte. Primitive
-// meshes are rebuilt from their `prim:` key (primitive_mesh.cpp); the others
-// come from the fixture. Row 0 is the primitive-displaced-sphere golden.
+// frozen from the TypeScript engine's heightDisplacementCrossEngine.test.ts):
+// the C++ displace_mesh over the same mesh, field, amount and subdivision count
+// must give displacedMeshFor's key, vertices and indices byte for byte.
+// Primitive meshes are rebuilt from their `prim:` key (primitive_mesh.cpp); the
+// others come from the fixture. Row 0 is the primitive-displaced-sphere golden.
+// PARITY_REBLESS=1 writes the C++ answers instead (parity_rebless.hpp); the
+// fields, meshes, amounts and subdivision counts are inputs and stay.
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
@@ -11,14 +13,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <map>
-#include <sstream>
 #include <string>
 #include <vector>
 
 #include "height_displacement.hpp"
 #include "json.hpp"
+#include "parity_rebless.hpp"
 #include "primitive_mesh.hpp"
 
 namespace sc = premation::scene;
@@ -43,15 +44,11 @@ std::string fnv1a64(const std::vector<T>& v) {
 }  // namespace
 
 TEST_CASE("height displacement parity: displaced meshes equal the editor's", "[scene][displacement][parity]") {
-  std::ifstream f(std::string(PREMATION_ENGINE_TEST_DATA) + "/height_displacement_parity.json", std::ios::binary);
-  REQUIRE(f.good());
-  std::stringstream ss;
-  ss << f.rdbuf();
-  const auto fixture = premation::js::parse(ss.str());
-  REQUIRE(fixture.has_value());
+  premation::test::JsonFixture fx("height_displacement_parity.json");
+  REQUIRE(fx.ok());
 
   std::map<std::string, sc::HeightField> fields;
-  for (const Json::Member& m : fixture->at("fields").obj()) {
+  for (const Json::Member& m : fx.root().at("fields").obj()) {
     const std::string& name = m.key;
     const Json& jf = m.value;
     sc::HeightField hf;
@@ -62,10 +59,10 @@ TEST_CASE("height displacement parity: displaced meshes equal the editor's", "[s
     fields.emplace(name, std::move(hf));
   }
 
-  const auto& rows = fixture->at("rows").arr();
+  auto& rows = fx.root().find_mut("rows")->arr_mut();
   REQUIRE(rows.size() >= 9);
   std::size_t checked = 0;
-  for (const Json& row : rows) {
+  for (Json& row : rows) {
     const std::string mesh = row.at("mesh").str();
     INFO(mesh << " × " << row.at("field").str() << " amount " << row.at("amount").num() << " subdivisions "
               << row.at("subdivisions").num());
@@ -88,15 +85,16 @@ TEST_CASE("height displacement parity: displaced meshes equal the editor's", "[s
     const double amount = row.at("amount").num();
     const double subs = row.at("subdivisions").num();
     const sc::DisplacedMesh d = sc::displace_mesh(vertices, indices, fields.at(field), amount, subs);
-    CHECK(sc::displaced_mesh_key(meshKey, field, amount, subs) == row.at("key").str());
-    CHECK(d.vertices.size() / 8 == static_cast<std::size_t>(row.at("vertexCount").num()));
-    CHECK(d.indices.size() == static_cast<std::size_t>(row.at("indexCount").num()));
-    CHECK(d.triangleScale == row.at("triangleScale").num());
-    CHECK(fnv1a64(d.vertices) == row.at("verticesFnv").str());
-    CHECK(fnv1a64(d.indices) == row.at("indicesFnv").str());
+    CHECK(fx.answer(row, "key", Json::string(sc::displaced_mesh_key(meshKey, field, amount, subs))));
+    CHECK(fx.answer(row, "vertexCount", Json::number(static_cast<double>(d.vertices.size() / 8))));
+    CHECK(fx.answer(row, "indexCount", Json::number(static_cast<double>(d.indices.size()))));
+    CHECK(fx.answer(row, "verticesFnv", Json::string(fnv1a64(d.vertices))));
+    CHECK(fx.answer(row, "indicesFnv", Json::string(fnv1a64(d.indices))));
+    CHECK(fx.answer(row, "triangleScale", Json::number(static_cast<double>(d.triangleScale))));
     ++checked;
   }
   CHECK(checked == rows.size());
+  REQUIRE(fx.finish());
 }
 
 TEST_CASE("height displacement: sample_height clamps and interpolates like the TypeScript", "[scene][displacement]") {

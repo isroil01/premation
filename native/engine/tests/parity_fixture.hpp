@@ -1,10 +1,16 @@
-// The cross-engine parity fixture (src/core/engine/__testHelpers__/parityFixture.ts):
-// the TypeScript engine's recorded requests and responses, replayed into a
-// fresh in-process C++ Session per session and compared BYTE FOR BYTE (seq and
-// revision zeroed; refusals by error code only — messages are each engine's
-// own), with every revision step. Shared by D1's evaluation parity
-// (test_d1_eval_parity.cpp) and F2's undo parity (test_undo_parity.cpp); each
-// test executable is one translation unit that includes this once.
+// The cross-engine parity fixture (format of the TypeScript engine's
+// src/core/engine/__testHelpers__/parityFixture.ts): recorded requests and
+// responses, replayed into a fresh in-process C++ Session per session and
+// compared BYTE FOR BYTE (seq and revision zeroed; refusals by error code only —
+// messages are each engine's own), with every revision step. Shared by D1's
+// evaluation parity (test_d1_eval_parity.cpp) and F2's undo parity
+// (test_undo_parity.cpp); each test executable is one translation unit that
+// includes this once.
+//
+// The fixtures were recorded from the TypeScript engine and are frozen data
+// now. PARITY_REBLESS=1 replays every session and writes the C++ responses
+// and revision steps into the fixture instead of comparing (requests, probes
+// and the hashed/full choice per record are kept) — see parity_rebless.hpp.
 #pragma once
 
 #include <catch2/catch_test_macros.hpp>
@@ -24,6 +30,7 @@
 #include <variant>
 #include <vector>
 
+#include "parity_rebless.hpp"
 #include "session_harness.hpp"
 
 namespace {
@@ -41,6 +48,9 @@ struct Record {
   std::uint32_t step = 0;
   std::string label;
   std::vector<std::uint8_t> request;
+  /// The request exactly as the file stores it (a probe's compact form or the
+  /// full encoding, with its tag byte) — what a re-bless writes back.
+  std::vector<std::uint8_t> requestSection;
   /// The TypeScript's normalized response in full, or (hashed = true) only its length + hash64.
   std::vector<std::uint8_t> response;
   bool hashed = false;
@@ -63,6 +73,7 @@ struct SessionData {
   std::vector<Record> records;
 };
 struct Fixture {
+  std::string path;  ///< where it was read from (a re-bless writes it back there)
   std::vector<std::pair<std::string, std::string>> files;
   std::vector<SessionData> sessions;
   bool ok = false;
@@ -72,7 +83,8 @@ struct Fixture {
 Fixture load_fixture(const char* file, const char* overrideVar) {
   Fixture fx;
   const char* override = std::getenv(overrideVar);
-  std::ifstream f(override != nullptr ? std::string(override) : std::string(PREMATION_ENGINE_TEST_DATA "/") + file, std::ios::binary);
+  fx.path = override != nullptr ? std::string(override) : premation::test::fixture_path(file);
+  std::ifstream f(fx.path, std::ios::binary);
   const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
   std::size_t at = 0;
   const auto u32 = [&](std::uint32_t& out) {
@@ -117,6 +129,7 @@ Fixture load_fixture(const char* file, const char* overrideVar) {
       if (at + 1 > bytes.size()) return fx;
       r.kind = bytes[at++];
       if (!u32(r.step) || !text(r.label) || at + 1 > bytes.size()) return fx;
+      const std::size_t sectionStart = at;
       if (bytes[at++] == 1) {
         // A getPropertyValues over record `base`'s properties at another time.
         std::uint32_t base = 0;
@@ -142,6 +155,7 @@ Fixture load_fixture(const char* file, const char* overrideVar) {
       } else if (!blob(r.request)) {
         return fx;
       }
+      r.requestSection.assign(bytes.begin() + static_cast<std::ptrdiff_t>(sectionStart), bytes.begin() + static_cast<std::ptrdiff_t>(at));
       if (at + 1 > bytes.size()) return fx;
       r.hashed = bytes[at++] == 1;
       if (r.hashed) {
@@ -158,6 +172,44 @@ Fixture load_fixture(const char* file, const char* overrideVar) {
   }
   fx.ok = at == bytes.size();
   return fx;
+}
+
+/// The fixture file for `fx` (the inverse of load_fixture).
+std::vector<std::uint8_t> encode_fixture(const Fixture& fx) {
+  std::vector<std::uint8_t> out{'D', '1', 'E', 'V'};
+  const auto u32 = [&out](std::uint32_t v) {
+    for (unsigned k = 0; k < 4; ++k) out.push_back(static_cast<std::uint8_t>(v >> (8U * k)));
+  };
+  const auto blob = [&](const auto& b) {
+    u32(static_cast<std::uint32_t>(b.size()));
+    out.insert(out.end(), b.begin(), b.end());
+  };
+  u32(2);
+  u32(static_cast<std::uint32_t>(fx.files.size()));
+  for (const auto& [p, doc] : fx.files) {
+    blob(p);
+    blob(doc);
+  }
+  u32(static_cast<std::uint32_t>(fx.sessions.size()));
+  for (const SessionData& sd : fx.sessions) {
+    blob(sd.name);
+    u32(static_cast<std::uint32_t>(sd.records.size()));
+    for (const Record& r : sd.records) {
+      out.push_back(r.kind);
+      u32(r.step);
+      blob(r.label);
+      out.insert(out.end(), r.requestSection.begin(), r.requestSection.end());
+      out.push_back(r.hashed ? 1 : 0);
+      if (r.hashed) {
+        u32(r.length);
+        u32(static_cast<std::uint32_t>(r.hash >> 32U));
+        u32(static_cast<std::uint32_t>(r.hash & 0xffffffffU));
+      } else {
+        blob(r.response);
+      }
+    }
+  }
+  return out;
 }
 
 std::string hex_of(std::string_view s) {
@@ -406,14 +458,17 @@ struct Report {
   [[nodiscard]] std::size_t mismatches() const { return outcomeDiffs + valueDiffs + stepDiffs; }
 };
 
-Report replay(const SessionData& s, const std::string& portsDir) {
+/// Replay one session and compare; with `bless`, write the C++ answers into
+/// its records instead (a copy of `s`, re-bless mode) and compare nothing.
+Report replay(const SessionData& s, const std::string& portsDir, SessionData* bless = nullptr) {
   Report rep;
   Harness h(3, portsDir);
   (void)h.hello();
   REQUIRE(premation::test::is_ok(h.run(premation::test::cmd(api::NewProject{}))));
   REQUIRE(premation::test::is_ok(h.run(premation::test::cmd(api::ClearHistory{}))));
   std::uint64_t revision = h.session.revision();
-  for (const Record& r : s.records) {
+  for (std::size_t index = 0; index < s.records.size(); ++index) {
+    const Record& r = s.records[index];
     rep.records += 1;
     (r.kind == 1 ? rep.probes : r.kind == 2 ? rep.walk : rep.requests) += 1;
     api::EngineMessage msg;
@@ -435,6 +490,17 @@ Report replay(const SessionData& s, const std::string& portsDir) {
     bool differs = false;
     const bool cxErr = got->outcome.kind() == api::Outcome::Kind::error;
     const std::vector<std::uint8_t> mine = encode_normalized(*got);
+    if (bless != nullptr) {
+      Record& out = bless->records[index];
+      out.step = static_cast<std::uint32_t>(step);
+      if (out.hashed) {
+        out.length = static_cast<std::uint32_t>(mine.size());
+        out.hash = hash64(mine);
+      } else {
+        out.response = mine;
+      }
+      continue;
+    }
     if (r.hashed) {
       // Only large successful answers are hashed (errors are small).
       if (cxErr) {
@@ -533,6 +599,25 @@ std::size_t run_parity(const char* title, const Fixture& fx, const char* scratch
               title, fx.sessions.size(), cleanSessions, totalRecords, totalProbes, totalWalk, total, totalProbeDiffs, table.c_str(), labels.c_str());
   std::filesystem::remove_all(dir);
   return total;
+}
+
+/// PARITY_REBLESS=1: replay every session of `fx` and write the C++ responses
+/// and revision steps back into its file. False when the write failed.
+bool rebless_parity(const char* title, Fixture& fx, const char* scratch) {
+  REQUIRE(fx.ok);
+  premation::log::set_min_level(premation::log::Level::error);
+  const std::filesystem::path dir = std::filesystem::temp_directory_path() / scratch;
+  for (SessionData& s : fx.sessions) {
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    for (const auto& [p, doc] : fx.files) std::ofstream(dir / (hex_of(p) + ".json"), std::ios::binary) << doc;
+    const SessionData recorded = s;
+    (void)replay(recorded, dir.string(), &s);
+  }
+  std::filesystem::remove_all(dir);
+  const std::vector<std::uint8_t> bytes = encode_fixture(fx);
+  std::printf("[%s] re-blessed %zu sessions into %s\n", title, fx.sessions.size(), fx.path.c_str());
+  return premation::test::write_fixture_file(fx.path, std::span(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
 }
 
 }  // namespace

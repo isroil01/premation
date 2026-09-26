@@ -10,7 +10,11 @@
 //     the builder decoded (luma of the image; the field decode is Chromium's
 //     drawImage + getImageData, exact for an opaque image at ≤ 256 px).
 //
-// The model is the render-tests model-maps golden's GLB (gltf_model_parity.json).
+// The model is the render-tests model-maps golden's GLB (gltf_model_parity.json,
+// frozen from the TypeScript engine's modelCrossEngine.test.ts). This test reads
+// only the fixture's INPUT bytes; the answers (model key, entries) belong to
+// test_gltf_model_parity.cpp, the one writer when PARITY_REBLESS=1
+// (parity_rebless.hpp) — so the key is derived here from the bytes.
 // With that file in its document, the golden frame itself was checked through
 // premation-scene: structurally equal to the TS FrameScene and pixel-equal to
 // the webgpu frame (NATIVE_CORE_PLAN.md, "D2w 3D leftovers").
@@ -99,7 +103,9 @@ std::string model_maps_glb_b64(std::string& key) {
   REQUIRE(fx.has_value());
   for (const Json& m : fx->at("models").arr()) {
     if (m.at("name").str() == "model-maps") {
-      key = m.at("modelKey").str();
+      const auto bytes = premation::doc::native_unbase64(m.at("bytes").str());
+      REQUIRE(bytes.has_value());
+      key = sc::gltf::model_key_for_bytes(*bytes);
       return m.at("bytes").str();
     }
   }

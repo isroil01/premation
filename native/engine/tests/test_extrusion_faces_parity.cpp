@@ -1,31 +1,26 @@
 // Extrusion fallback geometry parity (tests/data/extrusion_faces_parity.json,
-// written by src/core/scene/extrusionFacesCrossEngine.test.ts):
+// frozen from the TypeScript engine's extrusionFacesCrossEngine.test.ts):
 // extrusionGeometry's faces (order, suffix, role, size, every matrix element),
-// the emitted bevel, faceKindOf, and clampBevel.
+// the emitted bevel, faceKindOf, and clampBevel. PARITY_REBLESS=1 writes the
+// C++ answers instead (parity_rebless.hpp).
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
-#include <fstream>
-#include <sstream>
+#include <cstddef>
 #include <string>
+#include <utility>
 
 #include "extrusion_faces.hpp"
 #include "json.hpp"
+#include "parity_rebless.hpp"
 
 namespace ex = premation::scene::extrude;
 using premation::js::Json;
 
 TEST_CASE("extrusion faces parity: the fallback body equals the editor's", "[scene][extrusion][parity]") {
-  std::ifstream f(std::string(PREMATION_ENGINE_TEST_DATA) + "/extrusion_faces_parity.json", std::ios::binary);
-  if (!f.good()) {
-    WARN("extrusion_faces_parity.json not generated yet (GEN_NATIVE_EXTFACES=1 npx jest extrusionFacesCrossEngine)");
-    return;
-  }
-  std::stringstream ss;
-  ss << f.rdbuf();
-  const auto fixture = premation::js::parse(ss.str());
-  REQUIRE(fixture.has_value());
-  for (const Json& c : fixture->at("cases").arr()) {
+  premation::test::JsonFixture fx("extrusion_faces_parity.json");
+  REQUIRE(fx.ok());
+  for (Json& c : fx.root().find_mut("cases")->arr_mut()) {
     ex::Options o;
     const Json& jo = c.at("opts");
     if (jo.at("bevel").is_number()) o.bevel = jo.at("bevel").num();
@@ -34,22 +29,33 @@ TEST_CASE("extrusion faces parity: the fallback body equals the editor's", "[sce
     const double segments = c.at("segments").is_number() ? c.at("segments").num() : ex::kEllipseWallSegments;
     const ex::Geometry g =
         ex::extrusion_geometry(c.at("w").num(), c.at("h").num(), c.at("d").num(), c.at("shape").str() == "ellipse", segments, o);
-    CHECK(g.bevel == c.at("bevel").num());
-    const auto& want = c.at("faces").arr();
-    REQUIRE(g.faces.size() == want.size());
-    for (std::size_t i = 0; i < want.size(); ++i) {
-      const ex::Face& face = g.faces[i];
-      INFO(face.suffix);
-      CHECK(face.suffix == want[i].at("suffix").str());
-      CHECK(face.back == (want[i].at("role").str() == "back"));
-      CHECK(ex::face_kind_of(face) == want[i].at("kind").str());
-      CHECK(face.w == want[i].at("w").num());
-      CHECK(face.h == want[i].at("h").num());
-      for (std::size_t k = 0; k < 16; ++k) CHECK(face.m[k] == want[i].at("m").arr()[k].num());
+    CHECK(fx.answer(c, "bevel", Json::number(g.bevel)));
+    Json::Array faces;
+    for (const ex::Face& face : g.faces) {
+      Json::Array m;
+      for (std::size_t k = 0; k < 16; ++k) m.push_back(Json::number(static_cast<double>(face.m[k])));
+      faces.push_back(Json::object(Json::Object{{"m", Json::array(std::move(m))},
+                                                {"w", Json::number(face.w)},
+                                                {"h", Json::number(face.h)},
+                                                {"role", Json::string(face.back ? "back" : "wall")},
+                                                {"suffix", Json::string(face.suffix)},
+                                                {"kind", Json::string(std::string(ex::face_kind_of(face)))}}));
+    }
+    if (fx.reblessing()) {
+      CHECK(fx.answer(c, "faces", Json::array(std::move(faces))));
+    } else {
+      auto& want = c.find_mut("faces")->arr_mut();
+      REQUIRE(want.size() == faces.size());
+      for (std::size_t i = 0; i < faces.size(); ++i) {
+        INFO(g.faces[i].suffix);
+        CHECK(fx.answer(want[i], std::move(faces[i])));
+      }
     }
   }
-  for (const Json& b : fixture->at("bevels").arr()) {
+  for (Json& b : fx.root().find_mut("bevels")->arr_mut()) {
+    // JSON has no NaN: a NaN request travels as null.
     const double req = b.at("b").is_number() ? b.at("b").num() : std::nan("");
-    CHECK(ex::clamp_bevel(b.at("w").num(), b.at("h").num(), b.at("d").num(), req) == b.at("out").num());
+    CHECK(fx.answer(b, "out", Json::number(ex::clamp_bevel(b.at("w").num(), b.at("h").num(), b.at("d").num(), req))));
   }
+  REQUIRE(fx.finish());
 }

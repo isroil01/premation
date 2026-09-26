@@ -1,23 +1,24 @@
-// Cross-engine image-sky parity (tests/data/env_asset_parity.json, written by
-// src/core/scene/envAssetCrossEngine.test.ts): from the same decoded RGBA8
-// equirect, the C++ resample, SH9 projection, derived rig and reflection atlas
-// (env_light.cpp) must equal environmentLight.ts — floats and bytes exactly.
+// Cross-engine image-sky parity (tests/data/env_asset_parity.json, frozen from
+// the TypeScript engine's envAssetCrossEngine.test.ts): from the same decoded
+// RGBA8 equirect, the C++ resample, SH9 projection, derived rig and reflection
+// atlas (env_light.cpp) must equal environmentLight.ts — floats and bytes
+// exactly. PARITY_REBLESS=1 writes the C++ answers instead (parity_rebless.hpp).
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <vector>
 
 #include "env_light.hpp"
 #include "json.hpp"
+#include "parity_rebless.hpp"
 
 namespace sc = premation::scene;
 using premation::js::Json;
+using premation::test::json_numbers;
 
 namespace {
 
@@ -53,49 +54,45 @@ std::vector<std::uint8_t> image(std::uint32_t w, std::uint32_t h, std::uint32_t 
 }  // namespace
 
 TEST_CASE("image-sky parity: resample, SH, rig and reflection atlas equal environmentLight.ts", "[scene][env][parity]") {
-  std::ifstream f(std::string(PREMATION_ENGINE_TEST_DATA) + "/env_asset_parity.json", std::ios::binary);
-  REQUIRE(f.good());
-  std::stringstream ss;
-  ss << f.rdbuf();
-  const auto fixture = premation::js::parse(ss.str());
-  REQUIRE(fixture.has_value());
-  const auto& rows = fixture->at("rows").arr();
+  premation::test::JsonFixture fx("env_asset_parity.json");
+  REQUIRE(fx.ok());
+  auto& rows = fx.root().find_mut("rows")->arr_mut();
   REQUIRE(rows.size() >= 3);
-  for (const Json& row : rows) {
+  for (Json& row : rows) {
     const std::string name = row.at("name").str();
     INFO(name);
     const auto w = static_cast<std::uint32_t>(row.at("w").num());
     const auto h = static_cast<std::uint32_t>(row.at("h").num());
     const std::vector<std::uint8_t> px = image(w, h, static_cast<std::uint32_t>(row.at("seed").num()));
     const sc::EnvPixels base = sc::resample_equirect(px, static_cast<int>(w), static_cast<int>(h), sc::kEnvSpecWidth, sc::kEnvSpecHeight, false);
-    CHECK(base.width == static_cast<int>(row.at("resampled").at("width").num()));
-    CHECK(base.height == static_cast<int>(row.at("resampled").at("height").num()));
-    CHECK(fnv1a64(base.data) == row.at("resampled").at("fnv").str());
+    CHECK(fx.answer(row, "resampled",
+                    Json::object(Json::Object{{"width", Json::number(base.width)},
+                                              {"height", Json::number(base.height)},
+                                              {"fnv", Json::string(fnv1a64(base.data))}})));
 
     const std::array<float, 27> sh = sc::sh_project(base);
-    const auto& wantSh = row.at("sh").arr();
-    REQUIRE(wantSh.size() == 27);
-    for (std::size_t i = 0; i < 27; ++i) CHECK(static_cast<double>(sh.at(i)) == wantSh[i].num());
+    CHECK(fx.answer(row, "sh", json_numbers(sh)));
 
     const std::vector<sc::EnvRigLight> rig = sc::environment_rig(sh, 80, 30);
-    const auto& wantRig = row.at("rig").arr();
-    REQUIRE(rig.size() == wantRig.size());
-    for (std::size_t i = 0; i < rig.size(); ++i) {
-      CHECK(rig[i].ambient == (wantRig[i].at("kind").str() == "ambient"));
-      CHECK(rig[i].color == wantRig[i].at("color").str());
-      CHECK(rig[i].intensity == wantRig[i].at("intensity").num());
-      if (!rig[i].ambient) {
-        for (std::size_t k = 0; k < 3; ++k) CHECK(rig[i].from.at(k) == wantRig[i].at("from").arr()[k].num());
-      }
+    Json::Array gotRig;
+    for (const sc::EnvRigLight& l : rig) {
+      gotRig.push_back(Json::object(Json::Object{{"kind", Json::string(l.ambient ? "ambient" : "parallel")},
+                                                 {"color", Json::string(l.color)},
+                                                 {"intensity", Json::number(l.intensity)},
+                                                 {"from", l.ambient ? Json::null() : json_numbers(l.from)}}));
     }
+    CHECK(fx.answer(row, "rig", Json::array(std::move(gotRig))));
 
     const std::string id = sc::env_atlas_key("asset:" + name + "#" + sc::hash_env_pixels(base));
-    CHECK(id == row.at("atlas").at("id").str());
     const sc::EnvSpecularMap atlas = sc::build_env_specular_atlas(base, id);
-    CHECK(atlas.width == static_cast<std::uint32_t>(row.at("atlas").at("width").num()));
-    CHECK(atlas.height == static_cast<std::uint32_t>(row.at("atlas").at("height").num()));
-    CHECK(atlas.levels == static_cast<std::uint32_t>(row.at("atlas").at("levels").num()));
-    CHECK(atlas.scale == row.at("atlas").at("scale").num());
-    CHECK(fnv1a64(atlas.data) == row.at("atlas").at("fnv").str());
+    CHECK(fx.answer(row, "atlas",
+                    Json::object(Json::Object{{"id", Json::string(atlas.id)},
+                                              {"width", Json::number(atlas.width)},
+                                              {"height", Json::number(atlas.height)},
+                                              {"levels", Json::number(atlas.levels)},
+                                              {"scale", Json::number(atlas.scale)},
+                                              {"fnv", Json::string(fnv1a64(atlas.data))}})));
+    CHECK(atlas.id == id);
   }
+  REQUIRE(fx.finish());
 }

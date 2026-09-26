@@ -1,106 +1,111 @@
-// Image-alpha puppet mesh parity (tests/data/alpha_mesh_parity.json, written by
-// src/core/rig/alphaMeshCrossEngine.test.ts): the coverage mask of each image,
-// the traced outline regions, buildAlphaOutlineGeometry, and the rest mesh
-// buildRestMesh builds from the mask (grid + silhouette) — float for float.
+// Image-alpha puppet mesh parity (tests/data/alpha_mesh_parity.json, frozen
+// from the TypeScript engine's alphaMeshCrossEngine.test.ts): the coverage mask
+// of each image, the traced outline regions, buildAlphaOutlineGeometry, and the
+// rest mesh buildRestMesh builds from the mask (grid + silhouette) — float for
+// float. PARITY_REBLESS=1 writes the C++ answers instead (parity_rebless.hpp).
 #include <catch2/catch_test_macros.hpp>
 
-#include <fstream>
 #include <map>
-#include <sstream>
 #include <string>
 #include <vector>
 
 #include "alpha_mesh.hpp"
 #include "json.hpp"
 #include "native_effects.hpp"
+#include "parity_rebless.hpp"
 #include "rig_mesh.hpp"
 
 namespace sc = premation::scene;
 using premation::js::Json;
+using premation::test::json_numbers;
 
 namespace {
 
-template <typename T>
-void check_numbers(const Json& want, const std::vector<T>& got) {
-  REQUIRE(want.arr().size() == got.size());
-  for (std::size_t i = 0; i < got.size(); ++i) CHECK(static_cast<double>(got[i]) == want.arr()[i].num());
+/// A ring as the TypeScript flattened it: `ring.flatMap((p) => [p.x, p.y])`.
+Json flat_ring(const std::vector<sc::mesh::Pt2>& ring) {
+  Json::Array a;
+  a.reserve(ring.size() * 2);
+  for (const sc::mesh::Pt2& p : ring) {
+    a.push_back(Json::number(p.x));
+    a.push_back(Json::number(p.y));
+  }
+  return Json::array(std::move(a));
 }
 
-void check_ring(const Json& want, const std::vector<sc::mesh::Pt2>& got) {
-  REQUIRE(want.arr().size() == got.size() * 2);
-  for (std::size_t i = 0; i < got.size(); ++i) {
-    CHECK(got[i].x == want.arr()[i * 2].num());
-    CHECK(got[i].y == want.arr()[(i * 2) + 1].num());
+/// `regions.map((r) => ({ outer, holes }))`.
+Json regions_json(const std::vector<sc::rig::AlphaRegion>& regions) {
+  Json::Array out;
+  for (const sc::rig::AlphaRegion& r : regions) {
+    Json o = Json::object();
+    o.set("outer", flat_ring(r.outer));
+    Json::Array holes;
+    for (const auto& h : r.holes) holes.push_back(flat_ring(h));
+    o.set("holes", Json::array(std::move(holes)));
+    out.push_back(std::move(o));
   }
+  return Json::array(std::move(out));
 }
 
 }  // namespace
 
 TEST_CASE("alpha mesh parity: coverage, outline and rest mesh equal the editor's", "[scene][rig][alphamesh][parity]") {
-  std::ifstream f(std::string(PREMATION_ENGINE_TEST_DATA) + "/alpha_mesh_parity.json", std::ios::binary);
-  if (!f.good()) {
-    WARN("alpha_mesh_parity.json not generated yet (GEN_NATIVE_ALPHAMESH=1 npx jest alphaMeshCrossEngine)");
-    return;
-  }
-  std::stringstream ss;
-  ss << f.rdbuf();
-  const auto fixture = premation::js::parse(ss.str());
-  REQUIRE(fixture.has_value());
+  premation::test::JsonFixture fx("alpha_mesh_parity.json");
+  REQUIRE(fx.ok());
 
   std::map<std::string, sc::rig::CoverageMask, std::less<>> masks;
-  for (const auto& m : fixture->at("masks").obj()) {
+  for (auto& m : fx.root().find_mut("masks")->obj_mut()) {
     INFO(m.key);
     const auto rgba = premation::doc::native_unbase64(m.value.at("rgba").str());
     REQUIRE(rgba.has_value());
     sc::rig::CoverageMask mask = sc::rig::coverage_mask_from_image_data(
         *rgba, static_cast<int>(m.value.at("w").num()), static_cast<int>(m.value.at("h").num()));
-    CHECK(mask.cols == static_cast<int>(m.value.at("cols").num()));
-    CHECK(mask.rows == static_cast<int>(m.value.at("rows").num()));
-    CHECK(mask.key == m.value.at("key").str());
-    check_numbers(m.value.at("cells"), mask.cells);
+    CHECK(fx.answer(m.value, "cols", Json::number(static_cast<double>(mask.cols))));
+    CHECK(fx.answer(m.value, "rows", Json::number(static_cast<double>(mask.rows))));
+    CHECK(fx.answer(m.value, "cells", json_numbers(mask.cells)));
+    CHECK(fx.answer(m.value, "key", Json::string(mask.key)));
     masks.emplace(m.key, std::move(mask));
   }
 
-  for (const Json& c : fixture->at("cases").arr()) {
+  for (Json& c : fx.root().find_mut("cases")->arr_mut()) {
     const std::string image = c.at("image").str();
     INFO(image);
     const sc::rig::CoverageMask& mask = masks.at(image);
     const double lw = c.at("lw").num();
     const double lh = c.at("lh").num();
     const double pad = c.at("pad").num();
-    const Json& rig = c.at("rig");
+    const Json rig = c.at("rig");
     const double density = rig.at("meshDensity").is_number() ? rig.at("meshDensity").num() : 22;
     const double expansion = rig.at("meshExpansion").is_number() ? rig.at("meshExpansion").num() : 0;
 
     const std::vector<sc::rig::AlphaRegion> regions = sc::rig::alpha_outline_regions(mask, lw, lh, expansion);
-    REQUIRE(regions.size() == c.at("regions").arr().size());
-    for (std::size_t i = 0; i < regions.size(); ++i) {
-      const Json& wr = c.at("regions").arr()[i];
-      check_ring(wr.at("outer"), regions[i].outer);
-      REQUIRE(regions[i].holes.size() == wr.at("holes").arr().size());
-      for (std::size_t k = 0; k < regions[i].holes.size(); ++k) check_ring(wr.at("holes").arr()[k], regions[i].holes[k]);
-    }
+    CHECK(fx.answer(c, "regions", regions_json(regions)));
 
     const auto geom = sc::rig::build_alpha_outline_geometry(lw, lh, pad, density, expansion, mask);
-    REQUIRE(geom.has_value() == c.at("geom").is_object());
+    Json geom_json = Json::null();
     if (geom) {
-      CHECK(static_cast<double>(geom->numVertices) == c.at("geom").at("numVertices").num());
-      check_numbers(c.at("geom").at("vertices"), geom->vertices);
-      check_numbers(c.at("geom").at("triangles"), geom->triangles);
+      geom_json = Json::object();
+      geom_json.set("vertices", json_numbers(geom->vertices));
+      geom_json.set("triangles", json_numbers(geom->triangles));
+      geom_json.set("numVertices", Json::number(static_cast<double>(geom->numVertices)));
     }
+    CHECK(fx.answer(c, "geom", std::move(geom_json)));
 
     // buildRestMesh through the rig block's own resolution (puppet settings, the mask).
-    Json fx = Json::object();
-    fx.set("puppet", rig);
+    Json props = Json::object();
+    props.set("puppet", rig);
     sc::RigInputs in;
-    in.fx = &fx;
+    in.fx = &props;
     in.width = lw;
     in.height = lh;
     in.pad = pad;
     in.coverage = &mask;
     const auto rest = sc::rest_mesh_for(in);
     REQUIRE(rest.has_value());
-    check_numbers(c.at("rest").at("vertices"), rest->vertices);
-    check_numbers(c.at("rest").at("triangles"), rest->triangles);
+    // rest.layout is not exposed by rest_mesh_for: it stays as the fixture has it.
+    Json* rest_json = c.find_mut("rest");
+    REQUIRE(rest_json != nullptr);
+    CHECK(fx.answer(*rest_json, "vertices", json_numbers(rest->vertices)));
+    CHECK(fx.answer(*rest_json, "triangles", json_numbers(rest->triangles)));
   }
+  REQUIRE(fx.finish());
 }

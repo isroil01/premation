@@ -19,19 +19,17 @@
  * gap (per session: requests and probes that differ) and fails above the
  * ratchet it states.
  *
- * `GEN_NATIVE_D1=1 npx jest d1EvalParity` rewrites the fixture
- * (native/engine/tests/data/d1_eval_parity.bin); without it this test fails
- * when the checked-in fixture no longer matches the TypeScript.
+ * The fixture (native/engine/tests/data/d1_eval_parity.bin) is frozen,
+ * C++-owned data: the C++ test re-blesses it (PARITY_REBLESS=1). This test
+ * only fails when the TypeScript engine no longer produces it, a drift check
+ * kept until docs/TS_ENGINE_REMOVAL.md phase 4 deletes it.
  *
  * Format: `__testHelpers__/parityFixture.ts` (shared with F2's undoParity).
- * GEN_NATIVE_D1_FULL=<file> writes every response in full to <file> instead
- * (D1_FIXTURE=<file> points the C++ test at it, which then explains each
- * difference with both values).
  */
 
 import type { PropertyInfo, Query, Request, Response } from '@motion/engine-api';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { CORPUS as B2_CORPUS, CORPUS_FIXTURES, FAMILY_CORPUS, GENERATED_CORPUS } from '../__testHelpers__/corpus';
 import { setupEngine, sec, type Harness } from '../__testHelpers__/harness';
@@ -135,21 +133,15 @@ describe('D1: evaluated values of the replay corpus (fixture for the C++ engine)
   afterAll(() => {
     // test.each runs in declaration order; sort anyway so the file never depends on it.
     sessions.sort((a, b) => Object.keys(CORPUS).indexOf(a[0]) - Object.keys(CORPUS).indexOf(b[0]));
-    const fullTo = process.env.GEN_NATIVE_D1_FULL;
-    if (fullTo) writeFileSync(fullTo, encodeFixture(FILES, sessions, true));
     const bytes = encodeFixture(FILES, sessions, false);
     const digest = createHash('sha256').update(bytes).digest('hex');
     const records = sessions.reduce((n, [, r]) => n + r.length, 0);
     const probes = sessions.reduce((n, [, r]) => n + r.filter((x) => x.kind === 1).length, 0);
     console.log(`[D1 eval parity] ${sessions.length} sessions, ${records} records (${probes} probes), ${bytes.length} bytes, sha256 ${digest}`);
-    if (sessions.length !== Object.keys(CORPUS).length) return;  // a filtered run (-t) never writes or checks
-    if (process.env.GEN_NATIVE_D1 === '1') {
-      writeFileSync(OUT, bytes);
-      return;
-    }
+    if (sessions.length !== Object.keys(CORPUS).length) return;  // a filtered run (-t) never checks
     const stored = existsSync(OUT) ? createHash('sha256').update(readFileSync(OUT)).digest('hex') : '(missing)';
     if (stored !== digest) {
-      throw new Error(`native/engine/tests/data/d1_eval_parity.bin is stale (stored ${stored}, now ${digest}); regenerate with GEN_NATIVE_D1=1 npx jest d1EvalParity`);
+      throw new Error(`native/engine/tests/data/d1_eval_parity.bin is stale (stored ${stored}, now ${digest}); the TypeScript engine drifted from the frozen fixture`);
     }
   });
 });
