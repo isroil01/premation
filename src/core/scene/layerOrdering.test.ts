@@ -111,8 +111,16 @@ const paintOrder = (): string[] => {
     .layers.map((l) => l.id);
 };
 
-/** What the Scene panel LISTS under the composition, top row first. */
-const panelRows = (): string[] => {
+/** Let the scene writes above reach the document mirror as engine events (B4). */
+const mirrorSettled = async (): Promise<void> => {
+  await Promise.resolve();
+  await engineIdle();
+  await documentMirror().whenIdle();
+};
+
+/** What the Scene panel LISTS under the composition, top row first — built from the mirror (B4). */
+const panelRows = async (): Promise<string[]> => {
+  await mirrorSettled();
   const comp = sceneGraphToTree().find((n) => n.id === ROOT);
   return (comp?.children ?? []).map((n) => n.id);
 };
@@ -144,7 +152,7 @@ const contentHash = (): string => {
 async function expectStack(expected: string[]): Promise<void> {
   expect(stack()).toEqual(expected);
   expect(paintOrder()).toEqual(expected);
-  expect(panelRows()).toEqual([...expected].reverse());
+  expect(await panelRows()).toEqual([...expected].reverse());
   expect(await timelineRows()).toEqual([...expected].reverse());
   expect(hitAtOverlap()).toBe(expected[expected.length - 1]);
 }
@@ -330,6 +338,7 @@ describe('arrange is scoped to the siblings of ONE parent', () => {
 
   it('the Scene tree nests the group members the same way it stacks layers', async () => {
     arrangeNodes(['g1'], 'front');
+    await mirrorSettled();
     const comp = sceneGraphToTree().find((n) => n.id === ROOT);
     const g = (comp?.children ?? []).find((n) => n.id === 'G');
     expect((g?.children ?? []).map((n) => n.id)).toEqual(['g1', 'g2']);

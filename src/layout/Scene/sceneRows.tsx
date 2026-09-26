@@ -14,26 +14,21 @@
 
 import { Icon, type IconName } from '@components/Icon';
 import type { TreeNode } from '@components/TreeView';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import type SceneGraph from '@core/scene/SceneGraph';
-import {
-  KIND_GLYPH_COLOR,
-  nodeIconName,
-  readNodeKind,
-  stackOrderedChildren,
-} from '@core/scene/sceneDerive';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { readNodeLabelColor } from '@core/scene/labelColor';
-import { findKindFor, findLayerKind } from '@core/plugins/layerKindRegistry';
-import { ownerOf, readCustomLayer } from '@core/plugins/customLayers';
+import type { LayerInfo } from '@motion/engine-api';
+import { KIND_GLYPH_COLOR, KIND_ICON } from '@core/scene/sceneDerive';
+import { findLayerKind } from '@core/plugins/layerKindRegistry';
+import { splitKind } from '@core/plugins/layerKindSchema';
 import { getNodeEffects, effectDisplayNames } from '@core/effects/effects';
-import { assetIdOf } from '@core/source/sourceInfo';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorIconName } from '@core/mirror/layerGlyph';
+import { mirrorLabelColor } from '@core/mirror/layerLabels';
+import { childOrderOf } from '@core/mirror/layerTree';
 import { defaultAnimation } from '@motion/animation';
 import { useAssetStore } from '@stores/assetStore';
-import { useProjectStore } from '@stores/projectStore';
+import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 import type { SceneScope, SearchField } from '@stores/sceneViewStore';
 import type { SceneKind } from '@core/scene/seedDefaultScene';
-import type { SceneNode } from '@core/types';
 import type { SceneNodeFacts } from './sceneFilters';
 import styles from '@layout/EditorLayout/panels.module.css';
 
@@ -47,28 +42,61 @@ export interface RowOptions {
   thumbnails?: boolean;
 }
 
-/** Asset preview for a media layer, or undefined. */
-function thumbnailFor(node: SceneNode): string | undefined {
-  const assetId = assetIdOf(node);
-  if (!assetId) return undefined;
-  const asset = useAssetStore.getState().assets.find((a) => a.id === assetId);
-  if (!asset || asset.type === 'audio') return undefined;
-  return asset.thumbSrc ?? asset.src;
+/**
+ * The editor kind a row keys on: a plugin layer's own kind id (what the legacy
+ * `readNodeKind` reported for it — the filter menu lists only the built-in
+ * kinds), else the mirror's editor kind.
+ */
+function rowKind(layer: LayerInfo): SceneKind {
+  return (layer.generator || uiKindOf(layer) || 'shape') as SceneKind;
 }
 
-function toTreeNode(node: SceneNode, opts: RowOptions): TreeNode<SceneNodeData> {
-  const kind = readNodeKind(node);
-  // Stacking convention (matches the timeline): the TOP entry is the
-  // FRONT-most layer. `stackOrderedChildren` is that one convention, shared
-  // with `deriveTimelineTracks` so the tree and the timeline rows cannot drift.
-  const children = stackOrderedChildren(defaultSceneGraph, node.id).map((c) => toTreeNode(c, opts));
+/** Asset preview for a media layer, or undefined. */
+function thumbnailFor(m: DocumentMirror, layer: LayerInfo): string | undefined {
+  const item = layer.source ? m.item(layer.source) : undefined;
+  if (!item || item.kind !== 'footage' || item.mediaType === 'audio') return undefined;
+  // B4-gap: the preview URL is a page-side object URL the import minted (`thumbSrc`, else `src`), not a document
+  // fact — the API's `getThumbnail` answers it once the engine owns decode (D); until then the asset record holds it.
+  const asset = useAssetStore.getState().assets.find((a) => a.id === item.id);
+  return asset ? asset.thumbSrc ?? asset.src : undefined;
+}
 
-  const custom = readCustomLayer(node);
-  const iconName = nodeIconName(node, () => {
-    if (!custom) return undefined;
-    const registered = findLayerKind(custom.kind);
-    return (registered?.kind.icon as string | undefined) ?? 'plugin';
-  }) as IconName;
+/** A plugin layer kind's icon, when the plugin that provides it is installed. */
+function pluginIconOf(generator: string): string | undefined {
+  return (findLayerKind(generator)?.kind.icon as string | undefined) ?? 'plugin';
+}
+
+/** The row of a composition (a tree ROOT): labelled from its settings, its top layers under it. */
+function compToTreeNode(m: DocumentMirror, compId: string, opts: RowOptions): TreeNode<SceneNodeData> {
+  // A composition root is labelled from the PROJECT record, the source of truth
+  // the comp tabs and the timeline read — never from a root node's own name
+  // (seeded as "Composition 1", so a fresh project's tree said "Composition 1"
+  // under a tab titled "Main Comp").
+  const name = m.comp(compId)?.settings.name ?? compId;
+  const children = childOrderOf(m, compId).reverse().map((c) => layerToTreeNode(m, c, opts)).filter((n): n is TreeNode<SceneNodeData> => !!n);
+  return {
+    id: compId,
+    label: name,
+    name,
+    icon: KIND_ICON.group as IconName,
+    iconColor: KIND_GLYPH_COLOR.group,
+    labelColor: undefined,
+    thumbnail: undefined,
+    data: { type: 'group' },
+    children: children.length ? children : undefined,
+  };
+}
+
+function layerToTreeNode(m: DocumentMirror, id: string, opts: RowOptions): TreeNode<SceneNodeData> | null {
+  const layer = m.layer(id);
+  if (!layer) return null;
+  const kind = rowKind(layer);
+  // Stacking convention (matches the timeline): the TOP entry is the
+  // FRONT-most layer. `childOrderOf` is back-to-front, like the scene graph's
+  // child list, so the tree and the timeline rows cannot drift. (A legacy
+  // nested precomp GROUP is a composition too: its members are that comp's layers.)
+  const children = childOrderOf(m, id).reverse().map((c) => layerToTreeNode(m, c, opts)).filter((n): n is TreeNode<SceneNodeData> => !!n);
+  const iconName = mirrorIconName(layer, pluginIconOf) as IconName;
 
   /*
     Two plugin markers, both read from the DOCUMENT rather than from what
@@ -83,19 +111,12 @@ function toTreeNode(node: SceneNode, opts: RowOptions): TreeNode<SceneNodeData> 
     behaves like a normal layer, and the one thing it will not do is respond to
     its own properties.
   */
-  const owner = ownerOf(node);
-  const inert = custom ? !findKindFor(custom.pluginId, custom.kindId) : false;
-
-  // A composition root is labelled from the PROJECT record, the source of truth
-  // the comp tabs and the timeline read. The root node carries a name of its
-  // own, seeded as "Composition 1" and only kept in step by `renameComposition`
-  // — so a fresh project's tree said "Composition 1" under a tab titled
-  // "Main Comp".
-  const compName = node.parent ? undefined : useProjectStore.getState().comps[node.id]?.name;
+  const owner = layer.managedBy;
+  const inert = layer.generator ? !findLayerKind(layer.generator) : false;
   // The plain text behind whatever `label` becomes below. The rename field is
   // seeded from THIS, never from the node: a label wrapped in a <span> used to
   // seed an empty box, and an empty box commits as a cancel.
-  const name = compName ?? node.name ?? node.id;
+  const name = layer.name || id;
 
   let label: React.ReactNode = name;
   if (owner) {
@@ -107,7 +128,7 @@ function toTreeNode(node: SceneNode, opts: RowOptions): TreeNode<SceneNodeData> 
     );
   } else if (inert) {
     label = (
-      <span className={styles.pluginInertRow} title={`Needs the plugin "${custom!.pluginId}".`}>
+      <span className={styles.pluginInertRow} title={`Needs the plugin "${splitKind(layer.generator)?.pluginId ?? layer.generator}".`}>
         {label}
         <Icon name="warning" size="sm" />
       </span>
@@ -118,47 +139,51 @@ function toTreeNode(node: SceneNode, opts: RowOptions): TreeNode<SceneNodeData> 
   // glyph: the eye is on the far right and fades out until the row is
   // hovered, so a stack with three hidden layers looked identical to one
   // with none. Dimmed, not removed — it is still the user's layer.
-  if (node.visible === false) {
+  if (!layer.switches.visible) {
     label = <span className={styles.hiddenRow}>{label}</span>;
   }
 
   return {
-    id: node.id,
+    id,
     label,
     name,
     icon: iconName,
     iconColor: KIND_GLYPH_COLOR[kind],
-    labelColor: readNodeLabelColor(node),
-    thumbnail: opts.thumbnails ? thumbnailFor(node) : undefined,
+    labelColor: mirrorLabelColor(layer),
+    thumbnail: opts.thumbnails ? thumbnailFor(m, layer) : undefined,
     data: { type: kind },
     children: children.length ? children : undefined,
   };
 }
 
 /**
- * Build the Layers tree from the live scene graph (single source of truth).
+ * Build the Layers tree from the document mirror (B4).
  *
  * `scope` picks how much of the document is listed: the open composition, as
  * the timeline shows it, or every composition at once. It used to be the
- * second unconditionally — `getRoots()` — so a ten-comp project put ten roots
- * in one tree while the footer beside it counted only the open one.
+ * second unconditionally, so a ten-comp project put ten roots in one tree
+ * while the footer beside it counted only the open one.
  *
  * Exported for the layer-ordering tests, which assert what this panel LISTS
- * after an arrange without standing the whole React tree up.
+ * after an arrange without standing the whole React tree up (they let the
+ * engine's events land in the mirror first).
  */
 export function sceneGraphToTree(
   scope: SceneScope = 'project',
   opts: RowOptions = {},
-  graph: SceneGraph = defaultSceneGraph,
+  m: DocumentMirror = documentMirror(),
 ): TreeNode<SceneNodeData>[] {
   if (scope === 'comp') {
-    const rootId = activeCompRootId();
-    const root = rootId ? graph.getNode(rootId) : undefined;
-    // No open comp (or a stale id) falls back to the whole project rather than
-    // to an empty panel: something on screen beats a blank with no stated cause.
-    if (root) return [toTreeNode(root, opts)];
+    const id = activeCompIdNow();
+    // A composition, or a group opened in its own tab. No open comp falls back
+    // to the whole project rather than to an empty panel: something on screen
+    // beats a blank with no stated cause.
+    if (id && m.comp(id) && !m.layer(id)) return [compToTreeNode(m, id, opts)];
+    const row = id ? layerToTreeNode(m, id, opts) : null;
+    if (row) return [row];
   }
-  return graph.getRoots().map((n) => toTreeNode(n, opts));
+  // The tree's roots: the compositions that are not also a layer (a nested precomp group is listed where it sits).
+  return m.compIds.filter((c) => !m.layer(c)).map((c) => compToTreeNode(m, c, opts));
 }
 
 /** Every kind actually present, in `order`'s order — the menu lists what this
@@ -198,49 +223,57 @@ export function collectIds(nodes: ReadonlyArray<TreeNode<SceneNodeData>>): strin
  * Returns a plain function so `filterSceneTree` and `countSceneMatches` share
  * the same index instead of each doing their own walk.
  */
-export function makeFactsReader(fields: ReadonlyArray<SearchField>, querying: boolean): (id: string) => SceneNodeFacts | null {
+export function makeFactsReader(
+  fields: ReadonlyArray<SearchField>,
+  querying: boolean,
+  m: DocumentMirror = documentMirror(),
+): (id: string) => SceneNodeFacts | null {
   const wants = (f: SearchField): boolean => querying && fields.includes(f);
 
   let exprByNode: Map<string, string> | null = null;
   if (wants('expressions')) {
     exprByNode = new Map();
+    // B4-gap: a text search over EVERY expression in the document — the mirror holds property trees on demand
+    // (never wholesale), so this needs a `findLayers {expression}` filter on the engine.
     for (const expr of defaultAnimation.allExpressions()) {
       const prev = exprByNode.get(expr.nodeId);
       exprByNode.set(expr.nodeId, prev ? `${prev}\n${expr.src}` : expr.src);
     }
   }
 
-  let assetNameById: Map<string, string> | null = null;
-  if (wants('source')) {
-    assetNameById = new Map(useAssetStore.getState().assets.map((a) => [a.id, a.name]));
-  }
-  const comps = wants('source') ? useProjectStore.getState().comps : null;
-
   const wantEffectNames = wants('effects');
+  const wantSource = wants('source');
 
   return (id: string): SceneNodeFacts | null => {
-    const node = defaultSceneGraph.getNode(id);
-    if (!node) return null;
-    const effects = getNodeEffects(id);
+    const layer = m.layer(id);
+    if (!layer) {
+      // A composition root row: its name is its settings' name.
+      const comp = m.comp(id);
+      return comp
+        ? { kind: 'group', label: undefined, animated: false, hasEffects: false, name: comp.settings.name, shy: false, effectNames: wantEffectNames ? '' : undefined, expressions: exprByNode?.get(id)?.toLowerCase(), source: undefined }
+        : null;
+    }
 
     let source: string | undefined;
-    if (assetNameById) {
-      const assetId = assetIdOf(node);
-      const named = assetId ? assetNameById.get(assetId) : undefined;
-      // A comp layer's "source" is the composition it plays, which is the
-      // thing a user looking for "every layer using the Logo comp" means.
-      source = (named ?? comps?.[id]?.name)?.toLowerCase();
+    if (wantSource) {
+      // A footage layer's source is its file; a comp layer's "source" is the
+      // composition it plays, which is the thing a user looking for "every
+      // layer using the Logo comp" means (a composition item carries its name).
+      const named = layer.source ? m.item(layer.source)?.name ?? m.comp(layer.source)?.settings.name : undefined;
+      source = (named ?? (layer.kind === 'precomp' ? m.comp(id)?.settings.name : undefined))?.toLowerCase();
     }
 
     return {
-      kind: readNodeKind(node),
-      label: readNodeLabelColor(node),
-      animated: defaultAnimation.hasAnimation(id),
-      hasEffects: effects.length > 0,
-      name: node.name ?? id,
-      shy: (node as { shy?: boolean }).shy === true,
+      kind: rowKind(layer),
+      label: mirrorLabelColor(layer),
+      animated: m.layerKeyframes(id).size > 0,
+      hasEffects: layer.effectCount > 0,
+      name: layer.name || id,
+      shy: layer.switches.shy,
+      // B4-gap: effect NAMES of every layer for a text search — the effect list lives in the layer's property tree
+      // (`effects/<id>`), which the mirror loads per layer on demand, never for the whole document.
       effectNames: wantEffectNames
-        ? [...effectDisplayNames(effects).values()].join('\n').toLowerCase()
+        ? [...effectDisplayNames(getNodeEffects(id)).values()].join('\n').toLowerCase()
         : undefined,
       expressions: exprByNode?.get(id)?.toLowerCase(),
       source,

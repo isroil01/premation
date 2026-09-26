@@ -284,12 +284,21 @@ export function ScenePanel(): JSX.Element {
    * the layer just as hidden one level up.
    */
   const [revealIds, setRevealIds] = useState<ReadonlyArray<string>>([]);
+  // B4: a reparent is a layer whose mirror `parent` moved between two revisions (whichever engine made it).
+  const parentsSeen = useRef<Map<string, string | undefined> | null>(null);
   useEffect(() => {
-    const sub = getEventBus().on('LayerReparented', ({ parentId }) => {
-      setRevealIds(parentId ? [parentId, ...ancestorChain(parentId)] : []);
-    });
-    return () => sub.dispose();
-  }, []);
+    const m = documentMirror();
+    const prev = parentsSeen.current;
+    const next = new Map<string, string | undefined>();
+    let reveal: string[] | null = null;
+    for (const id of m.layerIds()) {
+      const parent = m.layer(id)?.parent;
+      next.set(id, parent);
+      if (prev && prev.has(id) && prev.get(id) !== parent) reveal = parent ? [parent, ...ancestorChain(parent)] : [];
+    }
+    parentsSeen.current = next;
+    if (reveal) setRevealIds(reveal);
+  }, [rev]);
   // While a filter drives the expansion set the tree is controlled and drops
   // `revealIds` on the floor (a controlled caller owns its reveal — this is
   // that caller). Merge the chain in here so a reparent during a search opens

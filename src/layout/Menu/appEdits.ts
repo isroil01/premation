@@ -24,7 +24,7 @@ import { uiKindOf } from '@core/mirror/layerKinds';
 import { childOrderOf } from '@core/mirror/layerTree';
 import { mirrorLayerFlag, mirrorLayerFlagAvailable } from '@core/mirror/layerSwitchFacts';
 import { readNodeMask } from '@core/effects/mask';
-import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
+import { notifyCameraTipIfMissingIn } from '@core/mirror/cameras';
 import { compOfLayer, isCompItem, isLayer } from '@core/engine/doc';
 import { compTime, type TrackRef } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';
@@ -142,7 +142,7 @@ export async function toggleLayerFlagEdit(nodeId: string, flag: LayerFlag): Prom
   if (flag === 'guide') {
     notify(on ? 'Guide layer — visible while editing, omitted from export' : 'No longer a guide layer', 'success');
   } else if (flag === 'threeD' && on) {
-    notifyCameraTipIfMissing((message, level) => notify(message, level));
+    notifyCameraTipIfMissingIn(documentMirror(), activeCompIdNow(), (message, level) => notify(message, level));
   } else if (flag === 'motionBlur' && on) {
     if (master.length > 0) notify('Motion Blur enabled for this layer and the composition', 'success');
     if (useRenderQualityStore.getState().draft) {

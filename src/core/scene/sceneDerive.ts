@@ -204,7 +204,7 @@ export const KIND_GLYPH_COLOR: Record<SceneKind, string> = {
  * imported outline — has no primitive glyph and correctly falls through to the
  * generic shape mark.
  */
-const SHAPE_TYPE_ICON: Readonly<Record<string, string>> = {
+export const SHAPE_TYPE_ICON: Readonly<Record<string, string>> = {
   rect: 'square',
   ellipse: 'circle',
   line: 'line',

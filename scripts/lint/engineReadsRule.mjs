@@ -174,6 +174,8 @@ const PURE_READS = new Set([
   'previewChoreography', // core/library/insertPreview: seek + play + a scheduled pause of the transport (§6 control), no document read
   'notifyNoSvgGeometry', 'notifySvgConverted', // core/svg/svgConvert: a toast about the file name / SvgLayerData given
   'clampSignedStretch', // core/animation/timeStretch (re-exported by layerTimeCommands): clamps the percent given
+  // B4 mirror reads (checked the same way).
+  'notifyGuideLayerChange', // core/effects/layerSwitchFeedback: a toast about the flag value given
 ]);
 
 /**
