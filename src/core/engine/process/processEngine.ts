@@ -39,12 +39,15 @@ export interface AppProcessEngineOptions {
   fallback?: () => EngineClient;
   /** Restart / fallback notices (a toast). The fallback notice comes once. */
   onNotice?: (notice: ProcessEngineNotice) => void;
+  /** F2: a batch ANOTHER window caused arrived (this window's page replica refreshes). */
+  onForeignBatch?: () => void;
 }
 
 interface State {
   instance: ProcessEngineClient | null;
   fallbackProvider: (() => EngineClient) | null;
   noticeHook: ((n: ProcessEngineNotice) => void) | null;
+  foreignHook: (() => void) | null;
   lastNotice: ProcessEngineNotice | null;
   listeners: Set<() => void>;
 }
@@ -55,7 +58,7 @@ type WindowWithEngine = {
   __premationProcessEngine?: ProcessEngineClient;
 };
 
-const fresh = (): State => ({ instance: null, fallbackProvider: null, noticeHook: null, lastNotice: null, listeners: new Set() });
+const fresh = (): State => ({ instance: null, fallbackProvider: null, noticeHook: null, foreignHook: null, lastNotice: null, listeners: new Set() });
 let local: State | null = null;
 
 function state(): State {
@@ -116,10 +119,12 @@ export function createAppProcessEngine(options: AppProcessEngineOptions = {}): P
   const s = state();
   if (options.fallback) s.fallbackProvider = options.fallback;
   if (options.onNotice) s.noticeHook = options.onNotice;
+  if (options.onForeignBatch) s.foreignHook = options.onForeignBatch;
   if (s.instance) return s.instance;
   const bridge = processEngineBridge();
   if (!bridge) return null;
   s.instance = createProcessEngineClient(bridge, {
+    onForeignBatch: () => state().foreignHook?.(),
     fallback: () => {
       const f = state().fallbackProvider?.();
       if (!f) throw new Error('no fallback engine attached');

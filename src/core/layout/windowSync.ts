@@ -33,6 +33,7 @@ import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { usePlaybackClockStore, setTime as setClockTime } from '@stores/playbackClockStore';
+import { refreshReplicaFromEngine } from '@core/engine/engineInstance';
 
 /** This window renders a detached panel, not the editor shell. */
 export function isPopoutWindow(): boolean {
@@ -54,12 +55,25 @@ interface TimePayload {
   frame: number;
 }
 
+export interface WindowSyncOptions {
+  /**
+   * F2: the C++ engine owns the document. Every window is then a mirror of the
+   * engine (main relays its events to each; edits are engine requests), so the
+   * DOCUMENT is not sent between windows at all — a pop-out's page replica is
+   * filled from the engine's `exportDocument` (engineInstance
+   * `refreshReplicaFromEngine`, then replicaRefresh.ts on every foreign batch).
+   * Selection and the playhead are editor state and still travel here.
+   */
+  engineDocument?: boolean;
+}
+
 /**
  * Start syncing this window with the others. Returns a teardown function.
  * Safe to call in any window; both roles publish and both apply.
  */
-export function startWindowSync(): () => void {
+export function startWindowSync(opts: WindowSyncOptions = {}): () => void {
   if (typeof window === 'undefined') return () => undefined;
+  const engineDocument = opts.engineDocument === true;
 
   /** True while we are writing a remote change into local state. */
   let applying = false;
@@ -68,7 +82,7 @@ export function startWindowSync(): () => void {
   let disposed = false;
 
   const publishDoc = (): void => {
-    if (applying || disposed) return;
+    if (applying || disposed || engineDocument) return;
     try {
       syncChannel.publish<EditorDocument>(MSG_DOC, captureDocument());
     } catch {
@@ -77,7 +91,7 @@ export function startWindowSync(): () => void {
   };
 
   const scheduleDoc = (): void => {
-    if (applying || disposed) return;
+    if (applying || disposed || engineDocument) return;
     // Nobody to send to: a popout announces itself with a doc-request, and
     // until one has, capturing the document per edit is pure cost.
     if (!syncChannel.hasPeers()) return;
@@ -119,7 +133,8 @@ export function startWindowSync(): () => void {
 
   // ── Inbound ─────────────────────────────────────────────────────
   const offDoc = syncChannel.subscribe<EditorDocument>(MSG_DOC, (doc) => {
-    if (!doc) return;
+    // F2: the engine is the one source; a page document from another window is not.
+    if (!doc || engineDocument) return;
     applying = true;
     try {
       // `runRestoring` as well as `applying`: the first stops this window from
@@ -144,6 +159,9 @@ export function startWindowSync(): () => void {
     if (isPopoutWindow()) return; // only the editor shell is authoritative
     publishDoc();
   });
+
+  // F2: a pop-out's first document comes from the engine, not the editor window.
+  if (engineDocument && isPopoutWindow()) void refreshReplicaFromEngine();
 
   const offSelection = syncChannel.subscribe<readonly string[]>(MSG_SELECTION, (ids) => {
     if (!Array.isArray(ids)) return;

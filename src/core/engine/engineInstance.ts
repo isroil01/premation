@@ -53,6 +53,7 @@ import { useUIStore } from '@stores/uiStore';
 import { setHistoryRoute } from '@stores/historyStore';
 import { setAppMirrorSource } from '@stores/documentMirror';
 import type { EnginePorts } from './ports';
+import { createReplicaRefresher, type ReplicaRefresher } from './replicaRefresh';
 
 export interface BootEngineOptions {
   ports?: EnginePorts;
@@ -77,6 +78,8 @@ let current: LocalEngine | null = null;
 /** The session's engine while the C++ engine owns the document (else null). */
 let owned: OwnedEngineClient | null = null;
 let detachOwned: (() => void) | null = null;
+/** F2: refreshes the page replica after another window's edit (replicaRefresh.ts). */
+let replicaRefresher: ReplicaRefresher | null = null;
 let bootOpts: BootEngineOptions | null = null;
 let busSubs: Array<{ dispose(): void }> = [];
 let generation = 0;
@@ -176,9 +179,14 @@ function startOwner(): boolean {
       if (n.kind === 'fallback') noteEngineFellBack();
       noticeToUser(n);
     },
+    // F2: another window (a pop-out, or the editor from a pop-out) edited the
+    // engine; this window's page replica missed those requests.
+    onForeignBatch: () => replicaRefresher?.schedule(),
   });
   if (!pc) return false;
   owned = new OwnedEngineClient(pc, () => current);
+  replicaRefresher?.dispose();
+  replicaRefresher = createReplicaRefresher({ owner: () => owned ?? engine() });
   // The replica's own events stop reaching the session; the owner's start.
   detachCurrent?.();
   detachCurrent = null;
@@ -284,6 +292,8 @@ export async function shutdownEngine(): Promise<void> {
   // a Providers remount; only this session's view of it goes.
   detachOwned?.();
   detachOwned = null;
+  replicaRefresher?.dispose();
+  replicaRefresher = null;
   owned = null;
   setHistoryRoute(null);
   detachCurrent?.();
@@ -303,6 +313,15 @@ export function engine(): EngineClient {
   if (owned) return owned;
   if (!current) bootEngine({});
   return owned ?? current!;
+}
+
+/**
+ * F2: refresh this window's page replica from the engine now (a pop-out's
+ * first document — windowSync). False when the engine does not own the
+ * document here, or nothing could be fetched.
+ */
+export function refreshReplicaFromEngine(): Promise<boolean> {
+  return replicaRefresher?.refreshNow() ?? Promise.resolve(false);
 }
 
 /** The owner client while the C++ engine owns the document (diagnostics, the harness). */

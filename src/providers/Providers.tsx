@@ -2381,8 +2381,13 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
       await applyPreferencesToDocument();
       // D5 / F2: does the C++ engine own the document in this window? Main
       // decides (engine:status.ownsDocument); default off. A pop-out never
-      // owns anything (it mirrors the editor shell's window).
-      const ownsDocument = !isPopoutWindow() && await processEngineOwnsDocument();
+      // owns the lifecycle, but with the engine as owner it is a SECOND MIRROR
+      // of the same engine (main relays its events here; edits are engine
+      // requests; the page replica refreshes from exportDocument) instead of a
+      // copy of the editor window's page document.
+      const engineIsOwner = await processEngineOwnsDocument();
+      const ownsDocument = !isPopoutWindow() && engineIsOwner;
+      const mirrorsEngine = isPopoutWindow() && engineIsOwner;
       setEngineOwnsDocument(ownsDocument);
 
       const selection = {
@@ -2966,7 +2971,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             // B5: the command log automation records/replays (dev builds and
             // VITE_RECORD_COMMAND_LOG=1; see core/automation/commandLog).
             recordLog: commandLogRecordingEnabled(),
-            ownsDocument,
+            ownsDocument: ownsDocument || mirrorsEngine,
           });
           track(() => { void shutdownEngine(); });
           // B5 automation (record/replay a session, run a script) on window.
@@ -3082,7 +3087,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
       // before boot resolves is attached to a bus that is then thrown away. That
       // is why the scene-change subscription silently never fired while the
       // selection one (a plain zustand store, never replaced) worked fine.
-      if (!cancelled) stopSync = startWindowSync();
+      if (!cancelled) stopSync = startWindowSync({ engineDocument: engineIsOwner });
 
       if (!cancelled) setReady(true);
     })();
