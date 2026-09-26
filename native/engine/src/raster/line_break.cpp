@@ -90,15 +90,20 @@ std::vector<bool> break_opportunities(const std::vector<std::string>& units) {
 }
 
 std::vector<std::size_t> wrap_units(const std::vector<std::string>& units, const std::vector<double>& lengths, double limit) {
+  return wrap_units(units, lengths, [limit](std::size_t) { return limit; });
+}
+
+std::vector<std::size_t> wrap_units(const std::vector<std::string>& units, const std::vector<double>& lengths,
+                                    const std::function<double(std::size_t line)>& limitOf) {
   std::vector<std::size_t> starts;
-  if (!(limit > 0)) return starts;
+  if (!(limitOf(0) > 0)) return starts;
   const auto opportunities = break_opportunities(units);
   constexpr double kFitEps = 0.5;
   std::size_t start = 0;
   double len = 0;
   for (std::size_t i = 0; i < units.size(); ++i) {
     const double w = i < lengths.size() ? lengths[i] : 0;
-    if (i > start && !is_break_space(units[i]) && len + w > limit + kFitEps) {
+    if (i > start && !is_break_space(units[i]) && len + w > limitOf(starts.size()) + kFitEps) {
       std::size_t b = i;
       while (b > start && !opportunities[b]) --b;
       if (b == start) {
@@ -114,6 +119,48 @@ std::vector<std::size_t> wrap_units(const std::vector<std::string>& units, const
     len += w;
   }
   return starts;
+}
+
+std::string join_wrapped(const std::vector<std::string>& clusters, const std::vector<std::size_t>& starts) {
+  std::string out;
+  std::size_t s = 0;
+  for (std::size_t i = 0; i < clusters.size(); ++i) {
+    if (s < starts.size() && starts[s] == i) {
+      ++s;
+      if (!out.empty() && out.back() == ' ') out.back() = '\n';
+      else out += '\n';
+    }
+    out += clusters[i];
+  }
+  return out;
+}
+
+std::vector<std::size_t> inserted_break_indices(const std::vector<std::string>& rawClusters,
+                                                const std::vector<std::string>& wrappedClusters) {
+  std::vector<std::size_t> out;
+  if (wrappedClusters.size() <= rawClusters.size()) return out;
+  std::size_t i = 0;
+  for (std::size_t j = 0; j < wrappedClusters.size(); ++j) {
+    const std::string& w = wrappedClusters[j];
+    const std::string* r = i < rawClusters.size() ? &rawClusters[i] : nullptr;
+    if ((r != nullptr && w == *r) || (w == "\n" && r != nullptr && *r == " ")) ++i;
+    else if (w == "\n") out.push_back(j);
+    else ++i;
+  }
+  return out;
+}
+
+std::pair<double, double> shift_span_for_inserted_breaks(double start, double end, const std::vector<std::size_t>& inserted) {
+  // The raw index each break was inserted before (j − m), counted at or
+  // before the start (inclusive) and before the end (exclusive).
+  double beforeStart = 0;
+  double beforeEnd = 0;
+  for (std::size_t m = 0; m < inserted.size(); ++m) {
+    const auto p = static_cast<double>(inserted[m] - m);
+    if (p <= start) ++beforeStart;
+    if (p < end) ++beforeEnd;
+  }
+  return {start + beforeStart, end + beforeEnd};
 }
 
 }  // namespace premation::raster

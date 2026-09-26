@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "json.hpp"
+#include "text_measure.hpp"
 #include "text_port.hpp"
 
 namespace sc = premation::scene;
@@ -80,4 +81,29 @@ TEST_CASE("text path parity: masks flatten to the editor's polyline", "[scene][t
     check_same(m.at("flat").at("pts"), flat.at("pts"), m.at("mask").at("id").str());
     CHECK(flat.at("closed").b() == m.at("flat").at("closed").b());
   }
+}
+
+// textExtras.ts softBreakLines over the CJK wraps of cjk_wrap_parity.json
+// (src/core/text/cjkWrapCrossEngine.test.ts): inserted breaks and replaced
+// spaces are soft, the paragraphs' own newlines hard.
+TEST_CASE("text: soft break lines of an inserting (CJK) wrap equal the editor's", "[scene][text][cjk]") {
+  std::ifstream f(std::string(PREMATION_ENGINE_TEST_DATA) + "/cjk_wrap_parity.json", std::ios::binary);
+  if (!f.good()) {
+    WARN("cjk_wrap_parity.json not generated yet (GEN_NATIVE_CJKWRAP=1 npx jest cjkWrapCrossEngine)");
+    return;
+  }
+  std::stringstream ss;
+  ss << f.rdbuf();
+  const auto fixture = premation::js::parse(ss.str());
+  REQUIRE(fixture.has_value());
+  for (const Json& row : fixture->at("rows").arr()) {
+    INFO(row.at("text").str());
+    std::vector<int> want;
+    for (const Json& n : row.at("softBreakLines").arr()) want.push_back(static_cast<int>(n.num()));
+    CHECK(sc::soft_break_lines(row.at("text").str(), row.at("wrapped").str()) == want);
+  }
+  // Same length (spaces replaced) and a wrap never shorter than its text.
+  CHECK(sc::soft_break_lines("ab cd ef", "ab\ncd ef") == std::vector<int>{0});
+  CHECK(sc::soft_break_lines("ab\ncd", "ab\ncd").empty());
+  CHECK(sc::soft_break_lines("abcd", "ab").empty());
 }
