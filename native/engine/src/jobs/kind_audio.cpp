@@ -330,6 +330,8 @@ class LevelResult final : public JobResult {
   std::vector<float> envelope;  // the detector, per frame (the dialogs' preview strip)
   double peakDuckDb = 0;
   bool reportPeak = false;
+  /// Gate: the fraction of frames the gate holds closed (GateDialog's readout: gain below −0.5 dB).
+  std::optional<double> closedFraction;
   Range range;
 
   [[nodiscard]] std::string summary_json() const override {
@@ -340,6 +342,7 @@ class LevelResult final : public JobResult {
                     ",\"start\":" + json_number(range.start) + ",\"end\":" + json_number(range.end) +
                     ",\"fps\":" + json_number(range.fps) + ",\"envelope\":" + numbers_json(env);
     if (reportPeak) s += ",\"peakDuckDb\":" + json_number(peakDuckDb);
+    if (closedFraction) s += ",\"closedFraction\":" + json_number(*closedFraction);
     return s + "}";
   }
   [[nodiscard]] std::string label() const override { return entryLabel; }
@@ -580,6 +583,11 @@ PreparedJob prepare_audio_gate(const api::AudioGateJob& spec, const JobDocContex
     out->entryLabel = "Noise Gate";
     out->range = range;
     out->envelope = env;
+    std::size_t closed = 0;
+    for (const float v : curve) {
+      if (v < -0.5F) ++closed;
+    }
+    out->closedFraction = curve.empty() ? 0.0 : static_cast<double>(closed) / static_cast<double>(curve.size());
     for (const std::size_t fi : aa::thin_levels(levels)) {
       out->keys.emplace_back(range.start + static_cast<double>(fi) / range.fps, round_to(levels[fi], 100));
     }

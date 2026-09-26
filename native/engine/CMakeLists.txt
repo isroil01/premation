@@ -1006,3 +1006,78 @@ if(MOTION_BUILD_TESTS)
   endif()
   add_test(NAME engine_export_tests COMMAND engine_export_tests --reporter compact)
 endif()
+# ── Engine jobs (src/jobs; kept in its own block) ───────────────────────────
+#   the runner + Session half is engine_core (jobs/job_runner, job_inputs,
+#   core/session_jobs.cpp); here are the kinds:
+#   engine_jobs_core   the pure analyses, decode- and GPU-free: audio
+#                      (silences, amplitude, beats, detector, ducking, gate),
+#                      scene detection, the render's encode args, the tracker
+#                      + stabilizer, auto-trace, SAM pre/post-processing, and
+#                      the track apply plans (document reads + commands)
+#   engine_jobs        the kinds (kind_*.cpp), footage frames / sound
+#                      (media_input_ffi.cpp: ffmpeg), the child-process job
+#                      host (child_job.cpp), ONNX Runtime for SAM
+#                      (sam_ort_ffi.cpp, vcpkg `engine` feature) — linked into
+#                      premation-engine as PREMATION_HAVE_JOBS
+add_library(engine_jobs_core STATIC
+  src/jobs/audio_analysis.cpp
+  src/jobs/scene_detect.cpp
+  src/jobs/encode_args.cpp
+  src/jobs/media_input.cpp
+  src/jobs/tracking.cpp
+  src/jobs/stabilize.cpp
+  src/jobs/track_apply.cpp
+  src/jobs/trace_bitmap.cpp
+  src/jobs/sam_pipeline.cpp
+)
+target_include_directories(engine_jobs_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/jobs)
+target_link_libraries(engine_jobs_core PUBLIC engine_core engine_scene_core motion::jsmath PRIVATE motion::options)
+if(MSVC)
+  target_compile_options(engine_jobs_core PRIVATE /bigobj)
+endif()
+
+if(FFMPEG_FOUND AND TARGET engine_audio)
+  add_library(engine_jobs STATIC
+    src/jobs/media_input_ffi.cpp
+    src/jobs/child_job.cpp
+    src/jobs/job_kinds.cpp
+    src/jobs/kind_audio.cpp
+    src/jobs/kind_scene_detect.cpp
+    src/jobs/kind_proxy.cpp
+    src/jobs/kind_render.cpp
+    src/jobs/kind_track_motion.cpp
+    src/jobs/kind_stabilize.cpp
+    src/jobs/kind_auto_trace.cpp
+    src/jobs/kind_object_matte.cpp
+    src/jobs/sam_ort_ffi.cpp
+  )
+  target_include_directories(engine_jobs SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+  target_link_directories(engine_jobs PUBLIC ${FFMPEG_LIBRARY_DIRS})
+  target_link_libraries(engine_jobs PUBLIC engine_jobs_core engine_audio engine_export_core ${FFMPEG_LIBRARIES} PRIVATE motion::options)
+  find_package(onnxruntime CONFIG QUIET)
+  if(onnxruntime_FOUND)
+    target_link_libraries(engine_jobs PRIVATE onnxruntime::onnxruntime)
+    target_compile_definitions(engine_jobs PRIVATE PREMATION_HAVE_ONNXRUNTIME=1)
+  else()
+    message(STATUS "premation-engine: onnxruntime not found — the object-matte job answers unsupported")
+  endif()
+  if(MSVC)
+    target_compile_options(engine_jobs PRIVATE /bigobj)
+    target_compile_definitions(engine_jobs PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+  endif()
+  if(TARGET premation-engine)
+    target_link_libraries(premation-engine PRIVATE engine_jobs)
+    target_compile_definitions(premation-engine PRIVATE PREMATION_HAVE_JOBS=1)
+  endif()
+else()
+  message(STATUS "premation-engine: ffmpeg or the audio decoder missing — engine jobs build their pure core only")
+endif()
+
+if(MOTION_BUILD_TESTS)
+  add_executable(engine_jobs_tests tests/test_jobs_audio.cpp tests/test_jobs_trace.cpp tests/test_jobs_tracking.cpp)
+  target_link_libraries(engine_jobs_tests PRIVATE engine_jobs_core motion::options Catch2::Catch2WithMain)
+  if(MSVC)
+    target_compile_options(engine_jobs_tests PRIVATE /bigobj)
+  endif()
+  add_test(NAME engine_jobs_tests COMMAND engine_jobs_tests --reporter compact)
+endif()
