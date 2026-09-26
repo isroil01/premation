@@ -47,4 +47,8 @@ GeometryStatus apply_path_ops(const doc::Node& n, const Values& a, double layerT
 /// sets `pathPoints` and the layer box (`layerW`/`layerH`) as the TypeScript does.
 GeometryStatus apply_polystar(const doc::Node& n, const Values& a, Json& pathPoints, double& layerW, double& layerH);
 
+/// audioWaveformGen.ts `audioWaveformPoints`. Empty when there is nothing to draw.
+[[nodiscard]] Json waveform_points(std::span<const float> peaks, double duration, double width, double height, double timeSec,
+                                   std::string_view mode, double samples, double heightScale, double thickness, double windowSec);
+
 }  // namespace premation::scene

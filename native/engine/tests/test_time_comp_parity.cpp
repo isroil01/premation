@@ -17,6 +17,7 @@
 #include "docexpr.hpp"
 #include "docio.hpp"
 #include "frame_build.hpp"
+#include "path_ops.hpp"
 #include "json.hpp"
 #include "model.hpp"
 #include "snapshot_build.hpp"
@@ -309,7 +310,7 @@ TEST_CASE("time/comp parity: the C++ scene builder reproduces buildSnapshot + sn
     for (const Json& f : c.at("frames").arr()) {
       const double frame = f.at("frame").num();
       INFO("frame " << frame);
-      const sc::BuildContext ctx{d, view, env, cache, nullptr};
+      const sc::BuildContext ctx{d, view, env, cache, nullptr, {}};
       std::optional<sc::MotionBlurCfg> mb;
       if (mbOn) mb = sc::motion_blur_of(d, compId);
       const sc::Snapshot snap = sc::build_snapshot(ctx, sc::snapshot_comp_of(d, compId), frame / fps, mb);
@@ -350,4 +351,15 @@ TEST_CASE("content-aware fill: a data: URL still decodes as the footage texture"
   CHECK(e->width == 2);
   CHECK(e->height == 1);
   CHECK(e->rgba == std::vector<std::uint8_t>{128, 0, 0, 128, 0, 0, 0, 255});
+}
+
+TEST_CASE("an audio waveform outline matches the TypeScript envelope geometry", "[scene]") {
+  const std::vector<float> peaks{0, 1, 0, 1};
+  const premation::js::Json pts = sc::waveform_points(peaks, 4, 100, 100, 0, "full", 4, 1, 0, 1);
+  REQUIRE(pts.arr().size() == 8);
+  CHECK(pts.arr()[0].at("x").num() == -50);
+  CHECK(pts.arr()[0].at("y").num() == 0);
+  CHECK(pts.arr()[1].at("y").num() == -50);
+  const premation::js::Json empty = sc::waveform_points({}, 4, 100, 100, 0, "full", 4, 1, 0, 1);
+  CHECK(empty.arr().empty());
 }

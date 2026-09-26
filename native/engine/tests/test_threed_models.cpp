@@ -169,7 +169,7 @@ TEST_CASE("3D leftovers: a glTF model and a displaced primitive build from the C
   doc::ExprCache cache;
   (void)doc::restore_document(d, view, *json, {});
   doc::DocExprEnv env(d, view, cache);
-  const sc::BuildContext ctx{d, view, env, cache, nullptr};
+  const sc::BuildContext ctx{d, view, env, cache, nullptr, {}};
   const sc::NativeFrame f = sc::build_native_frame(ctx, "comp_root", 0, sc::export_view(480, 360, 480, 360), false);
   for (const auto& e : f.errors) {
     INFO(e.layerId << ": " << e.message);
@@ -279,7 +279,7 @@ TEST_CASE("3D leftovers: an image (asset:) environment sky lights and reflects f
   doc::ExprCache cache;
   (void)doc::restore_document(d, view, *json, {asset});
   doc::DocExprEnv env(d, view, cache);
-  const sc::BuildContext ctx{d, view, env, cache, nullptr};
+  const sc::BuildContext ctx{d, view, env, cache, nullptr, {}};
   const sc::NativeFrame f = sc::build_native_frame(ctx, "comp_root", 0, sc::export_view(480, 360, 480, 360), false);
   for (const auto& e : f.errors) {
     INFO(e.layerId << ": " << e.message);
@@ -322,7 +322,7 @@ TEST_CASE("3D leftovers: a corner-pinned 3D layer renders on the pinned 2D path"
   doc::ExprCache cache;
   (void)doc::restore_document(d, view, *json, {});
   doc::DocExprEnv env(d, view, cache);
-  const sc::BuildContext ctx{d, view, env, cache, nullptr};
+  const sc::BuildContext ctx{d, view, env, cache, nullptr, {}};
   const sc::NativeFrame f = sc::build_native_frame(ctx, "comp_root", 0, sc::export_view(480, 360, 480, 360), false);
   for (const auto& e : f.errors) {
     INFO(e.layerId << ": " << e.message);

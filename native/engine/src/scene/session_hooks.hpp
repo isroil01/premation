@@ -30,6 +30,8 @@ class ExprCache;
 /// One frame the scene builder produced (scene/built_frame.hpp) — opaque to the core.
 struct BuiltFrame;
 
+class MediaClock;
+
 /// The composition at a time → the frame the render thread draws (D2w).
 class FrameBuilder {
  public:
@@ -51,6 +53,7 @@ class FrameBuilder {
                                                           std::string_view comp, api::Time time,
                                                           const ViewportConfig& viewport, bool playing,
                                                           std::vector<api::LayerError>& errors) = 0;
+  virtual void bind_audio(MediaClock* /*clock*/) {}
 };
 
 /// The transport's master clock and the document's sound — the seam of
@@ -75,6 +78,11 @@ class MediaClock {
   /// Rebuild the audio program from the document's audio / footage layers of `comp`.
   virtual void set_document(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
                             doc::ExprCache& cache, std::string_view comp) = 0;
+  /// The layer's decoded mono envelope (1024 buckets). False until conform finishes.
+  /// True with empty `peaks` means the source is silent or could not be opened.
+  virtual bool waveform(std::string_view /*layerId*/, std::vector<float>& /*peaks*/, double& /*duration*/) {
+    return false;
+  }
 };
 
 }  // namespace premation

@@ -187,7 +187,7 @@ struct DocCopy {
     measurer = sc::make_canvas_measurer(fonts->canvas);
     return true;
   }
-  [[nodiscard]] sc::BuildContext ctx() { return sc::BuildContext{d, view, *env, cache, measurer.get()}; }
+  [[nodiscard]] sc::BuildContext ctx() { return sc::BuildContext{d, view, *env, cache, measurer.get(), {}}; }
 };
 
 // ── what the job renders (headlessRender.ts + offlineRenderer.ts) ───────────

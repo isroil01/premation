@@ -22,6 +22,7 @@
 #include "paint_port.hpp"
 #include "particle_port.hpp"
 #include "path_ops.hpp"
+#include "timeline.hpp"
 #include "precomp_frame.hpp"
 #include "jsmath.hpp"
 #include "raw_world.hpp"
@@ -1032,7 +1033,51 @@ void Walk::build_node(const doc::Node& n) {
       unported(l, n, "parametric polystar");
     }
   }
-  if (fx.at("audioWaveform").is_object()) unported(l, n, "audio waveform generator");
+  if (const Json& wave = fx.at("audioWaveform"); wave.is_object()) {
+    const std::string source = wave.at("sourceLayerId").is_string() ? wave.at("sourceLayerId").str() : std::string();
+    std::vector<float> peaks;
+    double duration = 0;
+    if (source.empty() || c_.waveform == nullptr || !c_.waveform(source, peaks, duration)) {
+      unported(l, n, "audio waveform generator");
+    } else {
+      const double samples = wave.at("samples").is_number() ? wave.at("samples").num() : 128;
+      const double heightScale = wave.at("heightScale").is_number() ? wave.at("heightScale").num() : 1;
+      const double thickness = wave.at("thickness").is_number() ? wave.at("thickness").num() : 2;
+      const double windowSec = wave.at("windowSec").is_number() ? wave.at("windowSec").num() : 1;
+      const std::string mode = wave.at("mode").is_string() ? wave.at("mode").str() : "full";
+      double local = t_;
+      if (const doc::Node* src = d_.node(source)) {
+        const auto bars = doc::tl_bars_for_node(d_, c_.view, source);
+        double fps = doc::tl_fps_for_node(d_, c_.view, source);
+        if (!(fps > 0)) fps = 30;
+        bool hit = false;
+        for (const doc::Bar* b : bars) {
+          const double start = b->clip.start / fps;
+          const double inSec = b->clip.sourceIn / fps;
+          const double span = b->clip.duration / fps;
+          if (t_ >= start && t_ < start + span) {
+            local = inSec + (t_ - start);
+            hit = true;
+            break;
+          }
+        }
+        if (!hit && !bars.empty()) local = bars[0]->clip.sourceIn / fps + (t_ - bars[0]->clip.start / fps);
+        else if (!hit) {
+          const Json& st = src->comp("Audio") != nullptr ? src->comp("Audio")->props.at("__start") : Json();
+          if (st.is_number()) local = t_ - st.num();
+        }
+      }
+      Json pts = waveform_points(peaks, duration, layerW, layerH, local, mode, samples, heightScale, thickness, windowSec);
+      if (pts.arr().size() < 2) {
+        Json z = Json::object();
+        for (const char* k : {"x", "y", "inX", "inY", "outX", "outY"}) z.set(k, Json::number(0));
+        pts = Json::array();
+        pts.arr_mut().push_back(z);
+        pts.arr_mut().push_back(z);
+      }
+      pathPoints = std::move(pts);
+    }
+  }
   // Live Merge Paths (merge_paths.cpp): the boolean re-evaluated from the operands'
   // world outlines each frame, recentred onto this layer (the pose lands after 3D).
   std::optional<LiveBooleanResult> liveBoolean;

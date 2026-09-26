@@ -499,7 +499,7 @@ int batch(const Options& o) {
         first = false;
         continue;
       }
-      sc::BuildContext ctx{proj.d, proj.view, *proj.env, proj.cache, measurer.get()};
+      sc::BuildContext ctx{proj.d, proj.view, *proj.env, proj.cache, measurer.get(), {}};
       const doc::Json* rec = proj.d.comp(proj.comp);
       const double cw = rec != nullptr && rec->at("width").is_number() ? rec->at("width").num() : w;
       const double ch = rec != nullptr && rec->at("height").is_number() ? rec->at("height").num() : h;
@@ -864,7 +864,7 @@ int bench(const Options& o) {
   std::printf("{\"adapter\":\"%s\",\"cases\":[", esc(eng.renderer->adapter()).c_str());  // NOLINT(cppcoreguidelines-pro-type-vararg)
   bool first = true;
   for (Case& c : cases) {
-    sc::BuildContext ctx{c.p->d, c.p->view, *c.p->env, c.p->cache, measurer.get()};
+    sc::BuildContext ctx{c.p->d, c.p->view, *c.p->env, c.p->cache, measurer.get(), {}};
     const doc::Json* rec = c.p->d.comp(c.p->comp);
     const sc::ViewSpec view = sc::export_view(c.w, c.h, rec->at("width").num(), rec->at("height").num());
     std::vector<double> build, raster, encode, gpu, total;

@@ -1189,4 +1189,64 @@ GeometryStatus apply_polystar(const doc::Node& n, const Values& a, Json& pathPoi
   return GeometryStatus::applied;
 }
 
+namespace {
+
+double peak_at_norm(std::span<const float> peaks, double tNorm) {
+  if (peaks.empty()) return 0;
+  if (peaks.size() == 1) return peaks[0];
+  const double x = std::clamp(tNorm, 0.0, 1.0) * static_cast<double>(peaks.size() - 1);
+  const auto i = static_cast<std::size_t>(std::floor(x));
+  const float a = peaks[i];
+  const float b = peaks[std::min(peaks.size() - 1, i + 1)];
+  return static_cast<double>(a) + (static_cast<double>(b) - a) * (x - static_cast<double>(i));
+}
+
+Json corner_pt(double x, double y) {
+  Json p = Json::object();
+  p.set("x", Json::number(x));
+  p.set("y", Json::number(y));
+  p.set("inX", Json::number(x));
+  p.set("inY", Json::number(y));
+  p.set("outX", Json::number(x));
+  p.set("outY", Json::number(y));
+  return p;
+}
+
+}  // namespace
+
+Json waveform_points(std::span<const float> peaks, double duration, double width, double height, double timeSec,
+                     std::string_view mode, double samples, double heightScale, double thickness, double windowSec) {
+  if (peaks.empty() || !(width > 0) || !(height > 0)) return Json::array();
+  const int n = std::max(2, static_cast<int>(std::floor(samples)));
+  const double halfH = height / 2;
+  if (!std::isfinite(heightScale)) heightScale = 1;
+  const double minH = std::min(halfH, std::max(0.0, thickness) / 2);
+  double t0 = 0;
+  double t1 = 1;
+  if (mode == "playhead-window" && duration > 0 && windowSec > 0) {
+    const double half = windowSec / 2;
+    t0 = (timeSec - half) / duration;
+    t1 = (timeSec + half) / duration;
+  }
+  std::vector<Json> top;
+  std::vector<Json> bottom;
+  top.reserve(static_cast<std::size_t>(n));
+  bottom.reserve(static_cast<std::size_t>(n));
+  for (int i = 0; i < n; ++i) {
+    const double frac = static_cast<double>(i) / static_cast<double>(n - 1);
+    const double norm = t0 + (t1 - t0) * frac;
+    const double amp = norm >= 0 && norm <= 1 ? peak_at_norm(peaks, norm) : 0;
+    const double x = -width / 2 + frac * width;
+    double h = amp * halfH * heightScale;
+    if (h < minH) h = minH;
+    if (h > halfH) h = halfH;
+    top.push_back(corner_pt(x, -h));
+    bottom.push_back(corner_pt(x, h));
+  }
+  Json out = Json::array();
+  for (Json& p : top) out.arr_mut().push_back(std::move(p));
+  for (auto it = bottom.rbegin(); it != bottom.rend(); ++it) out.arr_mut().push_back(std::move(*it));
+  return out;
+}
+
 }  // namespace premation::scene

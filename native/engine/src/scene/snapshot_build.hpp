@@ -11,9 +11,11 @@
 // recorded with stage 'snapshot' — the frame still renders (CLAUDE.md).
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "anim.hpp"
 #include "model.hpp"
@@ -30,6 +32,10 @@ struct BuildContext {
   doc::ExprCache& cache;
   /// Text measurement (fonts); null = text layers report unported.
   TextMeasurer* measurer = nullptr;
+  /// Decoded mono envelope of an audio layer, once its source has conformed.
+  /// False = not ready yet (the waveform stays reported). True with empty peaks
+  /// = silence, which draws a zero-area path.
+  std::function<bool(std::string_view layerId, std::vector<float>& peaks, double& duration)> waveform;
 };
 
 /// The comp-level inputs the editor's viewport hands buildSnapshot for a

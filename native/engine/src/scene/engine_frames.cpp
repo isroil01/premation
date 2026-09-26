@@ -40,6 +40,7 @@
 
 #if defined(PREMATION_HAVE_AUDIO)
 #include "audio_system.hpp"
+#include "peaks.hpp"
 #include "transport_clock.hpp"
 #include "voice_build.hpp"
 #endif
@@ -119,6 +120,7 @@ std::vector<std::string> document_families(const doc::Document& d) {
 class EngineFrameBuilder final : public FrameBuilder {
  public:
   explicit EngineFrameBuilder(const EngineFramesOptions& o) : fonts_(o), measurer_(make_canvas_measurer(fonts_.canvas)) {}
+  void bind_audio(MediaClock* clock) override { audio_ = clock; }
 
   std::shared_ptr<BuiltFrame> build(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
                                     doc::ExprCache& cache, std::string_view comp, api::Time time,
@@ -133,7 +135,12 @@ class EngineFrameBuilder final : public FrameBuilder {
       for (const std::string& f : out->fontFamilies) added = fonts_.add(f) || added;
       if (added) measurer_ = make_canvas_measurer(fonts_.canvas);
 
-      BuildContext ctx{d, view, expr, cache, measurer_.get()};
+      BuildContext ctx{d, view, expr, cache, measurer_.get(), {}};
+      if (audio_ != nullptr) {
+        ctx.waveform = [this](std::string_view layerId, std::vector<float>& peaks, double& duration) {
+          return audio_->waveform(layerId, peaks, duration);
+        };
+      }
       const SnapshotComp sc = snapshot_comp_of(d, comp);
       // The comp contain-fitted into the slot, centred, over black — C2's
       // compositor placement (render/compositor.cpp), which the page's
@@ -191,6 +198,7 @@ class EngineFrameBuilder final : public FrameBuilder {
   static constexpr std::uint64_t kIdleInstanceFrames = 600;
   Fonts fonts_;
   std::unique_ptr<TextMeasurer> measurer_;
+  MediaClock* audio_ = nullptr;
   std::uint64_t builtFrames_ = 0;
 };
 
@@ -382,6 +390,33 @@ class EngineAudio final : public MediaClock {
                                                         : audio::LoopMode::loop;
     clock_.play(fromSec, rate, lm, rangeStartSec, rangeEndSec);
   }
+  bool waveform(std::string_view layerId, std::vector<float>& peaks, double& duration) override {
+    peaks.clear();
+    duration = 0;
+    if (doc_ == nullptr) return false;
+    const doc::Node* n = doc_->node(std::string(layerId));
+    if (n == nullptr) return true;
+    const doc::Component* a = n->comp("Audio");
+    if (a == nullptr) return true;
+    const Json& p = a->props;
+    const std::string assetId = p.at("__assetId").is_string() ? p.at("__assetId").str() : "";
+    std::string src = p.at("__src").is_string() ? p.at("__src").str() : "";
+    if (!assetId.empty()) {
+      if (const Json* asset = doc::find_asset(*doc_, assetId); asset != nullptr && asset->at("src").is_string()) src = asset->at("src").str();
+    }
+    if (src.empty()) return true;
+    const std::uint64_t id = source_of(src);
+    if (id == 0) return true;
+    const audio::SourceState st = system_.state(id);
+    if (st == audio::SourceState::unknown || st == audio::SourceState::conforming) return false;
+    const audio::SourcePtr data = system_.source(id);
+    if (!data || !data->complete() || !(data->sample_rate() > 0)) return st == audio::SourceState::ready ? false : true;
+    duration = static_cast<double>(data->total_frames()) / data->sample_rate();
+    if (!(duration > 0)) return true;
+    peaks = audio::ts_envelope(system_.peaks(id, 0, duration, 1024, true));
+    return true;
+  }
+
   void pause() override { clock_.pause(); }
   void seek(double sec, bool scrub) override { clock_.seek(sec, scrub); }
   [[nodiscard]] std::optional<double> media_elapsed(std::chrono::steady_clock::time_point now) const override {
@@ -392,6 +427,7 @@ class EngineAudio final : public MediaClock {
 
   void set_document(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
                     doc::ExprCache& cache, std::string_view comp) override {
+    doc_ = &d;
     audio::Program p;
     p.format = system_.format();
     p.revision = ++revision_;
@@ -666,6 +702,7 @@ class EngineAudio final : public MediaClock {
   }
 
   audio::AudioSystem system_;
+  const doc::Document* doc_ = nullptr;
   AudioTransportClock clock_;
   std::map<std::string, std::uint64_t> sources_;
   std::set<std::string> notes_;

@@ -194,6 +194,7 @@ int run_engine(const EngineOptions& options) {
     // PREMATION_AUDIO_DEVICE=null plays through the steady-clock NullDevice.
     std::string audioError;
     mediaClock = scene::make_media_clock(os::env_var("PREMATION_AUDIO_DEVICE").value_or("") != "null", audioError);
+    frameBuilder->bind_audio(mediaClock.get());
   }
 #endif
 #if defined(PREMATION_ENGINE_HEADLESS)
