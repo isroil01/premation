@@ -49,6 +49,13 @@ struct CompOverrides {
   std::optional<bool> transparent;
 };
 
+/// The file half of build_native_frame: `snap` flattened (build_frame_scene)
+/// and wrapped in `view`, with the document's colour settings; the comp clip
+/// is clipWidth × clipHeight comp px. Also a frame that is not a composition's
+/// (a footage item's thumbnail: one layer in a snapshot of its own).
+[[nodiscard]] NativeFrame native_frame_of(const doc::Document& d, Snapshot snap, const ViewSpec& view, double clipWidth,
+                                          double clipHeight, const std::string& sceneId = {}, std::int64_t frame = 0);
+
 /// Build one frame. `motionBlur` false = the harness's no-blur scenes (buildSnapshot
 /// gets no config); true = the document's own motion-blur settings.
 [[nodiscard]] NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, double t, const ViewSpec& view,

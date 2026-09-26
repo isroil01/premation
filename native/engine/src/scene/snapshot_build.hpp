@@ -37,6 +37,9 @@ struct BuildContext {
   /// False = not ready yet (the waveform stays reported). True with empty peaks
   /// = silence, which draws a zero-area path.
   std::function<bool(std::string_view layerId, std::vector<float>& peaks, double& duration)> waveform;
+  /// getThumbnail of a layer: only this layer (and what it holds) draws in the
+  /// walk that holds it, as if it were the one soloed layer. '' = the comp.
+  std::string isolateLayer{};
 };
 
 /// The comp-level inputs the editor's viewport hands buildSnapshot for a

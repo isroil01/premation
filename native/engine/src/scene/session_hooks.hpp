@@ -54,6 +54,37 @@ class FrameBuilder {
                                                           const ViewportConfig& viewport, bool playing,
                                                           std::vector<api::LayerError>& errors) = 0;
   virtual void bind_audio(MediaClock* /*clock*/) {}
+
+  /// getThumbnail: a still of `comp` at `time`, contain-fitted into a
+  /// width × height surface over a transparent void, for FrameSink::render_still.
+  /// `isolateLayer` non-empty = only that layer (and what it holds) draws.
+  /// Null = this builder cannot build one.
+  [[nodiscard]] virtual std::shared_ptr<BuiltFrame> build_still(const doc::Document& /*d*/, const doc::EditorView& /*view*/,
+                                                                const doc::ExprEnv& /*expr*/, doc::ExprCache& /*cache*/,
+                                                                std::string_view /*comp*/, api::Time /*time*/,
+                                                                std::uint32_t /*width*/, std::uint32_t /*height*/,
+                                                                std::string_view /*isolateLayer*/) {
+    return nullptr;
+  }
+  /// getThumbnail of a footage item: `src` (a still, or a video's frame at
+  /// `sourceSec`), sourceWidth × sourceHeight, contain-fitted into width × height.
+  [[nodiscard]] virtual std::shared_ptr<BuiltFrame> build_footage_still(const doc::Document& /*d*/, std::string_view /*src*/,
+                                                                        bool /*video*/, double /*sourceSec*/,
+                                                                        double /*sourceWidth*/, double /*sourceHeight*/,
+                                                                        std::uint32_t /*width*/, std::uint32_t /*height*/) {
+    return nullptr;
+  }
+
+  /// hitTest: the ids of what the frame of `comp` at `time` draws under
+  /// `point` (comp pixels), topmost first — renderable ids as the builder names
+  /// them: a layer's id, `id::…` for a layer's extra draws, and the inner
+  /// comp's layer ids for a collapsed precomp's children (frame_hit.hpp).
+  /// False = this builder has no frame geometry to answer from.
+  virtual bool hit_test(const doc::Document& /*d*/, const doc::EditorView& /*view*/, const doc::ExprEnv& /*expr*/,
+                        doc::ExprCache& /*cache*/, std::string_view /*comp*/, api::Time /*time*/, api::Vec2 /*point*/,
+                        std::vector<std::string>& /*topmostFirst*/) {
+    return false;
+  }
 };
 
 /// The transport's master clock and the document's sound — the seam of
@@ -82,6 +113,15 @@ class MediaClock {
   /// True with empty `peaks` means the source is silent or could not be opened.
   virtual bool waveform(std::string_view /*layerId*/, std::vector<float>& /*peaks*/, double& /*duration*/) {
     return false;
+  }
+  /// getWaveform: min/max per bucket per channel (+ RMS of channel 0) of a
+  /// media source (a footage / audio asset's `src`) over [fromSec, fromSec +
+  /// durationSec) of SOURCE time, clamped to the source (durationSec ≤ 0 = to
+  /// its end). `pending` while the source is still decoding; a source with no
+  /// sound (or that cannot be opened) is `ready` with channels = 0.
+  virtual HookAnswer peaks(std::string_view /*src*/, double /*fromSec*/, double /*durationSec*/,
+                           std::uint32_t /*buckets*/, api::WaveformPeaks& /*out*/) {
+    return HookAnswer::unsupported;
   }
 };
 

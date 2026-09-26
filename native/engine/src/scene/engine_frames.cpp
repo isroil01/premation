@@ -16,9 +16,13 @@
 #include <utility>
 
 #include "anim.hpp"
+#include "fail.hpp"
 #include "built_frame.hpp"
 #include "fonts.hpp"
+#include "frame_hit.hpp"
 #include "log.hpp"
+#include "passes.hpp"
+#include "png_write.hpp"
 #include "model.hpp"
 #include "native_scene.hpp"
 #include "host.hpp"
@@ -130,17 +134,8 @@ class EngineFrameBuilder final : public FrameBuilder {
     auto out = std::make_shared<BuiltFrame>();
     try {
       // Fonts the text names, registered before measuring (and forwarded to the render thread).
-      out->fontFamilies = document_families(d);
-      bool added = false;
-      for (const std::string& f : out->fontFamilies) added = fonts_.add(f) || added;
-      if (added) measurer_ = make_canvas_measurer(fonts_.canvas);
-
-      BuildContext ctx{d, view, expr, cache, measurer_.get(), {}};
-      if (audio_ != nullptr) {
-        ctx.waveform = [this](std::string_view layerId, std::vector<float>& peaks, double& duration) {
-          return audio_->waveform(layerId, peaks, duration);
-        };
-      }
+      out->fontFamilies = register_fonts(d);
+      const BuildContext ctx = context(d, view, expr, cache);
       const SnapshotComp sc = snapshot_comp_of(d, comp);
       // The comp contain-fitted into the slot, centred, over black — C2's
       // compositor placement (render/compositor.cpp), which the page's
@@ -194,7 +189,103 @@ class EngineFrameBuilder final : public FrameBuilder {
     return out;
   }
 
+  std::shared_ptr<BuiltFrame> build_still(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
+                                          doc::ExprCache& cache, std::string_view comp, api::Time time,
+                                          std::uint32_t width, std::uint32_t height,
+                                          std::string_view isolateLayer) override {
+    auto out = std::make_shared<BuiltFrame>();
+    out->fontFamilies = register_fonts(d);
+    BuildContext ctx = context(d, view, expr, cache);
+    ctx.isolateLayer = std::string(isolateLayer);
+    const SnapshotComp sc = snapshot_comp_of(d, comp);
+    ViewSpec vs = export_view(width, height, std::max(1.0, sc.width), std::max(1.0, sc.height));
+    vs.clear = api::Color{0, 0, 0, 0};
+    vs.surfaceFormat = api::RenderTextureFormat::rgba8unorm;
+    try {
+      // The document's own motion blur: a thumbnail is the frame as it renders.
+      const double seconds = doc::flicks_to_seconds(time);
+      NativeFrame nf = build_native_frame(ctx, comp, seconds, vs, true);
+      plugins::finish_native_frame(ctx, comp, seconds, vs, true, nf, plugins::PluginHost::active());
+      out->file = std::move(nf.file);
+      out->textures = std::move(nf.textures);
+    } catch (const std::exception& e) {
+      doc::fail(api::ErrorCode::internal, std::string("the frame could not be built: ") + e.what());
+    }
+    return out;
+  }
+
+  std::shared_ptr<BuiltFrame> build_footage_still(const doc::Document& d, std::string_view src, bool video,
+                                                  double sourceSec, double sourceWidth, double sourceHeight,
+                                                  std::uint32_t width, std::uint32_t height) override {
+    // One footage layer filling a snapshot of the source's own size — the
+    // same texture feed and quad an image / video layer gets (frame_build.cpp).
+    Snapshot snap;
+    snap.width = std::max(1.0, sourceWidth);
+    snap.height = std::max(1.0, sourceHeight);
+    snap.transparent = true;
+    RLayer l;
+    l.id = "thumbnail";
+    l.kind = video ? LayerKind::video : LayerKind::image;
+    l.x = snap.width / 2;
+    l.y = snap.height / 2;
+    l.width = snap.width;
+    l.height = snap.height;
+    l.src = std::string(src);
+    l.sourceTime = video ? std::max(0.0, sourceSec) : 0.0;
+    snap.layers.push_back(std::move(l));
+    ViewSpec vs = export_view(width, height, snap.width, snap.height);
+    vs.clear = api::Color{0, 0, 0, 0};
+    vs.surfaceFormat = api::RenderTextureFormat::rgba8unorm;
+    auto out = std::make_shared<BuiltFrame>();
+    const double w = snap.width;
+    const double h = snap.height;
+    NativeFrame nf = native_frame_of(d, std::move(snap), vs, w, h);
+    out->file = std::move(nf.file);
+    out->textures = std::move(nf.textures);
+    return out;
+  }
+
+  bool hit_test(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr, doc::ExprCache& cache,
+                std::string_view comp, api::Time time, api::Vec2 point, std::vector<std::string>& topmostFirst) override {
+    topmostFirst.clear();
+    (void)register_fonts(d);
+    const BuildContext ctx = context(d, view, expr, cache);
+    const SnapshotComp sc = snapshot_comp_of(d, comp);
+    // The frame in comp pixels (a 1:1 camera over the comp): only the scene's
+    // geometry is read, nothing is rasterised or drawn. No motion blur — the
+    // layer is where it is at `time`, not where its samples smear.
+    const double w = std::max(1.0, sc.width);
+    const double h = std::max(1.0, sc.height);
+    try {
+      const NativeFrame nf = build_native_frame(ctx, comp, doc::flicks_to_seconds(time), export_view(w, h, w, h), false);
+      topmostFirst = hit_renderables(nf.file.scene, point.x, point.y);
+    } catch (const std::exception& e) {
+      doc::fail(api::ErrorCode::internal, std::string("the frame could not be built: ") + e.what());
+    }
+    return true;
+  }
+
  private:
+  /// Register the document's font families before measuring text (the
+  /// measurer is rebuilt when the FontSet grew); returns them.
+  std::vector<std::string> register_fonts(const doc::Document& d) {
+    std::vector<std::string> families = document_families(d);
+    bool added = false;
+    for (const std::string& f : families) added = fonts_.add(f) || added;
+    if (added) measurer_ = make_canvas_measurer(fonts_.canvas);
+    return families;
+  }
+  BuildContext context(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
+                       doc::ExprCache& cache) {
+    BuildContext ctx{d, view, expr, cache, measurer_.get(), {}};
+    if (audio_ != nullptr) {
+      ctx.waveform = [this](std::string_view layerId, std::vector<float>& peaks, double& duration) {
+        return audio_->waveform(layerId, peaks, duration);
+      };
+    }
+    return ctx;
+  }
+
   static constexpr std::uint64_t kIdleInstanceFrames = 600;
   Fonts fonts_;
   std::unique_ptr<TextMeasurer> measurer_;
@@ -232,44 +323,78 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
 
   bool draw(const BuiltFrame& frame, const wgpu::TextureView& target, std::uint32_t width, std::uint32_t height,
             std::string& error) override {
-    // New families: the FontSet grows between frames (never while rasterising),
-    // and cached rasters drawn without the face are dropped.
-    bool added = false;
-    for (const std::string& f : frame.fontFamilies) added = fonts_.add(f) || added;
-    if (added) textures_->clear();
-#if defined(PREMATION_HAVE_MEDIA)
-    // Paused: the exact frame (short wait); playing: never block, nearest frame.
-    mediaTex_->set_mode(frame.playing ? media::MediaTextures::Mode::preview : media::MediaTextures::Mode::exact);
-    mediaTex_->set_exact_timeout(std::chrono::milliseconds(250));
-#endif
-    textures_->set_playing(frame.playing);
-    textures_->set_color_managed(frame.file.view.color_management.has_value());
-    api::RenderFrameFile file = frame.file;  // refs are filled per draw (hashes depend on the cache)
-    PrepareStats ps;
-    textures_->prepare(frame.textures, file.textures, ps);
-    for (const auto& [key, what] : ps.unsupported) {
-      std::string reportKey = key;
-      reportKey += '|';
-      reportKey += what;
-      if (reported_.insert(std::move(reportKey)).second) {
-        PREMATION_LOG(warn, "scene_texture_unsupported").kv("key", key).kv("what", what);
-      }
-    }
-    // Rounded: a fractional DPR (2.18 on the owner's laptop) makes css × dpr
-    // miss the slot size by an ulp even when the frame was built for this slot.
-    if (std::lround(file.view.css_width * file.view.device_pixel_ratio) != static_cast<long>(width) ||
-        std::lround(file.view.css_height * file.view.device_pixel_ratio) != static_cast<long>(height)) {
-      // A frame built for the previous slot size (resize in flight): draw it
-      // into this size (the camera is re-fitted by the next frame).
-      file.view.css_width = width;
-      file.view.css_height = height;
-      file.view.device_pixel_ratio = 1;
-    }
+    const api::RenderFrameFile file = prepare(frame, width, height);
     // D4: a frame is final unless footage on it was drawn from the nearest
     // decoded frame (playing, MediaTextures preview mode).
-    exact_ = !frame.playing || ps.mediaRefs == 0;
+    exact_ = !frame.playing || lastMediaRefs_ == 0;
     rg::FrameStats st;
     return renderer_->render_into(file, target, wgpu::TextureFormat::RGBA8Unorm, st, error);
+  }
+
+  bool draw_still(const BuiltFrame& frame, std::uint32_t width, std::uint32_t height, StillImage& out,
+                  std::string& error) override {
+    const api::RenderFrameFile file = prepare(frame, width, height);
+    rg::Frame px;
+    rg::FrameStats st;
+    if (!renderer_->render(file, &px, st, error)) return false;
+    if (px.width == 0 || px.height == 0 || px.rgba.size() != std::size_t{px.width} * px.height * 4) {
+      error = "the still read back empty";
+      return false;
+    }
+    // The readback is premultiplied (the golden convention); PNG is straight.
+    for (std::size_t i = 0; i + 3 < px.rgba.size(); i += 4) {
+      const unsigned a = px.rgba[i + 3];
+      if (a == 0 || a == 255) {
+        if (a == 0) px.rgba[i] = px.rgba[i + 1] = px.rgba[i + 2] = 0;
+        continue;
+      }
+      for (std::size_t k = 0; k < 3; ++k) {
+        px.rgba[i + k] = static_cast<std::uint8_t>(std::min(255U, (px.rgba[i + k] * 255U + a / 2) / a));
+      }
+    }
+    out.width = px.width;
+    out.height = px.height;
+    out.format = "png";
+    if (!exporter::encode_png_rgba8(px.rgba, px.width, px.height, out.data)) {
+      error = "PNG encoding failed";
+      return false;
+    }
+    return true;
+  }
+
+  bool read_working(const BuiltFrame& frame, std::uint32_t width, std::uint32_t height, PixelRegion region,
+                    WorkingPixels& out, std::string& error) override {
+    // Drawn again, into the renderer's own surface (the slot the host shows is
+    // not touched): the graph's targets may hold another frame — the viewport
+    // may have shown a frame-cache copy, or a still was drawn since — and
+    // telling would cost a content key on every viewport draw. A pixel read
+    // is a click or a hover (the UI throttles it), not a per-frame cost.
+    const api::RenderFrameFile file = prepare(frame, width, height);
+    rg::FrameStats st;
+    if (!renderer_->render(file, nullptr, st, error)) return false;
+    rg::TargetPixels scene;
+    if (!renderer_->read_target(rg::kSceneColor, scene, error)) return false;
+    if (region.x + region.width > scene.width || region.y + region.height > scene.height) {
+      error = "the scene colour is smaller than the viewport's slot";
+      return false;
+    }
+    out.width = region.width;
+    out.height = region.height;
+    out.rgba.resize(std::size_t{region.width} * region.height * 4);
+    for (std::uint32_t y = 0; y < region.height; ++y) {
+      for (std::uint32_t x = 0; x < region.width; ++x) {
+        const std::size_t src = (std::size_t{region.y + y} * scene.width + region.x + x) * 4;
+        const std::size_t dst = (std::size_t{y} * region.width + x) * 4;
+        const float a = scene.rgba[src + 3];
+        // Premultiplied in the graph; the Info panel and the eyedropper want the colour.
+        const float inv = a > 0 ? 1.0F / a : 0.0F;
+        out.rgba[dst] = scene.rgba[src] * inv;
+        out.rgba[dst + 1] = scene.rgba[src + 1] * inv;
+        out.rgba[dst + 2] = scene.rgba[src + 2] * inv;
+        out.rgba[dst + 3] = a;
+      }
+    }
+    return true;
   }
 
   /// D4: everything that decides the frame's pixels — the encoded
@@ -309,6 +434,46 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
   [[nodiscard]] bool last_frame_exact() const override { return exact_; }
 
  private:
+  /// The frame's file as it draws into width × height, with its texture feed
+  /// prepared (rasters, footage) — what every draw of it starts from.
+  api::RenderFrameFile prepare(const BuiltFrame& frame, std::uint32_t width, std::uint32_t height) {
+    // New families: the FontSet grows between frames (never while rasterising),
+    // and cached rasters drawn without the face are dropped.
+    bool added = false;
+    for (const std::string& f : frame.fontFamilies) added = fonts_.add(f) || added;
+    if (added) textures_->clear();
+#if defined(PREMATION_HAVE_MEDIA)
+    // Paused: the exact frame (short wait); playing: never block, nearest frame.
+    mediaTex_->set_mode(frame.playing ? media::MediaTextures::Mode::preview : media::MediaTextures::Mode::exact);
+    mediaTex_->set_exact_timeout(std::chrono::milliseconds(250));
+#endif
+    textures_->set_playing(frame.playing);
+    textures_->set_color_managed(frame.file.view.color_management.has_value());
+    api::RenderFrameFile file = frame.file;  // refs are filled per draw (hashes depend on the cache)
+    PrepareStats ps;
+    textures_->prepare(frame.textures, file.textures, ps);
+    for (const auto& [key, what] : ps.unsupported) {
+      std::string reportKey = key;
+      reportKey += '|';
+      reportKey += what;
+      if (reported_.insert(std::move(reportKey)).second) {
+        PREMATION_LOG(warn, "scene_texture_unsupported").kv("key", key).kv("what", what);
+      }
+    }
+    // Rounded: a fractional DPR (2.18 on the owner's laptop) makes css × dpr
+    // miss the slot size by an ulp even when the frame was built for this slot.
+    if (std::lround(file.view.css_width * file.view.device_pixel_ratio) != static_cast<long>(width) ||
+        std::lround(file.view.css_height * file.view.device_pixel_ratio) != static_cast<long>(height)) {
+      // A frame built for the previous slot size (resize in flight): draw it
+      // into this size (the camera is re-fitted by the next frame).
+      file.view.css_width = width;
+      file.view.css_height = height;
+      file.view.device_pixel_ratio = 1;
+    }
+    lastMediaRefs_ = ps.mediaRefs;
+    return file;
+  }
+
   /// A fast 64-bit content hash (8 bytes per step, multiply-xorshift mix): the
   /// file can carry megabytes of mesh and environment blobs, so byte-wise
   /// FNV would cost milliseconds per frame. Not cryptographic; a collision
@@ -348,6 +513,7 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
   explicit ViewportDrawer(const EngineFramesOptions& o) : fonts_(o) {}
   mutable wire::Writer keyWriter_;
   bool exact_ = false;
+  std::uint32_t lastMediaRefs_ = 0;  // footage refs of the last prepare (D4 exactness)
   Fonts fonts_;
   std::unique_ptr<rg::SceneRenderer> renderer_;
   std::unique_ptr<SceneTextures> textures_;
@@ -415,6 +581,42 @@ class EngineAudio final : public MediaClock {
     if (!(duration > 0)) return true;
     peaks = audio::ts_envelope(system_.peaks(id, 0, duration, 1024, true));
     return true;
+  }
+
+  HookAnswer peaks(std::string_view src, double fromSec, double durationSec, std::uint32_t buckets,
+                   api::WaveformPeaks& out) override {
+    out = {};
+    const std::uint64_t id = source_of(std::string(src));
+    if (id == 0) return HookAnswer::ready;  // cannot be opened: no sound (logged by source_of)
+    const audio::SourceState st = system_.state(id);
+    if (st == audio::SourceState::unknown || st == audio::SourceState::conforming) return HookAnswer::pending;
+    const audio::SourcePtr data = system_.source(id);
+    if (st != audio::SourceState::ready || !data || !(data->sample_rate() > 0)) return HookAnswer::ready;
+    if (!data->complete()) return HookAnswer::pending;
+    const double total = static_cast<double>(data->total_frames()) / data->sample_rate();
+    const double from = std::clamp(fromSec, 0.0, total);
+    const double want = durationSec > 0 ? durationSec : total - from;
+    const double inside = std::max(0.0, std::min(want, total - from));
+    // Bucket b covers [from + b·want/buckets, …) whatever the source's length:
+    // the part of the window past the end is zero buckets, not a stretch of
+    // the rest (query_peaks spreads its buckets over the frames it is given).
+    std::uint32_t nIn = buckets;
+    if (inside < want && want > 0) {
+      nIn = static_cast<std::uint32_t>(std::floor(static_cast<double>(buckets) * inside / want));
+    }
+    const auto channels = static_cast<std::uint32_t>(std::max(0, data->channels()));
+    out.channels = channels;
+    out.buckets = buckets;
+    out.peaks.assign(static_cast<std::size_t>(buckets) * channels * 2, 0.0F);
+    out.rms.assign(buckets, 0.0F);
+    if (nIn == 0 || channels == 0) return HookAnswer::ready;
+    const double span = inside < want ? want * nIn / buckets : inside;
+    const audio::WaveformPeaksResult r = system_.peaks(id, from, span, nIn, false);
+    std::copy(r.peaks.begin(), r.peaks.begin() + static_cast<std::ptrdiff_t>(std::min(r.peaks.size(), out.peaks.size())),
+              out.peaks.begin());
+    std::copy(r.rms.begin(), r.rms.begin() + static_cast<std::ptrdiff_t>(std::min(r.rms.size(), out.rms.size())),
+              out.rms.begin());
+    return HookAnswer::ready;
   }
 
   void pause() override { clock_.pause(); }

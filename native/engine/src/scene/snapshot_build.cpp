@@ -328,6 +328,10 @@ class Walk final : public Scene3DHost {
   RawWorld raw_{c_.d, c_.expr, c_.cache, t_};
   double fps_ = 30;
   bool anySolo_ = false;
+  /// BuildContext::isolateLayer, when this walk holds it: the layer, the
+  /// layers under it and the groups above it — soloed for this walk alone.
+  std::set<std::string, std::less<>> isolated_;
+  [[nodiscard]] bool soloed(const doc::Node& n) const { return isolated_.empty() ? n.solo : isolated_.contains(n.id); }
 
   std::vector<const doc::Node*> nodes_;
   /// The walked nodes' owner: collapsed-instance clones and override copies.
@@ -1529,7 +1533,7 @@ void Walk::build_node(const doc::Node& n) {
   l.stroke = strokeFold.stroke;
   l.strokes = strokeFold.strokes;
   l.color = finalColor;
-  l.visible = n.visible && (!anySolo_ || n.solo) && !(comp_.forExport && read_is_guide_layer(n));
+  l.visible = n.visible && (!anySolo_ || soloed(n)) && !(comp_.forExport && read_is_guide_layer(n));
   std::string name = n.name;
   std::ranges::transform(name, name.begin(), [](char ch) { return ch >= 'A' && ch <= 'Z' ? static_cast<char>(ch - 'A' + 'a') : ch; });
   const bool nameEllipse = name.find("circle") != std::string::npos || name.find("ellip") != std::string::npos ||
@@ -1741,6 +1745,30 @@ Snapshot Walk::run() {
   nodes_ = wn_.nodes;
   for (const doc::Node* n : nodes_) byId_.emplace(n->id, n);
   anySolo_ = std::ranges::any_of(nodes_, [](const doc::Node* n) { return n->solo; });
+  if (!c_.isolateLayer.empty() && byId_.contains(c_.isolateLayer)) {
+    // getThumbnail of a layer: it alone draws (with what it holds), as if the
+    // only soloed layer. A nested comp's walk does not hold it: unaffected.
+    for (const doc::Node* n : nodes_) {
+      for (const doc::Node* up = n; up != nullptr;) {
+        if (up->id == c_.isolateLayer) {
+          isolated_.insert(n->id);
+          break;
+        }
+        const auto it = up->parent ? byId_.find(*up->parent) : byId_.end();
+        up = it != byId_.end() ? it->second : nullptr;
+      }
+    }
+    // The groups above it: a group draws nothing of its own, but its
+    // visibility carries to what it holds.
+    const doc::Node* n = byId_.at(c_.isolateLayer);
+    while (n->parent) {
+      const auto it = byId_.find(*n->parent);
+      if (it == byId_.end()) break;
+      n = it->second;
+      if (n->kind() == "group") isolated_.insert(n->id);
+    }
+    anySolo_ = true;
+  }
   fps_ = comp_.fps ? *comp_.fps : doc::comp_fps(d_, comp_.rootId);
   // The camera, DOF and lights resolve before the walk (buildSnapshot order).
   three_ = std::make_unique<Scene3D>(*this, c_, comp_, t_, mb_);
@@ -1759,7 +1787,7 @@ Snapshot Walk::run() {
       order.push_back(n);
     }
     const auto willDraw = [&](const doc::Node& n) {
-      return n.visible && (!anySolo_ || n.solo) && !(comp_.forExport && read_is_guide_layer(n));
+      return n.visible && (!anySolo_ || soloed(n)) && !(comp_.forExport && read_is_guide_layer(n));
     };
     for (std::size_t i = 0; i < order.size(); ++i) {
       const doc::Node& n = *order[i];
