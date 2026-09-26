@@ -11,6 +11,7 @@
 // recorded with stage 'snapshot' — the frame still renders (CLAUDE.md).
 #pragma once
 
+#include <array>
 #include <functional>
 #include <optional>
 #include <string>
@@ -48,5 +49,11 @@ struct BuildContext {
 /// `buildSnapshot(graph, anim, t, undefined, undefined, view, motionBlur, comp)`.
 [[nodiscard]] Snapshot build_snapshot(const BuildContext& c, const SnapshotComp& comp, double t,
                                       const std::optional<MotionBlurCfg>& motionBlur);
+
+/// mediaSlots.ts `coverUvRect`: the texture sub-rect a cover slot samples.
+/// Null when a dimension is missing or the aspects already match (full texture).
+/// Order is x, y, width, height, each in 0..1.
+[[nodiscard]] std::optional<std::array<double, 4>> cover_uv_rect(double sourceW, double sourceH, double slotW,
+                                                                  double slotH);
 
 }  // namespace premation::scene

@@ -119,6 +119,11 @@ class ExprCache {
 [[nodiscard]] std::vector<std::pair<std::string, double>> anim_evaluate_node(const Document& d, const ExprEnv& env,
                                                                              ExprCache& cache, std::string_view node,
                                                                              double t);
+/// `evaluateSourceText(node, t)`. Null when there is no enabled Source Text
+/// expression, the layer has no text, or the expression errors (the layer
+/// then keeps its un-expressed text).
+[[nodiscard]] std::optional<motion::expr::SourceTextResult> anim_evaluate_source_text(
+    const Document& d, const ExprEnv& env, ExprCache& cache, std::string_view node, double t);
 
 /// `componentIndexOf(prop)`.
 [[nodiscard]] std::size_t component_index_of(std::string_view prop) noexcept;

@@ -9,6 +9,8 @@
 #include "eval.hpp"
 #include "jsmath.hpp"
 #include "motion/motion_eval.h"
+#include "ptree.hpp"
+#include "sourcetext.hpp"
 
 namespace premation::doc {
 namespace ex = motion::expr;
@@ -441,6 +443,72 @@ class Sampler {
     return env_.resolve_layer(ref);
   }
 
+  struct TextEval {
+    std::optional<ex::SourceTextSample> sample;
+    std::optional<ex::SourceTextResult> result;
+  };
+
+  /// `sourceTextInternal`: the post-expression sample, and the result when an
+  /// enabled Source Text expression ran. Throws HostError on a cycle or depth
+  /// overflow. An expression error falls back to the pre-expression sample.
+  TextEval source_text_internal(const std::string& node, double t, int depth) {
+    const std::optional<ex::SourceTextSample> base = env_.source_text(node, t);
+    if (!base) return {};
+    const ExprState* entry = anim_expr(d_, node, std::string(kSourceTextProp));
+    if (entry == nullptr || !entry->enabled) return {*base, std::nullopt};
+    const std::string key = node + ":" + std::string(kSourceTextProp);
+    if (visited_.contains(key)) {
+      throw ex::HostError{u"Cycle detected across expression evaluation (" + ex::utf8_to_utf16(key) + u")"};
+    }
+    if (depth > 16) {
+      throw ex::HostError{u"Maximum cross-layer evaluation depth (16) exceeded (" + ex::utf8_to_utf16(key) + u")"};
+    }
+    visited_.insert(key);
+    struct Erase {
+      std::set<std::string>& v;
+      const std::string& k;
+      ~Erase() { v.erase(k); }
+    } const erase{visited_, key};
+    ContextHost host(*this, node, std::string(kSourceTextProp), depth);
+    host.time = t;
+    ex::Context c;
+    c.time = t;
+    c.value = 0;
+    c.audio = env_.audio_level();
+    c.comp = env_.comp_info();
+    c.layer_info = env_.layer_info(node);
+    c.prop_seed = ex::string_seed(ex::utf8_to_utf16(key));
+    c.text_value = &*base;
+    c.host = &host;
+    const ex::TextResult tr = cache_.get(entry->src).run_text(c);
+    if (tr.error) {
+      const std::u16string& m = *tr.error;
+      if (m.find(u"Cycle detected") != std::u16string::npos || m.find(u"Maximum cross-layer") != std::u16string::npos) {
+        throw ex::HostError{m};
+      }
+      return {*base, std::nullopt};
+    }
+    if (!tr.result) return {*base, std::nullopt};
+    ex::SourceTextSample after = *base;
+    after.text = tr.result->text;
+    after.style = ex::detail::resolve_style(base->style, tr.result->style);
+    return {std::move(after), tr.result};
+  }
+
+  /// `sourceTextFor`: own Source Text on the Source Text property is the
+  /// pre-expression text; every other read is post-expression.
+  std::optional<ex::SourceTextSample> source_text_for(const std::string& self, const std::string& prop,
+                                                      const std::u16string* name, double t, int depth) {
+    std::string target = self;
+    if (name != nullptr) {
+      const auto r = resolve(*name);
+      if (!r) return std::nullopt;
+      target = *r;
+    }
+    if (target == self && prop == kSourceTextProp) return env_.source_text(target, t);
+    return source_text_internal(target, t, depth).sample;
+  }
+
   /// `sampleInternal` — throws ex::HostError for a cycle or depth overflow.
   std::optional<double> internal(const std::string& node, const std::string& prop, double t, int depth) {
     if (prop == "text.source") return std::nullopt;
@@ -529,15 +597,7 @@ std::array<double, 3> ContextHost::space_convert(const std::u16string* name, dou
 }
 std::vector<ex::MarkerData> ContextHost::markers_at(ex::MarkerScope scope) { return s_.env_.markers(node_, scope); }
 std::optional<ex::SourceTextSample> ContextHost::source_text_at(const std::u16string* name, double t) {
-  std::string target = node_;
-  if (name != nullptr) {
-    const auto r = s_.resolve(*name);
-    if (!r) return std::nullopt;
-    target = *r;
-  }
-  // Source Text expressions are evaluated elsewhere (E3); the pre-expression
-  // text is what every read sees here.
-  return s_.env_.source_text(target, t);
+  return s_.source_text_for(node_, prop_, name, t, depth_);
 }
 
 }  // namespace
@@ -566,6 +626,16 @@ ex::Result anim_preview_expression(const Document& d, const ExprEnv& env, ExprCa
     ex::Result r;
     r.error = e.message;
     return r;
+  }
+}
+
+std::optional<ex::SourceTextResult> anim_evaluate_source_text(const Document& d, const ExprEnv& env, ExprCache& cache,
+                                                                std::string_view node, double t) {
+  try {
+    Sampler s(d, env, cache);
+    return s.source_text_internal(std::string(node), t, 0).result;
+  } catch (const ex::HostError&) {
+    return std::nullopt;
   }
 }
 

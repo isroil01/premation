@@ -33,7 +33,9 @@
 #include "corner_pin.hpp"
 #include "svg_layer.hpp"
 #include "temporal_ghosts.hpp"
+#include "sourcetext.hpp"
 #include "text_port.hpp"
+#include "text_unicode.hpp"
 #include "text_runs.hpp"
 #include "threed_port.hpp"
 #include "transform.hpp"
@@ -868,9 +870,155 @@ void Walk::text_fields(RLayer& l, const doc::Node& n, const Base& base, const Va
   l.textStrokePaint = text_stroke_paint(n, a);                                     // text_port.cpp
   const Json axes = doc::read_font_axes_prop(n);
   if (axes.is_object() && !axes.obj().empty()) unported(l, n, "variable font axes");
-  if (doc::anim_has_expr(d_, sid(n.id), "text.source") || doc::anim_expr(d_, sid(n.id), "sourceText") != nullptr) {
-    unported(l, n, "source text expressions");
+}
+
+/// applySourceTextExpressionResult: layer-wide style overrides and the
+/// expression's text. Stored runs are shifted across a string rewrite
+/// (runOffsets.ts diffEdit + shiftRunsForEdits) so a style stays on the same
+/// letters. Ranges the expression sets become the run list on the result.
+void apply_source_text(RLayer& l, const motion::expr::SourceTextResult& result) {
+  namespace ex = motion::expr;
+  const auto& o = result.style;
+  ex::SourceTextStyle base;
+  base.font_family = ex::utf8_to_utf16(l.fontFamily.value_or("Inter"));
+  base.font_size = l.fontSize;
+  base.font_weight = ex::utf8_to_utf16(l.fontWeight.value_or("600"));
+  base.font_style = ex::utf8_to_utf16(l.fontStyle.value_or("normal"));
+  base.fill = ex::utf8_to_utf16(l.fill.value_or("#ffffff"));
+  if (l.textStroke) base.stroke = ex::utf8_to_utf16(*l.textStroke);
+  base.stroke_width = l.textStrokeWidth.value_or(0);
+  base.letter_spacing = l.letterSpacing.value_or(0);
+  base.line_height = l.lineHeight.value_or(1.2);
+  base.baseline_shift = l.baselineShift.value_or(0);
+  base.horizontal_scale = l.horizontalScale.value_or(100);
+  base.vertical_scale = l.verticalScale.value_or(100);
+  base.text_transform = ex::utf8_to_utf16(l.textTransform.value_or("none"));
+  base.font_variant = ex::utf8_to_utf16(l.fontVariant.value_or("normal"));
+  base.align = ex::utf8_to_utf16(l.align.value_or("left"));
+  base.paragraph_spacing = l.paragraphSpacing.value_or(0);
+  const ex::SourceTextStyle eff = ex::detail::resolve_style(base, o);
+  const auto u8 = [](const std::u16string& s) { return ex::utf16_to_utf8(s); };
+  if (o.font_family) l.fontFamily = u8(eff.font_family);
+  if (o.font_size) l.fontSize = eff.font_size;
+  if (o.font_weight) l.fontWeight = u8(eff.font_weight);
+  if (o.font_style) l.fontStyle = u8(eff.font_style);
+  if (o.fill || o.apply_fill) l.fill = u8(eff.fill);
+  if (o.stroke && eff.stroke) l.textStroke = u8(*eff.stroke);
+  if (o.stroke_width || o.apply_stroke) l.textStrokeWidth = eff.stroke_width;
+  if (o.tracking) l.letterSpacing = eff.letter_spacing;
+  if (o.leading) l.lineHeight = eff.line_height;
+  if (o.baseline_shift) l.baselineShift = eff.baseline_shift;
+  if (o.horizontal_scale) l.horizontalScale = eff.horizontal_scale;
+  if (o.vertical_scale) l.verticalScale = eff.vertical_scale;
+  if (o.text_transform) l.textTransform = u8(eff.text_transform);
+  if (o.font_variant) l.fontVariant = u8(eff.font_variant);
+  if (o.align) l.align = u8(eff.align);
+  if (o.space_after || o.space_before) l.paragraphSpacing = eff.paragraph_spacing;
+  if (o.direction) {
+    Json extras = l.textExtras.is_object() ? l.textExtras : Json::object();
+    if (*o.direction == u"rtl") extras.set("direction", Json::string("rtl"));
+    else extras.erase("direction");
+    l.textExtras = extras.obj().empty() ? Json() : std::move(extras);
   }
+  const std::string before = l.text.value_or("");
+  const std::string after = u8(result.text);
+  if (before != after && l.runs.is_array() && !l.runs.arr().empty()) {
+    // runOffsets.ts diffEdit + shiftRunsForEdits, one prefix/suffix edit.
+    const std::vector<std::string> ga = raster::split_graphemes(before);
+    const std::vector<std::string> gb = raster::split_graphemes(after);
+    int pre = 0;
+    while (pre < static_cast<int>(ga.size()) && pre < static_cast<int>(gb.size()) && ga[static_cast<std::size_t>(pre)] == gb[static_cast<std::size_t>(pre)]) ++pre;
+    int suf = 0;
+    while (suf < static_cast<int>(ga.size()) - pre && suf < static_cast<int>(gb.size()) - pre &&
+           ga[ga.size() - 1 - static_cast<std::size_t>(suf)] == gb[gb.size() - 1 - static_cast<std::size_t>(suf)]) {
+      ++suf;
+    }
+    const int eStart = pre;
+    const int eEnd = static_cast<int>(ga.size()) - suf;
+    const int insert = static_cast<int>(gb.size()) - pre - suf;
+    const int nlen = static_cast<int>(gb.size());
+    const auto map_boundary = [&](int i, bool isEnd) {
+      if (i <= eStart) return i;
+      const int delta = insert - (eEnd - eStart);
+      if (i >= eEnd) return i + delta;
+      return eStart + (isEnd ? insert : 0);
+    };
+    Json shifted = Json::array();
+    for (const Json& r : l.runs.arr()) {
+      if (!r.at("start").is_number() || !r.at("end").is_number()) continue;
+      const int start = std::clamp(map_boundary(static_cast<int>(r.at("start").num()), false), 0, nlen);
+      const int end = std::clamp(map_boundary(static_cast<int>(r.at("end").num()), true), 0, nlen);
+      if (end <= start) continue;
+      Json q = r;
+      q.set("start", Json::number(static_cast<double>(start)));
+      q.set("end", Json::number(static_cast<double>(end)));
+      shifted.arr_mut().push_back(std::move(q));
+    }
+    l.runs = shifted.arr().empty() ? Json() : std::move(shifted);
+  }
+  if (!result.ranges.empty()) {
+    const std::vector<std::string> gs = raster::split_graphemes(after);
+    const auto n = static_cast<std::ptrdiff_t>(gs.size());
+    Json runs = Json::array();
+    if (n > 0) {
+      struct Slot {
+        bool on = false;
+        double fontSize = 0;
+        bool hasSize = false;
+        std::string family, weight, style, fill;
+        bool hasFamily = false, hasWeight = false, hasStyle = false, hasFill = false;
+        double tracking = 0;
+        bool hasTracking = false;
+      };
+      std::vector<Slot> per(static_cast<std::size_t>(n));
+      for (const ex::SourceTextRangeOverride& range : result.ranges) {
+        const auto from = static_cast<std::ptrdiff_t>(std::max(0.0, range.start));
+        const auto to = static_cast<std::ptrdiff_t>(std::min(static_cast<double>(n), range.start + range.count));
+        for (std::ptrdiff_t i = from; i < to; ++i) {
+          Slot& s = per[static_cast<std::size_t>(i)];
+          s.on = true;
+          const auto& st = range.style;
+          if (st.font_size) { s.fontSize = *st.font_size; s.hasSize = true; }
+          if (st.font_family) { s.family = u8(*st.font_family); s.hasFamily = true; }
+          if (st.font_weight) { s.weight = u8(*st.font_weight); s.hasWeight = true; }
+          if (st.font_style) { s.style = u8(*st.font_style); s.hasStyle = true; }
+          if (st.fill) { s.fill = u8(*st.fill); s.hasFill = true; }
+          if (st.apply_fill && !*st.apply_fill) { s.fill = "transparent"; s.hasFill = true; }
+          if (st.tracking) { s.tracking = *st.tracking; s.hasTracking = true; }
+        }
+      }
+      const double layerSize = o.font_size ? eff.font_size : l.fontSize;
+      std::ptrdiff_t i = 0;
+      while (i < n) {
+        const Slot& s = per[static_cast<std::size_t>(i)];
+        if (!s.on) { ++i; continue; }
+        std::ptrdiff_t j = i + 1;
+        while (j < n) {
+          const Slot& b = per[static_cast<std::size_t>(j)];
+          if (b.on != s.on || b.hasSize != s.hasSize || b.fontSize != s.fontSize || b.family != s.family || b.weight != s.weight ||
+              b.style != s.style || b.fill != s.fill || b.hasTracking != s.hasTracking || b.tracking != s.tracking) {
+            break;
+          }
+          ++j;
+        }
+        Json style = Json::object();
+        if (s.hasSize) style.set("fontSize", Json::number(s.fontSize));
+        if (s.hasFamily) style.set("fontFamily", Json::string(s.family));
+        if (s.hasWeight) style.set("fontWeight", Json::string(s.weight));
+        if (s.hasStyle) style.set("fontStyle", Json::string(s.style));
+        if (s.hasFill) style.set("fill", Json::string(s.fill));
+        if (s.hasTracking) style.set("letterSpacing", Json::number((s.tracking * (s.hasSize ? s.fontSize : layerSize)) / 1000));
+        Json run = Json::object();
+        run.set("start", Json::number(static_cast<double>(i)));
+        run.set("end", Json::number(static_cast<double>(j)));
+        run.set("style", std::move(style));
+        runs.arr_mut().push_back(std::move(run));
+        i = j;
+      }
+    }
+    l.runs = runs.arr().empty() ? Json() : std::move(runs);
+  }
+  l.text = after;
 }
 
 void Walk::build_node(const doc::Node& n) {
@@ -1385,8 +1533,10 @@ void Walk::build_node(const doc::Node& n) {
                                                                             : "rect";
   l.cornerRadius = resolvedCornerRadius;
   // Glass owns the backdrop blur when it is on (buildSnapshot).
+  // Standalone backdrop blur is the composition pass's half-res blur (glass uses
+  // the same path with its own radius). It used to be reported unported after
+  // that pass landed.
   l.backdropBlur = l.glass ? std::optional<double>(l.glass->blur) : a.get("backdropBlur") ? a.get("backdropBlur") : base.backdropBlur;
-  if (!l.glass && l.backdropBlur && *l.backdropBlur > 0) unported(l, n, "backdrop blur");
   l.pathPoints = pathPoints.is_null() ? Json() : pathPoints;
   l.pathOpen = pathOpen;
   // Text (`wrappedLayerText`: point text is the raw string; paragraph text is reported above).
@@ -1416,16 +1566,15 @@ void Walk::build_node(const doc::Node& n) {
   if (layerKind == LayerKind::image || layerKind == LayerKind::video) {
     l.assetId = base.assetId;
     std::optional<std::string> src = base.src;
-    if (base.assetId) {
-      if (const Json* asset = doc::find_asset(d_, *base.assetId)) {
-        if (asset->at("src").is_string() && !asset->at("src").str().empty()) src = asset->at("src").str();
-        if (asset->at("interpret").at("alpha").is_string() && asset->at("interpret").at("alpha").str() == "premultiplied") {
-          l.premultipliedSource = true;
-        }
-        const Json& fields = asset->at("interpret").at("fields");
-        if (fields.is_string() && (fields.str() == "upper" || fields.str() == "lower")) unported(l, n, "interlaced footage (fields)");
-        if (asset->at("interpret").at("pulldownPhase").is_number()) unported(l, n, "pulldown removal");
+    const Json* asset = base.assetId ? doc::find_asset(d_, *base.assetId) : nullptr;
+    if (asset != nullptr) {
+      if (asset->at("src").is_string() && !asset->at("src").str().empty()) src = asset->at("src").str();
+      if (asset->at("interpret").at("alpha").is_string() && asset->at("interpret").at("alpha").str() == "premultiplied") {
+        l.premultipliedSource = true;
       }
+      const Json& fields = asset->at("interpret").at("fields");
+      if (fields.is_string() && (fields.str() == "upper" || fields.str() == "lower")) unported(l, n, "interlaced footage (fields)");
+      if (asset->at("interpret").at("pulldownPhase").is_number()) unported(l, n, "pulldown removal");
     }
     l.src = src;
     if (kind == "svg") {  // svgLayerSrc: the stored document (svg_layer.cpp)
@@ -1433,8 +1582,20 @@ void Walk::build_node(const doc::Node& n) {
       if (svg.src) l.src = std::move(svg.src);
       for (std::string& why : svg.unported) unported(l, n, std::move(why));
     }
+    // buildSnapshot: a cover slot keeps the authored box and crops in UV space
+    // (mediaSlots.ts coverUvRect). The source size is footageSourceOf's display
+    // size: stored pixels × pixel aspect, width rounded like Math.round.
     const Json& fit = doc::transform_props(n).at("slotFit");
-    if (fit.is_string() && fit.str() == "cover") unported(l, n, "media slot cover crop");
+    if (fit.is_string() && fit.str() == "cover" && asset != nullptr) {
+      const Json& md = asset->at("metadata");
+      const double storedW = md.at("width").is_number() ? md.at("width").num() : 0;
+      const double storedH = md.at("height").is_number() ? md.at("height").num() : 0;
+      const Json& par = asset->at("interpret").at("par");
+      const double pixelAspect = par.is_number() && par.num() > 0 ? par.num() : 1;
+      if (auto uv = cover_uv_rect(motion::js::round(storedW * pixelAspect), storedH, base.width.value_or(0), base.height.value_or(0))) {
+        l.uvRect = *uv;
+      }
+    }
   }
   l.preserveTransparency = read_node_preserve_transparency(n);
   l.continuousRaster = read_continuous_raster(n) && supports_continuous_raster(n);  // continuousRaster.ts
@@ -1510,20 +1671,31 @@ void Walk::build_node(const doc::Node& n) {
   motion_samples(l, n, base, n.id, three_->matrix_at(n, a, base.x, base.y, base.rotation, s3));
   if (layerKind == LayerKind::text && l.text) {
     // Text animators (text_port.cpp): per-glyph transforms over the unwrapped text.
-    if (const std::vector<Json> anims = resolve_text_animators(n, a); !anims.empty()) {
+    const std::vector<Json> anims = resolve_text_animators(n, a);
+    const auto glyphs_of = [&](const std::string& text) {
+      if (anims.empty()) return;
       std::string why;
-      Json glyphs = evaluate_text_animators(*l.text, anims, layerTimeNow, &why);
+      Json glyphs = evaluate_text_animators(text, anims, layerTimeNow, &why);
       if (why.empty()) l.glyphs = std::move(glyphs);
       else unported(l, n, why);
-    }
+    };
+    glyphs_of(*l.text);
     // Per-character styling (richText.ts readRuns + normalizeRuns): emitted only when non-empty.
     const doc::Component* tc = n.comp("Text");
     if (tc != nullptr && tc->props.at("__runs").is_array() && !tc->props.at("__runs").arr().empty()) {
       l.runs = normalize_runs(tc->props, *l.text);
     }
+    // Source Text expression (applySourceTextExpressionResult). Null when the
+    // layer has none, or the expression errored — the un-expressed text stays.
+    if (const auto expr = doc::anim_evaluate_source_text(d_, c_.expr, c_.cache, sid(n.id), layerTimeNow)) {
+      apply_source_text(l, *expr);
+      if (l.text) glyphs_of(*l.text);
+    }
     // Paragraph text renders WRAPPED (wrappedLayerText, text_port.cpp) — after the animators
     // and runs, which index the raw text.
-    if (std::string why = paragraph_layer(l, n, c_.measurer, *l.text); !why.empty()) unported(l, n, why);
+    if (l.text) {
+      if (std::string why = paragraph_layer(l, n, c_.measurer, *l.text); !why.empty()) unported(l, n, why);
+    }
   }
   three_->effects(s3, isSolid, px, py, l);  // DOF blur, cast shadows, receivers, the Only modes
   // Temporal ghosts (Echo / Wide Time, temporal_ghosts.cpp): copies at other
@@ -1670,6 +1842,19 @@ SnapshotComp snapshot_comp_of(const Document& d, std::string_view comp) {
   s.globalLightAltitude = jnum(rec->at("globalLightAltitude")).value_or(45);
   if (auto ds = jnum(rec->at("durationSeconds"))) s.durationSeconds = ds;
   return s;
+}
+
+std::optional<std::array<double, 4>> cover_uv_rect(double sourceW, double sourceH, double slotW, double slotH) {
+  if (!(sourceW > 0) || !(sourceH > 0) || !(slotW > 0) || !(slotH > 0)) return std::nullopt;
+  const double sourceAspect = sourceW / sourceH;
+  const double slotAspect = slotW / slotH;
+  if (std::abs(sourceAspect - slotAspect) < 1e-6) return std::nullopt;
+  if (sourceAspect > slotAspect) {
+    const double frac = slotAspect / sourceAspect;
+    return std::array<double, 4>{(1.0 - frac) / 2, 0, frac, 1};
+  }
+  const double frac = sourceAspect / slotAspect;
+  return std::array<double, 4>{0, (1.0 - frac) / 2, 1, frac};
 }
 
 MotionBlurCfg motion_blur_of(const Document& d, std::string_view comp) {
