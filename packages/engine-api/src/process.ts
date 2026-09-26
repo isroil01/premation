@@ -61,6 +61,8 @@ export interface EngineHostStatus {
   ownsDocument?: boolean;
   /** F2 / D5: where the engine-owned document's autosave writes its recovery copy (with ownsDocument). */
   recoveryPath?: string;
+  /** F2: main keeps the command log and replays it after a restart; the client records none. */
+  hostCommandLog?: boolean;
 }
 
 export type EngineWireReply =
@@ -73,6 +75,21 @@ export interface EngineRestartNotice {
   exitCode: number | null;
   signal: string | null;
   logTail: string[];
+  /**
+   * F2: main replayed ITS command log into the restarted engine (the log lives
+   * in main, electron/engineCommandLog.ts) — the client must not replay its
+   * own. Absent: an older host; the client replays as before.
+   */
+  replayedByHost?: boolean;
+  replayed?: number;
+  mismatches?: number;
+  ms?: number;
+}
+
+/** Per-batch facts the host adds (F2). */
+export interface EngineEventMeta {
+  /** The batch was caused by ANOTHER window's request (a pop-out editing the same engine). */
+  foreign?: boolean;
 }
 
 export interface EngineFallbackNotice {
@@ -111,7 +128,7 @@ export interface VideoFrameLike {
 export interface EngineBridge {
   request(bytes: Uint8Array): Promise<EngineWireReply>;
   status(): Promise<EngineHostStatus>;
-  onEvents(handler: (bytes: Uint8Array) => void): () => void;
+  onEvents(handler: (bytes: Uint8Array, meta?: EngineEventMeta) => void): () => void;
   onState(handler: (state: EngineHostState) => void): () => void;
   onRestarted(handler: (info: EngineRestartNotice) => void): () => void;
   onFallback(handler: (info: EngineFallbackNotice) => void): () => void;
@@ -130,8 +147,13 @@ export interface ProcessEngineOptions {
   fallback?: () => EngineClient;
   /** Restart / fallback notices for the UI (a toast). Fallback is reported once. */
   onNotice?: (notice: ProcessEngineNotice) => void;
-  /** Keep the command log for crash recovery (default true). */
+  /** Keep the command log for crash recovery (default true). A host that replays its own log (F2) makes it unused. */
   recordLog?: boolean;
+  /**
+   * F2: a batch another window caused (main's `foreign` mark) was delivered —
+   * this window's page replica missed the request and should refresh.
+   */
+  onForeignBatch?: (batch: EventBatch) => void;
 }
 
 /** Transport commands a crash-recovery replay skips: the clock restarts stopped. */
@@ -154,6 +176,8 @@ export class ProcessEngineClient extends EngineClientBase {
   private waiters: Array<() => void> = [];
   private eventRevisionValue: Revision = 0;
   private log: LogRecord[] = [];
+  /** F2: main keeps the log (EngineHostStatus.hostCommandLog): this client records nothing. */
+  private hostLogs = false;
   private suppressEvents = false;
   private recoveryGen = 0;
   private resyncing = false;
@@ -170,7 +194,7 @@ export class ProcessEngineClient extends EngineClientBase {
   ) {
     super();
     this.disposers.push(
-      bridge.onEvents((bytes) => this.onEventBytes(bytes)),
+      bridge.onEvents((bytes, meta) => this.onEventBytes(bytes, meta?.foreign === true)),
       bridge.onState((s) => this.onHostState(s)),
       bridge.onRestarted((info) => void this.recover(info)),
       bridge.onFallback((info) => this.switchToFallback(info.reason)),
@@ -260,6 +284,7 @@ export class ProcessEngineClient extends EngineClientBase {
       this.switchToFallback('the engine process backend is switched off');
       return;
     }
+    this.hostLogs = st.hostCommandLog === true;
     if (st.state === 'fallback') {
       this.switchToFallback(st.fallbackReason ?? 'the engine process is unavailable');
       return;
@@ -321,13 +346,13 @@ export class ProcessEngineClient extends EngineClientBase {
   }
 
   private record(req: Request, res: Response): void {
-    if (this.options.recordLog === false) return;
+    if (this.options.recordLog === false || this.hostLogs) return;
     if (req.body.kind === 'query' || res.outcome.kind === 'error') return;
     if (req.body.kind === 'command' && req.body.value.type === 'newProject') this.log = [];  // nothing before it matters
     this.log.push({ request: deepCopy(req), revisionAfter: res.revision, documentHash: 0 });
   }
 
-  private onEventBytes(bytes: Uint8Array): void {
+  private onEventBytes(bytes: Uint8Array, foreign = false): void {
     let msg: EngineMessage;
     try {
       msg = decodeEngineMessage(new Uint8Array(bytes));
@@ -335,24 +360,32 @@ export class ProcessEngineClient extends EngineClientBase {
       return;  // an undecodable batch is a gap the next batch will reveal
     }
     if (msg.kind !== 'events') return;
-    this.onBatch(msg.value);
+    if (this.onBatch(msg.value) && foreign) {
+      try {
+        this.options.onForeignBatch?.(msg.value);
+      } catch {
+        // the hook's failure is its own
+      }
+    }
   }
 
-  private onBatch(b: EventBatch): void {
-    if (this.mode === 'fallback' || this.mode === 'closed') return;  // a stale engine's last words
+  /** True when the batch was delivered to subscribers. */
+  private onBatch(b: EventBatch): boolean {
+    if (this.mode === 'fallback' || this.mode === 'closed') return false;  // a stale engine's last words
     this.noteRevision(b.toRevision);
     if (this.suppressEvents || this.mode !== 'ready') {
       // Connecting or replaying: the documentReset that ends it covers these.
-      return;
+      return false;
     }
     const revisioned = b.fromRevision !== b.toRevision;
     if (b.fromRevision > this.eventRevisionValue) {
       void this.resync();  // §8.2: a gap — drop and refetch
-      return;
+      return false;
     }
-    if (revisioned && b.toRevision <= this.eventRevisionValue) return;  // duplicate
+    if (revisioned && b.toRevision <= this.eventRevisionValue) return false;  // duplicate
     if (b.toRevision > this.eventRevisionValue) this.eventRevisionValue = b.toRevision;
     this.deliver(b);
+    return true;
   }
 
   private async resync(): Promise<void> {
@@ -386,6 +419,21 @@ export class ProcessEngineClient extends EngineClientBase {
   /** The engine came back empty: replay the log into it, then reopen the gate. */
   private async recover(info: EngineRestartNotice): Promise<void> {
     if (this.mode === 'fallback' || this.mode === 'closed') return;
+    if (info.replayedByHost) {
+      // F2: main already replayed its command log (every window's requests,
+      // once); this window only refetches. Its own log would replay twice.
+      const gen = ++this.recoveryGen;
+      this.mode = 'recovering';
+      this.suppressEvents = false;
+      const replayed = info.replayed ?? 0;
+      const mismatches = info.mismatches ?? 0;
+      const ms = info.ms ?? 0;
+      this.lastRestart = { replayed, mismatches, ms };
+      await this.becomeReady('engineRestarted');
+      if (gen !== this.recoveryGen) return;
+      this.options.onNotice?.({ kind: 'restarted', attempt: info.attempt, cause: info.cause, replayed, mismatches, ms });
+      return;
+    }
     const gen = ++this.recoveryGen;
     this.mode = 'recovering';
     this.suppressEvents = true;

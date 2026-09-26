@@ -1541,6 +1541,9 @@ function registerOAuthIpc(): void {
   });
 }
 
+/** Open pop-out windows (F2: each is a mirror the engine's events are relayed to). */
+const popoutWindows = new Set<BrowserWindow>();
+
 function registerPopoutIpc(): void {
   handle('popout:spawnWindow', (event, panelId: string) => {
     const parentWin = BrowserWindow.fromWebContents(event.sender);
@@ -1568,6 +1571,10 @@ function registerPopoutIpc(): void {
     const popoutUrl = isDev
       ? `${DEV_SERVER_URL}/#/popout/${panelId}`
       : `file://${path.join(__dirname, '..', 'dist', 'index.html')}#/popout/${panelId}`;
+
+    // F2: the engine relays its events to every pop-out (a second mirror).
+    popoutWindows.add(popoutWin);
+    popoutWin.on('closed', () => popoutWindows.delete(popoutWin));
 
     void popoutWin.loadURL(popoutUrl);
     popoutWin.once('ready-to-show', () => popoutWin.show());
@@ -1929,6 +1936,8 @@ app.whenReady().then(() => {
     appVersion: app.getVersion(),
     getGPUInfo: (level) => app.getGPUInfo(level),
     getWindow: () => mainWindow,
+    // F2: pop-outs are second mirrors of the engine — its events reach them too.
+    getWindows: () => [mainWindow, ...popoutWindows].filter((w): w is BrowserWindow => w !== null && !w.isDestroyed()),
     sharedTexture: sharedTexture as unknown as SharedTextureApi,
     // G1: native SDK plugins load in the engine process from this folder.
     nativePluginDir: ensureDir(path.join(app.getPath('userData'), 'native-plugins')),

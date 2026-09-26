@@ -222,6 +222,151 @@ export function peekEnvelope(msg: Uint8Array): EnvelopePeek | null {
   return peek;
 }
 
+// ── F2: main as the ONE client of the engine (command log, several windows) ──
+//
+// With the command log in main (engineCommandLog.ts) and pop-out windows as
+// second mirrors, main owns the engine connection's `seq` space: each window
+// numbers its own requests, so main renumbers them on the way in and back on
+// the way out, and maps an event batch's `causedBy` back for the window that
+// caused it. Only envelope fields are touched; bodies are copied as bytes.
+
+interface RawField {
+  field: number;
+  wire: number;
+  num: number;
+  /** The field's bytes, key included. */
+  raw: Uint8Array;
+  body: Uint8Array | null;
+}
+
+/** The top-level fields with their raw bytes; null when malformed. */
+function rawFields(b: Uint8Array): RawField[] | null {
+  const out: RawField[] = [];
+  let pos = 0;
+  while (pos < b.length) {
+    const start = pos;
+    const k = readVarint(b, pos);
+    if (!k) return null;
+    pos = k[1];
+    const field = Math.floor(k[0] / 8);
+    const wire = k[0] % 8;
+    let num = 0;
+    let body: Uint8Array | null = null;
+    if (wire === WT_VARINT) {
+      const v = readVarint(b, pos);
+      if (!v) return null;
+      num = v[0];
+      pos = v[1];
+    } else if (wire === WT_LEN) {
+      const l = readVarint(b, pos);
+      if (!l) return null;
+      pos = l[1];
+      if (pos + l[0] > b.length) return null;
+      body = b.subarray(pos, pos + l[0]);
+      pos += l[0];
+    } else if (wire === WT_FIXED64) {
+      if (pos + 8 > b.length) return null;
+      pos += 8;
+    } else if (wire === WT_FIXED32) {
+      if (pos + 4 > b.length) return null;
+      pos += 4;
+    } else {
+      return null;
+    }
+    out.push({ field, wire, num, raw: b.subarray(start, pos), body });
+  }
+  return out;
+}
+
+function concat(parts: Uint8Array[]): Uint8Array {
+  let n = 0;
+  for (const p of parts) n += p.length;
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
+/**
+ * The same EngineMessage with inner varint field `field` of its (only) variant
+ * set to `value` — or removed when `value` is null. Canonical order is kept: the
+ * field goes where the encoder would put it (fields are written in number order).
+ * Null when `msg` is not an envelope.
+ */
+function withInnerVarint(msg: Uint8Array, field: number, value: number | null): Uint8Array | null {
+  const top = rawFields(msg);
+  if (!top || top.length !== 1 || !top[0]!.body) return null;
+  const variant = top[0]!.field;
+  const inner = rawFields(top[0]!.body);
+  if (!inner) return null;
+  const parts: Uint8Array[] = [];
+  let placed = value === null;
+  for (const f of inner) {
+    if (f.field === field && f.wire === WT_VARINT) continue;
+    if (!placed && f.field > field) {
+      parts.push(new ProtoWriter().u32(field, value!).done());
+      placed = true;
+    }
+    parts.push(f.raw);
+  }
+  if (!placed) parts.push(new ProtoWriter().u32(field, value!).done());
+  return new ProtoWriter().bytesField(variant, concat(parts)).done();
+}
+
+/** An encoded EngineMessage{request|response} with `seq` replaced. Null when malformed. */
+export function withEnvelopeSeq(msg: Uint8Array, seq: number): Uint8Array | null {
+  return withInnerVarint(msg, 1, seq);
+}
+
+/** An encoded EngineMessage{events} with `causedBy` set (or removed: null). Null when malformed. */
+export function withCausedBy(msg: Uint8Array, seq: number | null): Uint8Array | null {
+  return withInnerVarint(msg, 4, seq);
+}
+
+export interface RequestPeek {
+  body: 'command' | 'query' | 'batch';
+  /** The command's schema id (the Command union's field number). */
+  commandId?: number;
+  /** A command's field 1 when it is a varint (setViewport / closeViewport: the viewport). */
+  firstVarint?: number;
+}
+
+/** What an encoded EngineMessage{request} asks for, without decoding it. Null when malformed. */
+export function peekRequest(msg: Uint8Array): RequestPeek | null {
+  const env = peekEnvelope(msg);
+  if (!env || env.kind !== 'request') return null;
+  const inner = fields(env.body);
+  const rb = inner?.find((f) => f.field === 2 && f.body);
+  if (!rb?.body) return null;
+  const union = fields(rb.body);
+  if (!union || union.length !== 1 || !union[0]!.body) return null;
+  const kind = union[0]!.field === 1 ? 'command' : union[0]!.field === 2 ? 'query' : union[0]!.field === 3 ? 'batch' : null;
+  if (!kind) return null;
+  if (kind !== 'command') return { body: kind };
+  const cmd = fields(union[0]!.body);
+  if (!cmd || cmd.length !== 1) return null;
+  const peek: RequestPeek = { body: 'command', commandId: cmd[0]!.field };
+  const args = cmd[0]!.body ? fields(cmd[0]!.body) : [];
+  const first = args?.find((f) => f.field === 1 && f.wire === WT_VARINT);
+  peek.firstVarint = first?.num ?? 0;
+  return peek;
+}
+
+/** Is an encoded EngineMessage{response} an error (Outcome variant 4)? Null when malformed. */
+export function responseIsError(msg: Uint8Array): boolean | null {
+  const env = peekEnvelope(msg);
+  if (!env || env.kind !== 'response') return null;
+  const inner = fields(env.body);
+  const outcome = inner?.find((f) => f.field === 3 && f.body);
+  if (!outcome?.body) return null;
+  const union = fields(outcome.body);
+  if (!union || union.length !== 1) return null;
+  return union[0]!.field === 4;
+}
+
 export interface HelloInfo {
   client: string;
   clientVersion: string;

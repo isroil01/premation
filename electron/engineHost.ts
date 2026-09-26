@@ -33,7 +33,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { handle, on } from './ipcGuard';
-import type { EngineFrameMessage, FrameReadyMessage, SlotsMessage } from './engineFraming';
+import { peekEnvelope, withCausedBy, withEnvelopeSeq, type EngineFrameMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
+import { EngineCommandLog } from './engineCommandLog';
 import { EngineGoneError } from './engineTransport';
 import {
   EngineSupervisor,
@@ -252,6 +253,14 @@ export interface EngineHostOptions {
   appVersion: string;
   getGPUInfo(level: 'complete'): Promise<unknown>;
   getWindow(): BrowserWindow | null;
+  /**
+   * F2: every window that mirrors the engine (the main window and its pop-outs).
+   * Events and notices go to each; frames only to `getWindow()`. Default: the
+   * main window alone.
+   */
+  getWindows?(): BrowserWindow[];
+  /** F2: keep the command log here and replay it into a restarted engine (default true). */
+  recordLog?: boolean;
   sharedTexture: SharedTextureApi | null;
   supervisor?: Partial<SupervisorOptions>;
   /** G1: the native plugin folder (bundles with premation-plugin.json) the engine scans. */
@@ -285,14 +294,41 @@ export interface EngineHostStatusReply {
   ownsDocument?: boolean;
   /** F2 / D5: where autosave writes the recovery copy (with ownsDocument). */
   recoveryPath?: string;
+  /** F2: main keeps the command log and replays it after a restart (renderer clients record none). */
+  hostCommandLog?: boolean;
+}
+
+/** Where a request came from: the webContents id of the window that sent it. */
+export type EngineRequestSender = number;
+
+interface InFlight {
+  sender: EngineRequestSender | undefined;
+  seq: number;
+}
+
+/** What the renderer is told after a restart the HOST recovered (the renderer client must not replay). */
+export interface HostRecoveryInfo {
+  replayedByHost: true;
+  replayed: number;
+  mismatches: number;
+  ms: number;
 }
 
 export class EngineHost {
   readonly supervisor: EngineSupervisor | null;
   readonly frames: FrameForwarder;
   private fallbackReason: string | undefined;
+  /** F2: the engine's command log (engineCommandLog.ts), replayed by main after a restart. */
+  readonly commandLog: EngineCommandLog;
+  /** Main's seq space on the engine connection: every window's requests renumbered. */
+  private hostSeq = 0;
+  private readonly inFlight = new Map<number, InFlight>();
+  /** While a restarted engine is being replayed into: requests wait, events are not relayed. */
+  private recovering: Promise<void> | null = null;
+  private lastRecovery: HostRecoveryInfo | null = null;
 
   constructor(private readonly o: EngineHostOptions) {
+    this.commandLog = new EngineCommandLog(o.recordLog ?? true);
     this.frames = new FrameForwarder({
       sharedTexture: o.sharedTexture,
       target: () => {
@@ -332,11 +368,9 @@ export class EngineHost {
     const sup = this.supervisor;
     sup.on('ready', () => this.frames.engineStarted());
     sup.on('frame', (m) => this.frames.onFrame(m));
-    sup.on('events', (b) => this.push('engine:events', b.bytes));
+    sup.on('events', (b) => this.relayEvents(b.bytes, b.causedBy));
     sup.on('state', (s) => this.push('engine:state', s));
-    sup.on('engine-restarted', (info: EngineRestartedInfo) =>
-      this.push('engine:restarted', { attempt: info.attempt, cause: info.cause, exitCode: info.exitCode, signal: info.signal, logTail: info.logTail.slice(-20) }),
-    );
+    sup.on('engine-restarted', (info: EngineRestartedInfo) => void this.recoverRestarted(info));
     sup.on('fallback', (info: FallbackInfo) => {
       this.fallbackReason = info.reason;
       this.push('engine:fallback', { reason: info.reason, logTail: info.logTail.slice(-20) });
@@ -382,27 +416,109 @@ export class EngineHost {
       ...(w ? { engine: w.engine, engineVersion: w.engineVersion, revision: w.revision } : {}),
       ...(this.fallbackReason ? { fallbackReason: this.fallbackReason } : {}),
       ...(this.o.ownsDocument ? { ownsDocument: true, ...(this.o.recoveryPath ? { recoveryPath: this.o.recoveryPath } : {}) } : {}),
+      ...((this.o.recordLog ?? true) ? { hostCommandLog: true } : {}),
     };
   }
 
-  async request(bytes: Uint8Array): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; reason: 'gone' | 'disabled' | 'invalid'; message: string }> {
+  /** The last restart main recovered by replaying its command log (HUD, tests). */
+  get recovery(): HostRecoveryInfo | null {
+    return this.lastRecovery;
+  }
+
+  /**
+   * One request from a window. F2: main is the engine's ONE client — the
+   * window's `seq` is renumbered into main's space (two windows both number
+   * from 1), the response is renumbered back, and the applied request goes on
+   * the command log. Requests wait while a restarted engine is being replayed.
+   */
+  async request(bytes: Uint8Array, sender?: EngineRequestSender): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; reason: 'gone' | 'disabled' | 'invalid'; message: string }> {
     const sup = this.supervisor;
     if (!sup) return { ok: false, reason: 'disabled', message: 'the engine process backend is switched off' };
     if (!(bytes instanceof Uint8Array)) return { ok: false, reason: 'invalid', message: 'engine:request takes the encoded request bytes' };
+    const peek = peekEnvelope(bytes);
+    if (!peek || peek.kind !== 'request' || peek.seq === undefined) return { ok: false, reason: 'invalid', message: 'not an encoded EngineMessage{request}' };
+    while (this.recovering) await this.recovering;
+    this.hostSeq += 1;
+    const seq = this.hostSeq;
+    // A copy either way: the IPC buffer is not ours to keep while the pipe write is pending.
+    const out = withEnvelopeSeq(bytes, seq);
+    if (!out) return { ok: false, reason: 'invalid', message: 'not an encoded EngineMessage{request}' };
+    this.inFlight.set(seq, { sender, seq: peek.seq });
     try {
-      // Copy: the IPC buffer is not ours to keep while the pipe write is pending.
-      const res = await sup.request(Uint8Array.from(bytes));
-      return { ok: true, bytes: res };
+      const res = await sup.request(out);
+      const revision = peekEnvelope(res)?.revision ?? 0;
+      this.commandLog.record(out, res, revision);
+      return { ok: true, bytes: withEnvelopeSeq(res, peek.seq) ?? res };
     } catch (e) {
       if (e instanceof EngineGoneError) return { ok: false, reason: 'gone', message: e.message };
       return { ok: false, reason: 'invalid', message: e instanceof Error ? e.message : String(e) };
+    } finally {
+      // The response comes after its events (§8.1): nothing can still name this seq.
+      this.inFlight.delete(seq);
     }
   }
 
+  /**
+   * An event batch to every mirror window. `causedBy` is main's seq: the window
+   * that sent the request gets its own seq back; every other window gets the
+   * batch without it and a `foreign` mark (its page replica refreshes).
+   */
+  private relayEvents(bytes: Uint8Array, causedBy: number | undefined): void {
+    if (this.recovering) return;  // the documentReset{engineRestarted} after the replay covers these
+    const origin = causedBy !== undefined ? this.inFlight.get(causedBy) : undefined;
+    for (const w of this.windows()) {
+      const mine = origin !== undefined && origin.sender !== undefined && origin.sender === w.webContents.id;
+      const own = origin !== undefined && (mine || origin.sender === undefined);
+      const payload = causedBy === undefined ? bytes : (withCausedBy(bytes, own ? origin!.seq : null) ?? bytes);
+      w.webContents.send('engine:events', payload, { foreign: causedBy !== undefined && !own });
+    }
+  }
+
+  /**
+   * The engine came back EMPTY: replay the command log into it before any
+   * window's request, then tell every window (with `replayedByHost`, so no
+   * renderer client replays its own copy).
+   */
+  private async recoverRestarted(info: EngineRestartedInfo): Promise<void> {
+    const sup = this.supervisor;
+    const notice = { attempt: info.attempt, cause: info.cause, exitCode: info.exitCode, signal: info.signal, logTail: info.logTail.slice(-20) };
+    if (!sup || (this.o.recordLog ?? true) === false) {
+      this.push('engine:restarted', notice);
+      return;
+    }
+    let done!: () => void;
+    const gate = new Promise<void>((resolve) => { done = resolve; });
+    this.recovering = gate;
+    const t0 = Date.now();
+    let replayed = 0;
+    let mismatches = 0;
+    try {
+      for (const rec of this.commandLog.plan()) {
+        if (sup.state !== 'running') break;  // crashed again mid-replay: the next restart starts over
+        try {
+          const res = await sup.request(rec.bytes);
+          replayed += 1;
+          if (peekEnvelope(res)?.revision !== rec.revisionAfter) mismatches += 1;
+        } catch {
+          mismatches += 1;
+          break;
+        }
+      }
+    } finally {
+      this.recovering = null;
+      done();
+    }
+    this.lastRecovery = { replayedByHost: true, replayed, mismatches, ms: Date.now() - t0 };
+    this.push('engine:restarted', { ...notice, ...this.lastRecovery });
+  }
+
+  private windows(): BrowserWindow[] {
+    const list = this.o.getWindows?.() ?? [this.o.getWindow()].filter((w): w is BrowserWindow => w !== null);
+    return list.filter((w) => !w.isDestroyed() && !w.webContents.isDestroyed());
+  }
+
   private push(channel: (typeof ENGINE_PUSH_CHANNELS)[number], payload: unknown): void {
-    const w = this.o.getWindow();
-    if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return;
-    w.webContents.send(channel, payload);
+    for (const w of this.windows()) w.webContents.send(channel, payload);
   }
 }
 
@@ -410,7 +526,7 @@ export class EngineHost {
 export function registerEngineIpc(host: EngineHost): void {
   handle('engine:status', () => host.status());
   if (!host.enabled) return;
-  handle('engine:request', (_e: IpcMainInvokeEvent, bytes: Uint8Array) => host.request(bytes));
+  handle('engine:request', (e: IpcMainInvokeEvent, bytes: Uint8Array) => host.request(bytes, e.sender.id));
   on('engine:receiverReady', (_e: IpcMainEvent, ready: boolean) => host.frames.setReceiverReady(ready === true));
 }
 

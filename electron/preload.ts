@@ -583,8 +583,9 @@ const bridge = {
     request: (bytes: Uint8Array) => ipcRenderer.invoke('engine:request', bytes),
     status: () =>
       ipcRenderer.invoke('engine:status').catch(() => ({ enabled: false, state: 'disabled' })),
-    onEvents: (handler: (bytes: Uint8Array) => void) => {
-      const listener = (_event: unknown, bytes: Uint8Array): void => handler(bytes);
+    onEvents: (handler: (bytes: Uint8Array, meta?: { foreign?: boolean }) => void) => {
+      // F2: `foreign` = caused by another window's request (a pop-out's edit in the editor, or back).
+      const listener = (_event: unknown, bytes: Uint8Array, meta?: { foreign?: boolean }): void => handler(bytes, meta);
       ipcRenderer.on('engine:events', listener);
       return () => ipcRenderer.removeListener('engine:events', listener);
     },
