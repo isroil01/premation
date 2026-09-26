@@ -4,11 +4,12 @@
  * docs/VIEWPORT_ROUTE.md.
  *
  *   node native/engine/proto-host/run-matrix.mjs --out=DIR [--electron40=path/to/electron.exe]
- *        [--seconds=8] [--only=A,B,C] [--display=external|internal]
+ *        [--seconds=8] [--only=A,C] [--display=external|internal]
  *        [--chromium-gpu=low|high] [--fps=0] [--tests=0]   (fps 0 = engine unpaced: throughput ceiling)
  *
- * Routes A and B run on the repo's Electron (32); route C needs Electron >= 40
- * (sharedTexture) — pass its electron.exe. Every run is a fresh host + engine;
+ * Route A runs on the repo's Electron; route C needs Electron >= 40
+ * (sharedTexture) — pass its electron.exe. Route B was rejected in C1 and its
+ * code deleted. Every run is a fresh host + engine;
  * each host kills its engine on exit.
  */
 import { spawnSync } from 'node:child_process';
@@ -21,7 +22,7 @@ const root = resolve(here, '..', '..', '..');
 const args = Object.fromEntries(process.argv.slice(2).map((a) => a.replace(/^--/, '').split('=')));
 const out = resolve(args.out || join(here, '.results'));
 const seconds = args.seconds || '8';
-const only = (args.only || 'A,B,C').split(',');
+const only = (args.only || 'A,C').split(',');
 const electron32 = join(root, 'node_modules', 'electron', 'dist', 'electron.exe');
 const electron40 = args.electron40;
 mkdirSync(out, { recursive: true });

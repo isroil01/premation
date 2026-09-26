@@ -25,7 +25,6 @@ enum class MessageType : std::uint32_t {
   Frame = 1,       // payload = width*height*4 RGBA8 bytes (route A)
   Json = 2,        // payload = UTF-8 JSON (hello, stats)
   SlotReady = 3,   // no payload; `slot` names a shared texture (route C)
-  Presented = 4,   // no payload; a frame reached the swapchain (route B)
 };
 
 // Little-endian, 64 bytes, read by proto-host/main.cjs.
@@ -59,7 +58,7 @@ class Wire {
   // still going down the pipe — the engine never blocks on a slow consumer.
   bool offer_frame(const MessageHeader& header, std::span<const std::uint8_t> pixels);
 
-  // Small messages (JSON, SlotReady, Presented); queued, never dropped.
+  // Small messages (JSON, SlotReady); queued, never dropped.
   void send(MessageHeader header, std::string_view payload = {});
   void send_json(std::string_view json);
 

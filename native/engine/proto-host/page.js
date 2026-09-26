@@ -1,5 +1,5 @@
-/* C1 prototype page: draws engine frames (A, C) or reports the viewport rect
- * the engine's child window must cover (B), and records per-frame timing. */
+/* C1 prototype page: draws engine frames (A: uploaded pixels, C: imported
+ * shared texture) and records per-frame timing. Route B was rejected (C1). */
 'use strict';
 /* global window, document, location, performance, navigator, requestAnimationFrame, setInterval,
    URLSearchParams, ResizeObserver, matchMedia, GPUBufferUsage, GPUTextureUsage -- a plain browser
@@ -48,14 +48,14 @@ setInterval(() => {
   window.host.send('page-counters', { raf: rafCount, drops: pageDrops - lastDrops });
   rafCount = 0;
   lastDrops = pageDrops;
-  $('hud').textContent = `${route === 'B' ? '' : `page ${presented} fps  lat ${lastLat.toFixed(1)} ms  drops ${pageDrops}   `}${engineLine}`;
+  $('hud').textContent = `page ${presented} fps  lat ${lastLat.toFixed(1)} ms  drops ${pageDrops}   ${engineLine}`;
   presented = 0;
 }, 1000);
 
 // Command pings: the newest one rides on the next frame the engine renders.
 setInterval(() => window.host.send('ping', epochUs()), 100);
 
-// ── layout: splitter, menu, holes, rect reporting ─────────────────────────
+// ── layout: splitter, menu, rect reporting ────────────────────────────────
 const inspector = $('inspector');
 {
   let drag = null;
@@ -69,7 +69,6 @@ const inspector = $('inspector');
   $('splitter').addEventListener('pointerup', () => (drag = null));
 }
 
-let holesOn = params.get('holes') === '1';
 const menu = $('menu');
 function physRect(el) {
   const r = el.getBoundingClientRect();
@@ -78,26 +77,14 @@ function physRect(el) {
   const y = Math.round(r.top * d);
   return { x, y, w: Math.round(r.right * d) - x, h: Math.round(r.bottom * d) - y };
 }
-function sendHoles() {
-  window.host.send('holes', holesOn && menu.classList.contains('open') ? [physRect(menu)] : []);
-}
 function openMenu(on) {
   menu.classList.toggle('open', on);
-  sendHoles();
-}
-function setHoles(on) {
-  holesOn = on;
-  $('holesBtn').textContent = `holes: ${on ? 'on' : 'off'}`;
-  sendHoles();
 }
 $('viewBtn').addEventListener('click', () => openMenu(!menu.classList.contains('open')));
-$('holesBtn').addEventListener('click', () => setHoles(!holesOn));
-setHoles(holesOn);
 
 function reportRect() {
   const r = physRect(vp);
   window.host.send('viewport-rect', { ...r, t: epochUs() });
-  if (menu.classList.contains('open')) sendHoles();
   return r;
 }
 function sizeCanvas() {
@@ -139,7 +126,7 @@ function animateSplit(from, to, ms) {
     requestAnimationFrame(step);
   });
 }
-window.proto = { openMenu, setHoles, animateSplit };
+window.proto = { openMenu, animateSplit };
 
 // ── WebGPU presentation (A: uploaded pixels, C: imported shared texture) ────
 const BLIT_WGSL = (external) => `
@@ -212,12 +199,10 @@ function draw(g, pipeline, bindGroup) {
 
 (async () => {
   let g = null;
-  if (route !== 'B') {
-    try {
-      g = await initGpu();
-    } catch (e) {
-      window.host.send('page-log', String(e));
-    }
+  try {
+    g = await initGpu();
+  } catch (e) {
+    window.host.send('page-log', String(e));
   }
   const info = {
     route,

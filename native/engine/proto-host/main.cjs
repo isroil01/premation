@@ -41,7 +41,6 @@ const cfg = {
   shots: argv.shots || '',
   power: argv.power || 'auto',
   fps: Number(argv.fps || 60),
-  holesDefault: argv.holes === '1',
   engine:
     argv.engine ||
     // The C1 prototype binary. Since C2, premation-engine.exe is the real engine
@@ -74,7 +73,7 @@ const log = (...a) => console.log('[host]', ...a);
 // ── measurement state ──────────────────────────────────────────────────────
 const M = {
   measuring: false,
-  frames: [], // per presented frame timing records (A, C from page; B from engine)
+  frames: [], // per presented frame timing records (from the page)
   engineStats: [],
   appMetrics: [],
   mainDrops: 0,
@@ -194,17 +193,6 @@ function onEngineMessage(h, payload) {
     forwardSharedTexture(h);
     return;
   }
-  if (h.type === 4) {
-    // Route B: the engine presented a frame into its child window.
-    if (M.measuring) {
-      M.frames.push({
-        f: h.frameIndex,
-        tRenderStart: h.tRenderStartUs,
-        tPresent: h.tRenderDoneUs,
-        tCmd: h.tCmdUs,
-      });
-    }
-  }
 }
 
 function postFrame(h, buf) {
@@ -271,7 +259,7 @@ function pickPower() {
   return M.chromiumGpuIsDiscrete ? 'high' : 'low';
 }
 
-function spawnEngine(rect) {
+function spawnEngine() {
   const args = [
     '--route', cfg.route,
     '--width', String(compW),
@@ -283,10 +271,6 @@ function spawnEngine(rect) {
   // Same adapter as Chromium: vendor id wins over the power heuristic. An
   // explicit --power=low|high is a deliberate mismatch test, so it is not sent.
   if (cfg.power === 'auto' && M.chromiumGpu) args.push('--gpu-vendor', String(M.chromiumGpu.vendorId));
-  if (cfg.route === 'B') {
-    const hwnd = win.getNativeWindowHandle().readBigUInt64LE(0);
-    args.push('--parent', hwnd.toString(), '--rect', `${rect.x},${rect.y},${rect.w},${rect.h}`);
-  }
   if (cfg.route === 'C') args.push('--host-pid', String(process.pid), '--slots', '3');
   log('spawn', path.basename(cfg.engine), args.join(' '));
   engine = spawn(cfg.engine, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
@@ -322,10 +306,6 @@ ipcMain.on('page-ready', (_e, info) => {
 });
 ipcMain.on('viewport-rect', (_e, r) => {
   lastRect = r;
-  if (cfg.route === 'B') sendEngine(`rect ${r.x} ${r.y} ${r.w} ${r.h} ${r.t}`);
-});
-ipcMain.on('holes', (_e, holes) => {
-  if (cfg.route === 'B') sendEngine(`holes ${holes.length} ${holes.map((h) => `${h.x} ${h.y} ${h.w} ${h.h}`).join(' ')}`);
 });
 ipcMain.on('ping', (_e, t) => sendEngine(`ping ${t}`));
 ipcMain.on('pointer', (_e, p) => M.pointer.push(p));
@@ -462,12 +442,6 @@ async function runTests(result) {
   t.menuShot = osShot(`menu-open-${tag}.png`);
   // Does an HTML layer over the viewport cost frames?
   t.presentedFpsMenuOpen = (await measure('menu-open', 3)).presentedFps;
-  if (cfg.route === 'B') {
-    await page('window.proto.setHoles(true)');
-    await sleep(600);
-    t.menuHolesShot = osShot(`menu-open-holes-${tag}.png`);
-    await page('window.proto.setHoles(false)');
-  }
   await page('window.proto.openMenu(false)');
   await sleep(300);
 
@@ -541,38 +515,6 @@ async function runTests(result) {
     await sleep(1000);
   }
 
-  // 9. B only: the engine thread stops pumping messages for 4 s. Does the
-  //    Electron UI still take a click (its input queue is attached)?
-  if (cfg.route === 'B') {
-    await page('window.proto.openMenu(false)');
-    const btn = await page('(() => { const r = document.getElementById("viewBtn").getBoundingClientRect(); const d = devicePixelRatio; return { x: (r.left + r.width / 2) * d, y: (r.top + r.height / 2) * d }; })()');
-    const hangMs = Number(argv.hang ?? 4000); // --hang=0 is the baseline (click cost incl. PowerShell start-up)
-    sendEngine(`hang ${hangMs}`);
-    await sleep(300);
-    const tClick = Date.now();
-    const pb = physicalBounds();
-    osClick(pb.x + btn.x, pb.y + btn.y);
-    let opened = false;
-    while (Date.now() - tClick < 6000) {
-      opened = await page('document.getElementById("menu").classList.contains("open")');
-      if (opened) break;
-      await sleep(20);
-    }
-    // ...and can the window still be resized / minimized while the child's thread is stuck?
-    const b1 = win.getBounds();
-    const tResize = performance.now();
-    win.setBounds({ ...b1, width: b1.width - 100 });
-    win.setBounds(b1);
-    const resizeMs = performance.now() - tResize;
-    const tMin = performance.now();
-    win.minimize();
-    win.restore();
-    const minRestoreMs = performance.now() - tMin;
-    t.engineHang = { uiClickHandledMs: opened ? Date.now() - tClick : null, hangMs, resizeMs: +resizeMs.toFixed(1), minRestoreMs: +minRestoreMs.toFixed(1) };
-    await page('window.proto.openMenu(false)');
-    await sleep(hangMs);
-  }
-
   const after = await measure('after-tests', 3);
   t.presentedFpsAfterTests = after.presentedFps;
   result.tests = t;
@@ -617,7 +559,7 @@ app.whenReady().then(async () => {
   });
   win.setMenu(null);
   await win.loadFile(path.join(__dirname, 'index.html'), {
-    query: { route: cfg.route, holes: cfg.holesDefault ? '1' : '0' },
+    query: { route: cfg.route },
   });
   if (cfg.route === 'A') {
     const { port1, port2 } = new MessageChannelMain();
@@ -637,7 +579,7 @@ app.whenReady().then(async () => {
   }
   const info = await pageReady;
   log('page ready', JSON.stringify(info));
-  spawnEngine(info.rect);
+  spawnEngine();
 
   if (cfg.interactive) return;
   await sleep(cfg.warmup * 1000);
