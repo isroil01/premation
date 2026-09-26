@@ -155,10 +155,6 @@ std::vector<double> text_beam_points(const doc::Node& n, TextMeasurer* measurer,
   if (n.kind() != "text") return out;
   const std::optional<MeasuredStyle> style = read_measured_text_style(n, {});
   if (!style || blank(style->content)) return out;
-  if (style->boxWidth && *style->boxWidth > 0) {
-    why = "Energy Beam on a paragraph text outline";
-    return out;
-  }
   const raster::CanvasOptions* canvas = measurer != nullptr ? measurer->canvas_options() : nullptr;
   const std::optional<std::pair<double, double>> size = canvas != nullptr ? measurer->measure_text_size(*style) : std::nullopt;
   if (!size) {
