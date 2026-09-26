@@ -1717,6 +1717,10 @@ field); both engines report them from the same stored keys.
   keys, publish order, once each). Rides `compositionChanged` like the other
   root-stored settings (`responsiveTime`, `templateFields`); not in
   `CompSettingsPatch`.
+- **`LayerInfo.generator`** now names EVERY plugin-provided kind: a custom
+  plugin layer (`pluginLayer:<kind>` component) reports its `<pluginId>.<kindId>`
+  too, although its `kind` stays the shape it draws (before, only `generator`
+  layers did, so the Layers tree and the Inspector could not tell one apart).
 - **`liftRange`** (command 971, result `TimeRangeEdit`): Lift, `rippleDeleteRange`
   without the ripple, reporting what it cut (the timeline's Lift Work Area
   toast states it). Both engines run one shared plan for the two commands.
