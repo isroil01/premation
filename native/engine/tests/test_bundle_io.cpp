@@ -15,6 +15,7 @@
 #include <sstream>
 
 #include "core/bundle_io.hpp"
+#include "core/deflate.hpp"
 #include "core/fail.hpp"
 
 using namespace premation;
@@ -87,6 +88,67 @@ std::map<std::string, std::string> unzip_store(const std::string& z) {
     o += 30 + nameLen + size;
   }
   CHECK(u32(o) == 0x02014b50U);  // the central directory follows the entries
+  return out;
+}
+
+/// The same entries as a zip another tool would write: every entry DEFLATE (method 8).
+std::string deflate_zip(const std::map<std::string, std::string>& entries) {
+  std::string out;
+  std::string central;
+  auto p16 = [](std::string& b, std::uint32_t v) {
+    b.push_back(static_cast<char>(v & 0xFFU));
+    b.push_back(static_cast<char>((v >> 8U) & 0xFFU));
+  };
+  auto p32 = [&p16](std::string& b, std::uint32_t v) {
+    p16(b, v & 0xFFFFU);
+    p16(b, v >> 16U);
+  };
+  for (const auto& [name, data] : entries) {
+    const std::span<const std::uint8_t> raw(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
+    std::vector<std::uint8_t> packed;
+    REQUIRE(zlib::deflate_raw(raw, 9, packed));
+    const auto offset = static_cast<std::uint32_t>(out.size());
+    const std::uint32_t crc = doc::zip_crc32(data);
+    p32(out, 0x04034b50U);
+    p16(out, 20);
+    p16(out, 0);
+    p16(out, 8);
+    p32(out, 0);
+    p32(out, crc);
+    p32(out, static_cast<std::uint32_t>(packed.size()));
+    p32(out, static_cast<std::uint32_t>(data.size()));
+    p16(out, static_cast<std::uint32_t>(name.size()));
+    p16(out, 0);
+    out += name;
+    out.append(packed.begin(), packed.end());
+    p32(central, 0x02014b50U);
+    p16(central, 20);
+    p16(central, 20);
+    p16(central, 0);
+    p16(central, 8);
+    p32(central, 0);
+    p32(central, crc);
+    p32(central, static_cast<std::uint32_t>(packed.size()));
+    p32(central, static_cast<std::uint32_t>(data.size()));
+    p16(central, static_cast<std::uint32_t>(name.size()));
+    p16(central, 0);
+    p16(central, 0);
+    p16(central, 0);
+    p16(central, 0);
+    p32(central, 0);
+    p32(central, offset);
+    central += name;
+  }
+  const auto cdStart = static_cast<std::uint32_t>(out.size());
+  out += central;
+  p32(out, 0x06054b50U);
+  p16(out, 0);
+  p16(out, 0);
+  p16(out, static_cast<std::uint32_t>(entries.size()));
+  p16(out, static_cast<std::uint32_t>(entries.size()));
+  p32(out, static_cast<std::uint32_t>(central.size()));
+  p32(out, cdStart);
+  p16(out, 0);
   return out;
 }
 
@@ -261,4 +323,57 @@ TEST_CASE("opening a zip that is not a STORE Premation project is refused", "[bu
   for (std::size_t p = bytes.find("scene.json"); p != std::string::npos; p = bytes.find("scene.json", p + 1)) bytes[p] = 'X';
   spit(other, bytes);
   CHECK(refused(other, t.path / "s2"));
+}
+
+TEST_CASE("a portable .motion repacked with DEFLATE opens like the STORE original", "[bundle]") {
+  TempDir t;
+  const fs::path src = t.path / "Old.motion";
+  spit(src / "blobs" / "01" / kHash, "VIDEO-BYTES");
+  spit(src / "assets" / "registry.json",
+       std::string(R"({"version":"1.0.0","assets":[{"id":"asset_plate","hash":")") + kHash +
+           R"(","name":"plate.mp4","type":"video","mime":"video/mp4","size":11}]})");
+  const fs::path store = t.path / "Store.motion";
+  doc::write_portable(store, sample_doc(), src);
+  const auto entries = unzip_store(slurp(store));
+  const fs::path packed = t.path / "Deflate.motion";
+  spit(packed, deflate_zip(entries));
+  REQUIRE(doc::is_portable_file(packed));
+
+  const doc::PortableOpen a = doc::read_portable(store, t.path / "sa");
+  const doc::PortableOpen b = doc::read_portable(packed, t.path / "sb");
+  CHECK(b.embedded == a.embedded);
+  CHECK(js::stringify(b.doc) == js::stringify(a.doc));
+  const std::string sha = doc::sha256_hex("VIDEO-BYTES");
+  CHECK(slurp(t.path / "sb" / "blobs" / sha.substr(0, 2) / sha) == "VIDEO-BYTES");
+
+  // A damaged DEFLATE stream is `io`, never a partial document.
+  std::string bad = slurp(packed);
+  const auto at = bad.find("scene.json");
+  REQUIRE(at != std::string::npos);
+  for (std::size_t i = at + 10; i < at + 20 && i < bad.size(); ++i) bad[i] = static_cast<char>(~bad[i]);
+  const fs::path broken = t.path / "Broken.motion";
+  spit(broken, bad);
+  bool refused = false;
+  try {
+    (void)doc::read_portable(broken, t.path / "sc");
+  } catch (const doc::EngineFail& e) {
+    refused = e.error.code == api::ErrorCode::io;
+  }
+  CHECK(refused);
+}
+
+TEST_CASE("inflate_raw inflates to exactly the declared size", "[bundle]") {
+  std::string text;
+  for (int i = 0; i < 5000; ++i) text += "premation " + std::to_string(i % 97) + "\n";
+  const std::span<const std::uint8_t> raw(reinterpret_cast<const std::uint8_t*>(text.data()), text.size());
+  std::vector<std::uint8_t> packed;
+  REQUIRE(zlib::deflate_raw(raw, 6, packed));
+  CHECK(packed.size() < text.size());
+  std::vector<std::uint8_t> out;
+  REQUIRE(zlib::inflate_raw(packed, text.size(), out));
+  CHECK(std::string(out.begin(), out.end()) == text);
+  CHECK_FALSE(zlib::inflate_raw(packed, text.size() - 1, out));  // longer than declared
+  CHECK_FALSE(zlib::inflate_raw(packed, text.size() + 1, out));  // shorter than declared
+  const std::span<const std::uint8_t> cut(packed.data(), packed.size() / 2);
+  CHECK_FALSE(zlib::inflate_raw(cut, text.size(), out));         // truncated
 }

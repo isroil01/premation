@@ -257,6 +257,7 @@ set(ENGINE_DOC_SOURCES
   src/core/anim_json.cpp
   src/core/bundle_io.cpp
   src/core/catalog_data.cpp
+  src/core/deflate_ffi.cpp
   src/core/docexpr.cpp
   src/core/docio.cpp
   src/core/engine_ctx.cpp
@@ -300,6 +301,10 @@ set(ENGINE_DOC_SOURCES
 )
 target_sources(engine_core PRIVATE ${ENGINE_DOC_SOURCES})
 target_link_libraries(engine_core PUBLIC motion::expr motion::transform motion::jsmath)
+# zlib: CRC-32 + DEFLATE for portable zips (core/deflate_ffi.cpp) and the export
+# writers' PNG / zip entries — the one zlib binding, shared.
+find_package(ZLIB REQUIRED)
+target_link_libraries(engine_core PUBLIC ZLIB::ZLIB)
 # ── G1: the native plugin SDK host (src/plugins, GPU-free half) ────────────
 #   engine_plugins   manifest scan, module load (module_ffi), per-call crash
 #                    guard (guard_ffi), the quarantine journal (journal_ffi), the
@@ -493,6 +498,7 @@ if(TARGET engine_fuzz)
                  ${_libs_dir}/motion_transform/transform.cpp ${_libs_dir}/motion_transform/motion_transform.cpp)
   target_include_directories(engine_fuzz PRIVATE ${_libs_dir}/motion_expr ${_libs_dir}/motion_jsmath
                              ${_libs_dir}/motion_transform)
+  target_link_libraries(engine_fuzz PRIVATE ZLIB::ZLIB)  # core/deflate_ffi.cpp (C only: malloc/free across the CRT)
   if(WIN32)
     target_link_options(engine_fuzz PRIVATE ${_doc_stack})
   endif()
@@ -958,11 +964,9 @@ add_library(engine_export_core STATIC
   src/export/child_process_ffi.cpp
   src/export/png_write.cpp
   src/export/jpeg_write.cpp
-  src/export/zlib_ffi.cpp
   src/export/zip_write.cpp)
 target_include_directories(engine_export_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/export)
-find_package(ZLIB REQUIRED)
-target_link_libraries(engine_export_core PUBLIC engine_core ZLIB::ZLIB PRIVATE motion::options)
+target_link_libraries(engine_export_core PUBLIC engine_core PRIVATE motion::options)
 if(WIN32)
   target_compile_definitions(engine_export_core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   target_link_libraries(engine_export_core PRIVATE windowscodecs ole32)

@@ -4,11 +4,13 @@
 #include <array>
 #include <fstream>
 #include <map>
+#include <span>
 #include <set>
 #include <sstream>
 #include <system_error>
 #include <vector>
 
+#include "deflate.hpp"
 #include "fail.hpp"
 
 namespace premation::doc {
@@ -545,8 +547,9 @@ std::uint32_t rd16(std::string_view z, std::size_t o) {
 std::uint32_t rd32(std::string_view z, std::size_t o) { return rd16(z, o) | (rd16(z, o + 2) << 16U); }
 
 /// Every file entry of a zip (name → bytes) through its central directory.
-/// STORE only: Premation writes STORE (zip.ts `zipBytes`); a DEFLATE entry —
-/// the zip was repacked by another tool — is refused rather than guessed at.
+/// Premation writes STORE (zip.ts `zipBytes`); a DEFLATE entry (method 8 — the
+/// zip was repacked by another tool, as fflate's `unzipSync` reads it in the
+/// page) is inflated to exactly its declared size. Any other method is refused.
 std::map<std::string, std::string, std::less<>> unzip_entries(std::string_view z, const std::string& what) {
   auto bad = [&what](const std::string& why) { fail(ErrorCode::io, "could not read '" + what + "': " + why); };
   if (z.size() < 22) bad("not a zip");
@@ -569,6 +572,7 @@ std::map<std::string, std::string, std::less<>> unzip_entries(std::string_view z
     const std::uint32_t method = rd16(z, c + 10);
     const std::uint32_t crc = rd32(z, c + 16);
     const std::uint32_t csize = rd32(z, c + 20);
+    const std::uint32_t usize = rd32(z, c + 24);
     const std::uint32_t nameLen = rd16(z, c + 28);
     const std::uint32_t extraLen = rd16(z, c + 30);
     const std::uint32_t commentLen = rd16(z, c + 32);
@@ -580,8 +584,18 @@ std::map<std::string, std::string, std::less<>> unzip_entries(std::string_view z
     if (local + 30 > z.size() || rd32(z, local) != 0x04034b50U) bad("the zip entry '" + name + "' is damaged");
     const std::size_t data = local + 30 + rd16(z, local + 26) + rd16(z, local + 28);
     if (data + csize > z.size()) bad("the zip entry '" + name + "' is truncated");
-    if (method != 0) bad("'" + name + "' is compressed; re-save the portable copy from Premation");
-    std::string bytes(z.substr(data, csize));
+    if (method != 0 && method != 8) bad("'" + name + "' uses an unsupported compression method");
+    std::string bytes;
+    if (method == 8) {
+      std::vector<std::uint8_t> raw;
+      const auto* p = reinterpret_cast<const std::uint8_t*>(z.data() + data);  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): bytes as bytes
+      if (!zlib::inflate_raw(std::span<const std::uint8_t>(p, csize), usize, raw)) {
+        bad("the zip entry '" + name + "' is corrupt (it does not inflate to its size)");
+      }
+      bytes.assign(raw.begin(), raw.end());
+    } else {
+      bytes.assign(z.substr(data, csize));
+    }
     if (zip_crc32(bytes) != crc) bad("the zip entry '" + name + "' is corrupt (CRC mismatch)");
     out.insert_or_assign(std::move(name), std::move(bytes));
   }
