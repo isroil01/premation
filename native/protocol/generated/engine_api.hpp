@@ -994,6 +994,9 @@ struct TranscribeJob;
 struct AudioAnalysisJob;
 struct RenderJob;
 struct PrerenderJob;
+struct ProxyJob;
+struct AudioDuckJob;
+struct AudioGateJob;
 struct JobSpec;
 struct StartJob;
 struct CancelJob;
@@ -2659,6 +2662,11 @@ struct AutoTraceJob {
   TimeRange range;
   std::string channel;
   double threshold = 0.0;
+  std::optional<double> tolerance;
+  std::optional<double> blur;
+  std::optional<double> min_area;
+  bool every_frame = false;
+  bool invert = false;
   bool operator==(const AutoTraceJob&) const = default;
 };
 
@@ -2666,6 +2674,8 @@ struct SceneDetectJob {
   LayerId layer;
   bool create_markers = false;
   bool split_layers = false;
+  std::optional<double> threshold;
+  std::optional<double> min_shot_seconds;
   bool operator==(const SceneDetectJob&) const = default;
 };
 
@@ -2673,6 +2683,9 @@ struct ObjectMatteJob {
   LayerId layer;
   TimeRange range;
   std::vector<Vec2> prompts;
+  std::vector<Vec2> background_prompts;
+  std::string encoder_model;
+  std::string decoder_model;
   bool operator==(const ObjectMatteJob&) const = default;
 };
 
@@ -2687,6 +2700,13 @@ struct AudioAnalysisJob {
   LayerId layer;
   bool beats = false;
   bool amplitude_keyframes = false;
+  bool silence = false;
+  bool remove_silence = false;
+  std::optional<double> silence_threshold_db;
+  std::optional<double> silence_min_ms;
+  std::optional<double> silence_padding_ms;
+  std::optional<std::string> amplitude_channel;
+  std::optional<std::uint32_t> amplitude_smoothing;
   bool operator==(const AudioAnalysisJob&) const = default;
 };
 
@@ -2702,6 +2722,26 @@ struct PrerenderJob {
   bool operator==(const PrerenderJob&) const = default;
 };
 
+struct ProxyJob {
+  ItemId item;
+  std::string output_folder;
+  std::optional<std::uint32_t> max_edge;
+  bool operator==(const ProxyJob&) const = default;
+};
+
+struct AudioDuckJob {
+  LayerId music;
+  std::vector<LayerId> voices;
+  std::string params;
+  bool operator==(const AudioDuckJob&) const = default;
+};
+
+struct AudioGateJob {
+  LayerId layer;
+  std::string params;
+  bool operator==(const AudioGateJob&) const = default;
+};
+
 struct JobSpec {
   enum class Kind : std::uint32_t {
     track_motion = 1,
@@ -2713,8 +2753,11 @@ struct JobSpec {
     audio_analysis = 7,
     render = 8,
     prerender = 9,
+    proxy = 709,
+    audio_duck = 710,
+    audio_gate = 711,
   };
-  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob> v;
+  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob, ProxyJob, AudioDuckJob, AudioGateJob> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const JobSpec&) const = default;
 };
@@ -4038,6 +4081,8 @@ struct JobInfo {
   JobStatus status = JobStatus::queued;
   double progress = 0.0;
   std::string message;
+  std::string result;
+  bool applied = false;
   bool operator==(const JobInfo&) const = default;
 };
 
@@ -5268,6 +5313,12 @@ void encode(wire::Writer& w, const RenderJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderJob& out);
 void encode(wire::Writer& w, const PrerenderJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PrerenderJob& out);
+void encode(wire::Writer& w, const ProxyJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ProxyJob& out);
+void encode(wire::Writer& w, const AudioDuckJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, AudioDuckJob& out);
+void encode(wire::Writer& w, const AudioGateJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, AudioGateJob& out);
 void encode(wire::Writer& w, const JobSpec& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, JobSpec& out);
 void encode(wire::Writer& w, const StartJob& v);

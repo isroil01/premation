@@ -34,10 +34,15 @@ set(ENGINE_CORE_SOURCES
   src/core/log.cpp
   src/core/history.cpp
   src/core/session.cpp
+  src/core/session_jobs.cpp
+  src/jobs/job_runner.cpp
+  src/jobs/job_inputs.cpp
 )  # the D1b document model adds its sources in its own block at the end
 add_library(engine_core STATIC ${ENGINE_CORE_SOURCES})
 target_include_directories(engine_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
-target_link_libraries(engine_core PUBLIC engine_protocol motion::eval PRIVATE motion::options)
+# Threads: the job runner's workers (src/jobs/job_runner.cpp).
+find_package(Threads REQUIRED)
+target_link_libraries(engine_core PUBLIC engine_protocol motion::eval Threads::Threads PRIVATE motion::options)
 if(MSVC)
   target_compile_options(engine_core PRIVATE /bigobj)  # std::visit over the command union
 endif()
@@ -148,6 +153,7 @@ if(MOTION_BUILD_TESTS)
     tests/test_bundle_io.cpp
     tests/test_framing.cpp
     tests/test_session.cpp
+    tests/test_jobs.cpp
     tests/test_paint_strokes.cpp
     tests/test_paths.cpp
     tests/test_expression_controls.cpp
@@ -498,7 +504,7 @@ if(TARGET engine_fuzz)
                  ${_libs_dir}/motion_transform/transform.cpp ${_libs_dir}/motion_transform/motion_transform.cpp)
   target_include_directories(engine_fuzz PRIVATE ${_libs_dir}/motion_expr ${_libs_dir}/motion_jsmath
                              ${_libs_dir}/motion_transform)
-  target_link_libraries(engine_fuzz PRIVATE ZLIB::ZLIB)  # core/deflate_ffi.cpp (C only: malloc/free across the CRT)
+  target_link_libraries(engine_fuzz PRIVATE ZLIB::ZLIB Threads::Threads)  # core/deflate_ffi.cpp (C only: malloc/free across the CRT); the job runner
   if(WIN32)
     target_link_options(engine_fuzz PRIVATE ${_doc_stack})
   endif()

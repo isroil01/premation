@@ -9569,6 +9569,11 @@ void encode(wire::Writer& w, const AutoTraceJob& v) {
   w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, v.range); w.end_ld(s); }
   w.varint(26U); w.str(v.channel);
   w.varint(33U); w.f64(v.threshold);
+  if (v.tolerance.has_value()) { w.varint(5633U); w.f64(*v.tolerance); }
+  if (v.blur.has_value()) { w.varint(5641U); w.f64(*v.blur); }
+  if (v.min_area.has_value()) { w.varint(5649U); w.f64(*v.min_area); }
+  w.varint(5656U); w.boolean(v.every_frame);
+  w.varint(5664U); w.boolean(v.invert);
 }
 
 Status decode(wire::Reader& r, AutoTraceJob& out) {
@@ -9576,6 +9581,8 @@ Status decode(wire::Reader& r, AutoTraceJob& out) {
   bool has_range = false;
   bool has_channel = false;
   bool has_threshold = false;
+  bool has_every_frame = false;
+  bool has_invert = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -9600,6 +9607,34 @@ Status decode(wire::Reader& r, AutoTraceJob& out) {
         has_threshold = true;
         break;
       }
+      case 5633U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.tolerance = std::move(e);
+        break;
+      }
+      case 5641U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.blur = std::move(e);
+        break;
+      }
+      case 5649U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.min_area = std::move(e);
+        break;
+      }
+      case 5656U: {
+        if (!r.boolean(out.every_frame)) return Status::truncated;
+        has_every_frame = true;
+        break;
+      }
+      case 5664U: {
+        if (!r.boolean(out.invert)) return Status::truncated;
+        has_invert = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -9609,6 +9644,8 @@ Status decode(wire::Reader& r, AutoTraceJob& out) {
   if (!has_range) return Status::missing_field;
   if (!has_channel) return Status::missing_field;
   if (!has_threshold) return Status::missing_field;
+  if (!has_every_frame) return Status::missing_field;
+  if (!has_invert) return Status::missing_field;
   return Status::ok;
 }
 
@@ -9616,6 +9653,8 @@ void encode(wire::Writer& w, const SceneDetectJob& v) {
   w.varint(10U); w.str(v.layer);
   w.varint(16U); w.boolean(v.create_markers);
   w.varint(24U); w.boolean(v.split_layers);
+  if (v.threshold.has_value()) { w.varint(5625U); w.f64(*v.threshold); }
+  if (v.min_shot_seconds.has_value()) { w.varint(5633U); w.f64(*v.min_shot_seconds); }
 }
 
 Status decode(wire::Reader& r, SceneDetectJob& out) {
@@ -9641,6 +9680,18 @@ Status decode(wire::Reader& r, SceneDetectJob& out) {
         has_split_layers = true;
         break;
       }
+      case 5625U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.threshold = std::move(e);
+        break;
+      }
+      case 5633U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.min_shot_seconds = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -9656,11 +9707,16 @@ void encode(wire::Writer& w, const ObjectMatteJob& v) {
   w.varint(10U); w.str(v.layer);
   w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, v.range); w.end_ld(s); }
   for (const auto& e : v.prompts) { w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  for (const auto& e : v.background_prompts) { w.varint(5626U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  w.varint(5634U); w.str(v.encoder_model);
+  w.varint(5642U); w.str(v.decoder_model);
 }
 
 Status decode(wire::Reader& r, ObjectMatteJob& out) {
   bool has_layer = false;
   bool has_range = false;
+  bool has_encoder_model = false;
+  bool has_decoder_model = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -9680,6 +9736,21 @@ Status decode(wire::Reader& r, ObjectMatteJob& out) {
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         break;
       }
+      case 5626U: {
+        auto& e = out.background_prompts.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 5634U: {
+        if (!r.str(out.encoder_model)) return Status::truncated;
+        has_encoder_model = true;
+        break;
+      }
+      case 5642U: {
+        if (!r.str(out.decoder_model)) return Status::truncated;
+        has_decoder_model = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -9687,6 +9758,8 @@ Status decode(wire::Reader& r, ObjectMatteJob& out) {
   }
   if (!has_layer) return Status::missing_field;
   if (!has_range) return Status::missing_field;
+  if (!has_encoder_model) return Status::missing_field;
+  if (!has_decoder_model) return Status::missing_field;
   return Status::ok;
 }
 
@@ -9734,12 +9807,21 @@ void encode(wire::Writer& w, const AudioAnalysisJob& v) {
   w.varint(10U); w.str(v.layer);
   w.varint(16U); w.boolean(v.beats);
   w.varint(24U); w.boolean(v.amplitude_keyframes);
+  w.varint(5624U); w.boolean(v.silence);
+  w.varint(5632U); w.boolean(v.remove_silence);
+  if (v.silence_threshold_db.has_value()) { w.varint(5641U); w.f64(*v.silence_threshold_db); }
+  if (v.silence_min_ms.has_value()) { w.varint(5649U); w.f64(*v.silence_min_ms); }
+  if (v.silence_padding_ms.has_value()) { w.varint(5657U); w.f64(*v.silence_padding_ms); }
+  if (v.amplitude_channel.has_value()) { w.varint(5666U); w.str(*v.amplitude_channel); }
+  if (v.amplitude_smoothing.has_value()) { w.varint(5672U); w.varint(*v.amplitude_smoothing); }
 }
 
 Status decode(wire::Reader& r, AudioAnalysisJob& out) {
   bool has_layer = false;
   bool has_beats = false;
   bool has_amplitude_keyframes = false;
+  bool has_silence = false;
+  bool has_remove_silence = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -9759,6 +9841,46 @@ Status decode(wire::Reader& r, AudioAnalysisJob& out) {
         has_amplitude_keyframes = true;
         break;
       }
+      case 5624U: {
+        if (!r.boolean(out.silence)) return Status::truncated;
+        has_silence = true;
+        break;
+      }
+      case 5632U: {
+        if (!r.boolean(out.remove_silence)) return Status::truncated;
+        has_remove_silence = true;
+        break;
+      }
+      case 5641U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.silence_threshold_db = std::move(e);
+        break;
+      }
+      case 5649U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.silence_min_ms = std::move(e);
+        break;
+      }
+      case 5657U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.silence_padding_ms = std::move(e);
+        break;
+      }
+      case 5666U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.amplitude_channel = std::move(e);
+        break;
+      }
+      case 5672U: {
+        std::uint32_t e = 0;
+        if (!r.u32(e)) return Status::bad_value;
+        out.amplitude_smoothing = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -9767,6 +9889,8 @@ Status decode(wire::Reader& r, AudioAnalysisJob& out) {
   if (!has_layer) return Status::missing_field;
   if (!has_beats) return Status::missing_field;
   if (!has_amplitude_keyframes) return Status::missing_field;
+  if (!has_silence) return Status::missing_field;
+  if (!has_remove_silence) return Status::missing_field;
   return Status::ok;
 }
 
@@ -9830,8 +9954,117 @@ Status decode(wire::Reader& r, PrerenderJob& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const ProxyJob& v) {
+  w.varint(10U); w.str(v.item);
+  w.varint(18U); w.str(v.output_folder);
+  if (v.max_edge.has_value()) { w.varint(24U); w.varint(*v.max_edge); }
+}
+
+Status decode(wire::Reader& r, ProxyJob& out) {
+  bool has_item = false;
+  bool has_output_folder = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.item)) return Status::truncated;
+        has_item = true;
+        break;
+      }
+      case 18U: {
+        if (!r.str(out.output_folder)) return Status::truncated;
+        has_output_folder = true;
+        break;
+      }
+      case 24U: {
+        std::uint32_t e = 0;
+        if (!r.u32(e)) return Status::bad_value;
+        out.max_edge = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_item) return Status::missing_field;
+  if (!has_output_folder) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const AudioDuckJob& v) {
+  w.varint(10U); w.str(v.music);
+  for (const auto& e : v.voices) { w.varint(18U); w.str(e); }
+  w.varint(26U); w.str(v.params);
+}
+
+Status decode(wire::Reader& r, AudioDuckJob& out) {
+  bool has_music = false;
+  bool has_params = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.music)) return Status::truncated;
+        has_music = true;
+        break;
+      }
+      case 18U: {
+        auto& e = out.voices.emplace_back();
+        if (!r.str(e)) return Status::truncated;
+        break;
+      }
+      case 26U: {
+        if (!r.str(out.params)) return Status::truncated;
+        has_params = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_music) return Status::missing_field;
+  if (!has_params) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const AudioGateJob& v) {
+  w.varint(10U); w.str(v.layer);
+  w.varint(18U); w.str(v.params);
+}
+
+Status decode(wire::Reader& r, AudioGateJob& out) {
+  bool has_layer = false;
+  bool has_params = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.layer)) return Status::truncated;
+        has_layer = true;
+        break;
+      }
+      case 18U: {
+        if (!r.str(out.params)) return Status::truncated;
+        has_params = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_layer) return Status::missing_field;
+  if (!has_params) return Status::missing_field;
+  return Status::ok;
+}
+
 JobSpec::Kind JobSpec::kind() const noexcept {
-  static constexpr std::array<Kind, 9> kKinds = {Kind::track_motion, Kind::stabilize, Kind::auto_trace, Kind::scene_detect, Kind::object_matte, Kind::transcribe, Kind::audio_analysis, Kind::render, Kind::prerender};
+  static constexpr std::array<Kind, 12> kKinds = {Kind::track_motion, Kind::stabilize, Kind::auto_trace, Kind::scene_detect, Kind::object_matte, Kind::transcribe, Kind::audio_analysis, Kind::render, Kind::prerender, Kind::proxy, Kind::audio_duck, Kind::audio_gate};
   return kKinds[v.index()];
 }
 
@@ -9846,6 +10079,9 @@ void encode(wire::Writer& w, const JobSpec& v) {
     case 6: w.varint(58U); { const std::size_t s = w.begin_ld(); encode(w, std::get<6>(v.v)); w.end_ld(s); } return;
     case 7: w.varint(66U); { const std::size_t s = w.begin_ld(); encode(w, std::get<7>(v.v)); w.end_ld(s); } return;
     case 8: w.varint(74U); { const std::size_t s = w.begin_ld(); encode(w, std::get<8>(v.v)); w.end_ld(s); } return;
+    case 9: w.varint(5674U); { const std::size_t s = w.begin_ld(); encode(w, std::get<9>(v.v)); w.end_ld(s); } return;
+    case 10: w.varint(5682U); { const std::size_t s = w.begin_ld(); encode(w, std::get<10>(v.v)); w.end_ld(s); } return;
+    case 11: w.varint(5690U); { const std::size_t s = w.begin_ld(); encode(w, std::get<11>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -9925,6 +10161,30 @@ Status decode(wire::Reader& r, JobSpec& out) {
         PrerenderJob e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.v.emplace<8>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 5674U: {
+        if (seen) return Status::multiple_variants;
+        ProxyJob e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<9>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 5682U: {
+        if (seen) return Status::multiple_variants;
+        AudioDuckJob e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<10>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 5690U: {
+        if (seen) return Status::multiple_variants;
+        AudioGateJob e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<11>(std::move(e));
         seen = true;
         break;
       }
@@ -18501,6 +18761,8 @@ void encode(wire::Writer& w, const JobInfo& v) {
   w.varint(24U); w.varint(static_cast<std::uint32_t>(v.status));
   w.varint(33U); w.f64(v.progress);
   w.varint(42U); w.str(v.message);
+  w.varint(5642U); w.str(v.result);
+  w.varint(5648U); w.boolean(v.applied);
 }
 
 Status decode(wire::Reader& r, JobInfo& out) {
@@ -18509,6 +18771,8 @@ Status decode(wire::Reader& r, JobInfo& out) {
   bool has_status = false;
   bool has_progress = false;
   bool has_message = false;
+  bool has_result = false;
+  bool has_applied = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -18538,6 +18802,16 @@ Status decode(wire::Reader& r, JobInfo& out) {
         has_message = true;
         break;
       }
+      case 5642U: {
+        if (!r.str(out.result)) return Status::truncated;
+        has_result = true;
+        break;
+      }
+      case 5648U: {
+        if (!r.boolean(out.applied)) return Status::truncated;
+        has_applied = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -18548,6 +18822,8 @@ Status decode(wire::Reader& r, JobInfo& out) {
   if (!has_status) return Status::missing_field;
   if (!has_progress) return Status::missing_field;
   if (!has_message) return Status::missing_field;
+  if (!has_result) return Status::missing_field;
+  if (!has_applied) return Status::missing_field;
   return Status::ok;
 }
 
@@ -23533,7 +23809,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 418> kNames = {
+constexpr std::array<std::string_view, 421> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -23777,6 +24053,9 @@ constexpr std::array<std::string_view, 418> kNames = {
     "ObjectMatteJob",
     "TranscribeJob",
     "AudioAnalysisJob",
+    "AudioDuckJob",
+    "AudioGateJob",
+    "ProxyJob",
     "RenderJob",
     "PrerenderJob",
     "JobSpec",
@@ -24201,6 +24480,9 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "ObjectMatteJob") return roundtrip<ObjectMatteJob>(bytes, out);
   if (type == "TranscribeJob") return roundtrip<TranscribeJob>(bytes, out);
   if (type == "AudioAnalysisJob") return roundtrip<AudioAnalysisJob>(bytes, out);
+  if (type == "AudioDuckJob") return roundtrip<AudioDuckJob>(bytes, out);
+  if (type == "AudioGateJob") return roundtrip<AudioGateJob>(bytes, out);
+  if (type == "ProxyJob") return roundtrip<ProxyJob>(bytes, out);
   if (type == "RenderJob") return roundtrip<RenderJob>(bytes, out);
   if (type == "PrerenderJob") return roundtrip<PrerenderJob>(bytes, out);
   if (type == "JobSpec") return roundtrip<JobSpec>(bytes, out);

@@ -437,22 +437,17 @@ std::vector<api::CommandResult> Session::run_edits(const std::vector<const api::
   doc_.begin();
   for (std::size_t i = 0; i < commands.size(); ++i) {
     const api::Command& cmd = *commands[i];
-    const std::string name = command_name(cmd);
-    doc::HCtx x = handler_ctx(origin);
     const std::optional<std::uint32_t> index = indexed ? std::optional<std::uint32_t>(static_cast<std::uint32_t>(i)) : std::nullopt;
     // The failure is recorded and re-thrown OUTSIDE the handler: a throw from
     // inside a catch funclet crashes the clang-cl ASan runtime's SEH handler.
     std::optional<api::EngineError> failed;
     try {
-      api::CommandResult r = std::visit(EditVisitor{x, name}, cmd.v);
-      // stampMissingKeyIds over what this command touched, then syncTimelines.
-      doc::ChangeSet sofar;
-      doc_.peek_journal(sofar.before);
-      stamp_missing_key_ids(sofar, x);
-      doc::tl_sync_all(doc_);
+      std::string own;
+      // A held job result is its own commands, in this journal (one entry).
+      const auto* applyJob = std::get_if<api::ApplyJobResult>(&cmd.v);
+      api::CommandResult r = applyJob != nullptr ? apply_job_in_journal(*applyJob, origin, own) : run_in_journal(cmd, origin, &own);
       results.push_back(std::move(r));
-      if (!batchLabel) label = x.label ? *x.label : humanize(name);
-      keys_.invalidate();
+      if (!batchLabel) label = std::move(own);
     } catch (const EngineFail& f) {
       failed = with_index(f.error, index);
     } catch (const std::exception& e) {
@@ -478,6 +473,21 @@ std::vector<api::CommandResult> Session::run_edits(const std::vector<const api::
   emit_status();
   request_render();
   return results;
+}
+
+api::CommandResult Session::run_in_journal(const api::Command& cmd, api::Origin origin, std::string* label) {
+  const std::string name = command_name(cmd);
+  if (!is_edit(cmd)) fail(ErrorCode::invalid_argument, "'" + name + "' is not an edit command");
+  doc::HCtx x = handler_ctx(origin);
+  api::CommandResult r = std::visit(EditVisitor{x, name}, cmd.v);
+  // stampMissingKeyIds over what this command touched, then syncTimelines.
+  doc::ChangeSet sofar;
+  doc_.peek_journal(sofar.before);
+  stamp_missing_key_ids(sofar, x);
+  doc::tl_sync_all(doc_);
+  keys_.invalidate();
+  if (label != nullptr) *label = x.label ? *x.label : humanize(name);
+  return r;
 }
 
 // ── history and controls ────────────────────────────────────────────────────
@@ -544,6 +554,7 @@ void Session::load_new_project(api::ResetReason reason, bool emit) {
 }
 
 void Session::after_load(api::ResetReason reason, bool emit) {
+  drop_jobs();
   ensure_timelines();
   history_.clear();
   gesture_.reset();
@@ -759,11 +770,8 @@ struct ControlVisitor {
     fail(ErrorCode::unsupported, "no collect-files port is attached to this engine");
   }
   R operator()(const api::ReloadItems&) const { return result_for<api::ReloadItems>(); }
-  R operator()(const api::StartJob&) const {
-    fail(ErrorCode::unsupported, "jobs run in the editor today (tracking, stabilize, object matte, transcription, render); "
-                                 "they move into the engine in phase E/F");
-  }
-  R operator()(const api::CancelJob& c) const { fail(ErrorCode::not_found, "no job '" + c.job + "'"); }
+  R operator()(const api::StartJob& c) const { return s.start_job(c); }
+  R operator()(const api::CancelJob& c) const { return s.cancel_job(c); }
   R operator()(const api::SetPluginEnabled& c) const {
     // G1: native SDK plugins live in this process (src/plugins); JavaScript
     // plugins are the editor's and are not ported (plan §5 G2).
@@ -932,6 +940,12 @@ api::QueryResult Session::run_query(const api::Query& q) {
     if (!comp.empty() && comp != layerErrorsComp_) return std::vector<api::LayerError>{};
     return layerErrors_;
   };
+  // Jobs are session state (jobs_), not the document's.
+  if (std::holds_alternative<api::GetJobs>(q.v)) {
+    api::JobList list;
+    for (const JobRecord& r : jobs_) list.jobs.push_back(r.info);
+    return query_result_for<api::GetJobs>(std::move(list));
+  }
   // Queries never write the document: bar lookups come from an index for the
   // duration (timeline.hpp TlReadScope).
   const doc::TlReadScope readOnly;
@@ -1047,6 +1061,18 @@ void Session::stop_playback() {
 }
 
 std::optional<Clock::time_point> Session::next_deadline() const {
+  // Jobs: the core loop wakes to drain them (progress, results) every 50 ms.
+  std::optional<Clock::time_point> jobs;
+  if (runner_ && runner_->live() > 0) jobs = jobsPolled_ + std::chrono::milliseconds(50);
+  for (const JobRecord& r : jobs_) {
+    if (r.result && r.apply && r.info.status == api::JobStatus::done && !r.info.applied) jobs = jobsPolled_ + std::chrono::milliseconds(50);
+  }
+  const std::optional<Clock::time_point> clock = next_clock_deadline();
+  if (jobs && clock) return std::min(*jobs, *clock);
+  return jobs ? jobs : clock;
+}
+
+std::optional<Session::Clock::time_point> Session::next_clock_deadline() const {
   if (!playing_) return std::nullopt;
   const auto c = active_comp();
   if (!c) return std::nullopt;
@@ -1066,6 +1092,7 @@ std::optional<Clock::time_point> Session::next_deadline() const {
 }
 
 void Session::tick(Clock::time_point now) {
+  if (phase_ == Phase::open && (runner_ || !jobs_.empty())) poll_jobs(now);
   if (!playing_ || phase_ != Phase::open) return;
   const auto c = active_comp();
   if (!c) {

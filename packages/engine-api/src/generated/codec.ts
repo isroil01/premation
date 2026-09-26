@@ -7208,16 +7208,28 @@ function encS_AutoTraceJob(w: Writer, v: T.AutoTraceJob): void {
   w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
   w.byte(26); w.str(v.channel);
   w.byte(33); w.f64(v.threshold);
+  if (v.tolerance !== undefined) { w.varint(5633); w.f64(v.tolerance); }
+  if (v.blur !== undefined) { w.varint(5641); w.f64(v.blur); }
+  if (v.minArea !== undefined) { w.varint(5649); w.f64(v.minArea); }
+  w.varint(5656); w.bool(v.everyFrame);
+  w.varint(5664); w.bool(v.invert);
 }
 function decS_AutoTraceJob(r: Reader, end: number, o: any): T.AutoTraceJob {
   let h_layer = false;
   let h_range = false;
   let h_channel = false;
   let h_threshold = false;
+  let h_everyFrame = false;
+  let h_invert = false;
   let v_layer: string | undefined;
   let v_range: T.TimeRange | undefined;
   let v_channel: string | undefined;
   let v_threshold: number | undefined;
+  let v_tolerance: number | undefined;
+  let v_blur: number | undefined;
+  let v_minArea: number | undefined;
+  let v_everyFrame: boolean | undefined;
+  let v_invert: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7225,6 +7237,11 @@ function decS_AutoTraceJob(r: Reader, end: number, o: any): T.AutoTraceJob {
       case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
       case 26: v_channel = r.str(); h_channel = true; break;
       case 33: v_threshold = r.f64(); h_threshold = true; break;
+      case 5633: v_tolerance = r.f64(); break;
+      case 5641: v_blur = r.f64(); break;
+      case 5649: v_minArea = r.f64(); break;
+      case 5656: v_everyFrame = r.bool(); h_everyFrame = true; break;
+      case 5664: v_invert = r.bool(); h_invert = true; break;
       default: r.skip(key);
     }
   }
@@ -7233,16 +7250,25 @@ function decS_AutoTraceJob(r: Reader, end: number, o: any): T.AutoTraceJob {
   if (!h_range) throw new DecodeError('AutoTraceJob.range: missing', 'missingField');
   if (!h_channel) throw new DecodeError('AutoTraceJob.channel: missing', 'missingField');
   if (!h_threshold) throw new DecodeError('AutoTraceJob.threshold: missing', 'missingField');
+  if (!h_everyFrame) throw new DecodeError('AutoTraceJob.everyFrame: missing', 'missingField');
+  if (!h_invert) throw new DecodeError('AutoTraceJob.invert: missing', 'missingField');
   o.layer = v_layer;
   o.range = v_range;
   o.channel = v_channel;
   o.threshold = v_threshold;
+  if (v_tolerance !== undefined) o.tolerance = v_tolerance;
+  if (v_blur !== undefined) o.blur = v_blur;
+  if (v_minArea !== undefined) o.minArea = v_minArea;
+  o.everyFrame = v_everyFrame;
+  o.invert = v_invert;
   return o;
 }
 function encS_SceneDetectJob(w: Writer, v: T.SceneDetectJob): void {
   w.byte(10); w.str(v.layer);
   w.byte(16); w.bool(v.createMarkers);
   w.byte(24); w.bool(v.splitLayers);
+  if (v.threshold !== undefined) { w.varint(5625); w.f64(v.threshold); }
+  if (v.minShotSeconds !== undefined) { w.varint(5633); w.f64(v.minShotSeconds); }
 }
 function decS_SceneDetectJob(r: Reader, end: number, o: any): T.SceneDetectJob {
   let h_layer = false;
@@ -7251,12 +7277,16 @@ function decS_SceneDetectJob(r: Reader, end: number, o: any): T.SceneDetectJob {
   let v_layer: string | undefined;
   let v_createMarkers: boolean | undefined;
   let v_splitLayers: boolean | undefined;
+  let v_threshold: number | undefined;
+  let v_minShotSeconds: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_layer = r.str(); h_layer = true; break;
       case 16: v_createMarkers = r.bool(); h_createMarkers = true; break;
       case 24: v_splitLayers = r.bool(); h_splitLayers = true; break;
+      case 5625: v_threshold = r.f64(); break;
+      case 5633: v_minShotSeconds = r.f64(); break;
       default: r.skip(key);
     }
   }
@@ -7267,34 +7297,52 @@ function decS_SceneDetectJob(r: Reader, end: number, o: any): T.SceneDetectJob {
   o.layer = v_layer;
   o.createMarkers = v_createMarkers;
   o.splitLayers = v_splitLayers;
+  if (v_threshold !== undefined) o.threshold = v_threshold;
+  if (v_minShotSeconds !== undefined) o.minShotSeconds = v_minShotSeconds;
   return o;
 }
 function encS_ObjectMatteJob(w: Writer, v: T.ObjectMatteJob): void {
   w.byte(10); w.str(v.layer);
   w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
   { const a = v.prompts; for (let i = 0; i < a.length; i++) { w.byte(26); { const s = w.beginLd(); encS_Vec2(w, a[i]!); w.endLd(s); } } }
+  { const a = v.backgroundPrompts; for (let i = 0; i < a.length; i++) { w.varint(5626); { const s = w.beginLd(); encS_Vec2(w, a[i]!); w.endLd(s); } } }
+  w.varint(5634); w.str(v.encoderModel);
+  w.varint(5642); w.str(v.decoderModel);
 }
 function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   const l_prompts: T.Vec2[] = [];
+  const l_backgroundPrompts: T.Vec2[] = [];
   let h_layer = false;
   let h_range = false;
+  let h_encoderModel = false;
+  let h_decoderModel = false;
   let v_layer: string | undefined;
   let v_range: T.TimeRange | undefined;
+  let v_encoderModel: string | undefined;
+  let v_decoderModel: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_layer = r.str(); h_layer = true; break;
       case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
       case 26: l_prompts.push(decS_Vec2(r, r.ldEnd(), {})); break;
+      case 5626: l_backgroundPrompts.push(decS_Vec2(r, r.ldEnd(), {})); break;
+      case 5634: v_encoderModel = r.str(); h_encoderModel = true; break;
+      case 5642: v_decoderModel = r.str(); h_decoderModel = true; break;
       default: r.skip(key);
     }
   }
   r.expectAt(end);
   if (!h_layer) throw new DecodeError('ObjectMatteJob.layer: missing', 'missingField');
   if (!h_range) throw new DecodeError('ObjectMatteJob.range: missing', 'missingField');
+  if (!h_encoderModel) throw new DecodeError('ObjectMatteJob.encoderModel: missing', 'missingField');
+  if (!h_decoderModel) throw new DecodeError('ObjectMatteJob.decoderModel: missing', 'missingField');
   o.layer = v_layer;
   o.range = v_range;
   o.prompts = l_prompts;
+  o.backgroundPrompts = l_backgroundPrompts;
+  o.encoderModel = v_encoderModel;
+  o.decoderModel = v_decoderModel;
   return o;
 }
 function encS_TranscribeJob(w: Writer, v: T.TranscribeJob): void {
@@ -7331,20 +7379,43 @@ function encS_AudioAnalysisJob(w: Writer, v: T.AudioAnalysisJob): void {
   w.byte(10); w.str(v.layer);
   w.byte(16); w.bool(v.beats);
   w.byte(24); w.bool(v.amplitudeKeyframes);
+  w.varint(5624); w.bool(v.silence);
+  w.varint(5632); w.bool(v.removeSilence);
+  if (v.silenceThresholdDb !== undefined) { w.varint(5641); w.f64(v.silenceThresholdDb); }
+  if (v.silenceMinMs !== undefined) { w.varint(5649); w.f64(v.silenceMinMs); }
+  if (v.silencePaddingMs !== undefined) { w.varint(5657); w.f64(v.silencePaddingMs); }
+  if (v.amplitudeChannel !== undefined) { w.varint(5666); w.str(v.amplitudeChannel); }
+  if (v.amplitudeSmoothing !== undefined) { w.varint(5672); w.u32(v.amplitudeSmoothing); }
 }
 function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJob {
   let h_layer = false;
   let h_beats = false;
   let h_amplitudeKeyframes = false;
+  let h_silence = false;
+  let h_removeSilence = false;
   let v_layer: string | undefined;
   let v_beats: boolean | undefined;
   let v_amplitudeKeyframes: boolean | undefined;
+  let v_silence: boolean | undefined;
+  let v_removeSilence: boolean | undefined;
+  let v_silenceThresholdDb: number | undefined;
+  let v_silenceMinMs: number | undefined;
+  let v_silencePaddingMs: number | undefined;
+  let v_amplitudeChannel: string | undefined;
+  let v_amplitudeSmoothing: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_layer = r.str(); h_layer = true; break;
       case 16: v_beats = r.bool(); h_beats = true; break;
       case 24: v_amplitudeKeyframes = r.bool(); h_amplitudeKeyframes = true; break;
+      case 5624: v_silence = r.bool(); h_silence = true; break;
+      case 5632: v_removeSilence = r.bool(); h_removeSilence = true; break;
+      case 5641: v_silenceThresholdDb = r.f64(); break;
+      case 5649: v_silenceMinMs = r.f64(); break;
+      case 5657: v_silencePaddingMs = r.f64(); break;
+      case 5666: v_amplitudeChannel = r.str(); break;
+      case 5672: v_amplitudeSmoothing = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -7352,9 +7423,98 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
   if (!h_layer) throw new DecodeError('AudioAnalysisJob.layer: missing', 'missingField');
   if (!h_beats) throw new DecodeError('AudioAnalysisJob.beats: missing', 'missingField');
   if (!h_amplitudeKeyframes) throw new DecodeError('AudioAnalysisJob.amplitudeKeyframes: missing', 'missingField');
+  if (!h_silence) throw new DecodeError('AudioAnalysisJob.silence: missing', 'missingField');
+  if (!h_removeSilence) throw new DecodeError('AudioAnalysisJob.removeSilence: missing', 'missingField');
   o.layer = v_layer;
   o.beats = v_beats;
   o.amplitudeKeyframes = v_amplitudeKeyframes;
+  o.silence = v_silence;
+  o.removeSilence = v_removeSilence;
+  if (v_silenceThresholdDb !== undefined) o.silenceThresholdDb = v_silenceThresholdDb;
+  if (v_silenceMinMs !== undefined) o.silenceMinMs = v_silenceMinMs;
+  if (v_silencePaddingMs !== undefined) o.silencePaddingMs = v_silencePaddingMs;
+  if (v_amplitudeChannel !== undefined) o.amplitudeChannel = v_amplitudeChannel;
+  if (v_amplitudeSmoothing !== undefined) o.amplitudeSmoothing = v_amplitudeSmoothing;
+  return o;
+}
+function encS_AudioDuckJob(w: Writer, v: T.AudioDuckJob): void {
+  w.byte(10); w.str(v.music);
+  { const a = v.voices; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+  w.byte(26); w.str(v.params);
+}
+function decS_AudioDuckJob(r: Reader, end: number, o: any): T.AudioDuckJob {
+  const l_voices: string[] = [];
+  let h_music = false;
+  let h_params = false;
+  let v_music: string | undefined;
+  let v_params: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_music = r.str(); h_music = true; break;
+      case 18: l_voices.push(r.str()); break;
+      case 26: v_params = r.str(); h_params = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_music) throw new DecodeError('AudioDuckJob.music: missing', 'missingField');
+  if (!h_params) throw new DecodeError('AudioDuckJob.params: missing', 'missingField');
+  o.music = v_music;
+  o.voices = l_voices;
+  o.params = v_params;
+  return o;
+}
+function encS_AudioGateJob(w: Writer, v: T.AudioGateJob): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); w.str(v.params);
+}
+function decS_AudioGateJob(r: Reader, end: number, o: any): T.AudioGateJob {
+  let h_layer = false;
+  let h_params = false;
+  let v_layer: string | undefined;
+  let v_params: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_params = r.str(); h_params = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('AudioGateJob.layer: missing', 'missingField');
+  if (!h_params) throw new DecodeError('AudioGateJob.params: missing', 'missingField');
+  o.layer = v_layer;
+  o.params = v_params;
+  return o;
+}
+function encS_ProxyJob(w: Writer, v: T.ProxyJob): void {
+  w.byte(10); w.str(v.item);
+  w.byte(18); w.str(v.outputFolder);
+  if (v.maxEdge !== undefined) { w.byte(24); w.u32(v.maxEdge); }
+}
+function decS_ProxyJob(r: Reader, end: number, o: any): T.ProxyJob {
+  let h_item = false;
+  let h_outputFolder = false;
+  let v_item: string | undefined;
+  let v_outputFolder: string | undefined;
+  let v_maxEdge: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_item = r.str(); h_item = true; break;
+      case 18: v_outputFolder = r.str(); h_outputFolder = true; break;
+      case 24: v_maxEdge = r.u32(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_item) throw new DecodeError('ProxyJob.item: missing', 'missingField');
+  if (!h_outputFolder) throw new DecodeError('ProxyJob.outputFolder: missing', 'missingField');
+  o.item = v_item;
+  o.outputFolder = v_outputFolder;
+  if (v_maxEdge !== undefined) o.maxEdge = v_maxEdge;
   return o;
 }
 function encS_RenderJob(w: Writer, v: T.RenderJob): void {
@@ -10122,6 +10282,8 @@ function encS_JobInfo(w: Writer, v: T.JobInfo): void {
   w.byte(24); w.varint(enc_JobStatus(v.status));
   w.byte(33); w.f64(v.progress);
   w.byte(42); w.str(v.message);
+  w.varint(5642); w.str(v.result);
+  w.varint(5648); w.bool(v.applied);
 }
 function decS_JobInfo(r: Reader, end: number, o: any): T.JobInfo {
   let h_id = false;
@@ -10129,11 +10291,15 @@ function decS_JobInfo(r: Reader, end: number, o: any): T.JobInfo {
   let h_status = false;
   let h_progress = false;
   let h_message = false;
+  let h_result = false;
+  let h_applied = false;
   let v_id: string | undefined;
   let v_kind: string | undefined;
   let v_status: T.JobStatus | undefined;
   let v_progress: number | undefined;
   let v_message: string | undefined;
+  let v_result: string | undefined;
+  let v_applied: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -10142,6 +10308,8 @@ function decS_JobInfo(r: Reader, end: number, o: any): T.JobInfo {
       case 24: v_status = dec_JobStatus(r.varint()); h_status = true; break;
       case 33: v_progress = r.f64(); h_progress = true; break;
       case 42: v_message = r.str(); h_message = true; break;
+      case 5642: v_result = r.str(); h_result = true; break;
+      case 5648: v_applied = r.bool(); h_applied = true; break;
       default: r.skip(key);
     }
   }
@@ -10151,11 +10319,15 @@ function decS_JobInfo(r: Reader, end: number, o: any): T.JobInfo {
   if (!h_status) throw new DecodeError('JobInfo.status: missing', 'missingField');
   if (!h_progress) throw new DecodeError('JobInfo.progress: missing', 'missingField');
   if (!h_message) throw new DecodeError('JobInfo.message: missing', 'missingField');
+  if (!h_result) throw new DecodeError('JobInfo.result: missing', 'missingField');
+  if (!h_applied) throw new DecodeError('JobInfo.applied: missing', 'missingField');
   o.id = v_id;
   o.kind = v_kind;
   o.status = v_status;
   o.progress = v_progress;
   o.message = v_message;
+  o.result = v_result;
+  o.applied = v_applied;
   return o;
 }
 function encS_GetHistory(w: Writer, v: T.GetHistory): void {
@@ -13146,6 +13318,9 @@ function encU_JobSpec(w: Writer, v: T.JobSpec): void {
     case 'audioAnalysis': w.byte(58); { const s = w.beginLd(); encS_AudioAnalysisJob(w, v.value); w.endLd(s); } return;
     case 'render': w.byte(66); { const s = w.beginLd(); encS_RenderJob(w, v.value); w.endLd(s); } return;
     case 'prerender': w.byte(74); { const s = w.beginLd(); encS_PrerenderJob(w, v.value); w.endLd(s); } return;
+    case 'proxy': w.varint(5674); { const s = w.beginLd(); encS_ProxyJob(w, v.value); w.endLd(s); } return;
+    case 'audioDuck': w.varint(5682); { const s = w.beginLd(); encS_AudioDuckJob(w, v.value); w.endLd(s); } return;
+    case 'audioGate': w.varint(5690); { const s = w.beginLd(); encS_AudioGateJob(w, v.value); w.endLd(s); } return;
     default: throw new RangeError('JobSpec: unknown kind ' + String((v as { kind?: unknown }).kind));
   }
 }
@@ -13164,6 +13339,9 @@ function decU_JobSpec(r: Reader, end: number): T.JobSpec {
       case 58: out = { kind: 'audioAnalysis', value: decS_AudioAnalysisJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 66: out = { kind: 'render', value: decS_RenderJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 74: out = { kind: 'prerender', value: decS_PrerenderJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 5674: out = { kind: 'proxy', value: decS_ProxyJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 5682: out = { kind: 'audioDuck', value: decS_AudioDuckJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 5690: out = { kind: 'audioGate', value: decS_AudioGateJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       default: r.skip(key);
     }
   }
@@ -14351,6 +14529,9 @@ export const codecs = {
   ObjectMatteJob: mk<T.ObjectMatteJob>(encS_ObjectMatteJob, (r, e) => decS_ObjectMatteJob(r, e, {})),
   TranscribeJob: mk<T.TranscribeJob>(encS_TranscribeJob, (r, e) => decS_TranscribeJob(r, e, {})),
   AudioAnalysisJob: mk<T.AudioAnalysisJob>(encS_AudioAnalysisJob, (r, e) => decS_AudioAnalysisJob(r, e, {})),
+  AudioDuckJob: mk<T.AudioDuckJob>(encS_AudioDuckJob, (r, e) => decS_AudioDuckJob(r, e, {})),
+  AudioGateJob: mk<T.AudioGateJob>(encS_AudioGateJob, (r, e) => decS_AudioGateJob(r, e, {})),
+  ProxyJob: mk<T.ProxyJob>(encS_ProxyJob, (r, e) => decS_ProxyJob(r, e, {})),
   RenderJob: mk<T.RenderJob>(encS_RenderJob, (r, e) => decS_RenderJob(r, e, {})),
   PrerenderJob: mk<T.PrerenderJob>(encS_PrerenderJob, (r, e) => decS_PrerenderJob(r, e, {})),
   JobSpec: mk<T.JobSpec>(encU_JobSpec, decU_JobSpec),

@@ -1082,7 +1082,7 @@ export interface NewProject {
   template?: string;
 }
 
-/** Open a .motion project (or a recovery file). Clears history; the UI receives documentReset. F2: a portable `.motion` zip (Save Portable Copy's form) opens as an UNTITLED copy — projectPath '' (Save asks where), its embedded footage made reachable by the engine (C++: unpacked content-addressed into a staging bundle, srcs `motion-blob:<sha256>`; TypeScript: session object URLs), and a `portable:` warning. A compressed (DEFLATE) zip entry or a zip that is not a project is `io`. */
+/** Open a .motion project (or a recovery file). Clears history; the UI receives documentReset. F2: a portable `.motion` zip (Save Portable Copy's form) opens as an UNTITLED copy — projectPath '' (Save asks where), its embedded footage made reachable by the engine (C++: unpacked content-addressed into a staging bundle, srcs `motion-blob:<sha256>`; TypeScript: session object URLs), and a `portable:` warning. STORE and DEFLATE entries are read (another compression method, a damaged entry or a zip that is not a project is `io`). */
 export interface OpenProject {
   path: string;
 }
@@ -2519,6 +2519,7 @@ export interface TrackMotionJob {
   applyTo?: PropRef;
 }
 
+/** `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%). */
 export interface StabilizeJob {
   layer: LayerId;
   range: TimeRange;
@@ -2526,23 +2527,41 @@ export interface StabilizeJob {
   method: string;
 }
 
+/** `channel`: `alpha`, `luminance`, `red`, `green`, `blue`; `threshold` 0…1. Only the frame at `range.start` is traced unless `everyFrame` (then one mask path key per frame of the range). */
 export interface AutoTraceJob {
   layer: LayerId;
   range: TimeRange;
   channel: string;
   threshold: number;
+  /** Path simplification tolerance in pixels (autoTrace.ts `tolerance`, default 1). */
+  tolerance?: number;
+  /** Blur radius (px) applied to the channel before thresholding (default 0). */
+  blur?: number;
+  /** Smallest traced area, pixels (default 16). */
+  minArea?: number;
+  everyFrame: boolean;
+  /** Invert the matte before tracing. */
+  invert: boolean;
 }
 
+/** Cuts in a footage layer's picture. `threshold` 0…1 (the frame-difference score above which a frame starts a new shot; default 0.35); `minShotSeconds` default 0.5. */
 export interface SceneDetectJob {
   layer: LayerId;
   createMarkers: boolean;
   splitLayers: boolean;
+  threshold?: number;
+  minShotSeconds?: number;
 }
 
+/** `prompts` are foreground clicks in layer pixels at `range.start`; `backgroundPrompts` background clicks. The matte is applied as masks traced from the segmentation. */
 export interface ObjectMatteJob {
   layer: LayerId;
   range: TimeRange;
   prompts: Vec2[];
+  backgroundPrompts: Vec2[];
+  /** The SAM encoder / decoder ONNX files (the page's bundled `models/object-matte/*` or the user's install). Empty = the engine's default search (PREMATION_SAM_DIR). */
+  encoderModel: string;
+  decoderModel: string;
 }
 
 export interface TranscribeJob {
@@ -2551,10 +2570,43 @@ export interface TranscribeJob {
   createCaptions: boolean;
 }
 
+/** One audio analysis over a layer's sound (an audio layer, or a video layer's own track). */
 export interface AudioAnalysisJob {
   layer: LayerId;
+  /** Beat grid → composition markers on the beats (beatGrid.ts). */
   beats: boolean;
+  /** Amplitude envelope → keyframes (audioKeyframes.ts): on the layer's `audioAmplitude` slider control. */
   amplitudeKeyframes: boolean;
+  /** Silence detection (silenceRemoval.ts detectSilences); with `removeSilence` the silent stretches are cut out of the layer and the layers playing the same file in its composition, gaps closed. */
+  silence: boolean;
+  removeSilence: boolean;
+  silenceThresholdDb?: number;
+  silenceMinMs?: number;
+  silencePaddingMs?: number;
+  /** `both` (default), `left`, `right` — the channel the amplitude envelope follows. */
+  amplitudeChannel?: string;
+  /** Envelope smoothing window in frames (default 1 = none). */
+  amplitudeSmoothing?: number;
+}
+
+/** Ducking (ducking.ts): lower `music`'s level under the `voices`, as Audio Levels keyframes. `params` is the DuckingParams JSON (amountDb, thresholdDb, attackMs, releaseMs, holdMs); absent keys take the defaults. */
+export interface AudioDuckJob {
+  music: LayerId;
+  voices: LayerId[];
+  params: string;
+}
+
+/** Noise gate (audioGate.ts): close the layer's level while it is quiet, as Audio Levels keyframes. `params` is the GateParams JSON. */
+export interface AudioGateJob {
+  layer: LayerId;
+  params: string;
+}
+
+/** A low-resolution editing proxy for a footage item (assets/proxy.ts): transcoded by ffmpeg into `outputFolder` (default: next to the project, `Proxies/`), then attached with setProxy. `maxEdge` default 960. */
+export interface ProxyJob {
+  item: ItemId;
+  outputFolder: string;
+  maxEdge?: number;
 }
 
 export interface RenderJob {
@@ -2577,7 +2629,10 @@ export type JobSpec =
   | { kind: 'transcribe'; value: TranscribeJob }
   | { kind: 'audioAnalysis'; value: AudioAnalysisJob }
   | { kind: 'render'; value: RenderJob }
-  | { kind: 'prerender'; value: PrerenderJob };
+  | { kind: 'prerender'; value: PrerenderJob }
+  | { kind: 'proxy'; value: ProxyJob }
+  | { kind: 'audioDuck'; value: AudioDuckJob }
+  | { kind: 'audioGate'; value: AudioGateJob };
 export type JobSpecKind = JobSpec['kind'];
 
 export interface StartJob {
@@ -3205,6 +3260,10 @@ export interface JobInfo {
   status: JobStatus;
   progress: number;
   message: string;
+  /** The finished job's summary, JSON (kind-specific, ENGINE_API.md §4.9); '' until done. */
+  result: string;
+  /** Whether its result was applied (false while running, with apply=false, or when it changes nothing). */
+  applied: boolean;
 }
 
 export interface GetHistory {}

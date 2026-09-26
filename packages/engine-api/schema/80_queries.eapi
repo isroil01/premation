@@ -398,6 +398,10 @@ struct JobInfo {
   status: JobStatus = 3;
   progress: f64 = 4;
   message: string = 5;
+  /// The finished job's summary, JSON (kind-specific, ENGINE_API.md §4.9); '' until done.
+  result: string = 705;
+  /// Whether its result was applied (false while running, with apply=false, or when it changes nothing).
+  applied: bool = 706;
 }
 
 query getHistory = 1080 {} -> HistoryState;
