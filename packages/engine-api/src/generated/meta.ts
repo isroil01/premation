@@ -35,6 +35,8 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   setGuides: { id: 22, kind: 'edit', coalesce: false, family: "Project", result: "Empty", doc: "F2 — patch the document's guide settings (the persisted half of the guides store: rulers, grids, safe areas, motion-path display, overlay opacity, user ruler guides, camera bookmarks). `patch` is a JSON object; every key it carries replaces the stored field, sanitized and clamped as on open (a malformed guide or bookmark is dropped), unknown keys are ignored. Malformed JSON is `decode`, a non-object `invalidArgument`. Inverse: the previous settings." },
   setSwatches: { id: 23, kind: 'edit', coalesce: false, family: "Project", result: "Empty", doc: "F2 — replace the project palette, in order. Colours are canonicalized; a colour that is not hex is `invalidArgument` (nothing changes); an empty or repeated id is re-minted (`sw_doc_<n>`), a blank name becomes the colour. Inverse: the previous palette." },
   setMaterials: { id: 24, kind: 'edit', coalesce: false, family: "Project", result: "Empty", doc: "F2 — replace the project material library, in order. `params` are normalized (every axis clamped, unknown keys dropped); params that are not a JSON object are `invalidArgument`; an empty, repeated or `builtin:` id is re-minted (`mat_doc_<n>`), names are trimmed and a blank one becomes \"Material\", a swatch that is not `#rrggbb` is dropped. Inverse: the previous library." },
+  setMotionBlur: { id: 724, kind: 'edit', coalesce: false, family: "Project", result: "Empty", doc: "F2 — patch the motion-blur record (the master switch and shutter). Values are clamped as on open. Inverse: the previous record." },
+  setColorManagement: { id: 725, kind: 'edit', coalesce: false, family: "Project", result: "Empty", doc: "F2 — patch colour management. A bit depth other than 16 or 32 is `invalidArgument` (nothing changes). `setProjectSettings{workingSpace, bitDepth}` also writes this record where the renderer can honour the value. Inverse: the previous settings." },
   importFiles: { id: 50, kind: 'edit', coalesce: false, family: "Items", result: "ItemList", doc: "Import files as footage items. Undo removes the items (files on disk are never touched)." },
   importBytes: { id: 70, kind: 'edit', coalesce: false, family: "Items", result: "ItemList", doc: "B3 — import footage from bytes. The media port stores the bytes (the project bundle / the device library, content-addressed) and returns the record; the item is added in the same undoable entry (undo removes the item; the stored bytes stay, as for importFiles). An empty list or empty data is `invalidArgument`; bytes the importer cannot decode are `io`." },
   relinkItem: { id: 51, kind: 'edit', coalesce: false, family: "Items", result: "Empty", doc: "Point an item at a different file (relink missing footage / Replace Footage). Undo restores the old path." },
@@ -221,6 +223,8 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
   guidesChanged: { id: 2014, ephemeral: false, family: "DocumentEvents", doc: "F2 — the guide settings (full replacement, as DocumentSnapshot.guides), after setGuides, a restore or their undo." },
   swatchesChanged: { id: 2015, ephemeral: false, family: "DocumentEvents", doc: "F2 — the project palette (full replacement)." },
   materialsChanged: { id: 2016, ephemeral: false, family: "DocumentEvents", doc: "F2 — the project material library (full replacement)." },
+  motionBlurChanged: { id: 2716, ephemeral: false, family: "DocumentEvents", doc: "F2 — the motion-blur record (full replacement), after setMotionBlur, setCompositionSettings{motionBlur}, a restore or their undo. Every composition's `compositionChanged` follows too (CompSettings.motionBlur)." },
+  colorManagementChanged: { id: 2717, ephemeral: false, family: "DocumentEvents", doc: "F2 — colour management (full replacement), after setColorManagement, setProjectSettings, a restore or their undo." },
   historyChanged: { id: 2050, ephemeral: true, family: "StatusEvents", doc: "" },
   dirtyChanged: { id: 2051, ephemeral: true, family: "StatusEvents", doc: "" },
   transportChanged: { id: 2052, ephemeral: true, family: "StatusEvents", doc: "" },
@@ -238,4 +242,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":75,"structs":400,"unions":11,"commands":148,"queries":35,"events":31} as const;
+export const SCHEMA_COUNTS = {"enums":75,"structs":407,"unions":11,"commands":150,"queries":35,"events":33} as const;

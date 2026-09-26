@@ -1218,6 +1218,17 @@ Json capture_project_storage(const Json& store) {
 
 }  // namespace
 
+void apply_motion_blur_patch(Document& d, const api::MotionBlurPatch& p) {
+  MotionBlur& mb = d.motion_blur_mut();
+  if (p.enabled) mb.enabled = *p.enabled;
+  if (p.shutter_angle) mb.shutterAngle = std::max(0.0, std::min(360.0, *p.shutter_angle));
+  if (p.shutter_phase) mb.shutterPhase = std::max(-360.0, std::min(360.0, *p.shutter_phase));
+  if (p.samples_per_frame) mb.samples = std::max(2.0, std::min(32.0, static_cast<double>(*p.samples_per_frame)));
+  if (p.adaptive_sample_limit) {
+    mb.adaptiveSampleLimit = std::max(2.0, std::min(128.0, static_cast<double>(*p.adaptive_sample_limit)));
+  }
+}
+
 Json default_guides() {
   Json g = Json::object();
   g.set("rulers", Json::boolean(false));

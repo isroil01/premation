@@ -1,5 +1,6 @@
 #include "handlers_misc.hpp"
 
+#include <cmath>
 #include <utility>
 
 #include "anim_json.hpp"
@@ -164,6 +165,33 @@ ResultOf<api::SetMaterials> handle(const api::SetMaterials& c, HCtx& x) {
     list.arr_mut().push_back(std::move(o));
   }
   x.d.materials_mut() = normalize_materials(list);
+  return {};
+}
+
+ResultOf<api::SetMotionBlur> handle(const api::SetMotionBlur& c, HCtx& x) {
+  const api::MotionBlurPatch& p = c.patch;
+  const bool finite = (!p.shutter_angle || std::isfinite(*p.shutter_angle)) && (!p.shutter_phase || std::isfinite(*p.shutter_phase));
+  if (!finite) fail(ErrorCode::invalid_argument, "shutter angle and phase must be finite");
+  x.label = "Motion Blur";
+  apply_motion_blur_patch(x.d, p);
+  return {};
+}
+
+ResultOf<api::SetColorManagement> handle(const api::SetColorManagement& c, HCtx& x) {
+  const api::ColorManagementPatch& p = c.patch;
+  if (p.bit_depth && *p.bit_depth != 16 && *p.bit_depth != 32) fail(ErrorCode::invalid_argument, "the bit depth is 16 or 32");
+  x.label = "Color Management";
+  ColorMgmt& cm = x.d.color_mut();
+  if (p.working_space) cm.workingSpace = *p.working_space == api::RenderWorkingSpace::aces_cg ? "aces-cg" : "srgb-linear";
+  if (p.display_transform) {
+    switch (*p.display_transform) {
+      case api::RenderDisplayTransform::aces: cm.displayTransform = "aces"; break;
+      case api::RenderDisplayTransform::pq: cm.displayTransform = "pq"; break;
+      case api::RenderDisplayTransform::hlg: cm.displayTransform = "hlg"; break;
+      case api::RenderDisplayTransform::srgb: cm.displayTransform = "srgb"; break;
+    }
+  }
+  if (p.bit_depth) cm.bitDepth = *p.bit_depth == 32 ? 32 : 16;
   return {};
 }
 

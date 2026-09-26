@@ -2046,6 +2046,128 @@ function decS_SetMaterials(r: Reader, end: number, o: any): T.SetMaterials {
   o.materials = l_materials;
   return o;
 }
+function encS_MotionBlurPatch(w: Writer, v: T.MotionBlurPatch): void {
+  if (v.enabled !== undefined) { w.byte(8); w.bool(v.enabled); }
+  if (v.shutterAngle !== undefined) { w.byte(17); w.f64(v.shutterAngle); }
+  if (v.shutterPhase !== undefined) { w.byte(25); w.f64(v.shutterPhase); }
+  if (v.samplesPerFrame !== undefined) { w.byte(32); w.u32(v.samplesPerFrame); }
+  if (v.adaptiveSampleLimit !== undefined) { w.byte(40); w.u32(v.adaptiveSampleLimit); }
+}
+function decS_MotionBlurPatch(r: Reader, end: number, o: any): T.MotionBlurPatch {
+  let v_enabled: boolean | undefined;
+  let v_shutterAngle: number | undefined;
+  let v_shutterPhase: number | undefined;
+  let v_samplesPerFrame: number | undefined;
+  let v_adaptiveSampleLimit: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_enabled = r.bool(); break;
+      case 17: v_shutterAngle = r.f64(); break;
+      case 25: v_shutterPhase = r.f64(); break;
+      case 32: v_samplesPerFrame = r.u32(); break;
+      case 40: v_adaptiveSampleLimit = r.u32(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (v_enabled !== undefined) o.enabled = v_enabled;
+  if (v_shutterAngle !== undefined) o.shutterAngle = v_shutterAngle;
+  if (v_shutterPhase !== undefined) o.shutterPhase = v_shutterPhase;
+  if (v_samplesPerFrame !== undefined) o.samplesPerFrame = v_samplesPerFrame;
+  if (v_adaptiveSampleLimit !== undefined) o.adaptiveSampleLimit = v_adaptiveSampleLimit;
+  return o;
+}
+function encS_ColorManagementSettings(w: Writer, v: T.ColorManagementSettings): void {
+  w.byte(8); w.varint(enc_RenderWorkingSpace(v.workingSpace));
+  w.byte(16); w.varint(enc_RenderDisplayTransform(v.displayTransform));
+  w.byte(24); w.u32(v.bitDepth);
+}
+function decS_ColorManagementSettings(r: Reader, end: number, o: any): T.ColorManagementSettings {
+  let h_workingSpace = false;
+  let h_displayTransform = false;
+  let h_bitDepth = false;
+  let v_workingSpace: T.RenderWorkingSpace | undefined;
+  let v_displayTransform: T.RenderDisplayTransform | undefined;
+  let v_bitDepth: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_workingSpace = dec_RenderWorkingSpace(r.varint()); h_workingSpace = true; break;
+      case 16: v_displayTransform = dec_RenderDisplayTransform(r.varint()); h_displayTransform = true; break;
+      case 24: v_bitDepth = r.u32(); h_bitDepth = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_workingSpace) throw new DecodeError('ColorManagementSettings.workingSpace: missing', 'missingField');
+  if (!h_displayTransform) throw new DecodeError('ColorManagementSettings.displayTransform: missing', 'missingField');
+  if (!h_bitDepth) throw new DecodeError('ColorManagementSettings.bitDepth: missing', 'missingField');
+  o.workingSpace = v_workingSpace;
+  o.displayTransform = v_displayTransform;
+  o.bitDepth = v_bitDepth;
+  return o;
+}
+function encS_ColorManagementPatch(w: Writer, v: T.ColorManagementPatch): void {
+  if (v.workingSpace !== undefined) { w.byte(8); w.varint(enc_RenderWorkingSpace(v.workingSpace)); }
+  if (v.displayTransform !== undefined) { w.byte(16); w.varint(enc_RenderDisplayTransform(v.displayTransform)); }
+  if (v.bitDepth !== undefined) { w.byte(24); w.u32(v.bitDepth); }
+}
+function decS_ColorManagementPatch(r: Reader, end: number, o: any): T.ColorManagementPatch {
+  let v_workingSpace: T.RenderWorkingSpace | undefined;
+  let v_displayTransform: T.RenderDisplayTransform | undefined;
+  let v_bitDepth: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_workingSpace = dec_RenderWorkingSpace(r.varint()); break;
+      case 16: v_displayTransform = dec_RenderDisplayTransform(r.varint()); break;
+      case 24: v_bitDepth = r.u32(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (v_workingSpace !== undefined) o.workingSpace = v_workingSpace;
+  if (v_displayTransform !== undefined) o.displayTransform = v_displayTransform;
+  if (v_bitDepth !== undefined) o.bitDepth = v_bitDepth;
+  return o;
+}
+function encS_SetMotionBlur(w: Writer, v: T.SetMotionBlur): void {
+  w.byte(10); { const s = w.beginLd(); encS_MotionBlurPatch(w, v.patch); w.endLd(s); }
+}
+function decS_SetMotionBlur(r: Reader, end: number, o: any): T.SetMotionBlur {
+  let h_patch = false;
+  let v_patch: T.MotionBlurPatch | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_patch = decS_MotionBlurPatch(r, r.ldEnd(), {}); h_patch = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_patch) throw new DecodeError('SetMotionBlur.patch: missing', 'missingField');
+  o.patch = v_patch;
+  return o;
+}
+function encS_SetColorManagement(w: Writer, v: T.SetColorManagement): void {
+  w.byte(10); { const s = w.beginLd(); encS_ColorManagementPatch(w, v.patch); w.endLd(s); }
+}
+function decS_SetColorManagement(r: Reader, end: number, o: any): T.SetColorManagement {
+  let h_patch = false;
+  let v_patch: T.ColorManagementPatch | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_patch = decS_ColorManagementPatch(r, r.ldEnd(), {}); h_patch = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_patch) throw new DecodeError('SetColorManagement.patch: missing', 'missingField');
+  o.patch = v_patch;
+  return o;
+}
 function encS_OpenProjectResult(w: Writer, v: T.OpenProjectResult): void {
   { const a = v.warnings; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
   { const a = v.missingItems; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
@@ -7951,6 +8073,8 @@ function encS_DocumentSnapshot(w: Writer, v: T.DocumentSnapshot): void {
   w.byte(90); w.str(v.guides);
   { const a = v.swatches; for (let i = 0; i < a.length; i++) { w.byte(98); { const s = w.beginLd(); encS_Swatch(w, a[i]!); w.endLd(s); } } }
   { const a = v.materials; for (let i = 0; i < a.length; i++) { w.byte(106); { const s = w.beginLd(); encS_LibraryMaterial(w, a[i]!); w.endLd(s); } } }
+  w.varint(5706); { const s = w.beginLd(); encS_MotionBlurSettings(w, v.motionBlur); w.endLd(s); }
+  w.varint(5714); { const s = w.beginLd(); encS_ColorManagementSettings(w, v.colorManagement); w.endLd(s); }
 }
 function decS_DocumentSnapshot(r: Reader, end: number, o: any): T.DocumentSnapshot {
   const l_items: T.ItemInfo[] = [];
@@ -7966,11 +8090,15 @@ function decS_DocumentSnapshot(r: Reader, end: number, o: any): T.DocumentSnapsh
   let h_dirty = false;
   let h_settings = false;
   let h_guides = false;
+  let h_motionBlur = false;
+  let h_colorManagement = false;
   let v_revision: number | undefined;
   let v_projectPath: string | undefined;
   let v_dirty: boolean | undefined;
   let v_settings: T.ProjectSettings | undefined;
   let v_guides: string | undefined;
+  let v_motionBlur: T.MotionBlurSettings | undefined;
+  let v_colorManagement: T.ColorManagementSettings | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7987,6 +8115,8 @@ function decS_DocumentSnapshot(r: Reader, end: number, o: any): T.DocumentSnapsh
       case 90: v_guides = r.str(); h_guides = true; break;
       case 98: l_swatches.push(decS_Swatch(r, r.ldEnd(), {})); break;
       case 106: l_materials.push(decS_LibraryMaterial(r, r.ldEnd(), {})); break;
+      case 5706: v_motionBlur = decS_MotionBlurSettings(r, r.ldEnd(), {}); h_motionBlur = true; break;
+      case 5714: v_colorManagement = decS_ColorManagementSettings(r, r.ldEnd(), {}); h_colorManagement = true; break;
       default: r.skip(key);
     }
   }
@@ -7996,6 +8126,8 @@ function decS_DocumentSnapshot(r: Reader, end: number, o: any): T.DocumentSnapsh
   if (!h_dirty) throw new DecodeError('DocumentSnapshot.dirty: missing', 'missingField');
   if (!h_settings) throw new DecodeError('DocumentSnapshot.settings: missing', 'missingField');
   if (!h_guides) throw new DecodeError('DocumentSnapshot.guides: missing', 'missingField');
+  if (!h_motionBlur) throw new DecodeError('DocumentSnapshot.motionBlur: missing', 'missingField');
+  if (!h_colorManagement) throw new DecodeError('DocumentSnapshot.colorManagement: missing', 'missingField');
   o.revision = v_revision;
   o.projectPath = v_projectPath;
   o.dirty = v_dirty;
@@ -8009,6 +8141,8 @@ function decS_DocumentSnapshot(r: Reader, end: number, o: any): T.DocumentSnapsh
   o.guides = v_guides;
   o.swatches = l_swatches;
   o.materials = l_materials;
+  o.motionBlur = v_motionBlur;
+  o.colorManagement = v_colorManagement;
   return o;
 }
 function encS_ExportedDocument(w: Writer, v: T.ExportedDocument): void {
@@ -10506,6 +10640,42 @@ function decS_MaterialsChangedEvent(r: Reader, end: number, o: any): T.Materials
   }
   r.expectAt(end);
   o.materials = l_materials;
+  return o;
+}
+function encS_MotionBlurChangedEvent(w: Writer, v: T.MotionBlurChangedEvent): void {
+  w.byte(10); { const s = w.beginLd(); encS_MotionBlurSettings(w, v.motionBlur); w.endLd(s); }
+}
+function decS_MotionBlurChangedEvent(r: Reader, end: number, o: any): T.MotionBlurChangedEvent {
+  let h_motionBlur = false;
+  let v_motionBlur: T.MotionBlurSettings | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_motionBlur = decS_MotionBlurSettings(r, r.ldEnd(), {}); h_motionBlur = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_motionBlur) throw new DecodeError('MotionBlurChangedEvent.motionBlur: missing', 'missingField');
+  o.motionBlur = v_motionBlur;
+  return o;
+}
+function encS_ColorManagementChangedEvent(w: Writer, v: T.ColorManagementChangedEvent): void {
+  w.byte(10); { const s = w.beginLd(); encS_ColorManagementSettings(w, v.colorManagement); w.endLd(s); }
+}
+function decS_ColorManagementChangedEvent(r: Reader, end: number, o: any): T.ColorManagementChangedEvent {
+  let h_colorManagement = false;
+  let v_colorManagement: T.ColorManagementSettings | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_colorManagement = decS_ColorManagementSettings(r, r.ldEnd(), {}); h_colorManagement = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_colorManagement) throw new DecodeError('ColorManagementChangedEvent.colorManagement: missing', 'missingField');
+  o.colorManagement = v_colorManagement;
   return o;
 }
 function encS_HistoryChangedEvent(w: Writer, v: T.HistoryChangedEvent): void {
@@ -13161,6 +13331,8 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_UpdateMarkers(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_DeleteMarkers(w, v); w.endLd(s); } return;
     case 'moveMarkers': w.varint(5626); { const s = w.beginLd(); encS_MoveMarkers(w, v); w.endLd(s); } return;
+    case 'setMotionBlur': w.varint(5794); { const s = w.beginLd(); encS_SetMotionBlur(w, v); w.endLd(s); } return;
+    case 'setColorManagement': w.varint(5802); { const s = w.beginLd(); encS_SetColorManagement(w, v); w.endLd(s); } return;
     case 'play': w.varint(6402); { const s = w.beginLd(); encS_Play(w, v); w.endLd(s); } return;
     case 'pause': w.varint(6410); { const s = w.beginLd(); encS_Pause(w, v); w.endLd(s); } return;
     case 'seek': w.varint(6418); { const s = w.beginLd(); encS_Seek(w, v); w.endLd(s); } return;
@@ -13318,6 +13490,8 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 5610: out = decS_UpdateMarkers(r, r.ldEnd(), { type: 'updateMarkers' }) as T.Command; break;
       case 5618: out = decS_DeleteMarkers(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.Command; break;
       case 5626: out = decS_MoveMarkers(r, r.ldEnd(), { type: 'moveMarkers' }) as T.Command; break;
+      case 5794: out = decS_SetMotionBlur(r, r.ldEnd(), { type: 'setMotionBlur' }) as T.Command; break;
+      case 5802: out = decS_SetColorManagement(r, r.ldEnd(), { type: 'setColorManagement' }) as T.Command; break;
       case 6402: out = decS_Play(r, r.ldEnd(), { type: 'play' }) as T.Command; break;
       case 6410: out = decS_Pause(r, r.ldEnd(), { type: 'pause' }) as T.Command; break;
       case 6418: out = decS_Seek(r, r.ldEnd(), { type: 'seek' }) as T.Command; break;
@@ -13475,6 +13649,8 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'moveMarkers': w.varint(5626); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setMotionBlur': w.varint(5794); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setColorManagement': w.varint(5802); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'play': w.varint(6402); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'pause': w.varint(6410); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'seek': w.varint(6418); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -13632,6 +13808,8 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 5610: out = decS_Empty(r, r.ldEnd(), { type: 'updateMarkers' }) as T.CommandResult; break;
       case 5618: out = decS_Empty(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.CommandResult; break;
       case 5626: out = decS_Empty(r, r.ldEnd(), { type: 'moveMarkers' }) as T.CommandResult; break;
+      case 5794: out = decS_Empty(r, r.ldEnd(), { type: 'setMotionBlur' }) as T.CommandResult; break;
+      case 5802: out = decS_Empty(r, r.ldEnd(), { type: 'setColorManagement' }) as T.CommandResult; break;
       case 6402: out = decS_Empty(r, r.ldEnd(), { type: 'play' }) as T.CommandResult; break;
       case 6410: out = decS_Empty(r, r.ldEnd(), { type: 'pause' }) as T.CommandResult; break;
       case 6418: out = decS_Empty(r, r.ldEnd(), { type: 'seek' }) as T.CommandResult; break;
@@ -13866,6 +14044,8 @@ function encU_Event(w: Writer, v: T.Event): void {
     case 'assetStatusChanged': w.varint(16490); { const s = w.beginLd(); encS_AssetStatusChangedEvent(w, v); w.endLd(s); } return;
     case 'fontsChanged': w.varint(16498); { const s = w.beginLd(); encS_FontsChangedEvent(w, v); w.endLd(s); } return;
     case 'autosaved': w.varint(16506); { const s = w.beginLd(); encS_AutosavedEvent(w, v); w.endLd(s); } return;
+    case 'motionBlurChanged': w.varint(21730); { const s = w.beginLd(); encS_MotionBlurChangedEvent(w, v); w.endLd(s); } return;
+    case 'colorManagementChanged': w.varint(21738); { const s = w.beginLd(); encS_ColorManagementChangedEvent(w, v); w.endLd(s); } return;
     default: throw new RangeError('Event: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -13906,6 +14086,8 @@ function decU_Event(r: Reader, end: number): T.Event {
       case 16490: out = decS_AssetStatusChangedEvent(r, r.ldEnd(), { type: 'assetStatusChanged' }) as T.Event; break;
       case 16498: out = decS_FontsChangedEvent(r, r.ldEnd(), { type: 'fontsChanged' }) as T.Event; break;
       case 16506: out = decS_AutosavedEvent(r, r.ldEnd(), { type: 'autosaved' }) as T.Event; break;
+      case 21730: out = decS_MotionBlurChangedEvent(r, r.ldEnd(), { type: 'motionBlurChanged' }) as T.Event; break;
+      case 21738: out = decS_ColorManagementChangedEvent(r, r.ldEnd(), { type: 'colorManagementChanged' }) as T.Event; break;
       default: r.skip(key);
     }
   }
@@ -13989,6 +14171,11 @@ export const codecs = {
   SetGuides: mk<T.SetGuides>(encS_SetGuides, (r, e) => decS_SetGuides(r, e, {})),
   SetSwatches: mk<T.SetSwatches>(encS_SetSwatches, (r, e) => decS_SetSwatches(r, e, {})),
   SetMaterials: mk<T.SetMaterials>(encS_SetMaterials, (r, e) => decS_SetMaterials(r, e, {})),
+  MotionBlurPatch: mk<T.MotionBlurPatch>(encS_MotionBlurPatch, (r, e) => decS_MotionBlurPatch(r, e, {})),
+  ColorManagementSettings: mk<T.ColorManagementSettings>(encS_ColorManagementSettings, (r, e) => decS_ColorManagementSettings(r, e, {})),
+  ColorManagementPatch: mk<T.ColorManagementPatch>(encS_ColorManagementPatch, (r, e) => decS_ColorManagementPatch(r, e, {})),
+  SetMotionBlur: mk<T.SetMotionBlur>(encS_SetMotionBlur, (r, e) => decS_SetMotionBlur(r, e, {})),
+  SetColorManagement: mk<T.SetColorManagement>(encS_SetColorManagement, (r, e) => decS_SetColorManagement(r, e, {})),
   OpenProjectResult: mk<T.OpenProjectResult>(encS_OpenProjectResult, (r, e) => decS_OpenProjectResult(r, e, {})),
   SaveProjectResult: mk<T.SaveProjectResult>(encS_SaveProjectResult, (r, e) => decS_SaveProjectResult(r, e, {})),
   ItemList: mk<T.ItemList>(encS_ItemList, (r, e) => decS_ItemList(r, e, {})),
@@ -14279,6 +14466,8 @@ export const codecs = {
   GuidesChangedEvent: mk<T.GuidesChangedEvent>(encS_GuidesChangedEvent, (r, e) => decS_GuidesChangedEvent(r, e, {})),
   SwatchesChangedEvent: mk<T.SwatchesChangedEvent>(encS_SwatchesChangedEvent, (r, e) => decS_SwatchesChangedEvent(r, e, {})),
   MaterialsChangedEvent: mk<T.MaterialsChangedEvent>(encS_MaterialsChangedEvent, (r, e) => decS_MaterialsChangedEvent(r, e, {})),
+  MotionBlurChangedEvent: mk<T.MotionBlurChangedEvent>(encS_MotionBlurChangedEvent, (r, e) => decS_MotionBlurChangedEvent(r, e, {})),
+  ColorManagementChangedEvent: mk<T.ColorManagementChangedEvent>(encS_ColorManagementChangedEvent, (r, e) => decS_ColorManagementChangedEvent(r, e, {})),
   HistoryChangedEvent: mk<T.HistoryChangedEvent>(encS_HistoryChangedEvent, (r, e) => decS_HistoryChangedEvent(r, e, {})),
   DirtyChangedEvent: mk<T.DirtyChangedEvent>(encS_DirtyChangedEvent, (r, e) => decS_DirtyChangedEvent(r, e, {})),
   TransportChangedEvent: mk<T.TransportChangedEvent>(encS_TransportChangedEvent, (r, e) => decS_TransportChangedEvent(r, e, {})),

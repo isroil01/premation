@@ -392,7 +392,6 @@ api::CompSettings comp_settings(const Document& d, std::string_view comp) {
   const double fps = num("fps", 30);
   const Timeline* tl = d.timeline(comp);
   const double durFrames = comp_duration_frames(d, comp);
-  const MotionBlur& mb = d.motion_blur();
   api::CompSettings s;
   const Json& name = c.at("name");
   s.name = name.is_undefined() || name.is_null() ? std::string(comp) : (name.is_string() ? name.str() : stringify(name));
@@ -409,11 +408,7 @@ api::CompSettings comp_settings(const Document& d, std::string_view comp) {
   } else {
     s.work_area = api::TimeRange{0, frames_to_flicks(durFrames, fps)};
   }
-  s.motion_blur.shutter_angle = mb.shutterAngle;
-  s.motion_blur.shutter_phase = mb.shutterPhase;
-  s.motion_blur.samples_per_frame = u32_of(mb.samples);
-  s.motion_blur.adaptive_sample_limit = u32_of(mb.adaptiveSampleLimit);
-  s.motion_blur.enabled = mb.enabled;
+  s.motion_blur = motion_blur_info(d);
   const Json& r3 = c.at("renderer3d");
   s.renderer3d = r3.is_string() ? enum_from_string<api::Renderer3d>(r3.str()).value_or(api::Renderer3d::classic)
                                 : api::Renderer3d::classic;
@@ -476,6 +471,29 @@ std::vector<api::Transition> transitions_of(const Document& d, std::string_view 
 }
 
 std::string guides_info(const Document& d) { return stringify(guides_settings(d.guides())); }
+
+api::MotionBlurSettings motion_blur_info(const Document& d) {
+  const MotionBlur& mb = d.motion_blur();
+  api::MotionBlurSettings s;
+  s.shutter_angle = mb.shutterAngle;
+  s.shutter_phase = mb.shutterPhase;
+  s.samples_per_frame = u32_of(mb.samples);
+  s.adaptive_sample_limit = u32_of(mb.adaptiveSampleLimit);
+  s.enabled = mb.enabled;
+  return s;
+}
+
+api::ColorManagementSettings color_management_info(const Document& d) {
+  const ColorMgmt& cm = d.color();
+  api::ColorManagementSettings s;
+  s.working_space = cm.workingSpace == "aces-cg" ? api::RenderWorkingSpace::aces_cg : api::RenderWorkingSpace::srgb_linear;
+  if (cm.displayTransform == "aces") s.display_transform = api::RenderDisplayTransform::aces;
+  else if (cm.displayTransform == "pq") s.display_transform = api::RenderDisplayTransform::pq;
+  else if (cm.displayTransform == "hlg") s.display_transform = api::RenderDisplayTransform::hlg;
+  else s.display_transform = api::RenderDisplayTransform::srgb;
+  s.bit_depth = cm.bitDepth == 32 ? 32U : 16U;
+  return s;
+}
 
 std::vector<api::Swatch> swatch_infos(const Document& d) {
   std::vector<api::Swatch> out;
@@ -756,6 +774,8 @@ api::DocumentSnapshot document_snapshot(const PCtx& c, api::Revision revision, c
   s.guides = guides_info(d);
   s.swatches = swatch_infos(d);
   s.materials = material_infos(d);
+  s.motion_blur = motion_blur_info(d);
+  s.color_management = color_management_info(d);
   return s;
 }
 

@@ -140,6 +140,10 @@ struct DocumentSnapshot {
   guides: string = 11;
   swatches: Swatch[] = 12;
   materials: LibraryMaterial[] = 13;
+  /// F2 — the project's motion-blur record (setMotionBlur).
+  motionBlur: MotionBlurSettings = 713;
+  /// F2 — the project's colour management (setColorManagement).
+  colorManagement: ColorManagementSettings = 714;
 }
 
 /// The document as saveProject would write it: a .motion project's JSON, UTF-8.

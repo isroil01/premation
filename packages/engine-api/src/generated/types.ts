@@ -1153,6 +1153,43 @@ export interface SetMaterials {
   materials: LibraryMaterial[];
 }
 
+/** F2 — patch of the project's motion-blur record (motionBlurStore: the composition's Enable Motion Blur master switch, shutter angle / phase, samples per frame, adaptive sample limit). One record per document — every composition reports it as `CompSettings.motionBlur`, and `setCompositionSettings{motionBlur}` writes the same record. Only present fields change. */
+export interface MotionBlurPatch {
+  enabled?: boolean;
+  /** Degrees, clamped to 0…360. */
+  shutterAngle?: number;
+  /** Degrees, clamped to −360…360. */
+  shutterPhase?: number;
+  /** Rounded and clamped to 2…32. */
+  samplesPerFrame?: number;
+  /** Rounded and clamped to 2…128. */
+  adaptiveSampleLimit?: number;
+}
+
+/** F2 — the project's colour management (colorManagementStore: working space, display transform, intermediate bit depth), as the snapshot and `colorManagementChanged` report it. */
+export interface ColorManagementSettings {
+  workingSpace: RenderWorkingSpace;
+  displayTransform: RenderDisplayTransform;
+  /** 16 (half float) or 32 (float). */
+  bitDepth: number;
+}
+
+export interface ColorManagementPatch {
+  workingSpace?: RenderWorkingSpace;
+  displayTransform?: RenderDisplayTransform;
+  bitDepth?: number;
+}
+
+/** F2 — patch the motion-blur record (the master switch and shutter). Values are clamped as on open. Inverse: the previous record. */
+export interface SetMotionBlur {
+  patch: MotionBlurPatch;
+}
+
+/** F2 — patch colour management. A bit depth other than 16 or 32 is `invalidArgument` (nothing changes). `setProjectSettings{workingSpace, bitDepth}` also writes this record where the renderer can honour the value. Inverse: the previous settings. */
+export interface SetColorManagement {
+  patch: ColorManagementPatch;
+}
+
 export interface OpenProjectResult {
   /** Migrations applied, missing fonts, missing footage, … */
   warnings: string[];
@@ -2710,6 +2747,10 @@ export interface DocumentSnapshot {
   guides: string;
   swatches: Swatch[];
   materials: LibraryMaterial[];
+  /** F2 — the project's motion-blur record (setMotionBlur). */
+  motionBlur: MotionBlurSettings;
+  /** F2 — the project's colour management (setColorManagement). */
+  colorManagement: ColorManagementSettings;
 }
 
 /** The document as saveProject would write it: a .motion project's JSON, UTF-8. */
@@ -3286,6 +3327,16 @@ export interface SwatchesChangedEvent {
 /** F2 — the project material library (full replacement). */
 export interface MaterialsChangedEvent {
   materials: LibraryMaterial[];
+}
+
+/** F2 — the motion-blur record (full replacement), after setMotionBlur, setCompositionSettings{motionBlur}, a restore or their undo. Every composition's `compositionChanged` follows too (CompSettings.motionBlur). */
+export interface MotionBlurChangedEvent {
+  motionBlur: MotionBlurSettings;
+}
+
+/** F2 — colour management (full replacement), after setColorManagement, setProjectSettings, a restore or their undo. */
+export interface ColorManagementChangedEvent {
+  colorManagement: ColorManagementSettings;
 }
 
 export interface HistoryChangedEvent {
@@ -3891,6 +3942,8 @@ export type Command =
   | ({ type: 'setGuides' } & SetGuides)
   | ({ type: 'setSwatches' } & SetSwatches)
   | ({ type: 'setMaterials' } & SetMaterials)
+  | ({ type: 'setMotionBlur' } & SetMotionBlur)
+  | ({ type: 'setColorManagement' } & SetColorManagement)
   | ({ type: 'importFiles' } & ImportFiles)
   | ({ type: 'importBytes' } & ImportBytes)
   | ({ type: 'relinkItem' } & RelinkItem)
@@ -4043,6 +4096,8 @@ export type CommandResult =
   | ({ type: 'setGuides' } & Empty)
   | ({ type: 'setSwatches' } & Empty)
   | ({ type: 'setMaterials' } & Empty)
+  | ({ type: 'setMotionBlur' } & Empty)
+  | ({ type: 'setColorManagement' } & Empty)
   | ({ type: 'importFiles' } & ItemList)
   | ({ type: 'importBytes' } & ItemList)
   | ({ type: 'relinkItem' } & Empty)
@@ -4270,6 +4325,8 @@ export type Event =
   | ({ type: 'guidesChanged' } & GuidesChangedEvent)
   | ({ type: 'swatchesChanged' } & SwatchesChangedEvent)
   | ({ type: 'materialsChanged' } & MaterialsChangedEvent)
+  | ({ type: 'motionBlurChanged' } & MotionBlurChangedEvent)
+  | ({ type: 'colorManagementChanged' } & ColorManagementChangedEvent)
   | ({ type: 'historyChanged' } & HistoryChangedEvent)
   | ({ type: 'dirtyChanged' } & DirtyChangedEvent)
   | ({ type: 'transportChanged' } & TransportChangedEvent)
@@ -4308,6 +4365,8 @@ export interface CommandArgs {
   setGuides: SetGuides;
   setSwatches: SetSwatches;
   setMaterials: SetMaterials;
+  setMotionBlur: SetMotionBlur;
+  setColorManagement: SetColorManagement;
   importFiles: ImportFiles;
   importBytes: ImportBytes;
   relinkItem: RelinkItem;
@@ -4460,6 +4519,8 @@ export interface CommandResults {
   setGuides: Empty;
   setSwatches: Empty;
   setMaterials: Empty;
+  setMotionBlur: Empty;
+  setColorManagement: Empty;
   importFiles: ItemList;
   importBytes: ItemList;
   relinkItem: Empty;
@@ -4687,6 +4748,8 @@ export interface EventPayloads {
   guidesChanged: GuidesChangedEvent;
   swatchesChanged: SwatchesChangedEvent;
   materialsChanged: MaterialsChangedEvent;
+  motionBlurChanged: MotionBlurChangedEvent;
+  colorManagementChanged: ColorManagementChangedEvent;
   historyChanged: HistoryChangedEvent;
   dirtyChanged: DirtyChangedEvent;
   transportChanged: TransportChangedEvent;

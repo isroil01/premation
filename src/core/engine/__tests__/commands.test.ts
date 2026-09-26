@@ -357,6 +357,8 @@ export const CASES: Partial<Record<CommandType, Case>> = {
   setGuides: { cmd: () => ({ type: 'setGuides', patch: JSON.stringify({ rulers: true, grid: true, gridSpacing: 40 }) }) },
   setSwatches: { cmd: () => ({ type: 'setSwatches', swatches: [{ id: 'sw1', name: 'Ink', hex: '#112233' }, { id: '', name: '', hex: '#abc' }] }) },
   setMaterials: { cmd: () => ({ type: 'setMaterials', materials: [{ id: 'mat1', name: 'Glass', params: '{"shininess":40}', swatch: '#88aacc' }] }) },
+  setMotionBlur: { cmd: () => ({ type: 'setMotionBlur', patch: { enabled: false, shutterAngle: 400, samplesPerFrame: 12 } }) },
+  setColorManagement: { cmd: () => ({ type: 'setColorManagement', patch: { workingSpace: 'acesCg', displayTransform: 'pq', bitDepth: 32 } }) },
   applyJobResult: { cmd: () => ({ type: 'applyJobResult', job: 'job1' }), fails: 'notFound' },
   setPluginData: { cmd: (s) => ({ type: 'setPluginData', layer: s.A, group: `effects/${s.fx}`, key: 'state', data: new Uint8Array([1, 2, 3, 250]) }) },
 };
