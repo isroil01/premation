@@ -15,38 +15,31 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { insertBuiltLayers } from '@core/engine/offDocument';
 import pluginHost from './PluginHost';
 import { findLayerKind } from './layerKindRegistry';
 import { buildCustomLayerNode } from './customLayers';
 
 /**
- * Insert a layer of `kind` and wake the plugin that owns it.
+ * Insert a layer of `kind` into the active composition and wake the plugin
+ * that owns it — the menu's New ▸ <kind>.
  *
- * Returns the new layer's id, or null when the kind is not registered — which
- * happens if the user disabled the plugin between the menu opening and the
- * click, and is a no-op rather than an error.
+ * The layer is built from the SCHEMA off-document (every declared property at
+ * its declared default — the same node the plugin would have produced through
+ * `scene.createLayer`, because it is the same builder) and inserted with ONE
+ * engine `pasteLayers` (offDocument.ts): one undo entry, replayable, the id
+ * minted by the engine. Selected, because a layer a user just asked for and
+ * cannot see the properties of reads as nothing having happened.
+ *
+ * Resolves to the new layer's id, or null when the kind is not registered —
+ * which happens if the user disabled the plugin between the menu opening and
+ * the click, and is a no-op rather than an error — or the insert failed.
  */
-export function createCustomLayerFromMenu(kind: string): string | null {
-  const entry = findLayerKind(kind);
-  if (!entry) return null;
-
-  const id = `n_${Math.random().toString(36).slice(2, 10)}`;
-
-  runDocumentEdit(`New ${entry.kind.label}`, () => {
-    // Built from the SCHEMA, so every declared property starts at its declared
-    // default — the same node the plugin would have produced through
-    // `scene.createLayer`, because it is the same builder.
-    defaultSceneGraph.addNode(buildCustomLayerNode(id, entry.pluginId, entry.kind));
-    bumpScene();
-  });
-
-  // Selected, because a layer a user just asked for and cannot see the
-  // properties of reads as nothing having happened.
-  useSelectionStore.getState().set([id]);
-
+export async function createCustomLayerFromMenu(kind: string, comp: string = activeCompRootId() as string): Promise<string | null> {
+  const ids = await insertCustomLayer(kind, comp);
+  if (!ids || ids.length === 0) return null;
   /*
     Then wake the plugin.
 
@@ -56,27 +49,25 @@ export function createCustomLayerFromMenu(kind: string): string | null {
     responds — which is the same state a document opened without the plugin is
     in, and already handled everywhere.
   */
-  pluginHost.activateForDocument([kind]);
-
-  return id;
+  wakeCustomLayerKind(kind);
+  return ids[0] ?? null;
 }
 
 /**
- * The menu insert's BUILDER alone (B3z): add a layer of `kind` to `parentId`
- * (the active composition) and select it, with no undo scope and no plugin
- * wake-up — the UI runs it off-document and inserts the result as one
- * `pasteLayers` (offDocument.ts `insertBuiltLayers`), then calls
- * {@link wakeCustomLayerKind}. Unlike the legacy path above it lands INSIDE the
- * composition, as every other New ▸ layer does (AE: the active comp).
- * Null when the kind is not registered.
+ * The menu insert as ONE engine `pasteLayers` (B3z / B5): a layer of `kind`
+ * built off-document into `comp` (the active composition — AE: New ▸ lands in
+ * the active comp) and selected, with no plugin wake-up (the caller calls
+ * {@link wakeCustomLayerKind}). Resolves to the new ids ([] when the kind is
+ * not registered), or null when the insert failed (toasted).
  */
-export function buildCustomLayerInto(kind: string, parentId: string): string | null {
+export async function insertCustomLayer(kind: string, comp: string): Promise<string[] | null> {
   const entry = findLayerKind(kind);
-  if (!entry) return null;
-  const node = buildCustomLayerNode(`n_${Math.random().toString(36).slice(2, 10)}`, entry.pluginId, entry.kind);
-  defaultSceneGraph.addChild(parentId, node);
-  useSelectionStore.getState().set([node.id]);
-  return node.id;
+  if (!entry) return [];
+  return insertBuiltLayers(`New ${entry.kind.label}`, comp, () => {
+    const node = buildCustomLayerNode(`n_${Math.random().toString(36).slice(2, 10)}`, entry.pluginId, entry.kind);
+    defaultSceneGraph.addChild(comp, node);
+    useSelectionStore.getState().set([node.id]);
+  });
 }
 
 /** The menu label of a registered kind ("New Depth Image"), or null. */

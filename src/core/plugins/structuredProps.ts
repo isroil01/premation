@@ -65,9 +65,11 @@
  * capability answers exactly that without a version bump. See `capabilities.ts`.
  */
 
+import type { Command } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { setNodeFill, makeStop, type ColorStop, type FillPaint, type OpacityStop } from '@core/paint/fill';
-import { setNodeStroke, defaultStroke, getNodeStroke, type Stroke } from '@core/paint/stroke';
+import { makeStop, type ColorStop, type FillPaint, type OpacityStop } from '@core/paint/fill';
+import { defaultStroke, getNodeStroke, readNodeStrokes, type Stroke } from '@core/paint/stroke';
+import { catalogFor, shapeClosed, shapePathValue } from '@core/engine/props';
 
 /**
  * Bounds. Every one of these is a refusal, not a clamp.
@@ -285,67 +287,66 @@ function stroke(v: unknown, at: string, nodeId: string): Stroke {
 // ── The registry ────────────────────────────────────────────────────────────
 
 /**
- * Write onto the node's `Geometry` component, CREATING it when absent.
- *
- * Creating rather than refusing is the whole use case. A shape layer made by
- * `scene.createLayer` carries a Transform and a Style and no geometry — the
- * primitives that ship with one get it from `sceneInsert`, which a plugin does
- * not go through. Refusing here would mean a generator could make a layer and
- * then never give it an outline, which is the ceiling this module exists to
- * remove.
- *
- * `addComponent` rather than `node.components.push`: the components array is a
- * live view rebuilt from the engine on every read, so pushing to it mutates a
- * throwaway and is silently lost.
+ * A layer's outline as engine commands (B5). A layer that HAS an outline
+ * (a Geometry: `layer/path.points` is in its catalog) gets its Path's static
+ * value — the Closed switch kept; one that has none gets one through
+ * `setShapeOutline` (the engine gives a layer without Geometry one), which is
+ * what makes a generator able to make a layer and then give it an outline —
+ * the ceiling this module exists to remove.
  */
-function writeGeometry(nodeId: string, key: string, value: unknown): void {
+function outlineCommands(nodeId: string, runs: ReadonlyArray<{ points: BezierPoint[]; closed: boolean }>, single: boolean): Command[] {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) bad(`Layer "${nodeId}" no longer exists.`);
-  const geom = node!.components.find((c) => c.type === 'Geometry');
-  if (geom) {
-    defaultSceneGraph.writeProp(nodeId, geom.id, key, value);
-    return;
+  let hasPath = false;
+  try {
+    hasPath = catalogFor(nodeId).byPath.has('layer/path.points');
+  } catch {
+    hasPath = false;
   }
-  defaultSceneGraph.addComponent(nodeId, {
-    id: `${nodeId}_g`,
-    type: 'Geometry',
-    props: { [key]: value },
-  } as never);
+  if (single && hasPath) {
+    const run = runs[0]!;
+    return [{ type: 'setProperty', prop: { layer: nodeId, path: 'layer/path.points' }, value: { kind: 'path', value: shapePathValue(run.points, shapeClosed(node!)) } } as Command];
+  }
+  return [{ type: 'setShapeOutline', layer: nodeId, runs: runs.map((r) => shapePathValue(r.points, r.closed)) } as Command];
 }
 
 /**
  * Every structured prop, and how to write it.
  *
- * `parse` runs FIRST and completely — including the bounds — and only then does
- * `apply` touch the document. Splitting them is what lets `scene.apply` keep
- * its validate-all-then-apply-all promise for structured ops too: a batch that
- * would fail on op 40 must not have written op 39.
+ * `parse` runs FIRST and completely — including the bounds — and only then are
+ * the engine commands built (`commands`). Splitting them is what lets
+ * `scene.apply` keep its validate-all-then-apply-all promise for structured ops
+ * too: a batch that would fail on op 40 must not have written op 39.
  */
 interface StructuredProp {
   parse: (value: unknown, nodeId: string) => unknown;
-  apply: (nodeId: string, parsed: unknown) => void;
+  commands: (nodeId: string, parsed: unknown) => Command[];
 }
 
 const STRUCTURED: Readonly<Record<string, StructuredProp>> = Object.freeze({
   /** A single-subpath outline — the shorthand every simple generator wants. */
   points: {
     parse: (v) => points(v, 'points'),
-    apply: (id, parsed) => writeGeometry(id, 'points', parsed),
+    commands: (id, parsed) => outlineCommands(id, [{ points: parsed as BezierPoint[], closed: true }], true),
   },
   /** Several outlines on one layer: a donut, a letter with a counter. */
   subpaths: {
     parse: (v) => subpaths(v, 'subpaths'),
-    apply: (id, parsed) => writeGeometry(id, 'subpaths', parsed),
+    commands: (id, parsed) => outlineCommands(id, (parsed as Array<{ points: BezierPoint[]; open: boolean }>).map((r) => ({ points: r.points, closed: !r.open })), false),
   },
-  /** Solid or gradient fill. Routed through the fill STACK — see the header. */
+  /** Solid or gradient fill: the layer's PRIMARY fill paint (`layer/fillPaint` — the fill stack's first entry). */
   fillPaint: {
     parse: (v) => fillPaint(v, 'fillPaint'),
-    apply: (id, parsed) => setNodeFill(id, parsed as FillPaint),
+    commands: (id, parsed) => [{ type: 'setProperty', prop: { layer: id, path: 'layer/fillPaint' }, value: { kind: 'json', value: JSON.stringify(parsed) } } as Command],
   },
-  /** Outline paint. Patched onto the layer's existing stroke, not replacing it. */
+  /** Outline paint. Patched onto the layer's existing stroke (`layer/strokes`: the stack with stroke 1 replaced). */
   stroke: {
     parse: (v, nodeId) => stroke(v, 'stroke', nodeId),
-    apply: (id, parsed) => setNodeStroke(id, parsed as Stroke),
+    commands: (id, parsed) => {
+      const n = defaultSceneGraph.getNode(id);
+      const rest = n ? readNodeStrokes(n).slice(1) : [];
+      return [{ type: 'setProperty', prop: { layer: id, path: 'layer/strokes' }, value: { kind: 'json', value: JSON.stringify([parsed, ...rest]) } } as Command];
+    },
   },
 });
 
@@ -408,12 +409,12 @@ export function isStructuredProp(prop: string): boolean {
 }
 
 export type StructuredPlan =
-  | { ok: true; apply: () => void }
+  | { ok: true; commands: () => Command[] }
   | { ok: false; message: string };
 
 /**
- * Validate a structured write and return the applier, WITHOUT touching the
- * document.
+ * Validate a structured write and return its engine commands' builder,
+ * WITHOUT touching the document.
  *
  * The two-phase shape is the point: callers that batch (`scene.apply`) plan
  * every op before applying any, and a caller that only ever does one still
@@ -432,7 +433,7 @@ export function planStructuredWrite(prop: string, value: unknown, nodeId: string
   }
   try {
     const parsed = entry.parse(value, nodeId);
-    return { ok: true, apply: () => entry.apply(nodeId, parsed) };
+    return { ok: true, commands: () => entry.commands(nodeId, parsed) };
   } catch (e) {
     if (e instanceof Invalid) return { ok: false, message: e.message };
     throw e;

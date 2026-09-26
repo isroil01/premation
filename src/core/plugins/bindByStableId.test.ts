@@ -13,13 +13,15 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { seedDefaultScene } from '@core/scene/seedDefaultScene';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 import { defaultAnimation, layerIdRef, resolveLayerRef, isLayerIdRef } from '@motion/animation';
 import { usePluginStore } from '@stores/pluginStore';
 import { buildCustomLayerNode, customPropPath } from './customLayers';
 import { regenerateProxyChildren, resetRateLimitForTests } from './proxySubtree';
-import { migratePluginBindings } from './bindingMigration';
+import { migratePluginBindings } from '@core/persistence/pluginBindingMigration';
 import type { LayerKindContribution } from './layerKindSchema';
 
 const PLUGIN = 'studio.acme.depth';
@@ -38,21 +40,21 @@ const byName = (name: string): string | null => {
   return found;
 };
 
-beforeAll(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-});
+let h: Harness & { engine: LocalEngine };
 
 beforeEach(async () => {
+  // B5: regeneration is an engine batch — the app's engine, a fresh project.
+  h = await setupAppEngine();
   await usePluginStore.getState().hydrate();
   for (const p of [...usePluginStore.getState().plugins]) usePluginStore.getState().remove(p.manifest.id);
-  defaultSceneGraph.clear();
-  seedDefaultScene();
   resetRateLimitForTests();
   defaultAnimation.setLayerResolver(byName);
-  defaultSceneGraph.addNode(buildCustomLayerNode('depth-1', PLUGIN, KIND, { name: 'Hero depth' }));
+  // A layer of the active composition (the API addresses layers of compositions only).
+  defaultSceneGraph.addChild(activeCompRootId() as string, buildCustomLayerNode('depth-1', PLUGIN, KIND, { name: 'Hero depth' }));
   defaultAnimation.setKeyframe('depth-1', customPropPath('focal'), 0, 10);
   defaultAnimation.setKeyframe('depth-1', customPropPath('focal'), 4, 90);
 });
+afterEach(async () => { await h.dispose(); });
 
 describe('the resolution layer', () => {
   it('takes an id reference without consulting the name lookup at all', () => {
@@ -76,29 +78,29 @@ describe('the resolution layer', () => {
 });
 
 describe('a new proxy binding', () => {
-  function build(): string[] {
-    regenerateProxyChildren('depth-1', PLUGIN, 'Depth', [
+  async function build(): Promise<string[]> {
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Depth', [
       { key: 'p0', kind: 'shape', name: 'Plane 1',
         expressions: { x: `layer('Hero depth', '${customPropPath('focal')}')` } },
     ]);
     return defaultSceneGraph.getChildren('depth-1').map((c) => c.id);
   }
 
-  it('is written by id, even though the plugin wrote a name', () => {
+  it('is written by id, even though the plugin wrote a name', async () => {
     // A plugin naturally writes the parent's NAME — it is what the author sees.
     // Resolving it to a stable id happens once, at authoring time.
-    const [childId] = build();
+    const [childId] = await build();
     const src = defaultAnimation.getExpressionSrc(childId!, 'x')!;
     expect(src).toContain(layerIdRef('depth-1'));
     expect(src).not.toContain('Hero depth');
   });
 
-  it('evaluates IDENTICALLY after the parent is renamed', () => {
+  it('evaluates IDENTICALLY after the parent is renamed', async () => {
     /*
       The whole point. Before this, renaming the parent made every child read 0
       — silently, and nowhere near the rename.
     */
-    const [childId] = build();
+    const [childId] = await build();
     const before = defaultAnimation.sample(childId!, 'x', 4);
     expect(before).toBeCloseTo(90, 3);
 
@@ -109,10 +111,10 @@ describe('a new proxy binding', () => {
     expect(defaultAnimation.sample(childId!, 'x', 0)).toBeCloseTo(10, 3);
   });
 
-  it('leaves a reference to a layer that does not exist alone', () => {
+  it('leaves a reference to a layer that does not exist alone', async () => {
     // Rewriting it to `#undefined` would turn an already-broken reference into
     // a permanently broken and untraceable one.
-    regenerateProxyChildren('depth-1', PLUGIN, 'Depth', [
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Depth', [
       { key: 'p0', kind: 'shape', expressions: { x: `layer('Ghost layer', 'x')` } },
     ]);
     const [childId] = defaultSceneGraph.getChildren('depth-1').map((c) => c.id);

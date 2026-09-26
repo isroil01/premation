@@ -354,7 +354,8 @@ export async function convertSvgLayer(session: AiEngineSession, nodeId: string):
 /** Import generated / attached bytes as a footage item (`importBytes`); resolves to the item's record. */
 export async function importAssetBytes(session: AiEngineSession, file: File): Promise<ImportedAsset> {
   const data = new Uint8Array(await file.arrayBuffer());
-  const r = await session.apply([{ type: 'importBytes', files: [{ name: file.name, data, mimeType: file.type }] } as Command]);
+  // `source: ai` — generated / attached media, filed as the AI's (the cloud-upload policy of the asset store).
+  const r = await session.apply([{ type: 'importBytes', files: [{ name: file.name, data, mimeType: file.type, source: 'ai' }] } as Command]);
   const id = (r[0] as { items?: string[] }).items?.[0];
   const asset = id ? useAssetStore.getState().assets.find((a) => a.id === id) : undefined;
   if (!asset) throw new AiEngineError('io', `'${file.name}' was not imported`);

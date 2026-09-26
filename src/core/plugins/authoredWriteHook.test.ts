@@ -21,6 +21,8 @@ import { buildCustomLayerNode, customLayerComponent, customPropPath, isPluginOwn
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { defaultAnimation } from '@motion/animation';
 import type { LayerKindContribution } from './layerKindSchema';
 
@@ -133,10 +135,16 @@ describe('an authored edit reaches the plugin', () => {
 });
 
 describe('a user edit detaches a generated subtree', () => {
-  it('detaches wherever the edit came from, not only from the inspector', () => {
+  // B5: regeneration is an engine batch — the app's engine, a fresh project,
+  // the custom layer inside its composition.
+  let dispose: () => Promise<void> = async () => {};
+  beforeEach(async () => { dispose = (await setupAppEngine()).dispose; });
+  afterEach(async () => { await dispose(); });
+
+  it('detaches wherever the edit came from, not only from the inspector', async () => {
     bootWithKind();
-    defaultSceneGraph.addNode(buildCustomLayerNode('depth-1', PLUGIN, KIND));
-    regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [
+    defaultSceneGraph.addChild(activeCompRootId() as string, buildCustomLayerNode('depth-1', PLUGIN, KIND));
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [
       { key: 'a', kind: 'shape' },
       { key: 'b', kind: 'shape' },
     ]);
@@ -152,12 +160,12 @@ describe('a user edit detaches a generated subtree', () => {
     for (const id of ids) expect(isPluginOwned(defaultSceneGraph.getNode(id)!)).toBe(false);
   });
 
-  it('does not detach while the plugin is regenerating', () => {
+  it('does not detach while the plugin is regenerating', async () => {
     bootWithKind();
-    defaultSceneGraph.addNode(buildCustomLayerNode('depth-1', PLUGIN, KIND));
-    regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [{ key: 'a', kind: 'shape' }]);
-    // A second pass writes to the same children through the same path.
-    regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [{ key: 'a', kind: 'shape', props: { x: 40 } }]);
+    defaultSceneGraph.addChild(activeCompRootId() as string, buildCustomLayerNode('depth-1', PLUGIN, KIND));
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [{ key: 'a', kind: 'shape' }]);
+    // A second pass writes to the same children through the engine (a setProperty).
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [{ key: 'a', kind: 'shape', props: { x: 40 } }]);
 
     const id = defaultSceneGraph.getChildren('depth-1')[0]!.id;
     expect(isPluginOwned(defaultSceneGraph.getNode(id)!)).toBe(true);

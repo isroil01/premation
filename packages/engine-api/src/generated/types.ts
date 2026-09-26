@@ -1230,6 +1230,12 @@ export interface ImportBytesFile {
   interpretation?: InterpretationPatch;
   /** Where the bytes came from, when there is a file behind them (recorded for relink); absent = none. */
   originPath?: string;
+  /**
+   * B5 — who made the bytes, stored on the record (`source`): `user` (absent), `ai` (an AI tool's generated or
+   * attached media), `derived` (an automation client's generated image — kept off the Assets panel's shelf).
+   * Anything else is `invalidArgument`.
+   */
+  source?: string;
 }
 
 /** B3 — import footage from bytes. The media port stores the bytes (the project bundle / the device library, content-addressed) and returns the record; the item is added in the same undoable entry (undo removes the item; the stored bytes stay, as for importFiles). An empty list or empty data is `invalidArgument`; bytes the importer cannot decode are `io`. */
@@ -1948,12 +1954,16 @@ export interface SetDimensionsSeparated {
  * `member`: Premation's per-dimension expression on an UNSEPARATED vector (one axis's field in the inspector) —
  * only that dimension carries the source (its number, or component `member` of a vector result); absent = the
  * property's expression, on every dimension. A separated dimension is its own property (`transform/position/x`).
+ * B5 `owner`: the PLUGIN that wrote it (expression provenance, stored as the expression's `authoredBy` and saved
+ * with the document: a user can tell a formula they wrote from one a plugin left behind). Authorship is REPLACED,
+ * never inherited — a write without `owner` (the user's own edit) clears a plugin's mark.
  */
 export interface SetExpression {
   prop: PropRef;
   source: string;
   enabled: boolean;
   member?: number;
+  owner?: string;
 }
 
 /** Enable / disable expressions (the `=` switch). `member`: only that dimension's expression (see setExpression). */

@@ -1611,6 +1611,7 @@ struct ImportBytesFile {
   std::optional<ItemId> folder;
   std::optional<InterpretationPatch> interpretation;
   std::optional<std::string> origin_path;
+  std::optional<std::string> source;
   bool operator==(const ImportBytesFile&) const = default;
 };
 
@@ -2179,6 +2180,7 @@ struct SetExpression {
   std::string source;
   bool enabled = false;
   std::optional<std::uint32_t> member;
+  std::optional<std::string> owner;
   bool operator==(const SetExpression&) const = default;
 };
 

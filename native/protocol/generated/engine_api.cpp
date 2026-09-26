@@ -3844,6 +3844,7 @@ void encode(wire::Writer& w, const ImportBytesFile& v) {
   if (v.folder.has_value()) { w.varint(34U); w.str(*v.folder); }
   if (v.interpretation.has_value()) { w.varint(42U); { const std::size_t s = w.begin_ld(); encode(w, *v.interpretation); w.end_ld(s); } }
   if (v.origin_path.has_value()) { w.varint(50U); w.str(*v.origin_path); }
+  if (v.source.has_value()) { w.varint(58U); w.str(*v.source); }
 }
 
 Status decode(wire::Reader& r, ImportBytesFile& out) {
@@ -3885,6 +3886,12 @@ Status decode(wire::Reader& r, ImportBytesFile& out) {
         std::string e;
         if (!r.str(e)) return Status::truncated;
         out.origin_path = std::move(e);
+        break;
+      }
+      case 58U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.source = std::move(e);
         break;
       }
       default:
@@ -6961,6 +6968,7 @@ void encode(wire::Writer& w, const SetExpression& v) {
   w.varint(18U); w.str(v.source);
   w.varint(24U); w.boolean(v.enabled);
   if (v.member.has_value()) { w.varint(32U); w.varint(*v.member); }
+  if (v.owner.has_value()) { w.varint(42U); w.str(*v.owner); }
 }
 
 Status decode(wire::Reader& r, SetExpression& out) {
@@ -6990,6 +6998,12 @@ Status decode(wire::Reader& r, SetExpression& out) {
         std::uint32_t e = 0;
         if (!r.u32(e)) return Status::bad_value;
         out.member = std::move(e);
+        break;
+      }
+      case 42U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.owner = std::move(e);
         break;
       }
       default:

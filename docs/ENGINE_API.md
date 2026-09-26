@@ -335,7 +335,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | Command | Semantics / inverse |
 |---|---|
 | `importFiles` | Import files (sequence detection, target folder, interpretation, optional comp). Inverse: remove the items (files untouched). |
-| `importBytes` | B3 — import from bytes (a browser-picked / dropped file, a bundled sound, a generated image): the media port stores the bytes and returns the record. Inverse: remove the items (stored bytes untouched). |
+| `importBytes` | B3 — import from bytes (a browser-picked / dropped file, a bundled sound, a generated image): the media port stores the bytes and returns the record. B5 `source` per file: who made the bytes, stored on the record (`user` = absent, `ai`, `derived` — an automation client's generated image, kept off the Assets shelf); anything else is `invalidArgument`. Inverse: remove the items (stored bytes untouched). |
 | `relinkItem` | Point an item at another file (relink / Replace Footage). Inverse: old path (+ old interpretation unless kept). |
 | `reloadItems` | control — re-read from disk. |
 | `removeItems` | Remove items; with `removeUsingLayers` also their layers, otherwise error `locked` if used. Inverse: items and layers restored with the same ids and positions. |
@@ -407,7 +407,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `resetProperty` | Default value (a key at `time` if animated). Inverse: previous value/key. |
 | `setAnimated` | The stopwatch. On: one key at `time` with the current value. Off: remove all keys; static value = value at `time`. Inverse: exact previous keys/value. |
 | `setDimensionsSeparated` | Split/merge dimensions and their keys as AE does. Inverse: the previous keys exactly. |
-| `setExpression` | Set/replace; empty source removes. Returns diagnostics; a failing expression is stored disabled (AE). Inverse: previous source + enabled flag. |
+| `setExpression` | Set/replace; empty source removes. Returns diagnostics; a failing expression is stored disabled (AE). B5 `owner`: the plugin that wrote it (provenance, the expression's `authoredBy`, saved with the document); authorship is replaced, never inherited — a write without `owner` clears a plugin's mark. Inverse: previous source + enabled flag + owner. |
 | `setExpressionEnabled` | Inverse: previous flags. |
 | `convertExpressionToKeyframes` | Bake over a range at a step. Inverse: previous keys + expression. |
 | `linkProperty` | Pickwhip: sets an expression reading `target`. Inverse: previous expression. |
@@ -1200,6 +1200,52 @@ refusal fallbacks are gone. The routes:
   `reorderLayers` (Send to Back), `trimLayers` (a scene's in-point),
   `setLayerSwitches.threeD`, `layer/fillPaint`, `layer/strokes`.
 - **New:** `addEffect.id` — a caller-chosen effect id (both engines).
+
+**The plugin host** (ratchet plugins 41 → 1) no longer writes around the
+engine either (`src/core/plugins/hostApi.ts` has no legacy table):
+
+- `scene.createLayer` builds the layer off-document — a plugin layer kind
+  from its schema, an image layer bound to its asset, a primitive where the
+  menu insert puts it — and sends ONE `pasteLayers` into the ACTIVE
+  composition (a plugin layer used to be created as a composition-less root).
+  The menu's New ▸ <kind> is the same insert (`createCustomLayerFromMenu`).
+- `scene.apply` is ONE engine gesture: each op is the single call's command;
+  the first failing op aborts it (`endGesture{commit:false}`, which reverts
+  every op before it) and the error carries the op's index. One undo entry.
+- `animation.setExpression` → `setExpression` with **`owner`** (new, both
+  engines; the C++ `ExprState` gains `authored_by`, read and written as the
+  document's `authoredBy`). Colour-channel and other vector-member keyframes,
+  non-API easings and an empty `setKeyframes` run the per-track writer
+  off-document and send `setKeyframes` / `setAnimated` (assistantKeys.ts).
+- Structured `scene.setProperty` values are commands: `points` → the static
+  `layer/path.points` (or `setShapeOutline` on a layer with no outline yet),
+  `subpaths` → `setShapeOutline`, `fillPaint` → `layer/fillPaint`, `stroke` →
+  `layer/strokes` (structuredProps.ts).
+- `scene.setProxyChildren` → ONE batch: `deleteLayers` of the gone children,
+  `renameLayer` / `setProperty` / `setExpression{owner}` on the matched ones
+  (ids kept; a prop the API does not address refuses the regeneration), new
+  children built off-document and pasted into the proxy layer (engine ids).
+- `params.set` → the Inspector's own commands (pluginParamCommands.ts, moved
+  from layout/Inspector): the panel group seeded with its defaults, then the
+  param. Effect param supervision (`paramSupervision.ts`) → `setProperty` of
+  `effects/<id>/<param>`. `assets.createImage` → `importBytes` with
+  **`source: derived`** (new field, both engines).
+- A node that is not a layer of a composition is refused by name.
+- The load-time plugin-binding migration (`migratePluginBindings`) is part of
+  opening a document and moved to `src/core/persistence/pluginBindingMigration.ts`.
+
+What still writes around the engine (the ratchet: ai 1, plugins 1):
+`aiTransaction.ts`'s recorder flush before a snapshot commit (goes with the
+legacy recorder, below), and `proxySubtree.ts` `detachSubtree` — the ownership
+mark a USER edit clears on a generated subtree, from the write hook INSIDE the
+user's engine command (the `__ownedBy` mark is not an API property; it needs
+an engine-side rule in both engines: an authored write on an owned child
+clears the subtree's marks as part of the same command). The legacy debounce
+recorder (`LEGACY_DEBOUNCE_RECORDER`, `StoreSnapshotCommand`) cannot be
+deleted yet: the AI turn's snapshot commit still uses it for turns with a gap
+(`merge_paths`, `export_video`), and `runDocumentEdit` has callers outside the
+automation clients (src/core/scene, fonts, textTools, simulation, svg, and
+layout/Inspector/PolystarSection, layout/Scene/layerSwitchEdits).
 
 The Lottie importer's synchronous document context (`createLegacyDocumentContext`)
 moved to `src/core/lottie/lottieDocumentContext.ts`: it is an off-document

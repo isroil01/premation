@@ -1,9 +1,9 @@
 {
   "comment": "B5 ratchet (docs/ENGINE_API.md §15.6). Counts may only go DOWN; lower them with `node scripts/lint/automationWritesReport.mjs --update` after moving writes onto engine commands.",
-  "total": 42,
+  "total": 2,
   "areas": {
     "ai": 1,
-    "plugins": 41,
+    "plugins": 1,
     "scripts/automation": 0
   }
 }

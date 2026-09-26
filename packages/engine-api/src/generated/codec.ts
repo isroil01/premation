@@ -2291,6 +2291,7 @@ function encS_ImportBytesFile(w: Writer, v: T.ImportBytesFile): void {
   if (v.folder !== undefined) { w.byte(34); w.str(v.folder); }
   if (v.interpretation !== undefined) { w.byte(42); { const s = w.beginLd(); encS_InterpretationPatch(w, v.interpretation); w.endLd(s); } }
   if (v.originPath !== undefined) { w.byte(50); w.str(v.originPath); }
+  if (v.source !== undefined) { w.byte(58); w.str(v.source); }
 }
 function decS_ImportBytesFile(r: Reader, end: number, o: any): T.ImportBytesFile {
   let h_name = false;
@@ -2302,6 +2303,7 @@ function decS_ImportBytesFile(r: Reader, end: number, o: any): T.ImportBytesFile
   let v_folder: string | undefined;
   let v_interpretation: T.InterpretationPatch | undefined;
   let v_originPath: string | undefined;
+  let v_source: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -2311,6 +2313,7 @@ function decS_ImportBytesFile(r: Reader, end: number, o: any): T.ImportBytesFile
       case 34: v_folder = r.str(); break;
       case 42: v_interpretation = decS_InterpretationPatch(r, r.ldEnd(), {}); break;
       case 50: v_originPath = r.str(); break;
+      case 58: v_source = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -2324,6 +2327,7 @@ function decS_ImportBytesFile(r: Reader, end: number, o: any): T.ImportBytesFile
   if (v_folder !== undefined) o.folder = v_folder;
   if (v_interpretation !== undefined) o.interpretation = v_interpretation;
   if (v_originPath !== undefined) o.originPath = v_originPath;
+  if (v_source !== undefined) o.source = v_source;
   return o;
 }
 function encS_ImportBytes(w: Writer, v: T.ImportBytes): void {
@@ -5094,6 +5098,7 @@ function encS_SetExpression(w: Writer, v: T.SetExpression): void {
   w.byte(18); w.str(v.source);
   w.byte(24); w.bool(v.enabled);
   if (v.member !== undefined) { w.byte(32); w.u32(v.member); }
+  if (v.owner !== undefined) { w.byte(42); w.str(v.owner); }
 }
 function decS_SetExpression(r: Reader, end: number, o: any): T.SetExpression {
   let h_prop = false;
@@ -5103,6 +5108,7 @@ function decS_SetExpression(r: Reader, end: number, o: any): T.SetExpression {
   let v_source: string | undefined;
   let v_enabled: boolean | undefined;
   let v_member: number | undefined;
+  let v_owner: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5110,6 +5116,7 @@ function decS_SetExpression(r: Reader, end: number, o: any): T.SetExpression {
       case 18: v_source = r.str(); h_source = true; break;
       case 24: v_enabled = r.bool(); h_enabled = true; break;
       case 32: v_member = r.u32(); break;
+      case 42: v_owner = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -5121,6 +5128,7 @@ function decS_SetExpression(r: Reader, end: number, o: any): T.SetExpression {
   o.source = v_source;
   o.enabled = v_enabled;
   if (v_member !== undefined) o.member = v_member;
+  if (v_owner !== undefined) o.owner = v_owner;
   return o;
 }
 function encS_SetExpressionEnabled(w: Writer, v: T.SetExpressionEnabled): void {

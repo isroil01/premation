@@ -83,6 +83,9 @@ function interpretationPatch(p: InterpretationPatch): Partial<FootageInterpretat
   return out;
 }
 
+/** `ImportBytesFile.source` values (assetStore AssetSource). */
+const IMPORT_SOURCES: ReadonlySet<string> = new Set(['user', 'ai', 'derived']);
+
 const DEFAULT_RENDER: RenderSettings = {
   format: 'mp4-h264', outputPath: '', range: { start: 0, duration: 0 }, bitDepth: 'u8',
   includeAudio: true, includeAlpha: false, quality: 80, outputColorSpace: '', motionBlur: true, frameBlending: true,
@@ -146,6 +149,7 @@ export const itemHandlers: HandlerTable = {
       if (f.name.trim() === '') fail('invalidArgument', 'a file name is required');
       if (f.folder && !useAssetStore.getState().folders.some((x) => x.id === f.folder)) fail('notFound', `no folder '${f.folder}'`, { item: f.folder });
       if (f.interpretation) interpretationPatch(f.interpretation);
+      if (f.source !== undefined && !IMPORT_SOURCES.has(f.source)) fail('invalidArgument', `'${f.source}' is not a source (user, ai, derived)`);
     }
     const ids = cmd.files.map(() => ctx.mintId('item_'));
     const records: ImportedAsset[] = [];
@@ -172,7 +176,11 @@ export const itemHandlers: HandlerTable = {
         const snap = assetsSnapshot();
         const added = records.map((r, i) => {
           const f = cmd.files[i]!;
-          let a: ImportedAsset = { ...r, id: ids[i]!, ...(f.folder ? { folderId: f.folder } : {}) };
+          let a: ImportedAsset = {
+            ...r, id: ids[i]!, ...(f.folder ? { folderId: f.folder } : {}),
+            // B5: who made the bytes (the port stores it too; the record says it either way).
+            ...(f.source && f.source !== 'user' ? { source: f.source as ImportedAsset['source'] } : {}),
+          };
           if (f.interpretation) {
             const { __clear, ...patch } = interpretationPatch(f.interpretation);
             const interp: Record<string, unknown> = { ...(a.interpret ?? {}), ...patch };

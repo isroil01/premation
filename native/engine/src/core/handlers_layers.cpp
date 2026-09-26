@@ -545,7 +545,9 @@ ResultOf<api::RenameLayer> handle(const api::RenameLayer& c, HCtx& x) {
   d.node_mut(c.layer).name = newName;
   for (const Rewrite& r : rewrites) {
     const ExprState* cur = anim_expr(d, r.node, r.prop);
-    anim_set_expr_state(d, r.node, r.prop, ExprState{r.src, cur != nullptr ? cur->enabled : true});
+    // The rewrite keeps the expression's author (TS renameLayer keeps `authoredBy`).
+    anim_set_expr_state(d, r.node, r.prop,
+                        ExprState{r.src, cur != nullptr ? cur->enabled : true, cur != nullptr ? cur->authored_by : std::nullopt});
   }
   api::RenameLayerResult out;
   out.repaired = static_cast<std::uint32_t>(rewrites.size());

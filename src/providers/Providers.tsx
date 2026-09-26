@@ -16,7 +16,7 @@ import {
   usePreferenceStore,
 } from '@stores/preferenceStore';
 import { allLayerKinds } from '@core/plugins/layerKindRegistry';
-import { buildCustomLayerInto, customLayerLabel, wakeCustomLayerKind } from '@core/plugins/createCustomLayerFromMenu';
+import { createCustomLayerFromMenu } from '@core/plugins/createCustomLayerFromMenu';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { graph as docGraph, isLayer } from '@core/engine/doc';
 import { useLayoutStore } from '@stores/layoutStore';
@@ -2656,10 +2656,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
               // The plugin kind's schema builder runs off-document → ONE pasteLayers entry into the
               // active comp; the plugin wakes after, outside the entry (createCustomLayerFromMenu.ts).
               execute: async () => {
-                const label = customLayerLabel(kind);
-                if (!label) return;
-                const ids = await insertBuiltLayers(label, (activeCompIdNow() ?? 'comp_root'), () => buildCustomLayerInto(kind, (activeCompIdNow() ?? 'comp_root')));
-                if (ids && ids.length > 0) wakeCustomLayerKind(kind);
+                await createCustomLayerFromMenu(kind, activeCompIdNow() ?? 'comp_root');
               },
             });
           }

@@ -31,6 +31,7 @@
  */
 
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import { engine } from '@core/engine/engineInstance';
 
 /**
  * Every ceiling, in one block, because they only make sense relative to each
@@ -298,8 +299,8 @@ export async function readAssetPixels(
 /**
  * Create an image asset from a plugin's bytes.
  *
- * Goes through `useAssetStore.addAsset` — the same path as a user dropping a
- * file in — so a plugin-made image thumbnails, persists, can be reused on other
+ * Goes through the engine's `importBytes` — the same importer as a user
+ * dropping a file in — so a plugin-made image thumbnails, persists, can be reused on other
  * layers, and is not a special case anywhere downstream.
  *
  * Filed as `'derived'` rather than `'user'`, which is the one way it differs.
@@ -313,6 +314,8 @@ export async function readAssetPixels(
 export async function createImageAsset(
   pluginId: string,
   opts: { width: unknown; height: unknown; bytes: unknown; mime: unknown; name: unknown },
+  /** The undo entry's name (`<plugin name>: create image`). */
+  label?: string,
 ): Promise<{ assetId: string; width: number; height: number }> {
   const mime = typeof opts.mime === 'string' ? opts.mime : RAW_MIME;
   if (!(ACCEPTED_IMAGE_MIMES as readonly string[]).includes(mime)) {
@@ -366,9 +369,16 @@ export async function createImageAsset(
     const name = typeof opts.name === 'string' && opts.name.trim()
       ? opts.name.trim().slice(0, 80).replace(/[/\\]/g, '-')
       : `${pluginId}-image`;
-    const file = new File([blob], /\.png$/i.test(name) ? name : `${name}.png`, { type: 'image/png' });
-    const asset = await useAssetStore.getState().addAsset(file, null, { source: 'derived' });
-    return { assetId: asset.id, width, height };
+    // The engine's `importBytes` (B5): the same importer as a dropped file,
+    // one undoable Import entry named after the plugin, `source: derived`.
+    const res = await engine().batch(label ?? `${pluginId}: create image`, [{
+      type: 'importBytes',
+      files: [{ name: /\.png$/i.test(name) ? name : `${name}.png`, data: new Uint8Array(await blob.arrayBuffer()), mimeType: 'image/png', source: 'derived' }],
+    }], { origin: 'plugin' });
+    if (!res.ok) refuse('asset-import-failed', res.error.message || res.error.code);
+    const assetId = (res.value[0] as { items?: string[] } | undefined)?.items?.[0];
+    if (!assetId) refuse('asset-import-failed', 'the image was not imported.');
+    return { assetId: assetId!, width, height };
   } finally {
     release();
   }

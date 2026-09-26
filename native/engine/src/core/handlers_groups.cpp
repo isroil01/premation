@@ -1240,7 +1240,7 @@ bool apply_preset(HCtx& x, const Json& preset, const std::string& layer, double 
     for (const Json& e : exprs.arr()) {
       const std::string prop = e.at("prop").str();
       const ExprState* cur = anim_expr(d, layer, prop);
-      anim_set_expr_state(d, layer, prop, ExprState{e.at("expr").str(), cur != nullptr ? cur->enabled : true});
+      anim_set_expr_state(d, layer, prop, ExprState{e.at("expr").str(), cur != nullptr ? cur->enabled : true, std::nullopt});
     }
   }
   return true;

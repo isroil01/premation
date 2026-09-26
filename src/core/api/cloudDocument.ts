@@ -30,7 +30,7 @@ import { migrateDocument } from '@core/project/migrations';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { usePluginStore } from '@stores/pluginStore';
 import { collectPluginReferences, type DocumentPluginReference } from '@core/plugins/customLayers';
-import { migratePluginBindings } from '@core/plugins/bindingMigration';
+import { migratePluginBindings } from '@core/persistence/pluginBindingMigration';
 import { captureProjectStorage, restoreProjectStorage } from '@core/plugins/pluginStorage';
 import { rebindAssetSrcs } from '@core/scene/assetRebind';
 import {

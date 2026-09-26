@@ -44,8 +44,13 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { rewriteNameRefsToIds } from './bindingMigration';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import { bumpScene } from '@stores/sceneStore';
+import type { Command } from '@motion/engine-api';
+import { engine } from '@core/engine/engineInstance';
+import { compOfLayer, layerSubtree } from '@core/engine/doc';
+import { buildLayerFragment, type BuiltLayers } from '@core/engine/offDocument';
+import { propRefForTrack } from '@core/engine/propRefs';
+import { activePlayheadSeconds, propWriteCommand } from '@core/engine/trackWrites';
 import type { SceneNode } from '../types';
 import { OWNED_BY_KEY, ownerOf } from './customLayers';
 
@@ -193,17 +198,28 @@ export function resetRateLimitForTests(): void {
 /**
  * Bring a proxy layer's children into line with what the plugin asked for.
  *
- * One `runDocumentEdit` entry for the whole thing — a regeneration is one
- * conceptual action, and a user undoing "Depth Image: update layers" should not
- * have to press Ctrl+Z once per generated child.
+ * ONE engine batch for the whole thing (B5, origin plugin) — a regeneration is
+ * one conceptual action, and a user undoing "Depth Image: update layers"
+ * should not have to press Ctrl+Z once per generated child:
+ *
+ *   gone       `deleteLayers` of the children the plugin no longer lists;
+ *   matched    keep their ids — `renameLayer`, a `setProperty` per changed
+ *              prop, a `setExpression` (owner: the plugin) per changed binding;
+ *   new        built off-document (marked, props and bindings in place) and
+ *              inserted with ONE `pasteLayers` into the proxy layer — the
+ *              engine mints their ids.
+ *
+ * A prop or binding the engine API does not address on a matched child is
+ * refused (the whole regeneration, before anything is sent) rather than
+ * written around the engine.
  */
-export function regenerateProxyChildren(
+export async function regenerateProxyChildren(
   parentId: string,
   pluginId: string,
   pluginName: string,
   specs: readonly ProxyChildSpec[],
   now = 0,
-): RegenerateResult {
+): Promise<RegenerateResult> {
   const parent = defaultSceneGraph.getNode(parentId);
   if (!parent) return { created: [], updated: [], removed: [] };
 
@@ -223,47 +239,139 @@ export function regenerateProxyChildren(
     return { created: [], updated: [], removed: [] };
   }
 
+  const comp = compOfLayer(parentId);
+  if (!comp) throw new Error(`"${parent.name ?? parentId}" is not a layer of a composition, so its children cannot be generated.`);
+
   const result: RegenerateResult = { created: [], updated: [], removed: [] };
   // Captured once: the diff may rename children, and every binding in this
   // pass must resolve against the same parent.
   const parentRef = { id: parentId, name: parent.name ?? parentId };
 
-  runDocumentEdit(`${pluginName}: update layers`, () => {
-    withRegeneration(() => {
-      const byKey = new Map<string, SceneNode>();
-      for (const child of existingChildren) {
-        const key = keyOf(child);
-        if (key !== null) byKey.set(key, child);
-      }
+  const byKey = new Map<string, SceneNode>();
+  for (const child of existingChildren) {
+    const key = keyOf(child);
+    if (key !== null) byKey.set(key, child);
+  }
+  const wanted = new Set(specs.map((s) => s.key));
 
-      const wanted = new Set(specs.map((s) => s.key));
+  const cmds: Command[] = [];
+  // Gone from the plugin's answer.
+  const doomed: string[] = [];
+  for (const [key, child] of byKey) {
+    if (wanted.has(key)) continue;
+    for (const id of layerSubtree(child.id) ?? [child.id]) if (!doomed.includes(id)) doomed.push(id);
+    result.removed.push(child.id);
+  }
+  if (doomed.length > 0) cmds.push({ type: 'deleteLayers', layers: doomed } as Command);
 
-      // Gone from the plugin's answer.
-      for (const [key, child] of byKey) {
-        if (wanted.has(key)) continue;
-        defaultSceneGraph.removeNode(child.id);
-        result.removed.push(child.id);
-      }
+  // Matched: keep the ID. Everything referencing it — selection, parenting,
+  // another layer's expression — keeps working.
+  const refused: string[] = [];
+  const fresh: ProxyChildSpec[] = [];
+  for (const spec of specs) {
+    const existing = byKey.get(spec.key);
+    if (!existing) { fresh.push(spec); continue; }
+    cmds.push(...updateCommands(existing, spec, pluginId, parentRef, refused));
+    result.updated.push(existing.id);
+  }
+  if (refused.length > 0) {
+    throw new Error(`These generated values are not properties the engine can set: ${refused.join(', ')}.`);
+  }
 
-      for (const spec of specs) {
-        const existing = byKey.get(spec.key);
-        if (existing) {
-          // Matched: keep the ID. Everything referencing it — selection,
-          // parenting, another layer's expression — keeps working.
-          applySpec(existing.id, spec, pluginId, parentRef);
-          result.updated.push(existing.id);
-          continue;
+  // New: built whole, off-document, and pasted into the proxy layer.
+  let built: BuiltLayers | null = null;
+  if (fresh.length > 0) {
+    // Regenerating: the scratch writes are not a user's edit (no detach).
+    regenerating += 1;
+    try {
+      built = buildLayerFragment(comp, () => {
+        for (const spec of fresh) {
+          const id = `${parentId}__${sanitiseKey(spec.key)}`;
+          defaultSceneGraph.addChild(parentId, buildChild(id, spec, pluginId));
+          // Props and bindings in place (SCRATCH writes: the build is off-document).
+          const t = defaultSceneGraph.getNode(id)?.components.find((c) => c.type === 'Transform');
+          for (const [name, value] of Object.entries(spec.props ?? {})) {
+            if (name.startsWith('__') || !t) continue; // Bookkeeping is the host's.
+            defaultSceneGraph.writeProp(id, t.id, name, value);
+          }
+          for (const [prop, src] of Object.entries(bindByStableId(spec.expressions ?? {}, parentRef.id, parentRef.name))) {
+            defaultAnimation.setExpression(id, prop, src, pluginId);
+          }
         }
-        const id = `${parentId}__${sanitiseKey(spec.key)}`;
-        defaultSceneGraph.addChild(parentId, buildChild(id, spec, pluginId));
-        applySpec(id, spec, pluginId, parentRef);
-        result.created.push(id);
-      }
-    });
-    bumpScene();
-  });
+      });
+    } finally {
+      regenerating -= 1;
+    }
+    if (built) {
+      cmds.push({
+        type: 'pasteLayers', comp, fragment: built.fragment, index: built.index, ...(built.parent ? { parent: built.parent } : {}),
+      } as Command);
+    }
+  }
+  if (cmds.length === 0) return result;
 
+  regenerating += 1;
+  let res;
+  try {
+    res = await engine().batch(`${pluginName}: update layers`, cmds, { origin: 'plugin' });
+  } finally {
+    regenerating -= 1;
+  }
+  if (!res.ok) throw new Error(res.error.message || res.error.code);
+  if (built) {
+    const pasted = res.value[res.value.length - 1] as { layers?: string[] } | undefined;
+    const ids = pasted?.layers ?? [];
+    // The fragment's top layers are the new children, in build order.
+    for (const top of built.tops) {
+      const at = built.scratchIds.indexOf(top);
+      const id = at >= 0 ? ids[at] : undefined;
+      if (id) result.created.push(id);
+    }
+  }
   return result;
+}
+
+/** A matched child's changes as engine commands (props that did not change send nothing). */
+function updateCommands(
+  child: SceneNode,
+  spec: ProxyChildSpec,
+  pluginId: string,
+  parent: { id: string; name: string },
+  refused: string[],
+): Command[] {
+  const out: Command[] = [];
+  const t = child.components.find((c) => c.type === 'Transform');
+  if (!t) return out;
+  const name = spec.name?.slice(0, 80);
+  if (name && child.name !== name) out.push({ type: 'renameLayer', layer: child.id, name } as Command);
+  const at = activePlayheadSeconds();
+  const props = t.props as Record<string, unknown>;
+  for (const [key, value] of Object.entries(spec.props ?? {})) {
+    if (key.startsWith('__')) continue; // Bookkeeping is the host's.
+    if (Object.is(props[key], value)) continue;
+    const cmds = propWriteCommand(child, t.id, key, value, at);
+    if (cmds) out.push(...cmds);
+    else refused.push(`${spec.key}.${key}`);
+  }
+  /*
+    Bindings, with provenance (`owner`): this is how a proxy layer ANIMATES —
+    the child references the parent's animated property and the engine
+    evaluates it, so the subtree keeps animating in a document opened with the
+    plugin uninstalled. Proxy output is expression-bearing by design, so a
+    document ends up full of expressions the user did not write; the origin
+    label is what keeps "why does this layer have an expression" answerable.
+  */
+  for (const [prop, src] of Object.entries(bindByStableId(spec.expressions ?? {}, parent.id, parent.name))) {
+    if (defaultAnimation.getExpressionSrc(child.id, prop) === src && defaultAnimation.expressionsAuthoredBy(pluginId).some((e) => e.nodeId === child.id && e.prop === prop)) continue;
+    const r = propRefForTrack(child.id, prop);
+    if (!r || !r.members.includes(prop)) { refused.push(`${spec.key}.${prop} (expression)`); continue; }
+    const enabled = defaultAnimation.hasExpression(child.id, prop) ? defaultAnimation.isExpressionEnabled(child.id, prop) : true;
+    out.push({
+      type: 'setExpression', prop: r.ref, source: src, enabled, owner: pluginId,
+      ...(r.members.length > 1 ? { member: r.member } : {}),
+    } as Command);
+  }
+  return out;
 }
 
 /** The stable key a generated child was created with. */
@@ -301,44 +409,6 @@ function buildChild(id: string, spec: ProxyChildSpec, pluginId: string): SceneNo
       },
     }],
   };
-}
-
-function applySpec(id: string, spec: ProxyChildSpec, pluginId: string, parent?: { id: string; name: string }): void {
-  const node = defaultSceneGraph.getNode(id);
-  const component = node?.components.find((c) => c.type === 'Transform');
-  if (!node || !component) return;
-
-  // Re-marked on every pass: a child that somehow lost its mark and is still
-  // being generated is a child the plugin still owns.
-  defaultSceneGraph.writeProp(id, component.id, OWNED_BY_KEY, pluginId);
-  defaultSceneGraph.writeProp(id, component.id, '__proxyKey', spec.key);
-  if (spec.name) node.name = spec.name.slice(0, 80);
-
-  for (const [name, value] of Object.entries(spec.props ?? {})) {
-    if (name.startsWith('__')) continue; // Bookkeeping is the host's.
-    defaultSceneGraph.writeProp(id, component.id, name, value);
-  }
-
-  /*
-    Bindings, with provenance.
-
-    This is how a proxy layer ANIMATES: the child references the parent's
-    animated property (`layer('Depth Image', 'plugin.focal')`) and the engine
-    evaluates it, so the subtree keeps animating in a document opened with the
-    plugin uninstalled — no plugin involved at runtime.
-
-    `authoredBy` is not decoration. Proxy output is expression-bearing by
-    design, so a document ends up full of expressions the user did not write.
-    Without an origin label, "why does this layer have an expression on it"
-    becomes unanswerable months later, and the answer is not recoverable from
-    anything else in the file.
-  */
-  const bound = parent
-    ? bindByStableId(spec.expressions ?? {}, parent.id, parent.name)
-    : (spec.expressions ?? {});
-  for (const [prop, src] of Object.entries(bound)) {
-    defaultAnimation.setExpression(id, prop, src, pluginId);
-  }
 }
 
 /**

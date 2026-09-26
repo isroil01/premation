@@ -35,7 +35,9 @@ import { resetRateLimitForTests } from './proxySubtree';
 import { resetEffectsForTests } from './pluginEffects';
 import { customPropPath, isPluginOwned, readCustomLayer } from './customLayers';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { seedDefaultScene } from '@core/scene/seedDefaultScene';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { defaultAnimation } from '@motion/animation';
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
@@ -101,7 +103,12 @@ beforeAll(async () => {
 });
 afterAll(() => { pluginHost.setWorkerFactory(null); });
 
-beforeEach(() => {
+let h: Harness & { engine: LocalEngine };
+
+beforeEach(async () => {
+  // B5: plugin writes are engine commands — the app's engine, a fresh project
+  // (a real composition, every time).
+  h = await setupAppEngine();
   defaultAnimation.setLayerResolver((name) => {
     for (const root of defaultSceneGraph.getRoots()) {
       if (root.name === name) return root.id;
@@ -117,10 +124,8 @@ beforeEach(() => {
   resetNotifierForTests();
   resetRateLimitForTests();
   resetEffectsForTests();
-  defaultSceneGraph.clear();
-  defaultAnimation.clear();
-  seedDefaultScene();
 });
+afterEach(async () => { await h.dispose(); });
 
 /**
  * Author a document containing all three kinds of plugin content.
@@ -134,13 +139,14 @@ async function authorDocument(): Promise<{ worker: FakeWorker; customLayerId: st
   // The ordinary layer first: `insertPrimitive` parents to the selection, so a
   // shape created after the custom layer would land INSIDE its proxy subtree
   // and the subtree assertions would be counting the wrong thing.
-  const nativeLayerId = (worker.callAndWait('scene.createLayer', {
+  // B5: creation and regeneration are engine batches (async).
+  const nativeLayerId = (await worker.callAsync('scene.createLayer', {
     kind: 'shape',
     name: 'Plain rectangle',
   }) as { value: string }).value;
 
   // 1. A custom layer of a plugin-declared kind…
-  const customLayerId = (worker.callAndWait('scene.createLayer', {
+  const customLayerId = (await worker.callAsync('scene.createLayer', {
     kind: `${PLUGIN}.depthImage`,
     name: 'Hero depth',
     props: { focal: 72, planes: 3, mode: 'displace' },
@@ -153,7 +159,7 @@ async function authorDocument(): Promise<{ worker: FakeWorker; customLayerId: st
   ]);
 
   // 2. …a proxy subtree beneath it…
-  worker.callAndWait('scene.setProxyChildren', customLayerId, planeSpecs('Hero depth', 3));
+  await worker.callAsync('scene.setProxyChildren', customLayerId, planeSpecs('Hero depth', 3));
 
   // 3. …and a plugin effect on the ordinary layer.
   const effectId = (await worker.callAsync(

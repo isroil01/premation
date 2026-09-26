@@ -226,6 +226,10 @@ ResultOf<api::ImportBytes> handle(const api::ImportBytes& c, HCtx& x) {
       fail(ErrorCode::not_found, "no folder '" + *f.folder + "'", {.item = *f.folder});
     }
     if (f.interpretation) (void)interpretation_patch(*f.interpretation);
+    // B5: who made the bytes (assetStore AssetSource).
+    if (f.source && *f.source != "user" && *f.source != "ai" && *f.source != "derived") {
+      fail(ErrorCode::invalid_argument, "'" + *f.source + "' is not a source (user, ai, derived)");
+    }
   }
   std::vector<std::string> ids;
   for (std::size_t i = 0; i < c.files.size(); ++i) ids.push_back(x.mint_id("item_"));
@@ -246,6 +250,7 @@ ResultOf<api::ImportBytes> handle(const api::ImportBytes& c, HCtx& x) {
     Json a = records[i];
     a.set("id", Json::string(ids[i]));
     if (f.folder && !f.folder->empty()) a.set("folderId", Json::string(*f.folder));
+    if (f.source && *f.source != "user") a.set("source", Json::string(*f.source));
     if (f.interpretation) a = with_interpretation(a, interpretation_patch(*f.interpretation));
     items.assets.push_back(std::move(a));
   }
