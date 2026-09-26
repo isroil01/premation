@@ -627,7 +627,13 @@ std::vector<Json> Walk::effects_of(const doc::Node& n, const Values& a, std::opt
   std::vector<Json> resolved = resolve_effect_params(own, a, layerTime);
   {  // path / paint effects' resolved geometry (effect_handoff.cpp)
     std::vector<std::string> notes;
-    resolve_effect_handoffs(resolved, n, a, layerTime, c_.measurer, notes);
+    // buildSnapshot's `anim` bound to this node (Write-on's dab history).
+    HandoffAnim anim{
+        [this, &n](std::string_view prop, double tt) { return anim_sample_of(n.id, prop, tt); },
+        [this, &n](std::string_view prop) { return !wn_.is_overridden(n.id, prop) && doc::anim_is_animated(d_, sid(n.id), prop); },
+        std::nullopt};
+    if (const auto span = doc::anim_time_span(d_, sid(n.id))) anim.firstKey = span->start;
+    resolve_effect_handoffs(resolved, n, a, layerTime, c_.measurer, notes, &anim);
     if (note != nullptr) {
       for (std::string& w : notes) unported(*note, n, std::move(w));
     }
