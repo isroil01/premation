@@ -6,7 +6,8 @@
  *
  *   lifecycle     ProjectManager delegates New / Open / Save / Save As /
  *                 snapshot / Close to EngineDocumentSession (engine requests;
- *                 the engine reads and writes the files, temp + rename).
+ *                 the engine reads and writes the files, temp + rename —
+ *                 `.motion` bundles and Save Portable Copy's zip included).
  *   dirty dot     the active tab's unsaved flag follows `mirror.dirty` (the
  *                 engine's dirtyChanged), not the TypeScript bus traffic.
  *   autosave      every 60 s, `session.autosave()` — the engine writes a
@@ -27,6 +28,8 @@ import { processEngine, processEngineBridge } from '@core/engine/process/process
 import { installEngineTransport, type EngineTransportStats } from '@core/engine/engineTransport';
 import { getProjectManager } from '@core/services/coreServices';
 import { projectNameFromFilePath } from '@core/project/projectName';
+import { isBundlePath } from '@core/project/bundle/bundleProjectIO';
+import { isLocalFirst } from '@core/config/flags';
 import { documentMirror } from '@stores/documentMirror';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
@@ -106,6 +109,8 @@ export async function installEngineOwnedSession(track: (dispose: () => void) => 
     files: preloadRecoveryFiles,
     index: localRecoveryIndex,
     now: () => Date.now(),
+    // F2 bundles: where the page would write a `.motion` directory bundle, the engine does.
+    formatFor: (p) => (isLocalFirst() && isBundlePath(p) ? 'bundle' : 'auto'),
   });
   const pm = getProjectManager();
   pm.setEngineDocument(session);

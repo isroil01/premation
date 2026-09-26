@@ -86,9 +86,24 @@ async function writeViaElectron(bytes: Uint8Array, filename: string): Promise<st
   return path;
 }
 
+/**
+ * F2: the ENGINE owns the document — it packs the zip itself (the page holds
+ * only a mirror, so there is nothing here to capture). Desktop only: the engine
+ * writes to a path, so the native save dialog picks one.
+ */
+async function saveToComputerThroughEngine(filename: string): Promise<LocalSaveResult> {
+  const choose = window.motionEditor?.project?.chooseSavePath;
+  if (!choose) return { status: 'failed', error: 'Saving a portable copy needs the desktop app.' };
+  const path = await choose(filename);
+  if (!path) return { status: 'cancelled' };
+  await getProjectManager().snapshotPortableTo(path);
+  return { status: 'saved', path, skipped: [] };
+}
+
 /** Capture the live project and write a portable `.motion` file. */
 export async function saveToComputer(name = suggestedName()): Promise<LocalSaveResult> {
   try {
+    if (getProjectManager().engineOwned) return await saveToComputerThroughEngine(`${stem(name)}.motion`);
     const captured = captureDocument();
     const { document, assets, skipped } = await embedLiveAssets(captured);
     const bytes = packPortableMotion(document, assets);

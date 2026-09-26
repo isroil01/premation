@@ -21,6 +21,12 @@
  *   Save / Save As saveProject{path}                  (the engine writes; dirty clears, path moves)
  *   Save a Copy    saveProject{path, copy:true}       (path and dirty unchanged — also the
  *                                                     export supervisor's snapshot)
+ *   Portable Copy  saveProject{path, copy:true, format:'portable'}  (the `.motion` zip)
+ *
+ * Save / Save As / Save a Copy carry `format` from `formatFor(path)`: the app
+ * asks for `bundle` where the page would have written a `.motion` directory
+ * bundle (LOCAL_FIRST), so the ENGINE writes the bundle — chunks, manifest
+ * last, footage collected — and the page never serializes it (F2 "bundles").
  *   Revert         revertProject
  *   Close          newProject
  *   Autosave       saveProject{recoveryPath, copy:true} when the MIRROR says dirty,
@@ -40,7 +46,7 @@
  * on this machine, like recent projects — never in the document).
  */
 
-import type { EngineClient, EngineResult, OpenProjectResult, SaveProjectResult } from '@motion/engine-api';
+import type { EngineClient, EngineResult, OpenProjectResult, ProjectFormat, SaveProjectResult } from '@motion/engine-api';
 
 /** What the session reads from the document mirror (DocumentMirror satisfies it). */
 export interface MirrorView {
@@ -85,6 +91,12 @@ export interface EngineDocumentSessionOptions {
   files: RecoveryFiles;
   index: RecoveryIndex;
   now: () => number;
+  /**
+   * The form a save to `path` asks the engine for (saveProject's `format`).
+   * Default `auto`: the engine keeps the target's form. The app passes
+   * `bundle` for a `.motion` path under LOCAL_FIRST (RoutedProjectStorage's rule).
+   */
+  formatFor?: (path: string) => ProjectFormat;
 }
 
 /** A lifecycle request the engine refused (the message is the engine's). */
@@ -129,14 +141,25 @@ export class EngineDocumentSession {
   async save(path?: string): Promise<SaveProjectResult> {
     const target = path ?? this.projectPath;
     if (!target) throw new DocumentLifecycleError('saveProject', 'invalidArgument', 'the project has no path yet; pass one');
-    const r = await this.run('saveProject', this.o.engine().execute({ type: 'saveProject', path: target, copy: false }));
+    const r = await this.run('saveProject', this.o.engine().execute({ type: 'saveProject', path: target, copy: false, ...this.format(target) }));
     await this.dropRecovery();
     return r;
   }
 
   /** Save a Copy / the export supervisor's snapshot: the document keeps its path and dirty flag. */
   async saveCopy(path: string): Promise<SaveProjectResult> {
-    return this.run('saveProject', this.o.engine().execute({ type: 'saveProject', path, copy: true }));
+    return this.run('saveProject', this.o.engine().execute({ type: 'saveProject', path, copy: true, ...this.format(path) }));
+  }
+
+  /** Save Portable Copy: the engine packs the `.motion` zip; path and dirty unchanged. */
+  async savePortableCopy(path: string): Promise<SaveProjectResult> {
+    return this.run('saveProject', this.o.engine().execute({ type: 'saveProject', path, copy: true, format: 'portable' }));
+  }
+
+  /** `{format}` for a save to `path`; nothing for `auto` (the request stays as it was before F2 bundles). */
+  private format(path: string): { format?: ProjectFormat } {
+    const f = this.o.formatFor?.(path) ?? 'auto';
+    return f === 'auto' ? {} : { format: f };
   }
 
   async revert(): Promise<void> {

@@ -4,7 +4,10 @@
  * §15.3 "Attach real EnginePorts"):
  *
  *   readProject / writeProject → ProjectManager's storage (bundle or single
- *       file; the storage owns temp-file + rename and footage collection)
+ *       file; the storage owns temp-file + rename and footage collection).
+ *       saveProject's `format` (F2) picks the form: `bundle` / `json` go to
+ *       that storage strategy, `portable` is portableMotion.ts's zip written
+ *       through the desktop bridge, `auto` is the storage's own routing
  *   importFile                 → the desktop preload bridge (`file.readBytes`)
  *       + the asset store's importer (`importMediaFile` → `addAsset`), so a
  *       file imported through the API is ingested, content-addressed and
@@ -24,12 +27,22 @@ import type { ProjectFile, VersionedDocument } from '@core/types';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { canImportFromDisk, fileNameOf, importMediaFile, mimeForPath } from '@core/assets/local/importFromDisk';
 import { probeMedia } from '@core/assets/mediaProbe';
+import { embedLiveAssets, packPortableMotion } from '@core/project/portableMotion';
 
 /** The slice of ProjectManager the file ports need (a fake in tests). */
 export interface ProjectFileAccess {
   readDocument(path: string): Promise<VersionedDocument | null>;
-  writeDocument(path: string, doc: VersionedDocument): Promise<void>;
+  writeDocument(path: string, doc: VersionedDocument, form?: 'json' | 'bundle'): Promise<void>;
 }
+
+/** Bytes to a path (temp file + rename in main); the desktop bridge's by default. */
+export type BytesWriter = (path: string, bytes: Uint8Array) => Promise<void>;
+
+const bridgeWriteBytes: BytesWriter = async (path, bytes) => {
+  const write = typeof window !== 'undefined' ? window.motionEditor?.file?.writeBytes : undefined;
+  if (!write) throw new Error('writing a portable .motion to a path needs the desktop app');
+  await write(path, bytes);
+};
 
 /** A pre-1.1 `.motion` is a bare scene file; lift it into an EditorDocument. */
 function asEditorDocument(doc: VersionedDocument): EditorDocument {
@@ -65,7 +78,7 @@ function detachFromSession(id: string): void {
   useAssetStore.setState((s) => ({ assets: s.assets.filter((a) => a.id !== id) }));
 }
 
-export function createAppEnginePorts(project: ProjectFileAccess): EnginePorts {
+export function createAppEnginePorts(project: ProjectFileAccess, writeBytes: BytesWriter = bridgeWriteBytes): EnginePorts {
   return {
     readProject: async (path) => {
       const doc = await project.readDocument(path);
@@ -73,8 +86,15 @@ export function createAppEnginePorts(project: ProjectFileAccess): EnginePorts {
       return asEditorDocument(doc);
     },
 
-    writeProject: async (path, doc) => {
-      await project.writeDocument(path, doc);
+    writeProject: async (path, doc, format) => {
+      if (format === 'portable') {
+        // Save Portable Copy (localProjectIO.ts `saveToComputer`'s packing).
+        const { document, assets } = await embedLiveAssets(doc);
+        const bytes = packPortableMotion(document, assets);
+        await writeBytes(path, bytes);
+        return { bytes: bytes.byteLength };
+      }
+      await project.writeDocument(path, doc, format === 'json' || format === 'bundle' ? format : undefined);
       // The storage does not report a size; the serialised document is the
       // honest lower bound (a bundle's footage is collected beside it).
       return { bytes: JSON.stringify(doc).length };
