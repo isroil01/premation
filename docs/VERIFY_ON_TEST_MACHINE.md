@@ -32,7 +32,7 @@ Each new C++ parity test prints WARN and skips while its fixture is missing.
 - [ ] `getLayerTransforms` returns world 4×4 for 3D layers/cameras/lights in both engines.
 - Not wired yet: Pixel Motion / deinterlace kernels (need the GPU media feed).
 
-### f2-ownership (C++ syntax-checked only; TS linted; no jest, no tsc run)
+### f2-ownership (C++: bundle_io / engine_ctx / session / test_bundle_io pass `clang++ -fsyntax-only` with the engine's -Werror flags; TS linted; no jest, no tsc, nothing linked)
 - [ ] `npx tsc --noEmit` — new async signatures (`buildMogrtPackage` / `exportMogrtZip`, `exportJSON`), `liveDocument`, `engineDocumentStores`, `replicaRefresh`, `EngineBridge.onEvents(bytes, meta)`, `Ports::Opened`.
 - [ ] Headless C++: `engine_tests` `[bundle]` — sha256 vectors, portable pack → `read_portable` → Save As bundle collects the footage, refusals (junk zip, zip without a project).
 - [ ] `PREMATION_ENGINE_PATH=<premation-engine-headless> npx jest bundleCrossEngine` — the new "Open portable copy" case on BOTH engines (C++: `motion-blob:<sha256>` src, untitled, not dirty; TS: `blob:` src).
