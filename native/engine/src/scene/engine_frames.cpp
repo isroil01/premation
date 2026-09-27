@@ -150,6 +150,7 @@ class EngineFrameBuilder final : public FrameBuilder {
       // overlays are drawn against (docs/VIEWPORT_ROUTE.md).
       ViewSpec vs = export_view(std::max<double>(1, viewport.width), std::max<double>(1, viewport.height),
                                 std::max(1.0, sc.width), std::max(1.0, sc.height));
+      vs.gpuEffects = engine_gpu_effects();  // E4: drawn on the render thread's device
       if (viewport.zoom > 0) {
         // D5: the page's own camera (viewToCamera), so the engine's frame lines up
         // with the overlays the page draws over it: CSS px, DPR, zoom, centre.
@@ -209,6 +210,7 @@ class EngineFrameBuilder final : public FrameBuilder {
     const SnapshotComp sc = snapshot_comp_of(d, comp);
     ViewSpec vs = export_view(width, height, std::max(1.0, sc.width), std::max(1.0, sc.height));
     vs.clear = api::Color{0, 0, 0, 0};
+    vs.gpuEffects = engine_gpu_effects();
     vs.surfaceFormat = api::RenderTextureFormat::rgba8unorm;
     try {
       // The document's own motion blur: a thumbnail is the frame as it renders.
@@ -313,6 +315,7 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
     auto d = std::unique_ptr<ViewportDrawer>(new ViewportDrawer(o));  // NOLINT(cppcoreguidelines-owning-memory): private ctor
     d->renderer_ = rg::SceneRenderer::create_on(gpu.instance, gpu.adapter, gpu.device, gpu.float32, error);
     if (!d->renderer_) return nullptr;
+    d->renderer_->set_effect_fields(engine_gpu_effects());  // E4: the frames build with gpuEffects the same way
     SceneTextures::Options to;
     to.canvas = d->fonts_.canvas;
     d->textures_ = std::make_unique<SceneTextures>(to);

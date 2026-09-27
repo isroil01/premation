@@ -12,8 +12,11 @@
 //       as <out>/<scene>/<frame>.png for the pixel gate (render-tests
 //       `native-scene`, scripts/nativeBackend.mjs).
 //
-//   premation-scene --bench <scenes> --fonts <fonts.json> [--only a,b] [--frames N]
+//   premation-scene --bench <scenes> --fonts <fonts.json> [--only a,b] [--frames N] [--gpu-effects]
 //       frame-build (snapshot + scene), raster and render time per scene.
+//       --gpu-effects (also for --batch): layers the TypeScript bakes run their
+//       stack on the GPU chain when they can (E4, the engine's default); the
+//       per-frame effect paths are reported beside the times.
 //   premation-scene --mesh-check <scenes> --fonts <fonts.json> [--only a,b]
 //       every extrudedMesh of the exported FrameScenes rebuilt by the C++ mesh
 //       producers from its key alone (extrusions, traced text, primitives) and
@@ -413,6 +416,9 @@ struct Options {
   int synthetic = 0;
   bool bench = false;
   bool hash = false;  ///< --bench --hash: print an FNV-1a 64 of every raster's bytes per case
+  /// --gpu-effects: E4's GPU route for layers the TypeScript bakes (the engine's
+  /// default); off = the CPU bake, the parity gate's reference.
+  bool gpuEffects = false;
 };
 
 struct Engine {
@@ -424,11 +430,12 @@ struct Engine {
 #endif
 };
 
-bool make_engine(const Fonts& fonts, Engine& e, std::string& err) {
+bool make_engine(const Fonts& fonts, Engine& e, std::string& err, bool gpuEffects) {
   premation::rg::RendererOptions ro;
   ro.highPerformance = true;
   e.renderer = premation::rg::SceneRenderer::create(ro, err);
   if (!e.renderer) return false;
+  e.renderer->set_effect_fields(gpuEffects);  // E4: with the views' gpuEffects
   sc::SceneTextures::Options to;
   to.canvas = fonts.canvas;
   e.textures = std::make_unique<sc::SceneTextures>(to);
@@ -454,7 +461,7 @@ int batch(const Options& o) {
   if (!load_fonts(o.fonts, o.profile, fonts)) return 2;
   Engine eng;
   std::string err;
-  if (!make_engine(fonts, eng, err)) {
+  if (!make_engine(fonts, eng, err, o.gpuEffects)) {
     std::fprintf(stderr, "premation-scene: %s\n", err.c_str());  // NOLINT(cppcoreguidelines-pro-type-vararg)
     return 1;
   }
@@ -503,7 +510,8 @@ int batch(const Options& o) {
       const doc::Json* rec = proj.d.comp(proj.comp);
       const double cw = rec != nullptr && rec->at("width").is_number() ? rec->at("width").num() : w;
       const double ch = rec != nullptr && rec->at("height").is_number() ? rec->at("height").num() : h;
-      const sc::ViewSpec view = sc::export_view(w, h, cw, ch);
+      sc::ViewSpec view = sc::export_view(w, h, cw, ch);
+      view.gpuEffects = o.gpuEffects;
       sc::NativeFrame nf;
       std::string buildErr;
       try {
@@ -830,7 +838,7 @@ int bench(const Options& o) {
   if (!load_fonts(o.fonts, o.profile, fonts)) return 2;
   Engine eng;
   std::string err;
-  if (!make_engine(fonts, eng, err)) {
+  if (!make_engine(fonts, eng, err, o.gpuEffects)) {
     std::fprintf(stderr, "premation-scene: %s\n", err.c_str());  // NOLINT(cppcoreguidelines-pro-type-vararg)
     return 1;
   }
@@ -866,7 +874,8 @@ int bench(const Options& o) {
   for (Case& c : cases) {
     sc::BuildContext ctx{c.p->d, c.p->view, *c.p->env, c.p->cache, measurer.get(), {}};
     const doc::Json* rec = c.p->d.comp(c.p->comp);
-    const sc::ViewSpec view = sc::export_view(c.w, c.h, rec->at("width").num(), rec->at("height").num());
+    sc::ViewSpec view = sc::export_view(c.w, c.h, rec->at("width").num(), rec->at("height").num());
+    view.gpuEffects = o.gpuEffects;
     std::vector<double> build, raster, encode, gpu, total;
     double contentMs = 0;
     double bakeMs = 0;
@@ -874,6 +883,7 @@ int bench(const Options& o) {
     std::uint64_t pixHash = 0xcbf29ce484222325ULL;
     std::size_t layers = 0;
     std::uint64_t misses = 0;
+    std::uint64_t fxGpu = 0, sdfBuilt = 0, sdfReused = 0, silStyles = 0;  // E4: the chain's paths
     for (int k = 0; k < o.frames + 3; ++k) {
       const double t = static_cast<double>(k % 60) / c.fps;
       const auto t0 = std::chrono::steady_clock::now();
@@ -903,6 +913,10 @@ int bench(const Options& o) {
         }
       }
       misses += ps.rasterMisses;
+      fxGpu += stats.effects.gpuEntries;
+      sdfBuilt += stats.effects.sdfBuilt;
+      sdfReused += stats.effects.sdfReused;
+      silStyles += stats.effects.silhouetteStyles;
       contentMs += ps.contentMs;
       bakeMs += ps.bakeMs;
       readMs += ps.readMs;
@@ -917,11 +931,13 @@ int bench(const Options& o) {
       return v[v.size() / 2];
     };
     const double nf = std::max<double>(1, static_cast<double>(total.size()));
-    std::printf("%s{\"case\":\"%s\",\"renderables\":%zu,\"frames\":%zu,\"buildMs\":%s,\"buildP50Ms\":%s,\"rasterMs\":%s,\"rasterP50Ms\":%s,\"contentMs\":%s,\"bakeMs\":%s,\"readMs\":%s,\"renderEncodeMs\":%s,\"renderGpuMs\":%s,\"totalMs\":%s,\"totalP50Ms\":%s,\"rasterMissesPerFrame\":%s}\n",  // NOLINT(cppcoreguidelines-pro-type-vararg)
+    std::printf("%s{\"case\":\"%s\",\"renderables\":%zu,\"frames\":%zu,\"buildMs\":%s,\"buildP50Ms\":%s,\"rasterMs\":%s,\"rasterP50Ms\":%s,\"contentMs\":%s,\"bakeMs\":%s,\"readMs\":%s,\"renderEncodeMs\":%s,\"renderGpuMs\":%s,\"totalMs\":%s,\"totalP50Ms\":%s,\"rasterMissesPerFrame\":%s,\"gpuEffectsPerFrame\":%s,\"sdfBuilt\":%llu,\"sdfReused\":%llu,\"silhouetteStyles\":%llu}\n",  // NOLINT(cppcoreguidelines-pro-type-vararg)
                 first ? "" : ",", esc(c.name).c_str(), layers, total.size(), fmt(mean(build)).c_str(), fmt(p50(build)).c_str(),
                 fmt(mean(raster)).c_str(), fmt(p50(raster)).c_str(), fmt(contentMs / nf).c_str(), fmt(bakeMs / nf).c_str(), fmt(readMs / nf).c_str(),
                 fmt(mean(encode)).c_str(), fmt(mean(gpu)).c_str(), fmt(mean(total)).c_str(), fmt(p50(total)).c_str(),
-                fmt(total.empty() ? 0.0 : static_cast<double>(misses) / static_cast<double>(total.size())).c_str());
+                fmt(total.empty() ? 0.0 : static_cast<double>(misses) / static_cast<double>(total.size())).c_str(),
+                fmt(static_cast<double>(fxGpu) / nf).c_str(), static_cast<unsigned long long>(sdfBuilt),
+                static_cast<unsigned long long>(sdfReused), static_cast<unsigned long long>(silStyles));
     if (o.hash) std::fprintf(stderr, "HASH %s %016llx\n", esc(c.name).c_str(), static_cast<unsigned long long>(pixHash));  // NOLINT(cppcoreguidelines-pro-type-vararg)
     std::fflush(stdout);
     first = false;
@@ -942,6 +958,7 @@ int run(int argc, char** argv) {
   if (opt.contains("profile")) o.profile = opt["profile"];
   if (opt.contains("frames")) o.frames = std::stoi(opt["frames"]);
   o.hash = opt.contains("hash");
+  o.gpuEffects = opt.contains("gpu-effects");
   if (opt.contains("only")) {
     std::stringstream ss(opt["only"]);
     std::string s;

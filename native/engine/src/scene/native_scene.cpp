@@ -1,8 +1,11 @@
 #include "native_scene.hpp"
 
 #include <chrono>
+#include <cstdlib>
+#include <string_view>
 
 #include "color_settings.hpp"
+#include "effects_port.hpp"
 
 namespace premation::scene {
 
@@ -22,12 +25,33 @@ ViewSpec export_view(double outW, double outH, double compW, double compH) {
   return v;
 }
 
+bool engine_gpu_effects() noexcept {
+  static const bool on = [] {
+    const char* v = std::getenv("PREMATION_CPU_BAKE");  // NOLINT(concurrency-mt-unsafe): read once, before any thread sets it
+    return v == nullptr || std::string_view(v).empty() || std::string_view(v) == "0";
+  }();
+  return on;
+}
+
+std::size_t mark_gpu_effect_layers(std::vector<RLayer>& layers) {
+  std::size_t n = 0;
+  for (RLayer& l : layers) {
+    if (l.precompLayers) n += mark_gpu_effect_layers(*l.precompLayers);
+    if (!l.gpuEffects && gpu_effect_route(l)) {
+      l.gpuEffects = true;
+      ++n;
+    }
+  }
+  return n;
+}
+
 NativeFrame native_frame_of(const doc::Document& d, Snapshot snap, const ViewSpec& view, double clipWidth,
                             double clipHeight, const std::string& sceneId, std::int64_t frame) {
   using Clock = std::chrono::steady_clock;
   NativeFrame nf;
   const auto t1 = Clock::now();
   const double rasterScale = view.zoom * view.dpr;
+  if (view.gpuEffects) (void)mark_gpu_effect_layers(snap.layers);  // E4: before anything reads layer_is_baked
   FrameBuild fb = build_frame_scene(snap, rasterScale);
   const auto t2 = Clock::now();
   nf.sceneMs = std::chrono::duration<double, std::milli>(t2 - t1).count();

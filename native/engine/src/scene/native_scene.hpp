@@ -25,7 +25,21 @@ struct ViewSpec {
   api::RenderTextureFormat surfaceFormat = api::RenderTextureFormat::bgra8unorm;
   /// An export frame's output module colour space (RenderSettings.outputColorSpace); '' = the viewer.
   std::string outputColorSpace;
+  /// E4: the frame is drawn on a GPU device, so a layer the TypeScript bakes on
+  /// the CPU runs its stack on the render graph's chain when it can
+  /// (effects_port.hpp gpu_effect_route). Off = the TypeScript's bake rule,
+  /// byte for byte (the parity gate, CPU-only callers).
+  bool gpuEffects = false;
 };
+
+/// E4: whether the engine's own frames take the GPU effect route — on, unless
+/// the process was started with PREMATION_CPU_BAKE=1 (read once: the CPU bake
+/// is the reference, for A/B against the golden scenes in the app).
+[[nodiscard]] bool engine_gpu_effects() noexcept;
+
+/// Set RLayer::gpuEffects on every layer of `layers` (and of the precomps they
+/// hold) that gpu_effect_route accepts. Returns how many were routed.
+std::size_t mark_gpu_effect_layers(std::vector<RLayer>& layers);
 
 /// offlineRenderer.ts `exportView(outW, outH, comp)` as a camera: the comp fitted
 /// (contain) and centred in an out × out surface — what the harness and export draw through.

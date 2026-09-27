@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "engine_api.hpp"
@@ -57,6 +58,33 @@ struct ColorMatrix {
 /// Kinds outside the port are skipped here and reported by the snapshot
 /// (effect_unported_reason).
 [[nodiscard]] std::vector<api::RenderEffect> extract_spatial_effects(const RLayer& l, bool onlyGpuOnly);
+
+// ── E4: the GPU route ────────────────────────────────────────────────────────
+//
+// The TypeScript bakes a layer's WHOLE stack on the CPU (layerIsBaked: fill
+// opacity, an effect-scoped mask, an effect opacity, a Canvas2D-only effect) —
+// 0.1–1 s a frame at 1080p for the styles. When the frame renders on a device,
+// a baked layer whose every reason and every effect the render graph's chain
+// can express runs there instead: the same chain entries an unbaked layer gets
+// (extract_spatial_effects' per-effect writer), preceded by a `fill-opacity`
+// entry, with `effectOpacity` / `scopeMaskKey` on the entries the bake would
+// have blended back. What the chain cannot express keeps the CPU bake, the
+// reference and the fallback (no device, PREMATION_CPU_BAKE=1, the parity gate).
+
+/// Why this layer's stack cannot take the GPU route (nullptr = it can).
+[[nodiscard]] const char* gpu_effect_route_blocker(const RLayer& l);
+/// The layer is baked by the TypeScript rule and can run on the GPU chain instead.
+[[nodiscard]] bool gpu_effect_route(const RLayer& l);
+/// The chain of a GPU-routed layer (see above).
+[[nodiscard]] std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l);
+/// Texture key of an effect-scoped mask (a TexKind::mask raster of one path, mode add).
+[[nodiscard]] std::string scope_mask_key(std::string_view layerId, std::string_view maskId);
+/// The scoped masks a GPU-routed layer's chain reads: (texture key, `{paths: [path]}`).
+[[nodiscard]] std::vector<std::pair<std::string, Json>> gpu_route_scope_masks(const RLayer& l);
+/// A Canvas2D-only effect the GPU draws itself on this layer (Vegas over the
+/// layer's own alpha: gpu_canvas_fx.cpp), and its chain entry.
+[[nodiscard]] bool gpu_draws_canvas_effect(const RLayer& l, const Json& e);
+[[nodiscard]] std::optional<api::RenderEffect> gpu_canvas_effect_entry(const RLayer& l, const Json& e);
 
 /// RenderEffect param-bag writer (effectToWire's encoding).
 class FxWriter {

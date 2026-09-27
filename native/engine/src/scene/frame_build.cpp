@@ -523,6 +523,24 @@ void Flattener::feed(const RLayer& l) {
     r.layerId = l.id;
     textures_.push_back(std::move(r));
   }
+  if (l.gpuEffects) {
+    // E4 GPU route: each effect-scoped mask as a raster of its one path (mode
+    // add), drawn like the layer mask — the chain blends the effect back
+    // through it (effectBake.ts compositeBlend).
+    // The painter reads only the mask and the box: the stack stays out of the
+    // spec, so the raster is keyed by the path and survives param animation.
+    for (auto& [key, mask] : gpu_route_scope_masks(l)) {
+      TextureRequest r;
+      r.key = std::move(key);
+      r.kind = TexKind::mask;
+      r.spec = layer_json(l, "mask");
+      r.spec.set("mask", std::move(mask));
+      r.spec.erase("effects");
+      r.spec.erase("fillOpacity");
+      r.layerId = l.id;
+      textures_.push_back(std::move(r));
+    }
+  }
   append_lut_textures(l, textures_);  // lut:<id> / cubelut:<id> (lut_port.cpp)
 }
 
@@ -653,7 +671,9 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
       r.sdf = sdf;
     }
   }
-  r.effects = extract_spatial_effects(l, baked);
+  // E4: a GPU-routed layer (not baked) runs its whole stack on the chain,
+  // with the fill opacity, effect opacities and scoped masks the bake held.
+  r.effects = l.gpuEffects ? extract_gpu_route_effects(l) : extract_spatial_effects(l, baked);
   if (l.deformedMesh) r.deformed_mesh = deformed_mesh_wire(*l.deformedMesh, l.width, l.height, pad);
   // Shape / text bakes run on their raster, footage bakes on the decoded frame
   // (scene_textures.cpp footage_bake_ref → bake_chain.cpp bake_footage).

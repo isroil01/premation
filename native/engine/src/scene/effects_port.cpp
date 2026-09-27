@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
 #include <set>
+#include <string>
 
 #include "catalog_data.hpp"
 #include "effects_spatial.hpp"
@@ -199,6 +201,7 @@ bool effects_need_cpu_bake(const std::vector<Json>& effects) {
 }
 
 bool layer_is_baked(const RLayer& l) {
+  if (l.gpuEffects) return false;  // E4: the stack runs on the GPU chain (gpu_effect_route)
   if (l.kind == LayerKind::image || l.kind == LayerKind::video) return effects_need_cpu_bake(l.effects);
   return effects_need_cpu_bake(l.effects) || (l.fillOpacity && *l.fillOpacity < 1);
 }
@@ -413,6 +416,109 @@ FxWriter& FxWriter::text(std::string name, std::string v) {
   return *this;
 }
 
+namespace {
+
+/// The chain entries of ONE enabled effect — the loop body of
+/// extractSpatialEffects, shared by the TS-parity extraction below and the E4
+/// GPU route (extract_gpu_route_effects), so both write identical entries.
+void effect_entries(const Json& e, const RLayer& l, std::vector<api::RenderEffect>& spatial) {
+  const std::string t = type_of(e);
+  const Json params = doc::params_of(e);
+  if (auto native = native_effect_entry(e, params, l)) {  // G1: a native SDK plugin effect
+    spatial.push_back(std::move(*native));
+    return;
+  }
+  const auto n = [&](std::string_view k) {
+    const Json& v = param_of(params, k);
+    return v.is_number() ? v.num() : 0.0;
+  };
+  const auto c = [&](std::string_view k, double alpha) { return color_with_alpha(param_of(params, k), alpha); };
+  if (t == "blur") {
+    const double blades = n("blades");
+    const double roundness = n("roundness");
+    const double highlightGain = n("highlightGain");
+    const double irisRotation = n("irisRotation");
+    const double irisAspect = n("irisAspect");
+    const double highlightThreshold = n("highlightThreshold");
+    const double highlightSaturation = n("highlightSaturation");
+    const double fringe = n("diffractionFringe");
+    const bool hasCoc = params.find("coc0") != nullptr;
+    const double amount = hasCoc ? std::max({n("amount"), n("coc0"), n("coc1"), n("coc2"), n("coc3")}) : n("amount");
+    FxWriter w("blur");
+    w.num("radiusPx", amount);
+    if (blades >= 3) w.num("blades", blades);
+    if (blades >= 3 && std::isfinite(roundness)) w.num("roundness", roundness);
+    if (highlightGain > 0) w.num("highlightGain", highlightGain);
+    if (blades >= 3 && std::isfinite(irisRotation) && irisRotation != 0) w.num("irisRotationDeg", irisRotation);
+    if (blades >= 3 && std::isfinite(irisAspect) && irisAspect > 0 && irisAspect != 1) w.num("irisAspect", irisAspect);
+    if (highlightThreshold > 0) w.num("highlightThreshold", highlightThreshold);
+    if (highlightSaturation > 0) w.num("highlightSaturation", highlightSaturation);
+    if (blades >= 3 && fringe > 0) w.num("fringe", fringe);
+    if (hasCoc) w.nums("cocCorners", {n("coc0"), n("coc1"), n("coc2"), n("coc3")});
+    if (e.at("id").is_string() && e.at("id").str() == "dof") w.flag("dofSource", true);
+    spatial.push_back(w.done());
+  }
+  if (t == "glow") {
+    const double size = n("radius");
+    const double spread01 = std::max(0.0, std::min(1.0, n("spread") / 100));
+    FxWriter w("glow");
+    w.num("radiusPx", size * (1 - spread01));
+    if (spread01 > 0) w.num("spreadPx", size * spread01);
+    w.color("color", c("color", n("intensity") / 100));
+    spatial.push_back(w.done());
+  }
+  if (t == "drop-shadow") {
+    const double rad = (n("angle") * std::numbers::pi) / 180;
+    const double size = n("softness");
+    const double spread01 = std::max(0.0, std::min(1.0, n("spread") / 100));
+    FxWriter w("drop-shadow");
+    w.num("radiusPx", size * (1 - spread01));
+    if (spread01 > 0) w.num("spreadPx", size * spread01);
+    w.num("offsetX", motion::js::cos(rad) * n("distance"));
+    w.num("offsetY", motion::js::sin(rad) * n("distance"));
+    w.color("color", c("color", n("opacity") / 100));
+    spatial.push_back(w.done());
+  }
+  if (t == "gradient-ramp") {
+    FxWriter w("gradient-ramp");
+    w.num("blend", n("blend") / 100);
+    w.color("colorA", c("colorA", 1));
+    w.color("colorB", c("colorB", 1));
+    w.num("angle", n("angle"));
+    spatial.push_back(w.done());
+  }
+  if (t == "fill") {
+    spatial.push_back(FxWriter("fill").color("color", c("color", n("opacity") / 100)).done());
+  }
+  if (t == "stroke") {
+    const Json& posRaw = param_of(params, "position");
+    int position = 0;
+    if ((posRaw.is_string() && posRaw.str() == "inside") || (posRaw.is_number() && posRaw.num() == 1)) position = 1;
+    else if ((posRaw.is_string() && posRaw.str() == "center") || (posRaw.is_number() && posRaw.num() == 2)) position = 2;
+    else if (posRaw.is_number() && posRaw.num() >= 1 && posRaw.num() <= 2) position = static_cast<int>(motion::js::round(posRaw.num()));
+    FxWriter w("stroke");
+    w.num("widthPx", n("width"));
+    w.color("color", c("color", n("opacity") / 100));
+    if (position != 0) w.num("position", position);
+    spatial.push_back(w.done());
+  }
+  if (t == "apply-color-lut") {
+    if (auto lut = apply_color_lut_entry(e, params, l)) spatial.push_back(std::move(*lut));
+  }
+  if (!is_ported_spatial(t)) (void)extract_more_spatial(e, params, l, spatial);
+  if (t == "sharpen") spatial.push_back(FxWriter("sharpen").num("amount", n("amount") / 100).done());
+  if (t == "noise") {
+    const Json& mono = e.at("params").at("monochrome");
+    spatial.push_back(FxWriter("noise")
+                          .num("amount", n("amount") / 100)
+                          .num("evolution", n("evolution"))
+                          .flag("monochrome", !(mono.is_bool() && !mono.b()))
+                          .done());
+  }
+}
+
+}  // namespace
+
 std::vector<api::RenderEffect> extract_spatial_effects(const RLayer& l, bool onlyGpuOnly) {
   std::vector<api::RenderEffect> spatial;
   if (l.effects.empty()) return spatial;
@@ -436,105 +542,164 @@ std::vector<api::RenderEffect> extract_spatial_effects(const RLayer& l, bool onl
   for (const Json& e : l.effects) {
     stampOpacity();
     if (!effect_enabled(e)) continue;
-    const std::string t = type_of(e);
-    if (onlyGpuOnly && !is_gpu_only_effect(t)) continue;
+    if (onlyGpuOnly && !is_gpu_only_effect(type_of(e))) continue;
     owner = &e;
     ownerAt = spatial.size();
-    const Json params = doc::params_of(e);
-    if (auto native = native_effect_entry(e, params, l)) {  // G1: a native SDK plugin effect
-      spatial.push_back(std::move(*native));
-      continue;
-    }
-    const auto n = [&](std::string_view k) {
-      const Json& v = param_of(params, k);
-      return v.is_number() ? v.num() : 0.0;
-    };
-    const auto c = [&](std::string_view k, double alpha) { return color_with_alpha(param_of(params, k), alpha); };
-    if (t == "blur") {
-      const double blades = n("blades");
-      const double roundness = n("roundness");
-      const double highlightGain = n("highlightGain");
-      const double irisRotation = n("irisRotation");
-      const double irisAspect = n("irisAspect");
-      const double highlightThreshold = n("highlightThreshold");
-      const double highlightSaturation = n("highlightSaturation");
-      const double fringe = n("diffractionFringe");
-      const bool hasCoc = params.find("coc0") != nullptr;
-      const double amount = hasCoc ? std::max({n("amount"), n("coc0"), n("coc1"), n("coc2"), n("coc3")}) : n("amount");
-      FxWriter w("blur");
-      w.num("radiusPx", amount);
-      if (blades >= 3) w.num("blades", blades);
-      if (blades >= 3 && std::isfinite(roundness)) w.num("roundness", roundness);
-      if (highlightGain > 0) w.num("highlightGain", highlightGain);
-      if (blades >= 3 && std::isfinite(irisRotation) && irisRotation != 0) w.num("irisRotationDeg", irisRotation);
-      if (blades >= 3 && std::isfinite(irisAspect) && irisAspect > 0 && irisAspect != 1) w.num("irisAspect", irisAspect);
-      if (highlightThreshold > 0) w.num("highlightThreshold", highlightThreshold);
-      if (highlightSaturation > 0) w.num("highlightSaturation", highlightSaturation);
-      if (blades >= 3 && fringe > 0) w.num("fringe", fringe);
-      if (hasCoc) w.nums("cocCorners", {n("coc0"), n("coc1"), n("coc2"), n("coc3")});
-      if (e.at("id").is_string() && e.at("id").str() == "dof") w.flag("dofSource", true);
-      spatial.push_back(w.done());
-    }
-    if (t == "glow") {
-      const double size = n("radius");
-      const double spread01 = std::max(0.0, std::min(1.0, n("spread") / 100));
-      FxWriter w("glow");
-      w.num("radiusPx", size * (1 - spread01));
-      if (spread01 > 0) w.num("spreadPx", size * spread01);
-      w.color("color", c("color", n("intensity") / 100));
-      spatial.push_back(w.done());
-    }
-    if (t == "drop-shadow") {
-      const double rad = (n("angle") * std::numbers::pi) / 180;
-      const double size = n("softness");
-      const double spread01 = std::max(0.0, std::min(1.0, n("spread") / 100));
-      FxWriter w("drop-shadow");
-      w.num("radiusPx", size * (1 - spread01));
-      if (spread01 > 0) w.num("spreadPx", size * spread01);
-      w.num("offsetX", motion::js::cos(rad) * n("distance"));
-      w.num("offsetY", motion::js::sin(rad) * n("distance"));
-      w.color("color", c("color", n("opacity") / 100));
-      spatial.push_back(w.done());
-    }
-    if (t == "gradient-ramp") {
-      FxWriter w("gradient-ramp");
-      w.num("blend", n("blend") / 100);
-      w.color("colorA", c("colorA", 1));
-      w.color("colorB", c("colorB", 1));
-      w.num("angle", n("angle"));
-      spatial.push_back(w.done());
-    }
-    if (t == "fill") {
-      spatial.push_back(FxWriter("fill").color("color", c("color", n("opacity") / 100)).done());
-    }
-    if (t == "stroke") {
-      const Json& posRaw = param_of(params, "position");
-      int position = 0;
-      if ((posRaw.is_string() && posRaw.str() == "inside") || (posRaw.is_number() && posRaw.num() == 1)) position = 1;
-      else if ((posRaw.is_string() && posRaw.str() == "center") || (posRaw.is_number() && posRaw.num() == 2)) position = 2;
-      else if (posRaw.is_number() && posRaw.num() >= 1 && posRaw.num() <= 2) position = static_cast<int>(motion::js::round(posRaw.num()));
-      FxWriter w("stroke");
-      w.num("widthPx", n("width"));
-      w.color("color", c("color", n("opacity") / 100));
-      if (position != 0) w.num("position", position);
-      spatial.push_back(w.done());
-    }
-    if (t == "apply-color-lut") {
-      if (auto lut = apply_color_lut_entry(e, params, l)) spatial.push_back(std::move(*lut));
-    }
-    if (!is_ported_spatial(t)) (void)extract_more_spatial(e, params, l, spatial);
-    if (t == "sharpen") spatial.push_back(FxWriter("sharpen").num("amount", n("amount") / 100).done());
-    if (t == "noise") {
-      const Json& mono = e.at("params").at("monochrome");
-      spatial.push_back(FxWriter("noise")
-                            .num("amount", n("amount") / 100)
-                            .num("evolution", n("evolution"))
-                            .flag("monochrome", !(mono.is_bool() && !mono.b()))
-                            .done());
-    }
+    effect_entries(e, l, spatial);
   }
   stampOpacity();
   return spatial;
+}
+
+// ── E4: the GPU route for a layer the TypeScript bakes ─────────────────────
+
+bool gpu_draws_canvas_effect(const RLayer& /*l*/, const Json& /*e*/) { return false; }
+
+std::optional<api::RenderEffect> gpu_canvas_effect_entry(const RLayer& /*l*/, const Json& /*e*/) { return std::nullopt; }
+
+namespace {
+
+/// The layer-mask path an effect's `maskId` names (effectBake.ts compositeBlend's
+/// scope), or null: no id, or an id the layer's mask does not hold — then the
+/// CPU chain applies the effect unscoped, and so does the GPU route.
+const Json* scope_path_of(const RLayer& l, const Json& e) {
+  const Json& id = e.at("maskId");
+  if (!id.is_string() || id.str().empty()) return nullptr;
+  if (!l.mask.is_object() || !l.mask.at("paths").is_array()) return nullptr;
+  for (const Json& p : l.mask.at("paths").arr()) {
+    if (p.at("id").is_string() && p.at("id").str() == id.str()) return &p;
+  }
+  return nullptr;
+}
+
+/// effectOpacityOf: a finite `opacity` → clamp(pct / 100); absent → nullopt.
+std::optional<double> effect_opacity_of(const Json& e) {
+  const Json& op = e.at("opacity");
+  if (!op.is_number() || !std::isfinite(op.num())) return std::nullopt;
+  return std::max(0.0, std::min(1.0, op.num() / 100));
+}
+
+void add_param(api::RenderEffect& fx, std::string name, double v) {
+  api::RenderEffectParam p;
+  p.name = std::move(name);
+  p.kind = api::RenderParamKind::number;
+  p.number = v;
+  fx.params.push_back(std::move(p));
+}
+
+void add_text(api::RenderEffect& fx, std::string name, std::string v) {
+  api::RenderEffectParam p;
+  p.name = std::move(name);
+  p.kind = api::RenderParamKind::text;
+  p.text = std::move(v);
+  fx.params.push_back(std::move(p));
+}
+
+}  // namespace
+
+std::string scope_mask_key(std::string_view layerId, std::string_view maskId) {
+  std::string k = "fxmask:";
+  k += layerId;
+  k += ':';
+  k += maskId;
+  return k;
+}
+
+const char* gpu_effect_route_blocker(const RLayer& l) {
+  if (l.precompLayers) return "a precomp container (its chain is the container's)";
+  for (const Json& e : l.effects) {
+    if (!effect_enabled(e)) continue;
+    const std::string t = type_of(e);
+    if (is_canvas2d_only(t) && !gpu_draws_canvas_effect(l, e)) return "a Canvas2D-only effect";
+    // Ordered inside the bake: the GPU applies the layer's colour matrix and
+    // LUT strip at the content draw, BEFORE its chain, so an interleaved grade
+    // would move.
+    if (is_lut_effect(t)) return "a per-channel LUT effect";
+    if (is_color_effect(t)) return "a colour-matrix / CSS colour effect";
+    if (is_temporal(t)) continue;  // the snapshot's time plumbing, baked or not
+    if (!is_native_effect(t) && doc::registry().effect(t) == nullptr) return "a plugin effect (G2)";
+    if (t == "write-on") {
+      const Json& mode = doc::params_of(e).at("writeOnMode");
+      if (mode.is_number() && motion::js::round(mode.num()) == 0) return "a path-following effect (Write-on brush)";
+    }
+    if (t != "beam-path") {
+      const Json& pm = e.at("params").at("pathMaskId");
+      if (pm.is_string() && !pm.str().empty()) return "a path-following effect";
+    }
+    const bool chained = is_ported_spatial(t) || is_more_spatial(t) || is_native_effect(t) || t == "apply-color-lut" ||
+                         (is_canvas2d_only(t) && gpu_draws_canvas_effect(l, e));
+    if (!chained) return "an effect with no GPU chain entry";
+    const std::optional<double> a = effect_opacity_of(e);
+    const bool faded = a && *a < 1;
+    if (faded && !gpu_blends_effect_opacity(t) && !is_canvas2d_only(t)) return "an effect opacity the GPU chain does not blend";
+    const bool scoped = scope_path_of(l, e) != nullptr;
+    if ((faded && *a > 0) || scoped) {
+      // Opacity and scope blend ONE entry back over its input.
+      std::vector<api::RenderEffect> probe;
+      effect_entries(e, l, probe);
+      if (probe.size() > 1) return "a faded / scoped effect with several chain entries";
+    }
+  }
+  return nullptr;
+}
+
+bool gpu_effect_route(const RLayer& l) {
+  if (l.gpuEffects) return true;
+  if (!layer_is_baked(l)) return false;  // nothing to route: the stack is on the GPU already
+  return gpu_effect_route_blocker(l) == nullptr;
+}
+
+std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
+  std::vector<api::RenderEffect> out;
+  // Fill opacity (shape / text only, as layerIsBaked): the chain snapshots the
+  // silhouette, fades the contents and shapes every style by the snapshot.
+  const bool vector = l.kind != LayerKind::image && l.kind != LayerKind::video;
+  if (vector && l.fillOpacity && *l.fillOpacity < 1) {
+    out.push_back(FxWriter("fill-opacity").num("amount", std::max(0.0, std::min(1.0, *l.fillOpacity))).done());
+  }
+  for (const Json& e : l.effects) {
+    if (!effect_enabled(e)) continue;
+    const std::size_t at = out.size();
+    const std::string t = type_of(e);
+    if (is_canvas2d_only(t)) {
+      if (auto drawn = gpu_canvas_effect_entry(l, e)) out.push_back(std::move(*drawn));
+    } else {
+      effect_entries(e, l, out);
+    }
+    if (out.size() - at != 1) continue;  // gpu_effect_route: a faded / scoped effect writes one entry
+    const std::optional<double> a = effect_opacity_of(e);
+    const Json* scope = scope_path_of(l, e);
+    if (a && *a <= 0 && scope == nullptr) {  // applyEffectChain: a fully faded, unscoped effect is skipped
+      out.resize(at);
+      continue;
+    }
+    if (a && *a < 1) add_param(out[at], "effectOpacity", *a);
+    if (scope != nullptr) {
+      add_text(out[at], "scopeMaskKey", scope_mask_key(l.id, scope->at("id").str()));
+      if (!a) add_param(out[at], "effectOpacity", 1);  // the scoped blend-back runs even at full opacity
+    }
+  }
+  return out;
+}
+
+std::vector<std::pair<std::string, Json>> gpu_route_scope_masks(const RLayer& l) {
+  std::vector<std::pair<std::string, Json>> out;
+  for (const Json& e : l.effects) {
+    if (!effect_enabled(e)) continue;
+    const Json* scope = scope_path_of(l, e);
+    if (scope == nullptr) continue;
+    std::string key = scope_mask_key(l.id, scope->at("id").str());
+    if (std::ranges::any_of(out, [&](const auto& m) { return m.first == key; })) continue;
+    // compositeBlend paints `{...path, mode: 'add'}` alone.
+    Json path = *scope;
+    path.set("mode", Json::string("add"));
+    Json paths = Json::array();
+    paths.arr_mut().push_back(std::move(path));
+    Json mask = Json::object();
+    mask.set("paths", std::move(paths));
+    out.emplace_back(std::move(key), std::move(mask));
+  }
+  return out;
 }
 
 }  // namespace premation::scene

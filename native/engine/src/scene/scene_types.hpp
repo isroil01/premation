@@ -190,6 +190,12 @@ struct RLayer {
   /// The resolved effect stack (Effect[], params sampled at t). Empty = none.
   std::vector<Json> effects;
   std::optional<double> fillOpacity;
+  /// E4: this layer's stack runs on the render graph's GPU chain instead of a
+  /// CPU bake — set by native_frame_of when the view renders on a device and
+  /// gpu_effect_route(layer) holds (effects_port.hpp). layer_is_baked is false
+  /// for such a layer, so every bake-dependent choice (padding, `__baked`,
+  /// texture keys, LUT / mask routing) follows from this one flag.
+  bool gpuEffects = false;
   std::optional<double> skew, skewAxis;
   std::optional<double> backdropBlur;
   std::optional<ResolvedGlass> glass;

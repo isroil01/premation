@@ -277,6 +277,7 @@ bool make_plan(const doc::Document& d, const JobSpec& job, Plan& p, std::string&
   p.overrides.forExport = true;
   p.overrides.transparent = p.alpha;
   p.view = sc::export_view(p.width, p.height, p.compW, p.compH);
+  p.view.gpuEffects = sc::engine_gpu_effects();  // E4: exports render on the device too
   // RGBA surface: the read-back rows are the raw pipe's channel order already.
   // 16-bit output draws the same display-encoded frame into a half-float surface.
   p.depth = job.depth;
@@ -709,6 +710,7 @@ int run_export(const std::string& jobPath) {
     gpuInit = JoiningThread([&renderer, &gpuErr, &gpuInitMs, ro] {
       const auto t0 = Clock::now();
       renderer = rg::SceneRenderer::create(ro, gpuErr);
+      if (renderer) renderer->set_effect_fields(sc::engine_gpu_effects());  // E4, with the view's gpuEffects
       gpuInitMs = ms_since(t0);
     });
   }
