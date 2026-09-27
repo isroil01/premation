@@ -41,7 +41,7 @@
  * than anyone wants to think about.
  */
 
-import { StoreSnapshotCommand } from '@stores/historyStore';
+import { StoreSnapshotCommand } from '@core/commands/snapshotCommand';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { captureSharedState, statesEqual, type DocState } from '@core/commands/snapshotSharing';
 import { bumpScene } from '@stores/sceneStore';
@@ -327,13 +327,13 @@ export function dispatchPluginCanvasEvent(pluginId: string, event: PluginCanvasE
 /**
  * A drag on a plugin handle is ONE act to the user, and it has to be one
  * Ctrl-Z — but the plugin makes it out of many `scene.setProperty` calls, each
- * of which is its own `runDocumentEdit`. Fifty entries for one drag is the
+ * of which is its own engine entry. Fifty entries for one drag is the
  * behaviour every native tool in this editor already avoids.
  *
  * So the gesture brackets them: snapshot at pointer-down, SUSPEND history for
- * the duration (the suspension is counted, so each inner `runDocumentEdit`
+ * the duration (the suspension is counted, so each inner edit
  * suspends and resumes inside ours and pushes nothing), and push one entry at
- * pointer-up. Identical in shape to `runDocumentEdit`, split across two ticks
+ * pointer-up. A whole-document snapshot entry, split across two ticks
  * because a drag is.
  *
  * `end` is guaranteed by the viewport's pointer-up AND pointer-cancel paths: a

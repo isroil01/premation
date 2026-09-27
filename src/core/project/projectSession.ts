@@ -14,7 +14,7 @@
  */
 
 import { useProjectStore } from '@stores/projectStore';
-import { useHistoryStore } from '@stores/historyStore';
+import { baselineHistoryNow } from '@core/engine/historyBaseline';
 import { clearRecovery } from '@core/persistence/recovery';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { resetSessionAssets } from '@core/project/sessionAssets';
@@ -65,8 +65,7 @@ export function afterProjectSaved(): void {
  * against the old stack.
  */
 export function baselineProjectHistory(label = 'Open'): void {
-  useHistoryStore.getState().reset();
-  useHistoryStore.getState().record(label, true);
+  baselineHistoryNow(label);
 }
 
 /**

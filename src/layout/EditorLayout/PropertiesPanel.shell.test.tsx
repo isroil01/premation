@@ -22,7 +22,6 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { TooltipProvider } from '@components/Tooltip/Tooltip';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
-import { useHistoryStore } from '@stores/historyStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
@@ -204,15 +203,12 @@ describe('the switches live in the ⋯ menu', () => {
   });
 
   it('a mixed switch turns everything on, as ONE undo entry', async () => {
-    // History wired the way boot wires it (`setupAppEngine` attaches the
-    // recorder), and the debounce flushed before counting — the same
-    // measurement modifierStack.test.ts makes.
+    // History wired the way boot wires it (`setupAppEngine`): every edit is an engine entry.
     await h.run({ type: 'setLayerSwitches', layers: [A], patch: SOLO.patch(true) });
     getCommandSystem().getHistory().clear();
     const before = entries();
     // B3: the switch is an engine batch — one entry on the one history.
     await applyLayerSwitch([A, B], SOLO);
-    useHistoryStore.getState().flush();
     expect([defaultSceneGraph.getNode(A)?.solo, defaultSceneGraph.getNode(B)?.solo]).toEqual([true, true]);
     expect(entries() - before).toBe(1);
     expect(historyLabels()).toEqual(['Enable Solo']);

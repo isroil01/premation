@@ -19,7 +19,7 @@
  */
 
 import type { EngineClient, Origin } from '@motion/engine-api';
-import { StoreSnapshotCommand, restoreSnapshotState, useHistoryStore } from '@stores/historyStore';
+import { StoreSnapshotCommand, restoreSnapshotState } from '@core/commands/snapshotCommand';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { bumpScene } from '@stores/sceneStore';
 import { captureSharedState, statesEqual, type DocState } from '@core/commands/snapshotSharing';
@@ -33,7 +33,7 @@ import { EngineTurnSession } from './aiEngineSession';
  */
 const capture = (): DocState => captureSharedState();
 
-/** The store's own restore path: clones, restores every half, re-baselines. */
+/** The snapshot entry's own restore path: clones, restores every half. */
 const restore = (s: DocState): void => restoreSnapshotState(s);
 
 export interface AiTurnOutcome {
@@ -118,20 +118,13 @@ export async function beginAiTransaction(label: string, opts: BeginTurnOptions =
   };
   let settled: Promise<AiTurnOutcome> | null = null;
 
-  /**
-   * Legacy writes schedule the 700 ms debounce recorder. Settle it while
-   * history is still suspended (its entry is dropped: the turn's own entry
-   * covers the same change) — released first, it would land as a stray
-   * "Edit N" beside the turn. The snapshot restore then re-baselines it.
-   */
-  const settleRecorder = (): void => {
-    if (released) history.suspend();
-    released = false;
-    useHistoryStore.getState().flush();
-  };
-
   const snapshotCommit = async (gestureOpen: boolean): Promise<AiTurnOutcome> => {
-    settleRecorder();
+    // Suspended again when the engine commit was tried first (and released
+    // history): the restore below must not let a subsystem push a stray entry.
+    if (released) {
+      history.suspend();
+      released = false;
+    }
     const after = capture();
     // The engine's share goes back first (its own cancel); the snapshot then
     // reinstates the whole finished document, legacy writes included.
@@ -168,7 +161,6 @@ export async function beginAiTransaction(label: string, opts: BeginTurnOptions =
 
   const rollback = async (): Promise<void> => {
     try {
-      settleRecorder();
       if (gesture !== null) await client.endGesture(gesture, false, { origin });
       if (gesture === null || session.legacyGaps.length > 0) restore(before);
     } finally {

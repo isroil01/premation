@@ -1326,6 +1326,22 @@ Live Union / Subtract / Intersect.
   `createSolidLayer`, `deleteSelectedLayers`, `toggleSelected*` /
   `toggleNodeVisible`, `toggleLayerFlags`, the legacy resets. A composition
   root's row in the Layers panel has no switches (refused with a note).
+- **The legacy debounce recorder is deleted.** `historyStore.ts` keeps only
+  the undo / redo / jump route (`performUndo` & co., `setHistoryRoute`) and
+  `resetHistory`; gone are `LEGACY_DEBOUNCE_RECORDER`, `attachHistoryRecording`
+  / `attachHistoryBaselineSync`, `schedule` / `record` / `flush` /
+  `runRestoring` / `restoring`, `batchHistory`, `baselineHistory` (load
+  boundaries call `baselineHistoryNow`, core/engine/historyBaseline.ts),
+  `runDocumentEdit` (core/commands/documentEdit.ts), `VITE_UNIFIED_HISTORY` /
+  `unifiedHistoryEnabled` (snapshots always carry clip geometry, bars are
+  always `clip:<nodeId>`), and `aiTransaction.ts`'s recorder flush.
+  `StoreSnapshotCommand` stays in core/commands/snapshotCommand.ts for the
+  remaining whole-document snapshot entries (the AI turn's gap fallback, the
+  document transaction, the plugin handle gesture, `runAsOneHistoryEntry`). A
+  write made around the engine now has no undo of its own. The B5
+  automation-writes ratchet reached 0 (ai 0, plugins 0) and is deleted with it
+  (eslint.automation-writes.config.mjs, scripts/lint/automationWritesReport.mjs,
+  src/__tests__/automationWriteRatchet.*, `npm run lint:automation-writes`).
 
 ### 15.7 G1 — static fields, optional properties and the data-model gaps
 

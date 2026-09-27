@@ -16,7 +16,7 @@
 
 import { getProjectManager, getSettingsManager } from '@core/services/coreServices';
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
-import { baselineHistory } from '@stores/historyStore';
+import { baselineHistoryNow } from '@core/engine/historyBaseline';
 import { type AnimSnapshot } from '@motion/animation';
 import { IMPLIED_LEGACY_VERSION } from '@core/project/migrations';
 import type { ProjectFile } from '@core/types';
@@ -545,6 +545,6 @@ export function restoreRecovery(snap: RecoverySnapshot): number {
   }
   // Recovering IS a load: undo must not be able to step behind it into the
   // seeded starter scene captured at boot.
-  baselineHistory('Recovered');
+  baselineHistoryNow('Recovered');
   return snap.time;
 }

@@ -50,7 +50,7 @@ import { panelAssetSelectionIds, selectedPanelAssets, selectedPanelFootage } fro
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { baselineHistoryEdit } from '@core/engine/historyBaseline';
-import { attachHistoryRecording, performUndo, performRedo } from '@stores/historyStore';
+import { performUndo, performRedo } from '@stores/historyStore';
 import { attachRenderBackendEvents } from '@stores/renderBackendStore';
 import { Button } from '@components/Button';
 import { openAbout } from '@layout/Help/AboutDialog';
@@ -2943,32 +2943,14 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         }
         try { void useAssetStore.getState().initialize(); } catch { /* ignore */ }
 
-        // History: initial "Open" state, then a debounced snapshot after edits.
+        // History: the "Open" baseline (a load boundary). Every edit after it
+        // is an engine command with its own entry — there is no recorder.
         try {
-          // The history baseline at boot (a load boundary; history infrastructure, not an edit).
           void baselineHistoryEdit('Open');
-          // The debounce lives in the store so undo/redo can flush it — a
-          // pending snapshot that only exists in a local closure is why Ctrl+Z
-          // inside the window used to eat two actions.
-          // The KEY tells history what is being edited, so a burst on one
-          // target coalesces into a single undo step while a move to a
-          // different layer/property commits the previous one first. A bare
-          // `schedule` merged anything that happened to land inside the same
-          // 700 ms — two unrelated edits, one Ctrl+Z, both gone.
-          //
-          // ONE attach point, deliberately. These were four separate `track`
-          // lines here and three of them worked; the baseline sync had been
-          // subscribed at MODULE SCOPE, so it landed on the bus this boot
-          // discards and never fired once — every commanded edit then also
-          // recorded a generic snapshot and Ctrl+Z took two presses, app-wide.
-          // Keeping the set together in `historyStore` makes the half-wired
-          // state unrepresentable, and lets the guard suite drive the same unit
-          // boot does rather than a re-typed copy of it.
-          track(attachHistoryRecording());
         } catch { /* ignore */ }
         // The engine API (NATIVE_CORE_PLAN §5 B3): ONE LocalEngine over the
         // live document, with the real file/media ports. After the history
-        // wiring (its entries go on the same unified stack) and the default
+        // baseline (its entries go on the same unified stack) and the default
         // scene seed; rebuilt on every ProjectLoaded/ProjectUnloaded.
         try {
           bootEngine({

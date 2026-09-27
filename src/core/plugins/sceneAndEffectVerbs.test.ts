@@ -48,7 +48,7 @@ function newLayer(kind = 'shape'): string {
 }
 
 /**
- * Every mutating verb runs inside `runDocumentEdit`, which needs a command
+ * Every mutating verb runs inside an edit's history entry, which needs a command
  * system — that is what makes a plugin's change ONE undo entry. Without it the
  * call throws before reaching the code under test, and every assertion fails on
  * a message about boot order rather than on anything these verbs do.

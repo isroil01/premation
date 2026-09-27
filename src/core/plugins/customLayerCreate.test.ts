@@ -43,7 +43,7 @@ beforeAll(async () => {
   await usePluginStore.getState().hydrate();
   pluginHost.configure({ getSelection: () => [] });
   seedDefaultScene();
-  // `runDocumentEdit` needs one — every plugin write goes through it, which is
+  // an edit's history entry needs one — every plugin write goes through it, which is
   // the point: one undo entry per call, labelled with the plugin.
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
 });

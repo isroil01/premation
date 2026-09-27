@@ -7,8 +7,8 @@
  * whole selection when the row is part of it, on that row alone otherwise), the
  * clicked row's state decides the direction for the whole set, and the lot is
  * ONE undo step. What changed is the write: one `setLayerSwitches` per layer in
- * one labelled batch, instead of assigning `node.visible` inside
- * `runDocumentEdit`. The engine records the inverse, refreshes the panels and
+ * one labelled batch, instead of assigning `node.visible` in a whole-document
+ * snapshot edit. The engine records the inverse, refreshes the panels and
  * refuses what it cannot do with a typed error (toasted by `edit`).
  *
  * A composition ROOT is not a layer in the API (it is an item): its row has no

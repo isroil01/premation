@@ -4,26 +4,10 @@
  * ## Rule 5·0 — the observable, the layer, and the medium
  *
  * The observable is the number of rows the History panel gains from one edit,
- * and the layer that produces it is `HistoryService`'s entry list — fed from
- * TWO independent places: the command a control invokes, and the debounced
- * snapshot `historyStore` captures behind it.
- *
- * The medium has to sample BOTH, and that is the whole reason this bug lived so
- * long. `rigGestureUndo.test.tsx` already asserted "one gesture, one step" for
- * the canvas gestures and was green throughout, because it never wires the
- * snapshot path — with only the command layer live, the count is trivially
- * right. The duplicate only exists when `attachHistoryRecording()` has run, so
- * this suite runs it, exactly as boot does.
- *
- * ## The bug this pins
- *
- * The baseline sync was subscribed at MODULE SCOPE. `Application.boot()` calls
- * `setEventBus(new EventBus())`, so it attached to a bus boot then discarded and
- * never fired once. `lastState` was therefore never refreshed after a command
- * pushed, `statesEqual` compared every capture against a stale baseline and
- * always saw a change, and each commanded edit recorded a generic `Edit N`
- * snapshot ON TOP of the command's own entry. Ctrl+Z took two presses for one
- * gesture, app-wide, and the History panel showed rows for actions nobody took.
+ * and the layer that produces it is `HistoryService`'s entry list — fed by the
+ * engine commands the controls send (the 700 ms debounced snapshot recorder
+ * that once recorded a second, generic `Edit N` row behind a commanded edit is
+ * gone, B5 round 2). The suite boots the app engine exactly as boot does.
  *
  * ## Why the subject set is DERIVED
  *
@@ -52,7 +36,7 @@ import { EventBus, setEventBus } from '@core/events/EventBus';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { defaultAnimation } from '@motion/animation';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
-import { useHistoryStore, baselineHistory } from '@stores/historyStore';
+import { resetHistory } from '@stores/historyStore';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
@@ -125,10 +109,7 @@ interface Probe {
  * Fire one realistic edit at `el` and measure what history did.
  *
  * The engine is awaited (`idle`) after every fire, so the measurement sees the
- * edit the control sent rather than the document before it landed. `flush()`
- * stands in for the 700 ms debounce elapsing — it is the same call
- * `performUndo` makes, so this is the real commit path rather than a shortcut
- * around it.
+ * edit the control sent rather than the document before it landed.
  */
 async function probeControl(section: string, el: Element): Promise<Probe> {
   const control = el.getAttribute('aria-label') ?? el.tagName.toLowerCase();
@@ -161,7 +142,6 @@ async function probeControl(section: string, el: Element): Promise<Probe> {
     await idle();
   }
 
-  useHistoryStore.getState().flush();
   await idle();
   return {
     section, control,
@@ -217,7 +197,7 @@ async function collectProbes(): Promise<Probe[]> {
  */
 async function resetWorld(): Promise<void> {
   // A fresh bus per section, then the SAME wiring boot installs
-  // (`setupAppEngine`: the unified history, the recorder, the engine). Order
+  // (`setupAppEngine`: the unified history, the engine). Order
   // matters: this mirrors `Application.boot()` swapping the bus before
   // Providers subscribes, which is the exact sequence the bug lived in.
   setEventBus(new EventBus());
@@ -228,7 +208,7 @@ async function resetWorld(): Promise<void> {
     { type: 'setProperty', prop: { layer: ID, path: 'layer/skeleton' }, value: { kind: 'json', value: JSON.stringify(SKELETON) } },
   ]);
   useSelectionStore.setState({ ids: [ID] } as never);
-  baselineHistory();
+  resetHistory();
 }
 
 let PROBES: Probe[] = [];
@@ -280,20 +260,17 @@ describe('the probe set is real', () => {
     }
   });
 
-  it('POSITIVE CONTROL: the recording mechanism is live in this harness', async () => {
-    // If `attachHistoryRecording` were wired to nothing here, the snapshot path
-    // would be absent and the suite would measure the command layer alone —
-    // which is exactly the blind spot that hid this bug for so long. An
-    // UNCOMMANDED edit is the tell: only the snapshot path can record it.
+  it('there is no recorder behind the engine: an uncommanded write records nothing', async () => {
+    // The debounced snapshot recorder is gone — only engine commands make
+    // entries, so a write around the engine adds none (it is a gap, not an edit).
     await resetWorld();
     const before = entryCount();
     defaultSceneGraph.setSkeleton(ID, {
       bones: [{ id: 'solo', name: 'Solo', parentId: null, length: 20, x: 1, y: 2, rotation: 0 }],
       ikTargets: [], meshDensity: 6, meshExpansion: 0,
     } as never);
-    useHistoryStore.getState().schedule('scene');
-    useHistoryStore.getState().flush();
-    expect(entryCount() - before).toBe(1);
+    await idle();
+    expect(entryCount() - before).toBe(0);
   });
 });
 

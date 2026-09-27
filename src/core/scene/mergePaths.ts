@@ -25,7 +25,6 @@ import { resolveCornerRadii, clampCornerRadii, type CornerRadiiProps } from '@co
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene } from '@stores/sceneStore';
-import { useHistoryStore } from '@stores/historyStore';
 
 export type MergeOp = 'union' | 'subtract' | 'intersect' | 'exclude';
 
@@ -503,7 +502,6 @@ export function planLiveMerge(op: MergeOp): LiveMergePlan | null {
  * {@link planLiveMerge} for designed motion where operands animate.
  */
 export function mergeSelectedPaths(op: MergeOp): string[] {
-  useHistoryStore.getState().flush();
   const { polys, sources } = collectMergeableSelection();
   if (polys.length < 2) return [];
 
@@ -555,6 +553,5 @@ export function mergeSelectedPaths(op: MergeOp): string[] {
   for (const s of sources) defaultSceneGraph.removeNode(s.id);
   useSelectionStore.getState().set(newIds);
   bumpScene();
-  useHistoryStore.getState().record(`Merge Paths (${op})`);
   return newIds;
 }

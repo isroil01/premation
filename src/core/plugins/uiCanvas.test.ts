@@ -161,7 +161,7 @@ describe('one gesture, one undo entry', () => {
 
     beginPluginGesture('Drag plugin handle');
     expect(pluginGestureActive()).toBe(true);
-    // Whatever the plugin writes during the drag, every inner `runDocumentEdit`
+    // Whatever the plugin writes during the drag, every inner an edit's history entry
     // suspends and resumes INSIDE ours (the suspension is counted) and pushes
     // nothing of its own.
     endPluginGesture();

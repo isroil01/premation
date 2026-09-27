@@ -1,7 +1,6 @@
 /**
  * Test harness for the local engine: a booted-enough editor (CommandSystem,
- * unified history, the scene→timeline mirror and the 700 ms debounce recorder
- * the app wires) plus an engine with `verifyScopes` and `wire` on — every
+ * unified history and the scene→timeline mirror the app wires) plus an engine with `verifyScopes` and `wire` on — every
  * command is checked against a whole-document diff and every payload goes
  * through the binary codec.
  */
@@ -12,10 +11,8 @@ import type { EnginePorts } from '../ports';
 import { canonicalJson } from '../canonical';
 import { CommandSystem, setCommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
 import type { CommandServices } from '@core/commands/Command';
-import { setUnifiedHistory } from '@core/config/flags';
 import { getEventBus } from '@core/events/EventBus';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { attachHistoryRecording, useHistoryStore } from '@stores/historyStore';
 import { resetSnapshotSharing } from '@core/commands/snapshotSharing';
 import type { ImportedAsset } from '@stores/assetStore';
 import type { EditorDocument } from '@core/api/cloudDocument';
@@ -76,12 +73,10 @@ U.createObjectURL ??= () => 'blob:test';
 
 export async function setupEngine(opts: LocalEngineOptions = {}): Promise<Harness> {
   for (const s of subs) s.dispose();
-  setUnifiedHistory(true);
   setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
   resetSnapshotSharing();
   subs = [
     getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene()),
-    attachHistoryRecording(),
   ];
   const files = new Map<string, EditorDocument>();
   const engine = new LocalEngine({ verifyScopes: true, wire: true, ports: fakePorts(files), ...opts });
@@ -102,7 +97,6 @@ export async function setupEngine(opts: LocalEngineOptions = {}): Promise<Harnes
     },
   };
   await h.run({ type: 'newProject' });
-  useHistoryStore.getState().reset();
   getCommandSystem().getHistory().clear();
   engine.startLog();
   return h;

@@ -18,10 +18,9 @@
 import { unwrap, type DocumentSnapshot, type EngineClient } from '@motion/engine-api';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import type { CommandServices } from '@core/commands/Command';
-import { setUnifiedHistory } from '@core/config/flags';
 import { getEventBus } from '@core/events/EventBus';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { attachHistoryRecording, performUndo, performRedo } from '@stores/historyStore';
+import { performUndo, performRedo } from '@stores/historyStore';
 import { resetSnapshotSharing } from '@core/commands/snapshotSharing';
 import { documentMirror } from '@stores/documentMirror';
 import type { EditorDocument } from '@core/api/cloudDocument';
@@ -69,12 +68,10 @@ maybe('D5: the C++ engine owns the document, the page keeps a replica', () => {
 
   it('routes the session to the owner and keeps the replica equal through edits, a gesture and undo/redo', async () => {
     await shutdownEngine();
-    setUnifiedHistory(true);
     setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
     resetSnapshotSharing();
     subs = [
       getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene()),
-      attachHistoryRecording(),
     ];
     setEngineOwnsDocument(true);
     const files = new Map<string, EditorDocument>();

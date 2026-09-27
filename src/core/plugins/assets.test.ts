@@ -217,7 +217,7 @@ describe('the permission gate', () => {
   beforeAll(async () => {
     seedDefaultScene();
     // A real CommandSystem, because every mutating plugin call goes through
-    // `runDocumentEdit`, which needs one. Worth noting: until this suite,
+    // an edit's history entry, which needs one. Worth noting: until this suite,
     // nothing exercised a SUCCESSFUL plugin write at all — the host suite only
     // ever checked the refusal paths, and those return before the edit runs.
     setCommandSystem(new CommandSystem({ getState: () => ({}), services: {} as never }));

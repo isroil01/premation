@@ -8,8 +8,7 @@
  * they are. The VERSION's frame renders by swapping its document in, rendering,
  * and swapping the live document back — the offline renderer reads the
  * default scene graph and animation, so there is no second engine to hand it.
- * The swap runs under `runRestoring`, which is how undo and redo tell the
- * snapshot history "this change is not an edit"; nothing lands in the undo
+ * A restore records no history entry, so nothing lands in the undo
  * stack and the live document is byte-identical afterwards (it is the same
  * captured document, restored).
  *

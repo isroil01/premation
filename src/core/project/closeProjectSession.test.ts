@@ -17,7 +17,7 @@
 import { ProjectManager } from './ProjectManager';
 import { projectDocumentIO } from './projectDocumentIO';
 import { baselineProjectHistory, resetProjectWorkspace } from './projectSession';
-import { useHistoryStore, performUndo } from '@stores/historyStore';
+import { resetHistory, performUndo } from '@stores/historyStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { getCommandSystem, setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
@@ -94,7 +94,7 @@ beforeEach(() => {
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
   resetScene();
   getCommandSystem().getHistory().clear();
-  useHistoryStore.getState().reset();
+  resetHistory();
   useAssetStore.setState({ assets: [] });
 });
 

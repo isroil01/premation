@@ -20,7 +20,6 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { updateNodeComponentProp } from './InspectorAPI';
-import { batchHistory } from '@stores/historyStore';
 import { getNodeFill, setNodeFill, solidFill } from '@core/paint/fill';
 import { getNodeStroke, updateNodeStroke, type Stroke } from '@core/paint/stroke';
 import { applyMaterialParams, normalizeMaterialParams, readNodeMaterialParams } from '@core/scene/material';
@@ -99,33 +98,26 @@ export function captureTextPreset(nodeId: string): PresetValues {
   return out;
 }
 
-/**
- * Write a bag of component props onto every node that has the component, as
- * ONE undo entry: `batchHistory` renames the debounce target for the whole
- * loop, so the snapshot cannot split on a change of prop or of node.
- */
+/** Write a bag of component props onto every node that has the component. Returns how many props were written. */
 export function applyComponentPropsPreset(
   nodeIds: ReadonlyArray<string>,
   componentType: string,
   values: PresetValues,
-  label: string,
 ): number {
   let written = 0;
-  batchHistory(`preset:${label}:${nodeIds.join(',')}`, () => {
-    for (const nodeId of nodeIds) {
-      const comp = componentOf(nodeId, componentType);
-      if (!comp) continue;
-      for (const [key, value] of Object.entries(values)) {
-        if (!isPresetValue(value)) continue;
-        if (updateNodeComponentProp(defaultSceneGraph, nodeId, comp.id, key, value)) written += 1;
-      }
+  for (const nodeId of nodeIds) {
+    const comp = componentOf(nodeId, componentType);
+    if (!comp) continue;
+    for (const [key, value] of Object.entries(values)) {
+      if (!isPresetValue(value)) continue;
+      if (updateNodeComponentProp(defaultSceneGraph, nodeId, comp.id, key, value)) written += 1;
     }
-  });
+  }
   return written;
 }
 
 export function applyTextPreset(nodeIds: ReadonlyArray<string>, values: PresetValues): number {
-  return applyComponentPropsPreset(nodeIds, 'Text', values, 'Apply Text preset');
+  return applyComponentPropsPreset(nodeIds, 'Text', values);
 }
 
 // ── Appearance ──────────────────────────────────────────────────────
@@ -153,19 +145,17 @@ export function applyAppearancePreset(nodeIds: ReadonlyArray<string>, values: Pr
     if (v !== undefined) (strokePatch as Record<string, PresetValue>)[key] = v;
   }
   const fillColor = values.fillColor;
-  batchHistory(`preset:appearance:${nodeIds.join(',')}`, () => {
-    for (const nodeId of nodeIds) {
-      if (!defaultSceneGraph.getNode(nodeId)) continue;
-      if (typeof fillColor === 'string') {
-        setNodeFill(nodeId, fillColor ? solidFill(fillColor) : undefined);
-        written += 1;
-      }
-      if (Object.keys(strokePatch).length > 0) {
-        updateNodeStroke(nodeId, strokePatch);
-        written += 1;
-      }
+  for (const nodeId of nodeIds) {
+    if (!defaultSceneGraph.getNode(nodeId)) continue;
+    if (typeof fillColor === 'string') {
+      setNodeFill(nodeId, fillColor ? solidFill(fillColor) : undefined);
+      written += 1;
     }
-  });
+    if (Object.keys(strokePatch).length > 0) {
+      updateNodeStroke(nodeId, strokePatch);
+      written += 1;
+    }
+  }
   return written;
 }
 
@@ -182,12 +172,10 @@ export function captureMaterialPreset(nodeId: string): PresetValues {
 export function applyMaterialPreset(nodeIds: ReadonlyArray<string>, values: PresetValues): number {
   let written = 0;
   const params = normalizeMaterialParams(values);
-  batchHistory(`preset:material:${nodeIds.join(',')}`, () => {
-    for (const nodeId of nodeIds) {
-      if (!defaultSceneGraph.getNode(nodeId)) continue;
-      applyMaterialParams(nodeId, params);
-      written += 1;
-    }
-  });
+  for (const nodeId of nodeIds) {
+    if (!defaultSceneGraph.getNode(nodeId)) continue;
+    applyMaterialParams(nodeId, params);
+    written += 1;
+  }
   return written;
 }

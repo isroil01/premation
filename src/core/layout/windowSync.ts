@@ -26,7 +26,6 @@
 
 import { syncChannel } from './syncChannel';
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
-import { useHistoryStore } from '@stores/historyStore';
 import { getEventBus } from '@core/events/EventBus';
 import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { bumpScene } from '@stores/sceneStore';
@@ -137,15 +136,10 @@ export function startWindowSync(opts: WindowSyncOptions = {}): () => void {
     if (!doc || engineDocument) return;
     applying = true;
     try {
-      // `runRestoring` as well as `applying`: the first stops this window from
-      // re-broadcasting, the second stops history from recording a document
-      // that arrived from ANOTHER window as a local edit. Without it, every
-      // sync push became an undo step, and undoing it would have shoved the
-      // other window's older document back over the user's work.
-      useHistoryStore.getState().runRestoring(() => {
-        restoreDocument(doc);
-        bumpScene();
-      });
+      // `applying` stops this window from re-broadcasting a document that
+      // arrived from ANOTHER window (a restore records no undo entry).
+      restoreDocument(doc);
+      bumpScene();
     } finally {
       // Release on the next macrotask: restoreDocument's own store writes emit
       // events synchronously, and those must not be mistaken for local edits.

@@ -26,7 +26,6 @@
 import type { Command, DocumentFragment } from '@motion/engine-api';
 import { edit, reportEngineError, type EditOptions } from './uiEdits';
 import { getCommandSystem } from '@core/commands/CommandSystem';
-import { useHistoryStore } from '@stores/historyStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene } from '@stores/sceneStore';
 import { jsonEqual } from '@core/commands/snapshotSharing';
@@ -46,8 +45,8 @@ export interface OffDocumentRun<T> {
 /**
  * Run `build` against a scratch state of the live document and put the
  * document back exactly. `inspect` runs while the scratch state is still live
- * (to encode what the build produced). No history entry, no engine resync, no
- * recorder capture; the selection is restored too.
+ * (to encode what the build produced). No history entry, no engine resync;
+ * the selection is restored too.
  */
 export function offDocument<T, R>(
   build: () => T,
@@ -55,9 +54,6 @@ export function offDocument<T, R>(
 ): R {
   const eng = localEngine();
   const hold = <X>(fn: () => X): X => (eng ? eng.holdDetection(fn) : fn());
-  const store = useHistoryStore.getState();
-  // A pending debounced legacy edit gets its own entry first (as runEdits does).
-  store.flush();
   let history: ReturnType<ReturnType<typeof getCommandSystem>['getHistory']> | null = null;
   try {
     history = getCommandSystem().getHistory();
@@ -67,8 +63,6 @@ export function offDocument<T, R>(
   const selection = [...useSelectionStore.getState().ids];
   return hold(() => {
     history?.suspend();
-    const prevRestoring = useHistoryStore.getState().restoring;
-    useHistoryStore.setState({ restoring: true });
     const before = captureScope(documentScope());
     let restoreParts: Parts | null = null;
     try {
@@ -90,7 +84,6 @@ export function offDocument<T, R>(
       throw err;
     } finally {
       if (restoreParts && restoreParts.size > 0) applyParts(restoreParts);
-      useHistoryStore.setState({ restoring: prevRestoring });
       history?.resume();
       useSelectionStore.getState().set(selection);
       bumpScene();

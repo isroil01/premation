@@ -12,8 +12,10 @@
  *     random values built to hit the edge cases (NaN, -0, undefined in objects
  *     and arrays, `toJSON`, key order, shared sub-objects);
  *   • a shared capture is deep-equal to the old capture, field for field;
- *   • random edit sequences through the REAL store (record / undo / redo /
- *     jump, `runDocumentEdit`) push an entry exactly when the old equality says
+ *   • random edit sequences of snapshot entries (a capture pushed when it
+ *     changed, as every remaining snapshot entry does — the AI turn's gap
+ *     fallback, the document transaction — plus undo / redo / jump) push an
+ *     entry exactly when the old equality says
  *     they should, every undo and redo lands on the state the oracle recorded,
  *     undo-all returns the opening document and redo-all the final one;
  *   • nothing restored aliases a snapshot: editing the live document after an
@@ -27,16 +29,8 @@ import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { CommandSystem, getCommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import { EventBus, setEventBus } from '@core/events/EventBus';
-import {
-  attachHistoryRecording,
-  baselineHistory,
-  performJumpTo,
-  performRedo,
-  performUndo,
-  StoreSnapshotCommand,
-  useHistoryStore,
-} from '@stores/historyStore';
-import { runDocumentEdit } from './documentEdit';
+import { performJumpTo, performRedo, performUndo } from '@stores/historyStore';
+import { StoreSnapshotCommand } from './snapshotCommand';
 import {
   captureSharedScene,
   captureSharedState,
@@ -50,8 +44,8 @@ import {
   type ClipGeometry,
   type ClipGeometryProvider,
   type ClipsByComp,
+  type DocState,
 } from './snapshotSharing';
-import { setUnifiedHistory } from '@core/config/flags';
 import type { SceneNode } from '@core/types';
 
 jest.useFakeTimers();
@@ -245,7 +239,47 @@ function freshHistory(): void {
   setEventBus(new EventBus());
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
   resetSnapshotSharing();
+  lastState = null;
 }
+
+// ── Snapshot entries, the way the remaining snapshot users push them ──────
+
+let lastState: DocState | null = null;
+
+/** The load boundary: an empty stack and a named "Open" entry that changes nothing. */
+function baselineHistory(label: string): void {
+  const h = getCommandSystem().getHistory();
+  h.clear();
+  lastState = captureSharedState();
+  h.push(new StoreSnapshotCommand(label, lastState, lastState, true));
+}
+
+/** Push a snapshot entry when the document changed since the last capture. */
+function record(label = 'Edit'): void {
+  const cur = captureSharedState();
+  if (lastState && !statesEqual(lastState, cur)) getCommandSystem().getHistory().push(new StoreSnapshotCommand(label, lastState, cur));
+  lastState = cur;
+}
+
+/** One structural edit as one entry (the document transaction's shape). */
+function docEdit(label: string, mutate: () => void): void {
+  const before = captureSharedState();
+  const h = getCommandSystem().getHistory();
+  h.suspend();
+  try {
+    mutate();
+  } finally {
+    h.resume();
+  }
+  const after = captureSharedState();
+  if (!statesEqual(before, after)) h.push(new StoreSnapshotCommand(label, before, after));
+  lastState = after;
+}
+
+const resync = (): void => { lastState = captureSharedState(); };
+const undo = (): void => { void performUndo(); resync(); };
+const redo = (): void => { void performRedo(); resync(); };
+const jumpTo = (i: number): void => { void performJumpTo(i); resync(); };
 
 describe('captureSharedScene', () => {
   beforeEach(() => {
@@ -369,7 +403,6 @@ function undoDepth(): number {
 
 function runSequence(seed: number, steps: number): void {
   freshHistory();
-  const rec = attachHistoryRecording();
   seedWorld(5);
   baselineHistory('Open');
   const r = rng(seed);
@@ -390,39 +423,37 @@ function runSequence(seed: number, steps: number): void {
         const cur = legacyCapture();
         const shouldPush = !legacyEqual(m.last, cur);
         const before = undoDepth();
-        useHistoryStore.getState().record();
+        record();
         expect({ ctx, added: undoDepth() - before }).toEqual({ ctx, added: shouldPush ? 1 : 0 });
         m.last = cur;
         if (shouldPush) pushState();
       } else if (roll < 0.72) {
-        // One structural edit, one entry — the documentEdit path.
+        // One structural edit, one entry — the document-transaction path.
         const before = undoDepth();
         const pre = legacyCapture();
         let post: ReturnType<typeof legacyCapture> | null = null;
-        runDocumentEdit('Doc edit', () => { pick(r, EDITS)(r); post = legacyCapture(); });
+        docEdit('Doc edit', () => { pick(r, EDITS)(r); post = legacyCapture(); });
         const pushed = !legacyEqual(pre, post);
         expect({ ctx, added: undoDepth() - before }).toEqual({ ctx, added: pushed ? 1 : 0 });
         if (pushed) pushState();
-        // Any pending debounce is flushed by the next undo; the baseline sync
-        // has already moved to the post-edit state, so it records nothing.
         m.last = legacyCapture();
       } else if (roll < 0.86) {
         if (m.index > 0) {
-          performUndo();
+          undo();
           m.index -= 1;
           expect({ ctx, op: 'undo', doc: docJson() }).toEqual({ ctx, op: 'undo', doc: m.states[m.index] });
           m.last = legacyCapture();
         }
       } else if (roll < 0.96) {
         if (m.index < m.states.length - 1) {
-          performRedo();
+          redo();
           m.index += 1;
           expect({ ctx, op: 'redo', doc: docJson() }).toEqual({ ctx, op: 'redo', doc: m.states[m.index] });
           m.last = legacyCapture();
         }
       } else if (m.states.length > 1) {
         const to = int(r, m.states.length);
-        performJumpTo(to);
+        jumpTo(to);
         m.index = to;
         expect({ ctx, op: 'jump', doc: docJson() }).toEqual({ ctx, op: 'jump', doc: m.states[to] });
         m.last = legacyCapture();
@@ -431,14 +462,14 @@ function runSequence(seed: number, steps: number): void {
     }
 
     // Undo everything → the opening document; redo everything → the final one.
-    while (getCommandSystem().getHistory().canUndo() && getCommandSystem().getHistory().getIndex() > 0) performUndo();
+    while (getCommandSystem().getHistory().canUndo() && getCommandSystem().getHistory().getIndex() > 0) undo();
     expect({ seed, doc: docJson() }).toEqual({ seed, doc: m.states[0] });
     expect(legacyCapture()).toEqual(m.structured[0]);
-    while (getCommandSystem().getHistory().canRedo()) performRedo();
+    while (getCommandSystem().getHistory().canRedo()) redo();
     expect({ seed, doc: docJson() }).toEqual({ seed, doc: m.states[m.states.length - 1] });
     expect(legacyCapture()).toEqual(m.structured[m.structured.length - 1]);
   } finally {
-    rec.dispose();
+    lastState = null;
   }
 }
 
@@ -459,7 +490,7 @@ describe('random edit sequences match the old history exactly', () => {
     for (let i = 0; i < 80; i++) {
       pick(r, EDITS)(r);
       const before = undoDepth();
-      useHistoryStore.getState().record();
+      record();
       if (undoDepth() > before) pushed++;
       else skipped++;
     }
@@ -479,10 +510,10 @@ describe('restored state never aliases history', () => {
     const open = docJson();
     defaultSceneGraph.writeProp('n1', 'n1_s', 'fill', '#ff0000');
     defaultAnimation.setKeyframes('n1', 'x', [{ t: 0, value: 5, easing: 'bezier', bezier: [0.1, 0.2, 0.3, 0.4] }] as never);
-    useHistoryStore.getState().record('edit');
+    record('edit');
     const edited = docJson();
 
-    performUndo();
+    undo();
     expect(docJson()).toBe(open);
     // Scribble over everything reachable from the restored live state, in place.
     const fx = defaultSceneGraph.getNode('n2')!.components.find((c) => c.type === 'fx')!;
@@ -492,9 +523,9 @@ describe('restored state never aliases history', () => {
     const kf = defaultAnimation.getTrackKeyframes('n2', 'x')!;
     (kf[0] as { bezier: number[] }).bezier[1] = 0.99;
 
-    performRedo();
+    redo();
     expect(docJson()).toBe(edited);
-    performUndo();
+    undo();
     expect(docJson()).toBe(open);
   });
 
@@ -516,9 +547,9 @@ describe('restored state never aliases history', () => {
     (after.anim.expressions.n0!.x as { src: string }).src = 'poisoned';
     (after.anim as { tracks: Record<string, unknown> }).tracks = {};
 
-    performUndo();
+    undo();
     expect(docJson()).toBe(beforeJson);
-    performRedo();
+    redo();
     expect(docJson()).toBe(afterJson);
   });
 
@@ -553,22 +584,13 @@ describe('clip geometry in the snapshot (unified history)', () => {
     };
     applied = [];
     previous = registerClipGeometryProvider({ capture: fresh, apply: (c) => { applied.push(c); } });
-    setUnifiedHistory(true);
   });
 
   afterEach(() => {
-    setUnifiedHistory(false);
     registerClipGeometryProvider(previous);
   });
 
-  it('flag off: the snapshot has no clips key at all', () => {
-    setUnifiedHistory(false);
-    const s = captureSharedState();
-    expect('clips' in s).toBe(false);
-    expect(Object.keys(s)).toEqual(['scene', 'anim']);
-  });
-
-  it('flag on: the snapshot carries every comp, equal in content to the provider', () => {
+  it('the snapshot carries every comp, equal in content to the provider', () => {
     const s = captureSharedState();
     expect(s.clips).toEqual(live);
     expect(s.clips).not.toBe(live);
@@ -624,16 +646,16 @@ describe('clip geometry in the snapshot (unified history)', () => {
     expect(statesEqual(a, captureSharedState())).toBe(true);
   });
 
-  it('a pure clip change records its own entry through the store', () => {
+  it('a pure clip change is its own snapshot entry', () => {
     baselineHistory('Open');
     const n = getCommandSystem().getHistory().getEntries().length;
     live.main!.n0 = [bar(12, 288)];
-    useHistoryStore.getState().record();
+    record();
     expect(getCommandSystem().getHistory().getEntries()).toHaveLength(n + 1);
     // Undo hands the entry's clips to the provider.
-    performUndo();
+    undo();
     expect(applied.at(-1)!.main!.n0).toEqual([bar(0, 300)]);
-    performRedo();
+    redo();
     expect(applied.at(-1)!.main!.n0).toEqual([bar(12, 288)]);
   });
 
@@ -645,7 +667,7 @@ describe('clip geometry in the snapshot (unified history)', () => {
     expect(copy.clips!.main).not.toBe(s.clips!.main);
     expect(copy.clips!.main!.n1).not.toBe(s.clips!.main!.n1);
     expect(copy.clips!.main!.n1![0]).not.toBe(s.clips!.main!.n1![0]);
-    // Flag off, no clips: no key is invented.
+    // A state without clips: no key is invented.
     expect('clips' in cloneStateForRestore({ scene: s.scene, anim: s.anim })).toBe(false);
   });
 
@@ -673,7 +695,7 @@ describe('clip geometry in the snapshot (unified history)', () => {
     expect(captureSharedState().clips).toBe(a.clips);
   });
 
-  it('without a provider the flag-on snapshot carries an empty clips record', () => {
+  it('without a provider the snapshot carries an empty clips record', () => {
     registerClipGeometryProvider(null);
     expect(captureSharedState().clips).toEqual({});
   });
