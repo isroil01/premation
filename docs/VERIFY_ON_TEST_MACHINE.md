@@ -5,11 +5,24 @@ build the full engine (Dawn/Skia/ffmpeg) or run the suites in parallel. Each
 item below was written but not run. Check them on a machine that can build
 every preset (the Windows RTX 4060 box, or a Mac with 16 GB+ and Docker off).
 
+## Status on the Windows RTX 4060 box (2026-09-28)
+
+Built and run there after the `wip-stopped` merges: `windows-clang-cl-engine`
+builds (two fixes: `_dupenv_s` in parity_rebless.hpp, the CJK wrap test on the
+real JSON API); ctest 15/15; tsc 0; lint 0 errors (567 warnings); engine-writes
+0; engine-reads 519; `engine-api:check` clean; the full jest suite re-run and
+its 35 failing suites fixed (re-baselines onto the app engine / mirror, plus
+real fixes: AI bezier/easing keys on separated Position, the uniform `scale`
+shorthand, bare `effect.<id>` tracks, the assistant planner keying a
+non-keyable combined Position). Parity fixtures re-blessed from C++ after
+checking every diff (schema growth, autoTrace, 3D world matrices, 1-ulp M1
+libm drift). Items below that this covers are ticked; real-app items stay open.
+
 ## Build first
 
-- [ ] `npm ci` on Node ≥ 22.12; `npm run engine-api:gen` leaves no diff.
-- [ ] `npx tsc --noEmit` (use `NODE_OPTIONS=--max-old-space-size=8192`).
-- [ ] `npm run lint`, `lint:engine-reads`, `lint:engine-writes`, `lint:automation-writes`.
+- [x] `npm ci` on Node ≥ 22.12; `npm run engine-api:gen` leaves no diff.
+- [x] `npx tsc --noEmit` (use `NODE_OPTIONS=--max-old-space-size=8192`).
+- [x] `npm run lint`, `lint:engine-reads`, `lint:engine-writes` (`lint:automation-writes` is no longer an npm script; its ratchet is the jest test `automationWriteRatchet`).
 - [ ] Native: `macos-clang`, `macos-clang-engine`, `windows-clang-cl-engine`, `linux-clang-engine`, the ASan/TSan presets, `native:tidy`, `native:wasm`.
 - [ ] Apple clang: `engine_effects`, `engine_export`, `engine_scene` build without `-fexperimental-library` (d2w-round2 replaced `std::jthread` with `core/joining_thread.hpp`).
 

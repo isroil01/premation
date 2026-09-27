@@ -145,10 +145,23 @@ switch (step) {
     const files = rest.includes('--engine')
       ? '.*[/\\\\]native[/\\\\](libs|engine[/\\\\]src[/\\\\](render_graph|media|raster|audio|scene))[/\\\\].*'
       : '.*[/\\\\]native[/\\\\]libs[/\\\\].*';
-    run('run-clang-tidy', ['-p', db, '-quiet', files]);
+    // LLVM for Windows ships run-clang-tidy as a Python script in share/clang, not an exe on PATH.
+    const llvmScript = join(process.env.ProgramFiles ?? 'C:/Program Files', 'LLVM', 'share', 'clang', 'run-clang-tidy');
+    if (process.platform === 'win32' && existsSync(llvmScript)) run('python', [llvmScript, '-p', db, '-quiet', files]);
+    else run('run-clang-tidy', ['-p', db, '-quiet', files]);
     break;
   }
   case 'wasm': {
+    if (!process.env.EMSDK) {
+      // A sibling emsdk checkout (../emsdk, like ../vcpkg): use its active SDK.
+      const sibling = resolve(root, '..', 'emsdk');
+      const upstream = join(sibling, 'upstream', 'emscripten');
+      if (existsSync(upstream)) {
+        process.env.EMSDK = sibling;
+        const sep = process.platform === 'win32' ? ';' : ':';
+        process.env.PATH = [upstream, join(sibling, 'upstream', 'bin'), process.env.PATH ?? ''].join(sep);
+      }
+    }
     if (!process.env.EMSDK) {
       console.error('EMSDK is not set — activate emsdk first (see native/README.md).');
       process.exit(1);

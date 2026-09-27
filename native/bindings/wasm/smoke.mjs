@@ -26,7 +26,8 @@ const version = m._motion_wasm_abi_version();
 const major = version >>> 16;
 const minor = version & 0xffff;
 console.log(`motion_wasm: abi ${major}.${minor}`);
-if (major !== 0 || minor !== 1) throw new Error(`unexpected ABI version ${major}.${minor}`);
+// MOTION_ABI_VERSION_* in native/include/motion/motion_abi.h (0.2 since D1).
+if (major !== 0 || minor !== 2) throw new Error(`unexpected ABI version ${major}.${minor}`);
 
 const { packed, count, samples } = loadGolden();
 if (packed.length !== count * PACKED_DOUBLES) throw new Error('golden table stride mismatch');

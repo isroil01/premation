@@ -18,7 +18,7 @@ const major = version >>> 16;
 const minor = version & 0xffff;
 console.log(`motion_napi: abi ${major}.${minor}`);
 assert.equal(major, 0);
-assert.equal(minor, 1);
+assert.equal(minor, 2); // MOTION_ABI_VERSION_MINOR (motion_abi.h), 0.2 since D1
 assert.equal(native.packedDoubles, PACKED_DOUBLES);
 
 const { packed, samples } = loadGolden();
