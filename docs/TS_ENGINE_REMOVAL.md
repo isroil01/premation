@@ -66,7 +66,11 @@ Data decisions:
 
 ## Gaps to close in C++ before cutting the UI over
 
-- Queries answering `unsupported`: `getLayerBounds`, `getTextLayout` (B4).
+- Queries: `getLayerBounds` / `getTextLayout` answer in both engines since
+  b4-round2 (the C++ text answer needs the full engine's fonts: `unsupported`
+  headless; viewport-space bounds and `includeEffects` stay `unsupported` —
+  the overlay geometry push carries screen geometry). `evaluateExpression`
+  takes a `member` and previews Source Text since b4-round3.
   (`listFonts` answers from the OS font catalogue since
   p0-platform; `getWaveform`, `getThumbnail`, `hitTest`, `readPixels` answer
   from the C++ engine since d2w-round2.)

@@ -210,6 +210,22 @@ geometry-backed SceneGraphPort (the push carries matrices and boxes; the port
 also needs anchors, 3D projection per view, extruded hulls, clip gating, path
 points and masks from the mirror — a parity-checked step of its own).
 
+### Closed in b4-round3 (2026-09-28, both engines — ENGINE_API.md §15.13; built and run on the Windows box)
+
+- Per-member expression preview: `evaluateExpression {member?}` and a Source
+  Text draft's `text: SourceTextPreview` — the expression editor's live value
+  and its Source Text preview read the engine; the Source Text provider is
+  installed with the expression providers at boot (the text commands and the
+  dialog no longer install it).
+- The effect row's context menu is the Inspector's engine row menu
+  (`engineRowMenuItems`, composition time) — not the legacy `buildPropertyMenu`.
+- Layer Styles section: `mirrorLayerStyles(tree)` over `styles/<key>`; a
+  switched-off style now keeps its properties in both catalogs.
+- The overlay geometry push has more than one consumer: `requestOverlayLayers`
+  (per-owner requests, the union subscribed). The paragraph box handles draw
+  from the pushed matrix + text box; their reflow drag reads the mirror and
+  asks `getTextLayout` / `getLayerTransforms` at press.
+
 ## 5. What is left (2026-09-24: 681 reads, from 765)
 
 The ratchet (`node scripts/lint/engineReadsReport.mjs`) by area: viewport/tools
