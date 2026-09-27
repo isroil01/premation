@@ -69,6 +69,14 @@ function handleAt(container: HTMLElement): [number, number] {
   return [Number(c.getAttribute('cx')), Number(c.getAttribute('cy'))];
 }
 
+/** Render, then let the mirror tree and the overlay geometry subscription land (B4). */
+async function renderOverlay(): Promise<ReturnType<typeof render>> {
+  const r = render(<EffectHandleOverlay />);
+  await act(async () => { await engineIdle(); });
+  await act(async () => { await engineIdle(); });
+  return r;
+}
+
 async function dragBy(svg: Element, from: [number, number], steps: Array<[number, number]>): Promise<void> {
   await act(async () => {
     fireEvent.pointerDown(svg, { clientX: from[0], clientY: from[1], pointerId: 1 });
@@ -80,7 +88,7 @@ async function dragBy(svg: Element, from: [number, number], steps: Array<[number
 }
 
 test('a handle drag writes the params — ONE "Move Bulge Centre" entry; undo restores the document', async () => {
-  const { container } = render(<EffectHandleOverlay />);
+  const { container } = await renderOverlay();
   const svg = container.querySelector('svg')!;
   const start = centre();
   const before = h.doc();
@@ -103,7 +111,7 @@ test('an animated param keys at the playhead; the static one takes the value', a
   const ref = propRefForTrack(ID, track)!.ref;
   await h.run({ type: 'addKeyframes', keys: [{ prop: ref, time: 0, value: values.scalar(0), spatialIn: [], spatialOut: [] }] });
   getCommandSystem().getHistory().clear();
-  const { container } = render(<EffectHandleOverlay />);
+  const { container } = await renderOverlay();
   const svg = container.querySelector('svg')!;
   const startY = centre().y;
 
@@ -116,7 +124,7 @@ test('an animated param keys at the playhead; the static one takes the value', a
 });
 
 test('a press that misses every handle writes nothing', async () => {
-  const { container } = render(<EffectHandleOverlay />);
+  const { container } = await renderOverlay();
   const svg = container.querySelector('svg')!;
   const before = h.doc();
   await dragBy(svg, [4000, 4000], [[4030, 4020]]);

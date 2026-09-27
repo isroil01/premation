@@ -9,7 +9,11 @@
  * error anywhere. So the baseline cases are the bulk of this file.
  */
 
-import { defaultAnimation } from '@motion/animation';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { sec, type Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { documentMirror } from '@stores/documentMirror';
 import {
   useOnboardingStore,
   TOUR_STEPS,
@@ -36,24 +40,41 @@ function goTo(id: string): void {
   for (let i = 0; i < stepIndex(id); i++) useOnboardingStore.getState().next();
 }
 
-beforeEach(() => {
+// `keyframeCount` reads the document mirror (B4), so the keys are made through
+// the app's engine on a real layer, and each case starts from a new project.
+let h: Harness & { engine: LocalEngine };
+let tourLayer = '';
+
+/** One key on `path` of `layer` at `seconds`, landed in the mirror. */
+async function key(layer: string, path: string, seconds: number, value: number): Promise<void> {
+  const v = path === 'transform/position'
+    ? { kind: 'vec2' as const, value: { x: value, y: 0 } }
+    : { kind: 'scalar' as const, value };
+  await h.run({ type: 'addKeyframes', keys: [{ prop: { layer, path }, time: sec(seconds), value: v, spatialIn: [], spatialOut: [] }] });
+  await engineIdle();
+  await documentMirror().whenIdle();
+}
+
+async function solid(name: string): Promise<string> {
+  return (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name, init: [] })).layer;
+}
+
+beforeEach(async () => {
   jest.useFakeTimers();
   localStorage.clear();
-  // Every track from a previous case, gone — `keyframeCount` reads the shared
-  // engine singleton.
-  for (const nodeId of defaultAnimation.getAnimatedNodeIds()) {
-    for (const track of defaultAnimation.tracksFor(nodeId)) {
-      defaultAnimation.removeTrack(nodeId, track.prop);
-    }
-  }
+  h = await setupAppEngine();
+  tourLayer = await solid('tour-node');
+  await engineIdle();
+  await documentMirror().whenIdle();
   resetOnboardingRuntime();
   useOnboardingStore.setState({ active: false, index: 0, done: false, autoStarted: false });
 });
 
-afterEach(() => {
+afterEach(async () => {
   useOnboardingStore.getState().skip();
   jest.clearAllTimers();
   jest.useRealTimers();
+  await h.dispose();
 });
 
 describe('the step list', () => {
@@ -116,42 +137,44 @@ describe('navigation', () => {
 });
 
 describe('auto-advance', () => {
-  test('a keyframe step advances by itself once a keyframe exists', () => {
+  test('a keyframe step advances by itself once a keyframe exists', async () => {
     goTo('set-keyframe');
     expect(useOnboardingStore.getState().index).toBe(stepIndex('set-keyframe'));
 
     jest.advanceTimersByTime(TOUR_POLL_MS * 2);
     expect(useOnboardingStore.getState().index).toBe(stepIndex('set-keyframe'));
 
-    defaultAnimation.setKeyframe('tour-node', 'position.x', 0, 0);
+    await key(tourLayer, 'transform/position', 0, 0);
     jest.advanceTimersByTime(TOUR_POLL_MS);
     expect(useOnboardingStore.getState().index).toBe(stepIndex('second-keyframe'));
   });
 
-  test('the second-keyframe step needs a SECOND one, not just any', () => {
+  test('the second-keyframe step needs a SECOND one, not just any', async () => {
     goTo('set-keyframe');
 
     // The keyframe that satisfies step 3 must not also satisfy step 4 — the
     // point of the step is that one keyframe is a value, and two are motion.
-    defaultAnimation.setKeyframe('tour-node', 'position.x', 0, 0);
+    // One Position key is ONE key (not its x and y member tracks).
+    await key(tourLayer, 'transform/position', 0, 0);
     jest.advanceTimersByTime(TOUR_POLL_MS);
     expect(useOnboardingStore.getState().index).toBe(stepIndex('second-keyframe'));
 
     jest.advanceTimersByTime(TOUR_POLL_MS * 3);
     expect(useOnboardingStore.getState().index).toBe(stepIndex('second-keyframe'));
 
-    defaultAnimation.setKeyframe('tour-node', 'position.x', 1, 100);
+    await key(tourLayer, 'transform/position', 1, 100);
     jest.advanceTimersByTime(TOUR_POLL_MS);
     expect(useOnboardingStore.getState().index).toBe(stepIndex('play'));
   });
 
-  test('a project that ALREADY has keyframes does not skip the keyframe steps', () => {
+  test('a project that ALREADY has keyframes does not skip the keyframe steps', async () => {
     // The regression this exists for: with an absolute check ("any keyframe
     // exists"), taking the tour on real work would fly through three steps
     // before the first card had been read.
-    defaultAnimation.setKeyframe('existing', 'position.x', 0, 0);
-    defaultAnimation.setKeyframe('existing', 'position.x', 1, 50);
-    defaultAnimation.setKeyframe('existing', 'opacity', 0, 1);
+    const existing = await solid('existing');
+    await key(existing, 'transform/position', 0, 0);
+    await key(existing, 'transform/position', 1, 50);
+    await key(existing, 'transform/opacity', 0, 100);
 
     goTo('set-keyframe');
     jest.advanceTimersByTime(TOUR_POLL_MS * 4);
@@ -165,10 +188,10 @@ describe('auto-advance', () => {
     expect(useOnboardingStore.getState().index).toBe(stepIndex('inspector'));
   });
 
-  test('the poll stops when the tour ends', () => {
+  test('the poll stops when the tour ends', async () => {
     goTo('set-keyframe');
     useOnboardingStore.getState().skip();
-    defaultAnimation.setKeyframe('tour-node', 'position.x', 0, 0);
+    await key(tourLayer, 'transform/position', 0, 0);
     jest.advanceTimersByTime(TOUR_POLL_MS * 4);
     expect(useOnboardingStore.getState().active).toBe(false);
     // The satisfied check must not have moved anything — a timer that outlives

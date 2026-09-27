@@ -10,7 +10,7 @@ import { create } from 'zustand';
 import type { TemplateDefinition } from '@core/template/templateTypes';
 import { getTemplate } from '@core/template/registry';
 import { readTemplateFieldValue } from '@core/template/templateFields';
-import { readAuthoredFields } from '@core/template/templateAuthoring';
+import { mirrorAuthoredFields } from '@layout/Templates/templateAuthoringEdits';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import type { Command } from '@motion/engine-api';
@@ -125,10 +125,13 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
     set({ active: { ...t, fields }, values });
   },
   previewAuthored: () => {
-    const fields = readAuthoredFields();
+    // B4: the authored manifest is the active composition's `templateFields` (the mirror).
+    const fields = mirrorAuthoredFields(activeCompIdNow() ?? '');
     if (fields.length === 0) return;
     const values: Record<string, string | number> = {};
     for (const f of fields) {
+      // B4-gap: a field's STORED component prop (a media slot's object URL, the static text / colour / number) —
+      // the API addresses text / fill / numbers as properties (valueAt a time), but not a slot's `src` URL.
       const current = readTemplateFieldValue(f);
       values[f.id] = (typeof current === 'string' || typeof current === 'number') ? current : f.default;
     }

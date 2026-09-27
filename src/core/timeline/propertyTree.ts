@@ -392,7 +392,10 @@ function layerStyleRows(nodeId: string): StaticPropertyRow[] {
 
   for (const styleKey of Object.keys(styles)) {
     const style = styles[styleKey];
-    if (!style || style.enabled === false) continue;
+    // A switched-off style keeps its properties (AE's Layer Styles: the eye
+    // hides the style, its properties stay in the timeline and in the API;
+    // the C++ catalog's ptree.cpp layer_style_rows agrees).
+    if (!style) continue;
     const effectId = layerStyleEffectId(styleKey as keyof LayerStyles);
     const label = LAYER_STYLE_LABEL[styleKey] ?? styleKey;
 

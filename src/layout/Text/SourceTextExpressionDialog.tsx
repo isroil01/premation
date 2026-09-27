@@ -14,13 +14,11 @@
 import { SOURCE_TEXT_PROP } from '@motion/animation';
 import { openModal } from '@stores/modalStore';
 import { documentMirror } from '@stores/documentMirror';
-import { installSourceTextProvider } from '@core/textExpr/sourceTextProvider';
 import { ExpressionEditor } from '@layout/Motion/ExpressionEditor';
 
 export const SOURCE_TEXT_EXPRESSION_MODAL_ID = 'source-text-expression';
 
 export function openSourceTextExpressionEditor(nodeId: string): void {
-  installSourceTextProvider();
   const name = documentMirror().layer(nodeId)?.name ?? 'Text';
   openModal({
     // Stable id: a floating window remembers where it was put.

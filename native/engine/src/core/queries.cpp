@@ -252,6 +252,55 @@ api::EffectInfo effect_info(const EffectDef& def) {
 
 namespace {
 
+/// The overridden keys of a Source Text result's style, by their TypeScript
+/// names in `SourceTextStyleOverrides` declaration order
+/// (src/core/engine/sourceTextPreview.ts SOURCE_TEXT_STYLE_KEYS).
+std::vector<std::string> source_text_style_keys(const motion::expr::SourceTextStyleOverrides& s) {
+  std::vector<std::string> out;
+  const auto add = [&out](bool present, const char* name) {
+    if (present) out.emplace_back(name);
+  };
+  add(s.font_family.has_value(), "fontFamily");
+  add(s.font_size.has_value(), "fontSize");
+  add(s.font_weight.has_value(), "fontWeight");
+  add(s.font_style.has_value(), "fontStyle");
+  add(s.fill.has_value(), "fill");
+  add(s.apply_fill.has_value(), "applyFill");
+  add(s.stroke.has_value(), "stroke");
+  add(s.stroke_width.has_value(), "strokeWidth");
+  add(s.apply_stroke.has_value(), "applyStroke");
+  add(s.tracking.has_value(), "tracking");
+  add(s.leading.has_value(), "leading");
+  add(s.baseline_shift.has_value(), "baselineShift");
+  add(s.horizontal_scale.has_value(), "horizontalScale");
+  add(s.vertical_scale.has_value(), "verticalScale");
+  add(s.text_transform.has_value(), "textTransform");
+  add(s.font_variant.has_value(), "fontVariant");
+  add(s.align.has_value(), "align");
+  add(s.first_line_indent.has_value(), "firstLineIndent");
+  add(s.left_indent.has_value(), "leftIndent");
+  add(s.right_indent.has_value(), "rightIndent");
+  add(s.space_before.has_value(), "spaceBefore");
+  add(s.space_after.has_value(), "spaceAfter");
+  add(s.direction.has_value(), "direction");
+  add(s.leading_type.has_value(), "leadingType");
+  return out;
+}
+
+/// evaluateExpression's answer for a draft Source Text expression (SourceTextPreview).
+api::SourceTextPreview source_text_preview(const motion::expr::SourceTextResult& r) {
+  api::SourceTextPreview p;
+  p.text = to_u8(r.text);
+  p.style_keys = source_text_style_keys(r.style);
+  p.ranges = static_cast<std::uint32_t>(r.ranges.size());
+  for (const auto& range : r.ranges) {
+    for (auto& k : source_text_style_keys(range.style)) {
+      if (std::find(p.range_keys.begin(), p.range_keys.end(), k) == p.range_keys.end()) p.range_keys.push_back(std::move(k));
+    }
+  }
+  return p;
+}
+
 struct Q {
   QCtx& c;
   const PCtx& pc;
@@ -856,8 +905,22 @@ struct Q {
     (void)require_layer(d, q.prop.layer);
     const Catalog cat = catalog_for(d, q.prop.layer);
     const PropBinding& b = require_binding(cat, q.prop.path);
+    if (b.path == "text/sourceText") {
+      // A draft Source Text expression: text + style overrides (B4, the editor preview).
+      const auto tr = anim_preview_source_text(d, pc.expr, pc.cache, q.prop.layer, q.source,
+                                               flicks_to_key_time(pc, q.prop.layer, b, q.time));
+      api::ExpressionEvaluation out;
+      if (tr.result) out.text = source_text_preview(*tr.result);
+      if (tr.error && !tr.error->empty()) out.diagnostics.push_back(api::ExpressionDiagnostic{to_u8(*tr.error), 0, 0});
+      return query_result_for<api::EvaluateExpression>(std::move(out));
+    }
     if (b.members.empty()) fail(ErrorCode::unsupported, "'" + b.path + "' is not numeric", {.path = b.path});
-    const auto r = anim_preview_expression(d, pc.expr, pc.cache, q.prop.layer, b.members[0], q.source,
+    const std::uint32_t member = q.member.value_or(0);
+    if (member >= b.members.size()) {
+      fail(ErrorCode::out_of_range, "'" + b.path + "' has " + std::to_string(b.members.size()) + " member(s)",
+           {.path = b.path});
+    }
+    const auto r = anim_preview_expression(d, pc.expr, pc.cache, q.prop.layer, b.members[member], q.source,
                                            flicks_to_key_time(pc, q.prop.layer, b, q.time));
     api::ExpressionEvaluation out;
     using K = motion::expr::Result::Kind;
@@ -870,6 +933,35 @@ struct Q {
     }
     if (r.error && !r.error->empty()) out.diagnostics.push_back(api::ExpressionDiagnostic{to_u8(*r.error), 0, 0});
     return query_result_for<api::EvaluateExpression>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetSearchFacts& q) const {
+    std::vector<std::string> ids;
+    if (!q.layers.empty()) {
+      for (const auto& id : q.layers) {
+        if (comp_of_layer(d, id)) ids.push_back(id);
+      }
+    } else {
+      for (const auto& comp : comp_item_ids(d)) {
+        for (auto& id : layer_ids_of_comp(d, comp)) ids.push_back(std::move(id));
+      }
+    }
+    api::SearchFactsList out;
+    out.layers.reserve(ids.size());
+    for (const auto& id : ids) {
+      api::LayerSearchFacts f;
+      f.layer = id;
+      const Json& fx = d.node(id)->fx().at("effects");
+      if (fx.is_array()) {
+        for (const Json& e : fx.arr()) {
+          if (e.at("type").is_string()) f.effects.push_back(e.at("type").str());
+        }
+      }
+      if (const NodeAnim* a = d.anim(id)) {
+        for (const auto& [prop, st] : a->exprs) f.expressions.push_back(st.src);
+      }
+      out.layers.push_back(std::move(f));
+    }
+    return query_result_for<api::GetSearchFacts>(std::move(out));
   }
   api::QueryResult operator()(const api::FindLayers& q) const {
     std::vector<std::string> comps;

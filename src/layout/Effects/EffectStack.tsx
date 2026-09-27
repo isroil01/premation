@@ -70,8 +70,7 @@ import {
   type CurvePoints,
 } from '@core/effects/effects';
 import { LABEL_COLORS } from '@core/scene/labelColor';
-import { buildPropertyMenu } from '@core/inspector/propertyMenu';
-import { layerTimeFor } from '@core/inspector/multiSelection';
+import { engineRowMenuItems } from '@layout/Inspector/propertyRowMenu';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import {
@@ -588,12 +587,15 @@ function EffectParamRow({
           openContextMenu(
             ev.clientX,
             ev.clientY,
-            buildPropertyMenu({
+            // The Inspector's row menu on the engine API: keys addressed in
+            // composition time, state from the mirror (B4).
+            engineRowMenuItems({
               nodeId,
               prop: path,
-              // The menu's own keyframe items work on the layer's keyframe axis (display read).
-              layerT: layerTimeFor(nodeId, path, time),
-              value: display,
+              nodeIds: [nodeId],
+              time,
+              label,
+              resetValue: typeof meta.defaultValue === 'number' && meta.resettable ? meta.defaultValue : undefined,
               setValue: (v) => send(v),
             }),
           );

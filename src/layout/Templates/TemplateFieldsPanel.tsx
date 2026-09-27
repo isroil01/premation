@@ -21,6 +21,8 @@ import { customConfirm } from '@components/Modal';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
 import { liveComps } from '@core/mirror/compNames';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { TEMPLATES } from '@core/template/registry';
 import { templateThumbnail, createTemplatePlayer } from '@core/template/templatePreview';
 import { ANIM_PRESETS, insertAnimPreset, animPresetThumbnail, createAnimPresetPlayer, type AnimPreset } from '@core/template/animPresets';
@@ -193,6 +195,10 @@ export function TemplateAuthoringSection(): JSX.Element | null {
 
   const exposeSelected = (): void => {
     if (!selectedId) return;
+    // B4-gap: a legacy WRITER that infers the field from the node's components (Text content, the Transform
+    // `src` URL, Style fill) and stamps the slot rect (`__slotW/__slotH/__slotFit`, no catalog path); closes
+    // with the slot props in the catalog and the layer's source URL in the API, then a
+    // `setCompositionSettings.templateFields` edit like templateAuthoringEdits.
     exposeNodeAsField(selectedId);
   };
 
@@ -204,7 +210,16 @@ export function TemplateAuthoringSection(): JSX.Element | null {
       { placeholder: 'Template name', confirmLabel: 'Save template' },
     );
     if (!name?.trim()) return;
-    const result = await publishCurrentTemplate(name.trim());
+    // B4: the active composition's fields and settings from the document mirror, read at call time.
+    const compId = activeCompIdNow();
+    const settings = compId ? documentMirror().comp(compId)?.settings : undefined;
+    const result = await publishCurrentTemplate(name.trim(), {
+      fields: compId ? mirrorAuthoredFields(compId) : [],
+      width: settings?.width ?? DEFAULT_COMPOSITION.width,
+      height: settings?.height ?? DEFAULT_COMPOSITION.height,
+      fps: settings ? settingsFps(settings) : DEFAULT_COMPOSITION.fps,
+      durationSeconds: settings ? settingsDurationSeconds(settings) : DEFAULT_COMPOSITION.durationSeconds,
+    });
     notify({
       level: result.ok ? 'success' : 'error',
       message: result.ok ? `Saved template “${name.trim()}”` : result.error ?? 'Publish failed',

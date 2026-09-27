@@ -41,6 +41,8 @@ const computed = new Map<number, FrameSet>();
 const engineDriven = new Set<number>();
 const listeners = new Map<number, Set<() => void>>();
 const subscribed = new Map<number, string>();
+/** The last subscription sent per viewport, settled once the engine has it. */
+const pendingSubscription = new Map<number, Promise<void>>();
 
 function merge(records: ReadonlyArray<OverlayLayerGeometry>): Map<string, OverlayLayer> {
   const out = new Map<string, OverlayLayer>();
@@ -87,12 +89,61 @@ export function publishFrameGeometry(viewport: number, time: number, revision: n
  * Subscribe the viewport's overlays to `layers` × `kinds` (`setOverlayGeometry`,
  * both engines). Sent only when it changes.
  */
-export function subscribeOverlayLayers(viewport: number, layers: ReadonlyArray<string>, kinds: ReadonlyArray<OverlayKind>): void {
+export function subscribeOverlayLayers(viewport: number, layers: ReadonlyArray<string>, kinds: ReadonlyArray<OverlayKind>): Promise<void> {
   const key = `${layers.join('\u0001')}\u0000${kinds.join(',')}`;
-  if (subscribed.get(viewport) === key) return;
+  if (subscribed.get(viewport) === key) return pendingSubscription.get(viewport) ?? Promise.resolve();
   subscribed.set(viewport, key);
   computed.delete(viewport);
-  void engine().execute({ type: 'setOverlayGeometry', viewport, layers: [...layers], kinds: [...kinds] });
+  // Records computed between the send and the engine taking it were for the old
+  // subscription: drop them once it has landed (a control moves no revision).
+  const landed = engine().execute({ type: 'setOverlayGeometry', viewport, layers: [...layers], kinds: [...kinds] }).then(() => {
+    if (subscribed.get(viewport) === key) computed.delete(viewport);
+  });
+  pendingSubscription.set(viewport, landed);
+  return landed;
+}
+
+/** Each overlay's own request, by viewport then owner: the subscription sent is their union. */
+const requests = new Map<number, Map<string, { layers: readonly string[]; kinds: readonly OverlayKind[] }>>();
+
+/**
+ * One overlay's share of the viewport's subscription (the selection chrome,
+ * the text box handles, the puppet pins…): `owner` names it, an empty `layers`
+ * withdraws it. The viewport is subscribed to the UNION — every requested layer
+ * with every requested kind (`setOverlayGeometry` has one kind list) — sent
+ * only when the union changes. Resolves once the engine has the subscription
+ * (a React overlay re-renders then: its records exist from that point).
+ */
+export function requestOverlayLayers(viewport: number, owner: string, layers: ReadonlyArray<string>, kinds: ReadonlyArray<OverlayKind>): Promise<void> {
+  let byOwner = requests.get(viewport);
+  if (!byOwner) requests.set(viewport, (byOwner = new Map()));
+  if (layers.length === 0 || kinds.length === 0) byOwner.delete(owner);
+  else byOwner.set(owner, { layers: [...layers], kinds: [...kinds] });
+  const allLayers: string[] = [];
+  const allKinds: OverlayKind[] = [];
+  for (const r of byOwner.values()) {
+    for (const l of r.layers) if (!allLayers.includes(l)) allLayers.push(l);
+    for (const k of r.kinds) if (!allKinds.includes(k)) allKinds.push(k);
+  }
+  return subscribeOverlayLayers(viewport, allLayers, allKinds);
+}
+
+/**
+ * The layer → screen placement of a pushed record's matrix (`transform`): the
+ * screen origin, the on-screen angle and the axis scales — what the DOM
+ * overlays glue to (the twin of the viewport's scene-node placement). The 2D
+ * chain as the column-major 4×4 the push carries; `toScreen` is the viewport
+ * camera's comp → screen (view state). Null without a matrix.
+ */
+export function overlayScreenPlacement(
+  g: OverlayLayer | undefined,
+  toScreen: (p: { x: number; y: number }) => { x: number; y: number },
+): { x: number; y: number; rotationDeg: number; scaleX: number; scaleY: number } | null {
+  const m = g?.matrix;
+  if (!m || m.length < 16) return null;
+  const a = m[0]!, b = m[1]!, c = m[4]!, d = m[5]!;
+  const s = toScreen({ x: m[12]!, y: m[13]! });
+  return { x: s.x, y: s.y, rotationDeg: (Math.atan2(b, a) * 180) / Math.PI, scaleX: Math.hypot(a, b) || 1, scaleY: Math.hypot(c, d) || 1 };
 }
 
 /**

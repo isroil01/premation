@@ -17,7 +17,6 @@
  */
 
 import { Icon, type IconName } from '@components/Icon';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { LayerFlag } from '@core/scene/layerFlags';
 import {
   mirrorDescribeLayerFlag,
@@ -64,13 +63,12 @@ export function SceneRowSwitches({ nodeId, flags }: SceneRowSwitchesProps): JSX.
     locked = layer.switches.locked;
     solo = layer.switches.solo;
   } else {
-    // B4-gap: a composition ROOT is not a layer in the API (it is an item), so its row's
-    // eye / lock / solo — node flags the legacy writers still toggle — have no mirror record.
-    const root = defaultSceneGraph.getNode(nodeId);
-    if (!root) return null;
-    hidden = root.visible === false;
-    locked = root.locked === true;
-    solo = root.solo === true;
+    // A composition ROOT is not a layer in the API (it is an item): it has no
+    // eye / lock / solo — the row's switches are a note, never a write (b5-round2).
+    if (!m.comp(nodeId)) return null;
+    hidden = false;
+    locked = false;
+    solo = false;
   }
   const audible = mirrorLayerHasAudio(layer);
   const muted = audible && layer?.switches.audioEnabled === false;

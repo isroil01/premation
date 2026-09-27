@@ -757,10 +757,11 @@ export function TopNav(): JSX.Element {
                   { type: 'item', id: 'new-light', label: 'Light…', icon: 'light', onSelect: () => openLightDialog() },
                   { type: 'item', id: 'new-particle', label: 'Particle System', icon: 'sparkles', onSelect: () => { void createLayerEdit('particle', { name: 'Particles 1', label: 'New Particle System' }); } },
                   { type: 'separator' },
-                  { type: 'item', id: 'new-3d-text', label: '3D Extruded Text', icon: 'text-3d', onSelect: () => insert3DText('3D TEXT') },
-                  { type: 'item', id: 'new-3d-cube', label: '3D Cube', icon: 'cube', onSelect: () => insert3DPrimitive('cube') },
-                  { type: 'item', id: 'new-3d-sphere', label: '3D Sphere', icon: 'sphere', onSelect: () => insert3DPrimitive('sphere') },
-                  { type: 'item', id: 'new-3d-cylinder', label: '3D Cylinder', icon: 'cylinder', onSelect: () => insert3DPrimitive('cylinder') },
+                  // Built off-document and inserted as ONE pasteLayers entry (like insertShape).
+                  { type: 'item', id: 'new-3d-text', label: '3D Extruded Text', icon: 'text-3d', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New 3D Text', t.comp, () => insert3DText('3D TEXT')); } },
+                  { type: 'item', id: 'new-3d-cube', label: '3D Cube', icon: 'cube', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New 3D Cube', t.comp, () => insert3DPrimitive('cube')); } },
+                  { type: 'item', id: 'new-3d-sphere', label: '3D Sphere', icon: 'sphere', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New 3D Sphere', t.comp, () => insert3DPrimitive('sphere')); } },
+                  { type: 'item', id: 'new-3d-cylinder', label: '3D Cylinder', icon: 'cylinder', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New 3D Cylinder', t.comp, () => insert3DPrimitive('cylinder')); } },
                   // The parametrised route to the same family, plus the shapes a
                   // fixed default cannot express (a torus IS its ring/tube ratio).
                   { type: 'item', id: 'new-3d-primitive', label: '3D Primitive…', icon: 'sphere', onSelect: () => openPrimitiveDialog() },

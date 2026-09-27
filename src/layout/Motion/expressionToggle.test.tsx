@@ -137,8 +137,10 @@ describe('the status line does not lie about a disabled expression', () => {
     expect(text).not.toMatch(/(^|[^d])= 200\.00/);
   });
 
-  test('enabled shows the live value as before', () => {
+  test('enabled shows the live value as before', async () => {
     const { container } = render(<ExpressionEditor nodeId={NODE} prop="x" />);
+    // The preview is the engine's `evaluateExpression` answer (B4): it lands asynchronously.
+    await act(async () => { await engineIdle(); });
     expect(container.textContent ?? '').toContain('= 200.00');
     expect(container.textContent ?? '').not.toContain('Disabled');
   });

@@ -86,7 +86,7 @@ const NAMED_WRITERS = {
 };
 
 /** Write verbs for helpers imported from engine-writing @core modules. */
-const WRITE_VERB = /^(add|update|remove|delete|toggle|move|set|duplicate|reorder|replace|apply|clear|reset|insert|write|rename|create|commit|keyframe|edit|group|ungroup|reparent|arrange|relink|nudge|split|trim|paste|bake|convert|precompose|align|distribute|sequence|link|unlink|merge|separate|import|freeze|reverse|enable|disable|fit)[A-Z]|^(renameLayer|alignNodes|arrangeNodes|reparentNode|insertNull|applyIk|applyFade|applyBounce|applyPreset|applyAssembly|applyDataRow|applyTransitionItem)$/;
+const WRITE_VERB = /^(add|update|remove|delete|toggle|move|set|duplicate|reorder|replace|apply|clear|reset|insert|write|rename|create|commit|keyframe|edit|group|ungroup|reparent|arrange|relink|nudge|split|trim|paste|bake|convert|precompose|align|distribute|sequence|link|unlink|merge|separate|import|freeze|reverse|enable|disable|fit)[A-Z0-9]|^(renameLayer|alignNodes|arrangeNodes|reparentNode|insertNull|applyIk|applyFade|applyBounce|applyPreset|applyAssembly|applyDataRow|applyTransitionItem)$/;
 
 /** @core areas that do not hold document state (view, services, rendering, tooling). */
 const NOT_DOCUMENT_MODULES = [

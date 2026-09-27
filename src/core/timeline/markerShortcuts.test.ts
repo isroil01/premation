@@ -37,6 +37,11 @@ import { getCommandRegistry, chordKey } from '@core/commands/Command';
 import { CommandSystem, setCommandSystem, chordFromEvent } from '@core/commands/CommandSystem';
 import { ShortcutManager, setShortcutManager } from '@core/commands/ShortcutManager';
 import type { SceneNode } from '@core/types';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { sec, type Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { documentMirror } from '@stores/documentMirror';
 
 const NODE = 'mk_rect';
 /** Deliberately NOT ascending — see the header. */
@@ -292,8 +297,27 @@ describe('the nine commands are registered', () => {
 // ── The crossing (F30) ─────────────────────────────────────────────
 
 describe('a real Shift+digit keydown moves the playhead', () => {
-  it('Shift+1 seeks the first marker — the whole chain, end to end', () => {
-    addMarkersOutOfOrder();
+  // The commands' `enabled` counts the active composition's markers in the
+  // document MIRROR (B4), so these markers are made through the app's engine
+  // (still out of time order) and have landed in the mirror before the key.
+  let h: (Harness & { engine: LocalEngine }) | null = null;
+  const addMarkersOutOfOrder = async (): Promise<void> => {
+    h = await setupAppEngine();
+    const comp = documentMirror().compIds[0] ?? 'comp_root';
+    for (const f of MARKER_FRAMES) {
+      await h.run({ type: 'addMarkers', markers: [{ owner: { comp }, time: sec(f / 30), duration: 0, name: `M${f}`, comment: '', label: 0 }] });
+    }
+    await engineIdle();
+    await documentMirror().whenIdle();
+    getTimelineController().timeline.seek(0);
+  };
+  afterEach(async () => {
+    await h?.dispose();
+    h = null;
+  });
+
+  it('Shift+1 seeks the first marker — the whole chain, end to end', async () => {
+    await addMarkersOutOfOrder();
     wireShortcuts();
     const c = getTimelineController();
     c.timeline.seek(0);
@@ -305,10 +329,10 @@ describe('a real Shift+digit keydown moves the playhead', () => {
     expect(Math.round(c.timeline.currentFrame)).toBe(30);
   });
 
-  it('Shift+3 seeks the third marker, not the third one created', () => {
+  it('Shift+3 seeks the third marker, not the third one created', async () => {
     // Creation order was 90, 30, 60 — so a chain that skipped the sort lands on
     // 60 here and this is the assertion that says so.
-    addMarkersOutOfOrder();
+    await addMarkersOutOfOrder();
     wireShortcuts();
     const c = getTimelineController();
     c.timeline.seek(0);
@@ -320,8 +344,8 @@ describe('a real Shift+digit keydown moves the playhead', () => {
     expect(Math.round(c.timeline.currentFrame)).toBe(90);
   });
 
-  it('Shift+5 with three markers does nothing — the command disables itself', () => {
-    addMarkersOutOfOrder();
+  it('Shift+5 with three markers does nothing — the command disables itself', async () => {
+    await addMarkersOutOfOrder();
     wireShortcuts();
     const c = getTimelineController();
     c.timeline.seek(45);
@@ -333,9 +357,9 @@ describe('a real Shift+digit keydown moves the playhead', () => {
     expect(Math.round(c.timeline.currentFrame)).toBe(45);
   });
 
-  it('a BARE 1 does not seek a marker — it still belongs to the 3D view', () => {
+  it('a BARE 1 does not seek a marker — it still belongs to the 3D view', async () => {
     // The collision check, at the layer where a collision would actually bite.
-    addMarkersOutOfOrder();
+    await addMarkersOutOfOrder();
     wireShortcuts();
     const c = getTimelineController();
     c.timeline.seek(45);

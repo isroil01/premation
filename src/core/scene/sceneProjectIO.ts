@@ -32,6 +32,11 @@ function defaultComposition(): SceneNode {
   };
 }
 
+/** A fresh empty scene file: the default composition root and nothing else (reads no graph). */
+export function emptySceneProject(): ProjectFile {
+  return { version: '1.0.0', nodes: [defaultComposition()] };
+}
+
 function clearGraph(): void {
   const ids: string[] = [];
   defaultSceneGraph.traverse((n) => ids.push(n.id));
@@ -39,7 +44,7 @@ function clearGraph(): void {
 }
 
 export const sceneProjectIO: ProjectDocumentIO<ProjectFile> = {
-  createEmpty: () => ({ version: '1.0.0', nodes: [defaultComposition()] }),
+  createEmpty: emptySceneProject,
 
   capture: () => {
     const nodes: SceneNode[] = [];

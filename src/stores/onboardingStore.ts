@@ -47,7 +47,6 @@ import { create } from 'zustand';
 import type { Placement } from '@hooks/positionPopover';
 import { documentMirror } from '@stores/documentMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { defaultAnimation } from '@motion/animation';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { tryCoreServices } from '@core/services/coreServices';
@@ -152,11 +151,18 @@ function contentLayerCount(): number {
   }
 }
 
+/**
+ * Keyframes in the document, per PROPERTY (B4: the mirror's key lists). One
+ * stopwatch click on Position is one key here — it used to count the stored
+ * x / y (/ z) member tracks, so the first click alone also passed the tour's
+ * "second keyframe" step.
+ */
 function keyframeCount(): number {
   try {
+    const m = documentMirror();
     let total = 0;
-    for (const nodeId of defaultAnimation.getAnimatedNodeIds()) {
-      for (const track of defaultAnimation.tracksFor(nodeId)) total += track.keyframes.length;
+    for (const id of m.layerIds()) {
+      for (const keys of m.layerKeyframes(id).values()) total += keys.length;
     }
     return total;
   } catch {

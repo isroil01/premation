@@ -18,7 +18,7 @@ import type { SceneNode } from '@core/types';
 import type { TrackMatte } from '@core/effects/matte';
 import type { AutoOrientMode } from '@core/scene/autoOrient';
 import { AUTO_ORIENT_DEAD_KINDS } from '@core/scene/autoOrient';
-import type { LayerStyles } from '@core/effects/layerStyles';
+import { LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS, type LayerStyles } from '@core/effects/layerStyles';
 import type { FaceMaterials } from '@core/scene/faceMaterials';
 import { readNodeMaterial, type MaterialOptions } from '@core/scene/material';
 import { readNodePolystar, type Polystar } from '@core/scene/polystar';
@@ -151,6 +151,50 @@ export function mirrorOverlayStyles(tree: MirrorTreeLike | undefined): LayerStyl
     };
   }
   return out;
+}
+
+/**
+ * The layer's whole style set in the editor's record shape (the twin of
+ * `getNodeLayerStyles`), from `styles/<key>` groups: `enabled` is the group's
+ * switch; numbers come from `styles/<key>/<param>` divided by the catalog's
+ * scale (LAYER_STYLE_NUMBER_PARAMS: an opacity 0..100 is the record's 0..1),
+ * colours from the colour params as hex, the switches (Use Global Light,
+ * Invert, Direction, Position) as stored; Glass keeps its own field names and
+ * stored units. STATIC values — animated ones are read per row.
+ */
+export function mirrorLayerStyles(tree: MirrorTreeLike | undefined): LayerStyles {
+  const out: Record<string, Record<string, unknown>> = {};
+  const root = tree?.nodes.get('styles');
+  for (const gPath of root?.children ?? []) {
+    const g = tree!.nodes.get(gPath);
+    if (!g || g.kind !== 'group') continue;
+    const key = gPath.slice('styles/'.length);
+    const nums = LAYER_STYLE_NUMBER_PARAMS[key] ?? {};
+    const colors = LAYER_STYLE_COLOR_PARAMS[key] ?? {};
+    const rec: Record<string, unknown> = { enabled: g.enabled };
+    for (const p of g.children) {
+      const info = tree!.nodes.get(p);
+      if (!info || info.kind !== 'property') continue;
+      const field = p.slice(gPath.length + 1);
+      const v = info.value;
+      if (v?.kind === 'color') {
+        const recKey = key === 'glass' ? field : Object.keys(colors).find((k) => colors[k] === field);
+        if (recKey) rec[recKey] = channelsToHex(v.value);
+        continue;
+      }
+      const plain = plainValue(v);
+      if (key !== 'glass' && typeof plain === 'number') {
+        const recKey = Object.keys(nums).find((k) => nums[k]!.param === field);
+        if (recKey) {
+          rec[recKey] = plain / nums[recKey]!.scale;
+          continue;
+        }
+      }
+      rec[field] = plain;
+    }
+    out[key] = rec;
+  }
+  return out as LayerStyles;
 }
 
 /** The primitive mesh spec (the twin of `readNodePrimitive`), null when the layer is not one. */

@@ -20,6 +20,14 @@ import { LOTTIE_DESIGN_CENTER, getLottieItem, prepareLottieFile, previewLottieIt
 import { planLottieImport, type ImportPlan } from '@core/lottie/lottieImport';
 import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
 import { buildLottieFragment } from '@/engine-client/lottieFragment';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
+
+/** The active composition's size and length (the document mirror, B4); the default comp when there is none. */
+function activeCompFrame(): { width: number; height: number; durationSeconds: number } {
+  const s = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+  if (!s) return { width: DEFAULT_COMPOSITION.width, height: DEFAULT_COMPOSITION.height, durationSeconds: DEFAULT_COMPOSITION.durationSeconds };
+  return { width: s.width, height: s.height, durationSeconds: settingsDurationSeconds(s) };
+}
 
 /**
  * Lay `plan` into a fragment for `comp` and paste it (one entry). The new
@@ -61,7 +69,7 @@ export async function insertLottieItemEdit(lottieId: string, x?: number, y?: num
 export async function importLottieFileEdit(file: File): Promise<void> {
   let prepared;
   try {
-    prepared = await prepareLottieFile(file);
+    prepared = await prepareLottieFile(file, activeCompFrame);
   } catch (err) {
     reportLottieImportFailure(file.name, err);
     return;

@@ -22,7 +22,6 @@ import { documentMirror } from '@stores/documentMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { canOutlineText } from './textMirror';
 import { masksFromTextEdit } from './textEdits';
-import { installSourceTextProvider } from '@core/textExpr/sourceTextProvider';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { openFindReplaceTextDialog } from './FindReplaceTextDialog';
@@ -119,5 +118,4 @@ export function installTextToolCommands(): void {
   for (const command of buildTextToolCommands()) registry.register(command);
   getShortcutManager().rehydrateFromRegistry();
   installMissingFontsWatcher();
-  installSourceTextProvider();
 }

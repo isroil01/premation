@@ -225,6 +225,13 @@ const setTimeRemap: AiTool['handler'] = async (input, ctx) => {
     await ctx.anim.setKeyframe(i.nodeId, 'timeRemap', k.t, k.sourceT, k.easing ?? 'linear');
     if (k.easing === 'bezier' && k.bezier) await ctx.anim.setBezier(i.nodeId, 'timeRemap', k.t, k.bezier);
   }
+  // Enabling remapping keyed the layer's in / out boundaries (AE's two keys);
+  // the call states the WHOLE remap, so a boundary key it did not name goes.
+  const named = (t: number): boolean => sorted.some((k) => Math.abs(k.t - t) < 1e-6);
+  const remap = (await ctx.anim.tracks(i.nodeId)).find((tr) => tr.prop === 'timeRemap');
+  for (const k of remap?.keyframes ?? []) {
+    if (!named(k.t)) await ctx.anim.removeKeyframe(i.nodeId, 'timeRemap', k.t);
+  }
   refreshAfterLegacy(ctx);
 
   // Describe what the remap actually DOES, so the model can tell whether it got

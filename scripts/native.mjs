@@ -4,7 +4,7 @@
  *
  *   node scripts/native.mjs configure [--asan|--tsan|--engine|--preset NAME]
  *                                     (--engine: premation-engine + Dawn, docs/VIEWPORT_ROUTE.md)
- *   node scripts/native.mjs build     [same flags]
+ *   node scripts/native.mjs build     [same flags] [--target a,b]   (only those CMake targets)
  *   node scripts/native.mjs test      [same flags]
  *   node scripts/native.mjs bench     runs the Google Benchmark binary
  *   node scripts/native.mjs tidy      run-clang-tidy over native/libs (needs a configured build)

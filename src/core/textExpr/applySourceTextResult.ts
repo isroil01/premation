@@ -90,6 +90,11 @@ export function unsupportedRangeKeys(result: SourceTextExpressionResult | null |
   return [...out];
 }
 
+/** The same test over range key NAMES (the engine's `SourceTextPreview.rangeKeys`). */
+export function unsupportedRangeKeyNames(keys: ReadonlyArray<string>): string[] {
+  return keys.filter((k) => !APPLIED_RANGE_KEYS.has(k as SourceTextRangeKey));
+}
+
 /** The spec's style with the rasteriser's defaults filled in — for unit conversion only. */
 function specStyle(spec: SourceTextSpec): SourceTextStyle {
   return {

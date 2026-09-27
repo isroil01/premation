@@ -27,7 +27,9 @@ import { Badge } from '@components/Badge';
 import { useViewportDisplayStore } from '@stores/viewportDisplayStore';
 import { useRotoBrushStore } from '@stores/rotoBrushStore';
 import { propagateRotoForward } from '@core/workspace/rotoBrushTool';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { playheadSeconds } from '@core/timeline/timelineView';
+import { settingsDurationSeconds, settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
+import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import styles from './ToolOptionsBar.module.css';
 
 /** The two things a roto stroke can mean, and how to say so. */
@@ -371,17 +373,19 @@ function RotoOptions(): JSX.Element {
   const propagate = (): void => {
     if (!nodeId) return;
     const store = useRotoBrushStore.getState();
-    const controller = getTimelineController();
-    const from = controller.currentSeconds;
-    const wa = controller.getWorkArea();
-    const to = wa ? wa.end : controller.durationSeconds;
+    // B4: the playhead (transport seam) and the active composition's work area / length / rate from the mirror.
+    const settings = activeCompSettingsNow();
+    const from = playheadSeconds();
+    const wa = settingsSetWorkArea(settings);
+    const to = wa ? wa.end : settingsDurationSeconds(settings);
     if (!(to > from)) {
       store.setStatus('Nothing ahead of the playhead to propagate into.');
       return;
     }
     store.setBusy(true, 0);
     store.setStatus('Propagating forward…');
-    propagateRotoForward(nodeId, store.strokes, from, to, controller.fps, store.featherPx, (f) => {
+    // B4-kept: an engine job run from the UI (segments decoded frames) — not registered as an engine job yet (G).
+    propagateRotoForward(nodeId, store.strokes, from, to, settingsFps(settings), store.featherPx, (f) => {
       useRotoBrushStore.getState().setBusy(true, f);
     })
       .then(() => {

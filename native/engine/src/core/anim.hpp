@@ -132,6 +132,12 @@ class ExprCache {
 /// then keeps its un-expressed text).
 [[nodiscard]] std::optional<motion::expr::SourceTextResult> anim_evaluate_source_text(
     const Document& d, const ExprEnv& env, ExprCache& cache, std::string_view node, double t);
+/// `previewSourceTextExpression(node, src, t)`: a DRAFT Source Text expression
+/// evaluated the way playback will (the editor preview) → {result, error}; the
+/// error "This layer has no Source Text." when the layer has none.
+[[nodiscard]] motion::expr::TextResult anim_preview_source_text(const Document& d, const ExprEnv& env,
+                                                                ExprCache& cache, std::string_view node,
+                                                                const std::string& src, double t);
 
 /// `componentIndexOf(prop)`.
 [[nodiscard]] std::size_t component_index_of(std::string_view prop) noexcept;

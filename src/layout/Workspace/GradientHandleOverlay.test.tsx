@@ -33,6 +33,7 @@ import { defaultAnimation } from '@motion/animation';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { Command } from '@motion/engine-api';
 import { engineIdle } from '@core/engine/engineInstance';
+import { propRefForTrack } from '@core/engine/propRefs';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
@@ -116,6 +117,14 @@ async function frame(): Promise<void> {
   await act(async () => { await new Promise<void>((r) => { requestAnimationFrame(() => r()); }); });
 }
 
+/** Render, then let the mirror and the overlay geometry subscription land (B4: the box comes with the frame). */
+async function renderOverlay(): Promise<ReturnType<typeof render>> {
+  const r = render(<GradientHandleOverlay />);
+  await act(async () => { await engineIdle(); });
+  await act(async () => { await engineIdle(); });
+  return r;
+}
+
 async function undo(): Promise<void> {
   await act(async () => { await h.run({ type: 'undo' }); });
 }
@@ -149,7 +158,7 @@ afterEach(async () => {
 describe('when the gizmo appears at all', () => {
   it('draws nothing for a layer with no gradient fill', async () => {
     await linearFillOn(ID, { type: 'solid', color: '#ff0000' });
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     expect(container.querySelector('svg')).toBeNull();
   });
 
@@ -158,7 +167,7 @@ describe('when the gizmo appears at all', () => {
     // artwork on every selection would be chrome in the way far more often
     // than it was wanted.
     await linearFillOn(ID);
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     expect(container.querySelector('svg')?.getAttribute('aria-label')).toBe('Gradient fill');
     expect(container.querySelector('line')).toBeNull();
   });
@@ -166,7 +175,7 @@ describe('when the gizmo appears at all', () => {
   it('draws the axis and both grips once armed', async () => {
     await linearFillOn(ID);
     useGradientEditStore.getState().arm(ID, 0);
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     expect(container.querySelector('svg')?.getAttribute('aria-label')).toBe('Gradient handles');
     expect(container.querySelector('[aria-label="Gradient Start handle"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Gradient End handle"]')).not.toBeNull();
@@ -179,7 +188,7 @@ describe('when the gizmo appears at all', () => {
     await linearFillOn(ID);
     useGradientEditStore.getState().arm(ID, 0);
     useSelectionStore.getState().set([]);
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     expect(container.querySelector('svg')).toBeNull();
   });
 });
@@ -191,7 +200,7 @@ describe('dragging a stop', () => {
     await linearFillOn(ID);
     freshHistory();
     useGradientEditStore.getState().arm(ID, 0);
-    const utils = render(<GradientHandleOverlay />);
+    const utils = await renderOverlay();
     return { ...utils, svg: utils.container.querySelector('svg')! };
   }
 
@@ -283,7 +292,7 @@ describe('dragging a grip', () => {
     await linearFillOn(ID);
     freshHistory();
     useGradientEditStore.getState().arm(ID, 0);
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     const before = h.doc();
     // The end grip stands 15px past the axis end (100, 0).
     await drag(container.querySelector('svg')!, [115, 0], [[20, 60], [0, 90]]);
@@ -299,7 +308,7 @@ describe('dragging a grip', () => {
     freshHistory();
     usePreferenceStore.setState({ timelineAutoKeyframe: true });
     useGradientEditStore.getState().arm(ID, 0);
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     await drag(container.querySelector('svg')!, [115, 0], [[0, 90]]);
     expect(defaultAnimation.isAnimated(ID, 'fillAngle')).toBe(true);
     expect(defaultAnimation.sample(ID, 'fillAngle', 0)).toBeCloseTo(90);
@@ -320,7 +329,7 @@ describe('deleting a stop', () => {
     });
     freshHistory();
     useGradientEditStore.getState().arm(ID, 0);
-    const utils = render(<GradientHandleOverlay />);
+    const utils = await renderOverlay();
     return { ...utils, svg: utils.container.querySelector('svg')! };
   }
 
@@ -342,7 +351,7 @@ describe('deleting a stop', () => {
     await linearFillOn(ID);
     freshHistory();
     useGradientEditStore.getState().arm(ID, 0);
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     const svg = container.querySelector('svg')!;
     await drag(svg, [100, 0], []);
     await act(async () => {
@@ -356,7 +365,7 @@ describe('deleting a stop', () => {
   it('Escape puts the gizmo away', async () => {
     await linearFillOn(ID);
     useGradientEditStore.getState().arm(ID, 0);
-    render(<GradientHandleOverlay />);
+    await renderOverlay();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(useGradientEditStore.getState().nodeId).toBeNull();
   });
@@ -371,7 +380,7 @@ describe('when fill.stops is animated', () => {
     await h.run({ type: 'setAnimated', prop: { layer: ID, path: 'layer/fillStops' }, animated: true, time: 0 });
     freshHistory();
     useGradientEditStore.getState().arm(ID, 0);
-    const utils = render(<GradientHandleOverlay />);
+    const utils = await renderOverlay();
     return { ...utils, svg: utils.container.querySelector('svg')! };
   }
   const sampled = (): number[] =>
@@ -442,7 +451,7 @@ describe('a fill stack', () => {
     ]));
     freshHistory();
     useGradientEditStore.getState().arm(ID, 1);
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     expect(container.querySelectorAll('[aria-label="Which fill to edit"] button')).toHaveLength(2);
 
     const before = h.doc();
@@ -462,7 +471,7 @@ describe('a fill stack', () => {
     freshHistory();
     usePreferenceStore.setState({ timelineAutoKeyframe: true });
     useGradientEditStore.getState().arm(ID, 1);
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     await drag(container.querySelector('svg')!, [115, 0], [[0, 90]]);
     const stack = getNodeFills(ID) as LinearFill[];
     expect(stack[1]?.angle).toBeCloseTo(90);
@@ -500,7 +509,7 @@ describe('a text stroke gradient', () => {
     await linearFillOn(T);
     freshHistory();
     useGradientEditStore.getState().arm(T, 0, 'stroke');
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     const chips = container.querySelectorAll('[aria-label="Which paint to edit"] button');
     expect([...chips].map((b) => [b.textContent, b.getAttribute('aria-pressed')])).toEqual([
       ['Fill', 'false'],
@@ -525,10 +534,13 @@ describe('a text stroke gradient', () => {
 
   it('a grip drag keyframes strokeAngle when that track is live — ONE undo entry, static paint untouched', async () => {
     await withStrokeGradient();
-    defaultAnimation.setKeyframe(T, 'strokeAngle', 0, 0);
+    // Keyed through the engine (the "live" test reads the mirror's key list, B4).
+    const ref = propRefForTrack(T, 'strokeAngle')!.ref;
+    await h.run({ type: 'setAnimated', prop: ref, animated: true, time: 0 });
+    await act(async () => { await engineIdle(); });
     freshHistory();
     useGradientEditStore.getState().arm(T, 0, 'stroke');
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     const grip = centreOf(container, 'Gradient End handle');
 
     // Straight below the layer origin: the axis turns to 90°.
@@ -547,7 +559,7 @@ describe('a shape stroke gradient', () => {
     await fixture(strokesCommands(ID, [{ ...defaultStroke(), paint: LINEAR }]));
     freshHistory();
     useGradientEditStore.getState().arm(ID, 0, 'shapeStroke');
-    const { container } = render(<GradientHandleOverlay />);
+    const { container } = await renderOverlay();
     const grip = centreOf(container, 'Gradient Start handle');
     const endBefore = getNodeStrokeAt(ID, 0);
     const before = h.doc();

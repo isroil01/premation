@@ -14,16 +14,15 @@
 
 import { Icon, type IconName } from '@components/Icon';
 import type { TreeNode } from '@components/TreeView';
-import type { LayerInfo } from '@motion/engine-api';
+import type { LayerInfo, LayerSearchFacts } from '@motion/engine-api';
 import { KIND_GLYPH_COLOR, KIND_ICON } from '@core/scene/sceneDerive';
 import { findLayerKind } from '@core/plugins/layerKindRegistry';
 import { splitKind } from '@core/plugins/layerKindSchema';
-import { getNodeEffects, effectDisplayNames } from '@core/effects/effects';
+import { effectDisplayNames, type Effect } from '@core/effects/effects';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { mirrorIconName } from '@core/mirror/layerGlyph';
 import { mirrorLabelColor } from '@core/mirror/layerLabels';
 import { childOrderOf } from '@core/mirror/layerTree';
-import { defaultAnimation } from '@motion/animation';
 import { useAssetStore } from '@stores/assetStore';
 import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
@@ -227,19 +226,22 @@ export function makeFactsReader(
   fields: ReadonlyArray<SearchField>,
   querying: boolean,
   m: DocumentMirror = documentMirror(),
+  search: ReadonlyMap<string, LayerSearchFacts> | null = null,
 ): (id: string) => SceneNodeFacts | null {
   const wants = (f: SearchField): boolean => querying && fields.includes(f);
 
+  // B4: the document-wide expression / effect facts are the engine's
+  // `getSearchFacts` answer (`useSearchFacts`) — the mirror loads property
+  // trees on demand, never wholesale. Until it lands those fields match nothing.
   let exprByNode: Map<string, string> | null = null;
   if (wants('expressions')) {
     exprByNode = new Map();
-    // B4-gap: a text search over EVERY expression in the document — the mirror holds property trees on demand
-    // (never wholesale), so this needs a `findLayers {expression}` filter on the engine.
-    for (const expr of defaultAnimation.allExpressions()) {
-      const prev = exprByNode.get(expr.nodeId);
-      exprByNode.set(expr.nodeId, prev ? `${prev}\n${expr.src}` : expr.src);
-    }
+    for (const [id, f] of search ?? []) if (f.expressions.length > 0) exprByNode.set(id, f.expressions.join('\n'));
   }
+  const effectNamesOf = (id: string): string => {
+    const pseudo = (search?.get(id)?.effects ?? []).map((type, i) => ({ id: String(i), type }) as Effect);
+    return [...effectDisplayNames(pseudo).values()].join('\n').toLowerCase();
+  };
 
   const wantEffectNames = wants('effects');
   const wantSource = wants('source');
@@ -270,11 +272,7 @@ export function makeFactsReader(
       hasEffects: layer.effectCount > 0,
       name: layer.name || id,
       shy: layer.switches.shy,
-      // B4-gap: effect NAMES of every layer for a text search — the effect list lives in the layer's property tree
-      // (`effects/<id>`), which the mirror loads per layer on demand, never for the whole document.
-      effectNames: wantEffectNames
-        ? [...effectDisplayNames(getNodeEffects(id)).values()].join('\n').toLowerCase()
-        : undefined,
+      effectNames: wantEffectNames ? effectNamesOf(id) : undefined,
       expressions: exprByNode?.get(id)?.toLowerCase(),
       source,
     };

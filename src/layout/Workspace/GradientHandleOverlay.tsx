@@ -49,20 +49,21 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { readGeometry } from '@core/workspace/geometry';
-import { defaultAnimation } from '@motion/animation';
-import type { Command } from '@motion/engine-api';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
+import { secondsToFlicks, type Command, type OverlayKind } from '@motion/engine-api';
+import { documentMirror } from '@stores/documentMirror';
+import { MAIN_VIEWPORT, overlayLayer, requestOverlayLayers } from '@stores/overlayGeometry';
+import { isTrackAnimated, readTrack } from '@core/mirror/selection';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { FILL_STOPS_PATH, gradientValueStops, mirrorFills, mirrorStrokeAt } from '@core/mirror/paintFields';
+import { mirrorTextStrokePaint } from '@layout/Text/textMirror';
 import { edit } from '@core/engine/uiEdits';
 import { useGesture } from '@hooks/useGesture';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
-import { readTextStrokePaint } from '@core/text/textExtras';
 import {
   applyGradientTracks,
   FILL_GRADIENT_TRACKS,
@@ -71,12 +72,11 @@ import {
 } from '@core/rendering/gradientPaintTracks';
 import { ColorPicker } from '@components/ColorPicker';
 import {
-  getNodeFills,
   sortedStops,
   type ColorStop,
   type FillPaint,
 } from '@core/paint/fill';
-import { getNodeStrokeAt, type Stroke, type StrokeGradientGeometry } from '@core/paint/stroke';
+import type { Stroke, StrokeGradientGeometry } from '@core/paint/stroke';
 import { strokeGradientGeometryFor, strokeTrackPath } from '@core/rendering/strokeTracks';
 import { useGradientEditStore, type GradientEditTarget } from './gradientEditStore';
 import { strokePatchCommands } from '@layout/Inspector/appearance/paintEdits';
@@ -232,6 +232,9 @@ function gradientGeometryDragCommands(t: EditTarget, next: GradientPaint, grip: 
   return gradientGeometryCommands(t, writes, () => gradientPaintCommands(t, staticNext), { seconds: t.time, autoKeyframe: autoKeyframe() });
 }
 
+/** The overlay geometry the gizmo maps through: the layer's drawn box. */
+const GRADIENT_KINDS: ReadonlyArray<OverlayKind> = ['bounds'];
+
 export function GradientHandleOverlay(): JSX.Element | null {
   // Frame-coalesced: a drag bumps the scene revision per pointer event and this
   // overlay only has to track it visually.
@@ -251,19 +254,27 @@ export function GradientHandleOverlay(): JSX.Element | null {
   const armed = armedId !== null && singleId === armedId;
   const nodeId = armed ? armedId : singleId;
 
-  const node = nodeId ? defaultSceneGraph.getNode(nodeId) : null;
-  const geom = node ? readGeometry(node) : null;
-  const fills = nodeId ? getNodeFills(nodeId) : [];
+  // B4: paint from the mirror, the drawn box from the overlay geometry push.
+  const m = documentMirror();
+  const node = nodeId ? m.layer(nodeId) ?? null : null;
+  const [, setGeoTick] = useState(0);
+  useEffect(() => {
+    void requestOverlayLayers(MAIN_VIEWPORT, 'gradientHandles', nodeId ? [nodeId] : [], GRADIENT_KINDS).then(() => setGeoTick((t) => t + 1));
+    return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'gradientHandles', [], GRADIENT_KINDS); };
+  }, [nodeId]);
+  const box = nodeId ? overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(time))?.box : undefined;
+  const geom = box && box.length >= 4 ? { width: box[2]!, height: box[3]! } : null;
+  const fills = nodeId ? mirrorFills(m, nodeId) : [];
   // A stack that shrank under an armed index must not read past its end.
   const fillIndex = armed ? Math.min(fillIndexRaw, Math.max(0, fills.length - 1)) : 0;
   const fillPaint = isGradient(fills[fillIndex]) ? (fills[fillIndex] as GradientPaint) : null;
   // A text layer's STROKE gradient — `strokePaint` on its Text component.
-  const strokePaint: GradientPaint | null = node ? readTextStrokePaint(node) ?? null : null;
-  const textComponentId = node?.components.find((c) => c.type === 'Text')?.id ?? null;
+  const strokePaint: GradientPaint | null = node ? mirrorTextStrokePaint(m, node.id) ?? null : null;
+  const textComponentId = node && uiKindOf(node) === 'text' ? node.id : null;
   const armedTarget = useGradientEditStore((s) => s.target);
   // A SHAPE stroke's gradient, only when armed on it from its stroke rows —
   // `fillIndex` then names the stroke's index in the stack.
-  const shapeStroke = armed && armedTarget === 'shapeStroke' && nodeId ? getNodeStrokeAt(nodeId, fillIndexRaw) : undefined;
+  const shapeStroke = armed && armedTarget === 'shapeStroke' && nodeId ? mirrorStrokeAt(m, nodeId, fillIndexRaw) : undefined;
   const shapeStrokePaint: GradientPaint | null = isGradient(shapeStroke?.paint) ? (shapeStroke!.paint as GradientPaint) : null;
   // The stroke when armed on it (the Fill/Stroke chip, or the stroke rows'
   // "Edit on canvas"), or when it is the layer's only gradient; else the fill.
@@ -272,13 +283,10 @@ export function GradientHandleOverlay(): JSX.Element | null {
     : strokePaint && textComponentId && ((armed && armedTarget === 'stroke') || !fillPaint) ? 'stroke' : 'fill';
   const storedPaint = channel === 'shapeStroke' ? shapeStrokePaint : channel === 'stroke' ? strokePaint : fillPaint;
 
-  // Display only: where the `fill.stops` track is SAMPLED for drawing (its key
-  // axis). Writes send comp time and the engine maps it.
-  const layerT = nodeId ? keyAxisTimeForDisplay(nodeId, time, 'fill.stops') : 0;
   // Stop KEYFRAMES bind to the primary FILL only — the same gating the panel
   // applies, because `fill.stops` is one track per node, not per stack slot.
   const stopsAnimated =
-    !!nodeId && channel === 'fill' && fillIndex === 0 && defaultAnimation.isDataAnimated(nodeId, 'fill.stops');
+    !!nodeId && channel === 'fill' && fillIndex === 0 && m.keyframes(nodeId, FILL_STOPS_PATH).length > 0;
 
   /**
    * The paint as the FRAME draws it: keyframed geometry (`fillAngle`… or
@@ -292,8 +300,9 @@ export function GradientHandleOverlay(): JSX.Element | null {
     const names = GEOMETRY_TRACKS[channel];
     const sampled = new Map<string, number>();
     for (const prop of [names.angle, names.centerX, names.centerY, names.radius]) {
-      if (!defaultAnimation.isAnimated(nodeId, prop)) continue;
-      const v = defaultAnimation.sample(nodeId, prop, keyAxisTimeForDisplay(nodeId, time, prop));
+      const mm = documentMirror();
+      if (!isTrackAnimated(mm, nodeId, prop)) continue;
+      const v = readTrack(mm, nodeId, prop, time);
       if (v !== undefined) sampled.set(prop, v);
     }
     return applyGradientTracks(storedPaint, sampled, names) ?? storedPaint;
@@ -308,16 +317,11 @@ export function GradientHandleOverlay(): JSX.Element | null {
   const stops = useMemo<ColorStop[]>(() => {
     if (!paint || !nodeId) return [];
     if (!stopsAnimated) return paint.stops;
-    const sampled = defaultAnimation.sampleData(nodeId, 'fill.stops', layerT) as
-      | Array<{ pos: number; color: string }>
-      | undefined;
     // Ids are synthesised from the INDEX, which is why every write preserves
     // storage order — see `moveStopTo`.
-    return sampled
-      ? sampled.map((s, i) => ({ id: `anim_${i}`, offset: s.pos, color: s.color }))
-      : paint.stops;
+    return gradientValueStops(documentMirror().valueAt(nodeId, FILL_STOPS_PATH, secondsToFlicks(time))) ?? paint.stops;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- anim rev drives this
-  }, [paint, nodeId, stopsAnimated, layerT, sceneTick]);
+  }, [paint, nodeId, stopsAnimated, time, sceneTick]);
 
   const camera = getWorkspaceController().ws.camera;
   const mapping = useMemo(
@@ -339,8 +343,9 @@ export function GradientHandleOverlay(): JSX.Element | null {
     const base = shapeStroke.gradient ?? strokeGradientGeometryFor(shapeStrokePaint, width, height);
     const read = (param: 'gradientStartX' | 'gradientStartY' | 'gradientEndX' | 'gradientEndY', fallback: number): number => {
       const prop = strokeTrackPath(fillIndexRaw, param);
-      if (!defaultAnimation.isAnimated(nodeId, prop)) return fallback;
-      const v = defaultAnimation.sample(nodeId, prop, keyAxisTimeForDisplay(nodeId, time, prop));
+      const mm = documentMirror();
+      if (!isTrackAnimated(mm, nodeId, prop)) return fallback;
+      const v = readTrack(mm, nodeId, prop, time);
       return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
     };
     return {

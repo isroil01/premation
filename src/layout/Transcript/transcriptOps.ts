@@ -33,11 +33,11 @@
 
 import { activeCompIdNow } from '@hooks/useMirror';
 import { documentMirror } from '@stores/documentMirror';
-import { settingsDurationSeconds } from '@core/mirror/compFacts';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { settingsDurationSeconds, settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
+import { mirrorCompBars, mirrorHasBar } from '@core/mirror/clipBars';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import type { Command } from '@motion/engine-api';
+import { flicksToSeconds, type Command } from '@motion/engine-api';
 import { framesToFlicks } from '@core/engine/time';
 import { compOfLayer } from '@core/engine/doc';
 import { downloadBlob } from '@core/export/exportManager';
@@ -92,35 +92,35 @@ export interface TranscribeScope extends TimeRange {
  * that clip; falling straight through to the comp would bill them for ten
  * minutes of audio to caption forty seconds of it.
  *
- * The bars are read in FRAMES and converted once, here. A video's sound is a
+ * The bars are the layers' timings (comp time) from the mirror. A video's sound is a
  * separate audio layer, so selecting the picture alone still gives the right
  * WINDOW — the mixdown underneath takes the comp's whole sound across it.
  */
 export function transcribeScope(): TranscribeScope {
-  const controller = getTimelineController();
+  // B4: the selected layers' bars and the work area from the document mirror (a layer's bar is its timing;
+  // a group's members have none — `clipBars.ts`).
+  const m = documentMirror();
   const selected = useSelectionStore.getState().ids;
 
   if (selected.length > 0) {
-    let startF = Number.POSITIVE_INFINITY;
-    let endF = Number.NEGATIVE_INFINITY;
-    let fps = controller.fps;
+    let start = Number.POSITIVE_INFINITY;
+    let end = Number.NEGATIVE_INFINITY;
     for (const nodeId of selected) {
-      for (const layer of controller.getLayersForNode(nodeId)) {
-        fps = controller.fpsForNode(nodeId);
-        startF = Math.min(startF, layer.start);
-        endF = Math.max(endF, layer.end);
-      }
+      const layer = m.layer(nodeId);
+      if (!layer || !mirrorHasBar(m, nodeId)) continue;
+      start = Math.min(start, flicksToSeconds(layer.timing.inPoint));
+      end = Math.max(end, flicksToSeconds(layer.timing.outPoint));
     }
-    if (Number.isFinite(startF) && endF > startF) {
+    if (Number.isFinite(start) && end > start) {
       return {
-        start: startF / fps,
-        end: endF / fps,
+        start,
+        end,
         label: selected.length === 1 ? 'selected layer' : `${selected.length} selected layers`,
       };
     }
   }
 
-  const work = controller.getWorkArea();
+  const work = settingsSetWorkArea(m.comp(activeCompId())?.settings);
   if (work && work.end > work.start) {
     return { start: work.start, end: work.end, label: 'work area' };
   }
@@ -197,6 +197,8 @@ export async function runTranscription(scope: TranscribeScope = transcribeScope(
  * overwrites a live transcript.
  */
 export function transcriptFromCaptions(rootId: string = activeCompId()): CompTranscript | null {
+  // B4-gap: which layers are captions (the `__caption` tag on the Text component) — no LayerInfo field; closes
+  // with a `LayerInfo.caption` role (the text itself is `text/sourceText`, the timing `LayerTiming`).
   const cues = readCaptionCues(rootId);
   if (cues.length === 0) return null;
   const words = wordsFromCues(cues);
@@ -242,7 +244,7 @@ export async function deleteTimeRanges(
   const empty: DeleteRangesResult = { removedSeconds: 0, splits: 0, deletedClips: 0 };
   if (merged.length === 0) return empty;
 
-  const controller = getTimelineController();
+  const m = documentMirror();
   const rootId = activeCompId();
   const restrict = opts.nodeIds && opts.nodeIds.length > 0 ? new Set(opts.nodeIds) : null;
   const cuttable = (sourceId: string | null): boolean =>
@@ -258,7 +260,9 @@ export async function deleteTimeRanges(
   // once over every unlocked layer. The counts are the legacy ones (a layer
   // cut at both edges is two splits and one deleted piece).
   const result: DeleteRangesResult = { removedSeconds: deletedDuration(merged), splits: 0, deletedClips: 0 };
-  const fps = controller.fps;
+  // B4: the comp's bars (the counts the toast states) from the mirror's layer timings, before the edit.
+  const fps = settingsFps(m.comp(rootId)?.settings);
+  const bars = mirrorCompBars(m, rootId, fps);
   const only = restrict ? [...restrict].filter((id) => compOfLayer(id) === rootId) : [];
   const cmds: Command[] = [];
   for (const range of [...merged].reverse()) {
@@ -269,8 +273,8 @@ export async function deleteTimeRanges(
     // up into the word beside it.
     if (endF <= startF) continue;
     if (restrict && only.length === 0) continue;
-    for (const layer of controller.layersOfComp(rootId)) {
-      if (layer.locked || !cuttable(layer.sourceId)) continue;
+    for (const layer of bars) {
+      if (layer.locked || !cuttable(layer.nodeId)) continue;
       if (layer.end <= startF || layer.start >= endF) continue;
       if (layer.start < startF) result.splits += 1;
       if (layer.end > endF) result.splits += 1;
@@ -360,6 +364,7 @@ export async function addTranscriptAsCaptions(rootId: string = activeCompId()): 
   // ONE entry: `deleteLayers` of the old captions + one `pasteLayers` of the
   // styled caption layers built off-document.
   const c = documentMirror().comp(rootId)?.settings;
+  // B4-gap: the builder finds the captions to replace by their `__caption` tag (see transcriptFromCaptions).
   const e = captionEditCommands(cues, DEFAULT_CAPTION_STYLE, c ? { rootId, width: c.width, height: c.height } : undefined);
   if (e.commands.length === 0) return 0;
   const res = await edit(`Add ${e.added} caption${e.added === 1 ? '' : 's'}`, e.commands);

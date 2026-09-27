@@ -141,7 +141,14 @@ export function collectDocumentColors(nodes: readonly SceneNode[]): string[] {
   return out;
 }
 
-/** Read the live scene graph and collect its colours. */
+/**
+ * Read the live scene graph and collect its colours.
+ *
+ * B4-gap: every paint colour of every layer (fill stacks, gradient stops, stroke
+ * stacks and their gradient paints) — the mirror holds property trees on demand
+ * only, and the catalog does not expose every stored paint; a document-colours
+ * query (`getDocumentColors`) would close it.
+ */
 export function collectSceneColors(): string[] {
   const nodes: SceneNode[] = [];
   defaultSceneGraph.traverse((n) => nodes.push(n));
