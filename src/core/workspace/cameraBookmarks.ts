@@ -16,7 +16,9 @@
 
 import { getWorkspaceController } from './WorkspaceController';
 import { useGuidesStore, type CameraBookmark } from '@stores/guidesStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
+import { useProjectStore } from '@stores/projectStore';
+import { documentMirror } from '@stores/documentMirror';
 import { isCustomViewId } from './customViews';
 
 export const BOOKMARK_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
@@ -24,7 +26,11 @@ export type BookmarkSlot = (typeof BOOKMARK_SLOTS)[number];
 
 /** The id bookmarks are keyed under: the active comp, or the virtual root. */
 export function bookmarkCompId(): string {
-  return useCompositionStore.getState().id || 'comp_root';
+  // The active tab's composition when the document has it (B4: the mirror),
+  // else the default composition record's id — as the composition store answered.
+  const s = useProjectStore.getState();
+  const id = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
+  return (id && documentMirror().comp(id) ? id : DEFAULT_COMPOSITION.id) || 'comp_root';
 }
 
 /** Bookmarks for the active composition, sorted by slot. */

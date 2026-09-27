@@ -21,6 +21,9 @@ import { useDismissOnOutside } from '@hooks/useDismissOnOutside';
 import { useMiniFlowchartStore } from '@stores/miniFlowchartStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useMirrorRevision } from '@hooks/useMirror';
+// B4-gap: the network walks INTO a legacy precomp group, whose members getDocument does not list (the model
+// stops at the barrier; the mirror fetches them one id at a time) — closes with the group's members in the
+// document snapshot (`MirrorComp` for a precomp group) or a `getCompNetwork` query.
 import { compNetworkOf, type NetworkEntry, type UpstreamSort } from '@core/composition/compNetwork';
 import { openContainingComposition, openLayerComposition } from '@core/composition/compNavigation';
 import styles from './MiniFlowchart.module.css';
