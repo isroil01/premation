@@ -22,6 +22,7 @@ import { clipGeometrySignature } from '@core/timeline/TimelineController';
 import { memoizedSceneContentHash } from './sceneContentHash';
 import { isMediaDecodeRepaint } from './mediaRepaint';
 import { getEventBus } from '@core/events/EventBus';
+import { renderStillFrame } from '@core/export/offlineRenderer';
 import { buildSnapshot, type SnapshotFocus, type SnapshotComp } from './buildSnapshot';
 import type { RenderOverlays, RenderSnapshot, RenderView } from './RenderBackend';
 
@@ -89,6 +90,17 @@ export function onPageFrameChanged(cb: (change: PageFrameChange) => void): () =>
     bus.on('NodeUpdated', () => cb('node')),
   ];
   return () => { for (const s of subs) s.dispose(); };
+}
+
+/**
+ * One frame of `comp` at composition frame `frame`, rendered through the
+ * deterministic offline path as a PNG (Save Frame As / Copy Frame).
+ */
+export function pageStillFrame(comp: CompositionSettings, frame: number): Promise<Blob | null> {
+  return renderStillFrame(
+    { width: comp.width, height: comp.height, fps: comp.fps, durationSec: comp.durationSeconds, comp: { ...comp, rootId: comp.id, compSizeOf } },
+    frame,
+  );
 }
 
 /** The TypeScript engine's snapshot of `input.comp` at `input.time` for the page renderer. */
