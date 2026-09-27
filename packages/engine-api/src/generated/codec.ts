@@ -2207,17 +2207,20 @@ function decS_OpenProjectResult(r: Reader, end: number, o: any): T.OpenProjectRe
 function encS_SaveProjectResult(w: Writer, v: T.SaveProjectResult): void {
   w.byte(10); w.str(v.path);
   w.byte(16); w.u64(v.bytes);
+  if (v.missing !== undefined) { w.byte(26); w.str(v.missing); }
 }
 function decS_SaveProjectResult(r: Reader, end: number, o: any): T.SaveProjectResult {
   let h_path = false;
   let h_bytes = false;
   let v_path: string | undefined;
   let v_bytes: number | undefined;
+  let v_missing: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_path = r.str(); h_path = true; break;
       case 16: v_bytes = r.u64(); h_bytes = true; break;
+      case 26: v_missing = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -2226,6 +2229,7 @@ function decS_SaveProjectResult(r: Reader, end: number, o: any): T.SaveProjectRe
   if (!h_bytes) throw new DecodeError('SaveProjectResult.bytes: missing', 'missingField');
   o.path = v_path;
   o.bytes = v_bytes;
+  if (v_missing !== undefined) o.missing = v_missing;
   return o;
 }
 function encS_ItemList(w: Writer, v: T.ItemList): void {
@@ -2242,6 +2246,96 @@ function decS_ItemList(r: Reader, end: number, o: any): T.ItemList {
   }
   r.expectAt(end);
   o.items = l_items;
+  return o;
+}
+function encS_AepImportSummary(w: Writer, v: T.AepImportSummary): void {
+  w.byte(8); w.u32(v.comps);
+  w.byte(16); w.u32(v.layers);
+  w.byte(24); w.u32(v.keyframes);
+  w.byte(32); w.u32(v.effects);
+  w.byte(40); w.u32(v.masks);
+  w.byte(48); w.u32(v.expressions);
+  { const a = v.unmappedEffects; for (let i = 0; i < a.length; i++) { w.byte(58); w.str(a[i]!); } }
+  w.byte(66); w.str(v.aeVersion);
+}
+function decS_AepImportSummary(r: Reader, end: number, o: any): T.AepImportSummary {
+  const l_unmappedEffects: string[] = [];
+  let h_comps = false;
+  let h_layers = false;
+  let h_keyframes = false;
+  let h_effects = false;
+  let h_masks = false;
+  let h_expressions = false;
+  let h_aeVersion = false;
+  let v_comps: number | undefined;
+  let v_layers: number | undefined;
+  let v_keyframes: number | undefined;
+  let v_effects: number | undefined;
+  let v_masks: number | undefined;
+  let v_expressions: number | undefined;
+  let v_aeVersion: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_comps = r.u32(); h_comps = true; break;
+      case 16: v_layers = r.u32(); h_layers = true; break;
+      case 24: v_keyframes = r.u32(); h_keyframes = true; break;
+      case 32: v_effects = r.u32(); h_effects = true; break;
+      case 40: v_masks = r.u32(); h_masks = true; break;
+      case 48: v_expressions = r.u32(); h_expressions = true; break;
+      case 58: l_unmappedEffects.push(r.str()); break;
+      case 66: v_aeVersion = r.str(); h_aeVersion = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_comps) throw new DecodeError('AepImportSummary.comps: missing', 'missingField');
+  if (!h_layers) throw new DecodeError('AepImportSummary.layers: missing', 'missingField');
+  if (!h_keyframes) throw new DecodeError('AepImportSummary.keyframes: missing', 'missingField');
+  if (!h_effects) throw new DecodeError('AepImportSummary.effects: missing', 'missingField');
+  if (!h_masks) throw new DecodeError('AepImportSummary.masks: missing', 'missingField');
+  if (!h_expressions) throw new DecodeError('AepImportSummary.expressions: missing', 'missingField');
+  if (!h_aeVersion) throw new DecodeError('AepImportSummary.aeVersion: missing', 'missingField');
+  o.comps = v_comps;
+  o.layers = v_layers;
+  o.keyframes = v_keyframes;
+  o.effects = v_effects;
+  o.masks = v_masks;
+  o.expressions = v_expressions;
+  o.unmappedEffects = l_unmappedEffects;
+  o.aeVersion = v_aeVersion;
+  return o;
+}
+function encS_ImportProjectResult(w: Writer, v: T.ImportProjectResult): void {
+  { const a = v.items; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  { const a = v.warnings; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+  { const a = v.missingFootage; for (let i = 0; i < a.length; i++) { w.byte(26); w.str(a[i]!); } }
+  if (v.openComp !== undefined) { w.byte(34); w.str(v.openComp); }
+  if (v.summary !== undefined) { w.byte(42); { const s = w.beginLd(); encS_AepImportSummary(w, v.summary); w.endLd(s); } }
+}
+function decS_ImportProjectResult(r: Reader, end: number, o: any): T.ImportProjectResult {
+  const l_items: string[] = [];
+  const l_warnings: string[] = [];
+  const l_missingFootage: string[] = [];
+  let v_openComp: string | undefined;
+  let v_summary: T.AepImportSummary | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_items.push(r.str()); break;
+      case 18: l_warnings.push(r.str()); break;
+      case 26: l_missingFootage.push(r.str()); break;
+      case 34: v_openComp = r.str(); break;
+      case 42: v_summary = decS_AepImportSummary(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.items = l_items;
+  o.warnings = l_warnings;
+  o.missingFootage = l_missingFootage;
+  if (v_openComp !== undefined) o.openComp = v_openComp;
+  if (v_summary !== undefined) o.summary = v_summary;
   return o;
 }
 function encS_Interpretation(w: Writer, v: T.Interpretation): void {
@@ -14851,7 +14945,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'newProject': w.byte(82); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'openProject': w.byte(90); { const s = w.beginLd(); encS_OpenProjectResult(w, v); w.endLd(s); } return;
     case 'saveProject': w.byte(98); { const s = w.beginLd(); encS_SaveProjectResult(w, v); w.endLd(s); } return;
-    case 'importProject': w.byte(106); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
+    case 'importProject': w.byte(106); { const s = w.beginLd(); encS_ImportProjectResult(w, v); w.endLd(s); } return;
     case 'setProjectSettings': w.byte(114); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'revertProject': w.byte(122); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'collectFiles': w.varint(130); { const s = w.beginLd(); encS_SaveProjectResult(w, v); w.endLd(s); } return;
@@ -15013,7 +15107,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 82: out = decS_Empty(r, r.ldEnd(), { type: 'newProject' }) as T.CommandResult; break;
       case 90: out = decS_OpenProjectResult(r, r.ldEnd(), { type: 'openProject' }) as T.CommandResult; break;
       case 98: out = decS_SaveProjectResult(r, r.ldEnd(), { type: 'saveProject' }) as T.CommandResult; break;
-      case 106: out = decS_ItemList(r, r.ldEnd(), { type: 'importProject' }) as T.CommandResult; break;
+      case 106: out = decS_ImportProjectResult(r, r.ldEnd(), { type: 'importProject' }) as T.CommandResult; break;
       case 114: out = decS_Empty(r, r.ldEnd(), { type: 'setProjectSettings' }) as T.CommandResult; break;
       case 122: out = decS_Empty(r, r.ldEnd(), { type: 'revertProject' }) as T.CommandResult; break;
       case 130: out = decS_SaveProjectResult(r, r.ldEnd(), { type: 'collectFiles' }) as T.CommandResult; break;
@@ -15531,6 +15625,8 @@ export const codecs = {
   OpenProjectResult: mk<T.OpenProjectResult>(encS_OpenProjectResult, (r, e) => decS_OpenProjectResult(r, e, {})),
   SaveProjectResult: mk<T.SaveProjectResult>(encS_SaveProjectResult, (r, e) => decS_SaveProjectResult(r, e, {})),
   ItemList: mk<T.ItemList>(encS_ItemList, (r, e) => decS_ItemList(r, e, {})),
+  AepImportSummary: mk<T.AepImportSummary>(encS_AepImportSummary, (r, e) => decS_AepImportSummary(r, e, {})),
+  ImportProjectResult: mk<T.ImportProjectResult>(encS_ImportProjectResult, (r, e) => decS_ImportProjectResult(r, e, {})),
   Interpretation: mk<T.Interpretation>(encS_Interpretation, (r, e) => decS_Interpretation(r, e, {})),
   InterpretationPatch: mk<T.InterpretationPatch>(encS_InterpretationPatch, (r, e) => decS_InterpretationPatch(r, e, {})),
   ImportFile: mk<T.ImportFile>(encS_ImportFile, (r, e) => decS_ImportFile(r, e, {})),

@@ -200,7 +200,9 @@ endif()
 if(MOTION_BUILD_TESTS)
   find_package(Catch2 3 CONFIG REQUIRED)
   add_executable(engine_tests
+    tests/test_aep_import.cpp
     tests/test_bundle_io.cpp
+    tests/test_collect_files.cpp
     tests/test_framing.cpp
     tests/test_session.cpp
     tests/test_b4_round2.cpp
@@ -347,10 +349,22 @@ premation_embed_catalog(${ENGINE_CATALOG_GENERATED})
 # engine_fuzz) finds catalog_data.inc.
 set_source_files_properties(src/core/catalog_data.cpp PROPERTIES INCLUDE_DIRECTORIES ${ENGINE_CATALOG_GENERATED})
 set(ENGINE_DOC_SOURCES
+  # After Effects .aep/.aepx import (importProject): pure byte parsing + the plan applier
+  src/core/aep/aep_apply.cpp
+  src/core/aep/aep_ease.cpp
+  src/core/aep/aep_effects.cpp
+  src/core/aep/aep_plan.cpp
+  src/core/aep/aep_properties.cpp
+  src/core/aep/aep_read.cpp
+  src/core/aep/aep_text.cpp
+  src/core/aep/aepx.cpp
+  src/core/aep/cos.cpp
+  src/core/aep/riff.cpp
   src/core/anim.cpp
   src/core/anim_json.cpp
   src/core/bundle_io.cpp
   src/core/catalog_data.cpp
+  src/core/collect_files.cpp
   src/core/deflate_ffi.cpp
   src/core/docexpr.cpp
   src/core/docio.cpp

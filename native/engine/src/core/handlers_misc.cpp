@@ -4,6 +4,9 @@
 #include <utility>
 
 #include "anim_json.hpp"
+#include "core/aep/aep_apply.hpp"
+#include "core/aep/aep_plan.hpp"
+#include "core/aep/aep_read.hpp"
 #include "docio.hpp"
 #include "fxstate.hpp"
 #include "handlers_items.hpp"
@@ -226,13 +229,54 @@ ResultOf<api::SetProjectSettings> handle(const api::SetProjectSettings& c, HCtx&
   return {};
 }
 
+namespace {
+
+/// importProject of an After Effects project (core/aep/aep_apply.hpp; docs/AFTER_EFFECTS_IMPORT.md).
+api::ImportProjectResult import_aep_project(const api::ImportProject& c, HCtx& x) {
+  if (!x.ports.has_file_bytes()) fail(ErrorCode::unsupported, "no file port is attached to this engine");
+  if (c.folder && !c.folder->empty() && find_folder(x.d, *c.folder) == nullptr) {
+    fail(ErrorCode::not_found, "no folder '" + *c.folder + "'", {.item = *c.folder});
+  }
+  x.label = "Import After Effects Project";
+  const std::vector<std::uint8_t> bytes = x.ports.read_file_bytes(c.path);
+  const aep::ChunkTree tree = aep::parse_aep_bytes(bytes);
+  const aep::AepProject project = aep::read_aep_project(tree.root);
+  if (project.comps.empty()) {
+    fail(ErrorCode::decode,
+         "That After Effects project has no compositions in it. Only its footage list could be read, so there is nothing to open.");
+  }
+  const aep::AepImportPlan plan = aep::plan_aep_import(project);
+  // The folder is named after the file: `.../Promo.aep` → "Promo".
+  std::string name = folder_name_of(c.path);
+  const std::size_t dot = name.find_last_of('.');
+  if (dot != std::string::npos && aep::is_aep_path(name)) name.resize(dot);
+  if (name.empty()) name = "After Effects Project";
+  aep::AepApplyResult applied = aep::apply_aep_plan(x, plan, name, c.folder && !c.folder->empty() ? c.folder : std::nullopt);
+  api::ImportProjectResult out;
+  out.items = std::move(applied.items);
+  out.warnings = std::move(applied.warnings);
+  out.missing_footage = std::move(applied.missingFootage);
+  out.open_comp = std::move(applied.openComp);
+  api::AepImportSummary s;
+  s.comps = plan.summary.comps;
+  s.layers = plan.summary.layers;
+  s.keyframes = plan.summary.keyframes;
+  s.effects = plan.summary.effects;
+  s.masks = plan.summary.masks;
+  s.expressions = plan.summary.expressions;
+  s.unmapped_effects = plan.summary.unmappedEffects;
+  s.ae_version = plan.aeVersion.value_or("");
+  out.summary = std::move(s);
+  return out;
+}
+
+}  // namespace
+
 ResultOf<api::ImportProject> handle(const api::ImportProject& c, HCtx& x) {
   Document& d = x.d;
+  if (aep::is_aep_path(c.path)) return import_aep_project(c, x);
   if (!x.ports.has_projects()) fail(ErrorCode::unsupported, "no project file port is attached to this engine");
-  if (!ends_with_motion(c.path)) {
-    fail(ErrorCode::unsupported,
-         "importing .aep/.aepx into an open project goes through the editor's importer until it moves into the engine");
-  }
+  if (!ends_with_motion(c.path)) fail(ErrorCode::unsupported, "only .motion, .aep and .aepx projects can be imported");
   if (c.folder && !c.folder->empty() && find_folder(d, *c.folder) == nullptr) {
     fail(ErrorCode::not_found, "no folder '" + *c.folder + "'", {.item = *c.folder});
   }
@@ -356,7 +400,9 @@ ResultOf<api::ImportProject> handle(const api::ImportProject& c, HCtx& x) {
   for (const auto& id : created) {
     if (d.comp(id) != nullptr) (void)tl_ensure(d, id);
   }
-  return api::ItemList{created};
+  api::ImportProjectResult out;
+  out.items = std::move(created);
+  return out;
 }
 
 ResultOf<api::ApplyJobResult> handle(const api::ApplyJobResult& c, HCtx& /*x*/) {

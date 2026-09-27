@@ -124,6 +124,8 @@ export interface EngineOwnedDocument {
   saveCopy(path: string): Promise<unknown>;
   /** F2: Save Portable Copy — the engine packs the `.motion` zip (footage embedded). */
   savePortableCopy?(path: string): Promise<unknown>;
+  /** Collect Files — the engine copies the project and its files into `folder` (engine-api `collectFiles`). */
+  collectFiles?(folder: string, onlyUsed: boolean): Promise<{ path: string; bytes: number; missing?: string }>;
   close(): Promise<void>;
 }
 
@@ -390,6 +392,20 @@ export class ProjectManager {
     if (!this.engineDocument?.savePortableCopy) return false;
     await this.engineDocument.savePortableCopy(path);
     return true;
+  }
+
+  /**
+   * File ▸ Dependencies ▸ Collect Files with the ENGINE as owner: the engine
+   * writes `<folder>/<folder name>.motion` with every used file inside it; the
+   * open project keeps its path and dirty flag. `missing` lists the files it
+   * could not read (one per line). Null when the engine does not own the
+   * document — the TypeScript engine's own `collectFiles` port (appPorts.ts)
+   * serves that case through the engine API.
+   */
+  async collectFilesTo(folder: string, onlyUsed: boolean): Promise<{ path: string; bytes: number; missing: string[] } | null> {
+    if (!this.engineDocument?.collectFiles) return null;
+    const r = await this.engineDocument.collectFiles(folder, onlyUsed);
+    return { path: r.path, bytes: r.bytes, missing: r.missing ? r.missing.split('\n').filter((l) => l.length > 0) : [] };
   }
 
   /**

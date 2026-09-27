@@ -513,7 +513,7 @@ export const layerHandlers: HandlerTable = {
 
   autoTrace: (cmd) => {
     requireLayer(cmd.layer);
-    return fail('unsupported', 'Auto-trace reads rendered pixels; in the TypeScript engine it runs from the editor (a job in phase E)');
+    return fail('unsupported', 'Auto-trace decodes the layer\'s frames: the C++ engine runs it (the autoTrace command and job); with the TypeScript engine it runs from the editor (Layer ▸ Auto-trace)');
   },
 };
 

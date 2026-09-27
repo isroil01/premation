@@ -156,6 +156,15 @@ export class EngineDocumentSession {
     return this.run('saveProject', this.o.engine().execute({ type: 'saveProject', path, copy: true, format: 'portable' }));
   }
 
+  /**
+   * Collect Files: the engine writes a copy of the project and every file it
+   * uses as `<folder>/<folder name>.motion` (path, dirty flag and history
+   * unchanged). The result's `missing` lists the files it could not read.
+   */
+  async collectFiles(folder: string, onlyUsed: boolean): Promise<SaveProjectResult> {
+    return this.run('collectFiles', this.o.engine().execute({ type: 'collectFiles', folder, onlyUsed }));
+  }
+
   /** `{format}` for a save to `path`; nothing for `auto` (the request stays as it was before F2 bundles). */
   private format(path: string): { format?: ProjectFormat } {
     const f = this.o.formatFor?.(path) ?? 'auto';

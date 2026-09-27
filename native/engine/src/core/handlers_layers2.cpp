@@ -674,9 +674,13 @@ ResultOf<api::SeparateLayer> handle(const api::SeparateLayer& c, HCtx& x) {
   fail(ErrorCode::unsupported, "Separate (break apart) is not implemented by the TypeScript engine");
 }
 
+// autoTrace decodes the layer's frames, which a handler cannot: the Session
+// runs it (Session::auto_trace_in_journal, session_jobs.cpp — the autoTrace
+// job inline). This handler is reached only from inside another command's
+// journal (a job result's commands), where it is refused.
 ResultOf<api::AutoTrace> handle(const api::AutoTrace& c, HCtx& x) {
   (void)require_layer(x.d, c.layer);
-  fail(ErrorCode::unsupported, "Auto-trace reads rendered pixels; in the TypeScript engine it runs from the editor (a job in phase E)");
+  fail(ErrorCode::unsupported, "Auto-trace runs as a request of its own (it decodes the layer's frames); it cannot be nested in another command");
 }
 
 }  // namespace premation::doc

@@ -3,11 +3,18 @@
 // progress events, and the result applied as ONE history entry through
 // ordinary commands.
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
+#include <vector>
 
 #include "fail.hpp"
+#include "jobs/job_apply_util.hpp"
 #include "log.hpp"
 #include "session.hpp"
 #include "variant_util.hpp"
@@ -220,6 +227,98 @@ void Session::drop_jobs() {
     }
   }
   jobs_.clear();
+}
+
+// ── the autoTrace COMMAND (40_layers.eapi 215) ──────────────────────────────
+//
+// The same tracer, the same masks as the autoTrace JOB (jobs/kind_auto_trace.cpp):
+// the job's prepare validates and snapshots, its work decodes the layer's frames
+// and traces them — here on the core thread, to completion, since a command
+// answers synchronously — and its result writes the masks through addMask /
+// addKeyframes inside the request's journal: one undo entry, "Auto-trace".
+// `range` of one frame (or less) traces the frame at range.start (static
+// masks); a longer range keys every mask path on every frame of it. The
+// command has no blur / minArea / invert: the job's defaults (0, 16, off).
+
+namespace {
+
+/// The job's apply, keeping every mask group an addMask adds.
+class MaskCollectingApply final : public jobs::JobApply {
+ public:
+  explicit MaskCollectingApply(jobs::JobApply& inner) : inner_(inner) {}
+  api::CommandResult run(const api::Command& cmd) override {
+    api::CommandResult r = inner_.run(cmd);
+    if (std::holds_alternative<api::AddMask>(cmd.v)) {
+      if (const auto g = jobs::result_payload<api::GroupList>(r)) groups.insert(groups.end(), g->groups.begin(), g->groups.end());
+    }
+    return r;
+  }
+  [[nodiscard]] const doc::Document& document() const override { return inner_.document(); }
+  std::vector<api::PropPath> groups;
+
+ private:
+  jobs::JobApply& inner_;
+};
+
+/// A command's work cannot be cancelled and reports no progress (the request is its progress).
+class InlineControl final : public jobs::JobControl {
+ public:
+  [[nodiscard]] bool cancelled() const noexcept override { return false; }
+  void progress(double /*fraction*/, std::string /*message*/) override {}
+};
+
+}  // namespace
+
+api::CommandResult Session::auto_trace_in_journal(const api::AutoTrace& c, api::Origin origin, std::string& label) {
+  // Validate first (the TS handler's order: the layer, then the arguments).
+  if (doc_.node(c.layer) == nullptr) fail(ErrorCode::not_found, "no layer '" + c.layer + "'", {.layer = c.layer});
+  static constexpr std::array<std::string_view, 7> kChannels = {"", "alpha", "luminance", "luma", "red", "green", "blue"};
+  if (std::find(kChannels.begin(), kChannels.end(), std::string_view(c.channel)) == kChannels.end()) {
+    fail(ErrorCode::invalid_argument, "channel '" + c.channel + "' is not alpha, luminance, red, green or blue", {.layer = c.layer});
+  }
+  if (!std::isfinite(c.threshold) || c.threshold < 0 || c.threshold > 1) {
+    fail(ErrorCode::out_of_range, "threshold must be 0…1", {.layer = c.layer});
+  }
+  if (!std::isfinite(c.tolerance) || c.tolerance < 0) fail(ErrorCode::out_of_range, "tolerance must be ≥ 0", {.layer = c.layer});
+  if (c.range.duration <= 0) {
+    fail(ErrorCode::invalid_argument, "range is empty: give at least one frame (one frame traces the frame at range.start)",
+         {.layer = c.layer});
+  }
+  if (jobKinds_ == nullptr) {
+    fail(ErrorCode::unsupported,
+         "Auto-trace decodes the layer's frames and this engine build has no decoder (a headless / no-media build)",
+         {.layer = c.layer});
+  }
+  api::AutoTraceJob spec;
+  spec.layer = c.layer;
+  spec.range = c.range;
+  spec.channel = c.channel;
+  spec.threshold = c.threshold;
+  spec.tolerance = c.tolerance;
+  // The job traces range.start only unless everyFrame; everyFrame over one
+  // frame is that frame, unkeyed — so the range alone decides.
+  spec.every_frame = true;
+  spec.invert = false;
+  api::JobSpec job;
+  job.v = std::move(spec);
+  const jobs::JobDocContext ctx{doc_, bundleRoot_, projectPath_, apiTime_};
+  // prepare: notFound / invalidArgument (not footage, retimed, no file) / outOfRange.
+  jobs::PreparedJob prepared = jobKinds_->prepare(job, ctx);
+  if (!prepared.work) fail(ErrorCode::internal, "the autoTrace job prepared no work");
+  InlineControl control;
+  const std::unique_ptr<jobs::JobResult> result = prepared.work(control);
+  if (!result) fail(ErrorCode::internal, "Auto-trace produced no result");
+  label = result->label();
+  api::GroupList out;
+  if (result->has_edits()) {
+    SessionJobApply inner(*this, origin);
+    MaskCollectingApply a(inner);
+    // Throws: run_edits rolls the journal back — nothing of the trace stays.
+    result->apply(a);
+    out.groups = std::move(a.groups);
+  }
+  PREMATION_LOG(info, "auto_trace").kv("layer", c.layer).kv("masks", out.groups.size());
+  return result_for<api::AutoTrace>(std::move(out));
 }
 
 }  // namespace premation
