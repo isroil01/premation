@@ -29,7 +29,11 @@
 namespace premation::rg {
 
 /// packages/renderer BlendMode.
-enum class Blend : std::uint8_t { normal, multiply, screen, overlay, add, subtract, darken, lighten, none };
+/// The first nine follow api::RenderBlendMode (blend_of casts). `lighter` and
+/// `atop` are Canvas2D's premultiplied `lighter` (colour AND alpha added) and
+/// `source-atop` (Co = Cs·Ab + Cb·(1 − As), Ao = Ab); `dstIn` is
+/// `destination-in` (Co = Cb·As, Ao = Ab·As) — E4's drawn-effect overlays.
+enum class Blend : std::uint8_t { normal, multiply, screen, overlay, add, subtract, darken, lighten, none, lighter, atop, dstIn };
 
 /// A sampled texture: view + a stable identity for bind-group keys.
 struct TexRef {

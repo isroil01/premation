@@ -85,6 +85,15 @@ struct ColorMatrix {
 /// layer's own alpha: gpu_canvas_fx.cpp), and its chain entry.
 [[nodiscard]] bool gpu_draws_canvas_effect(const RLayer& l, const Json& e);
 [[nodiscard]] std::optional<api::RenderEffect> gpu_canvas_effect_entry(const RLayer& l, const Json& e);
+/// E4 round 2: a Canvas2D-only effect whose pixels do not depend on the
+/// layer's (Numbers, Timecode, Audio Spectrum; Audio Waveform / Lightning in
+/// every composite but Multiply; Path Stroke / Scribble's paint buffer) on a
+/// layer with a raster of its own and no active layer mask: its drawing is
+/// painted alone at the bake's size (TexKind::overlay, bake_chain.cpp
+/// draw_effect_overlay) and the chain lands it (`fx-overlay`).
+[[nodiscard]] bool gpu_overlay_effect(const RLayer& l, const Json& e);
+/// The overlay textures a GPU-routed layer needs: (texture key, the effect).
+[[nodiscard]] std::vector<std::pair<std::string, Json>> gpu_overlay_requests(const RLayer& l);
 /// Texture key of a GPU Vegas' contours (TexKind::contours).
 [[nodiscard]] std::string contour_key(std::string_view layerId);
 /// The contour request of a GPU-routed layer drawing Vegas on the GPU:

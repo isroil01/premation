@@ -520,6 +520,7 @@ add_library(engine_scene_core STATIC
   src/scene/styled_surface.cpp  # layerStyles.ts styledSurfaceFill (extrusion walls under overlays)
   src/scene/corner_pin.cpp  # cornerPin.ts + resolveCornerPin + Homography.ts
   src/scene/write_on_trail.cpp  # writeOnBrush.ts resolveWriteOnTrail (Write-on's dab history)
+  src/scene/rigid_body.cpp  # rigidBody.ts + simulationCore.ts + physicsBodies.ts (layer physics)
   src/scene/model_deform.cpp  # modelMorph.ts + modelSkinning.ts (glTF morph targets, skinning)
   src/scene/pixel_motion.cpp  # pixelMotionFlow.ts + deinterlace.ts (footage pixel kernels)
   src/scene/extrusion_faces.cpp  # extrusion.ts extrusionGeometry (the fallback body faces)
@@ -543,7 +544,7 @@ if(MOTION_BUILD_TESTS)
                                          tests/test_corner_pin_parity.cpp tests/test_write_on_trail_parity.cpp
                                          tests/test_model_deform_parity.cpp tests/test_pixel_motion_parity.cpp
                                          tests/test_extrusion_faces_parity.cpp tests/test_alpha_mesh_parity.cpp
-                                         tests/test_frame_hit.cpp tests/test_exr_read.cpp)
+                                         tests/test_frame_hit.cpp tests/test_exr_read.cpp tests/test_rigid_body_parity.cpp)
   target_link_libraries(engine_scene_core_tests PRIVATE engine_scene_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_scene_core_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   add_test(NAME engine_scene_core_tests COMMAND engine_scene_core_tests --reporter compact)

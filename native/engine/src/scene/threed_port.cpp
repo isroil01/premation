@@ -1301,7 +1301,11 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
                                          morphed ? &*morphed : nullptr);
       }
       const gltf::Deformed* deformed = skinned ? &*skinned : morphed ? &*morphed : nullptr;
-      const bool textured = entry->textureImage && layer.kind == LayerKind::image && layer.src && !layer.src->empty();
+      // The TS also asks for a `src`, which modelHydrate repoints at the entry's
+      // texture on every open (a textured image leaf always has one in the
+      // editor). The engine reads the image out of the model, so a saved
+      // document whose session URL was dropped is textured all the same.
+      const bool textured = entry->textureImage && layer.kind == LayerKind::image;
       std::string dispWhy;
       const auto disp = displaced_carrier_for(c_.d, deformed != nullptr ? deformed->key : entry->key,
                                               deformed != nullptr ? deformed->vertices : entry->vertices, entry->indices, mMat, dispWhy);

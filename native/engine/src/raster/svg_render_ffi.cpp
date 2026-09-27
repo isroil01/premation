@@ -857,7 +857,11 @@ class Painter {
           dy *= bbox.height();
         }
         out.f = SkImageFilters::Offset(f(dx), f(dy), in_space(in, linear), crop);
-      } else if (p.name == "feDropShadow") {
+      } else if (p.name == "feDropShadow" || p.name == "fedropshadow") {
+        // `fedropshadow`: the page's sanitizer lower-cases this one name (its
+        // allow-list predates feDropShadow); Chromium still draws the shadow
+        // (the HTML parser's SVG tag-name adjustment), so the reference has it
+        // (svg-filter-drop-shadow).
         const auto sd = std_dev(k);
         double dx = num_attr(k, "dx", 2);
         double dy = num_attr(k, "dy", 2);

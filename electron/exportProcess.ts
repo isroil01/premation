@@ -397,7 +397,7 @@ export class ExportSupervisor {
 
   /**
    * F1: what a job may ask for here. `engineExport` = the engine path is on
-   * (PREMATION_EXPORT_ENGINE=1, a launcher attached); `bitDepth16` = a mov job
+   * (the default; PREMATION_EXPORT_ENGINE=0 turns it off); `bitDepth16` = a mov job
    * may ask for 16 bits per channel (rgba64le from the engine's half-float
    * surface — the window path has 8 and warns when it has to fall back).
    */
@@ -997,9 +997,15 @@ export function createExportSupervisor(opts: {
   });
 }
 
-/** F1's flag: engine export jobs are opt-in until they flip on golden parity (CLAUDE.md). */
+/**
+ * F1's flag: engine export jobs, default ON since 2026-09-28 (the golden gate
+ * green, the real-app Render Queue run, 13/13 alpha scenes through the CLI —
+ * NATIVE_CORE_PLAN F1). `PREMATION_EXPORT_ENGINE=0` keeps every job on the
+ * Chromium window path; every job the engine cannot run falls back to it anyway.
+ */
 export function exportEngineEnabled(env: Record<string, string | undefined>): boolean {
-  return env.PREMATION_EXPORT_ENGINE === '1';
+  const v = env.PREMATION_EXPORT_ENGINE?.trim().toLowerCase();
+  return !(v === '0' || v === 'off' || v === 'false');
 }
 
 /** The real engine launcher: premation-engine from the usual places, ffmpeg as the Chromium path finds it. */
@@ -1007,7 +1013,9 @@ function createEngineLauncher(root: string): EngineLauncher {
   const enginePath = resolveEngineExecutable({
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath ?? '',
-    appPath: app.getAppPath(),
+    // As main's EngineHost: development runs `electron dist-electron/main.js`,
+    // whose app path is dist-electron — the repo root (native/build) is one up.
+    appPath: app.isPackaged ? app.getAppPath() : path.join(__dirname, '..'),
     platform: process.platform,
     vars: process.env,
     exists: existsSync,

@@ -28,6 +28,18 @@ double supersample_for(double tier, double boxW, double boxH, bool bake, double 
 
 }  // namespace
 
+RasterCanvasSize raster_canvas_size(double width, double height, double resolutionScale, double padding, bool bake,
+                                    double deviceMax) {
+  const double bw = width + 2 * padding;
+  const double bh = height + 2 * padding;
+  const double ss = supersample_for(resolutionScale, bw, bh, bake, deviceMax);
+  RasterCanvasSize s;
+  s.width = static_cast<std::uint32_t>(std::max(1.0, js_round(bw * ss)));
+  s.height = static_cast<std::uint32_t>(std::max(1.0, js_round(bh * ss)));
+  s.scale = ss;
+  return s;
+}
+
 RasterOutput draw_raster_source(RasterKind kind, std::string_view specJson, double resolutionScale, double padding,
                                 const CanvasOptions& opts, const BakeHook* bakeHook, ContentReuse* reuse) {
   RasterOutput out;

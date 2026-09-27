@@ -171,8 +171,9 @@ TEST_CASE("gpu route: what the chain cannot express keeps the CPU bake", "[scene
   SECTION("a CSS opacity effect (no matrix and no chain entry)") {
     l.effects.push_back(effect(R"({"id":"a","type":"opacity","params":{"amount":50}})"));
   }
-  SECTION("a Canvas2D-only effect the GPU does not draw") {
-    l.effects.push_back(effect(R"({"id":"a","type":"path-stroke","params":{}})"));
+  SECTION("a drawn effect on a layer whose mask shapes it") {
+    l.mask = effect(R"({"paths":[{"id":"m1","mode":"add","closed":true,"points":[{"x":0,"y":0},{"x":10,"y":0},{"x":0,"y":10}]}]})");
+    l.effects.push_back(effect(R"({"id":"a","type":"numbers","params":{}})"));
   }
   SECTION("Scribble that has a mask path to fill") {
     l.mask = effect(R"({"paths":[{"id":"m1","closed":true,"points":[{"x":0,"y":0},{"x":10,"y":0},{"x":0,"y":10}]}]})");
@@ -185,6 +186,59 @@ TEST_CASE("gpu route: what the chain cannot express keeps the CPU bake", "[scene
   CHECK(sc::layer_is_baked(l));
   CHECK(sc::gpu_effect_route_blocker(l) != nullptr);
   CHECK_FALSE(sc::gpu_effect_route(l));
+}
+
+TEST_CASE("gpu route round 2: drawn effects land as overlays, CC RepeTile is the identity", "[scene][e4]") {
+  sc::RLayer l = shape_layer();
+  l.fillOpacity = 0.5;
+  // Mode-None paths (the ones Path Stroke / Scribble follow) do not shape the layer.
+  l.mask = effect(R"({"paths":[{"id":"m1","mode":"none","closed":true,"points":[{"x":0,"y":0},{"x":10,"y":0},{"x":0,"y":10}]}]})");
+  l.effects.push_back(effect(R"({"id":"a","type":"numbers","params":{"value":7}})"));
+  l.effects.push_back(effect(R"({"id":"b","type":"lightning","params":{"composite":4}})"));
+  l.effects.push_back(effect(R"({"id":"c","type":"path-stroke","params":{"paintStyle":2,"pathMaskId":"m1"}})"));
+  l.effects.push_back(effect(R"({"id":"d","type":"cc-repetile","params":{"expandLeft":40}})"));
+  l.effects.push_back(effect(R"({"id":"e","type":"audio-waveform","params":{"composite":1},"opacity":50})"));
+  CHECK(sc::layer_is_baked(l));
+  CHECK(sc::gpu_effect_route_blocker(l) == nullptr);
+  REQUIRE(sc::gpu_effect_route(l));
+  l.gpuEffects = true;
+  const auto chain = sc::extract_gpu_route_effects(l);
+  // fill-opacity, numbers, lightning, path-stroke, (repetile: nothing), waveform
+  REQUIRE(chain.size() == 5);
+  CHECK(chain[0].type == "fill-opacity");
+  const std::vector<double> modes{0, 4, 12, 1};
+  for (std::size_t i = 1; i < chain.size(); ++i) {
+    INFO(i);
+    CHECK(chain[i].type == "fx-overlay");
+    const auto* key = param(chain[i], "overlayKey");
+    REQUIRE(key != nullptr);
+    CHECK(key->text == "fxdraw:L:" + std::to_string(i - 1));
+    const auto* mode = param(chain[i], "mode");
+    REQUIRE(mode != nullptr);
+    CHECK(mode->number == modes[i - 1]);
+  }
+  const auto* faded = param(chain[4], "effectOpacity");  // the waveform's effect opacity blends back
+  REQUIRE(faded != nullptr);
+  CHECK(faded->number == 0.5);
+  const auto requests = sc::gpu_overlay_requests(l);
+  REQUIRE(requests.size() == 4);
+  CHECK(requests[2].first == "fxdraw:L:2");
+  CHECK(requests[2].second.at("type").str() == "path-stroke");
+}
+
+TEST_CASE("gpu route: Lightning in Multiply lands as a multiply overlay", "[scene][e4]") {
+  sc::RLayer l = shape_layer();
+  l.fillOpacity = 0.5;
+  l.effects.push_back(effect(R"({"id":"a","type":"lightning","params":{"composite":3}})"));
+  CHECK(sc::gpu_effect_route_blocker(l) == nullptr);
+  REQUIRE(sc::gpu_effect_route(l));
+  l.gpuEffects = true;
+  const auto chain = sc::extract_gpu_route_effects(l);
+  REQUIRE(chain.size() == 2);
+  CHECK(chain[1].type == "fx-overlay");
+  const auto* mode = param(chain[1], "mode");
+  REQUIRE(mode != nullptr);
+  CHECK(mode->number == 3);
 }
 
 TEST_CASE("gpu route: an unbaked layer is left alone", "[scene][e4]") {

@@ -56,6 +56,18 @@ struct ContentReuse {
   std::shared_ptr<BakedContent> painted;
 };
 
+/// The canvas size draw_raster_source gives a text / path raster of a
+/// `width` × `height` box (+ `padding` each side): {pixel width, height, px per
+/// layer unit}. E4's drawn-effect overlays are painted at exactly this size so
+/// the chain composites them texel for texel over the layer's own raster.
+struct RasterCanvasSize {
+  std::uint32_t width = 1;
+  std::uint32_t height = 1;
+  double scale = 1;
+};
+[[nodiscard]] RasterCanvasSize raster_canvas_size(double width, double height, double resolutionScale, double padding, bool bake,
+                                                  double deviceMax);
+
 /// Draw one raster: Canvas2DVectorRasterizer.rasterize's miss path.
 /// `resolutionScale` and `padding` are the RasterRequest's. `reuse` (baked
 /// rasters only) supplies / receives the painted content.

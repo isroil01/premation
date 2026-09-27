@@ -184,6 +184,7 @@
     "ssao-blur",
     "textured",
     "textured-linear",
+    "textured-srgb-grade",
     "masked-textured",
     "masked-textured-linear",
     "lut-textured",
@@ -6498,6 +6499,34 @@
     {
       "name": "TEXTURED_LINEAR_MATERIAL",
       "shader": "textured-linear",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "TEXTURED_SRGB_GRADE_MATERIAL",
+      "shader": "textured-srgb-grade",
       "layout": [
         {
           "binding": 0,

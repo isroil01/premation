@@ -188,12 +188,15 @@ struct DocCopy {
     fonts = std::make_unique<Fonts>(job.fontsManifest, job.chromiumProfile, families);
     measurer = sc::make_canvas_measurer(fonts->canvas);
     mediaBase = p.mediaBase;
+    waveform = sc::offline_waveform(d, view, *env, cache);
     return true;
   }
   std::filesystem::path mediaBase;  // relative media (image-layer rigs) resolve here, as the texture feed's
+  sc::WaveformProvider waveform;    // the Audio Waveform generator's source, decoded and waited for
   [[nodiscard]] sc::BuildContext ctx() {
     sc::BuildContext c{d, view, *env, cache, measurer.get(), {}};
     c.mediaBase = mediaBase;
+    c.waveform = waveform;
     return c;
   }
 };

@@ -398,7 +398,9 @@ std::string paragraph_layer(RLayer& l, const doc::Node& n, TextMeasurer* measure
   std::string why;
   const auto wrapped = measurer->wrapped_style(*style, &why);
   if (!wrapped) return why.empty() ? "paragraph text (box wrapping)" : why;
-  if (style->hasLineRuns) return "paragraph text: runs that change line height";
+  // Runs that change a line's size or leading: the painter stacks them itself
+  // (stackLines); the box placement / fit / anchor read the same stack
+  // (paragraph_line_stack).
   l.text = wrapped->content;
   align_to_wrap(l, raw, wrapped->content);
   // textExtrasForNode(node, style.softBreakLines, …).
@@ -426,7 +428,12 @@ std::string paragraph_layer(RLayer& l, const doc::Node& n, TextMeasurer* measure
       x.set("fitScale", Json::number(*wrapped->fitScale));
     }
   } else if (box && box->boxAnchorHeight) {
-    return "paragraph text: anchored auto-height box";
+    // An auto-height box with an authored height keeps its TOP edge: the centred
+    // line block moves down by half of what it grew (measureParagraphBox
+    // lineOffsetY → textExtras.boxOffsetY; compactTextExtras drops ~0).
+    const double contentHeight = paragraph_line_stack(*wrapped).blockHeight;
+    const double off = (contentHeight - *box->boxAnchorHeight) / 2;
+    if (std::isfinite(off) && std::abs(off) > 1e-6) x.set("boxOffsetY", Json::number(off));
   }
   if (!x.obj().empty()) l.textExtras = std::move(x);
   return {};

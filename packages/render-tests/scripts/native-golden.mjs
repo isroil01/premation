@@ -252,8 +252,12 @@ async function main() {
   for (const id of missingRefs) process.stdout.write(red(`  x ${id}: no reference PNG\n`));
 
   if (opts.updateBaseline) {
+    // The reviewed reason per ceiling (`_why`) is kept for every frame still listed.
+    const oldWhy = (await readJson(BASELINE, {}))._why ?? {};
+    const why = Object.fromEntries(Object.keys(newBaseline).filter((k) => oldWhy[k]).sort().map((k) => [k, oldWhy[k]]));
     const text = JSON.stringify({
       _comment: 'Ceilings (differing-pixel ratio) for frames where the C++ engine rendering the frozen scene document (scenes/<id>.json) differs from the reference. A LIST OF DEBTS: a frame may not get worse, and its entry goes when it matches. Written by scripts/native-golden.mjs --update-baseline; review the diff.',
+      ...(Object.keys(why).length ? { _why: why } : {}),
       frames: Object.fromEntries(Object.entries(newBaseline).sort(([a], [b]) => a.localeCompare(b))),
     }, null, 2);
     await fs.writeFile(BASELINE, `${text}\n`);

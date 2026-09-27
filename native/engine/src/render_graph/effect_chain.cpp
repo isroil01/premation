@@ -374,6 +374,7 @@ bool effect_ported(const api::RenderEffect& e, std::string& why) {
   if (t == "vegas") return true;          // E4: the GPU Vegas over its contour texture (below)
   if (t == "color-matrix" || t == "channel-lut") return true;  // E4: a grade in stack order (below)
   if (t == "stamp-field") return true;  // E4: Plexus / Write-on brush (below)
+  if (t == "fx-overlay") return true;   // E4 round 2: a drawn Canvas2D effect's own raster (below)
   if (fx_table().count(t) != 0 || p_table().count(t) != 0 || field_table().count(t) != 0 || known_single(t)) return true;
   why = "effect " + t;
   return false;
@@ -497,6 +498,7 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     // A missing LUT strip or stamp table leaves the buffer alone (no half-applied scope blend).
     if (type == "channel-lut" && !ctx.texture(fx.text("lutKey"))) continue;
     if (type == "stamp-field" && !ctx.texture(fx.text("stampKey"))) continue;
+    if (type == "fx-overlay" && !ctx.texture(fx.text("overlayKey"))) continue;
 
     // E4: an effect scoped to one mask path blends back through its coverage,
     // drawn now (before the effect) into the buffer's space.
@@ -567,6 +569,62 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       continue;
     }
 
+    if (type == "fx-overlay") {
+      // E4 round 2: Numbers / Timecode / Audio Spectrum / Audio Waveform /
+      // Lightning painted alone at the layer raster's size (TexKind::overlay):
+      // drawn through the layer's own placement with the effect's composite:
+      // 0 over, 1 lighter, 2 screen, 4 source-atop (effects_port.cpp
+      // gpu_overlay_effect: each equals drawing the primitives on the layer),
+      // 3 multiply through blend-combine.
+      const TexRef ov = ctx.texture(fx.text("overlayKey"));
+      if (!ov || selfR == nullptr) {
+        note.path = FxPath::skipped;
+        touch.keep = true;
+        continue;
+      }
+      const Mat3 layerMvp = space != nullptr ? mul(mvp, model_from_rect(space->box)) : mvp_for(vp, mat3_of(selfR->model_matrix));
+      const Rect layerUv = selfR->uv_rect ? rect_of(*selfR->uv_rect) : Rect{0, 0, 1, 1};
+      // 10 + PAINT_STYLE (Path Stroke / Scribble): 10 over, 11 in place of the
+      // layer (on transparent), 12 the layer revealed by the paint (destination-in).
+      const double mode = fx.num("mode");
+      if (mode == 3) {
+        // Multiply (Lightning / Audio Waveform composite 3). Canvas multiply with
+        // source-over is associative (in 1 − premultiplied colour it is the
+        // union a + b − ab), so the primitives multiplied onto transparent are
+        // one overlay O, and O multiplied onto the layer equals painting them
+        // there one by one. Cs(1 − Ab) + Cb(1 − As) + Cs·Cb has no fixed-function
+        // blend state: O is placed in the buffer's space (f1), then combined
+        // with the buffer by blend-combine's W3C multiply (mode 1).
+        Commands place;
+        emit_textured(ctx, place, layerMvp, Color::white(), 1, Blend::none, ov, ctx.linear_clamp(), layerUv, kIdentityColor,
+                      ov.sampleLinear);
+        ctx.draw_into(f1, place, true);
+        ColorTransform multiply;
+        multiply.m = {1, 0, 0, 0, 0, 0, 0, 0, 0};
+        Commands comp;
+        emit_blend_combine(ctx, comp, mvp, Blend::none, texOf(f1), ctx.linear_clamp(), curTex, multiply, targetUv);
+        ctx.draw_into(f0, comp, true);
+        curTex = texOf(f0);
+        curName = f0;
+        continue;
+      }
+      Commands comp;
+      if (mode != 11) {
+        emit_textured(ctx, comp, mvp, Color::white(), 1, Blend::none, curTex, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+      }
+      const Blend onto = mode == 1    ? Blend::lighter
+                         : mode == 2  ? Blend::screen
+                         : mode == 4  ? Blend::atop
+                         : mode == 11 ? Blend::none
+                         : mode == 12 ? Blend::dstIn
+                                      : Blend::normal;
+      emit_textured(ctx, comp, layerMvp, Color::white(), 1, onto, ov, ctx.linear_clamp(), layerUv, kIdentityColor, ov.sampleLinear);
+      ctx.draw_into(f0, comp, true);
+      curTex = texOf(f0);
+      curName = f0;
+      continue;
+    }
+
     if (type == "color-matrix" || type == "channel-lut") {
       // After fill opacity (and any earlier spatial effect): unpremultiply, grade
       // the straight colour, premultiply again. Same blit the content draw used
@@ -580,8 +638,12 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         for (std::size_t i = 0; i < 3 && i < o.size(); ++i) ct.offset.at(i) = o[i];
       }
       const TexRef lut = type == "channel-lut" ? ctx.texture(fx.text("lutKey")) : TexRef{};
+      // The CPU bake grades the sRGB-encoded 8-bit colour (the canvas filter /
+      // effectColorMatrix.ts), not the linear buffer: the matrix runs on the
+      // encoded colour, clamped, and decodes back (textured-srgb-grade.wgsl);
+      // the LUT shader already looks its strip up in the encoded domain.
       Commands grade;
-      DrawItem& it = grade.add(type == "channel-lut" ? Mat::LUT_TEXTURED_LINEAR_MATERIAL : Mat::TEXTURED_LINEAR_MATERIAL,
+      DrawItem& it = grade.add(type == "channel-lut" ? Mat::LUT_TEXTURED_LINEAR_MATERIAL : Mat::TEXTURED_SRGB_GRADE_MATERIAL,
                                Blend::none, pack_textured(ctx.packer(), mvp, targetUv, Color::white(), 1, ct, true));
       it.texture = curTex;
       it.sampler = ctx.linear_clamp();

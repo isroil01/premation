@@ -490,6 +490,11 @@ and 0 differing pixels against webgpu. `harness/scenes/modelMaps.ts` now stores
 `glbData` the way the importer does, so the next full run exports it and the
 pair ports. The displaced sphere stays pinned by the fixture only; porting that
 golden needs an image-backed field, which means re-blessing it.
+**Ported 2026-09-28:** the golden's field is now an 8-bit grey PNG `data:` URL in
+the document (`harness/scenes/bumpsField.data.ts`; the harness primes the page's
+cache with the same rounded bytes under that key). The engine decodes it and the
+frame matches the unchanged reference within the scene tolerance (no re-bless:
+rounding the field to bytes moves a vertex by ≤ 0.04 px).
 
 **Remaining:** none of the 3D leftovers (EXR skies landed in d2w-round2). Per-character 3D text, the extrusion slice stack and
 geometric faces, and glTF morph targets / skinning landed 2026-09-26 ("D2w
@@ -599,6 +604,37 @@ bake blended back; `fxmask:` rasters), `RLayer::gpuEffects` making
 `premation-scene --bench --gpu-effects` prints it. Still CPU-baked: the other
 canvas-only effects, interleaved LUT / colour grades, path-following effects.
 Exit to measure: `docs/VERIFY_ON_TEST_MACHINE.md` § e4-gpu-effects.
+**E4 round 2 + exit (2026-09-28, branch `render-completeness`, built and run on
+the RTX 4060 box).** The GPU route now covers the rest: Numbers, Timecode, Audio
+Spectrum / Waveform, Lightning (every composite but Multiply) and Path Stroke /
+Scribble's paint buffer are painted alone at the bake's size (`TexKind::overlay`)
+and landed by the chain (`fx-overlay`: over / lighter / screen / source-atop /
+in place / destination-in — each equals painting on the layer); CC RepeTile is
+the identity on the GPU; colour-matrix grades run on the sRGB-encoded colour,
+clamped, as the bake's canvas filter (`textured-srgb-grade.wgsl`; scoped-mask
+49 % → 0.6 % of pixels > 16/255 vs the bake). **Exit met:** `premation-scene
+--gen-effect-bench --active tests/data/effect_chain_bench.json` (every effect at
+rest and at its @active point, plus the chain bench's stacks: 393 cases), 1080p,
+30 frames, `--bench --gpu-effects`: **393/393 under 41.7 ms (24 fps), 0 CPU-baked,
+median 1.34 ms, worst Dust & Scratches 33.7 ms mean / 29.3 p50** (then Echo 21.8,
+the stylised stack 17.3, Median 15.2). Before → after (ms/frame): inner shadow
+1027 → 3.0, stroke 814 → 1.2, inner glow 478 → 2.9, vegas 279 → 1.4, satin → 2.8,
+drop shadow → 2.8; Audio Waveform@active 652 → 3.3, Audio Spectrum@active 1727
+→ 3.3, Scribble@active 69 → 1.2, Path Stroke@active 55 → 1.1, CC RepeTile@active
+70 → 1.2, Hue/Saturation 66 → 1.3, Timecode 8.5, Numbers / Lightning 1.3–1.5. The CPU bake (and the SIMD kernels) stay the
+parity path (`PREMATION_CPU_BAKE=1`, the golden gate) and the device-less fallback.
+Multiply too (2026-09-28): canvas multiply over source-over is associative (in
+1 − premultiplied colour it is a + b − ab), so Lightning / Audio Waveform in
+Multiply paint their overlay multiply-on-transparent and the chain lands it
+through blend-combine's W3C multiply (placed in the buffer's space first).
+1080p, 30 frames: Audio Waveform@active in Multiply 638 → 1.9 ms, Lightning in
+Multiply 23.9 → 1.5 ms; against the CPU bake 2.0 % of pixels > 16/255 (the
+same order as the already-routed source-atop case, 1.8 %: the chain composites
+in linear light where the canvas composites encoded values). Still on the CPU
+bake on the route's own terms: Vegas' mask / path modes or Vegas behind another
+effect, a drawn effect on a layer a mask shapes, Scribble filling mask regions,
+path-following effects outside the overlay set, a faded / scoped effect with
+several chain entries, footage (no raster of its own) and precomp containers.
 
 **D2w time/comp (2026-09-25): nested compositions, retime, ghosts, particles and
 cloners build from the C++ document.** New files beside `snapshot_build` /
@@ -753,6 +789,18 @@ built or run — docs/VERIFY_ON_TEST_MACHINE.md lists what to check.
 Still reported: paint strokes on footage; Fit Text to Box with runs that change
 line height; blob: / remote image-rig and sky sources; channelView (viewport
 only).
+**2026-09-28 (`render-completeness`): the golden gate's unported report is down to
+the accepted G2 loss.** Paint on footage and Fit Text to Box with line-height runs
+landed in 54eaa1da; the last two non-plugin reasons went: the `prime:` height
+field (the golden now carries its field — see D2w 3D leftovers) and SVG
+`<fedropshadow>` (the page's sanitizer lower-cases that one name; Chromium still
+draws the shadow, so the C++ SVG filter builder takes the lower-case name as
+feDropShadow). Native golden gate: **423/436 frames ported, 338/348 gated frames
+match, green**; the 13 unported frames are all JS/WGSL plugin effects and plugin
+generator layers (G2, an accepted loss in TS_ENGINE_REMOVAL.md). Outside the
+goldens the engine still reports `blob:` / remote image-rig and sky sources
+(session data it cannot read until session footage is written to a cache file
+and imported — TS_ENGINE_REMOVAL phase 2) and channelView (viewport only).
 
 **D4 (2026-09-25): the engine keeps finished viewport frames in VRAM, keyed by
 content.** A frame drawn before is a GPU copy into the slot instead of rasters,
@@ -767,8 +815,16 @@ exact frames are stored: a frame drawn mid-playback with a nearest decoded
 footage frame is not. Baked rasters keep their bake across time and a re-bake
 over unchanged content starts from a copy of the painted canvas (E4 perf, a
 256 MB LRU beside the raster cache). `engine_gpu_tests` pins the round trip
-(byte-identical), eviction, size mismatch, over-budget frames. **Exit not yet
-measured:** cached playback of a heavy comp at full rate, in the real app.
+(byte-identical), eviction, size mismatch, over-budget frames. **Exit met
+(2026-09-28, real app, RTX 4060, engine owner + viewport, `scripts/realapp/d5Viewport.cjs
+--cache`):** cache-first playback (`play{cacheFirst}`) of two heavy 30 fps comps —
+`heavy.json` (the bench fixture's 6 shapes + 3 text at 1080p, every shape with
+Lightning in Multiply — the one composite still CPU-baked — + Median + Dust &
+Scratches, fill opacity animated) and `styles.json` (every shape with fill
+opacity animated + inner shadow / glow / drop shadow / stroke; fixtures in
+`scripts/realapp/fixtures`, `genFixtures.cjs`) — fills at 13.8 /
+18.6 ms a frame (HUD p50) and then plays 60/60 frames in 1987 ms = **29.7 fps
+(full rate)** at **1.6 / 1.4 ms a frame** from the VRAM cache.
 
 **D5 (2026-09-25): with the owner flag on, the engine's frames are the
 viewport.** Behind `PREMATION_ENGINE=process` + `PREMATION_ENGINE_OWNER=engine`
@@ -798,8 +854,38 @@ viewport.** Behind `PREMATION_ENGINE=process` + `PREMATION_ENGINE_OWNER=engine`
   fallback), `ownerMode` (a real `premation-engine-headless` owner and the TS
   replica: equal documents, 0 differences), `engine_tests` (ring decision,
   `getLayerErrors`).
-**Exit not yet measured:** HUD frame time ≤ the TS path on every bench comp,
-in the real app; then the default flips.
+**Exit met (2026-09-28), and the defaults flipped.** Real app, the built
+Electron (`dist-electron`, not Vite), RTX 4060, a 998×545 viewport at DPR 1.09,
+2 s of playback per comp (`scripts/realapp/d5Viewport.cjs`: the same project
+opened in each mode; the TS number is its HUD CPU time + the GPU tail —
+every WebGPU submit timed to `onSubmittedWorkDone` — because the engine's HUD
+counts build + render to GPU completion; TS CPU-only in brackets):
+
+| bench comp | engine HUD p50 | TS HUD p50 (CPU only) | TS fps |
+|---|--:|--:|--:|
+| bench (6 shapes + 3 text) | **2.6 ms** | 8.6 ms (1.6) | 30 |
+| shapes8 | **2.6** | 8.6 (1.1) | 30 |
+| shapes32 | **5.9** | 10.2 (1.5) | 30 |
+| styles (fill opacity + 4 styles on every shape) | **17.1** | 115.2 (10.7) | **19** |
+| grades (blur 20, hue, levels, noise on every shape) | **9.4** | 17.3 (3.2) | 30 |
+
+The engine holds 30 fps on every comp (surface 29.8–30.7 fps); the TS path drops
+to 19 fps on styles. From 2026-09-28 the process backend, the engine as the
+document owner (hence the engine viewport) and engine export are ON by default
+(`electron/engineHost.ts` `engineBackendEnabled` / `engineOwnsDocument`,
+`electron/exportProcess.ts` `exportEngineEnabled`); the TypeScript path stays
+behind `PREMATION_ENGINE=ts`, `PREMATION_ENGINE_OWNER=ui`,
+`PREMATION_EXPORT_ENGINE=0` (or `{ "backend": "ts" }` / `{ "owner": "ui" }` in
+`<userData>/engine.json`), and a missing executable, a crash loop or an
+unported export frame still falls back to it. Checked in the real app with no
+flags set (`scripts/realapp/defaultFlags.cjs`): `engine:status` enabled +
+ownsDocument, the viewport on the shared-texture route, and a Render Queue job
+rendered by the engine (`f1RenderQueue.cjs --default`; this fixed the export launcher's
+dev path, which looked for the engine under `dist-electron`). The golden gate
+the flip rests on is green with its baseline (338/348 gated frames match; the
+10 ceilings are the TS WebGPU backend's own or known E1/E3 differences — not
+bit-identical, a decision recorded here: the owner flip was asked for once the
+performance exits were met).
 
 ### Phase E — Media, audio, text, effects
 
@@ -962,6 +1048,22 @@ engine (E4: the chain and all 27 canvas-drawn effects are ported — see the E4 
 note — `frame_build.cpp` does not call it yet), macOS system fonts (CoreText), variation axes and
 the 'vert' face through alias faces, the D2w scene builder's own paint resolution
 (`snapshot_build.cpp` still marks paint unported), pixel parity of the above.
+**E3 native run (2026-09-28, RTX 4060 box, `premation-raster --mode native` over
+the render-tests raster export, 263 rasters, platform glyphs):** 0 failures to
+draw; within 1/255 — blend 36/36, "other" 47/53, masks 11/18, strokes 14/22,
+text 17/28, shapes 6/13. Two known causes account for every visible (> 16/255)
+difference, neither a C++ painter bug: (1) ellipse edge AA — every `effect-*`
+subject ellipse (a gradient-filled 220×170 ellipse) is off on the same 527 rim
+pixels (max 71) and nowhere inside, the GPU-canvas-vs-Skia-CPU AA already noted
+for effect-posterize; the frames stay inside the golden tolerance; (2) glyph AA
+(DirectWrite through Chromium vs FreeType / the platform backend here): worst
+text-scale-4x 9 % and text-optical-kerning 17 % of inked pixels > 16/255, CJK
+vertical text with FreeType. The 10 rasters with ≥ 50 % differences (vegas, path-stroke,
+plexus, scribble, scoped-mask, plugin kernel, fill-opacity-*) are BAKED
+textures — the TS texel includes the effect chain, the native raster is the
+content before it; those are pinned by `bake_chain_parity` and the whole-frame
+golden gate, not by this harness. Whole frames: the native golden gate is green
+(338/348 gated, text 22/22, shapes 16/16, strokes 24/24).
 
 **E4 progress (2026-09-24, branches `e4-effects`, `e4-more`).** `native/engine/src/effects`
 (`engine_effects`, Skia- and GPU-free) holds C++ ports of **139 of the 166 CPU
@@ -1391,7 +1493,8 @@ is where it stands on `f2-ownership`.
 | `compositeEdit`, `documentSwap`, `headlessRender` | document snapshots for composite edits, swapping the live document for a render, missing-asset scans | page-side capture/restore | composite edits → batches/`restoreDocument`; render swaps → F1 engine export jobs (`saveProject{copy}` is the snapshot); missing assets → `openProject.missingItems`. **2026-09-26:** with the engine as owner `runAsOneHistoryEntry[Sync]` runs the builder on the page replica and lands the result in the owner as ONE `restoreDocument` entry (no page history push); `withDocumentSwapped` restores the OWNER's document (`exportDocument`) after the swap; `headlessRender`'s missing-asset scan reads `liveDocument()` | composite edits + scans done behind the flag; Versions ▸ Compare still renders on the page's TS still renderer (an engine still of another document needs an engine render of a non-open document — F1 export job of one frame) |
 | Selection, keyframe/property selection, `renderQueueStore` running jobs, component/template libraries | ids, UI session state, user libraries | — | NOT document state: stays in the UI (the rule "editor state never enters the document") | stays |
 
-**F1 (2026-09-25): export jobs run in the engine, behind `PREMATION_EXPORT_ENGINE=1`.**
+**F1 (2026-09-25): export jobs run in the engine, behind `PREMATION_EXPORT_ENGINE=1`**
+(on by default since 2026-09-28; `PREMATION_EXPORT_ENGINE=0` keeps the window path — see D5).
 `premation-engine --export JOB.json` (`native/engine/src/export`, protocol and exit
 codes in `export_job.hpp`) is one process per job. It opens the project on disk: a
 `.motion` bundle, including its asset registry, with `motion-blob:` refs pointed at
@@ -1459,7 +1562,7 @@ bound by the encoder, not the render.
 **16-bit.** A job with `bitDepth: 16` (mov only) renders into an rgba16float
 surface and sends `-pix_fmt rgba64le`. Binary16 keeps ~11 significant bits near
 white. A 16-bit job that falls back is delivered at 8 bits with a warning. Engine
-only. **Exposed (2026-09-26):** main answers `export:capabilities` (`bitDepth16` when the engine export flag is on); the Export form offers "Bits per channel 8 / 16" for a mov through the out-of-process export, and `buildSupervisorSpec` carries `bitDepth: 16` (mov only). The Render Queue's Output Module does not offer it yet.
+only. **Exposed (2026-09-26):** main answers `export:capabilities` (`bitDepth16` when the engine export flag is on); the Export form offers "Bits per channel 8 / 16" for a mov through the out-of-process export, and `buildSupervisorSpec` carries `bitDepth: 16` (mov only). The Render Queue's Output Module offers it too (2026-09-27, `engine-jobs`; verified in the real app 2026-09-28, below).
 
 **Open:**
 - The engine's own native-plugin host and the remaining preflight fallbacks
@@ -1469,10 +1572,20 @@ only. **Exposed (2026-09-26):** main answers `export:capabilities` (`bitDepth16`
   start). PNG and EXR
   sequences, and chapters already resolved to `{startMs, endMs, title}`, run
   in the engine when the export flag is on, and so do JPEG sequences (WIC on Windows).
-- Partial-alpha unpremultiply is modelled on Skia's float path and is only
-  unit-tested; the alpha golden scenes cannot run in the CLI because their
-  harness footage is not resolvable there.
-- The real-app Render Queue run with the flag on.
+- ~~Partial-alpha unpremultiply is only unit-tested; the alpha golden scenes
+  cannot run in the CLI.~~ **Done 2026-09-28:** each `alpha-*` scene staged as a
+  project folder with its harness media beside it and exported through
+  `premation-engine --export` (PNG sequence, the frame alone;
+  `scripts/realapp/alphaCli.mjs`): **13/13 within the
+  scene tolerance of the reference** (11 at 0.000 %, the two extruded scenes at
+  0.047 % / 0.018 %).
+- ~~The real-app Render Queue run with the flag on.~~ **Done 2026-09-28** (the
+  built app driven over CDP, `scripts/realapp/f1RenderQueue.cjs`): Render Queue ▸ Add
+  Comp ▸ Output Module ▸ H.264 MP4 → "started in the engine … completed", 1920×1080
+  h264 yuv420p, 120/120 frames; ProRes MOV with **Bits per Channel 16** in the
+  Output Module → the engine job file carries `depth: 16`, ProRes 4444
+  yuva444p12le, 120 frames. With no flags at all (the new default) the same
+  queue job runs in the engine.
 
 ### Phase G — Ecosystem
 

@@ -591,10 +591,11 @@ describe('F1: engine jobs', () => {
     expect(sup.get('a')!.error).toMatch(/engine did not start/);
   });
 
-  it('the flag is off unless PREMATION_EXPORT_ENGINE=1', () => {
-    expect(exportEngineEnabled({})).toBe(false);
-    expect(exportEngineEnabled({ PREMATION_EXPORT_ENGINE: '0' })).toBe(false);
+  it('the flag is on unless PREMATION_EXPORT_ENGINE=0 (default flipped 2026-09-28)', () => {
+    expect(exportEngineEnabled({})).toBe(true);
     expect(exportEngineEnabled({ PREMATION_EXPORT_ENGINE: '1' })).toBe(true);
+    expect(exportEngineEnabled({ PREMATION_EXPORT_ENGINE: '0' })).toBe(false);
+    expect(exportEngineEnabled({ PREMATION_EXPORT_ENGINE: 'off' })).toBe(false);
   });
 
   it('the renderer survives the queue file', async () => {

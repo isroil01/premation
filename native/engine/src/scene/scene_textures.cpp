@@ -303,6 +303,17 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
       cached = find_content(m.contentKey);
       reuse.cached = cached.get();
     }
+    if (m.req->kind == TexKind::overlay) {  // E4 round 2: a drawn effect alone (bake_chain.cpp)
+      bake::OverlayOutput ov = bake::draw_effect_overlay(m.req->spec, m.req->resolutionScale, m.req->padding, opts_.canvas,
+                                                         bake::SharedPool{bakePool_.get(), &bakePoolM_});
+      e->width = ov.width;
+      e->height = ov.height;
+      e->rgba = std::move(ov.rgba);
+      e->unsupported = std::move(ov.unsupported);
+      if (e->width == 0) e->error = "effect overlay failed";
+      done[i] = std::move(e);
+      return;
+    }
     raster::RasterOutput out =
         m.req->kind == TexKind::light  // a light's glow wash (light_wash.cpp)
             ? draw_light_wash(light_wash_of_spec(m.req->spec), opts_.canvas)
