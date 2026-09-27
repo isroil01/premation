@@ -21,6 +21,7 @@
 #include "built_frame.hpp"
 #include "convert_geometry.hpp"
 #include "effect_handoff.hpp"
+#include "svg_shapes.hpp"
 #include "text_outlines.hpp"
 #include "fonts.hpp"
 #include "frame_hit.hpp"
@@ -211,10 +212,9 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
     why = "per-character layout is not in the engine's text port yet";
     return std::nullopt;
   }
-  std::optional<doc::SvgShapes> svg_shapes(std::string_view /*markup*/, const std::optional<std::string>& /*fillOverride*/,
+  std::optional<doc::SvgShapes> svg_shapes(std::string_view markup, const std::optional<std::string>& fillOverride,
                                            std::string& why) override {
-    why = "the SVG-to-shapes converter (svgParser.ts) is not ported to the engine yet";
-    return std::nullopt;
+    return svg_document_shapes(markup, fillOverride, why);
   }
 
   std::shared_ptr<BuiltFrame> build(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,

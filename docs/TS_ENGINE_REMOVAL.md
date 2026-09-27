@@ -78,15 +78,14 @@ Data decisions:
   (`listFonts` answers from the OS font catalogue since
   p0-platform; `getWaveform`, `getThumbnail`, `hitTest`, `readPixels` answer
   from the C++ engine since d2w-round2.)
-- Commands answering `unsupported` (2026-09-28): only `convertLayer`
-  `shapesFromVector` / `editableText` / `uncompose` (the editor's client macros
-  build them: SVG → shapes needs svgParser.ts ported, uncompose a
-  picture-preserving precomp flatten). Answered by the C++ engine now:
-  `convertLayer` `shapesFromText` / `masksFromText` (the painted text traced on
-  the engine's fonts) / `bakeTransform`, `separateLayer` (shape runs), the
-  `autoTrace` command, `collectFiles`, `.aep` / `.mogrt.zip` `importProject`.
-  The Layer menu's Shapes / Masks from Text keep the editor's macros (they use
-  the font's own Béziers when the face can be read; the engine only traces).
+- Commands answering `unsupported` (2026-09-28, `convert-round2`): none of the
+  conversions. The C++ engine answers every `convertLayer` (shapes / masks from
+  text with the font's own Béziers, shapes from vector, editable text,
+  uncompose, bake transform), `separateLayer`, the `autoTrace` command,
+  `collectFiles`, `.aep` / `.mogrt.zip` `importProject`. The Layer menu's
+  Shapes / Masks from Text and a static SVG's Convert to Editable Shapes ask
+  the engine first; the editor macros stay for the TypeScript engine (and an
+  animated / clipped SVG) and go with it in phase 4.
 - **Jobs (2026-09-28, `engine-jobs3`, built and run on the Windows box):**
   transcribe runs in the engine (the owner's decision: the engine calls the
   user's speech provider with a key Electron main writes into the job request
