@@ -78,6 +78,12 @@ function stageEngine(platform = process.platform, arch = process.arch, env = pro
   if (missing.length > 0) {
     const how = presets.map((p) => `cmake --preset ${p} && cmake --build --preset ${p}   (in native/)`).join('\n  ');
     const message = `[stageEngine] the C++ engine is not built — missing:\n  ${missing.join('\n  ')}\nBuild it first:\n  ${how}`;
+    // The rehearsal escape hatch never applies to a CI / release build: there a
+    // missing engine is always a failed package, whatever the environment says.
+    const ci = (Boolean(env.CI) && env.CI !== 'false') || Boolean(env.GITHUB_ACTIONS);
+    if (env.PREMATION_PACKAGE_WITHOUT_ENGINE === '1' && ci) {
+      throw new EngineMissingError(`${message}\n[stageEngine] PREMATION_PACKAGE_WITHOUT_ENGINE is ignored in CI (CI / GITHUB_ACTIONS set): a release never ships without the engine.`);
+    }
     if (env.PREMATION_PACKAGE_WITHOUT_ENGINE === '1') {
       console.warn(`${message}\n[stageEngine] PREMATION_PACKAGE_WITHOUT_ENGINE=1: packaging WITHOUT the engine — this app cannot run.`);
       return [];

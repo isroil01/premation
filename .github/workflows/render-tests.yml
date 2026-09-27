@@ -28,6 +28,9 @@ on:
       - 'packages/renderer/**'
       - 'packages/render-tests/**'
       - 'src/core/export/**'
+      - 'native/**'
+      - '.github/actions/build-engine/**'
+      - '.github/workflows/render-tests.yml'
   pull_request:
   workflow_dispatch:
 
@@ -61,3 +64,65 @@ jobs:
           path: packages/render-tests/.artifacts/diff/
           if-no-files-found: ignore
           retention-days: 14
+
+  # The NATIVE golden gate (docs/TS_ENGINE_REMOVAL.md "Golden gate → native vs
+  # the reference folders"): premation-scene — built from the same
+  # *-engine preset as premation-engine, with the vcpkg binary cache of
+  # .github/actions/build-engine — opens every packages/render-tests/scenes/
+  # document, renders it with Dawn and compares it with the committed
+  # references under each scene's tolerance and native-golden-baseline.json.
+  #
+  # Windows: the runner has no GPU, but D3D12 always has WARP (Microsoft's
+  # conformant software rasterizer), which Dawn takes when nothing else is
+  # there; the `chromium` profile the script picks on Windows is the one the
+  # baseline was blessed with (the RTX 4060 box). The build is blocking; the
+  # gate is NOT until its first run on WARP has been reviewed — a software
+  # rasterizer may differ from the blessed GPU at edges (see
+  # docs/VERIFY_ON_TEST_MACHINE.md "platform-plumbing"). To flip it: compare
+  # the uploaded report with a GPU run, adjust the baseline if WARP is only
+  # within tolerance, remove `continue-on-error` from the gate step.
+  native-golden:
+    name: native golden · windows · D3D12 (WARP)
+    runs-on: windows-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build premation-engine + premation-scene
+        id: engine
+        uses: ./.github/actions/build-engine
+        with:
+          preset: windows-clang-cl-engine
+          triplet: x64-windows-static-md
+          # native/vcpkg.json builtin-baseline (the pin native.yml uses).
+          vcpkg-commit: c76c06644034521fb761a39f8f52d8e87d1103d5
+
+      - name: premation-scene was built
+        shell: bash
+        run: test -f "${{ steps.engine.outputs.engine-dir }}/premation-scene.exe" || { echo "::error::premation-scene.exe was not built"; exit 1; }
+
+      # The comparator's pngjs / pixelmatch (build-engine already set up Node 22).
+      # No install scripts: nothing native from npm is needed to compare PNGs.
+      - run: npm ci --ignore-scripts
+
+      - name: Native golden gate
+        id: gate
+        continue-on-error: true
+        shell: bash
+        env:
+          NATIVE_SCENE_EXE: ${{ steps.engine.outputs.engine-dir }}/premation-scene.exe
+        run: node packages/render-tests/scripts/native-golden.mjs
+
+      - name: Upload the native golden report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-golden-report
+          path: packages/render-tests/.artifacts/native-golden/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Gate outcome
+        if: steps.gate.outcome == 'failure'
+        shell: bash
+        run: echo "::warning::the native golden gate failed on WARP (non-blocking until reviewed — see the job comment)"

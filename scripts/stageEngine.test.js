@@ -49,6 +49,15 @@ describe('stageEngine', () => {
     warn.mockRestore();
   });
 
+  it('never packages without it in CI, whatever the escape hatch says', () => {
+    const hatch = { PREMATION_PACKAGE_WITHOUT_ENGINE: '1' };
+    expect(() => stageEngine('win32', 1, { ...hatch, CI: 'true' }, root)).toThrow(/ignored in CI/);
+    expect(() => stageEngine('darwin', 3, { ...hatch, GITHUB_ACTIONS: 'true' }, root)).toThrow(EngineMissingError);
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(stageEngine('win32', 1, { ...hatch, CI: 'false' }, root)).toEqual([]);
+    warn.mockRestore();
+  });
+
   it('stages Windows with DXC, macOS with the host bridge, Linux with its shared libraries', () => {
     const log = quiet();
     built('windows-clang-cl-engine', ['premation-engine.exe', 'dxcompiler.dll', 'dxil.dll', 'premation-render.exe']);
