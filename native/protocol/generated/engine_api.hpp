@@ -2792,6 +2792,10 @@ struct TranscribeJob {
   LayerId layer;
   std::string language;
   bool create_captions = false;
+  std::optional<ItemId> comp;
+  std::optional<TimeRange> range;
+  std::string provider;
+  std::optional<std::string> credential;
   bool operator==(const TranscribeJob&) const = default;
 };
 

@@ -422,6 +422,57 @@ std::vector<std::uint8_t> FilePorts::read_file_bytes(const std::string& path) {
   return out;
 }
 
+std::string local_file_url(std::string_view path) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out = "local-file://";
+  if (path.empty() || (path.front() != '/' && path.front() != '\\')) out += '/';
+  for (const char ch : path) {
+    const auto c = static_cast<unsigned char>(ch == '\\' ? '/' : ch);
+    const bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+                       c == '.' || c == '~' || c == '/' || c == ':';
+    if (plain) {
+      out.push_back(static_cast<char>(c));
+    } else {
+      out.push_back('%');
+      out.push_back(kHex[c >> 4U]);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+      out.push_back(kHex[c & 15U]);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+    }
+  }
+  return out;
+}
+
+Json FilePorts::import_file(const api::ImportFile& file, const std::string& id) {
+  Json facts = Json::object();
+  std::string error;
+  if (!probe_ || !probe_(file.path, facts, error)) fail(api::ErrorCode::io, error.empty() ? "the file could not be read" : error);
+  std::error_code ec;
+  const auto size = std::filesystem::file_size(std::filesystem::path(std::u8string(file.path.begin(), file.path.end())), ec);
+  Json a = Json::object();
+  a.set("id", Json::string(id));
+  a.set("name", Json::string(base_name(file.path)));
+  a.set("type", facts.at("type").is_string() ? facts.at("type") : Json::string("video"));
+  a.set("src", Json::string(local_file_url(file.path)));
+  a.set("size", Json::number(ec ? 0.0 : static_cast<double>(size)));
+  if (facts.at("metadata").is_object()) a.set("metadata", facts.at("metadata"));
+  a.set("path", Json::string(file.path));
+  return a;
+}
+
+Json FilePorts::probe_file(const std::string& path) {
+  Json out = Json::object();
+  out.set("name", Json::string(base_name(path)));
+  std::error_code ec;
+  const auto size = std::filesystem::file_size(std::filesystem::path(std::u8string(path.begin(), path.end())), ec);
+  if (!ec) out.set("size", Json::number(static_cast<double>(size)));
+  Json facts = Json::object();
+  std::string error;
+  if (probe_ && probe_(path, facts, error)) {
+    if (facts.at("type").is_string()) out.set("type", facts.at("type"));
+    if (facts.at("metadata").is_object()) out.set("metadata", facts.at("metadata"));
+  }
+  return out;
+}
+
 Json FilePorts::read_project(const std::string& path) {
   const std::filesystem::path p(std::u8string(path.begin(), path.end()));
   std::error_code dirEc;

@@ -1885,7 +1885,9 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         const endSec = range && wa ? (wa.start + wa.duration - 1) / fps : undefined;
         const noteId = useUIStore.getState().notify({ level: 'info', message: 'Auto-trace: rendering…', durationMs: 0 });
         try {
-          // The engine traces the layer's frames itself when it runs jobs (the autoTrace job).
+          // The engine traces the layer itself when it runs jobs (the autoTrace job):
+          // `rendered` = what the layer DRAWS, rendered alone by a child engine
+          // (effects and masks included, any layer kind) — as the page path below.
           const endS = endSec ?? startSec;
           const viaEngine = await runEngineJob<{ pathsAdded: number; keyframes: number }>(
             {
@@ -1897,7 +1899,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
                 threshold: threshold / 255,
                 everyFrame: range,
                 invert: false,
-                rendered: false,
+                rendered: true,
               },
             },
             { onProgress: (f) => { useUIStore.getState().notify({ level: 'info', message: `Auto-trace: ${Math.round(f * 100)}%`, durationMs: 600 }); } },

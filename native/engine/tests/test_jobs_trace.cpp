@@ -6,6 +6,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -128,6 +129,24 @@ TEST_CASE("auto-trace: rings in layer-centred space, outer rings before holes", 
 
   // The default minArea (16) drops the 4 px² hole.
   CHECK(trace::auto_trace_rings(p.px, p.w, p.h, 20, 12, {}).size() == 2);
+}
+
+TEST_CASE("auto-trace: a solo render's comp rings pull back through the layer's inverse", "[jobs][trace]") {
+  // A 100x50 layer at (400, 300) in an 800x600 comp, scaled 2x and turned 90 degrees:
+  // layer (x, y) -> comp (400 - 2y, 300 + 2x) — world2DAt's {a b c d e f}.
+  const std::array<double, 6> m{0, 2, -2, 0, 400, 300};
+  // The layer's corner (50, -25) draws at comp (450, 400): centred comp (50, 100).
+  std::vector<trace::MaskRing> rings{{pts({{50, 100}, {-50, 100}, {0, 0}}), false}};
+  const auto back = trace::comp_rings_to_layer(rings, 800, 600, m);
+  REQUIRE(back.size() == 1);
+  CHECK(back[0].points[0].x == Approx(50));
+  CHECK(back[0].points[0].y == Approx(-25));
+  CHECK(back[0].points[1].x == Approx(50));
+  CHECK(back[0].points[1].y == Approx(25));
+  CHECK(back[0].points[2].x == Approx(0).margin(1e-12));
+  CHECK(back[0].points[2].y == Approx(0).margin(1e-12));
+  // Scaled to nothing: nothing to trace.
+  CHECK(trace::comp_rings_to_layer(rings, 800, 600, {0, 0, 0, 0, 400, 300}).empty());
 }
 
 TEST_CASE("auto-trace: channel planes, invert and blur", "[jobs][trace]") {

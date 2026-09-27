@@ -373,7 +373,7 @@ const edits = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t]
 
 test('every edit command in the schema has a case', () => {
   expect(edits.filter((t) => !CASES[t])).toEqual([]);
-  expect(edits.length).toBe(118);
+  expect(edits.length).toBe(121);
 });
 
 describe.each(edits)('%s', (type) => {

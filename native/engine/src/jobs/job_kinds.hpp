@@ -32,6 +32,8 @@ void set_ffmpeg_executable(std::string path);
 [[nodiscard]] PreparedJob prepare_render(const api::RenderJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_prerender(const api::PrerenderJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_track_apply(const api::TrackApplyJob& spec, const JobDocContext& ctx);
+/// Transcription through the user's speech provider (kind_transcribe.cpp); the key arrives in the spec from Electron main.
+[[nodiscard]] PreparedJob prepare_transcribe(const api::TranscribeJob& spec, const JobDocContext& ctx);
 
 /// The child-process work of the kinds that load a model (child_job.hpp).
 void register_object_matte_child();

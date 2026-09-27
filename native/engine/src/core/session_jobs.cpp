@@ -17,7 +17,9 @@
 #include "jobs/job_apply_util.hpp"
 #include "log.hpp"
 #include "session.hpp"
+#include "scene.hpp"
 #include "variant_util.hpp"
+#include "worldxf.hpp"
 
 namespace premation {
 
@@ -52,6 +54,23 @@ class SessionJobApply final : public jobs::JobApply {
   api::Origin origin_;
 };
 
+std::function<std::optional<std::array<double, 6>>(std::string_view, double)> Session::layer_to_comp() {
+  return [this](std::string_view layer, double seconds) -> std::optional<std::array<double, 6>> {
+    const doc::PCtx pc = pctx();
+    double cw = 1920;
+    double ch = 1080;
+    if (const auto comp = doc::comp_of_layer(doc_, layer)) {
+      if (const doc::Json* rec = doc_.comp(*comp); rec != nullptr && rec->at("width").is_number() && rec->at("height").is_number()) {
+        cw = rec->at("width").num();
+        ch = rec->at("height").num();
+      }
+    }
+    if (doc::world_3d_at(doc::SpaceCtx{doc_, pc.view, pc.expr, pc.cache}, layer, seconds, cw, ch)) return std::nullopt;
+    const auto m = doc::world_2d_at(pc, layer, seconds);
+    return std::array<double, 6>{m.a, m.b, m.c, m.d, m.e, m.f};
+  };
+}
+
 Session::JobRecord* Session::find_job(const std::string& id) {
   const auto it = std::find_if(jobs_.begin(), jobs_.end(), [&id](const JobRecord& r) { return r.info.id == id; });
   return it != jobs_.end() ? &*it : nullptr;
@@ -63,7 +82,7 @@ api::CommandResult Session::start_job(const api::StartJob& c) {
   }
   catalogCache_.clear();
   ensure_timelines();
-  const jobs::JobDocContext ctx{doc_, bundleRoot_, projectPath_, apiTime_};
+  const jobs::JobDocContext ctx{doc_, bundleRoot_, projectPath_, apiTime_, layer_to_comp()};
   // prepare validates against the document and snapshots the inputs; a refusal
   // is the command's answer and nothing is queued.
   jobs::PreparedJob prepared = jobKinds_->prepare(c.job, ctx);
@@ -154,31 +173,33 @@ bool Session::apply_job(JobRecord& r) {
     request_render();
     // The applied edit, as the request a crash replay writes instead of
     // running startJob again (schema LogRecord.job).
-    if (!a.edits.empty()) {
-      api::CommandBatch batch;
-      batch.label = label;
-      batch.commands = std::move(a.edits);
-      api::Request req;
-      req.origin = api::Origin::engine;
-      req.body.v = std::move(batch);
-      api::LogRecord rec;
-      rec.request = std::move(req);
-      rec.revision_after = revision_;
-      rec.job = r.info.id;
-      const auto stale = std::find_if(log_.begin(), log_.end(), [&](const api::LogRecord& row) {
-        if (!row.job || *row.job != r.info.id) return false;
-        if (row.request.body.kind() != api::RequestBody::Kind::command) return false;
-        return std::get<api::Command>(row.request.body.v).kind() == api::Command::Kind::start_job;
-      });
-      if (stale != log_.end()) log_.erase(stale);
-      log_.push_back(rec);
-      api::EngineMessage msg;
-      msg.v = std::move(rec);
-      out_.send(msg);
-    }
+    if (!a.edits.empty()) log_job_edit(r.info.id, label, std::move(a.edits));
   }
   emit_job(r, true, std::nullopt);
   return true;
+}
+
+void Session::log_job_edit(const std::string& job, std::string label, std::vector<api::Command> edits) {
+  api::CommandBatch batch;
+  batch.label = std::move(label);
+  batch.commands = std::move(edits);
+  api::Request req;
+  req.origin = api::Origin::engine;
+  req.body.v = std::move(batch);
+  api::LogRecord rec;
+  rec.request = std::move(req);
+  rec.revision_after = revision_;
+  rec.job = job;
+  const auto stale = std::find_if(log_.begin(), log_.end(), [&](const api::LogRecord& row) {
+    if (!row.job || *row.job != job) return false;
+    if (row.request.body.kind() != api::RequestBody::Kind::command) return false;
+    return std::get<api::Command>(row.request.body.v).kind() == api::Command::Kind::start_job;
+  });
+  if (stale != log_.end()) log_.erase(stale);
+  log_.push_back(rec);
+  api::EngineMessage msg;
+  msg.v = std::move(rec);
+  out_.send(msg);
 }
 
 api::CommandResult Session::apply_job_in_journal(const api::ApplyJobResult& c, api::Origin origin, std::string& label) {
@@ -192,6 +213,8 @@ api::CommandResult Session::apply_job_in_journal(const api::ApplyJobResult& c, a
   r->info.result = r->result->summary_json();
   r->result.reset();
   r->info.applied = true;
+  // handle_request_body logs these commands in place of the applyJobResult.
+  jobLog_ = JobLog{c.job, label, std::move(a.edits)};
   // The finished event again, now `applied` (the UI's job list follows it).
   emit_job(*r, true, std::nullopt);
   return result_for<api::ApplyJobResult>(api::ItemList{});
@@ -330,7 +353,7 @@ api::CommandResult Session::auto_trace_in_journal(const api::AutoTrace& c, api::
   spec.invert = false;
   api::JobSpec job;
   job.v = std::move(spec);
-  const jobs::JobDocContext ctx{doc_, bundleRoot_, projectPath_, apiTime_};
+  const jobs::JobDocContext ctx{doc_, bundleRoot_, projectPath_, apiTime_, layer_to_comp()};
   // prepare: notFound / invalidArgument (not footage, retimed, no file) / outOfRange.
   jobs::PreparedJob prepared = jobKinds_->prepare(job, ctx);
   if (!prepared.work) fail(ErrorCode::internal, "the autoTrace job prepared no work");

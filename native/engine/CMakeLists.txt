@@ -1182,6 +1182,7 @@ add_library(engine_jobs_core STATIC
   src/jobs/reframe_path.cpp
   src/jobs/saliency.cpp
   src/jobs/reframe_analyse.cpp
+  src/jobs/transcribe.cpp
 )
 target_include_directories(engine_jobs_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/jobs)
 target_link_libraries(engine_jobs_core PUBLIC engine_core engine_scene_core motion::jsmath PRIVATE motion::options)
@@ -1205,18 +1206,41 @@ if(FFMPEG_FOUND AND TARGET engine_audio)
     src/jobs/kind_roto_brush.cpp
     src/jobs/kind_content_aware.cpp
     src/jobs/kind_auto_reframe.cpp
+    src/jobs/kind_transcribe.cpp
+    src/jobs/child_export.cpp
     src/jobs/kind_object_matte.cpp
     src/jobs/sam_ort_ffi.cpp
   )
   target_include_directories(engine_jobs SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
   target_link_directories(engine_jobs PUBLIC ${FFMPEG_LIBRARY_DIRS})
   target_link_libraries(engine_jobs PUBLIC engine_jobs_core engine_audio engine_export_core ${FFMPEG_LIBRARIES} PRIVATE motion::options)
+  # Still images (PNG frames of a child render, image footage): the OS codec the
+  # renderer uses (scene/image_decode_ffi.cpp) — the vcpkg ffmpeg has no still decoders.
+  if(TARGET engine_scene)
+    target_link_libraries(engine_jobs PRIVATE engine_scene)
+  endif()
   find_package(onnxruntime CONFIG QUIET)
   if(onnxruntime_FOUND)
     target_link_libraries(engine_jobs PRIVATE onnxruntime::onnxruntime)
     target_compile_definitions(engine_jobs PRIVATE PREMATION_HAVE_ONNXRUNTIME=1)
   else()
     message(STATUS "premation-engine: onnxruntime not found — the object-matte job answers unsupported")
+  endif()
+  # The transcribe job's HTTPS call (http_post.hpp): WinHTTP on Windows, the
+  # system libcurl elsewhere (macOS ships it; Linux: libcurl-dev), else a stub
+  # that refuses with that reason.
+  if(WIN32)
+    target_sources(engine_jobs PRIVATE src/jobs/http_post_ffi_win.cpp)
+    target_link_libraries(engine_jobs PRIVATE winhttp)
+  else()
+    find_package(CURL QUIET)
+    if(CURL_FOUND)
+      target_sources(engine_jobs PRIVATE src/jobs/http_post_ffi_curl.cpp)
+      target_link_libraries(engine_jobs PRIVATE CURL::libcurl)
+    else()
+      target_sources(engine_jobs PRIVATE src/jobs/http_post_ffi_none.cpp)
+      message(STATUS "premation-engine: libcurl not found — the transcribe job answers with a no-HTTP error")
+    endif()
   endif()
   if(MSVC)
     target_compile_options(engine_jobs PRIVATE /bigobj)
@@ -1234,7 +1258,8 @@ if(MOTION_BUILD_TESTS)
   add_executable(engine_jobs_tests tests/test_jobs_audio.cpp tests/test_jobs_trace.cpp tests/test_jobs_tracking.cpp
                                  tests/test_jobs_round2.cpp tests/test_roto_matte.cpp tests/test_content_aware.cpp
                                  tests/test_reframe_path.cpp tests/test_saliency.cpp
-                                 tests/test_reframe_analyse.cpp tests/test_job_retime.cpp)
+                                 tests/test_reframe_analyse.cpp tests/test_job_retime.cpp
+                                 tests/test_transcribe.cpp)
   target_link_libraries(engine_jobs_tests PRIVATE engine_jobs_core motion::options Catch2::Catch2WithMain)
   if(MSVC)
     target_compile_options(engine_jobs_tests PRIVATE /bigobj)

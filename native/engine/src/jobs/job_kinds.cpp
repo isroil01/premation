@@ -32,14 +32,8 @@ class EngineJobKinds final : public JobKinds {
           else if constexpr (std::is_same_v<T, api::RotoBrushJob>) return prepare_roto_brush(s, ctx);
           else if constexpr (std::is_same_v<T, api::ContentAwareFillJob>) return prepare_content_aware_fill(s, ctx);
           else if constexpr (std::is_same_v<T, api::AutoReframeJob>) return prepare_auto_reframe(s, ctx);
-          else {
-            // transcribe: the page's captions go to the user's speech provider
-            // through Electron main, which holds the key (captions/transcribe.ts);
-            // no local model ships, so there is nothing for the engine to run.
-            doc::fail(api::ErrorCode::unsupported,
-                      "transcription runs through the speech provider in the desktop app (no local model ships); "
-                      "the engine has no transcribe job");
-          }
+          else if constexpr (std::is_same_v<T, api::TranscribeJob>) return prepare_transcribe(s, ctx);
+          else doc::fail(api::ErrorCode::unsupported, "this engine does not run that job kind");
         },
         spec.v);
   }

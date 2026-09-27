@@ -117,9 +117,12 @@ switch (step) {
   case 'configure':
     run('cmake', ['--preset', preset()], { cwd: nativeDir });
     break;
-  case 'build':
-    run('cmake', ['--build', '--preset', preset()], { cwd: nativeDir });
+  case 'build': {
+    // `--target a,b`: only those targets (a machine short on disk / time).
+    const targets = flag('--target');
+    run('cmake', ['--build', '--preset', preset(), ...(typeof targets === 'string' ? ['--target', ...targets.split(',')] : [])], { cwd: nativeDir });
     break;
+  }
   case 'test':
     run('ctest', ['--preset', preset()], { cwd: nativeDir });
     break;

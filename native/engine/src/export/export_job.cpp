@@ -173,9 +173,11 @@ struct DocCopy {
   std::unique_ptr<doc::DocExprEnv> env;
   std::unique_ptr<Fonts> fonts;
   std::unique_ptr<sc::TextMeasurer> measurer;
+  std::string isolateLayer;
 
   bool open(const OpenedProject& p, const std::string& comp, const JobSpec& job, const std::vector<std::string>& families,
             std::string& err) {
+    isolateLayer = job.isolateLayer;
     try {
       (void)doc::restore_document(d, view, p.document, p.sessionAssets);
     } catch (const std::exception& e) {
@@ -194,6 +196,7 @@ struct DocCopy {
   [[nodiscard]] sc::BuildContext ctx() {
     sc::BuildContext c{d, view, *env, cache, measurer.get(), {}};
     c.mediaBase = mediaBase;
+    c.isolateLayer = isolateLayer;
     return c;
   }
 };
@@ -634,6 +637,9 @@ bool parse_job(const Json& j, JobSpec& out, std::string& error) {
     out.depth = static_cast<int>(j.at("depth").num());
   }
   if (j.at("preflightOnly").is_bool()) out.preflightOnly = j.at("preflightOnly").b();
+  if (j.at("audioOnly").is_bool()) out.audioOnly = j.at("audioOnly").b();
+  if (j.at("isolateLayer").is_string()) out.isolateLayer = j.at("isolateLayer").str();
+  if (out.audioOnly) out.audio = true;
   if (j.at("buildThreads").is_finite_number()) out.buildThreads = static_cast<unsigned>(std::clamp(j.at("buildThreads").num(), 0.0, 64.0));
   if (j.at("inFlight").is_finite_number()) out.inFlight = static_cast<unsigned>(std::clamp(j.at("inFlight").num(), 1.0, 8.0));
   const Json& enc = j.at("encode");
@@ -694,7 +700,7 @@ int run_export(const std::string& jobPath) {
   if (job.fontsManifest.empty()) {
     if (const char* m = std::getenv("PREMATION_FONTS_MANIFEST")) job.fontsManifest = m;  // NOLINT(concurrency-mt-unsafe): read before any thread starts
   }
-  if (!job.encodeBin && job.sequence.empty()) ctl.start_reader();
+  if (!job.encodeBin && job.sequence.empty() && !job.audioOnly) ctl.start_reader();
 
   // The GPU starts first, while the project opens and the preflight runs
   // (Dawn + the shader compiler: ~1 s). The renderer is used on this thread
@@ -703,7 +709,7 @@ int run_export(const std::string& jobPath) {
   std::string gpuErr;
   double gpuInitMs = 0;
   JoiningThread gpuInit;
-  if (!job.preflightOnly) {
+  if (!job.preflightOnly && !job.audioOnly) {
     rg::RendererOptions ro;
     ro.highPerformance = true;
     if (const char* v = std::getenv("PREMATION_EXPORT_GPU_VENDOR")) ro.vendorId = static_cast<std::uint32_t>(std::strtoul(v, nullptr, 0));  // NOLINT(concurrency-mt-unsafe): read before the thread starts
@@ -772,8 +778,8 @@ int run_export(const std::string& jobPath) {
   stats.inFlight = job.inFlight;
   Pipeline pipeline(plan, docs, ctl, stats);
 
-  // ── preflight ──
-  {
+  // ── preflight (an audio-only job renders no picture: nothing to check) ──
+  if (!job.audioOnly) {
     const auto t0 = Clock::now();
     std::vector<std::pair<std::int64_t, std::string>> unported;
     const bool ok = pipeline.preflight(unported);
@@ -849,7 +855,7 @@ int run_export(const std::string& jobPath) {
     j.set("ms", Json::number(stats.preflightMs));
     ctl.emit(j);
   }
-  if (job.preflightOnly) {
+  if (job.preflightOnly || job.audioOnly) {
     ctl.mark_done();
     return kExitOk;
   }

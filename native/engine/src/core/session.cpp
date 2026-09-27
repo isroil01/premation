@@ -111,7 +111,7 @@ struct EditVisitor {
 Session::Session(Outbox& out, FrameSink& sink, SessionOptions options)
     : out_(out), sink_(sink), options_(std::move(options)) {
   if (options_.testPorts) ports_ = std::make_unique<doc::FakePorts>(options_.testPortsDir);
-  else ports_ = std::make_unique<doc::FilePorts>();
+  else ports_ = std::make_unique<doc::FilePorts>(options_.mediaProbe);
   // The engine starts on a new project, as the editor does (New Project →
   // `comp_root`), at revision 0.
   load_new_project(api::ResetReason::created, false);
@@ -310,6 +310,7 @@ void Session::handle_request(api::Request request, Clock::time_point now) {
 
 api::Outcome Session::handle_request_body(const api::Request& request, Clock::time_point now) {
   api::Outcome o;
+  jobLog_.reset();
   try {
     if (request.base_revision && *request.base_revision != revision_) {
       fail(ErrorCode::conflict,
@@ -331,7 +332,22 @@ api::Outcome Session::handle_request_body(const api::Request& request, Clock::ti
         } else {
           r = run_control(cmd, request.origin, now);
         }
+        if (cmd.kind() == api::Command::Kind::apply_job_result && jobLog_) {
+          // The job's commands are the record (a replay has no held result);
+          // an empty apply wrote nothing and is not logged.
+          JobLog applied = std::move(*jobLog_);
+          jobLog_.reset();
+          if (!applied.edits.empty()) log_job_edit(applied.job, std::move(applied.label), std::move(applied.edits));
+          o.v = std::move(r);
+          return o;
+        }
         api::LogRecord row{request, revision_, 0, std::nullopt};
+        if (cmd.kind() == api::Command::Kind::start_job) {
+          // A transcribe job's provider key (Electron main put it there) is
+          // never kept: the logged copy goes without it.
+          auto& logged = std::get<api::StartJob>(std::get<api::Command>(row.request.body.v).v);
+          if (auto* t = std::get_if<api::TranscribeJob>(&logged.job.v)) t->credential.reset();
+        }
         if (cmd.kind() == api::Command::Kind::start_job) {
           const std::optional<std::string> id = std::visit(
               [](const auto& x) -> std::optional<std::string> {

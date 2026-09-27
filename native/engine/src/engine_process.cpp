@@ -28,6 +28,7 @@
 #if defined(PREMATION_HAVE_JOBS)
 #include "jobs/child_job.hpp"
 #include "jobs/job_kinds.hpp"
+#include "jobs/media_input.hpp"
 #endif
 
 namespace premation {
@@ -279,6 +280,12 @@ int run_engine(const EngineOptions& options) {
   };
   sessionOptions.testPorts = options.testPorts;
   sessionOptions.testPortsDir = options.testPortsDir;
+#if defined(PREMATION_HAVE_JOBS)
+  // importFiles by path: the jobs' decoders probe the file (ffmpeg + the OS still codec).
+  sessionOptions.mediaProbe = [](const std::string& path, js::Json& facts, std::string& error) {
+    return jobs::probe_media(path, facts, error);
+  };
+#endif
   Session session(outbox, *sink, sessionOptions);
 #if defined(PREMATION_HAVE_SCENE)
   session.set_frame_builder(frameBuilder.get());

@@ -1,8 +1,10 @@
 // Job kind `autoTrace` — Layer ▸ Auto-trace (src/core/effects/autoTrace.ts,
 // the `layer.autoTrace` command in src/providers/Providers.tsx).
 //
-// The TS rendered the layer alone on a transparent comp and traced that;
-// the engine job traces the footage layer's own frames (layer pixels, the
+// `rendered` (the TS behaviour: autoTrace.ts renderLayerAlone): the layer is
+// drawn alone on a transparent comp by a child engine and traced in comp
+// space, pulled back to layer space per frame (prepare_rendered_trace).
+// Without it the job traces a footage layer's own frames (layer pixels, the
 // same space its masks live in), read through open_frames at full size. The
 // rest is autoTrace.ts: the chosen channel thresholded, traced
 // (trace_bitmap.hpp), outer rings first as `add` masks named "Auto-trace N",
@@ -10,6 +12,7 @@
 // range of more than one frame, every mask path gets a keyframe on every
 // frame of the range — the TS `replaceMaskRings` + `keyframeMask` walk.
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -18,7 +21,9 @@
 #include <variant>
 #include <vector>
 
+#include "child_export.hpp"
 #include "fail.hpp"
+#include "scene.hpp"
 #include "job_apply_util.hpp"
 #include "job_inputs.hpp"
 #include "job_kinds.hpp"
@@ -153,14 +158,16 @@ std::int64_t frame_at(double s, double fps, std::int64_t count) {
   return static_cast<std::int64_t>(f);
 }
 
-}  // namespace
-
-PreparedJob prepare_auto_trace(const api::AutoTraceJob& spec, const JobDocContext& ctx) {
-  const FootageLayer fl = footage_layer(ctx, spec.layer, Need::picture);
+struct TraceSettings {
   trace::Channel channel = trace::Channel::alpha;
-  if (!trace::parse_channel(spec.channel, channel)) {
-    fail(ErrorCode::invalid_argument, "channel '" + spec.channel + "' is not alpha, luminance, red, green or blue",
-         {.layer = spec.layer});
+  trace::AutoTraceParams params;
+  double blur = 0;
+};
+
+TraceSettings trace_settings(const api::AutoTraceJob& spec) {
+  TraceSettings t;
+  if (!trace::parse_channel(spec.channel, t.channel)) {
+    fail(ErrorCode::invalid_argument, "channel '" + spec.channel + "' is not alpha, luminance, red, green or blue", {.layer = spec.layer});
   }
   if (!std::isfinite(spec.threshold) || spec.threshold < 0 || spec.threshold > 1) {
     fail(ErrorCode::out_of_range, "threshold must be 0…1", {.layer = spec.layer});
@@ -170,12 +177,83 @@ PreparedJob prepare_auto_trace(const api::AutoTraceJob& spec, const JobDocContex
     if (!std::isfinite(*v) || *v < 0) fail(ErrorCode::out_of_range, std::string(what) + " must be ≥ 0", {.layer = spec.layer});
     return *v;
   };
-  trace::AutoTraceParams params;
-  params.threshold = spec.threshold * 255.0;
-  params.tolerance = nonneg(spec.tolerance, 1.5, "tolerance");
-  params.minArea = nonneg(spec.min_area, 16, "minArea");
-  const double blur = nonneg(spec.blur, 0, "blur");
+  t.params.threshold = spec.threshold * 255.0;
+  t.params.tolerance = nonneg(spec.tolerance, 1.5, "tolerance");
+  t.params.minArea = nonneg(spec.min_area, 16, "minArea");
+  t.blur = nonneg(spec.blur, 0, "blur");
   if (spec.range.duration < 0) fail(ErrorCode::invalid_argument, "range.duration must be ≥ 0", {.layer = spec.layer});
+  return t;
+}
+
+/// `rendered`: autoTrace.ts renderLayerAlone — the layer drawn alone on a
+/// transparent comp by a child engine (effects, masks, parents included; any
+/// layer kind), traced in comp space, each frame's rings pulled back through
+/// the inverse of the layer's world affine at that frame (matrices read here,
+/// on the core thread, where expressions evaluate).
+PreparedJob prepare_rendered_trace(const api::AutoTraceJob& spec, const JobDocContext& ctx) {
+  if (ctx.doc.node(spec.layer) == nullptr) fail(ErrorCode::not_found, "no layer '" + spec.layer + "'", {.layer = spec.layer});
+  const std::optional<std::string> comp = doc::comp_of_layer(ctx.doc, spec.layer);
+  const doc::Json* rec = comp ? ctx.doc.comp(*comp) : nullptr;
+  if (rec == nullptr) fail(ErrorCode::invalid_argument, "the layer is not in a composition", {.layer = spec.layer});
+  if (!ctx.layerToComp) fail(ErrorCode::unsupported, "this engine cannot evaluate layer transforms for a rendered trace", {.layer = spec.layer});
+  const TraceSettings s = trace_settings(spec);
+  const double fps = rec->at("fps").is_number() && rec->at("fps").num() > 0 ? rec->at("fps").num() : 30.0;
+  const double compW = rec->at("width").is_number() ? rec->at("width").num() : 0;
+  const double compH = rec->at("height").is_number() ? rec->at("height").num() : 0;
+  if (!(compW >= 1) || !(compH >= 1)) fail(ErrorCode::invalid_argument, "the composition has no size", {.layer = spec.layer});
+  const auto first = static_cast<std::int64_t>(std::llround(seconds_of(spec.range.start) * fps));
+  std::int64_t last = first;
+  if (spec.every_frame) {
+    last = std::max(first, static_cast<std::int64_t>(std::llround(seconds_of(spec.range.start + spec.range.duration) * fps)) - 1);
+  }
+  if (last - first > 10'000) fail(ErrorCode::out_of_range, "range is too long to render and trace", {.layer = spec.layer});
+  std::vector<std::array<double, 6>> matrices;
+  matrices.reserve(static_cast<std::size_t>(last - first + 1));
+  for (std::int64_t f = first; f <= last; ++f) {
+    const std::optional<std::array<double, 6>> m = ctx.layerToComp(spec.layer, static_cast<double>(f) / fps);
+    if (!m) fail(ErrorCode::unsupported, "a 3D layer cannot be traced from its render yet (trace its footage instead)", {.layer = spec.layer});
+    matrices.push_back(*m);
+  }
+  PreparedJob job;
+  job.kind = "autoTrace";
+  job.work = [layer = spec.layer, compId = *comp, projectJson = snapshot_project_json(ctx.doc, ctx.bundleRoot), s, fps, first, last,
+              compW, compH, matrices = std::move(matrices), invert = spec.invert,
+              keyed = spec.every_frame && last > first](JobControl& control) -> std::unique_ptr<JobResult> {
+    const std::optional<std::vector<RgbaImage>> images =
+        render_layer_alone(projectJson, compId, layer, first, last, control, "Rendering the layer", 0, 0.6);
+    if (!images) return nullptr;
+    std::vector<TracedFrame> frames;
+    frames.reserve(images->size());
+    const std::size_t total = images->size();
+    for (std::size_t i = 0; i < total; ++i) {
+      if (control.cancelled()) return nullptr;
+      const RgbaImage& img = (*images)[i];
+      TracedFrame fr;
+      fr.time = flicks_of(static_cast<double>(first + static_cast<std::int64_t>(i)) / fps);
+      if (!img.empty()) {
+        std::vector<std::uint8_t> plane = trace::channel_plane(img, s.channel, invert);
+        if (s.blur > 0) plane = trace::box_blur(plane, img.width, img.height, s.blur);
+        fr.rings = trace::comp_rings_to_layer(trace::auto_trace_rings(plane, img.width, img.height, compW, compH, s.params), compW, compH,
+                                              matrices[i]);
+      }
+      frames.push_back(std::move(fr));
+      control.progress(0.6 + 0.4 * static_cast<double>(i + 1) / static_cast<double>(total),
+                       "Tracing frame " + std::to_string(i + 1) + " of " + std::to_string(total));
+    }
+    return std::make_unique<AutoTraceResult>(layer, std::move(frames), keyed);
+  };
+  return job;
+}
+
+}  // namespace
+
+PreparedJob prepare_auto_trace(const api::AutoTraceJob& spec, const JobDocContext& ctx) {
+  if (spec.rendered) return prepare_rendered_trace(spec, ctx);
+  const FootageLayer fl = footage_layer(ctx, spec.layer, Need::picture);
+  const TraceSettings settings = trace_settings(spec);
+  const trace::Channel channel = settings.channel;
+  const trace::AutoTraceParams params = settings.params;
+  const double blur = settings.blur;
 
   // autoTrace.ts: comp frames first…last at the comp's rate; a range is
   // inclusive of its last frame (Providers.tsx: work-area start + duration − 1).
