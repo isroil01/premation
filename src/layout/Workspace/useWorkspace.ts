@@ -15,7 +15,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRenderBackend } from '@core/rendering/createRenderBackend';
 import type { RenderBackend } from '@core/rendering/RenderBackend';
-import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot';
+import type { SnapshotFocus } from '@core/rendering/buildSnapshot';
+import { onPageFrameChanged, pageFrameClipSignature, pageFrameContentKey, pageFrameSnapshot } from '@core/rendering/pageFrame';
+import { compRecordFromSettings } from '@core/mirror/compFacts';
 import type { Guide, GuideAxis, WorkspaceOverlay } from '@motion/workspace';
 import { modifiersFrom, drawToolOptions, type PointerInput, type WheelInput } from '@motion/workspace';
 import renderCache from '@core/rendering/renderCache';
@@ -26,23 +28,20 @@ import { useWorkspaceStore } from '@stores/projectStore';
 import workspaceStyles from './Workspace.module.css';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { compHasWireframeQualityLayer, paintWireframeQualityLayers } from './wireframeQualityOverlay';
-import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore, clampOverlayOpacity } from '@stores/guidesStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { idleCacheSpan, nextSpanFrame } from '@core/rendering/idleCacheSpan';
 import { onPreviewCacheRequest } from '@stores/cacheRequestStore';
 import { publishFrame } from '@core/rendering/frameTap';
-import { clipGeometrySignature } from '@core/timeline/TimelineController';
 import { roiHandleAt, resizeRoi, clampRoi, roiHandleCursor, type RoiHandle } from '@core/rendering/roiGeometry';
 import { activeCompSettingsNow, useActiveMotionBlur } from '@hooks/useMirrorFrame';
 import { settingsWorkArea } from '@core/mirror/compFacts';
 import { previewIncludesVideo } from '@stores/previewBehaviorStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { useRenderQueueStore } from '@stores/renderQueueStore';
 import { useModalStore } from '@stores/modalStore';
-import { useCompositionStore, compKeyFor } from '@stores/compositionStore';
+import { DEFAULT_COMPOSITION, compKeyFor } from '@stores/compositionStore';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { MAIN_VIEWPORT, overlayLayer, requestOverlayLayers, subscribeOverlayGeometry, type OverlayLayer } from '@stores/overlayGeometry';
@@ -81,7 +80,6 @@ import { useTextEditStore } from '@stores/textEditStore';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { createOnionSkinPainter } from '@core/rendering/onionSkinPainter';
-import { memoizedSceneContentHash } from '@core/rendering/sceneContentHash';
 import type { PaintMode } from '@core/paint/paintStrokes';
 import { commitPaintDrag } from '@core/engine/paintEdits';
 import { ctrlDragBrush, penSample } from '@core/paint/paintCapture';
@@ -107,7 +105,6 @@ import {
   findNavTarget,
   orbitNavBy,
   resolveOrbitPivot,
-  resolveViewCameraInput,
   smoothDollyNavBy,
   trackNavBy,
   unifiedNavModeFor,
@@ -117,7 +114,6 @@ import {
 import { useFaceSelectionStore } from '@stores/faceSelectionStore';
 import { facesOfNode, pickFace, faceHighlightGroups } from '@core/scene/facePicking';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
-import { compSizeOf } from '@core/composition/compSizes';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
 import { RULER_CSS_PX, inStrip, rulerStrips } from './rulerGeometry';
 import {
@@ -376,13 +372,16 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   // Draft preview quality skips the expensive motion-blur multi-sample pass.
   const draft = useRenderQualityStore((s) => s.draft);
 
-  const compKey = useCompositionStore((s) => s.key());
-  // The auto-fit below reacts to the active composition's size (a document fact).
-  const activeCompSettings = useActiveMirrorComp()?.settings;
+  // The active composition as its record, from the document mirror (B4); the
+  // auto-fit below reacts to its size (a document fact).
+  const activeMirrorComp = useActiveMirrorComp();
+  const activeCompSettings = activeMirrorComp?.settings;
   const compWidth = activeCompSettings?.width;
   const compHeight = activeCompSettings?.height;
-  const compRef = useRef(useCompositionStore.getState().comp());
-  compRef.current = useCompositionStore.getState().comp();
+  const compRecord = activeMirrorComp ? compRecordFromSettings(activeMirrorComp.id, activeMirrorComp.settings) : DEFAULT_COMPOSITION;
+  const compKey = compKeyFor(compRecord);
+  const compRef = useRef(compRecord);
+  compRef.current = compRecord;
 
   // RAM preview (frame cache) inputs, threaded via refs into the mount-scoped
   // render closure. The cache only fills AND serves during PLAYBACK (read
@@ -464,7 +463,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (clipSigMemo && clipSigMemo.rev === clipRev && clipSigMemo.compId === compId) {
         return clipSigMemo.sig;
       }
-      const sig = clipGeometrySignature(compId);
+      const sig = pageFrameClipSignature(compId);
       clipSigMemo = { rev: clipRev, compId, sig };
       return sig;
     };
@@ -573,39 +572,28 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     const renderFrameAtUnguarded = (t: number, ghost: boolean): void => {
       perfBegin(PerfStage.snapshot);
       const snap = {
-        ...buildSnapshot(
-          defaultSceneGraph,
-          defaultAnimation,
-          t,
-          focusRef.current,
-          overlaysRef.current,
-          controller.getView(),
-          motionBlurRef.current,
-          // rootId scopes the render to the ACTIVE composition's subtree. Without
-          // it, buildSnapshot flattens every root and draws all comps stacked on
-          // top of each other — and the preview (which DOES pass rootId) then
-          // showed a different picture than the editor. Both scope the same now.
-          {
-            ...compRef.current,
-            rootId: compRef.current.id,
-            compSizeOf,
-            // Custom views resolve to a pre-built override camera; ortho /
-            // active pass straight through (resolveViewCameraInput reads the
-            // live store, so the closure never freezes a stale view).
-            ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
-            draft3d: draft3dRef.current,
-            useProxies: useProxiesRef.current,
-            // Viewport-only: Quality = Wireframe layers hide their pixels and
-            // `paintWireframeQualityLayers` strokes their boxes instead.
-            wireframeLayers: true,
-            // Alpha view: the comp's own alpha is the picture, so the opaque
-            // background plate must not be composited under the layers — with
-            // it, every pixel is alpha 1 and the matte reads as solid white.
-            ...(ghost || useGuidesStore.getState().channel === 'alpha'
-              ? { transparent: true, backgroundPaint: undefined }
-              : {}),
-          },
-        ),
+        // The TypeScript engine's frame (B4: core/rendering/pageFrame, the
+        // engine's seam). Scoped to the ACTIVE composition's subtree (rootId =
+        // the comp) — without it every root would draw stacked.
+        ...pageFrameSnapshot({
+          time: t,
+          focus: focusRef.current,
+          overlays: overlaysRef.current,
+          view: controller.getView(),
+          motionBlur: motionBlurRef.current,
+          comp: compRef.current,
+          // Custom views resolve to a pre-built override camera; ortho /
+          // active pass straight through.
+          viewMode: camera3dModeRef.current,
+          draft3d: draft3dRef.current,
+          useProxies: useProxiesRef.current,
+          // Viewport-only: Quality = Wireframe layers hide their pixels and
+          // `paintWireframeQualityLayers` strokes their boxes instead.
+          wireframeLayers: true,
+          // Alpha view / onion ghosts: the comp's own alpha is the picture, so
+          // the opaque background plate must not be composited under the layers.
+          alpha: ghost || useGuidesStore.getState().channel === 'alpha',
+        }),
         // The only producer of `snapshot.roi`. Read live from the store so the
         // region takes effect on the very next frame after the menu toggles it.
         roi: useGuidesStore.getState().roi ?? undefined,
@@ -969,9 +957,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // Memoized ON those counters, so it costs one scene walk per EDIT rather
       // than one per frame; the counters keep doing the O(1) job they are
       // actually good at.
-      const contentKey = memoizedSceneContentHash(
-        defaultSceneGraph, defaultAnimation, sceneRevRef.current, animRev,
-      );
+      const contentKey = pageFrameContentKey(sceneRevRef.current, animRev);
       // NOTE: adaptive/preview RESOLUTION is deliberately absent — it changes
       // quality, not content, and including it wiped the whole RAM+disk
       // preview twice per adaptive flip (degrade AND restore), so the green
@@ -1325,27 +1311,28 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       comp the user switched to. The bus listener is bound once and hears all
       of them.
     */
-    const clipSub = getEventBus().on('DocumentChanged', (payload) => {
-      if (payload?.source !== 'timeline') return;
-      clipRev++;
-      controller.requestRender();
-    });
-
-    // Content also depends on the animation engine (keyframe edits, playback).
-    const animSub = getEventBus().on('AnimationChanged', (payload) => {
-      if (!isMediaDecodeRepaint(payload)) animRev++;
+    // B4: the TypeScript engine's frame-change signals, through the page
+    // renderer's seam (core/rendering/pageFrame).
+    const offFrameChanged = onPageFrameChanged((change) => {
+      if (change === 'clips') {
+        clipRev++;
+        controller.requestRender();
+        return;
+      }
+      if (change === 'node') {
+        controller.requestRender();
+        return;
+      }
+      // Content also depends on the animation engine (keyframe edits, playback).
+      if (change === 'animation') animRev++;
       // During playback the playhead pump already re-renders every frame;
       // decode-landing repaints on top of that were a render storm.
       const tabPlaying = useWorkspaceStore.getState().activeTabId
         ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.playing
         : false;
-      if (!isMediaDecodeRepaint(payload) || !tabPlaying) {
+      if (change === 'animation' || !tabPlaying) {
         controller.requestRender();
       }
-    });
-
-    const nodeSub = getEventBus().on('NodeUpdated', () => {
-      controller.requestRender();
     });
 
     // Leaving playback must reveal the live canvas even if no further render is
@@ -1379,9 +1366,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       ro.disconnect();
       qualitySub();
       onionSub();
-      animSub.dispose();
-      clipSub.dispose();
-      nodeSub.dispose();
+      offFrameChanged();
       playSub();
       // Don't leave a mount's worth of frames pinned in RAM.
       viewportFrameCache.clear();

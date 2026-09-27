@@ -78,6 +78,10 @@ const SEAM_MODULES = [
   '@core/workspace/WorkspaceController',
   '@core/export/', // export jobs and file downloads, not the document
   '@core/mirror/', // the B4 read layer over the document mirror (pure)
+  // The TypeScript engine's frame for the page's own renderer (the fallback when the C++ engine does not draw a
+  // surface): one call per painted frame with plain inputs, a RenderSnapshot back — the twin of FrameReady. The
+  // snapshot IS the engine's evaluation; the page never reads the scene graph through it (B4 round 5).
+  '@core/rendering/pageFrame',
 ];
 
 /** Names imported from engine-reading modules that are nevertheless pure. Reason each. */

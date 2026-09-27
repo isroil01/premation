@@ -1,0 +1,108 @@
+/**
+ * The TypeScript engine's frame for the PAGE's own renderer (B4) — the
+ * fallback when the C++ engine does not draw a surface (EngineSurface off, the
+ * Layer viewer, inspection panes, Presentation, scopes).
+ *
+ * This is engine code: the snapshot IS the TypeScript engine's evaluation of
+ * its document at a time (buildSnapshot over the scene graph and the animation
+ * engine). The page's surfaces hand it plain inputs — the time, the view, the
+ * composition RECORD they draw (from the document mirror) and view options —
+ * and get a RenderSnapshot back, one call per painted frame: the twin of the
+ * C++ engine's FrameReady. They never read the scene graph themselves.
+ */
+
+import type { CompositionSettings } from '@stores/projectStore';
+import type { Camera3dMode } from '@stores/guidesStore';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { defaultAnimation } from '@motion/animation';
+import { compSizeOf } from '@core/composition/compSizes';
+import { resolveViewCameraInput } from '@core/workspace/cameraNav';
+import type { MotionBlurConfig } from '@core/effects/motionBlur';
+import { clipGeometrySignature } from '@core/timeline/TimelineController';
+import { memoizedSceneContentHash } from './sceneContentHash';
+import { isMediaDecodeRepaint } from './mediaRepaint';
+import { getEventBus } from '@core/events/EventBus';
+import { buildSnapshot, type SnapshotFocus, type SnapshotComp } from './buildSnapshot';
+import type { RenderOverlays, RenderSnapshot, RenderView } from './RenderBackend';
+
+export interface PageFrameInput {
+  /** Composition time, seconds. */
+  time: number;
+  focus?: SnapshotFocus;
+  overlays?: RenderOverlays;
+  view?: RenderView;
+  motionBlur?: MotionBlurConfig;
+  /** The composition drawn (its record: size, fps, background…). */
+  comp: CompositionSettings;
+  /** The subtree rendered; default the composition itself. */
+  rootId?: string;
+  /** The 3D view the surface looks through. */
+  viewMode: Camera3dMode;
+  draft3d?: boolean;
+  useProxies?: boolean;
+  /** Viewport only: Quality = Wireframe layers hide their pixels. */
+  wireframeLayers?: boolean;
+  /** Alpha channel view: the comp's own alpha, no background plate. */
+  alpha?: boolean;
+  /** Extra snapshot options a surface needs (the Layer viewer's isolation…). */
+  extra?: Partial<SnapshotComp>;
+}
+
+/**
+ * The page renderer's frame-cache CONTENT key: the TypeScript engine's scene +
+ * animation content hash, memoized on the revision counters the caller keeps
+ * (one walk per edit, not per frame — sceneContentHash.ts).
+ */
+export function pageFrameContentKey(sceneRev: number, animRev: number): string {
+  return memoizedSceneContentHash(defaultSceneGraph, defaultAnimation, sceneRev, animRev);
+}
+
+/** The composition's clip geometry signature (bars live in the timeline engine, outside the content hash). */
+export function pageFrameClipSignature(compId: string): string {
+  return clipGeometrySignature(compId);
+}
+
+/** Why the TypeScript engine's frame changed (the page renderer's cache and repaint triggers). */
+export type PageFrameChange =
+  /** A clip bar moved / trimmed / split (timeline geometry, outside the content hash). */
+  | 'clips'
+  /** Animation changed (a keyframe edit, playback of an expression…). */
+  | 'animation'
+  /** A media decode landed (a video frame, a texture): repaint only, the content did not change. */
+  | 'media'
+  /** A node's props changed. */
+  | 'node';
+
+/**
+ * Told whenever the TypeScript engine's frame may have changed, and why — the
+ * page renderer's invalidation (its RAM preview key, its repaint). Engine-side
+ * events of the engine that renders the page; the C++ engine's frames carry
+ * their own revision.
+ */
+export function onPageFrameChanged(cb: (change: PageFrameChange) => void): () => void {
+  const bus = getEventBus();
+  const subs = [
+    bus.on('DocumentChanged', (payload) => {
+      if (payload?.source === 'timeline') cb('clips');
+    }),
+    bus.on('AnimationChanged', (payload) => cb(isMediaDecodeRepaint(payload) ? 'media' : 'animation')),
+    bus.on('NodeUpdated', () => cb('node')),
+  ];
+  return () => { for (const s of subs) s.dispose(); };
+}
+
+/** The TypeScript engine's snapshot of `input.comp` at `input.time` for the page renderer. */
+export function pageFrameSnapshot(input: PageFrameInput): RenderSnapshot {
+  const c = input.comp;
+  return buildSnapshot(defaultSceneGraph, defaultAnimation, input.time, input.focus, input.overlays, input.view, input.motionBlur, {
+    ...c,
+    rootId: input.rootId ?? c.id,
+    compSizeOf,
+    ...(input.draft3d !== undefined ? { draft3d: input.draft3d } : {}),
+    ...(input.useProxies !== undefined ? { useProxies: input.useProxies } : {}),
+    ...(input.wireframeLayers ? { wireframeLayers: true } : {}),
+    ...resolveViewCameraInput(c.width, c.height, input.viewMode),
+    ...(input.alpha ? { transparent: true, backgroundPaint: undefined } : {}),
+    ...(input.extra ?? {}),
+  } as SnapshotComp);
+}

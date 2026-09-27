@@ -18,14 +18,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRenderBackend } from '@core/rendering/createRenderBackend';
 import type { RenderBackend } from '@core/rendering/RenderBackend';
-import { buildSnapshot } from '@core/rendering/buildSnapshot';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { getEventBus } from '@core/events/EventBus';
-import { useCompositionStore } from '@stores/compositionStore';
+import { onPageFrameChanged, pageFrameSnapshot } from '@core/rendering/pageFrame';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { compRecordFromSettings } from '@core/mirror/compFacts';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useProjectStore } from '@stores/projectStore';
-import { compSizeOf } from '@core/composition/compSizes';
 
 export interface LayerViewerRenderParams {
   nodeId: string | null;
@@ -66,31 +66,31 @@ export function useLayerViewerRenderer(
     const b = backendRef.current;
     const p = paramsRef.current;
     try {
-      if (!b || !p.nodeId || !defaultSceneGraph.getNode(p.nodeId)) return;
-      const comp = useCompositionStore.getState().comp();
+      // B4: the layer's existence and the active composition's record from the
+      // mirror; the frame from the TypeScript engine's seam (core/rendering/pageFrame).
+      if (!b || !p.nodeId || !documentMirror().layer(p.nodeId)) return;
+      const s = activeCompSettingsNow();
+      const id = activeCompIdNow();
+      const comp = s && id ? compRecordFromSettings(id, s) : DEFAULT_COMPOSITION;
       b.setPlaybackMode?.(playingRef.current);
-      b.renderFrame(buildSnapshot(
-        defaultSceneGraph, defaultAnimation, p.compTime, undefined, undefined, undefined, undefined,
-        {
-          ...comp,
-          width: Math.max(1, p.frameWidth),
-          height: Math.max(1, p.frameHeight),
-          rootId: p.nodeId,
-          compSizeOf,
-          // The Layer panel shows the layer, not the comp: no background plate,
-          // and no scene camera or custom view reaches it.
-          transparent: true,
-          backgroundPaint: undefined,
-          camera3dMode: 'active',
+      b.renderFrame(pageFrameSnapshot({
+        time: p.compTime,
+        comp: { ...comp, width: Math.max(1, p.frameWidth), height: Math.max(1, p.frameHeight) },
+        rootId: p.nodeId,
+        // The Layer panel shows the layer, not the comp: no background plate,
+        // and no scene camera or custom view reaches it.
+        viewMode: 'active',
+        alpha: true,
+        useProxies: useProxiesRef.current,
+        extra: {
           customViewCamera: undefined,
-          useProxies: useProxiesRef.current,
           layerView: {
             id: p.nodeId,
             render: p.render,
             ...(p.sourceTime !== undefined ? { sourceTime: p.sourceTime } : {}),
           },
         },
-      ));
+      }));
       // A frame drawn before its video decoded is stale; nothing will tell
       // this backend when the decode lands, so look again shortly.
       const retry = retryRef.current;
@@ -149,11 +149,10 @@ export function useLayerViewerRenderer(
       doResize();
     });
 
-    const bus = getEventBus();
+    // Repaint when the engine's frame may have changed, and on any document batch.
     const subs = [
-      bus.on('AnimationChanged', () => render()),
-      bus.on('NodeUpdated', () => render()),
-      bus.on('SceneGraphChanged', () => render()),
+      onPageFrameChanged(() => render()),
+      documentMirror().subscribe(['doc'], () => render()),
     ];
     return () => {
       cancelled = true;
@@ -162,7 +161,7 @@ export function useLayerViewerRenderer(
       if (retry.timer !== null) clearTimeout(retry.timer);
       retry.timer = null;
       ro.disconnect();
-      for (const s of subs) s.dispose();
+      for (const off of subs) off();
       backend.dispose();
       backendRef.current = null;
     };

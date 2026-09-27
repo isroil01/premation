@@ -31,7 +31,6 @@ import { ctrlDragBrush, penSample } from '@core/paint/paintCapture';
 import { segmentStrokesToMask } from '@core/workspace/rotoBrushTool';
 import { drawToolOptions } from '@motion/workspace';
 import { useUIStore } from '@stores/uiStore';
-import { useAssetStore } from '@stores/assetStore';
 import { usePaintStore } from '@stores/paintStore';
 import { useRotoBrushStore, type RotoStroke } from '@stores/rotoBrushStore';
 import { bumpScene } from '@stores/sceneStore';
@@ -104,9 +103,9 @@ export function LayerPaintSurface({
   // The segmenter cuts the layer's SOURCE pixels, so Roto needs footage — a
   // solid or a comp layer has nothing for it to read.
   const assetId = layer?.source ?? null;
-  // B4-gap: the footage's media TYPE (video / image) — `ItemInfo` says footage, not which.
-  const assetType = useAssetStore((s) => (assetId ? s.assets.find((a) => a.id === assetId)?.type : undefined));
-  const rotoable = assetType === 'video' || assetType === 'image';
+  // The footage's media type from the mirror (`ItemInfo.mediaType`).
+  const mediaType = assetId ? documentMirror().item(assetId)?.mediaType : undefined;
+  const rotoable = mediaType === 'video' || mediaType === 'image';
 
   const local = (e: { clientX: number; clientY: number }): Pt => {
     const r = svgRef.current?.getBoundingClientRect();
