@@ -17551,6 +17551,7 @@ void encode(wire::Writer& w, const LayerInfo& v) {
   w.varint(954U); w.str(v.managed_by);
   w.varint(962U); w.str(v.mograph_id);
   w.varint(7360U); w.varint(static_cast<std::uint32_t>(v.svg));
+  if (v.plugin_schema_version.has_value()) { w.varint(7368U); w.varint(*v.plugin_schema_version); }
 }
 
 Status decode(wire::Reader& r, LayerInfo& out) {
@@ -17685,6 +17686,12 @@ Status decode(wire::Reader& r, LayerInfo& out) {
       case 7360U: {
         { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.svg)) return Status::bad_enum; }
         has_svg = true;
+        break;
+      }
+      case 7368U: {
+        std::uint32_t e = 0;
+        if (!r.u32(e)) return Status::bad_value;
+        out.plugin_schema_version = std::move(e);
         break;
       }
       default:

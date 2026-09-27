@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <functional>
+#include <optional>
+#include <utility>
 
 #include "catalog_data.hpp"
 #include "docio.hpp"
@@ -327,17 +330,44 @@ namespace {
 
 /// B4 — a plugin layer kind's id (`<pluginId>.<kindId>`, layerKindSchema.ts `splitKind`: the kind id after the
 /// last '.' matches /^[a-z][a-zA-Z0-9]{0,31}$/), '' for any other stored kind.
-std::string plugin_kind_of(const Node& n) {
-  std::string k = n.kind();
+/// `splitKind(kind)`: the plugin id before the last '.' and a valid kind id after it (nullopt otherwise).
+std::optional<std::pair<std::string, std::string>> split_kind(std::string_view k) {
   const std::size_t at = k.rfind('.');
-  if (at == std::string::npos || at == 0 || at + 1 >= k.size()) return {};
-  const std::string_view id = std::string_view(k).substr(at + 1);
-  if (id.size() > 32 || id[0] < 'a' || id[0] > 'z') return {};
+  if (at == std::string_view::npos || at == 0 || at + 1 >= k.size()) return std::nullopt;
+  const std::string_view id = k.substr(at + 1);
+  if (id.size() > 32 || id[0] < 'a' || id[0] > 'z') return std::nullopt;
   for (const char c : id) {
     const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
-    if (!ok) return {};
+    if (!ok) return std::nullopt;
   }
-  return k;
+  return std::pair{std::string(k.substr(0, at)), std::string(id)};
+}
+
+std::string plugin_kind_of(const Node& n) {
+  std::string k = n.kind();
+  return split_kind(k) ? k : std::string{};
+}
+
+/// B4 — a custom plugin layer's stored schema version (model.ts pluginSchemaVersionOf, customLayers.ts
+/// readCustomLayer): the first `pluginLayer:<kind>` component with a string `__kind` whose ids resolve.
+std::optional<std::uint32_t> plugin_schema_version_of(const Node& n) {
+  for (const Component& c : n.components) {
+    if (!c.type.starts_with("pluginLayer:")) continue;
+    const Json& kind = c.props.at("__kind");
+    if (!kind.is_string()) continue;
+    const auto split = split_kind(kind.str());
+    const Json& pid = c.props.at("__pluginId");
+    const Json& kid = c.props.at("__kindId");
+    const bool hasPlugin = pid.is_string() ? !pid.str().empty() : split.has_value();
+    const bool hasKind = kid.is_string() ? !kid.str().empty() : split.has_value();
+    if (!hasPlugin || !hasKind) continue;
+    const Json& v = c.props.at("__schemaVersion");
+    if (!v.is_number()) return 1U;
+    const double x = v.num();
+    if (!std::isfinite(x) || x < 0) return 1U;
+    return static_cast<std::uint32_t>(std::floor(std::min(x, 4294967295.0)));
+  }
+  return std::nullopt;
 }
 
 /// B4 - the first non-empty string a component of `n` stores under `prop` ('' when none): model.ts firstStringProp.
@@ -409,6 +439,7 @@ api::LayerInfo layer_info(const Document& d, std::string_view layer) {
   info.managed_by = first_string_prop(n, "__ownedByPlugin");
   info.mograph_id = first_string_prop(n, "__mographId");
   info.svg = svg_role_of(n);
+  info.plugin_schema_version = plugin_schema_version_of(n);
   return info;
 }
 

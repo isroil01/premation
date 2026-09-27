@@ -152,3 +152,45 @@ TEST_CASE("getSearchFacts: effect match names in stack order and every expressio
   CHECK(one.layers[0].effects.empty());
   CHECK(one.layers[0].expressions.empty());
 }
+
+TEST_CASE("LayerInfo.pluginSchemaVersion: a custom plugin layer's stored schema version", "[b4r3][plugin]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto seed = make_layer(h, comp, api::LayerKind::shape);
+  api::CopyLayers copy;
+  copy.layers = {seed};
+  const auto res = h.ask(qry(copy));
+  REQUIRE(is_ok(res));
+  const api::DocumentFragment frag = std::get<api::DocumentFragment>(std::get<api::QueryResult>(res.outcome.v).v);
+  const std::string base(frag.data.begin(), frag.data.end());
+  // A pluginLayer:<kind> component spliced into the copied layer (customLayers.ts buildCustomLayerComponent).
+  const auto with = [&](const std::string& component) {
+    std::string text = base;
+    const std::string key = "\"components\":[";
+    const auto at = text.find(key);
+    REQUIRE(at != std::string::npos);
+    text.insert(at + key.size(), component + ",");
+    api::PasteLayers p;
+    p.comp = comp;
+    p.fragment = frag;
+    p.fragment.data.assign(text.begin(), text.end());
+    const auto r = h.run(cmd(p));
+    if (!is_ok(r)) FAIL(std::get<api::EngineError>(r.outcome.v).message);
+    const auto id = result_as<api::LayerList>(r).layers.at(0);
+    const auto q = h.ask(qry(api::GetLayers{{id}}));
+    REQUIRE(is_ok(q));
+    const auto& d = std::get<api::LayerDetails>(std::get<api::QueryResult>(q.outcome.v).v);
+    REQUIRE(d.layers.size() == 1);
+    return d.layers[0].plugin_schema_version;
+  };
+  CHECK(with(R"({"id":"plg1","props":{"__kind":"studio.acme.lab.depthImage","__schemaVersion":3},"type":"pluginLayer:studio.acme.lab.depthImage"})") == 3U);
+  // No stored version: 1 (readCustomLayer's default).
+  CHECK(with(R"({"id":"plg2","props":{"__kind":"studio.acme.lab.depthImage"},"type":"pluginLayer:studio.acme.lab.depthImage"})") == 1U);
+  // A kind that does not split into plugin + kind ids is not a custom layer record.
+  CHECK_FALSE(with(R"({"id":"plg3","props":{"__kind":"nodot"},"type":"pluginLayer:nodot"})").has_value());
+  // An ordinary layer has none.
+  const auto plain = h.ask(qry(api::GetLayers{{seed}}));
+  REQUIRE(is_ok(plain));
+  CHECK_FALSE(std::get<api::LayerDetails>(std::get<api::QueryResult>(plain.outcome.v).v).layers.at(0).plugin_schema_version.has_value());
+}

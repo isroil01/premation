@@ -3942,6 +3942,7 @@ struct LayerInfo {
   std::string managed_by;
   std::string mograph_id;
   SvgRole svg = SvgRole::none;
+  std::optional<std::uint32_t> plugin_schema_version;
   bool operator==(const LayerInfo&) const = default;
 };
 

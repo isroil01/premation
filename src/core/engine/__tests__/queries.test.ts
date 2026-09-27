@@ -226,3 +226,20 @@ test('answers carry the document as the engine holds it', async () => {
   const bad = await h.engine.query({ type: 'getLayers', layers: ['nope'] });
   expect(!bad.ok && bad.error.code).toBe('notFound');
 });
+
+test('LayerInfo.pluginSchemaVersion: a custom plugin layer\'s stored schema version (the C++ test_b4_round3 twin)', async () => {
+  const frag = (await h.query({ type: 'copyLayers', layers: [s.A] })) as { data: Uint8Array };
+  const base = new TextDecoder().decode(frag.data);
+  const withComponent = async (component: string): Promise<number | undefined> => {
+    const key = '"components":[';
+    const at = base.indexOf(key);
+    expect(at).toBeGreaterThanOrEqual(0);
+    const text = `${base.slice(0, at + key.length)}${component},${base.slice(at + key.length)}`;
+    const r = (await h.run({ type: 'pasteLayers', comp: s.comp, fragment: { ...frag, data: new TextEncoder().encode(text) } })) as { layers: string[] };
+    return (await h.query({ type: 'getLayers', layers: [r.layers[0]!] })).layers[0]!.pluginSchemaVersion;
+  };
+  expect(await withComponent('{"id":"plg1","props":{"__kind":"studio.acme.lab.depthImage","__schemaVersion":3},"type":"pluginLayer:studio.acme.lab.depthImage"}')).toBe(3);
+  expect(await withComponent('{"id":"plg2","props":{"__kind":"studio.acme.lab.depthImage"},"type":"pluginLayer:studio.acme.lab.depthImage"}')).toBe(1);
+  expect(await withComponent('{"id":"plg3","props":{"__kind":"nodot"},"type":"pluginLayer:nodot"}')).toBeUndefined();
+  expect((await h.query({ type: 'getLayers', layers: [s.A] })).layers[0]!.pluginSchemaVersion).toBeUndefined();
+});

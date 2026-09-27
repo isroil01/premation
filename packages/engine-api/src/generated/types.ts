@@ -2965,6 +2965,8 @@ export interface LayerInfo {
   mographId: string;
   /** B4 — `layer`: an SVG layer that stores its document (getSvgDocument reads it; Convert to Editable Shapes); `converted`: a group converted from one that still retains the original source (Revert to Original SVG); `none` otherwise. */
   svg: SvgRole;
+  /** B4 — a custom plugin layer's stored schema version (`__schemaVersion` on its `pluginLayer:<kind>` component; 1 when the record has none): what decides the Inspector's needs-migration / downgrade state. Absent for a layer that is not a custom plugin layer. */
+  pluginSchemaVersion?: number;
 }
 
 /** B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`). */

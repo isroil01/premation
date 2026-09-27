@@ -8480,6 +8480,7 @@ function encS_LayerInfo(w: Writer, v: T.LayerInfo): void {
   w.varint(954); w.str(v.managedBy);
   w.varint(962); w.str(v.mographId);
   w.varint(7360); w.varint(enc_SvgRole(v.svg));
+  if (v.pluginSchemaVersion !== undefined) { w.varint(7368); w.u32(v.pluginSchemaVersion); }
 }
 function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   const l_children: string[] = [];
@@ -8521,6 +8522,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let v_managedBy: string | undefined;
   let v_mographId: string | undefined;
   let v_svg: T.SvgRole | undefined;
+  let v_pluginSchemaVersion: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -8546,6 +8548,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
       case 954: v_managedBy = r.str(); h_managedBy = true; break;
       case 962: v_mographId = r.str(); h_mographId = true; break;
       case 7360: v_svg = dec_SvgRole(r.varint()); h_svg = true; break;
+      case 7368: v_pluginSchemaVersion = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -8589,6 +8592,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   o.managedBy = v_managedBy;
   o.mographId = v_mographId;
   o.svg = v_svg;
+  if (v_pluginSchemaVersion !== undefined) o.pluginSchemaVersion = v_pluginSchemaVersion;
   return o;
 }
 function encS_MemberExpression(w: Writer, v: T.MemberExpression): void {
