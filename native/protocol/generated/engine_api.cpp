@@ -13562,6 +13562,7 @@ Status decode(wire::Reader& r, OpenProjectResult& out) {
 void encode(wire::Writer& w, const SaveProjectResult& v) {
   w.varint(10U); w.str(v.path);
   w.varint(16U); w.varint(v.bytes);
+  if (v.missing.has_value()) { w.varint(26U); w.str(*v.missing); }
 }
 
 Status decode(wire::Reader& r, SaveProjectResult& out) {
@@ -13581,6 +13582,12 @@ Status decode(wire::Reader& r, SaveProjectResult& out) {
         has_bytes = true;
         break;
       }
+      case 26U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.missing = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -13588,6 +13595,132 @@ Status decode(wire::Reader& r, SaveProjectResult& out) {
   }
   if (!has_path) return Status::missing_field;
   if (!has_bytes) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const AepImportSummary& v) {
+  w.varint(8U); w.varint(v.comps);
+  w.varint(16U); w.varint(v.layers);
+  w.varint(24U); w.varint(v.keyframes);
+  w.varint(32U); w.varint(v.effects);
+  w.varint(40U); w.varint(v.masks);
+  w.varint(48U); w.varint(v.expressions);
+  for (const auto& e : v.unmapped_effects) { w.varint(58U); w.str(e); }
+  w.varint(66U); w.str(v.ae_version);
+}
+
+Status decode(wire::Reader& r, AepImportSummary& out) {
+  bool has_comps = false;
+  bool has_layers = false;
+  bool has_keyframes = false;
+  bool has_effects = false;
+  bool has_masks = false;
+  bool has_expressions = false;
+  bool has_ae_version = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.u32(out.comps)) return Status::bad_value;
+        has_comps = true;
+        break;
+      }
+      case 16U: {
+        if (!r.u32(out.layers)) return Status::bad_value;
+        has_layers = true;
+        break;
+      }
+      case 24U: {
+        if (!r.u32(out.keyframes)) return Status::bad_value;
+        has_keyframes = true;
+        break;
+      }
+      case 32U: {
+        if (!r.u32(out.effects)) return Status::bad_value;
+        has_effects = true;
+        break;
+      }
+      case 40U: {
+        if (!r.u32(out.masks)) return Status::bad_value;
+        has_masks = true;
+        break;
+      }
+      case 48U: {
+        if (!r.u32(out.expressions)) return Status::bad_value;
+        has_expressions = true;
+        break;
+      }
+      case 58U: {
+        auto& e = out.unmapped_effects.emplace_back();
+        if (!r.str(e)) return Status::truncated;
+        break;
+      }
+      case 66U: {
+        if (!r.str(out.ae_version)) return Status::truncated;
+        has_ae_version = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_comps) return Status::missing_field;
+  if (!has_layers) return Status::missing_field;
+  if (!has_keyframes) return Status::missing_field;
+  if (!has_effects) return Status::missing_field;
+  if (!has_masks) return Status::missing_field;
+  if (!has_expressions) return Status::missing_field;
+  if (!has_ae_version) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const ImportProjectResult& v) {
+  for (const auto& e : v.items) { w.varint(10U); w.str(e); }
+  for (const auto& e : v.warnings) { w.varint(18U); w.str(e); }
+  for (const auto& e : v.missing_footage) { w.varint(26U); w.str(e); }
+  if (v.open_comp.has_value()) { w.varint(34U); w.str(*v.open_comp); }
+  if (v.summary.has_value()) { w.varint(42U); { const std::size_t s = w.begin_ld(); encode(w, *v.summary); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, ImportProjectResult& out) {
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        auto& e = out.items.emplace_back();
+        if (!r.str(e)) return Status::truncated;
+        break;
+      }
+      case 18U: {
+        auto& e = out.warnings.emplace_back();
+        if (!r.str(e)) return Status::truncated;
+        break;
+      }
+      case 26U: {
+        auto& e = out.missing_footage.emplace_back();
+        if (!r.str(e)) return Status::truncated;
+        break;
+      }
+      case 34U: {
+        ItemId e;
+        if (!r.str(e)) return Status::truncated;
+        out.open_comp = std::move(e);
+        break;
+      }
+      case 42U: {
+        AepImportSummary e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.summary = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
   return Status::ok;
 }
 
@@ -14334,7 +14467,7 @@ Status decode(wire::Reader& r, CommandResult& out) {
       }
       case 106U: {
         if (seen) return Status::multiple_variants;
-        ItemList e;
+        ImportProjectResult e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.v.emplace<12>(std::move(e));
         seen = true;
@@ -24110,7 +24243,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 423> kNames = {
+constexpr std::array<std::string_view, 425> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -24182,6 +24315,8 @@ constexpr std::array<std::string_view, 423> kNames = {
     "OpenProjectResult",
     "SaveProjectResult",
     "ItemList",
+    "AepImportSummary",
+    "ImportProjectResult",
     "Interpretation",
     "InterpretationPatch",
     "ImportFile",
@@ -24611,6 +24746,8 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "OpenProjectResult") return roundtrip<OpenProjectResult>(bytes, out);
   if (type == "SaveProjectResult") return roundtrip<SaveProjectResult>(bytes, out);
   if (type == "ItemList") return roundtrip<ItemList>(bytes, out);
+  if (type == "AepImportSummary") return roundtrip<AepImportSummary>(bytes, out);
+  if (type == "ImportProjectResult") return roundtrip<ImportProjectResult>(bytes, out);
   if (type == "Interpretation") return roundtrip<Interpretation>(bytes, out);
   if (type == "InterpretationPatch") return roundtrip<InterpretationPatch>(bytes, out);
   if (type == "ImportFile") return roundtrip<ImportFile>(bytes, out);

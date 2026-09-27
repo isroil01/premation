@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 
 #include "bundle_io.hpp"
@@ -244,6 +245,8 @@ Json FakePorts::import_file(const api::ImportFile& file, const std::string& id) 
   md.set("hasAudioTrack", Json::boolean(!image));
   a.set("metadata", std::move(md));
   a.set("path", Json::string(file.path));
+  // What the fake collector reads for this file (collect_files).
+  fakeFiles_.insert_or_assign(file.path, "fake:" + file.path);
   return a;
 }
 
@@ -267,6 +270,10 @@ Json FakePorts::import_bytes(const api::ImportBytesFile& file, const std::string
   md.set("hasAudioTrack", Json::boolean(!image));
   a.set("metadata", std::move(md));
   if (file.origin_path) a.set("path", Json::string(*file.origin_path));
+  // What the fake collector reads for this item (collect_files): its bytes, under its src and origin path.
+  std::string bytes(file.data.begin(), file.data.end());
+  if (file.origin_path) fakeFiles_.insert_or_assign(*file.origin_path, bytes);
+  fakeFiles_.insert_or_assign("blob:fake/" + id, std::move(bytes));
   return a;
 }
 
@@ -312,6 +319,107 @@ std::uint64_t FakePorts::write_project(const std::string& path, const Json& doc)
     out << text;
   }
   return text.size();
+}
+
+// ── collectFiles (collect_files.hpp) ──────────────────────────────────────
+
+CollectOutcome Ports::collect_files(CollectRequest /*req*/) {
+  fail(api::ErrorCode::unsupported, "no collect-files port is attached to this engine");
+}
+
+/// FakePorts' collector: reads what the fake imported (or add_file), writes into its maps.
+class FakeCollectIo final : public CollectIo {
+ public:
+  explicit FakeCollectIo(FakePorts& p) : p_(p) {}
+  bool read(std::string_view ref, const std::string& sourceBundle, std::string& bytes, std::string& why) override {
+    std::string key(ref);
+    if (ref.starts_with("motion-blob:")) key = sourceBundle + "/blobs/" + std::string(ref.substr(12));
+    if (const auto it = p_.fakeFiles_.find(key); it != p_.fakeFiles_.end()) {
+      bytes = it->second;
+      return true;
+    }
+    if (const auto it = p_.blobs_.find(key); it != p_.blobs_.end()) {  // an earlier collect's bundle as the source
+      bytes = it->second;
+      return true;
+    }
+    why = "no file at '" + std::string(ref) + "'";
+    return false;
+  }
+  std::string normal(const std::string& path) override {
+    std::string s;
+    const std::u8string u = std::filesystem::path(std::u8string(path.begin(), path.end())).lexically_normal().generic_u8string();
+    s.assign(u.begin(), u.end());
+    while (s.size() > 1 && s.back() == '/') s.pop_back();
+    return s;
+  }
+  Target target(const std::string& path) override {
+    if (p_.registries_.contains(path)) return Target::bundle;
+    return p_.files_.contains(path) ? Target::other : Target::absent;
+  }
+  std::uint64_t put_blob(const std::string& bundle, const std::string& hash, std::string_view bytes) override {
+    const auto [it, added] = p_.blobs_.try_emplace(bundle + "/blobs/" + hash, bytes);
+    return added ? bytes.size() : 0;
+  }
+  std::uint64_t write_bundle(const std::string& bundle, const Json& doc, const Json& registry) override {
+    p_.registries_.insert_or_assign(bundle, registry);
+    return p_.write_project(bundle, doc) + js::stringify(registry).size();
+  }
+
+ private:
+  FakePorts& p_;
+};
+
+CollectOutcome FakePorts::collect_files(CollectRequest req) {
+  FakeCollectIo io(*this);
+  return doc::collect_files(std::move(req), io);
+}
+
+const std::string* FakePorts::blob(const std::string& bundle, const std::string& hash) const {
+  const auto it = blobs_.find(bundle + "/blobs/" + hash);
+  return it != blobs_.end() ? &it->second : nullptr;
+}
+
+Json FakePorts::registry(const std::string& bundle) const {
+  const auto it = registries_.find(bundle);
+  return it != registries_.end() ? it->second : Json();
+}
+
+CollectOutcome FilePorts::collect_files(CollectRequest req) {
+  const std::unique_ptr<CollectIo> io = make_disk_collect_io();
+  return doc::collect_files(std::move(req), *io);
+}
+
+// ── raw file bytes (importProject .aep / .aepx) ──────────────────────────
+
+std::vector<std::uint8_t> Ports::read_file_bytes(const std::string& /*path*/) {
+  fail(api::ErrorCode::unsupported, "no file port is attached to this engine");
+}
+
+std::vector<std::uint8_t> FakePorts::read_file_bytes(const std::string& path) {
+  if (const auto it = fileBytes_.find(path); it != fileBytes_.end()) return it->second;
+  if (!dir_.empty()) {
+    std::filesystem::path p = mirror_file(dir_, path);
+    p.replace_extension(".bin");
+    std::ifstream in(p, std::ios::binary);
+    if (in) return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  }
+  fail(api::ErrorCode::unsupported, "importing '" + path + "' needs file bytes the test ports do not have");
+}
+
+std::vector<std::uint8_t> FilePorts::read_file_bytes(const std::string& path) {
+  constexpr std::uintmax_t kMaxBytes = std::uintmax_t{1} << 30U;
+  const std::filesystem::path p(std::u8string(path.begin(), path.end()));
+  std::error_code ec;
+  if (std::filesystem::is_directory(p, ec)) fail(api::ErrorCode::io, "could not read '" + path + "': it is a folder");
+  const std::uintmax_t size = std::filesystem::file_size(p, ec);
+  if (ec) fail(api::ErrorCode::io, "could not read '" + path + "'");
+  if (size > kMaxBytes) fail(api::ErrorCode::io, "could not read '" + path + "': the file is larger than 1 GB");
+  std::ifstream in(p, std::ios::binary);
+  if (!in) fail(api::ErrorCode::io, "could not read '" + path + "'");
+  std::vector<std::uint8_t> out(static_cast<std::size_t>(size));
+  in.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(out.size()));
+  if (static_cast<std::uintmax_t>(in.gcount()) != size) fail(api::ErrorCode::io, "could not read '" + path + "': short read");
+  return out;
 }
 
 Json FilePorts::read_project(const std::string& path) {

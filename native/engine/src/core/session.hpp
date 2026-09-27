@@ -124,6 +124,10 @@ class Session {
   /// Engine jobs (jobs/job_api.hpp): the kinds this build runs. Null (the
   /// headless engine, most tests) = startJob answers `unsupported`.
   void set_job_kinds(jobs::JobKinds* kinds) noexcept { jobKinds_ = kinds; }
+  /// convertLayer / separateLayer: fonts, text layout and SVG parsing
+  /// (core/convert_geometry.hpp). Null (core-only builds, most tests) = those
+  /// commands answer `unsupported`, as the TypeScript engine does.
+  void set_convert_geometry(doc::ConvertGeometry* g) noexcept { convertGeometry_ = g; }
 
  private:
   enum class Phase : std::uint8_t { awaiting_hello, open, closed };
@@ -299,6 +303,7 @@ class Session {
     std::unique_ptr<jobs::JobResult> result;
   };
   jobs::JobKinds* jobKinds_ = nullptr;
+  doc::ConvertGeometry* convertGeometry_ = nullptr;
   std::unique_ptr<jobs::JobRunner> runner_;
   std::vector<JobRecord> jobs_;
   std::uint64_t jobSeq_ = 0;
@@ -315,6 +320,10 @@ class Session {
   void drop_jobs();
   /// applyJobResult: the held result's commands inside the request's journal.
   api::CommandResult apply_job_in_journal(const api::ApplyJobResult& c, api::Origin origin, std::string& label);
+  /// The autoTrace COMMAND: the autoTrace job's trace run to completion on this
+  /// thread, its masks written inside the request's journal (one entry);
+  /// answers the added mask groups (session_jobs.cpp).
+  api::CommandResult auto_trace_in_journal(const api::AutoTrace& c, api::Origin origin, std::string& label);
 };
 
 /// The seq of a Request inside an EngineMessage that failed to decode (so

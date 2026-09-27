@@ -69,12 +69,12 @@ enum ProjectFormat { auto = 0; json = 1; bundle = 2; portable = 3; }
 
 /// Save to `path` (temp file + rename, never over the user's file mid-write). copy=true is Save a Copy: the document path and dirty flag are unchanged. `format` absent = `auto`. `portable` without copy is `invalidArgument`; `bundle` over an existing plain file, or `json` over a directory, is `io` and writes nothing.
 command saveProject = 12 [io] { path?: string = 1; copy: bool = 2; format?: ProjectFormat = 3; } -> SaveProjectResult;
-/// Import another project (.motion, .aep, .aepx) INTO this one as items in a new folder. Undoable.
-command importProject = 13 { path: string = 1; folder?: ItemId = 2; } -> ItemList;
+/// Import another project (.motion, .aep, .aepx) INTO this one as items in a new folder (named after the file, under `folder`). Undoable: ONE history entry whose undo removes everything imported. An After Effects project is converted (docs/AFTER_EFFECTS_IMPORT.md): every composition, its layers, keyframes, masks, effects and footage; what does not come across is reported in `warnings`. A file that is not a readable project is `decode`; an unreadable file `io`; an AE project with no compositions `decode`.
+command importProject = 13 { path: string = 1; folder?: ItemId = 2; } -> ImportProjectResult;
 command setProjectSettings = 14 { patch: ProjectSettingsPatch = 1; }
 /// Revert to the last saved state. Clears history.
 command revertProject = 15 [io] {}
-/// Copy the project and every file it uses into `folder` (File ▸ Dependencies ▸ Collect Files). The open document is unchanged.
+/// Copy the project and every file it uses into `folder` (File ▸ Dependencies ▸ Collect Files). The open document is unchanged (path, dirty flag, history). The copy is the `.motion` bundle `<folder>/<folder name>.motion` with every used file inside it (`blobs/`, srcs rewritten to `motion-blob:`); `onlyUsed` leaves out footage items no layer uses. A file that cannot be read is listed in the result's `missing`, never fails the collect. `invalidArgument`: an empty folder, or a target that is the open project or inside its bundle; `io`: a non-bundle already at the target, or a write failure.
 command collectFiles = 16 [io] { folder: string = 1; onlyUsed: bool = 2; } -> SaveProjectResult;
 /// Autosave / crash-recovery cadence (a preference the engine executes; not document state).
 command setAutosave = 17 [control] { enabled: bool = 1; intervalSeconds: u32 = 2; keep: u32 = 3; }
@@ -139,6 +139,41 @@ struct OpenProjectResult {
   missingItems: ItemId[] = 2;
 }
 
-struct SaveProjectResult { path: string = 1; bytes: u64 = 2; }
+struct SaveProjectResult {
+  path: string = 1;
+  bytes: u64 = 2;
+  /// collectFiles: the files that could not be collected, one per line ("<item name>: <why>"); absent when every file was collected (and for saveProject).
+  missing?: string = 3;
+}
 
 struct ItemList { items: ItemId[] = 1; }
+
+/// What an After Effects import brought across — the counts the import report shows.
+struct AepImportSummary {
+  comps: u32 = 1;
+  layers: u32 = 2;
+  /// Keyframes on the tracks that were created (not every dimension read).
+  keyframes: u32 = 3;
+  effects: u32 = 4;
+  masks: u32 = 5;
+  /// Expressions carried as text (not evaluated on import).
+  expressions: u32 = 6;
+  /// AE effects with no equivalent here, by display name (skipped).
+  unmappedEffects: string[] = 7;
+  /// The After Effects version that wrote the file ('' when the header did not say).
+  aeVersion: string = 8;
+}
+
+/// importProject's answer. Wire-compatible with ItemList (tag 1).
+struct ImportProjectResult {
+  /// The new folder first, then every composition, footage item and sub-folder created.
+  items: ItemId[] = 1;
+  /// What did not come across exactly (empty for a .motion import).
+  warnings: string[] = 2;
+  /// Footage paths that could not be read; their layers exist, pointing at a missing placeholder item to relink.
+  missingFootage: string[] = 3;
+  /// The composition a person would open first (AE import: the longest comp nothing else contains).
+  openComp?: ItemId = 4;
+  /// AE import only.
+  summary?: AepImportSummary = 5;
+}

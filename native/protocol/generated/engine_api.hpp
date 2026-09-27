@@ -1057,6 +1057,8 @@ struct HistoryStep;
 struct GestureRef;
 struct OpenProjectResult;
 struct SaveProjectResult;
+struct AepImportSummary;
+struct ImportProjectResult;
 struct ItemList;
 struct ItemRef;
 struct PrecomposeResult;
@@ -3281,7 +3283,29 @@ struct OpenProjectResult {
 struct SaveProjectResult {
   std::string path;
   std::uint64_t bytes = 0;
+  std::optional<std::string> missing;
   bool operator==(const SaveProjectResult&) const = default;
+};
+
+struct AepImportSummary {
+  std::uint32_t comps = 0;
+  std::uint32_t layers = 0;
+  std::uint32_t keyframes = 0;
+  std::uint32_t effects = 0;
+  std::uint32_t masks = 0;
+  std::uint32_t expressions = 0;
+  std::vector<std::string> unmapped_effects;
+  std::string ae_version;
+  bool operator==(const AepImportSummary&) const = default;
+};
+
+struct ImportProjectResult {
+  std::vector<ItemId> items;
+  std::vector<std::string> warnings;
+  std::vector<std::string> missing_footage;
+  std::optional<ItemId> open_comp;
+  std::optional<AepImportSummary> summary;
+  bool operator==(const ImportProjectResult&) const = default;
 };
 
 struct ItemList {
@@ -3536,7 +3560,7 @@ struct CommandResult {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ImportProjectResult, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
 };
@@ -5474,6 +5498,10 @@ void encode(wire::Writer& w, const OpenProjectResult& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, OpenProjectResult& out);
 void encode(wire::Writer& w, const SaveProjectResult& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SaveProjectResult& out);
+void encode(wire::Writer& w, const AepImportSummary& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, AepImportSummary& out);
+void encode(wire::Writer& w, const ImportProjectResult& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ImportProjectResult& out);
 void encode(wire::Writer& w, const ItemList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ItemList& out);
 void encode(wire::Writer& w, const ItemRef& v);

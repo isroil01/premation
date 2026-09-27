@@ -375,7 +375,7 @@ bool Session::is_edit(const api::Command& cmd) const {
 doc::PCtx Session::pctx() { return doc::PCtx{doc_, view_, exprEnv_, exprCache_}; }
 
 doc::HCtx Session::handler_ctx(api::Origin origin) {
-  return doc::HCtx{doc_, view_, ids_, keys_, exprEnv_, exprCache_, *ports_, origin, apiTime_, std::nullopt};
+  return doc::HCtx{doc_, view_, ids_, keys_, exprEnv_, exprCache_, *ports_, origin, apiTime_, std::nullopt, convertGeometry_};
 }
 
 void Session::ensure_timelines() {
@@ -453,7 +453,11 @@ std::vector<api::CommandResult> Session::run_edits(const std::vector<const api::
       std::string own;
       // A held job result is its own commands, in this journal (one entry).
       const auto* applyJob = std::get_if<api::ApplyJobResult>(&cmd.v);
-      api::CommandResult r = applyJob != nullptr ? apply_job_in_journal(*applyJob, origin, own) : run_in_journal(cmd, origin, &own);
+      // autoTrace reads decoded frames: the autoTrace job run inline (session_jobs.cpp).
+      const auto* autoTrace = std::get_if<api::AutoTrace>(&cmd.v);
+      api::CommandResult r = applyJob != nullptr    ? apply_job_in_journal(*applyJob, origin, own)
+                             : autoTrace != nullptr ? auto_trace_in_journal(*autoTrace, origin, own)
+                                                    : run_in_journal(cmd, origin, &own);
       results.push_back(std::move(r));
       if (!batchLabel) label = std::move(own);
     } catch (const EngineFail& f) {
@@ -772,10 +776,30 @@ struct ControlVisitor {
       s.send_events(s.revision_, s.revision_, std::move(ev), std::nullopt, api::Origin::engine);
       s.emit_status();
     }
-    return result_for<api::SaveProject>(api::SaveProjectResult{path, bytes});
+    return result_for<api::SaveProject>(api::SaveProjectResult{path, bytes, std::nullopt});
   }
-  R operator()(const api::CollectFiles&) const {
-    fail(ErrorCode::unsupported, "no collect-files port is attached to this engine");
+  R operator()(const api::CollectFiles& c) const {
+    // collect_files.hpp: a captured COPY is collected; the document, its path,
+    // dirty flag and history are untouched.
+    if (!s.ports_->has_collect()) fail(ErrorCode::unsupported, "no collect-files port is attached to this engine");
+    doc::CollectRequest req;
+    req.folder = c.folder;
+    req.onlyUsed = c.only_used;
+    req.doc = s.capture_document();
+    for (const js::Json& a : s.doc_.items().assets) {
+      if (a.at("id").is_string() && doc::layers_using_item(s.doc_, a.at("id").str()).empty()) req.unusedItems.insert(a.at("id").str());
+    }
+    req.sourceBundle = s.bundleRoot_;
+    req.projectPath = s.projectPath_;
+    doc::CollectOutcome out = s.ports_->collect_files(std::move(req));
+    PREMATION_LOG(info, "collect_files").kv("path", out.path).kv("files", out.collected).kv("missing", out.missing.size());
+    api::SaveProjectResult r{out.path, out.bytes, std::nullopt};
+    if (!out.missing.empty()) {
+      std::string lines;
+      for (const std::string& m : out.missing) lines += (lines.empty() ? "" : "\n") + m;
+      r.missing = std::move(lines);
+    }
+    return result_for<api::CollectFiles>(std::move(r));
   }
   R operator()(const api::ReloadItems&) const { return result_for<api::ReloadItems>(); }
   R operator()(const api::StartJob& c) const { return s.start_job(c); }

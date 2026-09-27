@@ -20,6 +20,8 @@
 #include <vector>
 
 #include "anim.hpp"
+#include "collect_files.hpp"
+#include "convert_geometry.hpp"
 #include "model.hpp"
 #include "props.hpp"
 #include "timeline.hpp"
@@ -119,6 +121,13 @@ class Ports {
   /// The default: `read_project`, with `path` as the footage root when it is a bundle.
   [[nodiscard]] virtual Opened open_project(const std::string& path);
   [[nodiscard]] virtual bool has_collect() const { return false; }
+  /// collectFiles (collect_files.hpp): a copy of the project and its files in
+  /// `req.folder`. The default: `unsupported`. Throws EngineFail.
+  [[nodiscard]] virtual CollectOutcome collect_files(CollectRequest req);
+  /// A file's raw bytes (importProject of `.aep` / `.aepx`). The default has none.
+  [[nodiscard]] virtual bool has_file_bytes() const { return false; }
+  /// Throws EngineFail (FilePorts: `io`).
+  [[nodiscard]] virtual std::vector<std::uint8_t> read_file_bytes(const std::string& path);
 };
 
 /// The harness's fake ports (__testHelpers__/harness.ts `fakePorts`):
@@ -138,10 +147,37 @@ class FakePorts final : public Ports {
   [[nodiscard]] bool has_projects() const override { return true; }
   [[nodiscard]] Json read_project(const std::string& path) override;
   std::uint64_t write_project(const std::string& path, const Json& doc) override;
+  /// collectFiles in memory: the files it can read are the bytes it imported
+  /// (import_bytes: the data under its `blob:fake/<id>` src and origin path;
+  /// import_file: `fake:<path>` under the path) plus add_file(); the collected
+  /// document is kept like a written project (read_project / openProject
+  /// read it back), its blobs in memory (blob()).
+  [[nodiscard]] bool has_collect() const override { return true; }
+  [[nodiscard]] CollectOutcome collect_files(CollectRequest req) override;
+  /// A file the fake collector can read.
+  void add_file(std::string ref, std::string bytes) { fakeFiles_.insert_or_assign(std::move(ref), std::move(bytes)); }
+  /// A collected file of `bundle` (nullptr when absent).
+  [[nodiscard]] const std::string* blob(const std::string& bundle, const std::string& hash) const;
+  /// The registry a collect wrote into `bundle` (undefined when none).
+  [[nodiscard]] Json registry(const std::string& bundle) const;
+  /// Raw file bytes: seeded ones, else `<dir>/<hex of the path>.bin` in the mirror
+  /// directory. Neither: `unsupported` — the TypeScript twin (harness fakePorts)
+  /// has no bytes port and refuses an `.aep` import the same way, so the
+  /// cross-engine replay answers alike.
+  [[nodiscard]] bool has_file_bytes() const override { return true; }
+  [[nodiscard]] std::vector<std::uint8_t> read_file_bytes(const std::string& path) override;
+  void seed_file_bytes(std::string path, std::vector<std::uint8_t> bytes) {
+    fileBytes_.insert_or_assign(std::move(path), std::move(bytes));
+  }
 
  private:
+  std::map<std::string, std::vector<std::uint8_t>, std::less<>> fileBytes_;
+  friend class FakeCollectIo;
   std::map<std::string, Json, std::less<>> files_;
   std::string dir_;
+  std::map<std::string, std::string, std::less<>> fakeFiles_;
+  std::map<std::string, std::string, std::less<>> blobs_;  ///< "<bundle>/blobs/<hash>" → bytes
+  std::map<std::string, Json, std::less<>> registries_;
 };
 
 /// Project files on disk, written temp-file + rename: JSON EditorDocuments,
@@ -157,6 +193,12 @@ class FilePorts final : public Ports {
   [[nodiscard]] bool is_bundle(const std::string& path) const override;
   /// A portable zip is unpacked into `<staging>/<hash of its path>` (bundle_io.hpp `read_portable`).
   [[nodiscard]] Opened open_project(const std::string& path) override;
+  /// collectFiles on disk (collect_files.hpp `make_disk_collect_io`).
+  [[nodiscard]] bool has_collect() const override { return true; }
+  [[nodiscard]] CollectOutcome collect_files(CollectRequest req) override;
+  /// A file read whole (at most 1 GiB); `io` when it cannot be.
+  [[nodiscard]] bool has_file_bytes() const override { return true; }
+  [[nodiscard]] std::vector<std::uint8_t> read_file_bytes(const std::string& path) override;
   /// Where portable footage is unpacked: `<temp>/premation-portable` unless set.
   void set_staging_root(std::string dir) { staging_ = std::move(dir); }
 
@@ -178,6 +220,9 @@ struct HCtx {
   api::Time time = 0;
   /// History label override (a handler sets it; else the humanized command name).
   std::optional<std::string> label;
+  /// Fonts / text layout / SVG for the layer conversions (convert_geometry.hpp);
+  /// null = none attached (the conversions answer `unsupported`).
+  ConvertGeometry* geometry = nullptr;
 
   [[nodiscard]] PCtx pc() const { return PCtx{d, view, expr, cache}; }
   /// A layer/item id in the shared id space (`idTaken`).

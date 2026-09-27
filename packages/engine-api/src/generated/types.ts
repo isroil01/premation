@@ -1102,7 +1102,7 @@ export interface SaveProject {
   format?: ProjectFormat;
 }
 
-/** Import another project (.motion, .aep, .aepx) INTO this one as items in a new folder. Undoable. */
+/** Import another project (.motion, .aep, .aepx) INTO this one as items in a new folder (named after the file, under `folder`). Undoable: ONE history entry whose undo removes everything imported. An After Effects project is converted (docs/AFTER_EFFECTS_IMPORT.md): every composition, its layers, keyframes, masks, effects and footage; what does not come across is reported in `warnings`. A file that is not a readable project is `decode`; an unreadable file `io`; an AE project with no compositions `decode`. */
 export interface ImportProject {
   path: string;
   folder?: ItemId;
@@ -1115,7 +1115,7 @@ export interface SetProjectSettings {
 /** Revert to the last saved state. Clears history. */
 export interface RevertProject {}
 
-/** Copy the project and every file it uses into `folder` (File ▸ Dependencies ▸ Collect Files). The open document is unchanged. */
+/** Copy the project and every file it uses into `folder` (File ▸ Dependencies ▸ Collect Files). The open document is unchanged (path, dirty flag, history). The copy is the `.motion` bundle `<folder>/<folder name>.motion` with every used file inside it (`blobs/`, srcs rewritten to `motion-blob:`); `onlyUsed` leaves out footage items no layer uses. A file that cannot be read is listed in the result's `missing`, never fails the collect. `invalidArgument`: an empty folder, or a target that is the open project or inside its bundle; `io`: a non-bundle already at the target, or a write failure. */
 export interface CollectFiles {
   folder: string;
   onlyUsed: boolean;
@@ -1207,10 +1207,42 @@ export interface OpenProjectResult {
 export interface SaveProjectResult {
   path: string;
   bytes: number;
+  /** collectFiles: the files that could not be collected, one per line ("<item name>: <why>"); absent when every file was collected (and for saveProject). */
+  missing?: string;
 }
 
 export interface ItemList {
   items: ItemId[];
+}
+
+/** What an After Effects import brought across — the counts the import report shows. */
+export interface AepImportSummary {
+  comps: number;
+  layers: number;
+  /** Keyframes on the tracks that were created (not every dimension read). */
+  keyframes: number;
+  effects: number;
+  masks: number;
+  /** Expressions carried as text (not evaluated on import). */
+  expressions: number;
+  /** AE effects with no equivalent here, by display name (skipped). */
+  unmappedEffects: string[];
+  /** The After Effects version that wrote the file ('' when the header did not say). */
+  aeVersion: string;
+}
+
+/** importProject's answer. Wire-compatible with ItemList (tag 1). */
+export interface ImportProjectResult {
+  /** The new folder first, then every composition, footage item and sub-folder created. */
+  items: ItemId[];
+  /** What did not come across exactly (empty for a .motion import). */
+  warnings: string[];
+  /** Footage paths that could not be read; their layers exist, pointing at a missing placeholder item to relink. */
+  missingFootage: string[];
+  /** The composition a person would open first (AE import: the longest comp nothing else contains). */
+  openComp?: ItemId;
+  /** AE import only. */
+  summary?: AepImportSummary;
 }
 
 export interface Interpretation {
@@ -4230,7 +4262,7 @@ export type CommandResult =
   | ({ type: 'newProject' } & Empty)
   | ({ type: 'openProject' } & OpenProjectResult)
   | ({ type: 'saveProject' } & SaveProjectResult)
-  | ({ type: 'importProject' } & ItemList)
+  | ({ type: 'importProject' } & ImportProjectResult)
   | ({ type: 'setProjectSettings' } & Empty)
   | ({ type: 'revertProject' } & Empty)
   | ({ type: 'collectFiles' } & SaveProjectResult)
@@ -4655,7 +4687,7 @@ export interface CommandResults {
   newProject: Empty;
   openProject: OpenProjectResult;
   saveProject: SaveProjectResult;
-  importProject: ItemList;
+  importProject: ImportProjectResult;
   setProjectSettings: Empty;
   revertProject: Empty;
   collectFiles: SaveProjectResult;
