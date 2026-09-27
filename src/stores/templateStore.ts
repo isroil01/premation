@@ -14,11 +14,9 @@ import { readAuthoredFields } from '@core/template/templateAuthoring';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import type { Command } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { liveKf } from '@core/template/templates/builders';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
-import { buildLayerFragment } from '@core/engine/offDocument';
+import { buildTemplateFragment } from '@/engine-client/templateFragment';
 import { layerIdsOfComp } from '@core/engine/doc';
 import { compTime } from '@core/engine/propRefs';
 import { hexToColor } from '@core/engine/model';
@@ -68,9 +66,9 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
     // `build()` cleared the WHOLE scene graph (every composition's layers) and
     // wrote the comp record; here the ACTIVE composition's layers are deleted,
     // the template's settings sent as `setCompositionSettings`, and its layout +
-    // choreography built off-document and pasted (offDocument.ts). The build
-    // needs the emptied comp (its layers carry fixed `tpl_*` ids), so it runs
-    // between the two steps of the gesture.
+    // choreography laid into a pasteLayers fragment by the engine client
+    // (engine-client/templateFragment.ts — no scratch run of the TypeScript
+    // scene graph) and pasted.
     const comp = activeCompIdNow() ?? 'comp_root';
     const label = `Apply ${t.name}`;
     const client = engine();
@@ -88,10 +86,7 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
       }
       let built;
       try {
-        built = buildLayerFragment(comp, () => {
-          (t.layout as (g: typeof defaultSceneGraph, rootId: string) => void)(defaultSceneGraph, comp);
-          t.animate?.(liveKf);
-        });
+        built = buildTemplateFragment(t, comp);
       } catch (err) {
         reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
         return false;
