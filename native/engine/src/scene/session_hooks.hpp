@@ -27,6 +27,7 @@ struct EditorView;
 class ExprEnv;
 class ExprCache;
 struct Node;
+class ConvertGeometry;  // core/convert_geometry.hpp
 }  // namespace doc
 
 /// One frame the scene builder produced (scene/built_frame.hpp) — opaque to the core.
@@ -94,6 +95,9 @@ class FrameBuilder {
   virtual void bind_audio(MediaClock* /*clock*/) {}
   /// The text measurer's queries on this builder's fonts (B4 round 2); null = none.
   [[nodiscard]] virtual TextQueries* text_queries() noexcept { return nullptr; }
+  /// The layer conversions' geometry (convertLayer: text outlines) on this
+  /// builder's fonts; null = none (the conversions answer `unsupported`).
+  [[nodiscard]] virtual doc::ConvertGeometry* convert_geometry() noexcept { return nullptr; }
 
   /// The folder relative media paths resolve against — the project's (its
   /// bundle, or the folder of its file); '' = none. Set before every build.

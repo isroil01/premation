@@ -203,6 +203,7 @@ if(MOTION_BUILD_TESTS)
     tests/test_aep_import.cpp
     tests/test_bundle_io.cpp
     tests/test_collect_files.cpp
+    tests/test_convert_layer.cpp
     tests/test_framing.cpp
     tests/test_session.cpp
     tests/test_b4_round2.cpp
@@ -380,6 +381,7 @@ set(ENGINE_DOC_SOURCES
   src/core/handlers_items.cpp
   src/core/handlers_layers.cpp
   src/core/handlers_layers2.cpp
+  src/core/handlers_convert.cpp
   src/core/handlers_layertime.cpp
   src/core/handlers_markers.cpp
   src/core/handlers_misc.cpp

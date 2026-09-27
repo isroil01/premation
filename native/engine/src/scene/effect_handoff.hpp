@@ -20,10 +20,12 @@
 // Energy Beam on text, point or paragraph, traces the painted runs.
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "extrude_mesh.hpp"
 #include "readers.hpp"
 #include "scene_types.hpp"
 #include "write_on_trail.hpp"
@@ -46,5 +48,16 @@ struct HandoffAnim {
 /// fonts a text outline is traced with (null = none).
 void resolve_effect_handoffs(std::vector<Json>& effects, const doc::Node& n, const Values& a, std::optional<double> layerTimeSec,
                              TextMeasurer* measurer, std::vector<std::string>& unported, const HandoffAnim* anim = nullptr);
+
+/// shapesFromText.ts `tracedRuns(node)`: the text node's static style painted
+/// and traced (traceTextSpec at 4x) — smoothed closed runs in LAYER space
+/// (centre origin, 1x, absolute handles) and the layer box they sit in.
+/// nullopt + `why` when there is no text, no fonts for its style, or nothing traces.
+struct TracedText {
+  std::shared_ptr<const std::vector<mesh::BezRun>> runs;
+  double width = 0;
+  double height = 0;
+};
+[[nodiscard]] std::optional<TracedText> traced_text_of(const doc::Node& n, TextMeasurer& measurer, std::string& why);
 
 }  // namespace premation::scene

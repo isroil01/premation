@@ -403,7 +403,11 @@ bool Session::is_edit(const api::Command& cmd) const {
 doc::PCtx Session::pctx() { return doc::PCtx{doc_, view_, exprEnv_, exprCache_}; }
 
 doc::HCtx Session::handler_ctx(api::Origin origin) {
-  return doc::HCtx{doc_, view_, ids_, keys_, exprEnv_, exprCache_, *ports_, origin, apiTime_, std::nullopt, convertGeometry_};
+  // The conversions' geometry: one set explicitly (tests), else the frame
+  // builder's (the full engine: its fonts and text measurer).
+  doc::ConvertGeometry* geometry = convertGeometry_;
+  if (geometry == nullptr && frameBuilder_ != nullptr) geometry = frameBuilder_->convert_geometry();
+  return doc::HCtx{doc_, view_, ids_, keys_, exprEnv_, exprCache_, *ports_, origin, apiTime_, std::nullopt, geometry};
 }
 
 void Session::ensure_timelines() {
