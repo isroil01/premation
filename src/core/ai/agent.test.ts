@@ -44,21 +44,6 @@ const registry = (): ToolRegistry => {
  * root, and new layers parented to a root that doesn't exist are unreachable
  * from `flattenScene` even though `getNode` still finds them.
  */
-function resetDocument(): void {
-  defaultAnimation.clear();
-  defaultSceneGraph.clear();
-  defaultSceneGraph.addNode({
-    id: 'comp_root',
-    name: 'Composition 1',
-    parent: null,
-    children: [],
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true,
-    locked: false,
-    components: [{ id: 'comp_root_meta', type: 'group', props: { __kind: 'group' } }],
-  });
-  getCommandSystem().getHistory().clear();
-}
 
 // ── B1: one time conversion, applied to value AND easing ──────────
 

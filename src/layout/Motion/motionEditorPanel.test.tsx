@@ -102,14 +102,36 @@ describe('the panel hosts the shared graph editor', () => {
     }
   });
 
-  it('still offers the expression editor, on a property you pick', () => {
-    animate();
-    render(<MotionEditorPanel />);
-    const props = screen.getByRole('radiogroup', { name: 'Animated property' });
-    expect(props).toBeTruthy();
-    expect(screen.getByRole('radio', { name: 'y' })).toHaveAttribute('aria-checked', 'true');
-    // The expression editor is headed with the property it drives.
-    expect(screen.getByText(/Expression · y/)).toBeTruthy();
+  it('still offers the expression editor, on a property you pick', async () => {
+    // B4: the property list is the engine's member tracks (getMemberKeyframes).
+    const h = await setupAppEngine();
+    try {
+      let layer = '';
+      await act(async () => {
+        ({ layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'Graph layer', init: [] }));
+        const prop = { layer, path: 'transform/position' };
+        await h.run({
+          type: 'addKeyframes',
+          keys: [
+            { prop, time: 0, value: { kind: 'vec2', value: { x: 0, y: 0 } }, spatialIn: [], spatialOut: [] },
+            { prop, time: secondsToFlicks(1), value: { kind: 'vec2', value: { x: 0, y: 80 } }, spatialIn: [], spatialOut: [] },
+          ],
+        });
+      });
+      useSelectionStore.getState().set([layer]);
+      render(<MotionEditorPanel />);
+      await act(async () => { await engineIdle(); });
+      const props = screen.getByRole('radiogroup', { name: 'Animated property' });
+      expect(props).toBeTruthy();
+      // Position is keyed whole, so both members are listed; pick y.
+      fireEvent.click(screen.getByRole('radio', { name: 'y' }));
+      expect(screen.getByRole('radio', { name: 'y' })).toHaveAttribute('aria-checked', 'true');
+      // The expression editor is headed with the property it drives.
+      expect(screen.getByText(/Expression · y/)).toBeTruthy();
+    } finally {
+      cleanup();
+      await h.dispose();
+    }
   });
 
   it('says there are no keyframes rather than offering an expression target', () => {

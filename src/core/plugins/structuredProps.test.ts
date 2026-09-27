@@ -54,6 +54,16 @@ function geometry(id: string): Record<string, unknown> | undefined {
     | undefined;
 }
 
+/**
+ * The layer's outline points. Through the engine (`setShapeOutline`) an
+ * outline is stored as ONE `subpaths` run on a `path` shape; the legacy
+ * single-outline slot is `points`.
+ */
+function outline(id: string): Array<Record<string, number>> {
+  const g = geometry(id);
+  return ((g?.points as unknown[] | undefined) ?? (g?.subpaths as Array<{ points: unknown[] }> | undefined)?.[0]?.points ?? []) as Array<Record<string, number>>;
+}
+
 const setProp = (id: string, prop: string, value: unknown): unknown =>
   api['scene.setProperty']!(id, prop, value);
 
@@ -69,7 +79,7 @@ describe('geometry', () => {
       { x: 0, y: 50 },
     ])).toBe(true);
 
-    const pts = geometry(id)!.points as Array<Record<string, number>>;
+    const pts = outline(id);
     expect(pts).toHaveLength(3);
     expect(pts[1]).toEqual({ x: 50, y: -50, inX: 0, inY: 0, outX: 0, outY: 0 });
   });
@@ -79,15 +89,16 @@ describe('geometry', () => {
     // the simplest possible plugin four times longer for no expressive gain.
     const id = await newLayer();
     await setProp(id, 'points', [{ x: 0, y: 0 }, { x: 10, y: 10 }]);
-    expect((geometry(id)!.points as Array<Record<string, number>>)[0]).toEqual({
+    expect(outline(id)[0]).toEqual({
       x: 0, y: 0, inX: 0, inY: 0, outX: 0, outY: 0,
     });
   });
 
   it('keeps the curve handles an author did supply', async () => {
     const id = await newLayer();
-    await setProp(id, 'points', [{ x: 0, y: 0, inX: -5, inY: 0, outX: 5, outY: 0 }]);
-    expect((geometry(id)!.points as Array<Record<string, number>>)[0]).toMatchObject({ inX: -5, outX: 5 });
+    // A one-vertex path is refused by the engine; two vertices, the first with handles.
+    await setProp(id, 'points', [{ x: 0, y: 0, inX: -5, inY: 0, outX: 5, outY: 0 }, { x: 20, y: 0 }]);
+    expect(outline(id)[0]).toMatchObject({ inX: -5, outX: 5 });
   });
 
   it('writes several outlines through subpaths', async () => {
@@ -135,13 +146,13 @@ describe('the value is parsed, not cast', () => {
     // The parse walks the array in order, so a bad point at the end is the case
     // where a careless implementation has already written the good ones.
     const id = await newLayer();
-    await setProp(id, 'points', [{ x: 1, y: 1 }]);
-    const before = JSON.stringify(geometry(id)!.points);
+    await setProp(id, 'points', [{ x: 1, y: 1 }, { x: 5, y: 1 }]);
+    const before = JSON.stringify(outline(id));
 
     expect(() => setProp(id, 'points', [
       { x: 2, y: 2 }, { x: 3, y: 3 }, { x: 4, y: Number.NaN },
     ])).toThrow();
-    expect(JSON.stringify(geometry(id)!.points)).toBe(before);
+    expect(JSON.stringify(outline(id))).toBe(before);
   });
 
   it('refuses a prototype-polluting key', async () => {

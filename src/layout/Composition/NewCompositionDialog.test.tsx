@@ -2,6 +2,7 @@ import { act, render as rtlRender, screen, fireEvent } from '@testing-library/re
 import { openNewCompositionDialog, NewComposition } from './NewCompositionDialog';
 import { useModalStore } from '@stores/modalStore';
 import { useProjectStore } from '@stores/projectStore';
+import { documentMirror } from '@stores/documentMirror';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import { TooltipProvider } from '@components/Tooltip';
@@ -174,6 +175,10 @@ describe('NewCompositionDialog', () => {
     it('adds a composition as ONE undo entry, opens its tab, and undo removes it exactly', async () => {
       // A project whose only comp is the user's (not pristine): New Composition ADDS.
       useProjectStore.getState().actions.updateComp('comp_root', { pristine: undefined });
+      // B4: the dialog reads `CompSettings.pristine` from the mirror — refetch after the fixture write.
+      documentMirror().start();
+      documentMirror().reload();
+      await documentMirror().whenIdle();
       const before = h.doc();
       const count = Object.keys(useProjectStore.getState().comps).length;
       const close = await create();

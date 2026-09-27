@@ -16,6 +16,7 @@ import { createIdMatteLayerEdit } from './idMatteEdits';
 
 jest.mock('@core/media/cryptomatte', () => ({
   getCryptomatteForAsset: () => ({ layers: [] }),
+  onCryptomatteChanged: () => () => {},
   idMattePngFile: async () => new File([new Uint8Array([137, 80, 78, 71])], 'EXR — ID matte (Car).png', { type: 'image/png' }),
 }));
 

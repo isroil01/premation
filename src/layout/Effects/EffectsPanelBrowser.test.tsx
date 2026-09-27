@@ -13,9 +13,9 @@ import { EffectsPanel } from './EffectsPanel';
 import { EFFECT_CATEGORY } from './effectCategory';
 import { EFFECT_DEFS } from '@core/effects/effects';
 import { useSelectionStore } from '@stores/selectionStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-
-const NODE = 'fxbrowser_node';
+import { documentMirror } from '@stores/documentMirror';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { buildScene } from '@core/engine/__testHelpers__/scene';
 
 class StubResizeObserver {
   observe(): void {}
@@ -31,25 +31,21 @@ beforeAll(() => {
   (globalThis as { ResizeObserver?: unknown }).ResizeObserver = StubResizeObserver;
 });
 
-beforeEach(() => {
-  try { defaultSceneGraph.removeNode(NODE); } catch { /* first run */ }
-  defaultSceneGraph.addNode({
-    id: NODE,
-    name: 'Layer',
-    parent: null,
-    children: [],
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [],
-    visible: true,
-    locked: false,
-  } as never);
-  useSelectionStore.getState().set([NODE]);
+// B4: the panel reads the selected layer from the document mirror, so the
+// fixture is a real engine layer the mirror has seen.
+let h: Awaited<ReturnType<typeof setupAppEngine>>;
+beforeEach(async () => {
+  h = await setupAppEngine();
+  documentMirror().start();
+  const s = await buildScene(h);
+  await documentMirror().whenIdle();
+  useSelectionStore.getState().set([s.A]);
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   useSelectionStore.getState().clear();
-  try { defaultSceneGraph.removeNode(NODE); } catch { /* already gone */ }
+  await h.dispose();
 });
 
 it('lists the library as one keyboard-reachable tree', () => {

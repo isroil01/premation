@@ -32,6 +32,7 @@ import {
 } from '@core/plugins/layerKindRegistry';
 import { usePluginStore } from '@stores/pluginStore';
 import { useAssetStore } from '@stores/assetStore';
+import { documentMirror } from '@stores/documentMirror';
 import type { LayerKindContribution } from '@core/plugins/layerKindSchema';
 
 const PLUGIN = 'studio.acme.lab';
@@ -121,7 +122,7 @@ describe('rendered from the schema', () => {
       to useless: a plugin could SET an asset, but the user it was declared for
       could not choose one.
     */
-    beforeEach(() => {
+    beforeEach(async () => {
       useAssetStore.setState({
         assets: [
           { id: 'a_img', name: 'Backdrop.png', type: 'image', src: 'blob:1', size: 1 },
@@ -130,6 +131,10 @@ describe('rendered from the schema', () => {
           { id: 'a_aud', name: 'Track.mp3', type: 'audio', src: 'blob:4', size: 1 },
         ],
       } as never);
+      // B4: the picker lists the mirror's image items — refetch after the fixture write.
+      documentMirror().start();
+      documentMirror().reload();
+      await documentMirror().whenIdle();
     });
 
     it('offers the images in the project', () => {
@@ -178,6 +183,7 @@ describe('rendered from the schema', () => {
       await idle();
 
       useAssetStore.setState({ assets: [] } as never);
+      await act(async () => { documentMirror().reload(); await documentMirror().whenIdle(); });
       render(<CustomLayerSection nodeId={n1} />);
 
       const selects = screen.getAllByLabelText('Source') as HTMLSelectElement[];

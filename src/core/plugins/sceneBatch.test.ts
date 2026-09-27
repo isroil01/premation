@@ -231,6 +231,7 @@ describe('one undo entry', () => {
     */
     const worker = boot();
     const depthBefore = historyLabels().length;
+    const layersBefore = compLayers();
 
     await apply(worker, Array.from({ length: 50 }, (_, i) => ({
       op: 'createLayer', kind: 'shape', name: `L${i}`,
@@ -239,7 +240,7 @@ describe('one undo entry', () => {
     expect(historyLabels().length - depthBefore).toBe(1);
     // …and ONE undo takes all fifty away.
     await h.run({ type: 'undo' });
-    expect(historyLabels().length).toBe(depthBefore);
+    expect(compLayers()).toBe(layersBefore);
   });
 
   it('labels the entry with the plugin s name', async () => {

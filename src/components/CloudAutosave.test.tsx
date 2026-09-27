@@ -31,6 +31,7 @@ jest.mock('@stores/documentMirror', () => ({
       return () => mockDocListeners.delete(fn);
     },
   }),
+  setAppMirrorSource: () => {},
 }));
 const documentRevision = (): void => { for (const fn of [...mockDocListeners]) fn(); };
 

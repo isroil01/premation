@@ -21,8 +21,9 @@ jest.mock('@stores/documentMirror', () => {
       layer: (id: string) => ({
         id,
         comp: 'c',
-        kind: id === 'solid' ? 'solid' : 'video',
-        timing: { inPoint: 0, outPoint: 2 * F, startTime: 0, stretch: 1 },
+        kind: id.startsWith('solid') ? 'solid' : 'video',
+        // 'solid200' was stretched earlier: its bar holds the bake (LayerTiming.bakedStretch).
+        timing: { inPoint: 0, outPoint: 2 * F, startTime: 0, stretch: 1, ...(id === 'solid200' ? { bakedStretch: 2 } : {}) },
       }),
       comp: () => ({ settings: { frameRate: { num: 30, den: 1 } } }),
     }),

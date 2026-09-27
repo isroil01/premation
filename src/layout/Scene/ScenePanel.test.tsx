@@ -108,6 +108,12 @@ beforeEach(() => {
   defaultSceneGraph.addChild('grp', layer('child', 'Child', 'grp', 'shape'));
   defaultSceneGraph.addNode(compRoot(OTHER, 'Other'));
   defaultSceneGraph.addChild(OTHER, layer('solo', 'Solo', OTHER, 'shape'));
+  // Both roots are compositions of the project (the mirror's items come from the comp table).
+  const base = Object.values(useProjectStore.getState().comps)[0]!;
+  useProjectStore.getState().actions.replaceComps({
+    [ROOT]: { ...base, id: ROOT, name: 'Main' },
+    [OTHER]: { ...base, id: OTHER, name: 'Other' },
+  });
   useProjectStore.getState().actions.openTab(ROOT, [ROOT], 'Main');
   // The fixture is rebuilt around the engine (no change events): the panel's
   // document mirror starts over, as it would on a document reset.
@@ -315,10 +321,11 @@ describe('row switches', () => {
 });
 
 describe('hide shy', () => {
-  it('removes shy layers without lighting the "you are filtering" state', () => {
+  it('removes shy layers without lighting the "you are filtering" state', async () => {
     renderPanel();
-    act(() => {
-      (defaultSceneGraph.getNode('beta') as { shy?: boolean }).shy = true;
+    await act(async () => {
+      setNodeFlag('beta', { shy: true });
+      await engineIdle();
       useSceneViewStore.getState().setHideShy(true);
     });
     expect(rowIds()).not.toContain('beta');

@@ -24,6 +24,7 @@ import { recordSession, replaySession, isRecording, CommandLogUnavailable, logFr
 import { performUndo, performRedo, performJumpTo } from '@stores/historyStore';
 import { activeCompRootId } from '@core/scene/activeComp';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { getEventBus } from '@core/events/EventBus';
 import { defaultAnimation } from '@motion/animation';
 import { getNodeEffects } from '@core/effects/effects';
 import { useProjectStore } from '@stores/projectStore';
@@ -134,6 +135,8 @@ describe('record → replay', () => {
     const node = defaultSceneGraph.getNode(id)!;
     const t = node.components.find((c) => c.type === 'Transform')!;
     defaultSceneGraph.writeProp(id, t.id, 'x', 321);
+    // …announced the way a legacy writer (InspectorAPI) announces it.
+    getEventBus().emit('NodeUpdated', { nodeId: id });
     await createLayerEdit('null', { name: 'After' });
     rec.stop();
     expect(rec.writesAroundEngine).toBeGreaterThan(0);

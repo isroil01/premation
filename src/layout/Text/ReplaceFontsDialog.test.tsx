@@ -19,7 +19,6 @@ import type { SceneNode } from '@core/types';
 import { ReplaceFontsBody, REPLACE_FONTS_MODAL_ID } from './ReplaceFontsDialog';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
-import { getEventBus } from '@core/events/EventBus';
 import { documentMirror } from '@stores/documentMirror';
 
 class StubResizeObserver {
@@ -129,13 +128,23 @@ describe('ReplaceFontsBody', () => {
 });
 
 describe('the missing-font check', () => {
-  // The check reads the document MIRROR (B4): announce the fixture as a legacy writer does and let it land.
+  // The check reads the document MIRROR (B4): the fixture is an engine document.
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
   beforeEach(async () => {
-    getEventBus().emit('SceneGraphChanged', undefined);
-    await Promise.resolve();
+    h = await setupAppEngine();
+    documentMirror().start();
+    const mk = async (name: string): Promise<string> => (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name, init: [] })).layer;
+    const a = await mk('Title'); // listed first: its spelling of the family is the one reported
+    const b = await mk('Lower third');
+    await h.batch('Setup', [
+      { type: 'setProperty', prop: { layer: a, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Brand Sans' } },
+      { type: 'setProperty', prop: { layer: b, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Inter' } },
+      { type: 'setProperty', prop: { layer: b, path: 'text/styleRuns' }, value: { kind: 'json', value: JSON.stringify([{ start: 0, end: 2, style: { fontFamily: 'brand sans' } }]) } },
+    ]);
     await engineIdle();
     await documentMirror().whenIdle();
   });
+  afterEach(async () => { await h.dispose(); });
 
   it('shows ONE toast whose action opens Replace Fonts', async () => {
     const notify = jest.spyOn(useUIStore.getState(), 'notify');

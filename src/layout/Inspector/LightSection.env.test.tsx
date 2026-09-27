@@ -33,6 +33,7 @@ import { values } from '@core/engine/propRefs';
 import { readNodeLight, type LightType } from '@core/scene/light';
 import { ENVIRONMENT_PRESETS } from '@core/scene/environmentLight';
 import { useAssetStore } from '@stores/assetStore';
+import { documentMirror } from '@stores/documentMirror';
 import { kelvinToHex, nearestKelvin } from '@core/scene/colorTemperature';
 
 jest.useFakeTimers();
@@ -181,8 +182,12 @@ describe('an environment light', () => {
 describe('an environment light lit by an image', () => {
   const IMG = { id: 'img_hdri', name: 'sunflowers_2k.exr', type: 'image' as const, src: 'blob:hdri', size: 1 };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     useAssetStore.setState({ assets: [IMG] } as never);
+    // B4: the picker lists the mirror's image items — refetch after the fixture write.
+    documentMirror().start();
+    documentMirror().reload();
+    await documentMirror().whenIdle();
   });
   afterEach(() => {
     cleanup(); // unmount before the library changes under the section

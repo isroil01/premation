@@ -196,11 +196,13 @@ describe('auto-generate at import (gated on the Use Proxies preference)', () => 
     expect(proxyOf()).toBeUndefined();
   });
 
-  it('starts a job for worth-it footage when Use Proxies is on', () => {
+  it('starts a job for worth-it footage when Use Proxies is on', async () => {
     usePreferenceStore.setState({ useProxies: true } as never);
     generate.mockResolvedValue(new Uint8Array([1]));
     maybeAutoGenerateProxy('a1');
-    // startProxy writes 'generating' synchronously, before its first await.
+    // startProxy asks the engine first (the proxy job); with no engine job it
+    // marks 'generating' on its page path before the transcode's first await.
+    for (let i = 0; i < 20 && proxyOf()?.status !== 'generating'; i += 1) await Promise.resolve();
     expect(proxyOf()?.status).toBe('generating');
   });
 
