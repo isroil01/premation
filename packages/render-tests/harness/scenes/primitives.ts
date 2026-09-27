@@ -17,6 +17,7 @@
 
 import { defineScene, node, type Scene } from '../sceneKit';
 import { primeHeightField, type HeightField } from '@core/scene/heightDisplacement';
+import { BUMPS_PNG_DATA_URL } from './bumpsField.data';
 
 const COMP = { width: 480, height: 360, background: '#0c0c12' };
 
@@ -38,16 +39,22 @@ function primitive(
 }
 
 /**
- * A procedural height field for the displacement golden — primed into the
- * cache so the frame needs no image decode. Bumps: 6 × 4 sine cells, 50 %
- * grey mean, so half the surface rises and half sinks.
+ * A procedural height field for the displacement golden. Bumps: 6 × 4 sine
+ * cells, 50 % grey mean, so half the surface rises and half sinks. The
+ * document carries it as an 8-bit grey PNG data: URL (`BUMPS_PNG_DATA_URL`,
+ * the same bytes rounded here), so the C++ engine decodes it from the
+ * document; the page's cache is primed with the decoded values under that
+ * key so the frame needs no asynchronous image decode.
  */
 function bumpsField(): HeightField {
   const w = 64; const h = 64;
   const data = new Float32Array(w * h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      data[y * w + x] = 0.5 + 0.5 * Math.sin((x / w) * Math.PI * 2 * 6) * Math.sin((y / h) * Math.PI * 2 * 4);
+      const v = 0.5 + 0.5 * Math.sin((x / w) * Math.PI * 2 * 6) * Math.sin((y / h) * Math.PI * 2 * 4);
+      // decode(): Rec.709 luma of a grey byte, opaque.
+      const b = Math.round(v * 255);
+      data[y * w + x] = (0.2126 * b + 0.7152 * b + 0.0722 * b) / 255;
     }
   }
   return { width: w, height: h, data };
@@ -71,11 +78,11 @@ export const primitiveScenes: Scene[] = [
     frames: [0],
     gpuParity: 'expect-pass',
     build: (graph) => {
-      primeHeightField('prime:bumps', bumpsField());
+      primeHeightField(BUMPS_PNG_DATA_URL, bumpsField());
       graph.addNode(primitive(
         'bumpy',
         { x: 240, y: 180 },
-        { z: 0, rotationX: 10, rotationY: 20, heightMapSrc: 'prime:bumps', displacement: 22, displacementSubdiv: 1 },
+        { z: 0, rotationX: 10, rotationY: 20, heightMapSrc: BUMPS_PNG_DATA_URL, displacement: 22, displacementSubdiv: 1 },
         { type: 'sphere', radius: 96, radialSegments: 36, heightSegments: 18 },
         '#c9a05a',
       ));
