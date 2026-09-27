@@ -120,8 +120,11 @@ PreparedJob prepare_content_aware_fill(const api::ContentAwareFillJob& spec, con
 
   std::filesystem::path folder(spec.output_folder);
   if (folder.empty()) {
+    // Beside the project; an untitled one: the temp folder (never the
+    // engine's working directory).
     const std::filesystem::path project(ctx.projectPath);
-    folder = (project.empty() ? std::filesystem::current_path() : project.parent_path()) / "Content-Aware Fill";
+    folder = project.empty() ? std::filesystem::temp_directory_path() / "premation-content-aware-fill" / spec.layer
+                             : project.parent_path() / "Content-Aware Fill";
   }
   const std::string folderText = folder.string();
 

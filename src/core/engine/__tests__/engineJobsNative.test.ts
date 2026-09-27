@@ -13,11 +13,14 @@
  *               traced in comp space, pulled back to layer space.
  *   autoReframe the composition rendered small by a child engine, read back
  *               (PNG through the OS still codec), a new comp made from it.
+ *   rotoBrush / contentAwareFill  on a moving box made by ffmpeg (skipped
+ *               when there is no ffmpeg on PATH).
  *
  * Skipped, saying so, when the full engine is not built (the headless build
  * runs no jobs).
  */
 
+import { spawnSync } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -199,6 +202,49 @@ maybe('engine jobs on the real engine', () => {
     const history = unwrap(await client.query({ type: 'getHistory' })).entries;
     expect(history.length).toBe(before + 1);
     expect(history[history.length - 1]!.label).toBe('Auto-trace');
+  });
+
+  /** A 1 s, 160x90 clip: a white 40x30 box sliding right over black. Null without ffmpeg. */
+  function movingBox(): string | null {
+    const out = path.join(tmp, 'box.mp4');
+    const r = spawnSync('ffmpeg', [
+      '-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=160x90:r=30:d=1', '-f', 'lavfi', '-i', 'color=c=white:s=40x30:r=30:d=1',
+      '-filter_complex', "[0][1]overlay=x='20+t*60':y=30", '-c:v', 'libx264', '-pix_fmt', 'yuv420p', out,
+    ], { encoding: 'utf8' });
+    return r.status === 0 ? out : null;
+  }
+
+  it('rotoscopes a moving box and fills a masked hole in footage', async () => {
+    const clip = movingBox();
+    if (!clip) {
+      console.log('[engine jobs native] no ffmpeg on PATH — roto / fill skipped');
+      return;
+    }
+    const comp = unwrap(await client.execute({ type: 'createComposition', settings: { name: 'Roto', width: 160, height: 90, duration: secondsToFlicks(1) }, fromItems: [] })).item;
+    const item = unwrap(await client.execute({ type: 'importFiles', files: [{ path: clip, asSequence: false, createComposition: false }] })).items[0]!;
+    const layer = unwrap(await client.execute({ type: 'createLayer', comp, kind: 'video', source: item, init: [] })).layer;
+    const range = { start: 0, duration: secondsToFlicks(10 / 30) };
+
+    const roto = unwrap(await client.execute({
+      type: 'startJob', job: { kind: 'rotoBrush', value: { layer, range, seed: { x: 40, y: 45 } } }, apply: true,
+    }));
+    const rotoDone = await waitJob(client, roto.job);
+    expect(rotoDone.error).toBeUndefined();
+    const r = JSON.parse(rotoDone.job.result) as { frames: number; keyframes: number };
+    expect(r.frames).toBe(10);
+    expect(r.keyframes).toBeGreaterThan(0);
+
+    // The roto mask is the hole: fill it from the frames around it.
+    const fill = unwrap(await client.execute({
+      type: 'startJob', job: { kind: 'contentAwareFill', value: { layer, range: { start: 0, duration: secondsToFlicks(3 / 30) }, outputFolder: path.join(tmp, 'fill') } }, apply: true,
+    }));
+    const fillDone = await waitJob(client, fill.job);
+    expect(fillDone.error).toBeUndefined();
+    const f = JSON.parse(fillDone.job.result) as { frames: number; filledPixels: number };
+    expect(f.frames).toBe(3);
+    expect(f.filledPixels).toBeGreaterThan(0);
+    const history = unwrap(await client.query({ type: 'getHistory' })).entries.map((e) => e.label);
+    expect(history.slice(-2)).toEqual(['Roto Brush', expect.stringMatching(/Content-Aware Fill/)]);
   });
 
   it('auto-reframes a composition into a new one, the source untouched', async () => {
