@@ -98,3 +98,78 @@ TEST_CASE("a resize reallocates the graph's targets at the new size") {
   CHECK(frame.width == 128);
   CHECK(after.targetMisses > before.targetMisses);
 }
+
+namespace {
+
+api::RenderEffectParam num_param(std::string name, double v) {
+  api::RenderEffectParam p;
+  p.name = std::move(name);
+  p.kind = api::RenderParamKind::number;
+  p.number = v;
+  return p;
+}
+
+api::RenderEffectParam color_param(std::string name, double r, double g, double b, double a) {
+  api::RenderEffectParam p;
+  p.name = std::move(name);
+  p.kind = api::RenderParamKind::color;
+  p.numbers = {r, g, b, a};
+  return p;
+}
+
+}  // namespace
+
+TEST_CASE("E4: a distance-field stroke lands outside the shape and its field is kept across frames") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  renderer->set_effect_fields(true);
+  auto file = solid_scene(0, 0, 1);
+  api::RenderEffect stroke;
+  stroke.type = "stroke";
+  stroke.params.push_back(num_param("widthPx", 4));
+  stroke.params.push_back(color_param("color", 1, 0, 0, 1));
+  file.scene.renderables[0].effects.push_back(stroke);
+  Frame frame;
+  FrameStats s1;
+  REQUIRE(renderer->render(file, &frame, s1, err));
+  CHECK(s1.gpuError.empty());
+  CHECK(s1.effects.sdfBuilt == 1);
+  CHECK(s1.effects.gpuEntries == 1);
+  const auto px = [&](std::uint32_t x, std::uint32_t y, std::size_t c) { return frame.rgba.at((std::size_t{y} * 64 + x) * 4 + c); };
+  // 2 px outside the rect's left edge (x = 16): the red band; the rect stays blue.
+  CHECK(px(14, 24, 0) > 200);
+  CHECK(px(14, 24, 2) < 40);
+  CHECK(px(32, 24, 2) > 200);
+  CHECK(px(4, 24, 0) < 20);  // beyond the width: the background
+  // Only the stroke's width moves: the content (and its field) does not.
+  file.scene.renderables[0].effects[0].params[0].number = 6;
+  FrameStats s2;
+  REQUIRE(renderer->render(file, &frame, s2, err));
+  CHECK(s2.effects.sdfReused == 1);
+  CHECK(s2.effects.sdfBuilt == 0);
+  CHECK(px(11, 24, 0) > 200);
+}
+
+TEST_CASE("E4: fill opacity fades the contents and shapes the stroke by the silhouette") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  renderer->set_effect_fields(true);
+  auto file = solid_scene(0, 0, 1);
+  api::RenderEffect fade;
+  fade.type = "fill-opacity";
+  fade.params.push_back(num_param("amount", 0));
+  api::RenderEffect stroke;
+  stroke.type = "stroke";
+  stroke.params.push_back(num_param("widthPx", 4));
+  stroke.params.push_back(color_param("color", 1, 0, 0, 1));
+  file.scene.renderables[0].effects = {fade, stroke};
+  Frame frame;
+  FrameStats s;
+  REQUIRE(renderer->render(file, &frame, s, err));
+  CHECK(s.gpuError.empty());
+  const auto px = [&](std::uint32_t x, std::uint32_t y, std::size_t c) { return frame.rgba.at((std::size_t{y} * 64 + x) * 4 + c); };
+  CHECK(px(32, 24, 2) < 20);   // fill 0: the contents are gone (black background shows)
+  CHECK(px(14, 24, 0) > 200);  // the outside stroke is still drawn at full strength
+}

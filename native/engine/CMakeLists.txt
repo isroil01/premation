@@ -1042,7 +1042,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp
                                       tests/test_threed_models.cpp tests/test_time_comp_parity.cpp tests/test_particle_parity.cpp
                                       tests/test_polygon_clipping_parity.cpp tests/test_cover_crop.cpp tests/test_source_text.cpp
-                                      tests/test_rig_coverage.cpp)
+                                      tests/test_rig_coverage.cpp tests/test_gpu_effect_route.cpp)
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)
     if(MSVC)
