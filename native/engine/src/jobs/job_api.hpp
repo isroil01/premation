@@ -22,10 +22,13 @@
 // engine_jobs (jobs/*.cpp), the Session sees only this interface.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "engine_api.hpp"
@@ -107,6 +110,11 @@ struct JobDocContext {
   std::string projectPath;
   /// The engine's playhead (flicks).
   api::Time time = 0;
+  /// A 2D layer's layer -> composition affine at composition second `s`
+  /// (layerSpace.ts world2DAt: {a, b, c, d, e, f}, centre-origin layer space
+  /// -> composition pixels); nullopt for a 3D layer / camera / light. Empty
+  /// when the caller has no evaluator (tests): a kind that needs it refuses.
+  std::function<std::optional<std::array<double, 6>>(std::string_view layer, double seconds)> layerToComp;
 };
 
 /// The job kinds this engine build can run (engine_jobs: make_job_kinds).

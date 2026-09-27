@@ -39,9 +39,16 @@ export const CMD = {
   setViewport: 808,
   closeViewport: 809,
   startJob: 850,
+  applyJobResult: 852,
 } as const;
 
-const REPLAY_SKIP = new Set<number>([CMD.play, CMD.pause, CMD.step]);
+/**
+ * Not replayed: transport (the clock restarts stopped) and startJob — a job's
+ * only effect on the document is the edit it applies, which the engine sends
+ * as a log record (absorbJobEdit). Replaying startJob would run a finished job
+ * again, or apply a cancelled / failed / still-held one.
+ */
+const REPLAY_SKIP = new Set<number>([CMD.play, CMD.pause, CMD.step, CMD.startJob]);
 const LAST_ONLY = new Set<number>([CMD.seek, CMD.setActiveComposition, CMD.setPreviewQuality, CMD.setLoop]);
 
 export interface LoggedRequest {
@@ -77,6 +84,9 @@ export class EngineCommandLog {
     if (!req || req.body === 'query') return;
     if (responseIsError(response) !== false) return;
     const id = req.commandId;
+    // The engine sent the job's commands as a log record just before this
+    // answer (absorbJobEdit); the applyJobResult itself has nothing to replay.
+    if (id === CMD.applyJobResult) return;
     if (id === CMD.newProject) this.entries = [];
     let key = '';
     if (id === CMD.setViewport || id === CMD.closeViewport) key = `viewport:${req.firstVarint ?? 0}`;

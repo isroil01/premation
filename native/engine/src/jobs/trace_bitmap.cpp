@@ -335,4 +335,24 @@ std::vector<MaskRing> auto_trace_rings(std::span<const std::uint8_t> plane, std:
   return rings;
 }
 
+std::vector<MaskRing> comp_rings_to_layer(std::vector<MaskRing> rings, double compW, double compH, const std::array<double, 6>& m) {
+  const double det = m[0] * m[3] - m[1] * m[2];
+  if (!std::isfinite(det) || std::abs(det) < 1e-12) return {};
+  // Matrix.invert: [a b c d e f] -> the inverse affine.
+  const double ia = m[3] / det;
+  const double ib = -m[1] / det;
+  const double ic = -m[2] / det;
+  const double id = m[0] / det;
+  const double ie = (m[2] * m[5] - m[3] * m[4]) / det;
+  const double iff = (m[1] * m[4] - m[0] * m[5]) / det;
+  for (MaskRing& r : rings) {
+    for (TracePoint& p : r.points) {
+      const double x = p.x + compW / 2;
+      const double y = p.y + compH / 2;
+      p = TracePoint{ia * x + ic * y + ie, ib * x + id * y + iff};
+    }
+  }
+  return rings;
+}
+
 }  // namespace premation::jobs::trace

@@ -2708,10 +2708,18 @@ export interface ObjectMatteJob {
   box?: Rect;
 }
 
+/**
+ * Transcription (captions/transcribe.ts transcribeCompositionDetailed): `comp`'s sound over `range` (absent = the whole composition) mixed down by a child engine (the export's offline mix: levels, trims, mutes), 16 kHz mono, sent to the user's speech provider; the summary is `{"cues":[{start,end,text}],"words":[…],"language":S}` in composition seconds, cues de-overlapped. Nothing is written (`createCaptions` must be false — the caption commands build layers from the cues). `layer` is not read yet (a single layer's sound is not isolated; send '').
+ * `provider` names the key (`openai`; the others have no timed speech API and are refused). `credential` is filled by Electron MAIN from its keystore as the request passes through it — a page never has the key, and a value the page sends is replaced. The engine keeps it only for the one request to the provider: it is never persisted, logged, or returned (the engine's own log and getJobs drop it).
+ */
 export interface TranscribeJob {
   layer: LayerId;
   language: string;
   createCaptions: boolean;
+  comp?: ItemId;
+  range?: TimeRange;
+  provider: string;
+  credential?: string;
 }
 
 /** One audio analysis over a layer's sound (an audio layer, or a video layer's own track). */

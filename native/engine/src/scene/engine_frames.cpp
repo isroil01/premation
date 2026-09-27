@@ -19,6 +19,8 @@
 #include "anim.hpp"
 #include "fail.hpp"
 #include "built_frame.hpp"
+#include "convert_geometry.hpp"
+#include "effect_handoff.hpp"
 #include "fonts.hpp"
 #include "frame_hit.hpp"
 #include "log.hpp"
@@ -126,7 +128,7 @@ std::vector<std::string> document_families(const doc::Document& d) {
 
 // ── the core-thread builder ───────────────────────────────────────────────
 
-class EngineFrameBuilder final : public FrameBuilder, public TextQueries {
+class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public doc::ConvertGeometry {
  public:
   explicit EngineFrameBuilder(const EngineFramesOptions& o) : fonts_(o), measurer_(make_canvas_measurer(fonts_.canvas)) {}
   void bind_audio(MediaClock* clock) override { audio_ = clock; }
@@ -144,6 +146,47 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries {
                                             const std::vector<std::pair<std::string, double>>& overrides) override {
     register_families(n);
     return text_geometry_of(*measurer_, n, overrides);
+  }
+
+  // convertLayer (core/handlers_convert.cpp): text outlines on the same fonts.
+  doc::ConvertGeometry* convert_geometry() noexcept override { return this; }
+  std::optional<doc::TextOutlines> text_outlines(const doc::GeoCtx& c, std::string_view layer, double /*compSeconds*/,
+                                                 std::string& why) override {
+    // shapesFromText.ts `outlineTextNode`: the font's own Béziers when the face
+    // can be read, else the trace. The engine has the trace (the painted
+    // text, every style it draws), so the outlines are always `traced`; the
+    // static style is what is traced (keyed font axes are not sampled).
+    const doc::Node* n = c.d.node(layer);
+    if (n == nullptr) {
+      why = "no layer '" + std::string(layer) + "'";
+      return std::nullopt;
+    }
+    register_families(*n);
+    const std::optional<TracedText> traced = traced_text_of(*n, *measurer_, why);
+    if (!traced) return std::nullopt;
+    doc::TextOutlines out;
+    out.width = traced->width;
+    out.height = traced->height;
+    out.fromFont = false;
+    out.runs.reserve(traced->runs->size());
+    for (const mesh::BezRun& r : *traced->runs) {
+      doc::GeoRun g;
+      g.closed = !r.open;
+      g.points.reserve(r.points.size());
+      for (const mesh::BezPt& p : r.points) g.points.push_back(doc::GeoPt{p.x, p.y, p.inX, p.inY, p.outX, p.outY});
+      out.runs.push_back(std::move(g));
+    }
+    return out;
+  }
+  std::optional<std::vector<doc::TextGlyphBox>> text_glyphs(const doc::GeoCtx& /*c*/, std::string_view /*layer*/,
+                                                            double /*compSeconds*/, std::string& why) override {
+    why = "per-character layout is not in the engine's text port yet";
+    return std::nullopt;
+  }
+  std::optional<doc::SvgShapes> svg_shapes(std::string_view /*markup*/, const std::optional<std::string>& /*fillOverride*/,
+                                           std::string& why) override {
+    why = "the SVG-to-shapes converter (svgParser.ts) is not ported to the engine yet";
+    return std::nullopt;
   }
 
   std::shared_ptr<BuiltFrame> build(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,

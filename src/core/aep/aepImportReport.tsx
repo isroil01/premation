@@ -15,7 +15,7 @@ import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { summarizeAepImport, type AepImportResult } from './aepImport';
+import { summarizeAepImport, summarizeEngineAepImport, type AepImportResult, type EngineAepImport } from './aepImport';
 import { track } from '@core/analytics/productEvents';
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -36,9 +36,15 @@ const listStyle: React.CSSProperties = {
   color: 'var(--color-text-secondary)',
 };
 
-function openReport(fileLabel: string, result: AepImportResult): void {
-  const warnings = result.applied.warnings;
-  const expressions = result.plan.comps.flatMap((c) => c.layers.flatMap((l) => l.expressions));
+interface ReportFacts {
+  summary: string;
+  aeVersion: string;
+  warnings: readonly string[];
+  expressions: number;
+}
+
+function openReport(fileLabel: string, facts: ReportFacts): void {
+  const { warnings } = facts;
 
   openModal({
     title: (
@@ -51,9 +57,9 @@ function openReport(fileLabel: string, result: AepImportResult): void {
     render: (close) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <p style={{ margin: 0, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-          Opened <strong style={{ color: 'var(--color-text-primary)' }}>{summarizeAepImport(result)}</strong> from{' '}
+          Opened <strong style={{ color: 'var(--color-text-primary)' }}>{facts.summary}</strong> from{' '}
           <strong style={{ color: 'var(--color-text-primary)' }}>{fileLabel}</strong>
-          {result.project.aeVersion ? ` (saved by After Effects ${result.project.aeVersion})` : ''}. Here is everything
+          {facts.aeVersion ? ` (saved by After Effects ${facts.aeVersion})` : ''}. Here is everything
           that did not come across exactly:
         </p>
         <ul style={listStyle}>
@@ -61,9 +67,9 @@ function openReport(fileLabel: string, result: AepImportResult): void {
             <li key={i}>{w}</li>
           ))}
         </ul>
-        {expressions.length > 0 && (
+        {facts.expressions > 0 && (
           <p style={{ margin: 0, fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-            {plural(expressions.length, 'expression')} came across as text on the properties that carried them. They are
+            {plural(facts.expressions, 'expression')} came across as text on the properties that carried them. They are
             not evaluated on import — open a property and re-enable its expression to run it here.
           </p>
         )}
@@ -94,7 +100,30 @@ export function reportAepImport(fileLabel: string, result: AepImportResult): voi
     message: `Opened ${summarizeAepImport(result)} — ${plural(warnings.length, 'thing')} did not come across`,
     durationMs: 4500,
   });
-  openReport(fileLabel, result);
+  openReport(fileLabel, {
+    summary: summarizeAepImport(result),
+    aeVersion: result.project.aeVersion ?? '',
+    warnings,
+    expressions: result.plan.comps.flatMap((c) => c.layers.flatMap((l) => l.expressions)).length,
+  });
+}
+
+/** Report an import the ENGINE made (`importProject`): the same toast and dialog from its summary. */
+export function reportEngineAepImport(fileLabel: string, result: EngineAepImport): void {
+  const { notify } = useUIStore.getState();
+  const { warnings } = result;
+  track('aep_imported', { layers: result.summary.layers, warnings: warnings.length });
+  const summary = summarizeEngineAepImport(result);
+  if (warnings.length === 0) {
+    notify({ level: 'success', message: `Opened ${summary} from “${fileLabel}”`, durationMs: 3200 });
+    return;
+  }
+  notify({
+    level: 'warning',
+    message: `Opened ${summary} — ${plural(warnings.length, 'thing')} did not come across`,
+    durationMs: 4500,
+  });
+  openReport(fileLabel, { summary, aeVersion: result.summary.aeVersion, warnings, expressions: result.summary.expressions });
 }
 
 /** The file could not be read at all. */

@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "json.hpp"
+
 namespace premation::jobs {
 
 /// Straight (unpremultiplied) RGBA, 8 bits per channel, rows top-down, no padding.
@@ -73,6 +75,12 @@ class FrameSource {
 
 /// Open a video or still image. `maxEdge` 0 = full size. Null with `error` when it cannot be read.
 [[nodiscard]] std::unique_ptr<FrameSource> open_frames(const std::string& path, std::uint32_t maxEdge, std::string& error);
+
+/// importFiles' media facts (core/engine_ctx.hpp FilePorts::MediaProbe): a
+/// still `image` (width, height, duration 0), a `video` (its picture's size,
+/// rate, frames / rate as the duration, whether it has sound) or `audio`
+/// (duration, hasAudioTrack). False + `error` when neither decoder reads it.
+bool probe_media(const std::string& path, js::Json& facts, std::string& error);
 
 /// A file's sound at its own sample rate, one vector per channel (1 or 2,
 /// conformed as the mixer hears it: audio/audio_decode.hpp).

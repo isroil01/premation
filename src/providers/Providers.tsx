@@ -70,7 +70,7 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { getEventBus } from '@core/events/EventBus';
 import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager, getFileManager } from '@core/services/coreServices';
-import { bootEngine, shutdownEngine } from '@core/engine/engineInstance';
+import { bootEngine, engine, shutdownEngine } from '@core/engine/engineInstance';
 import { engineOwnsDocumentNow, setEngineOwnsDocument } from '@core/engine/engineOwnership';
 import { processEngineOwnsDocument } from '@core/engine/process/processEngine';
 import { installEngineOwnedSession } from './engineOwnedSession';
@@ -309,6 +309,35 @@ function reportSave(outcome: SaveOutcome, opts?: { forkedFrom?: string | null })
   return false;
 }
 
+/** `file.importTemplatePackage` — a `.mogrt.zip` into the project, through the engine's importProject. */
+async function pickAndImportTemplatePackage(): Promise<void> {
+  const file = await new Promise<File | null>((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.mogrt,.zip';
+    input.addEventListener('change', () => resolve(input.files?.[0] ?? null));
+    input.addEventListener('cancel', () => resolve(null));
+    input.click();
+  });
+  if (!file) return;
+  const diskPath = window.motionEditor?.file?.pathOf?.(file) ?? '';
+  if (!diskPath) {
+    notify('Importing a template package needs the desktop app.', 'warning');
+    return;
+  }
+  const res = await engine().execute({ type: 'importProject', path: diskPath });
+  if (!res.ok) {
+    notify(
+      res.error.code === 'unsupported'
+        ? 'Template packages are imported by the C++ engine — this session runs the TypeScript engine.'
+        : `Could not import “${file.name}”: ${res.error.message}`,
+      'error',
+    );
+    return;
+  }
+  notify(`Imported “${file.name}”`, 'success');
+}
+
 /**
  * `file.openAfterEffects` — open an After Effects project.
  *
@@ -349,6 +378,27 @@ async function pickAndOpenAfterEffectsProject(): Promise<void> {
   resetProjectWorkspace();
 
   notify(`Opening “${file.name}”…`, 'info');
+  // The C++ engine as owner converts the project itself (importProject{path},
+  // core/aep): one undo entry, the footage imported by path.
+  const diskPath = window.motionEditor?.file?.pathOf?.(file) ?? '';
+  if (engineOwnsDocumentNow() && diskPath) {
+    const { importAepThroughEngine } = await import('@core/aep/aepImport');
+    const { reportEngineAepImport } = await import('@core/aep/aepImportReport');
+    const viaEngine = await importAepThroughEngine(engine(), diskPath).catch((err: unknown) => ({
+      ok: false as const,
+      message: err instanceof Error ? err.message : 'the file could not be read',
+    }));
+    if (viaEngine) {
+      if (!viaEngine.ok) {
+        reportAepImportFailure(file.name, viaEngine.message);
+        return;
+      }
+      if (viaEngine.openComp) await engine().execute({ type: 'setActiveComposition', comp: viaEngine.openComp });
+      afterProjectLoaded();
+      reportEngineAepImport(file.name, viaEngine);
+      return;
+    }
+  }
   let result: Awaited<ReturnType<typeof importAepFile>>;
   try {
     result = await importAepFile(file);
@@ -1885,7 +1935,9 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         const endSec = range && wa ? (wa.start + wa.duration - 1) / fps : undefined;
         const noteId = useUIStore.getState().notify({ level: 'info', message: 'Auto-trace: rendering…', durationMs: 0 });
         try {
-          // The engine traces the layer's frames itself when it runs jobs (the autoTrace job).
+          // The engine traces the layer itself when it runs jobs (the autoTrace job):
+          // `rendered` = what the layer DRAWS, rendered alone by a child engine
+          // (effects and masks included, any layer kind) — as the page path below.
           const endS = endSec ?? startSec;
           const viaEngine = await runEngineJob<{ pathsAdded: number; keyframes: number }>(
             {
@@ -1897,7 +1949,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
                 threshold: threshold / 255,
                 everyFrame: range,
                 invert: false,
-                rendered: false,
+                rendered: true,
               },
             },
             { onProgress: (f) => { useUIStore.getState().notify({ level: 'info', message: `Auto-trace: ${Math.round(f * 100)}%`, durationMs: 600 }); } },
@@ -2316,6 +2368,32 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       },
     },
     {
+      // AE: File ▸ Dependencies ▸ Collect Files. The ENGINE copies the project
+      // and every file it uses into `<folder>/<folder name>.motion`
+      // (engine-api collectFiles: the C++ engine's collect_files, or the
+      // TypeScript engine's collect port); the open project is unchanged.
+      id: asCommandId('file.collectFiles'),
+      label: 'Collect Files…',
+      enabled: () => typeof window.motionEditor?.shell?.pickFolder === 'function',
+      execute: async () => {
+        const folder = await window.motionEditor?.shell?.pickFolder?.();
+        if (!folder) return;
+        notify('Collecting files…', 'info');
+        const res = await engine().execute({ type: 'collectFiles', folder, onlyUsed: false });
+        if (!res.ok) {
+          notify(`Could not collect files: ${res.error.message}`, 'error');
+          return;
+        }
+        const missing = res.value.missing ? res.value.missing.split('\n').filter((l) => l.length > 0) : [];
+        notify(
+          missing.length === 0
+            ? `Collected the project and its files into ${res.value.path}`
+            : `Collected into ${res.value.path} — ${missing.length} file${missing.length === 1 ? '' : 's'} could not be read: ${missing.slice(0, 3).join('; ')}`,
+          missing.length === 0 ? 'success' : 'warning',
+        );
+      },
+    },
+    {
       id: asCommandId(ProjectCommands.IncrementAndSave),
       label: 'Increment and Save',
       // AE: Cmd/Ctrl+Alt+Shift+S — save a fresh copy with the next number.
@@ -2611,6 +2689,14 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             // state in which opening one would not make sense.
             enabled: () => true,
             execute: () => { void pickAndOpenAfterEffectsProject(); },
+          });
+          registry.register({
+            // A Premation template package (Export ▸ .mogrt.zip): the engine
+            // reads the package and imports its document as a folder
+            // (importProject — one undo entry). Desktop: the file's disk path.
+            id: asCommandId('file.importTemplatePackage'), label: 'Import Template Package…', icon: 'folder',
+            enabled: () => typeof window.motionEditor?.file?.pathOf === 'function',
+            execute: () => { void pickAndImportTemplatePackage(); },
           });
           registry.register({
             id: asCommandId('file.import3DModel'), label: 'Import 3D Model…', icon: 'cube',

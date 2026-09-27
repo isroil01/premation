@@ -295,4 +295,31 @@ void resolve_effect_handoffs(std::vector<Json>& effects, const doc::Node& n, con
   }
 }
 
+std::optional<TracedText> traced_text_of(const doc::Node& n, TextMeasurer& measurer, std::string& why) {
+  if (n.kind() != "text") {
+    why = "the layer is not a text layer";
+    return std::nullopt;
+  }
+  const std::optional<MeasuredStyle> style = read_measured_text_style(n, {});
+  if (!style || blank(style->content)) {
+    why = "the text layer has no text to outline";
+    return std::nullopt;
+  }
+  const raster::CanvasOptions* canvas = measurer.canvas_options();
+  const std::optional<std::pair<double, double>> size = canvas != nullptr ? measurer.measure_text_size(*style) : std::nullopt;
+  if (!size) {
+    why = "the engine has no fonts for this text style (vertical type, paragraph boxes and variable axes are outside the text port)";
+    return std::nullopt;
+  }
+  TracedText out;
+  out.runs = trace_text_runs(text_paint_spec_from_node(n, *style, *size), *canvas);
+  out.width = size->first;
+  out.height = size->second;
+  if (!out.runs || out.runs->empty()) {
+    why = "nothing of the text traced (blank glyphs)";
+    return std::nullopt;
+  }
+  return out;
+}
+
 }  // namespace premation::scene

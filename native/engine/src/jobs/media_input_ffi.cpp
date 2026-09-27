@@ -15,11 +15,15 @@ extern "C" {
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 #include "audio_decode.hpp"
+#include "scene/image_decode.hpp"
 
 namespace premation::jobs {
 namespace {
+
+std::filesystem::path fs_path(const std::string& s) { return std::filesystem::path(std::u8string(s.begin(), s.end())); }
 
 std::string av_error(int code) {
   char buf[AV_ERROR_MAX_STRING_SIZE] = {};
@@ -268,12 +272,115 @@ class FfmpegFrames final : public FrameSource {
   bool eof_ = false;
 };
 
+/// A still image (PNG, JPEG, …): the engine's ffmpeg build carries no still
+/// decoders, so it is read through the OS codec the renderer uses for image
+/// layers (scene/image_decode.hpp: WIC on Windows) — one frame, box-filtered
+/// down to the job's long edge.
+class StillFrames final : public FrameSource {
+ public:
+  bool open(const std::string& path, std::uint32_t maxEdge, std::string& error) {
+    scene::DecodedImage img;
+    if (!scene::decode_image_file(fs_path(path), img, error)) return false;
+    srcW_ = img.width;
+    srcH_ = img.height;
+    const std::uint32_t edge = std::max(srcW_, srcH_);
+    if (maxEdge == 0 || edge <= maxEdge) {
+      image_.width = srcW_;
+      image_.height = srcH_;
+      image_.rgba = std::move(img.rgba);
+      return true;
+    }
+    const double k = static_cast<double>(maxEdge) / edge;
+    image_.width = std::max(1U, static_cast<std::uint32_t>(std::lround(srcW_ * k)));
+    image_.height = std::max(1U, static_cast<std::uint32_t>(std::lround(srcH_ * k)));
+    image_.rgba.assign(static_cast<std::size_t>(image_.width) * image_.height * 4U, 0);
+    for (std::uint32_t y = 0; y < image_.height; ++y) {
+      const std::uint32_t y0 = static_cast<std::uint32_t>(static_cast<std::uint64_t>(y) * srcH_ / image_.height);
+      const std::uint32_t y1 = std::max(y0 + 1, static_cast<std::uint32_t>(static_cast<std::uint64_t>(y + 1) * srcH_ / image_.height));
+      for (std::uint32_t x = 0; x < image_.width; ++x) {
+        const std::uint32_t x0 = static_cast<std::uint32_t>(static_cast<std::uint64_t>(x) * srcW_ / image_.width);
+        const std::uint32_t x1 = std::max(x0 + 1, static_cast<std::uint32_t>(static_cast<std::uint64_t>(x + 1) * srcW_ / image_.width));
+        std::uint64_t sum[4] = {0, 0, 0, 0};
+        for (std::uint32_t sy = y0; sy < y1; ++sy) {
+          for (std::uint32_t sx = x0; sx < x1; ++sx) {
+            const std::size_t i = (static_cast<std::size_t>(sy) * srcW_ + sx) * 4U;
+            for (std::size_t c = 0; c < 4; ++c) sum[c] += img.rgba[i + c];  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+          }
+        }
+        const std::uint64_t n = static_cast<std::uint64_t>(y1 - y0) * (x1 - x0);
+        const std::size_t o = (static_cast<std::size_t>(y) * image_.width + x) * 4U;
+        for (std::size_t c = 0; c < 4; ++c) image_.rgba[o + c] = static_cast<std::uint8_t>((sum[c] + n / 2) / n);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+      }
+    }
+    return true;
+  }
+  [[nodiscard]] std::uint32_t width() const noexcept override { return image_.width; }
+  [[nodiscard]] std::uint32_t height() const noexcept override { return image_.height; }
+  [[nodiscard]] std::uint32_t source_width() const noexcept override { return srcW_; }
+  [[nodiscard]] std::uint32_t source_height() const noexcept override { return srcH_; }
+  [[nodiscard]] double fps() const noexcept override { return 30; }
+  [[nodiscard]] std::int64_t frame_count() const noexcept override { return 1; }
+  bool read(std::int64_t /*frame*/, RgbaImage& out, std::string& /*error*/) override {
+    out = image_;
+    return true;
+  }
+
+ private:
+  RgbaImage image_;
+  std::uint32_t srcW_ = 0;
+  std::uint32_t srcH_ = 0;
+};
+
 }  // namespace
 
 std::unique_ptr<FrameSource> open_frames(const std::string& path, std::uint32_t maxEdge, std::string& error) {
+  if (scene::is_still_image_path(fs_path(path))) {
+    auto still = std::make_unique<StillFrames>();
+    std::string stillError;
+    if (still->open(path, maxEdge, stillError)) return still;
+    // Not decodable by the OS codec (or no codec on this OS): try ffmpeg.
+    auto f = std::make_unique<FfmpegFrames>();
+    if (f->open(path, maxEdge, error)) return f;
+    error = stillError;
+    return nullptr;
+  }
   auto f = std::make_unique<FfmpegFrames>();
   if (!f->open(path, maxEdge, error)) return nullptr;
   return f;
+}
+
+bool probe_media(const std::string& path, js::Json& facts, std::string& error) {
+  audio::AudioStreamInfo sound;
+  std::string soundError;
+  const bool probedSound = audio::probe_audio(path, sound, soundError) && sound.hasAudio;
+  std::string pictureError;
+  const std::unique_ptr<FrameSource> picture = open_frames(path, 1, pictureError);
+  facts = js::Json::object();
+  js::Json md = js::Json::object();
+  if (picture) {
+    const bool still = scene::is_still_image_path(fs_path(path)) || picture->frame_count() <= 1;
+    facts.set("type", js::Json::string(still && !probedSound ? "image" : "video"));
+    md.set("width", js::Json::number(picture->source_width()));
+    md.set("height", js::Json::number(picture->source_height()));
+    if (still && !probedSound) {
+      md.set("duration", js::Json::number(0));
+    } else {
+      const double fps = picture->fps();
+      md.set("fps", js::Json::number(fps));
+      const double frames = static_cast<double>(picture->frame_count());
+      md.set("duration", js::Json::number(fps > 0 ? frames / fps : sound.durationSec));
+      md.set("hasAudioTrack", js::Json::boolean(probedSound));
+    }
+  } else if (probedSound) {
+    facts.set("type", js::Json::string("audio"));
+    md.set("duration", js::Json::number(sound.durationSec));
+    md.set("hasAudioTrack", js::Json::boolean(true));
+  } else {
+    error = !pictureError.empty() ? pictureError : soundError;
+    return false;
+  }
+  facts.set("metadata", std::move(md));
+  return true;
 }
 
 bool read_audio(const std::string& path, AudioPcm& out, std::string& error) {

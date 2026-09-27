@@ -10029,12 +10029,17 @@ void encode(wire::Writer& w, const TranscribeJob& v) {
   w.varint(10U); w.str(v.layer);
   w.varint(18U); w.str(v.language);
   w.varint(24U); w.boolean(v.create_captions);
+  if (v.comp.has_value()) { w.varint(5634U); w.str(*v.comp); }
+  if (v.range.has_value()) { w.varint(5642U); { const std::size_t s = w.begin_ld(); encode(w, *v.range); w.end_ld(s); } }
+  w.varint(5650U); w.str(v.provider);
+  if (v.credential.has_value()) { w.varint(5658U); w.str(*v.credential); }
 }
 
 Status decode(wire::Reader& r, TranscribeJob& out) {
   bool has_layer = false;
   bool has_language = false;
   bool has_create_captions = false;
+  bool has_provider = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -10054,6 +10059,29 @@ Status decode(wire::Reader& r, TranscribeJob& out) {
         has_create_captions = true;
         break;
       }
+      case 5634U: {
+        ItemId e;
+        if (!r.str(e)) return Status::truncated;
+        out.comp = std::move(e);
+        break;
+      }
+      case 5642U: {
+        TimeRange e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.range = std::move(e);
+        break;
+      }
+      case 5650U: {
+        if (!r.str(out.provider)) return Status::truncated;
+        has_provider = true;
+        break;
+      }
+      case 5658U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.credential = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -10062,6 +10090,7 @@ Status decode(wire::Reader& r, TranscribeJob& out) {
   if (!has_layer) return Status::missing_field;
   if (!has_language) return Status::missing_field;
   if (!has_create_captions) return Status::missing_field;
+  if (!has_provider) return Status::missing_field;
   return Status::ok;
 }
 

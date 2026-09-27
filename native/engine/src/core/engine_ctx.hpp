@@ -185,6 +185,20 @@ class FakePorts final : public Ports {
 /// is read as a bundle.
 class FilePorts final : public Ports {
  public:
+  /// A file's media facts from the engine's decoders — `type` (video / audio /
+  /// image), `metadata` {width, height, duration, fps, hasAudioTrack} — or
+  /// false + `error` when nothing can read it. The engine process passes
+  /// jobs::probe_media; without one, importFiles answers `unsupported`.
+  using MediaProbe = std::function<bool(const std::string& path, Json& facts, std::string& error)>;
+  FilePorts() = default;
+  explicit FilePorts(MediaProbe probe) : probe_(std::move(probe)) {}
+  /// importFiles by path: the file stays where it is; the record's `src` is
+  /// its `local-file://` URL (what the page's own importer gives a file on
+  /// disk), `path` the path.
+  [[nodiscard]] bool has_import() const override { return static_cast<bool>(probe_); }
+  [[nodiscard]] Json import_file(const api::ImportFile& file, const std::string& id) override;
+  [[nodiscard]] bool has_probe() const override { return static_cast<bool>(probe_); }
+  [[nodiscard]] Json probe_file(const std::string& path) override;
   [[nodiscard]] bool has_projects() const override { return true; }
   [[nodiscard]] Json read_project(const std::string& path) override;
   std::uint64_t write_project(const std::string& path, const Json& doc) override;
@@ -204,7 +218,12 @@ class FilePorts final : public Ports {
 
  private:
   std::string staging_;
+  MediaProbe probe_;
 };
+
+/// `local-file:///C:/a%20b.mp4` for a path on disk (electron/localFileUrl.ts
+/// reads it back; jobs' resolve_footage_path too).
+[[nodiscard]] std::string local_file_url(std::string_view path);
 
 /// handler.ts `HandlerCtx`.
 struct HCtx {

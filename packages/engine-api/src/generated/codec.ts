@@ -7621,20 +7621,33 @@ function encS_TranscribeJob(w: Writer, v: T.TranscribeJob): void {
   w.byte(10); w.str(v.layer);
   w.byte(18); w.str(v.language);
   w.byte(24); w.bool(v.createCaptions);
+  if (v.comp !== undefined) { w.varint(5634); w.str(v.comp); }
+  if (v.range !== undefined) { w.varint(5642); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); } }
+  w.varint(5650); w.str(v.provider);
+  if (v.credential !== undefined) { w.varint(5658); w.str(v.credential); }
 }
 function decS_TranscribeJob(r: Reader, end: number, o: any): T.TranscribeJob {
   let h_layer = false;
   let h_language = false;
   let h_createCaptions = false;
+  let h_provider = false;
   let v_layer: string | undefined;
   let v_language: string | undefined;
   let v_createCaptions: boolean | undefined;
+  let v_comp: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  let v_provider: string | undefined;
+  let v_credential: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_layer = r.str(); h_layer = true; break;
       case 18: v_language = r.str(); h_language = true; break;
       case 24: v_createCaptions = r.bool(); h_createCaptions = true; break;
+      case 5634: v_comp = r.str(); break;
+      case 5642: v_range = decS_TimeRange(r, r.ldEnd(), {}); break;
+      case 5650: v_provider = r.str(); h_provider = true; break;
+      case 5658: v_credential = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -7642,9 +7655,14 @@ function decS_TranscribeJob(r: Reader, end: number, o: any): T.TranscribeJob {
   if (!h_layer) throw new DecodeError('TranscribeJob.layer: missing', 'missingField');
   if (!h_language) throw new DecodeError('TranscribeJob.language: missing', 'missingField');
   if (!h_createCaptions) throw new DecodeError('TranscribeJob.createCaptions: missing', 'missingField');
+  if (!h_provider) throw new DecodeError('TranscribeJob.provider: missing', 'missingField');
   o.layer = v_layer;
   o.language = v_language;
   o.createCaptions = v_createCaptions;
+  if (v_comp !== undefined) o.comp = v_comp;
+  if (v_range !== undefined) o.range = v_range;
+  o.provider = v_provider;
+  if (v_credential !== undefined) o.credential = v_credential;
   return o;
 }
 function encS_AudioAnalysisJob(w: Writer, v: T.AudioAnalysisJob): void {

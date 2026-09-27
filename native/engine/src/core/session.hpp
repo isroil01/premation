@@ -78,6 +78,9 @@ struct SessionOptions {
   /// `listFonts`: the installed fonts matching a query (the engine process
   /// passes its font catalogue). Unset, or with testPorts: an empty list.
   std::function<api::FontList(const std::string&)> systemFonts;
+  /// importFiles / probe by path (FilePorts::MediaProbe): the engine process
+  /// passes its decoders' probe (jobs::probe_media). Unset: `unsupported`.
+  doc::FilePorts::MediaProbe mediaProbe;
 };
 
 class Session {
@@ -321,6 +324,8 @@ class Session {
   api::CommandResult start_job(const api::StartJob& c);
   api::CommandResult cancel_job(const api::CancelJob& c);
   JobRecord* find_job(const std::string& id);
+  /// JobDocContext.layerToComp over this document (world2DAt; nullopt for 3D).
+  std::function<std::optional<std::array<double, 6>>(std::string_view, double)> layer_to_comp();
   /// Drain the runner: progress events, results applied (core thread, from tick()).
   void poll_jobs(Clock::time_point now);
   /// Apply a held result as ONE history entry (origin engine). False with the error recorded on the job.
@@ -330,6 +335,19 @@ class Session {
   void drop_jobs();
   /// applyJobResult: the held result's commands inside the request's journal.
   api::CommandResult apply_job_in_journal(const api::ApplyJobResult& c, api::Origin origin, std::string& label);
+  /// What an applyJobResult request wrote: its job's commands, kept until the
+  /// request is logged so the log holds them instead of the applyJobResult
+  /// (a replay has no held result to apply).
+  struct JobLog {
+    std::string job;
+    std::string label;
+    std::vector<api::Command> edits;
+  };
+  std::optional<JobLog> jobLog_;
+  /// A job's applied edit as the request a crash replay writes instead of the
+  /// job (schema LogRecord.job): the job's startJob row dropped from `log_`,
+  /// the edits appended as one batch, and the record sent to the client.
+  void log_job_edit(const std::string& job, std::string label, std::vector<api::Command> edits);
   /// The autoTrace COMMAND: the autoTrace job's trace run to completion on this
   /// thread, its masks written inside the request's journal (one entry);
   /// answers the added mask groups (session_jobs.cpp).

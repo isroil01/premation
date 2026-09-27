@@ -11,6 +11,12 @@
  * What gets transcribed is the COMPOSITION, mixed down — not a footage file.
  * See `speechAudio.ts` for why that distinction decides whether the cues line
  * up with the picture.
+ *
+ * With the C++ engine (2026-09-28) the whole thing is its `transcribe` JOB:
+ * the engine mixes the composition, calls the provider, and answers the cues.
+ * The page never holds the key there either — Electron main writes it into
+ * the job request on its way to the engine. The page path below runs only
+ * when the engine does not run the job (the TypeScript engine).
  */
 
 import { aiRunsThroughBackend } from '@core/config/edition';
@@ -19,6 +25,9 @@ import type { AiVaultProvider } from '@app-types/motionEditor';
 import { deoverlap, type Cue } from './captionFormat';
 import type { SpokenWord } from './transcriptEdit';
 import { speechWav } from './speechAudio';
+import { secondsToFlicks } from '@motion/engine-api';
+import { runEngineJob } from '@core/engine/engineJobs';
+import { activeCompRootId } from '@core/scene/activeComp';
 
 export interface TranscribeOptions {
   /** Comp-time window to transcribe. */
@@ -40,6 +49,52 @@ export class TranscribeError extends Error {
 /** True when this build can transcribe at all. */
 export function transcriptionAvailable(): boolean {
   return typeof globalThis.window?.motionEditor?.ai?.transcribe === 'function';
+}
+
+/** What the engine's transcribe job answers (JobInfo.result). */
+interface EngineTranscript {
+  cues: Cue[];
+  words: SpokenWord[];
+  language?: string;
+}
+
+/** aiProxy.ts's failure code, carried in the engine error's `detail`. */
+function engineErrorCode(detail: string | undefined, fallback: string): string {
+  if (!detail) return fallback;
+  try {
+    const code = (JSON.parse(detail) as { code?: unknown }).code;
+    return typeof code === 'string' && code ? code : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * The engine's transcribe job. Null when this engine does not run it (the
+ * page path runs instead); throws TranscribeError when it ran and failed.
+ */
+async function transcribeInEngine(opts: TranscribeOptions): Promise<Transcription | null> {
+  const outcome = await runEngineJob<EngineTranscript>({
+    kind: 'transcribe',
+    value: {
+      layer: '',
+      language: opts.language ?? '',
+      createCaptions: false,
+      comp: opts.rootId ?? activeCompRootId(),
+      range: { start: secondsToFlicks(opts.startSec), duration: secondsToFlicks(opts.endSec - opts.startSec) },
+      provider: useAiProviderStore.getState().provider as AiVaultProvider,
+    },
+  });
+  if (!outcome) return null;
+  if (outcome.status === 'cancelled') throw new TranscribeError('cancelled', 'Transcription was cancelled.');
+  if (outcome.status !== 'done' || !outcome.result) {
+    throw new TranscribeError(
+      engineErrorCode(outcome.error?.detail, 'provider_error'),
+      outcome.error?.message || 'The transcription failed.',
+    );
+  }
+  // Already in composition seconds and de-overlapped by the engine.
+  return { cues: outcome.result.cues, words: outcome.result.words ?? [] };
 }
 
 /** A transcript as the provider gave it: segments, and words when it had them. */
@@ -89,11 +144,13 @@ export async function transcribeCompositionDetailed(
       + 'There is no hosted transcription route yet.',
     );
   }
-  if (!transcribe) {
-    throw new TranscribeError('unsupported', 'This build cannot transcribe audio.');
-  }
   if (opts.endSec <= opts.startSec) {
     throw new TranscribeError('bad_request', 'That time range is empty, so there is no audio in it.');
+  }
+  const viaEngine = await transcribeInEngine(opts);
+  if (viaEngine) return viaEngine;
+  if (!transcribe) {
+    throw new TranscribeError('unsupported', 'This build cannot transcribe audio.');
   }
 
   const wav = await speechWav(opts.startSec, opts.endSec, opts.rootId);

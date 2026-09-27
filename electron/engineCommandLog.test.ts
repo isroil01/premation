@@ -6,7 +6,15 @@
  */
 
 import { decodeEngineMessage, encodeEngineMessage, type Command, type EngineMessage, type Response } from '@motion/engine-api';
-import { appliedRequestFromLogRecord, peekRequest, responseIsError, withCausedBy, withEnvelopeSeq } from './engineFraming';
+import {
+  appliedRequestFromLogRecord,
+  peekRequest,
+  responseIsError,
+  transcribeProviderOf,
+  withCausedBy,
+  withEnvelopeSeq,
+  withTranscribeCredential,
+} from './engineFraming';
 import { CMD, EngineCommandLog } from './engineCommandLog';
 
 let seq = 0;
@@ -98,7 +106,7 @@ describe('EngineCommandLog', () => {
     expect(log.length).toBe(0);
   });
 
-  it('replaces the finished job and leaves a still-running job to replay', () => {
+  it('replays a job only as the edit it applied, never as startJob', () => {
     const log = new EngineCommandLog();
     const start = (layer: string) => req({
       type: 'startJob',
@@ -126,12 +134,90 @@ describe('EngineCommandLog', () => {
       },
     }))!;
     log.absorbJobEdit(applied.bytes, applied.revisionAfter, applied.job);
+    // job_1 is still running (or was cancelled): nothing of it is replayed.
     const plan = log.plan();
-    expect(plan).toHaveLength(3);
-    expect(plan[0]).toMatchObject({ commandId: CMD.startJob, jobId: 'job_1' });
-    expect(plan.some((e) => e.jobId === 'job_2')).toBe(false);
-    expect(plan[2]!.revisionAfter).toBe(4);
-    const batch = decodeEngineMessage(plan[2]!.bytes) as Extract<EngineMessage, { kind: 'request' }>;
+    expect(plan).toHaveLength(2);
+    expect(plan.some((e) => e.commandId === CMD.startJob)).toBe(false);
+    expect(plan[1]!.revisionAfter).toBe(4);
+    const batch = decodeEngineMessage(plan[1]!.bytes) as Extract<EngineMessage, { kind: 'request' }>;
     expect(batch.value.body).toMatchObject({ kind: 'batch', value: { label: 'Scene Edit' } });
+  });
+
+  it('logs a held result applied later as its commands, not as applyJobResult', () => {
+    const log = new EngineCommandLog();
+    const started = encodeEngineMessage({
+      kind: 'response',
+      value: { seq: 1, revision: 1, outcome: { kind: 'command', value: { type: 'startJob', job: 'job_7' } as never } },
+    });
+    log.record(req({
+      type: 'startJob',
+      job: { kind: 'audioGate', value: { layer: 'A', params: '{}' } },
+      apply: false,
+    } as Command), started, 1);
+    // The engine sends the log record, then answers the applyJobResult.
+    const applied = appliedRequestFromLogRecord(encodeEngineMessage({
+      kind: 'logRecord',
+      value: {
+        request: {
+          seq: 0,
+          origin: 'engine',
+          body: { kind: 'batch', value: { label: 'Gate', commands: [{ type: 'renameLayer', layer: 'A', name: 'Gated' } as Command] } },
+        },
+        revisionAfter: 2,
+        documentHash: 0,
+        job: 'job_7',
+      },
+    }))!;
+    log.absorbJobEdit(applied.bytes, applied.revisionAfter, applied.job);
+    log.record(req({ type: 'applyJobResult', job: 'job_7' } as Command), ok(2), 2);
+    const plan = log.plan();
+    expect(plan).toHaveLength(1);
+    expect(plan[0]!.commandId).toBeUndefined();
+    const batch = decodeEngineMessage(plan[0]!.bytes) as Extract<EngineMessage, { kind: 'request' }>;
+    expect(batch.value.body).toMatchObject({ kind: 'batch', value: { label: 'Gate' } });
+  });
+});
+
+describe("the transcribe job's provider key (main to engine only)", () => {
+  const transcribe = (credential?: string) => req({
+    type: 'startJob',
+    job: {
+      kind: 'transcribe',
+      value: { layer: '', language: 'en', createCaptions: false, comp: 'comp_1', provider: 'openai', ...(credential !== undefined ? { credential } : {}) },
+    },
+    apply: false,
+  } as Command);
+  const specOf = (bytes: Uint8Array) => {
+    const m = decodeEngineMessage(bytes) as Extract<EngineMessage, { kind: 'request' }>;
+    const body = m.value.body as Extract<typeof m.value.body, { kind: 'command' }>;
+    const start = body.value as Extract<Command, { type: 'startJob' }>;
+    return start.job as Extract<typeof start.job, { kind: 'transcribe' }>;
+  };
+
+  it('reads the provider of a transcribe startJob and nothing else', () => {
+    expect(transcribeProviderOf(transcribe())).toBe('openai');
+    expect(transcribeProviderOf(req({ type: 'renameLayer', layer: 'A', name: 'x' } as Command))).toBeNull();
+    expect(transcribeProviderOf(req({
+      type: 'startJob',
+      job: { kind: 'sceneDetect', value: { layer: 'A', createMarkers: true, splitLayers: false } },
+      apply: true,
+    } as Command))).toBeNull();
+  });
+
+  it('writes the key in, replacing what the page sent, and takes it out again', () => {
+    const page = transcribe();
+    const withKey = withTranscribeCredential(transcribe('page-sent'), 'sk-secret');
+    const spec = specOf(withKey);
+    expect(spec.value.credential).toBe('sk-secret');
+    expect(spec.value).toMatchObject({ comp: 'comp_1', language: 'en', provider: 'openai' });
+    const stripped = withTranscribeCredential(withKey, '');
+    expect(specOf(stripped).value.credential).toBeUndefined();
+    expect(new TextDecoder().decode(stripped)).not.toContain('sk-secret');
+    // Canonical: the page's own request (no key) round-trips byte for byte.
+    const back = withTranscribeCredential(withTranscribeCredential(page, 'k'), '');
+    expect(Array.from(back)).toEqual(Array.from(page));
+    // Anything else passes through untouched.
+    const other = req({ type: 'renameLayer', layer: 'A', name: 'x' } as Command);
+    expect(withTranscribeCredential(other, 'k')).toBe(other);
   });
 });

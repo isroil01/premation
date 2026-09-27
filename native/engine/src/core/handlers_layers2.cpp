@@ -662,17 +662,7 @@ ResultOf<api::DuplicateLayers> handle(const api::DuplicateLayers& c, HCtx& x) {
   return api::LayerList{newIds};
 }
 
-ResultOf<api::ConvertLayer> handle(const api::ConvertLayer& c, HCtx& x) {
-  (void)require_layer(x.d, c.layer);
-  fail(ErrorCode::unsupported, "'" + std::string(api::to_string(c.conversion)) +
-                                   "' needs font outlines / evaluation the TypeScript engine only offers through editor dialogs "
-                                   "today; it moves into the engine with E3");
-}
-
-ResultOf<api::SeparateLayer> handle(const api::SeparateLayer& c, HCtx& x) {
-  (void)require_layer(x.d, c.layer);
-  fail(ErrorCode::unsupported, "Separate (break apart) is not implemented by the TypeScript engine");
-}
+// convertLayer / separateLayer: handlers_convert.cpp.
 
 // autoTrace decodes the layer's frames, which a handler cannot: the Session
 // runs it (Session::auto_trace_in_journal, session_jobs.cpp — the autoTrace
