@@ -1,6 +1,6 @@
 /** Every query (ENGINE_API.md §7): answers, never changes the document, and unknown ids are typed errors. */
 
-import { QUERIES, unwrap, type Query, type QueryType } from '@motion/engine-api';
+import { QUERIES, unwrap, type DocumentFragment, type Query, type QueryType } from '@motion/engine-api';
 import { setupEngine, sec, type Harness } from '../__testHelpers__/harness';
 import { buildScene, type Scene } from '../__testHelpers__/scene';
 import { hasCanvas } from '@core/effects/__testHelpers__/canvasFidelity';
@@ -35,6 +35,7 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
   copyKeyframes: (x) => ({ type: 'copyKeyframes', keys: x.posKeys }),
   getMemberKeyframes: (x) => ({ type: 'getMemberKeyframes', layer: x.B, members: [] }),
   copyEffects: (x) => ({ type: 'copyEffects', layer: x.A, effects: [] }),
+  getSearchFacts: (x) => ({ type: 'getSearchFacts', layers: [x.A] }),
   getWaveform: (x) => ({ type: 'getWaveform', layer: x.V, range: { start: 0, duration: sec(1) }, buckets: 10 }),
   listFonts: () => ({ type: 'listFonts', query: '' }),
   getItems: (x) => ({ type: 'getItems', items: [x.footage, x.comp2, x.folder] }),
@@ -66,7 +67,7 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
 
 test('every query in the schema has a case', () => {
   expect(Object.keys(QUERIES).sort()).toEqual(Object.keys(CASES).sort());
-  expect(Object.keys(QUERIES)).toHaveLength(41);
+  expect(Object.keys(QUERIES)).toHaveLength(42);
 });
 
 test('capturePreset: keys rebased to 0 and out of pixels against the layer\'s comp; effects renumbered; empty layers say so', async () => {
@@ -193,8 +194,52 @@ test('answers carry the document as the engine holds it', async () => {
   expect(mid.values[0]!.value).toEqual({ kind: 'vec2', value: { x: 200, y: 150 } });
   const expr = unwrap(await h.engine.query({ type: 'evaluateExpression', prop: { layer: s.A, path: 'transform/rotation' }, time: sec(2), source: 'time * 10' }));
   expect(expr.value).toEqual({ kind: 'scalar', value: 20 });
+  // B4: `member` — the draft drives that dimension; `value` is that member's own.
+  const y = unwrap(await h.engine.query({ type: 'evaluateExpression', prop: { layer: s.B, path: 'transform/position' }, time: sec(0.5), source: 'value + 1', member: 1 }));
+  expect(y.value).toEqual({ kind: 'scalar', value: 151 });
+  const x = unwrap(await h.engine.query({ type: 'evaluateExpression', prop: { layer: s.B, path: 'transform/position' }, time: sec(0.5), source: 'value + 1' }));
+  expect(x.value).toEqual({ kind: 'scalar', value: 201 });
+  const tooFar = await h.engine.query({ type: 'evaluateExpression', prop: { layer: s.B, path: 'transform/position' }, time: 0, source: 'value', member: 5 });
+  expect(!tooFar.ok && tooFar.error.code).toBe('outOfRange');
+  // Source Text: the draft's text + style result, never stored.
+  const text = unwrap(await h.engine.query({
+    type: 'evaluateExpression', prop: { layer: s.T, path: 'text/sourceText' }, time: 0,
+    source: 'value.style.setFontSize(20).setFillColor([1, 0, 0], 0, 2).setBaselineShift(4, 1, 1)',
+  }));
+  expect(text.value).toBeUndefined();
+  expect(text.diagnostics).toEqual([]);
+  expect(text.text).toEqual({ text: expect.any(String), styleKeys: ['fontSize'], ranges: 2, rangeKeys: ['fill', 'baselineShift'] });
+  const broken = unwrap(await h.engine.query({ type: 'evaluateExpression', prop: { layer: s.T, path: 'text/sourceText' }, time: 0, source: 'nope(' }));
+  expect(broken.text).toBeUndefined();
+  expect(broken.diagnostics).toHaveLength(1);
+  // B4: the document-wide search facts — effect match names in stack order, every expression's source.
+  await h.run({ type: 'setExpression', prop: { layer: s.A, path: 'transform/opacity' }, source: 'wiggle(1, 5)', enabled: false });
+  const facts = unwrap(await h.engine.query({ type: 'getSearchFacts', layers: [] }));
+  const fa = facts.layers.find((f) => f.layer === s.A)!;
+  expect(fa.effects).toContain('glow');
+  expect(fa.expressions).toContain('wiggle(1, 5)');
+  expect(facts.layers.map((f) => f.layer)).toEqual(expect.arrayContaining([s.A, s.B, s.T]));
+  const one = unwrap(await h.engine.query({ type: 'getSearchFacts', layers: [s.B, 'nope'] }));
+  expect(one.layers.map((f) => f.layer)).toEqual([s.B]);
   const found = unwrap(await h.engine.query({ type: 'findLayers', name: '', kinds: ['solid'], effect: 'glow' }));
   expect(found.layers).toEqual([s.A]);
   const bad = await h.engine.query({ type: 'getLayers', layers: ['nope'] });
   expect(!bad.ok && bad.error.code).toBe('notFound');
+});
+
+test('LayerInfo.pluginSchemaVersion: a custom plugin layer\'s stored schema version (the C++ test_b4_round3 twin)', async () => {
+  const frag = (await h.query({ type: 'copyLayers', layers: [s.A] })) as DocumentFragment;
+  const base = new TextDecoder().decode(frag.data);
+  const withComponent = async (component: string): Promise<number | undefined> => {
+    const key = '"components":[';
+    const at = base.indexOf(key);
+    expect(at).toBeGreaterThanOrEqual(0);
+    const text = `${base.slice(0, at + key.length)}${component},${base.slice(at + key.length)}`;
+    const r = (await h.run({ type: 'pasteLayers', comp: s.comp, fragment: { ...frag, data: new TextEncoder().encode(text) } })) as { layers: string[] };
+    return (await h.query({ type: 'getLayers', layers: [r.layers[0]!] })).layers[0]!.pluginSchemaVersion;
+  };
+  expect(await withComponent('{"id":"plg1","props":{"__kind":"studio.acme.lab.depthImage","__schemaVersion":3},"type":"pluginLayer:studio.acme.lab.depthImage"}')).toBe(3);
+  expect(await withComponent('{"id":"plg2","props":{"__kind":"studio.acme.lab.depthImage"},"type":"pluginLayer:studio.acme.lab.depthImage"}')).toBe(1);
+  expect(await withComponent('{"id":"plg3","props":{"__kind":"nodot"},"type":"pluginLayer:nodot"}')).toBeUndefined();
+  expect((await h.query({ type: 'getLayers', layers: [s.A] })).layers[0]!.pluginSchemaVersion).toBeUndefined();
 });

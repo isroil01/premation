@@ -22,6 +22,8 @@ async function sfxAsset(sfxId: string): Promise<ImportedAsset | null> {
   if (!item) return null;
   const fileName = `${item.name}.wav`;
   // Re-use the item a previous insert imported — same bytes anyway.
+  // B4-gap: `insertMediaEdit` takes the page's ImportedAsset record (object URL, metadata), which
+  // `ItemInfo` does not carry — the item could be FOUND in the mirror, not handed on.
   const existing = useAssetStore.getState().assets.find((a) => a.type === 'audio' && a.name === fileName);
   let asset = existing;
   if (!asset) {

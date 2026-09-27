@@ -155,6 +155,8 @@ export async function runAssembleFromFootage(target: AssembleTarget): Promise<vo
       nodeId = made.layer;
     }
 
+    // B4-kept: scene-edit detection is an engine job run from the UI (decodes the clip's frames) — not
+    // registered as an engine job yet (G).
     const { cutsCompSec, status } = await detectForAssembly(nodeId, opts);
     if (status === 'cancelled') {
       notify('Assemble from Footage: cancelled.', 'info');

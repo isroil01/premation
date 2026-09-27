@@ -25,7 +25,9 @@ import { activePlayheadSeconds, apiColorOfHex } from '@core/engine/trackWrites';
 import { catalogFor } from '@core/engine/props';
 import type { MaskPath } from '@core/effects/mask';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { insertAudio, insertMedia, insertSvgDocument, insertSvgLayer, isSvgAsset, readSvgText } from '@core/scene/sceneInsert';
+import { insertAudio, insertMedia, insertSvgDocument, isSvgAsset, readSvgText } from '@core/scene/sceneInsert';
+import { documentMirror } from '@stores/documentMirror';
+import { buildSvgLayerFragment } from '@/engine-client/svgFragment';
 import { buildSvgShapeGroup, type BuiltSvgShapes } from '@core/svg/svgConvert';
 import { forgetSvgLayerSrc, readSvgLayer } from '@core/svg/svgLayer';
 import { buildLayerFragment, type BuiltLayers } from '@core/engine/offDocument';
@@ -311,16 +313,23 @@ export async function insertAssetLayer(session: AiEngineSession, asset: Imported
 }
 
 /**
- * `insertSvgLayer(markup, name, {x, y})` — the sanitized SVG document layer —
- * built off-document and inserted with ONE `pasteLayers`. Null = the sanitizer
- * refused the markup (nothing sent).
+ * The sanitized SVG document layer at {x, y} — laid into a fragment by the
+ * engine client (engine-client/svgFragment.ts, no off-document run) and
+ * inserted with ONE `pasteLayers`. Null = the sanitizer refused the markup
+ * (nothing sent).
  */
 export async function insertSvgMarkupLayer(session: AiEngineSession, markup: string, name: string, at: { x?: number; y?: number }): Promise<string | null> {
   const comp = activeCompRootId() as string;
-  let made: string | null = null;
-  const built = buildLayerFragment(comp, () => { made = insertSvgLayer(markup, name, at); });
-  if (!(made as string | null)) return null;
-  return pasteBuilt(session, comp, built);
+  const settings = documentMirror().comp(comp)?.settings;
+  const made = buildSvgLayerFragment(markup, name, {
+    compWidth: settings?.width ?? 1920,
+    compHeight: settings?.height ?? 1080,
+    ...(at.x !== undefined ? { x: at.x } : {}),
+    ...(at.y !== undefined ? { y: at.y } : {}),
+  });
+  if (!made) return null;
+  const r = await session.apply([{ type: 'pasteLayers', comp, fragment: made.built.fragment } as Command]);
+  return ((r[0] as { layers?: string[] }).layers ?? [])[0] ?? null;
 }
 
 /**

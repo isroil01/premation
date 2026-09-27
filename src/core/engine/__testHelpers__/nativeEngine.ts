@@ -57,14 +57,19 @@ export interface NativeEngine {
   stop(): Promise<void>;
 }
 
-export async function startNativeEngine(options: Partial<SupervisorOptions> = {}): Promise<NativeEngine> {
+/**
+ * `env`: variables added to the engine's environment. Jest gives a test file
+ * its own copy of `process.env`, which a spawned child does not inherit, so a
+ * suite that needs a variable in the engine passes it here.
+ */
+export async function startNativeEngine(options: Partial<SupervisorOptions> = {}, env: Record<string, string> = {}): Promise<NativeEngine> {
   const exe = nativeEngineExe();
   if (!exe) throw new Error('premation-engine is not built');
   let child: ChildProcess | null = null;
   const supervisor = new EngineSupervisor(
     {
       spawn: (file, args) => {
-        child = spawn(file, args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'], windowsHide: true });
+        child = spawn(file, args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, ...env } });
         return child as unknown as EngineChild;
       },
       resolveExe: () => exe,

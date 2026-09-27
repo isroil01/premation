@@ -33,6 +33,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { TemplateField } from '@core/template/templateTypes';
+import { partLabel } from '@core/mirror/mographFields';
 
 /** Stamped on an inserted group's meta component so the subtree can be
  *  recognised as one element later. Underscore-prefixed like the other internal
@@ -81,17 +82,10 @@ function descendants(rootId: string): string[] {
 
 /**
  * A readable label for a built child, from the id suffix the catalog authored
- * (`mg_3_kf9a_role` → "Role", `..._sub_title` → "Sub Title"). The suffixes are
- * the item author's own names for the parts, so they read better than anything
- * derivable from geometry — and this is the same string used for the layer name
- * at insert, so the Inspector field and the Layers row agree.
+ * — pure, shared with the mirror reader (core/mirror/mographFields.ts) so the
+ * Inspector field and the Layers row agree.
  */
-export function partLabel(rootId: string, childId: string): string {
-  const suffix = childId.startsWith(`${rootId}_`) ? childId.slice(rootId.length + 1) : childId;
-  const words = suffix.split(/[_-]+/).filter(Boolean);
-  if (words.length === 0) return 'Part';
-  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-}
+export { partLabel };
 
 /** True when this node's text is regenerated per frame from a data track, so a
  *  typed value would not survive. */

@@ -17,7 +17,18 @@
  * where it is missing) so it lands between interactions rather than inside one.
  */
 
-import { useCompositionStore } from '@stores/compositionStore';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { compRecordFromSettings } from '@core/mirror/compFacts';
+
+/** The active composition's size and background, from the document mirror (B4); the default comp when there is none. */
+function activeCompFrame(): { width: number; height: number; background: string; transparent: boolean } {
+  const id = activeCompIdNow();
+  const comp = id ? documentMirror().comp(id) : undefined;
+  const c = comp ? compRecordFromSettings(comp.id, comp.settings) : DEFAULT_COMPOSITION;
+  return { width: c.width, height: c.height, background: c.background, transparent: c.transparent };
+}
 
 type IdleHandle = { cancel(): void };
 
@@ -48,7 +59,7 @@ export function captureThumbnailWhenIdle(
     if (cancelled) return;
     // Read at render time, not at schedule time: an idle callback can land
     // seconds later, after a comp-size edit.
-    const c = useCompositionStore.getState();
+    const c = activeCompFrame();
     // Lazy: the export stack is only needed once a capture actually runs.
     void import('@core/export/exportManager')
       .then(({ renderThumbnailBlob }) =>

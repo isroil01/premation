@@ -3,12 +3,16 @@
  *
  * The canonical project (EditorDocument + authored TemplateFields) is what
  * the API stores. n8n later sends named inputs; it never sees layer ids.
+ *
+ * B4: the composition's facts (its authored fields, frame size, rate and
+ * length) are the CALLER's — the panel reads them from the document mirror
+ * (`CompSettings.templateFields` and the settings) — so this module reads no
+ * engine state of its own.
  */
 
 import { api, isAuthenticated } from '@core/api/client';
 import { liveDocument } from '@core/project/liveDocument';
-import { readAuthoredFields } from '@core/template/templateAuthoring';
-import { useCompositionStore } from '@stores/compositionStore';
+import type { TemplateField } from '@core/template/templateTypes';
 import { getCloudProjectId } from '@stores/cloudProjectStore';
 import { isPublicFieldId } from './fieldIds';
 
@@ -18,11 +22,25 @@ export interface PublishTemplateResult {
   error?: string;
 }
 
-export async function publishCurrentTemplate(name: string, description?: string): Promise<PublishTemplateResult> {
+/** The composition being published, as the caller read it. */
+export interface PublishedComposition {
+  /** Its authored template fields. */
+  fields: readonly TemplateField[];
+  width: number;
+  height: number;
+  fps: number;
+  durationSeconds: number;
+}
+
+export async function publishCurrentTemplate(
+  name: string,
+  comp: PublishedComposition,
+  description?: string,
+): Promise<PublishTemplateResult> {
   if (!isAuthenticated()) {
     return { ok: false, error: 'Sign in to save an automation template.' };
   }
-  const fields = readAuthoredFields();
+  const { fields } = comp;
   if (!fields.length) {
     return { ok: false, error: 'Expose at least one input (character, video, caption…) first.' };
   }
@@ -33,7 +51,6 @@ export async function publishCurrentTemplate(name: string, description?: string)
       error: `Rename input ids to n8n-friendly slugs (e.g. character): ${bad.map((f) => f.id).join(', ')}`,
     };
   }
-  const comp = useCompositionStore.getState().comp();
   try {
     const row = await api.publishAutomationTemplate({
       name: name.trim(),

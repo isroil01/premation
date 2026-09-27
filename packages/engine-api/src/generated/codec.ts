@@ -7621,20 +7621,33 @@ function encS_TranscribeJob(w: Writer, v: T.TranscribeJob): void {
   w.byte(10); w.str(v.layer);
   w.byte(18); w.str(v.language);
   w.byte(24); w.bool(v.createCaptions);
+  if (v.comp !== undefined) { w.varint(5634); w.str(v.comp); }
+  if (v.range !== undefined) { w.varint(5642); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); } }
+  w.varint(5650); w.str(v.provider);
+  if (v.credential !== undefined) { w.varint(5658); w.str(v.credential); }
 }
 function decS_TranscribeJob(r: Reader, end: number, o: any): T.TranscribeJob {
   let h_layer = false;
   let h_language = false;
   let h_createCaptions = false;
+  let h_provider = false;
   let v_layer: string | undefined;
   let v_language: string | undefined;
   let v_createCaptions: boolean | undefined;
+  let v_comp: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  let v_provider: string | undefined;
+  let v_credential: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_layer = r.str(); h_layer = true; break;
       case 18: v_language = r.str(); h_language = true; break;
       case 24: v_createCaptions = r.bool(); h_createCaptions = true; break;
+      case 5634: v_comp = r.str(); break;
+      case 5642: v_range = decS_TimeRange(r, r.ldEnd(), {}); break;
+      case 5650: v_provider = r.str(); h_provider = true; break;
+      case 5658: v_credential = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -7642,9 +7655,14 @@ function decS_TranscribeJob(r: Reader, end: number, o: any): T.TranscribeJob {
   if (!h_layer) throw new DecodeError('TranscribeJob.layer: missing', 'missingField');
   if (!h_language) throw new DecodeError('TranscribeJob.language: missing', 'missingField');
   if (!h_createCaptions) throw new DecodeError('TranscribeJob.createCaptions: missing', 'missingField');
+  if (!h_provider) throw new DecodeError('TranscribeJob.provider: missing', 'missingField');
   o.layer = v_layer;
   o.language = v_language;
   o.createCaptions = v_createCaptions;
+  if (v_comp !== undefined) o.comp = v_comp;
+  if (v_range !== undefined) o.range = v_range;
+  o.provider = v_provider;
+  if (v_credential !== undefined) o.credential = v_credential;
   return o;
 }
 function encS_AudioAnalysisJob(w: Writer, v: T.AudioAnalysisJob): void {
@@ -8480,6 +8498,7 @@ function encS_LayerInfo(w: Writer, v: T.LayerInfo): void {
   w.varint(954); w.str(v.managedBy);
   w.varint(962); w.str(v.mographId);
   w.varint(7360); w.varint(enc_SvgRole(v.svg));
+  if (v.pluginSchemaVersion !== undefined) { w.varint(7368); w.u32(v.pluginSchemaVersion); }
 }
 function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   const l_children: string[] = [];
@@ -8521,6 +8540,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let v_managedBy: string | undefined;
   let v_mographId: string | undefined;
   let v_svg: T.SvgRole | undefined;
+  let v_pluginSchemaVersion: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -8546,6 +8566,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
       case 954: v_managedBy = r.str(); h_managedBy = true; break;
       case 962: v_mographId = r.str(); h_mographId = true; break;
       case 7360: v_svg = dec_SvgRole(r.varint()); h_svg = true; break;
+      case 7368: v_pluginSchemaVersion = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -8589,6 +8610,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   o.managedBy = v_managedBy;
   o.mographId = v_mographId;
   o.svg = v_svg;
+  if (v_pluginSchemaVersion !== undefined) o.pluginSchemaVersion = v_pluginSchemaVersion;
   return o;
 }
 function encS_MemberExpression(w: Writer, v: T.MemberExpression): void {
@@ -9290,6 +9312,64 @@ function decS_CopyEffects(r: Reader, end: number, o: any): T.CopyEffects {
   if (!h_layer) throw new DecodeError('CopyEffects.layer: missing', 'missingField');
   o.layer = v_layer;
   o.effects = l_effects;
+  return o;
+}
+function encS_GetSearchFacts(w: Writer, v: T.GetSearchFacts): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+}
+function decS_GetSearchFacts(r: Reader, end: number, o: any): T.GetSearchFacts {
+  const l_layers: string[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.layers = l_layers;
+  return o;
+}
+function encS_LayerSearchFacts(w: Writer, v: T.LayerSearchFacts): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.effects; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+  { const a = v.expressions; for (let i = 0; i < a.length; i++) { w.byte(26); w.str(a[i]!); } }
+}
+function decS_LayerSearchFacts(r: Reader, end: number, o: any): T.LayerSearchFacts {
+  const l_effects: string[] = [];
+  const l_expressions: string[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_effects.push(r.str()); break;
+      case 26: l_expressions.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('LayerSearchFacts.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.effects = l_effects;
+  o.expressions = l_expressions;
+  return o;
+}
+function encS_SearchFactsList(w: Writer, v: T.SearchFactsList): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_LayerSearchFacts(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SearchFactsList(r: Reader, end: number, o: any): T.SearchFactsList {
+  const l_layers: T.LayerSearchFacts[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(decS_LayerSearchFacts(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.layers = l_layers;
   return o;
 }
 function encS_MemberTrack(w: Writer, v: T.MemberTrack): void {
@@ -10790,6 +10870,7 @@ function encS_EvaluateExpression(w: Writer, v: T.EvaluateExpression): void {
   w.byte(10); { const s = w.beginLd(); encS_PropRef(w, v.prop); w.endLd(s); }
   w.byte(16); w.i64(v.time);
   w.byte(26); w.str(v.source);
+  if (v.member !== undefined) { w.byte(32); w.u32(v.member); }
 }
 function decS_EvaluateExpression(r: Reader, end: number, o: any): T.EvaluateExpression {
   let h_prop = false;
@@ -10798,12 +10879,14 @@ function decS_EvaluateExpression(r: Reader, end: number, o: any): T.EvaluateExpr
   let v_prop: T.PropRef | undefined;
   let v_time: number | undefined;
   let v_source: string | undefined;
+  let v_member: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_prop = decS_PropRef(r, r.ldEnd(), {}); h_prop = true; break;
       case 16: v_time = r.i64(); h_time = true; break;
       case 26: v_source = r.str(); h_source = true; break;
+      case 32: v_member = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -10814,6 +10897,7 @@ function decS_EvaluateExpression(r: Reader, end: number, o: any): T.EvaluateExpr
   o.prop = v_prop;
   o.time = v_time;
   o.source = v_source;
+  if (v_member !== undefined) o.member = v_member;
   return o;
 }
 function encS_ReadPixels(w: Writer, v: T.ReadPixels): void {
@@ -11151,21 +11235,57 @@ function decS_ParagraphLayout(r: Reader, end: number, o: any): T.ParagraphLayout
 function encS_ExpressionEvaluation(w: Writer, v: T.ExpressionEvaluation): void {
   if (v.value !== undefined) { w.byte(10); { const s = w.beginLd(); encU_Value(w, v.value); w.endLd(s); } }
   { const a = v.diagnostics; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_ExpressionDiagnostic(w, a[i]!); w.endLd(s); } } }
+  if (v.text !== undefined) { w.byte(26); { const s = w.beginLd(); encS_SourceTextPreview(w, v.text); w.endLd(s); } }
 }
 function decS_ExpressionEvaluation(r: Reader, end: number, o: any): T.ExpressionEvaluation {
   const l_diagnostics: T.ExpressionDiagnostic[] = [];
   let v_value: T.Value | undefined;
+  let v_text: T.SourceTextPreview | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_value = decU_Value(r, r.ldEnd()); break;
       case 18: l_diagnostics.push(decS_ExpressionDiagnostic(r, r.ldEnd(), {})); break;
+      case 26: v_text = decS_SourceTextPreview(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
   r.expectAt(end);
   if (v_value !== undefined) o.value = v_value;
   o.diagnostics = l_diagnostics;
+  if (v_text !== undefined) o.text = v_text;
+  return o;
+}
+function encS_SourceTextPreview(w: Writer, v: T.SourceTextPreview): void {
+  w.byte(10); w.str(v.text);
+  { const a = v.styleKeys; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+  w.byte(24); w.u32(v.ranges);
+  { const a = v.rangeKeys; for (let i = 0; i < a.length; i++) { w.byte(34); w.str(a[i]!); } }
+}
+function decS_SourceTextPreview(r: Reader, end: number, o: any): T.SourceTextPreview {
+  const l_styleKeys: string[] = [];
+  const l_rangeKeys: string[] = [];
+  let h_text = false;
+  let h_ranges = false;
+  let v_text: string | undefined;
+  let v_ranges: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_text = r.str(); h_text = true; break;
+      case 18: l_styleKeys.push(r.str()); break;
+      case 24: v_ranges = r.u32(); h_ranges = true; break;
+      case 34: l_rangeKeys.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_text) throw new DecodeError('SourceTextPreview.text: missing', 'missingField');
+  if (!h_ranges) throw new DecodeError('SourceTextPreview.ranges: missing', 'missingField');
+  o.text = v_text;
+  o.styleKeys = l_styleKeys;
+  o.ranges = v_ranges;
+  o.rangeKeys = l_rangeKeys;
   return o;
 }
 function encS_PixelSamples(w: Writer, v: T.PixelSamples): void {
@@ -15322,6 +15442,7 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'getSvgDocument': w.varint(15130); { const s = w.beginLd(); encS_GetSvgDocument(w, v); w.endLd(s); } return;
     case 'getCryptomatte': w.varint(15138); { const s = w.beginLd(); encS_GetCryptomatte(w, v); w.endLd(s); } return;
     case 'getMemberKeyframes': w.varint(15146); { const s = w.beginLd(); encS_GetMemberKeyframes(w, v); w.endLd(s); } return;
+    case 'getSearchFacts': w.varint(15154); { const s = w.beginLd(); encS_GetSearchFacts(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -15372,6 +15493,7 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 15130: out = decS_GetSvgDocument(r, r.ldEnd(), { type: 'getSvgDocument' }) as T.Query; break;
       case 15138: out = decS_GetCryptomatte(r, r.ldEnd(), { type: 'getCryptomatte' }) as T.Query; break;
       case 15146: out = decS_GetMemberKeyframes(r, r.ldEnd(), { type: 'getMemberKeyframes' }) as T.Query; break;
+      case 15154: out = decS_GetSearchFacts(r, r.ldEnd(), { type: 'getSearchFacts' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -15422,6 +15544,7 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'getSvgDocument': w.varint(15130); { const s = w.beginLd(); encS_SvgDocument(w, v); w.endLd(s); } return;
     case 'getCryptomatte': w.varint(15138); { const s = w.beginLd(); encS_CryptomatteInfo(w, v); w.endLd(s); } return;
     case 'getMemberKeyframes': w.varint(15146); { const s = w.beginLd(); encS_MemberTracks(w, v); w.endLd(s); } return;
+    case 'getSearchFacts': w.varint(15154); { const s = w.beginLd(); encS_SearchFactsList(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -15472,6 +15595,7 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 15130: out = decS_SvgDocument(r, r.ldEnd(), { type: 'getSvgDocument' }) as T.QueryResult; break;
       case 15138: out = decS_CryptomatteInfo(r, r.ldEnd(), { type: 'getCryptomatte' }) as T.QueryResult; break;
       case 15146: out = decS_MemberTracks(r, r.ldEnd(), { type: 'getMemberKeyframes' }) as T.QueryResult; break;
+      case 15154: out = decS_SearchFactsList(r, r.ldEnd(), { type: 'getSearchFacts' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -15868,6 +15992,9 @@ export const codecs = {
   CopyKeyframes: mk<T.CopyKeyframes>(encS_CopyKeyframes, (r, e) => decS_CopyKeyframes(r, e, {})),
   GetMemberKeyframes: mk<T.GetMemberKeyframes>(encS_GetMemberKeyframes, (r, e) => decS_GetMemberKeyframes(r, e, {})),
   CopyEffects: mk<T.CopyEffects>(encS_CopyEffects, (r, e) => decS_CopyEffects(r, e, {})),
+  GetSearchFacts: mk<T.GetSearchFacts>(encS_GetSearchFacts, (r, e) => decS_GetSearchFacts(r, e, {})),
+  LayerSearchFacts: mk<T.LayerSearchFacts>(encS_LayerSearchFacts, (r, e) => decS_LayerSearchFacts(r, e, {})),
+  SearchFactsList: mk<T.SearchFactsList>(encS_SearchFactsList, (r, e) => decS_SearchFactsList(r, e, {})),
   MemberTrack: mk<T.MemberTrack>(encS_MemberTrack, (r, e) => decS_MemberTrack(r, e, {})),
   MemberTracks: mk<T.MemberTracks>(encS_MemberTracks, (r, e) => decS_MemberTracks(r, e, {})),
   CopiedEffects: mk<T.CopiedEffects>(encS_CopiedEffects, (r, e) => decS_CopiedEffects(r, e, {})),
@@ -15931,6 +16058,7 @@ export const codecs = {
   TextLayoutOverrides: mk<T.TextLayoutOverrides>(encS_TextLayoutOverrides, (r, e) => decS_TextLayoutOverrides(r, e, {})),
   ParagraphLayout: mk<T.ParagraphLayout>(encS_ParagraphLayout, (r, e) => decS_ParagraphLayout(r, e, {})),
   ExpressionEvaluation: mk<T.ExpressionEvaluation>(encS_ExpressionEvaluation, (r, e) => decS_ExpressionEvaluation(r, e, {})),
+  SourceTextPreview: mk<T.SourceTextPreview>(encS_SourceTextPreview, (r, e) => decS_SourceTextPreview(r, e, {})),
   PixelSamples: mk<T.PixelSamples>(encS_PixelSamples, (r, e) => decS_PixelSamples(r, e, {})),
   Dependencies: mk<T.Dependencies>(encS_Dependencies, (r, e) => decS_Dependencies(r, e, {})),
   HistoryEntry: mk<T.HistoryEntry>(encS_HistoryEntry, (r, e) => decS_HistoryEntry(r, e, {})),

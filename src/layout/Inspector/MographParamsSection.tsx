@@ -13,49 +13,42 @@
  * to the catalog later gets its blanks for free.
  */
 
-import { useMemo } from 'react';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import { Input } from '@components/Input';
 import { ColorPicker } from '@components/ColorPicker';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flicksToSeconds, type Command } from '@motion/engine-api';
-import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
+import { flicksToSeconds, secondsToFlicks, type Command } from '@motion/engine-api';
+import { documentMirror } from '@stores/documentMirror';
 import { childOrderOf } from '@core/mirror/layerTree';
-import { useMirrorKeys } from '@hooks/useMirror';
-import { fieldWrite } from '@core/engine/propRefs';
+import {
+  mirrorMographFieldValue, mirrorMographFields, mirrorMographRoot, mographPartIds, mographWatchKeys,
+} from '@core/mirror/mographFields';
+import { useMirrorKeys, useRetainTrees } from '@hooks/useMirror';
 import { getTime } from '@stores/playbackClockStore';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useGesture } from '@hooks/useGesture';
-import { sourceTextCommand } from '@layout/Text/textEdits';
+import { templateFieldCommands as fieldCommandsAt } from '@layout/Templates/templateFieldEdits';
 import { useEngineEdit } from './useEngineEdit';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
-import { readMographFields } from '@core/library/mographParams';
 import { getMographItem, mographDuration, mographRestTime } from '@core/library/mographLibrary';
 import { previewChoreography } from '@core/library/insertPreview';
 import type { TemplateField } from '@core/template/templateTypes';
 import styles from './MographParamsSection.module.css';
 
+const NO_PARTS: string[] = [];
+
 export function MographParamsSection(): JSX.Element | null {
   const selected = useSelectionStore((s) => s.ids);
-  // Field values live in the SCENE, not in a store — re-read them whenever the
-  // scene changes so an edit made anywhere else (canvas, layers, AI) shows here.
-  // B4: which group is an inserted element is its mirror header (`LayerInfo.mographId`), found up the parent chain.
-  // B4-gap: its FIELDS are a child's Text / Style COMPONENT props (skipped when Source Text is a data track) —
-  // `readMographFields` walks the scene graph; they become `text/sourceText` / `layer/fill` of the children once the
-  // TemplateField target is path-addressed.
-  const revision = useSceneRevision();
+  // B4: everything from the document mirror — which group is an inserted
+  // element (`LayerInfo.mographId`, up the parent chain), its parts, and each
+  // part's Source Text / Fill Color (mographFields.ts). Subscribed to exactly
+  // those keys, so an edit made anywhere else (canvas, layers, AI) shows here.
   const primary = selected[0] ?? null;
-  useMirrorKeys(['layers', ...(primary ? [`layer:${primary}`] : [])]);
-  const root = mirrorMographRoot(documentMirror(), primary);
-
-  // `revision` is a real dependency even though the call does not take it: it
-  // reads the live SceneGraph, so the answer changes when the scene does and
-  // the memo has to be invalidated by the revision counter. eslint can only see
-  // the arguments, hence the disable.
-  /* eslint-disable react-hooks/exhaustive-deps */
-  const fields = useMemo(() => (root ? readMographFields(root) : []), [root, revision]);
-  /* eslint-enable react-hooks/exhaustive-deps */
+  const m = documentMirror();
+  useMirrorKeys(mographWatchKeys(m, primary));
+  const root = mirrorMographRoot(m, primary);
+  useRetainTrees(root ? mographPartIds(m, root) : NO_PARTS);
+  const fields = mirrorMographFields(m, root);
 
   if (!root || fields.length === 0) return null;
 
@@ -106,20 +99,6 @@ export function MographParamsSection(): JSX.Element | null {
   );
 }
 
-/**
- * The inserted-element root at or above `layerId` (the twin of `findMographRoot`): the nearest layer up the parent
- * chain whose header names a motion-graphics item. Selecting a child layer still offers the element's fields — that
- * is where a user lands after clicking the thing on canvas.
- */
-function mirrorMographRoot(m: DocumentMirror, layerId: string | null): string | null {
-  let cursor = layerId ? m.layer(layerId) : undefined;
-  for (let guard = 0; cursor && guard < 64; guard++) {
-    if (cursor.mographId) return cursor.id;
-    cursor = cursor.parent ? m.layer(cursor.parent) : undefined;
-  }
-  return null;
-}
-
 /** Earliest keyframe time (seconds) anywhere in the element — where its
  *  choreography was written. Falls back to 0 for an element with no tracks. */
 function elementStart(rootId: string): number {
@@ -139,37 +118,39 @@ function elementStart(rootId: string): number {
   return Number.isFinite(earliest) ? earliest : 0;
 }
 
-/** Current value of a field, read from the scene rather than remembered — this
- *  panel has no store of its own, and the scene is the authority. */
-function currentValue(field: TemplateField): string {
-  // B4-gap: the field's target is a COMPONENT prop (TemplateField.target) — see MographParamsSection.
-  const node = defaultSceneGraph.getNode(field.target.nodeId);
-  const comp = node?.components.find((c) => c.type === field.target.componentType);
-  const v = comp ? (comp.props as Record<string, unknown>)[field.target.prop] : undefined;
-  return v === undefined || v === null ? String(field.default ?? '') : String(v);
+/**
+ * The engine commands for "field := value" at the playhead — the fill-in
+ * panel's writer: a text part is the child layer's Source Text
+ * (`text/sourceText`, style runs kept), a colour its Fill Color (`layer/fill`;
+ * a key at the playhead when the fill is animated, AE). [] when the child is
+ * not an addressable layer.
+ */
+function templateFieldCommands(field: TemplateField, value: string): Command[] {
+  return fieldCommandsAt(field, value, getTime()) ?? [];
 }
 
 /**
- * The engine commands for "field := value": a text part is the child layer's
- * Source Text (`text/sourceText`, style runs kept — sourceTextCommand), a
- * colour its fill (`layer/fill`; a key at the playhead when the fill is
- * animated, AE). [] when the child is not an addressable layer.
+ * A field's current value — re-read on every render (the section re-renders
+ * its rows on each part's mirror keys). Text is the part's Source Text from the
+ * mirror (a field exists only for un-keyed text, so no playhead is involved).
  */
-function templateFieldCommands(field: TemplateField, value: string): Command[] {
-  const { nodeId, componentType, prop } = field.target;
-  const seconds = getTime();
-  if (componentType === 'Text' && prop === 'content') return sourceTextCommand(nodeId, value, seconds) ?? [];
-  if (prop === 'fill') {
-    // B4-gap: `fieldWrite` composes the write per component id (the B3 write layer).
-    const comp = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === componentType);
-    const w = comp ? fieldWrite(nodeId, comp.id, 'fill', value, seconds) : null;
-    return w ? [{ type: 'setProperty', prop: w.prop, value: w.value, ...(w.time !== undefined ? { time: w.time } : {}) }] : [];
+function currentValue(field: TemplateField): string {
+  if (field.kind === 'color') {
+    // B4-gap: the STORED CSS colour — the catalog paints with `rgba(r,g,b,a)` strings, and the TS engine's
+    // `layer/fill` reads anything but hex as white (parseColorChannels in fields.ts colorValue), so the mirror would
+    // show every translucent part as #ffffff. Closes when both engines parse CSS rgb()/rgba() fills into the color
+    // Value; then `mirrorMographFieldValue` answers it.
+    const node = defaultSceneGraph.getNode(field.target.nodeId);
+    const fill = node?.components
+      .filter((c) => c.type === 'Style' || c.type === 'Text')
+      .map((c) => (c.props as Record<string, unknown>).fill)
+      .find((f): f is string => typeof f === 'string');
+    if (fill !== undefined) return fill;
   }
-  return [];
+  return mirrorMographFieldValue(documentMirror(), field, secondsToFlicks(getTime()));
 }
 
 function FieldRow({ field }: { field: TemplateField }): JSX.Element {
-  useSceneRevision(); // re-read after any scene write (B4-gap: component-prop target, see above)
   const value = currentValue(field);
   const eng = useEngineEdit();
   // A typing session (first keystroke → blur) is ONE undo entry; the canvas

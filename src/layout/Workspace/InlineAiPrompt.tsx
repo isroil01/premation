@@ -29,14 +29,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@components/Button';
 import { Kbd } from '@components/Kbd';
 import { aiEnabled } from '@core/config/edition';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readGeometry } from '@core/workspace/geometry';
+import { secondsToFlicks, type OverlayKind } from '@motion/engine-api';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { MAIN_VIEWPORT, overlayLayer, requestOverlayLayers, subscribeOverlayGeometry } from '@stores/overlayGeometry';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { documentMirror } from '@stores/documentMirror';
 import { useCurrentTime } from '@stores/playbackClockStore';
 import { useInlineAiPromptStore } from './inlineAiPromptStore';
-import { layerScreenMapping } from './layerScreen';
 import { useAiChat } from './useAiChat';
 import styles from './InlineAiPrompt.module.css';
 
@@ -44,6 +43,8 @@ import styles from './InlineAiPrompt.module.css';
 const CARD_W = 340;
 /** Gap between the selection's box and the card. */
 const GAP = 8;
+/** The overlay geometry the card anchors on: the targets' drawn boxes. */
+const ANCHOR_KINDS: ReadonlyArray<OverlayKind> = ['bounds'];
 
 export function InlineAiPrompt(): JSX.Element | null {
   const open = useInlineAiPromptStore((s) => s.open);
@@ -76,10 +77,21 @@ function InlineAiPromptCard({ targetIds }: { targetIds: readonly string[] }): JS
     setStage({ w: Math.round(r.width), h: Math.round(r.height) });
   }, [sceneTick]);
 
+  // B4: the targets' drawn boxes arrive with the frame (the overlay geometry push).
+  const [geoTick, setGeoTick] = useState(0);
+  useEffect(() => {
+    void requestOverlayLayers(MAIN_VIEWPORT, 'inlineAi', targetIds, ANCHOR_KINDS).then(() => setGeoTick((t) => t + 1));
+    const off = subscribeOverlayGeometry(MAIN_VIEWPORT, () => setGeoTick((t) => t + 1));
+    return () => {
+      off();
+      void requestOverlayLayers(MAIN_VIEWPORT, 'inlineAi', [], ANCHOR_KINDS);
+    };
+  }, [targetIds]);
+
   const anchor = useMemo(
-    () => selectionScreenRect(targetIds, time, comp),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton
-    [targetIds, time, comp.width, comp.height, sceneTick],
+    () => selectionScreenRect(targetIds, time),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton; the tick is the push landing
+    [targetIds, time, comp.width, comp.height, sceneTick, geoTick],
   );
 
   const submit = useCallback(() => {
@@ -183,24 +195,20 @@ function InlineAiPromptCard({ targetIds }: { targetIds: readonly string[] }): JS
 function selectionScreenRect(
   ids: readonly string[],
   time: number,
-  comp: { width: number; height: number },
 ): { x: number; y: number; w: number; h: number } | null {
-  const camera = getWorkspaceController().ws.camera;
+  const ws = getWorkspaceController().ws;
+  const at = secondsToFlicks(time);
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
   for (const id of ids) {
-    const node = defaultSceneGraph.getNode(id as never);
-    if (!node) continue;
-    const g = readGeometry(node);
-    if (!g) continue;
-    const mapping = layerScreenMapping(id, time, comp, camera);
-    if (!mapping) continue;
-    const hw = g.width / 2;
-    const hh = g.height / 2;
-    for (const [lx, ly] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]] as const) {
-      const p = mapping.localToScreen(lx, ly);
+    // The drawn box's corners in comp space, through the 2D world chain (the
+    // push's `bounds`): a 3D layer anchors on its unprojected footprint.
+    const c = overlayLayer(MAIN_VIEWPORT, id, at)?.corners;
+    if (!c || c.length < 8) continue;
+    for (let i = 0; i < 8; i += 2) {
+      const p = ws.worldToScreen({ x: c[i]!, y: c[i + 1]! });
       if (p.x < minX) minX = p.x;
       if (p.y < minY) minY = p.y;
       if (p.x > maxX) maxX = p.x;

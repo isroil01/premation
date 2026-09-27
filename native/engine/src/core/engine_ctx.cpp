@@ -422,6 +422,25 @@ std::vector<std::uint8_t> FilePorts::read_file_bytes(const std::string& path) {
   return out;
 }
 
+std::string local_file_url(std::string_view path) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out = "local-file://";
+  if (path.empty() || (path.front() != '/' && path.front() != '\\')) out += '/';
+  for (const char ch : path) {
+    const auto c = static_cast<unsigned char>(ch == '\\' ? '/' : ch);
+    const bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+                       c == '.' || c == '~' || c == '/' || c == ':';
+    if (plain) {
+      out.push_back(static_cast<char>(c));
+    } else {
+      out.push_back('%');
+      out.push_back(kHex[c >> 4U]);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+      out.push_back(kHex[c & 15U]);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+    }
+  }
+  return out;
+}
+
 // ── FilePorts: footage import (session footage never stays a blob:) ────────
 
 namespace {
@@ -430,7 +449,8 @@ bool any_suffix(std::string_view name, std::initializer_list<std::string_view> s
   return std::any_of(suffixes.begin(), suffixes.end(), [name](std::string_view s) { return ends_with_ci(name, s); });
 }
 
-/// assetStore's `type` from a file name (and a MIME type when there is one).
+/// assetStore's `type` from a file name (and a MIME type when there is one),
+/// for when the probe named none.
 std::string footage_type(std::string_view name, std::string_view mime) {
   if (mime.starts_with("audio/")) return "audio";
   if (mime.starts_with("image/")) return "image";
@@ -463,18 +483,19 @@ std::string utf8_of(const std::filesystem::path& p) {
 
 }  // namespace
 
-Json FilePorts::record_for(const std::string& path, const std::string& name, const std::string& id) {
-  const std::filesystem::path p(std::u8string(path.begin(), path.end()));
+Json FilePorts::record_for(const std::string& path, const std::string& name, const std::string& id, std::string_view mime) {
+  Json facts = Json::object();
+  std::string error;
+  if (!probe_ || !probe_(path, facts, error)) fail(api::ErrorCode::io, error.empty() ? "the file could not be read" : error);
   std::error_code ec;
-  if (!std::filesystem::is_regular_file(p, ec)) fail(api::ErrorCode::io, "could not import '" + path + "': not a readable file");
-  const std::uintmax_t size = std::filesystem::file_size(p, ec);
+  const auto size = std::filesystem::file_size(std::filesystem::path(std::u8string(path.begin(), path.end())), ec);
   Json a = Json::object();
   a.set("id", Json::string(id));
   a.set("name", Json::string(name));
-  a.set("type", Json::string(footage_type(name, {})));
-  a.set("src", Json::string(path));
+  a.set("type", facts.at("type").is_string() ? facts.at("type") : Json::string(footage_type(name, mime)));
+  a.set("src", Json::string(local_file_url(path)));
   a.set("size", Json::number(ec ? 0.0 : static_cast<double>(size)));
-  a.set("metadata", probe_ ? probe_(path) : Json::object());
+  if (facts.at("metadata").is_object()) a.set("metadata", facts.at("metadata"));
   a.set("path", Json::string(path));
   return a;
 }
@@ -497,8 +518,8 @@ Json FilePorts::import_bytes(const api::ImportBytesFile& file, const std::string
   if (!std::filesystem::is_regular_file(target, ec) || std::filesystem::file_size(target, ec) != file.data.size()) {
     write_file_atomic(target, bytes);
   }
-  Json a = record_for(utf8_of(target), file.name, id);
-  if (!file.mime_type.empty()) a.set("type", Json::string(footage_type(file.name, file.mime_type)));
+  // The probe's type wins; the caller's MIME type only where the probe named none.
+  Json a = record_for(utf8_of(target), file.name, id, file.mime_type);
   // The original on disk, when the picker knew it (relink / collect read it); the cache file otherwise.
   if (file.origin_path && !file.origin_path->empty()) a.set("path", Json::string(*file.origin_path));
   return a;
@@ -508,20 +529,22 @@ Json FilePorts::probe_file(const std::string& path) {
   Json out = Json::object();
   out.set("name", Json::string(base_name(path)));
   std::error_code ec;
-  const std::filesystem::path p(std::u8string(path.begin(), path.end()));
-  if (const std::uintmax_t size = std::filesystem::file_size(p, ec); !ec) out.set("size", Json::number(static_cast<double>(size)));
-  if (probe_) {
-    try {
-      out.set("metadata", probe_(path));
-    } catch (const EngineFail&) {
-      // Relinking to an unreadable file keeps the old facts (the TS port's probe tier `none`).
-    }
+  const auto size = std::filesystem::file_size(std::filesystem::path(std::u8string(path.begin(), path.end())), ec);
+  if (!ec) out.set("size", Json::number(static_cast<double>(size)));
+  Json facts = Json::object();
+  std::string error;
+  // Relinking to an unreadable file keeps the old facts (the TS port's probe tier `none`).
+  if (probe_ && probe_(path, facts, error)) {
+    if (facts.at("type").is_string()) out.set("type", facts.at("type"));
+    if (facts.at("metadata").is_object()) out.set("metadata", facts.at("metadata"));
   }
   return out;
 }
 
 Json FilePorts::read_project(const std::string& path) {
   const std::filesystem::path p(std::u8string(path.begin(), path.end()));
+  // A template package carries its document inside a zip (exportMogrt.ts).
+  if (is_mogrt_path(path)) return read_mogrt(p);
   std::error_code dirEc;
   // F2: a `.motion` bundle is a directory (bundleCodec.ts `decodeBundle`).
   if (std::filesystem::is_directory(p, dirEc)) return read_bundle(p);

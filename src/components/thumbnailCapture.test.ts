@@ -13,9 +13,30 @@ jest.mock('@core/export/exportManager', () => ({
   renderThumbnailBlob: (comp: unknown) => mockRender(comp),
 }));
 
+// The active comp comes off the document mirror (B4): its settings, as the
+// engine states them (0..1 colour, flicks), turned into the comp record.
 let mockComp = { width: 1920, height: 1080, background: '#101014', transparent: false };
-jest.mock('@stores/compositionStore', () => ({
-  useCompositionStore: { getState: () => mockComp },
+const hexColor = (hex: string) => ({
+  r: parseInt(hex.slice(1, 3), 16) / 255,
+  g: parseInt(hex.slice(3, 5), 16) / 255,
+  b: parseInt(hex.slice(5, 7), 16) / 255,
+  a: 1,
+});
+jest.mock('@hooks/useMirror', () => ({ activeCompIdNow: () => 'comp_1' }));
+jest.mock('@stores/documentMirror', () => ({
+  documentMirror: () => ({
+    comp: (id: string) => (id === 'comp_1'
+      ? {
+        id,
+        settings: {
+          name: 'Comp 1', width: mockComp.width, height: mockComp.height, pixelAspect: 1,
+          frameRate: { num: 30, den: 1 }, duration: 0, startTimecode: 0,
+          background: hexColor(mockComp.background), transparent: mockComp.transparent,
+          globalLightAngle: 135, globalLightAltitude: 45,
+        },
+      }
+      : undefined),
+  }),
 }));
 
 import { captureThumbnailWhenIdle } from './thumbnailCapture';

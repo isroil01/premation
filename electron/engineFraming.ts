@@ -374,6 +374,63 @@ export function withCausedBy(msg: Uint8Array, seq: number | null): Uint8Array | 
   return withInnerVarint(msg, 4, seq);
 }
 
+// ── the transcribe job's provider key (schema 70_jobs.eapi TranscribeJob) ──
+//
+// Main holds the user's speech-provider key; the page never has it. A
+// startJob{transcribe} passing through main gets the key written into its
+// `credential` here, on the way to the engine only: what main logs is the
+// same request with the credential removed.
+
+/** EngineMessage.request → Request.body → RequestBody.command → Command.startJob → StartJob.job → JobSpec.transcribe. */
+const TRANSCRIBE_PATH = [3, 2, 1, 850, 1, 6] as const;
+const TRANSCRIBE_PROVIDER = 706;
+const TRANSCRIBE_CREDENTIAL = 707;
+
+/** `msg` with the length-delimited field at `path` (one field number per level) replaced by `fn(body)`; null when absent / malformed. */
+function rewriteAt(msg: Uint8Array, path: readonly number[], fn: (body: Uint8Array) => Uint8Array | null): Uint8Array | null {
+  if (path.length === 0) return fn(msg);
+  const top = rawFields(msg);
+  if (!top) return null;
+  const idx = top.findIndex((f) => f.field === path[0] && f.wire === WT_LEN && f.body !== null);
+  if (idx < 0) return null;
+  const inner = rewriteAt(top[idx]!.body!, path.slice(1), fn);
+  if (!inner) return null;
+  return concat(top.map((f, i) => (i === idx ? new ProtoWriter().bytesField(f.field, inner).done() : f.raw)));
+}
+
+/**
+ * The provider a startJob{transcribe} request names ('' when it names none),
+ * or null when the request is not one.
+ */
+export function transcribeProviderOf(msg: Uint8Array): string | null {
+  let provider: string | null = null;
+  rewriteAt(msg, TRANSCRIBE_PATH, (body) => {
+    const f = rawFields(body);
+    if (!f) return null;
+    const p = f.find((x) => x.field === TRANSCRIBE_PROVIDER && x.wire === WT_LEN && x.body);
+    provider = p?.body ? text.decode(p.body) : '';
+    return null;
+  });
+  return provider;
+}
+
+/**
+ * A startJob{transcribe} request with its `credential` set to `key` (any value
+ * the page sent is dropped), or removed when `key` is ''. The request
+ * unchanged when it is not a transcribe job.
+ */
+export function withTranscribeCredential(msg: Uint8Array, key: string): Uint8Array {
+  const out = rewriteAt(msg, TRANSCRIBE_PATH, (body) => {
+    const f = rawFields(body);
+    if (!f) return null;
+    // 707 is TranscribeJob's highest field: appending keeps the canonical order.
+    const parts = f.filter((x) => x.field !== TRANSCRIBE_CREDENTIAL).map((x) => x.raw);
+    if (key) parts.push(new ProtoWriter().str(TRANSCRIBE_CREDENTIAL, key).done());
+    return concat(parts);
+  });
+  return out ?? msg;
+}
+
 export interface RequestPeek {
   body: 'command' | 'query' | 'batch';
   /** The command's schema id (the Command union's field number). */

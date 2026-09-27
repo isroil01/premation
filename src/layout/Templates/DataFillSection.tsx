@@ -149,6 +149,7 @@ export function DataFillSection({ fields }: { fields: ReadonlyArray<TemplateFiel
     const from = resumeFrom ?? 0;
     setBatch({ fraction: from / table.rows.length, done: from, total: table.rows.length });
     try {
+      // B4-kept: a batch render — the TS renderer's job over the engine's document (renderer input, D5/F1).
       const summary = await runEditorBatchRender({
         table,
         fields,

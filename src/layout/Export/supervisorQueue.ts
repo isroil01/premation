@@ -50,6 +50,8 @@ export function shouldUseSupervisor(format: ExportFormat | string, exportInProce
     !exportInProcess
     && SUPERVISED.has(format)
     && exportSupervisorAvailable()
+    // B4-gap: portability is a test on each record's `src` (`blob:` URLs only this window can read) — ItemInfo
+    // has no source URL; closes with the item's stored source ref in the API.
     && currentProjectSnapshotIsPortable(useAssetStore.getState().assets)
   );
 }

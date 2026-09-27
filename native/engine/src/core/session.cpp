@@ -112,8 +112,7 @@ Session::Session(Outbox& out, FrameSink& sink, SessionOptions options)
     : out_(out), sink_(sink), options_(std::move(options)) {
   if (options_.testPorts) ports_ = std::make_unique<doc::FakePorts>(options_.testPortsDir);
   else {
-    auto files = std::make_unique<doc::FilePorts>();
-    if (options_.probeFile) files->set_probe(options_.probeFile);
+    auto files = std::make_unique<doc::FilePorts>(options_.mediaProbe);
     files->set_footage_dir(options_.footageDir);
     ports_ = std::move(files);
   }
@@ -315,6 +314,7 @@ void Session::handle_request(api::Request request, Clock::time_point now) {
 
 api::Outcome Session::handle_request_body(const api::Request& request, Clock::time_point now) {
   api::Outcome o;
+  jobLog_.reset();
   try {
     if (request.base_revision && *request.base_revision != revision_) {
       fail(ErrorCode::conflict,
@@ -336,7 +336,22 @@ api::Outcome Session::handle_request_body(const api::Request& request, Clock::ti
         } else {
           r = run_control(cmd, request.origin, now);
         }
+        if (cmd.kind() == api::Command::Kind::apply_job_result && jobLog_) {
+          // The job's commands are the record (a replay has no held result);
+          // an empty apply wrote nothing and is not logged.
+          JobLog applied = std::move(*jobLog_);
+          jobLog_.reset();
+          if (!applied.edits.empty()) log_job_edit(applied.job, std::move(applied.label), std::move(applied.edits));
+          o.v = std::move(r);
+          return o;
+        }
         api::LogRecord row{request, revision_, 0, std::nullopt};
+        if (cmd.kind() == api::Command::Kind::start_job) {
+          // A transcribe job's provider key (Electron main put it there) is
+          // never kept: the logged copy goes without it.
+          auto& logged = std::get<api::StartJob>(std::get<api::Command>(row.request.body.v).v);
+          if (auto* t = std::get_if<api::TranscribeJob>(&logged.job.v)) t->credential.reset();
+        }
         if (cmd.kind() == api::Command::Kind::start_job) {
           const std::optional<std::string> id = std::visit(
               [](const auto& x) -> std::optional<std::string> {
@@ -392,7 +407,11 @@ bool Session::is_edit(const api::Command& cmd) const {
 doc::PCtx Session::pctx() { return doc::PCtx{doc_, view_, exprEnv_, exprCache_}; }
 
 doc::HCtx Session::handler_ctx(api::Origin origin) {
-  return doc::HCtx{doc_, view_, ids_, keys_, exprEnv_, exprCache_, *ports_, origin, apiTime_, std::nullopt, convertGeometry_};
+  // The conversions' geometry: one set explicitly (tests), else the frame
+  // builder's (the full engine: its fonts and text measurer).
+  doc::ConvertGeometry* geometry = convertGeometry_;
+  if (geometry == nullptr && frameBuilder_ != nullptr) geometry = frameBuilder_->convert_geometry();
+  return doc::HCtx{doc_, view_, ids_, keys_, exprEnv_, exprCache_, *ports_, origin, apiTime_, std::nullopt, geometry};
 }
 
 void Session::ensure_timelines() {

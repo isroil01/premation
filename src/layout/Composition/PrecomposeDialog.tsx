@@ -38,6 +38,9 @@ const remembered: { mode: PrecomposeMode; adjustDuration: boolean; openNew: bool
 function PrecomposeDialog({ ids, close }: { ids: string[]; close: () => void }): JSX.Element {
   // B4: names from the document mirror.
   const hostName = useActiveMirrorComp()?.settings.name ?? 'this composition';
+  // B4-gap: "Leave all attributes" availability reads the layer's deformers (puppet pins, bones, corner pin on
+  // its `fx`, no catalog path) and a baked layer time; closes with those in LayerInfo, or a precompose
+  // dry-run query that returns the engine's refusal.
   const leaveBlocked = useMemo(() => leaveAttributesUnavailableReason(ids), [ids]);
   const [name, setName] = useState(() => defaultPrecompNameIn(documentMirror()));
   const [mode, setMode] = useState<PrecomposeMode>(

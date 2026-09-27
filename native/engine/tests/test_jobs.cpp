@@ -202,6 +202,61 @@ TEST_CASE("jobs: apply=false holds the result for applyJobResult", "[jobs]") {
   CHECK(is_error(h.run(cmd(api::ApplyJobResult{"job_99"})), api::ErrorCode::not_found));
 }
 
+/// The LogRecords the session sent since message index `mark`.
+static std::vector<api::LogRecord> log_records_since(Harness& h, std::size_t mark) {
+  std::vector<api::LogRecord> out;
+  for (std::size_t i = mark; i < h.messages.size(); ++i) {
+    if (h.messages[i].kind() == api::EngineMessage::Kind::log_record) out.push_back(std::get<api::LogRecord>(h.messages[i].v));
+  }
+  return out;
+}
+
+static bool is_rename_batch(const api::LogRecord& rec, const std::string& name) {
+  if (rec.request.body.kind() != api::RequestBody::Kind::batch) return false;
+  const auto& b = std::get<api::CommandBatch>(rec.request.body.v);
+  if (b.commands.size() != 1) return false;
+  const auto* r = std::get_if<api::RenameLayer>(&b.commands.front().v);
+  return r != nullptr && r->name == name;
+}
+
+TEST_CASE("jobs: an applied result is sent as a log record of its commands", "[jobs][log]") {
+  Harness h;
+  FakeKinds kinds;
+  h.session.set_job_kinds(&kinds);
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp);
+  const std::size_t mark = h.messages.size();
+  const std::string id = result_as<api::JobRef>(h.run(cmd(start(layer, true)))).job;
+  (void)wait_finished(h, id);
+  const auto recs = log_records_since(h, mark);
+  REQUIRE(recs.size() == 1);
+  CHECK(recs.front().job == id);
+  CHECK(recs.front().request.origin == api::Origin::engine);
+  CHECK(is_rename_batch(recs.front(), "Tracked"));
+}
+
+TEST_CASE("jobs: applyJobResult is logged as the job's commands", "[jobs][log]") {
+  Harness h;
+  FakeKinds kinds;
+  h.session.set_job_kinds(&kinds);
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp);
+  const std::string id = result_as<api::JobRef>(h.run(cmd(start(layer, false)))).job;
+  (void)wait_finished(h, id);
+  const std::size_t mark = h.messages.size();
+  REQUIRE(is_ok(h.run(cmd(api::ApplyJobResult{id}))));
+  const auto recs = log_records_since(h, mark);
+  REQUIRE(recs.size() == 1);
+  CHECK(recs.front().job == id);
+  CHECK(is_rename_batch(recs.front(), "Tracked"));
+  // A failed apply (already applied) sends nothing.
+  const std::size_t mark2 = h.messages.size();
+  CHECK(is_error(h.run(cmd(api::ApplyJobResult{id})), api::ErrorCode::invalid_argument));
+  CHECK(log_records_since(h, mark2).empty());
+}
+
 TEST_CASE("jobs: cancel stops a running job and nothing is applied", "[jobs]") {
   FakeKinds kinds;  // before the harness: its runner's workers read `kinds` until the harness joins them
   Harness h;

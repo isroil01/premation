@@ -45,7 +45,7 @@ import { useModalStore } from '@stores/modalStore';
 import { useCompositionStore, compKeyFor } from '@stores/compositionStore';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { MAIN_VIEWPORT, overlayLayer, subscribeOverlayGeometry, subscribeOverlayLayers, type OverlayLayer } from '@stores/overlayGeometry';
+import { MAIN_VIEWPORT, overlayLayer, requestOverlayLayers, subscribeOverlayGeometry, type OverlayLayer } from '@stores/overlayGeometry';
 import { documentMirror } from '@stores/documentMirror';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { isPaintableLayer } from '@core/mirror/layerKinds';
@@ -1568,7 +1568,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   useEffect(() => {
     const controller = getWorkspaceController();
     const sync = (ids: readonly string[]): void => {
-      subscribeOverlayLayers(MAIN_VIEWPORT, ids, ids.length === 1 ? OVERLAY_KINDS_ONE : OVERLAY_KINDS_MANY);
+      void requestOverlayLayers(MAIN_VIEWPORT, 'selection', ids, ids.length === 1 ? OVERLAY_KINDS_ONE : OVERLAY_KINDS_MANY);
     };
     sync(useSelectionStore.getState().ids);
     const unSel = useSelectionStore.subscribe((st) => sync(st.ids));

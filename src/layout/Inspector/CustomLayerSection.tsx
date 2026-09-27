@@ -23,20 +23,18 @@
  * (worse: the user makes changes and loses them).
  */
 
-import { useMemo } from 'react';
 import { Icon } from '@components/Icon';
 import { Checkbox } from '@components/Checkbox';
 import { ColorPicker } from '@components/ColorPicker';
 import { AngleDial } from '@components/AngleDial';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useMirrorFootage, useMirrorTree } from '@hooks/useMirror';
+import { useMirrorFootage, useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { mirrorCustomLayer } from '@core/mirror/customLayer';
+import { pluginLayerComponentOf } from '@core/engine/propRefs';
 import { useComponentProp } from './useComponentProp';
 import {
-  customLayerComponent,
   customPropPath,
   describeState,
   isInert,
-  readCustomLayer,
   resolveCustomLayer,
   type CustomLayerState,
 } from '@core/plugins/customLayers';
@@ -55,31 +53,30 @@ function humanise(name: string): string {
 }
 
 export function CustomLayerSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  // B4: wake when the layer's header or any of its properties (the kind's
-  // `plugin/<name>` values) changes in the document mirror.
-  useMirrorTree(nodeId);
+  // B4: the layer's header (`generator`, `pluginSchemaVersion`) and its
+  // `plugin/<name>` values from the document mirror; wakes when either changes.
+  const layer = useMirrorLayer(nodeId);
+  const tree = useMirrorTree(nodeId);
   // Re-resolve when the installed set changes: uninstalling a plugin while its
   // layer is selected must flip this panel to read-only, not leave live
   // controls behind that write into nothing.
   const installed = usePluginStore((s) => s.plugins);
 
-  // B4-gap: the plugin layer's record — its `__schemaVersion` (what decides needs-migration / downgrade) and the
-  // component id `useComponentProp` writes through have no API field (the values themselves are `plugin/<name>`;
-  // `LayerInfo.generator` names the kind). Closes with a schema-version field (e.g. `layer/pluginSchemaVersion`).
-  const node = defaultSceneGraph.getNode(nodeId);
-  const record = useMemo(() => (node ? readCustomLayer(node) : null), [node]);
-  const component = useMemo(() => (node ? customLayerComponent(node) : null), [node]);
+  // Rebuilt per render (a handful of props): a prop's value changing need not
+  // replace the tree record, and a memo on it would show the old value.
+  const record = mirrorCustomLayer(layer, tree);
+  // Which component the rows' writes land on is the write seam's business.
+  const componentId = record ? pluginLayerComponentOf(nodeId) : undefined;
 
-  const state: CustomLayerState | null = useMemo(() => {
-    if (!record) return null;
-    return resolveCustomLayer(record, {
-      isInstalled: (id) => installed.some((p) => p.manifest.id === id),
-      isEnabled: (id) => installed.some((p) => p.manifest.id === id && p.enabled),
-      find: (pluginId, kindId) => findKindFor(pluginId, kindId),
-    });
-  }, [record, installed]);
+  const state: CustomLayerState | null = record
+    ? resolveCustomLayer(record, {
+        isInstalled: (id) => installed.some((p) => p.manifest.id === id),
+        isEnabled: (id) => installed.some((p) => p.manifest.id === id && p.enabled),
+        find: (pluginId, kindId) => findKindFor(pluginId, kindId),
+      })
+    : null;
 
-  if (!record || !component || !state) return null;
+  if (!record || !componentId || !state) return null;
 
   const inert = isInert(state);
   /*
@@ -130,7 +127,7 @@ export function CustomLayerSection({ nodeId }: { nodeId: string }): JSX.Element 
             <PropRow
               key={name}
               nodeId={nodeId}
-              componentId={component.id}
+              componentId={componentId}
               name={name}
               schema={schema?.[name] ?? null}
               stored={record.props[name]}

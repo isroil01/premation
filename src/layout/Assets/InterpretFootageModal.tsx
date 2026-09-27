@@ -131,6 +131,10 @@ function InterpretFootageBody({
     };
 
     // Read the item as it is NOW (the dialog is floating; it may have changed).
+    // B4-gap: the patch is a diff against the STORED interpretation (conform fps as typed, alpha unset =
+    // straight); `ItemInfo.interpretation` states conform as a Rational and unset alpha as `auto`, so a diff
+    // against it would send changes nobody made. Closes with the stored float rate and an "alpha unset" fact
+    // on Interpretation.
     const live = useAssetStore.getState().assets.find((a) => a.id === asset.id) ?? asset;
     void interpretFootageEdit(live, patch);
     close();

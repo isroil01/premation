@@ -549,9 +549,14 @@ export interface PreparedLottieFile {
 /**
  * Read and plan a user's .json or .lottie file — the ASYNC half of a file
  * import (TopNav menu and the Lottie panel share it). Unpacks .lottie ZIP
- * archives. Throws on an unreadable file. Writes nothing.
+ * archives. Throws on an unreadable file. Writes nothing, and reads nothing but
+ * the file and `activeComp` — the composition it lands in (size, seconds),
+ * asked once the file is read (the caller answers from the document mirror).
  */
-export async function prepareLottieFile(file: File): Promise<PreparedLottieFile> {
+export async function prepareLottieFile(
+  file: File,
+  activeComp: () => { width: number; height: number; durationSeconds: number },
+): Promise<PreparedLottieFile> {
   let json: LottieJson;
   const fileName = file.name.toLowerCase();
 
@@ -598,7 +603,7 @@ export async function prepareLottieFile(file: File): Promise<PreparedLottieFile>
   // instead of redefining the comp's size/fps/duration. The old default
   // (`updateComp` true) silently resized the current (often freshly-created)
   // scene to the imported file's dimensions, which is never what the user wants.
-  const comp = useCompositionStore.getState();
+  const comp = activeComp();
   const offset = { x: comp.width / 2 - plan.comp.width / 2, y: comp.height / 2 - plan.comp.height / 2 };
   const warnings = [...plan.warnings];
   // A file longer than the comp would be silently truncated at playback, so say

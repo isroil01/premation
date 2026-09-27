@@ -64,8 +64,25 @@ jest.mock('@core/plugins/PluginHost', () => ({
   pluginHost: { notifyRenderFinished: jest.fn() },
 }));
 
+// The runner asks the document mirror (B4) which compositions the open project
+// holds: a ready mirror whose comps are the ones `openProject` names.
+const mockOpenComps = new Set<string>();
+jest.mock('../documentMirror', () => ({
+  documentMirror: () => ({
+    status: 'ready',
+    comp: (id: string) => (mockOpenComps.has(id) ? { id } : undefined),
+  }),
+}));
+
 import { useRenderQueueStore, type RenderJob } from '../renderQueueStore';
 import { useProjectStore, type CompositionSettings } from '../projectStore';
+
+/** Open a project holding `comps` (the project store and the mirror agree). */
+function openProject(comps: Record<string, CompositionSettings>): void {
+  useProjectStore.setState({ comps });
+  mockOpenComps.clear();
+  for (const id of Object.keys(comps)) mockOpenComps.add(id);
+}
 import { createResumableVideoRender } from '@core/export/exportManager';
 
 /**
@@ -154,7 +171,7 @@ beforeEach(() => {
   adoptions.length = 0;
   resumable = [];
   localStorage.clear();
-  useProjectStore.setState({ comps: { 'comp-1': comp1 } });
+  openProject({ 'comp-1': comp1 });
   (window as unknown as { motionEditor?: unknown }).motionEditor = {
     render: {
       listResumableJobs: jest.fn(async () => resumable),
@@ -563,7 +580,7 @@ describe('a job whose composition is not in the open project', () => {
     act(() => { useRenderQueueStore.getState().addJob(baseJob); });
     freshStore();
     // The user relaunched into a different project.
-    useProjectStore.setState({ comps: { other: { ...comp1, id: 'other', name: 'Other' } } });
+    openProject({ other: { ...comp1, id: 'other', name: 'Other' } });
     await act(async () => { await useRenderQueueStore.getState().restoreFromLastSession(); });
 
     const job = useRenderQueueStore.getState().jobs[0]!;
@@ -583,12 +600,12 @@ describe('a job whose composition is not in the open project', () => {
   it('renders once the right project is open again', async () => {
     act(() => { useRenderQueueStore.getState().addJob(baseJob); });
     freshStore();
-    useProjectStore.setState({ comps: { other: { ...comp1, id: 'other', name: 'Other' } } });
+    openProject({ other: { ...comp1, id: 'other', name: 'Other' } });
     await act(async () => { await useRenderQueueStore.getState().restoreFromLastSession(); });
     expect(useRenderQueueStore.getState().jobs[0]?.attention).toBeDefined();
 
     // The project it was queued from is opened.
-    useProjectStore.setState({ comps: { 'comp-1': comp1 } });
+    openProject({ 'comp-1': comp1 });
     mockRun.mockResolvedValueOnce({ done: true });
     mockFinish.mockResolvedValueOnce({ kind: 'file', ext: 'mp4', frames: 100, save: jest.fn(async () => '/out/hero.mp4'), saveTo: jest.fn(async () => '/out/hero.mp4'), discard: jest.fn() });
     await act(async () => {
@@ -603,7 +620,7 @@ describe('a job whose composition is not in the open project', () => {
     void _drop;
     act(() => { useRenderQueueStore.getState().addJob(legacy); });
     freshStore();
-    useProjectStore.setState({ comps: {} });
+    openProject({});
     await act(async () => { await useRenderQueueStore.getState().restoreFromLastSession(); });
     expect(useRenderQueueStore.getState().jobs[0]?.attention).toBeUndefined();
   });

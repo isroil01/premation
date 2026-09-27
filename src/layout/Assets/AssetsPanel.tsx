@@ -173,6 +173,9 @@ function useHostSize(): [React.RefObject<HTMLDivElement>, { width: number; heigh
 export function AssetsPanel(): JSX.Element {
   useEffect(() => installAssetCommands(), []);
 
+  // B4-gap: the rows and cards draw the asset RECORDS — the playable `src` / object URLs (thumbnails, hover
+  // scrub, drag payloads), the proxy job record, the probe's metadata — which ItemInfo does not carry;
+  // closes with `getThumbnail` for the pictures, the item's media URL and the proxy record in the API.
   const assets = useAssetStore((s) => s.assets);
   const folders = useAssetStore((s) => s.folders);
   // The label menu through the engine (B3z): setItemLabel stores the palette id this panel reads.

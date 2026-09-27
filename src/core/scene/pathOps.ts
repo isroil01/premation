@@ -327,6 +327,7 @@ export function pathOpParamSpecs(type: PathOpType): ReadonlyArray<PathOpParamSpe
       { param: 'wiggleScale', label: 'Scale', unit: '%', min: 0 },
       { param: 'anchorX', label: 'Anchor X', unit: 'px', signed: true },
       { param: 'anchorY', label: 'Anchor Y', unit: 'px', signed: true },
+      ...WIGGLE_TIME_ROWS,
     ];
   }
   if (type === 'offset') {
@@ -340,8 +341,20 @@ export function pathOpParamSpecs(type: PathOpType): ReadonlyArray<PathOpParamSpe
   const { amount, detail } = paramLabels(type);
   const rows: PathOpParamSpec[] = [{ param: 'amount', label: amount }];
   if (detail) rows.push({ param: 'detail', label: detail });
+  if (type === 'roughen') rows.push(...WIGGLE_TIME_ROWS);
   return rows;
 }
+
+/**
+ * The two temporal operators' shared rows (AE's Wiggle Paths / Wiggle
+ * Transform): how often the wiggle re-randomises and how alike neighbouring
+ * points (runs) move. Keyframeable properties like the rest — the engine
+ * catalog lists them under `contents/<opId>/` (native/engine/catalog/pathOps.json).
+ */
+const WIGGLE_TIME_ROWS: ReadonlyArray<PathOpParamSpec> = [
+  { param: 'wigglesPerSecond', label: 'Wiggles/Second', min: 0 },
+  { param: 'correlation', label: 'Correlation', unit: '%', min: 0, max: 100 },
+];
 
 /**
  * The keyframe path for one operator's parameter.

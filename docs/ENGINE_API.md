@@ -374,9 +374,9 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `setBlendMode`, `setTrackMatte` | Matte by reference to any layer (AE 2023); no `matte.layer` = the classic positional matte (the layer above, B3z). Inverse: previous values. |
 | `replaceLayerSource` | Inverse: previous source (and size if changed). |
 | `groupLayers` / `ungroupLayer` | Premation group layers. Inverse: ungroup / regroup with the same group id. |
-| `convertLayer` | Engine-evaluated conversions: shapes from text, masks from text, shapes from vector, editable text, uncompose, bake transform. Inverse: remove the created layers (and restore the source layer's visibility if the conversion hid it). |
+| `convertLayer` | Engine-evaluated conversions: shapes from text, masks from text, shapes from vector, editable text, uncompose, bake transform. Inverse: remove the created layers (and restore the source layer's visibility if the conversion hid it). C++ engine (2026-09-28, `core/handlers_convert.cpp`, answered when the process runs the scene — the full engine on a GPU, over the frame builder's fonts; `--no-gpu` and the headless / core-only engine answer `unsupported` like the TypeScript one, so the cross-engine replay compares like with like): `shapesFromText` — a path layer "<name> Outlines (traced)" whose Geometry is one run per contour of the PAINTED text traced at 4× (`traceTextSpec`; the font's own Béziers are the editor's `shapesFromTextEdit`), the text's transform and fill, just above the text; the text hidden; one entry "Create Shapes from Text". `masksFromText` — a comp-sized solid "<name> Outlines" in the text's fill with one mask per contour mapped text → comp → solid at the playhead, outers `add` ("Glyph N"), counters `subtract` ("Counter N") ordered by nesting (masksFromTextGeometry.ts); text hidden; "Create Masks from Text". `bakeTransform` — a copy out of its parent keyed on every frame of its span with the world Position / Rotation / Scale, expressions disabled; 2D layers only ("Bake Transform"). A non-text layer is `invalidArgument`, text that cannot be outlined `unsupported` naming why. `shapesFromVector`, `editableText`, `uncompose`: `unsupported` (SVG parser / precomp flatten not in the engine; the editor's macros build them). |
 | `pasteLayers` | Paste a `DocumentFragment` (from the `copyLayers` query). `parent` (B3z) pastes INTO a layer of `comp` (the fragment's top-level layers become its children; `index` stays a comp-stack index). The copied stacking is kept (the fragment's first layer is the front-most, per parent). References between pasted layers follow the copies (§15.9 WS-L1). Inverse: delete pasted layers and any items the paste created. |
-| `separateLayer` | Break apart into per-part layers. Inverse: remove parts, restore original. |
+| `separateLayer` | Break apart into per-part layers. Inverse: remove parts, restore original. C++ engine (2026-09-28, with conversion geometry as `convertLayer`): a shape layer whose Geometry has several runs becomes one copy per run ("<name> N", front to back in run order) and the original is removed — one entry "Separate Layer"; one run `invalidArgument`, a keyed outline `animated`, any other layer kind `unsupported`. |
 | `autoTrace` | Masks from alpha/luma over a range. Inverse: remove the created masks. C++ engine (2026-09-27): the Session runs the autoTrace JOB inline (§4.9 — its prepare, its work on the core thread to completion, its result's `addMask` / `addKeyframes` inside the request's journal): one entry "Auto-trace", answers the added masks' groups (`masks/<id>`, stack order; empty and no entry when nothing traced). `range` of one frame traces the frame at `range.start` (static masks); longer keys every mask path on every frame. `channel` `alpha` (or '') / `luminance` (`luma`) / `red` / `green` / `blue`, else `invalidArgument`; `threshold` outside 0…1 or `tolerance` < 0 `outOfRange`; `range.duration` ≤ 0 `invalidArgument`; then `unsupported` when the build has no job kinds (headless / no decode); the job's own refusals follow (not a video/image layer, retimed, session `blob:` footage). No blur / minArea / invert (the job's defaults). The request blocks the core thread while it decodes. The TypeScript engine answers `unsupported`. |
 
 ### 4.5 Layer time (the timeline bars)
@@ -499,7 +499,7 @@ The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 |---|---|---|---|
 | `trackMotion` | tracker.ts, patchMatch.ts, autoTrack.ts merge, planarFit / Homography; applyTrack.ts plans | with `applyTo`: keys spliced into the span (`addKeyframes` + `deleteKeyframes` of the keys the span drops) — follow (layer / camera POI), position-rotation-scale (2 points), corner pin (`addEffect corner-pin` if missing; RANSAC beyond 4 points); `stabilize:true`: planStabilize on the tracked layer. No `applyTo`: nothing ("Track Motion") | `{kind, direction, status, sourceWidth, sourceHeight, tracks:[[[t,x,y,conf,coasted]…]…]}` |
 | `stabilize` | globalMotion.ts + smoothStabilize.ts (similarity) | position (+ rotation, scale per `method`) keys on the layer | `{fittedPairs, totalPairs, …}` |
-| `autoTrace` | traceBitmap.ts + autoTrace.ts | `addMask` per ring (add / subtract), with `everyFrame` one `addKeyframes` of every path per frame ("Auto-trace") | `{pathsAdded, keyframes, frames}` |
+| `autoTrace` | traceBitmap.ts + autoTrace.ts | `addMask` per ring (add / subtract), with `everyFrame` one `addKeyframes` of every path per frame ("Auto-trace"). `rendered` (2026-09-28): the layer drawn ALONE by a child `--export` (`isolateLayer`, transparent comp — effects, masks, parents; any 2D layer kind), traced in comp space and pulled back through the inverse of its world affine per frame (autoTrace.ts renderLayerAlone); 3D layers `unsupported`. Without it: the footage layer's own frames | `{pathsAdded, keyframes, frames}` |
 | `sceneDetect` | sceneEditDetect.ts / sceneEditDetectLayer.ts | "Cut N" / "Dissolve N" comp markers, or `splitLayers` at every cut | `{cutsCompSec, dissolvesCompSec, mode}` |
 | `objectMatte` | samPipeline.ts / samSegment.ts / objectMask.ts (SlimSAM ONNX pair) | `addMask` "Object mask" + feather 2 ("Object Mask") | `{contourPoints, engine, iou}` |
 | `audioAnalysis` | beatGrid + @motion/audio, audioKeyframes.ts, silenceRemoval.ts | `setKeyframes` on `audioAmplitude`; "Beat N" markers (`beatMarkers`); Remove Silence's split / delete / local-ripple steps on the paired layers | `{amplitude:{keyframes,keys}, beats:{bpm,tempoConfidence,beatsCompSec,onsetsCompSec}, silence:{ranges,totalSec,gaps,secondsRemoved,layers}}` |
@@ -507,17 +507,33 @@ The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 | `proxy` | assets/proxy.ts (rule + ffmpeg args) | `setProxy` of the file written temp + rename under `Proxies/` ("Create Proxy") | `{path, width, height}` |
 | `render` | engineExport.ts + ffmpegEncodeArgs.ts | nothing (files delivered to each item's output path) | `{outputs}` |
 | `prerender` | — | `importFiles` of the rendered files ("Pre-render") | `{outputs}` |
-| `transcribe` | captions/transcribe.ts | — `unsupported`: the page transcribes through the user's speech provider in Electron main (the key never leaves main); no local model ships | — |
+| `rotoBrush` | rotoBrush.ts | one "Roto Brush" mask, a path key per frame ("Roto Brush") | `{frames, keyframes}` |
+| `contentAwareFill` | contentAwareFillVideo.ts | PNGs under `Content-Aware Fill/` + `setContentAwareFill` | `{frames, filledPixels}` |
+| `autoReframe` | autoReframe.ts (saliency, reframePath) | a NEW composition holding the source as a precomp, the pan keyed on separated position ("Auto-reframe"); the source comp is rendered small by a child `--export` (PNG frames read through the OS still codec) | `{samples, cuts, keyframes, comp, layer}` |
+| `transcribe` | captions/transcribe.ts + electron/aiProxy.ts transcribeAudio | nothing (the caption commands build layers from the cues; `createCaptions` must be false). 2026-09-28: `comp`'s sound over `range` mixed by a child `--export` (`audioOnly`: the export's offline mix, no picture preflight), 16 kHz mono WAV, POSTed to OpenAI whisper-1 (`verbose_json`, segment + word timings) over the OS HTTP stack (WinHTTP / libcurl, no redirects). The key: `credential`, written into the request by Electron MAIN from its keystore as it passes (engineHost `transcribeCredential`); the page never has it, main logs the request without it, the engine drops it from its log and never persists or returns it. Errors carry aiProxy's code in `detail` (`{"code":"no_key" / "auth" / "rate_limit" / "network" / "silent" / "empty" …}`) | `{cues:[{start,end,text}], words:[…], language}` (composition seconds, cues de-overlapped) |
 
 The `autoTrace` COMMAND (§4.4) is this job run synchronously: the same
 prepare / work / result, applied inside the command's journal, answering the
 mask groups — for scripts and the CLI; the UI keeps starting the job (progress,
 cancel).
 
-Limits: the jobs read FOOTAGE (a layer's own decoded frames), not a solo
-render of the layer — auto-trace ignores the layer's effects; retimed layers
-are refused. A job's result is not in the command log (it is not a request),
-so a replay after an engine crash does not reproduce it.
+Footage jobs follow the layer's Time Remap / Speed % (job_inputs.hpp
+`FootageLayer::source_seconds`, keys copied at prepare). Auto-trace can read a
+solo render (`rendered`); the other footage jobs read the layer's decoded
+frames (tracking and roto work on the source, as AE's tracker does).
+
+Command log (2026-09-28): a job's applied edit reaches the log as the engine's
+`logRecord` (`LogRecord.job`): the commands the result ran, as one batch,
+origin engine — for an `apply:true` job when it lands, for `applyJobResult`
+in place of that request. Electron main never replays `startJob` (a job's only
+effect on the document is that record) and never logs `applyJobResult`, so a
+crash replay writes the result instead of running the job again, and a
+cancelled / failed / held job replays as nothing.
+
+`importFiles` by path (2026-09-28): the C++ engine process probes the file with
+its own decoders (ffmpeg for video / sound, the OS still codec for images —
+`jobs::probe_media`) and records it in place (`src` its `local-file://` URL);
+without a probe (headless) `unsupported`.
 
 ### 4.10 Transport and viewport — §6.
 
@@ -2090,6 +2106,56 @@ from the struct's maximum + 800.
   (`alignLayers`) now places the drawn box's comp-space extent (before: the
   stored width × world scale around the origin) and moves each origin by its
   box's delta through the parent's inverse (`getLayerTransforms`).
+
+### 15.13 B4 round 3 — expression preview, styles in the tree, overlay consumers (both engines, 2026-09-28)
+
+- **`evaluateExpression {prop, time, source, member?}`** (1064): `member` is
+  the dimension a draft drives (as `setExpression`'s — `value` is that
+  member's own, the answer that member's); absent = the property's first
+  member. On **`text/sourceText`** the draft is a Source Text expression and
+  the answer is **`text: SourceTextPreview {text, styleKeys, ranges,
+  rangeKeys}`** (no `value`): the text, the layer-wide overrides by the Source
+  Text result's key names in declaration order, the number of character
+  ranges and the distinct keys they set. `outOfRange` for a member past the
+  property's. TS: `previewExpression` / `previewSourceTextExpression`
+  (`core/engine/sourceTextPreview.ts`); C++: `anim_preview_expression` /
+  the new `anim_preview_source_text` (queries.cpp `source_text_preview`). The
+  expression editor's live value is this query (throttled playhead, the tree
+  re-asks on a document change); the Source Text provider is installed with
+  the other expression providers at boot.
+- **A switched-off layer style keeps its properties** (both catalogs:
+  `propertyTree.ts layerStyleRows`, `ptree.cpp layer_style_rows`): AE's eye
+  hides the style, its properties stay. Before, `styles/<key>` of a disabled
+  style had only its switches, so a reader could not show its values. The
+  undo-parity fixture was re-blessed for exactly this (3 getDocument probes of
+  the layer-styles session). `mirrorLayerStyles(tree)` (core/mirror/layerFacts)
+  rebuilds the editor's `LayerStyles` record from `styles/<key>/<param>`
+  (numbers ÷ the catalog scale, colours as hex, Glass as stored).
+- **`getSearchFacts {layers}`** (1894 → `SearchFactsList {layers:
+  [LayerSearchFacts {layer, effects, expressions}]}`): what a document-wide
+  text search matches besides the layer headers — each layer's effect match
+  names in stack order and every expression source (enabled or not). Empty
+  `layers` = every layer of every composition. The Layers panel asks it
+  (`useSearchFacts`) only while an Effects / Expressions search is active, once
+  per revision; display names are the editor's (`effectDisplayNames` over the
+  match names).
+- A composition ROOT row in the Layers panel has no eye / lock / solo (it is an
+  item, not a layer): the tree reads none, where it read the root node's flags.
+- **`LayerInfo.pluginSchemaVersion?`** (921): a custom plugin layer's stored
+  `__schemaVersion` (1 when the record has none; absent for any other layer —
+  `readCustomLayer`'s rule: the first `pluginLayer:<kind>` component whose
+  `__kind` resolves to plugin + kind ids). TS `model.ts
+  pluginSchemaVersionOf`, C++ `readmodel.cpp plugin_schema_version_of`. The
+  Custom Layer section builds its record from the mirror
+  (`core/mirror/customLayer.ts`).
+- **Overlay geometry consumers**: `requestOverlayLayers(viewport, owner,
+  layers, kinds)` (src/stores/overlayGeometry.ts) — each overlay asks for its
+  own layers and kinds; the viewport's `setOverlayGeometry` is their union.
+  `overlayScreenPlacement(g, toScreen)` reads a pushed matrix as the screen
+  origin / angle / axis scales the DOM overlays glue to. The paragraph box
+  handles (TextBoxHandles) draw from the pushed `transform` + `textBox`; their
+  write side (textBoxReflow) reads the pose from the mirror and asks
+  `getTextLayout` / `getLayerTransforms` (the parent) at press.
 
 ## 16. Files
 

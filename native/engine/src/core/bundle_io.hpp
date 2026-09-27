@@ -104,4 +104,12 @@ struct PortableOpen {
 /// engine cannot read.
 [[nodiscard]] PortableOpen read_portable(const std::filesystem::path& file, const std::filesystem::path& staging);
 
+/// A Premation motion-graphics template package (`.mogrt` / `.mogrt.zip`, exportMogrt.ts).
+[[nodiscard]] bool is_mogrt_path(std::string_view path);
+/// exportMogrt.ts `exportMogrtZip` read back: the zip's `package.json`
+/// (`format: "premation-mogrt-v1"`) and the editor document it carries — what
+/// importProject brings in as a folder, like a `.motion`. EngineFail(io) for
+/// an unreadable file, a zip without the package, or another format.
+[[nodiscard]] js::Json read_mogrt(const std::filesystem::path& file);
+
 }  // namespace premation::doc

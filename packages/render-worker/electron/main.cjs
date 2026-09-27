@@ -37,6 +37,7 @@ const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { promises: fs, existsSync } = require('node:fs');
 const { CONTAINER_MIME, resolveEncode, wantsAlpha, encodeArgs } = require('./encode.cjs');
+const { renderViaEngine } = require('./engineRender.cjs');
 
 // Deterministic software rendering, headless-safe — the same flag set the
 // golden-frame harness pins, and for the same reason: output must not depend on
@@ -56,6 +57,13 @@ const MAX_CONCURRENT = positiveInt(process.env.RENDER_WORKER_MAX_CONCURRENT, 1);
 const JOB_TIMEOUT_MS = positiveInt(process.env.RENDER_WORKER_JOB_TIMEOUT_MS, 15 * 60_000);
 const MAX_BODY_BYTES = positiveInt(process.env.RENDER_WORKER_MAX_BODY_BYTES, 64 * 1024 * 1024);
 const RENDER_HTML = path.join(__dirname, '..', 'dist-render', 'render', 'index.html');
+/**
+ * Render through `premation-engine --export` first (engineRender.cjs), the
+ * offscreen window only when the engine cannot take the job. Opt-in, as the
+ * desktop's PREMATION_EXPORT_ENGINE, until the engine path flips on golden
+ * parity (CLAUDE.md).
+ */
+const ENGINE_RENDER = process.env.RENDER_WORKER_ENGINE === '1' || process.env.PREMATION_EXPORT_ENGINE === '1';
 
 function positiveInt(raw, fallback) {
   const n = Number(raw);
@@ -293,9 +301,18 @@ async function runJob(payload) {
       output: { ...output, container, codec, quality, alpha: wantsAlpha(output) },
       durationSeconds: payload.durationSeconds,
     };
-    const staged = await renderToFrames(spec, dir);
-    if (!staged || !staged.frames) throw new Error('The renderer staged no frames.');
-    const encoded = await encodeVideo(dir, staged.ext, staged.fps, spec.output);
+    let encoded = null;
+    if (ENGINE_RENDER) {
+      const viaEngine = await renderViaEngine(spec, dir, { ffmpegPath: resolveFfmpeg() });
+      if (viaEngine.kind === 'done') encoded = viaEngine.file;
+      else if (viaEngine.kind === 'failed') throw new Error(viaEngine.message);
+      else log(`job ${jobId}: rendering in the window (${viaEngine.reason})`);
+    }
+    if (!encoded) {
+      const staged = await renderToFrames(spec, dir);
+      if (!staged || !staged.frames) throw new Error('The renderer staged no frames.');
+      encoded = await encodeVideo(dir, staged.ext, staged.fps, spec.output);
+    }
     const videoUrl = await uploadVideo(encoded, jobId, container);
     return { videoUrl, container, codec, mime: CONTAINER_MIME[container], renderDurationMs: Date.now() - startedAt };
   } finally {

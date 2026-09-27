@@ -21,6 +21,7 @@ import { isPrecomp } from '@core/scene/precomp';
 import { useProjectStore } from '@stores/projectStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import type { SceneNode } from '@core/types';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 
 function registry(): ToolRegistry {
   const r = new ToolRegistry();
@@ -41,7 +42,13 @@ function layer(id: string): SceneNode {
   } as unknown as SceneNode;
 }
 
-beforeEach(() => {
+// Enabling Time Remapping is an engine command (`setTimeRemap`): the turn's
+// writes need the app engine.
+let h: Awaited<ReturnType<typeof setupAppEngine>> | null = null;
+afterEach(async () => { await h?.dispose(); h = null; });
+
+beforeEach(async () => {
+  h = await setupAppEngine();
   defaultAnimation.clear();
   defaultSceneGraph.clear();
   defaultSceneGraph.addNode({
@@ -87,6 +94,8 @@ describe('create_precomp', () => {
     );
     expect(res.ok ? true : res.content).toBe(true);
     expect(defaultAnimation.isAnimated(inst.id, 'timeRemap')).toBe(true);
+    // Exactly the keys the call named: Enable Time Remapping's out-point key is gone.
+    expect(defaultAnimation.getTrackKeyframes(inst.id, 'timeRemap')?.map((k) => k.value)).toEqual([0, 2]);
     // Its precomp flag is what makes it render its comp — never cleared.
     expect(isPrecomp(defaultSceneGraph.getNode(inst.id)!)).toBe(true);
   });

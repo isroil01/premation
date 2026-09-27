@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useLayoutStore } from '@stores/layoutStore';
 import { requestDocumentSync } from '@core/layout/windowSync';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
 import { PanelHeader } from '@layout/EditorLayout/PanelHeader';
 import { panelDef } from '@layout/EditorLayout/panelDefs';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
@@ -39,7 +39,8 @@ function PopoutContent(): JSX.Element {
     requestDocumentSync();
     const poll = window.setInterval(() => {
       attempts += 1;
-      const hasContent = defaultSceneGraph.getRoots().length > 0;
+      // B4: a composition in the document mirror (the synced document reaches it as a reset).
+      const hasContent = documentMirror().compIds.length > 0;
       if (hasContent || attempts > 10) {
         window.clearInterval(poll);
         return;

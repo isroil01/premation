@@ -28,9 +28,10 @@ import { mirrorMaskIds } from '@core/mirror/masks';
 import { compOfLayer, isCompItem, isLayer } from '@core/engine/doc';
 import { compTime, type TrackRef } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';
-import { readTransformProp } from '@core/scene/transformWrite';
+import { trackValuesAt } from '@stores/trackValues';
 import { staggerOffsets, type StaggerOptions } from '@core/animation/staggerOffsets';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { mirrorHasBar } from '@core/mirror/clipBars';
+import { fetchMemberTracks } from '@stores/memberTracks';
 import { engine } from '@core/engine/engineInstance';
 import { computeFit, intrinsicSizeOf, type FitMode, type Size } from '@core/source/fitCommands';
 import { motionBlurMasterOnCommands } from '@layout/Scene/layerSwitchEdits';
@@ -214,7 +215,11 @@ function refAnimated(nodeId: string, r: TrackRef): boolean {
  * property. False when a track is not addressable.
  */
 export async function propertyKeyToggleEdit(nodeId: string, prop: string, seconds: number): Promise<boolean> {
-  const tracks = expandKeyframeProp(prop).filter((p) => defaultAnimation.getTrackKeyframes(nodeId, p));
+  // B4: which of the row's members have a stored track, from the engine (`getMemberKeyframes`: keyed tracks, and
+  // expression-only ones with no keys — the latter have no track, so they stay out as before).
+  const expanded = expandKeyframeProp(prop);
+  const stored = new Set((await fetchMemberTracks(nodeId, expanded)).filter((t) => t.keyframes.length > 0 || !t.hasExpression).map((t) => t.member as string));
+  const tracks = expanded.filter((p) => stored.has(p));
   if (tracks.length === 0) return true;
   const refs = refsFor(nodeId, tracks);
   if (!refs) return false;
@@ -372,18 +377,16 @@ async function sendTransform(label: string, entries: ReadonlyArray<{ nodeId: str
 /**
  * AE's Centre Anchor Point in Layer Content over the selection: the anchor
  * goes to 0,0 (the content centre) and Position moves by the same offset so
- * nothing jumps — read at the playhead (`readTransformProp`), as the legacy
- * command did. One entry for the whole selection. False → legacy.
+ * nothing jumps — evaluated at the time by the engine (`trackValuesAt`, B4).
+ * One entry for the whole selection. False → legacy.
  */
-export function centreAnchorEdit(nodeIds: readonly string[], seconds: number): Promise<boolean> {
-  const entries = nodeIds.flatMap((nodeId) => {
-    const ax = readTransformProp(nodeId, 'anchorX', 0);
-    const ay = readTransformProp(nodeId, 'anchorY', 0);
-    if (ax === 0 && ay === 0) return [];
-    const x = readTransformProp(nodeId, 'x', 0);
-    const y = readTransformProp(nodeId, 'y', 0);
-    return [{ nodeId, values: { anchorX: 0, anchorY: 0, x: x - ax, y: y - ay } }];
-  });
+export async function centreAnchorEdit(nodeIds: readonly string[], seconds: number): Promise<boolean> {
+  const entries: Array<{ nodeId: string; values: Record<string, number> }> = [];
+  for (const nodeId of nodeIds) {
+    const [ax = 0, ay = 0, x = 0, y = 0] = await trackValuesAt(nodeId, ['anchorX', 'anchorY', 'x', 'y'], seconds);
+    if (ax === 0 && ay === 0) continue;
+    entries.push({ nodeId, values: { anchorX: 0, anchorY: 0, x: x - ax, y: y - ay } });
+  }
   return sendTransform('Centre Anchor Point', entries, seconds);
 }
 
@@ -398,6 +401,9 @@ export function centreInCompEdit(nodeIds: readonly string[], frame: Size, second
 /** Fit / Fill / Native Size over the selection (`computeFit` on each layer's intrinsic size). One entry. */
 export function fitLayersEdit(nodeIds: readonly string[], frame: Size, mode: FitMode, seconds: number): Promise<boolean> {
   const entries = nodeIds.flatMap((nodeId) => {
+    // B4-gap: the layer's intrinsic SOURCE size (`sourceOf`: probed footage, image sequences, SVG natural size,
+    // a precomp's frame, the per-kind fallback) — ItemInfo covers sized footage only; closes with a
+    // `getSourceSize {layers}` query (or `LayerInfo.sourceSize`).
     const node = defaultSceneGraph.getNode(nodeId);
     const intrinsic = node ? intrinsicSizeOf(node) : null;
     if (!node || !intrinsic) return [];
@@ -415,7 +421,9 @@ export function fitLayersEdit(nodeIds: readonly string[], frame: Size, mode: Fit
  * addressable (the caller keeps its legacy assistant).
  */
 async function layerKeys(nodeId: string): Promise<Array<{ ref: PropRef; keys: Array<{ id: string; time: number }> }> | null> {
-  const props = defaultAnimation.animatedProps(nodeId).filter((p) => (defaultAnimation.getTrackKeyframes(nodeId, p)?.length ?? 0) > 0);
+  // B4: the keyed member tracks from the engine (`getMemberKeyframes` — every stored track, catalog or not, in
+  // the animation engine's order).
+  const props = (await fetchMemberTracks(nodeId)).filter((t) => t.keyframes.length > 0).map((t) => t.member);
   if (props.length === 0) return [];
   const refs = refsFor(nodeId, props);
   if (!refs) return null;
@@ -455,7 +463,12 @@ export async function easyEaseAllEdit(nodeId: string): Promise<boolean | 'none'>
   return true;
 }
 
-/** Whether a layer owns any keyframe (scalar tracks, data tracks) — display read. */
+/**
+ * Whether a layer owns any keyframe (scalar tracks, data tracks) — display read.
+ * B4-gap: DATA tracks outside the catalog (puppet pins, Lottie-imported paths) — `getMemberKeyframes` lists the
+ * scalar member tracks and expressions only, and the mirror's key lists cover catalog properties only; closes
+ * with `getMemberKeyframes` reporting data tracks too (or a `LayerInfo.hasKeyframes`).
+ */
 function hasKeys(nodeId: string): boolean {
   return defaultAnimation.animatedProps(nodeId).some((p) => (defaultAnimation.getTrackKeyframes(nodeId, p)?.length ?? 0) > 0)
     || defaultAnimation.getDataAnimatedPropPaths(nodeId).length > 0;
@@ -496,7 +509,9 @@ export function staggerAnimationsEdit(nodeIds: readonly string[], intervalSec: n
  * two selected layers with bars.
  */
 export async function sequenceLayerBarsEdit(nodeIds: readonly string[], overlapSeconds: number, crossfade: boolean): Promise<boolean | 'none'> {
-  const layers = nodeIds.filter((id) => isLayer(id) && getTimelineController().getLayersForNode(id).length > 0);
+  // B4: a layer with a bar (every layer not inside a group), from the mirror.
+  const m = documentMirror();
+  const layers = nodeIds.filter((id) => isLayer(id) && mirrorHasBar(m, id));
   const byComp = new Map<string, string[]>();
   for (const id of layers) {
     const comp = compOfLayer(id)!;

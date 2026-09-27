@@ -45,7 +45,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { handle, on } from './ipcGuard';
-import { peekEnvelope, peekRequest, withCausedBy, withEnvelopeSeq, type EngineFrameMessage, type FrameGeometryMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
+import { peekEnvelope, peekRequest, transcribeProviderOf, withCausedBy, withEnvelopeSeq, withTranscribeCredential, type EngineFrameMessage, type FrameGeometryMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
 import { CMD, EngineCommandLog } from './engineCommandLog';
 import type { PixelFrame } from './pixelChannel';
 import { hostBridgePath, loadDmabufBridge, loadIoSurfaceBridge } from './ioSurfaceBridge';
@@ -578,6 +578,13 @@ export interface EngineHostOptions {
   /** Where the engine caches imported bytes / session footage as files (<userData>/session-footage). */
   sessionFootageDir?: string;
   log?(line: string): void;
+  /**
+   * The user's speech-provider key for a transcribe job ('openai' …), from
+   * main's keystore; null when none is connected. Written into the startJob
+   * on its way to the engine only (engineFraming.withTranscribeCredential) —
+   * never logged, never sent back to a page. Absent: transcribe jobs get no key.
+   */
+  transcribeCredential?(provider: string): Promise<string | null>;
 }
 
 /**
@@ -842,11 +849,25 @@ export class EngineHost {
     // A copy either way: the IPC buffer is not ours to keep while the pipe write is pending.
     const out = withEnvelopeSeq(bytes, seq);
     if (!out) return { ok: false, reason: 'invalid', message: 'not an encoded EngineMessage{request}' };
+    // A transcribe job: the provider key goes in here, main → engine only.
+    // What the log keeps (and anything a page could see) has no credential.
+    const logged = withTranscribeCredential(out, '');
+    let sent = logged;
+    const provider = transcribeProviderOf(out);
+    if (provider !== null) {
+      let key: string | null = null;
+      try {
+        key = (await this.o.transcribeCredential?.(provider || 'openai')) ?? null;
+      } catch {
+        key = null;
+      }
+      if (key) sent = withTranscribeCredential(logged, key);
+    }
     this.inFlight.set(seq, { sender, seq: peek.seq });
     try {
-      const res = await sup.request(out);
+      const res = await sup.request(sent);
       const revision = peekEnvelope(res)?.revision ?? 0;
-      this.commandLog.record(out, res, revision);
+      this.commandLog.record(logged, res, revision);
       return { ok: true, bytes: withEnvelopeSeq(res, peek.seq) ?? res };
     } catch (e) {
       if (e instanceof EngineGoneError) return { ok: false, reason: 'gone', message: e.message };

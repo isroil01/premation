@@ -4,7 +4,7 @@
  *
  *   node scripts/native.mjs configure [--asan|--tsan|--engine|--preset NAME]
  *                                     (--engine: premation-engine + Dawn, docs/VIEWPORT_ROUTE.md)
- *   node scripts/native.mjs build     [same flags]
+ *   node scripts/native.mjs build     [same flags] [--target a,b]   (only those CMake targets)
  *   node scripts/native.mjs test      [same flags]
  *   node scripts/native.mjs bench     runs the Google Benchmark binary
  *   node scripts/native.mjs tidy      run-clang-tidy over native/libs (needs a configured build)
@@ -117,9 +117,12 @@ switch (step) {
   case 'configure':
     run('cmake', ['--preset', preset()], { cwd: nativeDir });
     break;
-  case 'build':
-    run('cmake', ['--build', '--preset', preset()], { cwd: nativeDir });
+  case 'build': {
+    // `--target a,b`: only those targets (a machine short on disk / time).
+    const targets = flag('--target');
+    run('cmake', ['--build', '--preset', preset(), ...(typeof targets === 'string' ? ['--target', ...targets.split(',')] : [])], { cwd: nativeDir });
     break;
+  }
   case 'test':
     run('ctest', ['--preset', preset()], { cwd: nativeDir });
     break;

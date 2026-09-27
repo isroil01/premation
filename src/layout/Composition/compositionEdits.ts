@@ -29,9 +29,8 @@ import { mirrorAutoOrientMode, mirrorCanAutoOrient, mirrorCanBe3D } from '@core/
 import { mirrorPristineCompToAdopt, settingsFps } from '@core/mirror/compFacts';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
-import { layerSettingsKind, sanitizeLayerSize, type LayerSettingsValues } from '@core/scene/layerSettings';
-import { readNodeFill } from '@core/paint/fill';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { sanitizeLayerSize, type LayerSettingsValues } from '@core/scene/layerSettings';
+import { mirrorLayerSettings } from '@core/mirror/layerSettings';
 import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { valueCommands } from '@layout/Inspector/inspectorEdits';
@@ -196,6 +195,8 @@ export async function precomposeEdit(
   if (!res.ok) return { error: res.error.message || res.error.code };
   const r = res.value[0] as { comp: string; layer: string };
   useSelectionStore.getState().set([r.layer]);
+  // B4-gap: opening the precomp maps the playhead IN through the layer's time (remap, stretch, reverse —
+  // `innerTimeOf`); the mirror has no layer-time mapping. Closes with a `mapLayerTime {layer, time}` query.
   if (opts.openNew) openLayerComposition(r.layer);
   return r;
 }
@@ -242,15 +243,15 @@ export async function setAutoOrientEdit(ids: readonly string[], mode: AutoOrient
  * entry; an off-palette label colour is a custom `labelColor` (B3z).
  */
 export async function layerSettingsEdit(nodeId: string, values: LayerSettingsValues): Promise<'ok' | 'gone'> {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !isLayer(nodeId)) return 'gone';
-  const kind = layerSettingsKind(node);
-  const fill = kind === 'solid' && values.color ? readNodeFill(node) : undefined;
-  const colorChanged = !!values.color && kind === 'solid' && !(fill?.type === 'solid' && fill.color.toLowerCase() === values.color.toLowerCase());
-  const labelChanged = 'labelColor' in values && (values.labelColor ?? undefined) !== (node.color ?? undefined);
+  // B4: the layer's current settings from the mirror (what the dialog opened with).
+  const current = mirrorLayerSettings(documentMirror(), nodeId);
+  if (!current || !isLayer(nodeId)) return 'gone';
+  const { kind } = current;
+  const colorChanged = !!values.color && kind === 'solid' && (current.values.color ?? '').toLowerCase() !== values.color.toLowerCase();
+  const labelChanged = 'labelColor' in values && (values.labelColor ?? undefined) !== (current.values.labelColor ?? undefined);
   const cmds: Command[] = [];
   const name = values.name.trim();
-  if (name && name !== node.name) cmds.push({ type: 'renameLayer', layer: nodeId, name });
+  if (name && name !== current.values.name) cmds.push({ type: 'renameLayer', layer: nodeId, name });
   if (labelChanged) {
     // A colour outside the palette is a custom label (B3z `labelColor`).
     const label = labelIndexOf(values.labelColor);
@@ -258,12 +259,11 @@ export async function layerSettingsEdit(nodeId: string, values: LayerSettingsVal
     cmds.push({ type: 'setLayerSwitches', layers: [nodeId], patch });
   }
   if (kind !== 'plain') {
-    const t = node.components.find((c) => c.type === 'Transform')?.props as Record<string, unknown> | undefined;
     const size: Record<string, number> = {};
     const w = values.width !== undefined ? sanitizeLayerSize(values.width) : null;
     const h = values.height !== undefined ? sanitizeLayerSize(values.height) : null;
-    if (w !== null && w !== t?.width) size.width = w;
-    if (h !== null && h !== t?.height) size.height = h;
+    if (w !== null && w !== current.values.width) size.width = w;
+    if (h !== null && h !== current.values.height) size.height = h;
     if (Object.keys(size).length > 0) cmds.push(...valueCommands([{ nodeId, values: size }], { seconds: playheadSeconds() }));
   }
   if (colorChanged && values.color) {

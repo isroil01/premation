@@ -18,12 +18,11 @@ import { LABEL_COLORS } from '@core/scene/labelColor';
 import {
   DEFAULT_SOLID_COLOR,
   buildSolidLayer,
-  nextSolidName,
-  readLayerSettings,
   sanitizeLayerSize,
   type LayerSettingsKind,
   type LayerSettingsValues,
 } from '@core/scene/layerSettings';
+import { mirrorLayerSettings, mirrorNextSolidName } from '@core/mirror/layerSettings';
 import { cn } from '@utils/cn';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { layerSettingsEdit } from './compositionEdits';
@@ -72,7 +71,8 @@ function LayerSettingsBody({ target, kind, initial, close }: BodyProps): JSX.Ele
       });
     } else {
       // The New Solid builder (comp-sized, centred, colour, name, size) runs off-document and
-      // lands as ONE pasteLayers entry, selected (offDocument.ts).
+      // lands as ONE pasteLayers entry, selected (offDocument.ts). B4-kept: `buildSolidLayer` is that builder —
+      // a write into the scratch graph, not a display read.
       void insertBuiltLayers('New Solid', activeCompIdNow() ?? 'comp_root', () => buildSolidLayer(values));
     }
     close();
@@ -176,7 +176,7 @@ export function openSolidSettings(opts: { mode: 'new' } | { mode: 'edit'; nodeId
         <LayerSettingsBody
           target={{ mode: 'new' }}
           kind="solid"
-          initial={{ name: nextSolidName(), width: comp?.width || 1920, height: comp?.height || 1080, color: DEFAULT_SOLID_COLOR }}
+          initial={{ name: mirrorNextSolidName(documentMirror()), width: comp?.width || 1920, height: comp?.height || 1080, color: DEFAULT_SOLID_COLOR }}
           close={close}
         />
       ),
@@ -190,7 +190,8 @@ export function openSolidSettings(opts: { mode: 'new' } | { mode: 'edit'; nodeId
 export function openLayerSettings(nodeId?: string): void {
   const ids = useSelectionStore.getState().ids;
   const id = nodeId ?? (ids.length === 1 ? ids[0] : undefined);
-  const read = id ? readLayerSettings(id) : null;
+  // B4: the dialog's starting values from the mirror.
+  const read = id ? mirrorLayerSettings(documentMirror(), id) : null;
   if (!id || !read) {
     useUIStore.getState().notify({ level: 'info', message: 'Select one layer to open its settings.', durationMs: 3000 });
     return;

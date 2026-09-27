@@ -21,6 +21,7 @@ import { readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { controlValue } from '@core/animation/expressionControls';
+import { installSourceTextProvider } from '@core/textExpr/sourceTextProvider';
 
 /** Install every expression provider and the change sink (idempotent: each replaces the last). */
 export function installExpressionProviders(): void {
@@ -30,6 +31,10 @@ export function installExpressionProviders(): void {
   defaultAnimation.setChangeListener((nodeId) =>
     getEventBus().emit('AnimationChanged', { nodeId }),
   );
+  // Source Text expressions read the layer's text + style (idempotent; the
+  // render hook and the evaluateExpression query also install it on first use).
+  // It moved here from the text tool commands and the expression editor (B4).
+  installSourceTextProvider();
   // Audio-reactive expressions read live amplitude from the AudioEngine.
   defaultAnimation.setAudioLevelProvider(() => audioEngine.currentLevel());
   // ctrl('name') expressions read slider-control rigs from the scene.

@@ -304,7 +304,29 @@ export function layerInfo(layerId: string): LayerInfo {
     managedBy: firstStringProp(node, '__ownedByPlugin'),
     mographId: firstStringProp(node, '__mographId'),
     svg: svgRoleOf(node),
+    ...pluginSchemaVersionOf(node),
   };
+}
+
+/**
+ * B4: a custom plugin layer's stored schema version (`readCustomLayer`'s rule:
+ * the first `pluginLayer:<kind>` component with a string `__kind` whose plugin
+ * and kind ids resolve; `__schemaVersion` when numeric, else 1). Absent for
+ * any other layer.
+ */
+function pluginSchemaVersionOf(node: SceneNode): { pluginSchemaVersion?: number } {
+  for (const c of node.components) {
+    if (!c.type?.startsWith('pluginLayer:')) continue;
+    const p = (c.props ?? {}) as Record<string, unknown>;
+    if (typeof p.__kind !== 'string') continue;
+    const split = splitKind(p.__kind);
+    const pluginId = typeof p.__pluginId === 'string' ? p.__pluginId : split?.pluginId;
+    const kindId = typeof p.__kindId === 'string' ? p.__kindId : split?.kindId;
+    if (!pluginId || !kindId) continue;
+    const v = typeof p.__schemaVersion === 'number' ? p.__schemaVersion : 1;
+    return { pluginSchemaVersion: Number.isFinite(v) && v >= 0 ? Math.min(0xffffffff, Math.floor(v)) : 1 };
+  }
+  return {};
 }
 
 /** B4: what the layer holds of an SVG document — its `svg` component's sanitized markup (an SVG layer) or only the retained source (a converted group). */

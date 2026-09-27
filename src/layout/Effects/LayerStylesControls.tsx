@@ -37,13 +37,13 @@ import type { Command } from '@motion/engine-api';
 import { stopwatchCommands, scalarValueCommands, valueCommands } from '@layout/Inspector/inspectorEdits';
 import { useActiveWorkspace, resolveGlobalLight } from '@stores/projectStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useActiveMirrorComp, useMirrorTrackWatch } from '@hooks/useMirror';
+import { useActiveMirrorComp, useMirrorTrackWatch, useMirrorTree } from '@hooks/useMirror';
 import { isTrackAnimated, readTrack, trackRef, valueNumbersAt } from '@core/mirror/selection';
 import { Color } from '@motion/renderer';
 import { effectPropPath, resolveChannelColor } from '@core/effects/effects';
 import { glassPropPath, type GlassParam } from '@core/effects/glassResolve';
+import { mirrorLayerStyles } from '@core/mirror/layerFacts';
 import {
-  getNodeLayerStyles,
   layerStyleEffectId,
   LAYER_STYLE_NUMBER_PARAMS,
   LAYER_STYLE_COLOR_PARAMS,
@@ -232,7 +232,8 @@ function StyleColor({
 }
 
 export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element {
-  const ls = getNodeLayerStyles(nodeId);
+  // B4: the style set from the mirror's `styles/<key>` groups (static values).
+  const ls = mirrorLayerStyles(useMirrorTree(nodeId));
   const gl = ls.glass;
   const ds = ls.dropShadow;
   const og = ls.outerGlow;

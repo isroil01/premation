@@ -577,6 +577,7 @@ std::optional<PropertyMeta> resolve_path_op(std::string_view path, const Node* n
       {"pucker", "amount", "Amount"},        {"twist", "amount", "Angle"},
       {"offset", "amount", "Amount"},        {"offset", "miterLimit", "Miter Limit"},
       {"roughen", "amount", "Size"},         {"roughen", "detail", "Detail"},
+      {"roughen", "wigglesPerSecond", "Wiggles/Second"}, {"roughen", "correlation", "Correlation"},
       {"zigzag", "amount", "Amount"},        {"zigzag", "detail", "Ridges"},
       {"repeater", "copies", "Copies"},      {"repeater", "offset", "Offset"},
       {"repeater", "anchorX", "Anchor X"},   {"repeater", "anchorY", "Anchor Y"},

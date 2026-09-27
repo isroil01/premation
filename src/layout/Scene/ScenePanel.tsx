@@ -41,6 +41,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useActiveCompId, useMirrorRevision } from '@hooks/useMirror';
+import { useSearchFacts } from '@hooks/useSearchFacts';
 import { mirrorCanBeParentOf } from '@core/mirror/parenting';
 import { useUIStore } from '@stores/uiStore';
 import { openContextMenu } from '@stores/contextMenuStore';
@@ -51,7 +52,6 @@ import {
   type SearchField as SearchFieldId,
 } from '@stores/sceneViewStore';
 import { getEventBus } from '@core/events/EventBus';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { RenameLayerResult } from '@core/scene/renameLayer';
 import { isLayer } from '@core/engine/doc';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
@@ -137,10 +137,9 @@ function ancestorChain(id: string): string[] {
 function rowLock(id: string): { locked: boolean; name: string | undefined } | null {
   const l = documentMirror().layer(id);
   if (l) return { locked: l.switches.locked, name: l.name };
-  // B4-gap: a composition ROOT is not a layer in the API — its lock is a node flag the legacy
-  // writer toggles, with no mirror record.
-  const root = defaultSceneGraph.getNode(id);
-  return root ? { locked: root.locked === true, name: root.name } : null;
+  // A composition ROOT is not a layer in the API: it has no lock; its name is its settings'.
+  const comp = documentMirror().comp(id);
+  return comp ? { locked: false, name: comp.settings.name } : null;
 }
 
 export function ScenePanel(): JSX.Element {
@@ -217,10 +216,15 @@ export function ScenePanel(): JSX.Element {
     indexed once here and only when they are actually being searched, instead
     of being re-derived per node per keystroke by both walks.
   */
+  // Effects / Expressions searched: the engine's document-wide facts (B4).
+  const searchFacts = useSearchFacts(
+    q.length > 0 && (stored.fields.includes('effects') || stored.fields.includes('expressions')),
+    rev,
+  );
   const factsOf = useMemo(
-    () => makeFactsReader(stored.fields, q.length > 0),
+    () => makeFactsReader(stored.fields, q.length > 0, undefined, searchFacts),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stored.fields, q, rev],
+    [stored.fields, q, rev, searchFacts],
   );
 
   const filtered = useMemo(

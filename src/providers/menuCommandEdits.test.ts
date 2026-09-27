@@ -11,7 +11,15 @@ import { sec } from '@core/engine/__testHelpers__/harness';
 import { engineIdle } from '@core/engine/engineInstance';
 import { catalogFor, numbersOf, readKeys } from '@core/engine/props';
 import { values } from '@core/engine/propRefs';
-import { exponentialScaleEdit, expressionBakeEdit } from './menuCommandEdits';
+import { documentMirror } from '@stores/documentMirror';
+import { canExponentialScale, exponentialScaleEdit, expressionBakeEdit, hasBakeableExpression } from './menuCommandEdits';
+
+/** The layer's mirror records (its property tree included) as of now. */
+async function mirrored(layer: string): Promise<void> {
+  await engineIdle();
+  documentMirror().tree(layer);
+  await documentMirror().whenIdle();
+}
 
 let h: Harness;
 
@@ -88,6 +96,60 @@ describe('Exponential Scale', () => {
     const layer = await addShape();
     await keyScale(layer, [[0, 50, 50]]);
     expect((await exponentialScaleEdit(layer)).refusal).toBe('needs-two-keyframes');
+  });
+
+  it('the command is enabled exactly when the edit would act (the mirror at call time)', async () => {
+    const layer = await addShape();
+    await mirrored(layer);
+    expect(canExponentialScale(layer)).toBe(false); // no keys
+    await keyScale(layer, [[0, 50, 50]]);
+    await mirrored(layer);
+    expect(canExponentialScale(layer)).toBe(false); // one key
+    await keyScale(layer, [[1, 0, 50]]);
+    await mirrored(layer);
+    expect(canExponentialScale(layer)).toBe(false); // a ramp through zero
+    await keyScale(layer, [[1, 200, 50]]);
+    await mirrored(layer);
+    expect(canExponentialScale(layer)).toBe(true);
+    expect((await exponentialScaleEdit(layer)).refusal).toBeNull();
+  });
+});
+
+describe('Convert Expression to Keyframes', () => {
+  it('bakes an enabled expression, and the command is enabled for it', async () => {
+    const layer = await addShape();
+    await mirrored(layer);
+    expect(hasBakeableExpression(layer)).toBe(false);
+    await h.run({ type: 'setExpression', prop: { layer, path: 'transform/rotation' }, source: 'time * 45', enabled: true });
+    await mirrored(layer);
+    expect(hasBakeableExpression(layer)).toBe(true);
+    const entries = historyLabels().length;
+
+    const r = await expressionBakeEdit(layer);
+    await mirrored(layer);
+
+    expect(r.refusal).toBeNull();
+    expect([...r.written.keys()]).toEqual(['rotation']);
+    expect(r.written.get('rotation')).toBeGreaterThan(1);
+    expect(historyLabels().slice(entries)).toEqual(['Convert Expression to Keyframes']);
+    // Disabled, not deleted — and nothing left to bake.
+    expect(hasBakeableExpression(layer)).toBe(false);
+  });
+
+  it('a vector bakes per dimension', async () => {
+    const layer = await addShape();
+    await h.run({ type: 'setExpression', prop: { layer, path: 'transform/position' }, source: '[time * 10, 5]', enabled: true });
+    await mirrored(layer);
+    const r = await expressionBakeEdit(layer);
+    expect(r.refusal).toBeNull();
+    expect([...r.written.keys()]).toEqual(['x', 'y']);
+  });
+
+  it('a disabled expression is not offered', async () => {
+    const layer = await addShape();
+    await h.run({ type: 'setExpression', prop: { layer, path: 'transform/rotation' }, source: 'time * 45', enabled: false });
+    await mirrored(layer);
+    expect(hasBakeableExpression(layer)).toBe(false);
   });
 });
 

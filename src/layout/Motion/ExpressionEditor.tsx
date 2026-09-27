@@ -18,7 +18,7 @@
  * which is what the gesture means when you drag from Y, and what AE produces.
  */
 
-import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { useThrottledTime } from '@stores/playbackClockStore';
@@ -27,19 +27,16 @@ import { useMirrorTrackWatch } from '@hooks/useMirror';
 import { trackRefIn } from '@core/mirror/trackIndex';
 import { memberExpressionOf, type MemberExpressionFacts } from '@core/mirror/memberExpressions';
 import {
-  defaultAnimation,
   suggestExpression,
   tokenizeExpression,
   matchBracket,
   EXPRESSION_API,
   SOURCE_TEXT_PROP,
   type TokenKind,
-  type ExprResult,
-  type SourceTextExpressionResult,
 } from '@motion/animation';
-import { installSourceTextProvider } from '@core/textExpr/sourceTextProvider';
-import { unsupportedRangeKeys } from '@core/textExpr/applySourceTextResult';
-import type { PropRef } from '@motion/engine-api';
+import { unsupportedRangeKeyNames } from '@core/textExpr/applySourceTextResult';
+import { secondsToFlicks, type PropRef, type SourceTextPreview, type Value } from '@motion/engine-api';
+import { engine } from '@core/engine/engineInstance';
 import { edit } from '@core/engine/uiEdits';
 import { propRefForTrack } from '@core/engine/propRefs';
 import { PickWhip } from '@components/PickWhip';
@@ -53,20 +50,75 @@ const OPENS_COMPLETION = /[A-Za-z0-9_$.]/;
 const COMPLETION_LIST_ID = 'expression-completions';
 
 /** How a Source Text preview reads in the status line: the text, then what the style changed. */
-function describeTextResult(r: SourceTextExpressionResult | null): string {
+function describeTextResult(r: SourceTextPreview | undefined): string {
   if (!r) return '—';
   const shown = r.text.length > 60 ? `${r.text.slice(0, 57)}…` : r.text;
-  const styled = Object.keys(r.style).length;
+  const styled = r.styleKeys.length;
   const extras = [
     styled > 0 ? `${styled} style override${styled === 1 ? '' : 's'}` : '',
-    r.ranges.length > 0 ? `${r.ranges.length} character range${r.ranges.length === 1 ? '' : 's'}` : '',
+    r.ranges > 0 ? `${r.ranges} character range${r.ranges === 1 ? '' : 's'}` : '',
   ].filter(Boolean).join(', ');
   return `“${shown}”${extras ? ` · ${extras}` : ''}`;
 }
 
-function describeNumber(p: ExprResult): string {
-  if (p.error || p.value === null) return '—';
-  return Array.isArray(p.value) ? `[${p.value.map((v) => v.toFixed(2)).join(', ')}]` : p.value.toFixed(2);
+function describeValue(v: Value | undefined): string {
+  if (!v) return '—';
+  if (v.kind === 'scalar' || v.kind === 'int') return v.value.toFixed(2);
+  const n = v.kind === 'vec2' ? [v.value.x, v.value.y] : v.kind === 'vec3' ? [v.value.x, v.value.y, v.value.z] : null;
+  return n ? `[${n.map((x) => x.toFixed(2)).join(', ')}]` : '—';
+}
+
+interface Preview { error: string | null; shown: string; note: string | null }
+const NO_PREVIEW: Preview = { error: null, shown: '—', note: null };
+
+/**
+ * The draft's value from the engine (`evaluateExpression`): the property is
+ * addressed through the mirror — the API path, and the member when the track
+ * is one dimension of a vector (`value` is then that dimension's own).
+ */
+function useExpressionPreview(nodeId: string, prop: string, draft: string, time: number, isSourceText: boolean): Preview {
+  const [answer, setAnswer] = useState<{ key: string; preview: Preview } | null>(null);
+  const key = `${nodeId}\u0000${prop}`;
+  // The caller retains and watches the tree; a tree that lands later re-runs the query.
+  const tree = documentMirror().tree(nodeId);
+  useEffect(() => {
+    let target: { ref: PropRef; member?: number } | null = null;
+    if (isSourceText) target = { ref: { layer: nodeId, path: 'text/sourceText' } };
+    else {
+      const r = trackRefIn(tree, prop);
+      if (r) target = { ref: { layer: nodeId, path: r.path }, ...(r.members.length > 1 && r.members.includes(prop) ? { member: r.member } : {}) };
+    }
+    if (!target) {
+      setAnswer({ key, preview: NO_PREVIEW });
+      return undefined;
+    }
+    let live = true;
+    void engine().query({ type: 'evaluateExpression', prop: target.ref, time: secondsToFlicks(time), source: draft, ...(target.member !== undefined ? { member: target.member } : {}) }).then((res) => {
+      if (!live) return;
+      if (!res.ok) {
+        setAnswer({ key, preview: { error: res.error.message, shown: '—', note: null } });
+        return;
+      }
+      const e = res.value.diagnostics[0]?.message ?? null;
+      if (isSourceText) {
+        const unsupported = unsupportedRangeKeyNames(res.value.text?.rangeKeys ?? []);
+        setAnswer({
+          key,
+          preview: {
+            error: e,
+            shown: describeTextResult(res.value.text),
+            note: unsupported.length > 0 ? `Per-character ${unsupported.join(', ')} can’t be drawn per character and are ignored.` : null,
+          },
+        });
+      } else {
+        setAnswer({ key, preview: { error: e, shown: e ? '—' : describeValue(res.value.value), note: null } });
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [key, tree, nodeId, prop, draft, time, isSourceText]);
+  return answer && answer.key === key ? answer.preview : NO_PREVIEW;
 }
 
 const TOKEN_CLASS: Record<TokenKind, string | undefined> = {
@@ -132,29 +184,12 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
   // style overrides, previewed through its own engine entry point.
   const isSourceText = prop === SOURCE_TEXT_PROP;
 
-  // Live evaluation of the current draft at the playhead — through the engine
-  // so valueAtTime / layer / loopOut preview exactly as playback resolves.
-  // B4-gap: the API's `evaluateExpression` query evaluates a whole PROPERTY as
-  // its first member (no `member`: `value` in a Y-of-Position draft would be X)
-  // and refuses Source Text (no text + style result) — an `evaluateExpression`
-  // `member?` argument and a textDocument result would move this preview onto it.
-  const preview = useMemo(() => {
-    if (!isSourceText) {
-      const p = defaultAnimation.previewExpression(nodeId, prop, draft, time);
-      return { error: p.error, shown: describeNumber(p), note: null as string | null };
-    }
-    // Idempotent; the render hook installs it too, whichever runs first.
-    installSourceTextProvider();
-    const p = defaultAnimation.previewSourceTextExpression(nodeId, draft, time);
-    const unsupported = unsupportedRangeKeys(p.result);
-    return {
-      error: p.error,
-      shown: describeTextResult(p.result),
-      note: unsupported.length > 0
-        ? `Per-character ${unsupported.join(', ')} can’t be drawn per character and are ignored.`
-        : null,
-    };
-  }, [draft, nodeId, prop, time, isSourceText]);
+  // Live evaluation of the current draft at the (throttled) playhead — the
+  // engine's `evaluateExpression` (B4), so valueAtTime / layer / loopOut
+  // preview exactly as playback resolves: this member's own `value`, and for
+  // Source Text the text + style result. Answers land asynchronously; the last
+  // one stays shown until the next arrives.
+  const preview = useExpressionPreview(nodeId, prop, draft, time, isSourceText);
 
   const commit = (src: string): void => {
     setDraft(src);

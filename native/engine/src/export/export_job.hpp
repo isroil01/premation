@@ -94,6 +94,13 @@ struct JobSpec {
   std::vector<std::pair<std::pair<double, double>, std::string>> chapters;
   /// Tools: stop after the preflight report.
   bool preflightOnly = false;
+  /// Only the audio mix: workDir/audio.wav over the range, then the preflight
+  /// line (its `audio` names the file, null when nothing is audible) and done.
+  /// No GPU, no picture preflight (the transcribe job's mixdown).
+  bool audioOnly = false;
+  /// Render only this layer (and what it holds), as if it were the one soloed
+  /// layer — a job's solo render of a layer (jobs/child_export.hpp). '' = all.
+  std::string isolateLayer;
 };
 
 /// Parse a job file's JSON. False with `error` on a missing / mistyped field.

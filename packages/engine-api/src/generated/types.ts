@@ -2708,10 +2708,18 @@ export interface ObjectMatteJob {
   box?: Rect;
 }
 
+/**
+ * Transcription (captions/transcribe.ts transcribeCompositionDetailed): `comp`'s sound over `range` (absent = the whole composition) mixed down by a child engine (the export's offline mix: levels, trims, mutes), 16 kHz mono, sent to the user's speech provider; the summary is `{"cues":[{start,end,text}],"words":[…],"language":S}` in composition seconds, cues de-overlapped. Nothing is written (`createCaptions` must be false — the caption commands build layers from the cues). `layer` is not read yet (a single layer's sound is not isolated; send '').
+ * `provider` names the key (`openai`; the others have no timed speech API and are refused). `credential` is filled by Electron MAIN from its keystore as the request passes through it — a page never has the key, and a value the page sends is replaced. The engine keeps it only for the one request to the provider: it is never persisted, logged, or returned (the engine's own log and getJobs drop it).
+ */
 export interface TranscribeJob {
   layer: LayerId;
   language: string;
   createCaptions: boolean;
+  comp?: ItemId;
+  range?: TimeRange;
+  provider: string;
+  credential?: string;
 }
 
 /** One audio analysis over a layer's sound (an audio layer, or a video layer's own track). */
@@ -2965,6 +2973,8 @@ export interface LayerInfo {
   mographId: string;
   /** B4 — `layer`: an SVG layer that stores its document (getSvgDocument reads it; Convert to Editable Shapes); `converted`: a group converted from one that still retains the original source (Revert to Original SVG); `none` otherwise. */
   svg: SvgRole;
+  /** B4 — a custom plugin layer's stored schema version (`__schemaVersion` on its `pluginLayer:<kind>` component; 1 when the record has none): what decides the Inspector's needs-migration / downgrade state. Absent for a layer that is not a custom plugin layer. */
+  pluginSchemaVersion?: number;
 }
 
 /** B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`). */
@@ -3132,6 +3142,21 @@ export interface GetMemberKeyframes {
 export interface CopyEffects {
   layer: LayerId;
   effects: PropPath[];
+}
+
+/** B4 — what a document-wide text search over layers matches besides their headers (the Layers panel's Effects / Expressions filters): per layer, its effects' match names in stack order and the source of every expression it carries (enabled or not, in the engine's order). `layers` narrows (empty = every layer of every composition, in `findLayers` order); unknown ids are skipped. The mirror loads property trees on demand, never wholesale — this answers the whole document in one round trip. */
+export interface GetSearchFacts {
+  layers: LayerId[];
+}
+
+export interface LayerSearchFacts {
+  layer: LayerId;
+  effects: string[];
+  expressions: string[];
+}
+
+export interface SearchFactsList {
+  layers: LayerSearchFacts[];
 }
 
 /** B4 — one member track (getMemberKeyframes). */
@@ -3488,11 +3513,12 @@ export interface GetTextLayout {
   overrides?: TextLayoutOverrides;
 }
 
-/** Evaluate an expression without storing it (expression editor preview). */
+/** Evaluate an expression without storing it (expression editor preview). `member`: the dimension the draft drives (as setExpression's — `value` is that member's own value, and the answer is that member's); absent = the property's first member, a vector result whole. On `text/sourceText` the draft is a Source Text expression: the answer is `text` (no `value`). */
 export interface EvaluateExpression {
   prop: PropRef;
   time: Time;
   source: string;
+  member?: number;
 }
 
 /** Pixel values under a point of a viewport (Info panel, eyedropper), in working space. */
@@ -3595,6 +3621,15 @@ export interface ParagraphLayout {
 export interface ExpressionEvaluation {
   value?: Value;
   diagnostics: ExpressionDiagnostic[];
+  text?: SourceTextPreview;
+}
+
+/** What a draft Source Text expression evaluates to (evaluateExpression on `text/sourceText`): the text, the layer-wide style keys it overrides (the Source Text result's names: `fontSize`, `fill`, `tracking`, …, in declaration order), how many character ranges it styles and the distinct style keys those ranges set (first-seen order). */
+export interface SourceTextPreview {
+  text: string;
+  styleKeys: string[];
+  ranges: number;
+  rangeKeys: string[];
 }
 
 export interface PixelSamples {
@@ -4740,6 +4775,7 @@ export type Query =
   | ({ type: 'copyKeyframes' } & CopyKeyframes)
   | ({ type: 'getMemberKeyframes' } & GetMemberKeyframes)
   | ({ type: 'copyEffects' } & CopyEffects)
+  | ({ type: 'getSearchFacts' } & GetSearchFacts)
   | ({ type: 'getWaveform' } & GetWaveform)
   | ({ type: 'listFonts' } & ListFonts)
   | ({ type: 'getItems' } & GetItems)
@@ -4785,6 +4821,7 @@ export type QueryResult =
   | ({ type: 'copyKeyframes' } & KeyframeSets)
   | ({ type: 'getMemberKeyframes' } & MemberTracks)
   | ({ type: 'copyEffects' } & CopiedEffects)
+  | ({ type: 'getSearchFacts' } & SearchFactsList)
   | ({ type: 'getWaveform' } & WaveformPeaks)
   | ({ type: 'listFonts' } & FontList)
   | ({ type: 'getItems' } & ItemDetails)
@@ -5181,6 +5218,7 @@ export interface QueryArgs {
   copyKeyframes: CopyKeyframes;
   getMemberKeyframes: GetMemberKeyframes;
   copyEffects: CopyEffects;
+  getSearchFacts: GetSearchFacts;
   getWaveform: GetWaveform;
   listFonts: ListFonts;
   getItems: GetItems;
@@ -5226,6 +5264,7 @@ export interface QueryResults {
   copyKeyframes: KeyframeSets;
   getMemberKeyframes: MemberTracks;
   copyEffects: CopiedEffects;
+  getSearchFacts: SearchFactsList;
   getWaveform: WaveformPeaks;
   listFonts: FontList;
   getItems: ItemDetails;

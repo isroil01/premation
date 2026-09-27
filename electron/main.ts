@@ -26,7 +26,7 @@ import { shouldStartBackend, startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
 import { registerThumbIpc } from './thumbCache';
 import { registerRevealIpc } from './ipc/reveal';
-import { registerAiKeyIpc } from './aiKeyVault';
+import { getKeyForProvider, registerAiKeyIpc, VAULT_PROVIDERS, type VaultProvider } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
 import { registerModelDownloadIpc, abortAllModelDownloads } from './modelDownload';
 import { registerMediaKeyIpc } from './mediaKeyVault';
@@ -1978,6 +1978,9 @@ app.whenReady().then(() => {
     // Imported bytes and session blob: footage become files here (the same
     // folder file:sessionFootageDir hands the page).
     sessionFootageDir: ensureDir(path.join(app.getPath('userData'), 'session-footage')),
+    // The transcribe job's key: main's keystore → the startJob, per job (never logged, never to a page).
+    transcribeCredential: async (provider) =>
+      (VAULT_PROVIDERS as readonly string[]).includes(provider) ? getKeyForProvider(provider as VaultProvider) : null,
   });
   registerEngineIpc(engineHost);
   // Dev only: the real-app harness reads the frame-forwarding counters from

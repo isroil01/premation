@@ -11,9 +11,14 @@
 #include <cmath>
 #include <limits>
 
+#include <filesystem>
+#include <fstream>
+#include <string>
+
 #include "aep_build.hpp"
 #include "core/aep/aep_read.hpp"
 #include "core/aep/riff.hpp"
+#include "session_harness.hpp"
 
 using namespace premation::doc::aep;
 namespace b = premation::test::aepb;
@@ -193,4 +198,113 @@ TEST_CASE("aep: the layer kind", "[aep]") {
   c.layers = {b::layer(text)};
   const AepProject titles = read_file(b::aep_file({b::comp_item(c)}));
   REQUIRE(titles.comps[0].layers[0].kind == LayerKind::text);
+}
+
+
+// ── importProject of an .aep through the Session (aep_apply.cpp) ─────────
+
+namespace {
+
+/// FakePorts reads file bytes from `<dir>/<hex of the path>.bin`.
+void seed_bytes(const std::filesystem::path& dir, const std::string& path, const b::Buf& bytes) {
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string name;
+  for (const char c : path) {
+    const auto u = static_cast<unsigned char>(c);
+    name.push_back(kHex[u >> 4U]);
+    name.push_back(kHex[u & 15U]);
+  }
+  std::ofstream out(dir / (name + ".bin"), std::ios::binary);
+  out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+}
+
+b::Buf promo_aep() {
+  b::FootageItemOptions solid;
+  solid.id = 9;
+  solid.name = "Red Solid";
+  solid.solid = true;
+  solid.solidColor[0] = 1;
+  solid.solidName = "Red Solid";
+  b::FootageItemOptions plate;
+  plate.id = 10;
+  plate.name = "plate.mov";
+  plate.path = "/missing/footage/plate.mov";
+  b::LayerOptions bg;
+  bg.id = 1;
+  bg.sourceId = 9;
+  bg.displayName = "Background";
+  bg.outPoint = 10;
+  b::LayerOptions shot;
+  shot.id = 2;
+  shot.sourceId = 10;
+  shot.parentId = 1;
+  shot.displayName = "Shot";
+  shot.outPoint = 10;
+  b::CompItemOptions c = comp_main();
+  c.layers = {b::layer(bg), b::layer(shot)};
+  return b::aep_file({b::folder_item(20, "Footage", {b::footage_item(solid), b::footage_item(plate)}), b::comp_item(c)});
+}
+
+}  // namespace
+
+TEST_CASE("aep: importProject builds the comps, layers and footage as ONE undoable entry", "[aep][import]") {
+  namespace api = premation::api;
+  namespace t = premation::test;
+  const std::filesystem::path dir = std::filesystem::temp_directory_path() / "premation-aep-import-test";
+  std::filesystem::create_directories(dir);
+  const std::string path = "/projects/Promo.aep";
+  seed_bytes(dir, path, promo_aep());
+  t::Harness h(3, dir.string());
+  (void)h.hello();
+  const auto history = [&h] {
+    return t::result_as<api::HistoryState>(std::get<api::QueryResult>(h.ask(t::qry(api::GetHistory{})).outcome.v)).entries.size();
+  };
+  const std::size_t before = history();
+  api::ImportProject imp;
+  imp.path = path;
+  const auto r = h.run(t::cmd(imp));
+  REQUIRE(t::is_ok(r));
+  const auto result = t::result_as<api::ImportProjectResult>(r);
+  REQUIRE(result.summary);
+  CHECK(result.summary->comps == 1);
+  CHECK(result.summary->layers == 2);
+  // The folder named after the file first, then what it holds; the main comp to open.
+  REQUIRE(result.items.size() >= 3);
+  REQUIRE(result.open_comp);
+  // The test ports import any path (a fake record), so nothing is missing here;
+  // on disk (FilePorts + the engine's media probe) an unreadable file is listed.
+  CHECK(result.missing_footage.empty());
+  CHECK(history() == before + 1);
+  api::GetItems q;
+  q.items = {result.items.front(), *result.open_comp};
+  const auto items = t::result_as<api::ItemDetails>(std::get<api::QueryResult>(h.ask(t::qry(q)).outcome.v));
+  REQUIRE(items.items.size() == 2);
+  CHECK(items.items[0].name == "Promo");
+  CHECK(items.items[1].name == "Main");
+  // Undo removes everything imported.
+  REQUIRE(t::is_ok(h.run(t::cmd(api::Undo{}))));
+  CHECK(t::is_error(h.ask(t::qry(q)), api::ErrorCode::not_found));
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("aep: importProject refuses a project with no compositions and a file it cannot read", "[aep][import]") {
+  namespace api = premation::api;
+  namespace t = premation::test;
+  const std::filesystem::path dir = std::filesystem::temp_directory_path() / "premation-aep-import-test2";
+  std::filesystem::create_directories(dir);
+  b::FootageItemOptions solid;
+  solid.id = 9;
+  solid.name = "S";
+  solid.solid = true;
+  seed_bytes(dir, "/p/Empty.aep", b::aep_file({b::footage_item(solid)}));
+  seed_bytes(dir, "/p/Junk.aep", b::bytes_of("not a riff file at all"));
+  t::Harness h(3, dir.string());
+  (void)h.hello();
+  api::ImportProject empty;
+  empty.path = "/p/Empty.aep";
+  CHECK(t::is_error(h.run(t::cmd(empty)), api::ErrorCode::decode));
+  api::ImportProject junk;
+  junk.path = "/p/Junk.aep";
+  CHECK_FALSE(t::is_ok(h.run(t::cmd(junk))));
+  std::filesystem::remove_all(dir);
 }

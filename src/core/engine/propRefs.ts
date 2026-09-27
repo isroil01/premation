@@ -381,3 +381,8 @@ export function componentPropHome(nodeId: string, key: string, kind: 'number' | 
 export function componentOfType(nodeId: string, type: string): string | undefined {
   return defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === type)?.id;
 }
+
+/** The id of the layer's plugin layer kind component (`pluginLayer:<kind>`) — its props' write target. */
+export function pluginLayerComponentOf(nodeId: string): string | undefined {
+  return defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type.startsWith(PLUGIN_LAYER_COMPONENT_PREFIX))?.id;
+}

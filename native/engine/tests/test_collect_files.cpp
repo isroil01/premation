@@ -414,21 +414,28 @@ TEST_CASE("autoTrace: the job's masks, one undo entry, their groups answered", "
 TEST_CASE("FilePorts imports files by path and bytes as content-addressed cache files", "[collect][import]") {
   TempDir tmp;
   spit(tmp.path / "media" / "plate.mp4", "MP4-BYTES");
-  doc::FilePorts ports;
-  ports.set_footage_dir(tmp.str("cache"));
   int probes = 0;
-  ports.set_probe([&probes](const std::string&) {
+  // The engine process passes jobs::probe_media; this one reads any existing file.
+  doc::FilePorts ports([&probes](const std::string& path, Json& facts, std::string& error) {
     ++probes;
+    std::error_code ec;
+    if (!fs::is_regular_file(fs::path(std::u8string(path.begin(), path.end())), ec)) {
+      error = "not a file";
+      return false;
+    }
     Json md = Json::object();
     md.set("width", Json::number(64));
-    return md;
+    facts.set("metadata", std::move(md));
+    return true;
   });
+  ports.set_footage_dir(tmp.str("cache"));
   REQUIRE(ports.has_import());
+  CHECK_FALSE(doc::FilePorts{}.has_import());  // no probe: the import answers `unsupported`
 
   api::ImportFile f;
   f.path = tmp.str("media/plate.mp4");
   const Json byPath = ports.import_file(f, "item_1");
-  CHECK(byPath.at("src").str() == f.path);
+  CHECK(byPath.at("src").str() == doc::local_file_url(f.path));  // what the page's importer and localFileUrl.ts read
   CHECK(byPath.at("path").str() == f.path);
   CHECK(byPath.at("type").str() == "video");
   CHECK(byPath.at("size").num() == 9);
@@ -441,13 +448,13 @@ TEST_CASE("FilePorts imports files by path and bytes as content-addressed cache 
   b.data.assign(png.begin(), png.end());
   const Json byBytes = ports.import_bytes(b, "item_2");
   const std::string cached = tmp.str("cache/" + doc::sha256_hex(png) + ".png");
-  CHECK(byBytes.at("src").str() == cached);
+  CHECK(byBytes.at("src").str() == doc::local_file_url(cached));
   CHECK(byBytes.at("path").str() == cached);
   CHECK(byBytes.at("type").str() == "image");
   CHECK(slurp(fs::path(std::u8string(cached.begin(), cached.end()))) == png);
   b.origin_path = tmp.str("media/Sky.PNG");
   const Json again = ports.import_bytes(b, "item_3");
-  CHECK(again.at("src").str() == cached);
+  CHECK(again.at("src").str() == doc::local_file_url(cached));
   CHECK(again.at("path").str() == *b.origin_path);
   CHECK(probes == 3);
 
@@ -456,6 +463,7 @@ TEST_CASE("FilePorts imports files by path and bytes as content-addressed cache 
   CHECK_THROWS_AS(ports.import_file(f, "item_4"), doc::EngineFail);
   f.path = "blob:file:///abc";
   CHECK_THROWS_AS(ports.import_file(f, "item_5"), doc::EngineFail);
+  CHECK(probes == 4);  // the blob: never reached the probe
 }
 
 TEST_CASE("an asset's media is its file when src is a session URL", "[collect][import]") {

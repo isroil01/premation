@@ -559,6 +559,31 @@ class Sampler {
   }
 
   /// `compiled.run(exprContext(...))`.
+  /// `previewSourceTextExpression`: the draft run against the layer's own
+  /// (pre-expression) Source Text, its key marked visited, at depth 1.
+  ex::TextResult preview_source_text(const std::string& node, const std::string& src, double t) {
+    const std::optional<ex::SourceTextSample> base = env_.source_text(node, t);
+    if (!base) {
+      ex::TextResult r;
+      r.error = u"This layer has no Source Text.";
+      return r;
+    }
+    const std::string key = node + ":" + std::string(kSourceTextProp);
+    visited_.insert(key);
+    ContextHost host(*this, node, std::string(kSourceTextProp), 1);
+    host.time = t;
+    ex::Context c;
+    c.time = t;
+    c.value = 0;
+    c.audio = env_.audio_level();
+    c.comp = env_.comp_info();
+    c.layer_info = env_.layer_info(node);
+    c.prop_seed = ex::string_seed(ex::utf8_to_utf16(key));
+    c.text_value = &*base;
+    c.host = &host;
+    return cache_.get(src).run_text(c);
+  }
+
   ex::Result run(const std::string& node, const std::string& prop, double t, std::optional<double> base, int depth,
                  const ex::Expression& compiled) {
     ContextHost host(*this, node, prop, depth);
@@ -647,6 +672,18 @@ std::optional<ex::SourceTextResult> anim_evaluate_source_text(const Document& d,
     return s.source_text_internal(std::string(node), t, 0).result;
   } catch (const ex::HostError&) {
     return std::nullopt;
+  }
+}
+
+ex::TextResult anim_preview_source_text(const Document& d, const ExprEnv& env, ExprCache& cache, std::string_view node,
+                                        const std::string& src, double t) {
+  try {
+    Sampler s(d, env, cache);
+    return s.preview_source_text(std::string(node), src, t);
+  } catch (const ex::HostError& e) {
+    ex::TextResult r;
+    r.error = e.message;
+    return r;
   }
 }
 

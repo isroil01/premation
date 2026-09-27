@@ -22,62 +22,19 @@
 #include "raster/font_catalog.hpp"
 #include "premation/protocol/framing.hpp"
 
-#if defined(PREMATION_HAVE_SCENE) && defined(PREMATION_HAVE_MEDIA)
-#include "core/fail.hpp"
-#include "decoder.hpp"
-#include "scene/image_decode.hpp"
-#endif
 #if defined(PREMATION_HAVE_SCENE)
 #include "scene/engine_frames.hpp"
 #endif
 #if defined(PREMATION_HAVE_JOBS)
 #include "jobs/child_job.hpp"
 #include "jobs/job_kinds.hpp"
+#include "jobs/media_input.hpp"
 #endif
 
 namespace premation {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-
-#if defined(PREMATION_HAVE_SCENE) && defined(PREMATION_HAVE_MEDIA)
-/// importFiles' probe (FilePorts): ffmpeg's container probe — no packet is
-/// read — as ImportedAsset.metadata (width, height, duration, fps, audio, alpha).
-/// A file ffmpeg cannot open is an `io` failure of the import.
-doc::Json probe_media_facts(const std::string& path) {
-  const std::filesystem::path file(std::u8string(path.begin(), path.end()));
-  if (scene::is_still_image_path(file)) {
-    // A still: its size from the image decoder the renderer uses (ffmpeg's
-    // container probe reports no video stream for most still formats).
-    scene::DecodedImage img;
-    std::string why;
-    if (!scene::decode_image_file(file, img, why)) doc::fail(api::ErrorCode::io, "could not read '" + path + "' as an image: " + why);
-    doc::Json md = doc::Json::object();
-    md.set("width", doc::Json::number(img.width));
-    md.set("height", doc::Json::number(img.height));
-    md.set("hasAudioTrack", doc::Json::boolean(false));
-    return md;
-  }
-  media::MediaInfo info;
-  media::FrameIndex index;
-  std::string error;
-  if (!media::VideoDecoder::probe(path, info, index, error)) {
-    doc::fail(api::ErrorCode::io, "could not read '" + path + "' as media: " + error);
-  }
-  doc::Json md = doc::Json::object();
-  if (info.video) {
-    md.set("width", doc::Json::number(static_cast<double>(info.video->width)));
-    md.set("height", doc::Json::number(static_cast<double>(info.video->height)));
-    if (info.video->fps.valid()) md.set("fps", doc::Json::number(info.video->fps.value()));
-    if (info.video->hasAlpha) md.set("hasAlpha", doc::Json::boolean(true));
-  }
-  // A still (one frame, image2 / png_pipe…) has no duration.
-  const bool still = info.video && info.video->frameCount <= 1;
-  if (!still && info.durationSec > 0) md.set("duration", doc::Json::number(info.durationSec));
-  md.set("hasAudioTrack", doc::Json::boolean(info.hasAudio));
-  return md;
-}
-#endif
 
 struct CoreItem {
   enum class Kind : std::uint8_t { frame, ping, disconnect, framing_error, fatal };
@@ -254,6 +211,10 @@ int run_engine(const EngineOptions& options) {
     mediaClock = scene::make_media_clock(os::env_var("PREMATION_AUDIO_DEVICE").value_or("") != "null", audioError);
     frameBuilder->bind_audio(mediaClock.get());
   }
+  // convertLayer's text outlines come from the frame builder's fonts
+  // (Session::handler_ctx). Without the scene (--no-gpu, the cross-engine
+  // parity harness) the conversions answer `unsupported` as the TypeScript
+  // engine does, so the replay keeps comparing like with like.
 #endif
 #if defined(PREMATION_ENGINE_HEADLESS)
   // No Dawn in this build: frames are always simulated (as --no-gpu).
@@ -321,15 +282,17 @@ int run_engine(const EngineOptions& options) {
     }
     return list;
   };
-  // Footage import on disk (FilePorts): bytes cached where main says
-  // (PREMATION_SESSION_FOOTAGE, <userData>/session-footage), facts from the
-  // media system's probe when this build has one.
+  // importBytes caches bytes as files where main says (PREMATION_SESSION_FOOTAGE,
+  // <userData>/session-footage): the engine's document never holds a blob: URL.
   sessionOptions.footageDir = os::env_var("PREMATION_SESSION_FOOTAGE").value_or("");
-#if defined(PREMATION_HAVE_SCENE) && defined(PREMATION_HAVE_MEDIA)
-  sessionOptions.probeFile = [](const std::string& path) { return probe_media_facts(path); };
-#endif
   sessionOptions.testPorts = options.testPorts;
   sessionOptions.testPortsDir = options.testPortsDir;
+#if defined(PREMATION_HAVE_JOBS)
+  // importFiles / importBytes / relink: the jobs' decoders probe the file (ffmpeg + the OS still codec).
+  sessionOptions.mediaProbe = [](const std::string& path, js::Json& facts, std::string& error) {
+    return jobs::probe_media(path, facts, error);
+  };
+#endif
   Session session(outbox, *sink, sessionOptions);
 #if defined(PREMATION_HAVE_SCENE)
   session.set_frame_builder(frameBuilder.get());

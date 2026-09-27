@@ -127,6 +127,18 @@
       {
         "param": "detail",
         "label": "Detail"
+      },
+      {
+        "param": "wigglesPerSecond",
+        "label": "Wiggles/Second",
+        "min": 0
+      },
+      {
+        "param": "correlation",
+        "label": "Correlation",
+        "unit": "%",
+        "min": 0,
+        "max": 100
       }
     ],
     "default": {
@@ -168,6 +180,18 @@
         "label": "Anchor Y",
         "unit": "px",
         "signed": true
+      },
+      {
+        "param": "wigglesPerSecond",
+        "label": "Wiggles/Second",
+        "min": 0
+      },
+      {
+        "param": "correlation",
+        "label": "Correlation",
+        "unit": "%",
+        "min": 0,
+        "max": 100
       }
     ],
     "default": {

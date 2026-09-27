@@ -111,6 +111,8 @@ function HeadlessRunner(): JSX.Element {
       const { task } = source;
 
       const report = (result: CliDoneReport): void => source.done(result);
+      // B4-kept: the headless CLI jobs below open a project and render it with the TS renderer (its input IS the
+      // engine's document) — engine jobs and renderer input, not display reads; they move with the render (D5/F1).
 
       try {
         if (task.kind === 'comps') {

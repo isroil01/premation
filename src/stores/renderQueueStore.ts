@@ -34,7 +34,7 @@ import {
   type PersistedRenderJob,
 } from '@core/export/renderQueuePersist';
 import { readPersisted, writePersisted } from '@core/settings/persistedValue';
-import { useProjectStore } from './projectStore';
+import { documentMirror, type DocumentMirror } from './documentMirror';
 import { useUIStore } from './uiStore';
 import { exportFormatCode, failureReason, track as trackEvent } from '@core/analytics/productEvents';
 
@@ -265,7 +265,16 @@ function persistJobs(jobs: RenderJob[]): void {
  */
 function compositionMissing(job: RenderJobSpec): boolean {
   if (!job.compositionId) return false;
-  return !(job.compositionId in useProjectStore.getState().comps);
+  // B4: the open document's compositions, from the mirror. Until it has loaded
+  // the job is not judged (the runner asks again before every job).
+  let m: DocumentMirror;
+  try {
+    m = documentMirror();
+  } catch {
+    return false;
+  }
+  if (m.status !== 'ready') return false;
+  return !m.comp(job.compositionId);
 }
 
 /**

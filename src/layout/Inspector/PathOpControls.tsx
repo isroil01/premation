@@ -9,14 +9,13 @@ import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 
-import { useSceneRevision } from '@stores/sceneStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorPathOps } from '@core/mirror/layerFacts';
 import { edit } from '@core/engine/uiEdits';
 import { paths, values } from '@core/engine/propRefs';
 import type { Command } from '@motion/engine-api';
 import {
-  readPathOps,
   pathOpPropPath,
   pathOpParamSpecs,
   type PathOp,
@@ -336,39 +335,15 @@ function PathOpCard({
           unit={row.unit}
         />
       ))}
-      {/* The two temporal operators share these rows: the others are a pure
-          function of the outline, so a wiggle rate would be a dead control on
-          them. Correlation answers the same question at different granularity —
-          Roughen: how alike neighbouring POINTS move; Wiggle Transform: how
-          alike the RUNS (repeater copies) move. */}
+      {/* The two temporal operators' Wiggles/Second and Correlation are rows of
+          `pathOpParamSpecs` (catalog properties since b4-round3): the others
+          are a pure function of the outline, so a wiggle rate would be a dead
+          control on them. Correlation — Roughen: how alike neighbouring POINTS
+          move (0 shreds the outline, the pre-existing behaviour); Wiggle
+          Transform: how alike the RUNS (repeater copies) move. The seed is
+          not animatable: a plain field. */}
       {(op.type === 'roughen' || op.type === 'wiggleTransform') && (
         <>
-          <ParamRow
-            nodeId={nodeId}
-            opId={op.id}
-            param="wigglesPerSecond"
-            label="Wiggles/Second"
-            value={op.wigglesPerSecond ?? 0}
-            min={0}
-          />
-          {/*
-            Correlation is what makes this operator AE's Wiggle Paths rather
-            than AE's Roughen: how alike NEIGHBOURING points move. 0 shreds the
-            outline — and is the pre-existing behaviour, so stored projects are
-            unchanged — while higher values make it undulate like something with
-            stiffness. It was the one defining parameter the operator lacked
-            while already carrying the name.
-          */}
-          <ParamRow
-            nodeId={nodeId}
-            opId={op.id}
-            param="correlation"
-            label="Correlation"
-            value={op.correlation ?? 0}
-            min={0}
-            max={100}
-            unit="%"
-          />
           <div className={styles.paramRow}>
             {/* An empty gutter, not a missing one: the seed cannot be animated,
                 but its label must still start on the same column as the two
@@ -390,14 +365,13 @@ function PathOpCard({
 }
 
 export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | null {
-  // B4-gap: an operator's Wiggles/Second and Correlation (`fx.pathOps[i].wigglesPerSecond|correlation`) — the
-  // catalog lists neither under `contents/<opId>/`, so `mirrorPathOps` reads them as 0. Closes when both are
-  // `contents/<opId>/…` properties; then this is `mirrorPathOps(useMirrorTree(nodeId))`.
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || readNodeKind(node) !== 'shape') return null;
+  // B4: the chain from the mirror (`contents/<opId>/…`, Wiggles/Second and
+  // Correlation included since they are catalog properties).
+  const layer = useMirrorLayer(nodeId);
+  const tree = useMirrorTree(nodeId);
+  if (!layer || uiKindOf(layer) !== 'shape') return null;
 
-  const ops = readPathOps(node);
+  const ops = mirrorPathOps(tree);
   if (ops.length === 0) return null; // added via Effects & Presets
 
   // Rendered top-to-bottom in APPLICATION order, so the panel reads the way the

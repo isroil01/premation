@@ -14,6 +14,7 @@
 // top-left pixel.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <string_view>
@@ -98,5 +99,13 @@ struct MaskRing {
 [[nodiscard]] std::vector<MaskRing> auto_trace_rings(std::span<const std::uint8_t> plane, std::uint32_t pw,
                                                      std::uint32_t ph, double layerW, double layerH,
                                                      const AutoTraceParams& params);
+
+/// autoTrace.ts contoursToMaskRings for a SOLO RENDER: `rings` traced from a
+/// comp-sized frame by auto_trace_rings(…, compW, compH, …) — centred comp
+/// space — pulled back to the layer's centre-origin space through the inverse
+/// of `layerToComp` (world2DAt: a b c d e f). Empty when the matrix is singular
+/// (a layer scaled to nothing draws nothing to trace).
+[[nodiscard]] std::vector<MaskRing> comp_rings_to_layer(std::vector<MaskRing> rings, double compW, double compH,
+                                                        const std::array<double, 6>& layerToComp);
 
 }  // namespace premation::jobs::trace
