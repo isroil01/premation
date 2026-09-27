@@ -252,7 +252,7 @@ export function bindEngineComps(mirror: ItemsMirrorView): () => void {
     const key = JSON.stringify(next);
     if (key === last && key === JSON.stringify(current)) return;
     last = key;
-    useProjectStore.getState().replaceComps(next);
+    useProjectStore.getState().actions.replaceComps(next);
   };
   const dispose = mirror.subscribe(['comps', 'items'], apply);
   apply();

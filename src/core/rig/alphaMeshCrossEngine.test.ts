@@ -67,7 +67,7 @@ const IMAGES = {
 
 interface Case { image: keyof typeof IMAGES; lw: number; lh: number; pad: number; rig: PuppetRig }
 
-const pin = (id: string, x: number, y: number) => ({ id, x, y });
+const pin = (id: string, x: number, y: number) => ({ id, name: id, x, y });
 
 const CASES: Case[] = [
   { image: 'character', lw: 240, lh: 320, pad: 0, rig: { pins: [pin('a', 0, -100), pin('b', 90, -40)], meshMode: 'silhouette' } },

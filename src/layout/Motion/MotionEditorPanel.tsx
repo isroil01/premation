@@ -46,6 +46,7 @@ import { GraphEditor } from '@layout/Timeline/GraphEditor';
 import { ExpressionEditor } from './ExpressionEditor';
 import { BounceSection } from './BounceSection';
 import { MotionControls } from '@layout/Inspector/MotionControls';
+import { useMemberTracks } from '@hooks/useMemberTracks';
 import styles from './MotionEditorPanel.module.css';
 
 /**

@@ -143,6 +143,8 @@ export default tseslint.config(
       // added it. It is not nested under dist/, so it needs its own entry.
       '**/dist-render/**',
       'build/**',
+      // Native build trees and their scratch bench scripts (gitignored).
+      'native/build/**',
       'node_modules/**',
       'coverage/**',
       // Downloaded model runtimes (ONNX Runtime wasm glue for Object Matte).

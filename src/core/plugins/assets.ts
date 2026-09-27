@@ -376,7 +376,7 @@ export async function createImageAsset(
       files: [{ name: /\.png$/i.test(name) ? name : `${name}.png`, data: new Uint8Array(await blob.arrayBuffer()), mimeType: 'image/png', source: 'derived' }],
     }], { origin: 'plugin' });
     if (!res.ok) refuse('asset-import-failed', res.error.message || res.error.code);
-    const assetId = (res.value[0] as { items?: string[] } | undefined)?.items?.[0];
+    const assetId = ((res.ok ? res.value[0] : undefined) as unknown as { items?: string[] } | undefined)?.items?.[0];
     if (!assetId) refuse('asset-import-failed', 'the image was not imported.');
     return { assetId: assetId!, width, height };
   } finally {

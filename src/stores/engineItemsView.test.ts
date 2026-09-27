@@ -18,6 +18,7 @@ function footage(id: string, patch: Partial<ItemInfo> = {}): ItemInfo {
     width: 1920, height: 1080, duration: 4 * SEC, frameRate: { num: 25, den: 1 }, hasVideo: true, hasAudio: true, hasAlpha: false,
     interpretation: { alpha: 'auto', pixelAspect: 1, fieldOrder: 'progressive', loops: 1, colorProfile: 'auto', invertAlpha: false },
     proxyPath: '', proxyEnabled: false, tags: [], codec: 'h264', audioChannels: 2, audioSampleRate: 0, colorProfile: '', fileBytes: 1234,
+    mediaType: 'video', alphaProbed: true, audioProbed: true,
     ...patch,
   };
 }
@@ -36,6 +37,7 @@ function settings(patch: Partial<CompSettings> = {}): CompSettings {
     workArea: { start: 0, duration: 6 * SEC },
     motionBlur: { shutterAngle: 180, shutterPhase: -90, samplesPerFrame: 8, adaptiveSampleLimit: 128, enabled: true },
     renderer3d: 'classic', globalLightAngle: 90, globalLightAltitude: 45, dropFrame: false, preserveFrameRate: false, preserveResolution: false,
+    essentialProps: [],
     ...patch,
   };
 }

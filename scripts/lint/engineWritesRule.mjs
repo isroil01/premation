@@ -137,6 +137,8 @@ const NOT_WRITES = new Set([
   'pastePathEdit', // core/workspace/pathCommands: Edit ▸ Paste of copied vertices — ONE engine edit (setProperty / editPathTopology per target outline), not a direct write
   'setPluginPropWriteHandler', // core/scene/pluginPropWrites: REGISTERS the plugin system's write-path callback (plugins/authoredWriteHook.ts); writes nothing
   'insertCaptionLayers', // core/captions/captionLayers: ONE engine edit (deleteLayers + pasteLayers of an off-document build), not a direct write
+  'pasteKeyframes', // core/animation/keyframeClipboard: ONE engine batch of `pasteKeyframes` commands, not a direct write
+  'createCustomLayerFromMenu', // core/plugins/createCustomLayerFromMenu: ONE engine `pasteLayers` of an off-document build
   'importLocalAsset', // core/assets/local: content-addresses a File's bytes into the bundle BLOB store and returns a record + src (storage, dedup by hash); it adds no item — assetStore's importer (also the engine's importFiles port) does
 ]);
 const NOT_WRITE_SHAPE = /^create\w*(Player|Renderer|Painter|Port|Cache|Backend|Store)$|ForTests?$/;
@@ -183,6 +185,9 @@ function insideOffDocumentBuilder(context, node) {
  */
 const WRITER_MODULES = new Map([
   ['src/hooks/useNodeComponentProp.ts', 'the legacy hook; every useNodeComponentProp() call is counted where it is made'],
+  // F2 views: with the engine as owner these modules copy the ENGINE's answer
+  // into a page store (a projection of the mirror, never a user edit).
+  ['src/stores/engineItemsView.ts', 'bindEngineComps / bindEngineItems: projectStore comps and assetStore items follow CompInfo / ItemInfo'],
 ]);
 
 /**

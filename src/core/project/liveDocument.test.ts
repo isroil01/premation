@@ -4,7 +4,9 @@
  * owner (exportDocument, restoreDocument as one entry, saveProject).
  */
 
-import type { EngineClient, Request } from '@motion/engine-api';
+import type { Command, EngineClient, Query } from '@motion/engine-api';
+
+type Request = Command | Query;
 import { liveDocument, replaceLiveDocument, saveLiveDocument, setLiveDocumentSource, LiveDocumentError } from './liveDocument';
 
 const mockCaptured = { version: '1.1.0', scene: { version: '1.0.0', nodes: [] }, animation: { tracks: {}, expressions: {} }, from: 'page' };
@@ -24,7 +26,7 @@ function fakeEngine(refuse = false): { client: EngineClient; sent: Request[] } {
     sent.push(r);
     if (refuse) return { ok: false, revision: 0, error: { code: 'io', message: 'disk full' } };
     if (r.type === 'exportDocument') return { ok: true, revision: 3, value: { type: 'exportDocument', document: new TextEncoder().encode(JSON.stringify(ownerDoc)) } };
-    if (r.type === 'saveProject') return { ok: true, revision: 3, value: { path: (r as { path: string }).path, bytes: 10 } };
+    if (r.type === 'saveProject') return { ok: true, revision: 3, value: { path: (r as unknown as { path: string }).path, bytes: 10 } };
     return { ok: true, revision: 4, value: {} };
   };
   const client = { query: answer, execute: answer } as unknown as EngineClient;

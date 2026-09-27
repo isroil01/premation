@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- F11 targets SceneGraph copies; the rows here are this builder's own plain data, never scene-graph state. */
 /**
  * Layer fragments built on the CLIENT — no document, no engine state.
  *

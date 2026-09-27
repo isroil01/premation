@@ -514,7 +514,14 @@ Report replay(const SessionData& s, const std::string& portsDir, SessionData* bl
       }
     } else {
       api::Response expected;
-      REQUIRE(decode_response(r.response, expected));
+      if (!decode_response(r.response, expected)) {
+        // Schema drift: the stored answer predates a schema change. Re-bless
+        // (PARITY_REBLESS=1) after checking nothing else differs.
+        rep.valueDiffs += 1;
+        differs = true;
+        rep.lines.push_back(where + ": the stored answer does not decode with this schema (re-bless)");
+        continue;
+      }
       const bool tsErr = expected.outcome.kind() == api::Outcome::Kind::error;
       if (tsErr || cxErr) {
         if (tsErr != cxErr || std::get<api::EngineError>(expected.outcome.v).code != std::get<api::EngineError>(got->outcome.v).code) {

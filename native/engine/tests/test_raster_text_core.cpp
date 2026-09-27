@@ -300,41 +300,48 @@ TEST_CASE("optical kerning: vertical pairs match opticalKernVerticalPx exactly",
 }
 
 TEST_CASE("line breaks: CJK paragraph wrap, inserted breaks and shifted runs (cjk_wrap_parity.json)", "[raster][linebreak][cjk]") {
-  std::ifstream probe(std::string(PREMATION_ENGINE_TEST_DATA) + "/cjk_wrap_parity.json", std::ios::binary);
-  if (!probe.good()) {
+  const std::optional<std::string> text = premation::test::read_fixture_file(premation::test::fixture_path("cjk_wrap_parity.json"));
+  if (!text) {
     WARN("cjk_wrap_parity.json not generated yet (GEN_NATIVE_CJKWRAP=1 npx jest cjkWrapCrossEngine)");
     return;
   }
-  const auto fx = load_fixture("cjk_wrap_parity.json");
+  const std::optional<js::Json> parsed = js::parse(*text);
+  REQUIRE(parsed.has_value());
+  const js::Json& fx = *parsed;
+  const auto indices = [](const js::Json& a) {
+    std::vector<std::size_t> out;
+    for (const auto& v : a.arr()) out.push_back(static_cast<std::size_t>(v.num()));
+    return out;
+  };
   set_word_segmenter_disabled_for_test(true);  // the fixture is written without Intl.Segmenter
-  for (const auto& row : fx["rows"].items()) {
-    INFO(row["text"].str());
+  for (const auto& row : fx.at("rows").arr()) {
+    INFO(row.at("text").str());
     std::string wrapped;
     bool firstParagraph = true;
-    for (const auto& p : row["paragraphs"].items()) {
-      const auto units = strings(p["units"]);
+    for (const auto& p : row.at("paragraphs").arr()) {
+      const auto units = strings(p.at("units"));
       std::vector<double> lengths;
-      for (const auto& l : p["lengths"].items()) lengths.push_back(l.num());
-      const double limit = p["limit"].num();
-      const double indent = p["firstLineIndent"].num();
+      for (const auto& l : p.at("lengths").arr()) lengths.push_back(l.num());
+      const double limit = p.at("limit").num();
+      const double indent = p.at("firstLineIndent").num();
       const auto starts = wrap_units(units, lengths, [&](std::size_t line) { return limit - (line == 0 ? indent : 0); });
-      CHECK(starts == indices(p["starts"]));
+      CHECK(starts == indices(p.at("starts")));
       const std::string joined = join_wrapped(units, starts);
-      CHECK(joined == p["joined"].str());
+      CHECK(joined == p.at("joined").str());
       if (!firstParagraph) wrapped += '\n';
       wrapped += joined;
       firstParagraph = false;
     }
-    CHECK(wrapped == row["wrapped"].str());
-    const auto inserted = inserted_break_indices(split_graphemes(row["text"].str()), split_graphemes(wrapped));
-    CHECK(inserted == indices(row["inserted"]));
-    const auto& runs = row["runs"].items();
-    const auto& shifted = row["shifted"].items();
+    CHECK(wrapped == row.at("wrapped").str());
+    const auto inserted = inserted_break_indices(split_graphemes(row.at("text").str()), split_graphemes(wrapped));
+    CHECK(inserted == indices(row.at("inserted")));
+    const auto& runs = row.at("runs").arr();
+    const auto& shifted = row.at("shifted").arr();
     REQUIRE(runs.size() == shifted.size());
     for (std::size_t i = 0; i < runs.size(); ++i) {
-      const auto [s, e] = shift_span_for_inserted_breaks(runs[i]["start"].num(), runs[i]["end"].num(), inserted);
-      CHECK(s == shifted[i]["start"].num());
-      CHECK(e == shifted[i]["end"].num());
+      const auto [s, e] = shift_span_for_inserted_breaks(runs[i].at("start").num(), runs[i].at("end").num(), inserted);
+      CHECK(s == shifted[i].at("start").num());
+      CHECK(e == shifted[i].at("end").num());
     }
   }
   set_word_segmenter_disabled_for_test(false);

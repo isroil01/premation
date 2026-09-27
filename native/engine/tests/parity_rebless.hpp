@@ -42,8 +42,17 @@ namespace premation::test {
 
 /// PARITY_REBLESS=1: parity tests write their answers into their fixtures.
 [[nodiscard]] inline bool parity_rebless() {
-  const char* v = std::getenv("PARITY_REBLESS");
+#ifdef _WIN32
+  char* v = nullptr;
+  std::size_t len = 0;
+  if (_dupenv_s(&v, &len, "PARITY_REBLESS") != 0 || v == nullptr) return false;
+  const bool on = std::string_view(v) == "1";
+  std::free(v);  // NOLINT(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory): _dupenv_s allocates with malloc
+  return on;
+#else
+  const char* v = std::getenv("PARITY_REBLESS");  // NOLINT(concurrency-mt-unsafe): read once, before threads start
   return v != nullptr && std::string_view(v) == "1";
+#endif
 }
 
 /// A file of the test data directory (tests/data).

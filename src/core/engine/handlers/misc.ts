@@ -245,7 +245,7 @@ export const miscHandlers: HandlerTable = {
           remintKeyIds(newId, ctx);
         }
         for (const id of created) if (useProjectStore.getState().comps[id]) getTimelineController().timelineForComp(id);
-        return { items: created };
+        return { items: created, warnings: [], missingFootage: [] };
       },
     };
   },

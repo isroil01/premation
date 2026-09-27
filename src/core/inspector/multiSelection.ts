@@ -507,7 +507,7 @@ export function aggregateFlag<T>(
 /** Run `write` for every live node. Returns how many nodes were written. */
 export function applyFlagAll(
   nodeIds: ReadonlyArray<string>,
-  label: string,
+  _label: string,
   write: (nodeId: string) => void,
 ): number {
   let n = 0;
