@@ -88,7 +88,9 @@ const PURE_READS = new Set([
   'makeKeyframeId', 'parseKeyframeId', 'updateNodeComponentProp',
   // Libraries and clipboards the user keeps across projects — not the document.
   'listPresets', 'exportPresets', 'presetFolder', 'listEffectPresets', 'hasEffectClipboard',
+  'saveUserPreset', // core/animation/animationPresets: stores a captured body in the user's library (settings), reads nothing
   'effectClipboardSize', 'readEffectClipboard', // core/effects/effectClipboard: the clipboard's own module state
+  'holdCopiedEffects', 'storeEffectPreset', // core/effects/effectClipboard: hold the engine's copyEffects captures; store them in the preset library (localStorage)
   'getTransitionItem', // core/library/transitionLibrary: a lookup in the static TRANSITION_ITEMS catalog
   // Pure string helpers living in modules that also read the scene.
   'familyKey', // core/fonts/missingFonts: normalises a family name
@@ -169,7 +171,7 @@ const PURE_READS = new Set([
   'matchBounceStyle', 'bounceInTracks', 'describeBounce', // core/animation/bounce: the static style table; keys built from the options given; a sentence about the result given
   'revealBounce', // core/animation/bounce: emits the editor's RevealAnimatedProps (a view request, no read)
   'feelDurationSec', 'feelStaggerFrames', 'planStagger', // core/animation/choreography: the static feel table; the plan over the StaggerLayers given
-  'clipboardEntries', // core/animation/keyframeClipboard: the editor's keyframe clipboard — not the document
+  'clipboardSets', // core/animation/keyframeClipboard: the editor's keyframe clipboard (the engine's copyKeyframes answers) — not the document
   'countUserPresets', // core/animation/animationPresets: the user's preset library in settings — not the document
   'previewChoreography', // core/library/insertPreview: seek + play + a scheduled pause of the transport (§6 control), no document read
   'notifyNoSvgGeometry', 'notifySvgConverted', // core/svg/svgConvert: a toast about the file name / SvgLayerData given

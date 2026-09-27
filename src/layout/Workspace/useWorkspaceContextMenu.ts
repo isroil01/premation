@@ -26,7 +26,6 @@
  * playback.
  */
 
-import { liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
@@ -58,6 +57,7 @@ import {
   duplicateSelectedLayersEdit,
   freezeFrameEdit,
   groupSelectedLayersEdit,
+  liveMergePathsEdit,
   set3DEdit,
   setFrameBlendEdit,
   setLabelColorEdit,
@@ -336,10 +336,10 @@ export function nodeContextMenuItems(id: string): ContextMenuItem[] {
             id: 'merge-paths',
             label: 'Merge Paths',
             children: [
-              { id: 'merge-live-union', label: 'Live Union (Add)', onSelect: () => liveMergeSelectedPaths('union') },
-              { id: 'merge-live-subtract', label: 'Live Subtract', onSelect: () => liveMergeSelectedPaths('subtract') },
-              { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => liveMergeSelectedPaths('intersect') },
-              { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => liveMergeSelectedPaths('exclude') },
+              { id: 'merge-live-union', label: 'Live Union (Add)', onSelect: () => { void liveMergePathsEdit('union'); } },
+              { id: 'merge-live-subtract', label: 'Live Subtract', onSelect: () => { void liveMergePathsEdit('subtract'); } },
+              { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => { void liveMergePathsEdit('intersect'); } },
+              { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => { void liveMergePathsEdit('exclude'); } },
               { id: 'merge-sep', label: '—', disabled: true },
               // The boolean runs off-document; its result lands as deleteLayers + pasteLayers (one entry).
               { id: 'merge-union', label: 'Bake Union', onSelect: () => { void bakeMergePathsEdit('union'); } },

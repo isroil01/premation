@@ -39,6 +39,7 @@
 #include "jobs/job_api.hpp"
 #include "jobs/job_runner.hpp"
 #include "model.hpp"
+#include "overlay_geometry.hpp"
 #include "premation/protocol/frame_channel.hpp"
 #include "scene/session_hooks.hpp"
 #include "timeline.hpp"
@@ -273,6 +274,8 @@ class Session {
   ViewportConfig viewport_;
   double resolution_ = 1.0;
   bool renderDirty_ = false;
+  /// B4 round 2: the overlay geometry push (setOverlayGeometry) — at most one subscription per viewport.
+  std::vector<doc::OverlaySubscription> overlays_;
 
   // D2w / E2 hooks (session_hooks.hpp) and their bookkeeping.
   FrameBuilder* frameBuilder_ = nullptr;

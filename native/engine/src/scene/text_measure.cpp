@@ -260,6 +260,75 @@ class CanvasMeasurer final : public TextMeasurer {
   }
 
  private:
+  std::optional<FontBox> measure_font_box(const MeasuredStyle& input) override {
+    if (input.hasFontAxes || input.fontWidth || input.fontSlant || input.vertical) return std::nullopt;
+    std::optional<MeasuredStyle> wrapped;
+    if (input.boxWidth) {
+      wrapped = wrapped_style(input, nullptr);
+      if (!wrapped) return std::nullopt;
+    }
+    const MeasuredStyle& s = wrapped ? *wrapped : input;
+    const std::scoped_lock lock(m_);
+    if (!ctx_) ctx_ = raster::Canvas2D::make(1, 1, opts_);
+    raster::Canvas2D& g = *ctx_;
+    // cssFont(s) + applyFontVariations(g, s), as measure_uncached.
+    const std::string style = s.fontStyle == "italic" ? "italic " : "";
+    if (!set_measure_font(g, s)) return std::nullopt;
+    g.setTextBaseline(raster::TextBaseline::middle);
+    // measureTextBoxes (horizontal): the font band of every line, spaced as the rasterizer places them.
+    std::vector<std::string> lines;
+    {
+      std::size_t start = 0;
+      for (;;) {
+        const std::size_t nl = s.content.find('\n', start);
+        lines.push_back(s.content.substr(start, nl == std::string::npos ? std::string::npos : nl - start));
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+      }
+    }
+    const auto n = static_cast<double>(lines.size());
+    const double lineHeightPx = s.fontSize * (s.lineHeight != 0 ? s.lineHeight : kDefaultLineHeight);
+    const double gap = lineHeightPx + s.paragraphSpacing;
+    const double paraGap = s.spaceBefore.value_or(0) + s.spaceAfter.value_or(0);
+    std::vector<double> offsets;
+    double total = 0;
+    if (paraGap != 0) {
+      auto [off, tot] = raster::line_offsets(raster::hard_ends_of(lines.size(), s.softBreakLines), gap, s.spaceBefore.value_or(0),
+                                             s.spaceAfter.value_or(0));
+      offsets = std::move(off);
+      total = tot;
+    }
+    const auto lineDy = [&](std::size_t i) {
+      return paraGap != 0 ? -total / 2 + offsets[i] : (static_cast<double>(i) - (n - 1) / 2) * gap;
+    };
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+    double fontTop = kInf, fontBottom = -kInf, inkTop = kInf, inkBottom = -kInf, advance = 0;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      const std::string& line = lines[i];
+      const raster::TextMetrics m = g.measureText(line);
+      const double chars = static_cast<double>(raster::split_graphemes(line).size());
+      const double spacing = (chars > 0 ? (chars - 1) * s.letterSpacing : 0) + optical_line_delta(s, style, line);
+      const double dy = lineDy(i);
+      inkTop = std::min(inkTop, dy - m.actualBoundingBoxAscent);
+      inkBottom = std::max(inkBottom, dy + m.actualBoundingBoxDescent);
+      fontTop = std::min(fontTop, dy - m.fontBoundingBoxAscent);
+      fontBottom = std::max(fontBottom, dy + m.fontBoundingBoxDescent);
+      advance = std::max(advance, m.width + spacing);
+    }
+    // The TypeScript's fallbacks for missing metrics: the ink band, then the line block.
+    if (!std::isfinite(fontTop) || !std::isfinite(fontBottom)) {
+      if (std::isfinite(inkTop) && std::isfinite(inkBottom)) {
+        fontTop = inkTop;
+        fontBottom = inkBottom;
+      } else {
+        const double half = ((paraGap != 0 ? total : (n - 1) * gap) + lineHeightPx) / 2;
+        fontTop = -half;
+        fontBottom = half;
+      }
+    }
+    return FontBox{fontTop, fontBottom, advance / 2};
+  }
+
   /// Font + variations + kerning of `s` on the measuring canvas (cssFont +
   /// applyFontVariations); false when the font does not parse.
   bool set_measure_font(raster::Canvas2D& g, const MeasuredStyle& s) {

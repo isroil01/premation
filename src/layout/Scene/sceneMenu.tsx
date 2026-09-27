@@ -39,12 +39,12 @@ import {
   bakeMergePathsEdit,
   duplicateSelectedLayersEdit,
   groupSelectedLayersEdit,
+  liveMergePathsEdit,
   setLabelColorEdit,
   ungroupSelectedEdit,
 } from '@layout/Workspace/layerMenuEdits';
 import { alignLayers, parentLayer, setLayerMatte, setLayersBlend } from '@layout/Inspector/inspectorEdits';
 import { splitSelectedAtPlayhead, unfreezeEdit } from '@layout/Timeline/timelineEdits';
-import { liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { masksFromTextEdit } from '@layout/Text/textEdits';
 import { canOutlineText } from '@layout/Text/textMirror';
@@ -214,7 +214,7 @@ function alignMenuItems(ids: ReadonlyArray<string>): ContextMenuItem[] {
     ...ALIGN_ITEMS.map((a): ContextMenuItem => ({
       id: `align-${a.id}`,
       label: a.label,
-      onSelect: () => alignLayers(ids, a.id, 'selection', comp.width, comp.height),
+      onSelect: () => { void alignLayers(ids, a.id, 'selection', comp.width, comp.height); },
     })),
     { id: 'align-sep', separator: true },
     ...(['distribute-h', 'distribute-v'] as const).map((mode): ContextMenuItem => ({
@@ -223,7 +223,7 @@ function alignMenuItems(ids: ReadonlyArray<string>): ContextMenuItem[] {
       // AE greys distribution out below three layers, because two layers are
       // already evenly distributed and the command would be a no-op.
       disabled: ids.length < 3,
-      onSelect: () => alignLayers(ids, mode as AlignMode, 'selection', comp.width, comp.height),
+      onSelect: () => { void alignLayers(ids, mode as AlignMode, 'selection', comp.width, comp.height); },
     })),
   ];
 }
@@ -412,10 +412,10 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
             id: 'merge-paths',
             label: 'Merge Paths',
             children: [
-              { id: 'merge-live-union', label: 'Live Union (Add)', onSelect: () => liveMergeSelectedPaths('union') },
-              { id: 'merge-live-subtract', label: 'Live Subtract', onSelect: () => liveMergeSelectedPaths('subtract') },
-              { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => liveMergeSelectedPaths('intersect') },
-              { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => liveMergeSelectedPaths('exclude') },
+              { id: 'merge-live-union', label: 'Live Union (Add)', onSelect: () => { void liveMergePathsEdit('union'); } },
+              { id: 'merge-live-subtract', label: 'Live Subtract', onSelect: () => { void liveMergePathsEdit('subtract'); } },
+              { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => { void liveMergePathsEdit('intersect'); } },
+              { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => { void liveMergePathsEdit('exclude'); } },
               { id: 'merge-sep', separator: true },
               // The boolean runs off-document; deleteLayers + pasteLayers, one entry.
               { id: 'merge-union', label: 'Bake Union', onSelect: () => { void bakeMergePathsEdit('union'); } },

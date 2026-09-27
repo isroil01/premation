@@ -91,7 +91,7 @@ function node(id: string): SceneNode {
 
 describe('effect commands', () => {
   beforeAll(() => {
-    // batchHistory records onto the command system — boot a minimal one.
+    // The edits record onto the command system — boot a minimal one.
     const dummyServices = {
       undo: { push: () => {}, undo: () => {}, redo: () => {}, canUndo: () => false, canRedo: () => false },
       selection: { get: () => [], set: () => {}, clear: () => {} },

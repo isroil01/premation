@@ -76,7 +76,6 @@ import {
 } from '@core/effects/effects';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { HistoryService } from '@core/commands/HistoryService';
-import { useHistoryStore } from '@stores/historyStore';
 import { runAsOneHistoryEntry } from '@core/composition/compositeEdit';
 import { getTimelineController, compToKeyframeTime } from './TimelineController';
 import { useTransitionStore } from '@stores/transitionStore';
@@ -551,9 +550,9 @@ export async function removeTransition(compId: string, id: string): Promise<bool
 // ── Live preview (dragging a transition's end) ───────────────────────
 
 /**
- * Run `fn` with BOTH history mechanisms muted.
+ * Run `fn` with the app history muted.
  *
- * The same guard pair `runAsOneHistoryEntry` and `splitLayerAtFrame` use, held
+ * The same guard `runAsOneHistoryEntry` and `splitLayerAtFrame` use, held
  * open for a single call instead of a whole operation: a drag applies dozens of
  * these and not one of them is an edit the user made — only the release is.
  */
@@ -566,7 +565,7 @@ function silently(fn: () => void): void {
   }
   history?.suspend();
   try {
-    useHistoryStore.getState().runRestoring(fn);
+    fn();
   } finally {
     history?.resume();
   }

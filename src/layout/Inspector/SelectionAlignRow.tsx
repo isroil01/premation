@@ -50,7 +50,7 @@ export function SelectionAlignRow({ nodeIds = [] }: { nodeIds?: ReadonlyArray<st
         aria-label={a.label}
         tooltip={disabled ? `${a.label} — select ${min}+ layers` : a.label}
         disabled={disabled}
-        onClick={() => alignLayers(nodeIds, a.id, alignTo, compWidth, compHeight)}
+        onClick={() => { void alignLayers(nodeIds, a.id, alignTo, compWidth, compHeight); }}
       >
         <Icon name={a.icon} size="sm" />
       </IconButton>

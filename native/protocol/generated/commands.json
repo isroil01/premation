@@ -730,6 +730,11 @@
     "type": "setInteracting"
   },
   {
+    "id": 1771,
+    "kind": "control",
+    "type": "setOverlayGeometry"
+  },
+  {
     "id": 850,
     "kind": "control",
     "type": "startJob"

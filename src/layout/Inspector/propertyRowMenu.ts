@@ -26,7 +26,6 @@ import type { KeyChord } from '@app-types/common';
 import { documentMirror } from '@stores/documentMirror';
 import { isTrackAnimated, navigatorFor, trackRef as mirrorTrackRef, type MirrorRead } from '@core/mirror/selection';
 import { memberExpressionOf } from '@core/mirror/memberExpressions';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { edit } from '@core/engine/uiEdits';
 import { essentialPropMenuItems } from '@core/inspector/propertyMenu';
 import { setPinnedProp } from '@core/inspector/pinnedProps';
@@ -145,9 +144,8 @@ export function engineRowMenuItems(ctx: RowMenuContext): ContextMenuItem[] {
       items.push({
         id: 'kf-copy',
         label: 'Copy Keyframe',
-        // A clipboard READ: the key under the playhead on this track's own axis.
-        // B4-gap: the keyframe clipboard captures the TS keyframe records (stored-axis time, si/so, roving) — the copy has no mirror twin yet (shared with the timeline's Ctrl+C).
-        onSelect: () => copyKeyframeAt(nodeId, prop, keyAxisTimeForDisplay(nodeId, time, prop)),
+        // The key under the playhead, copied whole by the engine (`copyKeyframes`).
+        onSelect: () => { void copyKeyframeAt(nodeId, prop, time); },
       });
     }
     if (hasClipboard()) {

@@ -38,7 +38,6 @@ import { nativeEngineExe, startNativeEngine } from '../__testHelpers__/nativeEng
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isWriteAroundEngine } from '../externalWrites';
-import { LEGACY_DEBOUNCE_RECORDER } from '@stores/historyStore';
 
 // Real timers for the engine process's supervisor (captured before faking).
 const realSetTimeout = globalThis.setTimeout.bind(globalThis);
@@ -295,25 +294,20 @@ test('the mirror notifies once per batch, and a restated record keeps its identi
   m.stop();
 });
 
-test('engine edits keep exact undo with the legacy debounce recorder switched off', async () => {
-  LEGACY_DEBOUNCE_RECORDER.enabled = false;
-  try {
-    h = await setupEngine();
-    const m = new DocumentMirror(tsSource(h, true)).start();
-    const comp = m.compIds[0]!;
-    const A = unwrap(await h.engine.execute({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] })).layer;
-    const g = unwrap(await h.engine.beginGesture('Drag'));
-    for (let i = 0; i < 5; i++) unwrap(await h.engine.execute({ type: 'setProperty', prop: { layer: A, path: 'transform/rotation' }, value: { kind: 'scalar', value: i * 10 } }));
-    unwrap(await h.engine.endGesture(g.gesture, true));
-    expect(m.history?.state.entries.map((e) => e.label)).toEqual(['New Solid Layer', 'Drag']);
-    unwrap(await h.engine.undo());
-    expect(m.property(A, 'transform/rotation')?.value).toEqual({ kind: 'scalar', value: 0 });
-    jest.advanceTimersByTime(2000); // nothing debounced is pending: no extra entry appears
-    expect(m.history?.state.entries.length).toBe(2);
-    m.stop();
-  } finally {
-    LEGACY_DEBOUNCE_RECORDER.enabled = true;
-  }
+test('engine edits keep exact undo with no recorder behind them', async () => {
+  h = await setupEngine();
+  const m = new DocumentMirror(tsSource(h, true)).start();
+  const comp = m.compIds[0]!;
+  const A = unwrap(await h.engine.execute({ type: 'createLayer', comp, kind: 'solid', name: 'A', init: [] })).layer;
+  const g = unwrap(await h.engine.beginGesture('Drag'));
+  for (let i = 0; i < 5; i++) unwrap(await h.engine.execute({ type: 'setProperty', prop: { layer: A, path: 'transform/rotation' }, value: { kind: 'scalar', value: i * 10 } }));
+  unwrap(await h.engine.endGesture(g.gesture, true));
+  expect(m.history?.state.entries.map((e) => e.label)).toEqual(['New Solid Layer', 'Drag']);
+  unwrap(await h.engine.undo());
+  expect(m.property(A, 'transform/rotation')?.value).toEqual({ kind: 'scalar', value: 0 });
+  jest.advanceTimersByTime(2000); // nothing debounced is pending: no extra entry appears
+  expect(m.history?.state.entries.length).toBe(2);
+  m.stop();
 });
 
 test('B4 read additions reach the mirror: effectCount, memberExpressions, transitions, sourceDuration, pinned', async () => {

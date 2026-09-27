@@ -6,10 +6,13 @@
  * process with the renderer (phase D/E).
  */
 
-import type { Query, QueryResult, HistoryState, LogRecord, PropertyValue, EffectInfo, LayerKind } from '@motion/engine-api';
+import type { Query, QueryResult, HistoryState, LogRecord, PropertyValue, EffectInfo, LayerKind, Keyframe } from '@motion/engine-api';
 import { defaultAnimation } from '@motion/animation';
 import { EFFECT_DEFS, effectDefFor, getNodeEffects } from '@core/effects/effects';
-import { listPresets } from '@core/animation/animationPresets';
+import { captureEffect } from '@core/effects/effectClipboard';
+import { getCryptomatteForAsset } from '@core/media/cryptomatte';
+import { listPresets, capturePresetBody } from '@core/animation/animationPresets';
+import { presetContextFor } from '@core/animation/presetContext';
 import { world2DAt, world3DAt } from '@core/scene/layerSpace';
 import { compSizeOf } from '@core/composition/compSizes';
 import { readCompRef } from '@core/scene/compInstance';
@@ -26,9 +29,13 @@ import {
   compMarkers,
   layerMarkers,
   itemInfo,
+  svgRoleOf,
 } from './model';
 import { catalogFor, requireBinding, readStatic, readKeys, keyAtToApi, isAnimated, flicksToKeyTime, keyTimeToFlicks, toApiNums, apiUnitFactor } from './props';
 import { valueAt } from './handlers/properties';
+import { textLayoutAnswer } from './textLayoutQuery';
+import { layerBoundsAnswer } from './layerBoundsQuery';
+import { memberTracksAnswer } from './memberKeysQuery';
 import { encodeFragment } from './handlers/layers';
 import { GROUP_TYPES } from './handlers/groups';
 import { checkTime, flicksToSeconds } from './time';
@@ -177,6 +184,47 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
       });
       return { type: q.type, sets };
     }
+    case 'copyKeyframes': {
+      // B4: whole keys in API form, per property, in the order the ids first name them.
+      const layerSets = new Map<string, ReturnType<typeof keyframeSets>>();
+      const picked = new Map<string, { prop: { layer: string; path: string }; ids: Set<string>; keys: Keyframe[] }>();
+      for (const id of q.keys) {
+        const loc = ctx.keyIndex.resolve(id);
+        if (!loc) continue;
+        let sets = layerSets.get(loc.layer);
+        if (!sets) {
+          sets = keyframeSets(loc.layer);
+          layerSets.set(loc.layer, sets);
+        }
+        for (const set of sets) {
+          const k = set.keyframes.find((x) => x.id === id);
+          if (!k) continue;
+          const key = `${set.prop.layer}\u0000${set.prop.path}`;
+          const entry = picked.get(key) ?? { prop: set.prop, ids: new Set<string>(), keys: [] };
+          if (!entry.ids.has(k.id)) {
+            entry.ids.add(k.id);
+            entry.keys.push(k);
+          }
+          picked.set(key, entry);
+          break;
+        }
+      }
+      return { type: q.type, sets: [...picked.values()].map((e) => ({ prop: e.prop, keyframes: [...e.keys].sort((a, b) => a.time - b.time) })) };
+    }
+    case 'getMemberKeyframes':
+      // B4: the stored member tracks the keyframe assistants transform (memberKeysQuery.ts).
+      return { type: q.type, tracks: memberTracksAnswer(q) };
+    case 'copyEffects': {
+      // B4: the effect clipboard's capture (effectClipboard.ts captureEffect), stack order.
+      requireLayer(q.layer);
+      const wanted = new Set(q.effects.flatMap((p) => {
+        const seg = p.split('/');
+        return seg.length === 2 && seg[0] === 'effects' && seg[1] ? [seg[1]] : [];
+      }));
+      const stack = getNodeEffects(q.layer);
+      const picked = q.effects.length === 0 ? stack : stack.filter((e) => wanted.has(e.id));
+      return { type: q.type, effects: JSON.stringify(picked.map((e) => captureEffect(q.layer, e))), paths: picked.map((e) => `effects/${e.id}`) };
+    }
     case 'getMarkers': {
       requireComp(q.owner.comp);
       let markers = q.owner.layer ? (requireLayer(q.owner.layer), layerMarkers(q.owner.layer)) : compMarkers(q.owner.comp);
@@ -206,6 +254,37 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
       });
       return { type: q.type, items };
     }
+    case 'getSvgDocument': {
+      // B4: the `svg` component as stored (svgLayer.ts readSvgLayer / readRetainedSvgSource).
+      const node = requireLayer(q.layer);
+      const role = svgRoleOf(node);
+      const p = (node.components.find((c) => c.type === 'svg')?.props ?? {}) as Record<string, unknown>;
+      const str = (k: string): string => (typeof p[k] === 'string' ? (p[k] as string) : '');
+      const num = (k: string, d: number): number => (typeof p[k] === 'number' && Number.isFinite(p[k]) ? (p[k] as number) : d);
+      const vb = Array.isArray(p.viewBox) && p.viewBox.length === 4 && p.viewBox.every((v) => typeof v === 'number') ? (p.viewBox as number[]) : null;
+      if (role === 'none') {
+        return { type: q.type, role, fileName: '', intrinsicWidth: 0, intrinsicHeight: 0, capabilities: '{}', livePlayback: false, sourceMarkup: '', sanitizedMarkup: '', sanitizePolicy: 0 };
+      }
+      return {
+        type: q.type,
+        role,
+        fileName: str('fileName') || 'untitled.svg',
+        intrinsicWidth: num('intrinsicWidth', 512),
+        intrinsicHeight: num('intrinsicHeight', 512),
+        ...(vb ? { viewBox: { x: vb[0]!, y: vb[1]!, width: vb[2]!, height: vb[3]! } } : {}),
+        capabilities: JSON.stringify(p.capabilities && typeof p.capabilities === 'object' ? p.capabilities : {}),
+        livePlayback: p.livePlayback === true,
+        sourceMarkup: str('sourceMarkup') || str('sanitizedMarkup'),
+        sanitizedMarkup: str('sanitizedMarkup'),
+        sanitizePolicy: Math.max(0, Math.round(num('sanitizePolicy', 0))),
+      };
+    }
+    case 'getCryptomatte': {
+      // B4: the EXR's decoded manifest — the page decodes EXR in this engine (media/floatExr.ts).
+      if (!resolveItem(q.item)) fail('notFound', `no item '${q.item}'`, { item: q.item });
+      const set = getCryptomatteForAsset(q.item);
+      return { type: q.type, layers: (set?.layers ?? []).map((l) => ({ name: l.name, objects: l.objects.map((o) => o.name) })) };
+    }
     case 'getThumbnail':
       return fail('unsupported', 'thumbnails are rendered by the editor until the engine owns rendering (D2)');
     case 'listEffects': {
@@ -228,6 +307,12 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
         .map((p) => ({ id: p.name, name: p.name, category: p.folder ?? p.category ?? '', description: p.description ?? '' }));
       return { type: q.type, presets };
     }
+    case 'capturePreset': {
+      // B4: Save as Preset — the preset body resolved against the layer's OWN composition.
+      requireLayer(q.layer);
+      const body = capturePresetBody(q.layer, presetContextFor(q.layer, compOfLayer(q.layer) ?? undefined));
+      return { type: q.type, preset: body ? JSON.stringify(body) : '{}', empty: body === null };
+    }
     case 'listPlugins':
       // Native SDK plugins live in the C++ engine process (G1); this engine hosts none.
       return { type: q.type, plugins: [] };
@@ -249,9 +334,14 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
         colorManagement: true, float32: false, pluginApis: [], expressionEngines: ['premation'],
         cpuThreads: typeof navigator !== 'undefined' ? navigator.hardwareConcurrency ?? 1 : 1,
       };
-    case 'hitTest':
-    case 'getLayerBounds':
     case 'getTextLayout':
+      // B4: measured with the page's canvas metrics, as the painter lays the text out (textLayoutQuery.ts).
+      checkTime(q.time);
+      return { type: q.type, ...textLayoutAnswer(q) };
+    case 'getLayerBounds':
+      // B4: readGeometry's box at the time (layerBoundsQuery.ts).
+      return { type: q.type, bounds: layerBoundsAnswer(q) };
+    case 'hitTest':
     case 'readPixels':
       return fail('unsupported', `'${q.type}' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2`);
     case 'getLayerTransforms': {

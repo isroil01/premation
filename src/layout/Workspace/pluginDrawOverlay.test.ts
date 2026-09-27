@@ -146,7 +146,7 @@ describe('the gesture bracket', () => {
   it('suspends history from the press to the release', () => {
     const history = getCommandSystem().getHistory();
     pluginPointerDown(controller, { x: 0, y: 0 }, NO_MODS, 0);
-    // Counted, so each inner `runDocumentEdit` suspends and resumes inside
+    // Counted, so each inner an edit's history entry suspends and resumes inside
     // ours and pushes nothing of its own.
     history.suspend();
     history.resume();

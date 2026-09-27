@@ -18,41 +18,31 @@
  * "Convert to Point Text" (`text.convertToPointText`); the same two rows in
  * the viewport/timeline layer context menu for text layers.
  *
- * B4-gap: TEXT LAYOUT. Both conversions measure the text as it renders
- * (`readMeasuredTextStyle` / `measureParagraphBox` over the scene node: line
- * metrics, soft wraps, the Fit-to-Box scale) and hold it still through the
- * layer's evaluated pose (`readTransformProp`); the API has no text-layout
- * query (a `getTextLayout` answer — lines, box, fit scale — closes it) and the
- * Text COMPONENT id is what `componentPropsCommands` writes through. Whether
- * Source Text is keyed stays `isDataAnimated` with it.
+ * The measuring is the ENGINE's (`getTextLayout`, ENGINE_API.md §15.12): the
+ * render box, the wrap, the paragraph box and where the line block sits, for
+ * the stored style and for the style the conversion is about to write (the
+ * query's overrides). The pose comes from `getPropertyValues` at the time;
+ * the facts that decide what a layer is (box width, text path, lock, keyed
+ * Source Text) come from the mirror.
  */
 
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
-import type { Command as ApiCommand } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { readTransformProp } from '@core/scene/transformWrite';
-import { isLayer } from '@core/engine/doc';
+import type { Command as ApiCommand, TextLayout, TextLayoutOverrides } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
-import { paths, values as apiValues } from '@core/engine/propRefs';
+import { compTime, values as apiValues } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';
+import { storedNumber, trackRefIn } from '@core/mirror/trackIndex';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { documentMirror, type MirrorTree } from '@stores/documentMirror';
 import { getTime } from '@stores/playbackClockStore';
-import { sourceTextCommand } from '@layout/Text/textEdits';
-import { componentPropsCommands } from './useComponentProp';
-import { trackWrites } from './inspectorEdits';
-import {
-  measureParagraphBox,
-  measureTextSize,
-  readMeasuredTextStyle,
-  textStyleTransform,
-  type MeasuredTextStyle,
-} from '@core/text/measureText';
-import { MIN_BOX_SIZE, TEXT_PAD_X, firstParagraphDirection, hasTextPath, readParagraphBox, type BoxAutoSize } from '@core/text/textExtras';
-import { compensatePosition, lineBlockAnchorX, type Vec2 } from '@core/text/paragraphBox';
 import { useSelectionStore } from '@stores/selectionStore';
-import type { SceneNode } from '@core/types';
+import { fieldCommands, sourceTextCommand } from '@layout/Text/textEdits';
+import { isSourceTextAnimated, sourceTextOf, SOURCE_TEXT_PATH, textField, textPathOf } from '@layout/Text/textMirror';
+import { trackWrites } from './inspectorEdits';
+import { MIN_BOX_SIZE, TEXT_PAD_X, type BoxAutoSize } from '@core/text/textExtras';
+import { compensatePosition, type Vec2 } from '@core/text/paragraphBox';
 
 export const TEXT_CONVERT_TO_POINT_COMMAND = asCommandId('text.convertToPointText');
 export const TEXT_CONVERT_TO_PARAGRAPH_COMMAND = asCommandId('text.convertToParagraphText');
@@ -60,89 +50,79 @@ export const TEXT_CONVERT_TO_PARAGRAPH_COMMAND = asCommandId('text.convertToPara
 /** Padding added around the measured text when it becomes a box, px. */
 export const CONVERT_BOX_PADDING = 4;
 
-function textComponent(node: SceneNode | null | undefined): { id: string; props: Record<string, unknown> } | null {
-  const c = node?.components.find((x) => x.type === 'Text');
-  return c ? { id: c.id, props: c.props as Record<string, unknown> } : null;
+/** The layer's text layout as the engine measures it (overrides = the style about to be written); null when it cannot. */
+async function layoutOf(id: string, overrides?: TextLayoutOverrides, seconds: number = getTime()): Promise<TextLayout | null> {
+  const res = await engine().query({ type: 'getTextLayout', layer: id, time: compTime(seconds), ...(overrides ? { overrides } : {}) });
+  return res.ok ? res.value : null;
 }
 
-function alignOf(node: SceneNode): string | undefined {
-  let align: string | undefined;
-  for (const c of node.components) {
-    const a = (c.props as Record<string, unknown>).align;
-    if (typeof a === 'string') align = a;
-  }
-  return align;
+/** A layer's property tree, fetched when the mirror has not loaded it yet. */
+async function treeOf(id: string): Promise<MirrorTree | undefined> {
+  const m = documentMirror();
+  const now = m.tree(id);
+  if (now) return now;
+  await m.whenIdle();
+  return m.tree(id);
 }
 
-function directionOf(node: SceneNode): 'ltr' | 'rtl' {
-  let dir: unknown;
-  let content: string | undefined;
-  for (const c of node.components) {
-    const p = c.props as Record<string, unknown>;
-    if (p.direction === 'rtl' || p.direction === 'ltr' || p.direction === 'auto') dir = p.direction;
-    if (typeof p.content === 'string') content = p.content;
-  }
-  // The line block's anchor follows the FIRST paragraph ('auto' resolves it).
-  return firstParagraphDirection(dir, content);
-}
+interface Pose { x: number; y: number; rotationDeg: number; scaleX: number; scaleY: number }
 
-/**
- * Where the line block sits in its layer (local units, after the Character
- * panel's scale): the x its lines start/centre/end at, and its vertical offset
- * from the centred position. Null without text metrics.
- */
-export function lineBlockPlacement(style: MeasuredTextStyle, align: string | undefined, direction?: 'ltr' | 'rtl'): Vec2 | null {
-  const size = measureTextSize(style);
-  if (!size) return null;
-  const tr = textStyleTransform(style);
-  const box = style.boxWidth ? measureParagraphBox(style) : null;
-  const k = box?.fitScale ?? 1;
-  const indents = style.boxWidth
-    ? { left: (style.leftIndent ?? 0) * k, right: (style.rightIndent ?? 0) * k }
-    : undefined;
-  return {
-    x: tr.sx * lineBlockAnchorX(align, size.w, indents, direction),
-    // A fixed box aligns its lines INSIDE the character-scaled space; an
-    // auto-height box's top-anchor offset is applied outside it (textPaint).
-    y: box?.fixedHeight ? tr.sy * box.lineOffsetY : box?.lineOffsetY ?? 0,
+/** Position / Rotation / Scale evaluated at `seconds` (stored units: scale 1 = 100 %). */
+async function poseAt(id: string, seconds: number): Promise<Pose> {
+  const tree = await treeOf(id);
+  const tracks = ['x', 'y', 'rotation', 'scaleX', 'scaleY'] as const;
+  const refs = tracks.map((t) => trackRefIn(tree, t));
+  const pathsWanted = [...new Set(refs.flatMap((r) => (r ? [r.path] : [])))];
+  const res = pathsWanted.length > 0
+    ? await engine().query({ type: 'getPropertyValues', props: pathsWanted.map((path) => ({ layer: id, path })), time: compTime(seconds), evaluated: true })
+    : null;
+  const byPath = new Map((res?.ok ? res.value.values : []).map((v) => [v.prop.path, v.value]));
+  const read = (i: number, fallback: number): number => {
+    const r = refs[i];
+    const v = r ? storedNumber(r, byPath.get(r.path)) : undefined;
+    return v ?? fallback;
   };
-}
-
-function poseOf(id: string): { x: number; y: number; rotationDeg: number; scaleX: number; scaleY: number } {
-  return {
-    x: readTransformProp(id, 'x'),
-    y: readTransformProp(id, 'y'),
-    rotationDeg: readTransformProp(id, 'rotation'),
-    scaleX: readTransformProp(id, 'scaleX', 1),
-    scaleY: readTransformProp(id, 'scaleY', 1),
-  };
+  return { x: read(0, 0), y: read(1, 0), rotationDeg: read(2, 0), scaleX: read(3, 1), scaleY: read(4, 1) };
 }
 
 /** The Position write that holds the text still when its line block moves inside the layer. */
-function holdStillCommands(id: string, before: Vec2, after: Vec2, seconds: number): ApiCommand[] {
+async function holdStillCommands(id: string, before: Vec2, after: Vec2, seconds: number): Promise<ApiCommand[]> {
   const shift = { x: after.x - before.x, y: after.y - before.y };
   if (Math.abs(shift.x) < 1e-6 && Math.abs(shift.y) < 1e-6) return [];
-  const next = compensatePosition(poseOf(id), shift);
+  const next = compensatePosition(await poseAt(id, seconds), shift);
   // Keyed at the playhead where Position is animated (AE setValueAtTime), else static.
   const writes = trackWrites(id, { x: next.x, y: next.y }, seconds);
   return writes.length > 0 ? [{ type: 'setProperties', writes }] : [];
 }
 
-/** Text component props → field / property writes (every one addressed by the engine). */
-function textPropCommands(id: string, tcId: string, values: Readonly<Record<string, unknown>>, seconds: number): ApiCommand[] {
-  return componentPropsCommands(id, tcId, values, seconds).cmds;
+/** The paragraph-box fields as path writes (`text/boxWidth`, `text/boxHeight`, `text/boxAutoSize`). */
+function boxCommands(id: string, box: Readonly<{ boxWidth?: number; boxHeight?: number; boxAutoSize?: string }>): ApiCommand[] {
+  return Object.entries(box).flatMap(([k, v]) => (v === undefined ? [] : fieldCommands(id, `text/${k}`, v)));
+}
+
+function isTextLayerNow(id: string): boolean {
+  return uiKindOf(documentMirror().layer(id)) === 'text';
+}
+
+/** Point or paragraph, from the mirror: a box width makes paragraph text; text on a path has no box. Null when not a text layer (or its tree is not loaded yet). */
+function textKindOf(id: string): 'point' | 'paragraph' | 'path' | null {
+  const m = documentMirror();
+  if (!isTextLayerNow(id) || !m.tree(id)) return null;
+  if (textPathOf(m, id) !== '') return 'path';
+  const w = textField(m, id, 'boxWidth');
+  return typeof w === 'number' && w > 0 ? 'paragraph' : 'point';
 }
 
 /**
  * Selected text layers, split by kind. Text on a path is point text that
- * cannot become paragraph text (see `readParagraphBox`), so it is neither.
+ * cannot become paragraph text, so it is neither.
  */
 export function selectedTextLayers(kind: 'point' | 'paragraph'): string[] {
-  return useSelectionStore.getState().ids.filter((id) => {
-    const node = defaultSceneGraph.getNode(id);
-    if (!node || !textComponent(node) || hasTextPath(node)) return false;
-    return (readParagraphBox(node) !== null) === (kind === 'paragraph');
-  });
+  return useSelectionStore.getState().ids.filter((id) => textKindOf(id) === kind);
+}
+
+function lockedNow(id: string): boolean {
+  return documentMirror().layer(id)?.switches.locked === true;
 }
 
 /**
@@ -154,32 +134,32 @@ export async function convertToParagraphText(ids: ReadonlyArray<string>, seconds
   const done: string[] = [];
   const cmds: ApiCommand[] = [];
   for (const id of ids) {
-    const node = defaultSceneGraph.getNode(id);
-    const tc = textComponent(node);
+    await treeOf(id);
     // Text on a path is point text: it has no box to convert into.
-    if (!node || !tc || !isLayer(id) || node.locked || hasTextPath(node) || readParagraphBox(node)) continue;
-    const style = readMeasuredTextStyle(node);
-    const size = style ? measureTextSize(style) : null;
-    if (!style || !size) continue;
-    const align = alignOf(node);
-    const dir = directionOf(node);
-    const before = lineBlockPlacement(style, align, dir);
-    const tr = textStyleTransform(style);
+    if (textKindOf(id) !== 'point' || lockedNow(id)) continue;
+    const now = await layoutOf(id, undefined, seconds);
+    // The engine's word on a text path (a path option riding no mask reads '' in the mirror).
+    if (!now || now.onPath) continue;
     // The render box's content width, unscaled — at least as wide as every
     // line, so the new box does not re-wrap the text it was made from.
-    const boxWidth = Math.max(MIN_BOX_SIZE, Math.ceil((size.w - 2 * TEXT_PAD_X) / (tr.sx || 1)) + CONVERT_BOX_PADDING);
-    const auto = measureParagraphBox({ ...style, boxWidth });
-    const boxHeight = Math.max(MIN_BOX_SIZE, Math.ceil(auto?.contentHeight ?? style.fontSize * style.lineHeight) + CONVERT_BOX_PADDING);
-    const override = { boxWidth, boxHeight, boxAutoSize: 'off' };
-    const afterStyle = readMeasuredTextStyle(node, override);
-    const after = afterStyle ? lineBlockPlacement(afterStyle, align, dir) : null;
-    cmds.push(...textPropCommands(id, tc.id, override, seconds));
-    if (before && after) cmds.push(...holdStillCommands(id, before, after, seconds));
+    const boxWidth = Math.max(MIN_BOX_SIZE, Math.ceil((now.size.x - 2 * TEXT_PAD_X) / (now.styleScale.x || 1)) + CONVERT_BOX_PADDING);
+    const auto = await layoutOf(id, { boxWidth, boxHeight: 0 }, seconds);
+    const boxHeight = Math.max(MIN_BOX_SIZE, Math.ceil(auto?.paragraph?.contentHeight ?? now.fontSize * lineHeightOf(id)) + CONVERT_BOX_PADDING);
+    const box = { boxWidth, boxHeight, boxAutoSize: 'off' };
+    const after = await layoutOf(id, box, seconds);
+    cmds.push(...boxCommands(id, box));
+    if (after) cmds.push(...await holdStillCommands(id, now.lineBlock, after.lineBlock, seconds));
     done.push(id);
   }
   if (cmds.length === 0) return [];
   const res = await edit('Convert to Paragraph Text', cmds);
   return res.ok ? done : [];
+}
+
+/** The layer's stored leading (Character panel line height, a font-size multiple). */
+function lineHeightOf(id: string): number {
+  const v = textField(documentMirror(), id, 'lineHeight');
+  return typeof v === 'number' && v > 0 ? v : 1.2;
 }
 
 /**
@@ -193,47 +173,46 @@ export async function convertToParagraphText(ids: ReadonlyArray<string>, seconds
 export async function convertToPointText(ids: ReadonlyArray<string>, seconds: number = getTime()): Promise<string[]> {
   const done: string[] = [];
   const cmds: ApiCommand[] = [];
+  const m = documentMirror();
   for (const id of ids) {
-    const node = defaultSceneGraph.getNode(id);
-    const tc = textComponent(node);
-    if (!node || !tc || !isLayer(id) || node.locked || !readParagraphBox(node)) continue;
-    const style = readMeasuredTextStyle(node);
-    if (!style) continue;
-    const align = alignOf(node);
-    const dir = directionOf(node);
-    const before = lineBlockPlacement(style, align, dir);
-    const k = style.fitScale && style.fitScale > 0 ? style.fitScale : 1;
+    await treeOf(id);
+    if (textKindOf(id) !== 'paragraph' || lockedNow(id)) continue;
+    const now = await layoutOf(id, undefined, seconds);
+    if (!now) continue;
+    const fit = now.paragraph?.fitScale;
+    const k = fit && fit > 0 ? fit : 1;
     // The wrapped content is the raw content with each soft-wrap space
     // replaced by '\n' one-for-one, so character runs keep their indices.
-    const raw = typeof tc.props.content === 'string' ? tc.props.content : style.content;
-    const content = style.content.length !== raw.length ? raw : style.content;
-    if (defaultAnimation.isDataAnimated(id, 'text.source')) {
+    const raw = sourceTextOf(m.property(id, SOURCE_TEXT_PATH)?.value) ?? now.wrapped;
+    const content = now.wrapped.length !== raw.length ? raw : now.wrapped;
+    if (isSourceTextAnimated(m, id)) {
       // Keyframed Source Text: every key's text is wrapped through the same box
       // it rendered in (its OWN wrap, taken while the box still exists).
-      const q = await engine().query({ type: 'getKeyframes', props: [{ layer: id, path: paths.sourceText() }] });
-      const patches = q.ok ? (q.value.sets[0]?.keyframes ?? []).flatMap((kf) => {
-        if (kf.value.kind !== 'textDocument') return [];
+      const patches = [];
+      for (const kf of m.keyframes(id, SOURCE_TEXT_PATH)) {
+        if (kf.value.kind !== 'textDocument') continue;
         const text = kf.value.value.text;
-        const wrapped = readMeasuredTextStyle(node, { content: text })?.content;
-        if (wrapped === undefined || wrapped === text || wrapped.length !== text.length) return [];
-        return [{ id: kf.id, value: apiValues.string(wrapped), spatialIn: [], spatialOut: [] }];
-      }) : [];
+        const wrapped = (await layoutOf(id, { content: text }, seconds))?.wrapped;
+        if (wrapped === undefined || wrapped === text || wrapped.length !== text.length) continue;
+        patches.push({ id: kf.id, value: apiValues.string(wrapped), spatialIn: [], spatialOut: [] });
+      }
       if (patches.length > 0) cmds.push({ type: 'updateKeyframes', patches });
     } else if (content !== raw) {
       cmds.push(...(sourceTextCommand(id, content, seconds) ?? []));
     }
-    const bake: Record<string, number> = {};
+    const bake: { fontSize?: number; letterSpacing?: number; paragraphSpacing?: number } = {};
     if (k < 1) {
-      bake.fontSize = style.fontSize * k;
-      if (style.letterSpacing) bake.letterSpacing = style.letterSpacing * k;
-      if (style.paragraphSpacing) bake.paragraphSpacing = style.paragraphSpacing * k;
+      bake.fontSize = now.fontSize * k;
+      if (now.letterSpacing) bake.letterSpacing = now.letterSpacing * k;
+      if (now.paragraphSpacing) bake.paragraphSpacing = now.paragraphSpacing * k;
     }
-    const afterStyle = readMeasuredTextStyle(node, { content, boxWidth: 0, boxHeight: 0, ...bake });
-    const after = afterStyle ? lineBlockPlacement(afterStyle, align, dir) : null;
-    const box: Record<string, unknown> = { ...bake, boxWidth: 0 };
-    if (typeof tc.props.boxHeight === 'number' && tc.props.boxHeight !== 0) box.boxHeight = 0;
-    cmds.push(...textPropCommands(id, tc.id, box, seconds));
-    if (before && after) cmds.push(...holdStillCommands(id, before, after, seconds));
+    const after = await layoutOf(id, { content, boxWidth: 0, boxHeight: 0, ...bake }, seconds);
+    const bakeNums = Object.fromEntries(Object.entries(bake).filter((e): e is [string, number] => typeof e[1] === 'number'));
+    const bakeWrites = trackWrites(id, bakeNums, seconds);
+    if (bakeWrites.length > 0) cmds.push({ type: 'setProperties', writes: bakeWrites });
+    const storedHeight = textField(m, id, 'boxHeight');
+    cmds.push(...boxCommands(id, { boxWidth: 0, ...(typeof storedHeight === 'number' && storedHeight !== 0 ? { boxHeight: 0 } : {}) }));
+    if (after) cmds.push(...await holdStillCommands(id, now.lineBlock, after.lineBlock, seconds));
     done.push(id);
   }
   if (cmds.length === 0) return [];
@@ -254,24 +233,18 @@ export async function convertToPointText(ids: ReadonlyArray<string>, seconds: nu
  * anchor) is compensated through Position — ONE engine batch.
  */
 export async function setBoxAutoSize(id: string, mode: BoxAutoSize, seconds: number = getTime()): Promise<boolean> {
-  const node = defaultSceneGraph.getNode(id);
-  const tc = textComponent(node);
-  const box = node ? readParagraphBox(node) : null;
-  if (!node || !tc || !box || !isLayer(id)) return false;
-  const align = alignOf(node);
-  const dir = directionOf(node);
-  const style = readMeasuredTextStyle(node);
-  const before = style ? lineBlockPlacement(style, align, dir) : null;
-  const m = style ? measureParagraphBox(style) : null;
+  await treeOf(id);
+  if (textKindOf(id) !== 'paragraph') return false;
+  const now = await layoutOf(id, undefined, seconds);
+  const box = now?.paragraph;
+  if (!now || !box) return false;
   // Exactly the text's height, not rounded: a top-aligned box one fraction
   // of a pixel taller than its lines would nudge them up by half of it.
-  const contentH = Math.max(MIN_BOX_SIZE, m?.contentHeight ?? (style ? style.fontSize * style.lineHeight : MIN_BOX_SIZE));
-  const patch: Record<string, unknown> = {};
-  if (mode !== 'height' ? !box.fixedHeight : !(box.boxHeight > 0)) patch.boxHeight = contentH;
-  patch.boxAutoSize = mode;
-  const afterStyle = readMeasuredTextStyle(node, patch);
-  const after = afterStyle ? lineBlockPlacement(afterStyle, align, dir) : null;
-  const cmds = [...textPropCommands(id, tc.id, patch, seconds), ...(before && after ? holdStillCommands(id, before, after, seconds) : [])];
+  const contentH = Math.max(MIN_BOX_SIZE, box.contentHeight);
+  const patch: { boxHeight?: number; boxAutoSize: string } = { boxAutoSize: mode };
+  if (mode !== 'height' ? !box.fixedHeight : !(box.storedHeight > 0)) patch.boxHeight = contentH;
+  const after = await layoutOf(id, patch, seconds);
+  const cmds = [...boxCommands(id, patch), ...(after ? await holdStillCommands(id, now.lineBlock, after.lineBlock, seconds) : [])];
   const res = await edit('Box Auto-Size', cmds);
   return res.ok;
 }

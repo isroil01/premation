@@ -1,13 +1,8 @@
 /**
  * One undo entry for a multi-domain operation.
  *
- * The editor keeps two independent history mechanisms, and the note in
- * `TimelineController.splitLayerAtFrame` explains why:
- *
- *   • the ENGINE records clip geometry as explicit commands, and
- *   • the APP auto-captures a debounced scene + animation SNAPSHOT.
- *
- * Split needed both, and solved it by hand-writing an exact inverse. That works
+ * Split solved one-bar edits by hand-writing an exact inverse
+ * (`TimelineController.splitLayerAtFrame`). That works
  * for one bar. It does not work for an ASSEMBLY — create a comp, insert eight
  * clips, split at forty cuts, delete the runts, sequence the survivors and
  * write crossfades — where the inverse is not a small edit but "the project as
@@ -25,23 +20,12 @@
  *
  * ## What must hold while `fn` runs
  *
- *   • the engine history is SUSPENDED, so the split/delete/sequence commands
- *     underneath do not each become their own undo step, and
- *   • the app snapshot store is marked `restoring`, so the burst of
- *     SceneGraphChanged events does not land a debounced entry 700 ms later
- *     describing half the operation.
- *
- * Both are restored in a `finally`, and the store is re-baselined afterwards so
- * the next ordinary edit diffs against the assembled document rather than
- * against the one that preceded it.
- *
- * `fn` may be async — which is the reason this exists rather than
- * `historyStore.runRestoring`, whose callback is synchronous and so cannot span
- * an `await insertMedia(...)`.
+ * The engine history is SUSPENDED, so the split/delete/sequence commands
+ * underneath do not each become their own undo step; it resumes in a
+ * `finally`. `fn` may be async (it can span an `await insertMedia(...)`).
  */
 
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
-import { useHistoryStore } from '@stores/historyStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { HistoryService } from '@core/commands/HistoryService';
 import { bumpScene } from '@stores/sceneStore';
@@ -102,25 +86,15 @@ export async function runAsOneHistoryEntry<T>(
   label: string,
   fn: () => T | Promise<T>,
 ): Promise<T> {
-  const store = useHistoryStore.getState();
-  // Commit whatever edit was mid-debounce, so it keeps its OWN step rather than
-  // being swallowed by the baseline this operation is about to take.
-  store.flush();
-
   const toOwner = liveDocumentFromEngine();
   const before = toOwner ? null : captureShared();
   const history = historyService();
 
   history?.suspend();
-  useHistoryStore.setState({ restoring: true });
   let result: T;
   try {
     result = await fn();
   } finally {
-    useHistoryStore.setState({ restoring: false });
-    // A no-op restore, purely to re-baseline `lastState` (which is module
-    // private to the store — this is the only door to it).
-    useHistoryStore.getState().runRestoring(() => {});
     history?.resume();
   }
 
@@ -131,9 +105,7 @@ export async function runAsOneHistoryEntry<T>(
   const after = captureShared();
   history?.push({
     label,
-    // Undo/redo arrive through `performUndo`/`performRedo`, which already wrap
-    // the call in `runRestoring` — so these must NOT nest another one. The
-    // engine push still has to be suspended, hence the explicit pair.
+    // The restore must not push entries of its own: suspended around it.
     execute: () => {
       history?.suspend();
       try {
@@ -158,8 +130,8 @@ export async function runAsOneHistoryEntry<T>(
  * `runAsOneHistoryEntry` for a SYNCHRONOUS edit, with every flag restored
  * before this returns.
  *
- * The async version restores `restoring` and resumes the engine history in a
- * `finally` that runs after an `await` — a microtask later even when `fn` is
+ * The async version resumes the engine history in a `finally` that runs after
+ * an `await` — a microtask later even when `fn` is
  * synchronous. Anything that continues synchronously in the same task (a
  * second control edited in the same turn, a test driving controls in a loop)
  * then runs with history recording off, and records nothing. A synchronous
@@ -167,19 +139,15 @@ export async function runAsOneHistoryEntry<T>(
  * to leave that gap.
  */
 export function runAsOneHistoryEntrySync<T>(label: string, fn: () => T): T {
-  useHistoryStore.getState().flush();
   const toOwner = liveDocumentFromEngine();
   const before = toOwner ? null : captureShared();
   const history = historyService();
 
   history?.suspend();
-  useHistoryStore.setState({ restoring: true });
   let result: T;
   try {
     result = fn();
   } finally {
-    useHistoryStore.setState({ restoring: false });
-    useHistoryStore.getState().runRestoring(() => {});
     history?.resume();
   }
 

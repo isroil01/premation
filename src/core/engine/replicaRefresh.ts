@@ -12,7 +12,7 @@
  * main marks a batch `foreign` (caused by another window), the replica is
  * refreshed from the owner's `exportDocument` — debounced, so a drag in the
  * pop-out costs one refresh when it settles, and invisible to undo (the
- * history lives in the engine; `runRestoring` keeps the page's recorder out).
+ * history lives in the engine; a restore records no entry).
  *
  * This replaces windowSync's whole-document BroadcastChannel push, whose source
  * was the editor window's page capture.
@@ -22,7 +22,6 @@
 
 import type { EngineClient } from '@motion/engine-api';
 import { restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
-import { useHistoryStore } from '@stores/historyStore';
 import { bumpScene } from '@stores/sceneStore';
 
 /** Foreign edits settle before the document is fetched (windowSync's cadence). */
@@ -47,10 +46,8 @@ export interface ReplicaRefreshOptions {
 }
 
 function applyToPage(doc: EditorDocument): void {
-  useHistoryStore.getState().runRestoring(() => {
-    restoreDocument(doc);
-    bumpScene();
-  });
+  restoreDocument(doc);
+  bumpScene();
 }
 
 export function createReplicaRefresher(o: ReplicaRefreshOptions): ReplicaRefresher {

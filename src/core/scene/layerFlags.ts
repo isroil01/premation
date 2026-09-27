@@ -22,10 +22,10 @@
  *     than lighting an icon that changes no pixel)
  *   • `toggleLayerFlag`    — flip it, with the feedback the flag needs.
  *
- * `toggleLayerFlag` does NOT open a history entry: its callers are already
- * inside one (the timeline's handler bumps, the Scene panel wraps the whole
- * multi-layer toggle in a single `runDocumentEdit` so five layers is one undo).
- * `toggleLayerFlags` is that wrapper.
+ * `toggleLayerFlag` does NOT open a history entry: it is a builder for
+ * off-document callers (an importer). The panels send engine commands — the
+ * anchored multi-layer toggle is layout/Scene/layerSwitchEdits.ts
+ * `toggleLayerFlagsEdit`, one entry for the whole set.
  */
 
 import defaultSceneGraph from './DefaultSceneGraph';
@@ -51,8 +51,6 @@ import { readContinuousRaster, setContinuousRaster, supportsContinuousRaster } f
 import { getNodeLayerTime, updateNodeLayerTime } from './layerTime';
 import { nextQuality, readNodeQuality, setNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
-import { runDocumentEdit } from '@core/commands/documentEdit';
-import { bumpScene } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import type { SceneNode } from '@core/types';
 
@@ -236,7 +234,8 @@ export function layerFlagAvailable(node: SceneNode, flag: LayerFlag): boolean {
 
 /**
  * Flip one flag on one node. No history entry and no `bumpScene` — see the
- * header; `toggleLayerFlags` is the undoable wrapper the panels call.
+ * header; the panels send engine commands instead (layout/Scene/layerSwitchEdits.ts
+ * `toggleLayerFlagsEdit`, anchored, one entry).
  *
  * Returns false when the flag was refused (3D on a kind that cannot project),
  * so a caller toggling a selection can report how many it skipped.
@@ -316,72 +315,6 @@ export function toggleLayerFlag(
       (node as { shy?: boolean }).shy = on;
       return true;
   }
-}
-
-/**
- * Flip a flag across several layers as ONE undo step, anchored on `anchorId`.
- *
- * Anchored the way every other multi-layer switch in this app is: the state the
- * clicked row is in decides the direction for the whole set, so a mixed
- * selection resolves to "make them all match this one" rather than "invert each
- * of them" — which is what the label on the button already promised.
- *
- * Reports refusals once rather than per layer: selecting twelve layers and
- * hitting 3D when four are cameras should say so in one line.
- */
-export function toggleLayerFlags(
-  ids: ReadonlyArray<string>,
-  flag: LayerFlag,
-  anchorId?: string,
-): void {
-  const targets = ids.filter((id) => {
-    const n = defaultSceneGraph.getNode(id);
-    return !!n && layerFlagAvailable(n, flag);
-  });
-  const refused = ids.length - targets.length;
-  if (targets.length === 0) {
-    if (refused > 0) notifyRefused(flag, refused);
-    return;
-  }
-
-  const anchor = defaultSceneGraph.getNode(
-    anchorId && targets.includes(anchorId) ? anchorId : targets[0]!,
-  );
-  if (!anchor) return;
-
-  const def = layerFlagDef(flag);
-  // A cycling switch has no "on"/"off" to name: the anchor advances one
-  // position and the rest of the set lands on the SAME one, so twelve layers
-  // end up at Draft together rather than each one position further round.
-  const next: boolean | LayerQuality = def.cycles
-    ? nextQuality(readNodeQuality(anchor))
-    : !readLayerFlag(anchor, flag);
-
-  // Named after the position it is moving TO, not the one it is leaving —
-  // `describeLayerFlag` reads the CURRENT state, which is the wrong end of the
-  // edit for an undo label.
-  const verb = typeof next === 'string'
-    ? QUALITY_FACE[next].label
-    : `${next ? 'Enable' : 'Disable'} ${def.label}`;
-  const label = targets.length === 1 ? verb : `${verb} (${targets.length} layers)`;
-
-  runDocumentEdit(label, () => {
-    for (const id of targets) toggleLayerFlag(id, flag, next);
-    bumpScene();
-  });
-
-  if (refused > 0) notifyRefused(flag, refused);
-}
-
-function notifyRefused(flag: LayerFlag, count: number): void {
-  const def = layerFlagDef(flag);
-  useUIStore.getState().notify({
-    level: 'warning',
-    message: count === 1
-      ? `${def.label} isn't available for that layer`
-      : `${def.label} isn't available for ${count} of the selected layers`,
-    durationMs: 2600,
-  });
 }
 
 /** Kind of the node, for callers that want to explain a refusal. */

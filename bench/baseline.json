@@ -277,27 +277,6 @@
       "samples": 20
     },
     {
-      "name": "history/record-2000-with-clips",
-      "metric": "record.p50",
-      "unit": "ms",
-      "value": 132.66,
-      "samples": 500
-    },
-    {
-      "name": "history/record-2000-with-clips",
-      "metric": "retainedMBPer500",
-      "unit": "count",
-      "value": 197.1,
-      "samples": 0
-    },
-    {
-      "name": "history/record-2000-with-clips",
-      "metric": "undo.p50",
-      "unit": "ms",
-      "value": 424.58,
-      "samples": 20
-    },
-    {
       "name": "rasterKey/animated-paths-300",
       "metric": "key.min",
       "unit": "ms",

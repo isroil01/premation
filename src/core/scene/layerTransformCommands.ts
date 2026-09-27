@@ -14,16 +14,21 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { activeCompSize } from '@core/scene/activeComp';
 import {
-  flipLayers,
-  resetTransforms,
-  nudgeRotation,
-  nudgeScale,
+  flipLayersEdit,
+  nudgeRotationEdit,
+  nudgeScaleEdit,
   numpadStep,
 } from '@core/scene/layerTransformOps';
 
 export interface LayerTransformCommandDeps {
   /** Opens the Auto-Orient dialog. Injected: core cannot import the layout layer. */
   openAutoOrient?: (ids: ReadonlyArray<string>) => void;
+  /**
+   * Reset Transform through the engine — the timeline's own Reset
+   * (layout/Timeline/resetEdits.ts `resetTransformEdit`). Injected for the
+   * same reason.
+   */
+  resetTransform?: (ids: ReadonlyArray<string>, comp: { width: number; height: number }) => Promise<void>;
 }
 
 const hasSelection = (): boolean => useSelectionStore.getState().ids.length > 0;
@@ -43,7 +48,7 @@ export function buildLayerTransformCommands(deps: LayerTransformCommandDeps = {}
         icon: 'rotate-cw',
         shortcut: { key, ...(shift ? { shift: true } : {}) },
         enabled: hasSelection,
-        execute: () => { nudgeRotation(selection(), step); },
+        execute: () => { void nudgeRotationEdit(selection(), step); },
       });
       numpad.push({
         id: asCommandId(`layer.numpadScale${suffix}`),
@@ -52,7 +57,7 @@ export function buildLayerTransformCommands(deps: LayerTransformCommandDeps = {}
         icon: 'maximize',
         shortcut: { key, alt: true, ...(shift ? { shift: true } : {}) },
         enabled: hasSelection,
-        execute: () => { nudgeScale(selection(), step); },
+        execute: () => { void nudgeScaleEdit(selection(), step); },
       });
     }
   }
@@ -64,7 +69,10 @@ export function buildLayerTransformCommands(deps: LayerTransformCommandDeps = {}
       description: 'Anchor, position, scale, rotation and opacity back to their defaults; removes their keyframes',
       icon: 'undo',
       enabled: hasSelection,
-      execute: () => { resetTransforms(selection(), activeCompSize()); },
+      execute: () => {
+        if (deps.resetTransform) void deps.resetTransform(selection(), activeCompSize());
+        else useUIStore.getState().notify({ level: 'info', message: 'Reset Transform needs the editor UI.', durationMs: 3000 });
+      },
     },
     {
       id: asCommandId('layer.flipHorizontal'),
@@ -72,7 +80,7 @@ export function buildLayerTransformCommands(deps: LayerTransformCommandDeps = {}
       description: 'Mirror the selected layers around their anchor point (keyframes included)',
       icon: 'scale',
       enabled: hasSelection,
-      execute: () => { flipLayers(selection(), 'horizontal'); },
+      execute: () => { void flipLayersEdit(selection(), 'horizontal'); },
     },
     {
       id: asCommandId('layer.flipVertical'),
@@ -80,7 +88,7 @@ export function buildLayerTransformCommands(deps: LayerTransformCommandDeps = {}
       description: 'Mirror the selected layers vertically around their anchor point (keyframes included)',
       icon: 'scale',
       enabled: hasSelection,
-      execute: () => { flipLayers(selection(), 'vertical'); },
+      execute: () => { void flipLayersEdit(selection(), 'vertical'); },
     },
     {
       id: asCommandId('layer.autoOrient'),

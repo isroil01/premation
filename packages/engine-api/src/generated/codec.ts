@@ -188,6 +188,10 @@ const PurgeKind_TO_NUM: Record<string, number> = { 'all': 0, 'ram': 1, 'disk': 2
 const PurgeKind_FROM_NUM: readonly (T.PurgeKind | undefined)[] = ['all', 'ram', 'disk', 'undo', 'images'];
 function enc_PurgeKind(v: T.PurgeKind): number { const n = PurgeKind_TO_NUM[v]; if (n === undefined) throw new RangeError('PurgeKind: invalid value ' + String(v)); return n; }
 function dec_PurgeKind(n: number): T.PurgeKind { const v = PurgeKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PurgeKind: unknown value ' + n, 'badEnum'); return v; }
+const OverlayKind_TO_NUM: Record<string, number> = { 'transform': 0, 'bounds': 1, 'motionPath': 2, 'rig': 3, 'textBox': 4 };
+const OverlayKind_FROM_NUM: readonly (T.OverlayKind | undefined)[] = ['transform', 'bounds', 'motionPath', 'rig', 'textBox'];
+function enc_OverlayKind(v: T.OverlayKind): number { const n = OverlayKind_TO_NUM[v]; if (n === undefined) throw new RangeError('OverlayKind: invalid value ' + String(v)); return n; }
+function dec_OverlayKind(n: number): T.OverlayKind { const v = OverlayKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('OverlayKind: unknown value ' + n, 'badEnum'); return v; }
 const TrackKind_TO_NUM: Record<string, number> = { 'position': 0, 'positionRotation': 1, 'positionRotationScale': 2, 'perspectiveCorner': 3, 'mask': 4, 'planar': 5 };
 const TrackKind_FROM_NUM: readonly (T.TrackKind | undefined)[] = ['position', 'positionRotation', 'positionRotationScale', 'perspectiveCorner', 'mask', 'planar'];
 function enc_TrackKind(v: T.TrackKind): number { const n = TrackKind_TO_NUM[v]; if (n === undefined) throw new RangeError('TrackKind: invalid value ' + String(v)); return n; }
@@ -196,6 +200,10 @@ const TrackDirection_TO_NUM: Record<string, number> = { 'forward': 0, 'backward'
 const TrackDirection_FROM_NUM: readonly (T.TrackDirection | undefined)[] = ['forward', 'backward', 'both'];
 function enc_TrackDirection(v: T.TrackDirection): number { const n = TrackDirection_TO_NUM[v]; if (n === undefined) throw new RangeError('TrackDirection: invalid value ' + String(v)); return n; }
 function dec_TrackDirection(n: number): T.TrackDirection { const v = TrackDirection_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TrackDirection: unknown value ' + n, 'badEnum'); return v; }
+const SvgRole_TO_NUM: Record<string, number> = { 'none': 0, 'layer': 1, 'converted': 2 };
+const SvgRole_FROM_NUM: readonly (T.SvgRole | undefined)[] = ['none', 'layer', 'converted'];
+function enc_SvgRole(v: T.SvgRole): number { const n = SvgRole_TO_NUM[v]; if (n === undefined) throw new RangeError('SvgRole: invalid value ' + String(v)); return n; }
+function dec_SvgRole(n: number): T.SvgRole { const v = SvgRole_FROM_NUM[n]; if (v === undefined) throw new DecodeError('SvgRole: unknown value ' + n, 'badEnum'); return v; }
 const PropertyKind_TO_NUM: Record<string, number> = { 'property': 0, 'group': 1, 'indexedGroup': 2 };
 const PropertyKind_FROM_NUM: readonly (T.PropertyKind | undefined)[] = ['property', 'group', 'indexedGroup'];
 function enc_PropertyKind(v: T.PropertyKind): number { const n = PropertyKind_TO_NUM[v]; if (n === undefined) throw new RangeError('PropertyKind: invalid value ' + String(v)); return n; }
@@ -7177,6 +7185,32 @@ function decS_SetInteracting(r: Reader, end: number, o: any): T.SetInteracting {
   o.interacting = v_interacting;
   return o;
 }
+function encS_SetOverlayGeometry(w: Writer, v: T.SetOverlayGeometry): void {
+  w.byte(8); w.u32(v.viewport);
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+  { const a = v.kinds; if (a.length) { w.byte(26); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.varint(enc_OverlayKind(a[i]!)); w.endLd(s); } }
+}
+function decS_SetOverlayGeometry(r: Reader, end: number, o: any): T.SetOverlayGeometry {
+  const l_layers: string[] = [];
+  const l_kinds: T.OverlayKind[] = [];
+  let h_viewport = false;
+  let v_viewport: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_viewport = r.u32(); h_viewport = true; break;
+      case 18: l_layers.push(r.str()); break;
+      case 26: { const e = r.ldEnd(); while (r.pos < e) l_kinds.push(dec_OverlayKind(r.varint())); r.expectAt(e); break; }
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_viewport) throw new DecodeError('SetOverlayGeometry.viewport: missing', 'missingField');
+  o.viewport = v_viewport;
+  o.layers = l_layers;
+  o.kinds = l_kinds;
+  return o;
+}
 function encS_TrackPointSpec(w: Writer, v: T.TrackPointSpec): void {
   w.byte(10); { const s = w.beginLd(); encS_Rect(w, v.feature); w.endLd(s); }
   w.byte(18); { const s = w.beginLd(); encS_Rect(w, v.search); w.endLd(s); }
@@ -8067,6 +8101,7 @@ function encS_LayerInfo(w: Writer, v: T.LayerInfo): void {
   w.varint(946); w.str(v.shapeType);
   w.varint(954); w.str(v.managedBy);
   w.varint(962); w.str(v.mographId);
+  w.varint(7360); w.varint(enc_SvgRole(v.svg));
 }
 function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   const l_children: string[] = [];
@@ -8088,6 +8123,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let h_shapeType = false;
   let h_managedBy = false;
   let h_mographId = false;
+  let h_svg = false;
   let v_id: string | undefined;
   let v_comp: string | undefined;
   let v_kind: T.LayerKind | undefined;
@@ -8106,6 +8142,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let v_shapeType: string | undefined;
   let v_managedBy: string | undefined;
   let v_mographId: string | undefined;
+  let v_svg: T.SvgRole | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -8130,6 +8167,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
       case 946: v_shapeType = r.str(); h_shapeType = true; break;
       case 954: v_managedBy = r.str(); h_managedBy = true; break;
       case 962: v_mographId = r.str(); h_mographId = true; break;
+      case 7360: v_svg = dec_SvgRole(r.varint()); h_svg = true; break;
       default: r.skip(key);
     }
   }
@@ -8150,6 +8188,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   if (!h_shapeType) throw new DecodeError('LayerInfo.shapeType: missing', 'missingField');
   if (!h_managedBy) throw new DecodeError('LayerInfo.managedBy: missing', 'missingField');
   if (!h_mographId) throw new DecodeError('LayerInfo.mographId: missing', 'missingField');
+  if (!h_svg) throw new DecodeError('LayerInfo.svg: missing', 'missingField');
   o.id = v_id;
   o.comp = v_comp;
   o.kind = v_kind;
@@ -8171,6 +8210,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   o.shapeType = v_shapeType;
   o.managedBy = v_managedBy;
   o.mographId = v_mographId;
+  o.svg = v_svg;
   return o;
 }
 function encS_MemberExpression(w: Writer, v: T.MemberExpression): void {
@@ -8814,6 +8854,152 @@ function decS_CopyLayers(r: Reader, end: number, o: any): T.CopyLayers {
   o.layers = l_layers;
   return o;
 }
+function encS_CopyKeyframes(w: Writer, v: T.CopyKeyframes): void {
+  { const a = v.keys; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+}
+function decS_CopyKeyframes(r: Reader, end: number, o: any): T.CopyKeyframes {
+  const l_keys: string[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_keys.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.keys = l_keys;
+  return o;
+}
+function encS_GetMemberKeyframes(w: Writer, v: T.GetMemberKeyframes): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.members; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+}
+function decS_GetMemberKeyframes(r: Reader, end: number, o: any): T.GetMemberKeyframes {
+  const l_members: string[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_members.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('GetMemberKeyframes.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.members = l_members;
+  return o;
+}
+function encS_CopyEffects(w: Writer, v: T.CopyEffects): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.effects; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+}
+function decS_CopyEffects(r: Reader, end: number, o: any): T.CopyEffects {
+  const l_effects: string[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_effects.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('CopyEffects.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.effects = l_effects;
+  return o;
+}
+function encS_MemberTrack(w: Writer, v: T.MemberTrack): void {
+  w.byte(10); w.str(v.member);
+  w.byte(18); w.str(v.path);
+  w.byte(24); w.u32(v.index);
+  w.byte(34); w.str(v.keyframes);
+  w.byte(40); w.u32(v.count);
+  w.byte(48); w.bool(v.hasExpression);
+}
+function decS_MemberTrack(r: Reader, end: number, o: any): T.MemberTrack {
+  let h_member = false;
+  let h_path = false;
+  let h_index = false;
+  let h_keyframes = false;
+  let h_count = false;
+  let h_hasExpression = false;
+  let v_member: string | undefined;
+  let v_path: string | undefined;
+  let v_index: number | undefined;
+  let v_keyframes: string | undefined;
+  let v_count: number | undefined;
+  let v_hasExpression: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_member = r.str(); h_member = true; break;
+      case 18: v_path = r.str(); h_path = true; break;
+      case 24: v_index = r.u32(); h_index = true; break;
+      case 34: v_keyframes = r.str(); h_keyframes = true; break;
+      case 40: v_count = r.u32(); h_count = true; break;
+      case 48: v_hasExpression = r.bool(); h_hasExpression = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_member) throw new DecodeError('MemberTrack.member: missing', 'missingField');
+  if (!h_path) throw new DecodeError('MemberTrack.path: missing', 'missingField');
+  if (!h_index) throw new DecodeError('MemberTrack.index: missing', 'missingField');
+  if (!h_keyframes) throw new DecodeError('MemberTrack.keyframes: missing', 'missingField');
+  if (!h_count) throw new DecodeError('MemberTrack.count: missing', 'missingField');
+  if (!h_hasExpression) throw new DecodeError('MemberTrack.hasExpression: missing', 'missingField');
+  o.member = v_member;
+  o.path = v_path;
+  o.index = v_index;
+  o.keyframes = v_keyframes;
+  o.count = v_count;
+  o.hasExpression = v_hasExpression;
+  return o;
+}
+function encS_MemberTracks(w: Writer, v: T.MemberTracks): void {
+  { const a = v.tracks; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_MemberTrack(w, a[i]!); w.endLd(s); } } }
+}
+function decS_MemberTracks(r: Reader, end: number, o: any): T.MemberTracks {
+  const l_tracks: T.MemberTrack[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_tracks.push(decS_MemberTrack(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.tracks = l_tracks;
+  return o;
+}
+function encS_CopiedEffects(w: Writer, v: T.CopiedEffects): void {
+  w.byte(10); w.str(v.effects);
+  { const a = v.paths; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+}
+function decS_CopiedEffects(r: Reader, end: number, o: any): T.CopiedEffects {
+  const l_paths: string[] = [];
+  let h_effects = false;
+  let v_effects: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_effects = r.str(); h_effects = true; break;
+      case 18: l_paths.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_effects) throw new DecodeError('CopiedEffects.effects: missing', 'missingField');
+  o.effects = v_effects;
+  o.paths = l_paths;
+  return o;
+}
 function encS_CompositionDetails(w: Writer, v: T.CompositionDetails): void {
   w.byte(10); { const s = w.beginLd(); encS_CompInfo(w, v.comp); w.endLd(s); }
   { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_LayerInfo(w, a[i]!); w.endLd(s); } } }
@@ -9148,6 +9334,42 @@ function decS_GetItems(r: Reader, end: number, o: any): T.GetItems {
   o.items = l_items;
   return o;
 }
+function encS_GetSvgDocument(w: Writer, v: T.GetSvgDocument): void {
+  w.byte(10); w.str(v.layer);
+}
+function decS_GetSvgDocument(r: Reader, end: number, o: any): T.GetSvgDocument {
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('GetSvgDocument.layer: missing', 'missingField');
+  o.layer = v_layer;
+  return o;
+}
+function encS_GetCryptomatte(w: Writer, v: T.GetCryptomatte): void {
+  w.byte(10); w.str(v.item);
+}
+function decS_GetCryptomatte(r: Reader, end: number, o: any): T.GetCryptomatte {
+  let h_item = false;
+  let v_item: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_item = r.str(); h_item = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_item) throw new DecodeError('GetCryptomatte.item: missing', 'missingField');
+  o.item = v_item;
+  return o;
+}
 function encS_GetThumbnail(w: Writer, v: T.GetThumbnail): void {
   if (v.item !== undefined) { w.byte(10); w.str(v.item); }
   if (v.layer !== undefined) { w.byte(18); w.str(v.layer); }
@@ -9246,6 +9468,114 @@ function decS_Thumbnail(r: Reader, end: number, o: any): T.Thumbnail {
   o.height = v_height;
   o.format = v_format;
   o.data = v_data;
+  return o;
+}
+function encS_SvgDocument(w: Writer, v: T.SvgDocument): void {
+  w.byte(8); w.varint(enc_SvgRole(v.role));
+  w.byte(18); w.str(v.fileName);
+  w.byte(25); w.f64(v.intrinsicWidth);
+  w.byte(33); w.f64(v.intrinsicHeight);
+  if (v.viewBox !== undefined) { w.byte(42); { const s = w.beginLd(); encS_Rect(w, v.viewBox); w.endLd(s); } }
+  w.byte(50); w.str(v.capabilities);
+  w.byte(56); w.bool(v.livePlayback);
+  w.byte(66); w.str(v.sourceMarkup);
+  w.byte(74); w.str(v.sanitizedMarkup);
+  w.byte(80); w.u32(v.sanitizePolicy);
+}
+function decS_SvgDocument(r: Reader, end: number, o: any): T.SvgDocument {
+  let h_role = false;
+  let h_fileName = false;
+  let h_intrinsicWidth = false;
+  let h_intrinsicHeight = false;
+  let h_capabilities = false;
+  let h_livePlayback = false;
+  let h_sourceMarkup = false;
+  let h_sanitizedMarkup = false;
+  let h_sanitizePolicy = false;
+  let v_role: T.SvgRole | undefined;
+  let v_fileName: string | undefined;
+  let v_intrinsicWidth: number | undefined;
+  let v_intrinsicHeight: number | undefined;
+  let v_viewBox: T.Rect | undefined;
+  let v_capabilities: string | undefined;
+  let v_livePlayback: boolean | undefined;
+  let v_sourceMarkup: string | undefined;
+  let v_sanitizedMarkup: string | undefined;
+  let v_sanitizePolicy: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_role = dec_SvgRole(r.varint()); h_role = true; break;
+      case 18: v_fileName = r.str(); h_fileName = true; break;
+      case 25: v_intrinsicWidth = r.f64(); h_intrinsicWidth = true; break;
+      case 33: v_intrinsicHeight = r.f64(); h_intrinsicHeight = true; break;
+      case 42: v_viewBox = decS_Rect(r, r.ldEnd(), {}); break;
+      case 50: v_capabilities = r.str(); h_capabilities = true; break;
+      case 56: v_livePlayback = r.bool(); h_livePlayback = true; break;
+      case 66: v_sourceMarkup = r.str(); h_sourceMarkup = true; break;
+      case 74: v_sanitizedMarkup = r.str(); h_sanitizedMarkup = true; break;
+      case 80: v_sanitizePolicy = r.u32(); h_sanitizePolicy = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_role) throw new DecodeError('SvgDocument.role: missing', 'missingField');
+  if (!h_fileName) throw new DecodeError('SvgDocument.fileName: missing', 'missingField');
+  if (!h_intrinsicWidth) throw new DecodeError('SvgDocument.intrinsicWidth: missing', 'missingField');
+  if (!h_intrinsicHeight) throw new DecodeError('SvgDocument.intrinsicHeight: missing', 'missingField');
+  if (!h_capabilities) throw new DecodeError('SvgDocument.capabilities: missing', 'missingField');
+  if (!h_livePlayback) throw new DecodeError('SvgDocument.livePlayback: missing', 'missingField');
+  if (!h_sourceMarkup) throw new DecodeError('SvgDocument.sourceMarkup: missing', 'missingField');
+  if (!h_sanitizedMarkup) throw new DecodeError('SvgDocument.sanitizedMarkup: missing', 'missingField');
+  if (!h_sanitizePolicy) throw new DecodeError('SvgDocument.sanitizePolicy: missing', 'missingField');
+  o.role = v_role;
+  o.fileName = v_fileName;
+  o.intrinsicWidth = v_intrinsicWidth;
+  o.intrinsicHeight = v_intrinsicHeight;
+  if (v_viewBox !== undefined) o.viewBox = v_viewBox;
+  o.capabilities = v_capabilities;
+  o.livePlayback = v_livePlayback;
+  o.sourceMarkup = v_sourceMarkup;
+  o.sanitizedMarkup = v_sanitizedMarkup;
+  o.sanitizePolicy = v_sanitizePolicy;
+  return o;
+}
+function encS_CryptomatteLayerInfo(w: Writer, v: T.CryptomatteLayerInfo): void {
+  w.byte(10); w.str(v.name);
+  { const a = v.objects; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+}
+function decS_CryptomatteLayerInfo(r: Reader, end: number, o: any): T.CryptomatteLayerInfo {
+  const l_objects: string[] = [];
+  let h_name = false;
+  let v_name: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_name = r.str(); h_name = true; break;
+      case 18: l_objects.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_name) throw new DecodeError('CryptomatteLayerInfo.name: missing', 'missingField');
+  o.name = v_name;
+  o.objects = l_objects;
+  return o;
+}
+function encS_CryptomatteInfo(w: Writer, v: T.CryptomatteInfo): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_CryptomatteLayerInfo(w, a[i]!); w.endLd(s); } } }
+}
+function decS_CryptomatteInfo(r: Reader, end: number, o: any): T.CryptomatteInfo {
+  const l_layers: T.CryptomatteLayerInfo[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(decS_CryptomatteLayerInfo(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.layers = l_layers;
   return o;
 }
 function encS_EffectParamInfo(w: Writer, v: T.EffectParamInfo): void {
@@ -9436,6 +9766,24 @@ function decS_ListPresets(r: Reader, end: number, o: any): T.ListPresets {
   r.expectAt(end);
   if (!h_category) throw new DecodeError('ListPresets.category: missing', 'missingField');
   o.category = v_category;
+  return o;
+}
+function encS_CapturePreset(w: Writer, v: T.CapturePreset): void {
+  w.byte(10); w.str(v.layer);
+}
+function decS_CapturePreset(r: Reader, end: number, o: any): T.CapturePreset {
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('CapturePreset.layer: missing', 'missingField');
+  o.layer = v_layer;
   return o;
 }
 function encS_GetCapabilities(w: Writer, v: T.GetCapabilities): void {
@@ -9738,6 +10086,30 @@ function decS_PresetList(r: Reader, end: number, o: any): T.PresetList {
   o.presets = l_presets;
   return o;
 }
+function encS_CapturedPreset(w: Writer, v: T.CapturedPreset): void {
+  w.byte(10); w.str(v.preset);
+  w.byte(16); w.bool(v.empty);
+}
+function decS_CapturedPreset(r: Reader, end: number, o: any): T.CapturedPreset {
+  let h_preset = false;
+  let h_empty = false;
+  let v_preset: string | undefined;
+  let v_empty: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_preset = r.str(); h_preset = true; break;
+      case 16: v_empty = r.bool(); h_empty = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_preset) throw new DecodeError('CapturedPreset.preset: missing', 'missingField');
+  if (!h_empty) throw new DecodeError('CapturedPreset.empty: missing', 'missingField');
+  o.preset = v_preset;
+  o.empty = v_empty;
+  return o;
+}
 function encS_Capabilities(w: Writer, v: T.Capabilities): void {
   w.byte(10); w.str(v.gpuAdapter);
   w.byte(18); w.str(v.gpuBackend);
@@ -10011,17 +10383,20 @@ function decS_GetLayerTransforms(r: Reader, end: number, o: any): T.GetLayerTran
 function encS_GetTextLayout(w: Writer, v: T.GetTextLayout): void {
   w.byte(10); w.str(v.layer);
   w.byte(16); w.i64(v.time);
+  if (v.overrides !== undefined) { w.varint(6418); { const s = w.beginLd(); encS_TextLayoutOverrides(w, v.overrides); w.endLd(s); } }
 }
 function decS_GetTextLayout(r: Reader, end: number, o: any): T.GetTextLayout {
   let h_layer = false;
   let h_time = false;
   let v_layer: string | undefined;
   let v_time: number | undefined;
+  let v_overrides: T.TextLayoutOverrides | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_layer = r.str(); h_layer = true; break;
       case 16: v_time = r.i64(); h_time = true; break;
+      case 6418: v_overrides = decS_TextLayoutOverrides(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -10030,6 +10405,7 @@ function decS_GetTextLayout(r: Reader, end: number, o: any): T.GetTextLayout {
   if (!h_time) throw new DecodeError('GetTextLayout.time: missing', 'missingField');
   o.layer = v_layer;
   o.time = v_time;
+  if (v_overrides !== undefined) o.overrides = v_overrides;
   return o;
 }
 function encS_EvaluateExpression(w: Writer, v: T.EvaluateExpression): void {
@@ -10190,28 +10566,208 @@ function encS_TextLayout(w: Writer, v: T.TextLayout): void {
   { const a = v.glyphs; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_GlyphBox(w, a[i]!); w.endLd(s); } } }
   w.byte(16); w.u32(v.lines);
   w.byte(26); { const s = w.beginLd(); encS_Rect(w, v.box); w.endLd(s); }
+  w.varint(6426); { const s = w.beginLd(); encS_Vec2(w, v.size); w.endLd(s); }
+  w.varint(6434); w.str(v.wrapped);
+  { const a = v.softBreaks; if (a.length) { w.varint(6442); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u32(a[i]!); w.endLd(s); } }
+  if (v.paragraph !== undefined) { w.varint(6450); { const s = w.beginLd(); encS_ParagraphLayout(w, v.paragraph); w.endLd(s); } }
+  w.varint(6458); { const s = w.beginLd(); encS_Vec2(w, v.lineBlock); w.endLd(s); }
+  w.varint(6466); { const s = w.beginLd(); encS_Vec2(w, v.styleScale); w.endLd(s); }
+  w.varint(6472); w.bool(v.onPath);
+  w.varint(6481); w.f64(v.fontSize);
+  w.varint(6489); w.f64(v.letterSpacing);
+  w.varint(6497); w.f64(v.paragraphSpacing);
 }
 function decS_TextLayout(r: Reader, end: number, o: any): T.TextLayout {
   const l_glyphs: T.GlyphBox[] = [];
+  const l_softBreaks: number[] = [];
   let h_lines = false;
   let h_box = false;
+  let h_size = false;
+  let h_wrapped = false;
+  let h_lineBlock = false;
+  let h_styleScale = false;
+  let h_onPath = false;
+  let h_fontSize = false;
+  let h_letterSpacing = false;
+  let h_paragraphSpacing = false;
   let v_lines: number | undefined;
   let v_box: T.Rect | undefined;
+  let v_size: T.Vec2 | undefined;
+  let v_wrapped: string | undefined;
+  let v_paragraph: T.ParagraphLayout | undefined;
+  let v_lineBlock: T.Vec2 | undefined;
+  let v_styleScale: T.Vec2 | undefined;
+  let v_onPath: boolean | undefined;
+  let v_fontSize: number | undefined;
+  let v_letterSpacing: number | undefined;
+  let v_paragraphSpacing: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: l_glyphs.push(decS_GlyphBox(r, r.ldEnd(), {})); break;
       case 16: v_lines = r.u32(); h_lines = true; break;
       case 26: v_box = decS_Rect(r, r.ldEnd(), {}); h_box = true; break;
+      case 6426: v_size = decS_Vec2(r, r.ldEnd(), {}); h_size = true; break;
+      case 6434: v_wrapped = r.str(); h_wrapped = true; break;
+      case 6442: { const e = r.ldEnd(); while (r.pos < e) l_softBreaks.push(r.u32()); r.expectAt(e); break; }
+      case 6450: v_paragraph = decS_ParagraphLayout(r, r.ldEnd(), {}); break;
+      case 6458: v_lineBlock = decS_Vec2(r, r.ldEnd(), {}); h_lineBlock = true; break;
+      case 6466: v_styleScale = decS_Vec2(r, r.ldEnd(), {}); h_styleScale = true; break;
+      case 6472: v_onPath = r.bool(); h_onPath = true; break;
+      case 6481: v_fontSize = r.f64(); h_fontSize = true; break;
+      case 6489: v_letterSpacing = r.f64(); h_letterSpacing = true; break;
+      case 6497: v_paragraphSpacing = r.f64(); h_paragraphSpacing = true; break;
       default: r.skip(key);
     }
   }
   r.expectAt(end);
   if (!h_lines) throw new DecodeError('TextLayout.lines: missing', 'missingField');
   if (!h_box) throw new DecodeError('TextLayout.box: missing', 'missingField');
+  if (!h_size) throw new DecodeError('TextLayout.size: missing', 'missingField');
+  if (!h_wrapped) throw new DecodeError('TextLayout.wrapped: missing', 'missingField');
+  if (!h_lineBlock) throw new DecodeError('TextLayout.lineBlock: missing', 'missingField');
+  if (!h_styleScale) throw new DecodeError('TextLayout.styleScale: missing', 'missingField');
+  if (!h_onPath) throw new DecodeError('TextLayout.onPath: missing', 'missingField');
+  if (!h_fontSize) throw new DecodeError('TextLayout.fontSize: missing', 'missingField');
+  if (!h_letterSpacing) throw new DecodeError('TextLayout.letterSpacing: missing', 'missingField');
+  if (!h_paragraphSpacing) throw new DecodeError('TextLayout.paragraphSpacing: missing', 'missingField');
   o.glyphs = l_glyphs;
   o.lines = v_lines;
   o.box = v_box;
+  o.size = v_size;
+  o.wrapped = v_wrapped;
+  o.softBreaks = l_softBreaks;
+  if (v_paragraph !== undefined) o.paragraph = v_paragraph;
+  o.lineBlock = v_lineBlock;
+  o.styleScale = v_styleScale;
+  o.onPath = v_onPath;
+  o.fontSize = v_fontSize;
+  o.letterSpacing = v_letterSpacing;
+  o.paragraphSpacing = v_paragraphSpacing;
+  return o;
+}
+function encS_TextLayoutOverrides(w: Writer, v: T.TextLayoutOverrides): void {
+  if (v.content !== undefined) { w.byte(10); w.str(v.content); }
+  if (v.boxWidth !== undefined) { w.byte(17); w.f64(v.boxWidth); }
+  if (v.boxHeight !== undefined) { w.byte(25); w.f64(v.boxHeight); }
+  if (v.boxAutoSize !== undefined) { w.byte(34); w.str(v.boxAutoSize); }
+  if (v.fontSize !== undefined) { w.byte(41); w.f64(v.fontSize); }
+  if (v.letterSpacing !== undefined) { w.byte(49); w.f64(v.letterSpacing); }
+  if (v.paragraphSpacing !== undefined) { w.byte(57); w.f64(v.paragraphSpacing); }
+}
+function decS_TextLayoutOverrides(r: Reader, end: number, o: any): T.TextLayoutOverrides {
+  let v_content: string | undefined;
+  let v_boxWidth: number | undefined;
+  let v_boxHeight: number | undefined;
+  let v_boxAutoSize: string | undefined;
+  let v_fontSize: number | undefined;
+  let v_letterSpacing: number | undefined;
+  let v_paragraphSpacing: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_content = r.str(); break;
+      case 17: v_boxWidth = r.f64(); break;
+      case 25: v_boxHeight = r.f64(); break;
+      case 34: v_boxAutoSize = r.str(); break;
+      case 41: v_fontSize = r.f64(); break;
+      case 49: v_letterSpacing = r.f64(); break;
+      case 57: v_paragraphSpacing = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (v_content !== undefined) o.content = v_content;
+  if (v_boxWidth !== undefined) o.boxWidth = v_boxWidth;
+  if (v_boxHeight !== undefined) o.boxHeight = v_boxHeight;
+  if (v_boxAutoSize !== undefined) o.boxAutoSize = v_boxAutoSize;
+  if (v_fontSize !== undefined) o.fontSize = v_fontSize;
+  if (v_letterSpacing !== undefined) o.letterSpacing = v_letterSpacing;
+  if (v_paragraphSpacing !== undefined) o.paragraphSpacing = v_paragraphSpacing;
+  return o;
+}
+function encS_ParagraphLayout(w: Writer, v: T.ParagraphLayout): void {
+  w.byte(9); w.f64(v.boxWidth);
+  w.byte(17); w.f64(v.boxHeight);
+  w.byte(24); w.bool(v.fixedHeight);
+  w.byte(32); w.bool(v.overflow);
+  w.byte(41); w.f64(v.fitScale);
+  w.byte(49); w.f64(v.contentHeight);
+  w.byte(56); w.u32(v.lineCount);
+  w.byte(64); w.u32(v.visibleLines);
+  w.byte(73); w.f64(v.lineOffsetY);
+  w.byte(82); w.str(v.autoSize);
+  w.byte(90); w.str(v.verticalAlign);
+  w.byte(97); w.f64(v.storedHeight);
+}
+function decS_ParagraphLayout(r: Reader, end: number, o: any): T.ParagraphLayout {
+  let h_boxWidth = false;
+  let h_boxHeight = false;
+  let h_fixedHeight = false;
+  let h_overflow = false;
+  let h_fitScale = false;
+  let h_contentHeight = false;
+  let h_lineCount = false;
+  let h_visibleLines = false;
+  let h_lineOffsetY = false;
+  let h_autoSize = false;
+  let h_verticalAlign = false;
+  let h_storedHeight = false;
+  let v_boxWidth: number | undefined;
+  let v_boxHeight: number | undefined;
+  let v_fixedHeight: boolean | undefined;
+  let v_overflow: boolean | undefined;
+  let v_fitScale: number | undefined;
+  let v_contentHeight: number | undefined;
+  let v_lineCount: number | undefined;
+  let v_visibleLines: number | undefined;
+  let v_lineOffsetY: number | undefined;
+  let v_autoSize: string | undefined;
+  let v_verticalAlign: string | undefined;
+  let v_storedHeight: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 9: v_boxWidth = r.f64(); h_boxWidth = true; break;
+      case 17: v_boxHeight = r.f64(); h_boxHeight = true; break;
+      case 24: v_fixedHeight = r.bool(); h_fixedHeight = true; break;
+      case 32: v_overflow = r.bool(); h_overflow = true; break;
+      case 41: v_fitScale = r.f64(); h_fitScale = true; break;
+      case 49: v_contentHeight = r.f64(); h_contentHeight = true; break;
+      case 56: v_lineCount = r.u32(); h_lineCount = true; break;
+      case 64: v_visibleLines = r.u32(); h_visibleLines = true; break;
+      case 73: v_lineOffsetY = r.f64(); h_lineOffsetY = true; break;
+      case 82: v_autoSize = r.str(); h_autoSize = true; break;
+      case 90: v_verticalAlign = r.str(); h_verticalAlign = true; break;
+      case 97: v_storedHeight = r.f64(); h_storedHeight = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_boxWidth) throw new DecodeError('ParagraphLayout.boxWidth: missing', 'missingField');
+  if (!h_boxHeight) throw new DecodeError('ParagraphLayout.boxHeight: missing', 'missingField');
+  if (!h_fixedHeight) throw new DecodeError('ParagraphLayout.fixedHeight: missing', 'missingField');
+  if (!h_overflow) throw new DecodeError('ParagraphLayout.overflow: missing', 'missingField');
+  if (!h_fitScale) throw new DecodeError('ParagraphLayout.fitScale: missing', 'missingField');
+  if (!h_contentHeight) throw new DecodeError('ParagraphLayout.contentHeight: missing', 'missingField');
+  if (!h_lineCount) throw new DecodeError('ParagraphLayout.lineCount: missing', 'missingField');
+  if (!h_visibleLines) throw new DecodeError('ParagraphLayout.visibleLines: missing', 'missingField');
+  if (!h_lineOffsetY) throw new DecodeError('ParagraphLayout.lineOffsetY: missing', 'missingField');
+  if (!h_autoSize) throw new DecodeError('ParagraphLayout.autoSize: missing', 'missingField');
+  if (!h_verticalAlign) throw new DecodeError('ParagraphLayout.verticalAlign: missing', 'missingField');
+  if (!h_storedHeight) throw new DecodeError('ParagraphLayout.storedHeight: missing', 'missingField');
+  o.boxWidth = v_boxWidth;
+  o.boxHeight = v_boxHeight;
+  o.fixedHeight = v_fixedHeight;
+  o.overflow = v_overflow;
+  o.fitScale = v_fitScale;
+  o.contentHeight = v_contentHeight;
+  o.lineCount = v_lineCount;
+  o.visibleLines = v_visibleLines;
+  o.lineOffsetY = v_lineOffsetY;
+  o.autoSize = v_autoSize;
+  o.verticalAlign = v_verticalAlign;
+  o.storedHeight = v_storedHeight;
   return o;
 }
 function encS_ExpressionEvaluation(w: Writer, v: T.ExpressionEvaluation): void {
@@ -11517,6 +12073,116 @@ function decS_FrameReady(r: Reader, end: number, o: any): T.FrameReady {
   o.renderDoneUs = v_renderDoneUs;
   o.width = v_width;
   o.height = v_height;
+  return o;
+}
+function encS_OverlayLayerGeometry(w: Writer, v: T.OverlayLayerGeometry): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.matrix; if (a.length) { w.byte(18); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.box; if (a.length) { w.byte(26); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.corners; if (a.length) { w.byte(34); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.path; if (a.length) { w.byte(42); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.pathKeys; if (a.length) { w.byte(50); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.pins; if (a.length) { w.byte(58); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.bones; if (a.length) { w.byte(66); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.textBox; if (a.length) { w.byte(74); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.pathFrames; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.pathNow; if (a.length) { w.byte(90); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+}
+function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): T.OverlayLayerGeometry {
+  const l_matrix: number[] = [];
+  const l_box: number[] = [];
+  const l_corners: number[] = [];
+  const l_path: number[] = [];
+  const l_pathKeys: number[] = [];
+  const l_pins: number[] = [];
+  const l_bones: number[] = [];
+  const l_textBox: number[] = [];
+  const l_pathFrames: number[] = [];
+  const l_pathNow: number[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: { const e = r.ldEnd(); while (r.pos < e) l_matrix.push(r.f64()); r.expectAt(e); break; }
+      case 26: { const e = r.ldEnd(); while (r.pos < e) l_box.push(r.f64()); r.expectAt(e); break; }
+      case 34: { const e = r.ldEnd(); while (r.pos < e) l_corners.push(r.f64()); r.expectAt(e); break; }
+      case 42: { const e = r.ldEnd(); while (r.pos < e) l_path.push(r.f64()); r.expectAt(e); break; }
+      case 50: { const e = r.ldEnd(); while (r.pos < e) l_pathKeys.push(r.f64()); r.expectAt(e); break; }
+      case 58: { const e = r.ldEnd(); while (r.pos < e) l_pins.push(r.f64()); r.expectAt(e); break; }
+      case 66: { const e = r.ldEnd(); while (r.pos < e) l_bones.push(r.f64()); r.expectAt(e); break; }
+      case 74: { const e = r.ldEnd(); while (r.pos < e) l_textBox.push(r.f64()); r.expectAt(e); break; }
+      case 82: { const e = r.ldEnd(); while (r.pos < e) l_pathFrames.push(r.f64()); r.expectAt(e); break; }
+      case 90: { const e = r.ldEnd(); while (r.pos < e) l_pathNow.push(r.f64()); r.expectAt(e); break; }
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('OverlayLayerGeometry.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.matrix = l_matrix;
+  o.box = l_box;
+  o.corners = l_corners;
+  o.path = l_path;
+  o.pathKeys = l_pathKeys;
+  o.pins = l_pins;
+  o.bones = l_bones;
+  o.textBox = l_textBox;
+  o.pathFrames = l_pathFrames;
+  o.pathNow = l_pathNow;
+  return o;
+}
+function encS_FrameGeometry(w: Writer, v: T.FrameGeometry): void {
+  w.byte(8); w.u32(v.viewport);
+  w.byte(16); w.u32(v.generation);
+  w.byte(24); w.i64(v.frame);
+  w.byte(32); w.i64(v.time);
+  w.byte(40); w.u64(v.revision);
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_OverlayLayerGeometry(w, a[i]!); w.endLd(s); } } }
+  w.byte(56); w.bool(v.last);
+}
+function decS_FrameGeometry(r: Reader, end: number, o: any): T.FrameGeometry {
+  const l_layers: T.OverlayLayerGeometry[] = [];
+  let h_viewport = false;
+  let h_generation = false;
+  let h_frame = false;
+  let h_time = false;
+  let h_revision = false;
+  let h_last = false;
+  let v_viewport: number | undefined;
+  let v_generation: number | undefined;
+  let v_frame: number | undefined;
+  let v_time: number | undefined;
+  let v_revision: number | undefined;
+  let v_last: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_viewport = r.u32(); h_viewport = true; break;
+      case 16: v_generation = r.u32(); h_generation = true; break;
+      case 24: v_frame = r.i64(); h_frame = true; break;
+      case 32: v_time = r.i64(); h_time = true; break;
+      case 40: v_revision = r.u64(); h_revision = true; break;
+      case 50: l_layers.push(decS_OverlayLayerGeometry(r, r.ldEnd(), {})); break;
+      case 56: v_last = r.bool(); h_last = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_viewport) throw new DecodeError('FrameGeometry.viewport: missing', 'missingField');
+  if (!h_generation) throw new DecodeError('FrameGeometry.generation: missing', 'missingField');
+  if (!h_frame) throw new DecodeError('FrameGeometry.frame: missing', 'missingField');
+  if (!h_time) throw new DecodeError('FrameGeometry.time: missing', 'missingField');
+  if (!h_revision) throw new DecodeError('FrameGeometry.revision: missing', 'missingField');
+  if (!h_last) throw new DecodeError('FrameGeometry.last: missing', 'missingField');
+  o.viewport = v_viewport;
+  o.generation = v_generation;
+  o.frame = v_frame;
+  o.time = v_time;
+  o.revision = v_revision;
+  o.layers = l_layers;
+  o.last = v_last;
   return o;
 }
 function encS_FramePong(w: Writer, v: T.FramePong): void {
@@ -13534,6 +14200,7 @@ function encU_FrameChannelMessage(w: Writer, v: T.FrameChannelMessage): void {
     case 'slots': w.byte(10); { const s = w.beginLd(); encS_FrameSlots(w, v); w.endLd(s); } return;
     case 'frameReady': w.byte(18); { const s = w.beginLd(); encS_FrameReady(w, v); w.endLd(s); } return;
     case 'pong': w.byte(26); { const s = w.beginLd(); encS_FramePong(w, v); w.endLd(s); } return;
+    case 'geometry': w.byte(34); { const s = w.beginLd(); encS_FrameGeometry(w, v); w.endLd(s); } return;
     case 'release': w.varint(130); { const s = w.beginLd(); encS_FrameRelease(w, v); w.endLd(s); } return;
     case 'ping': w.varint(138); { const s = w.beginLd(); encS_FramePing(w, v); w.endLd(s); } return;
     default: throw new RangeError('FrameChannelMessage: unknown type ' + String((v as { type?: unknown }).type));
@@ -13548,6 +14215,7 @@ function decU_FrameChannelMessage(r: Reader, end: number): T.FrameChannelMessage
       case 10: out = decS_FrameSlots(r, r.ldEnd(), { type: 'slots' }) as T.FrameChannelMessage; break;
       case 18: out = decS_FrameReady(r, r.ldEnd(), { type: 'frameReady' }) as T.FrameChannelMessage; break;
       case 26: out = decS_FramePong(r, r.ldEnd(), { type: 'pong' }) as T.FrameChannelMessage; break;
+      case 34: out = decS_FrameGeometry(r, r.ldEnd(), { type: 'geometry' }) as T.FrameChannelMessage; break;
       case 130: out = decS_FrameRelease(r, r.ldEnd(), { type: 'release' }) as T.FrameChannelMessage; break;
       case 138: out = decS_FramePing(r, r.ldEnd(), { type: 'ping' }) as T.FrameChannelMessage; break;
       default: r.skip(key);
@@ -13710,6 +14378,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'setPluginEnabled': w.varint(6962); { const s = w.beginLd(); encS_SetPluginEnabled(w, v); w.endLd(s); } return;
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_SetPluginData(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_LiftRange(w, v); w.endLd(s); } return;
+    case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_SetOverlayGeometry(w, v); w.endLd(s); } return;
     default: throw new RangeError('Command: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -13870,6 +14539,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 6962: out = decS_SetPluginEnabled(r, r.ldEnd(), { type: 'setPluginEnabled' }) as T.Command; break;
       case 6970: out = decS_SetPluginData(r, r.ldEnd(), { type: 'setPluginData' }) as T.Command; break;
       case 7770: out = decS_LiftRange(r, r.ldEnd(), { type: 'liftRange' }) as T.Command; break;
+      case 14170: out = decS_SetOverlayGeometry(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.Command; break;
       default: r.skip(key);
     }
   }
@@ -14030,6 +14700,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'setPluginEnabled': w.varint(6962); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_TimeRangeEdit(w, v); w.endLd(s); } return;
+    case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     default: throw new RangeError('CommandResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -14190,6 +14861,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 6962: out = decS_Empty(r, r.ldEnd(), { type: 'setPluginEnabled' }) as T.CommandResult; break;
       case 6970: out = decS_Empty(r, r.ldEnd(), { type: 'setPluginData' }) as T.CommandResult; break;
       case 7770: out = decS_TimeRangeEdit(r, r.ldEnd(), { type: 'liftRange' }) as T.CommandResult; break;
+      case 14170: out = decS_Empty(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.CommandResult; break;
       default: r.skip(key);
     }
   }
@@ -14234,6 +14906,12 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'listPlugins': w.varint(8690); { const s = w.beginLd(); encS_ListPlugins(w, v); w.endLd(s); } return;
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_GetEffectUi(w, v); w.endLd(s); } return;
     case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportDocument(w, v); w.endLd(s); } return;
+    case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturePreset(w, v); w.endLd(s); } return;
+    case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_CopyKeyframes(w, v); w.endLd(s); } return;
+    case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopyEffects(w, v); w.endLd(s); } return;
+    case 'getSvgDocument': w.varint(15130); { const s = w.beginLd(); encS_GetSvgDocument(w, v); w.endLd(s); } return;
+    case 'getCryptomatte': w.varint(15138); { const s = w.beginLd(); encS_GetCryptomatte(w, v); w.endLd(s); } return;
+    case 'getMemberKeyframes': w.varint(15146); { const s = w.beginLd(); encS_GetMemberKeyframes(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -14278,6 +14956,12 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 8690: out = decS_ListPlugins(r, r.ldEnd(), { type: 'listPlugins' }) as T.Query; break;
       case 8698: out = decS_GetEffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.Query; break;
       case 8706: out = decS_ExportDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.Query; break;
+      case 15106: out = decS_CapturePreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.Query; break;
+      case 15114: out = decS_CopyKeyframes(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.Query; break;
+      case 15122: out = decS_CopyEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.Query; break;
+      case 15130: out = decS_GetSvgDocument(r, r.ldEnd(), { type: 'getSvgDocument' }) as T.Query; break;
+      case 15138: out = decS_GetCryptomatte(r, r.ldEnd(), { type: 'getCryptomatte' }) as T.Query; break;
+      case 15146: out = decS_GetMemberKeyframes(r, r.ldEnd(), { type: 'getMemberKeyframes' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -14322,6 +15006,12 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'listPlugins': w.varint(8690); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_EffectUi(w, v); w.endLd(s); } return;
     case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportedDocument(w, v); w.endLd(s); } return;
+    case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturedPreset(w, v); w.endLd(s); } return;
+    case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_KeyframeSets(w, v); w.endLd(s); } return;
+    case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopiedEffects(w, v); w.endLd(s); } return;
+    case 'getSvgDocument': w.varint(15130); { const s = w.beginLd(); encS_SvgDocument(w, v); w.endLd(s); } return;
+    case 'getCryptomatte': w.varint(15138); { const s = w.beginLd(); encS_CryptomatteInfo(w, v); w.endLd(s); } return;
+    case 'getMemberKeyframes': w.varint(15146); { const s = w.beginLd(); encS_MemberTracks(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -14366,6 +15056,12 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 8690: out = decS_PluginList(r, r.ldEnd(), { type: 'listPlugins' }) as T.QueryResult; break;
       case 8698: out = decS_EffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.QueryResult; break;
       case 8706: out = decS_ExportedDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.QueryResult; break;
+      case 15106: out = decS_CapturedPreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.QueryResult; break;
+      case 15114: out = decS_KeyframeSets(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.QueryResult; break;
+      case 15122: out = decS_CopiedEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.QueryResult; break;
+      case 15130: out = decS_SvgDocument(r, r.ldEnd(), { type: 'getSvgDocument' }) as T.QueryResult; break;
+      case 15138: out = decS_CryptomatteInfo(r, r.ldEnd(), { type: 'getCryptomatte' }) as T.QueryResult; break;
+      case 15146: out = decS_MemberTracks(r, r.ldEnd(), { type: 'getMemberKeyframes' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -14707,6 +15403,7 @@ export const codecs = {
   SetCacheBudget: mk<T.SetCacheBudget>(encS_SetCacheBudget, (r, e) => decS_SetCacheBudget(r, e, {})),
   PurgeCache: mk<T.PurgeCache>(encS_PurgeCache, (r, e) => decS_PurgeCache(r, e, {})),
   SetInteracting: mk<T.SetInteracting>(encS_SetInteracting, (r, e) => decS_SetInteracting(r, e, {})),
+  SetOverlayGeometry: mk<T.SetOverlayGeometry>(encS_SetOverlayGeometry, (r, e) => decS_SetOverlayGeometry(r, e, {})),
   TrackPointSpec: mk<T.TrackPointSpec>(encS_TrackPointSpec, (r, e) => decS_TrackPointSpec(r, e, {})),
   TrackMotionJob: mk<T.TrackMotionJob>(encS_TrackMotionJob, (r, e) => decS_TrackMotionJob(r, e, {})),
   StabilizeJob: mk<T.StabilizeJob>(encS_StabilizeJob, (r, e) => decS_StabilizeJob(r, e, {})),
@@ -14748,6 +15445,12 @@ export const codecs = {
   GetMotionPath: mk<T.GetMotionPath>(encS_GetMotionPath, (r, e) => decS_GetMotionPath(r, e, {})),
   GetMarkers: mk<T.GetMarkers>(encS_GetMarkers, (r, e) => decS_GetMarkers(r, e, {})),
   CopyLayers: mk<T.CopyLayers>(encS_CopyLayers, (r, e) => decS_CopyLayers(r, e, {})),
+  CopyKeyframes: mk<T.CopyKeyframes>(encS_CopyKeyframes, (r, e) => decS_CopyKeyframes(r, e, {})),
+  GetMemberKeyframes: mk<T.GetMemberKeyframes>(encS_GetMemberKeyframes, (r, e) => decS_GetMemberKeyframes(r, e, {})),
+  CopyEffects: mk<T.CopyEffects>(encS_CopyEffects, (r, e) => decS_CopyEffects(r, e, {})),
+  MemberTrack: mk<T.MemberTrack>(encS_MemberTrack, (r, e) => decS_MemberTrack(r, e, {})),
+  MemberTracks: mk<T.MemberTracks>(encS_MemberTracks, (r, e) => decS_MemberTracks(r, e, {})),
+  CopiedEffects: mk<T.CopiedEffects>(encS_CopiedEffects, (r, e) => decS_CopiedEffects(r, e, {})),
   CompositionDetails: mk<T.CompositionDetails>(encS_CompositionDetails, (r, e) => decS_CompositionDetails(r, e, {})),
   LayerDetails: mk<T.LayerDetails>(encS_LayerDetails, (r, e) => decS_LayerDetails(r, e, {})),
   PropertyTree: mk<T.PropertyTree>(encS_PropertyTree, (r, e) => decS_PropertyTree(r, e, {})),
@@ -14761,15 +15464,21 @@ export const codecs = {
   GetWaveform: mk<T.GetWaveform>(encS_GetWaveform, (r, e) => decS_GetWaveform(r, e, {})),
   ListFonts: mk<T.ListFonts>(encS_ListFonts, (r, e) => decS_ListFonts(r, e, {})),
   GetItems: mk<T.GetItems>(encS_GetItems, (r, e) => decS_GetItems(r, e, {})),
+  GetSvgDocument: mk<T.GetSvgDocument>(encS_GetSvgDocument, (r, e) => decS_GetSvgDocument(r, e, {})),
+  GetCryptomatte: mk<T.GetCryptomatte>(encS_GetCryptomatte, (r, e) => decS_GetCryptomatte(r, e, {})),
   GetThumbnail: mk<T.GetThumbnail>(encS_GetThumbnail, (r, e) => decS_GetThumbnail(r, e, {})),
   FontList: mk<T.FontList>(encS_FontList, (r, e) => decS_FontList(r, e, {})),
   ItemDetails: mk<T.ItemDetails>(encS_ItemDetails, (r, e) => decS_ItemDetails(r, e, {})),
   Thumbnail: mk<T.Thumbnail>(encS_Thumbnail, (r, e) => decS_Thumbnail(r, e, {})),
+  SvgDocument: mk<T.SvgDocument>(encS_SvgDocument, (r, e) => decS_SvgDocument(r, e, {})),
+  CryptomatteLayerInfo: mk<T.CryptomatteLayerInfo>(encS_CryptomatteLayerInfo, (r, e) => decS_CryptomatteLayerInfo(r, e, {})),
+  CryptomatteInfo: mk<T.CryptomatteInfo>(encS_CryptomatteInfo, (r, e) => decS_CryptomatteInfo(r, e, {})),
   EffectParamInfo: mk<T.EffectParamInfo>(encS_EffectParamInfo, (r, e) => decS_EffectParamInfo(r, e, {})),
   EffectInfo: mk<T.EffectInfo>(encS_EffectInfo, (r, e) => decS_EffectInfo(r, e, {})),
   ListEffects: mk<T.ListEffects>(encS_ListEffects, (r, e) => decS_ListEffects(r, e, {})),
   ListGroupTypes: mk<T.ListGroupTypes>(encS_ListGroupTypes, (r, e) => decS_ListGroupTypes(r, e, {})),
   ListPresets: mk<T.ListPresets>(encS_ListPresets, (r, e) => decS_ListPresets(r, e, {})),
+  CapturePreset: mk<T.CapturePreset>(encS_CapturePreset, (r, e) => decS_CapturePreset(r, e, {})),
   GetCapabilities: mk<T.GetCapabilities>(encS_GetCapabilities, (r, e) => decS_GetCapabilities(r, e, {})),
   ListPlugins: mk<T.ListPlugins>(encS_ListPlugins, (r, e) => decS_ListPlugins(r, e, {})),
   GetEffectUi: mk<T.GetEffectUi>(encS_GetEffectUi, (r, e) => decS_GetEffectUi(r, e, {})),
@@ -14782,6 +15491,7 @@ export const codecs = {
   GroupTypeList: mk<T.GroupTypeList>(encS_GroupTypeList, (r, e) => decS_GroupTypeList(r, e, {})),
   PresetInfo: mk<T.PresetInfo>(encS_PresetInfo, (r, e) => decS_PresetInfo(r, e, {})),
   PresetList: mk<T.PresetList>(encS_PresetList, (r, e) => decS_PresetList(r, e, {})),
+  CapturedPreset: mk<T.CapturedPreset>(encS_CapturedPreset, (r, e) => decS_CapturedPreset(r, e, {})),
   Capabilities: mk<T.Capabilities>(encS_Capabilities, (r, e) => decS_Capabilities(r, e, {})),
   LayerBounds: mk<T.LayerBounds>(encS_LayerBounds, (r, e) => decS_LayerBounds(r, e, {})),
   LayerTransform: mk<T.LayerTransform>(encS_LayerTransform, (r, e) => decS_LayerTransform(r, e, {})),
@@ -14798,6 +15508,8 @@ export const codecs = {
   LayerBoundsList: mk<T.LayerBoundsList>(encS_LayerBoundsList, (r, e) => decS_LayerBoundsList(r, e, {})),
   LayerTransformList: mk<T.LayerTransformList>(encS_LayerTransformList, (r, e) => decS_LayerTransformList(r, e, {})),
   TextLayout: mk<T.TextLayout>(encS_TextLayout, (r, e) => decS_TextLayout(r, e, {})),
+  TextLayoutOverrides: mk<T.TextLayoutOverrides>(encS_TextLayoutOverrides, (r, e) => decS_TextLayoutOverrides(r, e, {})),
+  ParagraphLayout: mk<T.ParagraphLayout>(encS_ParagraphLayout, (r, e) => decS_ParagraphLayout(r, e, {})),
   ExpressionEvaluation: mk<T.ExpressionEvaluation>(encS_ExpressionEvaluation, (r, e) => decS_ExpressionEvaluation(r, e, {})),
   PixelSamples: mk<T.PixelSamples>(encS_PixelSamples, (r, e) => decS_PixelSamples(r, e, {})),
   Dependencies: mk<T.Dependencies>(encS_Dependencies, (r, e) => decS_Dependencies(r, e, {})),
@@ -14851,6 +15563,8 @@ export const codecs = {
   AutosavedEvent: mk<T.AutosavedEvent>(encS_AutosavedEvent, (r, e) => decS_AutosavedEvent(r, e, {})),
   FrameSlots: mk<T.FrameSlots>(encS_FrameSlots, (r, e) => decS_FrameSlots(r, e, {})),
   FrameReady: mk<T.FrameReady>(encS_FrameReady, (r, e) => decS_FrameReady(r, e, {})),
+  OverlayLayerGeometry: mk<T.OverlayLayerGeometry>(encS_OverlayLayerGeometry, (r, e) => decS_OverlayLayerGeometry(r, e, {})),
+  FrameGeometry: mk<T.FrameGeometry>(encS_FrameGeometry, (r, e) => decS_FrameGeometry(r, e, {})),
   FramePong: mk<T.FramePong>(encS_FramePong, (r, e) => decS_FramePong(r, e, {})),
   FrameRelease: mk<T.FrameRelease>(encS_FrameRelease, (r, e) => decS_FrameRelease(r, e, {})),
   FramePing: mk<T.FramePing>(encS_FramePing, (r, e) => decS_FramePing(r, e, {})),

@@ -351,6 +351,16 @@ std::string first_string_prop(const Node& n, std::string_view prop) {
 
 }  // namespace
 
+api::SvgRole svg_role_of(const Node& n) {
+  const Component* c = n.comp("svg");
+  if (c == nullptr) return api::SvgRole::none;
+  const Json& san = c->props.at("sanitizedMarkup");
+  if (san.is_string() && !san.str().empty()) return api::SvgRole::layer;
+  const Json& src = c->props.at("sourceMarkup");
+  if (src.is_string() && !src.str().empty()) return api::SvgRole::converted;
+  return api::SvgRole::none;
+}
+
 api::LayerInfo layer_info(const Document& d, std::string_view layer) {
   const Node& n = *d.node(layer);
   api::LayerInfo info;
@@ -398,6 +408,7 @@ api::LayerInfo layer_info(const Document& d, std::string_view layer) {
   if (k != api::LayerKind::generator) info.shape_type = read_shape_type(n).value_or("");
   info.managed_by = first_string_prop(n, "__ownedByPlugin");
   info.mograph_id = first_string_prop(n, "__mographId");
+  info.svg = svg_role_of(n);
   return info;
 }
 

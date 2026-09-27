@@ -45,9 +45,9 @@ import { useModalStore } from '@stores/modalStore';
 import { useCompositionStore, compKeyFor } from '@stores/compositionStore';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { readNode3D } from '@core/scene/threeD';
+import { MAIN_VIEWPORT, overlayLayer, subscribeOverlayGeometry, subscribeOverlayLayers, type OverlayLayer } from '@stores/overlayGeometry';
 import { documentMirror } from '@stores/documentMirror';
-import { activeCompIdNow, compFps, useActiveMirrorComp } from '@hooks/useMirror';
+import { useActiveMirrorComp } from '@hooks/useMirror';
 import { isPaintableLayer } from '@core/mirror/layerKinds';
 import { mirrorLabelColor } from '@core/mirror/layerLabels';
 import { isMirrorDescendantOf } from '@core/mirror/layerTree';
@@ -58,20 +58,15 @@ import { isLookedThrough } from '@core/workspace/ports';
 
 import { getWorkspaceController, type WorkspaceController } from '@core/workspace/WorkspaceController';
 import {
-  motionPathSamples,
-  motionPathKeyframes,
-  motionPathFrameSamples,
-  motionPathTangents,
   setPathTangent,
   isPathTangentContinuous,
-  positionSamplerFor,
   motionPathTimeWindow,
 } from '@core/motion/motionPath';
 import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { motionPathKeyframeMenuItems, guideContextMenuItems, convertMotionPathVertex } from './viewportPrecisionMenus';
 import { openGuideEditor } from './GuideEditorDialog';
 import { beginViewportGesture, cancelToolGesture, endViewportGesture } from '@core/workspace/viewportGesture';
-import type { Command } from '@motion/engine-api';
+import { secondsToFlicks, type Command, type OverlayKind } from '@motion/engine-api';
 import { GestureSession } from '@core/engine/uiEdits';
 import {
   capturePositionTracks,
@@ -1565,6 +1560,23 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       last = s;
       apply(s);
     });
+  }, []);
+
+  // B4 round 2: the overlays' geometry push (setOverlayGeometry) follows the selection —
+  // drawn boxes and matrices for every selected layer, the motion path and text box for
+  // a single one; an engine-drawn frame's geometry repaints the chrome over it.
+  useEffect(() => {
+    const controller = getWorkspaceController();
+    const sync = (ids: readonly string[]): void => {
+      subscribeOverlayLayers(MAIN_VIEWPORT, ids, ids.length === 1 ? OVERLAY_KINDS_ONE : OVERLAY_KINDS_MANY);
+    };
+    sync(useSelectionStore.getState().ids);
+    const unSel = useSelectionStore.subscribe((st) => sync(st.ids));
+    const unGeo = subscribeOverlayGeometry(MAIN_VIEWPORT, () => controller.requestRender());
+    return () => {
+      unSel();
+      unGeo();
+    };
   }, []);
 
   // Face-select chrome lives on the overlay, which only repaints when something
@@ -3247,26 +3259,11 @@ function paintOverlay(
 }
 
 /**
- * A motion-path point → COMPOSITION space.
- *
- * The samples come from the layer's own `x`/`y` tracks, and those are values in
- * its PARENT's space — not comp coordinates, which is what this module drew
- * them as. Parent a layer to a Null and its trajectory, its keyframe dots and
- * their grab targets all appeared at the raw local numbers: for a circle at
- * comp (960, 540) under a null at (300, 700) the path was drawn up at
- * (660, −160), nowhere near the artwork it belongs to, and dragging a dot wrote
- * the pointer's COMP position straight into a parent-space keyframe, teleporting
- * that keyframe by the parent's whole transform.
- *
- * Identity for an unparented layer, so the common case is unchanged.
- */
-function pathToComp(nodeId: string, time: number, p: { x: number; y: number }): { x: number; y: number } {
-  return Matrix.transformPoint(parentWorld2DAt(nodeId, time), p);
-}
-
-/**
  * COMPOSITION space → the layer's position-track space, for writing a dragged
- * point back. The 2D inverse of `pathToComp`.
+ * point back: the 2D inverse of the parent's world matrix the motion path is
+ * drawn through (the overlay geometry push maps it into comp space). Through
+ * the parent chain matters: a path drawn in the parent's space but written as
+ * comp coordinates would teleport the key by the parent's transform.
  */
 function compToPath(nodeId: string, time: number, p: { x: number; y: number }): { x: number; y: number } {
   return Matrix.transformPoint(Matrix.invert(parentWorld2DAt(nodeId, time)), p);
@@ -3312,42 +3309,76 @@ function hitMotionPathKeyframe(
   if (ids.length !== 1) return null;
   const nodeId = ids[0]!;
   const m = documentMirror();
-  // C-phase: the path samplers below take the scene node — the engine's
-  // `getMotionPath` query (ENGINE_API §7) replaces them.
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !hasPositionKeys(m, nodeId)) return null;
+  if (!hasPositionKeys(m, nodeId)) return null;
+  const time = playheadTime();
+  // The engine's motion path for the frame on screen (the overlay geometry push).
+  const path = motionPathOverlay(nodeId, time);
+  if (!path) return null;
   const R = 8; // grab radius, screen px
   // Must use the SAME projection the painter does, or a 3D layer's dots are
   // drawn in one place and grabbable in another.
-  const comp = compSize();
-  const is3D = m.layer(nodeId)?.switches.threeD === true;
-  const project = is3D ? currentViewProjector(comp.w, comp.h, playheadTime()) : null;
-  const baseZ = is3D ? readNode3D(node).z : 0;
-  const time = playheadTime();
+  const toS = motionPathProjector(controller, m, nodeId, time);
   // Only what is DRAWN is grabbable — the display window hides the rest.
   const win = motionPathWindowFor(nodeId, time);
   if (!win) return null;
-  const near = (p: { x: number; y: number }, t?: number): boolean => {
-    // Through the parent chain FIRST, exactly as the painter does — the dots
-    // have to be grabbable where they are drawn.
-    let world = pathToComp(nodeId, time, p);
-    if (project) {
-      const z = (t !== undefined ? defaultAnimation.sample(nodeId, 'z', t) : undefined) ?? baseZ;
-      const q = project({ x: world.x, y: world.y, z });
-      world = { x: q.x, y: q.y };
-    }
-    const s = controller.ws.worldToScreen(world);
+  const near = (x: number, y: number, z: number): boolean => {
+    const s = toS(x, y, z);
     return Math.hypot(s.x - screen.x, s.y - screen.y) <= R;
   };
-  const tangents = motionPathTangents(node).filter((k) => inMotionPathWindow(k.t, win));
-  for (const k of tangents) {
-    if (k.out && near(k.out, k.t)) return { nodeId, t: k.t, part: 'out' };
-    if (k.in && near(k.in, k.t)) return { nodeId, t: k.t, part: 'in' };
+  const keys = pathKeysOf(path).filter((k) => inMotionPathWindow(k.t, win));
+  for (const k of keys) {
+    if (k.out && near(k.out.x, k.out.y, k.z)) return { nodeId, t: k.t, part: 'out' };
+    if (k.in && near(k.in.x, k.in.y, k.z)) return { nodeId, t: k.t, part: 'in' };
   }
-  for (const k of tangents) {
-    if (near(k, k.t)) return { nodeId, t: k.t, part: 'point' };
+  for (const k of keys) {
+    if (near(k.x, k.y, k.z)) return { nodeId, t: k.t, part: 'point' };
   }
   return null;
+}
+
+/** The overlay geometry push's kinds: every selected layer's box and matrix; a single one's motion path and text box too. */
+const OVERLAY_KINDS_MANY: ReadonlyArray<OverlayKind> = ['transform', 'bounds'];
+const OVERLAY_KINDS_ONE: ReadonlyArray<OverlayKind> = ['transform', 'bounds', 'motionPath', 'textBox'];
+
+/** The layer's motion path for the frame at comp `seconds`, from the overlay geometry push; undefined without keys. */
+function motionPathOverlay(nodeId: string, seconds: number): OverlayLayer | undefined {
+  const g = overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(seconds));
+  return g && g.pathKeys.length >= 8 ? g : undefined;
+}
+
+interface PathKey { t: number; x: number; y: number; z: number; in: { x: number; y: number } | null; out: { x: number; y: number } | null }
+
+/** `pathKeys` (t, x, y, z, inX, inY, outX, outY per key; NaN = no handle) as records. */
+function pathKeysOf(g: OverlayLayer): PathKey[] {
+  const out: PathKey[] = [];
+  const k = g.pathKeys;
+  for (let i = 0; i + 7 < k.length; i += 8) {
+    out.push({
+      t: k[i]!, x: k[i + 1]!, y: k[i + 2]!, z: k[i + 3]!,
+      in: Number.isNaN(k[i + 4]!) ? null : { x: k[i + 4]!, y: k[i + 5]! },
+      out: Number.isNaN(k[i + 6]!) ? null : { x: k[i + 6]!, y: k[i + 7]! },
+    });
+  }
+  return out;
+}
+
+/** Comp-space (x, y, z) → screen: through the view camera for a 3D layer (at the painted time), else the 2D camera. */
+function motionPathProjector(
+  controller: WorkspaceController,
+  m: ReturnType<typeof documentMirror>,
+  nodeId: string,
+  time: number,
+): (x: number, y: number, z: number) => { x: number; y: number } {
+  const comp = compSize();
+  const is3D = m.layer(nodeId)?.switches.threeD === true;
+  // For a 3D layer the trajectory goes through the SAME camera the renderer uses; the projector is
+  // built at the playhead (the path shows where the trajectory lies in the view you look at now).
+  const project = is3D ? currentViewProjector(comp.w, comp.h, time) : null;
+  return (x, y, z) => {
+    if (!project) return controller.ws.worldToScreen({ x, y });
+    const q = project({ x, y, z });
+    return controller.ws.worldToScreen({ x: q.x, y: q.y });
+  };
 }
 
 /**
@@ -3569,49 +3600,39 @@ function paintMotionPath(
   if (ids.length !== 1) return;
   const nodeId = ids[0]!;
   const m = documentMirror();
-  // C-phase: the path samplers below take the scene node — the engine's
-  // `getMotionPath` query (ENGINE_API §7) replaces them.
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !hasPositionKeys(m, nodeId)) return;
+  if (!hasPositionKeys(m, nodeId)) return;
   // A camera's own path, seen through that camera, is a line across the frame.
   if (isLookedThrough(nodeId)) return;
   const win = motionPathWindowFor(nodeId, time);
   if (!win) return;
-  const samples = motionPathSamples(node).filter((s) => inMotionPathWindow(s.t, win));
+  // The engine's motion path for the frame on screen (the overlay geometry push): comp-space
+  // points (x, y through the parent at this frame; z raw), keys with their tangent handles,
+  // the per-frame dots and the position now.
+  const path = motionPathOverlay(nodeId, time);
+  if (!path) return;
+  const samples: Array<{ t: number; x: number; y: number; z: number }> = [];
+  for (let i = 0; i + 3 < path.path.length; i += 4) {
+    const t = path.path[i]!;
+    if (inMotionPathWindow(t, win)) samples.push({ t, x: path.path[i + 1]!, y: path.path[i + 2]!, z: path.path[i + 3]! });
+  }
   if (samples.length < 2) return;
 
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw ON TOP of the overlay (no clear)
 
-  // For a 3D layer the trajectory must go through the SAME camera the renderer
-  // uses. This used to map raw x/y with the 2D transform and drop z entirely, so
-  // on any 3D layer the path and its keyframe dots were drawn nowhere near the
-  // object they belong to — you could not tell which layer a dot was for.
-  //
-  // The projector is built at the PLAYHEAD, not per sample: the path shows where
-  // the trajectory lies in the view you are looking at now, which is what AE
-  // draws. `z` is still sampled per point, so a layer animating in depth curves
-  // correctly.
-  const comp = compSize();
-  const is3D = m.layer(nodeId)?.switches.threeD === true;
-  const project = is3D ? currentViewProjector(comp.w, comp.h, time) : null;
-  const baseZ = is3D ? readNode3D(node).z : 0;
-  const toS = (p: { x: number; y: number; t?: number }): { x: number; y: number } => {
-    const c = pathToComp(nodeId, time, p);
-    if (!project) return controller.ws.worldToScreen(c);
-    const z = (p.t !== undefined ? defaultAnimation.sample(nodeId, 'z', p.t) : undefined) ?? baseZ;
-    const q = project({ x: c.x, y: c.y, z });
-    return controller.ws.worldToScreen({ x: q.x, y: q.y });
-  };
+  // For a 3D layer the trajectory goes through the SAME camera the renderer uses (motionPathProjector);
+  // `z` is per point, so a layer animating in depth curves correctly.
+  const project = motionPathProjector(controller, m, nodeId, time);
+  const toS = (p: { x: number; y: number; z: number }): { x: number; y: number } => project(p.x, p.y, p.z);
 
   // Trajectory curve.
   ctx.beginPath();
   const s0 = toS(samples[0]!);
   ctx.moveTo(s0.x, s0.y);
   for (let i = 1; i < samples.length; i++) {
-    const s = toS(samples[i]!);
-    ctx.lineTo(s.x, s.y);
+    const q = toS(samples[i]!);
+    ctx.lineTo(q.x, q.y);
   }
   ctx.strokeStyle = 'rgba(120,170,255,0.9)';
   ctx.lineWidth = 1.5;
@@ -3620,34 +3641,33 @@ function paintMotionPath(
   // Spatial tangent handles — a thin stem from each keyframe to its in/out
   // control point, with a small square grab dot (AE-style). Drawn under the
   // keyframe dots so the points stay the primary target.
-  for (const k of motionPathTangents(node)) {
+  const keys = pathKeysOf(path);
+  for (const k of keys) {
     if (!inMotionPathWindow(k.t, win)) continue;
     const p = toS(k);
     for (const [part, h] of [['out', k.out], ['in', k.in]] as const) {
       if (!h) continue;
-      const s = toS({ ...h, t: k.t });
+      const hs = toS({ x: h.x, y: h.y, z: k.z });
       const hovered = mpHover !== null && mpHover.nodeId === nodeId
         && Math.abs(mpHover.t - k.t) < 1e-9 && mpHover.part === part;
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
-      ctx.lineTo(s.x, s.y);
+      ctx.lineTo(hs.x, hs.y);
       ctx.strokeStyle = hovered ? 'rgba(160,200,255,0.9)' : 'rgba(120,170,255,0.55)';
       ctx.lineWidth = 1;
       ctx.stroke();
       ctx.fillStyle = hovered ? '#fff' : 'rgba(120,170,255,1)';
       const r = hovered ? 3.5 : 2.5;
-      ctx.fillRect(s.x - r, s.y - r, r * 2, r * 2);
+      ctx.fillRect(hs.x - r, hs.y - r, r * 2, r * 2);
       if (hovered) {
         ctx.strokeStyle = 'rgba(120,170,255,1)';
-        ctx.strokeRect(s.x - r, s.y - r, r * 2, r * 2);
+        ctx.strokeRect(hs.x - r, hs.y - r, r * 2, r * 2);
       }
     }
   }
 
   // Per-frame velocity tick dots (AE-style speed spacing) and keyframe markers.
   if (guides.motionPathDots !== 'off') {
-    const active = activeCompIdNow();
-    const fps = compFps(active ? m.comp(active) : undefined, 30) || 30;
     const frameDotRadius =
       guides.motionPathDots === 'small' ? 1.25
       : guides.motionPathDots === 'large' ? 2.25
@@ -3659,31 +3679,30 @@ function paintMotionPath(
       : 4.5; // 'medium'
 
     // 1. Draw per-frame velocity tick dots along the trajectory
-    const frameSamples = motionPathFrameSamples(node, fps);
     ctx.fillStyle = 'rgba(160, 205, 255, 0.9)';
-    for (const f of frameSamples) {
-      if (!inMotionPathWindow(f.t, win)) continue;
-      const s = toS(f);
+    for (let i = 0; i + 3 < path.pathFrames.length; i += 4) {
+      if (!inMotionPathWindow(path.pathFrames[i]!, win)) continue;
+      const q = toS({ x: path.pathFrames[i + 1]!, y: path.pathFrames[i + 2]!, z: path.pathFrames[i + 3]! });
       ctx.beginPath();
-      ctx.arc(s.x, s.y, frameDotRadius, 0, Math.PI * 2);
+      ctx.arc(q.x, q.y, frameDotRadius, 0, Math.PI * 2);
       ctx.fill();
     }
 
     // 2. Draw keyframe markers (distinct larger dots with white center & blue border)
-    for (const k of motionPathKeyframes(node)) {
+    for (const k of keys) {
       if (!inMotionPathWindow(k.t, win)) continue;
-      const s = toS(k);
+      const q = toS(k);
       const hovered = mpHover !== null && mpHover.nodeId === nodeId
         && Math.abs(mpHover.t - k.t) < 1e-9 && mpHover.part === 'point';
       if (hovered) {
         // Halo behind the dot — "grabbable", said before the press.
         ctx.beginPath();
-        ctx.arc(s.x, s.y, kfRadius + 4, 0, Math.PI * 2);
+        ctx.arc(q.x, q.y, kfRadius + 4, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(120,170,255,0.25)';
         ctx.fill();
       }
       ctx.beginPath();
-      ctx.arc(s.x, s.y, hovered ? kfRadius + 1 : kfRadius, 0, Math.PI * 2);
+      ctx.arc(q.x, q.y, hovered ? kfRadius + 1 : kfRadius, 0, Math.PI * 2);
       ctx.fillStyle = hovered ? 'rgba(120,170,255,1)' : '#fff';
       ctx.fill();
       ctx.strokeStyle = hovered ? '#fff' : 'rgba(100, 160, 255, 1)';
@@ -3693,12 +3712,14 @@ function paintMotionPath(
   }
 
   // Current-position marker at the playhead.
-  const cur = toS({ ...positionSamplerFor(node)(time), t: time });
-  ctx.beginPath();
-  ctx.arc(cur.x, cur.y, 5, 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(255,214,90,1)';
-  ctx.lineWidth = 2;
-  ctx.stroke();
+  if (path.pathNow.length >= 3) {
+    const cur = toS({ x: path.pathNow[0]!, y: path.pathNow[1]!, z: path.pathNow[2]! });
+    ctx.beginPath();
+    ctx.arc(cur.x, cur.y, 5, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,214,90,1)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
 }
 
 /**

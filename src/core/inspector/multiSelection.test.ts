@@ -11,10 +11,9 @@
  *      LAYER (that is the whole point of typing maths into a mixed field);
  *   3. a drag moves every layer by the same delta FROM WHERE IT STARTED, so
  *      the offset cannot compound across pointer events;
- *   4. one gesture is one undo entry, however many layers it touched.
  *
- * (4) is the one that cannot be checked by reading values back, so it is
- * checked by counting the history keys the write path opened.
+ * (One undo entry per gesture is the engine's: the Inspector sends these as
+ * engine commands; the 700 ms recorder these writers once fed is gone.)
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -27,19 +26,10 @@ import {
   applyFlagAll,
   applyRelative,
   applyTextExpression,
+  readPropertyValue,
   snapshotStarts,
   selectionKinds,
 } from './multiSelection';
-
-/* `batchHistory` is the "one undo entry" mechanism; spying on the KEY it is
- * called with is how a test sees grouping without needing a live history. */
-const batchKeys: string[] = [];
-jest.mock('@stores/historyStore', () => ({
-  batchHistory: (key: string, fn: () => void) => {
-    batchKeys.push(key);
-    fn();
-  },
-}));
 
 const IDS = ['ms_a', 'ms_b', 'ms_c'];
 
@@ -63,7 +53,6 @@ function addNode(id: string, x: number, opacity: number): void {
 }
 
 beforeEach(() => {
-  batchKeys.length = 0;
   for (const id of IDS) defaultSceneGraph.removeNode?.(id);
   addNode('ms_a', 100, 100);
   addNode('ms_b', 200, 100);
@@ -110,17 +99,9 @@ describe('aggregateProperty', () => {
 });
 
 describe('applyAbsolute', () => {
-  it('sets every layer to the same value in ONE history entry', () => {
+  it('sets every layer to the same value', () => {
     applyAbsolute(IDS, 'x', 42, { compTime: 0, label: 'Set X' });
     expect(aggregateProperty(IDS, 'x', 0)).toMatchObject({ value: 42, mixed: false });
-    expect(new Set(batchKeys).size).toBe(1);
-  });
-
-  it('coalesces a whole drag onto one key when the caller supplies a mergeKey', () => {
-    for (const v of [10, 20, 30]) {
-      applyAbsolute(IDS, 'x', v, { compTime: 0, mergeKey: 'drag-x', label: 'Set X' });
-    }
-    expect(new Set(batchKeys)).toEqual(new Set(['drag-x']));
   });
 
   it('skips layers that do not exist rather than throwing', () => {
@@ -151,10 +132,11 @@ describe('applyRelative — a scrub is a delta from the START', () => {
     expect(aggregateProperty(IDS, 'opacity', 0)).toMatchObject({ value: 100, mixed: false });
   });
 
-  it('is one history entry for the whole gesture', () => {
+  it('does not compound across the steps of one gesture', () => {
     const starts = snapshotStarts(IDS, 'x', 0);
+    const before = IDS.map((id) => readPropertyValue(id, 'x', 0));
     for (const d of [5, 10, 15]) applyRelative('x', starts, d, { compTime: 0, mergeKey: 'scrub-x' });
-    expect(new Set(batchKeys)).toEqual(new Set(['scrub-x']));
+    expect(IDS.map((id) => readPropertyValue(id, 'x', 0))).toEqual(before.map((v) => (v ?? 0) + 15));
   });
 });
 
@@ -199,11 +181,10 @@ describe('flags — the layer switches', () => {
     expect(aggregateFlag(['ms_a', 'ghost'], () => 'draft').present).toBe(1);
   });
 
-  it('writes every live layer under ONE history entry', () => {
+  it('writes every live layer and skips a missing one', () => {
     const touched: string[] = [];
     expect(applyFlagAll([...IDS, 'ghost'], 'Draft Quality', (id) => touched.push(id))).toBe(3);
     expect(touched).toEqual(IDS);
-    expect(new Set(batchKeys).size).toBe(1);
   });
 });
 

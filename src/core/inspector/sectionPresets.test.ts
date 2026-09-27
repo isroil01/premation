@@ -3,12 +3,10 @@
  *
  * The store holds flat `{key: value}` bags and knows nothing about what a key
  * means; THIS module is the schema, so it is the only place a mistake shows
- * up as "the preset saved the wrong thing" rather than as a type error. Two
- * properties are load-bearing and both are tested here:
- *
- *   • capture reads the PRIMARY layer and apply writes EVERY selected layer,
- *     which is what makes "make these three match the house style" one pick;
- *   • an apply is ONE undo entry however many layers and keys it touched.
+ * up as "the preset saved the wrong thing" rather than as a type error. The
+ * load-bearing property tested here: capture reads the PRIMARY layer and apply
+ * writes EVERY selected layer, which is what makes "make these three match
+ * the house style" one pick.
  *
  * Round-tripping (capture on A, apply to B, capture on B, expect the same
  * bag) is the strongest available check that the two halves agree about key
@@ -28,14 +26,6 @@ import {
   captureTextPreset,
   captureTransformPreset,
 } from './sectionPresets';
-
-const batchKeys: string[] = [];
-jest.mock('@stores/historyStore', () => ({
-  batchHistory: (key: string, fn: () => void) => {
-    batchKeys.push(key);
-    fn();
-  },
-}));
 
 const SHAPES = ['sp_a', 'sp_b'];
 const TEXTS = ['sp_t1', 'sp_t2'];
@@ -92,7 +82,6 @@ function addText(id: string, fontSize: number, family: string): void {
 }
 
 beforeEach(() => {
-  batchKeys.length = 0;
   for (const id of [...SHAPES, ...TEXTS]) defaultSceneGraph.removeNode?.(id);
   addShape('sp_a', 100, 100);
   addShape('sp_b', 500, 40);
@@ -147,11 +136,6 @@ describe('transform presets', () => {
     }
   });
 
-  it('is ONE undo entry across every layer and every key', () => {
-    applyTransformPreset(SHAPES, { x: 7, y: 8, opacity: 55 }, { compTime: 0 });
-    expect(new Set(batchKeys).size).toBe(1);
-  });
-
   it('captures nothing from a layer that is not there', () => {
     expect(captureTransformPreset('ghost', 0)).toEqual({});
   });
@@ -172,11 +156,10 @@ describe('text presets', () => {
     expect(captureTextPreset('sp_t2')).toMatchObject({ fontFamily: 'Inter', fontSize: 72 });
   });
 
-  it('applies to every selected text layer as ONE undo entry', () => {
+  it('applies to every selected text layer', () => {
     applyTextPreset(TEXTS, { fontSize: 33 });
     expect(captureTextPreset('sp_t1').fontSize).toBe(33);
     expect(captureTextPreset('sp_t2').fontSize).toBe(33);
-    expect(new Set(batchKeys).size).toBe(1);
   });
 
   it('skips layers that cannot take the component, without failing the rest', () => {
@@ -186,6 +169,6 @@ describe('text presets', () => {
   });
 
   it('reports nothing written when no layer has the component', () => {
-    expect(applyComponentPropsPreset(SHAPES, 'Text', { fontSize: 12 }, 'x')).toBe(0);
+    expect(applyComponentPropsPreset(SHAPES, 'Text', { fontSize: 12 })).toBe(0);
   });
 });

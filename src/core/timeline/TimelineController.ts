@@ -55,8 +55,6 @@ import { hasRetime, pickRetimeBar, retimeClipOf, retimedChainTime } from '@core/
 import { getEventBus } from '@core/events/EventBus';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { HistoryService } from '@core/commands/HistoryService';
-import { useHistoryStore, type HistoryStore } from '@stores/historyStore';
-import { unifiedHistoryEnabled } from '@core/config/flags';
 import {
   registerClipGeometryProvider,
   type ClipGeometry,
@@ -164,20 +162,6 @@ function getCommandSystem_safe(): HistoryService | null {
 }
 
 /**
- * The app's snapshot-history store, or null when there isn't one.
- *
- * Same reason as {@link getCommandSystem_safe}: it reaches into the
- * CommandSystem, which headless tests do not build.
- */
-function historyStore(): Pick<HistoryStore, 'flush' | 'runRestoring'> | null {
-  try {
-    return useHistoryStore.getState();
-  } catch {
-    return null;
-  }
-}
-
-/**
  * The id a NEW bar for `nodeId` should be created with, or undefined to let
  * the engine mint one (`uid('layer')`).
  *
@@ -190,7 +174,6 @@ function historyStore(): Pick<HistoryStore, 'flush' | 'runRestoring'> | null {
  * documents persist ids through `Layer.toJSON`/`fromJSON`.
  */
 function seedBarId(timeline: Timeline, nodeId: string): string | undefined {
-  if (!unifiedHistoryEnabled()) return undefined;
   const base = `clip:${nodeId}`;
   if (!timeline.getLayer(base)) return base;
   for (let n = 1; ; n += 1) {
@@ -244,22 +227,6 @@ export class TimelineController {
       frameRate: frameRate(compSettings.fps),
       duration: Math.max(1, Math.round(compSettings.durationSeconds * compSettings.fps)),
       historyOptions: {
-        // Commit whatever scene edit is mid-debounce BEFORE the engine command
-        // mutates anything. The push emits `UndoStackChanged`, whose baseline
-        // sync re-captures `lastState` — so a pending 700 ms scene capture that
-        // had not fired yet compared equal afterwards and was silently dropped:
-        // move a layer, then trim its bar within the window, and the move never
-        // reached the undo stack (T1 design note S2). Flushing gives it its own
-        // entry, in order, ahead of this one — and flushing before `do()`
-        // (not in `onPush`, which runs after) keeps this command's change out
-        // of that entry once snapshots carry clip geometry.
-        onBeforeRun: () => {
-          try {
-            historyStore()?.flush();
-          } catch {
-            // Store not attached (headless tests).
-          }
-        },
         onPush: (cmd) => {
           try {
             getCommandSystem().getHistory().push(new TimelineCommandAdapter(cmd));
@@ -1252,30 +1219,18 @@ export class TimelineController {
     };
 
     const history = getCommandSystem_safe();
-    // Two history mechanisms meet here and both want this edit.
+    // One undo entry for both domains this edit changes.
     //
     //   • The ENGINE records clip geometry as explicit commands (onPush →
     //     TimelineCommandAdapter). Geometry is invisible to a scene snapshot.
-    //   • The APP auto-captures a debounced scene+animation SNAPSHOT whenever
-    //     SceneGraphChanged fires. Cloning a node fires it.
+    //   • The scene change (the cloned node) rides in the same composite.
     //
-    // Split is the first operation that changes BOTH domains, and left alone it
-    // produced two undo entries for one act: the composite below, plus a
-    // snapshot 700ms later. Undoing them in sequence restored a scene from
-    // before the split on top of geometry that had already been reverted, and
-    // the layer disappeared entirely.
-    //
-    // `flush` commits whatever edit was mid-debounce so it keeps its own step,
-    // and `runRestoring` both silences the auto-capture for the duration and
-    // re-baselines it afterwards — so the snapshot layer sees the post-split
-    // scene as the new normal and has nothing left to record.
-    const store = historyStore();
-    store?.flush();
+    // The app history is suspended for the duration, so the clone's own
+    // pushes do not become entries beside the composite.
     const run = (fn: () => void): void => {
       history?.suspend();
       try {
-        if (store) store.runRestoring(fn);
-        else fn();
+        fn();
       } finally {
         history?.resume();
       }
@@ -1286,9 +1241,7 @@ export class TimelineController {
 
     history?.push({
       label: 'Split Layer',
-      // Undo/redo arrive through `performUndo`/`performRedo`, which already
-      // wrap the call in `runRestoring` — so these must NOT nest another one.
-      // The engine push still has to be suspended, hence the direct calls.
+      // The restore's own pushes must not become entries: suspended around it.
       execute: () => {
         history?.suspend();
         try { apply(); } finally { history?.resume(); }
@@ -1518,13 +1471,10 @@ export class TimelineController {
     };
 
     const history = getCommandSystem_safe();
-    const store = historyStore();
-    store?.flush();
     const run = (fn: () => void): void => {
       history?.suspend();
       try {
-        if (store) store.runRestoring(fn);
-        else fn();
+        fn();
       } finally {
         history?.resume();
       }

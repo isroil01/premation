@@ -1,161 +1,107 @@
 /**
- * keyframeClipboard — in-memory copy/paste for keyframes (AE-style).
+ * keyframeClipboard — in-memory copy/paste for keyframes (AE-style), in API
+ * form (B4, ENGINE_API.md §15.12).
  *
- * Copy: captures value + temporal easing + spatial tangents (`si`/`so`) +
- *       continuous / roving flags so motion-path shape survives Ctrl+C/V.
- * Paste: re-applies them to any selected layer at the playhead, offsetting
- *        times so the earliest copied keyframe lands at the playhead.
- *        Works across layers — paste applies to each currently-selected node.
+ * Copy: the engine's `copyKeyframes` answers the WHOLE keys the selection
+ *       names (every dimension, as AE copies a key) — value, temporal easing
+ *       and per-dimension ease, spatial tangents, spatial mode, continuous /
+ *       roving — grouped per property at their composition times.
+ * Paste: `pasteKeyframes` per (target layer, property of the same path): the
+ *        earliest copied key lands at the playhead, spacing kept (composition
+ *        time). One undo entry; a target without the property is skipped.
  *
- * Clipboard is module-level (survives re-renders, resets on page unload).
- * All mutations are wrapped in runAnimEdit so they are fully undoable.
+ * The clipboard is module state (survives re-renders, resets on page unload).
+ * It never reads the document itself: copies are the engine's answers, the
+ * mirror only names which key sits under the playhead.
  */
 
-import type { EasingKind, BezierHandles, SpatialInterp } from '@motion/animation';
-import { defaultAnimation, expandKeyframeProp, sampleTrack } from '@motion/animation';
-import { selectionStoredRefs } from '@core/mirror/keySelection';
+import type { Command, KeyframeSet } from '@motion/engine-api';
+import { engine } from '@core/engine/engineInstance';
+import { compTime } from '@core/engine/propRefs';
+import { edit } from '@core/engine/uiEdits';
+import { parseSelectionKey, selectionIdAt } from '@core/mirror/keySelection';
+import { trackRefIn } from '@core/mirror/trackIndex';
 import { documentMirror } from '@stores/documentMirror';
-import { propRefForTrack } from '@core/engine/propRefs';
-import { readStaticPropertyValue } from '@core/inspector/propertyValue';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
 
-export interface ClipboardEntry {
-  nodeId: string;
-  prop: string;
-  t: number;
-  value: number;
-  easing?: EasingKind;
-  bezier?: BezierHandles;
-  /** Spatial in/out tangents (value-space offsets) — motion-path shape. */
-  si?: number;
-  so?: number;
-  /** AE spatial interpolation mode of the motion-path vertex. */
-  spatialInterp?: SpatialInterp;
-  continuous?: boolean;
-  roving?: boolean;
-}
-
-let _clipboard: ClipboardEntry[] = [];
+let clipboard: KeyframeSet[] = [];
 
 /** True when the clipboard holds at least one keyframe. */
 export function hasClipboard(): boolean {
-  return _clipboard.length > 0;
+  return clipboard.some((s) => s.keyframes.length > 0);
 }
 
-/** What Ctrl+C captured (read-only) — the engine-API paste builds its commands from it. */
-export function clipboardEntries(): readonly ClipboardEntry[] {
-  return _clipboard;
+/** What Copy captured (read-only): API key sets, composition times. */
+export function clipboardSets(): readonly KeyframeSet[] {
+  return clipboard;
 }
 
 /** Test helper — wipe the module clipboard between cases. */
 export function clearClipboard(): void {
-  _clipboard = [];
+  clipboard = [];
 }
 
 /**
- * Copy the selected keyframes (keyframe SELECTION ids — engine key ids, see
- * core/mirror/keySelection.ts) into the clipboard. Each id is decoded by the
- * selection adapter into the stored positions of the tracks the diamond stands
- * for, which is what this clipboard reads.
+ * Copy by ENGINE keyframe id. Resolves true when something was copied (an
+ * empty answer leaves the clipboard as it was).
  */
-export function copyKeyframes(ids: ReadonlySet<string>): void {
-  copyKeyframeRefs(selectionStoredRefs(documentMirror(), ids));
+export async function copyKeyframeIds(keyIds: ReadonlyArray<string>): Promise<boolean> {
+  const ids = [...new Set(keyIds)];
+  if (ids.length === 0) return false;
+  const res = await engine().query({ type: 'copyKeyframes', keys: ids });
+  if (!res.ok) return false;
+  const sets = res.value.sets.filter((s) => s.keyframes.length > 0);
+  if (sets.length === 0) return false;
+  clipboard = sets;
+  return true;
 }
 
 /**
- * Copy the key of `prop` at STORED time `t` (the layer's keyframe axis) — the
- * inspector row menu's Copy Keyframe, which holds a property and the playhead
- * rather than a timeline selection. A clipboard read, not a document write.
+ * Copy the selected keyframes (keyframe SELECTION ids, core/mirror/keySelection.ts:
+ * `<layer>::<engineKeyId>[#member]`) — a member row's diamond copies its whole key.
  */
-export function copyKeyframeAt(nodeId: string, prop: string, t: number): void {
-  copyKeyframeRefs([{ nodeId, prop, t }]);
+export function copyKeyframes(ids: ReadonlySet<string>): Promise<boolean> {
+  return copyKeyframeIds([...ids].flatMap((id) => {
+    const ref = parseSelectionKey(id);
+    return ref ? [ref.keyId] : [];
+  }));
 }
 
 /**
- * Copy keys by STORED position (`nodeId`, track, stored `t`) — what a keyframe
- * selection decodes to (`selectionStoredRefs`).
+ * Copy the key of track `prop` under comp time `seconds` — the property menu's
+ * Copy Keyframe, which holds a property and the playhead rather than a
+ * timeline selection. Resolves false when no key sits there.
  */
-export function copyKeyframeRefs(refs: ReadonlyArray<{ nodeId: string; prop: string; t: number }>): void {
-  const entries: ClipboardEntry[] = [];
-  const seen = new Set<string>();
-  for (const ref of refs) {
-    // A selected "Position" row stands for the underlying x/y/z tracks; a
-    // member row (Scale X, a colour channel) for its whole property — AE has
-    // ONE key per time for every dimension (ENGINE_API.md §3.3), so Copy takes
-    // them all. A member with no key there (a legacy document) is copied at
-    // its value, with the keyed member's easing.
-    const tracks = expandKeyframeProp(ref.prop).flatMap((p) => {
-      const members = propRefForTrack(ref.nodeId, p)?.members ?? [];
-      return members.length > 1 ? members : [p];
-    });
-    const { nodeId, t } = ref;
-    const at = (prop: string) => defaultAnimation.getTrackKeyframes(nodeId, prop)?.find((k) => Math.abs(k.t - t) < 1e-6);
-    const lead = tracks.map(at).find((k) => k !== undefined);
-    if (!lead) continue;
-    for (const prop of tracks) {
-      if (seen.has(`${nodeId}|${prop}|${lead.t}`)) continue;
-      seen.add(`${nodeId}|${prop}|${lead.t}`);
-      const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
-      const kf = at(prop) ?? {
-        ...lead,
-        value: kfs && kfs.length > 0 ? sampleTrack({ nodeId, prop, keyframes: kfs }, lead.t) ?? 0 : readStaticPropertyValue(nodeId, prop) ?? 0,
-        si: undefined,
-        so: undefined,
-      };
-      entries.push({
-        nodeId,
-        prop,
-        t: kf.t,
-        value: kf.value,
-        easing: kf.easing,
-        bezier: kf.bezier ? [...kf.bezier] as BezierHandles : undefined,
-        si: kf.si,
-        so: kf.so,
-        spatialInterp: kf.spatialInterp,
-        continuous: kf.continuous,
-        roving: kf.roving,
-      });
+export function copyKeyframeAt(nodeId: string, prop: string, seconds: number): Promise<boolean> {
+  const m = documentMirror();
+  const ref = trackRefIn(m.tree(nodeId), prop);
+  const at = ref ? selectionIdAt(m, nodeId, ref.path, compTime(seconds)) : null;
+  const key = at ? parseSelectionKey(at) : null;
+  return key ? copyKeyframeIds([key.keyId]) : Promise.resolve(false);
+}
+
+/**
+ * Paste onto each target layer at comp time `atCompTime` (seconds): one
+ * `pasteKeyframes` per (layer, property); the earliest copied key of the whole
+ * clipboard lands at `atCompTime`, every set keeps its offset from it. ONE
+ * undo entry. A target without a property of the copied path is skipped for it.
+ */
+export async function pasteKeyframes(targetNodeIds: readonly string[], atCompTime: number): Promise<void> {
+  const sets = clipboard.filter((s) => s.keyframes.length > 0);
+  if (sets.length === 0 || targetNodeIds.length === 0) return;
+  const m = documentMirror();
+  const minTime = Math.min(...sets.flatMap((s) => s.keyframes.map((k) => k.time)));
+  const at = compTime(atCompTime);
+  const cmds: Command[] = [];
+  for (const layer of targetNodeIds) {
+    if (!m.layer(layer)) continue;
+    if (!m.tree(layer)) await m.whenIdle();
+    for (const s of sets) {
+      const info = m.property(layer, s.prop.path);
+      if (!info?.animatable) continue;
+      const first = Math.min(...s.keyframes.map((k) => k.time));
+      cmds.push({ type: 'pasteKeyframes', prop: { layer, path: s.prop.path }, time: at + (first - minTime), keys: s.keyframes.map((k) => ({ ...k, id: '' })) });
     }
   }
-  if (entries.length > 0) _clipboard = entries;
-}
-
-/**
- * Paste clipboard keyframes onto each target node at `atCompTime`.
- * The earliest clipboard keyframe is offset to land at `atCompTime`.
- */
-export function pasteKeyframes(targetNodeIds: readonly string[], atCompTime: number): void {
-  if (_clipboard.length === 0 || targetNodeIds.length === 0) return;
-  const minT = Math.min(..._clipboard.map((e) => e.t));
-
-  runAnimEdit('Paste keyframes', () => {
-    for (const nodeId of targetNodeIds) {
-      // The earliest clipboard keyframe lands at the TARGET's canonical time
-      // for the playhead; the rest keep their stored spacing. The old code
-      // added a comp-time offset to stored keyframe times — two different
-      // axes, which scattered pastes on any moved/trimmed clip.
-      const base = compToKeyframeTime(nodeId, atCompTime);
-      for (const entry of _clipboard) {
-        const layerT = base + (entry.t - minT);
-        defaultAnimation.setKeyframe(nodeId, entry.prop, layerT, entry.value, entry.easing);
-        if (entry.bezier) defaultAnimation.setBezier(nodeId, entry.prop, layerT, entry.bezier);
-        if (entry.si !== undefined || entry.so !== undefined) {
-          defaultAnimation.setSpatialTangent(nodeId, entry.prop, layerT, {
-            si: entry.si,
-            so: entry.so,
-          });
-        }
-        if (entry.spatialInterp !== undefined) {
-          defaultAnimation.setSpatialInterp(nodeId, entry.prop, layerT, entry.spatialInterp);
-        }
-        if (entry.continuous !== undefined || entry.roving !== undefined) {
-          defaultAnimation.updateKeyframe(nodeId, entry.prop, layerT, {
-            continuous: entry.continuous,
-            roving: entry.roving,
-          });
-        }
-      }
-    }
-  });
+  if (cmds.length === 0) return;
+  await edit('Paste keyframes', cmds);
 }

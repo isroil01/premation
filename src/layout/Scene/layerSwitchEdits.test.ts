@@ -67,10 +67,12 @@ test('solo and shy round-trip through undo/redo; shy is document state (§2.5 #1
   expect(node(s.A).shy).toBe(true);
 });
 
-test('a composition root is not an API layer: its row keeps the legacy writer', async () => {
+test('a composition root is not an API layer: its row has no switches (refused, nothing written)', async () => {
   const before = node(s.comp).locked;
+  const n = historyLabels().length;
   await toggleLayerSwitchAnchored(s.comp, 'locked');
-  expect(node(s.comp).locked).toBe(!before);
+  expect(node(s.comp).locked).toBe(before);
+  expect(historyLabels().length).toBe(n);
   expect(switchCommands([s.comp, s.A], 'locked', true)).toHaveLength(1);
 });
 

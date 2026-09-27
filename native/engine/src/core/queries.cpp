@@ -1,6 +1,7 @@
 #include "queries.hpp"
 
 #include <algorithm>
+#include <array>
 #include <unordered_map>
 #include <cmath>
 #include <set>
@@ -8,6 +9,7 @@
 #include <tuple>
 #include <utility>
 
+#include "anim_json.hpp"
 #include "catalog_data.hpp"
 #include "controls.hpp"
 #include "docexpr.hpp"
@@ -17,10 +19,13 @@
 #include "handlers_common.hpp"
 #include "handlers_layers.hpp"
 #include "handlers_native.hpp"
+#include "layer_geometry.hpp"
 #include "native_effects.hpp"
+#include "presets_capture.hpp"
 #include "readmodel.hpp"
 #include "rig.hpp"
 #include "scene.hpp"
+#include "scene/session_hooks.hpp"
 #include "strutil.hpp"
 #include "time_conv.hpp"
 #include "variant_util.hpp"
@@ -385,6 +390,139 @@ struct Q {
     }
     return query_result_for<api::GetKeyframes>(std::move(out));
   }
+  api::QueryResult operator()(const api::CopyKeyframes& q) const {
+    // B4: whole keys in API form, per property, in the order the ids first name them (queries.ts).
+    std::unordered_map<std::string, std::vector<api::KeyframeSet>> layerSets;
+    std::vector<api::KeyframeSet> picked;
+    std::vector<std::set<std::string>> pickedIds;
+    for (const std::string& id : q.keys) {
+      const auto loc = c.keys.resolve(d, id);
+      if (!loc || d.node(loc->layer) == nullptr) continue;
+      auto it = layerSets.find(loc->layer);
+      if (it == layerSets.end()) it = layerSets.emplace(loc->layer, keyframe_sets(pc, loc->layer, query_catalog(c, loc->layer))).first;
+      for (const api::KeyframeSet& set : it->second) {
+        const auto k = std::find_if(set.keyframes.begin(), set.keyframes.end(), [&](const api::Keyframe& x) { return x.id == id; });
+        if (k == set.keyframes.end()) continue;
+        auto at = std::find_if(picked.begin(), picked.end(), [&](const api::KeyframeSet& e) { return e.prop == set.prop; });
+        if (at == picked.end()) {
+          picked.push_back(api::KeyframeSet{set.prop, {}});
+          pickedIds.emplace_back();
+          at = picked.end() - 1;
+        }
+        auto& seen = pickedIds[static_cast<std::size_t>(at - picked.begin())];
+        if (seen.insert(k->id).second) at->keyframes.push_back(*k);
+        break;
+      }
+    }
+    for (api::KeyframeSet& s : picked) {
+      std::stable_sort(s.keyframes.begin(), s.keyframes.end(), [](const api::Keyframe& a, const api::Keyframe& b) { return a.time < b.time; });
+    }
+    api::KeyframeSets out;
+    out.sets = std::move(picked);
+    return query_result_for<api::CopyKeyframes>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetMemberKeyframes& q) const {
+    // B4: AnimationEngine.animatedProps (keyed tracks, then expression-only), keys as stored (memberKeysQuery.ts).
+    (void)require_layer(d, q.layer);
+    const std::set<std::string> wanted(q.members.begin(), q.members.end());
+    const Catalog& cat = query_catalog(c, q.layer);
+    api::MemberTracks out;
+    const NodeAnim* anim = d.anim(q.layer);
+    if (anim == nullptr) return query_result_for<api::GetMemberKeyframes>(std::move(out));
+    std::vector<std::string> members;
+    for (const auto& [prop, keys] : anim->tracks) members.push_back(prop);
+    for (const auto& [prop, st] : anim->exprs) {
+      if (std::find(members.begin(), members.end(), prop) == members.end()) members.push_back(prop);
+    }
+    for (const std::string& member : members) {
+      if (!wanted.empty() && !wanted.contains(member)) continue;
+      api::MemberTrack t;
+      t.member = member;
+      if (const PropBinding* b = cat.by_member(member)) {
+        t.path = b->path;
+        const auto at = std::find(b->members.begin(), b->members.end(), member);
+        t.index = static_cast<std::uint32_t>(at == b->members.end() ? 0 : at - b->members.begin());
+      }
+      Json list = Json::array();
+      if (const std::vector<Key>* keys = anim->tracks.find(member)) {
+        for (const Key& k : *keys) list.arr_mut().push_back(key_to_json(k));
+        t.count = static_cast<std::uint32_t>(keys->size());
+      }
+      t.keyframes = stringify(list);
+      t.has_expression = anim->exprs.contains(member);
+      out.tracks.push_back(std::move(t));
+    }
+    return query_result_for<api::GetMemberKeyframes>(std::move(out));
+  }
+  api::QueryResult operator()(const api::CopyEffects& q) const {
+    // B4: effectClipboard.ts captureEffect per picked effect, in stack order (queries.ts).
+    (void)require_layer(d, q.layer);
+    std::set<std::string> wanted;
+    for (const std::string& p : q.effects) {
+      const auto seg = split(p, '/');
+      if (seg.size() == 2 && seg[0] == "effects" && !seg[1].empty()) wanted.insert(seg[1]);
+    }
+    const NodeAnim* anim = d.anim(q.layer);
+    Json captures = Json::array();
+    api::CopiedEffects out;
+    for (const Json& e : get_node_effects(d, q.layer)) {
+      const std::string id = e.at("id").is_string() ? e.at("id").str() : std::string{};
+      if (!q.effects.empty() && !wanted.contains(id)) continue;
+      const std::string prefix = "effect." + id + ".";
+      Json tracks = Json::object();
+      if (anim != nullptr) {
+        for (const auto& [prop, keys] : anim->tracks) {
+          if (!prop.starts_with(prefix) || keys.empty()) continue;
+          Json list = Json::array();
+          for (const Key& k : keys) list.arr_mut().push_back(key_to_json(k));
+          tracks.set(prop.substr(prefix.size()), std::move(list));
+        }
+        // The legacy single-scalar track is `effect.<id>` with no param suffix.
+        if (const std::vector<Key>* legacy = anim->tracks.find("effect." + id); legacy != nullptr && !legacy->empty()) {
+          Json list = Json::array();
+          for (const Key& k : *legacy) list.arr_mut().push_back(key_to_json(k));
+          tracks.set("", std::move(list));
+        }
+      }
+      Json cap = Json::object();
+      cap.set("effect", e);
+      cap.set("tracks", std::move(tracks));
+      captures.arr_mut().push_back(std::move(cap));
+      out.paths.push_back("effects/" + id);
+    }
+    out.effects = stringify(captures);
+    return query_result_for<api::CopyEffects>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetSvgDocument& q) const {
+    // B4: the `svg` component as stored (queries.ts / svgLayer.ts readSvgLayer).
+    const Node& n = require_layer(d, q.layer);
+    api::SvgDocument out;
+    out.role = svg_role_of(n);
+    out.capabilities = "{}";
+    const Component* svgc = n.comp("svg");
+    if (out.role == api::SvgRole::none || svgc == nullptr) return query_result_for<api::GetSvgDocument>(std::move(out));
+    const Json& p = svgc->props;
+    const auto str = [&p](std::string_view k) { return p.at(k).is_string() ? p.at(k).str() : std::string{}; };
+    const auto num = [&p](std::string_view k, double dflt) { return p.at(k).is_finite_number() ? p.at(k).num() : dflt; };
+    out.file_name = str("fileName").empty() ? std::string("untitled.svg") : str("fileName");
+    out.intrinsic_width = num("intrinsicWidth", 512);
+    out.intrinsic_height = num("intrinsicHeight", 512);
+    const Json& vb = p.at("viewBox");
+    if (vb.is_array() && vb.arr().size() == 4 &&
+        std::all_of(vb.arr().begin(), vb.arr().end(), [](const Json& v) { return v.is_number(); })) {
+      out.view_box = api::Rect{vb.arr()[0].num(), vb.arr()[1].num(), vb.arr()[2].num(), vb.arr()[3].num()};
+    }
+    out.capabilities = p.at("capabilities").is_object() ? stringify(p.at("capabilities")) : "{}";
+    out.live_playback = p.at("livePlayback").is_bool() && p.at("livePlayback").b();
+    out.sanitized_markup = str("sanitizedMarkup");
+    out.source_markup = str("sourceMarkup").empty() ? out.sanitized_markup : str("sourceMarkup");
+    out.sanitize_policy = static_cast<std::uint32_t>(std::max(0.0, std::round(num("sanitizePolicy", 0))));
+    return query_result_for<api::GetSvgDocument>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetCryptomatte& q) const {
+    if (!resolve_item(d, q.item)) fail(ErrorCode::not_found, "no item '" + q.item + "'", {.item = q.item});
+    fail(ErrorCode::unsupported, "EXR Cryptomatte manifests are read by the editor's EXR decoder until media decode in the engine reads EXR");
+  }
   api::QueryResult operator()(const api::GetMarkers& q) const {
     require_comp(d, q.owner.comp);
     std::vector<api::Marker> markers;
@@ -552,6 +690,15 @@ struct Q {
     }
     return query_result_for<api::ListPresets>(std::move(out));
   }
+  api::QueryResult operator()(const api::CapturePreset& q) const {
+    // B4: Save as Preset — animationPresets.ts capturePresetBody against the layer's own comp (queries.ts).
+    (void)require_layer(d, q.layer);
+    api::CapturedPreset out;
+    const auto body = capture_preset_body(d, q.layer);
+    out.preset = body ? stringify(*body) : "{}";
+    out.empty = !body;
+    return query_result_for<api::CapturePreset>(std::move(out));
+  }
   api::QueryResult operator()(const api::GetCapabilities&) const {
     return query_result_for<api::GetCapabilities>(c.capabilities());
   }
@@ -593,11 +740,56 @@ struct Q {
     }
     return query_result_for<api::HitTest>(std::move(out));
   }
-  api::QueryResult operator()(const api::GetLayerBounds&) const {
-    fail(ErrorCode::unsupported, "'getLayerBounds' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2");
+  api::QueryResult operator()(const api::GetLayerBounds& q) const {
+    // B4 round 2: readGeometry's box at the time (core/layer_geometry.cpp; text through the text port),
+    // in the layer's own space or through its 2D world chain (queries.ts / layerBoundsQuery.ts).
+    if (q.space == api::BoundsSpace::viewport) {
+      fail(ErrorCode::unsupported, "viewport-space bounds need the viewport's camera: the overlay geometry push (setOverlayGeometry) carries them");
+    }
+    if (q.include_effects) fail(ErrorCode::unsupported, "effect growth is not in layer bounds yet (includeEffects)");
+    const double seconds = flicks_to_seconds(q.time);
+    const SpaceCtx sc{d, pc.view, pc.expr, pc.cache};
+    api::LayerBoundsList out;
+    for (const auto& id : q.layers) {
+      (void)require_layer(d, id);
+      const auto g = layer_geometry_at(sc, c.text, id, seconds);
+      if (!g) continue;  // no canvas box (audio, adjustment)
+      const double l = g->offsetX - g->width / 2;
+      const double t = g->offsetY - g->height / 2;
+      const double r = l + g->width;
+      const double b = t + g->height;
+      std::array<double, 8> corners{l, t, r, t, r, b, l, b};
+      if (q.space == api::BoundsSpace::comp) {
+        const auto m = world_2d_at(pc, id, seconds);
+        for (std::size_t i = 0; i < corners.size(); i += 2) {
+          const double x = corners[i];
+          const double y = corners[i + 1];
+          corners[i] = m.a * x + m.c * y + m.e;
+          corners[i + 1] = m.b * x + m.d * y + m.f;
+        }
+      }
+      double minX = corners[0], maxX = corners[0], minY = corners[1], maxY = corners[1];
+      for (std::size_t i = 2; i < corners.size(); i += 2) {
+        minX = std::min(minX, corners[i]);
+        maxX = std::max(maxX, corners[i]);
+        minY = std::min(minY, corners[i + 1]);
+        maxY = std::max(maxY, corners[i + 1]);
+      }
+      api::LayerBounds lb;
+      lb.layer = id;
+      lb.bounds = api::Rect{minX, minY, maxX - minX, maxY - minY};
+      lb.corners.assign(corners.begin(), corners.end());
+      out.bounds.push_back(std::move(lb));
+    }
+    return query_result_for<api::GetLayerBounds>(std::move(out));
   }
-  api::QueryResult operator()(const api::GetTextLayout&) const {
-    fail(ErrorCode::unsupported, "'getTextLayout' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2");
+  api::QueryResult operator()(const api::GetTextLayout& q) const {
+    // B4 round 2: measured by the text port on the frame builder's fonts (scene/text_query.cpp).
+    const Node& n = require_layer(d, q.layer);
+    if (n.comp("Text") == nullptr) fail(ErrorCode::invalid_argument, "layer '" + q.layer + "' is not a text layer", {.layer = q.layer});
+    if (c.text == nullptr) fail(ErrorCode::unsupported, "text is measured with fonts, which this engine has none of (headless)");
+    api::TextLayout out = c.text->text_layout(n, q.overrides ? &*q.overrides : nullptr);
+    return query_result_for<api::GetTextLayout>(std::move(out));
   }
   api::QueryResult operator()(const api::ReadPixels& q) const {
     const api::Rect& g = q.region;

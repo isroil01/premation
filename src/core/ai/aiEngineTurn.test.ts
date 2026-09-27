@@ -103,23 +103,45 @@ describe('an AI turn on the engine', () => {
     expect(historyLabels()).toEqual([]);
   });
 
-  it('a turn that writes around the engine is still ONE entry — a snapshot that names its gaps', async () => {
+  it('a turn with a named gap is still ONE entry — a snapshot that names its gaps', async () => {
     const before = h.doc();
-    const r = await runToolTurn('AI: boxes', [
-      { name: 'create_layer', args: { id: 's', kind: 'shape', shape: 'star', name: 'Box', fill: '#ff0000' } },
-      { name: 'set_keyframes', args: { keyframes: [{ nodeId: 's', prop: 'opacity', t: 0, value: 0 }, { nodeId: 's', prop: 'opacity', t: 1, value: 100 }] } },
-      { name: 'create_layer', args: { id: 'n', kind: 'null', name: 'N' } },
-      // merge_paths still edits source layers outside the engine: recorded as a gap wholesale.
-      { name: 'merge_paths', args: { op: 'union', nodeIds: ['no_such_a', 'no_such_b'] } },
-    ]);
-    expect(r.outcome.kind).toBe('snapshot');
-    expect(r.outcome.gaps.join('\n')).toContain('merge_paths');
+    const tx = await beginAiTransaction('AI: boxes');
+    const ctx = createToolContext(new AbortController().signal, undefined, tx.session);
+    await ctx.scene.create('null', 'N');
+    tx.session.legacy('a test gap');
+    const out = await tx.commit();
+    expect(out.kind).toBe('snapshot');
+    expect(out.gaps).toEqual(['a test gap']);
     expect(historyLabels()).toEqual(['AI: boxes']);
     const after = h.doc();
     await h.run({ type: 'undo' });
     expect(h.doc()).toBe(before);
     await h.run({ type: 'redo' });
     expect(h.doc()).toBe(after);
+  });
+
+  it('merge_paths is one engine entry: the result pasted, the operands flagged and hidden', async () => {
+    const before = h.doc();
+    const r = await runToolTurn('AI: merge', [
+      { name: 'create_layer', args: { id: 'ma', kind: 'shape', shape: 'rect', name: 'A', x: 100, y: 100, width: 80, height: 80 } },
+      { name: 'create_layer', args: { id: 'mb', kind: 'shape', shape: 'rect', name: 'B', x: 140, y: 100, width: 80, height: 80 } },
+      { name: 'merge_paths', args: { op: 'union', nodeIds: ['ma', 'mb'] } },
+    ]);
+    expect(r.results.map((x) => x.ok ? 'ok' : x.content)).toEqual(['ok', 'ok', 'ok']);
+    expect(r.outcome).toEqual({ kind: 'engine', gaps: [] });
+    expect(historyLabels()).toEqual(['AI: merge']);
+    const resultId = (r.results[2]!.data as { resultIds: string[] }).resultIds[0]!;
+    const result = defaultSceneGraph.getNode(resultId)!;
+    const fx = result.components.find((c) => c.type === 'fx')!.props;
+    expect(fx.booleanOp).toBe('union');
+    expect(fx.booleanSources).toEqual(['ma', 'mb']);
+    for (const id of ['ma', 'mb']) {
+      const n = defaultSceneGraph.getNode(id)!;
+      expect(n.visible).toBe(false);
+      expect(n.components.find((c) => c.type === 'fx')?.props.booleanOperand).toBe(true);
+    }
+    await h.run({ type: 'undo' });
+    expect(h.doc()).toBe(before);
   });
 
   it('B5: polystars, text animators, masks, path operators, styles, rigs and a group time remap stay on the engine', async () => {

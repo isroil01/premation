@@ -42,11 +42,12 @@
  *
  * Reported, never blocking. The user asked for a rename, and refusing it to
  * protect an expression they can see and edit would be the tool overruling them.
+ *
+ * The rename itself is the engine's `renameLayer` command (both engines; TS
+ * handlers/layers.ts), which repairs the references inside the same command.
+ * This module keeps the result types the Layers panel reports with
+ * (sceneEdits.ts `renameLayerEdit`).
  */
-
-import { defaultAnimation, mapLayerNameRefs, layerNameRefsIn } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 
 /** One expression whose reference to the renamed layer was repaired. */
 export interface RepairedRef {
@@ -76,112 +77,4 @@ export interface RenameLayerResult {
    * expression, which is worth one sentence at the moment it becomes true.
    */
   nameAlreadyInUse: boolean;
-}
-
-/** First node with this name, in traversal order — the same rule the engine's resolver uses. */
-function resolveByName(name: string): string | null {
-  let found: string | null = null;
-  defaultSceneGraph.traverse((n) => {
-    if (found === null && n.name === name) found = n.id;
-  });
-  return found;
-}
-
-function countNamed(name: string): number {
-  let n = 0;
-  defaultSceneGraph.traverse((node) => {
-    if (node.name === name) n += 1;
-  });
-  return n;
-}
-
-/**
- * Rename a layer and follow the rename through every expression that named it.
- *
- * One `runDocumentEdit`, so the rename and the repairs undo together. Undoing a
- * rename that left its repairs behind would be worse than not repairing at all
- * — the references would then name a layer that no longer exists.
- */
-export function renameLayer(nodeId: string, newName: string): RenameLayerResult {
-  const empty: RenameLayerResult = {
-    ok: false,
-    repaired: [],
-    captured: [],
-    nameAlreadyInUse: false,
-  };
-
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return empty;
-
-  // An unnamed node has no references to follow — nothing can have named it.
-  // Still a rename; just not one with any repair work in it.
-  const oldName = node.name ?? '';
-  const trimmed = newName.trim();
-  // An empty name is not a rename, and neither is renaming to the same thing.
-  if (trimmed === '' || trimmed === oldName) return { ...empty, ok: trimmed !== '' };
-
-  /*
-    Both questions have to be asked BEFORE the mutation, because afterwards
-    neither is answerable:
-
-      • Did the old name mean THIS layer? If it meant a different layer that
-        shares the name, references to it must be left alone — rewriting by
-        text match would retarget them to the layer being renamed, which is not
-        the one they were reading.
-      • Who did the NEW name mean? If it meant someone, and after the rename it
-        means this layer instead, every reference to it just moved.
-  */
-  const oldNameResolvedToThis = resolveByName(oldName) === nodeId;
-  const previousOwnerOfNewName = resolveByName(trimmed);
-  const nameAlreadyInUse = countNamed(trimmed) > 0;
-
-  const repaired: RepairedRef[] = [];
-  const captured: RepairedRef[] = [];
-
-  runDocumentEdit(`Rename “${oldName}” to “${trimmed}”`, () => {
-    node.name = trimmed;
-
-    for (const expr of defaultAnimation.allExpressions()) {
-      // A layer's own expression referring to its own old name is repaired the
-      // same way as anyone else's. There is nothing special about self.
-      const { src, changed } = mapLayerNameRefs(expr.src, (name) =>
-        name === oldName && oldNameResolvedToThis ? trimmed : null,
-      );
-
-      if (changed) {
-        defaultAnimation.setExpressionState(expr.nodeId, expr.prop, {
-          src,
-          // Preserved, both of them. Losing `enabled` would silently re-enable a
-          // disabled expression; losing `authoredBy` would strip the provenance
-          // that makes a plugin's leftovers findable after it is uninstalled.
-          enabled: defaultAnimation.isExpressionEnabled(expr.nodeId, expr.prop),
-          ...(expr.authoredBy ? { authoredBy: expr.authoredBy } : {}),
-        });
-        repaired.push({
-          nodeId: expr.nodeId,
-          prop: expr.prop,
-          ...(expr.authoredBy ? { authoredBy: expr.authoredBy } : {}),
-        });
-        continue;
-      }
-
-      // Names the layer this rename just stole the name FROM. Nothing about
-      // this expression changed, and that is exactly the problem: it silently
-      // began reading a different layer.
-      if (
-        previousOwnerOfNewName !== null &&
-        previousOwnerOfNewName !== nodeId &&
-        resolveByName(trimmed) === nodeId &&
-        layerNameRefsIn(expr.src).includes(trimmed)
-      ) {
-        captured.push({
-          nodeId: expr.nodeId,
-          prop: expr.prop,
-          ...(expr.authoredBy ? { authoredBy: expr.authoredBy } : {}),
-        });
-      }
-    }
-  });
-
-  return { ok: true, repaired, captured, nameAlreadyInUse };
 }

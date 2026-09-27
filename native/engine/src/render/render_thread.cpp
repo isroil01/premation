@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "log.hpp"
+#include "overlay_geometry.hpp"
 #include "os_ffi.hpp"
 #include "premation/protocol/framing.hpp"
 #include "premation/protocol/pixel_channel.hpp"
@@ -562,6 +563,13 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
   ready.render_done_us = doneUs;
   ready.width = set.width;
   ready.height = set.height;
+  // B4 round 2: the overlays' geometry for this frame first (the host pairs it with the FrameReady that follows).
+  if (job.geometrySubscribed && send_) {
+    for (api::FrameGeometry& g : doc::pack_frame_geometry(job.viewport, set.generation, job.frame, job.time, job.revision,
+                                                          std::move(job.geometry))) {
+      send_(frames::Message{.v = std::move(g)});
+    }
+  }
   if (send_) send_(frames::Message{.v = ready});
 
   const std::lock_guard<std::mutex> lock(m_);

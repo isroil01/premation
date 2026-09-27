@@ -534,6 +534,16 @@ enum class PurgeKind : std::uint32_t {
 [[nodiscard]] std::string_view to_string(PurgeKind v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, PurgeKind& out) noexcept;
 
+enum class OverlayKind : std::uint32_t {
+  transform = 0,
+  bounds = 1,
+  motion_path = 2,
+  rig = 3,
+  text_box = 4,
+};
+[[nodiscard]] std::string_view to_string(OverlayKind v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, OverlayKind& out) noexcept;
+
 enum class TrackKind : std::uint32_t {
   position = 0,
   position_rotation = 1,
@@ -552,6 +562,14 @@ enum class TrackDirection : std::uint32_t {
 };
 [[nodiscard]] std::string_view to_string(TrackDirection v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, TrackDirection& out) noexcept;
+
+enum class SvgRole : std::uint32_t {
+  none = 0,
+  layer = 1,
+  converted = 2,
+};
+[[nodiscard]] std::string_view to_string(SvgRole v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, SvgRole& out) noexcept;
 
 enum class PropertyKind : std::uint32_t {
   property = 0,
@@ -994,6 +1012,7 @@ struct CloseViewport;
 struct SetCacheBudget;
 struct PurgeCache;
 struct SetInteracting;
+struct SetOverlayGeometry;
 struct TrackPointSpec;
 struct TrackMotionJob;
 struct StabilizeJob;
@@ -1025,19 +1044,26 @@ struct GetKeyframes;
 struct GetMotionPath;
 struct GetMarkers;
 struct CopyLayers;
+struct CopyKeyframes;
+struct GetMemberKeyframes;
+struct CopyEffects;
 struct GetWaveform;
 struct ListFonts;
 struct GetItems;
+struct GetSvgDocument;
+struct GetCryptomatte;
 struct GetThumbnail;
 struct ListEffects;
 struct ListGroupTypes;
 struct ListPresets;
+struct CapturePreset;
 struct GetCapabilities;
 struct ListPlugins;
 struct GetEffectUi;
 struct HitTest;
 struct GetLayerBounds;
 struct GetLayerTransforms;
+struct TextLayoutOverrides;
 struct GetTextLayout;
 struct EvaluateExpression;
 struct ReadPixels;
@@ -1102,11 +1128,17 @@ struct PropertyValues;
 struct PropertySamples;
 struct KeyframeSets;
 struct MarkerList;
+struct MemberTrack;
+struct MemberTracks;
+struct CopiedEffects;
 struct WaveformPeaks;
 struct FontAxisInfo;
 struct FontInfo;
 struct FontList;
 struct ItemDetails;
+struct SvgDocument;
+struct CryptomatteLayerInfo;
+struct CryptomatteInfo;
 struct Thumbnail;
 struct EffectParamInfo;
 struct EffectInfo;
@@ -1115,6 +1147,7 @@ struct GroupTypeInfo;
 struct GroupTypeList;
 struct PresetInfo;
 struct PresetList;
+struct CapturedPreset;
 struct Capabilities;
 struct PluginInfo;
 struct PluginList;
@@ -1126,6 +1159,7 @@ struct LayerBoundsList;
 struct LayerTransform;
 struct LayerTransformList;
 struct GlyphBox;
+struct ParagraphLayout;
 struct TextLayout;
 struct ExpressionEvaluation;
 struct PixelSamples;
@@ -1184,6 +1218,8 @@ struct Goodbye;
 struct EngineMessage;
 struct FrameSlots;
 struct FrameReady;
+struct OverlayLayerGeometry;
+struct FrameGeometry;
 struct FramePong;
 struct FrameRelease;
 struct FramePing;
@@ -2653,6 +2689,13 @@ struct SetInteracting {
   bool operator==(const SetInteracting&) const = default;
 };
 
+struct SetOverlayGeometry {
+  std::uint32_t viewport = 0;
+  std::vector<LayerId> layers;
+  std::vector<OverlayKind> kinds;
+  bool operator==(const SetOverlayGeometry&) const = default;
+};
+
 struct TrackPointSpec {
   Rect feature;
   Rect search;
@@ -2975,13 +3018,14 @@ struct Command {
     set_cache_budget = 810,
     purge_cache = 811,
     set_interacting = 812,
+    set_overlay_geometry = 1771,
     start_job = 850,
     cancel_job = 851,
     apply_job_result = 852,
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, SetMotionBlur, SetColorManagement, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, SetMotionBlur, SetColorManagement, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, SetOverlayGeometry, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Command&) const = default;
 };
@@ -3053,6 +3097,23 @@ struct CopyLayers {
   bool operator==(const CopyLayers&) const = default;
 };
 
+struct CopyKeyframes {
+  std::vector<KeyframeId> keys;
+  bool operator==(const CopyKeyframes&) const = default;
+};
+
+struct GetMemberKeyframes {
+  LayerId layer;
+  std::vector<std::string> members;
+  bool operator==(const GetMemberKeyframes&) const = default;
+};
+
+struct CopyEffects {
+  LayerId layer;
+  std::vector<PropPath> effects;
+  bool operator==(const CopyEffects&) const = default;
+};
+
 struct GetWaveform {
   std::optional<LayerId> layer;
   std::optional<ItemId> item;
@@ -3069,6 +3130,16 @@ struct ListFonts {
 struct GetItems {
   std::vector<ItemId> items;
   bool operator==(const GetItems&) const = default;
+};
+
+struct GetSvgDocument {
+  LayerId layer;
+  bool operator==(const GetSvgDocument&) const = default;
+};
+
+struct GetCryptomatte {
+  ItemId item;
+  bool operator==(const GetCryptomatte&) const = default;
 };
 
 struct GetThumbnail {
@@ -3093,6 +3164,11 @@ struct ListGroupTypes {
 struct ListPresets {
   std::string category;
   bool operator==(const ListPresets&) const = default;
+};
+
+struct CapturePreset {
+  LayerId layer;
+  bool operator==(const CapturePreset&) const = default;
 };
 
 struct GetCapabilities {
@@ -3134,9 +3210,21 @@ struct GetLayerTransforms {
   bool operator==(const GetLayerTransforms&) const = default;
 };
 
+struct TextLayoutOverrides {
+  std::optional<std::string> content;
+  std::optional<double> box_width;
+  std::optional<double> box_height;
+  std::optional<std::string> box_auto_size;
+  std::optional<double> font_size;
+  std::optional<double> letter_spacing;
+  std::optional<double> paragraph_spacing;
+  bool operator==(const TextLayoutOverrides&) const = default;
+};
+
 struct GetTextLayout {
   LayerId layer;
   Time time = 0;
+  std::optional<TextLayoutOverrides> overrides;
   bool operator==(const GetTextLayout&) const = default;
 };
 
@@ -3206,13 +3294,19 @@ struct Query {
     get_motion_path = 1007,
     get_markers = 1008,
     copy_layers = 1009,
+    copy_keyframes = 1889,
+    get_member_keyframes = 1893,
+    copy_effects = 1890,
     get_waveform = 1020,
     list_fonts = 1021,
     get_items = 1022,
+    get_svg_document = 1891,
+    get_cryptomatte = 1892,
     get_thumbnail = 1023,
     list_effects = 1040,
     list_group_types = 1041,
     list_presets = 1042,
+    capture_preset = 1888,
     get_capabilities = 1043,
     list_plugins = 1086,
     get_effect_ui = 1087,
@@ -3231,7 +3325,7 @@ struct Query {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, GetWaveform, ListFonts, GetItems, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
+  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Query&) const = default;
 };
@@ -3530,13 +3624,14 @@ struct CommandResult {
     set_cache_budget = 810,
     purge_cache = 811,
     set_interacting = 812,
+    set_overlay_geometry = 1771,
     start_job = 850,
     cancel_job = 851,
     apply_job_result = 852,
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
 };
@@ -3718,6 +3813,7 @@ struct LayerInfo {
   std::string shape_type;
   std::string managed_by;
   std::string mograph_id;
+  SvgRole svg = SvgRole::none;
   bool operator==(const LayerInfo&) const = default;
 };
 
@@ -3870,6 +3966,27 @@ struct MarkerList {
   bool operator==(const MarkerList&) const = default;
 };
 
+struct MemberTrack {
+  std::string member;
+  PropPath path;
+  std::uint32_t index = 0;
+  std::string keyframes;
+  std::uint32_t count = 0;
+  bool has_expression = false;
+  bool operator==(const MemberTrack&) const = default;
+};
+
+struct MemberTracks {
+  std::vector<MemberTrack> tracks;
+  bool operator==(const MemberTracks&) const = default;
+};
+
+struct CopiedEffects {
+  std::string effects;
+  std::vector<PropPath> paths;
+  bool operator==(const CopiedEffects&) const = default;
+};
+
 struct WaveformPeaks {
   std::vector<float> peaks;
   std::uint32_t channels = 0;
@@ -3907,6 +4024,31 @@ struct FontList {
 struct ItemDetails {
   std::vector<ItemInfo> items;
   bool operator==(const ItemDetails&) const = default;
+};
+
+struct SvgDocument {
+  SvgRole role = SvgRole::none;
+  std::string file_name;
+  double intrinsic_width = 0.0;
+  double intrinsic_height = 0.0;
+  std::optional<Rect> view_box;
+  std::string capabilities;
+  bool live_playback = false;
+  std::string source_markup;
+  std::string sanitized_markup;
+  std::uint32_t sanitize_policy = 0;
+  bool operator==(const SvgDocument&) const = default;
+};
+
+struct CryptomatteLayerInfo {
+  std::string name;
+  std::vector<std::string> objects;
+  bool operator==(const CryptomatteLayerInfo&) const = default;
+};
+
+struct CryptomatteInfo {
+  std::vector<CryptomatteLayerInfo> layers;
+  bool operator==(const CryptomatteInfo&) const = default;
 };
 
 struct Thumbnail {
@@ -3973,6 +4115,12 @@ struct PresetInfo {
 struct PresetList {
   std::vector<PresetInfo> presets;
   bool operator==(const PresetList&) const = default;
+};
+
+struct CapturedPreset {
+  std::string preset;
+  bool empty = false;
+  bool operator==(const CapturedPreset&) const = default;
 };
 
 struct Capabilities {
@@ -4059,10 +4207,36 @@ struct GlyphBox {
   bool operator==(const GlyphBox&) const = default;
 };
 
+struct ParagraphLayout {
+  double box_width = 0.0;
+  double box_height = 0.0;
+  bool fixed_height = false;
+  bool overflow = false;
+  double fit_scale = 0.0;
+  double content_height = 0.0;
+  std::uint32_t line_count = 0;
+  std::uint32_t visible_lines = 0;
+  double line_offset_y = 0.0;
+  std::string auto_size;
+  std::string vertical_align;
+  double stored_height = 0.0;
+  bool operator==(const ParagraphLayout&) const = default;
+};
+
 struct TextLayout {
   std::vector<GlyphBox> glyphs;
   std::uint32_t lines = 0;
   Rect box;
+  Vec2 size;
+  std::string wrapped;
+  std::vector<std::uint32_t> soft_breaks;
+  std::optional<ParagraphLayout> paragraph;
+  Vec2 line_block;
+  Vec2 style_scale;
+  bool on_path = false;
+  double font_size = 0.0;
+  double letter_spacing = 0.0;
+  double paragraph_spacing = 0.0;
   bool operator==(const TextLayout&) const = default;
 };
 
@@ -4174,13 +4348,19 @@ struct QueryResult {
     get_motion_path = 1007,
     get_markers = 1008,
     copy_layers = 1009,
+    copy_keyframes = 1889,
+    get_member_keyframes = 1893,
+    copy_effects = 1890,
     get_waveform = 1020,
     list_fonts = 1021,
     get_items = 1022,
+    get_svg_document = 1891,
+    get_cryptomatte = 1892,
     get_thumbnail = 1023,
     list_effects = 1040,
     list_group_types = 1041,
     list_presets = 1042,
+    capture_preset = 1888,
     get_capabilities = 1043,
     list_plugins = 1086,
     get_effect_ui = 1087,
@@ -4199,7 +4379,7 @@ struct QueryResult {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, WaveformPeaks, FontList, ItemDetails, Thumbnail, EffectCatalog, GroupTypeList, PresetList, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
+  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const QueryResult&) const = default;
 };
@@ -4528,6 +4708,32 @@ struct FrameReady {
   bool operator==(const FrameReady&) const = default;
 };
 
+struct OverlayLayerGeometry {
+  LayerId layer;
+  std::vector<double> matrix;
+  std::vector<double> box;
+  std::vector<double> corners;
+  std::vector<double> path;
+  std::vector<double> path_keys;
+  std::vector<double> pins;
+  std::vector<double> bones;
+  std::vector<double> text_box;
+  std::vector<double> path_frames;
+  std::vector<double> path_now;
+  bool operator==(const OverlayLayerGeometry&) const = default;
+};
+
+struct FrameGeometry {
+  std::uint32_t viewport = 0;
+  std::uint32_t generation = 0;
+  std::int64_t frame = 0;
+  Time time = 0;
+  Revision revision = 0;
+  std::vector<OverlayLayerGeometry> layers;
+  bool last = false;
+  bool operator==(const FrameGeometry&) const = default;
+};
+
 struct FramePong {
   std::uint64_t nonce = 0;
   Revision revision = 0;
@@ -4552,10 +4758,11 @@ struct FrameChannelMessage {
     slots = 1,
     frame_ready = 2,
     pong = 3,
+    geometry = 4,
     release = 16,
     ping = 17,
   };
-  std::variant<FrameSlots, FrameReady, FramePong, FrameRelease, FramePing> v;
+  std::variant<FrameSlots, FrameReady, FramePong, FrameGeometry, FrameRelease, FramePing> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const FrameChannelMessage&) const = default;
 };
@@ -5348,6 +5555,8 @@ void encode(wire::Writer& w, const PurgeCache& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PurgeCache& out);
 void encode(wire::Writer& w, const SetInteracting& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetInteracting& out);
+void encode(wire::Writer& w, const SetOverlayGeometry& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetOverlayGeometry& out);
 void encode(wire::Writer& w, const TrackPointSpec& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, TrackPointSpec& out);
 void encode(wire::Writer& w, const TrackMotionJob& v);
@@ -5410,12 +5619,22 @@ void encode(wire::Writer& w, const GetMarkers& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetMarkers& out);
 void encode(wire::Writer& w, const CopyLayers& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CopyLayers& out);
+void encode(wire::Writer& w, const CopyKeyframes& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CopyKeyframes& out);
+void encode(wire::Writer& w, const GetMemberKeyframes& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetMemberKeyframes& out);
+void encode(wire::Writer& w, const CopyEffects& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CopyEffects& out);
 void encode(wire::Writer& w, const GetWaveform& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetWaveform& out);
 void encode(wire::Writer& w, const ListFonts& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ListFonts& out);
 void encode(wire::Writer& w, const GetItems& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetItems& out);
+void encode(wire::Writer& w, const GetSvgDocument& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetSvgDocument& out);
+void encode(wire::Writer& w, const GetCryptomatte& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetCryptomatte& out);
 void encode(wire::Writer& w, const GetThumbnail& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetThumbnail& out);
 void encode(wire::Writer& w, const ListEffects& v);
@@ -5424,6 +5643,8 @@ void encode(wire::Writer& w, const ListGroupTypes& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ListGroupTypes& out);
 void encode(wire::Writer& w, const ListPresets& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ListPresets& out);
+void encode(wire::Writer& w, const CapturePreset& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CapturePreset& out);
 void encode(wire::Writer& w, const GetCapabilities& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetCapabilities& out);
 void encode(wire::Writer& w, const ListPlugins& v);
@@ -5436,6 +5657,8 @@ void encode(wire::Writer& w, const GetLayerBounds& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetLayerBounds& out);
 void encode(wire::Writer& w, const GetLayerTransforms& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetLayerTransforms& out);
+void encode(wire::Writer& w, const TextLayoutOverrides& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, TextLayoutOverrides& out);
 void encode(wire::Writer& w, const GetTextLayout& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetTextLayout& out);
 void encode(wire::Writer& w, const EvaluateExpression& v);
@@ -5564,6 +5787,12 @@ void encode(wire::Writer& w, const KeyframeSets& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, KeyframeSets& out);
 void encode(wire::Writer& w, const MarkerList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, MarkerList& out);
+void encode(wire::Writer& w, const MemberTrack& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, MemberTrack& out);
+void encode(wire::Writer& w, const MemberTracks& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, MemberTracks& out);
+void encode(wire::Writer& w, const CopiedEffects& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CopiedEffects& out);
 void encode(wire::Writer& w, const WaveformPeaks& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, WaveformPeaks& out);
 void encode(wire::Writer& w, const FontAxisInfo& v);
@@ -5574,6 +5803,12 @@ void encode(wire::Writer& w, const FontList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FontList& out);
 void encode(wire::Writer& w, const ItemDetails& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ItemDetails& out);
+void encode(wire::Writer& w, const SvgDocument& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SvgDocument& out);
+void encode(wire::Writer& w, const CryptomatteLayerInfo& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CryptomatteLayerInfo& out);
+void encode(wire::Writer& w, const CryptomatteInfo& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CryptomatteInfo& out);
 void encode(wire::Writer& w, const Thumbnail& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Thumbnail& out);
 void encode(wire::Writer& w, const EffectParamInfo& v);
@@ -5590,6 +5825,8 @@ void encode(wire::Writer& w, const PresetInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PresetInfo& out);
 void encode(wire::Writer& w, const PresetList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PresetList& out);
+void encode(wire::Writer& w, const CapturedPreset& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CapturedPreset& out);
 void encode(wire::Writer& w, const Capabilities& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Capabilities& out);
 void encode(wire::Writer& w, const PluginInfo& v);
@@ -5612,6 +5849,8 @@ void encode(wire::Writer& w, const LayerTransformList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, LayerTransformList& out);
 void encode(wire::Writer& w, const GlyphBox& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GlyphBox& out);
+void encode(wire::Writer& w, const ParagraphLayout& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ParagraphLayout& out);
 void encode(wire::Writer& w, const TextLayout& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, TextLayout& out);
 void encode(wire::Writer& w, const ExpressionEvaluation& v);
@@ -5728,6 +5967,10 @@ void encode(wire::Writer& w, const FrameSlots& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FrameSlots& out);
 void encode(wire::Writer& w, const FrameReady& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FrameReady& out);
+void encode(wire::Writer& w, const OverlayLayerGeometry& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, OverlayLayerGeometry& out);
+void encode(wire::Writer& w, const FrameGeometry& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, FrameGeometry& out);
 void encode(wire::Writer& w, const FramePong& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FramePong& out);
 void encode(wire::Writer& w, const FrameRelease& v);

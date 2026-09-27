@@ -127,14 +127,13 @@ describe('record → replay', () => {
     expect(isRecording(h.engine)).toBe(true);
   });
 
-  it('says when a session wrote around the engine (a legacy AI turn): its replay would not be exact', async () => {
+  it('says when a session wrote around the engine: its replay would not be exact', async () => {
     const rec = await recordSession();
-    // merge_paths still edits layers outside the engine: a named legacy gap.
-    const turn = await runToolTurn('AI: legacy', [
-      { name: 'create_layer', args: { id: 'b', kind: 'shape', name: 'Box' } },
-      { name: 'merge_paths', args: { op: 'union', nodeIds: ['b', 'no_such_layer'] } },
-    ]);
-    expect(turn.outcome.kind).toBe('snapshot');
+    const id = (await createLayerEdit('null', { name: 'Before' }))!;
+    // A write the engine did not make (it resyncs before its next command).
+    const node = defaultSceneGraph.getNode(id)!;
+    const t = node.components.find((c) => c.type === 'Transform')!;
+    defaultSceneGraph.writeProp(id, t.id, 'x', 321);
     await createLayerEdit('null', { name: 'After' });
     rec.stop();
     expect(rec.writesAroundEngine).toBeGreaterThan(0);

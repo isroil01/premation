@@ -36,7 +36,6 @@
 import { defaultAnimation, type ExpressionState } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
-import { batchHistory } from '@stores/historyStore';
 import {
   convertExpressionToKeyframes,
   type BakeResult,
@@ -408,16 +407,12 @@ export function applyModifierStack(
   const previous = existing ? existing.previous : currentExpressionState(nodeId, prop);
   const src = compileModifierStack(modifiers);
 
-  // The expression write and the record write are ONE edit. Neither goes
-  // through `runAnimEdit`: that pushes its own command entry, and the record
-  // write then lands as a second (snapshot) entry — two undos for one gesture,
-  // which `inspectorHistoryGranularity` refuses. Instead both ride the debounced
-  // {scene, anim} snapshot, grouped under one key so they cannot split.
-  return batchHistory(`modifiers:${nodeId}:${prop}`, () => {
-    defaultAnimation.setExpression(nodeId, prop, src);
-    defaultAnimation.setExpressionEnabled(nodeId, prop, true);
-    return writeStacks(nodeId, { ...stacks, [prop]: { modifiers: [...modifiers], previous } });
-  });
+  // The expression write and the record write are ONE edit — neither goes
+  // through `runAnimEdit`, which would push an entry of its own. The Inspector
+  // sends them as one engine batch (layout/Inspector/modifierEdits.ts).
+  defaultAnimation.setExpression(nodeId, prop, src);
+  defaultAnimation.setExpressionEnabled(nodeId, prop, true);
+  return writeStacks(nodeId, { ...stacks, [prop]: { modifiers: [...modifiers], previous } });
 }
 
 /**
@@ -431,12 +426,10 @@ export function removeModifierStack(nodeId: string, prop: string): boolean {
   const existing = stacks[prop];
   if (!existing) return false;
 
-  return batchHistory(`modifiers:${nodeId}:${prop}`, () => {
-    defaultAnimation.setExpressionState(nodeId, prop, existing.previous);
-    const next = { ...stacks };
-    delete next[prop];
-    return writeStacks(nodeId, next);
-  });
+  defaultAnimation.setExpressionState(nodeId, prop, existing.previous);
+  const next = { ...stacks };
+  delete next[prop];
+  return writeStacks(nodeId, next);
 }
 
 /**

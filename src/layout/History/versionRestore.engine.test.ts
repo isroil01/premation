@@ -30,7 +30,7 @@ import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
-import { performRedo, performUndo, useHistoryStore } from '@stores/historyStore';
+import { performRedo, performUndo } from '@stores/historyStore';
 import { renderVersionFrame } from './VersionCompareDialog';
 import { restoreVersionAsOneEdit } from './versionRestore';
 
@@ -116,7 +116,6 @@ describe('compare a version (renderVersionFrame)', () => {
 
     await renderVersionFrame(version);
     await engineIdle();
-    useHistoryStore.getState().flush();
 
     expect(h.doc()).toBe(live);
     expect(historyLabels()).toEqual(labels);

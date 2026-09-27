@@ -34,6 +34,7 @@ import { clipRippleMenuItems } from '@layout/Timeline/clipEditCommands';
 import { deleteKeyframesUi, easePresetOnKeys, moveKeyframesTo, pasteKeyframesAt } from '@layout/Timeline/keyframeEdits';
 import { resolveSelectionKey, storedTimeOf } from '@core/mirror/keySelection';
 import { documentMirror } from '@stores/documentMirror';
+import { fetchMemberTracks, memberTracksNow } from '@stores/memberTracks';
 import {
   moveBar,
   moveBars,
@@ -104,7 +105,6 @@ import { PluginDeepLink } from '@layout/Plugins/PluginDeepLink';
 import { usePluginPanelRegistration } from '@layout/Plugins/usePluginPanels';
 import { availablePanelDefs } from '@layout/EditorLayout/panelDefs';
 import type { TimelineModel, TimelineTrack } from '@layout/Timeline';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import {
   defaultAnimation,
   POSITION_PSEUDO_PROP,
@@ -405,18 +405,24 @@ function EditorShellInner(): JSX.Element {
     const allMaskRows = (ids: readonly string[]): string[] => [
       ...new Set([MASK_ANIM_PROP, ...ids.flatMap((id) => buildStaticPropertyTree(id).filter((r) => r.group === 'masks').map((r) => r.prop))]),
     ];
-    /** Shift+U: the animated rows, spelled the way the timeline draws them. */
-    const animatedRows = (ids: readonly string[]): string[] => {
+    /**
+     * A layer's animated member tracks (the engine's `getMemberKeyframes`: keyed tracks and
+     * expressions, catalog or not) spelled the way the timeline draws them — x / y / z are ONE
+     * merged Position row unless Position is separated (the mirror's `transform/position`).
+     */
+    const rowsOfMembers = (id: string, members: ReadonlyArray<{ member: string }>): string[] => {
+      const separated = documentMirror().property(id, 'transform/position')?.separated === true;
       const rows = new Set<string>();
-      for (const id of ids) {
-        const separated = defaultSceneGraph.getNode(id)?.components.find((c) => c.type === 'Transform')?.props.separateDimensions === true;
-        for (const p of defaultAnimation.animatedProps(id)) {
-          if (!separated && (p === 'x' || p === 'y' || p === 'z')) rows.add(POSITION_PSEUDO_PROP);
-          else rows.add(p);
-        }
+      for (const { member: p } of members) {
+        if (!separated && (p === 'x' || p === 'y' || p === 'z')) rows.add(POSITION_PSEUDO_PROP);
+        else rows.add(p);
       }
       return [...rows];
     };
+    /** Shift+U: the animated rows over the last known member lists (warmed on selection, re-asked per revision). */
+    const animatedRows = (ids: readonly string[]): string[] => [
+      ...new Set(ids.flatMap((id) => rowsOfMembers(id, memberTracksNow(id) ?? []))),
+    ];
 
     // AE's Alt+Shift+<prop> — add a keyframe for that property on every
     // selected layer at the playhead, enabling animation if needed. The engine
@@ -531,24 +537,13 @@ function EditorShellInner(): JSX.Element {
       // would find no animated props and expand nothing — the exact "I clicked
       // it and the timeline is unchanged" this flag is for.
       if (force) {
-        const rows = new Set<string>();
-        const withRows: string[] = [];
-        for (const id of targetIds) {
-          const props = defaultAnimation.animatedProps(id);
-          if (!props.length) continue;
-          withRows.push(id);
-          const node = defaultSceneGraph.getNode(id);
-          const separated = node?.components.find((c) => c.type === 'Transform')?.props.separateDimensions === true;
-          for (const p of props) {
-            // x/y/z are drawn as one merged Position row unless the layer has
-            // separated dimensions; naming the raw prop would filter that row out.
-            if (!separated && (p === 'x' || p === 'y' || p === 'z')) rows.add(POSITION_PSEUDO_PROP);
-            else rows.add(p);
-          }
-        }
-        if (!withRows.length) return;
-        setRevealFilter([...rows]);
-        setExpandedIds((cur) => [...new Set([...cur, ...withRows])]);
+        // The engine's member lists, asked AFTER the generator's write has landed.
+        void Promise.all(targetIds.map(async (id) => ({ id, rows: rowsOfMembers(id, await fetchMemberTracks(id)) }))).then((res) => {
+          const withRows = res.filter((r) => r.rows.length > 0);
+          if (!withRows.length) return;
+          setRevealFilter([...new Set(withRows.flatMap((r) => r.rows))]);
+          setExpandedIds((cur) => [...new Set([...cur, ...withRows.map((r) => r.id)])]);
+        });
         return;
       }
 
@@ -581,17 +576,18 @@ function EditorShellInner(): JSX.Element {
           model rows are kept as a second source for anything the engine does
           not list (data tracks the model surfaces).
         */
-        const enginePropsOf = (id: string): string[] => {
-          const node = defaultSceneGraph.getNode(id);
-          const separated = node?.components.find((c) => c.type === 'Transform')?.props.separateDimensions === true;
-          const out = new Set<string>(animatedProps(id).map((p) => p.prop));
-          for (const p of defaultAnimation.animatedProps(id)) {
-            if (!separated && (p === 'x' || p === 'y' || p === 'z')) out.add(POSITION_PSEUDO_PROP);
-            else out.add(p);
-          }
-          return [...out];
-        };
-        const propsById = new Map(targetIds.map((id) => [id, enginePropsOf(id)] as const));
+        const enginePropsOf = async (id: string): Promise<string[]> => [
+          ...new Set([...animatedProps(id).map((p) => p.prop), ...rowsOfMembers(id, await fetchMemberTracks(id))]),
+        ];
+        void Promise.all(targetIds.map(async (id) => [id, await enginePropsOf(id)] as const)).then((pairs) => revealAnimated(new Map(pairs)));
+        return;
+      }
+    });
+
+    /** U: reveal the animated rows of the target layers (or collapse them when they already are). */
+    const revealAnimated = (propsById: ReadonlyMap<string, readonly string[]>): void => {
+      const targetIds = [...propsById.keys()];
+      {
         const animatedInTarget = targetIds.filter((id) => (propsById.get(id)?.length ?? 0) > 0);
         // Filter the revealed rows to the animated ones (AE's U shows only
         // keyframed properties; the chevron twirl shows the whole tree).
@@ -610,13 +606,19 @@ function EditorShellInner(): JSX.Element {
           return [...set];
         });
       }
-    });
+    };
 
     return () => {
       window.removeEventListener('keydown', onKey);
       sub.dispose();
     };
   }, []);
+
+  // Shift+U reads the selected layers' member lists synchronously (a keydown): ask the engine for
+  // them as the selection changes, so the key finds this revision's answer (or the last one).
+  useEffect(() => useSelectionStore.subscribe((st) => {
+    for (const id of st.ids.slice(0, 64)) memberTracksNow(id);
+  }), []);
 
   // Mark tracks that fall outside the current Focus Mode context as ghosted.
   const focusTracks = useMemo<TimelineTrack[]>(() => {
@@ -1087,7 +1089,7 @@ function EditorShellInner(): JSX.Element {
         id: 'copy',
         label: `Copy Keyframe${easeTargets.length > 1 ? 's' : ''}`,
         shortcut: 'Ctrl+C',
-        onSelect: () => copyKeyframes(new Set(easeTargets)),
+        onSelect: () => { void copyKeyframes(new Set(easeTargets)); },
       },
       {
         id: 'paste',

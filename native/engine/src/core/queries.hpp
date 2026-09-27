@@ -21,6 +21,10 @@
 #include "frame_scene.hpp"
 #include "props.hpp"
 
+namespace premation {
+class TextQueries;  // scene/session_hooks.hpp
+}
+
 namespace premation::doc {
 
 /// getThumbnail, resolved (queries.cpp): what to draw and at what size. The
@@ -79,6 +83,9 @@ struct QCtx {
   /// D2w: a region of the frame the viewport shows, in working space
   /// (readPixels; the region is inside the slot). Unset = `unsupported`.
   std::function<WorkingPixels(std::uint32_t viewport, PixelRegion region)> readPixels{};
+  /// B4 round 2: text measurement on the frame builder's fonts (getTextLayout,
+  /// getLayerBounds' text boxes). Null = no fonts in this engine: `unsupported`.
+  TextQueries* text = nullptr;  // after the positional members (Session builds QCtx{…} positionally)
 };
 
 /// `catalogFor(layer)` through the query's cache (require_layer first).

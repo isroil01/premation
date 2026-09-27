@@ -2,10 +2,9 @@
  * Polystar — the parametric Polygon / Star section (AE's Polystar Path group).
  *
  * Every numeric row is keyframeable with the same stopwatch/AnimToggle
- * pattern the path-operator cards use: reads and writes ride the canonical
- * keyframe time (`compToKeyframeTime`), an animated row keyframes through
- * `runAnimEdit`, and a static edit is one undo entry through
- * `runDocumentEdit`. The TYPE is discrete (a dropdown, no stopwatch) —
+ * pattern the path-operator cards use: reads come from the document mirror
+ * and every write is an engine command (`edit`) — an animated row gets a key
+ * at the playhead, a static edit is one undo entry. The TYPE is discrete (a dropdown, no stopwatch) —
  * interpolating polygon → star has no meaning; it is the static field
  * `contents/polystar/type` (shapeFieldSpecs.ts).
  */

@@ -21,7 +21,7 @@
  *
  * Wired lazily — the first subscriber mounts the bus subscriptions — and
  * re-armed when the bus instance changes, because `Application.boot()` swaps
- * the bus (the trap `attachHistoryBaselineSync` documents).
+ * the bus (a module-scope subscription lands on a bus boot discards).
  *
  * The React hooks over this counter (`useNodeRevision`, `useNodesRevision`)
  * live in `@hooks/useNodeRevision` — `src/core` does not import React

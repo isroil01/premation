@@ -190,6 +190,11 @@ export const LAYER_FIELDS: readonly LayerFieldSpec[] = [
     store: { fx: 'precomp' }, when: { kinds: ['group'] }, encode: [[false, null], [true, true]],
   },
   {
+    // A live Merge Paths operand (mergePaths.ts): sampled by the boolean result, not painted itself.
+    path: 'layer/booleanOperand', key: 'booleanOperand', label: 'Boolean Operand', type: 'bool', default: false,
+    store: { fx: 'booleanOperand' }, when: { kinds: ['shape'] }, encode: [[false, null], [true, true]],
+  },
+  {
     // Per-instance overrides of a nested composition's essential properties: Record<`${origId}/${prop}`, number | string>.
     path: 'layer/compOverrides', key: '__compOverrides', label: 'Essential Properties', type: 'json', default: null, json: 'object',
     store: { fx: '__compOverrides' }, when: { kinds: ['precomp'] },

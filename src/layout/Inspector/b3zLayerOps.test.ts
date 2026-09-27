@@ -9,7 +9,6 @@ import { readSvgLayer } from '@core/svg/svgLayer';
 import { getNodeMatte } from '@core/effects/matte';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
-import { useHistoryStore } from '@stores/historyStore';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -92,7 +91,6 @@ test('Convert SVG to Editable Shapes = pasteLayers + deleteLayers in one entry, 
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="40" height="40" fill="#0af"/><circle cx="70" cy="70" r="20" fill="#f00"/></svg>';
   const id = insertSvgLayer(svg, 'two.svg')!;
   getTimelineController().syncFromScene();
-  useHistoryStore.getState().flush(); // the legacy insert's own entry
   await engineIdle();
   expect(readSvgLayer(defaultSceneGraph.getNode(id)!)).not.toBeNull();
   let groupId: string | null = null;

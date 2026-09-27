@@ -13,21 +13,12 @@
  *
  * ## Why this is a module and not a hook
  *
- * Every write here has to be ONE undo entry across every selected node, and
- * history is fed from two places: the command a keyframe edit pushes, and the
- * debounced scene snapshot a static write schedules. The order below is what
- * makes them collapse into one:
- *
- *   1. static writes first, grouped under one `batchHistory` key, so the
- *      debounced snapshot cannot split on a change of node;
- *   2. keyframe writes last, in ONE `runAnimEdit` around ONE engine batch.
- *      The command push refreshes history's baseline (`attachHistoryBaselineSync`),
- *      so when the debounced snapshot fires it compares equal and records
- *      nothing.
- *
- * Reversing the order — keyframes first — would leave the static writes
- * outside the baseline and record a second entry. `writeTransformProps` makes
- * the same choice for the same reason.
+ * These are the pre-engine writers (the engine's property handlers and the
+ * remaining legacy callers use them). Static writes go straight to the scene
+ * graph; keyframe writes run in ONE `runAnimEdit` around ONE animation batch.
+ * The debounced recorder that used to give the static writes an undo entry is
+ * gone (B5 round 2): called from an engine command they are part of its
+ * inverse; called around the engine they have no undo of their own.
  *
  * ## Readers and writers are pluggable
  *
@@ -43,7 +34,6 @@ import { defaultAnimation } from '@motion/animation';
 import type { Command } from '@motion/engine-api';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import { batchHistory } from '@stores/historyStore';
 import { applyValueExpression } from '@utils/evalMath';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
@@ -186,9 +176,7 @@ export function applyValues(
   const key = opts.mergeKey ?? `multi:${prop}:${writes.map((w) => w.nodeId).join(',')}`;
 
   if (statics.length > 0) {
-    batchHistory(key, () => {
-      for (const s of statics) writeStatic(s.nodeId, s.value);
-    });
+    for (const s of statics) writeStatic(s.nodeId, s.value);
   }
   if (keyed.length > 0) {
     runAnimEdit(
@@ -368,9 +356,7 @@ export function applyPropertyBag(
   const label = opts.label ?? 'Apply preset';
   const key = opts.mergeKey ?? `preset:${label}:${nodeIds.join(',')}:${Date.now()}`;
   if (statics.length > 0) {
-    batchHistory(key, () => {
-      for (const s of statics) writeStaticPropertyValue(s.nodeId, s.prop, s.value);
-    });
+    for (const s of statics) writeStaticPropertyValue(s.nodeId, s.prop, s.value);
   }
   if (keyed.length > 0) {
     runAnimEdit(
@@ -518,25 +504,17 @@ export function aggregateFlag<T>(
   return { value: first, mixed, present: live.length };
 }
 
-/**
- * Run `write` for every live node under ONE history entry.
- *
- * `batchHistory` renames the debounce target for the whole loop, so the
- * snapshot cannot split partway through — the same guarantee
- * `applyComponentPropsPreset` relies on. Returns how many nodes were written.
- */
+/** Run `write` for every live node. Returns how many nodes were written. */
 export function applyFlagAll(
   nodeIds: ReadonlyArray<string>,
   label: string,
   write: (nodeId: string) => void,
 ): number {
   let n = 0;
-  batchHistory(`flag:${label}:${nodeIds.join(',')}`, () => {
-    for (const id of nodeIds) {
-      if (!defaultSceneGraph.getNode(id)) continue;
-      write(id);
-      n += 1;
-    }
-  });
+  for (const id of nodeIds) {
+    if (!defaultSceneGraph.getNode(id)) continue;
+    write(id);
+    n += 1;
+  }
   return n;
 }

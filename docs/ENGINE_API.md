@@ -618,15 +618,19 @@ Queries answer at the revision in their `Response` and never change anything.
 | `sampleProperty`, `getMotionPath` | Dense samples (+ speed) for the graph editor and motion paths. |
 | `getKeyframes`, `getMarkers` | Keyframe sets / markers, optionally in a range. |
 | `copyLayers` | A `DocumentFragment` for the clipboard. |
+| `getMemberKeyframes` | B4: a layer's stored MEMBER keyframe lists (every animated track, catalog or not) — the keyframe assistants' input (§15.12). |
+| `copyKeyframes`, `copyEffects` | B4: the keyframe / effect clipboards in API form — whole keys per property (`pasteKeyframes`), effect captures (`pasteEffects`) (§15.12). |
 | `getWaveform` | Min/max (+ RMS) peaks per bucket per channel for a layer or item range. `range` is SOURCE time (the window a clip bar shows; duration 0 = to the end); an audio layer sounds from its Audio component's asset, a footage layer / item from its asset; `buckets` 1–65536. The part of the window past the end of the source is zero buckets (bucket b always covers `start + b·duration/buckets`). No sound (a still, `hasAudioTrack: false`, an unopenable file) = `channels: 0`; still decoding = `busy`; no audio engine = `unsupported`. C++: the E2 peak pyramid (MediaClock::peaks); the TS engine answers `unsupported`. |
 | `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts, file path — the installed faces (C++: CoreText on macOS, DirectWrite on Windows, fontconfig on Linux; `query` filters family / style / PostScript name; OS-internal faces such as macOS's `.AppleSystemUIFont` are not listed). Empty under the test ports. |
+| `getSvgDocument`, `getCryptomatte` | B4: an SVG layer's stored document (or a converted group's retained source); an EXR item's Cryptomatte ID set (§15.12). |
 | `getItems`, `getThumbnail` | Item metadata (size, duration, rate, codec, alpha, audio, colour profile, missing, proxy); encoded thumbnail. `getThumbnail` (C++): a PNG (straight 8-bit RGBA) of a comp item's frame, a layer alone in its comp's frame (as if the one soloed layer), or a footage item's media (`time` = source time; a still ignores it); the source's aspect with the long side ≤ `maxSize` (0 = 256, ≤ 4096, never enlarged); transparent where nothing draws. Audio items and folders: `invalidArgument`; an unprobed size: `decode`; a renderer still busy after 10 s: `busy`; `--no-gpu`: `unsupported`. The TS engine answers `unsupported`. |
 | `listEffects`, `listGroupTypes`, `listPresets` | The effect catalog with full param schemas (drives the Effects & Presets panel and generic effect UIs); addable group types under a path; presets. |
+| `capturePreset` | B4: a layer's animation as a preset body (Save as Preset) — keys in the preset's own units, text animators, effects, expressions (§15.12). |
 | `getCapabilities` | GPU adapter/backend/VRAM/max texture, hardware decoders, export formats, colour management, float, plugin APIs, expression engines, threads. |
 | `listPlugins`, `getEffectUi` | G1: the native SDK plugins the engine found (loaded / disabled / failed with why / quarantined after ending the engine); a plugin effect's parameter UI at a time (UPDATE_PARAMS_UI: enabled, hidden, renamed). The TypeScript engine hosts no native plugins (empty list; builtin effects answer every param enabled). |
 | `hitTest` | Layers under a comp point at a time (topmost or all). C++: the frame's drawn quads (the model matrix, projective for corner pins / 3D cards), topmost first — a layer's box, not its alpha; meshes, extrusions, models and generators by their bounds; adjustment layers, track-matte sources and edge-on planes are never hit; a collapsed precomp's or a cloner's draws are that layer; locked layers only with `includeLocked`. The TS engine answers `unsupported` (the editor's HitTester answers in the page). |
-| `getLayerBounds`, `getLayerTransforms` | Bounds/corners in comp/layer/viewport space; 4×4 layer→comp matrices — what gizmos draw from. |
-| `getTextLayout` | Glyph boxes/lines for in-viewport text editing. |
+| `getLayerBounds`, `getLayerTransforms` | Bounds/corners in comp/layer space (viewport: the overlay push, §15.12); 4×4 layer→comp matrices — what gizmos draw from. |
+| `getTextLayout` | The measured layout of a text layer: render / selection box, wrap, paragraph box, line-block placement, with hypothetical overrides (§15.12). |
 | `evaluateExpression` | Preview an expression without storing it. |
 | `readPixels` | Working-space pixel values of a viewport region (Info panel, eyedropper). C++: `region` in the viewport's slot pixels (physical px, top-left origin; the pixels it touches, an empty one = the pixel under its corner, clamped to the slot, ≤ 256² pixels); the float scene colour before the display transform / viewer LUT, straight alpha, top-down; the frame the viewport last showed is drawn again offscreen to read it. No such viewport: `notFound`; nothing shown yet: `busy`; C2 quads / `--no-gpu`: `unsupported`. The TS engine answers `unsupported`. |
 | `findLayers`, `getDependencies` | Search; uses/used-by (flowchart, expression refs, precomp nesting). |
@@ -933,6 +937,7 @@ engine fd 4), framed like the command pipe:
 | `FrameReady` | engine → host | Slot N holds a finished frame (frame, comp time, the revision it shows, size, frames dropped since the last one, render timestamps for measurement). |
 | `FrameRelease` | host → engine | Chromium is done with a slot (a stale generation is ignored). |
 | `FramePing` / `FramePong` | host ⇄ engine | The supervisor's heartbeat, answered by the engine's document core thread. |
+| `FrameGeometry` | engine → host | B4: the overlay geometry of the NEXT FrameReady of a subscribed viewport (`setOverlayGeometry`, §15.12), in parts under the payload cap. |
 
 They are generated like everything else: C++ `api::FrameChannelMessage`, and —
 because Electron main cannot import packages/ — a standalone TypeScript module
@@ -1041,7 +1046,7 @@ B2 (2026-09-23) implements every command, query and event on today's engine:
 |---|---|
 | 91 edit commands | All dispatched. **86** implemented with exact inverses. **5** answer a typed error and change nothing: `convertLayer`, `separateLayer`, `autoTrace` (need font outlines / rendered pixels the TS engine only has inside editor dialogs — E3/D2), `invokeEffectAction` (native-SDK plugins, G1; JS plugins are not ported, plan §5 G2), `applyJobResult` (`notFound`: no engine jobs yet). Partial: `importProject` takes `.motion` only; `setInterpretation` refuses ignore/invert alpha, matte colour, start timecode and colour profile; `setCompositionSettings` refuses `backgroundGradient` and maps `motionBlur` onto the project-wide store (the TS engine has one); `setBlendMode` refuses the modes the TS renderer lacks; `setProxy` is footage-only; `reorderLayers`/`groupLayers` need one parent (parenting is nesting, below). |
 | 30 controls + io | All implemented. `openProject`/`saveProject`/`revertProject`/`collectFiles`/`importFiles` go through injected `EnginePorts` (`unsupported` when none is attached — B3 attaches the Electron ones). `startJob` answers `unsupported` (jobs run in the editor until E/F). Transport forwards to today's controller for the ACTIVE comp and keeps the rest as engine state; viewport/cache/preview controls are recorded state (the TS renderer still draws the viewport). |
-| 32 queries | 26 answered from the document. `getWaveform`, `getThumbnail`, `hitTest`, `getLayerBounds`, `getTextLayout`, `readPixels` answer `unsupported` in the TS engine (renderer-side); the C++ engine answers `getWaveform`, `getThumbnail`, `hitTest` and `readPixels` through its audio engine, frame builder and render thread (`unsupported` without them: `--no-gpu`, no audio); `getRenderStats`/`getLayerErrors`/`getJobs` answer empty (the editor's renderer owns those numbers today). |
+| 32 queries | 26 answered from the document. `getWaveform`, `getThumbnail`, `hitTest`, `readPixels` answer `unsupported` in the TS engine (renderer-side; `getLayerBounds` and `getTextLayout` are answered since b4-round2, §15.12); the C++ engine answers `getWaveform`, `getThumbnail`, `hitTest` and `readPixels` through its audio engine, frame builder and render thread (`unsupported` without them: `--no-gpu`, no audio); `getRenderStats`/`getLayerErrors`/`getJobs` answer empty (the editor's renderer owns those numbers today). |
 | 27 events | All 13 revisioned events emitted from the changed parts; ephemeral `historyChanged`, `dirtyChanged`, `transportChanged`, `playhead`, `projectSaved` emitted; the render/job/asset/font/autosave ones have no TS source yet. |
 
 ### 15.2 Undo: parts
@@ -1332,6 +1337,62 @@ still recorded as a gap wholesale (`buildAiTools`) is `merge_paths`: the
 live merge flags its operand layers in place (`fx.booleanOperand`), which
 no API property addresses yet — the same helper backs the canvas menu's
 Live Union / Subtract / Intersect.
+
+**B5 round 2 (2026-09-27).**
+
+- **`layer/booleanOperand`** (new catalog row, both engines — `layerFieldSpecs.ts`
+  and `native/engine/catalog/fields.json`): bool, stored as `fx.booleanOperand`
+  (false = absent), on `shape` layers. A live Merge Paths operand: sampled by
+  the boolean result, not painted. Live Merge Paths is ONE batch
+  (`src/core/scene/liveMergeCommands.ts`): `planLiveMerge` (mergePaths.ts, pure)
+  plans the result layer from the selection, it is built off-document and
+  pasted where the first operand sits, then `setProperties` of
+  `layer/booleanOperand` and `setLayerSwitches{visible:false}` on the
+  operands. The AI's `merge_paths`, the Workspace / Scene menus' Live
+  Union / Subtract / Intersect / Exclude and the palette's Path Operation
+  commands all send it (`liveMergePathsEdit`); `merge_paths` is engine-routed.
+- **Proxy ownership is an engine rule** (both engines: `src/core/engine/proxyOwnership.ts`,
+  called from `LocalEngine.runEdits`; C++ `detach_proxy_ownership` in `session.cpp`
+  `run_edits`, after `stamp_missing_key_ids`). After each edit command whose origin
+  is not `plugin`: if it changed an EXISTING layer carrying `__ownedByPlugin` (a
+  proxy layer's generated child; a layer it created or deleted does not count),
+  every owned layer under that child's proxy layer (the parent of its topmost
+  owned ancestor-or-self) gets the mark written `null` — inside the same command,
+  so undo re-attaches and a log replays it. The page-side `noteManualEdit` /
+  `detachSubtree` (the plugin write hook) are gone; `setProxyChildren` sends
+  origin `plugin` and never detaches its own writes.
+- **No `runDocumentEdit` caller outside automation is left.** Moved onto engine
+  commands: Flip Horizontal / Vertical (`flipLayersEdit`: an animated Scale's
+  keys negated off-document → `setKeyframes`, a static one `setProperties`),
+  the numpad rotate / scale nudges (`nudgeRotationEdit` / `nudgeScaleEdit`, a
+  key at the playhead where animated), the palette's Reset Transform (the
+  timeline's `resetTransformEdit`, injected), Revert to Original SVG
+  (svgLayerActions `revertSvgToLayer`: `buildRevertedSvgLayer` off-document,
+  `pasteLayers` at the group's slot + `deleteLayers` of the group), Bake
+  Physics (keys through `setKeyframes` + the `layer/physics` field off) and
+  Bake Particles (the layers pasted under the emitter + `setLayerSwitches`
+  hiding it), each ONE batch. Deleted as dead (the UI already used the engine
+  route): `convertSvgLayerToShapes`, `replaceAllInScope`, `createMasksFromText`,
+  `replaceFontFamilies`, the legacy `renameLayer`, `applyLayerSettings` /
+  `createSolidLayer`, `deleteSelectedLayers`, `toggleSelected*` /
+  `toggleNodeVisible`, `toggleLayerFlags`, the legacy resets. A composition
+  root's row in the Layers panel has no switches (refused with a note).
+- **The legacy debounce recorder is deleted.** `historyStore.ts` keeps only
+  the undo / redo / jump route (`performUndo` & co., `setHistoryRoute`) and
+  `resetHistory`; gone are `LEGACY_DEBOUNCE_RECORDER`, `attachHistoryRecording`
+  / `attachHistoryBaselineSync`, `schedule` / `record` / `flush` /
+  `runRestoring` / `restoring`, `batchHistory`, `baselineHistory` (load
+  boundaries call `baselineHistoryNow`, core/engine/historyBaseline.ts),
+  `runDocumentEdit` (core/commands/documentEdit.ts), `VITE_UNIFIED_HISTORY` /
+  `unifiedHistoryEnabled` (snapshots always carry clip geometry, bars are
+  always `clip:<nodeId>`), and `aiTransaction.ts`'s recorder flush.
+  `StoreSnapshotCommand` stays in core/commands/snapshotCommand.ts for the
+  remaining whole-document snapshot entries (the AI turn's gap fallback, the
+  document transaction, the plugin handle gesture, `runAsOneHistoryEntry`). A
+  write made around the engine now has no undo of its own. The B5
+  automation-writes ratchet reached 0 (ai 0, plugins 0) and is deleted with it
+  (eslint.automation-writes.config.mjs, scripts/lint/automationWritesReport.mjs,
+  src/__tests__/automationWriteRatchet.*, `npm run lint:automation-writes`).
 
 ### 15.7 G1 — static fields, optional properties and the data-model gaps
 
@@ -1885,6 +1946,144 @@ field); both engines report them from the same stored keys.
 - **`liftRange`** (command 971, result `TimeRangeEdit`): Lift, `rippleDeleteRange`
   without the ripple, reporting what it cut (the timeline's Lift Work Area
   toast states it). Both engines run one shared plan for the two commands.
+
+### 15.12 B4 round 2 — measured geometry, captures and clipboards in API form (both engines, 2026-09-27)
+
+The data the B4 exit left as `B4-gap` reads (B4_MIRROR.md §4 "Still open"),
+added so the sites that computed them over the TypeScript engine's scene graph
+ask the engine instead. Ids and field numbers start at the current maximum +
+800 (parallel agents): queries from 1888, commands from 1771, struct fields
+from the struct's maximum + 800.
+
+- **`capturePreset {layer}`** (query 1888 → `CapturedPreset {preset, empty}`):
+  Save as Preset. The body is JSON in the preset format `applyPreset` replays
+  (`animationPresets.ts` `AnimationPreset` without its name / folder): every
+  keyed track rebased to t = 0, its values converted OUT of pixels by the
+  property's default unit (`x` → `compW`, `y` → `compH`, `z` → `compMin`,
+  tracking / line spacing / blur / stroke width → `fontSize`, the rest `abs`)
+  against the layer's OWN composition and its stored width / height / font
+  size; the text animators (`requires: 'text'`); the effect stack renumbered
+  `fx0`, `fx1`, … with its `effect.<id>.*` tracks re-pointed; the ENABLED,
+  non-blank expressions. `empty` when there is none of that. Track names are
+  the stored prop paths of the preset format, not API paths. TS:
+  `capturePresetBody`; C++: `core/presets_capture.cpp`. The library stays the
+  editor's (`saveUserPreset` writes settings).
+- **`getTextLayout {layer, time, overrides?}`** (1063, now answered; `overrides`
+  802, `TextLayout` fields 803–812, `TextLayoutOverrides`, `ParagraphLayout`):
+  the STORED style measured as the painter lays it out, with the overrides
+  winning — the question Convert to Paragraph / Point Text and Box Auto-Size
+  ask before they write, and what the Character panel's Text Box card shows.
+  `box` is the font-metric selection box, `size` the render box, `wrapped` /
+  `softBreaks` the paragraph wrap, `paragraph` the box (fixed / auto height,
+  overflow, fit scale, content height, line offset, stored height), `lineBlock`
+  where the lines sit in the layer (the difference of two answers is what the
+  conversions compensate Position by), `styleScale`, `onPath` (a text path is
+  point text) and the measured font size / tracking / paragraph spacing (what a
+  Fit Text to Box bake multiplies). `glyphs` stays empty (in-viewport editing
+  still measures in the page). TS: `core/engine/textLayoutQuery.ts` over
+  measureText.ts — `unsupported` in a page without canvas metrics. C++:
+  `scene/text_query.cpp` over the scene port's `TextMeasurer` on the frame
+  builder's fonts (`TextQueries`, session_hooks.hpp; the new
+  `TextMeasurer::measure_font_box`) — `unsupported` in the headless engine
+  (no fonts) and for styles outside the text port (vertical type, runs that
+  change a line's size or leading, variable axes, Capitalize; Fit Text to Box
+  and CJK wrapping are the port's since d2w-round2). An anchored auto-height box's `size.y` may read 1 px taller
+  than the TypeScript's (the port rounds before adding the anchor offset).
+- **`getLayerBounds {layers, time, space}`** (1061, now answered): readGeometry's
+  box — the box the viewport selects, hit-tests and snaps with — at the time:
+  per-kind size, a shape's points, a text layer's measured box (a fixed
+  paragraph box as authored), an unseeded solid's comp frame, a GROUP's union
+  of its children AT THE SAME TIME. `layer` space: the local box (centred on
+  the origin, offset for groups and text); `comp`: its corners through the 2D
+  world chain (`world2DAt`: a 3D layer's depth and the camera are not applied),
+  `bounds` their axis-aligned extent. `viewport` space and `includeEffects`
+  answer `unsupported` (the overlay push carries viewport geometry; effect
+  growth is not measured). Layers with no canvas box (audio, adjustment) are
+  left out of the list. TS: `core/engine/layerBoundsQuery.ts`; C++:
+  `core/layer_geometry.cpp` (text through `TextQueries`: a text layer, or a
+  group holding one, is `unsupported` without fonts). Not in the C++ port: a
+  plugin generator's live instance bounds (the TS unions the last render's) and
+  text on a path's bent extent (its plain text box stands). Both engines size a
+  `comp` layer by its OWN composition (readGeometry read the active one).
+- **`copyKeyframes {keys}`** (1889 → `KeyframeSets`): Edit ▸ Copy of keyframes
+  — the WHOLE keys the ids name (every dimension: a member row's diamond copies
+  its key), grouped per property in the order the ids first name them, keys in
+  time order at their composition times; unknown ids skipped. The editor's
+  clipboard (core/animation/keyframeClipboard.ts) holds the sets and pastes each
+  onto a target's property of the same path with `pasteKeyframes`, the earliest
+  copied key at the playhead. Spacing is now COMPOSITION time (before: the
+  source's keyframe-axis spacing — they differ only on a time-stretched source).
+- **`copyEffects {layer, effects}`** (1890 → `CopiedEffects {effects, paths}`):
+  the effect clipboard's capture (`captureEffect`: the stored effect and its
+  `effect.<id>.*` keyframe records) as JSON, exactly what `pasteEffects` takes;
+  none named = the whole stack, stack order. The editor holds them
+  (`holdCopiedEffects`), stores whole-stack captures as effect presets
+  (`storeEffectPreset`), and a paste compares a fresh capture of each source
+  with the held one to choose `copyPropertyGroups` (still as copied) over the
+  snapshot paste. TS `captureEffect`; C++ queries.cpp (keys as `key_to_json`).
+- **`getMemberKeyframes {layer, members}`** (1893 → `MemberTracks`): the
+  per-MEMBER key lists B4 lacked — every animated member track in
+  AnimationEngine order (keyed tracks, then expression-only ones; catalog or
+  not), each with the API property that owns it (`path`, '' outside the
+  catalog; `index` among its members), its stored keyframe records as JSON
+  (keyframe-axis seconds, stored units — what The Smoother / The Wiggler
+  transform) and whether it carries an expression. The editor caches it per
+  revision (src/stores/memberTracks.ts, `useMemberTracks`): the Smoother /
+  Wiggler menu predicates and track lists, the Motion editor's property list,
+  and the previews' "before" (`beginTrackPreview` takes the captured lists).
+  The assistants' writes stay `setKeyframes` per property (assistantKeys.ts).
+- **The overlay geometry push** (docs/TS_ENGINE_REMOVAL.md "Gaps"):
+  **`setOverlayGeometry {viewport, layers, kinds}`** (control 1771; enum
+  `OverlayKind {transform, bounds, motionPath, rig, textBox}`) subscribes a
+  viewport; from its next frame on the engine sends, on the FRAME CHANNEL,
+  **`FrameGeometry {viewport, generation, frame, time, revision, layers:
+  OverlayLayerGeometry[], last}`** (FrameChannelMessage variant 4) right
+  before that frame's FrameReady — the geometry evaluated at the frame's own
+  time and revision, read on the core thread when the frame is built
+  (Session::submit_frame → RenderJob.geometry) and sent by the render thread
+  (or the simulated sink) with the frame: the world 4×4, readGeometry's local
+  box and its comp corners, the motion path (≤ 128 trajectory points, the keys
+  with their effective tangent handles, the per-frame dots, the position now —
+  t, x, y, z; x / y through the parent at the frame, z raw), a text layer's
+  measured box. `rig` (pins / bones) is declared and sent empty in both engines
+  (the rig sampler is scene-side). A frame's records span several messages
+  under the 4096-byte payload cap (`pack_frame_geometry`: a layer's long arrays
+  split in whole groups; the host concatenates). Electron main
+  (`FrameForwarder`) collects them and attaches `geometry` to the frame's meta
+  (`EngineFrameMeta.geometry`), so EngineSurface publishes the geometry of the
+  frame it draws (src/stores/overlayGeometry.ts). When the page's own renderer
+  draws the viewport, the TypeScript engine answers the same records per
+  painted (time, revision) (core/engine/overlayGeometry.ts). The viewport's
+  motion path (draw + hit test) reads it; the workspace subscribes the
+  selection (boxes + matrices for every selected layer, the path and text box
+  for a single one).
+- **`LayerInfo.svg`** (920, enum `SvgRole {none, layer, converted}`): an SVG
+  layer storing its document (the `svg` component's sanitized markup) / a group
+  converted from one that retains the original source (Revert to Original SVG).
+  **`getSvgDocument {layer}`** (1891 → `SvgDocument`): the stored document —
+  file name, intrinsic size, view box, the capability scan (JSON), live
+  playback, source and sanitized markup, sanitize policy (the editor
+  re-sanitises an older policy's markup from the source itself). Both engines
+  read the `svg` component as stored.
+- **`getCryptomatte {item}`** (1892 → `CryptomatteInfo {layers: [{name,
+  objects}]}`): an EXR's Cryptomatte set, from its decoded manifest. TS: the
+  page's EXR decode cache (media/cryptomatte.ts); the decode announces itself
+  as `assetStatusChanged {item, ready, 'cryptomatte'}` (ephemeral) so the UI
+  re-asks. C++: `unsupported` until the engine's media decode reads EXR.
+- Not added (they are not document facts, and the owner of each is another
+  phase): the PROXY record (a job's state — generating / failed / size — lives
+  in the page's asset store and is not written through the engine; closes with
+  proxy generation as an engine job) and the asset preview URL (a page-minted
+  object URL; the engine's answer is `getThumbnail`). The plugin layer record's
+  schema version waits for the Custom Layer section's writes to move to paths
+  (a field alone would convert no read).
+- UI: `useTextLayout(layer)` (src/hooks) re-asks on the layer's mirror keys;
+  `layerBoxAt(layer, time)` / `fetchLayerBox` (src/stores/layerBoxes.ts) cache
+  getLayerBounds per (layer, time) per revision for render-time reads, batched
+  per tick; `useLayerBoxes()` re-renders when they land. Align / Distribute
+  (`alignLayers`) now places the drawn box's comp-space extent (before: the
+  stored width × world scale around the origin) and moves each origin by its
+  box's delta through the parent's inverse (`getLayerTransforms`).
 
 ## 16. Files
 

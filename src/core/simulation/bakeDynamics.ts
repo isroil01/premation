@@ -37,22 +37,21 @@
  *
  * ── Undo ────────────────────────────────────────────────────────────────────
  *
- * A bake writes keyframes AND mutates the scene (it disables the component
- * that was driving the layer). Those are the two domains this app records
- * separately — `runAnimEdit` for tracks, the debounced snapshot store for the
- * scene — and left alone the pair produces two undo entries for one act. The
- * reconciliation is the one `TimelineController.splitLayerAtFrame` documents:
- * flush the pending snapshot, mutate inside `runRestoring` with the app history
- * suspended, then push ONE composite. See `commitBake`.
+ * A bake writes keyframes AND changes the scene (it disables the component
+ * that was driving the layer, or adds layers). Both go to the engine as ONE
+ * batch — one undo entry, replayable: the keyframes are computed off-document
+ * and sent as `setKeyframes` (assistantKeys.ts), the physics switch-off as the
+ * `layer/physics` field, the baked particle layers as one `pasteLayers` under
+ * the emitter and the emitter hidden with `setLayerSwitches`.
  */
 
 import { defaultAnimation, type Keyframe } from '@motion/animation';
 import { smoothTrackKeyframes } from '@core/animation/keyframeAssistants';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { StoreSnapshotCommand, useHistoryStore, type HistoryStore } from '@stores/historyStore';
-import type { HistoryService } from '@core/commands/HistoryService';
-import { captureSharedState, type DocState } from '@core/commands/snapshotSharing';
-import { bumpScene } from '@stores/sceneStore';
+import type { Command } from '@motion/engine-api';
+import { assistantKeyframeCommands } from '@core/engine/assistantKeys';
+import { buildLayerFragment } from '@core/engine/offDocument';
+import { compOfLayer } from '@core/engine/doc';
+import { edit } from '@core/engine/uiEdits';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenComposition } from '@core/scene/sceneDerive';
 import { enclosingCompRootOf } from '@core/scene/parenting';
@@ -66,7 +65,6 @@ import {
   physicsPosesAt,
   readNodePhysics,
   readNodePhysicsRaw,
-  PHYSICS_PROP,
 } from './physicsBodies';
 import type { BodySeed, PhysicsWorld } from './rigidBody';
 import {
@@ -148,69 +146,6 @@ export function finishBakedTrack(
     value: k.value,
     easing: i === thinned.length - 1 ? ('hold' as const) : ('linear' as const),
   }));
-}
-
-// ── The one-undo-entry commit ─────────────────────────────────────────
-
-/** Both history mechanisms, or null in a headless context (tests, workers). */
-function historyPair(): {
-  history: HistoryService | null;
-  store: Pick<HistoryStore, 'flush' | 'runRestoring'> | null;
-} {
-  let history: HistoryService | null = null;
-  let store: Pick<HistoryStore, 'flush' | 'runRestoring'> | null = null;
-  try {
-    history = getCommandSystem().getHistory();
-  } catch {
-    history = null;
-  }
-  try {
-    store = useHistoryStore.getState();
-  } catch {
-    store = null;
-  }
-  return { history, store };
-}
-
-/**
- * Scene + animation (+ clip geometry under the unified history), structurally
- * shared with every other history snapshot.
- */
-function captureDoc(): DocState | null {
-  try {
-    return captureSharedState();
-  } catch {
-    // A document that cannot be captured is a document the bake cannot make
-    // undoable — the mutation still happens, which is the honest trade: losing
-    // the work is worse than losing one undo step.
-    return null;
-  }
-}
-
-/**
- * Apply `mutate` as ONE undo entry spanning scene + animation.
- *
- * `flush` commits whatever edit was mid-debounce so it keeps its own step;
- * `runRestoring` silences the auto-capture for the duration AND re-baselines it
- * afterwards, so the snapshot layer sees the post-bake document as the new
- * normal and has nothing left of its own to record.
- */
-export function commitBake(label: string, mutate: () => void): void {
-  const { history, store } = historyPair();
-  store?.flush();
-  const before = captureDoc();
-  history?.suspend();
-  try {
-    if (store) store.runRestoring(mutate);
-    else mutate();
-  } finally {
-    history?.resume();
-  }
-  const after = captureDoc();
-  if (history && before && after) {
-    history.push(new StoreSnapshotCommand(label, before, after));
-  }
-  bumpScene();
 }
 
 // ── Reading a layer's seed pose ───────────────────────────────────────
@@ -337,16 +272,17 @@ export interface PhysicsBakeResult {
 
 /**
  * Bake the rigid-body simulation on `nodeIds` into keyframes and switch their
- * physics off, as one undo entry.
+ * physics off, as ONE engine entry. Null when there is nothing to bake or the
+ * engine refused the batch.
  *
  * Returns null when none of the ids carries an ENABLED dynamic body — a static
  * body has no simulated pose to bake (the renderer never overrides it), and
  * baking a disabled one would write the keyframes of a sim that is not running.
  */
-export function bakePhysicsToKeyframes(
+export async function bakePhysicsToKeyframes(
   nodeIds: ReadonlyArray<string>,
   opts: BakeRangeOptions,
-): PhysicsBakeResult | null {
+): Promise<PhysicsBakeResult | null> {
   const first = nodeIds[0];
   if (!first) return null;
   const rootId = enclosingCompRootOf(first) ?? activeCompRootId();
@@ -371,20 +307,29 @@ export function bakePhysicsToKeyframes(
     keyframes: tr.keyframes.map((k) => ({ ...k, t: compToKeyframeTime(tr.nodeId, k.t, tr.prop) })),
   }));
 
-  commitBake('Bake physics to keyframes', () => {
+  // The keyframes, computed off-document and sent through the API model.
+  const plan = assistantKeyframeCommands(targets, () => {
     defaultAnimation.batch(() => {
       for (const tr of placed) defaultAnimation.setKeyframes(tr.nodeId, tr.prop, tr.keyframes);
     });
-    // Switch the solver off LAST. `readNodePhysics` returns null for a
-    // disabled body, so from here the keyframes are the only thing moving the
-    // layer — which is the whole point of a bake, and the reason it has to be
-    // in the same undo entry as the keyframes that replaced it.
-    for (const id of targets) {
-      const node = defaultSceneGraph.getNode(id);
-      if (!node) continue;
-      defaultSceneGraph.setFxKey(id, PHYSICS_PROP, { ...readNodePhysicsRaw(node), enabled: false });
-    }
   });
+  if (plan.unaddressed.length > 0) {
+    throw new Error(`the bake writes a track the engine does not address on ${plan.unaddressed.join(', ')}`);
+  }
+  // Switch the solver off in the SAME entry. `readNodePhysics` returns null
+  // for a disabled body, so from here the keyframes are the only thing moving
+  // the layer — which is the whole point of a bake.
+  const off = targets.flatMap((id) => {
+    const node = defaultSceneGraph.getNode(id);
+    return node
+      ? [{ prop: { layer: id, path: 'layer/physics' }, value: { kind: 'json', value: JSON.stringify({ ...readNodePhysicsRaw(node), enabled: false }) } }]
+      : [];
+  });
+  const res = await edit('Bake physics to keyframes', [
+    ...plan.cmds,
+    ...(off.length > 0 ? [{ type: 'setProperties', writes: off } as Command] : []),
+  ]);
+  if (!res.ok) return null;
 
   return {
     nodeIds: [...targets],
@@ -517,10 +462,10 @@ export interface ParticleBakeResult {
  * Returns null when the layer is not an emitter or the range contains no
  * particles at all.
  */
-export function bakeParticlesToLayers(
+export async function bakeParticlesToLayers(
   emitterNodeId: string,
   opts: ParticleBakeOptions,
-): ParticleBakeResult | null {
+): Promise<ParticleBakeResult | null> {
   const emitter = defaultSceneGraph.getNode(emitterNodeId);
   if (!emitter) return null;
   const stored = readNodeParticle(emitter);
@@ -544,19 +489,23 @@ export function bakeParticlesToLayers(
   const sampled = sampleParticleLayers(configAt, opts, emitterNodeId);
   if (sampled.particles.length === 0) return null;
 
+  const comp = compOfLayer(emitterNodeId);
+  if (!comp) return null;
   const tol = opts.simplifyTolerance ?? 0;
-  const layerIds: string[] = [];
-  let containerId = '';
+  const scratchLayers: string[] = [];
+  let scratchContainer = '';
   let keyframes = 0;
 
-  commitBake('Bake particles to layers', () => {
+  // The layers are built OFF-document (scratch ids, keys in place) and pasted
+  // under the emitter as ONE pasteLayers; the emitter is hidden in the same batch.
+  const built = buildLayerFragment(comp, () => {
     const container = makeNode('null', `${emitter.name ?? 'Emitter'} Baked`);
     const ct = transformProps(container);
     ct.x = 0;
     ct.y = 0;
     container.transform.position = { x: 0, y: 0 };
     defaultSceneGraph.addChild(emitterNodeId, container);
-    containerId = container.id;
+    scratchContainer = container.id;
 
     defaultAnimation.batch(() => {
       for (const part of sampled.particles) {
@@ -608,21 +557,24 @@ export function bakeParticlesToLayers(
         write('scaleY', part.scale, null);
         write('opacity', part.opacity, 0);
 
-        layerIds.push(node.id);
+        scratchLayers.push(node.id);
       }
     });
-
-    // The emitter stops drawing; it stays as the rig the container hangs from.
-    // Re-read rather than reusing the view captured before the mutation —
-    // `visible` writes through the engine node, and the node the graph holds is
-    // the one that has to change.
-    const live = defaultSceneGraph.getNode(emitterNodeId);
-    if (live) live.visible = false;
   });
+  if (!built) return null;
+
+  // The emitter stops drawing; it stays as the rig the container hangs from.
+  const res = await edit('Bake particles to layers', [
+    { type: 'pasteLayers', comp, fragment: built.fragment, index: built.index, ...(built.parent ? { parent: built.parent } : {}) } as Command,
+    { type: 'setLayerSwitches', layers: [emitterNodeId], patch: { visible: false } } as Command,
+  ]);
+  if (!res.ok) return null;
+  const pasted = (res.value[0] as { layers?: string[] } | undefined)?.layers ?? [];
+  const idOf = (scratch: string): string => pasted[built.scratchIds.indexOf(scratch)] ?? '';
 
   return {
-    containerId,
-    layerIds,
+    containerId: idOf(scratchContainer),
+    layerIds: scratchLayers.map(idOf).filter((id) => id !== ''),
     seen: sampled.seen,
     capped: sampled.capped,
     keyframes,

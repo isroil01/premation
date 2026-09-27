@@ -10,18 +10,16 @@
  *             name, label colour, width, height.
  *  • plain  — every other layer: name and label colour.
  *
- * Every apply is ONE undo entry (`runDocumentEdit`), including the new-solid
- * path, so Undo takes a freshly created solid away in one press.
+ * Every apply is ONE engine entry (compositionEdits.ts; the new solid is one
+ * `pasteLayers`), so Undo takes a freshly created solid away in one press.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { renameLayer } from '@core/scene/renameLayer';
 import { setNodeLabelColor } from '@core/scene/labelColor';
 import { writeTransformProps } from '@core/scene/transformWrite';
 import { insertSolid } from '@core/scene/sceneInsert';
 import { readNodeFill, solidFill } from '@core/paint/fill';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode } from '@core/types';
 
@@ -88,12 +86,13 @@ export function readLayerSettings(nodeId: string): { kind: LayerSettingsKind; va
   return { kind, values };
 }
 
-/** Writes the values onto an existing layer. Caller provides the undo scope. */
+/** Writes the values onto a layer the builder just made (a SCRATCH write: the New Solid build runs off-document). */
 function writeSettings(nodeId: string, kind: LayerSettingsKind, values: LayerSettingsValues, label: string): void {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return;
   const name = values.name.trim();
-  if (name && name !== node.name) renameLayer(nodeId, name);
+  // A layer born in this build: nothing can name it yet, so there are no references to repair.
+  if (name && name !== node.name) node.name = name;
   if ('labelColor' in values && values.labelColor !== node.color) setNodeLabelColor(nodeId, values.labelColor);
   if (kind !== 'plain') {
     const w = values.width !== undefined ? sanitizeLayerSize(values.width) : null;
@@ -106,16 +105,6 @@ function writeSettings(nodeId: string, kind: LayerSettingsKind, values: LayerSet
   if (kind === 'solid' && values.color) defaultSceneGraph.setFill(nodeId, solidFill(values.color));
 }
 
-/** Apply Layer / Solid Settings to `nodeId` as one undo step. False when the layer is gone. */
-export function applyLayerSettings(nodeId: string, values: LayerSettingsValues): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return false;
-  const kind = layerSettingsKind(node);
-  const label = kind === 'solid' ? 'Solid Settings' : 'Layer Settings';
-  runDocumentEdit(label, () => writeSettings(nodeId, kind, values, label));
-  return true;
-}
-
 /** "Solid N" — one past the number of solids already in the project. */
 export function nextSolidName(): string {
   let count = 0;
@@ -126,17 +115,11 @@ export function nextSolidName(): string {
 }
 
 /**
- * Layer ▸ New ▸ Solid, confirmed from Solid Settings: insert a solid at the
- * comp centre with the dialog's name, size and colour. One undo step. Returns
- * the new layer's id (it is also selected), or null.
- */
-export function createSolidLayer(values: LayerSettingsValues): string | null {
-  return runDocumentEdit('New Solid', () => buildSolidLayer(values));
-}
-
-/**
- * The New Solid builder alone (no undo scope): the UI runs it off-document
- * and inserts the result as one `pasteLayers` (offDocument.ts).
+ * Layer ▸ New ▸ Solid, confirmed from Solid Settings: a solid at the comp
+ * centre with the dialog's name, size and colour. The builder alone: the UI
+ * runs it off-document and inserts the result as one `pasteLayers`
+ * (offDocument.ts); applying the dialog to an existing layer is
+ * compositionEdits.ts (engine commands).
  */
 export function buildSolidLayer(values: LayerSettingsValues): string | null {
   insertSolid(values.color ?? DEFAULT_SOLID_COLOR);

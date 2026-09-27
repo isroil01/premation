@@ -39,7 +39,6 @@ import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { seekPlayhead } from '@core/timeline/timelineView';
 import { useActiveCompFps, useActiveMirrorComp, useMirrorKeys, useRetainTree } from '@hooks/useMirror';
 import { flicksToSeconds } from '@motion/engine-api';
-import { defaultAnimation } from '@motion/animation';
 import { Icon } from '@components/Icon';
 import { Tabs } from '@components/Tabs';
 import { useResizeObserver } from '@hooks/useResizeObserver';
@@ -82,14 +81,13 @@ export function MotionEditorPanel(): JSX.Element {
   useRetainTree(primary);
   const rev = useMirrorKeys(primary ? [`keys:${primary}`, `tree:${primary}`, `layer:${primary}`] : []);
 
+  // The animated MEMBER tracks (`y` alone of an unseparated Position): the engine's member key
+  // lists (`getMemberKeyframes`) — the API's own lists are per property (ENGINE_API.md §3.3).
+  const members = useMemberTracks(primary);
   const propList = useMemo(
-    // B4-gap: the animated MEMBER tracks (`y` alone of an unseparated
-    // Position) — the API keys and animates a whole property (one keyframe per
-    // time for every dimension, ENGINE_API.md §3.3), so which member carries
-    // keys is not in the mirror (a per-member keyed flag / key list would close it).
-    () => (primary ? defaultAnimation.animatedProps(primary) : []),
+    () => (members ?? []).map((t) => t.member as string),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [primary, rev],
+    [members, rev],
   );
   const [propState, setProp] = useState<string | null>(null);
   const prop = propState && propList.includes(propState) ? propState : propList[0] ?? null;

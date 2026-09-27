@@ -1,11 +1,10 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveWorkspace } from '@stores/projectStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys, useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { currentRuns, isSourceTextAnimated, maskIdsOf, SOURCE_TEXT_PATH, sourceTextAt, STYLE_RUNS_PATH, textPathOf } from '@layout/Text/textMirror';
+import { currentRuns, isSourceTextAnimated, maskIdsOf, mirrorParagraphBox, SOURCE_TEXT_PATH, sourceTextAt, STYLE_RUNS_PATH, textPathOf } from '@layout/Text/textMirror';
 import { useComponentProp, type ComponentPropHandle } from './useComponentProp';
 import { useGesture } from '@hooks/useGesture';
 import { edit } from '@core/engine/uiEdits';
@@ -21,8 +20,8 @@ import { FontPicker } from './FontPicker';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import { installTextCommands, swapTextFillStroke } from './textCommands';
 import { convertToParagraphText, convertToPointText, setBoxAutoSize } from './paragraphTextCommands';
-import { MIN_BOX_SIZE, TATE_CHU_YOKO_DEFAULT_DIGITS, firstParagraphDirection, hasTextPath, readParagraphBox, type BoxAutoSize, type BoxVerticalAlign } from '@core/text/textExtras';
-import { measureTextNodeParagraphBox } from '@core/text/measureText';
+import { MIN_BOX_SIZE, TATE_CHU_YOKO_DEFAULT_DIGITS, firstParagraphDirection, type BoxAutoSize, type BoxVerticalAlign } from '@core/text/textExtras';
+import { useTextLayout } from '@hooks/useTextLayout';
 import { Segmented } from '@components/Segmented';
 import { Checkbox } from '@components/Checkbox';
 import { ColorPicker } from '@components/ColorPicker';
@@ -127,6 +126,8 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   const m = documentMirror();
   const isText = uiKindOf(layer) === 'text';
   const tComp = isText ? TEXT_COMPONENT : undefined;
+  // The Text Box card's measured facts (content height, overflow, text on a path) — the engine's.
+  const textLayout = useTextLayout(isText ? primary : null);
 
   // Bound layer hooks — Character properties
   const [content, setContent] = useComponentProp(primary, tComp, 'content');
@@ -1349,14 +1350,13 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
    * only where it is drawn, not behind a collapsed disclosure.
    */
   const renderTextBox = (): JSX.Element | null => {
-        // B4-gap: the box is MEASURED from the text as it lays out (a `getTextLayout` answer: lines, box, fit
-        // scale) and the stored box props are read beside it — the TS engine's text node until the query lands.
-        const node = hasTarget && primary ? defaultSceneGraph.getNode(primary) : undefined;
-        if (!node || !primary) return null;
-        const paraBox = readParagraphBox(node);
+        // B4: the STORED box from the mirror, the MEASURED one (content height, overflow) from the
+        // engine's `getTextLayout` — asked when the layer changes (useTextLayout), not per render.
+        if (!hasTarget || !primary || !isText) return null;
+        const paraBox = mirrorParagraphBox(m, primary);
         // Text on a path is point text (AE): no box to convert into or edit.
-        const onPath = hasTextPath(node);
-        const measuredBox = paraBox ? measureTextNodeParagraphBox(node) : null;
+        const onPath = textLayout?.onPath ?? textPathOf(m, primary) !== '';
+        const measuredBox = paraBox ? textLayout?.paragraph ?? null : null;
         const autoSize: BoxAutoSize = paraBox?.autoSize ?? 'height';
         const fixed = paraBox?.fixedHeight === true;
         const vAlign: BoxVerticalAlign =

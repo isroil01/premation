@@ -15,23 +15,16 @@
 
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { liveDocument, liveDocumentFromEngine } from './liveDocument';
-import { useHistoryStore } from '@stores/historyStore';
 import { bumpScene } from '@stores/sceneStore';
 
 export async function withDocumentSwapped<T>(doc: EditorDocument, fn: () => Promise<T>): Promise<T> {
-  const h = useHistoryStore.getState();
-  h.flush();
   const live = liveDocumentFromEngine() ? await liveDocument() : captureDocument();
-  h.runRestoring(() => {
-    restoreDocument(structuredClone(doc));
-    bumpScene();
-  });
+  restoreDocument(structuredClone(doc));
+  bumpScene();
   try {
     return await fn();
   } finally {
-    useHistoryStore.getState().runRestoring(() => {
-      restoreDocument(live);
-      bumpScene();
-    });
+    restoreDocument(live);
+    bumpScene();
   }
 }

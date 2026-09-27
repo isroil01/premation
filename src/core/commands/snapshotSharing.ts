@@ -14,8 +14,8 @@
  *
  * A snapshot is still a plain, complete `{ scene, anim }` value — nothing that
  * reads one (restore, the AI transaction's rollback, the bake commit) sees a
- * diff, a patch or a lazy view. Under the unified history (NATIVE_CORE_PLAN
- * §4 T1, `unifiedHistoryEnabled`) it also carries `clips`: every registered
+ * diff, a patch or a lazy view. It also carries (NATIVE_CORE_PLAN §4 T1, the
+ * unified history) `clips`: every registered
  * composition's clip-bar geometry, so a snapshot restore puts the timeline
  * back too instead of leaving the scene and the bars disagreeing. What changed
  * is only that two snapshots now SHARE the node objects, animation tracks and
@@ -51,7 +51,6 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
-import { unifiedHistoryEnabled } from '@core/config/flags';
 import type { ProjectFile, SceneNode } from '@core/types';
 
 /** A clip bar's geometry in FRAMES — the timeline engine's `Clip.toJSON()`. */
@@ -491,11 +490,11 @@ function shareClips(cur: ClipsByComp): ClipsByComp {
 
 /**
  * Capture the editable state (scene + animation, plus every composition's clip
- * geometry under the unified history) with structural sharing.
+ * geometry) with structural sharing.
  */
 export function captureSharedState(): DocState {
   const state: DocState = { scene: captureSharedScene(), anim: shareAnim(defaultAnimation.snapshot()) };
-  if (unifiedHistoryEnabled()) state.clips = shareClips(clipProvider ? clipProvider.capture() : {});
+  state.clips = shareClips(clipProvider ? clipProvider.capture() : {});
   sharedStates.add(state);
   return state;
 }

@@ -17,7 +17,6 @@ import type { LocalEngine } from '@core/engine/LocalEngine';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import type { BezierPath } from '@motion/engine-api';
-import * as documentEdit from '@core/commands/documentEdit';
 import { createSceneGraphPort } from './ports';
 import { getWorkspaceController } from './WorkspaceController';
 import {
@@ -83,12 +82,9 @@ const keyPaths = (layer: string, mask: string): MaskPath[] =>
 async function oneEntry(label: string, run: () => unknown, check: () => void): Promise<void> {
   const before = h.doc();
   const entries = historyLabels().length;
-  const legacy = jest.spyOn(documentEdit, 'runDocumentEdit');
   run();
   await engineIdle();
   await engineIdle();
-  expect(legacy).not.toHaveBeenCalled();
-  legacy.mockRestore();
   expect(historyLabels().length).toBe(entries + 1);
   expect(historyLabels().at(-1)).toBe(label);
   check();
@@ -265,17 +261,14 @@ describe('drawn shape paths go through the engine', () => {
   const geomOf = (id: string): Record<string, unknown> =>
     defaultSceneGraph.getNode(id)!.components.find((c) => c.type === 'Geometry')!.props as Record<string, unknown>;
 
-  /** ONE entry named `label`, no legacy writer; undo restores exactly; redo reapplies. */
+  /** ONE entry named `label`; undo restores exactly; redo reapplies. */
   async function engineEntry(label: string, run: () => unknown, check: () => void): Promise<void> {
     await engineIdle();
     const before = h.doc();
     const entries = historyLabels().length;
-    const legacy = jest.spyOn(documentEdit, 'runDocumentEdit');
     run();
     await engineIdle();
     await engineIdle();
-    expect(legacy).not.toHaveBeenCalled();
-    legacy.mockRestore();
     expect(historyLabels().length).toBe(entries + 1);
     expect(historyLabels().at(-1)).toBe(label);
     check();

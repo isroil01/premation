@@ -29,8 +29,8 @@
  * is cheap next to what it prevents. Validation cannot be complete — whether a
  * layer id still exists is knowable, whether a `setProperty` will be refused by
  * a component that does not have that prop is not — so the apply pass can still
- * fail. When it does it throws, and `runDocumentEdit`'s snapshot rolls the
- * document back.
+ * fail. When it does it throws, and the engine gesture's abort
+ * (`endGesture{commit:false}`) rolls the document back.
  *
  * ── Explicitly rejected: begin/end ──────────────────────────────────────────
  *

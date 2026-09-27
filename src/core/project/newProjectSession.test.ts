@@ -22,7 +22,7 @@
 import { ProjectManager } from './ProjectManager';
 import { projectDocumentIO } from './projectDocumentIO';
 import { baselineProjectHistory, afterProjectLoaded, resetProjectWorkspace } from './projectSession';
-import { useHistoryStore, performUndo } from '@stores/historyStore';
+import { resetHistory, performUndo } from '@stores/historyStore';
 import { useProjectStore } from '@stores/projectStore';
 import { getCommandSystem, setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -83,7 +83,7 @@ describe('File ▸ New Project', () => {
     setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
     resetScene();
     getCommandSystem().getHistory().clear();
-    useHistoryStore.getState().reset();
+    resetHistory();
   });
 
   it('undo cannot pull the PREVIOUS project back into the new one', () => {

@@ -12,15 +12,11 @@
  * changed, before and after (state.ts) — the concrete inverse recorded at apply
  * time. Undo writes the befores back, redo the afters; both are ordinary
  * revisions with change events. Because the entries live on the same stack as
- * the pre-API recorders (the 700 ms debounce, engine-timeline commands,
- * `runAnimEdit`), the two worlds interleave in one strictly linear order until
- * B3 removes the old recorders (see ENGINE_API.md "B2 implementation notes").
+ * the pre-API recorders (engine-timeline commands, `runAnimEdit`), the two
+ * worlds interleave in one strictly linear order (see ENGINE_API.md "B2
+ * implementation notes"; the 700 ms debounce recorder is gone, B5 round 2).
  *
- * Coexistence rules while the debounce recorder still exists:
- *   • every edit runs inside `historyStore.runRestoring` after a `flush()` — a
- *     pending UI edit gets its own entry first, and nothing this engine writes
- *     is captured a second time by the recorder (same contract `runAsOneHistoryEntry`
- *     uses);
+ * Coexistence rules:
  *   • `HistoryService` pushes from helpers the engine calls (timeline commands,
  *     runAnimEdit inside a helper) are suspended while it applies;
  *   • a document change NOT made through the engine marks it stale; the next
@@ -55,7 +51,6 @@ import {
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { HistoryService } from '@core/commands/HistoryService';
 import type { IUndoableCommand } from '@core/commands/Command';
-import { useHistoryStore } from '@stores/historyStore';
 import { getEventBus } from '@core/events/EventBus';
 import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { restoreDocument, captureDocument, type EditorDocument } from '@core/api/cloudDocument';
@@ -64,7 +59,8 @@ import { useProjectStore } from '@stores/projectStore';
 import { reconcileDocumentItems } from './documentLoad';
 import { EngineFail, fail, toEngineError } from './errors';
 import { IdAllocator, allKeyframeIds, type IdCounters } from './ids';
-import { captureScope, applyParts, changedKeys, documentScope, type Parts, type Scope } from './state';
+import { captureScope, applyParts, changedKeys, documentScope, newScope, K, type Parts, type Scope } from './state';
+import { detachProxyLayers, proxyLayersToDetach } from './proxyOwnership';
 import { EventBuilder } from './events';
 import { idTaken, compItemIds } from './doc';
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -77,6 +73,7 @@ import { Transport } from './transport';
 import { KeyIndex } from './keyIndex';
 import { stampMissingKeyIds } from './stamp';
 import { refreshLegacyUi } from './legacyRefresh';
+import { onCryptomatteChanged } from '@core/media/cryptomatte';
 
 /** Bars mirror their node (name, enabled, locked, membership) — refresh every comp's mirror. */
 function syncTimelines(): void {
@@ -235,6 +232,8 @@ export class LocalEngine extends EngineClientBase {
         if (!isMediaDecodeRepaint(p as never)) mark(p?.nodeId || undefined);
       }),
       bus.on('DocumentChanged', () => mark()),
+      // B4: an EXR's Cryptomatte manifest decoded — media state, not an edit: announced so `getCryptomatte` is re-asked.
+      { dispose: onCryptomatteChanged((item) => this.emitEphemeral([{ type: 'assetStatusChanged', item, status: 'ready', message: 'cryptomatte' }])) },
     ];
   }
 
@@ -423,11 +422,7 @@ export class LocalEngine extends EngineClientBase {
       restoreDocument(structuredClone(doc));
       if (opts.resetWorkspace) this.lastMissing = this.reconcileItems();
       this.ensureTimelines();
-      // D1 (d1EvalParity): the load's own scene events scheduled a debounced
-      // snapshot; left pending, the next command's flush recorded the load as a
-      // phantom "Edit N" undo step under it. A load is not an edit: drop it,
-      // then clear and rebaseline (the C++ engine keeps no such entry).
-      if (this.history()) useHistoryStore.getState().reset();
+      // A load is not an edit: the stack is cleared (the C++ engine keeps no entry).
       this.clearHistoryStacks();
     } finally {
       this.applying -= 1;
@@ -625,11 +620,9 @@ export class LocalEngine extends EngineClientBase {
     const before: Parts = new Map();
     const after: Parts = new Map();
     const results: CommandResult[] = [];
-    const store = useHistoryStore.getState();
     const history = this.history();
     const fullBefore = this.options.verifyScopes ? captureScope(documentScope()) : null;
     let label = batchLabel ?? '';
-    store.flush();
     let failure: { error: EngineError } | null = null;
     this.applying += 1;
     history?.suspend();
@@ -650,7 +643,6 @@ export class LocalEngine extends EngineClientBase {
         const b = captureScope(scope);
         let result: Record<string, unknown>;
         try {
-          useHistoryStore.setState({ restoring: true });
           result = plan.apply();
           stampMissingKeyIds(scope, ctx.mintKeyId);
           syncTimelines();
@@ -658,10 +650,18 @@ export class LocalEngine extends EngineClientBase {
           applyParts(b);
           failure = { error: withIndex(toEngineError(err), commands.length > 1 || batchLabel !== null ? i : undefined) };
           break;
-        } finally {
-          useHistoryStore.setState({ restoring: false });
         }
         const a = captureScope(scope);
+        // A non-plugin edit of a plugin-generated layer detaches its proxy
+        // subtree, inside this command (proxyOwnership.ts; C++ session.cpp).
+        const detach = proxyLayersToDetach(origin, b, a);
+        if (detach.length > 0) {
+          const extra = newScope();
+          for (const id of detach) extra.keys.add(K.node(id));
+          for (const [k, v] of captureScope(extra)) if (!b.has(k)) b.set(k, v);
+          detachProxyLayers(detach);
+          for (const [k, v] of captureScope(extra)) a.set(k, v);
+        }
         for (const [k, v] of b) if (!before.has(k)) before.set(k, v);
         // A key only the AFTER capture has did not exist before this command
         // (document scope enumerates the parts that exist). Its first-seen
@@ -688,8 +688,6 @@ export class LocalEngine extends EngineClientBase {
     } finally {
       history?.resume();
       this.applying -= 1;
-      // Re-baseline the debounce recorder on what the engine wrote (no entry).
-      store.runRestoring(() => {});
     }
     if (failure) throw new EngineFail(failure.error);
 
@@ -724,35 +722,24 @@ export class LocalEngine extends EngineClientBase {
 
   private applyQuiet(parts: Parts): void {
     if (parts.size === 0) return;
-    useHistoryStore.setState({ restoring: true });
-    try {
-      applyParts(parts);
-    } finally {
-      useHistoryStore.setState({ restoring: false });
-    }
+    applyParts(parts);
     this.keyIndex.invalidate();
   }
 
-  /** Legacy bus/revision announcements for what just changed (legacyRefresh.ts), recorder held. */
+  /** Legacy bus/revision announcements for what just changed (legacyRefresh.ts). */
   private refreshUi(keys: string[]): void {
     if (keys.length === 0) return;
-    const prev = useHistoryStore.getState().restoring;
-    useHistoryStore.setState({ restoring: true });
     try {
       refreshLegacyUi(keys);
     } catch {
       // A panel listener's failure must not fail a command that already applied.
-    } finally {
-      useHistoryStore.setState({ restoring: prev });
     }
   }
 
   private pushEntry(entry: EngineHistoryEntry): void {
     const history = this.history();
     if (!history) return;
-    const store = useHistoryStore.getState();
-    // Pushed inside runRestoring so the baseline sync does not capture again.
-    store.runRestoring(() => history.push(entry));
+    history.push(entry);
   }
 
   private history(): HistoryService | null {
@@ -768,7 +755,6 @@ export class LocalEngine extends EngineClientBase {
     const h = this.history();
     if (!h) return;
     h.clear();
-    useHistoryStore.getState().runRestoring(() => {});
   }
 
   // ── Controls and io ─────────────────────────────────────────────────
@@ -785,8 +771,6 @@ export class LocalEngine extends EngineClientBase {
         if (cmd.position > entries.length) fail('outOfRange', `history has ${entries.length} entries`);
         const target = cmd.position - 1;
         let label = '';
-        const store = useHistoryStore.getState();
-        store.flush();
         // One revision for the whole jump, like the C++ engine (replayEntry folds
         // the steps into `this.jump`; a foreign entry still resyncs on its own).
         this.jump = { from: new Map(), to: new Map() };
@@ -816,7 +800,6 @@ export class LocalEngine extends EngineClientBase {
       }
       case 'beginGesture': {
         if (this.gesture) fail('gestureOpen', `gesture '${this.gesture.label}' is already open`);
-        useHistoryStore.getState().flush();
         // The id comes from the id state (ids.ts), so a log header carries it.
         const id = this.ids.nextGesture();
         this.gesture = { id, label: cmd.label, origin, before: new Map(), after: new Map(), startRevision: this.docRevision };
@@ -848,7 +831,6 @@ export class LocalEngine extends EngineClientBase {
           } finally {
             history?.resume();
             this.applying -= 1;
-            useHistoryStore.getState().runRestoring(() => {});
           }
           const prev = this.docRevision;
           this.docRevision += 1;
@@ -861,7 +843,6 @@ export class LocalEngine extends EngineClientBase {
         // B3z: a NAMED entry that changes nothing — a point to jump back to.
         if (this.gesture) fail('gestureOpen', 'close the gesture first');
         if (cmd.label.trim() === '') fail('invalidArgument', 'a checkpoint needs a name');
-        useHistoryStore.getState().flush();
         this.pushEntry(new EngineHistoryEntry(this, cmd.label, origin, new Map(), new Map(), true));
         this.emitStatus();
         return {};
@@ -976,7 +957,6 @@ export class LocalEngine extends EngineClientBase {
   private historyStep(dir: 'undo' | 'redo'): Record<string, unknown> {
     if (this.gesture) fail('gestureOpen', `'${dir}' is refused while a gesture is open`);
     const h = this.requireHistory();
-    useHistoryStore.getState().flush();
     const entries = h.getEntries();
     if (dir === 'undo' && !h.canUndo()) fail('nothingToUndo', 'nothing to undo');
     if (dir === 'redo' && !h.canRedo()) fail('nothingToRedo', 'nothing to redo');
@@ -990,10 +970,10 @@ export class LocalEngine extends EngineClientBase {
     const entries = h.getEntries();
     const entry = dir === 'undo' ? entries[h.getIndex()] : entries[h.getIndex() + 1];
     const foreign = !(entry instanceof EngineHistoryEntry);
-    const store = useHistoryStore.getState();
     this.applying += 1;
     try {
-      store.runRestoring(() => (dir === 'undo' ? h.undo() : h.redo()));
+      if (dir === 'undo') h.undo();
+      else h.redo();
     } finally {
       this.applying -= 1;
     }

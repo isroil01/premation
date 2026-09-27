@@ -50,7 +50,7 @@ import { panelAssetSelectionIds, selectedPanelAssets, selectedPanelFootage } fro
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { baselineHistoryEdit } from '@core/engine/historyBaseline';
-import { attachHistoryRecording, performUndo, performRedo } from '@stores/historyStore';
+import { performUndo, performRedo } from '@stores/historyStore';
 import { attachRenderBackendEvents } from '@stores/renderBackendStore';
 import { Button } from '@components/Button';
 import { openAbout } from '@layout/Help/AboutDialog';
@@ -103,6 +103,7 @@ import { buildSpeedRampCommands } from '@core/animation/speedRampCommands';
 import { buildLayerTimeCommands } from '@core/animation/layerTimeCommands';
 import { buildExpressionCommands } from '@core/animation/expressionCommands';
 import { buildLayerTransformCommands } from '@core/scene/layerTransformCommands';
+import { resetTransformEdit } from '@layout/Timeline/resetEdits';
 import { openTimeStretchDialog } from '@layout/Composition/TimeStretchDialog';
 import { openAutoOrientDialog } from '@layout/Composition/AutoOrientDialog';
 import { buildCameraCommands } from '@core/scene/cameraCommands';
@@ -124,11 +125,9 @@ import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { loadBlockTower } from '@core/scene/seedBlockTower';
 import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
-import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { applyRigPresetEdit } from '@core/engine/rigPaths';
-import { readGeometry } from '@core/workspace/geometry';
 import { eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
 import {
   eligibleExpressionProps,
@@ -138,8 +137,11 @@ import {
   timeReverseKeyframes,
   easyEaseAll,
 } from '@core/animation/keyframeAssistants';
-import { openSmootherDialog, smootherTracks } from '@layout/Motion/SmootherDialog';
-import { openWigglerDialog, wigglerTracks } from '@layout/Motion/WigglerDialog';
+import { openSmootherDialog, smootherTracks, smootherTracksOf } from '@layout/Motion/SmootherDialog';
+import { openWigglerDialog, wigglerTracks, wigglerTracksOf } from '@layout/Motion/WigglerDialog';
+import { fetchMemberTracks, memberTracksNow } from '@stores/memberTracks';
+import { fetchLayerBox } from '@stores/layerBoxes';
+import { compTime } from '@core/engine/propRefs';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { AudioPlaybackBridge } from '@hooks/useAudioPlayback';
@@ -175,6 +177,7 @@ import {
   arrangeLayersEdit,
   bakeMergePathsEdit,
   deleteSelectedLayersEdit,
+  liveMergePathsEdit,
   duplicateSelectedLayersEdit,
 } from '@layout/Workspace/layerMenuEdits';
 import {
@@ -678,7 +681,7 @@ function buildMarkerCommands(): ReadonlyArray<Command> {
  * commands exist with no menu home". They live in the Animation menu now (see
  * menuModel), so they're discoverable rather than shortcut-only.
  */
-import { liveMergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
+import { type MergeOp } from '@core/scene/mergePaths';
 import { compSizeOf } from '@core/composition/compSizes';
 import { installProductAnalytics, noteNextProjectSource } from '@core/analytics/productEvents';
 
@@ -713,9 +716,11 @@ function buildMergePathCommands(): ReadonlyArray<Command> {
     icon: 'layers' as const,
     enabled,
     execute: () => {
-      const ids = liveMergeSelectedPaths(op);
-      if (ids.length > 0) notify(`Live boolean (${op}) — operands stay editable`, 'success');
-      else notify('Select at least two shape layers with closed paths', 'warning');
+      // The result is pasted and the operands flagged in ONE batch (liveMergeCommands.ts).
+      void liveMergePathsEdit(op).then((id) => {
+        if (id) notify(`Live boolean (${op}) — operands stay editable`, 'success');
+        else notify('Select at least two shape layers with closed paths', 'warning');
+      });
     },
   }));
   const baked: Command[] = MERGE_OPS.map(({ op, label, bakeId }) => ({
@@ -1109,7 +1114,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       icon: 'skip-back',
       enabled: () => {
         const id = useSelectionStore.getState().ids[0];
-        return !!id && defaultAnimation.animatedProps(id).length > 0;
+        // The engine's member lists (every animated track, catalog or not), last known — asked on first use.
+        return !!id && (memberTracksNow(id)?.length ?? 0) > 0;
       },
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
@@ -1129,7 +1135,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       icon: 'track',
       enabled: () => {
         const id = useSelectionStore.getState().ids[0];
-        return !!id && defaultAnimation.animatedProps(id).length > 0;
+        // The engine's member lists (every animated track, catalog or not), last known — asked on first use.
+        return !!id && (memberTracksNow(id)?.length ?? 0) > 0;
       },
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
@@ -1164,7 +1171,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         // A real dialog rather than `customPrompt`: tolerance is a look-at-it
         // control, and the prompt could not express WHICH tracks to touch at
         // all. The dialog previews live and commits as one undo entry.
-        if (smootherTracks(id).length === 0) {
+        // The exact member lists (the engine's `getMemberKeyframes`), not the menu's last known ones.
+        if (smootherTracksOf(id, await fetchMemberTracks(id)).length === 0) {
           notify('Needs a track with 3+ keyframes', 'warning');
           return;
         }
@@ -1191,7 +1199,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         if (!id) return;
         // Was a prompt that parsed "5, 25" out of a string — two numbers with
         // different units, unlabelled, and rejected wholesale on a typo.
-        if (wigglerTracks(id).length === 0) {
+        if (wigglerTracksOf(await fetchMemberTracks(id, ['x', 'y'])).size === 0) {
           notify('Animate position first (2+ keyframes on x or y)', 'warning');
           return;
         }
@@ -1507,12 +1515,9 @@ function buildRigPresetCommands(): ReadonlyArray<Command> {
     execute: async () => {
       const nodeId = useSelectionStore.getState().ids[0];
       if (!nodeId) return;
-      const node = defaultSceneGraph.getNode(nodeId);
-      if (!node) return;
-      // Sized from the layer's own box, so the rig fits the artwork. `readGeometry`
-      // reports the UNSCALED size, which is what keeps a scaled layer from getting
-      // a differently-proportioned skeleton.
-      const geom = readGeometry(node);
+      // Sized from the layer's own box (the engine's `getLayerBounds`), so the rig fits the artwork. The
+      // box is the UNSCALED size, which is what keeps a scaled layer from getting a differently-proportioned skeleton.
+      const geom = await fetchLayerBox(nodeId, compTime(getTime()));
       // One entry: a whole-rig `layer/skeleton` write (ENGINE_API.md §15.9).
       const problems = await applyRigPresetEdit(
         nodeId,
@@ -1551,7 +1556,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildSpeedRampCommands(),
     ...buildLayerTimeCommands({ openTimeStretch: openTimeStretchDialog }),
     ...buildExpressionCommands(),
-    ...buildLayerTransformCommands({ openAutoOrient: openAutoOrientDialog }),
+    ...buildLayerTransformCommands({ openAutoOrient: openAutoOrientDialog, resetTransform: resetTransformEdit }),
     ...buildCameraCommands(),
     ...buildSmartAnimateCommands(),
     ...buildReframeCommands(),
@@ -2970,32 +2975,14 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         }
         try { void useAssetStore.getState().initialize(); } catch { /* ignore */ }
 
-        // History: initial "Open" state, then a debounced snapshot after edits.
+        // History: the "Open" baseline (a load boundary). Every edit after it
+        // is an engine command with its own entry — there is no recorder.
         try {
-          // The history baseline at boot (a load boundary; history infrastructure, not an edit).
           void baselineHistoryEdit('Open');
-          // The debounce lives in the store so undo/redo can flush it — a
-          // pending snapshot that only exists in a local closure is why Ctrl+Z
-          // inside the window used to eat two actions.
-          // The KEY tells history what is being edited, so a burst on one
-          // target coalesces into a single undo step while a move to a
-          // different layer/property commits the previous one first. A bare
-          // `schedule` merged anything that happened to land inside the same
-          // 700 ms — two unrelated edits, one Ctrl+Z, both gone.
-          //
-          // ONE attach point, deliberately. These were four separate `track`
-          // lines here and three of them worked; the baseline sync had been
-          // subscribed at MODULE SCOPE, so it landed on the bus this boot
-          // discards and never fired once — every commanded edit then also
-          // recorded a generic snapshot and Ctrl+Z took two presses, app-wide.
-          // Keeping the set together in `historyStore` makes the half-wired
-          // state unrepresentable, and lets the guard suite drive the same unit
-          // boot does rather than a re-typed copy of it.
-          track(attachHistoryRecording());
         } catch { /* ignore */ }
         // The engine API (NATIVE_CORE_PLAN §5 B3): ONE LocalEngine over the
         // live document, with the real file/media ports. After the history
-        // wiring (its entries go on the same unified stack) and the default
+        // baseline (its entries go on the same unified stack) and the default
         // scene seed; rebuilt on every ProjectLoaded/ProjectUnloaded.
         try {
           bootEngine({

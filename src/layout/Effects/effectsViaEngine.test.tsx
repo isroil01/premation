@@ -22,7 +22,7 @@ import type { LocalEngine } from '@core/engine/LocalEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import { edit } from '@core/engine/uiEdits';
 import { effectDefFor, getNodeEffects, getNodeFxEnabled, paramsOf, effectOpacityPath } from '@core/effects/effects';
-import { copyEffects, copyAllEffects, clearEffectClipboard, applyEffectPreset } from '@core/effects/effectClipboard';
+import { clearEffectClipboard, applyEffectPreset } from '@core/effects/effectClipboard';
 import { BUILTIN_EFFECT_PRESETS } from '@core/effects/builtinEffectPresets';
 import { getNodeLayerStyles } from '@core/effects/layerStyles';
 import { getNodeMask, rectangleMask } from '@core/effects/mask';
@@ -44,6 +44,7 @@ import {
   maskValueCommands,
   paramCommands,
   patchLayerStyleEdit,
+  copyEffectsEdit,
   pasteEffectsEdit,
   removeMaskEdit,
   renameMaskEdit,
@@ -273,7 +274,7 @@ test('duplicate copies the effect and its keyframes under a new id, one entry', 
 
 test('copy / paste onto another layer is ONE engine entry with the keyframes; a stale clipboard falls back', async () => {
   await h.run({ type: 'setAnimated', prop: { layer: s.A, path: `effects/${s.fx}/radius` }, animated: true, time: 0 });
-  copyEffects(s.A, [s.fx]);
+  expect(await copyEffectsEdit(s.A, [s.fx])).toBe(1);
   getCommandSystem().getHistory().clear();
   await act(async () => { await pasteEffectsEdit([s.B]); });
   const pasted = fxOf(s.B, 'glow')!;
@@ -286,7 +287,7 @@ test('copy / paste onto another layer is ONE engine entry with the keyframes; a 
 
   // The source changed since the copy: the clipboard is a snapshot the API
   // cannot paste yet — the legacy snapshot paste still lands the COPIED state.
-  copyAllEffects(s.A);
+  expect(await copyEffectsEdit(s.A)).toBeGreaterThan(0);
   const radius = paramsOf(fxOf(s.A, 'glow')!).radius;
   await h.run({ type: 'removePropertyGroups', groups: [{ layer: s.A, path: `effects/${s.fx}` }] });
   await act(async () => { await pasteEffectsEdit([s.B]); });

@@ -17,8 +17,6 @@ import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
-import { EventBus, setEventBus } from '@core/events/EventBus';
-import { useHistoryStore, attachHistoryRecording, baselineHistory } from '@stores/historyStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import BEHAVIOR_PRESETS from './behaviorPresets';
 import {
@@ -210,28 +208,6 @@ describe('installing a stack', () => {
     defaultAnimation.setExpressionEnabled(NODE, 'x', false);
     applyModifierStack(NODE, 'x', [offset(10)]);
     expect(defaultAnimation.isExpressionEnabled(NODE, 'x')).toBe(true);
-  });
-
-  test('is one undo step that puts the previous expression back', () => {
-    // The stack rides the debounced {scene, anim} snapshot (one entry for the
-    // expression AND the record), so this test wires history recording the way
-    // boot does and flushes the debounce before counting.
-    setEventBus(new EventBus());
-    const recording = attachHistoryRecording();
-    try {
-      defaultAnimation.setExpression(NODE, 'x', 'value + 5');
-      baselineHistory();
-      const before = getCommandSystem().getHistory().getEntries().length;
-      applyModifierStack(NODE, 'x', [offset(10)]);
-      useHistoryStore.getState().flush();
-      expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('(value + 10)');
-      expect(getCommandSystem().getHistory().getEntries().length - before).toBe(1);
-      getCommandSystem().getHistory().undo();
-      expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('value + 5');
-      expect(readModifierStacks(defaultSceneGraph.getNode(NODE)!)['x']).toBeUndefined();
-    } finally {
-      recording.dispose();
-    }
   });
 });
 

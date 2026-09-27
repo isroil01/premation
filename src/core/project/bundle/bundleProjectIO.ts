@@ -13,7 +13,7 @@
  */
 
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
-import { baselineHistory } from '@stores/historyStore';
+import { baselineHistoryNow } from '@core/engine/historyBaseline';
 import { recordProjectOpened, recordProjectSaved } from '@core/localIndex/indexWriter';
 import { BundleRepository } from './BundleRepository';
 import { ProjectBundleService } from './ProjectBundleService';
@@ -66,7 +66,7 @@ export async function openProjectBundle(root: string, repo = getBundleRepository
   // The loaded document IS the baseline. Without this, undo's "before" is still
   // the seeded starter scene from boot, so one Ctrl+Z replaces the project the
   // user just opened.
-  baselineHistory('Open');
+  baselineHistoryNow('Open');
   await recordProjectOpened(root, doc);
   return true;
 }

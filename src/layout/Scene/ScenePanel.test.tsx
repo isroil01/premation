@@ -46,7 +46,7 @@ class NoopResizeObserver {
 }
 
 beforeAll(() => {
-  // The row switches are undoable document edits now, and `runDocumentEdit`
+  // The row switches are undoable document edits now, and an edit's history entry
   // needs a command system to record into.
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) } as never));
   (globalThis as unknown as Record<string, unknown>)['ResizeObserver'] = NoopResizeObserver;

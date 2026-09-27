@@ -6,7 +6,7 @@
  *  1. **Bake** (`mergeSelectedPaths`) — destructive: sources are removed and
  *     the result is a static polygonal Geometry. Kept for one-shot cleanup and
  *     tests that pin the bake contract.
- *  2. **Live** (`liveMergeSelectedPaths`) — AE Shape-Group style: sources stay
+ *  2. **Live** (`planLiveMerge`, sent by `liveMergeCommands.ts`) — AE Shape-Group style: sources stay
  *     in the scene (hidden as operands), a result layer stores `booleanOp` +
  *     `booleanSources`, and buildSnapshot re-evaluates the boolean every frame
  *     so animated transforms / path.points on the sources drive the merge.
@@ -25,7 +25,6 @@ import { resolveCornerRadii, clampCornerRadii, type CornerRadiiProps } from '@co
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene } from '@stores/sceneStore';
-import { useHistoryStore } from '@stores/historyStore';
 
 export type MergeOp = 'union' | 'subtract' | 'intersect' | 'exclude';
 
@@ -422,19 +421,32 @@ function collectMergeableSelection(): { polys: Polygon[]; sources: SceneNode[] }
   return { polys, sources };
 }
 
+/** A live boolean's result layer, planned from the selection (nothing written yet). */
+export interface LiveMergePlan {
+  /** The result layer (a shape storing `booleanOp` + `booleanSources`), not in the document. */
+  node: SceneNode;
+  /** Where it goes: the first operand's parent (its composition or group). */
+  parentId: string;
+  /** The operands, in selection order — marked `layer/booleanOperand` and hidden. */
+  sourceIds: string[];
+}
+
 /**
- * LIVE merge — sources stay editable/animatable. Creates a result layer that
- * re-evaluates the boolean each frame; sources are marked as operands and
- * hidden from paint.
+ * LIVE merge — sources stay editable/animatable. Plans a result layer that
+ * re-evaluates the boolean each frame; the operands are marked as such and
+ * hidden from paint. Pure: it reads the selection and the document and writes
+ * nothing — `liveMergeCommands.ts` sends the plan as engine commands (the
+ * result pasted, the operands flagged through the `layer/booleanOperand`
+ * property and `setLayerSwitches`). Null when fewer than two closed paths are
+ * selected or the boolean is empty.
  */
-export function liveMergeSelectedPaths(op: MergeOp): string[] {
-  useHistoryStore.getState().flush();
+export function planLiveMerge(op: MergeOp): LiveMergePlan | null {
   const { polys, sources } = collectMergeableSelection();
-  if (polys.length < 2) return [];
+  if (polys.length < 2) return null;
 
   // Sanity-check the boolean produces geometry before wiring the live link.
   const probe = booleanPolygons(polys, op);
-  if (probe.length === 0) return [];
+  if (probe.length === 0) return null;
 
   const parentId = sources[0]!.parent ?? activeCompRootId();
   const id = `live_merge_${(mergeSeq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -482,27 +494,14 @@ export function liveMergeSelectedPaths(op: MergeOp): string[] {
     ],
   };
 
-  defaultSceneGraph.addChild(parentId, node);
-
-  // Hide sources from paint but keep them for sampling / timeline edit.
-  for (const s of sources) {
-    defaultSceneGraph.setFxKey(s.id, BOOLEAN_OPERAND_PROP, true);
-    const sn = defaultSceneGraph.getNode(s.id);
-    if (sn) sn.visible = false;
-  }
-
-  useSelectionStore.getState().set([id]);
-  bumpScene();
-  useHistoryStore.getState().record(`Live Merge Paths (${op})`);
-  return [id];
+  return { node, parentId: parentId as string, sourceIds };
 }
 
 /**
  * Bake merge — sources are removed; result is a static Geometry. Prefer
- * {@link liveMergeSelectedPaths} for designed motion where operands animate.
+ * {@link planLiveMerge} for designed motion where operands animate.
  */
 export function mergeSelectedPaths(op: MergeOp): string[] {
-  useHistoryStore.getState().flush();
   const { polys, sources } = collectMergeableSelection();
   if (polys.length < 2) return [];
 
@@ -554,6 +553,5 @@ export function mergeSelectedPaths(op: MergeOp): string[] {
   for (const s of sources) defaultSceneGraph.removeNode(s.id);
   useSelectionStore.getState().set(newIds);
   bumpScene();
-  useHistoryStore.getState().record(`Merge Paths (${op})`);
   return newIds;
 }

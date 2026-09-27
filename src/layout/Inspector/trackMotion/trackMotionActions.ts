@@ -9,7 +9,6 @@
  * renders, so nothing here needs React.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { secondsToFlicks, type LayerInfo, type TrackKind } from '@motion/engine-api';
 import { runEngineJob, startEngineJob } from '@core/engine/engineJobs';
 import { documentMirror } from '@stores/documentMirror';
@@ -35,7 +34,9 @@ import { grabCutMatte } from '@core/tracking/grabCut';
 import { segmentSamSync } from '@core/tracking/samSegment';
 import { edit } from '@core/engine/uiEdits';
 import { isLayer } from '@core/engine/doc';
-import { values } from '@core/engine/propRefs';
+import { compTime, values } from '@core/engine/propRefs';
+import { fetchLayerBox } from '@stores/layerBoxes';
+import { getTime } from '@stores/playbackClockStore';
 import {
   applyTrackPlanEdit,
   createNullAndApplyEdit,
@@ -47,7 +48,6 @@ import { runRotoBrush } from '@core/tracking/rotoBrush';
 import { runContentAwareFill } from '@core/effects/contentAwareFillVideo';
 import { trackLayerMask } from '@core/tracking/maskTrack';
 import { densifyQuad } from '@core/tracking/planarFit';
-import { readGeometry } from '@core/workspace/geometry';
 import { customConfirm } from '@components/Modal';
 import { needsSelfApplyConfirm, selfApplyConfirmCopy } from './applyTargetGuard';
 
@@ -575,10 +575,8 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         return;
       }
     }
-    // B4-gap: engine-side until C-phase — the layer's DRAWN box (readGeometry
-    // resolves it from the render components), which the mask vertices scale into.
-    const target = defaultSceneGraph.getNode(nodeId);
-    const g = target ? readGeometry(target) : null;
+    // The layer's DRAWN box at the playhead (the engine's `getLayerBounds`), which the mask vertices scale into.
+    const g = await fetchLayerBox(nodeId, compTime(getTime()));
     const w = src?.width ?? 64;
     const h = src?.height ?? 64;
     const rgba = new Uint8ClampedArray(w * h * 4);
