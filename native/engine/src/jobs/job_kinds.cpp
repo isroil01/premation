@@ -15,7 +15,7 @@ class EngineJobKinds final : public JobKinds {
  public:
   [[nodiscard]] PreparedJob prepare(const api::JobSpec& spec, const JobDocContext& ctx) override {
     return std::visit(
-        [&ctx](const auto& s) -> PreparedJob {
+        [&ctx, &spec](const auto& s) -> PreparedJob {
           using T = std::decay_t<decltype(s)>;
           if constexpr (std::is_same_v<T, api::TrackMotionJob>) return prepare_track_motion(s, ctx);
           else if constexpr (std::is_same_v<T, api::StabilizeJob>) return prepare_stabilize(s, ctx);
@@ -28,7 +28,11 @@ class EngineJobKinds final : public JobKinds {
           else if constexpr (std::is_same_v<T, api::ProxyJob>) return prepare_proxy(s, ctx);
           else if constexpr (std::is_same_v<T, api::RenderJob>) return prepare_render(s, ctx);
           else if constexpr (std::is_same_v<T, api::PrerenderJob>) return prepare_prerender(s, ctx);
-          else {
+          else if constexpr (std::is_same_v<T, api::TrackApplyJob>) return prepare_track_apply(s, ctx);
+          else if constexpr (std::is_same_v<T, api::RotoBrushJob> || std::is_same_v<T, api::ContentAwareFillJob> ||
+                             std::is_same_v<T, api::AutoReframeJob>) {
+            doc::fail(api::ErrorCode::unsupported, "the engine does not run '" + job_kind_name(spec) + "' jobs yet");
+          } else {
             // transcribe: the page's captions go to the user's speech provider
             // through Electron main, which holds the key (captions/transcribe.ts);
             // no local model ships, so there is nothing for the engine to run.

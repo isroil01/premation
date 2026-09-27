@@ -1,4 +1,4 @@
-/** Project settings, motion blur, colour management, project import, jobs, plugin data (ENGINE_API.md §4.1, §4.9). */
+/** Project settings, motion blur, colour management, project import, jobs, plugin data, content-aware fill (ENGINE_API.md §4.1, §4.9). */
 
 import { defaultAnimation } from '@motion/animation';
 import type { ProjectSettings } from '@motion/engine-api';
@@ -11,7 +11,7 @@ import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
 import { canonicalHex, useSwatchStore } from '@stores/swatchStore';
 import { useMaterialStore } from '@stores/materialStore';
 import { migrateDocument } from '@core/project/migrations';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
 import { COMP_REF_PROP } from '@core/scene/compInstance';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import type { SceneNode } from '@core/types';
@@ -20,6 +20,7 @@ import { graph, requireLayer } from '../doc';
 import { K, documentScope, newScope, scopeLayer } from '../state';
 import type { HandlerTable } from '../handler';
 import { remintKeyIds } from './common';
+import { flicksToSeconds } from '../time';
 import { loadDocumentIntoStores } from '../documentLoad';
 
 export const miscHandlers: HandlerTable = {
@@ -268,6 +269,28 @@ export const miscHandlers: HandlerTable = {
         if (Object.keys(group).length > 0) cur[cmd.group] = group;
         else delete cur[cmd.group];
         graph.setFxKey(cmd.layer, 'pluginData', Object.keys(cur).length > 0 ? cur : undefined);
+        return {};
+      },
+    };
+  },
+
+  /**
+   * The layer's content-aware fill record — `fx.contentAwareFill` as
+   * contentAwareFillVideo.ts stores it (`{frames: [{t, dataUrl}]}`, `t` on the
+   * layer's keyframe axis); the C++ engine's content-aware fill job writes it
+   * through this command. Empty frames clear it.
+   */
+  setContentAwareFill: (cmd) => {
+    requireLayer(cmd.layer);
+    cmd.frames.forEach((f, i) => {
+      if (f.src === '') fail('invalidArgument', `fill frame ${i} has no picture`);
+    });
+    return {
+      scope: scopeLayer(newScope(), cmd.layer),
+      label: 'Content-Aware Fill',
+      apply: () => {
+        const frames = cmd.frames.map((f) => ({ t: compToKeyframeTime(cmd.layer, flicksToSeconds(f.time)), dataUrl: f.src }));
+        graph.setFxKey(cmd.layer, 'contentAwareFill', frames.length > 0 ? { frames } : undefined);
         return {};
       },
     };

@@ -1146,6 +1146,9 @@ add_library(engine_jobs_core STATIC
   src/jobs/tracking.cpp
   src/jobs/stabilize.cpp
   src/jobs/track_apply.cpp
+  src/jobs/track_plans.cpp
+  src/jobs/track_walk.cpp
+  src/jobs/mask_sampling.cpp
   src/jobs/trace_bitmap.cpp
   src/jobs/sam_pipeline.cpp
 )
@@ -1165,6 +1168,7 @@ if(FFMPEG_FOUND AND TARGET engine_audio)
     src/jobs/kind_proxy.cpp
     src/jobs/kind_render.cpp
     src/jobs/kind_track_motion.cpp
+    src/jobs/kind_track_apply.cpp
     src/jobs/kind_stabilize.cpp
     src/jobs/kind_auto_trace.cpp
     src/jobs/kind_object_matte.cpp
@@ -1193,7 +1197,8 @@ else()
 endif()
 
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_jobs_tests tests/test_jobs_audio.cpp tests/test_jobs_trace.cpp tests/test_jobs_tracking.cpp)
+  add_executable(engine_jobs_tests tests/test_jobs_audio.cpp tests/test_jobs_trace.cpp tests/test_jobs_tracking.cpp
+                                 tests/test_jobs_round2.cpp)
   target_link_libraries(engine_jobs_tests PRIVATE engine_jobs_core motion::options Catch2::Catch2WithMain)
   if(MSVC)
     target_compile_options(engine_jobs_tests PRIVATE /bigobj)

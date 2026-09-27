@@ -13,6 +13,8 @@ union EngineMessage {
   response: Response = 4;
   events: EventBatch = 5;
   goodbye: Goodbye = 6;
+  /// Engine → client: an edit the engine made on its own (a job's applied result), as the request that replays it — Electron main puts it on its command log in place of the job's startJob / applyJobResult, so crash recovery reproduces the result without re-running the job.
+  logRecord: LogRecord = 1006;
 }
 
 /// Client → engine, first message. The engine answers Welcome or closes with Goodbye{versionMismatch}.

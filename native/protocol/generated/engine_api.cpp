@@ -1049,6 +1049,32 @@ bool from_u32(std::uint32_t n, TrackDirection& out) noexcept {
     default: return false;
   }
 }
+std::string_view to_string(TrackApplyMode v) noexcept {
+  switch (v) {
+    case TrackApplyMode::follow: return "follow";
+    case TrackApplyMode::transform: return "transform";
+    case TrackApplyMode::corner: return "corner";
+    case TrackApplyMode::stabilize: return "stabilize";
+    case TrackApplyMode::mesh_warp: return "meshWarp";
+    case TrackApplyMode::create_null: return "createNull";
+    case TrackApplyMode::nulls_for_planes: return "nullsForPlanes";
+    case TrackApplyMode::camera_solve: return "cameraSolve";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, TrackApplyMode& out) noexcept {
+  switch (n) {
+    case 0: out = TrackApplyMode::follow; return true;
+    case 1: out = TrackApplyMode::transform; return true;
+    case 2: out = TrackApplyMode::corner; return true;
+    case 3: out = TrackApplyMode::stabilize; return true;
+    case 4: out = TrackApplyMode::mesh_warp; return true;
+    case 5: out = TrackApplyMode::create_null; return true;
+    case 6: out = TrackApplyMode::nulls_for_planes; return true;
+    case 7: out = TrackApplyMode::camera_solve; return true;
+    default: return false;
+  }
+}
 std::string_view to_string(PropertyKind v) noexcept {
   switch (v) {
     case PropertyKind::property: return "property";
@@ -9544,6 +9570,7 @@ void encode(wire::Writer& w, const TrackMotionJob& v) {
   if (v.max_coast_frames.has_value()) { w.varint(5664U); w.varint(*v.max_coast_frames); }
   if (v.analysis_max_edge.has_value()) { w.varint(5672U); w.varint(*v.analysis_max_edge); }
   w.varint(5680U); w.boolean(v.stabilize);
+  if (v.planar_grid.has_value()) { w.varint(13680U); w.varint(*v.planar_grid); }
 }
 
 Status decode(wire::Reader& r, TrackMotionJob& out) {
@@ -9616,6 +9643,12 @@ Status decode(wire::Reader& r, TrackMotionJob& out) {
         has_stabilize = true;
         break;
       }
+      case 13680U: {
+        std::uint32_t e = 0;
+        if (!r.u32(e)) return Status::bad_value;
+        out.planar_grid = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -9635,6 +9668,7 @@ void encode(wire::Writer& w, const StabilizeJob& v) {
   w.varint(25U); w.f64(v.smoothness);
   w.varint(34U); w.str(v.method);
   if (v.analysis_max_edge.has_value()) { w.varint(5632U); w.varint(*v.analysis_max_edge); }
+  if (v.variant.has_value()) { w.varint(13634U); w.str(*v.variant); }
 }
 
 Status decode(wire::Reader& r, StabilizeJob& out) {
@@ -9672,6 +9706,12 @@ Status decode(wire::Reader& r, StabilizeJob& out) {
         out.analysis_max_edge = std::move(e);
         break;
       }
+      case 13634U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.variant = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -9694,6 +9734,7 @@ void encode(wire::Writer& w, const AutoTraceJob& v) {
   if (v.min_area.has_value()) { w.varint(5649U); w.f64(*v.min_area); }
   w.varint(5656U); w.boolean(v.every_frame);
   w.varint(5664U); w.boolean(v.invert);
+  w.varint(13664U); w.boolean(v.rendered);
 }
 
 Status decode(wire::Reader& r, AutoTraceJob& out) {
@@ -9703,6 +9744,7 @@ Status decode(wire::Reader& r, AutoTraceJob& out) {
   bool has_threshold = false;
   bool has_every_frame = false;
   bool has_invert = false;
+  bool has_rendered = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -9755,6 +9797,11 @@ Status decode(wire::Reader& r, AutoTraceJob& out) {
         has_invert = true;
         break;
       }
+      case 13664U: {
+        if (!r.boolean(out.rendered)) return Status::truncated;
+        has_rendered = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -9766,6 +9813,7 @@ Status decode(wire::Reader& r, AutoTraceJob& out) {
   if (!has_threshold) return Status::missing_field;
   if (!has_every_frame) return Status::missing_field;
   if (!has_invert) return Status::missing_field;
+  if (!has_rendered) return Status::missing_field;
   return Status::ok;
 }
 
@@ -10240,8 +10288,309 @@ Status decode(wire::Reader& r, AudioGateJob& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const TrackSampleRow& v) {
+  w.varint(8U); w.svarint(v.time);
+  w.varint(17U); w.f64(v.x);
+  w.varint(25U); w.f64(v.y);
+  w.varint(33U); w.f64(v.confidence);
+  w.varint(40U); w.boolean(v.coasted);
+}
+
+Status decode(wire::Reader& r, TrackSampleRow& out) {
+  bool has_time = false;
+  bool has_x = false;
+  bool has_y = false;
+  bool has_confidence = false;
+  bool has_coasted = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.svarint(out.time)) return Status::truncated;
+        has_time = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.x)) return Status::truncated;
+        has_x = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.y)) return Status::truncated;
+        has_y = true;
+        break;
+      }
+      case 33U: {
+        if (!r.f64(out.confidence)) return Status::truncated;
+        has_confidence = true;
+        break;
+      }
+      case 40U: {
+        if (!r.boolean(out.coasted)) return Status::truncated;
+        has_coasted = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_time) return Status::missing_field;
+  if (!has_x) return Status::missing_field;
+  if (!has_y) return Status::missing_field;
+  if (!has_confidence) return Status::missing_field;
+  if (!has_coasted) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const TrackSeries& v) {
+  for (const auto& e : v.samples) { w.varint(10U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, TrackSeries& out) {
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        auto& e = out.samples.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const TrackApplyJob& v) {
+  w.varint(10U); w.str(v.layer);
+  w.varint(16U); w.varint(static_cast<std::uint32_t>(v.mode));
+  if (v.target.has_value()) { w.varint(26U); w.str(*v.target); }
+  for (const auto& e : v.tracks) { w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  w.varint(41U); w.f64(v.source_width);
+  w.varint(49U); w.f64(v.source_height);
+  if (v.null_mode.has_value()) { w.varint(56U); w.varint(static_cast<std::uint32_t>(*v.null_mode)); }
+}
+
+Status decode(wire::Reader& r, TrackApplyJob& out) {
+  bool has_layer = false;
+  bool has_mode = false;
+  bool has_source_width = false;
+  bool has_source_height = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.layer)) return Status::truncated;
+        has_layer = true;
+        break;
+      }
+      case 16U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.mode)) return Status::bad_enum; }
+        has_mode = true;
+        break;
+      }
+      case 26U: {
+        LayerId e;
+        if (!r.str(e)) return Status::truncated;
+        out.target = std::move(e);
+        break;
+      }
+      case 34U: {
+        auto& e = out.tracks.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 41U: {
+        if (!r.f64(out.source_width)) return Status::truncated;
+        has_source_width = true;
+        break;
+      }
+      case 49U: {
+        if (!r.f64(out.source_height)) return Status::truncated;
+        has_source_height = true;
+        break;
+      }
+      case 56U: {
+        TrackApplyMode e = TrackApplyMode::follow;
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; }
+        out.null_mode = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_layer) return Status::missing_field;
+  if (!has_mode) return Status::missing_field;
+  if (!has_source_width) return Status::missing_field;
+  if (!has_source_height) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RotoBrushJob& v) {
+  w.varint(10U); w.str(v.layer);
+  w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, v.range); w.end_ld(s); }
+  w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, v.seed); w.end_ld(s); }
+  if (v.tolerance.has_value()) { w.varint(33U); w.f64(*v.tolerance); }
+  if (v.feather.has_value()) { w.varint(41U); w.f64(*v.feather); }
+}
+
+Status decode(wire::Reader& r, RotoBrushJob& out) {
+  bool has_layer = false;
+  bool has_range = false;
+  bool has_seed = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.layer)) return Status::truncated;
+        has_layer = true;
+        break;
+      }
+      case 18U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.range); st != Status::ok) return st; }
+        has_range = true;
+        break;
+      }
+      case 26U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.seed); st != Status::ok) return st; }
+        has_seed = true;
+        break;
+      }
+      case 33U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.tolerance = std::move(e);
+        break;
+      }
+      case 41U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.feather = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_layer) return Status::missing_field;
+  if (!has_range) return Status::missing_field;
+  if (!has_seed) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const ContentAwareFillJob& v) {
+  w.varint(10U); w.str(v.layer);
+  w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, v.range); w.end_ld(s); }
+  w.varint(26U); w.str(v.output_folder);
+}
+
+Status decode(wire::Reader& r, ContentAwareFillJob& out) {
+  bool has_layer = false;
+  bool has_range = false;
+  bool has_output_folder = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.layer)) return Status::truncated;
+        has_layer = true;
+        break;
+      }
+      case 18U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.range); st != Status::ok) return st; }
+        has_range = true;
+        break;
+      }
+      case 26U: {
+        if (!r.str(out.output_folder)) return Status::truncated;
+        has_output_folder = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_layer) return Status::missing_field;
+  if (!has_range) return Status::missing_field;
+  if (!has_output_folder) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const AutoReframeJob& v) {
+  w.varint(10U); w.str(v.comp);
+  w.varint(16U); w.varint(v.width);
+  w.varint(24U); w.varint(v.height);
+  if (v.name.has_value()) { w.varint(34U); w.str(*v.name); }
+  if (v.dead_zone.has_value()) { w.varint(41U); w.f64(*v.dead_zone); }
+  if (v.lag_seconds.has_value()) { w.varint(49U); w.f64(*v.lag_seconds); }
+}
+
+Status decode(wire::Reader& r, AutoReframeJob& out) {
+  bool has_comp = false;
+  bool has_width = false;
+  bool has_height = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.comp)) return Status::truncated;
+        has_comp = true;
+        break;
+      }
+      case 16U: {
+        if (!r.u32(out.width)) return Status::bad_value;
+        has_width = true;
+        break;
+      }
+      case 24U: {
+        if (!r.u32(out.height)) return Status::bad_value;
+        has_height = true;
+        break;
+      }
+      case 34U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.name = std::move(e);
+        break;
+      }
+      case 41U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.dead_zone = std::move(e);
+        break;
+      }
+      case 49U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.lag_seconds = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_comp) return Status::missing_field;
+  if (!has_width) return Status::missing_field;
+  if (!has_height) return Status::missing_field;
+  return Status::ok;
+}
+
 JobSpec::Kind JobSpec::kind() const noexcept {
-  static constexpr std::array<Kind, 12> kKinds = {Kind::track_motion, Kind::stabilize, Kind::auto_trace, Kind::scene_detect, Kind::object_matte, Kind::transcribe, Kind::audio_analysis, Kind::render, Kind::prerender, Kind::proxy, Kind::audio_duck, Kind::audio_gate};
+  static constexpr std::array<Kind, 16> kKinds = {Kind::track_motion, Kind::stabilize, Kind::auto_trace, Kind::scene_detect, Kind::object_matte, Kind::transcribe, Kind::audio_analysis, Kind::render, Kind::prerender, Kind::proxy, Kind::audio_duck, Kind::audio_gate, Kind::track_apply, Kind::roto_brush, Kind::content_aware_fill, Kind::auto_reframe};
   return kKinds[v.index()];
 }
 
@@ -10259,6 +10608,10 @@ void encode(wire::Writer& w, const JobSpec& v) {
     case 9: w.varint(5674U); { const std::size_t s = w.begin_ld(); encode(w, std::get<9>(v.v)); w.end_ld(s); } return;
     case 10: w.varint(5682U); { const std::size_t s = w.begin_ld(); encode(w, std::get<10>(v.v)); w.end_ld(s); } return;
     case 11: w.varint(5690U); { const std::size_t s = w.begin_ld(); encode(w, std::get<11>(v.v)); w.end_ld(s); } return;
+    case 12: w.varint(13690U); { const std::size_t s = w.begin_ld(); encode(w, std::get<12>(v.v)); w.end_ld(s); } return;
+    case 13: w.varint(13698U); { const std::size_t s = w.begin_ld(); encode(w, std::get<13>(v.v)); w.end_ld(s); } return;
+    case 14: w.varint(13706U); { const std::size_t s = w.begin_ld(); encode(w, std::get<14>(v.v)); w.end_ld(s); } return;
+    case 15: w.varint(13714U); { const std::size_t s = w.begin_ld(); encode(w, std::get<15>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -10365,6 +10718,38 @@ Status decode(wire::Reader& r, JobSpec& out) {
         seen = true;
         break;
       }
+      case 13690U: {
+        if (seen) return Status::multiple_variants;
+        TrackApplyJob e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<12>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 13698U: {
+        if (seen) return Status::multiple_variants;
+        RotoBrushJob e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<13>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 13706U: {
+        if (seen) return Status::multiple_variants;
+        ContentAwareFillJob e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<14>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 13714U: {
+        if (seen) return Status::multiple_variants;
+        AutoReframeJob e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<15>(std::move(e));
+        seen = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -10453,6 +10838,68 @@ Status decode(wire::Reader& r, ApplyJobResult& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const ContentAwareFillFrame& v) {
+  w.varint(8U); w.svarint(v.time);
+  w.varint(18U); w.str(v.src);
+}
+
+Status decode(wire::Reader& r, ContentAwareFillFrame& out) {
+  bool has_time = false;
+  bool has_src = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.svarint(out.time)) return Status::truncated;
+        has_time = true;
+        break;
+      }
+      case 18U: {
+        if (!r.str(out.src)) return Status::truncated;
+        has_src = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_time) return Status::missing_field;
+  if (!has_src) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const SetContentAwareFill& v) {
+  w.varint(10U); w.str(v.layer);
+  for (const auto& e : v.frames) { w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, SetContentAwareFill& out) {
+  bool has_layer = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.layer)) return Status::truncated;
+        has_layer = true;
+        break;
+      }
+      case 18U: {
+        auto& e = out.frames.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_layer) return Status::missing_field;
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const SetPluginEnabled& v) {
   w.varint(10U); w.str(v.plugin);
   w.varint(16U); w.boolean(v.enabled);
@@ -10534,7 +10981,7 @@ Status decode(wire::Reader& r, SetPluginData& out) {
 }
 
 Command::Kind Command::kind() const noexcept {
-  static constexpr std::array<Kind, 151> kKinds = {Kind::undo, Kind::redo, Kind::jump_to_history, Kind::begin_gesture, Kind::end_gesture, Kind::clear_history, Kind::set_history_limit, Kind::add_history_checkpoint, Kind::restore_document, Kind::new_project, Kind::open_project, Kind::save_project, Kind::import_project, Kind::set_project_settings, Kind::revert_project, Kind::collect_files, Kind::set_autosave, Kind::set_guides, Kind::set_swatches, Kind::set_materials, Kind::set_motion_blur, Kind::set_color_management, Kind::import_files, Kind::import_bytes, Kind::relink_item, Kind::reload_items, Kind::remove_items, Kind::rename_item, Kind::create_folder, Kind::move_items, Kind::set_interpretation, Kind::set_item_label, Kind::remove_unused_items, Kind::set_proxy, Kind::set_item_comment, Kind::set_item_tags, Kind::create_composition, Kind::duplicate_composition, Kind::set_composition_settings, Kind::set_work_area, Kind::clear_work_area, Kind::precompose, Kind::trim_comp_to_work_area, Kind::crop_composition, Kind::assemble_composition, Kind::add_render_items, Kind::set_render_item, Kind::remove_render_items, Kind::reorder_render_items, Kind::create_layer, Kind::delete_layers, Kind::duplicate_layers, Kind::reorder_layers, Kind::set_parent, Kind::rename_layer, Kind::set_layer_switches, Kind::set_blend_mode, Kind::set_track_matte, Kind::replace_layer_source, Kind::group_layers, Kind::ungroup_layer, Kind::convert_layer, Kind::paste_layers, Kind::separate_layer, Kind::auto_trace, Kind::set_layer_comment, Kind::set_layer_timing, Kind::move_layers_in_time, Kind::trim_layers, Kind::slip_layers, Kind::slide_layer, Kind::roll_edit, Kind::split_layers, Kind::ripple_delete_layers, Kind::edit_work_area, Kind::insert_gap, Kind::time_reverse_layers, Kind::set_time_remap, Kind::freeze_frame, Kind::set_retime, Kind::sequence_layers, Kind::time_stretch_layers, Kind::unfreeze_layers, Kind::ripple_delete_range, Kind::lift_range, Kind::shift_layer_keyframes, Kind::add_transition, Kind::set_transition, Kind::remove_transitions, Kind::set_property, Kind::set_properties, Kind::reset_property, Kind::set_animated, Kind::set_dimensions_separated, Kind::set_expression, Kind::set_expression_enabled, Kind::convert_expression_to_keyframes, Kind::link_property, Kind::add_keyframes, Kind::delete_keyframes, Kind::move_keyframes, Kind::update_keyframes, Kind::scale_keyframes, Kind::reverse_keyframes, Kind::paste_keyframes, Kind::set_keyframes, Kind::add_effect, Kind::add_mask, Kind::add_property_group, Kind::remove_property_groups, Kind::move_property_group, Kind::duplicate_property_groups, Kind::set_group_enabled, Kind::rename_property_group, Kind::copy_property_groups, Kind::apply_preset, Kind::invoke_effect_action, Kind::add_properties, Kind::remove_properties, Kind::paste_effects, Kind::remove_stroke, Kind::add_paint_stroke, Kind::update_paint_stroke, Kind::remove_paint_strokes, Kind::set_paint_on_transparent, Kind::set_paint_stroke_path, Kind::set_paint_path_animated, Kind::edit_path_topology, Kind::set_shape_outline, Kind::add_markers, Kind::update_markers, Kind::delete_markers, Kind::move_markers, Kind::play, Kind::pause, Kind::seek, Kind::step, Kind::set_loop, Kind::set_preview_quality, Kind::set_audio_preview, Kind::set_active_composition, Kind::set_viewport, Kind::close_viewport, Kind::set_cache_budget, Kind::purge_cache, Kind::set_interacting, Kind::start_job, Kind::cancel_job, Kind::apply_job_result, Kind::set_plugin_enabled, Kind::set_plugin_data};
+  static constexpr std::array<Kind, 152> kKinds = {Kind::undo, Kind::redo, Kind::jump_to_history, Kind::begin_gesture, Kind::end_gesture, Kind::clear_history, Kind::set_history_limit, Kind::add_history_checkpoint, Kind::restore_document, Kind::new_project, Kind::open_project, Kind::save_project, Kind::import_project, Kind::set_project_settings, Kind::revert_project, Kind::collect_files, Kind::set_autosave, Kind::set_guides, Kind::set_swatches, Kind::set_materials, Kind::set_motion_blur, Kind::set_color_management, Kind::import_files, Kind::import_bytes, Kind::relink_item, Kind::reload_items, Kind::remove_items, Kind::rename_item, Kind::create_folder, Kind::move_items, Kind::set_interpretation, Kind::set_item_label, Kind::remove_unused_items, Kind::set_proxy, Kind::set_item_comment, Kind::set_item_tags, Kind::create_composition, Kind::duplicate_composition, Kind::set_composition_settings, Kind::set_work_area, Kind::clear_work_area, Kind::precompose, Kind::trim_comp_to_work_area, Kind::crop_composition, Kind::assemble_composition, Kind::add_render_items, Kind::set_render_item, Kind::remove_render_items, Kind::reorder_render_items, Kind::create_layer, Kind::delete_layers, Kind::duplicate_layers, Kind::reorder_layers, Kind::set_parent, Kind::rename_layer, Kind::set_layer_switches, Kind::set_blend_mode, Kind::set_track_matte, Kind::replace_layer_source, Kind::group_layers, Kind::ungroup_layer, Kind::convert_layer, Kind::paste_layers, Kind::separate_layer, Kind::auto_trace, Kind::set_layer_comment, Kind::set_layer_timing, Kind::move_layers_in_time, Kind::trim_layers, Kind::slip_layers, Kind::slide_layer, Kind::roll_edit, Kind::split_layers, Kind::ripple_delete_layers, Kind::edit_work_area, Kind::insert_gap, Kind::time_reverse_layers, Kind::set_time_remap, Kind::freeze_frame, Kind::set_retime, Kind::sequence_layers, Kind::time_stretch_layers, Kind::unfreeze_layers, Kind::ripple_delete_range, Kind::lift_range, Kind::shift_layer_keyframes, Kind::add_transition, Kind::set_transition, Kind::remove_transitions, Kind::set_property, Kind::set_properties, Kind::reset_property, Kind::set_animated, Kind::set_dimensions_separated, Kind::set_expression, Kind::set_expression_enabled, Kind::convert_expression_to_keyframes, Kind::link_property, Kind::add_keyframes, Kind::delete_keyframes, Kind::move_keyframes, Kind::update_keyframes, Kind::scale_keyframes, Kind::reverse_keyframes, Kind::paste_keyframes, Kind::set_keyframes, Kind::add_effect, Kind::add_mask, Kind::add_property_group, Kind::remove_property_groups, Kind::move_property_group, Kind::duplicate_property_groups, Kind::set_group_enabled, Kind::rename_property_group, Kind::copy_property_groups, Kind::apply_preset, Kind::invoke_effect_action, Kind::add_properties, Kind::remove_properties, Kind::paste_effects, Kind::remove_stroke, Kind::add_paint_stroke, Kind::update_paint_stroke, Kind::remove_paint_strokes, Kind::set_paint_on_transparent, Kind::set_paint_stroke_path, Kind::set_paint_path_animated, Kind::edit_path_topology, Kind::set_shape_outline, Kind::add_markers, Kind::update_markers, Kind::delete_markers, Kind::move_markers, Kind::play, Kind::pause, Kind::seek, Kind::step, Kind::set_loop, Kind::set_preview_quality, Kind::set_audio_preview, Kind::set_active_composition, Kind::set_viewport, Kind::close_viewport, Kind::set_cache_budget, Kind::purge_cache, Kind::set_interacting, Kind::start_job, Kind::cancel_job, Kind::apply_job_result, Kind::set_content_aware_fill, Kind::set_plugin_enabled, Kind::set_plugin_data};
   return kKinds[v.index()];
 }
 
@@ -10689,8 +11136,9 @@ void encode(wire::Writer& w, const Command& v) {
     case 146: w.varint(6802U); { const std::size_t s = w.begin_ld(); encode(w, std::get<146>(v.v)); w.end_ld(s); } return;
     case 147: w.varint(6810U); { const std::size_t s = w.begin_ld(); encode(w, std::get<147>(v.v)); w.end_ld(s); } return;
     case 148: w.varint(6818U); { const std::size_t s = w.begin_ld(); encode(w, std::get<148>(v.v)); w.end_ld(s); } return;
-    case 149: w.varint(6962U); { const std::size_t s = w.begin_ld(); encode(w, std::get<149>(v.v)); w.end_ld(s); } return;
-    case 150: w.varint(6970U); { const std::size_t s = w.begin_ld(); encode(w, std::get<150>(v.v)); w.end_ld(s); } return;
+    case 149: w.varint(14818U); { const std::size_t s = w.begin_ld(); encode(w, std::get<149>(v.v)); w.end_ld(s); } return;
+    case 150: w.varint(6962U); { const std::size_t s = w.begin_ld(); encode(w, std::get<150>(v.v)); w.end_ld(s); } return;
+    case 151: w.varint(6970U); { const std::size_t s = w.begin_ld(); encode(w, std::get<151>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -11893,11 +12341,19 @@ Status decode(wire::Reader& r, Command& out) {
         seen = true;
         break;
       }
+      case 14818U: {
+        if (seen) return Status::multiple_variants;
+        SetContentAwareFill e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<149>(std::move(e));
+        seen = true;
+        break;
+      }
       case 6962U: {
         if (seen) return Status::multiple_variants;
         SetPluginEnabled e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<149>(std::move(e));
+        out.v.emplace<150>(std::move(e));
         seen = true;
         break;
       }
@@ -11905,7 +12361,7 @@ Status decode(wire::Reader& r, Command& out) {
         if (seen) return Status::multiple_variants;
         SetPluginData e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
-        out.v.emplace<150>(std::move(e));
+        out.v.emplace<151>(std::move(e));
         seen = true;
         break;
       }
@@ -14069,7 +14525,7 @@ Status decode(wire::Reader& r, JobRef& out) {
 }
 
 CommandResult::Kind CommandResult::kind() const noexcept {
-  static constexpr std::array<Kind, 151> kKinds = {Kind::undo, Kind::redo, Kind::jump_to_history, Kind::begin_gesture, Kind::end_gesture, Kind::clear_history, Kind::set_history_limit, Kind::add_history_checkpoint, Kind::restore_document, Kind::new_project, Kind::open_project, Kind::save_project, Kind::import_project, Kind::set_project_settings, Kind::revert_project, Kind::collect_files, Kind::set_autosave, Kind::set_guides, Kind::set_swatches, Kind::set_materials, Kind::set_motion_blur, Kind::set_color_management, Kind::import_files, Kind::import_bytes, Kind::relink_item, Kind::reload_items, Kind::remove_items, Kind::rename_item, Kind::create_folder, Kind::move_items, Kind::set_interpretation, Kind::set_item_label, Kind::remove_unused_items, Kind::set_proxy, Kind::set_item_comment, Kind::set_item_tags, Kind::create_composition, Kind::duplicate_composition, Kind::set_composition_settings, Kind::set_work_area, Kind::clear_work_area, Kind::precompose, Kind::trim_comp_to_work_area, Kind::crop_composition, Kind::assemble_composition, Kind::add_render_items, Kind::set_render_item, Kind::remove_render_items, Kind::reorder_render_items, Kind::create_layer, Kind::delete_layers, Kind::duplicate_layers, Kind::reorder_layers, Kind::set_parent, Kind::rename_layer, Kind::set_layer_switches, Kind::set_blend_mode, Kind::set_track_matte, Kind::replace_layer_source, Kind::group_layers, Kind::ungroup_layer, Kind::convert_layer, Kind::paste_layers, Kind::separate_layer, Kind::auto_trace, Kind::set_layer_comment, Kind::set_layer_timing, Kind::move_layers_in_time, Kind::trim_layers, Kind::slip_layers, Kind::slide_layer, Kind::roll_edit, Kind::split_layers, Kind::ripple_delete_layers, Kind::edit_work_area, Kind::insert_gap, Kind::time_reverse_layers, Kind::set_time_remap, Kind::freeze_frame, Kind::set_retime, Kind::sequence_layers, Kind::time_stretch_layers, Kind::unfreeze_layers, Kind::ripple_delete_range, Kind::lift_range, Kind::shift_layer_keyframes, Kind::add_transition, Kind::set_transition, Kind::remove_transitions, Kind::set_property, Kind::set_properties, Kind::reset_property, Kind::set_animated, Kind::set_dimensions_separated, Kind::set_expression, Kind::set_expression_enabled, Kind::convert_expression_to_keyframes, Kind::link_property, Kind::add_keyframes, Kind::delete_keyframes, Kind::move_keyframes, Kind::update_keyframes, Kind::scale_keyframes, Kind::reverse_keyframes, Kind::paste_keyframes, Kind::set_keyframes, Kind::add_effect, Kind::add_mask, Kind::add_property_group, Kind::remove_property_groups, Kind::move_property_group, Kind::duplicate_property_groups, Kind::set_group_enabled, Kind::rename_property_group, Kind::copy_property_groups, Kind::apply_preset, Kind::invoke_effect_action, Kind::add_properties, Kind::remove_properties, Kind::paste_effects, Kind::remove_stroke, Kind::add_paint_stroke, Kind::update_paint_stroke, Kind::remove_paint_strokes, Kind::set_paint_on_transparent, Kind::set_paint_stroke_path, Kind::set_paint_path_animated, Kind::edit_path_topology, Kind::set_shape_outline, Kind::add_markers, Kind::update_markers, Kind::delete_markers, Kind::move_markers, Kind::play, Kind::pause, Kind::seek, Kind::step, Kind::set_loop, Kind::set_preview_quality, Kind::set_audio_preview, Kind::set_active_composition, Kind::set_viewport, Kind::close_viewport, Kind::set_cache_budget, Kind::purge_cache, Kind::set_interacting, Kind::start_job, Kind::cancel_job, Kind::apply_job_result, Kind::set_plugin_enabled, Kind::set_plugin_data};
+  static constexpr std::array<Kind, 152> kKinds = {Kind::undo, Kind::redo, Kind::jump_to_history, Kind::begin_gesture, Kind::end_gesture, Kind::clear_history, Kind::set_history_limit, Kind::add_history_checkpoint, Kind::restore_document, Kind::new_project, Kind::open_project, Kind::save_project, Kind::import_project, Kind::set_project_settings, Kind::revert_project, Kind::collect_files, Kind::set_autosave, Kind::set_guides, Kind::set_swatches, Kind::set_materials, Kind::set_motion_blur, Kind::set_color_management, Kind::import_files, Kind::import_bytes, Kind::relink_item, Kind::reload_items, Kind::remove_items, Kind::rename_item, Kind::create_folder, Kind::move_items, Kind::set_interpretation, Kind::set_item_label, Kind::remove_unused_items, Kind::set_proxy, Kind::set_item_comment, Kind::set_item_tags, Kind::create_composition, Kind::duplicate_composition, Kind::set_composition_settings, Kind::set_work_area, Kind::clear_work_area, Kind::precompose, Kind::trim_comp_to_work_area, Kind::crop_composition, Kind::assemble_composition, Kind::add_render_items, Kind::set_render_item, Kind::remove_render_items, Kind::reorder_render_items, Kind::create_layer, Kind::delete_layers, Kind::duplicate_layers, Kind::reorder_layers, Kind::set_parent, Kind::rename_layer, Kind::set_layer_switches, Kind::set_blend_mode, Kind::set_track_matte, Kind::replace_layer_source, Kind::group_layers, Kind::ungroup_layer, Kind::convert_layer, Kind::paste_layers, Kind::separate_layer, Kind::auto_trace, Kind::set_layer_comment, Kind::set_layer_timing, Kind::move_layers_in_time, Kind::trim_layers, Kind::slip_layers, Kind::slide_layer, Kind::roll_edit, Kind::split_layers, Kind::ripple_delete_layers, Kind::edit_work_area, Kind::insert_gap, Kind::time_reverse_layers, Kind::set_time_remap, Kind::freeze_frame, Kind::set_retime, Kind::sequence_layers, Kind::time_stretch_layers, Kind::unfreeze_layers, Kind::ripple_delete_range, Kind::lift_range, Kind::shift_layer_keyframes, Kind::add_transition, Kind::set_transition, Kind::remove_transitions, Kind::set_property, Kind::set_properties, Kind::reset_property, Kind::set_animated, Kind::set_dimensions_separated, Kind::set_expression, Kind::set_expression_enabled, Kind::convert_expression_to_keyframes, Kind::link_property, Kind::add_keyframes, Kind::delete_keyframes, Kind::move_keyframes, Kind::update_keyframes, Kind::scale_keyframes, Kind::reverse_keyframes, Kind::paste_keyframes, Kind::set_keyframes, Kind::add_effect, Kind::add_mask, Kind::add_property_group, Kind::remove_property_groups, Kind::move_property_group, Kind::duplicate_property_groups, Kind::set_group_enabled, Kind::rename_property_group, Kind::copy_property_groups, Kind::apply_preset, Kind::invoke_effect_action, Kind::add_properties, Kind::remove_properties, Kind::paste_effects, Kind::remove_stroke, Kind::add_paint_stroke, Kind::update_paint_stroke, Kind::remove_paint_strokes, Kind::set_paint_on_transparent, Kind::set_paint_stroke_path, Kind::set_paint_path_animated, Kind::edit_path_topology, Kind::set_shape_outline, Kind::add_markers, Kind::update_markers, Kind::delete_markers, Kind::move_markers, Kind::play, Kind::pause, Kind::seek, Kind::step, Kind::set_loop, Kind::set_preview_quality, Kind::set_audio_preview, Kind::set_active_composition, Kind::set_viewport, Kind::close_viewport, Kind::set_cache_budget, Kind::purge_cache, Kind::set_interacting, Kind::start_job, Kind::cancel_job, Kind::apply_job_result, Kind::set_content_aware_fill, Kind::set_plugin_enabled, Kind::set_plugin_data};
   return kKinds[v.index()];
 }
 
@@ -14224,8 +14680,9 @@ void encode(wire::Writer& w, const CommandResult& v) {
     case 146: w.varint(6802U); { const std::size_t s = w.begin_ld(); encode(w, std::get<146>(v.v)); w.end_ld(s); } return;
     case 147: w.varint(6810U); { const std::size_t s = w.begin_ld(); encode(w, std::get<147>(v.v)); w.end_ld(s); } return;
     case 148: w.varint(6818U); { const std::size_t s = w.begin_ld(); encode(w, std::get<148>(v.v)); w.end_ld(s); } return;
-    case 149: w.varint(6962U); { const std::size_t s = w.begin_ld(); encode(w, std::get<149>(v.v)); w.end_ld(s); } return;
-    case 150: w.varint(6970U); { const std::size_t s = w.begin_ld(); encode(w, std::get<150>(v.v)); w.end_ld(s); } return;
+    case 149: w.varint(14818U); { const std::size_t s = w.begin_ld(); encode(w, std::get<149>(v.v)); w.end_ld(s); } return;
+    case 150: w.varint(6962U); { const std::size_t s = w.begin_ld(); encode(w, std::get<150>(v.v)); w.end_ld(s); } return;
+    case 151: w.varint(6970U); { const std::size_t s = w.begin_ld(); encode(w, std::get<151>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -15428,7 +15885,7 @@ Status decode(wire::Reader& r, CommandResult& out) {
         seen = true;
         break;
       }
-      case 6962U: {
+      case 14818U: {
         if (seen) return Status::multiple_variants;
         Empty e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
@@ -15436,11 +15893,19 @@ Status decode(wire::Reader& r, CommandResult& out) {
         seen = true;
         break;
       }
-      case 6970U: {
+      case 6962U: {
         if (seen) return Status::multiple_variants;
         Empty e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.v.emplace<150>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 6970U: {
+        if (seen) return Status::multiple_variants;
+        Empty e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<151>(std::move(e));
         seen = true;
         break;
       }
@@ -21157,7 +21622,7 @@ Status decode(wire::Reader& r, Goodbye& out) {
 }
 
 EngineMessage::Kind EngineMessage::kind() const noexcept {
-  static constexpr std::array<Kind, 6> kKinds = {Kind::hello, Kind::welcome, Kind::request, Kind::response, Kind::events, Kind::goodbye};
+  static constexpr std::array<Kind, 7> kKinds = {Kind::hello, Kind::welcome, Kind::request, Kind::response, Kind::events, Kind::goodbye, Kind::log_record};
   return kKinds[v.index()];
 }
 
@@ -21169,6 +21634,7 @@ void encode(wire::Writer& w, const EngineMessage& v) {
     case 3: w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, std::get<3>(v.v)); w.end_ld(s); } return;
     case 4: w.varint(42U); { const std::size_t s = w.begin_ld(); encode(w, std::get<4>(v.v)); w.end_ld(s); } return;
     case 5: w.varint(50U); { const std::size_t s = w.begin_ld(); encode(w, std::get<5>(v.v)); w.end_ld(s); } return;
+    case 6: w.varint(8050U); { const std::size_t s = w.begin_ld(); encode(w, std::get<6>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -21224,6 +21690,14 @@ Status decode(wire::Reader& r, EngineMessage& out) {
         Goodbye e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.v.emplace<5>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 8050U: {
+        if (seen) return Status::multiple_variants;
+        LogRecord e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<6>(std::move(e));
         seen = true;
         break;
       }
@@ -24110,7 +24584,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 423> kNames = {
+constexpr std::array<std::string_view, 431> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -24361,11 +24835,19 @@ constexpr std::array<std::string_view, 423> kNames = {
     "ProxyJob",
     "RenderJob",
     "PrerenderJob",
+    "TrackSampleRow",
+    "TrackSeries",
+    "TrackApplyJob",
+    "RotoBrushJob",
+    "ContentAwareFillJob",
+    "AutoReframeJob",
     "JobSpec",
     "StartJob",
     "CancelJob",
     "ApplyJobResult",
     "JobRef",
+    "ContentAwareFillFrame",
+    "SetContentAwareFill",
     "SetPluginEnabled",
     "SetPluginData",
     "ItemInfo",
@@ -24790,11 +25272,19 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "ProxyJob") return roundtrip<ProxyJob>(bytes, out);
   if (type == "RenderJob") return roundtrip<RenderJob>(bytes, out);
   if (type == "PrerenderJob") return roundtrip<PrerenderJob>(bytes, out);
+  if (type == "TrackSampleRow") return roundtrip<TrackSampleRow>(bytes, out);
+  if (type == "TrackSeries") return roundtrip<TrackSeries>(bytes, out);
+  if (type == "TrackApplyJob") return roundtrip<TrackApplyJob>(bytes, out);
+  if (type == "RotoBrushJob") return roundtrip<RotoBrushJob>(bytes, out);
+  if (type == "ContentAwareFillJob") return roundtrip<ContentAwareFillJob>(bytes, out);
+  if (type == "AutoReframeJob") return roundtrip<AutoReframeJob>(bytes, out);
   if (type == "JobSpec") return roundtrip<JobSpec>(bytes, out);
   if (type == "StartJob") return roundtrip<StartJob>(bytes, out);
   if (type == "CancelJob") return roundtrip<CancelJob>(bytes, out);
   if (type == "ApplyJobResult") return roundtrip<ApplyJobResult>(bytes, out);
   if (type == "JobRef") return roundtrip<JobRef>(bytes, out);
+  if (type == "ContentAwareFillFrame") return roundtrip<ContentAwareFillFrame>(bytes, out);
+  if (type == "SetContentAwareFill") return roundtrip<SetContentAwareFill>(bytes, out);
   if (type == "SetPluginEnabled") return roundtrip<SetPluginEnabled>(bytes, out);
   if (type == "SetPluginData") return roundtrip<SetPluginData>(bytes, out);
   if (type == "ItemInfo") return roundtrip<ItemInfo>(bytes, out);

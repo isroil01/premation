@@ -7,6 +7,7 @@
 #include "docio.hpp"
 #include "fxstate.hpp"
 #include "handlers_items.hpp"
+#include "time_conv.hpp"
 
 namespace premation::doc {
 
@@ -377,6 +378,32 @@ ResultOf<api::SetPluginData> handle(const api::SetPluginData& c, HCtx& x) {
   if (!group.obj().empty()) cur.set(c.group, std::move(group));
   else cur.erase(c.group);
   sg_set_fx(d, c.layer, "pluginData", cur.is_object() && !cur.obj().empty() ? cur : Json());
+  return {};
+}
+
+/// The content-aware fill record (contentAwareFillVideo.ts `fx.contentAwareFill`):
+/// `{frames: [{t, dataUrl}]}`, `t` on the layer's keyframe axis (the renderer
+/// shows the frame nearest the layer's time), `dataUrl` the picture's src.
+ResultOf<api::SetContentAwareFill> handle(const api::SetContentAwareFill& c, HCtx& x) {
+  Document& d = x.d;
+  (void)require_layer(d, c.layer);
+  x.label = "Content-Aware Fill";
+  if (c.frames.empty()) {
+    sg_set_fx(d, c.layer, "contentAwareFill", Json());
+    return {};
+  }
+  Json frames = Json::array();
+  for (std::size_t i = 0; i < c.frames.size(); ++i) {
+    const api::ContentAwareFillFrame& f = c.frames[i];
+    if (f.src.empty()) fail(ErrorCode::invalid_argument, "fill frame " + std::to_string(i) + " has no picture");
+    Json fr = Json::object();
+    fr.set("t", Json::number(comp_to_keyframe_time(d, x.view, c.layer, flicks_to_seconds(f.time))));
+    fr.set("dataUrl", Json::string(f.src));
+    frames.arr_mut().push_back(std::move(fr));
+  }
+  Json record = Json::object();
+  record.set("frames", std::move(frames));
+  sg_set_fx(d, c.layer, "contentAwareFill", std::move(record));
   return {};
 }
 

@@ -170,6 +170,7 @@ void Session::on_message(api::EngineMessage message, Clock::time_point now) {
     case api::EngineMessage::Kind::welcome:
     case api::EngineMessage::Kind::response:
     case api::EngineMessage::Kind::events:
+    case api::EngineMessage::Kind::log_record:
       if (phase_ == Phase::awaiting_hello) {
         close(api::GoodbyeReason::protocol_error, "the first message must be a Hello");
         return;

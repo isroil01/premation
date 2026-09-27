@@ -745,6 +745,11 @@
     "type": "applyJobResult"
   },
   {
+    "id": 1852,
+    "kind": "edit",
+    "type": "setContentAwareFill"
+  },
+  {
     "id": 870,
     "kind": "control",
     "type": "setPluginEnabled"

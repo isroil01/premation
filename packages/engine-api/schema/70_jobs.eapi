@@ -25,6 +25,7 @@ struct TrackPointSpec {
 
 struct TrackMotionJob {
   layer: LayerId = 1;
+  /// `mask` (maskTrack.ts trackLayerMask): the points are the vertices of the layer's masks as they stand at the origin (every mask, or the one `applyTo` names as `masks/<id>`; `points` gives only the window sizes), and the result is written as path keys on those masks. `planar`: see `planarGrid`.
   kind: TrackKind = 2;
   points: TrackPointSpec[] = 3;
   range: TimeRange = 4;
@@ -41,6 +42,8 @@ struct TrackMotionJob {
   analysisMaxEdge?: u32 = 709;
   /// Stabilize Motion (trackerStore mode `stabilize`, applyTrack.ts planStabilize): point 0's inverse motion written as position keys on the TRACKED layer; `applyTo` is not read. Kind `position` only.
   stabilize: bool = 710;
+  /// Kind `planar` (the corner mode's "Dense grid", planarFit.ts densifyQuad): the quad TL, TR, BR, BL (+ any points after it, kept) gains a `planarGrid`×`planarGrid` lattice of features inside it (default 5, 1…16) and the corner pin is the RANSAC plane over all of them.
+  planarGrid?: u32 = 1710;
 }
 
 /// `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%).
@@ -51,6 +54,8 @@ struct StabilizeJob {
   method: string = 4;
   /// Long edge the footage is decoded at (the TS analysis tier; default 960, 0 = full size). The flow itself runs at most 480 px wide, as smoothStabilize.ts.
   analysisMaxEdge?: u32 = 704;
+  /// smoothStabilize.ts `variant`: `similarity` (default — position / rotation / scale keys per `method`), `subspace` (a 4×4 grid of local similarities → Mesh Warp keys on the layer, subspaceWarp.ts), `rolling-shutter` (the subspace grid with the rows' readout shear repaired).
+  variant?: string = 1704;
 }
 /// `channel`: `alpha`, `luminance`, `red`, `green`, `blue`; `threshold` 0…1. Only the frame at `range.start` is traced unless `everyFrame` (then one mask path key per frame of the range).
 struct AutoTraceJob {
@@ -67,6 +72,8 @@ struct AutoTraceJob {
   everyFrame: bool = 707;
   /// Invert the matte before tracing.
   invert: bool = 708;
+  /// Trace what the layer DRAWS (autoTrace.ts renderLayerAlone): the layer rendered alone (solo, transparent comp, its effects and masks included) by a child engine, comp-space contours pulled back through the layer's inverse transform at each frame. False: the layer's own footage frames (layer pixels). Any layer kind when true; footage only when false.
+  rendered: bool = 1708;
 }
 /// Scene Edit Detection (sceneEditDetect.ts): cuts and dissolves in a video layer's visible span, from 64-bin luma-histogram distances with an adaptive threshold. `createMarkers`: composition markers "Cut N" / "Dissolve N"; `splitLayers`: the layer split at every cut (markers win when both are set). `threshold` is the L1 floor (0…2, default 0.3), `sensitivity` the multiple of the local median (default 5), `minShotSeconds` absent = 6 frames; `dissolves` default true.
 struct SceneDetectJob {
@@ -126,6 +133,29 @@ struct RenderJob { items: RenderItemId[] = 1; }
 /// Pre-render (Pre-render / proxy creation) of compositions to files.
 struct PrerenderJob { comps: ItemId[] = 1; outputFolder: string = 2; format: string = 3; }
 
+/// What a finished track is applied as (trackMotionActions.ts onApply / onApplyMesh / onCreateNullAndApply / onCreateNullsForPlanes / onSolveCamera).
+enum TrackApplyMode { follow = 0; transform = 1; corner = 2; stabilize = 3; meshWarp = 4; createNull = 5; nullsForPlanes = 6; cameraSolve = 7; }
+/// One tracked sample: composition time, layer (source display) pixels, NCC confidence, coasted through a loss.
+struct TrackSampleRow { time: Time = 1; x: f64 = 2; y: f64 = 3; confidence: f64 = 4; coasted: bool = 5; }
+struct TrackSeries { samples: TrackSampleRow[] = 1; }
+/// Apply a track the UI already holds (a `trackMotion` job's `tracks`, or the page tracker's) — the plans of applyTrack.ts / trackApplyEdits.ts in the engine, ONE history entry:
+/// `follow` planTrackToLayer (a camera target: planTrackToCamera); `transform` planTransformTrack with rotation and scale (a camera: planCameraSolveTrack); `corner` planCornerPinTrack; `stabilize` planStabilize on `layer`; `meshWarp` planMeshWarpTrack; `createNull` Create Null & Apply (a "Tracked Null" beside the footage, keyed per `nullMode`: follow | transform | corner); `nullsForPlanes` one null per four tracks (corner pins); `cameraSolve` the 3D Camera Tracker (sfmCamera.ts, planar-hybrid SfM + bundle adjustment) keyed onto the composition's solve camera, made on the first run. `target` is read by follow / transform / corner / meshWarp.
+struct TrackApplyJob {
+  layer: LayerId = 1;
+  mode: TrackApplyMode = 2;
+  target?: LayerId = 3;
+  tracks: TrackSeries[] = 4;
+  sourceWidth: f64 = 5;
+  sourceHeight: f64 = 6;
+  nullMode?: TrackApplyMode = 7;
+}
+/// Roto Brush (rotoBrush.ts runRotoBrush): a GrabCut-class matte from the `seed` click (layer pixels at `range.start`, colour `tolerance` default 36), propagated frame to frame by block flow with a colour re-seed, as ONE "Roto Brush" mask with a path key per frame of the range (feather `feather` px, default 2).
+struct RotoBrushJob { layer: LayerId = 1; range: TimeRange = 2; seed: Vec2 = 3; tolerance?: f64 = 4; feather?: f64 = 5; }
+/// Content-Aware Fill (contentAwareFillVideo.ts runContentAwareFill): the layer's masks at each frame of the range are the hole, filled by PatchMatch then carried by flow both ways; the filled frames are PNGs written to `outputFolder` (default: next to the project, `Content-Aware Fill/`) and attached with setContentAwareFill (the renderer shows the nearest filled frame over the footage).
+struct ContentAwareFillJob { layer: LayerId = 1; range: TimeRange = 2; outputFolder: string = 3; }
+/// Auto-reframe (autoReframe.ts autoReframeComposition): `comp` rendered small (160 px wide, 12 frames/s) by a child engine, saliency + shot cuts per frame (saliency.ts, sceneEditDetect.ts), a dead-zone / lag camera path (reframePath.ts); a NEW composition `width`×`height` holding `comp` as a precomp layer scaled to cover, with the pan keyed on its separated position. The source is untouched.
+struct AutoReframeJob { comp: ItemId = 1; width: u32 = 2; height: u32 = 3; name?: string = 4; deadZone?: f64 = 5; lagSeconds?: f64 = 6; }
+
 union JobSpec {
   trackMotion: TrackMotionJob = 1;
   stabilize: StabilizeJob = 2;
@@ -139,6 +169,10 @@ union JobSpec {
   proxy: ProxyJob = 709;
   audioDuck: AudioDuckJob = 710;
   audioGate: AudioGateJob = 711;
+  trackApply: TrackApplyJob = 1711;
+  rotoBrush: RotoBrushJob = 1712;
+  contentAwareFill: ContentAwareFillJob = 1713;
+  autoReframe: AutoReframeJob = 1714;
 }
 
 command startJob = 850 [control] { job: JobSpec = 1; apply: bool = 2; } -> JobRef;
@@ -147,6 +181,11 @@ command cancelJob = 851 [control] { job: JobId = 1; }
 command applyJobResult = 852 { job: JobId = 1; } -> ItemList;
 
 struct JobRef { job: JobId = 1; }
+
+/// A content-aware fill frame: `time` in composition time, `src` the filled picture (a file path or URL the renderer reads as a still).
+struct ContentAwareFillFrame { time: Time = 1; src: string = 2; }
+/// The layer's content-aware fill (the content-aware fill job's result; the page stored the same record as `fx.contentAwareFill`): the frame nearest the layer's time stands in for its footage. Empty `frames` clears it. Inverse: the previous record.
+command setContentAwareFill = 1852 { layer: LayerId = 1; frames: ContentAwareFillFrame[] = 2; }
 
 family "Plugins";
 

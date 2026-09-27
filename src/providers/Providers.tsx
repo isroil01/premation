@@ -1892,6 +1892,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
                 threshold: threshold / 255,
                 everyFrame: range,
                 invert: false,
+                rendered: false,
               },
             },
             { onProgress: (f) => { useUIStore.getState().notify({ level: 'info', message: `Auto-trace: ${Math.round(f * 100)}%`, durationMs: 600 }); } },

@@ -1,17 +1,12 @@
 // Job kind `trackMotion` — the Track Motion panel's Track + Apply
 // (src/layout/Inspector/trackMotion/trackMotionActions.ts onTrack / onApply,
-// src/core/tracking/trackVideoLayer.ts, tracker.ts, applyTrack.ts).
+// src/core/tracking/trackVideoLayer.ts, tracker.ts, applyTrack.ts,
+// maskTrack.ts, planarFit.ts densifyQuad).
 //
 // Track: the footage layer's frames are decoded at the analysis size
-// (`analysisMaxEdge`, default 960 — the TS analysis tier), converted to luma
-// (the decoder's Y bytes when it has them, lumaExtract.ts 'raw8'; else
-// lumaFromRGBA), and the points walked through tracking.hpp over the DISTINCT
-// source frames of the range; comp samples are read out per comp frame
-// (`readOutCompSamples`: a comp frame whose source frame was never reached is
-// dropped). Points, window sizes and samples are in layer (source display)
-// pixels; windows convert to decoded pixels by the geometric mean, as
-// trackVideoLayer.ts does, and are then ROUNDED to whole pixels (the TS relies
-// on them being whole: a fractional half makes its Float32Array length throw).
+// (`analysisMaxEdge`, default 960 — the TS analysis tier) and walked by
+// track_walk.hpp (the distinct source frames of the range, samples read out
+// per comp frame). Point specs:
 //
 //   feature   Rect centre = the point; half = round((max(w, h) − 1) / 2)
 //             (21 → 10, the panel's 21×21), default 10.
@@ -26,8 +21,26 @@
 // backward then forward from the origin (default: the playhead) and merges
 // (autoTrack.ts runAutoTrack / mergeBidirectional).
 //
+// Kinds:
+//   position … perspectiveCorner   the points as given.
+//   planar    the corner mode's "Dense grid": the quad TL, TR, BR, BL (+ any
+//             points after it, kept) gains a planarGrid² lattice inside it
+//             (densifyQuad, default 5); applied as a corner pin, whose fit over
+//             more than four points is the RANSAC plane.
+//   mask      trackLayerMask: every vertex of the layer's masks (or of the one
+//             `applyTo` names, `masks/<id>`) as they stand at the origin
+//             (the mask animation interpolated there, else the static mask) is
+//             a point — past 64 vertices an arc-length sample is tracked and the
+//             rest ride their neighbours (mask_sampling.hpp); the windows are
+//             `points[0]`'s (default 10 / 24). The result is ONE path key per
+//             tracked comp frame on every tracked mask ("Track Mask"): vertices
+//             displaced by their tracked delta, handles rigid with their vertex,
+//             a lost vertex frozen where it was last seen; keys inside the
+//             tracked span replaced, the rest kept. (The TS wrote the layer's
+//             mask animation outside the history; here it is one undoable entry.)
+//
 // Apply (`applyTo` a PropRef on the TARGET layer; absent = analysis only, the
-// track is in the summary):
+// track is in the summary — the panel's Apply then sends a trackApply job):
 //   position                  path `transform/position` or `transform`:
 //                               planTrackToLayer (x/y keys, parent space);
 //                               a camera target: planTrackToCamera (+ poiX/poiY).
@@ -35,75 +48,64 @@
 //                               (rotation, and scale for …Scale, as deltas on
 //                               the target's own values); a camera target:
 //                               planCameraSolveTrack (+ orientationZ).
-//   perspectiveCorner         four points TL, TR, BR, BL (+ more: RANSAC planar
+//   perspectiveCorner/planar  four points TL, TR, BR, BL (+ more: RANSAC planar
 //                               fit, smoothed): path `effects/<id>` of a Corner
 //                               Pin, or `effects` = the target's first Corner Pin,
 //                               added when it has none (planCornerPinTrack).
 //   stabilize = true          kind position: planStabilize on the TRACKED layer.
 // The writes go out as track_apply.hpp describes (addEffect?, addKeyframes,
 // deleteKeyframes) in the job's one history entry.
-//
-// Not ported (the TS has them, the schema cannot ask for them or they are
-// other kinds): mask / planar kinds (maskTrack.ts), one-click auto-track
-// (autoFeature.ts / autoTrack.ts planTrack), Create Null & Apply, mesh warp,
-// 3D camera solves, nulls for planes.
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "fail.hpp"
+#include "fxstate.hpp"
 #include "job_inputs.hpp"
 #include "job_kinds.hpp"
 #include "jsmath.hpp"
+#include "mask_sampling.hpp"
 #include "media_input.hpp"
+#include "props.hpp"
 #include "scene.hpp"
 #include "track_apply.hpp"
 #include "track_frames.hpp"
-#include "tracking.hpp"
+#include "track_plans.hpp"
+#include "track_walk.hpp"
 
 namespace premation::jobs {
 
 using api::ErrorCode;
 using doc::fail;
-namespace tr = tracking;
 namespace ta = trackapply;
 namespace tf = trackframes;
+namespace tw = trackwalk;
+namespace ms = masksample;
 
 namespace {
 
 constexpr double kDefaultFeatureHalf = 10;
 constexpr double kDefaultSearchHalf = 24;
 constexpr std::uint32_t kAnalysisEdge = 960;
-/// Luma planes a backward walk may hold at once (reverseFrameWalk.ts budgets the same way).
-constexpr std::size_t kReverseBudgetBytes = std::size_t{256} << 20U;
 
 enum class Mode : std::uint8_t { none, follow, transform, corner, stabilize };
 
 struct PointSpec {
-  double x = 0;
-  double y = 0;
-  double featureHalf = kDefaultFeatureHalf;  ///< display px
-  double searchHalf = kDefaultSearchHalf;
+  tw::WalkPoint p;
   double attachDx = 0;
   double attachDy = 0;
 };
 
 /// Everything the work and the apply read, copied out of the document at prepare.
 struct TrackJob {
-  FootageLayer fl;
+  tw::WalkSpec walk;
   api::TrackKind kind = api::TrackKind::position;
-  api::TrackDirection direction = api::TrackDirection::forward;
   std::vector<PointSpec> points;
-  tf::CompFrames frames;
-  std::int64_t origin = 0;
-  double fps = 30;
-  double minConfidence = 0.55;
-  int maxCoast = 8;
   std::uint32_t maxEdge = kAnalysisEdge;
   Mode mode = Mode::none;
   std::string target;
@@ -111,314 +113,51 @@ struct TrackJob {
   bool targetCamera = false;
 };
 
-struct CompSample {
-  double compTime = 0;
-  double x = 0;
-  double y = 0;
-  double confidence = 0;
-  bool coasted = false;
-};
-
 double half_of(double size, double fallback) {
   return size > 0 ? motion::js::round((size - 1) / 2) : fallback;
 }
 
-/// Decoded luma for one walk: a straight stream ascending, bounded chunks
-/// decoded forward and served backwards descending (reverseFrameWalk.ts).
-class LumaWalk {
- public:
-  struct Cancelled {};
-  LumaWalk(FrameSource& src, JobControl& control, std::int64_t lo, bool descending)
-      : src_(src), control_(control), lo_(lo), descending_(descending) {
-    const std::size_t plane = std::max<std::size_t>(1, std::size_t{src.width()} * src.height() * sizeof(float));
-    chunk_ = static_cast<std::int64_t>(std::max<std::size_t>(1, kReverseBudgetBytes / plane));
-  }
-
-  const tr::LumaPlane& at(std::int64_t idx) {
-    if (const auto it = cache_.find(idx); it != cache_.end()) return it->second;
-    cache_.clear();
-    const std::int64_t from = descending_ ? std::max(lo_, idx - chunk_ + 1) : idx;
-    for (std::int64_t i = from; i <= idx; ++i) {
-      if (control_.cancelled()) throw Cancelled{};
-      load(i);
-    }
-    return cache_.at(idx);
-  }
-
- private:
-  void load(std::int64_t i) {
-    LumaImage li;
-    std::string error;
-    if (!src_.read_luma(i, li, error)) fail(ErrorCode::decode, "could not decode frame " + std::to_string(i) + ": " + error);
-    tr::LumaPlane p;
-    p.width = static_cast<int>(li.width);
-    p.height = static_cast<int>(li.height);
-    p.data = std::move(li.data);
-    cache_.insert_or_assign(i, std::move(p));
-  }
-
-  FrameSource& src_;
-  JobControl& control_;
-  std::int64_t lo_;
-  bool descending_;
-  std::int64_t chunk_ = 1;
-  std::map<std::int64_t, tr::LumaPlane> cache_;
-};
-
-// ── the plans (applyTrack.ts), against the document as it stands ────────
-
-struct Ctx {
-  const TrackJob& job;
-  const ta::DocView& v;
-  double sourceWidth;
-  double sourceHeight;
-  ta::P2 box;  ///< the footage's stored size, for a video box readGeometry does not report
-
-  [[nodiscard]] std::optional<ta::P2> to_comp(double x, double y, double t) const {
-    return v.sample_to_comp(job.fl.layer, x, y, t, sourceWidth, sourceHeight, box);
-  }
-  /// Comp point → `target`'s parent space (comp space when it has none), nullopt when unmeasurable.
-  [[nodiscard]] std::optional<ta::P2> to_parent(const std::string& target, ta::P2 c, double t) const {
-    const std::optional<std::string> parent = v.parent_of(target);
-    if (!parent) return c;
-    const std::optional<doc::LayerSpace> ps = v.space(*parent, t);
-    if (!ps) return std::nullopt;
-    return ta::DocView::from_comp(*ps, c);
-  }
-};
-
-/// planTrackToLayer / planTrackToCamera.
-std::optional<ta::Plan> plan_follow(const Ctx& c, const std::vector<CompSample>& samples, bool camera) {
-  if (c.v.node(c.job.target) == nullptr || samples.empty()) return std::nullopt;
-  if (camera && !c.v.is_camera(c.job.target)) return std::nullopt;
-  ta::Buckets b(camera ? std::vector<std::string>{"x", "y", "poiX", "poiY"} : std::vector<std::string>{"x", "y"});
-  std::size_t n = 0;
-  for (const CompSample& s : samples) {
-    const std::optional<ta::P2> cp = c.to_comp(s.x, s.y, s.compTime);
-    if (!cp) continue;
-    const std::optional<ta::P2> p = c.to_parent(c.job.target, *cp, s.compTime);
-    if (!p) continue;
-    b.add("x", s.compTime, p->x);
-    b.add("y", s.compTime, p->y);
-    if (camera) {
-      b.add("poiX", s.compTime, p->x);
-      b.add("poiY", s.compTime, p->y);
-    }
-    ++n;
-  }
-  if (n == 0) return std::nullopt;
-  return ta::Plan{camera ? "Apply Camera Track" : "Apply Motion Track", c.job.target, b.writes(), {}, {}, n};
-}
-
-/// planStabilize: the tracked layer moved so the feature stays where it was at the first sample.
-std::optional<ta::Plan> plan_stabilize(const Ctx& c, const std::vector<CompSample>& samples) {
-  const std::string& video = c.job.fl.layer;
-  if (c.v.node(video) == nullptr || samples.empty()) return std::nullopt;
-  const std::optional<ta::Geometry> g = c.v.geometry(video);
-  if (!g) return std::nullopt;
-  const std::optional<std::string> parent = c.v.parent_of(video);
-  const CompSample& first = samples.front();
-  const std::optional<ta::P2> p0 = c.to_comp(first.x, first.y, first.compTime);
-  if (!p0) return std::nullopt;
-  ta::Buckets b({"x", "y"});
-  std::size_t n = 0;
-  for (const CompSample& s : samples) {
-    const std::optional<ta::P2> p = c.to_comp(s.x, s.y, s.compTime);
-    if (!p) continue;
-    double dx = p0->x - p->x;
-    double dy = p0->y - p->y;
-    if (parent) {
-      const std::optional<doc::LayerSpace> ps = c.v.space(*parent, s.compTime);
-      if (!ps) continue;
-      const ta::P2 a = ta::DocView::from_comp(*ps, *p0);
-      const ta::P2 q = ta::DocView::from_comp(*ps, *p);
-      dx = a.x - q.x;
-      dy = a.y - q.y;
-    }
-    const double t = c.v.key_time(video, s.compTime);
-    const double baseX = c.v.sample(video, "x", t).value_or(g->local.x);
-    const double baseY = c.v.sample(video, "y", t).value_or(g->local.y);
-    b.add("x", s.compTime, baseX + dx);
-    b.add("y", s.compTime, baseY + dy);
-    ++n;
-  }
-  if (n == 0) return std::nullopt;
-  return ta::Plan{"Stabilize Motion", video, b.writes(), {}, {}, n};
-}
-
-double atan2_deg(double y, double x) { return (motion::js::atan2(y, x) * 180) / 3.141592653589793; }
-
-double hypot2(double a, double b) {
-  const std::array<double, 2> v{a, b};
-  return motion::js::hypot(v);
-}
-
-/// planTransformTrack: position from the anchor, rotation / scale from the anchor→reference vector.
-std::optional<ta::Plan> plan_transform(const Ctx& c, const std::vector<std::vector<CompSample>>& tracks, bool wantScale) {
-  const std::string& target = c.job.target;
-  if (c.v.node(target) == nullptr || tracks.size() != 2) return std::nullopt;
-  const std::optional<ta::Geometry> g = c.v.geometry(target);
-  if (!g) return std::nullopt;
-  std::map<double, const CompSample*> refByTime;
-  for (const CompSample& s : tracks[1]) refByTime.insert_or_assign(s.compTime, &s);
-  ta::Buckets bk({"x", "y", "rotation", "scaleX", "scaleY"});
-  std::size_t n = 0;
-  std::optional<double> baseAngle;
-  std::optional<double> baseLength;
-  double prevAngleDelta = 0;
-  for (const CompSample& a : tracks[0]) {
-    const auto it = refByTime.find(a.compTime);
-    if (it == refByTime.end()) continue;
-    const CompSample& b = *it->second;
-    const std::optional<ta::P2> ca = c.to_comp(a.x, a.y, a.compTime);
-    const std::optional<ta::P2> pa = ca ? c.to_parent(target, *ca, a.compTime) : std::nullopt;
-    const std::optional<ta::P2> cb = c.to_comp(b.x, b.y, a.compTime);
-    const std::optional<ta::P2> pb = cb ? c.to_parent(target, *cb, a.compTime) : std::nullopt;
-    if (!pa || !pb) continue;
-    const double vx = pb->x - pa->x;
-    const double vy = pb->y - pa->y;
-    const double len = hypot2(vx, vy);
-    if (len < 1e-6) continue;
-    const double angle = atan2_deg(vy, vx);
-    if (!baseAngle || !baseLength) {
-      baseAngle = angle;
-      baseLength = len;
-    }
-    const double angleDelta = ta::unwrap_deg(angle - *baseAngle, prevAngleDelta);
-    prevAngleDelta = angleDelta;
-    const double scaleRatio = len / *baseLength;
-    const double t = c.v.key_time(target, a.compTime);
-    bk.add("x", a.compTime, pa->x);
-    bk.add("y", a.compTime, pa->y);
-    ++n;
-    const double baseRot = c.v.sample(target, "rotation", t).value_or(g->local.rotation);
-    bk.add("rotation", a.compTime, baseRot + angleDelta);
-    if (wantScale) {
-      const double baseSx = c.v.sample(target, "scaleX", t).value_or(g->local.scale_x);
-      const double baseSy = c.v.sample(target, "scaleY", t).value_or(g->local.scale_y);
-      bk.add("scaleX", a.compTime, baseSx * scaleRatio);
-      bk.add("scaleY", a.compTime, baseSy * scaleRatio);
+/// planarFit.ts `densifyQuad(points, grid)`: the lattice takes the first point's windows (one size for all, trackerStore).
+std::vector<tw::WalkPoint> densify_quad(const std::vector<tw::WalkPoint>& points, int grid) {
+  if (points.size() < 4) return points;
+  const tw::WalkPoint tl = points[0];
+  const tw::WalkPoint tr = points[1];
+  const tw::WalkPoint br = points[2];
+  const tw::WalkPoint bl = points[3];
+  std::vector<tw::WalkPoint> out = points;
+  for (int r = 0; r < grid; ++r) {
+    const double v = (r + 0.5) / grid;
+    for (int c = 0; c < grid; ++c) {
+      const double u = (c + 0.5) / grid;
+      const double topX = tl.x + (tr.x - tl.x) * u;
+      const double topY = tl.y + (tr.y - tl.y) * u;
+      const double botX = bl.x + (br.x - bl.x) * u;
+      const double botY = bl.y + (br.y - bl.y) * u;
+      tw::WalkPoint p = tl;
+      p.x = topX + (botX - topX) * v;
+      p.y = topY + (botY - topY) * v;
+      out.push_back(p);
     }
   }
-  if (n == 0) return std::nullopt;
-  return ta::Plan{"Apply Motion Track (rotation & scale)", target, bk.writes(), {}, {}, n};
-}
-
-/// planCameraSolveTrack: the camera follow + orientationZ from the anchor→reference angle (source px).
-std::optional<ta::Plan> plan_camera_solve(const Ctx& c, const std::vector<std::vector<CompSample>>& tracks) {
-  if (tracks.size() < 2 || !c.v.is_camera(c.job.target)) return std::nullopt;
-  std::optional<ta::Plan> follow = plan_follow(c, tracks[0], true);
-  if (!follow) return std::nullopt;
-  std::map<double, const CompSample*> refByTime;
-  for (const CompSample& s : tracks[1]) refByTime.insert_or_assign(s.compTime, &s);
-  ta::Write ori{"orientationZ", {}};
-  std::optional<double> baseAngle;
-  double prevDelta = 0;
-  for (const CompSample& a : tracks[0]) {
-    const auto it = refByTime.find(a.compTime);
-    if (it == refByTime.end()) continue;
-    const double angle = atan2_deg(it->second->y - a.y, it->second->x - a.x);
-    if (!baseAngle) baseAngle = angle;
-    const double delta = ta::unwrap_deg(angle - *baseAngle, prevDelta);
-    prevDelta = delta;
-    ori.keys.emplace_back(a.compTime, delta);
-  }
-  follow->label = "Apply Camera Solve";
-  follow->count += ori.keys.size();
-  if (!ori.keys.empty()) follow->writes.push_back(std::move(ori));
-  return follow;
-}
-
-/// planCornerPinTrack: the target's Corner Pin offsets riding the tracked corners.
-std::optional<ta::Plan> plan_corner(const Ctx& c, const std::vector<std::vector<CompSample>>& tracks) {
-  const std::string& target = c.job.target;
-  if (c.v.node(target) == nullptr || tracks.size() < 4) return std::nullopt;
-  const std::optional<ta::Geometry> g = c.v.geometry(target);
-  if (!g || !g->width || !g->height) return std::nullopt;
-  const double gw = *g->width;
-  const double gh = *g->height;
-  struct CornerKey {
-    const char* x;
-    const char* y;
-    double rx;
-    double ry;
-  };
-  const std::array<CornerKey, 4> keys{CornerKey{"topLeftX", "topLeftY", 0, 0}, CornerKey{"topRightX", "topRightY", gw, 0},
-                                      CornerKey{"bottomRightX", "bottomRightY", gw, gh},
-                                      CornerKey{"bottomLeftX", "bottomLeftY", 0, gh}};
-  ta::Buckets bk({"topLeftX", "topLeftY", "topRightX", "topRightY", "bottomRightX", "bottomRightY", "bottomLeftX",
-                  "bottomLeftY"});
-  std::size_t nFrames = tracks[0].size();
-  for (const auto& t : tracks) nFrames = std::min(nFrames, t.size());
-  if (nFrames == 0) return std::nullopt;
-  std::size_t planned = 0;
-  auto writeCorner = [&](std::size_t corner, double sx, double sy, double compTime) {
-    const CornerKey& k = keys[corner];
-    const std::optional<ta::P2> cp = c.to_comp(sx, sy, compTime);
-    if (!cp) return;
-    const std::optional<doc::LayerSpace> space = c.v.space(target, compTime);
-    if (!space) return;
-    const ta::P2 l = ta::DocView::from_comp(*space, *cp);
-    bk.add(k.x, compTime, l.x + gw / 2 - k.rx);
-    bk.add(k.y, compTime, l.y + gh / 2 - k.ry);
-    planned += 1;
-  };
-  if (tracks.size() == 4) {
-    for (std::size_t corner = 0; corner < 4; ++corner) {
-      for (const CompSample& s : tracks[corner]) writeCorner(corner, s.x, s.y, s.compTime);
-    }
-  } else {
-    // RANSAC over every feature (coasted / weak samples weigh 0), then a temporal smooth of H.
-    std::vector<tr::Pt> seeds;
-    for (const auto& t : tracks) seeds.push_back(tr::Pt{t[0].x, t[0].y});
-    std::vector<std::optional<tr::Mat3>> hs;
-    for (std::size_t i = 0; i < nFrames; ++i) {
-      std::vector<tr::Pt> dst;
-      tr::RansacOptions ro;
-      ro.inlierPx = 3;
-      ro.seed = static_cast<std::uint32_t>(i + 1);
-      for (const auto& t : tracks) {
-        dst.push_back(tr::Pt{t[i].x, t[i].y});
-        ro.weights.push_back(t[i].coasted || t[i].confidence < 0.2 ? 0.0 : t[i].confidence);
-      }
-      const std::optional<tr::RansacFit> fit = tr::fit_homography_ransac(seeds, dst, ro);
-      hs.push_back(fit ? std::optional<tr::Mat3>(fit->H) : tr::fit_homography(seeds, dst));
-    }
-    const std::vector<std::optional<tr::Mat3>> smoothed = tr::smooth_homography_sequence(hs, 1);
-    for (std::size_t i = 0; i < nFrames; ++i) {
-      const double compTime = tracks[0][i].compTime;
-      if (!smoothed[i]) {
-        for (std::size_t corner = 0; corner < 4; ++corner) writeCorner(corner, tracks[corner][i].x, tracks[corner][i].y, compTime);
-        continue;
-      }
-      for (std::size_t corner = 0; corner < 4; ++corner) {
-        const std::optional<tr::Pt> p = tr::project_homography(*smoothed[i], seeds[corner]);
-        if (!p) continue;
-        writeCorner(corner, p->x, p->y, compTime);
-      }
-    }
-  }
-  if (planned == 0) return std::nullopt;
-  return ta::Plan{"Apply Corner Pin Track", target, bk.writes(), "corner-pin", c.job.effectId, planned};
+  return out;
 }
 
 // ── the result ──────────────────────────────────────────────────────────
 
 class TrackMotionResult final : public JobResult {
  public:
-  TrackMotionResult(TrackJob job, std::vector<std::vector<CompSample>> tracks, std::string status, double sw, double sh)
-      : job_(std::move(job)), tracks_(std::move(tracks)), status_(std::move(status)), sw_(sw), sh_(sh) {}
+  TrackMotionResult(TrackJob job, tw::WalkResult r) : job_(std::move(job)), r_(std::move(r)) {}
 
   [[nodiscard]] std::string summary_json() const override {
     std::string s = "{\"kind\":" + json_string(api::to_string(job_.kind)) + ",\"direction\":" +
-                    json_string(api::to_string(job_.direction)) + ",\"status\":" + json_string(status_) +
-                    ",\"sourceWidth\":" + json_number(sw_) + ",\"sourceHeight\":" + json_number(sh_) +
+                    json_string(api::to_string(job_.walk.direction)) + ",\"status\":" + json_string(r_.status) +
+                    ",\"sourceWidth\":" + json_number(r_.sourceWidth) + ",\"sourceHeight\":" + json_number(r_.sourceHeight) +
                     ",\"sample\":[\"t\",\"x\",\"y\",\"confidence\",\"coasted\"],\"tracks\":[";
-    for (std::size_t p = 0; p < tracks_.size(); ++p) {
+    for (std::size_t p = 0; p < r_.tracks.size(); ++p) {
       if (p > 0) s += ',';
       s += '[';
-      for (std::size_t i = 0; i < tracks_[p].size(); ++i) {
-        const CompSample& c = tracks_[p][i];
+      for (std::size_t i = 0; i < r_.tracks[p].size(); ++i) {
+        const ta::CompSample& c = r_.tracks[p][i];
         if (i > 0) s += ',';
         s += '[' + tf::fixed(c.compTime, 6) + ',' + tf::fixed(c.x, 4) + ',' + tf::fixed(c.y, 4) + ',' +
              tf::fixed(c.confidence, 4) + ',' + (c.coasted ? '1' : '0') + ']';
@@ -440,32 +179,33 @@ class TrackMotionResult final : public JobResult {
   }
 
   [[nodiscard]] bool has_edits() const override {
-    return job_.mode != Mode::none && std::any_of(tracks_.begin(), tracks_.end(), [](const auto& t) { return !t.empty(); });
+    return job_.mode != Mode::none && std::any_of(r_.tracks.begin(), r_.tracks.end(), [](const auto& t) { return !t.empty(); });
   }
 
   void apply(JobApply& a) const override {
     if (!has_edits()) return;
-    const ta::DocView v(a.document(), job_.fl.comp);
+    const ta::DocView v(a.document(), job_.walk.fl.comp);
     // The attach point rides the feature at a fixed offset (AE); (0, 0) = the feature itself.
-    std::vector<std::vector<CompSample>> tracks = tracks_;
+    std::vector<ta::Track> tracks = r_.tracks;
     for (std::size_t p = 0; p < tracks.size() && p < job_.points.size(); ++p) {
-      for (CompSample& s : tracks[p]) {
+      for (ta::CompSample& s : tracks[p]) {
         s.x += job_.points[p].attachDx;
         s.y += job_.points[p].attachDy;
       }
     }
-    const ta::P2 box{job_.fl.width > 0 ? static_cast<double>(job_.fl.width) : sw_,
-                     job_.fl.height > 0 ? static_cast<double>(job_.fl.height) : sh_};
-    const Ctx c{job_, v, sw_, sh_, box};
+    const FootageLayer& fl = job_.walk.fl;
+    const ta::P2 box{fl.width > 0 ? static_cast<double>(fl.width) : r_.sourceWidth,
+                     fl.height > 0 ? static_cast<double>(fl.height) : r_.sourceHeight};
+    const ta::Planner planner(v, ta::Source{fl.layer, r_.sourceWidth, r_.sourceHeight, box});
     std::optional<ta::Plan> plan;
     switch (job_.mode) {
-      case Mode::stabilize: plan = plan_stabilize(c, tracks[0]); break;
-      case Mode::follow: plan = plan_follow(c, tracks[0], job_.targetCamera); break;
+      case Mode::stabilize: plan = planner.stabilize(tracks[0]); break;
+      case Mode::follow: plan = planner.follow(job_.target, tracks[0], job_.targetCamera); break;
       case Mode::transform:
-        plan = job_.targetCamera ? plan_camera_solve(c, tracks)
-                                 : plan_transform(c, tracks, job_.kind == api::TrackKind::position_rotation_scale);
+        plan = job_.targetCamera ? planner.camera_track(job_.target, tracks)
+                                 : planner.transform(job_.target, tracks, job_.kind == api::TrackKind::position_rotation_scale);
         break;
-      case Mode::corner: plan = plan_corner(c, tracks); break;
+      case Mode::corner: plan = planner.corner(job_.target, tracks, job_.effectId); break;
       case Mode::none: break;
     }
     if (plan) ta::send_plan(a, *plan);
@@ -473,129 +213,199 @@ class TrackMotionResult final : public JobResult {
 
  private:
   TrackJob job_;
-  std::vector<std::vector<CompSample>> tracks_;
-  std::string status_;
-  double sw_;
-  double sh_;
+  tw::WalkResult r_;
 };
 
-// ── the work ────────────────────────────────────────────────────────────
+// ── mask tracking (maskTrack.ts) ────────────────────────────────────────
+
+/// One mask path as it stood at the origin (layer-local, centred).
+struct MaskShape {
+  std::string group;  ///< masks/<id>
+  api::BezierPath path;
+};
+
+struct MaskJob {
+  tw::WalkSpec walk;
+  std::vector<MaskShape> masks;
+  /// The layer's drawn box (readGeometry) the vertices scale into.
+  double boxW = 0;
+  double boxH = 0;
+  std::uint32_t maxEdge = kAnalysisEdge;
+};
+
+class MaskTrackResult final : public JobResult {
+ public:
+  MaskTrackResult(std::string layer, std::vector<ta::PathKeys> keys, std::size_t frames, std::size_t vertices,
+                  std::size_t sampled, std::string status)
+      : layer_(std::move(layer)), keys_(std::move(keys)), frames_(frames), vertices_(vertices), sampled_(sampled),
+        status_(std::move(status)) {}
+
+  [[nodiscard]] std::string summary_json() const override {
+    return "{\"kind\":\"mask\",\"keyframes\":" + std::to_string(frames_) + ",\"vertices\":" + std::to_string(vertices_) +
+           ",\"sampled\":" + std::to_string(sampled_) + ",\"masks\":" + std::to_string(keys_.size()) +
+           ",\"status\":" + json_string(status_) + "}";
+  }
+  [[nodiscard]] std::string label() const override { return "Track Mask"; }
+  [[nodiscard]] bool has_edits() const override { return frames_ > 0; }
+  void apply(JobApply& a) const override { ta::send_path_splice(a, layer_, keys_); }
+
+ private:
+  std::string layer_;
+  std::vector<ta::PathKeys> keys_;
+  std::size_t frames_;
+  std::size_t vertices_;
+  std::size_t sampled_;
+  std::string status_;
+};
+
+std::unique_ptr<JobResult> run_mask_track(const MaskJob& job, JobControl& control) {
+  const FootageLayer& fl = job.walk.fl;
+  std::string error;
+  const std::unique_ptr<FrameSource> src = open_frames(fl.file, job.maxEdge, error);
+  if (!src) fail(ErrorCode::decode, "could not read the footage: " + error, {.layer = fl.layer});
+  const double sw = src->source_width() > 0 ? src->source_width() : src->width();
+  const double sh = src->source_height() > 0 ? src->source_height() : src->height();
+  if (!(sw > 0) || !(sh > 0)) fail(ErrorCode::decode, "the footage has no picture", {.layer = fl.layer});
+  const double gw = job.boxW > 0 ? job.boxW : sw;
+  const double gh = job.boxH > 0 ? job.boxH : sh;
+
+  // Flatten every path's vertices, in path order: layer-local (centred) →
+  // source display px — the inverse of trackSampleToComp's local step.
+  struct VertexRef {
+    std::size_t path;
+    std::size_t point;
+  };
+  std::vector<VertexRef> refs;
+  std::vector<ms::Pt> vertices;
+  std::vector<ms::SamplablePath> samplable;
+  for (std::size_t p = 0; p < job.masks.size(); ++p) {
+    const api::BezierPath& path = job.masks[p].path;
+    ms::SamplablePath sp;
+    sp.closed = path.closed;
+    for (std::size_t i = 0; i + 1 < path.vertices.size(); i += 2) {
+      refs.push_back(VertexRef{p, i / 2});
+      const ms::Pt d{(path.vertices[i] / gw + 0.5) * sw, (path.vertices[i + 1] / gh + 0.5) * sh};
+      sp.points.push_back(d);
+      vertices.push_back(d);
+    }
+    samplable.push_back(std::move(sp));
+  }
+  if (vertices.empty()) fail(ErrorCode::invalid_argument, "The mask has no points.", {.layer = fl.layer});
+
+  // The tracking party: every vertex within the cap, an arc-length sample past it.
+  const ms::VertexSampling sampling = ms::sample_mask_vertices(samplable, ms::kMaxTrackedVertices);
+  tw::WalkSpec spec = job.walk;
+  const tw::WalkPoint windows = spec.points.empty() ? tw::WalkPoint{} : spec.points.front();
+  spec.points.clear();
+  std::vector<ms::Pt> rest;
+  for (const int v : sampling.tracked) {
+    const ms::Pt& d = vertices[static_cast<std::size_t>(v)];
+    rest.push_back(d);
+    tw::WalkPoint wp = windows;
+    wp.x = d.x;
+    wp.y = d.y;
+    spec.points.push_back(wp);
+  }
+  const std::optional<tw::WalkResult> r = tw::walk(*src, spec, control);
+  if (!r) return nullptr;
+
+  // Sample times: the union of comp times any vertex reached, in order. A
+  // vertex missing at a time freezes at its last known place.
+  std::set<double> timeSet;
+  for (const ta::Track& t : r->tracks) {
+    for (const ta::CompSample& s : t) timeSet.insert(s.compTime);
+  }
+  const std::vector<double> times(timeSet.begin(), timeSet.end());
+  if (times.size() < 2) fail(ErrorCode::invalid_argument, "Tracking produced too little motion to keyframe.", {.layer = fl.layer});
+  std::vector<std::map<double, const ta::CompSample*>> byTime(r->tracks.size());
+  for (std::size_t k = 0; k < r->tracks.size(); ++k) {
+    for (const ta::CompSample& s : r->tracks[k]) byTime[k].insert_or_assign(s.compTime, &s);
+  }
+
+  std::vector<ta::PathKeys> keys;
+  for (const MaskShape& m : job.masks) keys.push_back(ta::PathKeys{m.group, {}});
+  std::vector<ms::Pt> lastKnown = rest;
+  const bool interpolated = sampling.tracked.size() < refs.size();
+  for (const double compTime : times) {
+    // Where every tracked slot is at this time (frozen if it was lost).
+    std::vector<ms::Pt> slotAt(rest.size());
+    for (std::size_t k = 0; k < rest.size(); ++k) {
+      if (k < byTime.size()) {
+        const auto it = byTime[k].find(compTime);
+        if (it != byTime[k].end()) lastKnown[k] = ms::Pt{it->second->x, it->second->y};
+      }
+      slotAt[k] = lastKnown[k];
+    }
+    // Untracked vertices ride their neighbours' deltas (display px).
+    std::vector<ms::Pt> blended;
+    if (interpolated) {
+      std::vector<ms::Pt> deltas;
+      for (std::size_t k = 0; k < slotAt.size(); ++k) deltas.push_back(ms::Pt{slotAt[k].x - rest[k].x, slotAt[k].y - rest[k].y});
+      blended = ms::blend_vertex_deltas(sampling, deltas);
+    }
+    // The base shape, each vertex displaced by its tracked delta (the handles
+    // are relative in a BezierPath: they travel rigidly with their vertex).
+    std::vector<api::BezierPath> paths;
+    for (const MaskShape& m : job.masks) paths.push_back(m.path);
+    for (std::size_t v = 0; v < refs.size(); ++v) {
+      const int slot = sampling.slotOf[v];
+      const ms::Pt at = slot >= 0 ? slotAt[static_cast<std::size_t>(slot)]
+                                  : ms::Pt{vertices[v].x + blended[v].x, vertices[v].y + blended[v].y};
+      api::BezierPath& path = paths[refs[v].path];
+      path.vertices[refs[v].point * 2] = (at.x / sw - 0.5) * gw;
+      path.vertices[refs[v].point * 2 + 1] = (at.y / sh - 0.5) * gh;
+    }
+    for (std::size_t p = 0; p < paths.size(); ++p) keys[p].keys.push_back(ta::PathKey{compTime, std::move(paths[p])});
+  }
+  control.progress(1.0, "Tracked " + std::to_string(refs.size()) + " mask vertices");
+  return std::make_unique<MaskTrackResult>(fl.layer, std::move(keys), times.size(), refs.size(), sampling.tracked.size(),
+                                           r->status == "partial" ? "lost" : r->status);
+}
+
+/// The masks a mask track follows, as they stand at `originSec` (comp seconds).
+std::vector<MaskShape> masks_at(const JobDocContext& ctx, const FootageLayer& fl, double originSec, const std::string& only) {
+  const doc::Node* n = ctx.doc.node(fl.layer);
+  const ta::DocView v(ctx.doc, fl.comp);
+  // The shape VISIBLE at the start time: an animated mask continues from what
+  // the user sees, not from the static rest shape underneath.
+  std::optional<doc::Json> base = doc::interpolate_mask(doc::read_node_mask_anim(*n), v.key_time(fl.layer, originSec));
+  if (!base || !base->at("paths").is_array() || base->at("paths").arr().empty()) base = doc::read_node_mask(*n);
+  if (!base || !base->at("paths").is_array() || base->at("paths").arr().empty()) {
+    fail(ErrorCode::invalid_argument, "Layer has no mask to track.", {.layer = fl.layer});
+  }
+  std::vector<MaskShape> out;
+  for (const doc::Json& p : base->at("paths").arr()) {
+    const std::string id = p.at("id").is_string() ? p.at("id").str() : std::string("undefined");
+    if (!only.empty() && id != only) continue;
+    MaskShape m{"masks/" + id, doc::mask_to_bezier(p)};
+    if (m.path.vertices.empty()) continue;
+    out.push_back(std::move(m));
+  }
+  if (out.empty()) {
+    fail(ErrorCode::invalid_argument, only.empty() ? "The mask has no points." : "Layer has no mask '" + only + "' to track.",
+         {.layer = fl.layer});
+  }
+  return out;
+}
 
 std::unique_ptr<JobResult> run_track(const TrackJob& job, JobControl& control) {
   std::string error;
-  const std::unique_ptr<FrameSource> src = open_frames(job.fl.file, job.maxEdge, error);
-  if (!src) fail(ErrorCode::decode, "could not read the footage: " + error, {.layer = job.fl.layer});
-  const double w = src->width();
-  const double h = src->height();
-  const double sw = src->source_width() > 0 ? src->source_width() : w;
-  const double sh = src->source_height() > 0 ? src->source_height() : h;
-  if (w <= 0 || h <= 0) fail(ErrorCode::decode, "the footage has no picture", {.layer = job.fl.layer});
-  // Display grid (layer px) ↔ decoded grid; lengths by the geometric mean.
-  const double toCodedX = w / sw;
-  const double toCodedY = h / sh;
-  const double toCodedLength = std::sqrt(toCodedX * toCodedY);
-  const std::int64_t count = std::max<std::int64_t>(1, src->frame_count());
-  const double srcFps = src->fps();
-  auto srcIndexAt = [&](std::int64_t compFrame) { return tf::source_index(job.fl, compFrame, job.fps, srcFps, count); };
-
-  std::vector<tr::PointSeed> seeds;
-  for (const PointSpec& p : job.points) {
-    tr::PointSeed s;
-    s.x = p.x * toCodedX;
-    s.y = p.y * toCodedY;
-    s.featureHalf = std::max(1, static_cast<int>(motion::js::round(p.featureHalf * toCodedLength)));
-    s.searchHalf = std::max(1, static_cast<int>(motion::js::round(p.searchHalf * toCodedLength)));
-    seeds.push_back(s);
-  }
-  tr::TrackOptions opts;
-  opts.minConfidence = job.minConfidence;
-  opts.maxCoastFrames = job.maxCoast;
-
-  // Comp frames the result covers, and the source walks.
-  std::int64_t compLo = job.frames.first;
-  std::int64_t compHi = job.frames.last;
-  struct Walk {
-    std::int64_t from;
-    std::int64_t to;
-  };
-  std::vector<Walk> walks;  // run in order; `both` = backward, then forward
-  if (job.direction == api::TrackDirection::forward) {
-    compLo = job.origin;
-    walks.push_back(Walk{srcIndexAt(job.origin), srcIndexAt(compHi)});
-    if (walks[0].from == walks[0].to) fail(ErrorCode::invalid_argument, "the clip does not advance over this range — nothing to track");
-  } else if (job.direction == api::TrackDirection::backward) {
-    compHi = job.origin;
-    walks.push_back(Walk{srcIndexAt(job.origin), srcIndexAt(compLo)});
-    if (walks[0].from == walks[0].to) fail(ErrorCode::invalid_argument, "the clip does not advance over this range — nothing to track");
-  } else {
-    const std::int64_t a = srcIndexAt(compLo);
-    const std::int64_t b = srcIndexAt(compHi);
-    const std::int64_t lo = std::min(a, b);
-    const std::int64_t hi = std::max(a, b);
-    if (lo == hi) fail(ErrorCode::invalid_argument, "the clip does not advance over this range — nothing to track");
-    const std::int64_t anchor = std::clamp(srcIndexAt(job.origin), lo, hi);
-    if (lo < anchor) walks.push_back(Walk{anchor, lo});
-    if (anchor < hi) walks.push_back(Walk{anchor, hi});
-  }
-  std::int64_t total = 0;
-  for (const Walk& wk : walks) total += wk.to >= wk.from ? wk.to - wk.from : wk.from - wk.to;
-  std::int64_t done = 0;
-
-  std::vector<tr::MultiTrackResult> results;
-  try {
-    for (const Walk& wk : walks) {
-      const bool descending = wk.to < wk.from;
-      LumaWalk frames(*src, control, std::min(wk.from, wk.to), descending);
-      const tr::FrameAt frameAt = [&frames](std::int64_t i) -> const tr::LumaPlane& { return frames.at(i); };
-      const tr::OnProgress onProgress = [&](std::int64_t, std::int64_t) {
-        ++done;
-        control.progress(total > 0 ? static_cast<double>(done) / static_cast<double>(total) : 1.0,
-                         "Tracking frame " + std::to_string(done) + " of " + std::to_string(total));
-        return !control.cancelled();
-      };
-      results.push_back(tr::track_points(frameAt, wk.from, wk.to, seeds, opts, onProgress));
-      if (results.back().status == tr::TrackStatus::cancelled) return nullptr;
-    }
-  } catch (const LumaWalk::Cancelled&) {
-    return nullptr;
-  }
-  if (control.cancelled()) return nullptr;
-
-  // Per point: the source samples (merged when both ways), then read out per comp frame.
-  std::string status = "completed";
-  for (const tr::MultiTrackResult& r : results) {
-    if (r.status != tr::TrackStatus::completed) status = job.direction == api::TrackDirection::both ? "partial" : "lost";
-  }
-  std::vector<std::vector<CompSample>> out;
-  for (std::size_t p = 0; p < seeds.size(); ++p) {
-    std::vector<tr::TrackSample> samples;
-    if (results.size() == 2) {
-      samples = tr::merge_bidirectional(results[0].tracks[p], results[1].tracks[p]);
-    } else if (results.size() == 1) {
-      samples = results[0].tracks[p];
-    }
-    std::map<std::int64_t, const tr::TrackSample*> byFrame;
-    for (const tr::TrackSample& s : samples) byFrame.insert_or_assign(s.frame, &s);
-    std::vector<CompSample> comp;
-    for (std::int64_t f = compLo; f <= compHi; ++f) {
-      const auto it = byFrame.find(srcIndexAt(f));
-      if (it == byFrame.end()) continue;
-      const tr::TrackSample& s = *it->second;
-      comp.push_back(CompSample{static_cast<double>(f) / job.fps, s.x / toCodedX, s.y / toCodedY, s.confidence, s.coasted});
-    }
-    out.push_back(std::move(comp));
-  }
-  control.progress(1.0, "Tracked " + std::to_string(out.size()) + (out.size() == 1 ? " point" : " points"));
-  return std::make_unique<TrackMotionResult>(job, std::move(out), std::move(status), sw, sh);
+  const std::unique_ptr<FrameSource> src = open_frames(job.walk.fl.file, job.maxEdge, error);
+  if (!src) fail(ErrorCode::decode, "could not read the footage: " + error, {.layer = job.walk.fl.layer});
+  std::optional<tw::WalkResult> r = tw::walk(*src, job.walk, control);
+  if (!r) return nullptr;
+  control.progress(1.0, "Tracked " + std::to_string(r->tracks.size()) + (r->tracks.size() == 1 ? " point" : " points"));
+  return std::make_unique<TrackMotionResult>(job, std::move(*r));
 }
 
 }  // namespace
 
 PreparedJob prepare_track_motion(const api::TrackMotionJob& spec, const JobDocContext& ctx) {
   TrackJob job;
-  job.fl = footage_layer(ctx, spec.layer, Need::picture);
+  tw::WalkSpec& walk = job.walk;
+  walk.fl = footage_layer(ctx, spec.layer, Need::picture);
   job.kind = spec.kind;
-  job.direction = spec.direction;
+  walk.direction = spec.direction;
   const std::size_t n = spec.points.size();
   switch (spec.kind) {
     case api::TrackKind::position:
@@ -606,62 +416,90 @@ PreparedJob prepare_track_motion(const api::TrackMotionJob& spec, const JobDocCo
       if (n != 2) fail(ErrorCode::invalid_argument, "a rotation / scale track needs exactly two points (anchor, reference)");
       break;
     case api::TrackKind::perspective_corner:
+    case api::TrackKind::planar:
       if (n < 4) fail(ErrorCode::invalid_argument, "a corner pin track needs four points (top left, top right, bottom right, bottom left)");
       break;
     case api::TrackKind::mask:
-    case api::TrackKind::planar:
-      fail(ErrorCode::unsupported, "the engine tracks position, rotation / scale and corner pin; mask and planar tracks are not ported");
+      break;
   }
   if (spec.stabilize && spec.kind != api::TrackKind::position) {
     fail(ErrorCode::invalid_argument, "stabilize tracks one point (kind position)");
   }
-  job.fps = job.fl.compFps > 0 ? job.fl.compFps : 30;
-  job.frames = tf::comp_frames_of(spec.range, job.fps);
-  if (job.frames.last <= job.frames.first) fail(ErrorCode::out_of_range, "the range covers one frame or less — nothing to track");
-  const auto clampFrame = [&job](std::int64_t f) { return std::clamp(f, job.frames.first, job.frames.last); };
+  walk.fps = walk.fl.compFps > 0 ? walk.fl.compFps : 30;
+  walk.frames = tf::comp_frames_of(spec.range, walk.fps);
+  if (walk.frames.last <= walk.frames.first) fail(ErrorCode::out_of_range, "the range covers one frame or less — nothing to track");
+  const auto clampFrame = [&walk](std::int64_t f) { return std::clamp(f, walk.frames.first, walk.frames.last); };
   if (spec.origin) {
-    job.origin = clampFrame(static_cast<std::int64_t>(motion::js::round(seconds_of(*spec.origin) * job.fps)));
+    walk.origin = clampFrame(static_cast<std::int64_t>(motion::js::round(seconds_of(*spec.origin) * walk.fps)));
   } else if (spec.direction == api::TrackDirection::forward) {
-    job.origin = job.frames.first;
+    walk.origin = walk.frames.first;
   } else if (spec.direction == api::TrackDirection::backward) {
-    job.origin = job.frames.last;
+    walk.origin = walk.frames.last;
   } else {
-    job.origin = clampFrame(static_cast<std::int64_t>(motion::js::round(seconds_of(ctx.time) * job.fps)));
+    walk.origin = clampFrame(static_cast<std::int64_t>(motion::js::round(seconds_of(ctx.time) * walk.fps)));
   }
-  if (spec.direction == api::TrackDirection::forward && job.origin >= job.frames.last) {
+  if (spec.direction == api::TrackDirection::forward && walk.origin >= walk.frames.last) {
     fail(ErrorCode::out_of_range, "nothing after the origin to track");
   }
-  if (spec.direction == api::TrackDirection::backward && job.origin <= job.frames.first) {
+  if (spec.direction == api::TrackDirection::backward && walk.origin <= walk.frames.first) {
     fail(ErrorCode::out_of_range, "nothing before the origin to track");
   }
-  if (spec.min_confidence) job.minConfidence = *spec.min_confidence;
-  if (spec.max_coast_frames) job.maxCoast = static_cast<int>(std::min<std::uint32_t>(*spec.max_coast_frames, 100000));
+  if (spec.min_confidence) walk.minConfidence = *spec.min_confidence;
+  if (spec.max_coast_frames) walk.maxCoast = static_cast<int>(std::min<std::uint32_t>(*spec.max_coast_frames, 100000));
   if (spec.analysis_max_edge) job.maxEdge = *spec.analysis_max_edge;
 
   for (const api::TrackPointSpec& p : spec.points) {
     PointSpec s;
-    s.x = p.feature.x;
-    s.y = p.feature.y;
-    s.featureHalf = half_of(std::max(p.feature.width, p.feature.height), kDefaultFeatureHalf);
-    s.searchHalf = half_of(std::max(p.search.width, p.search.height), kDefaultSearchHalf);
+    s.p.x = p.feature.x;
+    s.p.y = p.feature.y;
+    s.p.featureHalf = half_of(std::max(p.feature.width, p.feature.height), kDefaultFeatureHalf);
+    s.p.searchHalf = half_of(std::max(p.search.width, p.search.height), kDefaultSearchHalf);
     if (p.attach.x != 0 || p.attach.y != 0) {
       s.attachDx = p.attach.x - p.feature.x;
       s.attachDy = p.attach.y - p.feature.y;
     }
     job.points.push_back(s);
+    walk.points.push_back(s.p);
+  }
+
+  if (spec.kind == api::TrackKind::mask) {
+    MaskJob mj;
+    mj.walk = walk;
+    mj.maxEdge = job.maxEdge;
+    std::string only;
+    if (spec.apply_to) {
+      if (spec.apply_to->layer != spec.layer) fail(ErrorCode::invalid_argument, "a mask track writes the tracked layer's own masks");
+      const std::string& path = spec.apply_to->path;
+      if (path.starts_with("masks/")) {
+        const std::size_t slash = path.find('/', 6);
+        only = path.substr(6, slash == std::string::npos ? std::string::npos : slash - 6);
+      } else if (!path.empty() && path != "masks") {
+        fail(ErrorCode::invalid_argument, "a mask track applies to 'masks' or 'masks/<id>'", {.layer = spec.layer, .path = path});
+      }
+    }
+    mj.masks = masks_at(ctx, walk.fl, static_cast<double>(walk.origin) / walk.fps, only);
+    if (const std::optional<ta::Geometry> g = ta::DocView(ctx.doc, walk.fl.comp).geometry(spec.layer)) {
+      mj.boxW = g->width.value_or(walk.fl.width);
+      mj.boxH = g->height.value_or(walk.fl.height);
+    }
+    return PreparedJob{"trackMotion", [mj = std::move(mj)](JobControl& control) { return run_mask_track(mj, control); }};
+  }
+  if (spec.kind == api::TrackKind::planar) {
+    const std::uint32_t grid = std::clamp<std::uint32_t>(spec.planar_grid.value_or(5), 1, 16);
+    walk.points = densify_quad(walk.points, static_cast<int>(grid));
   }
 
   // Where the result goes.
   if (spec.stabilize) {
     job.mode = Mode::stabilize;
-    job.target = job.fl.layer;
+    job.target = walk.fl.layer;
   } else if (spec.apply_to) {
     const api::PropRef& to = *spec.apply_to;
     const std::optional<std::string> comp = ctx.doc.node(to.layer) != nullptr ? doc::comp_of_layer(ctx.doc, to.layer) : std::nullopt;
     if (!comp || *comp == to.layer) fail(ErrorCode::not_found, "no layer '" + to.layer + "' to apply the track to", {.layer = to.layer});
     job.target = to.layer;
     job.targetCamera = ctx.doc.node(to.layer)->kind() == "camera";
-    if (spec.kind == api::TrackKind::perspective_corner) {
+    if (spec.kind == api::TrackKind::perspective_corner || spec.kind == api::TrackKind::planar) {
       job.mode = Mode::corner;
       if (to.path.starts_with("effects/")) {
         const std::string rest = to.path.substr(8);

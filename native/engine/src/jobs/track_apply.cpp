@@ -11,6 +11,7 @@
 #include "props.hpp"
 #include "scene.hpp"
 #include "time_conv.hpp"
+#include "values.hpp"
 
 namespace premation::jobs::trackapply {
 
@@ -232,6 +233,55 @@ void send_plan(JobApply& a, const Plan& plan) {
       const api::Time t =
           doc::seconds_to_flicks(doc::keyframe_to_comp_time(d, doc::EditorView{*comp, 0}, plan.layer, k.t, g.b.lead()));
       if (t >= lo && t <= hi) doomed.push_back(k.id);
+    }
+  }
+  if (add.keys.empty()) return;
+  const std::optional<api::KeyframeIds> added = result_payload<api::KeyframeIds>(a.run(command(std::move(add))));
+  const std::vector<std::string> kept = added ? added->ids : std::vector<std::string>{};
+  api::DeleteKeyframes del;
+  for (const std::string& id : doomed) {
+    if (std::find(kept.begin(), kept.end(), id) == kept.end() &&
+        std::find(del.ids.begin(), del.ids.end(), id) == del.ids.end()) {
+      del.ids.push_back(id);
+    }
+  }
+  if (!del.ids.empty()) (void)a.run(command(std::move(del)));
+}
+
+void send_path_splice(JobApply& a, const std::string& layer, const std::vector<PathKeys>& masks) {
+  const doc::Document& d = a.document();
+  const std::optional<std::string> comp = doc::comp_of_layer(d, layer);
+  if (!comp) fail(ErrorCode::not_found, "no layer '" + layer + "'", {.layer = layer});
+  const doc::Catalog cat = doc::catalog_for(d, layer);
+  const api::Time eps = doc::seconds_to_flicks(1e-6);
+  std::vector<std::string> doomed;
+  api::AddKeyframes add;
+  for (const PathKeys& m : masks) {
+    if (m.keys.empty()) continue;
+    const std::string path = m.group + "/path";
+    const doc::PropBinding* b = cat.find(path);
+    if (b == nullptr || b->special != doc::Special::maskPath) {
+      fail(ErrorCode::not_found, "the mask '" + m.group + "' is gone", {.layer = layer, .path = path});
+    }
+    api::Time lo = 0;
+    api::Time hi = 0;
+    bool first = true;
+    for (const PathKey& k : m.keys) {
+      api::KeyframeInsert ins;
+      ins.prop = api::PropRef{layer, path};
+      ins.time = doc::seconds_to_flicks(k.compTime);
+      ins.value = doc::v_path(k.path);
+      ins.easing = api::Easing::linear;
+      lo = first ? ins.time : std::min(lo, ins.time);
+      hi = first ? ins.time : std::max(hi, ins.time);
+      first = false;
+      add.keys.push_back(std::move(ins));
+    }
+    // What is there now and which of it the span drops (read BEFORE the adds).
+    for (const doc::KeyAt& k : doc::read_keys(d, layer, *b)) {
+      const api::Time t =
+          doc::seconds_to_flicks(doc::keyframe_to_comp_time(d, doc::EditorView{*comp, 0}, layer, k.t, b->lead()));
+      if (t >= lo - eps && t <= hi + eps) doomed.push_back(k.id);
     }
   }
   if (add.keys.empty()) return;
