@@ -468,6 +468,7 @@ on an effect or mask path — one command, one inverse implementation.
 | `startJob` | control | Track motion (position … planar, forward/backward/both, apply to a property), stabilize, auto-trace, scene detect, object matte, transcribe, audio analysis, render queue items, pre-render. A job never edits while it runs; on success its result is applied as **one** history entry (`origin: engine`) unless `apply:false`. |
 | `cancelJob` | control | Nothing is applied. |
 | `applyJobResult` | edit | Apply a finished `apply:false` job. Inverse: that entry. |
+| `setContentAwareFill` | edit | The layer's content-aware fill frames (the job's result; the page stored `fx.contentAwareFill`): the frame nearest the layer's time stands in for its footage; empty `frames` clears it. Inverse: the previous record. |
 | `setPluginEnabled` | control | Session enable/disable (installation stays in the editor's plugin manager). |
 | `setPluginData` | edit | Plugin data **in the document** (AE sequence data / arbitrary-data params) — today it is an in-memory LRU. Inverse: previous bytes. |
 
@@ -498,7 +499,7 @@ The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 |---|---|---|---|
 | `trackMotion` | tracker.ts, patchMatch.ts, autoTrack.ts merge, planarFit / Homography; applyTrack.ts plans | with `applyTo`: keys spliced into the span (`addKeyframes` + `deleteKeyframes` of the keys the span drops) — follow (layer / camera POI), position-rotation-scale (2 points), corner pin (`addEffect corner-pin` if missing; RANSAC beyond 4 points); `stabilize:true`: planStabilize on the tracked layer. No `applyTo`: nothing ("Track Motion") | `{kind, direction, status, sourceWidth, sourceHeight, tracks:[[[t,x,y,conf,coasted]…]…]}` |
 | `stabilize` | globalMotion.ts + smoothStabilize.ts (similarity) | position (+ rotation, scale per `method`) keys on the layer | `{fittedPairs, totalPairs, …}` |
-| `autoTrace` | traceBitmap.ts + autoTrace.ts | `addMask` per ring (add / subtract), with `everyFrame` one `addKeyframes` of every path per frame ("Auto-trace") | `{pathsAdded, keyframes, frames}` |
+| `autoTrace` | traceBitmap.ts + autoTrace.ts | `addMask` per ring (add / subtract), with `everyFrame` one `addKeyframes` of every path per frame ("Auto-trace"). `rendered` (2026-09-28): the layer drawn ALONE by a child `--export` (`isolateLayer`, transparent comp — effects, masks, parents; any 2D layer kind), traced in comp space and pulled back through the inverse of its world affine per frame (autoTrace.ts renderLayerAlone); 3D layers `unsupported`. Without it: the footage layer's own frames | `{pathsAdded, keyframes, frames}` |
 | `sceneDetect` | sceneEditDetect.ts / sceneEditDetectLayer.ts | "Cut N" / "Dissolve N" comp markers, or `splitLayers` at every cut | `{cutsCompSec, dissolvesCompSec, mode}` |
 | `objectMatte` | samPipeline.ts / samSegment.ts / objectMask.ts (SlimSAM ONNX pair) | `addMask` "Object mask" + feather 2 ("Object Mask") | `{contourPoints, engine, iou}` |
 | `audioAnalysis` | beatGrid + @motion/audio, audioKeyframes.ts, silenceRemoval.ts | `setKeyframes` on `audioAmplitude`; "Beat N" markers (`beatMarkers`); Remove Silence's split / delete / local-ripple steps on the paired layers | `{amplitude:{keyframes,keys}, beats:{bpm,tempoConfidence,beatsCompSec,onsetsCompSec}, silence:{ranges,totalSec,gaps,secondsRemoved,layers}}` |
@@ -506,17 +507,33 @@ The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 | `proxy` | assets/proxy.ts (rule + ffmpeg args) | `setProxy` of the file written temp + rename under `Proxies/` ("Create Proxy") | `{path, width, height}` |
 | `render` | engineExport.ts + ffmpegEncodeArgs.ts | nothing (files delivered to each item's output path) | `{outputs}` |
 | `prerender` | — | `importFiles` of the rendered files ("Pre-render") | `{outputs}` |
-| `transcribe` | captions/transcribe.ts | — `unsupported`: the page transcribes through the user's speech provider in Electron main (the key never leaves main); no local model ships | — |
+| `rotoBrush` | rotoBrush.ts | one "Roto Brush" mask, a path key per frame ("Roto Brush") | `{frames, keyframes}` |
+| `contentAwareFill` | contentAwareFillVideo.ts | PNGs under `Content-Aware Fill/` + `setContentAwareFill` | `{frames, filledPixels}` |
+| `autoReframe` | autoReframe.ts (saliency, reframePath) | a NEW composition holding the source as a precomp, the pan keyed on separated position ("Auto-reframe"); the source comp is rendered small by a child `--export` (PNG frames read through the OS still codec) | `{samples, cuts, keyframes, comp, layer}` |
+| `transcribe` | captions/transcribe.ts + electron/aiProxy.ts transcribeAudio | nothing (the caption commands build layers from the cues; `createCaptions` must be false). 2026-09-28: `comp`'s sound over `range` mixed by a child `--export` (`audioOnly`: the export's offline mix, no picture preflight), 16 kHz mono WAV, POSTed to OpenAI whisper-1 (`verbose_json`, segment + word timings) over the OS HTTP stack (WinHTTP / libcurl, no redirects). The key: `credential`, written into the request by Electron MAIN from its keystore as it passes (engineHost `transcribeCredential`); the page never has it, main logs the request without it, the engine drops it from its log and never persists or returns it. Errors carry aiProxy's code in `detail` (`{"code":"no_key" / "auth" / "rate_limit" / "network" / "silent" / "empty" …}`) | `{cues:[{start,end,text}], words:[…], language}` (composition seconds, cues de-overlapped) |
 
 The `autoTrace` COMMAND (§4.4) is this job run synchronously: the same
 prepare / work / result, applied inside the command's journal, answering the
 mask groups — for scripts and the CLI; the UI keeps starting the job (progress,
 cancel).
 
-Limits: the jobs read FOOTAGE (a layer's own decoded frames), not a solo
-render of the layer — auto-trace ignores the layer's effects; retimed layers
-are refused. A job's result is not in the command log (it is not a request),
-so a replay after an engine crash does not reproduce it.
+Footage jobs follow the layer's Time Remap / Speed % (job_inputs.hpp
+`FootageLayer::source_seconds`, keys copied at prepare). Auto-trace can read a
+solo render (`rendered`); the other footage jobs read the layer's decoded
+frames (tracking and roto work on the source, as AE's tracker does).
+
+Command log (2026-09-28): a job's applied edit reaches the log as the engine's
+`logRecord` (`LogRecord.job`): the commands the result ran, as one batch,
+origin engine — for an `apply:true` job when it lands, for `applyJobResult`
+in place of that request. Electron main never replays `startJob` (a job's only
+effect on the document is that record) and never logs `applyJobResult`, so a
+crash replay writes the result instead of running the job again, and a
+cancelled / failed / held job replays as nothing.
+
+`importFiles` by path (2026-09-28): the C++ engine process probes the file with
+its own decoders (ffmpeg for video / sound, the OS still codec for images —
+`jobs::probe_media`) and records it in place (`src` its `local-file://` URL);
+without a probe (headless) `unsupported`.
 
 ### 4.10 Transport and viewport — §6.
 

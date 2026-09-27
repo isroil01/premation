@@ -25,6 +25,9 @@ import path from 'node:path';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { handle, on } from './ipcGuard';
 import type { CliOutputOptions, CliRenderJob } from './cliArgs';
+import { runCliEngineRender } from './cliEngineRender';
+import { resolveEngineExecutable } from './engineSupervisor';
+import { resolveFfmpegBinary } from './ffmpegBinary';
 
 /**
  * How long a render may make no progress at all before it is declared stuck.
@@ -287,6 +290,53 @@ export async function runCliTask(task: CliTask): Promise<number> {
     print.line(`${what} ${path.basename(task.request.job.projectPath)} → ${task.request.job.outPath}`);
   } else if (task.request.kind === 'captions') {
     print.line(`Transcribing ${path.basename(task.request.projectPath)} → ${task.request.outPath}`);
+  }
+
+  // The engine first (PREMATION_EXPORT_ENGINE=1): `premation-engine --export`
+  // renders the job with no window; anything it cannot take falls through to
+  // the hidden editor window below (cliEngineRender.ts).
+  if (task.request.kind === 'render' && process.env.PREMATION_EXPORT_ENGINE === '1') {
+    const job = task.request.job;
+    const t0 = Date.now();
+    const viaEngine = await runCliEngineRender(job, {
+      enginePath: resolveEngineExecutable({
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath ?? '',
+        appPath: app.getAppPath(),
+        platform: process.platform,
+        vars: process.env,
+        exists: existsSync,
+      }),
+      ffmpegPath: () => resolveFfmpegBinary({ vars: process.env, resourcesPath: process.resourcesPath ?? '', platform: process.platform, exists: existsSync }),
+      workDirFor: (id) => path.join(app.getPath('temp'), 'premation-cli', id),
+      log: (m) => print.event({ event: 'engine', message: `engine: ${m}` }),
+    }, (f) => {
+      const pct = Math.round(Math.max(0, Math.min(1, f)) * 100);
+      print.progress(`  ${String(pct).padStart(3)}%`, { fraction: f, percent: pct });
+    });
+    if (viaEngine.kind === 'done') {
+      const elapsedMs = Date.now() - t0;
+      print.event({
+        event: 'done',
+        message: `Wrote ${job.outPath} — ${viaEngine.frames} frame(s), `
+          + `${viaEngine.width}×${viaEngine.height} @ ${viaEngine.fps}fps, in ${(elapsedMs / 1000).toFixed(1)}s (engine)`,
+        outPath: job.outPath,
+        compositionName: viaEngine.compositionName,
+        frames: viaEngine.frames,
+        width: viaEngine.width,
+        height: viaEngine.height,
+        fps: viaEngine.fps,
+        elapsedMs,
+        warnings: [],
+        renderer: 'engine',
+      });
+      return 0;
+    }
+    if (viaEngine.kind === 'failed') {
+      print.event({ event: 'error', message: viaEngine.message });
+      return 1;
+    }
+    print.event({ event: 'engine-fallback', message: `Rendering in the editor: ${viaEngine.reason}` });
   }
 
   const started = Date.now();
