@@ -3911,6 +3911,12 @@ export interface FrameSlots {
   shared: boolean;
   /** One per slot, at most 16. */
   handles: number[];
+  /** Linux dmabuf slots only (shared, `handles` = the dmabuf fd numbers IN THE ENGINE, which the host duplicates with pidfd_getfd): per slot, the single plane's row stride and offset in bytes and its size; empty elsewhere. */
+  strides: number[];
+  offsets: number[];
+  sizes: number[];
+  /** Linux dmabuf: the DRM format modifier of every slot (DRM_FORMAT_MOD_LINEAR = 0 — the engine allocates linear). 0 elsewhere. */
+  modifier: number;
 }
 
 /** Engine → host. A finished frame is in `slot` (the GPU work is complete: Electron's rgba import takes no fence). The slot belongs to the host until it sends FrameRelease for this generation + slot. */

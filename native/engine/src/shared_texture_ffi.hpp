@@ -15,6 +15,14 @@
 //                                        IOSurfaceID is announced, and Electron main
 //                                        (electron/ioSurfaceBridge.ts) looks it up into a
 //                                        process-local IOSurfaceRef for `handle: { ioSurface }`.
+//   Linux    shared_texture_ffi_linux.cpp  (only where CMake finds GBM — PREMATION_DMABUF)
+//                                        LINEAR ABGR8888 GBM buffers on the render node of
+//                                        Chromium's GPU, imported as SharedTextureMemoryDmaBuf,
+//                                        access bracketed by SyncFD fences; the dmabuf fd
+//                                        numbers are announced with each plane's stride /
+//                                        offset / size, Electron main duplicates them with
+//                                        pidfd_getfd (host bridge) for `handle: { nativePixmap }`.
+//                                        UNVERIFIED: written without a Linux GPU box.
 //
 // The protocol is the same everywhere: FrameSlots announces one `remoteHandle`
 // per slot, FrameReady names a slot whose GPU work is complete, FrameRelease
@@ -41,6 +49,10 @@ struct Slot {
   std::uint64_t remoteHandle = 0;
   bool free = true;
   bool copyable = false;  // CopySrc + CopyDst allowed (the D4 frame cache needs both)
+  /// Linux dmabuf: the single plane's layout (FrameSlots strides / offsets / sizes); 0 elsewhere.
+  std::uint32_t stride = 0;
+  std::uint32_t offset = 0;
+  std::uint64_t planeSize = 0;
 };
 
 class SharedTexturePool {
@@ -56,6 +68,8 @@ class SharedTexturePool {
             std::string& error);
 
   std::vector<Slot>& slots() { return slots_; }
+  /// Linux dmabuf: the DRM format modifier of every slot (FrameSlots.modifier); 0 elsewhere.
+  [[nodiscard]] std::uint64_t modifier() const noexcept { return modifier_; }
 
   // Bracket GPU writes to a slot (Dawn's shared-memory access rules). On macOS
   // the fences the previous EndAccess exported are waited on (on the GPU) by
@@ -78,6 +92,7 @@ class SharedTexturePool {
   struct Native;  // the OS objects behind the slots (RAII, in the per-OS .cpp)
   std::unique_ptr<Native> native_;
   std::vector<Slot> slots_;
+  std::uint64_t modifier_ = 0;
 };
 
 }  // namespace premation::shared

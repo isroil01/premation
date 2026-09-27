@@ -194,11 +194,22 @@ class FilePorts final : public Ports {
   explicit FilePorts(MediaProbe probe) : probe_(std::move(probe)) {}
   /// importFiles by path: the file stays where it is; the record's `src` is
   /// its `local-file://` URL (what the page's own importer gives a file on
-  /// disk), `path` the path.
+  /// disk, and what electron/localFileUrl.ts, the scene's file_url_path and
+  /// jobs' resolve_footage_path all read back), `path` the path.
+  /// importBytes (C, Phase 2 "session footage": a browser-picked / dropped
+  /// file, a session `blob:` the page read): the bytes are written first,
+  /// content-addressed, to `<footage dir>/<sha256><ext>` (temp + rename) and
+  /// that file is imported the same way — so every item the engine holds is a
+  /// file it can read, never a `blob:` URL. `path` is the picker's origin when
+  /// it knew one, else the cache file. The footage dir is
+  /// `<temp>/premation-session-footage` unless set (the engine process sets
+  /// PREMATION_SESSION_FOOTAGE = <userData>/session-footage).
   [[nodiscard]] bool has_import() const override { return static_cast<bool>(probe_); }
   [[nodiscard]] Json import_file(const api::ImportFile& file, const std::string& id) override;
+  [[nodiscard]] Json import_bytes(const api::ImportBytesFile& file, const std::string& id) override;
   [[nodiscard]] bool has_probe() const override { return static_cast<bool>(probe_); }
   [[nodiscard]] Json probe_file(const std::string& path) override;
+  void set_footage_dir(std::string dir) { footageDir_ = std::move(dir); }
   [[nodiscard]] bool has_projects() const override { return true; }
   [[nodiscard]] Json read_project(const std::string& path) override;
   std::uint64_t write_project(const std::string& path, const Json& doc) override;
@@ -217,7 +228,10 @@ class FilePorts final : public Ports {
   void set_staging_root(std::string dir) { staging_ = std::move(dir); }
 
  private:
+  /// The record for the file at `path` shown as `name` (throws EngineFail(io) when nothing can read it).
+  [[nodiscard]] Json record_for(const std::string& path, const std::string& name, const std::string& id, std::string_view mime = {});
   std::string staging_;
+  std::string footageDir_;
   MediaProbe probe_;
 };
 

@@ -49,11 +49,13 @@ runs:
       run: |
         sudo apt-get update
         # clang/ninja; what vcpkg's ffmpeg / fontconfig / Dawn ports need to build;
-        # X11 + GL headers for Dawn's Vulkan-on-X11 backend.
+        # X11 + GL headers for Dawn's Vulkan-on-X11 backend; GBM for the dmabuf
+        # viewport route (shared_texture_ffi_linux.cpp — without it CMake keeps
+        # the route-A copy only).
         sudo apt-get install -y clang ninja-build pkg-config autoconf autoconf-archive automake libtool \
           nasm gperf bison flex python3-venv libltdl-dev \
           libx11-dev libx11-xcb-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
-          libxkbcommon-dev libgl1-mesa-dev
+          libxkbcommon-dev libgl1-mesa-dev libgbm-dev
         clang++ --version
 
     - name: Toolchain (macOS)
@@ -140,6 +142,10 @@ runs:
         test -f "$dir/$exe" || { echo "::error::$dir/$exe was not built"; exit 1; }
         if [ "$RUNNER_OS" = "macOS" ]; then
           test -f "$dir/premation-host-bridge.node" || { echo "::error::$dir/premation-host-bridge.node was not built (the macOS viewport needs it)"; exit 1; }
+        fi
+        if [ "$RUNNER_OS" = "Linux" ]; then
+          # Optional there (the route-A copy works without it), but CI should build it.
+          test -f "$dir/premation-host-bridge.node" || echo "::warning::$dir/premation-host-bridge.node was not built (Linux viewport stays on the route-A copy)"
         fi
         echo "dir=$dir" >> "$GITHUB_OUTPUT"
         ls -la "$dir"

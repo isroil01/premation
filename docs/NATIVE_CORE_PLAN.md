@@ -272,6 +272,31 @@ centre-origin layer space. **Exit met:** the replay corpus passes against both
 engines (9/9, 0 mismatches; the C2-subset session 41/41 compared). Real app:
 30/30 fps, restart replays 55 requests in 29 ms with an identical document.
 
+**C platform plumbing (2026-09-28, branch platform-plumbing — Phase 0/2 of
+TS_ENGINE_REMOVAL.md).**
+- *Routes off Windows.* `PREMATION_VIEWPORT_ROUTE=copy` makes main offer only
+  `frames.copy`: route A measured in the real app on the RTX 4060 box —
+  bench.json 29.9 fps, latency p50 11.5 ms (route C 30.0 / 10.8). Linux dmabuf
+  route C written (`shared_texture_ffi_linux.cpp`: LINEAR ABGR8888 GBM buffers
+  on Chromium's render node → `SharedTextureMemoryDmaBuf` + SyncFD fences;
+  `FrameSlots.strides/offsets/sizes/modifier`; main duplicates the engine's fds
+  with `pidfd_getfd` through the Linux `premation-host-bridge.node` and imports
+  `nativePixmap`). Built only where CMake finds GBM; unverified.
+- *Multiple viewports.* Each `setViewport` id is its own surface: the Session
+  renders every open viewport per tick (each with its own camera), the render
+  thread keeps one ring per viewport (generations unique, round-robin service,
+  device loss rebuilds all), `closeViewport` announces an empty ring. Main maps
+  a viewport to the window that set it (`peekRequest` of setViewport), sends its
+  frames there, and keeps receivers / in-flight transfers / route-A copies per
+  window. A window's ids start at `engine:viewportBase` (0 in the editor,
+  webContents id × 256 in a pop-out). Real app: editor + popped-out Viewport
+  both drawn by the engine at ~30 fps, on route C and on route A.
+- *CI / release.* render-tests.yml gains `native-golden` (Windows, WARP) on the
+  shared build-engine action; the no-engine packaging hatch is refused in CI.
+- *Session footage.* `FilePorts` imports (ffmpeg probe; bytes → content-addressed
+  cache files in `<userData>/session-footage`); `doc::asset_media_src` reads a
+  record's file when its src is a session URL.
+
 ### Phase D — Rendering in C++
 
 | Step | What | Exit | Size |

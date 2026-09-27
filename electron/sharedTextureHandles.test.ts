@@ -5,11 +5,60 @@
  */
 
 import type { SlotsMessage } from './engineFraming';
-import { hostBridgePath, loadIoSurfaceBridge, type IoSurfaceBridge, type IoSurfaceRef } from './ioSurfaceBridge';
-import { ioSurfaceSource, ntHandleSource, slotHandleSourceFor } from './sharedTextureHandles';
+import { hostBridgePath, loadDmabufBridge, loadIoSurfaceBridge, type DmabufBridge, type IoSurfaceBridge, type IoSurfaceRef } from './ioSurfaceBridge';
+import { dmabufSource, ioSurfaceSource, ntHandleSource, slotHandleSourceFor } from './sharedTextureHandles';
 
 const ring = (generation: number, handles: number[] = [0x10, 0x14, 0]): SlotsMessage => ({
   type: 'slots', generation, viewport: 1, width: 64, height: 32, format: 'rgba8unorm', shared: true, handles,
+  strides: [], offsets: [], sizes: [], modifier: 0,
+});
+
+/** A Linux dmabuf ring: fd numbers in the engine + one plane layout per slot. */
+const dmaRing = (generation: number, fds: number[] = [21, 22]): SlotsMessage => ({
+  ...ring(generation, fds), strides: fds.map(() => 256), offsets: fds.map(() => 0), sizes: fds.map(() => 256 * 32),
+});
+
+function fakeDmabuf() {
+  const dups: Array<[number, number]> = [];
+  const closed: number[] = [];
+  const bridge: DmabufBridge = {
+    dupFd: (pid, fd) => { dups.push([pid, fd]); return fd === 99 ? null : fd + 100; },
+    closeFd: (fd) => { closed.push(fd); },
+  };
+  return { bridge, dups, closed };
+}
+
+describe('dmabufSource (Linux)', () => {
+  it('duplicates each slot fd out of the engine once per ring and imports it as a native pixmap', () => {
+    const { bridge, dups } = fakeDmabuf();
+    const src = dmabufSource(bridge, () => 4242);
+    src.open(dmaRing(1));
+    expect(dups).toEqual([[4242, 21], [4242, 22]]);
+    expect(src.handle(1, 1)).toEqual({
+      nativePixmap: { planes: [{ fd: 122, stride: 256, offset: 0, size: 8192 }], modifier: '0', supportsZeroCopyWebGpuImport: false },
+    });
+    expect(src.handle(2, 0)).toBeNull();
+  });
+
+  it('closes its duplicates when the ring is retired or the engine goes, and resolves nothing without a layout or a pid', () => {
+    const { bridge, closed } = fakeDmabuf();
+    let pid: number | undefined = 7;
+    const errors: string[] = [];
+    const src = dmabufSource(bridge, () => pid, (m) => errors.push(m));
+    src.open(dmaRing(1));
+    src.open(dmaRing(2, [23, 99]));
+    expect(src.handle(2, 1)).toBeNull();  // dupFd refused
+    src.retire(2);
+    expect(closed).toEqual([121, 122]);
+    src.closeAll();
+    expect(closed).toEqual([121, 122, 123]);
+    src.open(ring(3, [30]));  // shared but no plane layout
+    expect(src.handle(3, 0)).toBeNull();
+    pid = undefined;
+    src.open(dmaRing(4));
+    expect(src.handle(4, 0)).toBeNull();
+    expect(errors.some((e) => /no plane layout/.test(e))).toBe(true);
+  });
 });
 
 function fakeBridge() {
@@ -90,6 +139,23 @@ describe('slotHandleSourceFor', () => {
     expect(slotHandleSourceFor('darwin', () => bridge)).not.toBeNull();
     expect(slotHandleSourceFor('darwin', () => null)).toBeNull();
     expect(slotHandleSourceFor('linux', () => bridge)).toBeNull();
+  });
+
+  it('Linux with the dmabuf bridge only', () => {
+    const { bridge } = fakeDmabuf();
+    expect(slotHandleSourceFor('linux', () => null, undefined, { loadDmabuf: () => bridge, enginePid: () => 1 })).not.toBeNull();
+    expect(slotHandleSourceFor('linux', () => null, undefined, { loadDmabuf: () => null, enginePid: () => 1 })).toBeNull();
+  });
+});
+
+describe('loadDmabufBridge', () => {
+  it('loads only on Linux, only a module with dupFd / closeFd', () => {
+    const { bridge } = fakeDmabuf();
+    const base = { file: '/x/premation-host-bridge.node', exists: () => true };
+    expect(loadDmabufBridge({ ...base, platform: 'linux', load: () => bridge })).toBe(bridge);
+    expect(loadDmabufBridge({ ...base, platform: 'darwin', load: () => bridge })).toBeNull();
+    expect(loadDmabufBridge({ ...base, platform: 'linux', load: () => ({ lookup() {}, release() {} }) })).toBeNull();
+    expect(loadDmabufBridge({ ...base, platform: 'linux', exists: () => false, load: () => bridge })).toBeNull();
   });
 });
 

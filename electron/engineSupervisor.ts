@@ -187,6 +187,11 @@ export class EngineSupervisor {
     return this.transport?.session ?? null;
   }
 
+  /** The running engine's process id (Linux dmabuf slots are duplicated out of it), or undefined. */
+  get enginePid(): number | undefined {
+    return this.child?.pid ?? undefined;
+  }
+
   /** Start the engine. Resolves when it is running, or when it fell back (see `state`). */
   start(): Promise<void> {
     if (this.state_ !== 'stopped') return Promise.resolve();

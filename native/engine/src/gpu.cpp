@@ -103,8 +103,12 @@ std::optional<Gpu> create_gpu(bool wantSharedTexture, bool highPerformance, std:
 #elif defined(__APPLE__)
     constexpr wgpu::FeatureName kSharedMemory = wgpu::FeatureName::SharedTextureMemoryIOSurface;
     constexpr wgpu::FeatureName kSharedFence = wgpu::FeatureName::SharedFenceMTLSharedEvent;
+#elif defined(PREMATION_DMABUF)
+    // Linux with GBM (shared_texture_ffi_linux.cpp; unverified).
+    constexpr wgpu::FeatureName kSharedMemory = wgpu::FeatureName::SharedTextureMemoryDmaBuf;
+    constexpr wgpu::FeatureName kSharedFence = wgpu::FeatureName::SharedFenceSyncFD;
 #endif
-#if defined(_WIN32) || defined(__APPLE__)
+#if defined(_WIN32) || defined(__APPLE__) || defined(PREMATION_DMABUF)
     if (gpu.adapter.HasFeature(kSharedMemory) && gpu.adapter.HasFeature(kSharedFence)) {
       features.push_back(kSharedMemory);
       features.push_back(kSharedFence);

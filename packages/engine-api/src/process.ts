@@ -143,6 +143,12 @@ export interface EngineBridge {
   onFallback(handler: (info: EngineFallbackNotice) => void): () => void;
   /** Frames from the shared-texture ring (null stops). Absent outside Electron. */
   onFrame?(consumer: EngineFrameConsumer | null): void;
+  /**
+   * C (multiple viewports): the first engine viewport id this window may use —
+   * 0 in the editor window (its viewports are 1, 2, …), a block of 256 of its
+   * own in a pop-out. Absent outside Electron (then 0).
+   */
+  viewportBase?(): Promise<number>;
 }
 
 // ── notices ──

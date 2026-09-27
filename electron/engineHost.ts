@@ -45,10 +45,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { handle, on } from './ipcGuard';
-import { peekEnvelope, transcribeProviderOf, withCausedBy, withEnvelopeSeq, withTranscribeCredential, type EngineFrameMessage, type FrameGeometryMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
-import { EngineCommandLog } from './engineCommandLog';
+import { peekEnvelope, peekRequest, transcribeProviderOf, withCausedBy, withEnvelopeSeq, withTranscribeCredential, type EngineFrameMessage, type FrameGeometryMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
+import { CMD, EngineCommandLog } from './engineCommandLog';
 import type { PixelFrame } from './pixelChannel';
-import { hostBridgePath, loadIoSurfaceBridge } from './ioSurfaceBridge';
+import { hostBridgePath, loadDmabufBridge, loadIoSurfaceBridge } from './ioSurfaceBridge';
 import { ntHandleSource, slotHandleSourceFor, type SlotHandleSource, type SlotTextureHandle } from './sharedTextureHandles';
 import { resolveFfmpegBinary } from './ffmpegBinary';
 import { EngineGoneError } from './engineTransport';
@@ -69,6 +69,7 @@ export const ENGINE_IPC_CHANNELS = [
   'engine:receiverReady',
   'engine:request',
   'engine:status',
+  'engine:viewportBase',
 ] as const;
 
 /** Pushes to the renderer. */
@@ -125,6 +126,29 @@ export function engineOwnsDocument(env: Record<string, string | undefined>, pref
   return !(pref === 'ui' || pref === 'ts' || pref === 'off');
 }
 
+/**
+ * The viewport frame route main offers the engine. `auto` (default): the
+ * shared texture (route C) where this OS can import it, the route-A copy
+ * otherwise. `PREMATION_VIEWPORT_ROUTE=copy` offers ONLY the copy, even where
+ * shared textures work — how route A (the macOS-without-bridge / Linux path)
+ * is exercised on a Windows box, and a field switch if a GPU driver breaks
+ * shared-texture import.
+ */
+export function viewportRoute(env: Record<string, string | undefined>): 'auto' | 'copy' {
+  const v = env.PREMATION_VIEWPORT_ROUTE?.trim().toLowerCase();
+  return v === 'copy' || v === 'a' ? 'copy' : 'auto';
+}
+
+/**
+ * The frame capabilities main's Hello offers. Both where slots can be imported
+ * here (the engine takes shared slots when it can and falls back to copies
+ * when it cannot); only the copy otherwise (no handle source, or the route
+ * forced to copy).
+ */
+export function offeredFrameCapabilities(canImportShared: boolean): string[] {
+  return canImportShared ? ['frames.sharedTexture', 'frames.copy'] : ['frames.copy'];
+}
+
 function readText(p: string): string | null {
   try {
     return readFileSync(p, 'utf8');
@@ -176,36 +200,46 @@ export interface FrameForwarderStats {
 
 /**
  * FrameReady → one shared-texture transfer into the page, at most one in
- * flight (a frame that arrives meanwhile goes straight back to the ring: drop,
- * never block). Slot handles are per ring generation AND per engine process
- * (`epoch`): a release that belongs to a dead process is never sent to its
- * successor, whose generation numbers start over.
+ * flight PER VIEWPORT (a frame that arrives meanwhile goes straight back to
+ * the ring: drop, never block). Slot handles are per ring generation AND per
+ * engine process (`epoch`): a release that belongs to a dead process is never
+ * sent to its successor, whose generation numbers start over.
+ *
+ * C (multiple viewports): every viewport the engine draws — the editor's, a
+ * pop-out window's, a second view — has its own ring (FrameSlots.viewport;
+ * generations are unique across viewports), its own transfer in flight and its
+ * own overlay geometry, and its frames go to the window that OWNS it
+ * (`ownerOf`, learned by EngineHost from that window's setViewport). Receivers
+ * are per window (`setReceiverReady(…, key)`); a window going away frees only
+ * its own copied frames.
  */
 export class FrameForwarder {
-  private rings = new Map<number, SlotsMessage>();
   private epoch = 0;
-  private receiverReady = false;
-  private inFlight = false;
-  /** A newer ring arrived while a transfer was in flight: retire the older ones when it ends. */
-  private retirePending = false;
+  private readonly views = new Map<number, ViewState>();
+  /** generation → viewport, for every live ring (pixels name only the generation). */
+  private readonly genView = new Map<number, number>();
+  private readonly receivers = new Map<number, { ready: boolean; copyReady: boolean }>();
   private readonly handles: SlotHandleSource;
   readonly stats: FrameForwarderStats = { forwarded: 0, copied: 0, dropped: 0, engineDropped: 0, errors: [] };
   // Route A: the two halves of a copied frame arrive on different pipes.
-  private copyReady = false;
   private readonly copyWaiting = new Map<string, FrameReadyMessage>();
   private readonly copyPixels = new Map<string, PixelFrame>();
-  /** Copied frames with the page, by slot key → frees the slot (once). */
-  private readonly copyInPage = new Map<string, () => void>();
+  /** Copied frames with a page, by slot key → its viewport, its window and what frees the slot (once). */
+  private readonly copyInPage = new Map<string, { viewport: number; owner: number; free: () => void }>();
+  /** A ready frame's geometry until its meta is built (route A may wait for its pixels), by slot key. */
+  private readonly frameGeometry = new Map<string, FrameGeometryMessage['layers']>();
 
   constructor(
     private readonly deps: {
       sharedTexture: SharedTextureApi | null;
-      /** The page frame to send to (the main window's main frame), or null. */
-      target(): unknown;
+      /** The page frame showing `viewport` (its owner window's main frame), or null. */
+      target(viewport: number): unknown;
+      /** The receiver key (window) that owns `viewport`; default: 0 for every viewport (one window). */
+      ownerOf?(viewport: number): number;
       release(generation: number, slot: number): void;
       /** Slot handles for this OS (sharedTextureHandles.ts); default: Windows NT handles. */
       handles?: SlotHandleSource;
-      /** Route A: push one frame's pixels to the page; false when there is no page to take them. */
+      /** Route A: push one frame's pixels to the owner's page; false when there is no page to take them. */
       sendPixels?(meta: ForwardedFrameMeta, pixels: Uint8Array): boolean;
       now?(): number;
     },
@@ -216,41 +250,44 @@ export class FrameForwarder {
   /** A new engine process: forget every ring of the old one. */
   engineStarted(): void {
     this.epoch += 1;
-    this.rings.clear();
+    this.views.clear();
+    this.genView.clear();
     this.handles.closeAll();
-    this.inFlight = false;
-    this.retirePending = false;
     // The dead engine's slots are gone with it: nothing to release.
     this.copyWaiting.clear();
     this.copyPixels.clear();
     this.copyInPage.clear();
-    this.geometry = null;
     this.frameGeometry.clear();
   }
 
   /**
-   * The page's receivers: `ready` for shared textures, `copyReady` for route-A
-   * pixels (defaults to `ready`). Going away frees every copied frame the page
-   * held — a reloaded page never answers for them.
+   * A window's receivers (`key`, default 0): `ready` for shared textures,
+   * `copyReady` for route-A pixels (defaults to `ready`). Going away frees
+   * every copied frame that window held — a reloaded page never answers for them.
    */
-  setReceiverReady(ready: boolean, copyReady: boolean = ready): void {
-    this.receiverReady = ready;
-    this.copyReady = copyReady;
-    if (!copyReady) this.releaseCopiesInPage();
+  setReceiverReady(ready: boolean, copyReady: boolean = ready, key = 0): void {
+    this.receivers.set(key, { ready, copyReady });
+    if (!copyReady) this.releaseCopiesInPage(key);
+  }
+
+  /** A window closed: its receivers and its copied frames go. */
+  forgetReceiver(key: number): void {
+    this.receivers.delete(key);
+    this.releaseCopiesInPage(key);
   }
 
   /** Route A: the page is done with a copied frame (`engine:pixelsRelease`). */
   pixelsReleased(generation: number, slot: number): void {
     const key = slotKey(generation, slot);
-    const free = this.copyInPage.get(key);
-    if (!free) return;  // unknown, already freed, or a previous engine's
+    const held = this.copyInPage.get(key);
+    if (!held) return;  // unknown, already freed, or a previous engine's
     this.copyInPage.delete(key);
-    free();
+    held.free();
   }
 
   /** Route A: one frame's pixels from the engine's fd 5. */
   onPixels(p: PixelFrame): void {
-    if (!this.rings.has(p.generation)) return;  // a retired ring's: its slot went with it
+    if (!this.genView.has(p.generation)) return;  // a retired ring's: its slot went with it
     const key = slotKey(p.generation, p.slot);
     const ready = this.copyWaiting.get(key);
     if (ready) {
@@ -261,25 +298,14 @@ export class FrameForwarder {
     this.copyPixels.set(key, p);
   }
 
+  /** Is the main (key 0) shared-texture receiver installed? */
   get ready(): boolean {
-    return this.receiverReady;
+    return this.receivers.get(0)?.ready ?? false;
   }
 
   onFrame(m: EngineFrameMessage): void {
     if (m.type === 'slots') {
-      // A new ring retires every older generation of this process.
-      this.rings.clear();
-      this.rings.set(m.generation, m);
-      // Half-paired copies of the old ring: the engine ignores releases of a
-      // retired generation, so they are simply forgotten.
-      this.copyWaiting.clear();
-      this.copyPixels.clear();
-      if (m.shared) this.handles.open(m);
-      // An import in flight may still be using an older ring's handle.
-      if (this.inFlight) this.retirePending = true;
-      else this.handles.retire(m.generation);
-      this.geometry = null;
-      this.frameGeometry.clear();
+      this.onSlots(m);
       return;
     }
     if (m.type === 'geometry') {
@@ -289,37 +315,82 @@ export class FrameForwarder {
     if (m.type === 'frameReady') this.onFrameReady(m);
   }
 
-  /**
-   * B4 round 2: the overlay geometry of the NEXT FrameReady (setOverlayGeometry) —
-   * collected over its parts, then handed to the page WITH that frame (its meta),
-   * so the overlays draw the geometry of the very frame they are drawn over.
-   */
-  private geometry: { viewport: number; generation: number; frame: number; layers: FrameGeometryMessage['layers']; complete: boolean } | null = null;
-  /** A ready frame's geometry until its meta is built (route A may wait for its pixels), by slot key. */
-  private readonly frameGeometry = new Map<string, FrameGeometryMessage['layers']>();
+  private view(viewport: number): ViewState {
+    let v = this.views.get(viewport);
+    if (!v) {
+      v = { rings: new Map(), held: new Set(), inFlight: false, retirePending: false, geometry: null };
+      this.views.set(viewport, v);
+    }
+    return v;
+  }
 
+  private owner(viewport: number): number {
+    return this.deps.ownerOf?.(viewport) ?? 0;
+  }
+
+  private onSlots(m: SlotsMessage): void {
+    const v = this.view(m.viewport);
+    // A new ring retires every older generation OF THIS VIEWPORT. Half-paired
+    // copies of the old ring are forgotten: the engine ignores releases of a
+    // retired generation.
+    for (const g of v.rings.keys()) {
+      this.genView.delete(g);
+      // Its handle may be the one an import in flight is using: kept until that ends.
+      if (v.inFlight) v.held.add(g);
+      for (const k of [...this.copyWaiting.keys()]) if (k.startsWith(`${g}:`)) this.copyWaiting.delete(k);
+      for (const k of [...this.copyPixels.keys()]) if (k.startsWith(`${g}:`)) this.copyPixels.delete(k);
+    }
+    v.rings.clear();
+    v.rings.set(m.generation, m);
+    this.genView.set(m.generation, m.viewport);
+    if (m.shared) this.handles.open(m);
+    // An import in flight may still be using this viewport's older handle.
+    if (v.inFlight) v.retirePending = true;
+    else this.handles.retire(this.liveGenerations());
+    v.geometry = null;
+  }
+
+  /** Every ring any viewport still shows (the handle sources keep exactly these). */
+  private liveGenerations(): Set<number> {
+    const out = new Set<number>();
+    for (const v of this.views.values()) {
+      for (const g of v.rings.keys()) out.add(g);
+      // A viewport whose transfer is in flight keeps its retired rings until it ends.
+      for (const g of v.held) out.add(g);
+    }
+    return out;
+  }
+
+  /**
+   * B4 round 2: the overlay geometry of the NEXT FrameReady of its viewport
+   * (setOverlayGeometry) — collected over its parts, then handed to the page
+   * WITH that frame (its meta), so the overlays draw the geometry of the very
+   * frame they are drawn over.
+   */
   private onGeometry(g: FrameGeometryMessage): void {
-    const cur = this.geometry;
-    const same = cur !== null && !cur.complete && cur.viewport === g.viewport && cur.generation === g.generation && cur.frame === g.frame;
-    this.geometry = same
+    const v = this.view(g.viewport);
+    const cur = v.geometry;
+    const same = cur !== null && !cur.complete && cur.generation === g.generation && cur.frame === g.frame;
+    v.geometry = same
       ? { ...cur, layers: [...cur.layers, ...g.layers], complete: g.last }
-      : { viewport: g.viewport, generation: g.generation, frame: g.frame, layers: [...g.layers], complete: g.last };
+      : { generation: g.generation, frame: g.frame, layers: [...g.layers], complete: g.last };
   }
 
   /** The collected geometry for `f` (and forget it): only a complete set for this very frame. */
-  private takeGeometry(f: FrameReadyMessage): FrameGeometryMessage['layers'] | undefined {
-    const g = this.geometry;
-    this.geometry = null;
-    return g && g.complete && g.viewport === f.viewport && g.generation === f.generation && g.frame === f.frame ? g.layers : undefined;
+  private takeGeometry(v: ViewState, f: FrameReadyMessage): FrameGeometryMessage['layers'] | undefined {
+    const g = v.geometry;
+    v.geometry = null;
+    return g && g.complete && g.generation === f.generation && g.frame === f.frame ? g.layers : undefined;
   }
 
   private onFrameReady(f: FrameReadyMessage): void {
     this.stats.engineDropped += f.dropped;
+    const v = this.view(f.viewport);
     // The frame's overlay geometry travels with it on either route (meta()).
-    const geometry = this.takeGeometry(f);
+    const geometry = this.takeGeometry(v, f);
     if (geometry) this.frameGeometry.set(slotKey(f.generation, f.slot), geometry);
     else this.frameGeometry.delete(slotKey(f.generation, f.slot));
-    const ring = this.rings.get(f.generation);
+    const ring = v.rings.get(f.generation);
     if (ring && !ring.shared && this.deps.sendPixels) {
       // Route A: forward once the pixels are here too.
       const key = slotKey(f.generation, f.slot);
@@ -332,10 +403,11 @@ export class FrameForwarder {
       }
       return;
     }
-    const target = this.deps.target();
+    const target = this.deps.target(f.viewport);
     const st = this.deps.sharedTexture;
-    const handle = ring?.shared && !this.inFlight ? this.handles.handle(f.generation, f.slot) : null;
-    if (!ring || !ring.shared || !handle || !st || !target || !this.receiverReady || this.inFlight) {
+    const receiver = this.receivers.get(this.owner(f.viewport));
+    const handle = ring?.shared && !v.inFlight ? this.handles.handle(f.generation, f.slot) : null;
+    if (!ring || !ring.shared || !handle || !st || !target || !receiver?.ready || v.inFlight) {
       this.stats.dropped += 1;
       this.deps.release(f.generation, f.slot);
       return;
@@ -349,7 +421,7 @@ export class FrameForwarder {
         if (epoch === this.epoch) this.deps.release(f.generation, f.slot);
       };
     })();
-    this.inFlight = true;
+    v.inFlight = true;
     let imported: { release(): void };
     try {
       imported = st.importSharedTexture({
@@ -357,7 +429,7 @@ export class FrameForwarder {
         allReferencesReleased: releaseOnce,
       });
     } catch (e) {
-      this.inFlight = false;
+      v.inFlight = false;
       this.fail(e);
       releaseOnce();
       return;
@@ -379,21 +451,23 @@ export class FrameForwarder {
           this.fail(e);
         }
         if (epoch === this.epoch) {
-          this.inFlight = false;
-          if (this.retirePending) {
-            this.retirePending = false;
-            const current = [...this.rings.keys()][0];
-            this.handles.retire(current ?? -1);
+          v.inFlight = false;
+          if (v.retirePending) {
+            v.retirePending = false;
+            v.held.clear();
+            this.handles.retire(this.liveGenerations());
           }
         }
       });
   }
 
   private forwardCopy(f: FrameReadyMessage, p: PixelFrame): void {
-    const target = this.deps.target();
+    const target = this.deps.target(f.viewport);
     const send = this.deps.sendPixels;
     const key = slotKey(f.generation, f.slot);
-    if (!send || !target || !this.copyReady || this.copyInPage.size >= MAX_COPY_FRAMES_IN_PAGE || this.copyInPage.has(key)
+    const owner = this.owner(f.viewport);
+    const inPage = [...this.copyInPage.values()].filter((c) => c.viewport === f.viewport).length;
+    if (!send || !target || !this.receivers.get(owner)?.copyReady || inPage >= MAX_COPY_FRAMES_IN_PAGE || this.copyInPage.has(key)
       || p.width !== f.width || p.height !== f.height) {
       this.stats.dropped += 1;
       this.deps.release(f.generation, f.slot);
@@ -406,7 +480,7 @@ export class FrameForwarder {
       done = true;
       if (epoch === this.epoch) this.deps.release(f.generation, f.slot);
     };
-    this.copyInPage.set(key, free);
+    this.copyInPage.set(key, { viewport: f.viewport, owner, free });
     let sent = false;
     try {
       sent = send(this.meta(f, 'copy'), p.data);
@@ -423,10 +497,12 @@ export class FrameForwarder {
     this.stats.copied += 1;
   }
 
-  private releaseCopiesInPage(): void {
-    const frees = [...this.copyInPage.values()];
-    this.copyInPage.clear();
-    for (const free of frees) free();
+  private releaseCopiesInPage(owner: number): void {
+    for (const [k, held] of [...this.copyInPage.entries()]) {
+      if (held.owner !== owner) continue;
+      this.copyInPage.delete(k);
+      held.free();
+    }
   }
 
   private meta(f: FrameReadyMessage, route: ForwardedFrameMeta['route']): ForwardedFrameMeta {
@@ -446,6 +522,18 @@ export class FrameForwarder {
     this.stats.errors.push(e instanceof Error ? e.message : String(e));
     if (this.stats.errors.length > 20) this.stats.errors.shift();
   }
+}
+
+/** One viewport's frames in main. */
+interface ViewState {
+  rings: Map<number, SlotsMessage>;
+  /** Retired generations whose handles an in-flight import may still use. */
+  held: Set<number>;
+  /** A shared-texture transfer of this viewport is in flight. */
+  inFlight: boolean;
+  /** A newer ring arrived while a transfer was in flight: retire the older ones when it ends. */
+  retirePending: boolean;
+  geometry: { generation: number; frame: number; layers: FrameGeometryMessage['layers']; complete: boolean } | null;
 }
 
 function slotKey(generation: number, slot: number): string {
@@ -478,6 +566,8 @@ export interface EngineHostOptions {
   sharedTexture: SharedTextureApi | null;
   /** The OS (tests); default process.platform. Decides how slot handles are imported. */
   platform?: NodeJS.Platform;
+  /** The environment the route switch reads (tests); default process.env. */
+  env?: Record<string, string | undefined>;
   supervisor?: Partial<SupervisorOptions>;
   /** G1: the native plugin folder (bundles with premation-plugin.json) the engine scans. */
   nativePluginDir?: string;
@@ -485,6 +575,8 @@ export interface EngineHostOptions {
   nativePluginJournal?: string;
   /** F2 / D5: the recovery copy the engine-owned document's autosave writes (reported with ownsDocument). */
   recoveryPath?: string;
+  /** Where the engine caches imported bytes / session footage as files (<userData>/session-footage). */
+  sessionFootageDir?: string;
   log?(line: string): void;
   /**
    * The user's speech-provider key for a transcribe job ('openai' …), from
@@ -565,25 +657,34 @@ export class EngineHost {
       });
     // Route C where this OS can import the engine's slots; otherwise (Linux,
     // macOS without the host bridge, no sharedTexture module) the engine is
-    // not offered `frames.sharedTexture`.
-    const handles = o.enabled && o.sharedTexture
+    // not offered `frames.sharedTexture`. PREMATION_VIEWPORT_ROUTE=copy forces
+    // route A everywhere (viewportRoute).
+    const forceCopy = viewportRoute(o.env ?? process.env) === 'copy';
+    if (o.enabled && forceCopy) log('[engine] viewport route forced to copy (PREMATION_VIEWPORT_ROUTE=copy)');
+    const handles = o.enabled && o.sharedTexture && !forceCopy
       ? slotHandleSourceFor(
         platform,
         () => loadIoSurfaceBridge({ platform, file: hostBridgePath(resolveExe(), process.env), exists: existsSync, log: (m) => log(`[engine] warn ${m}`) }),
         (m) => log(`[engine] warn shared_texture ${m}`),
+        {
+          loadDmabuf: () => loadDmabufBridge({ platform, file: hostBridgePath(resolveExe(), process.env), exists: existsSync, log: (m) => log(`[engine] warn ${m}`) }),
+          enginePid: () => this.supervisor?.enginePid,
+        },
       )
       : null;
     this.frames = new FrameForwarder({
       sharedTexture: o.sharedTexture,
-      target: () => {
-        const w = o.getWindow();
-        return w && !w.isDestroyed() ? w.webContents.mainFrame : null;
+      // C: a viewport's frames go to the window that set it up (a pop-out's to the pop-out).
+      target: (viewport) => {
+        const w = this.windowOfViewport(viewport);
+        return w ? w.webContents.mainFrame : null;
       },
+      ownerOf: (viewport) => this.viewportOwners.get(viewport) ?? this.mainWindowKey(),
       release: (g, s) => this.supervisor?.releaseSlot(g, s),
       ...(handles ? { handles } : {}),
       sendPixels: (meta, pixels) => {
-        const w = o.getWindow();
-        if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return false;
+        const w = this.windowOfViewport(meta.viewport);
+        if (!w) return false;
         w.webContents.send('engine:pixels', meta, pixels);
         return true;
       },
@@ -592,9 +693,7 @@ export class EngineHost {
       this.supervisor = null;
       return;
     }
-    // Both offered where both work: the engine takes shared slots when it can
-    // and falls back to copies (route A) when it cannot.
-    const capabilities = handles ? ['frames.sharedTexture', 'frames.copy'] : ['frames.copy'];
+    const capabilities = offeredFrameCapabilities(handles !== null);
     this.supervisor = new EngineSupervisor(
       {
         spawn: (exe, args) =>
@@ -608,6 +707,9 @@ export class EngineHost {
               PREMATION_FFMPEG: resolveFfmpegBinary({ vars: process.env, resourcesPath: o.resourcesPath, platform: process.platform, exists: existsSync }),
               // The objectMatte job's SAM pair: <resources>/models/object-matte when
               // packaged (electron-builder extraResources), dist/ in development.
+              // importBytes caches bytes as files here (the page's session-footage
+              // cache, file:sessionFootageDir): the engine never holds a blob: URL.
+              ...(o.sessionFootageDir ? { PREMATION_SESSION_FOOTAGE: o.sessionFootageDir } : {}),
               PREMATION_SAM_DIR: process.env.PREMATION_SAM_DIR
                 ?? (o.isPackaged ? path.join(o.resourcesPath, 'models', 'object-matte') : path.join(o.appPath, 'dist', 'models', 'object-matte')),
             },
@@ -647,6 +749,43 @@ export class EngineHost {
     return this.supervisor !== null;
   }
 
+  /**
+   * C: which window owns each engine viewport — the sender of its last
+   * setViewport (main peeks the command id and the viewport field; it never
+   * decodes the request). A viewport nobody claimed belongs to the main window.
+   */
+  private readonly viewportOwners = new Map<number, number>();
+
+  /** The main window's receiver key (its webContents id), or 0 before it exists. */
+  private mainWindowKey(): number {
+    const w = this.o.getWindow();
+    return w && !w.isDestroyed() && !w.webContents.isDestroyed() ? w.webContents.id : 0;
+  }
+
+  /** The live window that owns `viewport` (see viewportOwners), or null. */
+  private windowOfViewport(viewport: number): BrowserWindow | null {
+    const owner = this.viewportOwners.get(viewport);
+    const list = this.windows();
+    const w = owner === undefined ? this.o.getWindow() : list.find((x) => x.webContents.id === owner) ?? null;
+    return w && !w.isDestroyed() && !w.webContents.isDestroyed() ? w : null;
+  }
+
+  /**
+   * C: the first engine viewport id a window may use. The main window keeps
+   * 1, 2, … (ENGINE_SURFACE_VIEWPORT = 1); every other window gets a block of
+   * 256 of its own (webContents id × 256), so two windows never name the same
+   * engine surface.
+   */
+  viewportBase(sender: number): number {
+    return sender === this.mainWindowKey() ? 0 : sender * 256;
+  }
+
+  /** A window went away: its receivers, its copied frames and its viewports' ownership go. */
+  windowClosed(sender: number): void {
+    this.frames.forgetReceiver(sender);
+    for (const [v, owner] of [...this.viewportOwners]) if (owner === sender) this.viewportOwners.delete(v);
+  }
+
   start(): Promise<void> {
     return this.supervisor?.start() ?? Promise.resolve();
   }
@@ -661,9 +800,9 @@ export class EngineHost {
     this.supervisor?.restart(`chromium GPU process gone (${reason})`);
   }
 
-  /** The page (re)loaded or went away: its receivers are gone until it says otherwise. */
-  pageReset(): void {
-    this.frames.setReceiverReady(false, false);
+  /** A page (re)loaded or went away (default: the main window's): its receivers are gone until it says otherwise. */
+  pageReset(sender: number = this.mainWindowKey()): void {
+    this.frames.setReceiverReady(false, false, sender);
   }
 
   status(): EngineHostStatusReply {
@@ -698,6 +837,13 @@ export class EngineHost {
     const peek = peekEnvelope(bytes);
     if (!peek || peek.kind !== 'request' || peek.seq === undefined) return { ok: false, reason: 'invalid', message: 'not an encoded EngineMessage{request}' };
     while (this.recovering) await this.recovering;
+    // C: the window that sets a viewport up owns its frames.
+    if (sender !== undefined) {
+      const cmd = peekRequest(bytes);
+      if (cmd && cmd.body !== 'query' && cmd.commandId === CMD.setViewport && cmd.firstVarint !== undefined) {
+        this.viewportOwners.set(cmd.firstVarint, sender);
+      }
+    }
     this.hostSeq += 1;
     const seq = this.hostSeq;
     // A copy either way: the IPC buffer is not ours to keep while the pipe write is pending.
@@ -799,10 +945,13 @@ export class EngineHost {
 /** Register the engine channels. `engine:status` always; the rest only when the host is enabled. */
 export function registerEngineIpc(host: EngineHost): void {
   handle('engine:status', () => host.status());
+  // C: the first engine viewport id this window may use (EngineHost.viewportBase).
+  handle('engine:viewportBase', (e: IpcMainInvokeEvent) => host.viewportBase(e.sender.id));
   if (!host.enabled) return;
   handle('engine:request', (e: IpcMainInvokeEvent, bytes: Uint8Array) => host.request(bytes, e.sender.id));
-  on('engine:receiverReady', (_e: IpcMainEvent, ready: boolean, copyReady?: boolean) =>
-    host.frames.setReceiverReady(ready === true, copyReady === undefined ? ready === true : copyReady === true));
+  // Receivers are per window: a pop-out's never stands in for the editor's.
+  on('engine:receiverReady', (e: IpcMainEvent, ready: boolean, copyReady?: boolean) =>
+    host.frames.setReceiverReady(ready === true, copyReady === undefined ? ready === true : copyReady === true, e.sender.id));
   on('engine:pixelsRelease', (_e: IpcMainEvent, generation: number, slot: number) => {
     if (Number.isInteger(generation) && Number.isInteger(slot)) host.frames.pixelsReleased(generation, slot);
   });

@@ -32,6 +32,12 @@ export interface FrameSlots {
   shared: boolean;
   /** One per slot, at most 16. */
   handles: number[];
+  /** Linux dmabuf slots only (shared, `handles` = the dmabuf fd numbers IN THE ENGINE, which the host duplicates with pidfd_getfd): per slot, the single plane's row stride and offset in bytes and its size; empty elsewhere. */
+  strides: number[];
+  offsets: number[];
+  sizes: number[];
+  /** Linux dmabuf: the DRM format modifier of every slot (DRM_FORMAT_MOD_LINEAR = 0 — the engine allocates linear). 0 elsewhere. */
+  modifier: number;
 }
 
 /** Engine → host. A finished frame is in `slot` (the GPU work is complete: Electron's rgba import takes no fence). The slot belongs to the host until it sends FrameRelease for this generation + slot. */
@@ -131,21 +137,30 @@ function encS_FrameSlots(w: Writer, v: FrameSlots): void {
   w.byte(40); w.varint(enc_PixelFormat(v.format));
   w.byte(48); w.bool(v.shared);
   { const a = v.handles; if (a.length) { w.byte(58); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u64(a[i]!); w.endLd(s); } }
+  { const a = v.strides; if (a.length) { w.byte(66); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u32(a[i]!); w.endLd(s); } }
+  { const a = v.offsets; if (a.length) { w.byte(74); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u32(a[i]!); w.endLd(s); } }
+  { const a = v.sizes; if (a.length) { w.byte(82); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u64(a[i]!); w.endLd(s); } }
+  w.byte(88); w.u64(v.modifier);
 }
 function decS_FrameSlots(r: Reader, end: number, o: any): FrameSlots {
   const l_handles: number[] = [];
+  const l_strides: number[] = [];
+  const l_offsets: number[] = [];
+  const l_sizes: number[] = [];
   let h_generation = false;
   let h_viewport = false;
   let h_width = false;
   let h_height = false;
   let h_format = false;
   let h_shared = false;
+  let h_modifier = false;
   let v_generation: number | undefined;
   let v_viewport: number | undefined;
   let v_width: number | undefined;
   let v_height: number | undefined;
   let v_format: PixelFormat | undefined;
   let v_shared: boolean | undefined;
+  let v_modifier: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -156,6 +171,10 @@ function decS_FrameSlots(r: Reader, end: number, o: any): FrameSlots {
       case 40: v_format = dec_PixelFormat(r.varint()); h_format = true; break;
       case 48: v_shared = r.bool(); h_shared = true; break;
       case 58: { const e = r.ldEnd(); while (r.pos < e) l_handles.push(r.u64()); r.expectAt(e); break; }
+      case 66: { const e = r.ldEnd(); while (r.pos < e) l_strides.push(r.u32()); r.expectAt(e); break; }
+      case 74: { const e = r.ldEnd(); while (r.pos < e) l_offsets.push(r.u32()); r.expectAt(e); break; }
+      case 82: { const e = r.ldEnd(); while (r.pos < e) l_sizes.push(r.u64()); r.expectAt(e); break; }
+      case 88: v_modifier = r.u64(); h_modifier = true; break;
       default: r.skip(key);
     }
   }
@@ -166,6 +185,7 @@ function decS_FrameSlots(r: Reader, end: number, o: any): FrameSlots {
   if (!h_height) throw new DecodeError('FrameSlots.height: missing', 'missingField');
   if (!h_format) throw new DecodeError('FrameSlots.format: missing', 'missingField');
   if (!h_shared) throw new DecodeError('FrameSlots.shared: missing', 'missingField');
+  if (!h_modifier) throw new DecodeError('FrameSlots.modifier: missing', 'missingField');
   o.generation = v_generation;
   o.viewport = v_viewport;
   o.width = v_width;
@@ -173,6 +193,10 @@ function decS_FrameSlots(r: Reader, end: number, o: any): FrameSlots {
   o.format = v_format;
   o.shared = v_shared;
   o.handles = l_handles;
+  o.strides = l_strides;
+  o.offsets = l_offsets;
+  o.sizes = l_sizes;
+  o.modifier = v_modifier;
   return o;
 }
 function encS_FrameReady(w: Writer, v: FrameReady): void {

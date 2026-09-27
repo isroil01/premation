@@ -1593,8 +1593,16 @@ function registerPopoutIpc(): void {
       : `file://${path.join(__dirname, '..', 'dist', 'index.html')}#/popout/${panelId}`;
 
     // F2: the engine relays its events to every pop-out (a second mirror).
+    // C: a pop-out's viewport is its own engine surface — its receivers reset
+    // with its page, and closing it drops its frames and viewports.
     popoutWindows.add(popoutWin);
-    popoutWin.on('closed', () => popoutWindows.delete(popoutWin));
+    const popoutKey = popoutWin.webContents.id;
+    popoutWin.webContents.on('did-start-loading', () => engineHost?.pageReset(popoutKey));
+    popoutWin.webContents.on('render-process-gone', () => engineHost?.pageReset(popoutKey));
+    popoutWin.on('closed', () => {
+      popoutWindows.delete(popoutWin);
+      engineHost?.windowClosed(popoutKey);
+    });
 
     void popoutWin.loadURL(popoutUrl);
     popoutWin.once('ready-to-show', () => popoutWin.show());
@@ -1967,6 +1975,9 @@ app.whenReady().then(() => {
     nativePluginJournal: path.join(app.getPath('userData'), 'native-plugin-journal.bin'),
     // F2 / D5: where the engine-owned document's autosave writes its recovery copy.
     recoveryPath: path.join(ensureDir(path.join(app.getPath('userData'), 'recovery')), 'engine-recovery.json'),
+    // Imported bytes and session blob: footage become files here (the same
+    // folder file:sessionFootageDir hands the page).
+    sessionFootageDir: ensureDir(path.join(app.getPath('userData'), 'session-footage')),
     // The transcribe job's key: main's keystore → the startJob, per job (never logged, never to a page).
     transcribeCredential: async (provider) =>
       (VAULT_PROVIDERS as readonly string[]).includes(provider) ? getKeyForProvider(provider as VaultProvider) : null,

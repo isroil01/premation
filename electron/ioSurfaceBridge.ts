@@ -37,6 +37,45 @@ export function hostBridgePath(engineExe: string | null, vars: Record<string, st
   return engineExe ? path.join(path.dirname(engineExe), HOST_BRIDGE_FILE) : null;
 }
 
+/**
+ * Linux: the same premation-host-bridge.node, built from
+ * native/engine/host_bridge/dmabuf_bridge_ffi.cpp (UNVERIFIED — no Linux GPU box
+ * has run it). Duplicates the engine's dmabuf fds into main with pidfd_getfd.
+ */
+export interface DmabufBridge {
+  /** A new fd in this process for `fd` of process `pid`, or null (no permission, kernel < 5.6, gone). */
+  dupFd(pid: number, fd: number): number | null;
+  closeFd(fd: number): void;
+}
+
+function isDmabufBridge(m: unknown): m is DmabufBridge {
+  const b = m as Partial<DmabufBridge> | null;
+  return !!b && typeof b.dupFd === 'function' && typeof b.closeFd === 'function';
+}
+
+/** Load the Linux bridge; null (with the reason logged) when it is absent or not the dmabuf bridge. */
+export function loadDmabufBridge(opts: {
+  platform: NodeJS.Platform;
+  file: string | null;
+  exists(p: string): boolean;
+  load?(p: string): unknown;
+  log?(message: string): void;
+}): DmabufBridge | null {
+  if (opts.platform !== 'linux' || !opts.file) return null;
+  if (!opts.exists(opts.file)) {
+    opts.log?.(`host bridge not found at ${opts.file} (the viewport uses the route-A copy)`);
+    return null;
+  }
+  try {
+    const m = (opts.load ?? ((p: string) => require(p) as unknown))(opts.file);
+    if (isDmabufBridge(m)) return m;
+    opts.log?.(`${opts.file} is not the Linux premation-host-bridge`);
+  } catch (e) {
+    opts.log?.(`host bridge failed to load: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return null;
+}
+
 function isBridge(m: unknown): m is IoSurfaceBridge {
   const b = m as Partial<IoSurfaceBridge> | null;
   return !!b && typeof b.lookup === 'function' && typeof b.release === 'function';

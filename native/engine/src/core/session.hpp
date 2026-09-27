@@ -24,6 +24,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <map>
 #include <set>
 #include <span>
 #include <string>
@@ -78,9 +79,12 @@ struct SessionOptions {
   /// `listFonts`: the installed fonts matching a query (the engine process
   /// passes its font catalogue). Unset, or with testPorts: an empty list.
   std::function<api::FontList(const std::string&)> systemFonts;
-  /// importFiles / probe by path (FilePorts::MediaProbe): the engine process
-  /// passes its decoders' probe (jobs::probe_media). Unset: `unsupported`.
+  /// importFiles / importBytes / relinkItem's probe (FilePorts::MediaProbe):
+  /// the engine process passes its decoders' probe (jobs::probe_media). Unset:
+  /// both imports answer `unsupported`. Ignored with testPorts.
   doc::FilePorts::MediaProbe mediaProbe;
+  /// Where importBytes caches bytes as files ('' = `<temp>/premation-session-footage`).
+  std::string footageDir;
 };
 
 class Session {
@@ -200,6 +204,8 @@ class Session {
   void request_render() noexcept { renderDirty_ = true; }
   void flush_render();
   void submit_frame(std::uint32_t clockDropped);
+  /// One viewport's job for the frame at `time_` (`announce`: report the layer errors).
+  void submit_frame_to(const ViewportConfig& port, const std::string& comp, std::uint32_t clockDropped, bool announce);
   [[nodiscard]] std::optional<std::string> active_comp() const;
   [[nodiscard]] api::Time frame_dur() const;
   struct Range {
@@ -285,7 +291,11 @@ class Session {
   std::uint64_t playheadSkipped_ = 0;
   Clock::time_point lastStats_{};
 
-  ViewportConfig viewport_;
+  /// Every open viewport (setViewport / closeViewport), by id: the editor's,
+  /// a pop-out window's, a second view. Each gets its own frame per tick,
+  /// built with its own camera, into its own ring (FrameSink).
+  std::map<std::uint32_t, ViewportConfig> surfaces_;
+  [[nodiscard]] bool any_viewport_open() const noexcept { return !surfaces_.empty(); }
   double resolution_ = 1.0;
   bool renderDirty_ = false;
   /// B4 round 2: the overlay geometry push (setOverlayGeometry) — at most one subscription per viewport.

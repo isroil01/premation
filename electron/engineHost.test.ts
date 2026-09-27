@@ -7,7 +7,7 @@
 
 jest.mock('electron', () => ({ ipcMain: { handle: () => undefined, on: () => undefined } }));
 
-import { FrameForwarder, engineBackendEnabled, engineOwnsDocument, nativePluginArgs, type ForwardedFrameMeta, type SharedTextureApi } from './engineHost';
+import { FrameForwarder, engineBackendEnabled, engineOwnsDocument, nativePluginArgs, offeredFrameCapabilities, viewportRoute, type ForwardedFrameMeta, type SharedTextureApi } from './engineHost';
 import type { PixelFrame } from './pixelChannel';
 import type { IoSurfaceBridge } from './ioSurfaceBridge';
 import { ioSurfaceSource, type SlotTextureHandle as SharedTextureImportHandle } from './sharedTextureHandles';
@@ -33,6 +33,17 @@ describe('engineBackendEnabled', () => {
   it('the environment wins over the preference', () => {
     expect(engineBackendEnabled({ PREMATION_ENGINE: 'ts' }, 'engine.json', read('{"backend":"process"}'))).toBe(false);
     expect(engineBackendEnabled({ PREMATION_ENGINE: 'process' }, 'engine.json', read('{"backend":"ts"}'))).toBe(true);
+  });
+});
+
+describe('viewportRoute / offeredFrameCapabilities', () => {
+  it('offers the shared texture and the copy by default, only the copy when forced', () => {
+    expect(viewportRoute({})).toBe('auto');
+    expect(viewportRoute({ PREMATION_VIEWPORT_ROUTE: 'shared' })).toBe('auto');
+    expect(viewportRoute({ PREMATION_VIEWPORT_ROUTE: ' Copy ' })).toBe('copy');
+    expect(viewportRoute({ PREMATION_VIEWPORT_ROUTE: 'a' })).toBe('copy');
+    expect(offeredFrameCapabilities(true)).toEqual(['frames.sharedTexture', 'frames.copy']);
+    expect(offeredFrameCapabilities(false)).toEqual(['frames.copy']);
   });
 });
 
@@ -70,7 +81,7 @@ describe('nativePluginArgs (G1)', () => {
 
 describe('FrameForwarder', () => {
   const slots = (generation: number, shared = true): SlotsMessage => ({
-    type: 'slots', generation, viewport: 1, width: 64, height: 32, format: 'rgba8unorm', shared, handles: [0x100, 0x104, 0x108],
+    type: 'slots', generation, viewport: 1, width: 64, height: 32, format: 'rgba8unorm', shared, handles: [0x100, 0x104, 0x108], strides: [], offsets: [], sizes: [], modifier: 0,
   });
   const ready = (generation: number, slot: number): FrameReadyMessage => ({
     type: 'frameReady', generation, slot, viewport: 1, dropped: 0, frame: 1, time: 0, revision: 3, renderStartUs: 0, renderDoneUs: 0, width: 64, height: 32,
@@ -283,6 +294,86 @@ describe('FrameForwarder', () => {
       expect(released).toEqual([[1, 0]]);
       fw.onPixels(pixels(1, 0));                 // no ring yet in the new engine: ignored
       expect(released).toEqual([[1, 0]]);
+    });
+  });
+
+  describe('multiple viewports (C: pop-outs, second views)', () => {
+    const vslots = (generation: number, viewport: number, handles: number[]): SlotsMessage => ({
+      ...slots(generation), viewport, handles,
+    });
+    const vready = (generation: number, slot: number, viewport: number): FrameReadyMessage => ({ ...ready(generation, slot), viewport });
+
+    function multi() {
+      const released: Array<[number, number]> = [];
+      const sends: Array<{ frame: unknown; meta: ForwardedFrameMeta; resolve: () => void }> = [];
+      const imports: Array<{ handle: bigint; allReleased?: () => void }> = [];
+      const st: SharedTextureApi = {
+        importSharedTexture: (o) => {
+          imports.push({ handle: o.textureInfo.handle.ntHandle!.readBigUInt64LE(0), allReleased: o.allReferencesReleased });
+          return { release: () => undefined };
+        },
+        sendSharedTexture: (o, meta) => new Promise<void>((resolve) => sends.push({ frame: o.frame, meta: meta as ForwardedFrameMeta, resolve })),
+      };
+      // Viewport 1 is the editor's (window 10); 2817 (= 11 × 256 + 1) a pop-out's (window 11).
+      const owners = new Map([[1, 10], [2817, 11]]);
+      const fw = new FrameForwarder({
+        sharedTexture: st,
+        target: (v) => `window-${owners.get(v)}`,
+        ownerOf: (v) => owners.get(v) ?? 10,
+        release: (g, s) => released.push([g, s]),
+      });
+      fw.engineStarted();
+      return { fw, released, sends, imports };
+    }
+
+    it('sends each viewport’s frames to its own window, one transfer in flight per viewport', () => {
+      const { fw, released, sends, imports } = multi();
+      fw.setReceiverReady(true, true, 10);
+      fw.setReceiverReady(true, true, 11);
+      fw.onFrame(vslots(1, 1, [0x100, 0x104]));
+      fw.onFrame(vslots(2, 2817, [0x200, 0x204]));
+      fw.onFrame(vready(1, 0, 1));
+      fw.onFrame(vready(2, 1, 2817));       // not blocked by viewport 1's transfer
+      expect(imports.map((i) => i.handle)).toEqual([0x100n, 0x204n]);
+      expect(sends.map((s) => [s.frame, s.meta.viewport])).toEqual([['window-10', 1], ['window-11', 2817]]);
+      fw.onFrame(vready(1, 1, 1));          // viewport 1 is still in flight: back to the ring
+      expect(released).toEqual([[1, 1]]);
+    });
+
+    it('a pop-out’s receiver never stands in for the editor’s, and a new ring of one viewport keeps the other’s', () => {
+      const { fw, released, imports } = multi();
+      fw.setReceiverReady(true, true, 11);  // only the pop-out is ready
+      fw.onFrame(vslots(1, 1, [0x100]));
+      fw.onFrame(vslots(2, 2817, [0x200]));
+      fw.onFrame(vready(1, 0, 1));
+      expect(released).toEqual([[1, 0]]);
+      fw.onFrame(vslots(3, 1, [0x300]));    // the editor resized
+      fw.onFrame(vready(2, 0, 2817));       // the pop-out's ring is still current
+      expect(imports.map((i) => i.handle)).toEqual([0x200n]);
+    });
+
+    it('closing a window frees the copies it held and nothing else', () => {
+      const released: Array<[number, number]> = [];
+      const owners = new Map([[1, 10], [2817, 11]]);
+      const fw = new FrameForwarder({
+        sharedTexture: null,
+        target: () => ({}),
+        ownerOf: (v) => owners.get(v) ?? 10,
+        release: (g, s) => released.push([g, s]),
+        sendPixels: () => true,
+      });
+      fw.engineStarted();
+      fw.setReceiverReady(false, true, 10);
+      fw.setReceiverReady(false, true, 11);
+      fw.onFrame({ ...vslots(1, 1, [0, 0]), shared: false });
+      fw.onFrame({ ...vslots(2, 2817, [0, 0]), shared: false });
+      fw.onPixels({ generation: 1, slot: 0, width: 64, height: 32, bytesPerRow: 256, data: new Uint8Array(64 * 32 * 4) } as PixelFrame);
+      fw.onFrame(vready(1, 0, 1));
+      fw.onPixels({ generation: 2, slot: 1, width: 64, height: 32, bytesPerRow: 256, data: new Uint8Array(64 * 32 * 4) } as PixelFrame);
+      fw.onFrame(vready(2, 1, 2817));
+      expect(fw.stats.copied).toBe(2);
+      fw.forgetReceiver(11);
+      expect(released).toEqual([[2, 1]]);
     });
   });
 

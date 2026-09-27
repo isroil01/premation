@@ -441,6 +441,20 @@ const Json* find_asset(const Document& d, std::string_view id) {
   return nullptr;
 }
 
+bool is_session_url(std::string_view ref) noexcept {
+  return ref.starts_with("blob:") || ref.starts_with("http:") || ref.starts_with("https:");
+}
+
+std::string asset_media_src(const Json& asset) {
+  const std::string src = asset.at("src").is_string() ? asset.at("src").str() : std::string();
+  if (!src.empty() && !is_session_url(src)) return src;
+  const Json& path = asset.at("path");
+  if (path.is_string() && !path.str().empty() && !is_session_url(path.str()) && !path.str().starts_with("data:")) {
+    return path.str();
+  }
+  return src;
+}
+
 const Folder* find_folder(const Document& d, std::string_view id) {
   for (const auto& f : d.items().folders) {
     if (f.id == id) return &f;

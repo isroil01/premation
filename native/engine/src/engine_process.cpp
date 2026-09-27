@@ -282,10 +282,13 @@ int run_engine(const EngineOptions& options) {
     }
     return list;
   };
+  // importBytes caches bytes as files where main says (PREMATION_SESSION_FOOTAGE,
+  // <userData>/session-footage): the engine's document never holds a blob: URL.
+  sessionOptions.footageDir = os::env_var("PREMATION_SESSION_FOOTAGE").value_or("");
   sessionOptions.testPorts = options.testPorts;
   sessionOptions.testPortsDir = options.testPortsDir;
 #if defined(PREMATION_HAVE_JOBS)
-  // importFiles by path: the jobs' decoders probe the file (ffmpeg + the OS still codec).
+  // importFiles / importBytes / relink: the jobs' decoders probe the file (ffmpeg + the OS still codec).
   sessionOptions.mediaProbe = [](const std::string& path, js::Json& facts, std::string& error) {
     return jobs::probe_media(path, facts, error);
   };

@@ -595,6 +595,58 @@ TEST_CASE("session: a full ring drops frames and never blocks; stale releases ar
   REQUIRE(after.back().slot == first.slot);
 }
 
+TEST_CASE("session: every viewport is its own surface with its own ring", "[session][frames][viewports]") {
+  Harness h(3);
+  (void)h.hello();
+  (void)make_layer(h, "comp_root");
+  const auto viewport = [](std::uint32_t id, std::uint32_t w, std::uint32_t hgt) {
+    api::SetViewport v;
+    v.viewport = id;
+    v.width = w;
+    v.height = hgt;
+    v.device_pixel_ratio = 1.0;
+    return v;
+  };
+  REQUIRE(is_ok(h.run(cmd(viewport(1, 320, 180)))));
+  REQUIRE(is_ok(h.run(cmd(viewport(257, 200, 100)))));  // a pop-out window's viewport
+  REQUIRE(h.sink.config(1).width == 320);
+  REQUIRE(h.sink.config(257).width == 200);
+  std::vector<api::FrameSlots> rings;
+  for (const auto& m : h.frameMsgs) {
+    if (const auto* s = std::get_if<api::FrameSlots>(&m.v)) rings.push_back(*s);
+  }
+  REQUIRE(rings.size() == 2);
+  REQUIRE(rings[0].viewport == 1);
+  REQUIRE(rings[1].viewport == 257);
+  REQUIRE(rings[0].generation != rings[1].generation);  // a release names its ring
+  // An edit renders every open viewport, each at its own size.
+  const std::size_t before = h.frames_ready().size();
+  REQUIRE(is_ok(h.run(cmd(viewport(1, 320, 180)))));  // unchanged: still a frame
+  const auto frames = h.frames_ready();
+  REQUIRE(frames.size() >= before + 2);
+  bool saw1 = false;
+  bool saw257 = false;
+  for (const auto& f : frames) {
+    if (f.viewport == 1) saw1 = f.width == 320 && f.generation == rings[0].generation;
+    if (f.viewport == 257) saw257 = f.width == 200 && f.generation == rings[1].generation;
+  }
+  REQUIRE(saw1);
+  REQUIRE(saw257);
+  // Closing one leaves the other: an empty ring for 257, frames for 1 only.
+  REQUIRE(is_ok(h.run(cmd(api::CloseViewport{257}))));
+  const auto& last = h.frameMsgs.back();
+  const auto* closed = std::get_if<api::FrameSlots>(&last.v);
+  REQUIRE(closed != nullptr);
+  REQUIRE(closed->viewport == 257);
+  REQUIRE(closed->handles.empty());
+  h.release_all();
+  const std::size_t n = h.frames_ready().size();
+  REQUIRE(is_ok(h.run(cmd(viewport(1, 320, 180)))));
+  const auto after = h.frames_ready();
+  REQUIRE(after.size() > n);
+  for (std::size_t i = n; i < after.size(); ++i) REQUIRE(after[i].viewport == 1);
+}
+
 TEST_CASE("session: the frame scene follows the document", "[session][eval]") {
   Harness h;
   (void)h.hello();

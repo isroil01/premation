@@ -110,7 +110,9 @@ std::shared_ptr<const EnvAsset> environment_asset(const doc::Document& d, std::s
     why = "the sky's image asset is not in the document";
     return nullptr;
   }
-  const std::string& src = asset->at("src").str();
+  // A session sky (`blob:` from an image picked this session) reads the file
+  // the page cached it to (the record's path) — doc::asset_media_src.
+  const std::string src = doc::asset_media_src(*asset);
   const std::string name = asset->at("name").is_string() ? asset->at("name").str() : std::string();
   if (ends_with_ci(name, ".exr") || ends_with_ci(src, ".exr")) {
     // environmentImage.ts projects an EXR's LINEAR float planes (floatExr.ts),

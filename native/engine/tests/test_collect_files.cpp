@@ -16,6 +16,7 @@
 #include "core/collect_files.hpp"
 #include "core/engine_ctx.hpp"
 #include "core/fail.hpp"
+#include "core/scene.hpp"
 #include "jobs/job_apply_util.hpp"
 #include "session_harness.hpp"
 
@@ -406,4 +407,75 @@ TEST_CASE("autoTrace: the job's masks, one undo entry, their groups answered", "
   REQUIRE(is_ok(none));
   CHECK(result_as<api::GroupList>(none).groups.empty());
   CHECK(history_len(h) == before);
+}
+
+// ── footage import on disk (FilePorts): session bytes become files ──────────
+
+TEST_CASE("FilePorts imports files by path and bytes as content-addressed cache files", "[collect][import]") {
+  TempDir tmp;
+  spit(tmp.path / "media" / "plate.mp4", "MP4-BYTES");
+  int probes = 0;
+  // The engine process passes jobs::probe_media; this one reads any existing file.
+  doc::FilePorts ports([&probes](const std::string& path, Json& facts, std::string& error) {
+    ++probes;
+    std::error_code ec;
+    if (!fs::is_regular_file(fs::path(std::u8string(path.begin(), path.end())), ec)) {
+      error = "not a file";
+      return false;
+    }
+    Json md = Json::object();
+    md.set("width", Json::number(64));
+    facts.set("metadata", std::move(md));
+    return true;
+  });
+  ports.set_footage_dir(tmp.str("cache"));
+  REQUIRE(ports.has_import());
+  CHECK_FALSE(doc::FilePorts{}.has_import());  // no probe: the import answers `unsupported`
+
+  api::ImportFile f;
+  f.path = tmp.str("media/plate.mp4");
+  const Json byPath = ports.import_file(f, "item_1");
+  CHECK(byPath.at("src").str() == doc::local_file_url(f.path));  // what the page's importer and localFileUrl.ts read
+  CHECK(byPath.at("path").str() == f.path);
+  CHECK(byPath.at("type").str() == "video");
+  CHECK(byPath.at("size").num() == 9);
+  CHECK(byPath.at("metadata").at("width").num() == 64);
+
+  // A session blob's bytes: written once under their hash, never a blob: src.
+  api::ImportBytesFile b;
+  b.name = "Sky.PNG";
+  const std::string png = "PNG-BYTES";
+  b.data.assign(png.begin(), png.end());
+  const Json byBytes = ports.import_bytes(b, "item_2");
+  const std::string cached = tmp.str("cache/" + doc::sha256_hex(png) + ".png");
+  CHECK(byBytes.at("src").str() == doc::local_file_url(cached));
+  CHECK(byBytes.at("path").str() == cached);
+  CHECK(byBytes.at("type").str() == "image");
+  CHECK(slurp(fs::path(std::u8string(cached.begin(), cached.end()))) == png);
+  b.origin_path = tmp.str("media/Sky.PNG");
+  const Json again = ports.import_bytes(b, "item_3");
+  CHECK(again.at("src").str() == doc::local_file_url(cached));
+  CHECK(again.at("path").str() == *b.origin_path);
+  CHECK(probes == 3);
+
+  // Not a file, or a session URL: refused, nothing recorded.
+  f.path = tmp.str("media/missing.mp4");
+  CHECK_THROWS_AS(ports.import_file(f, "item_4"), doc::EngineFail);
+  f.path = "blob:file:///abc";
+  CHECK_THROWS_AS(ports.import_file(f, "item_5"), doc::EngineFail);
+  CHECK(probes == 4);  // the blob: never reached the probe
+}
+
+TEST_CASE("an asset's media is its file when src is a session URL", "[collect][import]") {
+  Json a = Json::object();
+  a.set("src", Json::string("blob:file:///1234"));
+  CHECK(doc::asset_media_src(a) == "blob:file:///1234");  // nothing better known
+  a.set("path", Json::string("C:/cache/abc.mp4"));
+  CHECK(doc::asset_media_src(a) == "C:/cache/abc.mp4");
+  a.set("src", Json::string("https://cdn.example/a.mp4"));
+  CHECK(doc::asset_media_src(a) == "C:/cache/abc.mp4");
+  a.set("src", Json::string("D:/footage/a.mp4"));
+  CHECK(doc::asset_media_src(a) == "D:/footage/a.mp4");  // a readable src wins
+  a.set("src", Json::string(""));
+  CHECK(doc::asset_media_src(a) == "C:/cache/abc.mp4");
 }

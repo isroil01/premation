@@ -49,8 +49,22 @@ import { viewportHudStats } from '@stores/viewportDisplayStore';
 import { publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
 import styles from './EngineSurface.module.css';
 
-/** The engine viewport id this surface owns. */
+/**
+ * The engine viewport id this surface owns, relative to its window's base
+ * (C: multiple viewports — the editor window's base is 0, so its surface is
+ * viewport 1; a pop-out's surface is `base + 1` in the pop-out's own block, so
+ * it is a second engine surface with its own ring, not a copy of the editor's).
+ */
 export const ENGINE_SURFACE_VIEWPORT = 1;
+
+/** This window's surface viewport id (main: 1; a pop-out: its block + 1). */
+export async function surfaceViewportId(bridge: { viewportBase?(): Promise<number> } | null): Promise<number> {
+  try {
+    return ((await bridge?.viewportBase?.()) ?? 0) + ENGINE_SURFACE_VIEWPORT;
+  } catch {
+    return ENGINE_SURFACE_VIEWPORT;
+  }
+}
 
 /**
  * Route A's frame size cap, physical pixels: 1280×720 is ~3.7 MB a frame, which
@@ -149,7 +163,8 @@ export function EngineSurface({ mode = 'beside' }: { mode?: EngineSurfaceMode })
   useEffect(() => {
     // The client is normally created at boot (engineInstance); creating it here
     // when the flag is on is idempotent and keeps the surface self-sufficient.
-    // Only the main editor window drives the engine's viewport (a pop-out has an opener).
+    // A window.open() child never drives a viewport; pop-out WINDOWS (opened by
+    // main, no opener) do — each on its own engine viewport (surfaceViewportId).
     if (processEngine() || window.opener) return;
     let live = true;
     void processEngineEnabled().then((on) => {
@@ -198,7 +213,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     let device: SurfDevice | null = null;
     let ctx: SurfContext | null = null;
     // B4 round 2: while the engine draws THE viewport, the overlays' geometry is the frames' (overlayGeometry.ts).
-    if (isViewport) setEngineDrivenViewport(ENGINE_SURFACE_VIEWPORT, true);
+    // Known once main answered viewportBase; nothing is sent before (sendViewport waits).
+    let vp: number | null = null;
     let pipeline: { getBindGroupLayout(i: number): unknown } | null = null;
     let sampler: unknown = null;
     let pending: Pending | null = null;
@@ -313,6 +329,11 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     }
 
     bridge.onFrame((frame, meta, release) => {
+      // C: another viewport of this window (a second view) is not this surface's.
+      if (vp === null || (meta as EngineFrameMeta).viewport !== vp) {
+        release();
+        return;
+      }
       stats.received += 1;
       const route = (meta as EngineFrameMeta).route ?? 'shared';
       if (route !== stats.route) {
@@ -353,7 +374,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     };
     let lastChannel = useGuidesStore.getState().channel;
     const sendViewport = (force = false): void => {
-      if (disposed) return;
+      if (disposed || vp === null) return;
       const d = desired();
       const last = stats.lastViewport;
       const channel = useGuidesStore.getState().channel;
@@ -369,7 +390,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       inFlight = true;
       void client.execute({
         type: 'setViewport',
-        viewport: ENGINE_SURFACE_VIEWPORT,
+        viewport: vp,
         width: d.width,
         height: d.height,
         devicePixelRatio: d.dpr,
@@ -410,7 +431,13 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       requestViewport();
     }
     watchDpr();
-    requestViewport();
+    void surfaceViewportId(bridge).then((id) => {
+      if (disposed) return;
+      vp = id;
+      // B4 round 2: while the engine draws THE viewport, the overlays' geometry is the frames'.
+      if (isViewport) setEngineDrivenViewport(id, true);
+      requestViewport();
+    });
     // Viewport mode: the workspace's render tick runs whenever the camera may
     // have moved (pan, zoom, fit, resize) — compare and send, in that frame.
     const unRender = isViewport ? getWorkspaceController().onRender(() => sendViewport()) : null;
@@ -455,8 +482,10 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       bridge.onFrame?.(null);
       pending?.release();
       pending = null;
-      void client.execute({ type: 'closeViewport', viewport: ENGINE_SURFACE_VIEWPORT });
-      if (isViewport) setEngineDrivenViewport(ENGINE_SURFACE_VIEWPORT, false);
+      if (vp !== null) {
+        void client.execute({ type: 'closeViewport', viewport: vp });
+        if (isViewport) setEngineDrivenViewport(vp, false);
+      }
       device?.destroy();
     };
   }, [client, mode]);
