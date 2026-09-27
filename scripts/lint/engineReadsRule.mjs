@@ -48,7 +48,7 @@
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SCENE_MUTATORS, ANIM_MUTATORS, TIMELINE_MUTATORS, WRITE_VERB } from './engineWritesRule.mjs';
+import { SCENE_MUTATORS, ANIM_MUTATORS, TIMELINE_MUTATORS, WRITE_VERB, insideOffDocumentBuilder } from './engineWritesRule.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -386,6 +386,10 @@ const rule = {
         if (parent.type === 'TSQualifiedName' || parent.type === 'TSTypeReference' || parent.type === 'TSTypeQuery') return;
         const imp = imports.get(node.name);
         if (!imp) return;
+        // Inside an off-document builder (insertBuiltLayers / buildLayerFragment / …): the
+        // builder runs against the engine's scratch state and its only effect is the
+        // pasteLayers the caller sends — write composition, the write ratchet's territory.
+        if (insideOffDocumentBuilder(context, node)) return;
 
         // A. singletons
         if (isImportedSingleton(node.name)) {
