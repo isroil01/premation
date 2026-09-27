@@ -8,6 +8,7 @@
   "menu.project.saveToComputer": "Save Portable Copy…",
   "menu.project.saveCopyToCloud": "Save Copy to Cloud…",
   "menu.project.incrementAndSave": "Increment and Save",
+  "menu.file.collectFiles": "Collect Files…",
   "menu.project.sync": "Sync Project…",
   "menu.sub.import": "Import",
   "menu.assets.importFiles": "Files…",

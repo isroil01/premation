@@ -2339,6 +2339,32 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       },
     },
     {
+      // AE: File ▸ Dependencies ▸ Collect Files. The ENGINE copies the project
+      // and every file it uses into `<folder>/<folder name>.motion`
+      // (engine-api collectFiles: the C++ engine's collect_files, or the
+      // TypeScript engine's collect port); the open project is unchanged.
+      id: asCommandId('file.collectFiles'),
+      label: 'Collect Files…',
+      enabled: () => typeof window.motionEditor?.shell?.pickFolder === 'function',
+      execute: async () => {
+        const folder = await window.motionEditor?.shell?.pickFolder?.();
+        if (!folder) return;
+        notify('Collecting files…', 'info');
+        const res = await engine().execute({ type: 'collectFiles', folder, onlyUsed: false });
+        if (!res.ok) {
+          notify(`Could not collect files: ${res.error.message}`, 'error');
+          return;
+        }
+        const missing = res.value.missing ? res.value.missing.split('\n').filter((l) => l.length > 0) : [];
+        notify(
+          missing.length === 0
+            ? `Collected the project and its files into ${res.value.path}`
+            : `Collected into ${res.value.path} — ${missing.length} file${missing.length === 1 ? '' : 's'} could not be read: ${missing.slice(0, 3).join('; ')}`,
+          missing.length === 0 ? 'success' : 'warning',
+        );
+      },
+    },
+    {
       id: asCommandId(ProjectCommands.IncrementAndSave),
       label: 'Increment and Save',
       // AE: Cmd/Ctrl+Alt+Shift+S — save a fresh copy with the next number.

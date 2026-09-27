@@ -143,6 +143,11 @@ export const APP_MENU: MenuGroupModel[] = [
         visible: cloudProjectsEnabled,
       },
       { commandId: ProjectCommands.IncrementAndSave, label: 'Increment and Save' },
+      {
+        commandId: 'file.collectFiles',
+        label: 'Collect Files…',
+        visible: () => tryCoreServices()?.files.environment === 'electron',
+      },
       { separator: true },
       { commandId: ProjectCommands.Sync, label: 'Sync Project…' },
       { separator: true },
