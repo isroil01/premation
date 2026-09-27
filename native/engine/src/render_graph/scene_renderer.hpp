@@ -15,6 +15,8 @@
 
 #include "bit_depth.hpp"
 #include "device.hpp"
+#include "effect_stats.hpp"
+#include "fx_cache.hpp"
 #include "frame_scene.hpp"
 #include "graph.hpp"
 
@@ -66,6 +68,8 @@ struct FrameStats {
   std::size_t collected = 0;
   std::vector<GraphDiagnostic> diagnostics;
   std::string gpuError;  // first uncaptured Dawn error during the frame, if any
+  /// E4: the path each effect-chain entry took (set `effects.keepPaths` for the per-entry list).
+  EffectStats effects;
 };
 
 class SceneRenderer {
@@ -117,6 +121,10 @@ class SceneRenderer {
   void set_external_textures(ExternalTextureSource* source) noexcept { external_ = source; }
   /// G1: who runs `native-plugin` effect entries (the plugin host's render glue); nullptr = none.
   void set_native_effects(NativeEffectHost* host) noexcept { nativeFx_ = host; }
+  /// E4: the effect chain draws strokes and spreads from cached alpha distance
+  /// fields (the engine's frames); off = the TS renderer's reference passes (parity).
+  void set_effect_fields(bool on) noexcept { effectFields_ = on; }
+  [[nodiscard]] bool effect_fields() const noexcept { return effectFields_; }
 
  private:
   SceneRenderer() = default;
@@ -127,6 +135,9 @@ class SceneRenderer {
   std::unique_ptr<ColorSystem> colorSystem_;
   ExternalTextureSource* external_ = nullptr;
   NativeEffectHost* nativeFx_ = nullptr;
+  /// E4: the effect chain's distance fields, kept across frames.
+  FxCache fxCache_;
+  bool effectFields_ = false;
   wgpu::Texture surface_;
   wgpu::TextureView surfaceView_;
   std::uint32_t surfaceW_ = 0;

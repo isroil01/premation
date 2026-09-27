@@ -5,6 +5,7 @@
 // the fail-safe that an effect producing no draw leaves the chain untouched.
 #pragma once
 
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -75,9 +76,13 @@ class NativeEffectHost {
   virtual bool apply(PassContext& ctx, const Call& call) = 0;
 };
 
+/// `contentKey` (E4): a hash of what the chain's input was drawn from
+/// (composition_pass.cpp chain_content_key), 0 = unknown. Equal keys promise
+/// equal input pixels, so the styles' distance fields are kept across frames
+/// under it (fx_cache.hpp) while only effect params change.
 ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEffect>& effects, TexRef input,
                               std::span<const std::string_view> pool, const ById& byId, std::string_view selfId,
-                              MapLayerSource& maps, const FxSpace* space = nullptr);
+                              MapLayerSource& maps, const FxSpace* space = nullptr, std::uint64_t contentKey = 0);
 
 /// Whether the C++ chain renders this effect entry (support.cpp's gate).
 [[nodiscard]] bool effect_ported(const api::RenderEffect& e, std::string& why);

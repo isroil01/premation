@@ -17,6 +17,8 @@ namespace premation::rg {
 
 class ColorSystem;
 class NativeEffectHost;  // effect_chain.hpp (G1)
+class FxCache;           // fx_cache.hpp (E4)
+struct EffectStats;      // effect_stats.hpp (E4)
 
 /// E1: textures another engine system owns (the media system's decoded video
 /// frames), named by the RenderTextureRef.hash a frame carries with no blob.
@@ -88,6 +90,13 @@ struct PassContext {
   ExternalTextureSource* external = nullptr;
   /// G1: the native plugin host's render glue (nullptr = `native-plugin` entries pass through).
   NativeEffectHost* nativeFx = nullptr;
+  /// E4: distance fields kept across frames (nullptr = rebuilt every frame).
+  FxCache* fxCache = nullptr;
+  /// E4: where the chain records the path each entry took (nullptr = not recorded).
+  EffectStats* effectStats = nullptr;
+  /// E4: strokes and spreads from alpha distance fields (fx_distance.hpp);
+  /// off = the reference STROKE_MATERIAL disc scan (the TS renderer's pixels).
+  bool fxFields = false;
 
   /// ctx.target(name): nullptr = the surface (or an undeclared name).
   [[nodiscard]] RenderTarget* target(std::string_view name) const {

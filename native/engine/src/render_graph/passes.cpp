@@ -243,6 +243,8 @@ std::unique_ptr<RenderGraph> build_default_graph() {
   g->declare_target(std::string(kSceneColor), full("rgba16float", true, kMsaaSamples));
   for (const std::string_view n : {kLayerTarget, kBlur1, kBlur2, kBlur3}) g->declare_target(std::string(n), full("rgba16float"));
   g->declare_target(std::string(kMatteTarget), full("rgba8unorm"));
+  g->declare_target(std::string(kFxSilhouette), full("rgba16float"));
+  g->declare_target(std::string(kFxScopeMask), full("rgba8unorm"));
   g->declare_target(std::string(kBackdropHalf1), scaled(kBackdropDownscale));
   g->declare_target(std::string(kBackdropHalf2), scaled(kBackdropDownscale));
   g->declare_target("plugin-half1", scaled(2));

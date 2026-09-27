@@ -4,6 +4,8 @@
 // TS has one `else if` each — the rows are the same values in the same slots.
 #include "effect_chain.hpp"
 
+#include "effect_stats.hpp"
+#include "fx_distance.hpp"
 #include "passes.hpp"
 
 #include <algorithm>
@@ -269,6 +271,59 @@ std::vector<Octave> deep_glow_octaves(double radius, double octaves) {
 double deep_glow_step(double sigma) { return std::max(1.0, std::ceil((4 * sigma) / 16)); }
 double deep_glow_inv(double sigma) { return sigma <= 1e-3 ? 1e12 : 1 / (2 * sigma * sigma); }
 
+/// E4: a field-table style's `p` rows as STYLE_FILL_FX_MATERIAL reads them —
+/// INTERIOR_STYLE / SATIN rows (dx dy opacity flag | colour | lw lh) with the
+/// lw/lh row moved to p3, BEVEL rows (light depth | hi | lo | lw lh) as they
+/// are — then the mode row.
+std::vector<Vec4> style_fill_rows(std::string_view type, std::vector<Vec4> rows) {
+  const bool bevel = type == "bevel";
+  rows.resize(bevel ? 4 : 3, Vec4{0, 0, 0, 0});
+  if (!bevel) rows.insert(rows.begin() + 2, Vec4{0, 0, 0, 0});
+  const double mode = type == "inner-shadow" ? 0 : type == "inner-glow" ? 1 : type == "satin" ? 2 : 3;
+  rows.push_back({mode, 0, 0, 0});
+  return rows;
+}
+
+/// E4: the styles a fill-opacity silhouette shapes (canvas_effects.cpp silhouette_of).
+bool silhouette_style(std::string_view t) { return t == "inner-shadow" || t == "inner-glow" || t == "satin" || t == "bevel"; }
+
+/// E4: one entry's path, recorded when the iteration ends (every `continue`).
+class PathNote {
+ public:
+  PathNote(EffectStats* stats, std::string_view layer, std::string_view type) : stats_(stats), layer_(layer), type_(type) {}
+  ~PathNote() {
+    if (stats_ != nullptr) stats_->record(layer_, type_, path);
+  }
+  PathNote(const PathNote&) = delete;
+  PathNote& operator=(const PathNote&) = delete;
+  PathNote(PathNote&&) = delete;
+  PathNote& operator=(PathNote&&) = delete;
+  FxPath path = FxPath::gpu;
+
+ private:
+  EffectStats* stats_;
+  std::string_view layer_;
+  std::string_view type_;
+};
+
+/// E4: when an entry's iteration ends, the chain's buffer is no longer its
+/// input (a cached distance field of the input stops applying) — unless `keep`.
+class Touch {
+ public:
+  explicit Touch(bool& pristine) : pristine_(&pristine) {}
+  ~Touch() {
+    if (!keep) *pristine_ = false;
+  }
+  Touch(const Touch&) = delete;
+  Touch& operator=(const Touch&) = delete;
+  Touch(Touch&&) = delete;
+  Touch& operator=(Touch&&) = delete;
+  bool keep = false;
+
+ private:
+  bool* pristine_;
+};
+
 /// renderableBox: where a renderable sits in the viewport, as a [0,1] rect.
 Rect renderable_box(const PassContext& ctx, const api::Renderable* r) {
   const Rect v = ctx.viewport.visibleWorldRect;
@@ -315,6 +370,7 @@ bool effect_ported(const api::RenderEffect& e, std::string& why) {
   }
   if (t == "glow" || t == "drop-shadow" || t == "deep-glow" || t == "gaussian-blur" || t == "fast-box-blur") return true;
   if (t == "native-plugin") return true;  // G1: run by the plugin host (NativeEffectHost)
+  if (t == "fill-opacity") return true;   // E4: the GPU route's fill opacity (below)
   if (fx_table().count(t) != 0 || p_table().count(t) != 0 || field_table().count(t) != 0 || known_single(t)) return true;
   why = "effect " + t;
   return false;
@@ -322,7 +378,7 @@ bool effect_ported(const api::RenderEffect& e, std::string& why) {
 
 ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEffect>& effects, TexRef input,
                               std::span<const std::string_view> pool, const ById& byId, std::string_view selfId,
-                              MapLayerSource& maps, const FxSpace* space) {
+                              MapLayerSource& maps, const FxSpace* space, std::uint64_t contentKey) {
   const ViewportState& vp = ctx.viewport;
   const Rect targetUv{0, 0, 1, 1};
   const Mat3 mvp = screen_mvp();
@@ -350,10 +406,26 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     return texOf(dest);
   };
 
+  // E4 fill opacity (a `fill-opacity` entry, the GPU route of a layer the TS
+  // bakes): the pre-fade copy every later style is shaped by, and the fade.
+  TexRef silhouette;
+  double fillOpacity = 1;
+  // The current buffer is still the chain's input: a distance field of it is
+  // a function of `contentKey` alone and may come from the cache.
+  bool pristine = true;
+  const api::Renderable* selfR = self == byId.end() ? nullptr : self->second;
+  /// A key for a distance field of `shape`: the silhouette is the input by
+  /// construction; the current buffer only while nothing has changed it.
+  const auto fieldKey = [&](bool fromSilhouette) -> std::uint64_t {
+    // Under fill opacity every field is the silhouette's (never the faded buffer's).
+    return contentKey != 0 && (fromSilhouette || (pristine && !silhouette)) ? contentKey : 0;
+  };
+
   struct BlendBack {
     TexRef tex;
     std::string_view name;
     double amount;
+    TexRef scope;  ///< E4: an effect-scoped mask in the buffer's space (empty = the whole buffer)
   };
   std::optional<BlendBack> blendBack;
   auto land = [&] {
@@ -367,8 +439,10 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     }
     if (dest.empty()) return;
     const std::array<Vec4, 1> rows{{{b.amount, 0, 0, 0}}};
-    Commands c = one(Mat::EFFECT_OPACITY_FX_MATERIAL, pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), curTex);
+    Commands c = one(b.scope ? Mat::EFFECT_SCOPE_FX_MATERIAL : Mat::EFFECT_OPACITY_FX_MATERIAL,
+                     pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), curTex);
     c.last().mask = b.tex;
+    if (b.scope) c.last().origin = b.scope;
     ctx.draw_into(dest, c, true);
     curTex = texOf(dest);
     curName = dest;
@@ -395,8 +469,46 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     const std::string_view f0 = free[0];
     const std::string_view f1 = free[1];
     const std::string_view f2 = free.size() > 2 ? free[2] : std::string_view{};
-    if (fx.has("effectOpacity") && fx.num("effectOpacity") < 1 && type != "plugin") {
-      blendBack = BlendBack{curTex, curName, std::max(0.0, fx.num("effectOpacity"))};
+    PathNote note(ctx.effectStats, selfId, type);
+    // Every entry but the fill fade changes the buffer a later field would be built from.
+    Touch touch(pristine);
+
+    if (type == "fill-opacity") {
+      // effectBake.ts applyEffectChain: snapshot the silhouette, then fade the
+      // contents (destination-in against a flat alpha — Ao = Ad × fill).
+      touch.keep = true;
+      const double a = std::max(0.0, std::min(1.0, fx.num("amount", 1)));
+      Commands sil;
+      emit_textured(ctx, sil, mvp, Color::white(), 1, Blend::none, curTex, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+      ctx.draw_into(kFxSilhouette, sil, true);
+      silhouette = texOf(kFxSilhouette);
+      fillOpacity = a;
+      Commands fade;
+      emit_textured(ctx, fade, mvp, Color::white(), a, Blend::none, curTex, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+      ctx.draw_into(f0, fade, true);
+      curTex = texOf(f0);
+      curName = f0;
+      continue;
+    }
+
+    // E4: an effect scoped to one mask path blends back through its coverage,
+    // drawn now (before the effect) into the buffer's space.
+    TexRef scope;
+    if (const std::string_view scopeKey = fx.text("scopeMaskKey"); !scopeKey.empty() && type != "plugin") {
+      const TexRef maskTex = ctx.texture(scopeKey);
+      if (maskTex && selfR != nullptr) {
+        const Mat3 maskMvp = space != nullptr ? mul(mvp, model_from_rect(space->box)) : mvp_for(vp, mat3_of(selfR->model_matrix));
+        const Rect maskUv = selfR->uv_rect ? rect_of(*selfR->uv_rect) : Rect{0, 0, 1, 1};
+        Commands mc;
+        emit_textured(ctx, mc, maskMvp, Color::white(), 1, Blend::none, maskTex, ctx.linear_clamp(), maskUv, kIdentityColor,
+                      maskTex.sampleLinear);
+        ctx.draw_into(kFxScopeMask, mc, true);
+        scope = texOf(kFxScopeMask);
+        if (ctx.effectStats != nullptr) ++ctx.effectStats->scoped;
+      }
+    }
+    if (((fx.has("effectOpacity") && fx.num("effectOpacity") < 1) || scope) && type != "plugin") {
+      blendBack = BlendBack{curTex, curName, std::max(0.0, fx.num("effectOpacity", 1)), scope};
     }
 
     if (type == "native-plugin") {
@@ -418,9 +530,11 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       call.maps = &maps;
       call.space = space;
       call.poolHasMatte = poolHasMatte;
+      note.path = FxPath::skipped;
       if (call.source != nullptr && ctx.nativeFx->apply(ctx, call)) {
         curTex = texOf(f0);
         curName = f0;
+        note.path = FxPath::native_plugin;
       }
       continue;
     }
@@ -433,11 +547,24 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       TexRef blurSrc = curTex;
       if (spreadPx > 0) {
         const std::string_view dilateDest = f2.empty() ? f0 : f2;
-        const Commands d = one(Mat::STROKE_MATERIAL,
-                               pack_stroke(ctx.packer(), mvp, targetUv, Color::white(), spreadPx * ((kx + ky) * 0.5), kx / pw,
-                                           ky / ph, 3),
-                               curTex);
-        ctx.draw_into(dilateDest, d, true);
+        const double spreadTex = spreadPx * ((kx + ky) * 0.5);
+        // E4: the dilation from the alpha distance field (one load a pixel; the
+        // reference takes a disc of taps). Under fill opacity the field is the
+        // silhouette's and the spread keeps the faded strength.
+        const bool fromSil = static_cast<bool>(silhouette);
+        const DistanceField df =
+            ctx.fxFields ? distance_field(ctx, fromSil ? silhouette : curTex, spreadTex + 2, fieldKey(fromSil)) : DistanceField{};
+        if (df.tex) {
+          Packer pk = ctx.packer();
+          pk.mat3(mvp).rect(targetUv).vec4(spreadTex, fromSil ? fillOpacity : 1.0, 0, 0);
+          const Commands d = one(Mat::SDF_DILATE_FX_MATERIAL, pk.span(), df.tex, Blend::none);
+          ctx.draw_into(dilateDest, d, true);
+          note.path = df.reused ? FxPath::gpu_sdf_cached : FxPath::gpu_sdf;
+        } else {
+          const Commands d = one(Mat::STROKE_MATERIAL,
+                                 pack_stroke(ctx.packer(), mvp, targetUv, Color::white(), spreadTex, kx / pw, ky / ph, 3), curTex);
+          ctx.draw_into(dilateDest, d, true);
+        }
         blurSrc = texOf(dilateDest);
       }
       if (rPx > 0) {
@@ -716,22 +843,55 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     }
 
     if (const auto fit = field_table().find(std::string(type)); fit != field_table().end()) {
-      TexRef ref = curTex;
-      std::string_view refName = curName;
+      // E4: under fill opacity a style is shaped by the silhouette and lands on
+      // the faded contents (STYLE_FILL_FX); otherwise the reference pass.
+      const bool styled = silhouette && silhouette_style(type);
+      const TexRef shape = styled ? silhouette : curTex;
+      TexRef ref = shape;
+      std::string_view refName = styled ? kFxSilhouette : curName;
       const double sigma = fx.num("sigmaPx");
       if (sigma > 0) {
-        const TexRef h = blurPass(curTex, f1, 1.0 / pw, 0, sigma * kx);
+        const TexRef h = blurPass(shape, f1, 1.0 / pw, 0, sigma * kx);
         ref = blurPass(h, f0, 0, 1.0 / ph, sigma * ky);
         refName = f0;
       }
       const std::string_view dest = refName == f1 ? f0 : f1;
-      const auto rows = p_rows(fx);
-      Commands c = one(fit->second, pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), curTex);
+      std::vector<Vec4> rows = p_rows(fx);
+      Mat m = fit->second;
+      if (styled) {
+        rows = style_fill_rows(type, std::move(rows));
+        m = Mat::STYLE_FILL_FX_MATERIAL;
+        note.path = FxPath::gpu_silhouette;
+      }
+      Commands c = one(m, pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), curTex);
       c.last().mask = ref;
+      if (styled) c.last().origin = silhouette;
       ctx.draw_into(dest, c, true);
       curTex = texOf(dest);
       curName = dest;
       continue;
+    }
+
+    if (type == "stroke" && (ctx.fxFields || silhouette)) {
+      // E4: Stroke from the alpha distance field — O(1) a pixel at any width
+      // (the reference STROKE_MATERIAL below scans a disc of the width, capped
+      // at 64 px). The field is kept across frames while the content holds.
+      Color c{0, 0, 0, 1};
+      (void)fx.color("color", c);
+      const double widthTex = std::max(0.0, fx.num("widthPx")) * ((kx + ky) * 0.5);
+      const bool fromSil = static_cast<bool>(silhouette);
+      const DistanceField df = distance_field(ctx, fromSil ? silhouette : curTex, widthTex + 2, fieldKey(fromSil));
+      if (df.tex) {
+        Packer pk = ctx.packer();
+        pk.mat3(mvp).rect(targetUv).working_rgba(c).vec4(widthTex, fx.num("position", 0), fromSil ? 1.0 : 0.0, 0);
+        Commands sc = one(Mat::STROKE_SDF_FX_MATERIAL, pk.span(), curTex, Blend::none);
+        sc.last().mask = df.tex;
+        ctx.draw_into(f0, sc, true);
+        curTex = texOf(f0);
+        curName = f0;
+        note.path = df.reused ? FxPath::gpu_sdf_cached : FxPath::gpu_sdf;
+        continue;
+      }
     }
 
     // Single-pass effects: cur → f0.

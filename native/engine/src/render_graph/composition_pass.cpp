@@ -12,9 +12,13 @@
 // reported `not-ported`), so every branch below is exercised by a golden scene.
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -52,6 +56,83 @@ Blend blend_of(api::RenderBlendMode b) { return static_cast<Blend>(static_cast<s
 
 Color color_or_white(const api::Renderable& r) { return r.color ? color_of(*r.color) : Color::white(); }
 Rect uv_or_full(const api::Renderable& r) { return r.uv_rect ? rect_of(*r.uv_rect) : Rect{0, 0, 1, 1}; }
+
+/// A 64-bit mix (multiply-xorshift); not cryptographic.
+class KeyMix {
+ public:
+  void u64(std::uint64_t v) noexcept {
+    h_ ^= v * 0x9e3779b97f4a7c15ULL;
+    h_ = std::rotl(h_, 27) * 0xc2b2ae3d27d4eb4fULL + 0x165667b19e3779f9ULL;
+  }
+  void f64(double v) noexcept { u64(std::bit_cast<std::uint64_t>(v)); }
+  void str(std::string_view s) noexcept {
+    u64(s.size());
+    for (const char c : s) u64(static_cast<unsigned char>(c));
+  }
+  [[nodiscard]] std::uint64_t value() const noexcept {
+    std::uint64_t x = h_;
+    x ^= x >> 33U;
+    x *= 0xff51afd7ed558ccdULL;
+    x ^= x >> 33U;
+    return x | 1U;  // never 0 (= no key)
+  }
+
+ private:
+  std::uint64_t h_ = 0x243f6a8885a308d3ULL;
+};
+
+/// E4: what a layer's chain input is drawn from (renderable_cmds' inputs): its
+/// textures BY CONTENT HASH, placement, colour, opacity, motion samples and the
+/// viewport — equal keys, equal input pixels, so the chain keeps its distance
+/// fields under it across frames (fx_cache.hpp). 0 where the input is not a
+/// function of these (a precomp's offscreen, an unresolved texture, a mesh).
+std::uint64_t chain_content_key(const PassContext& ctx, const api::Renderable& r, double opacity) {
+  if (r.precomp || !r.precomp_children.empty() || r.deformed_mesh) return 0;
+  KeyMix k;
+  k.u64(static_cast<std::uint64_t>(r.kind));
+  k.u64(static_cast<std::uint64_t>(r.blend));
+  k.u64(static_cast<std::uint64_t>(r.sampling));
+  for (const std::optional<std::string>* key : {&r.texture_key, &r.mask_texture_key, &r.lut_texture_key}) {
+    if (!*key) {
+      k.u64(0);
+      continue;
+    }
+    const ResolvedBlob rb = ctx.textures.resolve(**key);
+    if (rb.hash.empty()) return 0;
+    k.str(rb.hash);
+  }
+  for (const double v : r.model_matrix) k.f64(v);
+  if (r.uv_rect) {
+    k.f64(r.uv_rect->x);
+    k.f64(r.uv_rect->y);
+    k.f64(r.uv_rect->width);
+    k.f64(r.uv_rect->height);
+  }
+  if (r.color) {
+    k.f64(r.color->r);
+    k.f64(r.color->g);
+    k.f64(r.color->b);
+    k.f64(r.color->a);
+  }
+  if (r.color_matrix) {
+    for (const double v : r.color_matrix->m) k.f64(v);
+    for (const double v : r.color_matrix->offset) k.f64(v);
+  }
+  if (r.sdf) {
+    k.u64(static_cast<std::uint64_t>(r.sdf->shape));
+    k.f64(r.sdf->width);
+    k.f64(r.sdf->height);
+    k.f64(r.sdf->radius_px);
+  }
+  k.f64(opacity);
+  for (const auto& s : r.motion_samples) {
+    for (const double v : s.model_matrix) k.f64(v);
+    k.f64(s.opacity);
+  }
+  k.u64((std::uint64_t{ctx.viewport.pixelWidth} << 32U) | ctx.viewport.pixelHeight);
+  for (const float v : ctx.viewport.viewProjection.m) k.f64(v);
+  return k.value();
+}
 
 }  // namespace
 
@@ -159,7 +240,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     std::vector<std::string> w = {std::string(kSceneColor), std::string(kLayerTarget), std::string(kBlur1),
                                   std::string(kBlur2),      std::string(kBlur3),       std::string(kMatteTarget),
                                   std::string(kDofTarget),  std::string(kFxHist),     std::string(kFxLut),
-                                  std::string(kGeneratorTarget)};
+                                  std::string(kGeneratorTarget), std::string(kFxSilhouette), std::string(kFxScopeMask)};
     for (const auto n : kPrecompTargets) w.emplace_back(n);
     return w;
   }
@@ -247,14 +328,15 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     ctx.draw_into(dest, cmds, true);
     RenderTarget* t = ctx.target(dest);
     if (t == nullptr) return {};
-    return apply_layer_effects(ctx, r, t->tex(), dest, st);
+    return apply_layer_effects(ctx, r, t->tex(), dest, st, opacity);
   }
 
   TexRef apply_layer_effects(PassContext& ctx, const api::Renderable& r, const TexRef& src, std::string_view dest,
-                             const ListState& st) {
+                             const ListState& st, double opacity) {
     if (r.effects.empty()) return src;
     const std::array<std::string_view, 4> pool = {dest, kBlur1, kBlur2, kBlur3};
-    const ChainResult res = run_effects_chain(ctx, r.effects, src, pool, st.byId, r.id, *this);
+    const ChainResult res =
+        run_effects_chain(ctx, r.effects, src, pool, st.byId, r.id, *this, nullptr, chain_content_key(ctx, r, opacity));
     if (res.name == dest) return res.tex;
     Commands copy;
     emit_textured(ctx, copy, screen_mvp(), Color::white(), 1, Blend::none, res.tex, ctx.linear_clamp(), {0, 0, 1, 1},
@@ -757,7 +839,8 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       return;
     }
     const std::array<std::string_view, 4> pool = {kLayerTarget, kBlur1, kBlur2, kBlur3};
-    const TexRef effectTex = run_effects_chain(ctx, r.effects, layerTex, pool, st.byId, r.id, *this).tex;
+    const TexRef effectTex =
+        run_effects_chain(ctx, r.effects, layerTex, pool, st.byId, r.id, *this, nullptr, chain_content_key(ctx, r, 1)).tex;
     emit_textured(ctx, st.main, screen_mvp(), Color::white(), r.opacity, blend_of(r.blend), effectTex, ctx.linear_clamp(),
                   targetUv, kIdentityColor, true);
   }

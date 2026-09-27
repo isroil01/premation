@@ -247,6 +247,12 @@ bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::Te
   ctx.color.bitDepth = file.view.bit_depth;
   ctx.external = external_;
   ctx.nativeFx = nativeFx_;
+  ctx.fxCache = &fxCache_;
+  ctx.fxFields = effectFields_;
+  stats.effects.gpuEntries = stats.effects.sdfBuilt = stats.effects.sdfReused = 0;
+  stats.effects.silhouetteStyles = stats.effects.scoped = stats.effects.skipped = 0;
+  stats.effects.paths.clear();
+  ctx.effectStats = &stats.effects;
   if (file.view.frame_clip) {
     // WebGPUBackend.beginRenderPass: round + clamp the clip to the surface.
     const auto& c = *file.view.frame_clip;

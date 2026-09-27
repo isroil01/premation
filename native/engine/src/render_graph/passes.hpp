@@ -23,6 +23,10 @@ inline constexpr std::string_view kPluginOrigin = "plugin-origin";
 inline constexpr std::string_view kGeneratorTarget = "generator-target";
 inline constexpr std::string_view kFxHist = "fx-hist";
 inline constexpr std::string_view kFxLut = "fx-lut";
+/// E4: the fill-opacity silhouette the styles are shaped by, and an effect-scoped
+/// mask drawn into the chain buffer's space (effect_chain.cpp).
+inline constexpr std::string_view kFxSilhouette = "fx-silhouette";
+inline constexpr std::string_view kFxScopeMask = "fx-scope-mask";
 inline constexpr std::array<std::string_view, 4> kPrecompTargets = {"precomp-target-0", "precomp-target-1",
                                                                     "precomp-target-2", "precomp-target-3"};
 inline constexpr std::uint32_t kBackdropDownscale = 2;

@@ -98,6 +98,7 @@ if(Dawn_FOUND)
     src/render_graph/passes.cpp
     src/render_graph/composition_pass.cpp
     src/render_graph/effect_chain.cpp
+    src/render_graph/fx_distance.cpp
     src/render_graph/support.cpp
     src/render_graph/threed.cpp
     src/render_graph/scene_renderer.cpp
