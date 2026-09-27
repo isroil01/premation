@@ -541,6 +541,16 @@ void Flattener::feed(const RLayer& l) {
       textures_.push_back(std::move(r));
     }
   }
+  if (l.gpuEffects) {
+    if (auto spec = contour_request_spec(l)) {  // E4: a GPU Vegas' contours, made once per content
+      TextureRequest r;
+      r.key = contour_key(l.id);
+      r.kind = TexKind::contours;
+      r.spec = std::move(*spec);
+      r.layerId = l.id;
+      textures_.push_back(std::move(r));
+    }
+  }
   append_lut_textures(l, textures_);  // lut:<id> / cubelut:<id> (lut_port.cpp)
 }
 

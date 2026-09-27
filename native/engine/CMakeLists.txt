@@ -476,8 +476,9 @@ if(TARGET engine_render_graph)
 endif()
 
 # engine_contours: vegas.ts extractAlphaContours, shared by the Vegas effect
-# (engine_canvas_effects) and the image-alpha puppet mesh (engine_scene_core).
-add_library(engine_contours STATIC src/effects/alpha_contours.cpp)
+# (engine_canvas_effects) and the image-alpha puppet mesh (engine_scene_core);
+# contour_texture packs them for the GPU Vegas (E4, scene_textures.cpp).
+add_library(engine_contours STATIC src/effects/alpha_contours.cpp src/effects/contour_texture.cpp)
 target_include_directories(engine_contours PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/effects)
 target_link_libraries(engine_contours PUBLIC motion::jsmath PRIVATE motion::options)
 

@@ -371,6 +371,7 @@ bool effect_ported(const api::RenderEffect& e, std::string& why) {
   if (t == "glow" || t == "drop-shadow" || t == "deep-glow" || t == "gaussian-blur" || t == "fast-box-blur") return true;
   if (t == "native-plugin") return true;  // G1: run by the plugin host (NativeEffectHost)
   if (t == "fill-opacity") return true;   // E4: the GPU route's fill opacity (below)
+  if (t == "vegas") return true;          // E4: the GPU Vegas over its contour texture (below)
   if (fx_table().count(t) != 0 || p_table().count(t) != 0 || field_table().count(t) != 0 || known_single(t)) return true;
   why = "effect " + t;
   return false;
@@ -892,6 +893,63 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         note.path = df.reused ? FxPath::gpu_sdf_cached : FxPath::gpu_sdf;
         continue;
       }
+    }
+
+    if (type == "vegas") {
+      // E4: Vegas on the GPU — dashes along the contours of the layer's own
+      // alpha (made once per content: scene_textures resolve_contours), every
+      // param a uniform. Strokes land in f1 (MAX blend), then Vegas' blend
+      // mode puts them with the contents (canvas_effects_generate apply_vegas).
+      const TexRef data = ctx.texture(fx.text("contourKey"));
+      if (!data || selfR == nullptr) {
+        note.path = FxPath::skipped;
+        touch.keep = true;
+        continue;
+      }
+      const Mat3 layerMvp = space != nullptr ? mul(mvp, model_from_rect(space->box)) : mvp_for(vp, mat3_of(selfR->model_matrix));
+      const Rect layerUv = selfR->uv_rect ? rect_of(*selfR->uv_rect) : Rect{0, 0, 1, 1};
+      Color vc = Color::white();
+      (void)fx.color("color", vc);
+      vc.a = 1;
+      // Every vertex fits in the texture: 4 texels each, past the header.
+      const auto maxInstances = static_cast<std::uint32_t>((static_cast<std::uint64_t>(data.width) * data.height) / 4);
+      Packer pk = ctx.packer();
+      pk.mat3(layerMvp).rect(layerUv).working_rgba(vc);
+      pk.vec4(fx.num("width", 1), fx.num("hardness", 100), fx.num("opacity", 1), fx.num("segments", 1));
+      pk.vec4(fx.num("length"), fx.num("rotation"), fx.flag("bunched") ? 1.0 : 0.0, fx.flag("randomPhase") ? 1.0 : 0.0);
+      pk.vec4(fx.num("seed"), fx.num("startOpacity", 100), fx.num("midOpacity", 100), fx.num("endOpacity", 100));
+      pk.vec4(fx.num("midPosition", 50), maxInstances, 0, 0);
+      Commands vcmds;
+      DrawItem& it = vcmds.add(Mat::VEGAS_FX_MATERIAL, Blend::lighten, pk.span());
+      it.texture = curTex;
+      it.sampler = ctx.linear_clamp();
+      it.mask = data;
+      it.instanceCount = maxInstances;
+      ctx.draw_into(f1, vcmds, true);
+      const TexRef strokes = texOf(f1);
+      note.path = FxPath::gpu_contours;
+      const double blend = fx.num("blendMode");
+      if (blend == 0) {  // clear, then the strokes alone
+        curTex = strokes;
+        curName = f1;
+        continue;
+      }
+      Commands comp;
+      if (blend == 2) {  // destination-over: behind the contents
+        emit_textured(ctx, comp, mvp, Color::white(), 1, Blend::normal, strokes, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+        emit_textured(ctx, comp, mvp, Color::white(), 1, Blend::normal, curTex, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+      } else if (blend == 3) {  // destination-in: the contents where the strokes are
+        ColorTransform alphaMode;
+        alphaMode.m = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+        emit_matte_combine(ctx, comp, mvp, Blend::none, curTex, ctx.linear_clamp(), strokes, alphaMode, targetUv);
+      } else {  // over the contents
+        emit_textured(ctx, comp, mvp, Color::white(), 1, Blend::normal, curTex, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+        emit_textured(ctx, comp, mvp, Color::white(), 1, Blend::normal, strokes, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+      }
+      ctx.draw_into(f0, comp, true);
+      curTex = texOf(f0);
+      curName = f0;
+      continue;
     }
 
     // Single-pass effects: cur → f0.

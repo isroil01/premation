@@ -9,6 +9,7 @@
 
 #include "catalog_data.hpp"
 #include "effects_spatial.hpp"
+#include "frame_build.hpp"
 #include "scene_native_fx.hpp"
 #include "fxstate.hpp"
 #include "jsmath.hpp"
@@ -553,9 +554,74 @@ std::vector<api::RenderEffect> extract_spatial_effects(const RLayer& l, bool onl
 
 // ── E4: the GPU route for a layer the TypeScript bakes ─────────────────────
 
-bool gpu_draws_canvas_effect(const RLayer& /*l*/, const Json& /*e*/) { return false; }
+bool gpu_draws_canvas_effect(const RLayer& l, const Json& e) {
+  // Vegas over the layer's own alpha (the contour mode, not mask / path
+  // strokes): its contours come from the content raster (TexKind::contours),
+  // so its input must BE that raster — a shape with a raster of its own, no
+  // layer mask, and Vegas first in the stack (fill opacity only scales the
+  // alpha, which the threshold absorbs: contour_request_spec).
+  if (type_of(e) != "vegas") return false;
+  if (l.kind != LayerKind::shape || !needs_shape_raster(l)) return false;
+  if (l.mask.is_object() && l.mask.at("paths").is_array() && !l.mask.at("paths").arr().empty()) return false;
+  const Json p = doc::params_of(e);
+  if (p.at("allMasks").is_bool() && p.at("allMasks").b()) return false;
+  if (p.at("pathPoints").is_array() && p.at("pathPoints").arr().size() >= 6) return false;
+  for (const Json& o : l.effects) {
+    if (!effect_enabled(o) || is_temporal(type_of(o))) continue;
+    return &o == &e;
+  }
+  return false;
+}
 
-std::optional<api::RenderEffect> gpu_canvas_effect_entry(const RLayer& /*l*/, const Json& /*e*/) { return std::nullopt; }
+std::string contour_key(std::string_view layerId) { return "vegas:" + std::string(layerId); }
+
+std::optional<api::RenderEffect> gpu_canvas_effect_entry(const RLayer& l, const Json& e) {
+  if (!gpu_draws_canvas_effect(l, e)) return std::nullopt;
+  const Json params = doc::params_of(e);
+  const auto n = [&](std::string_view k) {
+    const Json& v = param_of(params, k);
+    return v.is_number() ? v.num() : 0.0;
+  };
+  // apply_vegas' early returns (nothing drawn, nothing cleared).
+  if (n("opacity") <= 0 || n("length") <= 0) return std::nullopt;
+  const Json& rp = params.at("randomPhase");
+  FxWriter w("vegas");
+  w.text("contourKey", contour_key(l.id));
+  w.num("opacity", n("opacity") / 100);
+  w.num("length", n("length"));
+  w.num("width", std::max(0.1, n("width")));
+  w.num("segments", std::max(1.0, motion::js::round(n("segments"))));
+  w.num("rotation", n("rotation"));
+  w.num("hardness", std::max(0.0, std::min(100.0, n("hardness"))));
+  w.flag("bunched", motion::js::round(n("segmentDistribution")) == 0);
+  w.flag("randomPhase", rp.is_bool() && rp.b());
+  w.num("seed", std::floor(n("randomSeed")));
+  w.num("blendMode", motion::js::round(n("blendMode")));
+  w.num("startOpacity", n("startOpacity"));
+  w.num("midOpacity", n("midOpacity"));
+  w.num("endOpacity", n("endOpacity"));
+  w.num("midPosition", n("midPosition"));
+  w.color("color", color_with_alpha(param_of(params, "color"), 1));
+  return w.done();
+}
+
+std::optional<Json> contour_request_spec(const RLayer& l) {
+  for (const Json& e : l.effects) {
+    if (!effect_enabled(e) || !gpu_draws_canvas_effect(l, e)) continue;
+    const double threshold = std::max(1.0, std::min(254.0, effect_number(e, "threshold")));
+    // The CPU Vegas reads the FADED alpha: a contour of fo·a at t is the
+    // contour of a at t / fo (marching squares interpolates linearly).
+    const double fo = l.fillOpacity ? std::max(0.0, std::min(1.0, *l.fillOpacity)) : 1.0;
+    Json spec = Json::object();
+    spec.set("source", Json::string("path:" + l.id));
+    spec.set("threshold", Json::number(fo > 0 ? threshold / fo : 255));
+    spec.set("width", Json::number(l.width));
+    spec.set("height", Json::number(l.height));
+    spec.set("padding", Json::number(raster_padding(l)));
+    return spec;
+  }
+  return std::nullopt;
+}
 
 namespace {
 

@@ -213,7 +213,8 @@
     "sdf-dilate",
     "stroke-sdf",
     "style-fill",
-    "fx-effect-scope"
+    "fx-effect-scope",
+    "vegas-gpu"
   ],
   "materials": [
     {
@@ -7926,6 +7927,42 @@
           "binding": 4,
           "type": "texture",
           "stages": [
+            "fragment"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "VEGAS_FX_MATERIAL",
+      "shader": "vegas-gpu",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 3,
+          "type": "texture",
+          "stages": [
+            "vertex",
             "fragment"
           ]
         }

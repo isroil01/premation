@@ -20,7 +20,9 @@ namespace premation::scene {
 /// light: a light's glow wash (light_wash.cpp). pixels: a texture the builder
 /// computes itself (a colour-LUT strip), uploaded as given.
 /// particles: a particle emitter's field (particle_port.cpp).
-enum class TexKind : std::uint8_t { text, path, mask, media, light, pixels, particles };
+/// contours: E4's GPU Vegas — the alpha contours of another raster of the same
+/// frame (spec.source, its key) as a data texture (effects/contour_texture.hpp).
+enum class TexKind : std::uint8_t { text, path, mask, media, light, pixels, particles, contours };
 
 struct TextureRequest {
   std::string key;

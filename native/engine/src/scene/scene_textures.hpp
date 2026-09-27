@@ -23,9 +23,11 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "canvas.hpp"
@@ -69,6 +71,8 @@ struct PrepareStats {
   double bakeMs = 0;
   double readMs = 0;
   std::uint32_t mediaRefs = 0;
+  /// E4: GPU Vegas contour textures made this frame (once per content + threshold).
+  std::uint32_t contourBuilds = 0;
   /// Features the painters could not draw (key → what), for the explicit-fallback report.
   std::vector<std::pair<std::string, std::string>> unsupported;
 };
@@ -153,6 +157,10 @@ class SceneTextures final : public rg::ExternalTextureSource {
   std::list<FlowEntry> flows_;
   /// `gltf:<modelKey>#<image>`: a registered model's image (scene_textures_model.cpp).
   std::string model_ref(const TextureRequest& r, PrepareStats& stats);
+  /// E4: TexKind::contours — each request's source raster (a ref of this frame,
+  /// by key) as the Vegas contour texture, keyed by that raster's hash + threshold.
+  void resolve_contours(std::span<const std::pair<const TextureRequest*, std::size_t>> reqs,
+                        std::vector<api::RenderTextureRef>& refs, PrepareStats& stats);
   void insert(std::string hash, std::shared_ptr<const RasterEntry> e);
   [[nodiscard]] std::shared_ptr<const RasterEntry> find(std::string_view hash);
   /// Baked rasters' painted content (raster_source.hpp BakedContent), by content key.

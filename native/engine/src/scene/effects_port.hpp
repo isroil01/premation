@@ -85,6 +85,11 @@ struct ColorMatrix {
 /// layer's own alpha: gpu_canvas_fx.cpp), and its chain entry.
 [[nodiscard]] bool gpu_draws_canvas_effect(const RLayer& l, const Json& e);
 [[nodiscard]] std::optional<api::RenderEffect> gpu_canvas_effect_entry(const RLayer& l, const Json& e);
+/// Texture key of a GPU Vegas' contours (TexKind::contours).
+[[nodiscard]] std::string contour_key(std::string_view layerId);
+/// The contour request of a GPU-routed layer drawing Vegas on the GPU:
+/// {source: the content raster's key, threshold, width, height, padding}.
+[[nodiscard]] std::optional<Json> contour_request_spec(const RLayer& l);
 
 /// RenderEffect param-bag writer (effectToWire's encoding).
 class FxWriter {

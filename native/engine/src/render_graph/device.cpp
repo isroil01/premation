@@ -513,7 +513,9 @@ void Device::execute(wgpu::RenderPassEncoder& pass, const Commands& cmds, wgpu::
         bindGroups_.acquire(key_, frame_, [&] { return make_bind_group(p, m, it, chunks_[chunk].buffer, size); });
     pass.SetBindGroup(0, bg, 1, &offset);
     const bool instanced = it.instanceBuffer != nullptr;
-    const std::uint32_t instances = instanced ? it.instanceCount : 1;
+    // E4: instances with no per-instance buffer (the shader reads its data by
+    // instance_index — the GPU Vegas' contour texture).
+    const std::uint32_t instances = instanced || it.instanceCount > 0 ? it.instanceCount : 1;
     if (it.vertexBuffer != nullptr && it.indexBuffer != nullptr) {
       pass.SetVertexBuffer(0, it.vertexBuffer);
       if (instanced) pass.SetVertexBuffer(1, it.instanceBuffer);

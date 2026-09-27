@@ -92,5 +92,7 @@ void emit_textured(PassContext& ctx, Commands& cmds, const Mat3& mvp, const Colo
                    const TexRef& tex, const SamplerRef& smp, const Rect& uv, const ColorTransform& ct, bool sampleLinear);
 void emit_silhouette(PassContext& ctx, Commands& cmds, const Mat3& mvp, const Color& c, double opacity, Blend blend,
                      const TexRef& tex, const SamplerRef& smp, const Rect& uv);
+void emit_matte_combine(PassContext& ctx, Commands& cmds, const Mat3& mvp, Blend blend, const TexRef& tex,
+                        const SamplerRef& smp, const TexRef& matte, const ColorTransform& mode, const Rect& uv);
 
 }  // namespace premation::rg

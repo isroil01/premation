@@ -13,6 +13,7 @@
 
 #include "core/joining_thread.hpp"
 #include "bake_chain.hpp"
+#include "contour_texture.hpp"
 #include "image_decode.hpp"
 #include "json.hpp"
 #include "pixel_motion.hpp"
@@ -180,10 +181,17 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
   };
   std::vector<Miss> misses;
   std::vector<std::string> seen;
+  // E4: GPU Vegas contours read another raster of this frame — resolved last.
+  std::vector<std::pair<const TextureRequest*, std::size_t>> contourReqs;
   refs.reserve(refs.size() + reqs.size());
   for (const TextureRequest& r : reqs) {
     api::RenderTextureRef ref;
     ref.key = r.key;
+    if (r.kind == TexKind::contours) {
+      contourReqs.emplace_back(&r, refs.size());
+      refs.push_back(std::move(ref));  // hash filled by resolve_contours
+      continue;
+    }
     if (r.kind == TexKind::media) {
       std::optional<api::RenderColorSpace> space;
       ref.hash = media_ref(r, stats, space);
@@ -261,7 +269,10 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
     }
     refs.push_back(std::move(ref));
   }
-  if (misses.empty()) return;
+  if (misses.empty()) {
+    resolve_contours(contourReqs, refs, stats);
+    return;
+  }
   stats.rasterMisses += static_cast<std::uint32_t>(misses.size());
   const auto t0 = std::chrono::steady_clock::now();
   std::vector<std::shared_ptr<RasterEntry>> done(misses.size());
@@ -319,6 +330,46 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
     for (const std::string& u : done[i]->unsupported) stats.unsupported.emplace_back(misses[i].req->key, u);
     if (!done[i]->error.empty()) stats.unsupported.emplace_back(misses[i].req->key, "raster error: " + done[i]->error);
     insert(misses[i].hash, std::move(done[i]));
+  }
+  resolve_contours(contourReqs, refs, stats);
+}
+
+void SceneTextures::resolve_contours(std::span<const std::pair<const TextureRequest*, std::size_t>> reqs,
+                                     std::vector<api::RenderTextureRef>& refs, PrepareStats& stats) {
+  for (const auto& [req, at] : reqs) {
+    const Json& spec = req->spec;
+    const std::string source = spec.at("source").is_string() ? spec.at("source").str() : std::string();
+    const auto src = std::ranges::find_if(refs, [&](const api::RenderTextureRef& r) { return r.key == source; });
+    api::RenderTextureRef& ref = refs[at];
+    ref.ready = false;
+    if (src == refs.end() || src->hash.empty()) continue;
+    const std::shared_ptr<const RasterEntry> raster = find(src->hash);
+    if (raster == nullptr || raster->width == 0 || raster->height == 0) continue;
+    const double threshold = spec.at("threshold").is_number() ? spec.at("threshold").num() : 128;
+    std::array<char, 48> tail{};
+    std::snprintf(tail.data(), tail.size(), "|contours|%.17g", threshold);  // NOLINT(cppcoreguidelines-pro-type-vararg)
+    // Keyed by the content raster and the threshold: the contours are made
+    // once per content, whatever the Vegas params do (E4 cached silhouettes).
+    ref.hash = "rs:" + hex64(fnv1a(tail.data(), fnv1a(src->hash)));
+    ref.ready = true;
+    if (find(ref.hash)) {
+      ++stats.rasterHits;
+      continue;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    const double lw = spec.at("width").is_number() ? spec.at("width").num() : 0;
+    const double pad = spec.at("padding").is_number() ? spec.at("padding").num() : 0;
+    const double ss = lw + 2 * pad > 0 ? static_cast<double>(raster->width) / (lw + 2 * pad) : 1;
+    effects::ContourTexture ct = effects::pack_alpha_contours(raster->rgba, raster->width, raster->height, threshold, ss);
+    auto e = std::make_shared<RasterEntry>();
+    e->width = ct.width;
+    e->height = std::max<std::uint32_t>(1, ct.height);
+    e->rgba = std::move(ct.rgba);
+    e->rgba.resize(static_cast<std::size_t>(e->width) * e->height * 4, 0);
+    insert(ref.hash, std::move(e));
+    ++stats.rasterMisses;
+    ++stats.contourBuilds;
+    stats.rasterMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   }
 }
 

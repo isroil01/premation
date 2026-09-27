@@ -98,6 +98,7 @@ struct DrawItem {
   std::uint32_t firstIndex = 0;
   wgpu::IndexFormat indexFormat = wgpu::IndexFormat::Uint16;
   /// Per-instance data at vertex slot 1 (generator fields); drawn instanceCount times.
+  /// instanceCount > 0 with no buffer: drawn that many times all the same (E4).
   wgpu::Buffer instanceBuffer;
   std::uint32_t instanceCount = 0;
 };
