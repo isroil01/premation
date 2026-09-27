@@ -579,6 +579,22 @@ one effect, worst inner-shadow 1027 / stroke 814 / inner-glow 478 / vegas 279
 ms — the styles are dozens of full-frame drawImage calls on Skia's CPU raster.
 Next: a GPU route for the styles, cached silhouettes, and not re-rasterizing
 the content when only effect params change.
+**E4 GPU route (2026-09-27, branch `e4-gpu-effects`, syntax-checked only — not
+built or benched).** A layer the TS bakes runs its stack on the render graph's
+chain when the frame renders on a device (`ViewSpec::gpuEffects`, on in the
+engine; `PREMATION_CPU_BAKE=1` and the parity gate keep the CPU bake):
+`effects_port` `gpu_effect_route` / `extract_gpu_route_effects` (a
+`fill-opacity` entry + `effectOpacity` / `scopeMaskKey` on the entries the
+bake blended back; `fxmask:` rasters), `RLayer::gpuEffects` making
+`layer_is_baked` false. Chain additions: fill opacity (silhouette +
+`STYLE_FILL_FX` for inner shadow / glow / satin / bevel), scoped blend-back
+(`EFFECT_SCOPE_FX`), jump-flood alpha distance fields for Stroke and Spread
+(`fx_distance`, kept across frames under the chain input's content key,
+`fx_cache`), Vegas from cached alpha contours (`contour_texture`,
+`VEGAS_FX`). `FrameStats.effects` records each entry's path;
+`premation-scene --bench --gpu-effects` prints it. Still CPU-baked: the other
+canvas-only effects, interleaved LUT / colour grades, path-following effects.
+Exit to measure: `docs/VERIFY_ON_TEST_MACHINE.md` § e4-gpu-effects.
 
 **D2w time/comp (2026-09-25): nested compositions, retime, ghosts, particles and
 cloners build from the C++ document.** New files beside `snapshot_build` /
