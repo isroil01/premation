@@ -173,7 +173,7 @@ describe('motion-path keys (scratch-engine macros)', () => {
 
   it('a tangent drag: absolute from the press state, one entry', async () => {
     const t0 = defaultAnimation.getTrackKeyframes(s.B, 'x')![0]!.t;
-    const start = capturePositionTracks(s.B);
+    const start = await capturePositionTracks(s.B);
     const ids = await resolvePositionKeyIds(s.B, start);
     expect(ids.size).toBeGreaterThan(0);
     const expected = legacyResult(s.B, (e) => setPathTangent(s.B, t0, 'out', { x: 180, y: 90 }, true, e));
@@ -191,7 +191,7 @@ describe('motion-path keys (scratch-engine macros)', () => {
 
   it('a point drag moves the key value', async () => {
     const t0 = defaultAnimation.getTrackKeyframes(s.B, 'x')![1]!.t;
-    const start = capturePositionTracks(s.B);
+    const start = await capturePositionTracks(s.B);
     const ids = await resolvePositionKeyIds(s.B, start);
     await edit('Move keyframe', positionKeyPatchCommands(s.B, start, ids, (e) => {
       e.setKeyframe(s.B, 'x', t0, 333);

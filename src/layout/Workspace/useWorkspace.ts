@@ -59,9 +59,9 @@ import { isLookedThrough } from '@core/workspace/ports';
 import { getWorkspaceController, type WorkspaceController } from '@core/workspace/WorkspaceController';
 import {
   setPathTangent,
-  isPathTangentContinuous,
   motionPathTimeWindow,
 } from '@core/motion/motionPath';
+import { positionTangentContinuous } from '@core/mirror/positionTracks';
 import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { motionPathKeyframeMenuItems, guideContextMenuItems, convertMotionPathVertex } from './viewportPrecisionMenus';
 import { openGuideEditor } from './GuideEditorDialog';
@@ -2034,19 +2034,23 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           void convertMotionPathVertex(hit.nodeId, hit.t).then(() => controller.requestRender());
           return;
         }
-        const start = capturePositionTracks(hit.nodeId);
+        // B4: the drag starts from the engine's stored Position tracks
+        // (getMemberKeyframes), asked at press; moves before they land are
+        // replayed once they do (`latest`).
         const mp = {
           ...hit,
           gesture: new GestureSession(hit.part === 'point' ? 'Move keyframe' : 'Adjust path tangent'),
-          start,
+          start: {} as PositionTracks,
           ids: null as PositionKeyIds | null,
           latest: null as (() => Command[]) | null,
-          continuous: isPathTangentContinuous(hit.nodeId, hit.t),
+          continuous: true,
           broken: false,
           ready: Promise.resolve(),
         };
-        mp.ready = resolvePositionKeyIds(hit.nodeId, start).then((ids) => {
-          mp.ids = ids;
+        mp.ready = capturePositionTracks(hit.nodeId).then(async (start) => {
+          mp.start = start;
+          mp.continuous = positionTangentContinuous(hit.nodeId, hit.t, start);
+          mp.ids = await resolvePositionKeyIds(hit.nodeId, start);
           if (mp.latest) mp.gesture.send(mp.latest());
         });
         mpDragRef.current = mp;
@@ -2247,24 +2251,24 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         // Alt breaks the handle pair and it STAYS broken for the rest of the
         // drag (and, via Keyframe.continuous, for the next one).
         if (e.altKey) drag.broken = true;
-        const mirror = drag.continuous && !drag.broken;
-        const { nodeId, t, start } = drag;
+        const { nodeId, t } = drag;
         // One undo step for the whole drag: the engine gesture opened on press.
-        // Every message is built from the PRESS state (`start`) + this pointer.
+        // Every message is built from the PRESS state (`drag.start`, read when
+        // the thunk runs — it may land after the first moves) + this pointer.
         drag.latest = part === 'point'
           // Move the point in 2D (both axis tracks get a key at this time;
           // spatial tangents are relative offsets, so they travel with it).
           // `t` is ALREADY the stored keyframe time.
-          ? () => positionKeyPatchCommands(nodeId, start, drag.ids!, (scratch) => {
+          ? () => positionKeyPatchCommands(nodeId, drag.start, drag.ids!, (scratch) => {
             scratch.setKeyframe(nodeId, 'x', t, lp.x);
             scratch.setKeyframe(nodeId, 'y', t, lp.y);
           })
           // Pull a spatial tangent handle — bends the path. Mirrored when the
           // point is still continuous (AE smooth).
-          : () => positionKeyPatchCommands(nodeId, start, drag.ids!, (scratch) => {
+          : () => positionKeyPatchCommands(nodeId, drag.start, drag.ids!, (scratch) => {
             // B3-legacy: not a write — the tangent arithmetic runs on the scratch engine passed
             // in; the document edit is the `updateKeyframes` built from it (rule false positive).
-            setPathTangent(nodeId, t, part, lp, mirror, scratch);
+            setPathTangent(nodeId, t, part, lp, drag.continuous && !drag.broken, scratch);
           });
         if (drag.ids) drag.gesture.send(drag.latest());
         controller.requestRender();

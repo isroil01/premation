@@ -25,7 +25,9 @@ import {
   type SpatialInterp as ApiSpatialInterp,
   type Value,
 } from '@motion/engine-api';
-import { AnimationEngine, defaultAnimation, type Keyframe } from '@motion/animation';
+import type { AnimationEngine, Keyframe } from '@motion/animation';
+import { POSITION_TRACKS, positionTracksFrom, scratchPositionEngine, type PositionTracks } from '@core/mirror/positionTracks';
+import { fetchMemberTracks } from '@stores/memberTracks';
 import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import type { MaskMode, MaskPath, MaskPoint } from '@core/effects/mask';
 import { engine } from '@core/engine/engineInstance';
@@ -95,18 +97,14 @@ export async function deleteMaskEdit(nodeId: string, maskId: string): Promise<vo
 
 // ── Position keyframes (motion path) ─────────────────────────────────
 
-const POSITION_TRACKS = ['x', 'y', 'z'] as const;
+export type { PositionTracks };
 
-/** A layer's Position member tracks, deep-copied (the drag-start state). */
-export type PositionTracks = Partial<Record<(typeof POSITION_TRACKS)[number], Keyframe[]>>;
-
-export function capturePositionTracks(nodeId: string): PositionTracks {
-  const out: PositionTracks = {};
-  for (const m of POSITION_TRACKS) {
-    const kfs = defaultAnimation.getTrackKeyframes(nodeId, m);
-    if (kfs) out[m] = kfs.map((k) => ({ ...k }));
-  }
-  return out;
+/**
+ * The layer's Position member tracks as the engine stores them NOW
+ * (`getMemberKeyframes` — B4: never the TypeScript engine's live tracks).
+ */
+export async function capturePositionTracks(nodeId: string): Promise<PositionTracks> {
+  return positionTracksFrom(await fetchMemberTracks(nodeId, POSITION_TRACKS));
 }
 
 /**
@@ -118,7 +116,7 @@ export type PositionKeyIds = Map<string, string>;
 
 const keyAddr = (path: string, t: number): string => `${path}@${t}`;
 
-export async function resolvePositionKeyIds(nodeId: string, start: PositionTracks = capturePositionTracks(nodeId)): Promise<PositionKeyIds> {
+export async function resolvePositionKeyIds(nodeId: string, start: PositionTracks): Promise<PositionKeyIds> {
   const ids: PositionKeyIds = new Map();
   const refs = new Map<string, PropRef>();
   for (const m of POSITION_TRACKS) {
@@ -174,11 +172,9 @@ export function positionKeyPatchCommands(
   ids: PositionKeyIds,
   mutate: (scratch: AnimationEngine) => void,
 ): Command[] {
-  const scratch = new AnimationEngine();
-  for (const m of POSITION_TRACKS) {
-    const kfs = start[m];
-    if (kfs) scratch.setTrackKeyframes(nodeId, m, kfs.map((k) => ({ ...k })));
-  }
+  const scratch = scratchPositionEngine(nodeId, start);
+  // The start state, unmutated: what a member with no key at a time evaluates to there.
+  const base = scratchPositionEngine(nodeId, start);
   mutate(scratch);
 
   const patches: KeyframePatch[] = [];
@@ -197,7 +193,7 @@ export function positionKeyPatchCommands(
       const member = (mm: string): Keyframe | undefined =>
         (scratch.getTrackKeyframes(nodeId, mm) ?? []).find((x) => x.t === k.t);
       const keysOf = r.members.map(member);
-      const nums = keysOf.map((x, i) => x?.value ?? defaultAnimation.sample(nodeId, r.members[i]!, k.t) ?? 0);
+      const nums = keysOf.map((x, i) => x?.value ?? base.sample(nodeId, r.members[i]!, k.t) ?? 0);
       const value = valueOfNumbers(r.valueType, nums);
       const id = ids.get(addr);
       if (!id) {
@@ -236,7 +232,7 @@ export function positionKeyPatchCommands(
 
 /** One-shot form (a menu item / button): resolve ids, build, send as one entry. */
 export async function editPositionKeys(nodeId: string, label: string, mutate: (scratch: AnimationEngine) => void): Promise<void> {
-  const start = capturePositionTracks(nodeId);
+  const start = await capturePositionTracks(nodeId);
   const ids = await resolvePositionKeyIds(nodeId, start);
   await edit(label, positionKeyPatchCommands(nodeId, start, ids, mutate));
 }
