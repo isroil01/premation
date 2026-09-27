@@ -23,7 +23,7 @@
  */
 
 import { readSource } from '@/__testHelpers__/readSource';
-import { roughen } from './pathOps';
+import { pathOpParamSpecs, roughen } from './pathOps';
 import type { Pt } from './trimPath';
 
 /** A closed square, subdivided enough for a wiggle to have somewhere to go. */
@@ -131,10 +131,13 @@ describe('determinism survives the new parameter', () => {
 
 describe('it is reachable, and there is still only ONE Wiggle Paths', () => {
 
-  it('the inspector exposes Correlation on the operator', () => {
-    const ui = readSource('layout/Inspector/PathOpControls.tsx');
-    expect(ui).toMatch(/param="correlation"/);
-    expect(ui).toMatch(/label="Correlation"/);
+  it('the inspector exposes Correlation on the operator (a row of its param specs, b4-round3)', () => {
+    for (const type of ['roughen', 'wiggleTransform'] as const) {
+      expect(pathOpParamSpecs(type).map((r) => [r.param, r.label])).toEqual(
+        expect.arrayContaining([['correlation', 'Correlation'], ['wigglesPerSecond', 'Wiggles/Second']]),
+      );
+    }
+    expect(pathOpParamSpecs('pucker').map((r) => r.param)).not.toContain('correlation');
   });
 
   it('is keyframeable, unlike seed', () => {

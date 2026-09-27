@@ -118,7 +118,8 @@ std::vector<StaticPropertyRow> layer_style_rows(const Node& n) {
         (style.is_string() && style.str().empty())) {
       continue;  // !style
     }
-    if (style.at("enabled").is_bool() && !style.at("enabled").b()) continue;
+    // A switched-off style keeps its properties (AE's Layer Styles: the eye
+    // hides the style, its properties stay in the timeline and in the API).
     const std::string effectId = layer_style_effect_id(m.key);
     const Json& lab = registry().layerStyles.at("label").at(m.key);
     const std::string label = lab.is_string() ? lab.str() : m.key;

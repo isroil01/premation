@@ -928,7 +928,7 @@ const PATHOP_PARAM_LABEL: Record<string, Record<string, string>> = {
   pucker: { amount: 'Amount' },
   twist: { amount: 'Angle' },
   offset: { amount: 'Amount', miterLimit: 'Miter Limit' },
-  roughen: { amount: 'Size', detail: 'Detail' },
+  roughen: { amount: 'Size', detail: 'Detail', wigglesPerSecond: 'Wiggles/Second', correlation: 'Correlation' },
   zigzag: { amount: 'Amount', detail: 'Ridges' },
   // The repeater's, matching the labels the inspector card shows — a timeline
   // row reading "Repeater Offsetrotation" is what titleCase would have given.

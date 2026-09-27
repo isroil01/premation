@@ -36,7 +36,7 @@ import { isRiggableKind } from '@core/scene/rigLogo';
 import { nextRigIds, usedRigIds } from '@core/rig/rigIds';
 import { readNodePuppet } from '@core/rig/puppet';
 
-import { defaultPathOpOf, readPathOps, readTrimOp, pathOpPropPath, type PathOp } from '@core/scene/pathOps';
+import { readPathOps, readTrimOp, pathOpPropPath, type PathOp } from '@core/scene/pathOps';
 
 import { is3DEnabled } from '@core/scene/threeD';
 import { defaultPolystar } from '@core/scene/polystar';
@@ -1767,18 +1767,16 @@ const addPathOperatorHandler: AiTool['handler'] = async (input, ctx) => {
     );
   }
 
-  // The TYPE's own defaults, not zigzag's (the engine adds the operator with
-  // `defaultPathOpOf(type)`): a wiggleTransform must inherit its 2
-  // wiggles/second and correlation 50 or an unspecified call adds a frozen
-  // wiggle — an operator that appears to do nothing. Pushed onto the CHAIN
-  // (`contents`), then the named params written.
-  const base = defaultPathOpOf(type);
+  // The TYPE's own defaults come with the operator: the engine adds it with
+  // `defaultPathOpOf(type)` (a wiggleTransform keeps its 2 wiggles/second and
+  // correlation 50), so only what the call NAMES is written after it is pushed
+  // onto the chain (`contents`). Re-sending the defaults wrote wiggles/second
+  // on operators that have no such property (Pucker & Bloat), which the API
+  // does not address — and refused the whole call.
   const opId = await addPathOperator(ctx.engine, i.nodeId, type, {
     ...(i.amount !== undefined ? { amount: i.amount } : {}),
     ...(i.detail !== undefined ? { detail: i.detail } : {}),
-    ...(i.wigglesPerSecond !== undefined || base.wigglesPerSecond !== undefined
-      ? { wigglesPerSecond: Math.max(0, i.wigglesPerSecond ?? base.wigglesPerSecond ?? 0) }
-      : {}),
+    ...(i.wigglesPerSecond !== undefined ? { wigglesPerSecond: Math.max(0, i.wigglesPerSecond) } : {}),
   });
 
   const chain = readPathOps(defaultSceneGraph.getNode(i.nodeId)!);
