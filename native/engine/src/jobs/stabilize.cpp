@@ -179,12 +179,31 @@ FloatLuma downsample_luma(const FloatLuma& in, int factor) {
 
 int flow_factor(int decodedW, int decodedH) noexcept { return std::max(1, std::max(decodedW, decodedH) / 480); }
 
-scene::pixmo::FlowField compute_flow_f32(const FloatLuma& a, const FloatLuma& b) {
-  const scene::pixmo::ResolvedFlowOptions o = scene::pixmo::resolve_flow_options(scene::pixmo::FlowOptions{});
+scene::pixmo::FlowField compute_flow_f32(const FloatLuma& a, const FloatLuma& b, const scene::pixmo::FlowOptions& opts) {
+  const scene::pixmo::ResolvedFlowOptions o = scene::pixmo::resolve_flow_options(opts);
   const int cols = std::max(1, a.w / o.step);
   const int rows = std::max(1, a.h / o.step);
   const std::vector<double> raw = search_cells(a, b, o.step, o.r, o.s, o.minImp);
   return scene::pixmo::finalize_flow(raw, cols, rows, o.step, o.minImp);
+}
+
+XY sample_flow(const scene::pixmo::FlowField& f, double x, double y) noexcept {
+  const double gx = std::min(static_cast<double>(f.cols - 1), std::max(0.0, x / f.step - 0.5));
+  const double gy = std::min(static_cast<double>(f.rows - 1), std::max(0.0, y / f.step - 0.5));
+  const int x0 = static_cast<int>(std::floor(gx));
+  const int y0 = static_cast<int>(std::floor(gy));
+  const int x1 = std::min(f.cols - 1, x0 + 1);
+  const int y1 = std::min(f.rows - 1, y0 + 1);
+  const double fx = gx - x0;
+  const double fy = gy - y0;
+  const size_t i00 = uz(y0) * uz(f.cols) + uz(x0);
+  const size_t i10 = uz(y0) * uz(f.cols) + uz(x1);
+  const size_t i01 = uz(y1) * uz(f.cols) + uz(x0);
+  const size_t i11 = uz(y1) * uz(f.cols) + uz(x1);
+  const auto dxv = [&](size_t i) { return static_cast<double>(f.dx[i]); };
+  const auto dyv = [&](size_t i) { return static_cast<double>(f.dy[i]); };
+  return XY{(dxv(i00) * (1 - fx) + dxv(i10) * fx) * (1 - fy) + (dxv(i01) * (1 - fx) + dxv(i11) * fx) * fy,
+            (dyv(i00) * (1 - fx) + dyv(i10) * fx) * (1 - fy) + (dyv(i01) * (1 - fx) + dyv(i11) * fx) * fy};
 }
 
 std::vector<MotionSamplePoint> flow_sample_points(const scene::pixmo::FlowField& f, double scaleX, double scaleY) {
