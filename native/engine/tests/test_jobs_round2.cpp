@@ -10,6 +10,7 @@
 #include <cmath>
 #include <vector>
 
+#include "jobs/camera_solve.hpp"
 #include "jobs/mask_sampling.hpp"
 #include "jobs/stabilize.hpp"
 #include "jobs/track_plans.hpp"
@@ -18,6 +19,7 @@ using Catch::Approx;
 namespace ms = premation::jobs::masksample;
 namespace st = premation::jobs::stabilize;
 namespace ta = premation::jobs::trackapply;
+namespace cs = premation::jobs::camsolve;
 
 namespace {
 
@@ -131,4 +133,75 @@ TEST_CASE("subspace: the mesh plan keys 16 lattice offsets per frame on a Mesh W
   CHECK(plan->writes[0].track == "v0X");
   CHECK(plan->writes[0].keys[1].second == Approx(8));
   CHECK(plan->writes[1].keys[0].second == Approx(0));
+}
+
+namespace {
+
+cs::V2 image_of(const cs::M3& R, const cs::V3& C, cs::V3 X, double f, double cx, double cy) {
+  const std::optional<cs::UV> p = cs::project_point(R, C, X, f, cx, cy);
+  REQUIRE(p);
+  return cs::V2{p->u, p->v};
+}
+
+}  // namespace
+
+TEST_CASE("camera solve: the planar pose recovers a known camera", "[jobs][camera]") {
+  const double f = 1600;
+  const cs::V3 C{900, 500, -1400};
+  const cs::M3 R = cs::ypr_to_r(10, -5, 3);
+  const std::vector<cs::V2> plane{{0, 0}, {1920, 0}, {1920, 1080}, {0, 1080}, {960, 540}};
+  std::vector<cs::V2> image;
+  for (const cs::V2& p : plane) image.push_back(image_of(R, C, cs::V3{p.x, p.y, 0}, f, 960, 540));
+  const std::optional<cs::PlanarPose> pose = cs::solve_planar_pose(plane, image, f, 960, 540);
+  REQUIRE(pose);
+  // The Float32 homography bounds the accuracy.
+  CHECK(pose->position.x == Approx(C.x).margin(2));
+  CHECK(pose->position.y == Approx(C.y).margin(2));
+  CHECK(pose->position.z == Approx(C.z).margin(4));
+  CHECK(pose->yawDeg == Approx(10).margin(0.05));
+  CHECK(pose->pitchDeg == Approx(-5).margin(0.05));
+  CHECK(pose->rollDeg == Approx(3).margin(0.05));
+  CHECK(pose->rmsPx < 0.5);
+}
+
+TEST_CASE("camera solve: the SfM path takes the planar branch for a tracked quad", "[jobs][camera]") {
+  const double f = 1200;
+  const double w = 1280;
+  const double h = 720;
+  std::vector<std::vector<cs::V2>> frames;
+  for (int i = 0; i < 5; ++i) {
+    const cs::V3 C{640 + 20.0 * i, 360, -1100};
+    const cs::M3 R = cs::ypr_to_r(2.0 * i, 0, 0);
+    std::vector<cs::V2> pts;
+    for (const cs::V2& p : std::vector<cs::V2>{{0, 0}, {w, 0}, {w, h}, {0, h}}) pts.push_back(image_of(R, C, cs::V3{p.x, p.y, 0}, f, w / 2, h / 2));
+    frames.push_back(std::move(pts));
+  }
+  const std::vector<cs::SfmPose> path = cs::solve_sfm_camera_path(frames, f, w, h);
+  REQUIRE(path.size() == 5);
+  for (int i = 0; i < 5; ++i) {
+    CHECK(path[static_cast<std::size_t>(i)].x == Approx(640 + 20.0 * i).margin(2));
+    CHECK(path[static_cast<std::size_t>(i)].yawDeg == Approx(2.0 * i).margin(0.05));
+  }
+}
+
+TEST_CASE("camera solve: bundle adjustment of exact observations stays exact", "[jobs][camera]") {
+  const double f = 1000;
+  const std::vector<cs::BaCamera> cams{{cs::V3{0, 0, -800}, 0, 0, 0}, {cs::V3{40, 0, -800}, 3, 0, 0}};
+  const std::vector<cs::V3> pts{{-100, -80, 0}, {120, -60, 50}, {90, 110, -30}, {-70, 90, 20}, {0, 0, 80}, {30, -20, -60}};
+  std::vector<cs::BaObservation> obs;
+  for (int c = 0; c < 2; ++c) {
+    const cs::M3 R = cs::ypr_to_r(cams[static_cast<std::size_t>(c)].yawDeg, 0, 0);
+    for (int p = 0; p < 6; ++p) {
+      const cs::V2 im = image_of(R, cams[static_cast<std::size_t>(c)].C, pts[static_cast<std::size_t>(p)], f, 500, 400);
+      obs.push_back(cs::BaObservation{c, p, im.x, im.y, 1});
+    }
+  }
+  cs::BaOptions o;
+  o.focal = f;
+  o.cx = 500;
+  o.cy = 400;
+  o.maxIters = 3;
+  const cs::BaResult r = cs::bundle_adjust(obs, cams, pts, o);
+  CHECK(r.rmsPx < 1e-3);
+  CHECK(r.cameras[0].C.z == Approx(-800));
 }

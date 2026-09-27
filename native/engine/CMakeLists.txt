@@ -1149,6 +1149,7 @@ add_library(engine_jobs_core STATIC
   src/jobs/track_plans.cpp
   src/jobs/track_walk.cpp
   src/jobs/mask_sampling.cpp
+  src/jobs/camera_solve.cpp
   src/jobs/trace_bitmap.cpp
   src/jobs/sam_pipeline.cpp
 )

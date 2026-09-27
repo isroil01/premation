@@ -65,6 +65,11 @@ interface TrackApplySummary {
   mode: TrackApplyMode;
   keyframes: number;
   nullIds: string[];
+  /** cameraSolve: the solve camera and how well the path fits. */
+  cameraId?: string;
+  meanRmsPx?: number;
+  solvedFrames?: number;
+  totalFrames?: number;
 }
 
 /** A layer offered as the track's target (a mirror layer header). */
@@ -555,6 +560,20 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   const onSolveCamera = async (): Promise<void> => {
     if (!result || mode !== 'corner') return;
+    // The engine's 3D Camera Tracker when it runs jobs (the trackApply job,
+    // mode cameraSolve: the SfM / planar solve and the solve camera, one entry).
+    const viaEngine = await applyInEngine('cameraSolve');
+    if (viaEngine) {
+      const r = viaEngine.summary;
+      if (viaEngine.ok && r?.cameraId) useSelectionStore.getState().set([r.cameraId]);
+      store.getState().finishTracking(
+        result,
+        viaEngine.ok && r?.cameraId
+          ? `3D Camera Tracker: ${r.solvedFrames ?? 0}/${r.totalFrames ?? 0} frames, mean error ${(r.meanRmsPx ?? 0).toFixed(2)} px. Enable 3D on layers to see it.`
+          : viaEngine.message || 'Camera solve failed — the plane is degenerate over this range.',
+      );
+      return;
+    }
     const out = await solveCameraEdit({
       videoNodeId: nodeId,
       tracks: result.tracks,
