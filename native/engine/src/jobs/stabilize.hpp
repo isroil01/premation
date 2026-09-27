@@ -61,8 +61,11 @@ struct FloatLuma {
 /// smoothStabilize.ts: max(1, floor(max(w, h) / 480)).
 [[nodiscard]] int flow_factor(int decodedW, int decodedH) noexcept;
 
-/// `computeFlow(a, b, w, h)` (default options) over Float32 luma.
-[[nodiscard]] scene::pixmo::FlowField compute_flow_f32(const FloatLuma& a, const FloatLuma& b);
+/// `computeFlow(a, b, w, h, opts)` over Float32 luma (`lumaOf` planes are luma_255_of).
+[[nodiscard]] scene::pixmo::FlowField compute_flow_f32(const FloatLuma& a, const FloatLuma& b,
+                                                       const scene::pixmo::FlowOptions& opts = {});
+/// pixelMotionFlow.ts `sampleFlow(f, x, y)`: bilinear at a FLOW-RESOLUTION position, edge-clamped.
+[[nodiscard]] XY sample_flow(const scene::pixmo::FlowField& f, double x, double y) noexcept;
 
 struct MotionSamplePoint {
   double x = 0;
@@ -78,6 +81,21 @@ struct MotionSamplePoint {
 
 /// One adjacent pair: flow a→b, fitted in the caller's grid (flow px × scale).
 [[nodiscard]] std::optional<Sim> pair_motion(const FloatLuma& a, const FloatLuma& b, double scaleX, double scaleY);
+
+/// subspaceWarp.ts SubspaceCell: a cell centre (flow-sample coordinates) and its local similarity.
+struct Cell {
+  double cx = 0;
+  double cy = 0;
+  Sim sim;
+};
+/// `fitSubspaceWarp(field, rows, cols, scaleX, scaleY)`: rows×cols local similarities (15 % overlap, one trim
+/// round; identity when under-constrained), row-major.
+[[nodiscard]] std::vector<Cell> fit_subspace_warp(const scene::pixmo::FlowField& f, int rows, int cols, double scaleX,
+                                                  double scaleY);
+/// `estimateRollingShutterShear(field, scaleX, scaleY)`: k in dx ≈ k·(y − cy); 0 below 8 samples.
+[[nodiscard]] double estimate_rolling_shutter_shear(const scene::pixmo::FlowField& f, double scaleX, double scaleY);
+/// `applyRollingShutterRepair(x, y, cy, k)`.
+[[nodiscard]] XY apply_rolling_shutter_repair(double x, double y, double cy, double shearK) noexcept;
 
 /// `stabilizingCorrections(pairs, sigmaFrames)`: pairs.size() + 1 corrections.
 [[nodiscard]] std::vector<Sim> stabilizing_corrections(std::span<const std::optional<Sim>> pairs, double sigmaFrames);

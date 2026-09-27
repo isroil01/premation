@@ -1,4 +1,4 @@
-// Edit handlers: Guides / swatches / materials, motion blur, colour management, project settings, project import, jobs, plugin data — src/core/engine/handlers/misc.ts.
+// Edit handlers: Guides / swatches / materials, motion blur, colour management, project settings, project import, jobs, plugin data, content-aware fill — src/core/engine/handlers/misc.ts.
 //
 // Each handler: `ResultOf<api::Cmd> handle(const api::Cmd&, HCtx&)` — validate
 // (throw EngineFail), then mutate the document through its journaled writers.
@@ -20,5 +20,6 @@ ResultOf<api::SetColorManagement> handle(const api::SetColorManagement& c, HCtx&
 ResultOf<api::ImportProject> handle(const api::ImportProject& c, HCtx& x);
 ResultOf<api::ApplyJobResult> handle(const api::ApplyJobResult& c, HCtx& x);
 ResultOf<api::SetPluginData> handle(const api::SetPluginData& c, HCtx& x);
+ResultOf<api::SetContentAwareFill> handle(const api::SetContentAwareFill& c, HCtx& x);
 
 }  // namespace premation::doc

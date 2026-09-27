@@ -9,7 +9,7 @@
  * renders, so nothing here needs React.
  */
 
-import { secondsToFlicks, type LayerInfo, type TrackKind } from '@motion/engine-api';
+import { secondsToFlicks, type LayerInfo, type TrackApplyMode, type TrackKind, type TrackSeries } from '@motion/engine-api';
 import { runEngineJob, startEngineJob } from '@core/engine/engineJobs';
 import { documentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -52,6 +52,25 @@ import { customConfirm } from '@components/Modal';
 import { needsSelfApplyConfirm, selfApplyConfirmCopy } from './applyTargetGuard';
 
 export type StabVariant = 'similarity' | 'subspace' | 'rolling-shutter';
+
+/** A tracker result's samples as the engine's trackApply job takes them (composition flicks, source display px). */
+export function trackSeriesOf(tracks: TrackerResult['tracks']): TrackSeries[] {
+  return tracks.map((t) => ({
+    samples: t.map((smp) => ({ time: secondsToFlicks(smp.compTime), x: smp.x, y: smp.y, confidence: smp.confidence, coasted: smp.coasted })),
+  }));
+}
+
+/** What the engine's trackApply job reports once its entry is written. */
+interface TrackApplySummary {
+  mode: TrackApplyMode;
+  keyframes: number;
+  nullIds: string[];
+  /** cameraSolve: the solve camera and how well the path fits. */
+  cameraId?: string;
+  meanRmsPx?: number;
+  solvedFrames?: number;
+  totalFrames?: number;
+}
 
 /** A layer offered as the track's target (a mirror layer header). */
 export type TrackTarget = Pick<LayerInfo, 'id' | 'name'>;
@@ -113,6 +132,32 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     return `Tracked ${tracks.length} point${tracks.length === 1 ? '' : 's'} × ${n} frames (${outcome})${extra}`;
   };
 
+  /**
+   * Apply the held track in the engine when it runs jobs (the trackApply job:
+   * the applyTrack.ts plans over the engine's document, one history entry).
+   * Null when this engine does not (the page plan runs instead).
+   */
+  const applyInEngine = async (
+    applyMode: TrackApplyMode,
+    extra: { target?: string; nullMode?: TrackApplyMode; tracks?: TrackerResult['tracks'] } = {},
+  ): Promise<{ ok: boolean; summary: TrackApplySummary | null; message: string } | null> => {
+    if (!result) return null;
+    const out = await runEngineJob<TrackApplySummary>({
+      kind: 'trackApply',
+      value: {
+        layer: nodeId,
+        mode: applyMode,
+        tracks: trackSeriesOf(extra.tracks ?? result.tracks),
+        sourceWidth: result.sourceWidth,
+        sourceHeight: result.sourceHeight,
+        ...(extra.target ? { target: extra.target } : {}),
+        ...(extra.nullMode ? { nullMode: extra.nullMode } : {}),
+      },
+    });
+    if (!out) return null;
+    return { ok: out.status === 'done', summary: out.result, message: out.error?.message ?? (out.status === 'cancelled' ? 'cancelled' : '') };
+  };
+
   // ── One click ─────────────────────────────────────────────────────────
 
   const onArmPick = (): void => {
@@ -143,6 +188,22 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     const applyMode = asTransform ? 'transform' : mode;
     if (applyMode !== 'follow' && applyMode !== 'transform' && applyMode !== 'corner') return;
     if (applyMode === 'transform' && result.tracks.length < 2) return;
+    const viaEngine = await applyInEngine('createNull', { nullMode: applyMode === 'transform' ? 'transform' : applyMode === 'corner' ? 'corner' : 'follow' });
+    if (viaEngine) {
+      const nullId = viaEngine.summary?.nullIds[0];
+      if (!viaEngine.ok || !nullId) {
+        store.getState().finishTracking(result, viaEngine.message ? `Could not create null: ${viaEngine.message}` : 'Could not create null.');
+        return;
+      }
+      useSelectionStore.getState().set([nullId]);
+      setTargetId(nullId);
+      ctx.onNullCreated?.(nullId);
+      store.getState().finishTracking(
+        result,
+        `Created a tracked null with ${viaEngine.summary?.keyframes ?? 0} ${asTransform ? 'position, rotation & scale' : 'position'} keyframes.`,
+      );
+      return;
+    }
     const out = await createNullAndApplyEdit({
       videoNodeId: nodeId,
       mode: applyMode,
@@ -192,7 +253,48 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     try {
       if (mode === 'mask') {
         // Mask mode tracks AND applies in one action — its points come from
-        // the mask, and the result has nowhere else to go.
+        // the mask, and the result has nowhere else to go. The engine's
+        // trackMotion job (kind mask) when it runs jobs: the mask path keys
+        // are one undoable entry.
+        let cancelMask: (() => void) | null = null;
+        const maskJob = await startEngineJob<{ keyframes: number; vertices: number; sampled: number; status: string }>(
+          {
+            kind: 'trackMotion',
+            value: {
+              layer: nodeId,
+              kind: 'mask',
+              points: [{
+                feature: { x: 0, y: 0, width: 2 * featureHalf + 1, height: 2 * featureHalf + 1 },
+                search: { x: 0, y: 0, width: 2 * searchHalf + 1, height: 2 * searchHalf + 1 },
+                attach: { x: 0, y: 0 },
+              }],
+              range: { start: secondsToFlicks(time), duration: secondsToFlicks(Math.max(0, endCompTime - time) + 1 / Math.max(1, fps)) },
+              direction: 'forward',
+              origin: secondsToFlicks(time),
+              stabilize: false,
+            },
+          },
+          {
+            onProgress: (f) => {
+              store.getState().setProgress(f);
+              if (!store.getState().tracking) cancelMask?.();
+            },
+          },
+        );
+        if (maskJob) {
+          cancelMask = maskJob.cancel;
+          const out = await maskJob.done;
+          const r = out.result;
+          store.getState().finishTracking(
+            null,
+            out.status !== 'done' || !r
+              ? out.error?.message ?? 'Mask tracking was cancelled.'
+              : r.sampled < r.vertices
+                ? `Tracked ${r.sampled} of ${r.vertices} mask vertices (the rest follow their neighbours), wrote ${r.keyframes} mask keyframes (${r.status}).`
+                : `Tracked ${r.vertices} mask vertices, wrote ${r.keyframes} mask keyframes (${r.status}).`,
+          );
+          return;
+        }
         const r = await trackLayerMask({
           nodeId,
           startCompTime: time,
@@ -214,11 +316,12 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         return;
       }
       const range = { start: secondsToFlicks(time), duration: secondsToFlicks(Math.max(0, endCompTime - time) + 1 / Math.max(1, fps)) };
-      if (mode === 'smooth' && stabVariant === 'similarity') {
-        // The engine's stabilize job when it runs jobs (the similarity solve:
-        // tracks and writes the keys in one entry).
+      if (mode === 'smooth') {
+        // The engine's stabilize job when it runs jobs (every variant: the
+        // similarity solve's keys, or the subspace / rolling-shutter Mesh Warp
+        // path — tracked and written in one entry).
         const viaEngine = await runEngineJob<{ fittedPairs: number; totalPairs: number; keyframes?: number }>(
-          { kind: 'stabilize', value: { layer: nodeId, range, smoothness: 50, method: 'positionRotationScale' } },
+          { kind: 'stabilize', value: { layer: nodeId, range, smoothness: 50, method: 'positionRotationScale', variant: stabVariant } },
           { onProgress: (f) => store.getState().setProgress(f) },
         );
         if (viaEngine) {
@@ -256,7 +359,10 @@ export function trackMotionActions(ctx: TrackMotionContext) {
       const pts = mode === 'corner' && store.getState().dense ? densifyQuad(stored) : stored;
       // The engine's point tracker when it runs jobs: analysis only (no
       // applyTo) — Apply below plans and writes from the samples as before.
-      const kind: TrackKind = mode === 'transform' ? 'positionRotationScale' : mode === 'corner' ? 'perspectiveCorner' : 'position';
+      // Dense grid: the engine densifies the quad itself (kind planar) from the handles.
+      const planar = mode === 'corner' && store.getState().dense;
+      const kind: TrackKind = mode === 'transform' ? 'positionRotationScale' : planar ? 'planar' : mode === 'corner' ? 'perspectiveCorner' : 'position';
+      const enginePts = planar ? stored : pts;
       let cancelEngine: (() => void) | null = null;
       const handle = await startEngineJob<{ status: 'completed' | 'lost' | 'partial'; sourceWidth: number; sourceHeight: number; tracks: Array<Array<[number, number, number, number, number]>> }>(
         {
@@ -264,7 +370,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
           value: {
             layer: nodeId,
             kind,
-            points: pts.map((p) => ({
+            points: enginePts.map((p) => ({
               feature: { x: p.x, y: p.y, width: 2 * featureHalf + 1, height: 2 * featureHalf + 1 },
               search: { x: p.x, y: p.y, width: 2 * searchHalf + 1, height: 2 * searchHalf + 1 },
               attach: { x: 0, y: 0 },
@@ -338,6 +444,27 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     let plan: TrackPlan | null = null;
     let what = '';
     const targetIsCamera = uiKindOf(documentMirror().layer(targetId)) === 'camera';
+    const whatFor = (): string =>
+      mode === 'follow'
+        ? targetIsCamera ? `camera position + look-at to “${targetName(targetId)}”` : `position keyframes to “${targetName(targetId)}”`
+        : mode === 'transform'
+          ? targetIsCamera
+            ? `camera solve (position + orientation) to “${targetName(targetId)}”`
+            : `position/rotation/scale keyframes to “${targetName(targetId)}”`
+          : mode === 'stabilize'
+            ? 'stabilizing keyframes to this layer'
+            : `corner-pin keyframes to “${targetName(targetId)}”`;
+    if (mode === 'follow' || mode === 'transform' || mode === 'stabilize' || mode === 'corner') {
+      const viaEngine = await applyInEngine(mode, mode === 'stabilize' ? {} : { target: targetId });
+      if (viaEngine) {
+        const n = viaEngine.summary?.keyframes ?? 0;
+        store.getState().finishTracking(
+          result,
+          !viaEngine.ok ? `Not applied: ${viaEngine.message || 'the engine refused the track'}` : n > 0 ? `Applied ${n} ${whatFor()}.` : 'Nothing to apply.',
+        );
+        return;
+      }
+    }
     if (mode === 'follow') {
       if (targetIsCamera) {
         plan = planTrackToCamera({
@@ -408,6 +535,15 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   const onApplyMesh = async (): Promise<void> => {
     if (!result || mode !== 'corner') return;
+    const viaEngine = await applyInEngine('meshWarp', { target: targetId });
+    if (viaEngine) {
+      const n = viaEngine.summary?.keyframes ?? 0;
+      store.getState().finishTracking(
+        result,
+        !viaEngine.ok ? `Not applied: ${viaEngine.message}` : n > 0 ? `Applied ${n} mesh-warp keyframes to “${targetName(targetId)}”.` : 'Nothing to apply.',
+      );
+      return;
+    }
     const n = await applyTrackPlanEdit(planMeshWarpTrack({
       videoNodeId: nodeId,
       targetNodeId: targetId,
@@ -424,6 +560,20 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   const onSolveCamera = async (): Promise<void> => {
     if (!result || mode !== 'corner') return;
+    // The engine's 3D Camera Tracker when it runs jobs (the trackApply job,
+    // mode cameraSolve: the SfM / planar solve and the solve camera, one entry).
+    const viaEngine = await applyInEngine('cameraSolve');
+    if (viaEngine) {
+      const r = viaEngine.summary;
+      if (viaEngine.ok && r?.cameraId) useSelectionStore.getState().set([r.cameraId]);
+      store.getState().finishTracking(
+        result,
+        viaEngine.ok && r?.cameraId
+          ? `3D Camera Tracker: ${r.solvedFrames ?? 0}/${r.totalFrames ?? 0} frames, mean error ${(r.meanRmsPx ?? 0).toFixed(2)} px. Enable 3D on layers to see it.`
+          : viaEngine.message || 'Camera solve failed — the plane is degenerate over this range.',
+      );
+      return;
+    }
     const out = await solveCameraEdit({
       videoNodeId: nodeId,
       tracks: result.tracks,
@@ -491,6 +641,19 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   const onCreateNullsForPlanes = async (): Promise<void> => {
     if (!result || mode !== 'corner' || result.tracks.length < 8) return;
+    const viaEngine = await applyInEngine('nullsForPlanes');
+    if (viaEngine) {
+      const ids = viaEngine.summary?.nullIds ?? [];
+      store.getState().finishTracking(
+        result,
+        !viaEngine.ok
+          ? `Could not create plane nulls: ${viaEngine.message}`
+          : ids.length > 0
+            ? `Created ${ids.length} plane nulls (${viaEngine.summary?.keyframes ?? 0} keyframes).`
+            : 'Need at least two quads (8 tracks) for multi-plane nulls.',
+      );
+      return;
+    }
     const out = await createNullsForPlanesEdit({
       videoNodeId: nodeId,
       tracks: result.tracks,

@@ -128,6 +128,8 @@ bool Session::apply_job(JobRecord& r) {
     return false;
   }
   doc::ChangeSet changes = doc_.commit();
+  // The summary again, now with what the apply made (a created null's id…).
+  r.info.result = r.result->summary_json();
   r.result.reset();
   r.info.applied = !changes.empty();
   if (!changes.empty()) {
@@ -151,6 +153,7 @@ api::CommandResult Session::apply_job_in_journal(const api::ApplyJobResult& c, a
   SessionJobApply a(*this, origin);
   // Throws: run_edits rolls the journal back and the job keeps its result.
   r->result->apply(a);
+  r->info.result = r->result->summary_json();
   r->result.reset();
   r->info.applied = true;
   // The finished event again, now `applied` (the UI's job list follows it).

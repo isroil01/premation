@@ -21,8 +21,18 @@
 // parent-space deltas, rotation and scale composed onto the layer's own
 // values), through track_apply.hpp's addKeyframes / deleteKeyframes splice.
 //
-// Not ported: the `subspace` and `rolling-shutter` variants (Mesh Warp keys
-// from subspaceWarp.ts) — StabilizeJob has no field to ask for them.
+// Variants (smoothStabilize.ts `variant`):
+//   similarity       the above (default).
+//   subspace         the Warp Stabilizer's mesh path: per adjacent pair a 4×4
+//                    grid of local similarities (subspaceWarp.ts
+//                    fitSubspaceWarp, the SAME flow the similarity pass
+//                    measured — the TS walks twice and gets these numbers),
+//                    inverted as the correction, written as Mesh Warp lattice
+//                    keys on the layer (planSubspaceMeshSequence; a Mesh Warp
+//                    is added when it has none). The first frame is identity.
+//   rolling-shutter  subspace with each cell's x nudged by half the readout
+//                    shear the pair's flow shows (estimateRollingShutterShear).
+//   `method` is not read by the mesh variants (the TS wrote the mesh only).
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -39,6 +49,7 @@
 #include "stabilize.hpp"
 #include "track_apply.hpp"
 #include "track_frames.hpp"
+#include "track_plans.hpp"
 
 namespace premation::jobs {
 
@@ -53,6 +64,7 @@ namespace {
 constexpr std::uint32_t kAnalysisEdge = 960;
 
 enum class Method : std::uint8_t { position, positionRotation, positionRotationScale };
+enum class Variant : std::uint8_t { similarity, subspace, rollingShutter };
 
 struct StabJob {
   FootageLayer fl;
@@ -60,17 +72,29 @@ struct StabJob {
   double fps = 30;
   double smoothnessSec = 0.5;
   Method method = Method::positionRotationScale;
+  Variant variant = Variant::similarity;
   std::uint32_t maxEdge = kAnalysisEdge;
+};
+
+/// The mesh variants' path: one cell grid per comp frame, in flow-sample px.
+struct MeshPath {
+  std::vector<ta::MeshFrame> frames;
+  double fieldW = 0;
+  double fieldH = 0;
 };
 
 class StabilizeResult final : public JobResult {
  public:
-  StabilizeResult(StabJob job, std::vector<st::Sim> corrections, std::size_t fitted, std::size_t pairs, double sw, double sh)
-      : job_(std::move(job)), corr_(std::move(corrections)), fitted_(fitted), pairs_(pairs), sw_(sw), sh_(sh) {}
+  StabilizeResult(StabJob job, std::vector<st::Sim> corrections, std::size_t fitted, std::size_t pairs, double sw, double sh,
+                  MeshPath mesh)
+      : job_(std::move(job)), corr_(std::move(corrections)), fitted_(fitted), pairs_(pairs), sw_(sw), sh_(sh),
+        mesh_(std::move(mesh)) {}
 
   [[nodiscard]] std::string summary_json() const override {
     std::string s = "{\"fittedPairs\":" + std::to_string(fitted_) + ",\"totalPairs\":" + std::to_string(pairs_) +
                     ",\"sourceWidth\":" + json_number(sw_) + ",\"sourceHeight\":" + json_number(sh_) +
+                    ",\"variant\":" + json_string(variant_name()) +
+                    (mesh() ? ",\"keyframes\":" + std::to_string(mesh_.frames.size() * 32) : std::string()) +
                     ",\"frame\":[\"t\",\"a\",\"b\",\"tx\",\"ty\"],\"corrections\":[";
     for (std::size_t i = 0; i < corr_.size(); ++i) {
       const st::Sim& c = corr_[i];
@@ -82,12 +106,18 @@ class StabilizeResult final : public JobResult {
     return s + "]}";
   }
 
-  [[nodiscard]] std::string label() const override { return "Smooth Stabilize"; }
-  [[nodiscard]] bool has_edits() const override { return !corr_.empty(); }
+  [[nodiscard]] std::string label() const override { return mesh() ? "Apply Subspace Mesh Path" : "Smooth Stabilize"; }
+  [[nodiscard]] bool has_edits() const override { return mesh() ? !mesh_.frames.empty() : !corr_.empty(); }
 
-  /// applyTrack.ts planSmoothStabilize (keys filtered by `method`).
+  /// applyTrack.ts planSmoothStabilize (keys filtered by `method`), or planSubspaceMeshSequence.
   void apply(JobApply& a) const override {
     const std::string& video = job_.fl.layer;
+    if (mesh()) {
+      const std::optional<ta::Plan> plan =
+          ta::plan_subspace_mesh(video, mesh_.frames, 4, 4, mesh_.fieldW, mesh_.fieldH, sw_, sh_);
+      if (plan) ta::send_plan(a, *plan);
+      return;
+    }
     const ta::DocView v(a.document(), job_.fl.comp);
     if (v.node(video) == nullptr || corr_.empty()) return;
     const std::optional<ta::Geometry> g = v.geometry(video);
@@ -137,13 +167,39 @@ class StabilizeResult final : public JobResult {
   }
 
  private:
+  [[nodiscard]] bool mesh() const noexcept { return job_.variant != Variant::similarity; }
+  [[nodiscard]] std::string variant_name() const {
+    return job_.variant == Variant::subspace ? "subspace" : job_.variant == Variant::rollingShutter ? "rolling-shutter" : "similarity";
+  }
+
   StabJob job_;
   std::vector<st::Sim> corr_;
   std::size_t fitted_;
   std::size_t pairs_;
   double sw_;
   double sh_;
+  MeshPath mesh_;
 };
+
+/// One pair's mesh cells (smoothStabilize.ts's second walk): the local grid,
+/// the rolling-shutter nudge, inverted as the correction.
+std::vector<ta::SubspaceCell> mesh_cells(const scene::pixmo::FlowField& flow, double scaleX, double scaleY, double fieldH0,
+                                         bool rollingShutter) {
+  std::vector<st::Cell> cells = st::fit_subspace_warp(flow, 4, 4, scaleX, scaleY);
+  if (rollingShutter) {
+    const double k = st::estimate_rolling_shutter_shear(flow, scaleX, scaleY);
+    const double cy = fieldH0 / 2;
+    for (st::Cell& c : cells) {
+      const st::XY r = st::apply_rolling_shutter_repair(c.cx, c.cy, cy, -k);
+      c.sim.tx = c.sim.tx + (r.x - c.cx) * 0.5;
+    }
+  }
+  std::vector<ta::SubspaceCell> out;
+  out.reserve(cells.size());
+  // Invert local motion ≈ the stabilizing correction (the similarity path's idea).
+  for (const st::Cell& c : cells) out.push_back(ta::SubspaceCell{c.cx, c.cy, st::Sim{c.sim.a, -c.sim.b, -c.sim.tx, -c.sim.ty}});
+  return out;
+}
 
 /// Reads the stabilizer's luma: Y bytes when the decoder has them, else the canvas route over RGBA.
 class StabLuma {
@@ -199,17 +255,40 @@ std::unique_ptr<JobResult> run_stabilize(const StabJob& job, JobControl& control
   std::size_t fitted = 0;
   std::int64_t prevIdx = srcIndexAt(job.frames.first);
   st::FloatLuma prev = lumaAt(prevIdx);
+  const bool meshed = job.variant != Variant::similarity;
+  const bool rs = job.variant == Variant::rollingShutter;
+  MeshPath mesh;
+  // A repeated source frame: the flow of a frame against itself (the TS second
+  // walk computes it for every such pair), cached per frame.
+  std::optional<std::vector<ta::SubspaceCell>> stillCells;
+  if (meshed) {
+    mesh.fieldW = prev.w * scaleX;
+    mesh.fieldH = prev.h * scaleY;
+    std::vector<ta::SubspaceCell> first;
+    for (const st::Cell& c : st::fit_subspace_warp(st::compute_flow_f32(prev, prev), 4, 4, scaleX, scaleY)) {
+      first.push_back(ta::SubspaceCell{c.cx, c.cy, st::Sim{}});
+    }
+    mesh.frames.push_back(ta::MeshFrame{std::move(first), static_cast<double>(job.frames.first) / job.fps});
+  }
   for (std::int64_t i = 1; i < frames; ++i) {
     if (control.cancelled()) return nullptr;
     const std::int64_t idx = srcIndexAt(job.frames.first + i);
+    const double compTime = static_cast<double>(job.frames.first + i) / job.fps;
     if (idx == prevIdx) {
       pairs.emplace_back(st::Sim{});
       ++fitted;
+      if (meshed) {
+        if (!stillCells) stillCells = mesh_cells(st::compute_flow_f32(prev, prev), scaleX, scaleY, mesh.fieldH, rs);
+        mesh.frames.push_back(ta::MeshFrame{*stillCells, compTime});
+      }
     } else {
       st::FloatLuma cur = lumaAt(idx);
-      const std::optional<st::Sim> fit = st::pair_motion(prev, cur, scaleX, scaleY);
+      const scene::pixmo::FlowField flow = st::compute_flow_f32(prev, cur);
+      const std::optional<st::Sim> fit = st::fit_similarity(st::flow_sample_points(flow, scaleX, scaleY));
       pairs.push_back(fit);
       if (fit) ++fitted;
+      if (meshed) mesh.frames.push_back(ta::MeshFrame{mesh_cells(flow, scaleX, scaleY, mesh.fieldH, rs), compTime});
+      stillCells.reset();
       prev = std::move(cur);
       prevIdx = idx;
     }
@@ -219,7 +298,7 @@ std::unique_ptr<JobResult> run_stabilize(const StabJob& job, JobControl& control
   if (control.cancelled()) return nullptr;
   const double sigmaFrames = std::max(1.0, job.smoothnessSec * job.fps);
   std::vector<st::Sim> corrections = st::stabilizing_corrections(pairs, sigmaFrames);
-  return std::make_unique<StabilizeResult>(job, std::move(corrections), fitted, pairs.size(), sw, sh);
+  return std::make_unique<StabilizeResult>(job, std::move(corrections), fitted, pairs.size(), sw, sh, std::move(mesh));
 }
 
 }  // namespace
@@ -235,6 +314,16 @@ PreparedJob prepare_stabilize(const api::StabilizeJob& spec, const JobDocContext
     job.method = Method::position;
   } else {
     fail(ErrorCode::invalid_argument, "method must be 'position', 'positionRotation' or 'positionRotationScale'");
+  }
+  const std::string variant = spec.variant.value_or("similarity");
+  if (variant.empty() || variant == "similarity") {
+    job.variant = Variant::similarity;
+  } else if (variant == "subspace") {
+    job.variant = Variant::subspace;
+  } else if (variant == "rolling-shutter" || variant == "rollingShutter") {
+    job.variant = Variant::rollingShutter;
+  } else {
+    fail(ErrorCode::invalid_argument, "variant must be 'similarity', 'subspace' or 'rolling-shutter'");
   }
   if (!std::isfinite(spec.smoothness) || spec.smoothness < 0) fail(ErrorCode::out_of_range, "smoothness must be 0…100 %");
   job.smoothnessSec = std::min(spec.smoothness, 100.0) / 100;

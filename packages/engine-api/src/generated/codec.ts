@@ -200,6 +200,10 @@ const TrackDirection_TO_NUM: Record<string, number> = { 'forward': 0, 'backward'
 const TrackDirection_FROM_NUM: readonly (T.TrackDirection | undefined)[] = ['forward', 'backward', 'both'];
 function enc_TrackDirection(v: T.TrackDirection): number { const n = TrackDirection_TO_NUM[v]; if (n === undefined) throw new RangeError('TrackDirection: invalid value ' + String(v)); return n; }
 function dec_TrackDirection(n: number): T.TrackDirection { const v = TrackDirection_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TrackDirection: unknown value ' + n, 'badEnum'); return v; }
+const TrackApplyMode_TO_NUM: Record<string, number> = { 'follow': 0, 'transform': 1, 'corner': 2, 'stabilize': 3, 'meshWarp': 4, 'createNull': 5, 'nullsForPlanes': 6, 'cameraSolve': 7 };
+const TrackApplyMode_FROM_NUM: readonly (T.TrackApplyMode | undefined)[] = ['follow', 'transform', 'corner', 'stabilize', 'meshWarp', 'createNull', 'nullsForPlanes', 'cameraSolve'];
+function enc_TrackApplyMode(v: T.TrackApplyMode): number { const n = TrackApplyMode_TO_NUM[v]; if (n === undefined) throw new RangeError('TrackApplyMode: invalid value ' + String(v)); return n; }
+function dec_TrackApplyMode(n: number): T.TrackApplyMode { const v = TrackApplyMode_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TrackApplyMode: unknown value ' + n, 'badEnum'); return v; }
 const SvgRole_TO_NUM: Record<string, number> = { 'none': 0, 'layer': 1, 'converted': 2 };
 const SvgRole_FROM_NUM: readonly (T.SvgRole | undefined)[] = ['none', 'layer', 'converted'];
 function enc_SvgRole(v: T.SvgRole): number { const n = SvgRole_TO_NUM[v]; if (n === undefined) throw new RangeError('SvgRole: invalid value ' + String(v)); return n; }
@@ -7253,6 +7257,7 @@ function encS_TrackMotionJob(w: Writer, v: T.TrackMotionJob): void {
   if (v.maxCoastFrames !== undefined) { w.varint(5664); w.u32(v.maxCoastFrames); }
   if (v.analysisMaxEdge !== undefined) { w.varint(5672); w.u32(v.analysisMaxEdge); }
   w.varint(5680); w.bool(v.stabilize);
+  if (v.planarGrid !== undefined) { w.varint(13680); w.u32(v.planarGrid); }
 }
 function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   const l_points: T.TrackPointSpec[] = [];
@@ -7271,6 +7276,7 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   let v_maxCoastFrames: number | undefined;
   let v_analysisMaxEdge: number | undefined;
   let v_stabilize: boolean | undefined;
+  let v_planarGrid: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7285,6 +7291,7 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
       case 5664: v_maxCoastFrames = r.u32(); break;
       case 5672: v_analysisMaxEdge = r.u32(); break;
       case 5680: v_stabilize = r.bool(); h_stabilize = true; break;
+      case 13680: v_planarGrid = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -7305,6 +7312,7 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   if (v_maxCoastFrames !== undefined) o.maxCoastFrames = v_maxCoastFrames;
   if (v_analysisMaxEdge !== undefined) o.analysisMaxEdge = v_analysisMaxEdge;
   o.stabilize = v_stabilize;
+  if (v_planarGrid !== undefined) o.planarGrid = v_planarGrid;
   return o;
 }
 function encS_StabilizeJob(w: Writer, v: T.StabilizeJob): void {
@@ -7313,6 +7321,7 @@ function encS_StabilizeJob(w: Writer, v: T.StabilizeJob): void {
   w.byte(25); w.f64(v.smoothness);
   w.byte(34); w.str(v.method);
   if (v.analysisMaxEdge !== undefined) { w.varint(5632); w.u32(v.analysisMaxEdge); }
+  if (v.variant !== undefined) { w.varint(13634); w.str(v.variant); }
 }
 function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
   let h_layer = false;
@@ -7324,6 +7333,7 @@ function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
   let v_smoothness: number | undefined;
   let v_method: string | undefined;
   let v_analysisMaxEdge: number | undefined;
+  let v_variant: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7332,6 +7342,7 @@ function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
       case 25: v_smoothness = r.f64(); h_smoothness = true; break;
       case 34: v_method = r.str(); h_method = true; break;
       case 5632: v_analysisMaxEdge = r.u32(); break;
+      case 13634: v_variant = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -7345,6 +7356,7 @@ function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
   o.smoothness = v_smoothness;
   o.method = v_method;
   if (v_analysisMaxEdge !== undefined) o.analysisMaxEdge = v_analysisMaxEdge;
+  if (v_variant !== undefined) o.variant = v_variant;
   return o;
 }
 function encS_AutoTraceJob(w: Writer, v: T.AutoTraceJob): void {
@@ -7357,6 +7369,7 @@ function encS_AutoTraceJob(w: Writer, v: T.AutoTraceJob): void {
   if (v.minArea !== undefined) { w.varint(5649); w.f64(v.minArea); }
   w.varint(5656); w.bool(v.everyFrame);
   w.varint(5664); w.bool(v.invert);
+  w.varint(13664); w.bool(v.rendered);
 }
 function decS_AutoTraceJob(r: Reader, end: number, o: any): T.AutoTraceJob {
   let h_layer = false;
@@ -7365,6 +7378,7 @@ function decS_AutoTraceJob(r: Reader, end: number, o: any): T.AutoTraceJob {
   let h_threshold = false;
   let h_everyFrame = false;
   let h_invert = false;
+  let h_rendered = false;
   let v_layer: string | undefined;
   let v_range: T.TimeRange | undefined;
   let v_channel: string | undefined;
@@ -7374,6 +7388,7 @@ function decS_AutoTraceJob(r: Reader, end: number, o: any): T.AutoTraceJob {
   let v_minArea: number | undefined;
   let v_everyFrame: boolean | undefined;
   let v_invert: boolean | undefined;
+  let v_rendered: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7386,6 +7401,7 @@ function decS_AutoTraceJob(r: Reader, end: number, o: any): T.AutoTraceJob {
       case 5649: v_minArea = r.f64(); break;
       case 5656: v_everyFrame = r.bool(); h_everyFrame = true; break;
       case 5664: v_invert = r.bool(); h_invert = true; break;
+      case 13664: v_rendered = r.bool(); h_rendered = true; break;
       default: r.skip(key);
     }
   }
@@ -7396,6 +7412,7 @@ function decS_AutoTraceJob(r: Reader, end: number, o: any): T.AutoTraceJob {
   if (!h_threshold) throw new DecodeError('AutoTraceJob.threshold: missing', 'missingField');
   if (!h_everyFrame) throw new DecodeError('AutoTraceJob.everyFrame: missing', 'missingField');
   if (!h_invert) throw new DecodeError('AutoTraceJob.invert: missing', 'missingField');
+  if (!h_rendered) throw new DecodeError('AutoTraceJob.rendered: missing', 'missingField');
   o.layer = v_layer;
   o.range = v_range;
   o.channel = v_channel;
@@ -7405,6 +7422,7 @@ function decS_AutoTraceJob(r: Reader, end: number, o: any): T.AutoTraceJob {
   if (v_minArea !== undefined) o.minArea = v_minArea;
   o.everyFrame = v_everyFrame;
   o.invert = v_invert;
+  o.rendered = v_rendered;
   return o;
 }
 function encS_SceneDetectJob(w: Writer, v: T.SceneDetectJob): void {
@@ -7739,6 +7757,222 @@ function decS_PrerenderJob(r: Reader, end: number, o: any): T.PrerenderJob {
   o.format = v_format;
   return o;
 }
+function encS_TrackSampleRow(w: Writer, v: T.TrackSampleRow): void {
+  w.byte(8); w.i64(v.time);
+  w.byte(17); w.f64(v.x);
+  w.byte(25); w.f64(v.y);
+  w.byte(33); w.f64(v.confidence);
+  w.byte(40); w.bool(v.coasted);
+}
+function decS_TrackSampleRow(r: Reader, end: number, o: any): T.TrackSampleRow {
+  let h_time = false;
+  let h_x = false;
+  let h_y = false;
+  let h_confidence = false;
+  let h_coasted = false;
+  let v_time: number | undefined;
+  let v_x: number | undefined;
+  let v_y: number | undefined;
+  let v_confidence: number | undefined;
+  let v_coasted: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_time = r.i64(); h_time = true; break;
+      case 17: v_x = r.f64(); h_x = true; break;
+      case 25: v_y = r.f64(); h_y = true; break;
+      case 33: v_confidence = r.f64(); h_confidence = true; break;
+      case 40: v_coasted = r.bool(); h_coasted = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_time) throw new DecodeError('TrackSampleRow.time: missing', 'missingField');
+  if (!h_x) throw new DecodeError('TrackSampleRow.x: missing', 'missingField');
+  if (!h_y) throw new DecodeError('TrackSampleRow.y: missing', 'missingField');
+  if (!h_confidence) throw new DecodeError('TrackSampleRow.confidence: missing', 'missingField');
+  if (!h_coasted) throw new DecodeError('TrackSampleRow.coasted: missing', 'missingField');
+  o.time = v_time;
+  o.x = v_x;
+  o.y = v_y;
+  o.confidence = v_confidence;
+  o.coasted = v_coasted;
+  return o;
+}
+function encS_TrackSeries(w: Writer, v: T.TrackSeries): void {
+  { const a = v.samples; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_TrackSampleRow(w, a[i]!); w.endLd(s); } } }
+}
+function decS_TrackSeries(r: Reader, end: number, o: any): T.TrackSeries {
+  const l_samples: T.TrackSampleRow[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_samples.push(decS_TrackSampleRow(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.samples = l_samples;
+  return o;
+}
+function encS_TrackApplyJob(w: Writer, v: T.TrackApplyJob): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(16); w.varint(enc_TrackApplyMode(v.mode));
+  if (v.target !== undefined) { w.byte(26); w.str(v.target); }
+  { const a = v.tracks; for (let i = 0; i < a.length; i++) { w.byte(34); { const s = w.beginLd(); encS_TrackSeries(w, a[i]!); w.endLd(s); } } }
+  w.byte(41); w.f64(v.sourceWidth);
+  w.byte(49); w.f64(v.sourceHeight);
+  if (v.nullMode !== undefined) { w.byte(56); w.varint(enc_TrackApplyMode(v.nullMode)); }
+}
+function decS_TrackApplyJob(r: Reader, end: number, o: any): T.TrackApplyJob {
+  const l_tracks: T.TrackSeries[] = [];
+  let h_layer = false;
+  let h_mode = false;
+  let h_sourceWidth = false;
+  let h_sourceHeight = false;
+  let v_layer: string | undefined;
+  let v_mode: T.TrackApplyMode | undefined;
+  let v_target: string | undefined;
+  let v_sourceWidth: number | undefined;
+  let v_sourceHeight: number | undefined;
+  let v_nullMode: T.TrackApplyMode | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 16: v_mode = dec_TrackApplyMode(r.varint()); h_mode = true; break;
+      case 26: v_target = r.str(); break;
+      case 34: l_tracks.push(decS_TrackSeries(r, r.ldEnd(), {})); break;
+      case 41: v_sourceWidth = r.f64(); h_sourceWidth = true; break;
+      case 49: v_sourceHeight = r.f64(); h_sourceHeight = true; break;
+      case 56: v_nullMode = dec_TrackApplyMode(r.varint()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('TrackApplyJob.layer: missing', 'missingField');
+  if (!h_mode) throw new DecodeError('TrackApplyJob.mode: missing', 'missingField');
+  if (!h_sourceWidth) throw new DecodeError('TrackApplyJob.sourceWidth: missing', 'missingField');
+  if (!h_sourceHeight) throw new DecodeError('TrackApplyJob.sourceHeight: missing', 'missingField');
+  o.layer = v_layer;
+  o.mode = v_mode;
+  if (v_target !== undefined) o.target = v_target;
+  o.tracks = l_tracks;
+  o.sourceWidth = v_sourceWidth;
+  o.sourceHeight = v_sourceHeight;
+  if (v_nullMode !== undefined) o.nullMode = v_nullMode;
+  return o;
+}
+function encS_RotoBrushJob(w: Writer, v: T.RotoBrushJob): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  w.byte(26); { const s = w.beginLd(); encS_Vec2(w, v.seed); w.endLd(s); }
+  if (v.tolerance !== undefined) { w.byte(33); w.f64(v.tolerance); }
+  if (v.feather !== undefined) { w.byte(41); w.f64(v.feather); }
+}
+function decS_RotoBrushJob(r: Reader, end: number, o: any): T.RotoBrushJob {
+  let h_layer = false;
+  let h_range = false;
+  let h_seed = false;
+  let v_layer: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  let v_seed: T.Vec2 | undefined;
+  let v_tolerance: number | undefined;
+  let v_feather: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 26: v_seed = decS_Vec2(r, r.ldEnd(), {}); h_seed = true; break;
+      case 33: v_tolerance = r.f64(); break;
+      case 41: v_feather = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('RotoBrushJob.layer: missing', 'missingField');
+  if (!h_range) throw new DecodeError('RotoBrushJob.range: missing', 'missingField');
+  if (!h_seed) throw new DecodeError('RotoBrushJob.seed: missing', 'missingField');
+  o.layer = v_layer;
+  o.range = v_range;
+  o.seed = v_seed;
+  if (v_tolerance !== undefined) o.tolerance = v_tolerance;
+  if (v_feather !== undefined) o.feather = v_feather;
+  return o;
+}
+function encS_ContentAwareFillJob(w: Writer, v: T.ContentAwareFillJob): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  w.byte(26); w.str(v.outputFolder);
+}
+function decS_ContentAwareFillJob(r: Reader, end: number, o: any): T.ContentAwareFillJob {
+  let h_layer = false;
+  let h_range = false;
+  let h_outputFolder = false;
+  let v_layer: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  let v_outputFolder: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 26: v_outputFolder = r.str(); h_outputFolder = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('ContentAwareFillJob.layer: missing', 'missingField');
+  if (!h_range) throw new DecodeError('ContentAwareFillJob.range: missing', 'missingField');
+  if (!h_outputFolder) throw new DecodeError('ContentAwareFillJob.outputFolder: missing', 'missingField');
+  o.layer = v_layer;
+  o.range = v_range;
+  o.outputFolder = v_outputFolder;
+  return o;
+}
+function encS_AutoReframeJob(w: Writer, v: T.AutoReframeJob): void {
+  w.byte(10); w.str(v.comp);
+  w.byte(16); w.u32(v.width);
+  w.byte(24); w.u32(v.height);
+  if (v.name !== undefined) { w.byte(34); w.str(v.name); }
+  if (v.deadZone !== undefined) { w.byte(41); w.f64(v.deadZone); }
+  if (v.lagSeconds !== undefined) { w.byte(49); w.f64(v.lagSeconds); }
+}
+function decS_AutoReframeJob(r: Reader, end: number, o: any): T.AutoReframeJob {
+  let h_comp = false;
+  let h_width = false;
+  let h_height = false;
+  let v_comp: string | undefined;
+  let v_width: number | undefined;
+  let v_height: number | undefined;
+  let v_name: string | undefined;
+  let v_deadZone: number | undefined;
+  let v_lagSeconds: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_comp = r.str(); h_comp = true; break;
+      case 16: v_width = r.u32(); h_width = true; break;
+      case 24: v_height = r.u32(); h_height = true; break;
+      case 34: v_name = r.str(); break;
+      case 41: v_deadZone = r.f64(); break;
+      case 49: v_lagSeconds = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_comp) throw new DecodeError('AutoReframeJob.comp: missing', 'missingField');
+  if (!h_width) throw new DecodeError('AutoReframeJob.width: missing', 'missingField');
+  if (!h_height) throw new DecodeError('AutoReframeJob.height: missing', 'missingField');
+  o.comp = v_comp;
+  o.width = v_width;
+  o.height = v_height;
+  if (v_name !== undefined) o.name = v_name;
+  if (v_deadZone !== undefined) o.deadZone = v_deadZone;
+  if (v_lagSeconds !== undefined) o.lagSeconds = v_lagSeconds;
+  return o;
+}
 function encS_StartJob(w: Writer, v: T.StartJob): void {
   w.byte(10); { const s = w.beginLd(); encU_JobSpec(w, v.job); w.endLd(s); }
   w.byte(16); w.bool(v.apply);
@@ -7815,6 +8049,52 @@ function decS_JobRef(r: Reader, end: number, o: any): T.JobRef {
   r.expectAt(end);
   if (!h_job) throw new DecodeError('JobRef.job: missing', 'missingField');
   o.job = v_job;
+  return o;
+}
+function encS_ContentAwareFillFrame(w: Writer, v: T.ContentAwareFillFrame): void {
+  w.byte(8); w.i64(v.time);
+  w.byte(18); w.str(v.src);
+}
+function decS_ContentAwareFillFrame(r: Reader, end: number, o: any): T.ContentAwareFillFrame {
+  let h_time = false;
+  let h_src = false;
+  let v_time: number | undefined;
+  let v_src: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_time = r.i64(); h_time = true; break;
+      case 18: v_src = r.str(); h_src = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_time) throw new DecodeError('ContentAwareFillFrame.time: missing', 'missingField');
+  if (!h_src) throw new DecodeError('ContentAwareFillFrame.src: missing', 'missingField');
+  o.time = v_time;
+  o.src = v_src;
+  return o;
+}
+function encS_SetContentAwareFill(w: Writer, v: T.SetContentAwareFill): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.frames; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_ContentAwareFillFrame(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SetContentAwareFill(r: Reader, end: number, o: any): T.SetContentAwareFill {
+  const l_frames: T.ContentAwareFillFrame[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_frames.push(decS_ContentAwareFillFrame(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('SetContentAwareFill.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.frames = l_frames;
   return o;
 }
 function encS_SetPluginEnabled(w: Writer, v: T.SetPluginEnabled): void {
@@ -14081,6 +14361,7 @@ function encU_EngineMessage(w: Writer, v: T.EngineMessage): void {
     case 'response': w.byte(34); { const s = w.beginLd(); encS_Response(w, v.value); w.endLd(s); } return;
     case 'events': w.byte(42); { const s = w.beginLd(); encS_EventBatch(w, v.value); w.endLd(s); } return;
     case 'goodbye': w.byte(50); { const s = w.beginLd(); encS_Goodbye(w, v.value); w.endLd(s); } return;
+    case 'logRecord': w.varint(8050); { const s = w.beginLd(); encS_LogRecord(w, v.value); w.endLd(s); } return;
     default: throw new RangeError('EngineMessage: unknown kind ' + String((v as { kind?: unknown }).kind));
   }
 }
@@ -14096,6 +14377,7 @@ function decU_EngineMessage(r: Reader, end: number): T.EngineMessage {
       case 34: out = { kind: 'response', value: decS_Response(r, r.ldEnd(), {}) } as T.EngineMessage; break;
       case 42: out = { kind: 'events', value: decS_EventBatch(r, r.ldEnd(), {}) } as T.EngineMessage; break;
       case 50: out = { kind: 'goodbye', value: decS_Goodbye(r, r.ldEnd(), {}) } as T.EngineMessage; break;
+      case 8050: out = { kind: 'logRecord', value: decS_LogRecord(r, r.ldEnd(), {}) } as T.EngineMessage; break;
       default: r.skip(key);
     }
   }
@@ -14167,6 +14449,10 @@ function encU_JobSpec(w: Writer, v: T.JobSpec): void {
     case 'proxy': w.varint(5674); { const s = w.beginLd(); encS_ProxyJob(w, v.value); w.endLd(s); } return;
     case 'audioDuck': w.varint(5682); { const s = w.beginLd(); encS_AudioDuckJob(w, v.value); w.endLd(s); } return;
     case 'audioGate': w.varint(5690); { const s = w.beginLd(); encS_AudioGateJob(w, v.value); w.endLd(s); } return;
+    case 'trackApply': w.varint(13690); { const s = w.beginLd(); encS_TrackApplyJob(w, v.value); w.endLd(s); } return;
+    case 'rotoBrush': w.varint(13698); { const s = w.beginLd(); encS_RotoBrushJob(w, v.value); w.endLd(s); } return;
+    case 'contentAwareFill': w.varint(13706); { const s = w.beginLd(); encS_ContentAwareFillJob(w, v.value); w.endLd(s); } return;
+    case 'autoReframe': w.varint(13714); { const s = w.beginLd(); encS_AutoReframeJob(w, v.value); w.endLd(s); } return;
     default: throw new RangeError('JobSpec: unknown kind ' + String((v as { kind?: unknown }).kind));
   }
 }
@@ -14188,6 +14474,10 @@ function decU_JobSpec(r: Reader, end: number): T.JobSpec {
       case 5674: out = { kind: 'proxy', value: decS_ProxyJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 5682: out = { kind: 'audioDuck', value: decS_AudioDuckJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 5690: out = { kind: 'audioGate', value: decS_AudioGateJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13690: out = { kind: 'trackApply', value: decS_TrackApplyJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13698: out = { kind: 'rotoBrush', value: decS_RotoBrushJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13706: out = { kind: 'contentAwareFill', value: decS_ContentAwareFillJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13714: out = { kind: 'autoReframe', value: decS_AutoReframeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       default: r.skip(key);
     }
   }
@@ -14379,6 +14669,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_SetPluginData(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_LiftRange(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_SetOverlayGeometry(w, v); w.endLd(s); } return;
+    case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_SetContentAwareFill(w, v); w.endLd(s); } return;
     default: throw new RangeError('Command: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -14540,6 +14831,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 6970: out = decS_SetPluginData(r, r.ldEnd(), { type: 'setPluginData' }) as T.Command; break;
       case 7770: out = decS_LiftRange(r, r.ldEnd(), { type: 'liftRange' }) as T.Command; break;
       case 14170: out = decS_SetOverlayGeometry(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.Command; break;
+      case 14818: out = decS_SetContentAwareFill(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.Command; break;
       default: r.skip(key);
     }
   }
@@ -14701,6 +14993,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_TimeRangeEdit(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     default: throw new RangeError('CommandResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -14862,6 +15155,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 6970: out = decS_Empty(r, r.ldEnd(), { type: 'setPluginData' }) as T.CommandResult; break;
       case 7770: out = decS_TimeRangeEdit(r, r.ldEnd(), { type: 'liftRange' }) as T.CommandResult; break;
       case 14170: out = decS_Empty(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.CommandResult; break;
+      case 14818: out = decS_Empty(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.CommandResult; break;
       default: r.skip(key);
     }
   }
@@ -15417,11 +15711,19 @@ export const codecs = {
   ProxyJob: mk<T.ProxyJob>(encS_ProxyJob, (r, e) => decS_ProxyJob(r, e, {})),
   RenderJob: mk<T.RenderJob>(encS_RenderJob, (r, e) => decS_RenderJob(r, e, {})),
   PrerenderJob: mk<T.PrerenderJob>(encS_PrerenderJob, (r, e) => decS_PrerenderJob(r, e, {})),
+  TrackSampleRow: mk<T.TrackSampleRow>(encS_TrackSampleRow, (r, e) => decS_TrackSampleRow(r, e, {})),
+  TrackSeries: mk<T.TrackSeries>(encS_TrackSeries, (r, e) => decS_TrackSeries(r, e, {})),
+  TrackApplyJob: mk<T.TrackApplyJob>(encS_TrackApplyJob, (r, e) => decS_TrackApplyJob(r, e, {})),
+  RotoBrushJob: mk<T.RotoBrushJob>(encS_RotoBrushJob, (r, e) => decS_RotoBrushJob(r, e, {})),
+  ContentAwareFillJob: mk<T.ContentAwareFillJob>(encS_ContentAwareFillJob, (r, e) => decS_ContentAwareFillJob(r, e, {})),
+  AutoReframeJob: mk<T.AutoReframeJob>(encS_AutoReframeJob, (r, e) => decS_AutoReframeJob(r, e, {})),
   JobSpec: mk<T.JobSpec>(encU_JobSpec, decU_JobSpec),
   StartJob: mk<T.StartJob>(encS_StartJob, (r, e) => decS_StartJob(r, e, {})),
   CancelJob: mk<T.CancelJob>(encS_CancelJob, (r, e) => decS_CancelJob(r, e, {})),
   ApplyJobResult: mk<T.ApplyJobResult>(encS_ApplyJobResult, (r, e) => decS_ApplyJobResult(r, e, {})),
   JobRef: mk<T.JobRef>(encS_JobRef, (r, e) => decS_JobRef(r, e, {})),
+  ContentAwareFillFrame: mk<T.ContentAwareFillFrame>(encS_ContentAwareFillFrame, (r, e) => decS_ContentAwareFillFrame(r, e, {})),
+  SetContentAwareFill: mk<T.SetContentAwareFill>(encS_SetContentAwareFill, (r, e) => decS_SetContentAwareFill(r, e, {})),
   SetPluginEnabled: mk<T.SetPluginEnabled>(encS_SetPluginEnabled, (r, e) => decS_SetPluginEnabled(r, e, {})),
   SetPluginData: mk<T.SetPluginData>(encS_SetPluginData, (r, e) => decS_SetPluginData(r, e, {})),
   ItemInfo: mk<T.ItemInfo>(encS_ItemInfo, (r, e) => decS_ItemInfo(r, e, {})),

@@ -179,12 +179,31 @@ FloatLuma downsample_luma(const FloatLuma& in, int factor) {
 
 int flow_factor(int decodedW, int decodedH) noexcept { return std::max(1, std::max(decodedW, decodedH) / 480); }
 
-scene::pixmo::FlowField compute_flow_f32(const FloatLuma& a, const FloatLuma& b) {
-  const scene::pixmo::ResolvedFlowOptions o = scene::pixmo::resolve_flow_options(scene::pixmo::FlowOptions{});
+scene::pixmo::FlowField compute_flow_f32(const FloatLuma& a, const FloatLuma& b, const scene::pixmo::FlowOptions& opts) {
+  const scene::pixmo::ResolvedFlowOptions o = scene::pixmo::resolve_flow_options(opts);
   const int cols = std::max(1, a.w / o.step);
   const int rows = std::max(1, a.h / o.step);
   const std::vector<double> raw = search_cells(a, b, o.step, o.r, o.s, o.minImp);
   return scene::pixmo::finalize_flow(raw, cols, rows, o.step, o.minImp);
+}
+
+XY sample_flow(const scene::pixmo::FlowField& f, double x, double y) noexcept {
+  const double gx = std::min(static_cast<double>(f.cols - 1), std::max(0.0, x / f.step - 0.5));
+  const double gy = std::min(static_cast<double>(f.rows - 1), std::max(0.0, y / f.step - 0.5));
+  const int x0 = static_cast<int>(std::floor(gx));
+  const int y0 = static_cast<int>(std::floor(gy));
+  const int x1 = std::min(f.cols - 1, x0 + 1);
+  const int y1 = std::min(f.rows - 1, y0 + 1);
+  const double fx = gx - x0;
+  const double fy = gy - y0;
+  const size_t i00 = uz(y0) * uz(f.cols) + uz(x0);
+  const size_t i10 = uz(y0) * uz(f.cols) + uz(x1);
+  const size_t i01 = uz(y1) * uz(f.cols) + uz(x0);
+  const size_t i11 = uz(y1) * uz(f.cols) + uz(x1);
+  const auto dxv = [&](size_t i) { return static_cast<double>(f.dx[i]); };
+  const auto dyv = [&](size_t i) { return static_cast<double>(f.dy[i]); };
+  return XY{(dxv(i00) * (1 - fx) + dxv(i10) * fx) * (1 - fy) + (dxv(i01) * (1 - fx) + dxv(i11) * fx) * fy,
+            (dyv(i00) * (1 - fx) + dyv(i10) * fx) * (1 - fy) + (dyv(i01) * (1 - fx) + dyv(i11) * fx) * fy};
 }
 
 std::vector<MotionSamplePoint> flow_sample_points(const scene::pixmo::FlowField& f, double scaleX, double scaleY) {
@@ -266,6 +285,50 @@ std::optional<Sim> pair_motion(const FloatLuma& a, const FloatLuma& b, double sc
   const std::vector<MotionSamplePoint> pts = flow_sample_points(flow, scaleX, scaleY);
   return fit_similarity(pts);
 }
+
+std::vector<Cell> fit_subspace_warp(const scene::pixmo::FlowField& f, int rows, int cols, double scaleX, double scaleY) {
+  const std::vector<MotionSamplePoint> pts = flow_sample_points(f, scaleX, scaleY);
+  const double w = f.cols * f.step * scaleX;
+  const double h = f.rows * f.step * scaleY;
+  std::vector<Cell> out;
+  const double margin = 0.15;
+  for (int r = 0; r < rows; ++r) {
+    for (int c = 0; c < cols; ++c) {
+      const double x0 = (static_cast<double>(c) / cols) * w;
+      const double x1 = (static_cast<double>(c + 1) / cols) * w;
+      const double y0 = (static_cast<double>(r) / rows) * h;
+      const double y1 = (static_cast<double>(r + 1) / rows) * h;
+      const double mw = (x1 - x0) * margin;
+      const double mh = (y1 - y0) * margin;
+      std::vector<MotionSamplePoint> local;
+      for (const MotionSamplePoint& p : pts) {
+        if (p.x >= x0 - mw && p.x < x1 + mw && p.y >= y0 - mh && p.y < y1 + mh) local.push_back(p);
+      }
+      out.push_back(Cell{(x0 + x1) / 2, (y0 + y1) / 2, fit_similarity(local, 1).value_or(Sim{})});
+    }
+  }
+  return out;
+}
+
+double estimate_rolling_shutter_shear(const scene::pixmo::FlowField& f, double scaleX, double scaleY) {
+  const std::vector<MotionSamplePoint> pts = flow_sample_points(f, scaleX, scaleY);
+  if (pts.size() < 8) return 0;
+  double cy = 0;
+  for (const MotionSamplePoint& p : pts) cy += p.y;
+  cy /= static_cast<double>(pts.size());
+  // dx ≈ k · (y − cy)  →  k = Σ dx(y−cy) / Σ (y−cy)²
+  double num = 0;
+  double den = 0;
+  for (const MotionSamplePoint& p : pts) {
+    const double dy = p.y - cy;
+    num += p.dx * dy;
+    den += dy * dy;
+  }
+  if (den < 1e-6) return 0;
+  return num / den;
+}
+
+XY apply_rolling_shutter_repair(double x, double y, double cy, double shearK) noexcept { return XY{x - shearK * (y - cy), y}; }
 
 std::vector<Sim> stabilizing_corrections(std::span<const std::optional<Sim>> pairs, double sigmaFrames) {
   const size_t n = pairs.size() + 1;

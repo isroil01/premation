@@ -169,6 +169,10 @@ std::string job_kind_name(const api::JobSpec& spec) {
     case api::JobSpec::Kind::proxy: return "proxy";
     case api::JobSpec::Kind::audio_duck: return "audioDuck";
     case api::JobSpec::Kind::audio_gate: return "audioGate";
+    case api::JobSpec::Kind::track_apply: return "trackApply";
+    case api::JobSpec::Kind::roto_brush: return "rotoBrush";
+    case api::JobSpec::Kind::content_aware_fill: return "contentAwareFill";
+    case api::JobSpec::Kind::auto_reframe: return "autoReframe";
   }
   return "job";
 }

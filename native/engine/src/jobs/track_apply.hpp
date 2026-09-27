@@ -126,6 +126,23 @@ class DocView {
 /// when a planned track is not addressable on the layer (the whole result rolls back).
 void send_plan(JobApply& a, const Plan& plan);
 
+/// One key of a mask's path: composition seconds, the whole path.
+struct PathKey {
+  double compTime = 0;
+  api::BezierPath path;
+};
+/// A mask's keys (`group` = "masks/<id>").
+struct PathKeys {
+  std::string group;
+  std::vector<PathKey> keys;
+};
+
+/// Mask path keys spliced over their span (maskTrack.ts / rotoBrush.ts: the
+/// keys inside each mask's new first…last span replaced, the rest kept), as
+/// one addKeyframes (linear) + one deleteKeyframes. Throws EngineFail when a
+/// mask is gone (the whole result rolls back).
+void send_path_splice(JobApply& a, const std::string& layer, const std::vector<PathKeys>& masks);
+
 /// Unwrap `delta` to within half a turn of `prev` (degrees), as the plans do.
 [[nodiscard]] double unwrap_deg(double delta, double prev) noexcept;
 

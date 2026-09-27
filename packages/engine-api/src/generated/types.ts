@@ -446,6 +446,18 @@ export type TrackDirection =
   | 'both';
 export const TrackDirectionValues = ['forward', 'backward', 'both'] as const;
 
+/** What a finished track is applied as (trackMotionActions.ts onApply / onApplyMesh / onCreateNullAndApply / onCreateNullsForPlanes / onSolveCamera). */
+export type TrackApplyMode =
+  | 'follow'
+  | 'transform'
+  | 'corner'
+  | 'stabilize'
+  | 'meshWarp'
+  | 'createNull'
+  | 'nullsForPlanes'
+  | 'cameraSolve';
+export const TrackApplyModeValues = ['follow', 'transform', 'corner', 'stabilize', 'meshWarp', 'createNull', 'nullsForPlanes', 'cameraSolve'] as const;
+
 /** B4 — what a layer holds of an SVG document (LayerInfo.svg). */
 export type SvgRole =
   | 'none'
@@ -927,7 +939,8 @@ export type EngineMessage =
   | { kind: 'request'; value: Request }
   | { kind: 'response'; value: Response }
   | { kind: 'events'; value: EventBatch }
-  | { kind: 'goodbye'; value: Goodbye };
+  | { kind: 'goodbye'; value: Goodbye }
+  | { kind: 'logRecord'; value: LogRecord };
 export type EngineMessageKind = EngineMessage['kind'];
 
 /** Client → engine, first message. The engine answers Welcome or closes with Goodbye{versionMismatch}. */
@@ -2581,6 +2594,7 @@ export interface TrackPointSpec {
 
 export interface TrackMotionJob {
   layer: LayerId;
+  /** `mask` (maskTrack.ts trackLayerMask): the points are the vertices of the layer's masks as they stand at the origin (every mask, or the one `applyTo` names as `masks/<id>`; `points` gives only the window sizes), and the result is written as path keys on those masks. `planar`: see `planarGrid`. */
   kind: TrackKind;
   points: TrackPointSpec[];
   range: TimeRange;
@@ -2597,6 +2611,8 @@ export interface TrackMotionJob {
   analysisMaxEdge?: number;
   /** Stabilize Motion (trackerStore mode `stabilize`, applyTrack.ts planStabilize): point 0's inverse motion written as position keys on the TRACKED layer; `applyTo` is not read. Kind `position` only. */
   stabilize: boolean;
+  /** Kind `planar` (the corner mode's "Dense grid", planarFit.ts densifyQuad): the quad TL, TR, BR, BL (+ any points after it, kept) gains a `planarGrid`×`planarGrid` lattice of features inside it (default 5, 1…16) and the corner pin is the RANSAC plane over all of them. */
+  planarGrid?: number;
 }
 
 /** `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%). */
@@ -2607,6 +2623,8 @@ export interface StabilizeJob {
   method: string;
   /** Long edge the footage is decoded at (the TS analysis tier; default 960, 0 = full size). The flow itself runs at most 480 px wide, as smoothStabilize.ts. */
   analysisMaxEdge?: number;
+  /** smoothStabilize.ts `variant`: `similarity` (default — position / rotation / scale keys per `method`), `subspace` (a 4×4 grid of local similarities → Mesh Warp keys on the layer, subspaceWarp.ts), `rolling-shutter` (the subspace grid with the rows' readout shear repaired). */
+  variant?: string;
 }
 
 /** `channel`: `alpha`, `luminance`, `red`, `green`, `blue`; `threshold` 0…1. Only the frame at `range.start` is traced unless `everyFrame` (then one mask path key per frame of the range). */
@@ -2624,6 +2642,8 @@ export interface AutoTraceJob {
   everyFrame: boolean;
   /** Invert the matte before tracing. */
   invert: boolean;
+  /** Trace what the layer DRAWS (autoTrace.ts renderLayerAlone): the layer rendered alone (solo, transparent comp, its effects and masks included) by a child engine, comp-space contours pulled back through the layer's inverse transform at each frame. False: the layer's own footage frames (layer pixels). Any layer kind when true; footage only when false. */
+  rendered: boolean;
 }
 
 /** Scene Edit Detection (sceneEditDetect.ts): cuts and dissolves in a video layer's visible span, from 64-bin luma-histogram distances with an adaptive threshold. `createMarkers`: composition markers "Cut N" / "Dissolve N"; `splitLayers`: the layer split at every cut (markers win when both are set). `threshold` is the L1 floor (0…2, default 0.3), `sensitivity` the multiple of the local median (default 5), `minShotSeconds` absent = 6 frames; `dissolves` default true. */
@@ -2713,6 +2733,59 @@ export interface PrerenderJob {
   format: string;
 }
 
+/** One tracked sample: composition time, layer (source display) pixels, NCC confidence, coasted through a loss. */
+export interface TrackSampleRow {
+  time: Time;
+  x: number;
+  y: number;
+  confidence: number;
+  coasted: boolean;
+}
+
+export interface TrackSeries {
+  samples: TrackSampleRow[];
+}
+
+/**
+ * Apply a track the UI already holds (a `trackMotion` job's `tracks`, or the page tracker's) — the plans of applyTrack.ts / trackApplyEdits.ts in the engine, ONE history entry:
+ * `follow` planTrackToLayer (a camera target: planTrackToCamera); `transform` planTransformTrack with rotation and scale (a camera: planCameraSolveTrack); `corner` planCornerPinTrack; `stabilize` planStabilize on `layer`; `meshWarp` planMeshWarpTrack; `createNull` Create Null & Apply (a "Tracked Null" beside the footage, keyed per `nullMode`: follow | transform | corner); `nullsForPlanes` one null per four tracks (corner pins); `cameraSolve` the 3D Camera Tracker (sfmCamera.ts, planar-hybrid SfM + bundle adjustment) keyed onto the composition's solve camera, made on the first run. `target` is read by follow / transform / corner / meshWarp.
+ */
+export interface TrackApplyJob {
+  layer: LayerId;
+  mode: TrackApplyMode;
+  target?: LayerId;
+  tracks: TrackSeries[];
+  sourceWidth: number;
+  sourceHeight: number;
+  nullMode?: TrackApplyMode;
+}
+
+/** Roto Brush (rotoBrush.ts runRotoBrush): a GrabCut-class matte from the `seed` click (layer pixels at `range.start`, colour `tolerance` default 36), propagated frame to frame by block flow with a colour re-seed, as ONE "Roto Brush" mask with a path key per frame of the range (feather `feather` px, default 2). */
+export interface RotoBrushJob {
+  layer: LayerId;
+  range: TimeRange;
+  seed: Vec2;
+  tolerance?: number;
+  feather?: number;
+}
+
+/** Content-Aware Fill (contentAwareFillVideo.ts runContentAwareFill): the layer's masks at each frame of the range are the hole, filled by PatchMatch then carried by flow both ways; the filled frames are PNGs written to `outputFolder` (default: next to the project, `Content-Aware Fill/`) and attached with setContentAwareFill (the renderer shows the nearest filled frame over the footage). */
+export interface ContentAwareFillJob {
+  layer: LayerId;
+  range: TimeRange;
+  outputFolder: string;
+}
+
+/** Auto-reframe (autoReframe.ts autoReframeComposition): `comp` rendered small (160 px wide, 12 frames/s) by a child engine, saliency + shot cuts per frame (saliency.ts, sceneEditDetect.ts), a dead-zone / lag camera path (reframePath.ts); a NEW composition `width`×`height` holding `comp` as a precomp layer scaled to cover, with the pan keyed on its separated position. The source is untouched. */
+export interface AutoReframeJob {
+  comp: ItemId;
+  width: number;
+  height: number;
+  name?: string;
+  deadZone?: number;
+  lagSeconds?: number;
+}
+
 export type JobSpec =
   | { kind: 'trackMotion'; value: TrackMotionJob }
   | { kind: 'stabilize'; value: StabilizeJob }
@@ -2725,7 +2798,11 @@ export type JobSpec =
   | { kind: 'prerender'; value: PrerenderJob }
   | { kind: 'proxy'; value: ProxyJob }
   | { kind: 'audioDuck'; value: AudioDuckJob }
-  | { kind: 'audioGate'; value: AudioGateJob };
+  | { kind: 'audioGate'; value: AudioGateJob }
+  | { kind: 'trackApply'; value: TrackApplyJob }
+  | { kind: 'rotoBrush'; value: RotoBrushJob }
+  | { kind: 'contentAwareFill'; value: ContentAwareFillJob }
+  | { kind: 'autoReframe'; value: AutoReframeJob };
 export type JobSpecKind = JobSpec['kind'];
 
 export interface StartJob {
@@ -2744,6 +2821,18 @@ export interface ApplyJobResult {
 
 export interface JobRef {
   job: JobId;
+}
+
+/** A content-aware fill frame: `time` in composition time, `src` the filled picture (a file path or URL the renderer reads as a still). */
+export interface ContentAwareFillFrame {
+  time: Time;
+  src: string;
+}
+
+/** The layer's content-aware fill (the content-aware fill job's result; the page stored the same record as `fx.contentAwareFill`): the frame nearest the layer's time stands in for its footage. Empty `frames` clears it. Inverse: the previous record. */
+export interface SetContentAwareFill {
+  layer: LayerId;
+  frames: ContentAwareFillFrame[];
 }
 
 /** Enable/disable an installed plugin for this session (install/uninstall stays in the editor's plugin manager). */
@@ -4429,6 +4518,7 @@ export type Command =
   | ({ type: 'startJob' } & StartJob)
   | ({ type: 'cancelJob' } & CancelJob)
   | ({ type: 'applyJobResult' } & ApplyJobResult)
+  | ({ type: 'setContentAwareFill' } & SetContentAwareFill)
   | ({ type: 'setPluginEnabled' } & SetPluginEnabled)
   | ({ type: 'setPluginData' } & SetPluginData);
 export type CommandType = Command['type'];
@@ -4585,6 +4675,7 @@ export type CommandResult =
   | ({ type: 'startJob' } & JobRef)
   | ({ type: 'cancelJob' } & Empty)
   | ({ type: 'applyJobResult' } & ItemList)
+  | ({ type: 'setContentAwareFill' } & Empty)
   | ({ type: 'setPluginEnabled' } & Empty)
   | ({ type: 'setPluginData' } & Empty);
 export type CommandResultType = CommandResult['type'];
@@ -4868,6 +4959,7 @@ export interface CommandArgs {
   startJob: StartJob;
   cancelJob: CancelJob;
   applyJobResult: ApplyJobResult;
+  setContentAwareFill: SetContentAwareFill;
   setPluginEnabled: SetPluginEnabled;
   setPluginData: SetPluginData;
 }
@@ -5024,6 +5116,7 @@ export interface CommandResults {
   startJob: JobRef;
   cancelJob: Empty;
   applyJobResult: ItemList;
+  setContentAwareFill: Empty;
   setPluginEnabled: Empty;
   setPluginData: Empty;
 }

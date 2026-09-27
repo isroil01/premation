@@ -28,6 +28,7 @@ void set_ffmpeg_executable(std::string path);
 [[nodiscard]] PreparedJob prepare_proxy(const api::ProxyJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_render(const api::RenderJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_prerender(const api::PrerenderJob& spec, const JobDocContext& ctx);
+[[nodiscard]] PreparedJob prepare_track_apply(const api::TrackApplyJob& spec, const JobDocContext& ctx);
 
 /// The child-process work of the kinds that load a model (child_job.hpp).
 void register_object_matte_child();
