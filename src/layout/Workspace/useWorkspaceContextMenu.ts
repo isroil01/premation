@@ -39,7 +39,7 @@ import { uiKindOf } from '@core/mirror/layerKinds';
 import { mirrorLabelColor } from '@core/mirror/layerLabels';
 import { mirrorSourceDisplaySize } from '@core/mirror/sourceSize';
 import { renameLayerEdit } from '@layout/Scene/sceneEdits';
-import { getNodeLayerTime, type FrameBlend } from '@core/scene/layerTime';
+import type { FrameBlend } from '@core/scene/layerTime';
 import { unfreezeEdit } from '@layout/Timeline/timelineEdits';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
 import { useTrackerStore } from '@stores/trackerStore';
@@ -142,9 +142,8 @@ export function videoContextMenuItems(id: string): ContextMenuItem {
     stretch: Math.round(Math.abs(signed) * 100 * 1e6) / 1e6,
     reverse: signed < 0,
     frameBlend: FRAME_BLEND_OF[layer?.switches.frameBlend ?? 'off'] ?? 'none',
-    // B4-gap: freeze frame — `LayerTiming` carries no freeze flag (freezeFrame /
-    // unfreezeLayers have no read twin); a `LayerTiming.frozen` would close it.
-    freeze: getNodeLayerTime(id).freeze,
+    // Freeze Frame: `LayerTiming.freeze` (the held time; absent = not frozen).
+    freeze: layer?.timing.freeze !== undefined,
   };
   const playhead = getPlayheadTime();
   const speed = (label: string, stretch: number): ContextMenuItem => ({

@@ -53,7 +53,9 @@ import {
 } from '@core/workspace/cameraBookmarks';
 import { useCompareStore, canCompare, COMPARE_MODE_LABEL, type CompareMode } from '@stores/compareStore';
 import { usePreviewBehaviorStore } from '@stores/previewBehaviorStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { isTransportPlaying, playTransport, seekPlayhead } from '@core/timeline/timelineView';
+import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
+import { settingsSetWorkArea } from '@core/mirror/compFacts';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
@@ -125,16 +127,16 @@ export function transportChordsActive(): boolean {
  * the duration of the preview and stops itself.
  */
 function playAudioOnly(workAreaOnly: boolean): void {
-  const c = getTimelineController();
   const behavior = usePreviewBehaviorStore.getState().actions;
 
   if (workAreaOnly) {
-    const wa = c.getWorkArea();
-    if (wa) c.seekSeconds(wa.start);
+    // The work area from the mirror (null = none set); transport through its seam.
+    const wa = settingsSetWorkArea(activeCompSettingsNow());
+    if (wa) seekPlayhead(wa.start);
   }
 
   behavior.setAudioOnly();
-  c.play();
+  playTransport();
 
   const restore = (): void => {
     behavior.reset();
@@ -144,14 +146,14 @@ function playAudioOnly(workAreaOnly: boolean): void {
   // Belt and braces: if the transport never actually started (no comp, zero
   // duration), do not leave the viewport dark waiting for a stop that will
   // never come.
-  if (!c.isPlaying) {
+  if (!isTransportPlaying()) {
     restore();
     return;
   }
 
   const POLL_MS = 120;
   const timer = setInterval(() => {
-    if (c.isPlaying) return;
+    if (isTransportPlaying()) return;
     clearInterval(timer);
     restore();
   }, POLL_MS);
