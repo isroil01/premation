@@ -5,7 +5,8 @@
  * separate file from chat keys so clearing one does not drop the other.
  */
 
-import { app, safeStorage } from 'electron';
+import { app } from 'electron';
+import { decryptVault, encryptVault, vaultEncryptionAvailable } from './vaultCrypto';
 import { handle } from './ipcGuard';
 import path from 'node:path';
 import { readFile, writeFile, rename, unlink, chmod } from 'node:fs/promises';
@@ -32,8 +33,9 @@ async function read(): Promise<Vault> {
   if (cached !== undefined) return cached;
   try {
     const encrypted = await readFile(FILE());
-    if (!safeStorage.isEncryptionAvailable()) return (cached = {});
-    const parsed = JSON.parse(safeStorage.decryptString(encrypted)) as unknown;
+    if (!(await vaultEncryptionAvailable())) return (cached = {});
+    const { text, rewrite } = await decryptVault(encrypted);
+    const parsed = JSON.parse(text) as unknown;
     const out: Vault = {};
     if (parsed && typeof parsed === 'object') {
       for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
@@ -41,6 +43,7 @@ async function read(): Promise<Vault> {
       }
     }
     cached = out;
+    if (rewrite) void write(out);
   } catch {
     cached = {};
   }
@@ -54,11 +57,11 @@ async function write(vault: Vault): Promise<boolean> {
     await unlink(file).catch(() => undefined);
     return true;
   }
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (!(await vaultEncryptionAvailable())) {
     cached = {};
     return false;
   }
-  const encrypted = safeStorage.encryptString(JSON.stringify(vault));
+  const encrypted = await encryptVault(JSON.stringify(vault));
   const temp = `${file}.tmp`;
   await writeFile(temp, encrypted, { mode: 0o600 });
   await chmod(temp, 0o600).catch(() => undefined);
@@ -113,5 +116,5 @@ export function registerMediaKeyIpc(): void {
     await write(vault);
   });
 
-  handle('mediaKeys:available', () => safeStorage.isEncryptionAvailable());
+  handle('mediaKeys:available', () => vaultEncryptionAvailable());
 }

@@ -28,7 +28,8 @@
  * would look identical while offering no protection at all.
  */
 
-import { app, safeStorage } from 'electron';
+import { app } from 'electron';
+import { decryptVault, encryptVault, vaultEncryptionAvailable, vaultEncryptionKnown } from './vaultCrypto';
 import path from 'node:path';
 import { readFile, writeFile, rename, unlink, chmod } from 'node:fs/promises';
 
@@ -52,9 +53,10 @@ async function read(): Promise<StoredCredentials | null> {
 
   try {
     const encrypted = await readFile(FILE());
-    if (!safeStorage.isEncryptionAvailable()) return (cached = null);
-    const json = safeStorage.decryptString(encrypted);
-    cached = JSON.parse(json) as StoredCredentials;
+    if (!(await vaultEncryptionAvailable())) return (cached = null);
+    const { text, rewrite } = await decryptVault(encrypted);
+    cached = JSON.parse(text) as StoredCredentials;
+    if (rewrite) void write(cached);
   } catch {
     // Missing, unreadable, or encrypted under a key we no longer have (the
     // user changed their OS password, or the file came from another machine).
@@ -73,14 +75,14 @@ async function write(credentials: StoredCredentials | null): Promise<boolean> {
     return true;
   }
 
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (!(await vaultEncryptionAvailable())) {
     // See the module comment: no keystore, no stored credential. The session
     // still works for as long as the app is open — it just does not persist.
     cached = null;
     return false;
   }
 
-  const encrypted = safeStorage.encryptString(JSON.stringify(credentials));
+  const encrypted = await encryptVault(JSON.stringify(credentials));
   const temp = `${file}.tmp`;
   await writeFile(temp, encrypted, { mode: 0o600 });
   await chmod(temp, 0o600).catch(() => undefined);
@@ -135,5 +137,5 @@ export async function clearStoredCredentials(): Promise<void> {
  * nothing.
  */
 export function isCredentialStoreAvailable(): boolean {
-  return safeStorage.isEncryptionAvailable();
+  return vaultEncryptionKnown();
 }

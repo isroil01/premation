@@ -50,6 +50,7 @@ import {
   type ExportSupervisor,
 } from './exportProcess';
 import { enforceProjectExtension } from './projectSavePath';
+import { vaultEncryptionAvailable } from './vaultCrypto';
 import {
   inspectJob,
   jobDir as resumeJobDir,
@@ -1788,6 +1789,9 @@ app.whenReady().then(() => {
   // A second instance already relayed its deep link and quit; this one should not
   // have reached whenReady, but guard anyway rather than open a duplicate window.
   if (!hasSingleInstanceLock) return;
+  // The vaults' async encryptor initialises lazily; start it now so the sync
+  // `persisted` flag (auth status) has an answer before the first sign-in check.
+  void vaultEncryptionAvailable();
 
   // A render, not an editor: no menu, no updater, no managed backend, no
   // protocol registration, no GPU diagnostics timer — and no window anyone can

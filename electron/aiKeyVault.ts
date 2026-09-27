@@ -36,7 +36,8 @@
  * honest; a plaintext fallback would look identical and protect nothing.
  */
 
-import { app, safeStorage } from 'electron';
+import { app } from 'electron';
+import { decryptVault, encryptVault, vaultEncryptionAvailable } from './vaultCrypto';
 import { handle } from './ipcGuard';
 import path from 'node:path';
 import { readFile, writeFile, rename, unlink, chmod } from 'node:fs/promises';
@@ -88,8 +89,9 @@ async function read(): Promise<Vault> {
   if (cached !== undefined) return cached;
   try {
     const encrypted = await readFile(FILE());
-    if (!safeStorage.isEncryptionAvailable()) return (cached = {});
-    const parsed = JSON.parse(safeStorage.decryptString(encrypted)) as unknown;
+    if (!(await vaultEncryptionAvailable())) return (cached = {});
+    const { text, rewrite } = await decryptVault(encrypted);
+    const parsed = JSON.parse(text) as unknown;
     const out: Vault = {};
     // Re-validate on the way in. The file could have been written by an older
     // build with a provider we no longer proxy, and an unknown entry must be
@@ -100,6 +102,7 @@ async function read(): Promise<Vault> {
       }
     }
     cached = out;
+    if (rewrite) void write(out);
   } catch {
     // Missing, unreadable, or encrypted under a key we no longer have (the user
     // changed their OS password, or the file came from another machine). All of
@@ -121,13 +124,13 @@ async function write(vault: Vault): Promise<boolean> {
     return true;
   }
 
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (!(await vaultEncryptionAvailable())) {
     // See the module comment: no keystore, no stored key.
     cached = {};
     return false;
   }
 
-  const encrypted = safeStorage.encryptString(JSON.stringify(vault));
+  const encrypted = await encryptVault(JSON.stringify(vault));
   const temp = `${file}.tmp`;
   await writeFile(temp, encrypted, { mode: 0o600 });
   await chmod(temp, 0o600).catch(() => undefined);
@@ -206,7 +209,7 @@ export function registerAiKeyIpc(): void {
   });
 
   /** False when the OS has no keystore — the app then never persists a key. */
-  handle('aiKeys:available', () => safeStorage.isEncryptionAvailable());
+  handle('aiKeys:available', () => vaultEncryptionAvailable());
 }
 
 /** Test seam: drop the in-memory cache so the next read hits disk again. */

@@ -16,7 +16,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { buildRestMesh, coverageMaskFromImageData, type PuppetRig } from './puppet';
+import { buildRestMesh, coverageMaskFromImageData, type PuppetPin, type PuppetRig } from './puppet';
 import { alphaOutlineRegions, buildAlphaOutlineGeometry } from './alphaMesh';
 
 const OUT = path.resolve(__dirname, '../../../native/engine/tests/data/alpha_mesh_parity.json');
@@ -67,7 +67,8 @@ const IMAGES = {
 
 interface Case { image: keyof typeof IMAGES; lw: number; lh: number; pad: number; rig: PuppetRig }
 
-const pin = (id: string, x: number, y: number) => ({ id, name: id, x, y });
+// The fixture's pins carry no name (they are inputs to the mesh, which never reads it).
+const pin = (id: string, x: number, y: number) => ({ id, x, y }) as PuppetPin;
 
 const CASES: Case[] = [
   { image: 'character', lw: 240, lh: 320, pad: 0, rig: { pins: [pin('a', 0, -100), pin('b', 90, -40)], meshMode: 'silhouette' } },

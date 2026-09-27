@@ -58,6 +58,28 @@ export interface NativeProcessLike {
   readonly pid?: number | undefined;
 }
 
+/** How long a killed child gets to exit before it is force-killed. */
+const KILL_GRACE_MS = 2000;
+
+/**
+ * End a child for good. `UtilityProcess.kill()` sends SIGTERM on POSIX and,
+ * from Electron 46, no longer escalates; a plugin stuck in native code that
+ * survives it is sent SIGKILL after the grace period — only while the process
+ * is verifiably still there (`pid` is undefined once it has exited, so a
+ * reused pid is never hit).
+ */
+export function endProcess(proc: NativeProcessLike): void {
+  let exited = false;
+  try { proc.on('exit', () => { exited = true; }); } catch { /* no events: the pid check alone decides */ }
+  try { proc.kill(); } catch { /* already gone */ }
+  const timer = setTimeout(() => {
+    const pid = proc.pid;
+    if (exited || pid === undefined) return;
+    try { process.kill(pid, 'SIGKILL'); } catch { /* gone in between */ }
+  }, KILL_GRACE_MS);
+  (timer as { unref?: () => void }).unref?.();
+}
+
 export interface NativeSpawnRequest {
   pluginId: string;
   /** The package directory, which becomes the child's working directory. */
@@ -480,7 +502,7 @@ export class NativePluginHost {
     entry.proc = null;
     entry.ready = null;
     if (proc) {
-      try { proc.kill(); } catch { /* already gone, which is the usual case */ }
+      endProcess(proc); // already gone, the usual case, costs nothing
     }
     if (entry.idleTimer) { clearTimeout(entry.idleTimer); entry.idleTimer = null; }
 
@@ -534,7 +556,7 @@ export class NativePluginHost {
       // does not get to keep the process.
       proc.postMessage({ type: 'dispose', id: ++this.seq });
     } catch { /* the port is already gone */ }
-    try { proc.kill(); } catch { /* already gone */ }
+    endProcess(proc);
     this.emit({ type: 'stopped', pluginId: entry.config.pluginId, message: reason });
   }
 

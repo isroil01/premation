@@ -256,6 +256,10 @@ upgrade. Not re-blessed from that host. **Next upgrade:** sync `safeStorage`
 (three vaults) is deprecated in 45 and removed in 46; move to the async
 methods first. 46 also stops `utilityProcess.kill()` escalating to SIGKILL:
 check that the native plugin host's kill still ends a hung plugin child.
+**Both done (2026-09-28):** the three vaults use the async safeStorage API
+(`electron/vaultCrypto.ts`; a vault the sync API wrote is read once through it
+and rewritten), and the native plugin host force-kills a child that survives
+`kill()` for 2 s (`endProcess`, only while `pid` is still defined).
 
 **C3 result (2026-09-23, `docs/ENGINE_API.md` §15.5):** the C++ engine is a
 second `EngineClient` backend (`ProcessEngineClient`), selected by

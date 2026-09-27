@@ -22,6 +22,7 @@ jest.mock('electron', () => ({
 import {
   MAX_RESTARTS,
   NativePluginHost,
+  endProcess,
   RESTART_BACKOFF_MS,
   type NativeHostEvent,
   type NativeProcessLike,
@@ -352,5 +353,41 @@ describe('idle and shutdown', () => {
     expect(h.spawned).toHaveLength(2);
     h.last().replyLoaded();
     await expect(second).resolves.toMatchObject({ ok: true });
+  });
+});
+
+describe('endProcess', () => {
+  const fakeProc = (pid: number | undefined): { proc: NativeProcessLike; exit: () => void; killed: jest.Mock } => {
+    let onExit: ((code: number) => void) | null = null;
+    const state = { pid };
+    const killed = jest.fn(() => true);
+    const proc = {
+      postMessage: () => {},
+      on: (event: string, h: (code: number) => void) => { if (event === 'exit') onExit = h; },
+      kill: killed,
+      get pid() { return state.pid; },
+    } as unknown as NativeProcessLike;
+    return { proc, killed, exit: () => { state.pid = undefined; onExit?.(0); } };
+  };
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
+
+  it('force-kills a child that survives the polite kill', () => {
+    const sig = jest.spyOn(process, 'kill').mockImplementation(() => true);
+    const f = fakeProc(4242);
+    endProcess(f.proc);
+    expect(f.killed).toHaveBeenCalledTimes(1);
+    jest.advanceTimersByTime(2000);
+    expect(sig).toHaveBeenCalledWith(4242, 'SIGKILL');
+  });
+
+  it('leaves a child that exited alone (its pid may already be reused)', () => {
+    const sig = jest.spyOn(process, 'kill').mockImplementation(() => true);
+    const f = fakeProc(4243);
+    endProcess(f.proc);
+    f.exit();
+    jest.advanceTimersByTime(2000);
+    expect(sig).not.toHaveBeenCalled();
   });
 });

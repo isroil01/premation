@@ -513,6 +513,13 @@ export const layerHandlers: HandlerTable = {
 
   autoTrace: (cmd) => {
     requireLayer(cmd.layer);
+    // The arguments are checked before the refusal, in the C++ engine's order.
+    if (!['', 'alpha', 'luminance', 'luma', 'red', 'green', 'blue'].includes(cmd.channel)) {
+      fail('invalidArgument', `channel '${cmd.channel}' is not alpha, luminance, red, green or blue`, { layer: cmd.layer });
+    }
+    if (!Number.isFinite(cmd.threshold) || cmd.threshold < 0 || cmd.threshold > 1) fail('outOfRange', 'threshold must be 0…1', { layer: cmd.layer });
+    if (!Number.isFinite(cmd.tolerance) || cmd.tolerance < 0) fail('outOfRange', 'tolerance must be ≥ 0', { layer: cmd.layer });
+    if (cmd.range.duration <= 0) fail('invalidArgument', 'range is empty: give at least one frame (one frame traces the frame at range.start)', { layer: cmd.layer });
     return fail('unsupported', 'Auto-trace decodes the layer\'s frames: the C++ engine runs it (the autoTrace command and job); with the TypeScript engine it runs from the editor (Layer ▸ Auto-trace)');
   },
 };

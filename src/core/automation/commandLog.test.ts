@@ -136,7 +136,7 @@ describe('record → replay', () => {
     const t = node.components.find((c) => c.type === 'Transform')!;
     defaultSceneGraph.writeProp(id, t.id, 'x', 321);
     // …announced the way a legacy writer (InspectorAPI) announces it.
-    getEventBus().emit('NodeUpdated', { nodeId: id });
+    getEventBus().emit('NodeUpdated', { nodeId: id, componentId: t.id, propName: 'x', value: 321 });
     await createLayerEdit('null', { name: 'After' });
     rec.stop();
     expect(rec.writesAroundEngine).toBeGreaterThan(0);
