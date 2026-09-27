@@ -24,10 +24,9 @@
 import type { Command, PropRef, Value } from '@motion/engine-api';
 import { catalogFor } from '@core/engine/props';
 import { parseColorChannels } from '@core/effects/effects';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { compOfLayer, isLayer } from '@core/engine/doc';
 import { engine } from '@core/engine/engineInstance';
-import { compTime, paths, values as apiValues, fieldValue } from '@core/engine/propRefs';
+import { compTime, paths, values as apiValues, fieldValue, componentOfType } from '@core/engine/propRefs';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { isTrackAnimated, readTrack } from '@core/mirror/selection';
 import { documentMirror } from '@stores/documentMirror';
@@ -315,14 +314,16 @@ function fieldValueOfHex(hex: string): Value {
  * the legacy `strokeOverFill` boolean is the Fill and Stroke order
  * (`text/strokeOrder`, which keeps the boolean in step), `content` is Source Text.
  */
-function presetForEngine(props: Readonly<Record<string, unknown>>, values: PresetValues): { bag: Record<string, unknown>; content?: string } {
+function presetForEngine(strokeOrder: unknown, values: PresetValues): { bag: Record<string, unknown>; content?: string } {
   const bag: Record<string, unknown> = {};
   let content: string | undefined;
   for (const [key, v] of Object.entries(values)) {
     if (key === 'fontWeight' && typeof v === 'string' && /^(normal|bold)$/i.test(v.trim())) {
       bag.fontWeight = v.trim().toLowerCase() === 'bold' ? 700 : 400;
     } else if (key === 'strokeOverFill' && typeof v === 'boolean') {
-      const current = typeof props.strokeOrder === 'string' ? props.strokeOrder : props.strokeOverFill === true ? 'stroke-over-fill' : 'fill-over-stroke';
+      // The layer's Fill and Stroke order (`text/strokeOrder`, B4: the mirror). A legacy layer that stores only
+      // the boolean reads as the default order here; the result is the same — the order `v` asks for.
+      const current = typeof strokeOrder === 'string' ? strokeOrder : 'fill-over-stroke';
       bag.strokeOrder = strokeOverFillFor(current) === v ? current : v ? 'stroke-over-fill' : 'fill-over-stroke';
     } else if (key === 'content' && typeof v === 'string') {
       content = v;
@@ -344,14 +345,15 @@ export function textPresetEdit(nodeIds: ReadonlyArray<string>, values: PresetVal
   const seconds = getTime();
   const cmds: Command[] = [];
   const skipped = new Set<string>();
+  const m = documentMirror();
   for (const id of nodeIds) {
     if (!isLayer(id)) continue;
-    // B4-gap: the Text component's id and stored props — `componentPropsCommands` (the Inspector's
-    // shared write composer) is keyed by component id, which the API does not carry.
-    const comp = defaultSceneGraph.getNode(id)?.components.find((c) => c.type === 'Text');
-    if (!comp) continue;
-    const { bag, content } = presetForEngine(comp.props as Record<string, unknown>, values);
-    const r = componentPropsCommands(id, comp.id, bag, seconds);
+    // Which component the shared write composer lands on is the write seam's business
+    // (`componentOfType`, as `useComponentProp` resolves a `{ type }` ref); the values come from the mirror.
+    const compId = componentOfType(id, 'Text');
+    if (!compId) continue;
+    const { bag, content } = presetForEngine(textField(m, id, 'strokeOrder'), values);
+    const r = componentPropsCommands(id, compId, bag, seconds);
     for (const k of Object.keys(r.rest)) skipped.add(k);
     cmds.push(...r.cmds);
     if (content !== undefined) cmds.push(...(sourceTextCommand(id, content, seconds) ?? []));
@@ -374,6 +376,8 @@ export function textPresetEdit(nodeIds: ReadonlyArray<string>, values: PresetVal
 export async function masksFromTextEdit(nodeId: string, seconds: number = getTime()): Promise<MasksFromTextResult | null> {
   const comp = isLayer(nodeId) ? compOfLayer(nodeId) : null;
   if (!comp) return null;
+  // B4-gap: the glyph outlines and the text's placement (the editor's fonts, the layer's evaluated space) and
+  // the solid's build — `convertLayer {masksFromText}` is `unsupported` in the TypeScript engine (moves with E3).
   const plan = await planMasksFromText(nodeId, seconds);
   if (!plan) return null;
   let made: MasksFromTextResult | null = null;

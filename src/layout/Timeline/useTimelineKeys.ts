@@ -149,8 +149,10 @@ export function useTimelineKeys(): void {
           const ids = useSelectionStore.getState().ids;
           if (ids.length > 0) {
             // Off-document, sent as setKeyframes per property: one entry
-            // (core/engine/assistantKeys.ts). B4-gap: the assistant runs on the
-            // stored member tracks (keyframe assistants, B4_MIRROR.md §5).
+            // (core/engine/assistantKeys.ts). B4-gap: the assistant rewrites the
+            // stored x / y member tracks' spatial tangents; `getMemberKeyframes`
+            // reads them, but no command writes member keys in stored form (or
+            // smooths spatial tangents), so it runs as a scratch helper.
             void assistantKeyframesEdit('Smooth motion path', ids, () => {
               for (const id of ids) smoothMotionPath(id);
             });

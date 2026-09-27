@@ -17,8 +17,8 @@
  */
 
 import type { Command, EngineClient, RenameLayerResult as EngineRenameResult } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { canReparent, enclosingCompRootOf } from '@core/scene/parenting';
+import { childOrderOf, type MirrorTreeRead } from '@core/mirror/layerTree';
+import { mirrorCanBeParentOf } from '@core/mirror/parenting';
 import type { RenameLayerResult, RepairedRef } from '@core/scene/renameLayer';
 import { apiParentOf, compOfLayer, isCompItem, isLayer, layersUsingItem } from '@core/engine/doc';
 import { engine } from '@core/engine/engineInstance';
@@ -81,11 +81,13 @@ function parentIs(layer: string, parent: string | null): boolean {
  * the document as it is NOW, so call it after any re-parent has landed.
  */
 function adjacentOrderCommands(id: string, targetId: string, pos: 'before' | 'after'): Command[] {
-  const target = defaultSceneGraph.getNode(targetId);
-  const node = defaultSceneGraph.getNode(id);
+  // B4: the tree from the mirror — current here, since a batch's events reach it before the batch resolves
+  // (ENGINE_API.md §8.1 "events before the response").
+  const m = documentMirror();
+  const tParent = treeParentOf(m, targetId);
   const comp = compOfLayer(id);
-  if (!target?.parent || !node || node.parent !== target.parent || !comp) return [];
-  const kids = defaultSceneGraph.getChildOrder(target.parent);
+  if (!tParent || !m.layer(id) || treeParentOf(m, id) !== tParent || !comp) return [];
+  const kids = childOrderOf(m, tParent);
   const rest = kids.filter((x) => x !== id);
   let at = rest.indexOf(targetId);
   if (at < 0) at = rest.length;
@@ -93,7 +95,28 @@ function adjacentOrderCommands(id: string, targetId: string, pos: 'before' | 'af
   const next = [...rest];
   next.splice(at, 0, id);
   if (next.every((x, i) => x === kids[i])) return [];
-  return reorderCommands(comp, target.parent, kids, next, new Set([id]));
+  return reorderCommands(comp, tParent, kids, next, new Set([id]));
+}
+
+/**
+ * A layer's parent in the TREE (the scene graph's `node.parent`): its parent
+ * layer, else the composition it is a layer of. Null for a non-layer.
+ */
+function treeParentOf(m: MirrorTreeRead, id: string): string | null {
+  const l = m.layer(id);
+  return l ? l.parent ?? l.comp : null;
+}
+
+/**
+ * Whether `id` may be nested under `target` — a layer, or a composition (= no
+ * parent) — the mirror twin of `canReparent`: its own composition is always
+ * legal; a layer must be of the same composition and not one of its descendants.
+ */
+function canNestUnder(m: MirrorTreeRead, id: string, target: string): boolean {
+  const l = m.layer(id);
+  if (!l) return false;
+  if (target === l.comp) return true;
+  return m.layer(target) ? mirrorCanBeParentOf(m, id, target) : false;
 }
 
 // ── The tree's drag (reorder / reparent) ──────────────────────────────
@@ -125,18 +148,18 @@ export async function moveLayersInTreeEdit(ids: ReadonlyArray<string>, targetId:
     if (targetId !== null && !isLayer(targetId)) {
       // A composition root's row: the root is "no parent" (legacy `reparentNode(id, root)`).
       const root = targetId;
-      steps.push(() => (canReparent(id, root) && !parentIs(id, null) ? [setParentCmd(id, null)] : []));
+      steps.push(() => (canNestUnder(documentMirror(), id, root) && !parentIs(id, null) ? [setParentCmd(id, null)] : []));
       continue;
     }
     if (targetId === null) {
       steps.push(() => {
         const root = activeCompIdNow();
-        if (!root || enclosingCompRootOf(id) !== root || parentIs(id, null)) return [];
+        if (!root || documentMirror().layer(id)?.comp !== root || parentIs(id, null)) return [];
         return [setParentCmd(id, null)];
       });
       continue;
     }
-    if (pos === 'inside' && canReparent(id, targetId)) {
+    if (pos === 'inside' && canNestUnder(documentMirror(), id, targetId)) {
       steps.push(() => (parentIs(id, targetId) ? [] : [setParentCmd(id, targetId)]));
       continue;
     }
@@ -144,10 +167,11 @@ export async function moveLayersInTreeEdit(ids: ReadonlyArray<string>, targetId:
     // a row that cannot nest lands just in front of the target.
     const childPos: 'before' | 'after' = pos === 'before' || pos === 'inside' ? 'after' : 'before';
     steps.push(() => {
-      const tParent = defaultSceneGraph.getNode(targetId)?.parent ?? null;
+      const m = documentMirror();
+      const tParent = treeParentOf(m, targetId);
       if (!tParent || compOfLayer(id) !== compOfLayer(targetId) || id === targetId) return [];
-      if (defaultSceneGraph.getNode(id)?.parent === tParent) return [];
-      return canReparent(id, tParent) ? [setParentCmd(id, tParent)] : [];
+      if (treeParentOf(m, id) === tParent) return [];
+      return canNestUnder(m, id, tParent) ? [setParentCmd(id, tParent)] : [];
     });
     steps.push(() => (id === targetId ? [] : adjacentOrderCommands(id, targetId, childPos)));
   }

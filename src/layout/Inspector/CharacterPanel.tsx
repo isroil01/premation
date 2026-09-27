@@ -630,6 +630,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
           <SectionPresetMenu
             sectionId="text"
             label="Text style presets"
+            // B4-gap: a preset holds the props the layer STORES in their stored forms (TextSection's TextPresetAction).
             capture={() => (primary ? captureTextPreset(primary) : {})}
             apply={(values) => textPresetEdit(selected.length > 0 ? selected : [], values)}
           />

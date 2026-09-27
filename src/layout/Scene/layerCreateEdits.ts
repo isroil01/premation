@@ -87,6 +87,8 @@ export async function shapesFromTextEdit(
   if (!comp) return null;
   const node = docGraph.getNode(nodeId);
   if (!node || layerKindOf(node) !== 'text') return null;
+  // B4-gap: the glyph outlines (the editor's fonts, or a trace of the evaluated text) — `convertLayer
+  // {shapesFromText}` is `unsupported` in the TypeScript engine (moves with E3).
   const outlines = await outlineTextNode(node, seconds);
   if (!outlines) return null;
   const hide: Command = { type: 'setLayerSwitches', layers: [nodeId], patch: { visible: false } };

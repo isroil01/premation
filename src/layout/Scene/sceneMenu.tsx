@@ -402,6 +402,8 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
           },
         }]
       : []),
+    // B4-gap: Rig Logo rasterizes the selection and writes puppet pins itself — an engine job (G-phase) with
+    // legacy writes, not a display read.
     { id: 'rig-logo', label: 'Rig Logo for Animation', onSelect: () => { void rigLogoForAnimation(); } },
     ...svgContextMenuItems(targetId),
 
