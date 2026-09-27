@@ -21,7 +21,7 @@
 
 import type { Command, DocumentFragment, Value } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
-import { reportEngineError } from '@core/engine/uiEdits';
+import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { apiParentOf, graph as docGraph, isLayer } from '@core/engine/doc';
 import { catalogFor, isAnimated, readStatic } from '@core/engine/props';
@@ -30,6 +30,10 @@ import { readOsClipboardSvg } from '@core/commands/clipboard';
 import { copyPathFromSelection, pastePathEdit } from '@core/workspace/pathCommands';
 import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
 import { insertSvgDocument } from '@core/scene/sceneInsert';
+import { isAnimatedSvg, scanSvgCapabilities } from '@core/svg/svgCapabilities';
+import { documentMirror } from '@stores/documentMirror';
+import { useUIStore } from '@stores/uiStore';
+import { buildSvgLayerFragment } from '@/engine-client/svgFragment';
 import { deleteKeyframesUi, pasteKeyframesAt } from '@layout/Timeline/keyframeEdits';
 import { deleteSelectedLayersEdit } from '@layout/Workspace/layerMenuEdits';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
@@ -198,8 +202,30 @@ export async function pasteEdit(): Promise<PasteResult> {
   if (!svg) return null;
   const comp = activeInsertTarget()?.comp;
   if (!comp) return null;
-  const ids = await insertBuiltLayers('Paste SVG', comp, () => insertSvgDocument(svg, 'Pasted SVG'));
+  const ids = await pasteSvgDocument(comp, svg);
   return ids && ids.length > 0 ? 'svg' : null;
+}
+
+/**
+ * Paste an SVG document: a static one is ONE document layer laid into a
+ * fragment by the engine client (engine-client/svgFragment.ts); an animated
+ * one still takes the importer's router off-document (editable keyframes or a
+ * Live SVG, sceneInsert.ts insertSvgDocument).
+ */
+async function pasteSvgDocument(comp: string, svg: string): Promise<string[] | null> {
+  const caps = scanSvgCapabilities(new DOMParser().parseFromString(svg, 'image/svg+xml'));
+  if (isAnimatedSvg(caps)) return insertBuiltLayers('Paste SVG', comp, () => insertSvgDocument(svg, 'Pasted SVG'));
+  const settings = documentMirror().comp(comp)?.settings;
+  const made = buildSvgLayerFragment(svg, 'Pasted SVG', { compWidth: settings?.width ?? 1920, compHeight: settings?.height ?? 1080, capabilities: caps });
+  if (!made) return null;
+  const res = await edit('Paste SVG', [{ type: 'pasteLayers', comp, fragment: made.built.fragment }]);
+  if (!res.ok) return null;
+  const ids = (res.value[0] as { layers?: string[] } | undefined)?.layers ?? [];
+  if (ids.length > 0) useSelectionStore.getState().set(ids);
+  if (made.warnings.length > 0) {
+    useUIStore.getState().notify({ level: 'warning', message: `“Pasted SVG”: ${made.warnings.join(' ')}`, durationMs: 7000 });
+  }
+  return ids;
 }
 
 /** Forget what Copy took (tests). */
