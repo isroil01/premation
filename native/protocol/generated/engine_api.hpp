@@ -4809,6 +4809,10 @@ struct FrameSlots {
   PixelFormat format = PixelFormat::rgba8unorm;
   bool shared = false;
   std::vector<std::uint64_t> handles;
+  std::vector<std::uint32_t> strides;
+  std::vector<std::uint32_t> offsets;
+  std::vector<std::uint64_t> sizes;
+  std::uint64_t modifier = 0;
   bool operator==(const FrameSlots&) const = default;
 };
 

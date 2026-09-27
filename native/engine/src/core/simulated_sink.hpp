@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -28,29 +29,45 @@ class SimulatedSink final : public FrameSink {
   void submit(RenderJob job) override {
     const std::lock_guard<std::mutex> lock(m_);
     ++submitted_;
-    if (pending_) {
-      ++counters_.dropped;
-      ++droppedPending_;
-    }
-    droppedPending_ += job.clockDropped;
     lastScene_ = job.scene;
-    pending_ = std::move(job);
-    pump_locked();
+    const auto it = ports_.find(job.viewport);
+    if (it == ports_.end() || !it->second->config.open) {
+      ++counters_.dropped;  // no such viewport (closed meanwhile): nowhere to put it
+      return;
+    }
+    Port& p = *it->second;
+    if (p.pending) {
+      ++counters_.dropped;
+      ++p.droppedPending;
+    }
+    p.droppedPending += job.clockDropped;
+    p.pending = std::move(job);
+    pump_locked(p);
   }
 
+  /// Each viewport has its own ring (a generation unique across viewports); a
+  /// closed viewport announces an empty ring and is forgotten.
   void configure(const ViewportConfig& config) override {
     const std::lock_guard<std::mutex> lock(m_);
-    config_ = config;
-    ++generation_;
+    auto it = ports_.find(config.viewport);
+    if (it == ports_.end()) {
+      if (!config.open) return;
+      it = ports_.emplace(config.viewport, std::make_unique<Port>()).first;
+    }
+    Port& p = *it->second;
+    lastConfig_ = config;
+    p.config = config;
+    p.generation = ++generation_;
     const std::uint32_t count = config.open ? slots_ : 0;
-    ring_.reset(generation_, count);
+    p.ring.reset(p.generation, count);
     api::FrameSlots s;
-    s.generation = generation_;
+    s.generation = p.generation;
     s.viewport = config.viewport;
     s.width = config.width;
     s.height = config.height;
     s.handles.assign(count, 0);
     if (send_) send_(frames::Message{.v = std::move(s)});
+    if (!config.open) ports_.erase(it);
   }
 
   void set_shared(bool) override {}
@@ -78,7 +95,12 @@ class SimulatedSink final : public FrameSink {
 
   void release(std::uint32_t generation, std::uint32_t slot) {
     const std::lock_guard<std::mutex> lock(m_);
-    if (ring_.release(generation, slot)) pump_locked();
+    for (auto& [id, p] : ports_) {
+      if (p->generation == generation) {
+        if (p->ring.release(generation, slot)) pump_locked(*p);
+        return;
+      }
+    }
   }
 
   [[nodiscard]] std::uint64_t submitted() const {
@@ -89,35 +111,50 @@ class SimulatedSink final : public FrameSink {
     const std::lock_guard<std::mutex> lock(m_);
     return lastScene_;
   }
+  /// The config last given to configure (any viewport).
   [[nodiscard]] ViewportConfig config() const {
     const std::lock_guard<std::mutex> lock(m_);
-    return config_;
+    return lastConfig_;
+  }
+  /// The config of one open viewport (a default, closed one when there is none).
+  [[nodiscard]] ViewportConfig config(std::uint32_t viewport) const {
+    const std::lock_guard<std::mutex> lock(m_);
+    const auto it = ports_.find(viewport);
+    return it == ports_.end() ? ViewportConfig{} : it->second->config;
   }
 
  private:
-  void pump_locked() {
-    if (!pending_ || !config_.open) return;
-    const auto slot = ring_.acquire();
+  struct Port {
+    ViewportConfig config;
+    std::uint32_t generation = 0;
+    render::FrameRing ring;
+    std::optional<RenderJob> pending;
+    std::uint32_t droppedPending = 0;
+  };
+
+  void pump_locked(Port& p) {
+    if (!p.pending || !p.config.open) return;
+    const auto slot = p.ring.acquire();
     if (!slot) return;  // ring full: keep the newest job until a release
     api::FrameReady f;
-    f.generation = generation_;
+    f.generation = p.generation;
     f.slot = *slot;
-    f.viewport = pending_->viewport;
-    f.dropped = droppedPending_;
-    f.frame = pending_->frame;
-    f.time = pending_->time;
-    f.revision = pending_->revision;
-    f.width = config_.width;
-    f.height = config_.height;
-    droppedPending_ = 0;
+    f.viewport = p.pending->viewport;
+    f.dropped = p.droppedPending;
+    f.frame = p.pending->frame;
+    f.time = p.pending->time;
+    f.revision = p.pending->revision;
+    f.width = p.config.width;
+    f.height = p.config.height;
+    p.droppedPending = 0;
     // B4 round 2: the overlays' geometry first, as the render thread sends it.
-    if (pending_->geometrySubscribed && send_) {
+    if (p.pending->geometrySubscribed && send_) {
       for (api::FrameGeometry& g : doc::pack_frame_geometry(f.viewport, f.generation, f.frame, f.time, f.revision,
-                                                            std::move(pending_->geometry))) {
+                                                            std::move(p.pending->geometry))) {
         send_(frames::Message{.v = std::move(g)});
       }
     }
-    pending_.reset();
+    p.pending.reset();
     ++counters_.rendered;
     if (send_) send_(frames::Message{.v = f});
   }
@@ -125,11 +162,10 @@ class SimulatedSink final : public FrameSink {
   SendFrames send_;
   std::uint32_t slots_;
   mutable std::mutex m_;
-  render::FrameRing ring_;
+  /// unique_ptr: FrameRing holds a mutex (not movable).
+  std::map<std::uint32_t, std::unique_ptr<Port>> ports_;
   std::uint32_t generation_ = 0;
-  ViewportConfig config_;
-  std::optional<RenderJob> pending_;
-  std::uint32_t droppedPending_ = 0;
+  ViewportConfig lastConfig_;
   RenderCounters counters_;
   std::uint64_t submitted_ = 0;
   FrameScene lastScene_;

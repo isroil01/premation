@@ -111,7 +111,12 @@ struct EditVisitor {
 Session::Session(Outbox& out, FrameSink& sink, SessionOptions options)
     : out_(out), sink_(sink), options_(std::move(options)) {
   if (options_.testPorts) ports_ = std::make_unique<doc::FakePorts>(options_.testPortsDir);
-  else ports_ = std::make_unique<doc::FilePorts>();
+  else {
+    auto files = std::make_unique<doc::FilePorts>();
+    if (options_.probeFile) files->set_probe(options_.probeFile);
+    files->set_footage_dir(options_.footageDir);
+    ports_ = std::move(files);
+  }
   // The engine starts on a new project, as the editor does (New Project →
   // `comp_root`), at revision 0.
   load_new_project(api::ResetReason::created, false);
@@ -911,7 +916,7 @@ struct ControlVisitor {
     if (c.from) s.seek_to(*c.from);
     s.transportState_ = c.cache_first ? api::TransportState::caching : api::TransportState::playing;
     // No viewport: there is nowhere to store frames, so play at once.
-    if (s.transportState_ == api::TransportState::caching && !s.viewport_.open) {
+    if (s.transportState_ == api::TransportState::caching && !s.any_viewport_open()) {
       s.transportState_ = api::TransportState::playing;
     }
     s.start_playback(now, std::nullopt);
@@ -961,11 +966,11 @@ struct ControlVisitor {
   }
   R operator()(const api::SetPreviewQuality& c) const {
     s.resolution_ = resolution_factor(c.resolution);
-    if (s.viewport_.open) {
-      s.viewport_.resolution = s.resolution_;
-      s.sink_.configure(s.viewport_);
-      s.request_render();
+    for (auto& [id, v] : s.surfaces_) {
+      v.resolution = s.resolution_;
+      s.sink_.configure(v);
     }
+    if (s.any_viewport_open()) s.request_render();
     return result_for<api::SetPreviewQuality>();
   }
   R operator()(const api::SetAudioPreview& c) const {
@@ -991,8 +996,10 @@ struct ControlVisitor {
     v.panX = std::isfinite(c.pan.x) ? c.pan.x : 0.0;
     v.panY = std::isfinite(c.pan.y) ? c.pan.y : 0.0;
     v.devicePixelRatio = dpr;
-    if (!(v == s.viewport_)) {
-      s.viewport_ = v;
+    // C: each viewport id is its own engine surface (a pop-out, a second view).
+    const auto it = s.surfaces_.find(c.viewport);
+    if (it == s.surfaces_.end() || !(it->second == v)) {
+      s.surfaces_.insert_or_assign(c.viewport, v);
       s.sink_.configure(v);
     }
     s.request_render();
@@ -1000,9 +1007,11 @@ struct ControlVisitor {
   }
   R operator()(const api::CloseViewport& c) const {
     if (s.viewports_.erase(c.viewport) == 0) fail(ErrorCode::not_found, "no viewport " + std::to_string(c.viewport));
-    if (s.viewport_.open && s.viewport_.viewport == c.viewport) {
-      s.viewport_.open = false;
-      s.sink_.configure(s.viewport_);
+    if (const auto it = s.surfaces_.find(c.viewport); it != s.surfaces_.end()) {
+      ViewportConfig closed = it->second;
+      closed.open = false;
+      s.surfaces_.erase(it);
+      s.sink_.configure(closed);
     }
     return result_for<api::CloseViewport>();
   }
@@ -1078,8 +1087,9 @@ api::QueryResult Session::run_query(const api::Query& q) {
   }
   c.still = [this](const doc::StillRequest& r) { return render_still(r); };
   c.viewportSlot = [this](std::uint32_t viewport) -> std::optional<std::pair<std::uint32_t, std::uint32_t>> {
-    if (!viewport_.open || viewport_.viewport != viewport || viewport_.width == 0 || viewport_.height == 0) return std::nullopt;
-    return std::pair{viewport_.width, viewport_.height};
+    const auto it = surfaces_.find(viewport);
+    if (it == surfaces_.end() || it->second.width == 0 || it->second.height == 0) return std::nullopt;
+    return std::pair{it->second.width, it->second.height};
   };
   c.readPixels = [this](std::uint32_t viewport, PixelRegion region) {
     return await_render<WorkingPixels>(sink_.read_pixels(viewport, region), "readPixels");
@@ -1479,9 +1489,19 @@ void Session::flush_render() {
 }
 
 void Session::submit_frame(std::uint32_t clockDropped) {
-  if (!viewport_.open) return;
   const auto c = active_comp();
   if (!c) return;
+  // One job per open viewport, each built with its own camera (the frame
+  // builder bakes zoom / pan / size into the job). The layer errors are the
+  // document's, the same for every viewport: announced once.
+  bool first = true;
+  for (const auto& [id, port] : surfaces_) {
+    if (port.open) submit_frame_to(port, *c, clockDropped, first);
+    first = false;
+  }
+}
+
+void Session::submit_frame_to(const ViewportConfig& port, const std::string& c, std::uint32_t clockDropped, bool announce) {
   RenderJob job;
   if (frameBuilder_ != nullptr) {
     // D2w: the engine's own scene builder (scene/snapshot_build.cpp) — the
@@ -1490,17 +1510,17 @@ void Session::submit_frame(std::uint32_t clockDropped) {
     std::vector<api::LayerError> errors;
     const auto t0 = Clock::now();
     frameBuilder_->set_media_base(media_base());
-    job.built = frameBuilder_->build(doc_, view_, exprEnv_, exprCache_, *c, time_, viewport_, playing_, errors);
+    job.built = frameBuilder_->build(doc_, view_, exprEnv_, exprCache_, c, time_, port, playing_, errors);
     // Measurement only (RenderStats.cpuFrameMs): an exponential moving average.
     const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     buildMs_ = buildMs_ <= 0 ? ms : buildMs_ + (ms - buildMs_) * 0.2;
-    announce_layer_errors(*c, std::move(errors));
+    if (announce) announce_layer_errors(c, std::move(errors));
   }
   // The scene's quad vector changes hands (core → render thread) once per
   // frame: one small allocation per frame, deliberately, so the two threads
   // never share a buffer.
-  if (!job.built) doc::build_frame_scene(pctx(), *c, time_, job.scene);
-  job.viewport = viewport_.viewport;
+  if (!job.built) doc::build_frame_scene(pctx(), c, time_, job.scene);
+  job.viewport = port.viewport;
   job.frame = frame_;
   job.time = time_;
   job.revision = revision_;

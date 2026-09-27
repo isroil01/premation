@@ -202,8 +202,30 @@ class FilePorts final : public Ports {
   /// Where portable footage is unpacked: `<temp>/premation-portable` unless set.
   void set_staging_root(std::string dir) { staging_ = std::move(dir); }
 
+  /// importFiles / importBytes on disk (C, Phase 2 "session footage"): a file
+  /// is recorded by its path (src = path = the file), typed by its extension
+  /// and described by `probe` when one is attached (the media system's probe:
+  /// width, height, duration, fps, audio, alpha); bytes (a browser-picked or
+  /// dropped file, a session `blob:` the page read) are written first,
+  /// content-addressed, to `<footage dir>/<sha256><ext>` (temp + rename), so
+  /// every item the engine holds is a file it can read — never a `blob:` URL.
+  /// The footage dir is `<temp>/premation-session-footage` unless set.
+  /// A probe fills `metadata` fields (JSON ImportedAsset.metadata) or throws EngineFail(io) for an unreadable file.
+  using Probe = std::function<Json(const std::string& path)>;
+  void set_probe(Probe probe) { probe_ = std::move(probe); }
+  void set_footage_dir(std::string dir) { footageDir_ = std::move(dir); }
+  [[nodiscard]] bool has_import() const override { return true; }
+  [[nodiscard]] Json import_file(const api::ImportFile& file, const std::string& id) override;
+  [[nodiscard]] Json import_bytes(const api::ImportBytesFile& file, const std::string& id) override;
+  [[nodiscard]] bool has_probe() const override { return true; }
+  [[nodiscard]] Json probe_file(const std::string& path) override;
+
  private:
+  /// A record for the file at `path` (throws EngineFail(io) when it is not a readable file).
+  [[nodiscard]] Json record_for(const std::string& path, const std::string& name, const std::string& id);
   std::string staging_;
+  std::string footageDir_;
+  Probe probe_;
 };
 
 /// handler.ts `HandlerCtx`.

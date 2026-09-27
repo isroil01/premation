@@ -109,7 +109,7 @@ describe('engineFraming — pinned against the generated codec', () => {
   it('frame channel: the electron copy of the generated codec emits the schema codec\'s bytes', () => {
     const msgs: FrameChannelMessage[] = [
       { type: 'frameReady', generation: 3, slot: 1, viewport: 1, dropped: 4, frame: 90, time: 3 * FLICKS, revision: 17, renderStartUs: 1.5, renderDoneUs: 2.5, width: 1920, height: 1080 },
-      { type: 'slots', generation: 2, viewport: 1, width: 640, height: 360, format: 'rgba8unorm', shared: true, handles: [0x1a4, 0x1b8, 0x2000] },
+      { type: 'slots', generation: 2, viewport: 1, width: 640, height: 360, format: 'rgba8unorm', shared: true, handles: [0x1a4, 0x1b8, 0x2000], strides: [], offsets: [], sizes: [], modifier: 0 },
       { type: 'pong', nonce: 2 ** 40, revision: 9, playing: true, queued: 3 },
       { type: 'release', generation: 7, slot: 2 },
       { type: 'ping', nonce: 0xdeadbeef },

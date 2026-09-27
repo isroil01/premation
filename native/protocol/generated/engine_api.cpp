@@ -22775,6 +22775,10 @@ void encode(wire::Writer& w, const FrameSlots& v) {
   w.varint(40U); w.varint(static_cast<std::uint32_t>(v.format));
   w.varint(48U); w.boolean(v.shared);
   if (!v.handles.empty()) { w.varint(58U); const std::size_t s = w.begin_ld(); for (const auto& e : v.handles) w.varint(e); w.end_ld(s); }
+  if (!v.strides.empty()) { w.varint(66U); const std::size_t s = w.begin_ld(); for (const auto& e : v.strides) w.varint(e); w.end_ld(s); }
+  if (!v.offsets.empty()) { w.varint(74U); const std::size_t s = w.begin_ld(); for (const auto& e : v.offsets) w.varint(e); w.end_ld(s); }
+  if (!v.sizes.empty()) { w.varint(82U); const std::size_t s = w.begin_ld(); for (const auto& e : v.sizes) w.varint(e); w.end_ld(s); }
+  w.varint(88U); w.varint(v.modifier);
 }
 
 Status decode(wire::Reader& r, FrameSlots& out) {
@@ -22784,6 +22788,7 @@ Status decode(wire::Reader& r, FrameSlots& out) {
   bool has_height = false;
   bool has_format = false;
   bool has_shared = false;
+  bool has_modifier = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -22824,6 +22829,29 @@ Status decode(wire::Reader& r, FrameSlots& out) {
         while (!sub.at_end()) { std::uint64_t e = 0; if (!sub.varint(e)) return Status::truncated; out.handles.push_back(e); }
         break;
       }
+      case 66U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { std::uint32_t e = 0; if (!sub.u32(e)) return Status::bad_value; out.strides.push_back(e); }
+        break;
+      }
+      case 74U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { std::uint32_t e = 0; if (!sub.u32(e)) return Status::bad_value; out.offsets.push_back(e); }
+        break;
+      }
+      case 82U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { std::uint64_t e = 0; if (!sub.varint(e)) return Status::truncated; out.sizes.push_back(e); }
+        break;
+      }
+      case 88U: {
+        if (!r.varint(out.modifier)) return Status::truncated;
+        has_modifier = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -22835,6 +22863,7 @@ Status decode(wire::Reader& r, FrameSlots& out) {
   if (!has_height) return Status::missing_field;
   if (!has_format) return Status::missing_field;
   if (!has_shared) return Status::missing_field;
+  if (!has_modifier) return Status::missing_field;
   return Status::ok;
 }
 

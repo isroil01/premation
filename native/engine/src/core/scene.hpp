@@ -85,6 +85,15 @@ struct ViewTransform {
 [[nodiscard]] bool id_taken(const Document& d, std::string_view id);
 [[nodiscard]] std::vector<std::string> layers_using_item(const Document& d, std::string_view item);
 [[nodiscard]] const Json* find_asset(const Document& d, std::string_view id);
+/// Is `ref` a session URL the engine process cannot read (`blob:`, `http:`, `https:`)?
+[[nodiscard]] bool is_session_url(std::string_view ref) noexcept;
+/// What the engine reads an asset's media from: its `src`, unless that is a
+/// session URL (a page's `blob:` object URL, a remote file) or empty and the
+/// record's `path` names a file — the original on disk, or the cache file the
+/// page wrote the session bytes to (src/core/engine/sessionFootage.ts) — then
+/// the path. Empty when neither is set. The engine never gets a `blob:` it
+/// could have avoided.
+[[nodiscard]] std::string asset_media_src(const Json& asset);
 [[nodiscard]] const Folder* find_folder(const Document& d, std::string_view id);
 
 enum class ItemRefKind : std::uint8_t { composition, footage, folder };

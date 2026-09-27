@@ -635,6 +635,9 @@ const bridge = {
     request: (bytes: Uint8Array) => ipcRenderer.invoke('engine:request', bytes),
     status: () =>
       ipcRenderer.invoke('engine:status').catch(() => ({ enabled: false, state: 'disabled' })),
+    /** C: this window's first engine viewport id (0 in the editor, a block of its own in a pop-out). */
+    viewportBase: (): Promise<number> =>
+      ipcRenderer.invoke('engine:viewportBase').then((n: unknown) => (typeof n === 'number' && Number.isInteger(n) && n >= 0 ? n : 0), () => 0),
     onEvents: (handler: (bytes: Uint8Array, meta?: { foreign?: boolean }) => void) => {
       // F2: `foreign` = caused by another window's request (a pop-out's edit in the editor, or back).
       const listener = (_event: unknown, bytes: Uint8Array, meta?: { foreign?: boolean }): void => handler(bytes, meta);

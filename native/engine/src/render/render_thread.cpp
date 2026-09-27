@@ -61,10 +61,21 @@ struct RenderThread::SlotSet {
 RenderThread::RenderThread(RenderOptions options, SendFrames send, OnFatal onFatal)
     : options_(options), send_(std::move(send)), onFatal_(std::move(onFatal)) {
   options_.slots = std::clamp<std::uint32_t>(options_.slots, 2, frames::kMaxSlots);
-  ring_.on_release([this] {
+}
+
+void RenderThread::release(std::uint32_t generation, std::uint32_t slot) {
+  std::shared_ptr<FrameRing> ring;
+  {
     const std::lock_guard<std::mutex> lock(m_);
-    cv_.notify_all();
-  });
+    for (const auto& [id, port] : ports_) {
+      if (port->ring->generation() == generation) {
+        ring = port->ring;
+        break;
+      }
+    }
+  }
+  // Outside m_: the ring's release hook takes m_ to wake the render thread.
+  if (ring) (void)ring->release(generation, slot);
 }
 
 RenderThread::~RenderThread() { stop(); }
@@ -95,12 +106,18 @@ void RenderThread::stop() {
 void RenderThread::submit(RenderJob job) {
   {
     const std::lock_guard<std::mutex> lock(m_);
-    if (pending_) {
-      ++counters_.dropped;  // superseded before it started: the newest frame wins
-      ++droppedPending_;
+    const auto it = ports_.find(job.viewport);
+    if (it == ports_.end() || !it->second->config.open) {
+      ++counters_.dropped;  // its viewport closed meanwhile: nowhere to show it
+      return;
     }
-    droppedPending_ += job.clockDropped;
-    pending_ = std::move(job);
+    Port& p = *it->second;
+    if (p.pending) {
+      ++counters_.dropped;  // superseded before it started: the newest frame wins
+      ++p.droppedPending;
+    }
+    p.droppedPending += job.clockDropped;
+    p.pending = std::move(job);
   }
   cv_.notify_all();
 }
@@ -108,12 +125,27 @@ void RenderThread::submit(RenderJob job) {
 void RenderThread::configure(const ViewportConfig& config) {
   {
     const std::lock_guard<std::mutex> lock(m_);
-    if (config == config_) return;
-    const bool ring = ring_config_changed(config_, config);
-    config_ = config;
-    // D5: a camera-only change keeps the ring (ring_config_changed).
-    if (!ring) return;
-    configDirty_ = true;
+    auto it = ports_.find(config.viewport);
+    if (it == ports_.end()) {
+      if (!config.open) return;  // closing a viewport this thread never had
+      auto port = std::make_unique<Port>();
+      port->ring->on_release([this] {
+        const std::lock_guard<std::mutex> relock(m_);
+        cv_.notify_all();
+      });
+      it = ports_.emplace(config.viewport, std::move(port)).first;
+      it->second->config = config;
+      it->second->dirty = true;
+    } else {
+      Port& p = *it->second;
+      if (config == p.config) return;
+      const bool ring = ring_config_changed(p.config, config);
+      p.config = config;
+      // D5: a camera-only change keeps the ring (ring_config_changed).
+      if (!ring) return;
+      p.dirty = true;
+      if (!config.open) p.pending.reset();
+    }
   }
   cv_.notify_all();
 }
@@ -123,7 +155,7 @@ void RenderThread::set_shared(bool shared) {
     const std::lock_guard<std::mutex> lock(m_);
     if (shared_ == shared) return;
     shared_ = shared;
-    configDirty_ = true;
+    for (auto& [id, p] : ports_) p->dirty = true;
   }
   cv_.notify_all();
 }
@@ -139,7 +171,7 @@ void RenderThread::set_copy(bool copy) {
     const bool want = copy && static_cast<bool>(options_.sendPixels);
     if (copy_ == want) return;
     copy_ = want;
-    configDirty_ = true;
+    for (auto& [id, p] : ports_) p->dirty = true;
   }
   cv_.notify_all();
 }
@@ -168,10 +200,10 @@ FrameCacheStats RenderThread::cache_stats() const {
 
 std::string RenderThread::open_gpu() {
 #if defined(PREMATION_SHARED_TEXTURE)
-  // Windows (NT handles) and macOS (IOSurfaces): a host to share with.
+  // Windows (NT handles), macOS (IOSurfaces), Linux with GBM (dmabufs): a host to share with.
   const bool wantShared = options_.hostPid != 0;
 #else
-  const bool wantShared = false;  // Linux: no shared route yet — the route-A copy
+  const bool wantShared = false;  // Linux without GBM: no shared route — the route-A copy
 #endif
   gpu_ = create_gpu(wantShared, options_.highPerformance, options_.vendorId);
   if (!gpu_) return "no GPU adapter / device (Dawn)";
@@ -211,7 +243,12 @@ std::string RenderThread::open_gpu() {
 
 void RenderThread::close_gpu() {
   if (gpu_) wait_idle(*gpu_);
-  slots_.reset();
+  {
+    // Only the render thread touches `slots`; m_ guards the map against a
+    // concurrent configure() inserting a viewport.
+    const std::lock_guard<std::mutex> lock(m_);
+    for (auto& [id, p] : ports_) p->slots.reset();
+  }
   retired_.clear();
   cache_.reset();
   drawer_.reset();
@@ -241,9 +278,12 @@ void RenderThread::run(std::promise<std::string>& ready) {
   ready.set_value({});
 
   std::unique_lock<std::mutex> lock(m_);
+  const auto anyDirty = [this] {
+    return std::any_of(ports_.begin(), ports_.end(), [](const auto& e) { return e.second->dirty; });
+  };
   for (;;) {
-    cv_.wait_for(lock, std::chrono::milliseconds(500), [this] {
-      return quit_ || configDirty_ || !tasks_.empty() || (pending_ && config_.open && slots_ && ring_.any_free());
+    cv_.wait_for(lock, std::chrono::milliseconds(500), [this, &anyDirty] {
+      return quit_ || anyDirty() || !tasks_.empty() || next_ready_locked() != nullptr;
     });
     if (quit_) break;
     if (gpu_->device_lost()) {
@@ -252,10 +292,13 @@ void RenderThread::run(std::promise<std::string>& ready) {
       if (!recovered && onFatal_) onFatal_("GPU device lost");
       lock.lock();
       if (!recovered) break;
-      // New slots (a new generation the host imports), and the last frame
-      // again unless a newer one is waiting: the viewport is never left blank.
-      configDirty_ = true;
-      if (!pending_) std::swap(pending_, lastJob_);
+      // New slots (a new generation the host imports) for every viewport, and
+      // each one's last frame again unless a newer one is waiting: no viewport
+      // is left blank.
+      for (auto& [id, p] : ports_) {
+        p->dirty = true;
+        if (!p->pending) std::swap(p->pending, p->lastJob);
+      }
       continue;
     }
     const auto now = SteadyClock::now();
@@ -264,14 +307,24 @@ void RenderThread::run(std::promise<std::string>& ready) {
       collect_retired(now);
       lock.lock();
     }
-    if (configDirty_) {
-      configDirty_ = false;
-      const ViewportConfig config = config_;
+    if (anyDirty()) {
       const bool shared = shared_;
       const bool copy = copy_;
-      lock.unlock();
-      rebuild(config, shared, copy);
-      lock.lock();
+      for (auto it = ports_.begin(); it != ports_.end();) {
+        Port& p = *it->second;
+        if (!p.dirty) {
+          ++it;
+          continue;
+        }
+        p.dirty = false;
+        const ViewportConfig config = p.config;
+        lock.unlock();
+        rebuild(p, config, shared, copy);  // a closed viewport: an empty ring, announced
+        lock.lock();
+        // Forget a viewport that is (still) closed once its ring is retired; its
+        // late releases name a generation no ring has any more.
+        it = (!p.config.open && !p.dirty) ? ports_.erase(it) : std::next(it);
+      }
       continue;
     }
     if (!tasks_.empty()) {
@@ -280,17 +333,19 @@ void RenderThread::run(std::promise<std::string>& ready) {
       run_tasks(lock);
       continue;
     }
-    if (!pending_ || !config_.open || !slots_) continue;
-    const std::optional<std::uint32_t> slot = ring_.acquire();
+    Port* port = next_ready_locked();
+    if (port == nullptr) continue;
+    const std::optional<std::uint32_t> slot = port->ring->acquire();
     if (!slot) continue;  // every slot is with the host: keep the newest job until one returns
-    RenderJob job = std::move(*pending_);
-    pending_.reset();
-    job.clockDropped = droppedPending_;
-    droppedPending_ = 0;
-    const ViewportConfig config = config_;
+    RenderJob job = std::move(*port->pending);
+    port->pending.reset();
+    job.clockDropped = port->droppedPending;
+    port->droppedPending = 0;
+    lastServed_ = port->config.viewport;
+    const ViewportConfig config = port->config;
     lock.unlock();
-    render(job, *slot, config);
-    lastJob_ = std::move(job);
+    render(*port, job, *slot, config);
+    port->lastJob = std::move(job);
     lock.lock();
   }
   // Queries still queued are dropped: their futures report a broken promise,
@@ -299,6 +354,18 @@ void RenderThread::run(std::promise<std::string>& ready) {
   lock.unlock();
   // Tear down on this thread, which created everything.
   close_gpu();
+}
+
+RenderThread::Port* RenderThread::next_ready_locked() {
+  // Round-robin: the first ready viewport after the one served last, wrapping.
+  const auto ready = [](const Port& p) { return p.pending && p.config.open && p.slots && p.ring->any_free(); };
+  for (auto it = ports_.upper_bound(lastServed_); it != ports_.end(); ++it) {
+    if (ready(*it->second)) return it->second.get();
+  }
+  for (auto it = ports_.begin(); it != ports_.end() && it->first <= lastServed_; ++it) {
+    if (ready(*it->second)) return it->second.get();
+  }
+  return nullptr;
 }
 
 void RenderThread::post(std::function<void()> task) {
@@ -356,24 +423,32 @@ std::future<WorkingPixels> RenderThread::read_pixels(std::uint32_t viewport, Pix
   std::future<WorkingPixels> result = promise->get_future();
   post([this, promise, viewport, region] {
     WorkingPixels out;
-    if (!lastJob_ || lastJob_->viewport != viewport || !slots_) {
+    Port* port = nullptr;
+    {
+      const std::lock_guard<std::mutex> lock(m_);
+      if (const auto it = ports_.find(viewport); it != ports_.end()) port = it->second.get();
+    }
+    // Render thread: `port` stays valid (only this thread erases one).
+    const SlotSet* slots = port != nullptr ? port->slots.get() : nullptr;
+    const std::optional<RenderJob>* last = port != nullptr ? &port->lastJob : nullptr;
+    if (last == nullptr || !*last || slots == nullptr) {
       out.answer = HookAnswer::pending;
       out.error = "viewport " + std::to_string(viewport) + " has shown no frame yet";
-    } else if (!lastJob_->built || !drawer_) {
+    } else if (!(*last)->built || !drawer_) {
       out.answer = HookAnswer::unsupported;
       out.error = "the viewport shows C2 quads: there is no working-space frame to read";
     } else {
       // The ring may have been rebuilt since the core clamped the region.
       PixelRegion r = region;
-      r.x = std::min(r.x, slots_->width);
-      r.y = std::min(r.y, slots_->height);
-      r.width = std::min(r.width, slots_->width - r.x);
-      r.height = std::min(r.height, slots_->height - r.y);
+      r.x = std::min(r.x, slots->width);
+      r.y = std::min(r.y, slots->height);
+      r.width = std::min(r.width, slots->width - r.x);
+      r.height = std::min(r.height, slots->height - r.y);
       std::string error;
       if (r.width == 0 || r.height == 0) {
         out.answer = HookAnswer::failed;
         out.error = "the region is outside the viewport";
-      } else if (drawer_->read_working(*lastJob_->built, slots_->width, slots_->height, r, out, error)) {
+      } else if (drawer_->read_working(*(*last)->built, slots->width, slots->height, r, out, error)) {
         out.answer = HookAnswer::ready;
       } else {
         out = WorkingPixels{};
@@ -387,7 +462,7 @@ std::future<WorkingPixels> RenderThread::read_pixels(std::uint32_t viewport, Pix
   return result;
 }
 
-void RenderThread::rebuild(const ViewportConfig& config, bool shared, bool copy) {
+void RenderThread::rebuild(Port& port, const ViewportConfig& config, bool shared, bool copy) {
   auto next = std::make_unique<SlotSet>();
   next->generation = ++generation_;
   next->width = config.width;
@@ -411,7 +486,13 @@ void RenderThread::rebuild(const ViewportConfig& config, bool shared, bool copy)
           next->textures.push_back(s.texture);
           next->copyable = next->copyable && s.copyable;
           announce.handles.push_back(s.remoteHandle);
+          if (s.stride != 0) {  // Linux dmabuf: the plane layout the host imports with
+            announce.strides.push_back(s.stride);
+            announce.offsets.push_back(s.offset);
+            announce.sizes.push_back(s.planeSize);
+          }
         }
+        announce.modifier = pool->modifier();
         next->pool = std::move(pool);
       } else {
         pool->close_remote_handles();  // the ones duplicated before the failure
@@ -448,19 +529,20 @@ void RenderThread::rebuild(const ViewportConfig& config, bool shared, bool copy)
     }
   }
   announce.shared = next->shared;
-  if (slots_) {
-    slots_->retiredAt = SteadyClock::now();
-    retired_.push_back(std::move(slots_));
+  if (port.slots) {
+    port.slots->retiredAt = SteadyClock::now();
+    retired_.push_back(std::move(port.slots));
   }
-  slots_ = std::move(next);
-  ring_.reset(slots_->generation, count);
+  port.slots = std::move(next);
+  port.ring->reset(port.slots->generation, count);
   PREMATION_LOG(info, "slots")
-      .kv("generation", slots_->generation)
+      .kv("viewport", config.viewport)
+      .kv("generation", port.slots->generation)
       .kv("width", config.width)
       .kv("height", config.height)
       .kv("count", count)
-      .kv("shared", slots_->shared)
-      .kv("copy", slots_->copy);
+      .kv("shared", port.slots->shared)
+      .kv("copy", port.slots->copy);
   if (send_) send_(frames::Message{.v = std::move(announce)});
   const std::lock_guard<std::mutex> lock(m_);
   cv_.notify_all();
@@ -470,15 +552,16 @@ void RenderThread::collect_retired(SteadyClock::time_point now) {
   std::erase_if(retired_, [now](const std::unique_ptr<SlotSet>& s) { return now - s->retiredAt >= kRetireGrace; });
 }
 
-void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConfig& config) {
-  SlotSet& set = *slots_;
+void RenderThread::render(Port& port, RenderJob& job, std::uint32_t slot, const ViewportConfig& config) {
+  SlotSet& set = *port.slots;
+  FrameRing& ring = *port.ring;
   const double startUs = os::epoch_us();
   const auto t0 = SteadyClock::now();
 #if defined(PREMATION_SHARED_TEXTURE)
   shared::Slot* shared = set.pool ? &set.pool->slots()[slot] : nullptr;
   if (shared != nullptr && !set.pool->begin_access(*shared)) {
     PREMATION_LOG(error, "begin_access_failed").kv("slot", slot);
-    ring_.unacquire(slot);
+    ring.unacquire(slot);
     return;
   }
 #endif
@@ -539,12 +622,12 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
   wait_idle(*gpu_);
   if (gpu_->device_lost()) {
     // The slot holds nothing: never announced; the loop recovers and draws the job again.
-    ring_.unacquire(slot);
+    ring.unacquire(slot);
     return;
   }
   if (set.copy && !send_copy(set, slot)) {
     // No pixels, no FrameReady: the host pairs the two and would wait for pixels forever.
-    ring_.unacquire(slot);
+    ring.unacquire(slot);
     return;
   }
   lossesSinceFrame_ = 0;

@@ -129,7 +129,7 @@ std::optional<DisplacedCarrier> displaced_carrier_for(const doc::Document& d, st
   if (!fieldKey || fieldKey->empty()) return std::nullopt;
   std::string src;
   if (mat.heightMapAssetId) {
-    if (const js::Json* a = doc::find_asset(d, *mat.heightMapAssetId); a != nullptr && a->at("src").is_string()) src = a->at("src").str();
+    if (const js::Json* a = doc::find_asset(d, *mat.heightMapAssetId); a != nullptr && a->at("src").is_string()) src = doc::asset_media_src(*a);
   } else {
     src = *mat.heightMapSrc;
   }

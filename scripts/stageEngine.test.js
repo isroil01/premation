@@ -74,6 +74,10 @@ describe('stageEngine', () => {
     built('linux-clang-engine', ['premation-engine', 'libvulkan.so.1', 'libfoo.so', 'notes.txt']);
     stageEngine('linux', 1, {}, root);
     expect(staged()).toEqual(['libfoo.so', 'libvulkan.so.1', 'premation-engine']);
+    // The dmabuf host bridge travels when it was built (optional on Linux).
+    built('linux-clang-engine', ['premation-engine', 'premation-host-bridge.node']);
+    stageEngine('linux', 1, {}, root);
+    expect(staged()).toEqual(expect.arrayContaining(['premation-engine', 'premation-host-bridge.node']));
     log.mockRestore();
   });
 });

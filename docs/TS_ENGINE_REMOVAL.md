@@ -18,13 +18,30 @@ test lines** of TypeScript engine go. Rough size: 5–8 months for one small tea
 1. **The engine viewport exists only on Windows.** `shared_texture_ffi.cpp` is
    D3D11/NT-handle, built `if(WIN32)`; `electron/engineHost.ts` drops non-shared
    frames. No IOSurface (macOS) or dmabuf (Linux) path; route-A copy not wired.
+   **2026-09-28 (platform-plumbing): closed in code, verified on Windows only.**
+   Route A (pixel copy over fd 5 → `engine:pixels` → VideoFrame) runs in the
+   real app on the Windows box when forced with `PREMATION_VIEWPORT_ROUTE=copy`
+   (29.9 fps / p50 11.5 ms vs route C 30.0 / 10.8 on bench.json); it is what
+   macOS without the host bridge and Linux without GBM get. macOS IOSurface
+   (p0-platform) and Linux dmabuf (`shared_texture_ffi_linux.cpp` + the
+   `pidfd_getfd` host bridge, this branch) are written and compile-gated in CI,
+   never run — `docs/VERIFY_ON_TEST_MACHINE.md` "platform-plumbing".
 2. **The C++ build reads TypeScript sources:** WGSL (`native/engine/shaders/extract.mjs`
    from `packages/renderer/src/shaders`), the property catalog
    (`core/generated/catalog_data.inc` from ~25 TS registries via
    `crossEngineCatalog.test.ts`), `raster/vertical_orientation.inc`, and the
    golden gate's `.pfs` inputs from the TS WebGPU pass.
 3. **Release/CI never build the engine** (`release.yml`; `scripts/stageEngine.cjs`
-   ships an empty folder when it is missing).
+   ships an empty folder when it is missing). **Closed:** native.yml `engine`
+   (3 OSes) and release.yml `engine` (win, mac arm64, mac x64) build it through
+   `.github/actions/build-engine` with a vcpkg binary cache; render-tests.yml
+   `native-golden` builds it on Windows and runs the native golden gate on WARP
+   (non-blocking until its first run is reviewed); `stageEngine.cjs` refuses a
+   package without the engine and ignores `PREMATION_PACKAGE_WITHOUT_ENGINE`
+   in CI; electron-builder ships `<resources>/engine` (signs the .exe on
+   Windows through extraResources, codesigns the nested Mach-Os). None of the
+   workflows has run yet (validated structurally, and every Windows script step
+   run locally).
 
 ## What goes (prod / test lines)
 
@@ -97,6 +114,25 @@ Data decisions:
 - AI `LEGACY_GAPS` + `scene.apply` abort-on-failure (92 sites).
 - Pop-out windows as second mirrors; command log in main; multiple viewports;
   session `blob:` footage written to a cache file then `importFiles`.
+  **2026-09-28 (platform-plumbing):** the command log was already in main
+  (`electron/engineCommandLog.ts`) and pop-outs already mirrors (events relayed
+  to every window). New: **multiple viewports** — every `setViewport` id is its
+  own engine surface (Session keeps a map; the render thread one ring per
+  viewport, generations unique across them, viewports served round-robin);
+  main routes each viewport's frames to the window that set it up, receivers
+  and route-A copies are per window; a pop-out's EngineSurface uses its own id
+  block (`engine:viewportBase`, webContents id × 256), so a popped-out Viewport
+  is a second live engine surface (real app: editor + pop-out both at ~30 fps,
+  route C and route A). **Session footage**: the engine has an import port on
+  disk (`FilePorts`: `importFiles` probes with ffmpeg, `importBytes` writes a
+  content-addressed cache file under `<userData>/session-footage` first), and
+  wherever it reads an asset's media (footage, sprites, sky, height map, audio)
+  it takes the record's file `path` when `src` is a `blob:` / `http:` URL
+  (`doc::asset_media_src`), so the page's cache-file relink
+  (`sessionFootage.ts`) reaches the renderer. Decision: the page RELINKS the
+  existing item to the cache file (`relinkItem`) rather than re-importing it —
+  the item id and every layer on it stay; a new import of bytes goes through
+  `importBytes` and never leaves a `blob:` in the engine's document.
 
 ## Features that exist only in TypeScript today
 

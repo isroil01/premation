@@ -1097,7 +1097,7 @@ void Walk::build_node(const doc::Node& n) {
     cfg.set("shutterSec", Json::number(blurOn ? (std::max(0.0, std::min(360.0, mb_->shutterAngle)) / 360) / std::max(1.0, mb_->fps) : 0));
     if (cfg.at("spriteAssetId").is_string() && !cfg.at("spriteAssetId").str().empty()) {
       if (const Json* asset = doc::find_asset(d_, cfg.at("spriteAssetId").str()); asset != nullptr && asset->at("src").is_string()) {
-        cfg.set("spriteSrc", asset->at("src"));
+        cfg.set("spriteSrc", Json::string(doc::asset_media_src(*asset)));
       }
     }
     // A 3D emitter with no lens of its own takes the scene camera's focal length.
@@ -1590,7 +1590,7 @@ void Walk::build_node(const doc::Node& n) {
     std::optional<std::string> src = base.src;
     const Json* asset = base.assetId ? doc::find_asset(d_, *base.assetId) : nullptr;
     if (asset != nullptr) {
-      if (asset->at("src").is_string() && !asset->at("src").str().empty()) src = asset->at("src").str();
+      if (std::string media = doc::asset_media_src(*asset); !media.empty()) src = std::move(media);
       if (asset->at("interpret").at("alpha").is_string() && asset->at("interpret").at("alpha").str() == "premultiplied") {
         l.premultipliedSource = true;
       }

@@ -422,6 +422,104 @@ std::vector<std::uint8_t> FilePorts::read_file_bytes(const std::string& path) {
   return out;
 }
 
+// ── FilePorts: footage import (session footage never stays a blob:) ────────
+
+namespace {
+
+bool any_suffix(std::string_view name, std::initializer_list<std::string_view> suffixes) {
+  return std::any_of(suffixes.begin(), suffixes.end(), [name](std::string_view s) { return ends_with_ci(name, s); });
+}
+
+/// assetStore's `type` from a file name (and a MIME type when there is one).
+std::string footage_type(std::string_view name, std::string_view mime) {
+  if (mime.starts_with("audio/")) return "audio";
+  if (mime.starts_with("image/")) return "image";
+  if (mime.starts_with("video/")) return "video";
+  if (any_suffix(name, {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".exr", ".svg", ".avif", ".heic"})) {
+    return "image";
+  }
+  if (any_suffix(name, {".wav", ".mp3", ".aac", ".m4a", ".flac", ".ogg", ".opus", ".aif", ".aiff"})) return "audio";
+  return "video";
+}
+
+/// The extension to cache bytes under (".bin" when the name has none a decoder could use).
+std::string cache_extension(std::string_view name) {
+  const std::size_t dot = name.find_last_of('.');
+  if (dot == std::string_view::npos || name.size() - dot > 9 || name.find_first_of("/\\", dot) != std::string_view::npos) {
+    return ".bin";
+  }
+  std::string ext(name.substr(dot));
+  for (char& c : ext) {
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.')) return ".bin";
+  }
+  return ext;
+}
+
+std::string utf8_of(const std::filesystem::path& p) {
+  const std::u8string s = p.generic_u8string();
+  return {s.begin(), s.end()};
+}
+
+}  // namespace
+
+Json FilePorts::record_for(const std::string& path, const std::string& name, const std::string& id) {
+  const std::filesystem::path p(std::u8string(path.begin(), path.end()));
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(p, ec)) fail(api::ErrorCode::io, "could not import '" + path + "': not a readable file");
+  const std::uintmax_t size = std::filesystem::file_size(p, ec);
+  Json a = Json::object();
+  a.set("id", Json::string(id));
+  a.set("name", Json::string(name));
+  a.set("type", Json::string(footage_type(name, {})));
+  a.set("src", Json::string(path));
+  a.set("size", Json::number(ec ? 0.0 : static_cast<double>(size)));
+  a.set("metadata", probe_ ? probe_(path) : Json::object());
+  a.set("path", Json::string(path));
+  return a;
+}
+
+Json FilePorts::import_file(const api::ImportFile& file, const std::string& id) {
+  if (file.path.empty() || is_session_url(file.path) || file.path.starts_with("data:")) {
+    fail(api::ErrorCode::invalid_argument, "importFiles takes a file path, not '" + file.path.substr(0, 16) + "…'");
+  }
+  return record_for(file.path, base_name(file.path), id);
+}
+
+Json FilePorts::import_bytes(const api::ImportBytesFile& file, const std::string& id) {
+  // Content-addressed: the same bytes imported twice are one cache file.
+  const std::string_view bytes(reinterpret_cast<const char*>(file.data.data()), file.data.size());
+  std::error_code ec;
+  const std::filesystem::path dir = footageDir_.empty()
+                                        ? std::filesystem::temp_directory_path(ec) / "premation-session-footage"
+                                        : std::filesystem::path(std::u8string(footageDir_.begin(), footageDir_.end()));
+  const std::filesystem::path target = dir / (sha256_hex(bytes) + cache_extension(file.name));
+  if (!std::filesystem::is_regular_file(target, ec) || std::filesystem::file_size(target, ec) != file.data.size()) {
+    write_file_atomic(target, bytes);
+  }
+  Json a = record_for(utf8_of(target), file.name, id);
+  if (!file.mime_type.empty()) a.set("type", Json::string(footage_type(file.name, file.mime_type)));
+  // The original on disk, when the picker knew it (relink / collect read it); the cache file otherwise.
+  if (file.origin_path && !file.origin_path->empty()) a.set("path", Json::string(*file.origin_path));
+  return a;
+}
+
+Json FilePorts::probe_file(const std::string& path) {
+  Json out = Json::object();
+  out.set("name", Json::string(base_name(path)));
+  std::error_code ec;
+  const std::filesystem::path p(std::u8string(path.begin(), path.end()));
+  if (const std::uintmax_t size = std::filesystem::file_size(p, ec); !ec) out.set("size", Json::number(static_cast<double>(size)));
+  if (probe_) {
+    try {
+      out.set("metadata", probe_(path));
+    } catch (const EngineFail&) {
+      // Relinking to an unreadable file keeps the old facts (the TS port's probe tier `none`).
+    }
+  }
+  return out;
+}
+
 Json FilePorts::read_project(const std::string& path) {
   const std::filesystem::path p(std::u8string(path.begin(), path.end()));
   std::error_code dirEc;

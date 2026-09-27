@@ -80,6 +80,20 @@ if(Dawn_FOUND)
     target_sources(engine_gpu PRIVATE src/shared_texture_ffi_mac.cpp)
     target_link_libraries(engine_gpu PUBLIC "-framework IOSurface" "-framework CoreFoundation")
     target_compile_definitions(engine_gpu PUBLIC PREMATION_SHARED_TEXTURE=1)
+  else()
+    # Linux: dmabuf slots need GBM (libgbm-dev); without it frames take the
+    # route-A copy. UNVERIFIED on a Linux GPU box (docs/VERIFY_ON_TEST_MACHINE.md).
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(GBM IMPORTED_TARGET gbm)
+    endif()
+    if(GBM_FOUND)
+      target_sources(engine_gpu PRIVATE src/shared_texture_ffi_linux.cpp)
+      target_link_libraries(engine_gpu PUBLIC PkgConfig::GBM)
+      target_compile_definitions(engine_gpu PUBLIC PREMATION_SHARED_TEXTURE=1 PREMATION_DMABUF=1)
+    else()
+      message(STATUS "premation-engine: GBM not found — the Linux viewport uses the route-A frame copy")
+    endif()
   endif()
   target_include_directories(engine_gpu PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -168,10 +182,14 @@ endif()
 # so it builds with the headless configuration too. Written against the C
 # N-API: the headers of any Node ≥ 16 work, and the module is not tied to one
 # Electron version. Lands beside premation-engine; electron-builder ships both.
-if(APPLE)
-  option(PREMATION_HOST_BRIDGE "Build premation-host-bridge.node (macOS engine viewport)" ON)
+#
+# Linux: the same module name from host_bridge/dmabuf_bridge_ffi.cpp — main
+# duplicates the engine's dmabuf fds with pidfd_getfd (UNVERIFIED; the route-A
+# copy is used when it is missing).
+if(NOT WIN32)
+  option(PREMATION_HOST_BRIDGE "Build premation-host-bridge.node (macOS / Linux engine viewport)" ON)
 endif()
-if(APPLE AND PREMATION_HOST_BRIDGE)
+if(NOT WIN32 AND PREMATION_HOST_BRIDGE)
   if(NOT NODE_API_INCLUDE_DIR)
     find_program(PREMATION_NODE_EXECUTABLE node)
     if(PREMATION_NODE_EXECUTABLE)
@@ -182,17 +200,25 @@ if(APPLE AND PREMATION_HOST_BRIDGE)
     find_path(NODE_API_INCLUDE_DIR node_api.h HINTS ${_node_hint} "${CMAKE_SOURCE_DIR}/../node_modules/node-api-headers/include")
   endif()
   if(NODE_API_INCLUDE_DIR)
-    add_library(premation-host-bridge MODULE host_bridge/iosurface_bridge_ffi.cpp)
+    if(APPLE)
+      add_library(premation-host-bridge MODULE host_bridge/iosurface_bridge_ffi.cpp)
+    else()
+      add_library(premation-host-bridge MODULE host_bridge/dmabuf_bridge_ffi.cpp)
+    endif()
     set_target_properties(premation-host-bridge PROPERTIES PREFIX "" SUFFIX ".node"
       LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     target_include_directories(premation-host-bridge SYSTEM PRIVATE "${NODE_API_INCLUDE_DIR}")
     target_compile_definitions(premation-host-bridge PRIVATE NAPI_VERSION=8 NODE_GYP_MODULE_NAME=premation_host_bridge)
-    target_link_libraries(premation-host-bridge PRIVATE motion::options "-framework IOSurface" "-framework CoreFoundation")
-    # N-API symbols come from the loading process (Electron / node).
-    target_link_options(premation-host-bridge PRIVATE -undefined dynamic_lookup)
+    target_link_libraries(premation-host-bridge PRIVATE motion::options)
+    if(APPLE)
+      target_link_libraries(premation-host-bridge PRIVATE "-framework IOSurface" "-framework CoreFoundation")
+      # N-API symbols come from the loading process (Electron / node).
+      target_link_options(premation-host-bridge PRIVATE -undefined dynamic_lookup)
+    endif()
+    # Linux: a MODULE may leave the N-API symbols undefined; the loader binds them.
   else()
     message(WARNING "premation-host-bridge: node_api.h not found (set NODE_API_INCLUDE_DIR) — "
-                    "the macOS engine viewport falls back to the route-A frame copy")
+                    "the engine viewport falls back to the route-A frame copy")
   endif()
 endif()
 

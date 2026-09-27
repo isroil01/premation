@@ -1,9 +1,12 @@
-// The render thread: owns the Dawn device, the compositor and the frame-slot
-// ring. The document core hands it evaluated frames (FrameSink::submit); it
-// renders the newest one into a free slot and announces it on the frame
-// channel. It never blocks the core: submit replaces a job that has not
-// started, and a full ring (every slot still with Chromium) holds the newest
-// job until a slot comes back — older ones are dropped and counted.
+// The render thread: owns the Dawn device, the compositor and one frame-slot
+// ring PER VIEWPORT (the editor's viewport, a pop-out window's, a second view:
+// each is its own engine surface with its own generation numbers). The
+// document core hands it evaluated frames (FrameSink::submit, tagged with their
+// viewport); it renders the newest one of a viewport into a free slot of that
+// viewport's ring and announces it on the frame channel, taking viewports in
+// turn. It never blocks the core: submit replaces a job that has not started,
+// and a full ring (every slot still with Chromium) holds the newest job until
+// a slot comes back — older ones are dropped and counted.
 //
 // Device loss (driver reset, TDR) is recovered in-process: everything built on
 // the lost device is dropped (slots, frame cache, the drawer — and with it the
@@ -21,6 +24,7 @@
 #include <deque>
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -115,8 +119,9 @@ class RenderThread final : public FrameSink {
   bool start(std::string& error);
   void stop();
 
-  /// Frame-channel Release (any thread).
-  void release(std::uint32_t generation, std::uint32_t slot) { ring_.release(generation, slot); }
+  /// Frame-channel Release (any thread). Generations are unique across
+  /// viewports, so the generation names the viewport's ring.
+  void release(std::uint32_t generation, std::uint32_t slot);
 
   // FrameSink
   void submit(RenderJob job) override;
@@ -137,6 +142,23 @@ class RenderThread final : public FrameSink {
 
  private:
   struct SlotSet;
+  /// One viewport (C multi-viewport): its config, newest job, ring and slots.
+  /// Created by configure (core thread, under m_); erased only by the render
+  /// thread (under m_) once a closed viewport's ring has been retired, so a
+  /// Port* the render thread took under the lock stays valid after it unlocks.
+  struct Port {
+    ViewportConfig config;                  // m_
+    bool dirty = false;                     // m_: the ring must be rebuilt (size, open/closed, route)
+    std::optional<RenderJob> pending;       // m_
+    std::uint32_t droppedPending = 0;       // m_: superseded + clock-skipped since the last FrameReady
+    /// shared_ptr: release() (the frame-channel reader thread) holds it past
+    /// m_ while the render thread may retire the port.
+    std::shared_ptr<FrameRing> ring = std::make_shared<FrameRing>();
+    // Render-thread only.
+    std::unique_ptr<SlotSet> slots;
+    /// The job drawn last, drawn again on a recovered device (and read by readPixels).
+    std::optional<RenderJob> lastJob;
+  };
   static constexpr std::uint32_t kMaxDeviceRecoveries = 3;
   void run(std::promise<std::string>& ready);
   /// Device, compositor, drawer and frame cache; "" or why not.
@@ -145,14 +167,16 @@ class RenderThread final : public FrameSink {
   void close_gpu();
   /// After a loss: close, then open again. False = the loss is fatal.
   bool recover_device();
-  void rebuild(const ViewportConfig& config, bool shared, bool copy);
+  void rebuild(Port& port, const ViewportConfig& config, bool shared, bool copy);
   /// Route A: the slot's read-back buffer → one pixel message. False = nothing sent.
   bool send_copy(SlotSet& set, std::uint32_t slot);
-  void render(RenderJob& job, std::uint32_t slot, const ViewportConfig& config);
+  void render(Port& port, RenderJob& job, std::uint32_t slot, const ViewportConfig& config);
   void collect_retired(std::chrono::steady_clock::time_point now);
   /// Queue `task` for the render thread (queries: stills, pixel reads).
   void post(std::function<void()> task);
   void run_tasks(std::unique_lock<std::mutex>& lock);
+  /// Under m_: a viewport with a job and a free slot, round-robin after the last one served.
+  Port* next_ready_locked();
 
   RenderOptions options_;
   SendFrames send_;
@@ -162,12 +186,11 @@ class RenderThread final : public FrameSink {
   mutable std::mutex m_;
   std::condition_variable cv_;
   bool quit_ = false;
-  bool configDirty_ = false;
-  ViewportConfig config_;
   bool shared_ = false;
   bool copy_ = false;
-  std::optional<RenderJob> pending_;
-  std::uint32_t droppedPending_ = 0;  // superseded + clock-skipped since the last FrameReady
+  /// Every viewport by id (m_ for the map; see Port for its fields).
+  std::map<std::uint32_t, std::unique_ptr<Port>> ports_;
+  std::uint32_t lastServed_ = 0;  // m_: the viewport rendered last (fair turns between viewports)
   /// Query work for the render thread (render_still, read_pixels), run
   /// between frames in arrival order; drained (answered) on stop.
   std::deque<std::function<void()>> tasks_;
@@ -177,12 +200,8 @@ class RenderThread final : public FrameSink {
   std::unique_ptr<Compositor> compositor_;
   std::unique_ptr<BuiltFrameDrawer> drawer_;
   std::unique_ptr<FrameCache> cache_;
-  std::unique_ptr<SlotSet> slots_;
   std::vector<std::unique_ptr<SlotSet>> retired_;
-  std::uint32_t generation_ = 0;
-  FrameRing ring_;
-  /// The job drawn last, drawn again on a recovered device.
-  std::optional<RenderJob> lastJob_;
+  std::uint32_t generation_ = 0;  // unique across viewports
   std::uint32_t lossesSinceFrame_ = 0;
   bool pixelPipeGone_ = false;  // logged once
 

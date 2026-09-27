@@ -627,7 +627,7 @@ class EngineAudio final : public MediaClock {
     const std::string assetId = p.at("__assetId").is_string() ? p.at("__assetId").str() : "";
     std::string src = p.at("__src").is_string() ? p.at("__src").str() : "";
     if (!assetId.empty()) {
-      if (const Json* asset = doc::find_asset(*doc_, assetId); asset != nullptr && asset->at("src").is_string()) src = asset->at("src").str();
+      if (const Json* asset = doc::find_asset(*doc_, assetId); asset != nullptr && asset->at("src").is_string()) src = doc::asset_media_src(*asset);
     }
     if (src.empty()) return true;
     const std::uint64_t id = source_of(src);
@@ -820,9 +820,8 @@ class EngineAudio final : public MediaClock {
     const std::string assetId = p.at("__assetId").is_string() ? p.at("__assetId").str() : "";
     std::string src = p.at("__src").is_string() ? p.at("__src").str() : "";
     if (!assetId.empty()) {
-      if (const Json* asset = doc::find_asset(c.d, assetId); asset != nullptr && asset->at("src").is_string() &&
-                                                             !asset->at("src").str().empty()) {
-        src = asset->at("src").str();
+      if (const Json* asset = doc::find_asset(c.d, assetId); asset != nullptr) {
+        if (std::string media = doc::asset_media_src(*asset); !media.empty()) src = std::move(media);
       }
     }
     if (src.empty() || assetId.empty()) return {};
@@ -872,7 +871,9 @@ class EngineAudio final : public MediaClock {
     if (assetId.empty()) return {};
     std::string src = rawSrc;
     const Json* asset = doc::find_asset(c.d, assetId);
-    if (asset != nullptr && asset->at("src").is_string() && !asset->at("src").str().empty()) src = asset->at("src").str();
+    if (asset != nullptr) {
+      if (std::string media = doc::asset_media_src(*asset); !media.empty()) src = std::move(media);
+    }
     if (src.empty()) return {};
     if (asset != nullptr && asset->at("metadata").at("hasAudioTrack").is_bool() &&
         !asset->at("metadata").at("hasAudioTrack").b()) {
