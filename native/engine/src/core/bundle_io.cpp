@@ -4,6 +4,7 @@
 #include <array>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <span>
 #include <set>
 #include <sstream>
@@ -672,6 +673,29 @@ std::string sha256_hex(std::string_view bytes) {
     for (int sh = 28; sh >= 0; sh -= 4) out.push_back(kHex[(word >> static_cast<unsigned>(sh)) & 0xFU]);
   }
   return out;
+}
+
+bool is_mogrt_path(std::string_view path) {
+  std::string lower(path);
+  for (char& ch : lower) {
+    if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+  }
+  return lower.ends_with(".mogrt") || lower.ends_with(".mogrt.zip");
+}
+
+Json read_mogrt(const fs::path& file) {
+  const std::string what = utf8(file);
+  std::string zip;
+  if (!read_file(file, zip)) fail(ErrorCode::io, "could not read '" + what + "'");
+  const auto entries = unzip_entries(zip, what);
+  const auto it = entries.find("package.json");
+  if (it == entries.end()) fail(ErrorCode::io, "could not read '" + what + "': it is not a Premation template package");
+  const std::optional<Json> pkg = js::parse(it->second);
+  if (!pkg || !pkg->is_object() || !pkg->at("format").is_string() || pkg->at("format").str() != "premation-mogrt-v1") {
+    fail(ErrorCode::io, "could not read '" + what + "': it is not a premation-mogrt-v1 package");
+  }
+  if (!pkg->at("document").is_object()) fail(ErrorCode::io, "could not read '" + what + "': the package carries no document");
+  return pkg->at("document");
 }
 
 bool is_portable_file(const fs::path& file) {

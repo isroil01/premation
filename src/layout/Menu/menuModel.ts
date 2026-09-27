@@ -163,6 +163,7 @@ export const APP_MENU: MenuGroupModel[] = [
           { commandId: 'assets.importFiles', label: 'Files…' },
           { commandId: 'assets.importFolder', label: 'Folder…' },
           { commandId: 'file.import3DModel', label: '3D Model…' },
+          { commandId: 'file.importTemplatePackage', label: 'Template Package…' },
         ],
       },
       { commandId: 'file.export', label: 'Export…' },

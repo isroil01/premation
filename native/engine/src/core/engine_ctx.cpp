@@ -475,6 +475,8 @@ Json FilePorts::probe_file(const std::string& path) {
 
 Json FilePorts::read_project(const std::string& path) {
   const std::filesystem::path p(std::u8string(path.begin(), path.end()));
+  // A template package carries its document inside a zip (exportMogrt.ts).
+  if (is_mogrt_path(path)) return read_mogrt(p);
   std::error_code dirEc;
   // F2: a `.motion` bundle is a directory (bundleCodec.ts `decodeBundle`).
   if (std::filesystem::is_directory(p, dirEc)) return read_bundle(p);

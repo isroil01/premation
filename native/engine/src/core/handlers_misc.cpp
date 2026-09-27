@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "anim_json.hpp"
+#include "bundle_io.hpp"
 #include "core/aep/aep_apply.hpp"
 #include "core/aep/aep_plan.hpp"
 #include "core/aep/aep_read.hpp"
@@ -62,6 +63,7 @@ std::string folder_name_of(std::string_view path) {
   const std::size_t slash = path.find_last_of("/\\");
   std::string_view base = slash == std::string_view::npos ? path : path.substr(slash + 1);
   if (ends_with_motion(base)) base.remove_suffix(7);
+  if (is_mogrt_path(base)) base.remove_suffix(base.ends_with(".zip") || base.ends_with(".ZIP") ? 10 : 6);
   return std::string(base);
 }
 
@@ -276,7 +278,9 @@ ResultOf<api::ImportProject> handle(const api::ImportProject& c, HCtx& x) {
   Document& d = x.d;
   if (aep::is_aep_path(c.path)) return import_aep_project(c, x);
   if (!x.ports.has_projects()) fail(ErrorCode::unsupported, "no project file port is attached to this engine");
-  if (!ends_with_motion(c.path)) fail(ErrorCode::unsupported, "only .motion, .aep and .aepx projects can be imported");
+  if (!ends_with_motion(c.path) && !is_mogrt_path(c.path)) {
+    fail(ErrorCode::unsupported, "only .motion, .mogrt, .aep and .aepx projects can be imported");
+  }
   if (c.folder && !c.folder->empty() && find_folder(d, *c.folder) == nullptr) {
     fail(ErrorCode::not_found, "no folder '" + *c.folder + "'", {.item = *c.folder});
   }

@@ -15,6 +15,7 @@ import path from 'node:path';
 import { ProcessEngineClient, unwrap, type EngineClient } from '@motion/engine-api';
 import { setupEngine } from '@core/engine/__testHelpers__/harness';
 import { nativeEngineExe, startNativeEngine, type NativeEngine } from '@core/engine/__testHelpers__/nativeEngine';
+import { zipBytes } from '@core/export/zip';
 import { aepFile, compItem, folderItem, footageItem, layer } from '../__testHelpers__/buildAep';
 import { importAepThroughEngine, summarizeEngineAepImport } from '../aepImport';
 
@@ -113,6 +114,32 @@ maybe('After Effects import in the C++ engine', () => {
     expect(comp.name).toBe('Main');
     unwrap(await client.execute({ type: 'undo' }));
     expect((await client.query({ type: 'getItems', items: [result.openComp!] })).ok).toBe(false);
+  });
+
+  it('imports a template package (.mogrt.zip, exportMogrt.ts) as a folder, one undoable entry', async () => {
+    // A document from the engine itself: one comp with two layers.
+    const comp = unwrap(await client.execute({ type: 'createComposition', settings: { name: 'Lower Third' }, fromItems: [] })).item;
+    unwrap(await client.execute({ type: 'createLayer', comp, kind: 'solid', name: 'Bar', init: [] }));
+    unwrap(await client.execute({ type: 'createLayer', comp, kind: 'text', name: 'Name', init: [] }));
+    const exported = unwrap(await client.query({ type: 'exportDocument' })).document;
+    const document = JSON.parse(new TextDecoder().decode(exported)) as unknown;
+    const enc = new TextEncoder();
+    const file = path.join(tmp, 'Lower Third.mogrt.zip');
+    writeFileSync(file, zipBytes([
+      { name: 'manifest.json', data: enc.encode(JSON.stringify({ version: 1, type: 'premation-mogrt', name: 'Lower Third', fieldCount: 0 })) },
+      { name: 'package.json', data: enc.encode(JSON.stringify({ format: 'premation-mogrt-v1', name: 'Lower Third', createdAt: '', fields: [], document })) },
+    ]));
+    const before = unwrap(await client.query({ type: 'getHistory' })).entries.length;
+    const res = unwrap(await client.execute({ type: 'importProject', path: file }));
+    expect(res.items.length).toBeGreaterThanOrEqual(2);
+    const folder = unwrap(await client.query({ type: 'getItems', items: [res.items[0]!] })).items[0]!;
+    expect(folder.name).toBe('Lower Third');
+    expect(unwrap(await client.query({ type: 'getHistory' })).entries.length).toBe(before + 1);
+    // Not a package: refused, nothing written.
+    const junk = path.join(tmp, 'Other.mogrt');
+    writeFileSync(junk, zipBytes([{ name: 'package.json', data: enc.encode('{"format":"something-else"}') }]));
+    const bad = await client.execute({ type: 'importProject', path: junk });
+    expect(bad.ok).toBe(false);
   });
 
   it('reports a file that is not a project', async () => {

@@ -309,6 +309,35 @@ function reportSave(outcome: SaveOutcome, opts?: { forkedFrom?: string | null })
   return false;
 }
 
+/** `file.importTemplatePackage` — a `.mogrt.zip` into the project, through the engine's importProject. */
+async function pickAndImportTemplatePackage(): Promise<void> {
+  const file = await new Promise<File | null>((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.mogrt,.zip';
+    input.addEventListener('change', () => resolve(input.files?.[0] ?? null));
+    input.addEventListener('cancel', () => resolve(null));
+    input.click();
+  });
+  if (!file) return;
+  const diskPath = window.motionEditor?.file?.pathOf?.(file) ?? '';
+  if (!diskPath) {
+    notify('Importing a template package needs the desktop app.', 'warning');
+    return;
+  }
+  const res = await engine().execute({ type: 'importProject', path: diskPath });
+  if (!res.ok) {
+    notify(
+      res.error.code === 'unsupported'
+        ? 'Template packages are imported by the C++ engine — this session runs the TypeScript engine.'
+        : `Could not import “${file.name}”: ${res.error.message}`,
+      'error',
+    );
+    return;
+  }
+  notify(`Imported “${file.name}”`, 'success');
+}
+
 /**
  * `file.openAfterEffects` — open an After Effects project.
  *
@@ -2660,6 +2689,14 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             // state in which opening one would not make sense.
             enabled: () => true,
             execute: () => { void pickAndOpenAfterEffectsProject(); },
+          });
+          registry.register({
+            // A Premation template package (Export ▸ .mogrt.zip): the engine
+            // reads the package and imports its document as a folder
+            // (importProject — one undo entry). Desktop: the file's disk path.
+            id: asCommandId('file.importTemplatePackage'), label: 'Import Template Package…', icon: 'folder',
+            enabled: () => typeof window.motionEditor?.file?.pathOf === 'function',
+            execute: () => { void pickAndImportTemplatePackage(); },
           });
           registry.register({
             id: asCommandId('file.import3DModel'), label: 'Import 3D Model…', icon: 'cube',
