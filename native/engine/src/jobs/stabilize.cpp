@@ -267,6 +267,50 @@ std::optional<Sim> pair_motion(const FloatLuma& a, const FloatLuma& b, double sc
   return fit_similarity(pts);
 }
 
+std::vector<Cell> fit_subspace_warp(const scene::pixmo::FlowField& f, int rows, int cols, double scaleX, double scaleY) {
+  const std::vector<MotionSamplePoint> pts = flow_sample_points(f, scaleX, scaleY);
+  const double w = f.cols * f.step * scaleX;
+  const double h = f.rows * f.step * scaleY;
+  std::vector<Cell> out;
+  const double margin = 0.15;
+  for (int r = 0; r < rows; ++r) {
+    for (int c = 0; c < cols; ++c) {
+      const double x0 = (static_cast<double>(c) / cols) * w;
+      const double x1 = (static_cast<double>(c + 1) / cols) * w;
+      const double y0 = (static_cast<double>(r) / rows) * h;
+      const double y1 = (static_cast<double>(r + 1) / rows) * h;
+      const double mw = (x1 - x0) * margin;
+      const double mh = (y1 - y0) * margin;
+      std::vector<MotionSamplePoint> local;
+      for (const MotionSamplePoint& p : pts) {
+        if (p.x >= x0 - mw && p.x < x1 + mw && p.y >= y0 - mh && p.y < y1 + mh) local.push_back(p);
+      }
+      out.push_back(Cell{(x0 + x1) / 2, (y0 + y1) / 2, fit_similarity(local, 1).value_or(Sim{})});
+    }
+  }
+  return out;
+}
+
+double estimate_rolling_shutter_shear(const scene::pixmo::FlowField& f, double scaleX, double scaleY) {
+  const std::vector<MotionSamplePoint> pts = flow_sample_points(f, scaleX, scaleY);
+  if (pts.size() < 8) return 0;
+  double cy = 0;
+  for (const MotionSamplePoint& p : pts) cy += p.y;
+  cy /= static_cast<double>(pts.size());
+  // dx ≈ k · (y − cy)  →  k = Σ dx(y−cy) / Σ (y−cy)²
+  double num = 0;
+  double den = 0;
+  for (const MotionSamplePoint& p : pts) {
+    const double dy = p.y - cy;
+    num += p.dx * dy;
+    den += dy * dy;
+  }
+  if (den < 1e-6) return 0;
+  return num / den;
+}
+
+XY apply_rolling_shutter_repair(double x, double y, double cy, double shearK) noexcept { return XY{x - shearK * (y - cy), y}; }
+
 std::vector<Sim> stabilizing_corrections(std::span<const std::optional<Sim>> pairs, double sigmaFrames) {
   const size_t n = pairs.size() + 1;
   std::vector<Sim> path{Sim{}};

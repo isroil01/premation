@@ -311,11 +311,12 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         return;
       }
       const range = { start: secondsToFlicks(time), duration: secondsToFlicks(Math.max(0, endCompTime - time) + 1 / Math.max(1, fps)) };
-      if (mode === 'smooth' && stabVariant === 'similarity') {
-        // The engine's stabilize job when it runs jobs (the similarity solve:
-        // tracks and writes the keys in one entry).
+      if (mode === 'smooth') {
+        // The engine's stabilize job when it runs jobs (every variant: the
+        // similarity solve's keys, or the subspace / rolling-shutter Mesh Warp
+        // path — tracked and written in one entry).
         const viaEngine = await runEngineJob<{ fittedPairs: number; totalPairs: number; keyframes?: number }>(
-          { kind: 'stabilize', value: { layer: nodeId, range, smoothness: 50, method: 'positionRotationScale' } },
+          { kind: 'stabilize', value: { layer: nodeId, range, smoothness: 50, method: 'positionRotationScale', variant: stabVariant } },
           { onProgress: (f) => store.getState().setProgress(f) },
         );
         if (viaEngine) {
@@ -529,6 +530,15 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   const onApplyMesh = async (): Promise<void> => {
     if (!result || mode !== 'corner') return;
+    const viaEngine = await applyInEngine('meshWarp', { target: targetId });
+    if (viaEngine) {
+      const n = viaEngine.summary?.keyframes ?? 0;
+      store.getState().finishTracking(
+        result,
+        !viaEngine.ok ? `Not applied: ${viaEngine.message}` : n > 0 ? `Applied ${n} mesh-warp keyframes to “${targetName(targetId)}”.` : 'Nothing to apply.',
+      );
+      return;
+    }
     const n = await applyTrackPlanEdit(planMeshWarpTrack({
       videoNodeId: nodeId,
       targetNodeId: targetId,

@@ -10,6 +10,9 @@
 //                   camera target: planCameraSolveTrack
 //   corner          planCornerPinTrack (≥ 4 tracks; more: RANSAC plane)
 //   stabilize       planStabilize on `layer`
+//   meshWarp        planMeshWarpTrack: the target's first Mesh Warp (added when
+//                   it has none) — its 4×4 lattice on the tracked plane
+//                   (bilinear from 4 corners; RANSAC plane over a dense grid)
 //   createNull      Create Null & Apply: `createLayer` null "Tracked Null N"
 //                   beside the footage (its layer parent), seeded on the first
 //                   sample in that parent's space (trackedNullSeed), keyed per
@@ -83,6 +86,7 @@ class TrackApplyResult final : public JobResult {
       case TrackApplyMode::transform: return "Apply Motion Track (rotation & scale)";
       case TrackApplyMode::corner: return "Apply Corner Pin Track";
       case TrackApplyMode::stabilize: return "Stabilize Motion";
+      case TrackApplyMode::mesh_warp: return "Apply Mesh Warp Track";
       case TrackApplyMode::create_null: return "Create Null & Apply Track";
       case TrackApplyMode::nulls_for_planes: return "Create Nulls for Planes";
       default: break;
@@ -108,6 +112,7 @@ class TrackApplyResult final : public JobResult {
       case TrackApplyMode::follow:
       case TrackApplyMode::transform:
       case TrackApplyMode::corner:
+      case TrackApplyMode::mesh_warp:
       case TrackApplyMode::stabilize: {
         const ta::DocView v(a.document(), job_.comp);
         const ta::Planner planner(v, src);
@@ -120,6 +125,7 @@ class TrackApplyResult final : public JobResult {
           send(camera ? planner.camera_track(job_.target, job_.tracks) : planner.transform(job_.target, job_.tracks, true));
         }
         if (job_.mode == TrackApplyMode::corner) send(planner.corner(job_.target, job_.tracks, {}));
+        if (job_.mode == TrackApplyMode::mesh_warp) send(planner.mesh_warp(job_.target, job_.tracks));
         if (job_.mode == TrackApplyMode::stabilize) send(planner.stabilize(first));
         break;
       }
@@ -210,13 +216,13 @@ PreparedJob prepare_track_apply(const api::TrackApplyJob& spec, const JobDocCont
       if (nTracks != 2) fail(ErrorCode::invalid_argument, "a rotation / scale apply needs exactly two tracks (anchor, reference)");
       break;
     case TrackApplyMode::corner: need(4, "a corner pin needs four tracks (top left, top right, bottom right, bottom left)"); break;
+    case TrackApplyMode::mesh_warp: need(4, "a mesh warp needs four corner tracks (top left, top right, bottom right, bottom left)"); break;
     case TrackApplyMode::create_null:
       job.nullMode = null_mode_of(spec.null_mode.value_or(TrackApplyMode::follow));
       if (job.nullMode == ta::NullMode::transform && nTracks < 2) fail(ErrorCode::invalid_argument, "a rotation / scale null needs two tracks");
       if (job.nullMode == ta::NullMode::corner) need(4, "a corner pin null needs four tracks");
       break;
     case TrackApplyMode::nulls_for_planes: need(8, "Need at least two quads (8 tracks) for multi-plane nulls."); break;
-    case TrackApplyMode::mesh_warp:
     case TrackApplyMode::camera_solve:
       fail(ErrorCode::unsupported, "the engine does not apply '" + mode_name(spec.mode) + "' yet");
   }

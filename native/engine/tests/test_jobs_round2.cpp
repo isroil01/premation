@@ -11,9 +11,13 @@
 #include <vector>
 
 #include "jobs/mask_sampling.hpp"
+#include "jobs/stabilize.hpp"
+#include "jobs/track_plans.hpp"
 
 using Catch::Approx;
 namespace ms = premation::jobs::masksample;
+namespace st = premation::jobs::stabilize;
+namespace ta = premation::jobs::trackapply;
 
 namespace {
 
@@ -66,4 +70,65 @@ TEST_CASE("mask sampling: an untracked vertex blends its neighbours by arc lengt
   const std::vector<ms::Pt> out = ms::blend_vertex_deltas(s, {ms::Pt{0, 0}, ms::Pt{10, 0}, ms::Pt{20, 0}});
   CHECK(out[1].x == Approx(5));
   CHECK(out[3].x == Approx(15));
+}
+
+namespace {
+
+/// A flow field of `cols`×`rows` valid cells moving by (dx(y), dy).
+premation::scene::pixmo::FlowField field(int cols, int rows, int step, double dx, double dy, double shear = 0) {
+  premation::scene::pixmo::FlowField f;
+  f.cols = cols;
+  f.rows = rows;
+  f.step = step;
+  for (int gy = 0; gy < rows; ++gy) {
+    for (int gx = 0; gx < cols; ++gx) {
+      const double y = (gy + 0.5) * step;
+      f.dx.push_back(static_cast<float>(dx + shear * (y - rows * step / 2.0)));
+      f.dy.push_back(static_cast<float>(dy));
+      f.valid.push_back(1);
+    }
+  }
+  return f;
+}
+
+}  // namespace
+
+TEST_CASE("subspace: a uniform translation fits every cell, and the grid samples it", "[jobs][stabilize]") {
+  const auto f = field(24, 16, 8, 2, -1);
+  const std::vector<st::Cell> cells = st::fit_subspace_warp(f, 4, 4, 1, 1);
+  REQUIRE(cells.size() == 16);
+  std::vector<ta::SubspaceCell> grid;
+  for (const st::Cell& c : cells) {
+    CHECK(c.sim.a == Approx(1).margin(1e-9));
+    CHECK(c.sim.b == Approx(0).margin(1e-9));
+    CHECK(c.sim.tx == Approx(2).margin(1e-9));
+    CHECK(c.sim.ty == Approx(-1).margin(1e-9));
+    grid.push_back(ta::SubspaceCell{c.cx, c.cy, c.sim});
+  }
+  const ta::P2 p = ta::sample_subspace(grid, 4, 4, 50, 40, 192, 128);
+  CHECK(p.x == Approx(52));
+  CHECK(p.y == Approx(39));
+  CHECK(st::estimate_rolling_shutter_shear(f, 1, 1) == Approx(0).margin(1e-12));
+}
+
+TEST_CASE("subspace: the rolling-shutter shear is the dx-per-row slope", "[jobs][stabilize]") {
+  const auto f = field(24, 16, 8, 0, 0, 0.05);
+  CHECK(st::estimate_rolling_shutter_shear(f, 1, 1) == Approx(0.05).epsilon(1e-6));
+  const st::XY r = st::apply_rolling_shutter_repair(10, 30, 20, 0.05);
+  CHECK(r.x == Approx(9.5));
+  CHECK(r.y == Approx(30));
+}
+
+TEST_CASE("subspace: the mesh plan keys 16 lattice offsets per frame on a Mesh Warp", "[jobs][stabilize]") {
+  std::vector<ta::SubspaceCell> cells;
+  for (int i = 0; i < 16; ++i) cells.push_back(ta::SubspaceCell{0, 0, st::Sim{1, 0, 4, 0}});
+  const std::optional<ta::Plan> plan = ta::plan_subspace_mesh("L", {ta::MeshFrame{cells, 0}, ta::MeshFrame{cells, 0.5}}, 4, 4, 100, 50, 200, 100);
+  REQUIRE(plan);
+  CHECK(plan->effectType == "mesh-warp");
+  CHECK(plan->writes.size() == 32);
+  CHECK(plan->count == 64);
+  // Every vertex moves 4 flow px = 8 layer px in x, nothing in y.
+  CHECK(plan->writes[0].track == "v0X");
+  CHECK(plan->writes[0].keys[1].second == Approx(8));
+  CHECK(plan->writes[1].keys[0].second == Approx(0));
 }
