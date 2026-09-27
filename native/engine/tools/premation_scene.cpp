@@ -17,6 +17,8 @@
 //       --gpu-effects (also for --batch): layers the TypeScript bakes run their
 //       stack on the GPU chain when they can (E4, the engine's default); the
 //       per-frame effect paths are reported beside the times.
+//   premation-scene --gen-effect-bench <dir> [--active effect_chain_bench.json]
+//       writes the E4 per-effect bench projects (see gen_effect_bench).
 //   premation-scene --mesh-check <scenes> --fonts <fonts.json> [--only a,b]
 //       every extrudedMesh of the exported FrameScenes rebuilt by the C++ mesh
 //       producers from its key alone (extrusions, traced text, primitives) and
@@ -795,18 +797,45 @@ js::Json synthetic_document(int layers) {
 /// stack) with the fill opacity keyframed 90 → 95 % over 2 s — so every frame's
 /// bake input changes (the chain re-runs) while the painted content does not.
 /// `--bench DIR` then gives the ms per 1080p frame of each.
-int gen_effect_bench(const fs::path& dir) {
+///
+/// `--active FILE` (the frozen `tests/data/effect_chain_bench.json`) adds one
+/// project per case of that file — every effect at its `@active` point of the
+/// declared ranges and the stacks — named `fxbench-<case>` with `@` and other
+/// non-name characters as `_`. Same subject, same animated fill opacity.
+int gen_effect_bench(const fs::path& dir, const fs::path& active) {
   using js::Json;
-  std::vector<std::pair<std::string, Json>> cases;
-  cases.emplace_back("none", Json::null());
+  /// (case id, the fx `effects` array as JSON text)
+  std::vector<std::pair<std::string, std::string>> cases;
+  cases.emplace_back("none", "[]");
   for (const doc::EffectDef& def : doc::registry().effects) {
     if (def.gpuOnly) continue;
-    cases.emplace_back(def.type, doc::new_instance_params_of(def));
+    cases.emplace_back(def.type, R"([{"id":"fx","type":")" + def.type + R"(","params":)" +
+                                     js::stringify(doc::new_instance_params_of(def)) + "}]");
+  }
+  if (!active.empty()) {
+    std::vector<std::uint8_t> bytes;
+    if (!read_file(active, bytes)) {
+      std::fprintf(stderr, "premation-scene: cannot read %s\n", active.string().c_str());  // NOLINT(cppcoreguidelines-pro-type-vararg)
+      return 1;
+    }
+    const auto j = js::parse(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    if (!j || !j->at("cases").is_array()) {
+      std::fprintf(stderr, "premation-scene: %s has no cases\n", active.string().c_str());  // NOLINT(cppcoreguidelines-pro-type-vararg)
+      return 1;
+    }
+    for (const Json& c : j->at("cases").arr()) {
+      if (!c.at("name").is_string() || !c.at("effects").is_array()) continue;
+      std::string name = c.at("name").str();
+      if (name.ends_with("@default")) continue;  // the registry defaults are the cases above
+      for (char& ch : name) {
+        const bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-';
+        if (!ok) ch = '_';
+      }
+      cases.emplace_back(name, js::stringify(c.at("effects")));
+    }
   }
   int written = 0;
-  for (const auto& [type, params] : cases) {
-    const std::string fx = type == "none" ? std::string("[]")
-                                          : R"([{"id":"fx","type":")" + type + R"(","params":)" + js::stringify(params) + "}]";
+  for (const auto& [type, fx] : cases) {
     const std::string id = "fxbench-" + type;
     const std::string doc =
         R"({"version":"1.9.0","scene":{"version":"1.0.0","nodes":[)"
@@ -969,7 +998,9 @@ int run(int argc, char** argv) {
   if (opt.contains("readback-table")) {
     if (!read_file(opt["readback-table"], o.table) || o.table.size() != 65536) o.table.clear();
   }
-  if (opt.contains("gen-effect-bench")) return gen_effect_bench(opt["gen-effect-bench"]);
+  if (opt.contains("gen-effect-bench")) {
+    return gen_effect_bench(opt["gen-effect-bench"], opt.contains("active") ? fs::path(opt["active"]) : fs::path());
+  }
   if (opt.contains("synthetic")) {
     o.synthetic = std::stoi(opt["synthetic"]);
     return bench(o);

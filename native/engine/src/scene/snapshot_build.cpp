@@ -28,6 +28,7 @@
 #include "jsmath.hpp"
 #include "raw_world.hpp"
 #include "readers.hpp"
+#include "rigid_body.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "scene_math.hpp"
@@ -327,6 +328,8 @@ class Walk final : public Scene3DHost {
   /// The raw graph's world transforms (rawLocalOf / rawWorldCache).
   RawWorld raw_{c_.d, c_.expr, c_.cache, t_};
   double fps_ = 30;
+  /// Rigid-body poses at this frame (physicsPosesAt, rigid_body.cpp), by node id.
+  std::map<std::string, physics::Pose> physics_;
   bool anySolo_ = false;
   /// BuildContext::isolateLayer, when this walk holds it: the layer, the
   /// layers under it and the groups above it — soloed for this walk alone.
@@ -1196,8 +1199,20 @@ void Walk::build_node(const doc::Node& n) {
     const std::string source = wave.at("sourceLayerId").is_string() ? wave.at("sourceLayerId").str() : std::string();
     std::vector<float> peaks;
     double duration = 0;
-    if (source.empty() || c_.waveform == nullptr || !c_.waveform(source, peaks, duration)) {
-      unported(l, n, "audio waveform generator");
+    const auto emptyPath = [] {  // EMPTY_WAVEFORM_PATH
+      Json z = Json::object();
+      for (const char* k : {"x", "y", "inX", "inY", "outX", "outY"}) z.set(k, Json::number(0));
+      Json pts = Json::array();
+      pts.arr_mut().push_back(z);
+      pts.arr_mut().push_back(z);
+      return pts;
+    };
+    if (c_.waveform == nullptr) {
+      unported(l, n, "audio waveform generator (no audio engine)");
+    } else if (source.empty() || !c_.waveform(source, peaks, duration)) {
+      // resolveAudioWaveformPoints: no source, or a source still decoding (getWave
+      // undefined), draws the empty path; the next frame after the conform draws it.
+      pathPoints = emptyPath();
     } else {
       const double samples = wave.at("samples").is_number() ? wave.at("samples").num() : 128;
       const double heightScale = wave.at("heightScale").is_number() ? wave.at("heightScale").num() : 1;
@@ -1227,13 +1242,7 @@ void Walk::build_node(const doc::Node& n) {
         }
       }
       Json pts = waveform_points(peaks, duration, layerW, layerH, local, mode, samples, heightScale, thickness, windowSec);
-      if (pts.arr().size() < 2) {
-        Json z = Json::object();
-        for (const char* k : {"x", "y", "inX", "inY", "outX", "outY"}) z.set(k, Json::number(0));
-        pts = Json::array();
-        pts.arr_mut().push_back(z);
-        pts.arr_mut().push_back(z);
-      }
+      if (pts.arr().size() < 2) pts = emptyPath();
       pathPoints = std::move(pts);
     }
   }
@@ -1271,16 +1280,18 @@ void Walk::build_node(const doc::Node& n) {
   // Auto-orient along the path applies to 2D layers only (below); Toward Camera is part of the 3D placement.
   const bool autoOrientPath = !is3d && ((fx.at("autoOrient").is_string() && fx.at("autoOrient").str() == "path") ||
                                         (fx.at("autoOrient").is_bool() && fx.at("autoOrient").b()));
-  for (const auto& comp : n.components) {
-    const Json& ph = comp.props.at("__physics");
-    if (ph.is_object() && !(ph.at("enabled").is_bool() && !ph.at("enabled").b())) unported(l, n, "rigid-body physics");
-  }
-
   double px = world.x;
   double py = world.y;
   double sx = world.scale_x;
   double sy = world.scale_y;
   double rot = world.rotation;
+  // Physics REPLACES the position (a dynamic body's position IS the solver's
+  // output); the rotation only for a body that spins. Static bodies are absent.
+  if (const auto sim = physics_.find(n.id); sim != physics_.end()) {
+    px = sim->second.x;
+    py = sim->second.y;
+    if (sim->second.rotation) rot = *sim->second.rotation;
+  }
   if (clone != nullptr) {  // the cloner offset, on the RESOLVED transform
     px += clone->x;
     py += clone->y;
@@ -1465,8 +1476,9 @@ void Walk::build_node(const doc::Node& n) {
   if (doc::read_node_paint(n)) {  // paint_port.cpp: the frame's live strokes
     LayerPaint lp = resolve_layer_paint(d_, n, layerTimeNow, a, sid(n.id));
     for (std::string& why : lp.unported) unported(l, n, std::move(why));
-    // Text draws paint into its raster with a paint pad, footage bakes it (E4): shapes only here.
-    if (!lp.paint.is_undefined() && layerKind != LayerKind::shape) unported(l, n, "paint strokes on text / footage layers");
+    // Shapes draw paint in their path raster, text in its text raster (text_spec's
+    // `paint`, raster_source), footage bakes it onto the decoded frame
+    // (frame_build's paint-only bake → bake_footage), as the TypeScript does.
     l.paint = std::move(lp.paint);
   }
   // Content-aware fill (contentAwareFillVideo.ts contentAwareFillAt): the stored
@@ -1777,6 +1789,37 @@ Snapshot Walk::run() {
     anySolo_ = true;
   }
   fps_ = comp_.fps ? *comp_.fps : doc::comp_fps(d_, comp_.rootId);
+  {
+    // Rigid-body poses: a PRE-PASS (bodies collide, so every body is known before
+    // any is placed), seeded from each layer's AUTHORED pose (readBase). The world
+    // is physicsStore's default: gravity 0 / 1800, the comp rectangle, 4 passes.
+    std::vector<physics::BodySeed> seeds;
+    for (const doc::Node* n : nodes_) {
+      std::optional<physics::BodyConfig> cfg;
+      for (const auto& comp : n->components) {
+        const Json& raw = comp.props.at("__physics");
+        if (!raw.is_object()) continue;
+        cfg = physics::read_physics(raw);
+        break;
+      }
+      if (!cfg) continue;
+      const Base pb = read_base(*n);
+      physics::BodySeed s;
+      s.id = n->id;
+      s.x = pb.x;
+      s.y = pb.y;
+      s.rotation = pb.rotation;
+      s.width = pb.width.value_or(100);
+      s.height = pb.height.value_or(100);
+      s.cfg = *cfg;
+      seeds.push_back(std::move(s));
+    }
+    if (!seeds.empty()) {
+      physics::World world;
+      world.bounds = physics::Bounds{0, 0, comp_.width, comp_.height};
+      physics_ = physics::poses_at(seeds, world, fps_, motion::js::round(t_ * (fps_ != 0 ? fps_ : 30)));
+    }
+  }
   // The camera, DOF and lights resolve before the walk (buildSnapshot order).
   three_ = std::make_unique<Scene3D>(*this, c_, comp_, t_, mb_);
   three_->setup(nodes_);

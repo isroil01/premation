@@ -27,6 +27,18 @@ bool blend_state(Blend mode, wgpu::BlendState& out) {
       return true;
     case Blend::darken: out.color = {wgpu::BlendOperation::Min, wgpu::BlendFactor::One, wgpu::BlendFactor::One}; return true;
     case Blend::lighten: out.color = {wgpu::BlendOperation::Max, wgpu::BlendFactor::One, wgpu::BlendFactor::One}; return true;
+    case Blend::lighter:
+      out.color = {wgpu::BlendOperation::Add, wgpu::BlendFactor::One, wgpu::BlendFactor::One};
+      out.alpha = out.color;
+      return true;
+    case Blend::atop:
+      out.color = {wgpu::BlendOperation::Add, wgpu::BlendFactor::DstAlpha, wgpu::BlendFactor::OneMinusSrcAlpha};
+      out.alpha = {wgpu::BlendOperation::Add, wgpu::BlendFactor::Zero, wgpu::BlendFactor::One};
+      return true;
+    case Blend::dstIn:
+      out.color = {wgpu::BlendOperation::Add, wgpu::BlendFactor::Zero, wgpu::BlendFactor::SrcAlpha};
+      out.alpha = out.color;
+      return true;
     default: out.color = over; return true;
   }
 }

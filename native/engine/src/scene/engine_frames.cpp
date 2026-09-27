@@ -1003,6 +1003,30 @@ std::unique_ptr<MediaClock> make_media_clock(bool useDevice, std::string& error)
 
 std::vector<std::string> document_font_families(const doc::Document& d) { return document_families(d); }
 
+WaveformProvider offline_waveform(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
+                                  doc::ExprCache& cache) {
+#if defined(PREMATION_HAVE_AUDIO)
+  // shared_ptr: the std::function is copyable, every copy shares the one lazily
+  // started audio engine (and its decoded sources).
+  auto audio = std::make_shared<std::unique_ptr<EngineAudio>>();
+  return [audio, &d, &view, &expr, &cache](std::string_view layerId, std::vector<float>& peaks, double& duration) {
+    if (!*audio) {
+      *audio = std::make_unique<EngineAudio>(false);
+      (*audio)->set_document(d, view, expr, cache, "");
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+    while (!(*audio)->waveform(layerId, peaks, duration)) {
+      if (std::chrono::steady_clock::now() > deadline) return false;
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return true;
+  };
+#else
+  (void)d, (void)view, (void)expr, (void)cache;
+  return {};
+#endif
+}
+
 bool mix_comp_audio(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr, doc::ExprCache& cache,
                     std::string_view comp, double startSec, double endSec, CompAudioMix& out, std::string& error) {
 #if defined(PREMATION_HAVE_AUDIO)

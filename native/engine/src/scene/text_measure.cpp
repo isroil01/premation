@@ -67,6 +67,11 @@ std::string ascii_case(std::string s, bool upper) {
 
 std::string css_number(double v) { return js::number_to_string(v); }
 
+/// The anchored auto-height box's content offset (measureText.ts anchorOffsetOf).
+double anchor_offset_of(const MeasuredStyle& s, double contentHeight) {
+  return s.boxAnchorHeight ? (contentHeight - *s.boxAnchorHeight) / 2 : 0;
+}
+
 class CanvasMeasurer final : public TextMeasurer {
  public:
   explicit CanvasMeasurer(raster::CanvasOptions opts) : opts_(opts) {}
@@ -81,8 +86,6 @@ class CanvasMeasurer final : public TextMeasurer {
     // Paragraph text measures its WRAPPED content (measureTextSize → wrappedStyle).
     std::optional<MeasuredStyle> wrapped;
     if (input.boxWidth) {
-      // Line runs restack the lines, and an anchored auto-height box offsets them: not ported.
-      if (input.hasLineRuns || (!input.boxHeight && input.boxAnchorHeight)) return std::nullopt;
       wrapped = wrapped_style(input, nullptr);
       if (!wrapped) return std::nullopt;
     }
@@ -140,6 +143,15 @@ class CanvasMeasurer final : public TextMeasurer {
     k += s.boxVerticalAlign;
     k += s.boxFit ? "|fit|" : "|-|";
     opt(s.fitScale);
+    opt(s.boxAnchorHeight);
+    // `|lr${JSON.stringify(s.lineRuns)}`: runs restack the lines.
+    for (const MeasuredStyle::LineRun& r : s.lineRuns) {
+      k += "lr";
+      num(r.start);
+      num(r.end);
+      opt(r.fontSize);
+      opt(r.lineHeight);
+    }
     opt(s.leftIndent);
     opt(s.rightIndent);
     opt(s.firstLineIndent);
@@ -224,7 +236,12 @@ class CanvasMeasurer final : public TextMeasurer {
     const std::array<double, 2> hh{-inkTop, inkBottom};
     const double halfH = (motion::js::max_of(hh) + fauxH) * tr.sy + std::abs(tr.dy);
     const double width = halfW * 2;
-    const double height = std::max(lineBlock * tr.sy + std::abs(tr.dy) * 2, halfH * 2);
+    // An anchored auto-height box draws its content `lineOffsetY` below centre
+    // (textExtras.boxOffsetY), so the centred texture grows by twice that.
+    const double anchorDy = s.boxWidth && !s.boxHeight && s.boxAnchorHeight
+                                ? std::abs(anchor_offset_of(s, paragraph_line_stack(s).blockHeight))
+                                : 0;
+    const double height = std::max(lineBlock * tr.sy + std::abs(tr.dy) * 2, halfH * 2) + anchorDy * 2;
     // Paragraph text's width is AUTHORED; a FIXED box is authored in both directions.
     const double w = s.boxWidth ? std::max(16.0, std::ceil(*s.boxWidth) + kPadX * 2) : std::max(16.0, std::ceil(width) + kPadX * 2);
     const double h = s.boxWidth && s.boxHeight ? std::max(16.0, std::ceil(*s.boxHeight) + kPadY * 2)
@@ -242,11 +259,6 @@ class CanvasMeasurer final : public TextMeasurer {
     // scale then rides on the style (re-wrapping never searches again).
     MeasuredStyle fitted = s;
     if (s.boxFit && s.boxHeight && !s.fitScale) {
-      if (s.hasLineRuns) {
-        // boxPlacementOf's run branch (paragraphLineMetrics): outside the port.
-        if (why != nullptr) *why = "paragraph text: Fit Text to Box with runs that change line height";
-        return std::nullopt;
-      }
       const auto k = fit_scale_of(s, why);
       if (!k) return std::nullopt;
       fitted.fitScale = *k;
@@ -365,8 +377,12 @@ class CanvasMeasurer final : public TextMeasurer {
         failed = true;
         return false;
       }
-      // boxPlacementOf (no line runs): the lines' stack against the box height / k.
-      const std::vector<int> soft = soft_break_lines(s.content, *wrapped);
+      // boxPlacementOf: the lines' stack (line runs included) against the box height / k.
+      MeasuredStyle laid = trial;
+      laid.content = *wrapped;
+      laid.softBreakLines = soft_break_lines(s.content, *wrapped);
+      const LineStack stack = paragraph_line_stack(laid);
+      if (raster::place_lines_in_box(stack.ys, stack.leading, *s.boxHeight / k, s.boxVerticalAlign).overflow) return false;
       std::vector<std::string> lines;
       for (std::size_t start = 0;;) {
         const std::size_t nl = wrapped->find('\n', start);
@@ -374,13 +390,6 @@ class CanvasMeasurer final : public TextMeasurer {
         if (nl == std::string::npos) break;
         start = nl + 1;
       }
-      const double lineHeightPx = s.fontSize * (s.lineHeight != 0 ? s.lineHeight : kDefaultLineHeight);
-      const auto [offsets, total] = raster::line_offsets(raster::hard_ends_of(lines.size(), soft), lineHeightPx + s.paragraphSpacing,
-                                                         s.spaceBefore.value_or(0), s.spaceAfter.value_or(0));
-      std::vector<double> ys;
-      ys.reserve(offsets.size());
-      for (const double o : offsets) ys.push_back(o - total / 2);  // centredLineYs
-      if (raster::place_lines_in_box(ys, {lineHeightPx}, *s.boxHeight / k, s.boxVerticalAlign).overflow) return false;
       raster::Canvas2D& g = *ctx_;
       if (!set_measure_font(g, s)) {
         failed = true;
@@ -628,14 +637,43 @@ std::optional<MeasuredStyle> read_measured_text_style(const doc::Node& n,
   if (!s.vertical) s.verticalRomanAlignment = false;
   if (s.boxWidth) {
     // readLineRuns: runs that change a line's size or leading.
+    // The first Text component (`components.find`), its legacy code-point runs migrated.
     for (const auto& c : n.components) {
-      if (c.type != "Text" || !c.props.at("__runs").is_array()) continue;
+      if (c.type != "Text") continue;
+      if (!c.props.at("__runs").is_array()) break;
+      const std::string tc = c.props.at("content").is_string() ? c.props.at("content").str() : std::string();
+      const std::vector<std::string> gs = raster::split_graphemes(tc);
+      const bool migrate = !(c.props.at("__runsIndex").is_string() && c.props.at("__runsIndex").str() == "grapheme") &&
+                           gs.size() != raster::code_points(tc).size();
+      // codePointToGraphemeIndex (richText.ts).
+      const auto toG = [&gs](double cp, bool roundUp) {
+        if (cp <= 0) return 0.0;
+        double acc = 0;
+        for (std::size_t i = 0; i < gs.size(); ++i) {
+          const auto len = static_cast<double>(raster::code_points(gs[i]).size());
+          if (cp == acc) return static_cast<double>(i);
+          if (cp < acc + len) return roundUp ? static_cast<double>(i + 1) : static_cast<double>(i);
+          acc += len;
+        }
+        return static_cast<double>(gs.size());
+      };
       for (const Json& r : c.props.at("__runs").arr()) {
         const Json& st = r.at("style");
-        const auto pos = [&st](const char* k) { return st.at(k).is_number() && st.at(k).num() > 0; };
-        if (st.is_object() && (pos("fontSize") || pos("lineHeight"))) s.hasLineRuns = true;
+        if (!r.at("start").is_number() || !r.at("end").is_number() || !st.is_object()) continue;
+        const auto pos = [&st](const char* k) -> std::optional<double> {
+          return st.at(k).is_number() && st.at(k).num() > 0 ? std::optional<double>(st.at(k).num()) : std::nullopt;
+        };
+        MeasuredStyle::LineRun lr;
+        lr.fontSize = pos("fontSize");
+        lr.lineHeight = pos("lineHeight");
+        if (!lr.fontSize && !lr.lineHeight) continue;
+        lr.start = migrate ? toG(r.at("start").num(), false) : r.at("start").num();
+        lr.end = migrate ? toG(r.at("end").num(), true) : r.at("end").num();
+        s.lineRuns.push_back(lr);
       }
+      break;
     }
+    s.hasLineRuns = !s.lineRuns.empty();
     // readParagraphBox (text on a path has none: boxWidth was already dropped above).
     double bw = 0;
     double bh = 0;
@@ -703,6 +741,86 @@ std::vector<int> soft_break_lines(std::string_view raw, std::string_view wrapped
     if (raw[i] != '\n') out.push_back(line);
     ++line;
   }
+  return out;
+}
+
+LineStack paragraph_line_stack(const MeasuredStyle& s) {
+  LineStack out;
+  const double mul = s.lineHeight != 0 ? s.lineHeight : kDefaultLineHeight;
+  const double sb = s.spaceBefore.value_or(0);
+  const double sa = s.spaceAfter.value_or(0);
+  if (s.lineRuns.empty()) {
+    // boxPlacementOf's uniform branch.
+    std::size_t n = 1;
+    for (const char c : s.content) n += c == '\n' ? 1 : 0;
+    out.lineHeightPx = s.fontSize * mul;
+    const auto [offsets, total] = raster::line_offsets(raster::hard_ends_of(n, s.softBreakLines), out.lineHeightPx + s.paragraphSpacing, sb, sa);
+    out.ys.reserve(offsets.size());
+    for (const double o : offsets) out.ys.push_back(o - total / 2);  // centredLineYs
+    out.leading = {out.lineHeightPx};
+    out.blockHeight = total + out.lineHeightPx;
+    return out;
+  }
+  // textLayout.ts paragraphLineMetrics → stackLines: each glyph's size and
+  // leading under the runs (resolveGlyphStyle: later runs win), lines split at
+  // line-break clusters.
+  struct G {
+    double size;
+    double leading;  ///< the resolved lineHeight multiplier (the base's when no run sets one)
+  };
+  std::vector<std::vector<G>> lines(1);
+  const std::vector<std::string> chars = raster::split_graphemes(s.content);
+  for (std::size_t i = 0; i < chars.size(); ++i) {
+    if (raster::is_line_break(chars[i])) {
+      lines.emplace_back();
+      continue;
+    }
+    G g{s.fontSize, mul};
+    const auto idx = static_cast<double>(i);
+    for (const MeasuredStyle::LineRun& r : s.lineRuns) {
+      if (!(idx >= r.start && idx < r.end)) continue;
+      if (r.fontSize) g.size = *r.fontSize;
+      if (r.lineHeight) g.leading = *r.lineHeight;
+    }
+    lines.back().push_back(g);
+  }
+  const bool perRange = std::ranges::any_of(s.lineRuns, [](const MeasuredStyle::LineRun& r) { return r.lineHeight.has_value(); });
+  const double baseLeading = s.fontSize * mul;
+  double lineHeightPx = baseLeading;
+  for (const auto& line : lines) {
+    for (const G& g : line) lineHeightPx = std::max(lineHeightPx, g.size * (perRange ? g.leading : mul));
+  }
+  out.lineHeightPx = lineHeightPx;
+  const std::vector<bool> hardEnds = raster::hard_ends_of(lines.size(), s.softBreakLines);
+  std::vector<double> offsets;
+  double total = 0;
+  if (!perRange) {
+    auto [off, tot] = raster::line_offsets(hardEnds, lineHeightPx + s.paragraphSpacing, sb, sa);
+    offsets = std::move(off);
+    total = tot;
+    out.leading.assign(offsets.size(), lineHeightPx);
+  } else {
+    // rangedLineOffsets: a line's leading is the largest of its glyphs'; an empty line keeps the layer's.
+    const auto leadingOf = [&](const std::vector<G>& line) {
+      if (line.empty()) return baseLeading;
+      double m = 0;
+      for (const G& g : line) m = std::max(m, g.size * g.leading);
+      return m;
+    };
+    const std::size_t n = std::max<std::size_t>(1, lines.size());
+    offsets.assign(n, 0);
+    const double para = sb + sa;
+    for (std::size_t i = 1; i < n; ++i) {
+      const double leading = i < lines.size() ? leadingOf(lines[i]) : baseLeading;
+      offsets[i] = offsets[i - 1] + leading + s.paragraphSpacing + (para != 0 && hardEnds[i - 1] ? para : 0);
+    }
+    total = offsets[n - 1];
+    out.leading.reserve(lines.size());
+    for (const auto& line : lines) out.leading.push_back(leadingOf(line));
+  }
+  out.ys.reserve(offsets.size());
+  for (const double o : offsets) out.ys.push_back(o - total / 2);
+  out.blockHeight = total + lineHeightPx;
   return out;
 }
 

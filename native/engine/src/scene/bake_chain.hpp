@@ -12,6 +12,7 @@
 // reported as a fallback) and skipped — never a thrown error, never a blank.
 #pragma once
 
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -45,6 +46,24 @@ void bake_layer_raster(raster::Canvas2D& ctx, const Json& spec, double bw, doubl
 /// layer's centred space scaled onto the bitmap, then the stack runs with its
 /// px lengths × (bake width / layer width).
 void bake_footage(raster::Canvas2D& ctx, const Json& spec, std::vector<std::string>& unsupported, SharedPool pool = {});
+
+/// E4 round 2 — the drawn part of ONE Canvas2D-only effect that only draws
+/// (Numbers, Timecode, Audio Spectrum, Audio Waveform, Lightning: none reads
+/// the layer's pixels; Path Stroke / Scribble paint a buffer from the mask
+/// paths first), painted alone on a transparent canvas the size the CPU bake of
+/// the layer would have (raster::raster_canvas_size, bake on: the padded box ×
+/// the tier), with the effect's px lengths × that scale, as the bake draws it.
+/// The GPU chain lands it through the layer's quad with the effect's composite:
+/// `fx-overlay`.
+/// `spec` = {effect, width, height, __deviceMax}.
+struct OverlayOutput {
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::vector<std::uint8_t> rgba;
+  std::vector<std::string> unsupported;
+};
+[[nodiscard]] OverlayOutput draw_effect_overlay(const Json& spec, double resolutionScale, double padding,
+                                                const raster::CanvasOptions& opts, SharedPool pool = {});
 
 /// `bakedEffectSpread(layer)` (vectorDraw.ts): how far a CPU-baked chain paints
 /// outside the layer box, px (0 when the layer is not baked).

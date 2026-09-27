@@ -18,6 +18,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "gpu.hpp"
@@ -59,6 +60,15 @@ struct CompAudioMix {
   /// What the voice builder reports as outside the port (audio_unported).
   std::vector<std::string> notes;
 };
+/// F1 export: BuildContext::waveform for an offline render. The viewport draws
+/// the Audio Waveform generator's empty path until its source has conformed
+/// (as the TypeScript does while it decodes); an export waits for the decode
+/// (up to 5 minutes) instead. The audio engine starts on the first call. Null
+/// when built without E2. One provider per document copy (not thread-safe).
+using WaveformProvider = std::function<bool(std::string_view layerId, std::vector<float>& peaks, double& duration)>;
+[[nodiscard]] WaveformProvider offline_waveform(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
+                                                doc::ExprCache& cache);
+
 /// False (with `error`) when a source never finished decoding or there is no audio engine.
 bool mix_comp_audio(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr, doc::ExprCache& cache,
                     std::string_view comp, double startSec, double endSec, CompAudioMix& out, std::string& error);

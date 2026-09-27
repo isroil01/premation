@@ -79,6 +79,11 @@ bool is_color_effect(std::string_view t) {
   return std::ranges::find(k, t) != k.end();
 }
 
+/// Effects whose GPU form is the identity (canvas2dEffects.ts: CC RepeTile's
+/// CPU pass expands the buffer and crops it back, so there is nothing to draw
+/// — the TS GPU path has no shader for it and draws the layer unchanged).
+bool is_gpu_identity(std::string_view t) { return t == "cc-repetile"; }
+
 bool is_temporal(std::string_view t) { return t == "echo" || t == "posterize-time" || t == "wide-time" || t == "force-motion-blur"; }
 
 /// `withAlpha(hex, alpha)` then `Color.fromHex`.
@@ -230,6 +235,7 @@ const char* effect_unported_reason(const Json& e) {
   if (t != "beam-path" && pm.is_string() && !pm.str().empty()) return nullptr;
   if (e.at("opacity").is_number() && !gpu_blends_effect_opacity(t)) return nullptr;
   if (is_lut_effect(t) || t == "apply-color-lut") return nullptr;  // lut:<id> strip / apply-color-lut entry (lut_port.cpp)
+  if (is_gpu_identity(t)) return nullptr;
   if (!is_ported_spatial(t) && !is_more_spatial(t)) return "GPU effect not in the C++ port";
   return nullptr;
 }
@@ -590,6 +596,68 @@ bool gpu_draws_canvas_effect(const RLayer& l, const Json& e) {
 
 std::string contour_key(std::string_view layerId) { return "vegas:" + std::string(layerId); }
 
+namespace {
+/// Path Stroke's / Scribble's paint-style param (strokePaint.ts PAINT_STYLE:
+/// 0 on original, 1 on transparent, 2 reveal original).
+const char* paint_style_param(std::string_view t) {
+  return t == "path-stroke" ? "paintStyle" : t == "scribble" ? "composite" : nullptr;
+}
+}  // namespace
+
+bool gpu_overlay_effect(const RLayer& l, const Json& e) {
+  const std::string t = type_of(e);
+  const bool drawOnly = t == "numbers" || t == "timecode" || t == "audio-spectrum";
+  const bool composited = t == "audio-waveform" || t == "lightning";
+  // Path Stroke / Scribble paint a buffer from the mask paths alone and only then
+  // composite it with the layer (compositePaint): the buffer on transparent IS
+  // the overlay, landed over (on original), in place of (on transparent) or as
+  // a destination-in mask (reveal original).
+  const bool paintBuffer = paint_style_param(t) != nullptr;
+  if (!drawOnly && !composited && !paintBuffer) return false;
+  if (t == "scribble" && !scribble_has_paths(l)) return false;  // draws nothing (gpu_draws_canvas_effect)
+  if (composited) {
+    // compositeFor: 0 over · 1 add (lighter) · 2 screen · 3 multiply · 4 inside
+    // (source-atop). Painting the primitives alone and landing the result once
+    // equals painting them on the layer one by one for over, lighter and screen
+    // (each is associative, and the first primitive lands on transparent as
+    // itself) and for source-atop (Σ atop B = (P1 over … over Pn) atop B, so
+    // the overlay is painted source-over and landed atop). Multiply lands as
+    // Cs·(1 − Ab) + Cb·(1 − As) + Cs·Cb, which no fixed-function blend state
+    // expresses: it keeps the CPU bake.
+    const double mode = motion::js::round(effect_number(e, "composite"));
+    if (mode != 0 && mode != 1 && mode != 2 && mode != 4) return false;
+  }
+  // The overlay is painted at the size of the layer's OWN raster (a shape with
+  // a path raster, or text), which a layer mask would not shape the same way.
+  const bool ownRaster = (l.kind == LayerKind::shape && needs_shape_raster(l)) || l.kind == LayerKind::text;
+  if (!ownRaster) return false;
+  // maskIsActive (mask.ts): only paths with a mode shape the layer; the
+  // mode-None paths Path Stroke / Scribble follow do not.
+  if (l.mask.is_object() && l.mask.at("paths").is_array()) {
+    for (const Json& p : l.mask.at("paths").arr()) {
+      if (!(p.at("mode").is_string() && p.at("mode").str() == "none")) return false;
+    }
+  }
+  return true;
+}
+
+namespace {
+std::string overlay_key(std::string_view layerId, std::size_t ordinal) {
+  return "fxdraw:" + std::string(layerId) + ":" + std::to_string(ordinal);
+}
+}  // namespace
+
+std::vector<std::pair<std::string, Json>> gpu_overlay_requests(const RLayer& l) {
+  std::vector<std::pair<std::string, Json>> out;
+  if (!l.gpuEffects) return out;
+  std::size_t ordinal = 0;
+  for (const Json& e : l.effects) {
+    if (!effect_enabled(e) || !gpu_overlay_effect(l, e)) continue;
+    out.emplace_back(overlay_key(l.id, ordinal++), e);
+  }
+  return out;
+}
+
 std::optional<api::RenderEffect> gpu_canvas_effect_entry(const RLayer& l, const Json& e) {
   if (!gpu_draws_canvas_effect(l, e)) return std::nullopt;
   if (type_of(e) == "plexus") {
@@ -701,10 +769,10 @@ const char* gpu_effect_route_blocker(const RLayer& l) {
   for (const Json& e : l.effects) {
     if (!effect_enabled(e)) continue;
     const std::string t = type_of(e);
-    if (is_canvas2d_only(t) && !gpu_draws_canvas_effect(l, e)) return "a Canvas2D-only effect";
+    if (is_canvas2d_only(t) && !gpu_draws_canvas_effect(l, e) && !gpu_overlay_effect(l, e)) return "a Canvas2D-only effect";
     if (is_temporal(t)) continue;  // the snapshot's time plumbing, baked or not
     if (!is_native_effect(t) && doc::registry().effect(t) == nullptr) return "a plugin effect (G2)";
-    if (t != "beam-path") {
+    if (t != "beam-path" && !gpu_overlay_effect(l, e) && !(is_canvas2d_only(t) && gpu_draws_canvas_effect(l, e))) {
       const Json& pm = e.at("params").at("pathMaskId");
       if (pm.is_string() && !pm.str().empty()) return "a path-following effect";
     }
@@ -712,7 +780,8 @@ const char* gpu_effect_route_blocker(const RLayer& l) {
     // channel-lut), so they stay in stack order after fill opacity.
     const bool grade = (is_color_effect(t) && t != "opacity") || is_lut_effect(t);
     const bool chained = is_ported_spatial(t) || is_more_spatial(t) || is_native_effect(t) || t == "apply-color-lut" ||
-                         (is_canvas2d_only(t) && gpu_draws_canvas_effect(l, e)) || grade;
+                         (is_canvas2d_only(t) && (gpu_draws_canvas_effect(l, e) || gpu_overlay_effect(l, e))) || grade ||
+                         is_gpu_identity(t);
     if (!chained) return "an effect with no GPU chain entry";
     const std::optional<double> a = effect_opacity_of(e);
     const bool faded = a && *a < 1;
@@ -743,6 +812,7 @@ std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
     out.push_back(FxWriter("fill-opacity").num("amount", std::max(0.0, std::min(1.0, *l.fillOpacity))).done());
   }
   std::size_t lutOrdinal = 0;
+  std::size_t overlayOrdinal = 0;  // gpu_overlay_requests' order
   for (const Json& e : l.effects) {
     if (!effect_enabled(e)) continue;
     const std::size_t at = out.size();
@@ -772,8 +842,17 @@ std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
     } else if (is_lut_effect(t)) {
       out.push_back(FxWriter("channel-lut").text("lutKey", channel_lut_key(l.id, lutOrdinal)).done());
       ++lutOrdinal;
+    } else if (is_canvas2d_only(t) && gpu_overlay_effect(l, e)) {
+      // E4 round 2: the effect's drawing alone, landed with its composite
+      // (compositeFor's code; 10 + PAINT_STYLE for a paint buffer).
+      double mode = (t == "audio-waveform" || t == "lightning") ? motion::js::round(effect_number(e, "composite")) : 0;
+      if (const char* style = paint_style_param(t)) mode = 10 + std::max(0.0, std::min(2.0, motion::js::round(effect_number(e, style))));
+      out.push_back(FxWriter("fx-overlay").text("overlayKey", overlay_key(l.id, overlayOrdinal)).num("mode", mode).done());
+      ++overlayOrdinal;
     } else if (is_canvas2d_only(t)) {
       if (auto drawn = gpu_canvas_effect_entry(l, e)) out.push_back(std::move(*drawn));
+    } else if (is_gpu_identity(t)) {
+      // nothing to draw (the CPU pass is expand + crop back)
     } else {
       effect_entries(e, l, out);
     }

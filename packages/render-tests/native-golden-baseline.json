@@ -1,0 +1,27 @@
+{
+  "_comment": "Ceilings (differing-pixel ratio) for frames where the C++ engine rendering the frozen scene document (scenes/<id>.json) differs from the reference. A LIST OF DEBTS: a frame may not get worse, and its entry goes when it matches. Written by scripts/native-golden.mjs --update-baseline; review the diff.",
+  "_why": {
+    "effect-apply-color-lut-gpu#0": "0.70 % at <= 1/255 steps: the .cube lattice sampled in float on the GPU vs the WebGL2 reference's 8-bit path; under the product tolerance, over this scene's tighter one.",
+    "effect-posterize#0": "Path raster AA amplified by posterize: the engine draws on Skia's CPU raster, the reference on Chromium's GPU canvas (native-raster-baseline.json, same debt).",
+    "fill-opacity-zero-inner-shadow#0": "The same WebGPU-vs-WebGL2 reference debt the TS WebGPU backend carries (webgpu-baseline.json 3.288 %); the frame is structurally equal to the TS FrameScene.",
+    "light-spot#0": "Same debt as webgpu-baseline.json (1.233 %): spot falloff rounding, WebGPU vs the WebGL2-blessed reference.",
+    "mask-feather#0": "Feather blur edge, 0.84 %: Skia's blur vs the WebGL2 reference (was 6.2 % before the Chromium-GPU blur algorithm, D2w effects).",
+    "model-maps#0": "Same debt as webgpu-baseline.json (9.905 %): PBR maps shaded on WebGPU vs the WebGL2 reference; the base-colour texture now renders (was 24 %: textured leaves needed a session src).",
+    "svg-embedded-raster#0": "Same debt as webgpu-baseline.json (19.156 %): Chromium upscales the SVG's 2x2 embedded bitmap with its low-quality filter in the WebGL2 reference; the engine filters it bilinearly.",
+    "three-d-dof-visible#0": "Same debt as webgpu-baseline.json (5.243 %); the C++ FrameScene is structurally equal to the TS one (premation-scene against the TS .pfs).",
+    "video-decoded-frame#13": "E1 decode: ffmpeg YUV->RGB (chroma siting / matrix rounding) vs Chromium's WebCodecs decode of the same H.264 frame.",
+    "video-decoded-frame#5": "E1 decode: ffmpeg YUV->RGB (chroma siting / matrix rounding) vs Chromium's WebCodecs decode of the same H.264 frame."
+  },
+  "frames": {
+    "effect-apply-color-lut-gpu#0": 0.007,
+    "effect-posterize#0": 0.0104,
+    "fill-opacity-zero-inner-shadow#0": 0.03392,
+    "light-spot#0": 0.01236,
+    "mask-feather#0": 0.00837,
+    "model-maps#0": 0.09877,
+    "svg-embedded-raster#0": 0.19316,
+    "three-d-dof-visible#0": 0.05242,
+    "video-decoded-frame#13": 0.1928,
+    "video-decoded-frame#5": 0.19326
+  }
+}

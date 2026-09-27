@@ -50,6 +50,14 @@ struct MeasuredStyle {
   bool boxFit = false;                   ///< Fit Text to Box
   std::optional<double> boxAnchorHeight; ///< auto-height box's authored height
   bool hasLineRuns = false;              ///< character runs that change a line's height
+  /// measureText.ts readLineRuns: the runs that change a line's size or
+  /// leading, in grapheme indices (legacy code-point runs migrated).
+  struct LineRun {
+    double start = 0;
+    double end = 0;
+    std::optional<double> fontSize, lineHeight;
+  };
+  std::vector<LineRun> lineRuns;
   /// Set by wrapping: the wrapped content's soft-break line numbers.
   std::optional<std::vector<int>> softBreakLines;
   /// Set by wrapping a Fit Text to Box style (measureText.ts fitScaleOf): the
@@ -75,6 +83,19 @@ inline constexpr double kMinFitScale = 0.05;
 
 /// `DEFAULT_LINE_HEIGHT`.
 inline constexpr double kDefaultLineHeight = 1.2;
+
+/// Where the lines of a WRAPPED paragraph style sit (measureText.ts
+/// boxPlacementOf's stack, before the box placement): centre-origin baselines,
+/// each line's leading, the tallest line and the block height. With line runs
+/// it is textLayout.ts paragraphLineMetrics (the painter's own stackLines);
+/// without, the uniform lineOffsets stack. Measures no glyph.
+struct LineStack {
+  std::vector<double> ys;
+  std::vector<double> leading;  ///< one entry (uniform) without per-range leading runs
+  double lineHeightPx = 0;
+  double blockHeight = 0;
+};
+[[nodiscard]] LineStack paragraph_line_stack(const MeasuredStyle& wrapped);
 
 /// measureTextBoxes' FONT box (stroke width 0), relative to the draw origin:
 /// the line block's font-metric top / bottom and half the widest advance.

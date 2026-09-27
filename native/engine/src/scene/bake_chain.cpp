@@ -15,7 +15,10 @@
 #include "effects_port.hpp"
 #include "fxstate.hpp"
 #include "json.hpp"
+#include "jsmath.hpp"
 #include "mask_paint.hpp"
+#include "paint_raster.hpp"
+#include "raster_source.hpp"
 #include "thread_pool.hpp"
 
 namespace premation::scene::bake {
@@ -111,6 +114,18 @@ void bake_footage(Canvas2D& ctx, const Json& spec, std::vector<std::string>& uns
   t.d = ky;
   t.e = w / 2;
   t.f = h / 2;
+  // PAINT before the mask and the chain (bakeImageBitmap / the video bake):
+  // strokes are content, drawn in the same centred space as the matte. Clone
+  // strokes sample this frame.
+  if (spec.at("paint").is_object()) {
+    const rj::Value paint = to_raster(spec.at("paint"));
+    if (raster::has_paint_strokes(paint)) {
+      ctx.save();
+      ctx.setTransform(t);
+      raster::draw_paint(ctx, paint);
+      ctx.restore();
+    }
+  }
   rj::Value rmask;
   const bool masked = apply_mask_matte(ctx, spec, t, rmask, unsupported);
   ctx.setTransform(Mat2D{});
@@ -152,6 +167,59 @@ void apply_stack(Canvas2D& ctx, const Json& spec, double ss, bool masked, const 
 }
 
 }  // namespace
+
+OverlayOutput draw_effect_overlay(const Json& spec, double resolutionScale, double padding, const raster::CanvasOptions& opts,
+                                  SharedPool pool) {
+  OverlayOutput out;
+  const double lw = spec.at("width").is_number() ? spec.at("width").num() : 0;
+  const double lh = spec.at("height").is_number() ? spec.at("height").num() : 0;
+  const double deviceMax = spec.at("__deviceMax").is_number() ? spec.at("__deviceMax").num() : 8192;
+  // At the CPU BAKE's scale (no 2x supersample): the drawing then has the bake's
+  // own pixels and AA, at a quarter of the pixels. The chain samples it through
+  // the layer's quad, so it need not share the layer raster's texel grid — only
+  // its padded box.
+  const raster::RasterCanvasSize size = raster::raster_canvas_size(lw, lh, resolutionScale, padding, true, deviceMax);
+  const auto ctx = Canvas2D::make(size.width, size.height, opts);
+  if (!ctx) {
+    out.unsupported.emplace_back("effect overlay: no canvas");
+    return out;
+  }
+  // The one effect, without its effect opacity / scope (the GPU chain blends
+  // those back) — the stack bake_layer_raster would hand the chain.
+  const Json& e = spec.at("effect");
+  Json o = Json::object();
+  o.set("type", Json::string(type_of(e)));
+  Json params = scaled_params(e, size.scale);
+  // Inside (source-atop) paints nothing on a transparent canvas: the overlay is
+  // painted source-over and the chain lands it atop the layer (the same result).
+  const std::string t = type_of(e);
+  if ((t == "audio-waveform" || t == "lightning") && params.at("composite").is_number() &&
+      motion::js::round(params.at("composite").num()) == 4) {
+    params.set("composite", Json::number(0));
+  }
+  // Path Stroke / Scribble: the paint buffer alone ("on transparent"); the chain
+  // lands it by the effect's own paint style.
+  if (t == "path-stroke") params.set("paintStyle", Json::number(1));
+  if (t == "scribble") params.set("composite", Json::number(1));
+  o.set("params", std::move(params));
+  Json stack = Json::array();
+  stack.arr_mut().push_back(std::move(o));
+  effects::ThreadPool* threads = nullptr;
+  std::unique_lock<std::mutex> lock;
+  if (pool.pool != nullptr && pool.m != nullptr) {
+    lock = std::unique_lock<std::mutex>(*pool.m, std::try_to_lock);
+    if (lock.owns_lock()) threads = pool.pool;
+  }
+  effects::ChainReport report;
+  effects::apply_effect_chain(*ctx, static_cast<int>(size.width), static_cast<int>(size.height), to_raster(stack), 1, nullptr,
+                              threads, report);
+  for (std::string& u : report.unported) out.unsupported.push_back("effect chain: " + std::move(u));
+  for (std::string& u : report.unsupported) out.unsupported.push_back(std::move(u));
+  out.width = size.width;
+  out.height = size.height;
+  out.rgba = ctx->pixels();
+  return out;
+}
 
 double baked_effect_spread(const RLayer& l) {
   if (!layer_is_baked(l)) return 0;

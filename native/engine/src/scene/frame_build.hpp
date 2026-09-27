@@ -22,7 +22,9 @@ namespace premation::scene {
 /// particles: a particle emitter's field (particle_port.cpp).
 /// contours: E4's GPU Vegas — the alpha contours of another raster of the same
 /// frame (spec.source, its key) as a data texture (effects/contour_texture.hpp).
-enum class TexKind : std::uint8_t { text, path, mask, media, light, pixels, particles, contours };
+/// `overlay`: E4 round 2 — a drawn Canvas2D-only effect painted alone at the
+/// layer raster's size (spec {effect, width, height, __deviceMax}).
+enum class TexKind : std::uint8_t { text, path, mask, media, light, pixels, particles, contours, overlay };
 
 struct TextureRequest {
   std::string key;

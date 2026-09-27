@@ -387,6 +387,8 @@ Json text_spec(const RLayer& l) {
   }
   if (l.mask.is_object()) o.set("mask", l.mask);
   if (l.fillOpacity) o.set("fillOpacity", Json::number(*l.fillOpacity));  // TextSpec.fillOpacity (the bake's fade)
+  // Brush / Eraser / Clone strokes over the glyphs (TextSpec.paint; raster_source draws them).
+  if (has_paint_strokes(l)) o.set("paint", l.paint);
   o.set("kind", Json::string("text"));
   o.set("__baked",Json::boolean(layer_is_baked(l)));  // text_spec is only built for text layers
   o.set("__deviceMax", Json::number(kDeviceMax));
@@ -445,20 +447,30 @@ void Flattener::feed(const RLayer& l) {
       r.pulldownPhase = l.pulldownSource;
       r.fields = l.fieldsSource;
     }
-    if (layer_is_baked(l) && !(l.kind == LayerKind::video && l.contentAwareFillSrc)) {
+    const bool cafVideo = l.kind == LayerKind::video && l.contentAwareFillSrc.has_value();
+    const bool fullBake = layer_is_baked(l) && !cafVideo;
+    // MotionRendererBackend paintOnlyBake: a PAINTED still / clip / fill frame
+    // bakes its strokes alone (no effects, mask or fill opacity — the layer is
+    // not baked, so the GPU still applies all three to the painted texture).
+    if (fullBake || has_paint_strokes(l)) {
       // Canvas2D-only styles on footage bake into the bitmap (MotionRendererBackend:
       // the whole stack, the mask, the fill opacity), the GPU draws the result.
       r.bake = true;
       Json spec = Json::object();
       Json fx = Json::array();
-      for (const Json& e : l.effects) fx.arr_mut().push_back(e);
+      if (fullBake) {
+        for (const Json& e : l.effects) fx.arr_mut().push_back(e);
+      }
       spec.set("effects", std::move(fx));
       spec.set("width", Json::number(l.width));
       spec.set("height", Json::number(l.height));
-      if (l.fillOpacity) spec.set("fillOpacity", Json::number(*l.fillOpacity));
-      if (l.mask.is_object() && l.mask.at("paths").is_array() && !l.mask.at("paths").arr().empty()) spec.set("mask", l.mask);
+      if (fullBake && l.fillOpacity) spec.set("fillOpacity", Json::number(*l.fillOpacity));
+      if (fullBake && l.mask.is_object() && l.mask.at("paths").is_array() && !l.mask.at("paths").arr().empty()) {
+        spec.set("mask", l.mask);
+      }
+      if (has_paint_strokes(l)) spec.set("paint", l.paint);
       r.spec = std::move(spec);
-      if (l.kind == LayerKind::video) {
+      if (l.kind == LayerKind::video && !cafVideo) {
         // Device px per layer unit this frame: the view's raster scale × the layer's own.
         r.bakeTargetScale = rasterScale_ * std::max(std::abs(l.scaleX), std::abs(l.scaleY));
         // The bake decodes one frame and cannot weave: a pulldown source is bobbed.
@@ -550,6 +562,21 @@ void Flattener::feed(const RLayer& l) {
       r.pxWidth = s.width;
       r.pxHeight = s.height;
       r.pixels = s.rgba;
+      r.layerId = l.id;
+      textures_.push_back(std::move(r));
+    }
+    for (auto& [key, effect] : gpu_overlay_requests(l)) {  // E4 round 2: drawn effects, painted alone
+      TextureRequest r;
+      r.key = std::move(key);
+      r.kind = TexKind::overlay;
+      r.spec = Json::object();
+      r.spec.set("effect", std::move(effect));
+      r.spec.set("width", Json::number(l.width));
+      r.spec.set("height", Json::number(l.height));
+      r.spec.set("__deviceMax", Json::number(kDeviceMax));
+      // The layer raster's tier and padding: the overlay covers the same padded box.
+      r.resolutionScale = tier;
+      r.padding = raster_padding(l);
       r.layerId = l.id;
       textures_.push_back(std::move(r));
     }
