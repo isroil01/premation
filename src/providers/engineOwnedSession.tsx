@@ -1,6 +1,7 @@
 /**
  * D5 / F2 — the editor session when the C++ ENGINE OWNS THE DOCUMENT
- * (`PREMATION_ENGINE=process` + `PREMATION_ENGINE_OWNER=engine`; default off).
+ * (the default since 2026-09-28; `PREMATION_ENGINE_OWNER=ui` or
+ * `PREMATION_ENGINE=ts` keeps the TypeScript owner).
  *
  * What Providers wires instead of the TypeScript owner's pieces:
  *

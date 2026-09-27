@@ -1,10 +1,11 @@
 /**
  * engineHost — the C++ engine process wired into the app (NATIVE_CORE_PLAN §5 C3).
  *
- * Behind a flag, default OFF: `PREMATION_ENGINE=process` in the environment,
- * or `{ "backend": "process" }` in `<userData>/engine.json`. When it is off
- * the only thing registered is `engine:status` (answers `enabled: false`), so
- * the renderer can ask without a handler error and nothing starts.
+ * Behind a flag, default ON since 2026-09-28: `PREMATION_ENGINE=ts` in the
+ * environment, or `{ "backend": "ts" }` in `<userData>/engine.json`, turns it
+ * off. When it is off the only thing registered is `engine:status` (answers
+ * `enabled: false`), so the renderer can ask without a handler error and
+ * nothing starts.
  *
  * When on:
  *  - `EngineSupervisor` (engineSupervisor.ts) starts `premation-engine` after
@@ -78,42 +79,50 @@ export const MAX_COPY_FRAMES_IN_PAGE = 2;
 
 // ── the flag ─────────────────────────────────────────────────────────────────
 
-/** Is the process backend on? Env wins; then the preference file; default off. */
+/** A string field of the preference file, or undefined (no file, not JSON, not a string). */
+function prefField(prefFile: string | null, key: 'backend' | 'owner', read: (p: string) => string | null): string | undefined {
+  if (!prefFile) return undefined;
+  const text = read(prefFile);
+  if (!text) return undefined;
+  try {
+    const v = (JSON.parse(text) as Record<string, unknown>)[key];
+    return typeof v === 'string' ? v.trim().toLowerCase() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Is the process backend on? Env wins; then the preference file; default ON
+ * since 2026-09-28 (D5 / D4 / F1 exits met — NATIVE_CORE_PLAN D5). The
+ * TypeScript path stays behind `PREMATION_ENGINE=ts` or `{ "backend": "ts" }`,
+ * and a missing executable or a crash loop still falls back to it.
+ */
 export function engineBackendEnabled(env: Record<string, string | undefined>, prefFile: string | null, read: (p: string) => string | null = readText): boolean {
   const v = env.PREMATION_ENGINE?.trim().toLowerCase();
   if (v === 'process') return true;
   if (v === 'ts' || v === 'off' || v === 'typescript') return false;
-  if (!prefFile) return false;
-  const text = read(prefFile);
-  if (!text) return false;
-  try {
-    return (JSON.parse(text) as { backend?: unknown }).backend === 'process';
-  } catch {
-    return false;
-  }
+  const pref = prefField(prefFile, 'backend', read);
+  return !(pref === 'ts' || pref === 'off' || pref === 'typescript');
 }
 
 /**
  * F2 (NATIVE_CORE_PLAN §5 Phase F): does the ENGINE own the document — the
  * editor's New / Open / Save / Revert / autosave / recovery go through engine
- * requests, the page holding only the mirror? Needs the process backend on.
- * `PREMATION_ENGINE_OWNER=engine` (or `ui`) wins; then `{ "owner": "engine" }`
- * in the preference file; default off — the TypeScript engine stays the owner
- * for one release (the plan's F2 row).
+ * requests, the page holding only the mirror, and the engine's frames are the
+ * viewport (D5)? Needs the process backend on.
+ * `PREMATION_ENGINE_OWNER=engine` (or `ui`) wins; then `{ "owner": … }` in the
+ * preference file; default ON since 2026-09-28 (the D5 exit: engine HUD frame
+ * time ≤ the TS path on every bench comp). `ui` keeps the TypeScript engine as
+ * the owner (the fallback for one release).
  */
 export function engineOwnsDocument(env: Record<string, string | undefined>, prefFile: string | null, read: (p: string) => string | null = readText): boolean {
   if (!engineBackendEnabled(env, prefFile, read)) return false;
   const v = env.PREMATION_ENGINE_OWNER?.trim().toLowerCase();
   if (v === 'engine') return true;
   if (v === 'ui' || v === 'ts' || v === 'off') return false;
-  if (!prefFile) return false;
-  const text = read(prefFile);
-  if (!text) return false;
-  try {
-    return (JSON.parse(text) as { owner?: unknown }).owner === 'engine';
-  } catch {
-    return false;
-  }
+  const pref = prefField(prefFile, 'owner', read);
+  return !(pref === 'ui' || pref === 'ts' || pref === 'off');
 }
 
 function readText(p: string): string | null {

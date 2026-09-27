@@ -77,7 +77,8 @@ let exportSupervisor: ExportSupervisor | null = null;
 /**
  * The C++ engine process (electron/engineHost.ts), created in whenReady. Its
  * supervisor only exists — and the engine only runs — when the process
- * backend is switched on (PREMATION_ENGINE=process or <userData>/engine.json).
+ * backend is on (the default since 2026-09-28; PREMATION_ENGINE=ts or
+ * <userData>/engine.json `{ "backend": "ts" }` switches it off).
  */
 let engineHost: EngineHost | null = null;
 
@@ -1943,7 +1944,7 @@ app.whenReady().then(() => {
   // boot); `engine:status` answers `enabled: false` when the flag is off.
   engineHost = new EngineHost({
     enabled: engineBackendEnabled(process.env, enginePreferenceFile(app.getPath('userData'))),
-    // F2: the document lifecycle through the engine (PREMATION_ENGINE_OWNER=engine); default off.
+    // F2: the document lifecycle through the engine; default on since 2026-09-28 (PREMATION_ENGINE_OWNER=ui opts out).
     ownsDocument: engineOwnsDocument(process.env, enginePreferenceFile(app.getPath('userData'))),
     isDev,
     isPackaged: app.isPackaged,

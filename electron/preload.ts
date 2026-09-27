@@ -627,8 +627,8 @@ const bridge = {
   /**
    * The C++ engine process (NATIVE_CORE_PLAN C3; electron/engineHost.ts). Bytes
    * in, bytes out: the page's ProcessEngineClient owns the codec, main relays.
-   * `status().enabled` is false unless the process backend is switched on
-   * (PREMATION_ENGINE=process / <userData>/engine.json), and then nothing else
+   * `status().enabled` is false when the process backend is switched off
+   * (PREMATION_ENGINE=ts / <userData>/engine.json; on by default), and then nothing else
    * here has a handler.
    */
   engine: {

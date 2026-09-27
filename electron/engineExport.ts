@@ -17,8 +17,8 @@
  *
  * ── When the engine does not run a job ───────────────────────────────────
  *
- *  - Off unless `PREMATION_EXPORT_ENGINE=1` (CLAUDE.md: every native
- *    replacement ships behind a flag with the TypeScript path intact).
+ *  - Off with `PREMATION_EXPORT_ENGINE=0` (on by default since 2026-09-28;
+ *    CLAUDE.md: every native replacement keeps the TypeScript path intact).
  *  - Ineligible specs (`engineIneligible`): JPEG sequences, chapters that are
  *    not already resolved `{startMs,endMs,title}` records, or no engine
  *    executable — the window path, unchanged. PNG and EXR sequences, resolved

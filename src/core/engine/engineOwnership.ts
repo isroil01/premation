@@ -3,10 +3,11 @@
  * (NATIVE_CORE_PLAN §5 D5 + F2).
  *
  *   engineOwnsDocumentNow()     the F2 owner flag, decided once at boot
- *                               (PREMATION_ENGINE=process + PREMATION_ENGINE_OWNER=engine,
- *                               or `{ "backend": "process", "owner": "engine" }` in
- *                               <userData>/engine.json). Default false: the TypeScript
- *                               engine owns the document, exactly as before.
+ *                               (main's engineOwnsDocument: ON by default since
+ *                               2026-09-28; PREMATION_ENGINE_OWNER=ui / PREMATION_ENGINE=ts
+ *                               or `{ "owner": "ui" }` in <userData>/engine.json keep the
+ *                               TypeScript engine as the owner, exactly as before).
+ *                               False here until main's status says otherwise.
  *   engineViewportActive()      the C++ engine's frames ARE the viewport: the engine owns
  *                               the document AND the process backend has not fallen back.
  *                               The TypeScript renderer does not run while this is true.
