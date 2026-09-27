@@ -19,7 +19,7 @@ import { readCompRef } from '@core/scene/compInstance';
 import { getFontWeights } from '@core/text/fontCatalog';
 import { captureDocument } from '@core/api/cloudDocument';
 import { fail } from './errors';
-import { graph, requireComp, requireLayer, compOfLayer, layerIdsOfComp, compItemIds, layerKindOf, isCompItem, resolveItem } from './doc';
+import { graph, requireComp, requireLayer, compOfLayer, layerIdsOfComp, compItemIds, layerKindOf, isCompItem, resolveItem, isLayer } from './doc';
 import {
   documentSnapshot,
   compInfo,
@@ -34,6 +34,8 @@ import {
 import { catalogFor, requireBinding, readStatic, readKeys, keyAtToApi, isAnimated, flicksToKeyTime, keyTimeToFlicks, toApiNums, apiUnitFactor } from './props';
 import { valueAt } from './handlers/properties';
 import { textLayoutAnswer } from './textLayoutQuery';
+import { sourceTextPreview } from './sourceTextPreview';
+import { installSourceTextProvider } from '@core/textExpr/sourceTextProvider';
 import { layerBoundsAnswer } from './layerBoundsQuery';
 import { memberTracksAnswer } from './memberKeysQuery';
 import { encodeFragment } from './handlers/layers';
@@ -363,14 +365,43 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
     case 'evaluateExpression': {
       requireLayer(q.prop.layer);
       const b = requireBinding(catalogFor(q.prop.layer), q.prop.path);
-      if (b.members.length === 0) fail('unsupported', `'${b.path}' is not numeric`, { path: b.path });
       checkTime(q.time);
-      const r = defaultAnimation.previewExpression(q.prop.layer, b.members[0]!, q.source, flicksToKeyTime(q.prop.layer, b, q.time));
+      if (b.path === 'text/sourceText') {
+        // A draft Source Text expression: text + style overrides (B4, the editor preview).
+        installSourceTextProvider();
+        const r = defaultAnimation.previewSourceTextExpression(q.prop.layer, q.source, flicksToKeyTime(q.prop.layer, b, q.time));
+        return {
+          type: q.type,
+          ...(r.result ? { text: sourceTextPreview(r.result) } : {}),
+          diagnostics: r.error ? [{ message: r.error, line: 0, column: 0 }] : [],
+        };
+      }
+      if (b.members.length === 0) fail('unsupported', `'${b.path}' is not numeric`, { path: b.path });
+      const member = q.member ?? 0;
+      if (member >= b.members.length) fail('outOfRange', `'${b.path}' has ${b.members.length} member(s)`, { path: b.path });
+      const r = defaultAnimation.previewExpression(q.prop.layer, b.members[member]!, q.source, flicksToKeyTime(q.prop.layer, b, q.time));
       const val = r.value;
       const value = val === null ? undefined : Array.isArray(val)
         ? (val.length === 2 ? { kind: 'vec2' as const, value: { x: val[0]!, y: val[1]! } } : { kind: 'vec3' as const, value: { x: val[0]!, y: val[1] ?? 0, z: val[2] ?? 0 } })
         : { kind: 'scalar' as const, value: val as number };
       return { type: q.type, ...(value ? { value } : {}), diagnostics: r.error ? [{ message: r.error, line: 0, column: 0 }] : [] };
+    }
+    case 'getSearchFacts': {
+      const ids = q.layers.length > 0 ? q.layers.filter((id) => isLayer(id)) : compItemIds().flatMap((c) => layerIdsOfComp(c));
+      const exprs = new Map<string, string[]>();
+      for (const e of defaultAnimation.allExpressions()) {
+        const list = exprs.get(e.nodeId);
+        if (list) list.push(e.src);
+        else exprs.set(e.nodeId, [e.src]);
+      }
+      return {
+        type: q.type,
+        layers: ids.map((id) => ({
+          layer: id,
+          effects: getNodeEffects(id).map((e) => e.type),
+          expressions: exprs.get(id) ?? [],
+        })),
+      };
     }
     case 'findLayers': {
       const comps = q.comp ? [q.comp] : compItemIds();

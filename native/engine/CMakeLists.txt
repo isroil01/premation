@@ -206,6 +206,7 @@ if(MOTION_BUILD_TESTS)
     tests/test_framing.cpp
     tests/test_session.cpp
     tests/test_b4_round2.cpp
+    tests/test_b4_round3.cpp
     tests/test_jobs.cpp
     tests/test_paint_strokes.cpp
     tests/test_paths.cpp

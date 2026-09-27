@@ -2090,6 +2090,49 @@ from the struct's maximum + 800.
   stored width × world scale around the origin) and moves each origin by its
   box's delta through the parent's inverse (`getLayerTransforms`).
 
+### 15.13 B4 round 3 — expression preview, styles in the tree, overlay consumers (both engines, 2026-09-28)
+
+- **`evaluateExpression {prop, time, source, member?}`** (1064): `member` is
+  the dimension a draft drives (as `setExpression`'s — `value` is that
+  member's own, the answer that member's); absent = the property's first
+  member. On **`text/sourceText`** the draft is a Source Text expression and
+  the answer is **`text: SourceTextPreview {text, styleKeys, ranges,
+  rangeKeys}`** (no `value`): the text, the layer-wide overrides by the Source
+  Text result's key names in declaration order, the number of character
+  ranges and the distinct keys they set. `outOfRange` for a member past the
+  property's. TS: `previewExpression` / `previewSourceTextExpression`
+  (`core/engine/sourceTextPreview.ts`); C++: `anim_preview_expression` /
+  the new `anim_preview_source_text` (queries.cpp `source_text_preview`). The
+  expression editor's live value is this query (throttled playhead, the tree
+  re-asks on a document change); the Source Text provider is installed with
+  the other expression providers at boot.
+- **A switched-off layer style keeps its properties** (both catalogs:
+  `propertyTree.ts layerStyleRows`, `ptree.cpp layer_style_rows`): AE's eye
+  hides the style, its properties stay. Before, `styles/<key>` of a disabled
+  style had only its switches, so a reader could not show its values. The
+  undo-parity fixture was re-blessed for exactly this (3 getDocument probes of
+  the layer-styles session). `mirrorLayerStyles(tree)` (core/mirror/layerFacts)
+  rebuilds the editor's `LayerStyles` record from `styles/<key>/<param>`
+  (numbers ÷ the catalog scale, colours as hex, Glass as stored).
+- **`getSearchFacts {layers}`** (1894 → `SearchFactsList {layers:
+  [LayerSearchFacts {layer, effects, expressions}]}`): what a document-wide
+  text search matches besides the layer headers — each layer's effect match
+  names in stack order and every expression source (enabled or not). Empty
+  `layers` = every layer of every composition. The Layers panel asks it
+  (`useSearchFacts`) only while an Effects / Expressions search is active, once
+  per revision; display names are the editor's (`effectDisplayNames` over the
+  match names).
+- A composition ROOT row in the Layers panel has no eye / lock / solo (it is an
+  item, not a layer): the tree reads none, where it read the root node's flags.
+- **Overlay geometry consumers**: `requestOverlayLayers(viewport, owner,
+  layers, kinds)` (src/stores/overlayGeometry.ts) — each overlay asks for its
+  own layers and kinds; the viewport's `setOverlayGeometry` is their union.
+  `overlayScreenPlacement(g, toScreen)` reads a pushed matrix as the screen
+  origin / angle / axis scales the DOM overlays glue to. The paragraph box
+  handles (TextBoxHandles) draw from the pushed `transform` + `textBox`; their
+  write side (textBoxReflow) reads the pose from the mirror and asks
+  `getTextLayout` / `getLayerTransforms` (the parent) at press.
+
 ## 16. Files
 
 | Path | What |

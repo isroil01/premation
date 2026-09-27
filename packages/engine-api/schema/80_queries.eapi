@@ -198,6 +198,10 @@ query copyKeyframes = 1889 { keys: KeyframeId[] = 1; } -> KeyframeSets;
 query getMemberKeyframes = 1893 { layer: LayerId = 1; members: string[] = 2; } -> MemberTracks;
 /// B4 — Edit ▸ Copy of EFFECTS in API form: the layer's effects `effects` names (`effects/<id>`; empty = the whole stack), in stack order, captured as `pasteEffects` takes them — a JSON array of `{effect: <the stored effect: type, params, enabled, opacity, maskId, labelColor, …>, tracks: {<param suffix>: Keyframe[]}}` (stored keyframe records on the layer's keyframe axis; suffix '' = the legacy single-scalar track). Two captures of the same effect compare equal as strings until it changes (the editor's "still as copied" test). Unknown effect paths are skipped.
 query copyEffects = 1890 { layer: LayerId = 1; effects: PropPath[] = 2; } -> CopiedEffects;
+/// B4 — what a document-wide text search over layers matches besides their headers (the Layers panel's Effects / Expressions filters): per layer, its effects' match names in stack order and the source of every expression it carries (enabled or not, in the engine's order). `layers` narrows (empty = every layer of every composition, in `findLayers` order); unknown ids are skipped. The mirror loads property trees on demand, never wholesale — this answers the whole document in one round trip.
+query getSearchFacts = 1894 { layers: LayerId[] = 1; } -> SearchFactsList;
+struct LayerSearchFacts { layer: LayerId = 1; effects: string[] = 2; expressions: string[] = 3; }
+struct SearchFactsList { layers: LayerSearchFacts[] = 1; }
 
 /// B4 — one member track (getMemberKeyframes).
 struct MemberTrack {
@@ -420,8 +424,8 @@ query getLayerBounds = 1061 { layers: LayerId[] = 1; time: Time = 2; space: Boun
 query getLayerTransforms = 1062 { layers: LayerId[] = 1; time: Time = 2; } -> LayerTransformList;
 /// Text layout: how a text layer's lines measure (B4: the render box, the selection box, the wrap, the paragraph box, where the line block sits in the layer). The STORED style is measured (animated values at their base, as Convert / Box Auto-Size hold the text still) with `overrides` winning — a "where would the lines sit if…" before a write. `time` is reserved for evaluated layouts (glyph boxes for in-viewport editing). `invalidArgument` for a layer with no text; `unsupported` where the engine cannot measure (no fonts: the headless engine, a jsdom page) or the style is outside its text port (the message says which).
 query getTextLayout = 1063 { layer: LayerId = 1; time: Time = 2; overrides?: TextLayoutOverrides = 802; } -> TextLayout;
-/// Evaluate an expression without storing it (expression editor preview).
-query evaluateExpression = 1064 { prop: PropRef = 1; time: Time = 2; source: string = 3; } -> ExpressionEvaluation;
+/// Evaluate an expression without storing it (expression editor preview). `member`: the dimension the draft drives (as setExpression's — `value` is that member's own value, and the answer is that member's); absent = the property's first member, a vector result whole. On `text/sourceText` the draft is a Source Text expression: the answer is `text` (no `value`).
+query evaluateExpression = 1064 { prop: PropRef = 1; time: Time = 2; source: string = 3; member?: u32 = 4; } -> ExpressionEvaluation;
 /// Pixel values under a point of a viewport (Info panel, eyedropper), in working space.
 query readPixels = 1065 { viewport: u32 = 1; region: Rect = 2; } -> PixelSamples;
 query findLayers = 1066 { comp?: ItemId = 1; name: string = 2; kinds: LayerKind[] = 3; effect: string = 4; } -> LayerList;
@@ -494,7 +498,9 @@ struct ParagraphLayout {
   /// The STORED box height (0 = none): an auto-height box keeps the top edge of a box this tall.
   storedHeight: f64 = 12;
 }
-struct ExpressionEvaluation { value?: Value = 1; diagnostics: ExpressionDiagnostic[] = 2; }
+struct ExpressionEvaluation { value?: Value = 1; diagnostics: ExpressionDiagnostic[] = 2; text?: SourceTextPreview = 3; }
+/// What a draft Source Text expression evaluates to (evaluateExpression on `text/sourceText`): the text, the layer-wide style keys it overrides (the Source Text result's names: `fontSize`, `fill`, `tracking`, …, in declaration order), how many character ranges it styles and the distinct style keys those ranges set (first-seen order).
+struct SourceTextPreview { text: string = 1; styleKeys: string[] = 2; ranges: u32 = 3; rangeKeys: string[] = 4; }
 struct PixelSamples { width: u32 = 1; height: u32 = 2; rgba: f32[] = 3; }
 struct Dependencies { uses: PropRef[] = 1; usedBy: PropRef[] = 2; items: ItemId[] = 3; }
 
