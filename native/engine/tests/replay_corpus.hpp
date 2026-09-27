@@ -1,7 +1,8 @@
 // The replay corpus: every request the cross-engine test (crossEngine.test.ts)
 // sent to the C++ engine, per session, as encoded EngineMessage{request}
-// bytes — regenerated with
-//   PREMATION_DUMP_REPLAY=native/engine/tests/data/replay_corpus.bin npx jest src/core/engine/__tests__/crossEngine.test.ts
+// bytes. Frozen data (recorded once from the TypeScript engine; requests only,
+// no answers, so there is nothing to re-bless) — the stress test's and the
+// fuzzer's seed corpus.
 // Format, little-endian: u32 session count; per session u32 request count;
 // per request u32 byte length + the bytes.
 #pragma once

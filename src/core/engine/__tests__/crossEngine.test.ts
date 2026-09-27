@@ -25,7 +25,6 @@
 
 import {
   COMMANDS,
-  encodeEngineMessage,
   IdMap,
   commandKind,
   ProcessEngineClient,
@@ -51,14 +50,6 @@ import { installAppExpressionProviders } from './crossEngineProviders.test';
 const CORPUS = { ...B2_CORPUS, ...FAMILY_CORPUS, ...GENERATED_CORPUS };
 /** Every command type the recorded sessions sent (batch members included) — the coverage report. */
 const ISSUED = new Set<string>();
-/**
- * PREMATION_DUMP_REPLAY=<file>: write every request each session sent to the C++
- * engine — the native stress test's and the fuzzer's seed corpus
- * (native/engine/tests/data/replay_corpus.bin). Format, little-endian: u32
- * session count; per session u32 request count; per request u32 byte length +
- * an encoded EngineMessage{request}.
- */
-const DUMP: Uint8Array[][] = [];
 
 // The TS harness runs under fake timers (the 700 ms recorder must not fire on
 // its own); the engine supervisor keeps REAL timers (nativeEngine.ts captures them).
@@ -355,8 +346,6 @@ async function replaySession(name: string): Promise<SessionReport> {
     // skipped: the C++ stack is the TS stack minus the TS-only entries, so an
     // undo/redo of a TS-only entry is not sent (the C++ document never had
     // that change), and a jump's position is translated to the C++ stack.
-    const sentToCxx: Uint8Array[] = [];
-    DUMP.push(sentToCxx);
     const stack: Array<{ cxx: boolean }> = [];
     let pos = 0;
     let gesture: { ts: boolean; cxx: boolean } | null = null;
@@ -438,7 +427,6 @@ async function replaySession(name: string): Promise<SessionReport> {
         cxxReq = map.translate(req);
       }
 
-      sentToCxx.push(encodeEngineMessage({ kind: 'request', value: cxxReq }));
       const cxxBefore = cxxBatches.length;
       const cxxPosBefore = isEdit ? await historyPos(cxx) : 0;
       const cxxRes: Response = await cxx.request(cxxReq);
@@ -682,16 +670,6 @@ describeNative('C3: the replay corpus against both engines', () => {
   const reports: Record<string, SessionReport> = {};
 
   afterAll(() => {
-    const dumpTo = process.env.PREMATION_DUMP_REPLAY;
-    if (dumpTo) {
-      const u32 = (n: number): Uint8Array => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n, true); return b; };
-      const parts: Uint8Array[] = [u32(DUMP.length)];
-      for (const session of DUMP) {
-        parts.push(u32(session.length));
-        for (const m of session) parts.push(u32(m.length), m);
-      }
-      writeFileSync(dumpTo, Buffer.concat(parts));
-    }
     const rows = Object.entries(reports).map(([n, r]) => {
       const unsupported = Object.values(r.unsupported).reduce((a, b) => a + b, 0);
       return `${n.slice(0, 48).padEnd(48)} records ${String(r.records).padStart(3)} · compared ${String(r.compared).padStart(3)} · unsupported ${String(unsupported).padStart(3)} · dependent ${String(r.dependent).padStart(3)} · final layers ${r.finalLayers}, trees ${r.finalTrees}, values ${r.finalValues}, keys ${r.finalKeys}, saved docs ${r.savedDocs} · ts-only history ${r.tsOnlyHistory} · shared event gaps ${r.sharedEventGaps.length} · catalog diffs ${r.catalogDiffs.length} · mismatches ${r.mismatches.length} · event-kind diffs ${r.eventKindDiffs.length}`;

@@ -9,7 +9,7 @@
 namespace premation::doc {
 namespace {
 
-#include "generated/catalog_data.inc"
+#include "catalog_data.inc"  // NOLINT(bugprone-suspicious-include) — generated data table (catalog/embed_catalog.cmake)
 
 std::optional<double> opt_num(const Json& o, std::string_view k) { return o.number_at(k); }
 std::optional<std::string> opt_str(const Json& o, std::string_view k) { return o.string_at(k); }
@@ -19,9 +19,9 @@ Registry build() {
   for (const char* chunk : kCatalogJsonChunks) text += chunk;
   const auto parsed = js::parse(text);
   if (!parsed) {
-    // The data is generated and pinned by a test; failing to parse it is a
-    // build defect, not a runtime condition to recover from.
-    std::fputs("premation-engine: generated catalog data does not parse\n", stderr);
+    // embed_catalog.cmake validates every part at configure time; failing to
+    // parse it here is a build defect, not a runtime condition to recover from.
+    std::fputs("premation-engine: embedded catalog data does not parse\n", stderr);
     std::abort();
   }
   const Json& d = *parsed;

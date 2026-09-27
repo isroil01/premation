@@ -500,7 +500,8 @@ ResultOf<api::SetExpression> handle(const api::SetExpression& c, HCtx& x) {
     r.ok = true;
     return r;
   }
-  for (const auto& m : members) anim_set_expr_state(x.d, layer, m, ExprState{c.source, c.enabled});
+  // B5 `owner`: the plugin that wrote it (`authoredBy`); absent = the user's (a plugin's mark is cleared).
+  for (const auto& m : members) anim_set_expr_state(x.d, layer, m, ExprState{c.source, c.enabled, c.owner});
   if (const auto err = anim_expr_error(x.d, x.cache, layer, members[0])) {
     // After Effects (since CC 2019): stored as given and left on; the error is reported.
     r.ok = false;
@@ -608,7 +609,7 @@ ResultOf<api::LinkProperty> handle(const api::LinkProperty& c, HCtx& x) {
   x.label = "Link Property";
   for (std::size_t i = 0; i < b.members.size(); ++i) {
     const std::string src = "layer('#" + c.target.layer + "', '" + target.b.members[i] + "')";
-    anim_set_expr_state(x.d, c.prop.layer, b.members[i], ExprState{src, true});
+    anim_set_expr_state(x.d, c.prop.layer, b.members[i], ExprState{src, true, std::nullopt});
   }
   return {};
 }

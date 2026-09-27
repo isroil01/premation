@@ -1,0 +1,185 @@
+{
+ "version": "1.9.0",
+ "scene": {
+  "version": "1.0.0",
+  "nodes": [
+   {
+    "id": "comp_root",
+    "name": "Composition 1",
+    "parent": null,
+    "children": [
+     "liq"
+    ],
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "visible": true,
+    "locked": false,
+    "components": [
+     {
+      "id": "comp_root_meta",
+      "type": "group",
+      "props": {
+       "__kind": "group"
+      }
+     }
+    ]
+   },
+   {
+    "id": "liq",
+    "name": "liq",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 160,
+      "y": 110
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "liq_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "shape",
+       "x": 160,
+       "y": 110,
+       "rotation": 0,
+       "width": 240,
+       "height": 160,
+       "shapeType": "rect"
+      }
+     },
+     {
+      "id": "liq_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#1b2436"
+      }
+     },
+     {
+      "id": "liq_fx",
+      "type": "fx",
+      "props": {
+       "effects": [
+        {
+         "id": "chk",
+         "type": "checkerboard",
+         "params": {
+          "width": 20,
+          "height": 20,
+          "anchorX": 0,
+          "anchorY": 0,
+          "colorA": "#12304f",
+          "colorB": "#ffd166",
+          "opacity": 100
+         }
+        },
+        {
+         "id": "lq",
+         "type": "liquify",
+         "params": {
+          "centerX": -40,
+          "centerY": -20,
+          "brushSize": 55,
+          "pushX": 18,
+          "pushY": 10,
+          "twirl": 70,
+          "pinch": 25
+         }
+        }
+       ]
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   }
+  ]
+ },
+ "animation": {
+  "tracks": {},
+  "expressions": {}
+ },
+ "comps": {
+  "comp_root": {
+   "id": "comp_root",
+   "name": "comp_root",
+   "width": 320,
+   "height": 220,
+   "fps": 30,
+   "durationSeconds": 10,
+   "background": "#0c0c12"
+  }
+ },
+ "motionBlur": {
+  "enabled": false,
+  "shutterAngle": 180,
+  "shutterPhase": -90,
+  "samples": 8,
+  "adaptiveSampleLimit": 128
+ },
+ "colorManagement": {
+  "workingSpace": "srgb-linear",
+  "displayTransform": "srgb",
+  "bitDepth": 16
+ },
+ "projectItems": {
+  "folders": [],
+  "footage": {}
+ },
+ "openTabs": {
+  "tabOrder": [
+   "tab1"
+  ],
+  "activeTabId": "tab1",
+  "tabs": {
+   "tab1": {
+    "id": "tab1",
+    "compositionId": "comp_root",
+    "breadcrumbPath": [
+     "comp_root"
+    ],
+    "title": "comp_root",
+    "time": 0,
+    "frame": 0
+   }
+  }
+ },
+ "harness": {
+  "sceneId": "effect-liquify",
+  "frames": [
+   0
+  ],
+  "fps": 30,
+  "size": {
+   "w": 320,
+   "h": 220
+  },
+  "motionBlurFps": null,
+  "motionBlurOn": false,
+  "overlays": null,
+  "viewerLut": false,
+  "assets": [],
+  "compId": "comp_root",
+  "viewerLutCube": null,
+  "media": [],
+  "tolerance": null,
+  "fidelityOnly": false,
+  "description": "Liquify: one offset brush pushing, twirling and pinching a checkerboard — the rest untouched."
+ }
+}

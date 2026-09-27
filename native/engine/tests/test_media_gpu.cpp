@@ -172,6 +172,15 @@ TEST_CASE("MediaTextures: media hashes resolve to textures; preview never blocks
   CHECK_FALSE(parse_media_hash("media:3:x"));
   CHECK(media_hash(3, 17) == "media:3:17");
   CHECK(media_hash(3, 17, 16) == "media:3:17~16");
+  // Interpret Footage ▸ Fields rides as a suffix.
+  CHECK(media_hash(3, 17, std::nullopt, 'u') == "media:3:17#u");
+  CHECK(media_hash(3, 17, 16, 'l') == "media:3:17~16#l");
+  CHECK(media_hash(3, 17, std::nullopt, 0) == "media:3:17");
+  CHECK(parse_media_hash("media:3:17#u")->fields == 'u');
+  CHECK(parse_media_hash("media:3:17~16#l")->bottom == 16);
+  CHECK(parse_media_hash("media:3:17~16#l")->fields == 'l');
+  CHECK(parse_media_hash("media:3:17")->fields == 0);
+  CHECK_FALSE(parse_media_hash("media:3:17#x"));
 
   const auto g = make_gpu();
   if (!g) SKIP("no GPU adapter");
@@ -189,6 +198,19 @@ TEST_CASE("MediaTextures: media hashes resolve to textures; preview never blocks
   CHECK(tex.external_texture(media_hash(*id, 4)).id == t.id);
   // Weave of two fields.
   CHECK(tex.external_texture(media_hash(*id, 3, 2)));
+  // A deinterlaced frame is its own texture.
+  const auto fields = tex.external_texture(media_hash(*id, 4, std::nullopt, 'u'));
+  CHECK(fields);
+  CHECK(fields.id != t.id);
+  // Pixel Motion reads frames through convert_frame (the caller owns the texture).
+  {
+    ConvertedFrame owned;
+    bool exact = false;
+    REQUIRE(tex.convert_frame(*id, 5, owned, exact, error));
+    CHECK(exact);
+    CHECK(owned.width == 256);
+    tex.recycle(std::move(owned));
+  }
   // Preview: an undecoded frame falls back to the nearest cached one.
   tex.set_mode(MediaTextures::Mode::preview);
   const auto near = tex.external_texture(media_hash(*id, 7));
@@ -293,4 +315,48 @@ TEST_CASE("GPU conversion matches swscale: BT.601/709/2020 x limited/full x 8/10
       }
     }
   }
+}
+
+TEST_CASE("GPU deinterlace keeps one field and rebuilds the other (deinterlace.ts)", "[media][gpu]") {
+  const auto g = make_gpu();
+  if (!g) SKIP("no GPU adapter");
+  DecoderOptions opt;
+  opt.hw = HwPolicy::softwareOnly;
+  const FramePtr f = decode_one(fixture_path(fixture::Kind::prores422, "gpu-422.mov"), 3, opt);
+  FrameConverter conv(g->device);
+  ConvertedFrame src;
+  std::string error;
+  REQUIRE(conv.convert(*f, AlphaMode::straight, src, error));
+  const auto in = read_back(*g, src);
+  for (const bool keepUpper : {true, false}) {
+    INFO("keep " << (keepUpper ? "upper" : "lower"));
+    ConvertedFrame out;
+    REQUIRE(conv.deinterlace(src, keepUpper, out, error));
+    const auto px = read_back(*g, out);
+    REQUIRE(px.size() == in.size());
+    const std::uint32_t w = src.width;
+    const std::uint32_t h = src.height;
+    const auto at = [w](const std::vector<float>& v, std::uint32_t x, std::uint32_t y, std::size_t c) {
+      return v[(std::size_t{y} * w + x) * 4 + c];
+    };
+    const std::uint32_t keep = keepUpper ? 0U : 1U;
+    double worst = 0;
+    for (std::uint32_t y = 0; y < h; ++y) {
+      for (const std::uint32_t x : {0U, 17U, 100U, w - 1}) {
+        for (std::size_t c = 0; c < 4; ++c) {
+          double want = at(in, x, y, c);
+          if ((y & 1U) != keep) {
+            if (y == 0) want = at(in, x, 1, c);
+            else if (y + 1 >= h) want = at(in, x, y - 1, c);
+            else want = (static_cast<double>(at(in, x, y - 1, c)) + at(in, x, y + 1, c)) / 2;
+          }
+          worst = std::max(worst, std::abs(at(px, x, y, c) - want));
+        }
+      }
+    }
+    INFO("worst " << worst);
+    CHECK(worst < 1e-3);  // half-float rounding of the mean
+    conv.recycle(std::move(out));
+  }
+  conv.recycle(std::move(src));
 }

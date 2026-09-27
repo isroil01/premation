@@ -29,6 +29,8 @@ import { segmentSam } from './samSegment';
 import { matteToPath } from './rotoMatte';
 import { sourceDisplaySize } from './trackerSource';
 import { loadExactSource, mediaTimeAt } from './rotoBrush';
+import { runEngineJob } from '@core/engine/engineJobs';
+import { secondsToFlicks } from '@motion/engine-api';
 
 export interface ObjectMaskRequest {
   nodeId: string;
@@ -158,6 +160,33 @@ export async function runObjectMaskPick(opts: {
 
   store.getState().setAutoPhase('analyzing');
   try {
+    // The engine segments the frame with SAM itself when it runs jobs (the
+    // objectMatte job; the model in a child engine process) and adds the mask.
+    const viaEngine = await runEngineJob<{ contourPoints: number; engine?: string }>({
+      kind: 'objectMatte',
+      value: {
+        layer: opts.nodeId,
+        range: { start: secondsToFlicks(time), duration: secondsToFlicks(1 / fps) },
+        prompts: opts.point ? [opts.point] : [],
+        backgroundPrompts: [],
+        encoderModel: '',
+        decoderModel: '',
+        ...(opts.box
+          ? { box: { x: Math.min(opts.box.x0, opts.box.x1), y: Math.min(opts.box.y0, opts.box.y1), width: Math.abs(opts.box.x1 - opts.box.x0), height: Math.abs(opts.box.y1 - opts.box.y0) } }
+          : {}),
+      },
+    });
+    if (viaEngine) {
+      if (viaEngine.status !== 'done') throw new Error(viaEngine.error?.message ?? 'Object mask was cancelled.');
+      const display = sourceDisplaySize(opts.nodeId);
+      if (display) store.getState().setMode('mask', display.width, display.height);
+      store.getState().finishTracking(
+        prevResult,
+        `Object mask: ${viaEngine.result?.contourPoints ?? 0} points (neural). ` +
+          'Track mask makes it follow; Write-on/Vegas can draw along it via their Path option.',
+      );
+      return;
+    }
     const r = await segmentObjectMask({
       nodeId: opts.nodeId,
       compTime: time,

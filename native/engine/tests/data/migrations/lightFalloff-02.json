@@ -1,0 +1,342 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/lightFalloff.migration.test.ts › 1.7.0 → 1.8.0 light falloff is idempotent and leaves an untouched document as the same object",
+ "input": {
+  "version": "1.7.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "old",
+     "name": "old",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "old_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "light",
+        "x": 0,
+        "y": 0,
+        "radius": 500,
+        "intensity": 100,
+        "falloff": "legacy"
+       }
+      }
+     ]
+    },
+    {
+     "id": "spot",
+     "name": "spot",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "spot_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "light",
+        "x": 0,
+        "y": 0,
+        "lightType": "spot",
+        "radius": 500,
+        "falloff": "legacy"
+       }
+      }
+     ]
+    },
+    {
+     "id": "curved",
+     "name": "curved",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "curved_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "light",
+        "x": 0,
+        "y": 0,
+        "radius": 500,
+        "falloff": "smooth",
+        "falloffDistance": 200
+       }
+      }
+     ]
+    },
+    {
+     "id": "fresh",
+     "name": "fresh",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "fresh_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "light",
+        "x": 0,
+        "y": 0,
+        "radius": 500,
+        "falloff": "none"
+       }
+      }
+     ]
+    },
+    {
+     "id": "box",
+     "name": "box",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "box_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "shape",
+        "x": 0,
+        "y": 0,
+        "radius": 500
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "old",
+     "name": "old",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "old_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "light",
+        "x": 0,
+        "y": 0,
+        "radius": 500,
+        "intensity": 100,
+        "falloff": "legacy"
+       }
+      }
+     ]
+    },
+    {
+     "id": "spot",
+     "name": "spot",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "spot_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "light",
+        "x": 0,
+        "y": 0,
+        "lightType": "spot",
+        "radius": 500,
+        "falloff": "legacy"
+       }
+      }
+     ]
+    },
+    {
+     "id": "curved",
+     "name": "curved",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "curved_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "light",
+        "x": 0,
+        "y": 0,
+        "radius": 500,
+        "falloff": "smooth",
+        "falloffDistance": 200
+       }
+      }
+     ]
+    },
+    {
+     "id": "fresh",
+     "name": "fresh",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "fresh_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "light",
+        "x": 0,
+        "y": 0,
+        "radius": 500,
+        "falloff": "none"
+       }
+      }
+     ]
+    },
+    {
+     "id": "box",
+     "name": "box",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "box_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "shape",
+        "x": 0,
+        "y": 0,
+        "radius": 500
+       }
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

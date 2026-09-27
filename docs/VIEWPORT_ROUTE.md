@@ -34,7 +34,7 @@ managed about 36 fps and 6 fps.
 | Machine | Windows 11 Pro 26200. Hybrid laptop: **AMD Radeon 780M** (integrated) + **NVIDIA RTX 4060 Laptop**. Two displays: internal panel at DPR 2.18 and external at DPR 1.09, 75 Hz. The measurement window ran on the external display. |
 | Chromium's GPU | Electron 32 and 40 both choose the **RTX 4060** by default (`app.getGPUInfo`). The engine follows Chromium's adapter, matched by PCI vendor id. A second full run forced both onto the **780M** (`--chromium-gpu=low`). |
 | Engine | `premation-engine` in Release, clang-cl, Dawn `20260714.215939`, D3D12 backend. |
-| Scene | A tiled textured background plus a rotating textured card, then separable Gaussian blur H and V, then vignette, then the display encode and a 20-bit frame counter. The first three shaders are **WGSL taken verbatim from `packages/renderer`** (`textured`, `blur`, `vignette`), extracted by `native/engine/shaders/extract.mjs`. Intermediates are rgba16float at comp resolution. Pixels depend only on the frame index. |
+| Scene | A tiled textured background plus a rotating textured card, then separable Gaussian blur H and V, then vignette, then the display encode and a 20-bit frame counter. The first three shaders are **WGSL taken verbatim from `packages/renderer`** (`textured`, `blur`, `vignette`), now frozen under `native/engine/shaders/wgsl/`. Intermediates are rgba16float at comp resolution. Pixels depend only on the frame index. |
 | Pacing | The engine runs at a 60 fps playback clock (A, C). B is paced by its FIFO swapchain, which is the display's 75 Hz. The "ceiling" run is unpaced. |
 | Engine alone | 780M: 1080p render 284 fps, render + readback 312 fps; 4K render 75 fps, render + readback 73 fps. RTX 4060: 1080p 571 / 469 fps; 4K 146 / 114 fps. Source: `premation-engine --route bench`. |
 
@@ -199,6 +199,57 @@ How the engine side works (`native/engine/src/shared_texture_ffi.cpp`):
 
 Per frame, main takes 0.15 ms and main → renderer takes 1.2 ms.
 
+## Route C on macOS (IOSurface) — written, not yet measured
+
+Same ring, same protocol (`FrameSlots` / `FrameReady` / `FrameRelease`), a
+different handle:
+
+1. Each slot is an IOSurface (`'RGBA'`, 4 bytes/pixel, `kIOSurfaceIsGlobal`),
+   imported into the Metal Dawn device as `SharedTextureMemoryIOSurface`
+   (`native/engine/src/shared_texture_ffi_mac.cpp`). `gpu.cpp` requests
+   `SharedTextureMemoryIOSurface` + `SharedFenceMTLSharedEvent`.
+2. Writes are bracketed by `BeginAccess`/`EndAccess`; the MTLSharedEvent fences
+   an `EndAccess` exports are passed to the same slot's next `BeginAccess`.
+   Chromium still takes no fence for `rgba`, so the render thread CPU-waits for
+   its queue before it announces a slot, exactly as on Windows.
+3. `FrameSlots.handles` carries each surface's **IOSurfaceID**. Electron's
+   `ioSurface` handle must be an IOSurfaceRef local to main, so main loads
+   `premation-host-bridge.node` (N-API, `native/engine/host_bridge/`, built
+   beside the engine) and calls `IOSurfaceLookup` once per slot when the ring
+   is announced (`electron/sharedTextureHandles.ts`), holding the references
+   until the ring is replaced or the engine goes away. No bridge → the host
+   does not offer `frames.sharedTexture` and the viewport uses the route-A copy.
+4. **Trade-off:** `kIOSurfaceIsGlobal` / `IOSurfaceLookup` are deprecated (10.11)
+   but honoured for unsandboxed apps (checked on macOS 15: a global surface
+   from one process resolves by id in another). Any process of the same user
+   that guesses an id can read a viewport frame. The replacement is
+   `IOSurfaceCreateMachPort` over a mach rendezvous with main; it changes only
+   `shared_texture_ffi_mac.cpp` and the bridge.
+5. Unverified on hardware: Chromium's import of an `'RGBA'` IOSurface as
+   `pixelFormat: 'rgba'` (if it rejects it, switch the slots to `'BGRA'` /
+   `bgra` and the slot textures to BGRA8Unorm), and the latency numbers.
+
+## Linux and any platform without shared textures — route A copy
+
+Linux has no shared route yet: dmabuf needs GBM allocation in the engine
+(`SharedTextureMemoryDmaBuf` on Vulkan), fd passing into main (SCM_RIGHTS or
+`pidfd_getfd`, neither reachable from Node without native code) and
+`supportsZeroCopyWebGpuImport`. Until then the viewport runs on route A, wired
+end to end (`frames.copy`, docs/ENGINE_API.md §13):
+
+1. The host always offers `frames.copy`; the engine takes it when shared slots
+   are not in play and its fd 5 is open.
+2. The render thread copies each drawn slot into a per-slot read-back buffer
+   (same queue, after the draw), maps it after the queue wait it already does,
+   and writes one pixel message on fd 5 before the `FrameReady` on fd 3.
+3. Main (`FrameForwarder`) pairs pixels and `FrameReady` by (generation, slot),
+   pushes the pixels to the page (`engine:pixels`), at most two frames in the
+   page at once, and releases the slot on `engine:pixelsRelease`.
+4. The preload wraps the bytes in a `VideoFrame` (`format: 'RGBA'`), so
+   `EngineSurface` draws both routes the same way (`importExternalTexture`).
+5. On route A `EngineSurface` asks for at most 1280×720 physical pixels
+   (`copyRouteDpr`), where C1 measured copies holding the display rate.
+
 ## What the losing routes cost to keep
 
 - **A (keep, as fallback).** About 250 lines: engine readback ring + stdout
@@ -290,7 +341,8 @@ Per frame, main takes 0.15 ms and main → renderer takes 1.2 ms.
 
 1. **`sharedTexture` is experimental** and may change; it is maintained by
    one contributor. Pin the Electron version; keep A.
-2. **macOS (IOSurface) and Linux (dmabuf) C paths are untested.** The
+2. **macOS (IOSurface) C path is written but unmeasured; Linux (dmabuf) C
+   path is not written** (route A there). The
    Electron doc says Linux zero-copy WebGPU import depends on
    `supportsZeroCopyWebGpuImport`. Measure there before D5.
 3. **Hybrid-GPU adapter matching** uses vendor id (fine here: one AMD, one
@@ -322,5 +374,6 @@ Flags: `--chromium-gpu=low` moves the whole stack to the integrated GPU.
 overlap, resize and minimize tests. With tests on, the host moves the real
 mouse once, clicks, and restores it.
 
-`native/engine/shaders/extract.mjs --check` fails if `renderer_wgsl.hpp` has
-drifted from `packages/renderer`.
+`renderer_wgsl.hpp` is generated at configure time from
+`native/engine/shaders/wgsl/` (`embed_wgsl.cmake`), the frozen copy of the
+`packages/renderer` WGSL.

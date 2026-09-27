@@ -60,6 +60,10 @@ struct MatteState {
 [[nodiscard]] std::vector<api::Swatch> swatch_infos(const Document& d);
 /// F2: model.ts `materialInfos()`.
 [[nodiscard]] std::vector<api::LibraryMaterial> material_infos(const Document& d);
+/// F2: the motion-blur record as CompSettings.motionBlur / DocumentSnapshot.motionBlur report it.
+[[nodiscard]] api::MotionBlurSettings motion_blur_info(const Document& d);
+/// F2: colorManagementStore.settings() as the API reports it.
+[[nodiscard]] api::ColorManagementSettings color_management_info(const Document& d);
 
 [[nodiscard]] api::ItemInfo footage_info(const Json& asset);
 [[nodiscard]] api::ItemInfo folder_info(const Folder& f);

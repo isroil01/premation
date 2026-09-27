@@ -3,7 +3,7 @@
  * After Effects users expect (format, resolution, frame rate, duration, channels).
  */
 
-import { useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import { DialogFooter, enterShouldConfirm } from '@components/Modal';
@@ -11,6 +11,9 @@ import { OutputFormat } from '@stores/renderQueueStore';
 import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/videoSink';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
+import { exportSupervisorClient } from '@core/export/exportSupervisorClient';
+import { usePreferenceStore } from '@stores/preferenceStore';
+import { shouldUseSupervisor } from '@layout/Export/supervisorQueue';
 import {
   listOutputTemplates,
   saveOutputTemplate,
@@ -31,6 +34,8 @@ export interface OutputSettings {
   quality: ExportQuality;
   /** mov only — which ProRes flavour ffmpeg encodes. */
   proresProfile?: ProresProfile;
+  /** F1: 16 bits per channel — mov through the engine export path only (main's `bitDepth16`). */
+  bitDepth?: 8 | 16;
 }
 
 /** Explicit order (not Object.keys — numeric-looking keys re-sort): alpha first, then by size. */
@@ -84,6 +89,17 @@ export function OutputModuleDialog({
   const [transparent, setTransparent] = useState(() => !!documentMirror().comp(activeCompIdNow() ?? '')?.settings.transparent);
   const [quality, setQuality] = useState<ExportQuality>('high');
   const [proresProfile, setProresProfile] = useState<ProresProfile>('4444');
+  const [bitDepth, setBitDepth] = useState<8 | 16>(8);
+  // F1: 16 bits per channel exists only on the engine export path (main's
+  // PREMATION_EXPORT_ENGINE flag) and only for a job main's queue renders —
+  // the in-window queue writes 8 bits (the Export form's rule).
+  const [bitDepth16, setBitDepth16] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void exportSupervisorClient.capabilities().then((c) => { if (!cancelled) setBitDepth16(c.bitDepth16); });
+    return () => { cancelled = true; };
+  }, []);
+  const offerBitDepth = format === 'mov' && bitDepth16 && shouldUseSupervisor(format, usePreferenceStore.getState().exportInProcess);
   // MOV alpha only exists in 4444 — the 422 family has no alpha plane.
   const supportsAlpha = ALPHA_FORMATS.has(format) && (format !== 'mov' || proresProfile === '4444');
 
@@ -155,6 +171,7 @@ export function OutputModuleDialog({
       transparent: transparent && supportsAlpha,
       quality,
       ...(format === 'mov' ? { proresProfile } : {}),
+      ...(offerBitDepth && bitDepth === 16 ? { bitDepth: 16 as const } : {}),
     });
 
   // Not a `Modal` (it sits inside the Render Queue panel rather than the
@@ -233,6 +250,23 @@ export function OutputModuleDialog({
                 {PRORES_PROFILES.map((p) => (
                   <option key={p} value={p}>{PRORES_PROFILE_LABELS[p]}</option>
                 ))}
+              </select>
+            </div>
+          ) : null}
+
+          {offerBitDepth ? (
+            <div className={styles.fieldRow}>
+              <label>Bits per Channel</label>
+              <select
+                value={bitDepth}
+                onChange={(e) => setBitDepth(e.target.value === '16' ? 16 : 8)}
+                aria-label="Bits per channel"
+                title={bitDepth === 16
+                  ? 'Rendered by the engine into a half-float surface (rgba64le). A job the engine cannot render is delivered at 8 bits, with a warning.'
+                  : '8 bits per channel, as every renderer writes it.'}
+              >
+                <option value="8">8 bits</option>
+                <option value="16">16 bits</option>
               </select>
             </div>
           ) : null}

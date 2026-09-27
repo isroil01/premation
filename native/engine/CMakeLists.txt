@@ -7,7 +7,9 @@
 #                     session + transport clock. No GPU, no OS calls: unit-tested,
 #                     stress-tested and fuzzed on its own.
 #   engine_gpu        Dawn device, compositor, render thread + frame-slot ring,
-#                     shared textures (Windows)
+#                     shared textures (Windows NT handles, macOS IOSurfaces)
+#   premation-host-bridge  (macOS) the N-API module Electron main loads to turn an
+#                     announced IOSurfaceID into its own IOSurfaceRef (host_bridge/)
 #   premation-engine  the process: pipes, reader/writer threads, core loop
 #   premation-viewport-proto   the C1 prototype (routes A, C, bench), kept so
 #                     docs/VIEWPORT_ROUTE.md stays reproducible
@@ -34,10 +36,15 @@ set(ENGINE_CORE_SOURCES
   src/core/log.cpp
   src/core/history.cpp
   src/core/session.cpp
+  src/core/session_jobs.cpp
+  src/jobs/job_runner.cpp
+  src/jobs/job_inputs.cpp
 )  # the D1b document model adds its sources in its own block at the end
 add_library(engine_core STATIC ${ENGINE_CORE_SOURCES})
 target_include_directories(engine_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
-target_link_libraries(engine_core PUBLIC engine_protocol motion::eval PRIVATE motion::options)
+# Threads: the job runner's workers (src/jobs/job_runner.cpp).
+find_package(Threads REQUIRED)
+target_link_libraries(engine_core PUBLIC engine_protocol motion::eval Threads::Threads PRIVATE motion::options)
 if(MSVC)
   target_compile_options(engine_core PRIVATE /bigobj)  # std::visit over the command union
 endif()
@@ -50,6 +57,12 @@ target_link_libraries(engine_rg_core PRIVATE motion::options)
 
 # ── GPU + process ───────────────────────────────────────────────────────────
 if(Dawn_FOUND)
+  # The renderer WGSL + material table (shaders/wgsl/*.wgsl, shaders/materials.json)
+  # as C++: builtin_shaders.inc, materials.inc, renderer_wgsl.hpp.
+  include(${CMAKE_CURRENT_SOURCE_DIR}/shaders/embed_wgsl.cmake)
+  set(ENGINE_WGSL_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders)
+  premation_embed_wgsl(${ENGINE_WGSL_GENERATED})
+
   add_library(engine_gpu STATIC
     src/gpu.cpp
     src/os_ffi.cpp
@@ -58,20 +71,26 @@ if(Dawn_FOUND)
     src/render/render_thread.cpp
     src/render/vram_ffi.cpp
   )
+  # Route C's shared-texture ring, one implementation per OS (shared_texture_ffi.hpp).
   if(WIN32)
     target_sources(engine_gpu PRIVATE src/shared_texture_ffi.cpp)
     target_link_libraries(engine_gpu PUBLIC d3d11 dxgi winmm)
-    target_compile_definitions(engine_gpu PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    target_compile_definitions(engine_gpu PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE PREMATION_SHARED_TEXTURE=1)
+  elseif(APPLE)
+    target_sources(engine_gpu PRIVATE src/shared_texture_ffi_mac.cpp)
+    target_link_libraries(engine_gpu PUBLIC "-framework IOSurface" "-framework CoreFoundation")
+    target_compile_definitions(engine_gpu PUBLIC PREMATION_SHARED_TEXTURE=1)
   endif()
   target_include_directories(engine_gpu PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+    ${ENGINE_WGSL_GENERATED})
   target_link_libraries(engine_gpu PUBLIC engine_core dawn::webgpu_dawn PRIVATE motion::options)
 
   # D2: the render graph on Dawn — FrameScene (engine-api 96_render.eapi) in,
-  # pixels out; WGSL + material table extracted verbatim from packages/renderer
-  # (shaders/extract.mjs → builtin_shaders.inc, materials.inc).
+  # pixels out; WGSL + material table from shaders/wgsl + shaders/materials.json
+  # (embedded above → builtin_shaders.inc, materials.inc).
   add_library(engine_render_graph STATIC
     src/render_graph/device.cpp
     src/render_graph/shader_library.cpp
@@ -85,7 +104,8 @@ if(Dawn_FOUND)
   )
   target_include_directories(engine_render_graph PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render_graph
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+    ${ENGINE_WGSL_GENERATED})
   target_link_libraries(engine_render_graph PUBLIC engine_rg_core engine_protocol dawn::webgpu_dawn PRIVATE motion::options)
   if(MSVC)
     target_compile_options(engine_render_graph PRIVATE /bigobj)
@@ -141,6 +161,40 @@ if(WIN32)
   target_compile_definitions(premation-engine-headless PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 endif()
 
+# ── premation-host-bridge (macOS): IOSurfaceID → IOSurfaceRef in Electron main ─
+# Route C on macOS: Electron's sharedTexture takes an IOSurfaceRef local to
+# main, so main resolves the ids the engine announces (host_bridge/). No Dawn,
+# so it builds with the headless configuration too. Written against the C
+# N-API: the headers of any Node ≥ 16 work, and the module is not tied to one
+# Electron version. Lands beside premation-engine; electron-builder ships both.
+if(APPLE)
+  option(PREMATION_HOST_BRIDGE "Build premation-host-bridge.node (macOS engine viewport)" ON)
+endif()
+if(APPLE AND PREMATION_HOST_BRIDGE)
+  if(NOT NODE_API_INCLUDE_DIR)
+    find_program(PREMATION_NODE_EXECUTABLE node)
+    if(PREMATION_NODE_EXECUTABLE)
+      get_filename_component(_node_bin "${PREMATION_NODE_EXECUTABLE}" REALPATH)
+      get_filename_component(_node_bin "${_node_bin}" DIRECTORY)
+      set(_node_hint "${_node_bin}/../include/node")
+    endif()
+    find_path(NODE_API_INCLUDE_DIR node_api.h HINTS ${_node_hint} "${CMAKE_SOURCE_DIR}/../node_modules/node-api-headers/include")
+  endif()
+  if(NODE_API_INCLUDE_DIR)
+    add_library(premation-host-bridge MODULE host_bridge/iosurface_bridge_ffi.cpp)
+    set_target_properties(premation-host-bridge PROPERTIES PREFIX "" SUFFIX ".node"
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_include_directories(premation-host-bridge SYSTEM PRIVATE "${NODE_API_INCLUDE_DIR}")
+    target_compile_definitions(premation-host-bridge PRIVATE NAPI_VERSION=8 NODE_GYP_MODULE_NAME=premation_host_bridge)
+    target_link_libraries(premation-host-bridge PRIVATE motion::options "-framework IOSurface" "-framework CoreFoundation")
+    # N-API symbols come from the loading process (Electron / node).
+    target_link_options(premation-host-bridge PRIVATE -undefined dynamic_lookup)
+  else()
+    message(WARNING "premation-host-bridge: node_api.h not found (set NODE_API_INCLUDE_DIR) — "
+                    "the macOS engine viewport falls back to the route-A frame copy")
+  endif()
+endif()
+
 # ── tests ───────────────────────────────────────────────────────────────────
 if(MOTION_BUILD_TESTS)
   find_package(Catch2 3 CONFIG REQUIRED)
@@ -149,9 +203,11 @@ if(MOTION_BUILD_TESTS)
     tests/test_framing.cpp
     tests/test_session.cpp
     tests/test_b4_round2.cpp
+    tests/test_jobs.cpp
     tests/test_paint_strokes.cpp
     tests/test_paths.cpp
     tests/test_expression_controls.cpp
+    tests/test_migrations.cpp
     tests/test_stress.cpp
     tests/test_render_graph.cpp
   )
@@ -169,6 +225,10 @@ if(MOTION_BUILD_TESTS)
       target_compile_options(engine_gpu_tests PRIVATE /bigobj)
     endif()
     add_test(NAME engine_gpu_tests COMMAND engine_gpu_tests --reporter compact)
+    if(APPLE)
+      target_sources(engine_gpu_tests PRIVATE tests/test_shared_texture_mac.cpp)
+      target_link_libraries(engine_gpu_tests PRIVATE "-framework IOSurface" "-framework CoreFoundation")
+    endif()
     if(WIN32 AND DEFINED _dxc_bin)
       add_custom_command(TARGET engine_gpu_tests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dxc_bin}/dxcompiler.dll" "${_dxc_bin}/dxil.dll"
@@ -186,13 +246,37 @@ endif()
 option(MOTION_ENGINE_FUZZER "Build the libFuzzer protocol target when the compiler supports it" ON)
 if(MOTION_ENGINE_FUZZER AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   include(CheckCXXSourceCompiles)
+  include(CMakePushCheckState)
+  set(_have_fuzzer OFF)
   if(MSVC)
     # clang-cl: CMake links with lld-link/link.exe, not the clang driver, so
     # the libFuzzer runtime is named explicitly.
     get_filename_component(_llvm_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
     file(GLOB _fuzzer_lib "${_llvm_bin}/../lib/clang/*/lib/windows/clang_rt.fuzzer-x86_64.lib")
+    if(_fuzzer_lib)
+      set(_have_fuzzer ON)
+    endif()
+  else()
+    # Apple's clang ships no libFuzzer runtime (Homebrew / upstream LLVM do):
+    # -fsanitize=fuzzer compiles but does not link. Probe a whole link.
+    cmake_push_check_state(RESET)
+    set(CMAKE_REQUIRED_FLAGS "-fsanitize=fuzzer")
+    set(CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=fuzzer")
+    set(CMAKE_REQUIRED_QUIET ON)
+    check_cxx_source_compiles([=[
+#include <cstddef>
+#include <cstdint>
+extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t*, std::size_t) { return 0; }
+]=] PREMATION_HAVE_LIBFUZZER)
+    cmake_pop_check_state()
+    if(PREMATION_HAVE_LIBFUZZER)
+      set(_have_fuzzer ON)
+    endif()
   endif()
-  if(NOT MSVC OR _fuzzer_lib)
+  if(NOT _have_fuzzer)
+    message(STATUS "premation-engine: ${CMAKE_CXX_COMPILER} has no libFuzzer runtime — engine_fuzz is not built")
+  endif()
+  if(_have_fuzzer)
     # motion_eval is compiled in (not linked) so everything shares one CRT:
     # the Windows libFuzzer runtime is static-CRT (/MT), the libraries are /MD.
     set(_eval_dir ${CMAKE_CURRENT_SOURCE_DIR}/../libs/motion_eval)
@@ -251,13 +335,21 @@ endif()
 #   handlers_*                       one family of edit commands each
 #   props/meta/ptree/readmodel       the property catalog + read model
 #   queries/events/docio             queries, change events, save/open
-#   catalog_data                     registries generated from the TS
-#                                    (crossEngineCatalog.test.ts)
+#   catalog_data                     the property/effect catalog: catalog/*.json
+#                                    (+ the schema's commands.json), embedded by
+#                                    catalog/embed_catalog.cmake
+include(${CMAKE_CURRENT_SOURCE_DIR}/catalog/embed_catalog.cmake)
+set(ENGINE_CATALOG_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/generated/catalog)
+premation_embed_catalog(${ENGINE_CATALOG_GENERATED})
+# A source property, so every target compiling catalog_data.cpp (engine_core,
+# engine_fuzz) finds catalog_data.inc.
+set_source_files_properties(src/core/catalog_data.cpp PROPERTIES INCLUDE_DIRECTORIES ${ENGINE_CATALOG_GENERATED})
 set(ENGINE_DOC_SOURCES
   src/core/anim.cpp
   src/core/anim_json.cpp
   src/core/bundle_io.cpp
   src/core/catalog_data.cpp
+  src/core/deflate_ffi.cpp
   src/core/docexpr.cpp
   src/core/docio.cpp
   src/core/engine_ctx.cpp
@@ -281,7 +373,6 @@ set(ENGINE_DOC_SOURCES
   src/core/handlers_properties.cpp
   src/core/handlers_strokes.cpp
   src/core/handlers_paths.cpp
-  src/core/json.cpp
   src/core/layer_clone.cpp
   src/core/layer_geometry.cpp
   src/core/meta.cpp
@@ -302,8 +393,20 @@ set(ENGINE_DOC_SOURCES
   src/core/timeline.cpp
   src/core/worldxf.cpp
 )
+# The JavaScript value type (src/core/json.hpp) on its own, a leaf: the test
+# fixtures' re-bless mode (tests/parity_rebless.hpp) reads and writes JSON in
+# test targets that do not link the document core.
+add_library(engine_json STATIC src/core/json.cpp)
+target_compile_features(engine_json PUBLIC cxx_std_20)
+target_link_libraries(engine_json PUBLIC motion::jsmath PRIVATE motion::options)
+
 target_sources(engine_core PRIVATE ${ENGINE_DOC_SOURCES})
+target_link_libraries(engine_core PUBLIC engine_json)
 target_link_libraries(engine_core PUBLIC motion::expr motion::transform motion::jsmath)
+# zlib: CRC-32 + DEFLATE for portable zips (core/deflate_ffi.cpp) and the export
+# writers' PNG / zip entries — the one zlib binding, shared.
+find_package(ZLIB REQUIRED)
+target_link_libraries(engine_core PUBLIC ZLIB::ZLIB)
 # ── G1: the native plugin SDK host (src/plugins, GPU-free half) ────────────
 #   engine_plugins   manifest scan, module load (module_ffi), per-call crash
 #                    guard (guard_ffi), the quarantine journal (journal_ffi), the
@@ -328,6 +431,12 @@ target_include_directories(engine_plugins PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
 target_link_libraries(engine_plugins PUBLIC engine_core Threads::Threads PRIVATE ${CMAKE_DL_LIBS} motion::options)
 if(MSVC)
   target_compile_options(engine_plugins PRIVATE /bigobj)
+endif()
+
+# listFonts answers from the installed-font catalogue (engine_process.cpp → font_catalog.hpp).
+target_link_libraries(premation-engine-headless PRIVATE engine_raster_core)
+if(TARGET premation-engine)
+  target_link_libraries(premation-engine PRIVATE engine_raster_core)
 endif()
 
 # The engine process starts the host (--plugins / PREMATION_PLUGIN_PATH, engine_process.cpp).
@@ -398,9 +507,13 @@ add_library(engine_scene_core STATIC
   src/scene/pixel_motion.cpp  # pixelMotionFlow.ts + deinterlace.ts (footage pixel kernels)
   src/scene/extrusion_faces.cpp  # extrusion.ts extrusionGeometry (the fallback body faces)
   src/scene/alpha_mesh.cpp  # puppet.ts coverage mask + alphaMesh.ts (image-layer rig meshes)
+  src/scene/frame_hit.cpp  # hitTest over a built frame's renderables
+  src/scene/exr_read.cpp  # exr.ts decodeExr + exrToFloatRgba (EXR environment skies)
+  src/scene/zlib_inflate_ffi.cpp  # the EXR reader's zlib inflate
 )
 target_include_directories(engine_scene_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
-target_link_libraries(engine_scene_core PUBLIC engine_core engine_contours motion::jsmath PRIVATE motion::options)
+find_package(ZLIB REQUIRED)  # exr_read's inflate (zlib_inflate_ffi.cpp)
+target_link_libraries(engine_scene_core PUBLIC engine_core engine_contours motion::jsmath PRIVATE motion::options ZLIB::ZLIB)
 if(MSVC)
   target_compile_options(engine_scene_core PRIVATE /bigobj)
 endif()
@@ -412,7 +525,8 @@ if(MOTION_BUILD_TESTS)
                                          tests/test_env_asset_parity.cpp tests/test_styled_surface_parity.cpp
                                          tests/test_corner_pin_parity.cpp tests/test_write_on_trail_parity.cpp
                                          tests/test_model_deform_parity.cpp tests/test_pixel_motion_parity.cpp
-                                         tests/test_extrusion_faces_parity.cpp tests/test_alpha_mesh_parity.cpp)
+                                         tests/test_extrusion_faces_parity.cpp tests/test_alpha_mesh_parity.cpp
+                                         tests/test_frame_hit.cpp tests/test_exr_read.cpp)
   target_link_libraries(engine_scene_core_tests PRIVATE engine_scene_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_scene_core_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   add_test(NAME engine_scene_core_tests COMMAND engine_scene_core_tests --reporter compact)
@@ -492,11 +606,12 @@ if(TARGET engine_fuzz)
   # engine_fuzz compiles everything in (one static CRT, see above).
   set(_libs_dir ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
   file(GLOB _doc_fuzz_expr ${_libs_dir}/motion_expr/*.cpp)
-  target_sources(engine_fuzz PRIVATE ${ENGINE_DOC_SOURCES} ${_doc_fuzz_expr}
+  target_sources(engine_fuzz PRIVATE ${ENGINE_DOC_SOURCES} src/core/json.cpp ${_doc_fuzz_expr}
                  ${_libs_dir}/motion_jsmath/fdlibm.cpp ${_libs_dir}/motion_jsmath/numconv.cpp
                  ${_libs_dir}/motion_transform/transform.cpp ${_libs_dir}/motion_transform/motion_transform.cpp)
   target_include_directories(engine_fuzz PRIVATE ${_libs_dir}/motion_expr ${_libs_dir}/motion_jsmath
                              ${_libs_dir}/motion_transform)
+  target_link_libraries(engine_fuzz PRIVATE ZLIB::ZLIB Threads::Threads)  # core/deflate_ffi.cpp (C only: malloc/free across the CRT); the job runner
   if(WIN32)
     target_link_options(engine_fuzz PRIVATE ${_doc_stack})
   endif()
@@ -613,12 +728,22 @@ add_library(engine_raster_core STATIC
   src/raster/paint_raster.cpp     # paint strokes (paintRaster.ts), on any Canvas2D
   src/raster/mask_paint.cpp       # paintMaskMatte (mask.ts), on any Canvas2D
   src/raster/word_break_ffi.cpp   # ICU word break iterator, loaded from the OS at run time
-  src/raster/system_fonts_ffi.cpp # fontconfig family matching (Linux)
+  src/raster/system_fonts_ffi.cpp # fontconfig family matching + the Linux font catalogue
+  src/raster/font_catalog.cpp     # listFonts + font resolution over the installed faces
   src/raster/svg_doc.cpp          # SVG documents: XML, CSS cascade, path / transform micro-syntax (D2w)
 )
 target_include_directories(engine_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/raster)
 target_compile_features(engine_raster_core PUBLIC cxx_std_20)
 target_link_libraries(engine_raster_core PUBLIC motion::jsmath ${CMAKE_DL_LIBS} PRIVATE motion::options)
+# The installed-font catalogue per OS (font_catalog.hpp).
+if(WIN32)
+  target_sources(engine_raster_core PRIVATE src/raster/font_catalog_ffi_win.cpp)
+  target_link_libraries(engine_raster_core PRIVATE dwrite)
+  target_compile_definitions(engine_raster_core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+elseif(APPLE)
+  target_sources(engine_raster_core PRIVATE src/raster/font_catalog_ffi_mac.cpp)
+  target_link_libraries(engine_raster_core PUBLIC "-framework CoreText" "-framework CoreFoundation")
+endif()
 if(NOT WIN32 AND NOT APPLE)
   find_package(Fontconfig QUIET)
   if(TARGET Fontconfig::Fontconfig)
@@ -669,8 +794,8 @@ else()
 endif()
 if(MOTION_BUILD_TESTS)
   add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp tests/test_paint_raster.cpp
-                 tests/test_svg_doc.cpp)
-  target_link_libraries(engine_raster_tests PRIVATE engine_raster_core motion::options Catch2::Catch2WithMain)
+                 tests/test_svg_doc.cpp tests/test_font_catalog.cpp)
+  target_link_libraries(engine_raster_tests PRIVATE engine_raster_core engine_json motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_raster_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(TARGET engine_raster)
     target_sources(engine_raster_tests PRIVATE tests/test_raster_canvas.cpp)
@@ -742,7 +867,7 @@ endif()
 
 if(MOTION_BUILD_TESTS)
   add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp tests/test_effect_chain.cpp)
-  target_link_libraries(engine_effects_tests PRIVATE engine_effect_chain engine_effects engine_canvas_effects engine_raster_core motion::options Catch2::Catch2WithMain)
+  target_link_libraries(engine_effects_tests PRIVATE engine_effect_chain engine_effects engine_canvas_effects engine_raster_core engine_json motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_effects_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(MSVC)
     target_compile_definitions(engine_effects_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv
@@ -817,6 +942,9 @@ endif()
 if(MOTION_BUILD_TESTS)
   add_executable(engine_audio_tests tests/test_audio.cpp tests/test_audio_clock.cpp tests/test_audio_parity.cpp)
   target_link_libraries(engine_audio_tests PRIVATE engine_audio_core motion::jsmath motion::options Catch2::Catch2WithMain)
+  # tests/parity_rebless.hpp: the audio test only uses its file helpers, but the
+  # header's JSON half needs the value type.
+  target_link_libraries(engine_audio_tests PRIVATE engine_json)
   target_compile_definitions(engine_audio_tests PRIVATE
     PREMATION_AUDIO_PARITY="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/audio_parity.bin")
   if(TARGET engine_audio)
@@ -916,7 +1044,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   if(MOTION_BUILD_TESTS)
     add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp
                                       tests/test_threed_models.cpp tests/test_time_comp_parity.cpp tests/test_particle_parity.cpp
-                                      tests/test_polygon_clipping_parity.cpp tests/test_cover_crop.cpp tests/test_source_text.cpp)
+                                      tests/test_polygon_clipping_parity.cpp tests/test_cover_crop.cpp tests/test_source_text.cpp
+                                      tests/test_rig_coverage.cpp)
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)
     if(MSVC)
@@ -931,6 +1060,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   if(TARGET engine_gpu AND TARGET premation-engine)
     add_library(engine_frames STATIC src/scene/engine_frames.cpp)
     target_link_libraries(engine_frames PUBLIC engine_scene engine_gpu engine_plugins_gpu PRIVATE motion::options)
+    # getThumbnail encodes its still as PNG (png_write, GPU-free; defined below).
+    target_link_libraries(engine_frames PRIVATE engine_export_core)
     if(TARGET engine_audio)
       target_link_libraries(engine_frames PUBLIC engine_audio)
       target_compile_definitions(engine_frames PRIVATE PREMATION_HAVE_AUDIO=1)
@@ -946,7 +1077,7 @@ else()
 endif()
 # The Session's scene / audio-clock hooks (session_hooks.hpp) are engine_core: tested with fakes.
 if(MOTION_BUILD_TESTS AND TARGET engine_tests)
-  target_sources(engine_tests PRIVATE tests/test_session_hooks.cpp)
+  target_sources(engine_tests PRIVATE tests/test_session_hooks.cpp tests/test_engine_queries.cpp)
 endif()
 
 # ── F1: export from the engine (src/export; kept in its own block) ──────────
@@ -963,11 +1094,9 @@ add_library(engine_export_core STATIC
   src/export/child_process_ffi.cpp
   src/export/png_write.cpp
   src/export/jpeg_write.cpp
-  src/export/zlib_ffi.cpp
   src/export/zip_write.cpp)
 target_include_directories(engine_export_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/export)
-find_package(ZLIB REQUIRED)
-target_link_libraries(engine_export_core PUBLIC engine_core ZLIB::ZLIB PRIVATE motion::options)
+target_link_libraries(engine_export_core PUBLIC engine_core PRIVATE motion::options)
 if(WIN32)
   target_compile_definitions(engine_export_core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   target_link_libraries(engine_export_core PRIVATE windowscodecs ole32)
@@ -1000,4 +1129,79 @@ if(MOTION_BUILD_TESTS)
     target_compile_definitions(engine_export_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
   endif()
   add_test(NAME engine_export_tests COMMAND engine_export_tests --reporter compact)
+endif()
+# ── Engine jobs (src/jobs; kept in its own block) ───────────────────────────
+#   the runner + Session half is engine_core (jobs/job_runner, job_inputs,
+#   core/session_jobs.cpp); here are the kinds:
+#   engine_jobs_core   the pure analyses, decode- and GPU-free: audio
+#                      (silences, amplitude, beats, detector, ducking, gate),
+#                      scene detection, the render's encode args, the tracker
+#                      + stabilizer, auto-trace, SAM pre/post-processing, and
+#                      the track apply plans (document reads + commands)
+#   engine_jobs        the kinds (kind_*.cpp), footage frames / sound
+#                      (media_input_ffi.cpp: ffmpeg), the child-process job
+#                      host (child_job.cpp), ONNX Runtime for SAM
+#                      (sam_ort_ffi.cpp, vcpkg `engine` feature) — linked into
+#                      premation-engine as PREMATION_HAVE_JOBS
+add_library(engine_jobs_core STATIC
+  src/jobs/audio_analysis.cpp
+  src/jobs/scene_detect.cpp
+  src/jobs/encode_args.cpp
+  src/jobs/media_input.cpp
+  src/jobs/tracking.cpp
+  src/jobs/stabilize.cpp
+  src/jobs/track_apply.cpp
+  src/jobs/trace_bitmap.cpp
+  src/jobs/sam_pipeline.cpp
+)
+target_include_directories(engine_jobs_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/jobs)
+target_link_libraries(engine_jobs_core PUBLIC engine_core engine_scene_core motion::jsmath PRIVATE motion::options)
+if(MSVC)
+  target_compile_options(engine_jobs_core PRIVATE /bigobj)
+endif()
+
+if(FFMPEG_FOUND AND TARGET engine_audio)
+  add_library(engine_jobs STATIC
+    src/jobs/media_input_ffi.cpp
+    src/jobs/child_job.cpp
+    src/jobs/job_kinds.cpp
+    src/jobs/kind_audio.cpp
+    src/jobs/kind_scene_detect.cpp
+    src/jobs/kind_proxy.cpp
+    src/jobs/kind_render.cpp
+    src/jobs/kind_track_motion.cpp
+    src/jobs/kind_stabilize.cpp
+    src/jobs/kind_auto_trace.cpp
+    src/jobs/kind_object_matte.cpp
+    src/jobs/sam_ort_ffi.cpp
+  )
+  target_include_directories(engine_jobs SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+  target_link_directories(engine_jobs PUBLIC ${FFMPEG_LIBRARY_DIRS})
+  target_link_libraries(engine_jobs PUBLIC engine_jobs_core engine_audio engine_export_core ${FFMPEG_LIBRARIES} PRIVATE motion::options)
+  find_package(onnxruntime CONFIG QUIET)
+  if(onnxruntime_FOUND)
+    target_link_libraries(engine_jobs PRIVATE onnxruntime::onnxruntime)
+    target_compile_definitions(engine_jobs PRIVATE PREMATION_HAVE_ONNXRUNTIME=1)
+  else()
+    message(STATUS "premation-engine: onnxruntime not found — the object-matte job answers unsupported")
+  endif()
+  if(MSVC)
+    target_compile_options(engine_jobs PRIVATE /bigobj)
+    target_compile_definitions(engine_jobs PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+  endif()
+  if(TARGET premation-engine)
+    target_link_libraries(premation-engine PRIVATE engine_jobs)
+    target_compile_definitions(premation-engine PRIVATE PREMATION_HAVE_JOBS=1)
+  endif()
+else()
+  message(STATUS "premation-engine: ffmpeg or the audio decoder missing — engine jobs build their pure core only")
+endif()
+
+if(MOTION_BUILD_TESTS)
+  add_executable(engine_jobs_tests tests/test_jobs_audio.cpp tests/test_jobs_trace.cpp tests/test_jobs_tracking.cpp)
+  target_link_libraries(engine_jobs_tests PRIVATE engine_jobs_core motion::options Catch2::Catch2WithMain)
+  if(MSVC)
+    target_compile_options(engine_jobs_tests PRIVATE /bigobj)
+  endif()
+  add_test(NAME engine_jobs_tests COMMAND engine_jobs_tests --reporter compact)
 endif()

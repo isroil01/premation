@@ -1,0 +1,87 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/migrations.test.ts › migrateDocument — the real 1.0.0 → 1.1.0 step hoists the single active comp into the comps registry",
+ "input": {
+  "version": "1.0.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": [
+    {
+     "id": "n1",
+     "name": "Rect",
+     "kind": "shape",
+     "components": []
+    },
+    {
+     "id": "n2",
+     "name": "Text",
+     "kind": "text",
+     "components": []
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {},
+   "expressions": {}
+  },
+  "comp": {
+   "id": "comp_root",
+   "name": "Legacy",
+   "width": 640,
+   "height": 480,
+   "fps": 12,
+   "durationSeconds": 5,
+   "background": "#000000",
+   "transparent": false,
+   "startFrame": 0
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": [
+    {
+     "id": "n1",
+     "name": "Rect",
+     "kind": "shape",
+     "components": []
+    },
+    {
+     "id": "n2",
+     "name": "Text",
+     "kind": "text",
+     "components": []
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {},
+   "expressions": {}
+  },
+  "comp": {
+   "id": "comp_root",
+   "name": "Legacy",
+   "width": 640,
+   "height": 480,
+   "fps": 12,
+   "durationSeconds": 5,
+   "background": "#000000",
+   "transparent": false,
+   "startFrame": 0
+  },
+  "comps": {
+   "comp_root": {
+    "id": "comp_root",
+    "name": "Legacy",
+    "width": 640,
+    "height": 480,
+    "fps": 12,
+    "durationSeconds": 5,
+    "background": "#000000",
+    "transparent": false,
+    "startFrame": 0
+   }
+  }
+ }
+}

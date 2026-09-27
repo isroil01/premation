@@ -22,23 +22,14 @@ ViewSpec export_view(double outW, double outH, double compW, double compH) {
   return v;
 }
 
-NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, double t, const ViewSpec& view,
-                               bool motionBlur, const std::string& sceneId, std::int64_t frame,
-                               const CompOverrides& overrides) {
+NativeFrame native_frame_of(const doc::Document& d, Snapshot snap, const ViewSpec& view, double clipWidth,
+                            double clipHeight, const std::string& sceneId, std::int64_t frame) {
   using Clock = std::chrono::steady_clock;
   NativeFrame nf;
-  const auto t0 = Clock::now();
-  SnapshotComp sc = snapshot_comp_of(c.d, comp);
-  if (overrides.forExport) sc.forExport = true;
-  if (overrides.transparent) sc.transparent = *overrides.transparent;
-  std::optional<MotionBlurCfg> mb;
-  if (motionBlur) mb = motion_blur_of(c.d, comp);
-  Snapshot snap = build_snapshot(c, sc, t, mb);
   const auto t1 = Clock::now();
   const double rasterScale = view.zoom * view.dpr;
   FrameBuild fb = build_frame_scene(snap, rasterScale);
   const auto t2 = Clock::now();
-  nf.snapshotMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
   nf.sceneMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
   nf.errors = std::move(snap.layerErrors);
   for (auto& [id, what] : fb.unported) nf.errors.push_back({id, "", "unported", std::move(what)});
@@ -60,12 +51,12 @@ NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, dou
     api::Rect clip;
     clip.x = toScreen(0, view.centerX, view.cssWidth);
     clip.y = toScreen(0, view.centerY, view.cssHeight);
-    clip.width = sc.width * view.zoom * view.dpr;
-    clip.height = sc.height * view.zoom * view.dpr;
+    clip.width = clipWidth * view.zoom * view.dpr;
+    clip.height = clipHeight * view.zoom * view.dpr;
     v.frame_clip = clip;
   }
   v.overlays_active = false;
-  const doc::ColorMgmt& cm = c.d.color();
+  const doc::ColorMgmt& cm = d.color();
   v.working_space = cm.workingSpace == "aces-cg" ? api::RenderWorkingSpace::aces_cg : api::RenderWorkingSpace::srgb_linear;
   v.display_transform = cm.displayTransform == "aces" ? api::RenderDisplayTransform::aces
                         : cm.displayTransform == "pq"  ? api::RenderDisplayTransform::pq
@@ -74,7 +65,7 @@ NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, dou
   v.bit_depth = cm.bitDepth == 32 ? 32 : 16;
   // D3 colour management from the project's settings (absent = the TS pipeline);
   // textures are tagged with their interpretation by SceneTextures (set_color_managed).
-  ColorManagementChoice cmc = color_management_of(c.d, view.outputColorSpace);
+  ColorManagementChoice cmc = color_management_of(d, view.outputColorSpace);
   v.color_management = std::move(cmc.management);
   if (!cmc.note.empty()) nf.errors.push_back({"", "", "color", std::move(cmc.note)});
   v.float16_textures = true;
@@ -97,6 +88,23 @@ NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, dou
     f.blobs.push_back(std::move(white));
   }
   nf.textures = std::move(fb.textures);
+  return nf;
+}
+
+NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, double t, const ViewSpec& view,
+                               bool motionBlur, const std::string& sceneId, std::int64_t frame,
+                               const CompOverrides& overrides) {
+  using Clock = std::chrono::steady_clock;
+  const auto t0 = Clock::now();
+  SnapshotComp sc = snapshot_comp_of(c.d, comp);
+  if (overrides.forExport) sc.forExport = true;
+  if (overrides.transparent) sc.transparent = *overrides.transparent;
+  std::optional<MotionBlurCfg> mb;
+  if (motionBlur) mb = motion_blur_of(c.d, comp);
+  Snapshot snap = build_snapshot(c, sc, t, mb);
+  const double snapshotMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+  NativeFrame nf = native_frame_of(c.d, std::move(snap), view, sc.width, sc.height, sceneId, frame);
+  nf.snapshotMs = snapshotMs;
   return nf;
 }
 

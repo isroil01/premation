@@ -25,9 +25,25 @@ std::string media_hash(SourceId source, std::int64_t top, std::int64_t bottom) {
   return media_hash(source, top) + '~' + std::to_string(bottom);
 }
 
+std::string media_hash(SourceId source, std::int64_t frame, std::optional<std::int64_t> bottom, char fields) {
+  std::string h = bottom ? media_hash(source, frame, *bottom) : media_hash(source, frame);
+  if (fields == 'u' || fields == 'l') {
+    h += '#';
+    h += fields;
+  }
+  return h;
+}
+
 std::optional<MediaKey> parse_media_hash(std::string_view hash) noexcept {
   if (!hash.starts_with(kPrefix)) return std::nullopt;
   hash.remove_prefix(kPrefix.size());
+  char fields = 0;
+  if (const auto hashMark = hash.find('#'); hashMark != std::string_view::npos) {
+    const std::string_view f = hash.substr(hashMark + 1);
+    if (f != "u" && f != "l") return std::nullopt;
+    fields = f.front();
+    hash = hash.substr(0, hashMark);
+  }
   const auto colon = hash.find(':');
   if (colon == std::string_view::npos) return std::nullopt;
   std::int64_t src = 0;
@@ -41,6 +57,7 @@ std::optional<MediaKey> parse_media_hash(std::string_view hash) noexcept {
     rest = rest.substr(0, tilde);
   }
   if (!parse_int(rest, k.frame) || k.frame < 0) return std::nullopt;
+  k.fields = fields;
   return k;
 }
 
@@ -74,6 +91,16 @@ bool MediaTextures::convert_into(Entry& e, const DecodedFrame& f, SourceId src, 
   e.tex = std::move(fresh);
   e.id = kIdBit | nextId_++;
   return true;
+}
+
+bool MediaTextures::convert_frame(SourceId source, std::int64_t frame, ConvertedFrame& out, bool& exact, std::string& error) {
+  const FramePtr f = frame_for(source, frame, exact);
+  if (!f) {
+    error = "frame not decoded";
+    return false;
+  }
+  const auto a = alpha_.find(source);
+  return converter_.convert(*f, a == alpha_.end() ? AlphaMode::straight : a->second, out, error);
 }
 
 void MediaTextures::touch(std::list<Entry>::iterator it) { lru_.splice(lru_.begin(), lru_, it); }
@@ -133,6 +160,18 @@ rg::TexRef MediaTextures::external_texture(std::string_view hash) {
       e.id = kIdBit | nextId_++;
     }
     converter_.recycle(std::move(bottom.tex));
+  }
+  if (ok && key->fields != 0) {
+    // Interpret Footage ▸ Fields: after the weave (never both — Remove
+    // Pulldown suppresses Fields — but the order is the TS feed's).
+    ConvertedFrame clean;
+    if (converter_.deinterlace(e.tex, key->fields == 'u', clean, error)) {
+      converter_.recycle(std::move(e.tex));
+      e.tex = std::move(clean);
+      e.id = kIdBit | nextId_++;
+    } else {
+      ok = false;
+    }
   }
   if (!ok) {
     ++misses_.skipped;

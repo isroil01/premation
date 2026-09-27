@@ -25,12 +25,12 @@
 import pluginHost from './PluginHost';
 import { usePluginStore } from '@stores/pluginStore';
 import { useFakeWorkers, testPackage, bootPlugin, FakeWorker } from './fakeWorker.testkit';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { sceneProjectIO } from '@core/scene/sceneProjectIO';
-import { setCommandSystem, getCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
-import { defaultAnimation } from '@motion/animation';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 import { MAX_OPS, OP_PERMISSIONS, validateBatch } from './sceneBatch';
 
 const PLUGIN = 'studio.acme.generate';
@@ -43,51 +43,47 @@ const pkg = (permissions: string[]) =>
     activationEvents: ['onStartup'],
   });
 
+let h: Harness & { engine: LocalEngine };
+
 beforeAll(async () => {
   useFakeWorkers();
   await usePluginStore.getState().hydrate();
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
   pluginHost.configure({ getSelection: () => [] });
 });
 afterAll(() => { pluginHost.setWorkerFactory(null); });
 
-beforeEach(() => {
+beforeEach(async () => {
+  // B5: a batch is ONE engine gesture — the app's engine, a fresh project
+  // (a real composition, every time).
+  h = await setupAppEngine();
   for (const p of [...usePluginStore.getState().plugins]) pluginHost.uninstall(p.manifest.id);
-  defaultSceneGraph.clear();
-  defaultAnimation.clear();
   /*
     The selection too, and this is not housekeeping.
 
     `insertPrimitive` parents a new layer to whatever is SELECTED, so a
     selection surviving from an earlier test puts this test's layers somewhere
-    it never asked for — and a `setParent` onto a node that is already the
-    parent is refused. Every test here passed in isolation and two failed in the
-    suite, which is exactly the shape that gets written off as a flake.
+    it never asked for.
   */
   useSelectionStore.setState({ ids: [], primary: null });
-
-  /*
-    A real composition root, every time — and NOT through `seedDefaultScene()`.
-
-    That helper is guarded and will not re-seed a graph it has already seeded,
-    so `clear(); seedDefaultScene();` leaves the graph EMPTY from the second
-    test onward. Layers then land as orphan roots, each its own composition,
-    and reparenting between two of them is refused with a message about
-    ancestry that has nothing to do with what the test asked for.
-
-    Worth stating because of how it presents: every test here passed alone and
-    two failed in the suite, which is the shape that gets written off as flake
-    and retried. `sceneProjectIO.restore(createEmpty())` is the real "new
-    project" path and installs a fresh root unconditionally.
-  */
-  sceneProjectIO.restore(sceneProjectIO.createEmpty('Test'));
   FakeWorker.last = null;
 });
+afterEach(async () => { await h.dispose(); });
+
+/** The active composition's layers (depth-first), to see what a batch left. */
+const compLayers = (): string => {
+  const out: string[] = [];
+  const walk = (id: string): void => {
+    for (const c of defaultSceneGraph.getChildren(id)) { out.push(c.id); walk(c.id); }
+  };
+  walk(activeCompRootId() as string);
+  return JSON.stringify(out);
+};
 
 const boot = (permissions = ['scene:write', 'animation:write']): FakeWorker =>
   bootPlugin(pkg(permissions), { granted: permissions as never });
 
-const apply = (worker: FakeWorker, ops: unknown[]) => worker.callAndWait('scene.apply', ops);
+/** One engine command per op, inside one gesture: the answer comes after as many turns. */
+const apply = (worker: FakeWorker, ops: unknown[]) => worker.callAsyncWithin(ops.length * 20 + 50, 'scene.apply', ops);
 
 describe('validation happens before anything is applied', () => {
   it('names the failing index and the reason', () => {
@@ -153,9 +149,9 @@ describe('validation happens before anything is applied', () => {
 });
 
 describe('building a hierarchy in one call', () => {
-  it('resolves forward references', () => {
+  it('resolves forward references', async () => {
     const worker = boot();
-    const reply = apply(worker, [
+    const reply = await apply(worker, [
       { op: 'createLayer', kind: 'group', name: 'Rig' },
       { op: 'createLayer', kind: 'shape', name: 'Bone A' },
       { op: 'setParent', layer: { ref: 1 }, parent: { ref: 0 } },
@@ -171,11 +167,11 @@ describe('building a hierarchy in one call', () => {
     expect(children).toContain('Bone A');
   });
 
-  it('returns one result per op, positionally', () => {
+  it('returns one result per op, positionally', async () => {
     // Positional, so a plugin can index straight into it rather than
     // reconstructing which op produced which id.
     const worker = boot();
-    const reply = apply(worker, [
+    const reply = await apply(worker, [
       { op: 'createLayer', kind: 'shape', name: 'One' },
       { op: 'rename', layer: { ref: 0 }, name: 'Renamed' },
       { op: 'createLayer', kind: 'shape', name: 'Two' },
@@ -185,17 +181,17 @@ describe('building a hierarchy in one call', () => {
 });
 
 describe('all or nothing', () => {
-  it('leaves the document byte-identical when a late op fails', () => {
+  it('leaves the document byte-identical when a late op fails', async () => {
     /*
       The property the whole design turns on. A batch that failed halfway would
       leave the document in a state nobody asked for and the plugin unable to
       describe — it knows which call it made, not which ops landed.
 
-      `runDocumentEdit` snapshots before and after, and the exception escapes
-      it, so the restore is what actually delivers this.
+      The batch is one engine gesture; the failing op aborts it
+      (`endGesture{commit:false}`), which is what actually delivers this.
     */
     const worker = boot();
-    const before = JSON.stringify(defaultSceneGraph.getRoots().map((r) => r.id));
+    const before = h.doc();
 
     const ops = [
       ...Array.from({ length: 20 }, (_, i) => ({ op: 'createLayer', kind: 'shape', name: `L${i}` })),
@@ -204,71 +200,61 @@ describe('all or nothing', () => {
       { op: 'rename', layer: 'n_does_not_exist', name: 'x' },
     ];
 
-    const reply = apply(worker, ops);
+    const reply = await apply(worker, ops);
     expect(reply.ok).toBe(false);
     expect(reply.ok ? '' : reply.error).toMatch(/ops\[20\]/);
 
-    expect(JSON.stringify(defaultSceneGraph.getRoots().map((r) => r.id))).toBe(before);
+    // The gesture was aborted (`endGesture{commit:false}`): every op before the failing one reverted.
+    expect(h.doc()).toBe(before);
+    expect(historyLabels()).toEqual([]);
   });
 
-  it('applies nothing at all when validation fails', () => {
+  it('applies nothing at all when validation fails', async () => {
     const worker = boot();
-    const before = defaultSceneGraph.getRoots().length;
-    const reply = apply(worker, [
+    const before = compLayers();
+    const reply = await apply(worker, [
       { op: 'createLayer', kind: 'shape' },
       { op: 'createLayer', kind: 'shape' },
       { op: 'not-an-op' },
     ]);
     expect(reply.ok).toBe(false);
-    expect(defaultSceneGraph.getRoots()).toHaveLength(before);
+    expect(compLayers()).toBe(before);
   });
 });
 
-describe('one undo entry, one notification', () => {
-  it('records a single undoable entry for the whole batch', () => {
+describe('one undo entry', () => {
+  it('records a single undoable entry for the whole batch', async () => {
     /*
       Fifty layers used to be fifty entries. A user who ran a generative plugin
       and did not like the result had to hold Ctrl+Z, which is not undo, it is
       a punishment for trying something.
     */
-    getCommandSystem().getHistory().clear();
     const worker = boot();
-    const depthBefore = getCommandSystem().getHistory().getEntries().length;
+    const depthBefore = historyLabels().length;
 
-    apply(worker, Array.from({ length: 50 }, (_, i) => ({
+    await apply(worker, Array.from({ length: 50 }, (_, i) => ({
       op: 'createLayer', kind: 'shape', name: `L${i}`,
     })));
 
-    expect(getCommandSystem().getHistory().getEntries().length - depthBefore).toBe(1);
+    expect(historyLabels().length - depthBefore).toBe(1);
+    // …and ONE undo takes all fifty away.
+    await h.run({ type: 'undo' });
+    expect(historyLabels().length).toBe(depthBefore);
   });
 
-  it('bumps the scene revision once, not once per op', () => {
-    // The revision is what re-renders the viewport and every panel reading it.
-    // 5,000 bumps is 5,000 renders of a tree that is still being built.
-    const worker = boot();
-    const before = useSceneRevision.getState().rev;
-
-    apply(worker, Array.from({ length: 40 }, (_, i) => ({
-      op: 'createLayer', kind: 'shape', name: `L${i}`,
-    })));
-
-    expect(useSceneRevision.getState().rev - before).toBe(1);
-  });
-
-  it('labels the entry with the plugin s name', () => {
+  it('labels the entry with the plugin s name', async () => {
     // So a user reading the history sees who did it, not "Add layer" forty
     // times from nowhere.
     const worker = boot();
-    apply(worker, [{ op: 'createLayer', kind: 'shape', name: 'One' }]);
-    const last = getCommandSystem().getHistory().getEntries().at(-1);
-    expect(String((last as { label?: string })?.label ?? '')).toMatch(/Generate/);
+    await apply(worker, [{ op: 'createLayer', kind: 'shape', name: 'One' }]);
+    expect(String(historyLabels().at(-1) ?? '')).toMatch(/Generate/);
   });
 });
 
 describe('permissions', () => {
-  it('refuses a batch needing more than was granted, and names what it needs', () => {
+  it('refuses a batch needing more than was granted, and names what it needs', async () => {
     const worker = boot(['scene:write']);
-    const reply = apply(worker, [
+    const reply = await apply(worker, [
       { op: 'createLayer', kind: 'shape' },
       { op: 'animation.setKeyframes', layer: { ref: 0 }, path: 'x', keyframes: [] },
     ]);
@@ -276,26 +262,26 @@ describe('permissions', () => {
     expect(reply.ok ? '' : reply.error).toMatch(/animation:write/);
   });
 
-  it('applies nothing when the permission check fails', () => {
+  it('applies nothing when the permission check fails', async () => {
     // Checked before anything runs, so a refused batch is not a half-applied
     // one with an error attached.
     const worker = boot(['scene:write']);
-    const before = defaultSceneGraph.getRoots().length;
-    apply(worker, [
+    const before = compLayers();
+    await apply(worker, [
       { op: 'createLayer', kind: 'shape' },
       { op: 'animation.setExpression', layer: { ref: 0 }, path: 'x', expression: 'time' },
     ]);
-    expect(defaultSceneGraph.getRoots()).toHaveLength(before);
+    expect(compLayers()).toBe(before);
   });
 
-  it('allows a batch entirely within the grant', () => {
+  it('allows a batch entirely within the grant', async () => {
     const worker = boot(['scene:write']);
-    expect(apply(worker, [{ op: 'createLayer', kind: 'shape', name: 'Fine' }]).ok).toBe(true);
+    expect((await apply(worker, [{ op: 'createLayer', kind: 'shape', name: 'Fine' }])).ok).toBe(true);
   });
 });
 
 describe('scale', () => {
-  it('builds a thousand parented layers in one call', () => {
+  it('builds a thousand parented layers in one call', async () => {
     /*
       Not a benchmark with a threshold — a wall-clock assertion would be a flaky
       test on shared CI. What it proves is that the shape works at size: one
@@ -303,7 +289,6 @@ describe('scale', () => {
       place.
     */
     const worker = boot();
-    const before = useSceneRevision.getState().rev;
 
     const ops: unknown[] = [{ op: 'createLayer', kind: 'group', name: 'Root' }];
     for (let i = 0; i < 1000; i++) {
@@ -311,11 +296,11 @@ describe('scale', () => {
       ops.push({ op: 'setParent', layer: { ref: ops.length - 1 }, parent: { ref: 0 } });
     }
 
-    const reply = apply(worker, ops);
+    const reply = await apply(worker, ops);
     expect(reply.ok).toBe(true);
 
     const rootId = (reply as { value: unknown[] }).value[0] as string;
     expect(defaultSceneGraph.getChildren(rootId)).toHaveLength(1000);
-    expect(useSceneRevision.getState().rev - before).toBe(1);
+    expect(historyLabels()).toHaveLength(1);
   });
 });

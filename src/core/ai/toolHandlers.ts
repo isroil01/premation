@@ -29,35 +29,22 @@ import type { AiTool, ToolContext, ToolResult } from '@motion/ai-tools';
 import { ALL_TOOL_DEFS, bindAlias, mutates } from '@motion/ai-tools';
 import { EFFECT_DEFS, effectDefFor } from '@core/effects/effects';
 import { ANIMATOR_PARAMS } from '@core/text/textAnimators';
-import { addTextAnimator, updateAnimator, readAnimatorData } from '@core/text/textAnimators';
+import { readAnimatorData } from '@core/text/textAnimators';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { isRiggableKind } from '@core/scene/rigLogo';
 import { nextRigIds, usedRigIds } from '@core/rig/rigIds';
 import { readNodePuppet } from '@core/rig/puppet';
-import { updateDropShadow, updateOuterGlow } from '@core/effects/layerStyles';
 
-import {
-  addPathOp, defaultPathOpOf, newPathOpId, readPathOps, readTrimOp,
-  ensureTrimOp, updatePathOp, addRepeaterOp, pathOpPropPath, type PathOp,
-} from '@core/scene/pathOps';
+import { defaultPathOpOf, readPathOps, readTrimOp, pathOpPropPath, type PathOp } from '@core/scene/pathOps';
 
-import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
-import { defaultPolystar, setNodePolystar } from '@core/scene/polystar';
-import {
-  MATERIAL_PCT_DEFAULTS,
-  setNodeAcceptsLights,
-  setNodeMaterialPct,
-  setNodeShininess,
-  setNodeSpecular,
-} from '@core/scene/material';
-import { rectangleMask, ellipseMask, addMaskPath, type MaskMode } from '@core/effects/mask';
+import { is3DEnabled } from '@core/scene/threeD';
+import { defaultPolystar } from '@core/scene/polystar';
+import { rectangleMask, ellipseMask, type MaskMode } from '@core/effects/mask';
 import { refreshAfterLegacy } from './toolContext';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { insertMedia, insertSvgLayer } from '@core/scene/sceneInsert';
-import { convertSvgLayerToShapes } from '@core/svg/svgConvert';
 import { analyseAudio } from '@motion/audio';
 import { resolveStyle, buildCustomStyle, setRuntimeStyle, type CustomStyleInput } from './design';
 import { decodeBase64Bytes } from './decodeBase64';
@@ -86,15 +73,18 @@ import {
 } from './recipes';
 import { selectScene } from './sceneWindow';
 import { TRANSFORM_PROPS, THREE_D_PROPS, SPECIAL_PROPS, CAMERA_PROPS, isAnimatableProp } from './toolContext';
-import { setNodeBlend } from '@core/effects/blendMode';
-import { setNodeMatte, readMatte } from '@core/effects/matte';
-import { setNodeMotionBlur } from '@core/effects/motionBlur';
+import { readMatte } from '@core/effects/matte';
 import { CRAFT_HANDLERS } from './craftHandlers';
 import { mapSeq, filterSeq } from './asyncList';
-import { engineOr } from './toolContext';
+import { engineOnly } from './toolContext';
 import { activePlayheadSeconds, trackMatteCommand } from '@core/engine/trackWrites';
-import { memberWrite } from '@core/engine/propRefs';
-import type { Command } from '@motion/engine-api';
+import { fieldWrite, memberWrite } from '@core/engine/propRefs';
+import { maskToBezier } from '@core/engine/props';
+import {
+  addMaskFromPath, addPathOperator, addTextAnimatorGroup, convertSvgLayer, ensurePathOperator, importAssetBytes,
+  insertAssetLayer, insertModelPlaceholder, insertSvgMarkupLayer, patchLayerStyle, patchPathOperator, patchTextAnimator,
+} from './hostWrites';
+import type { Command, PropertyWrite } from '@motion/engine-api';
 
 const def = (name: string) => {
   const d = ALL_TOOL_DEFS.find((t) => t.name === name);
@@ -286,13 +276,6 @@ const createLayer: AiTool['handler'] = async (input, ctx) => {
     i.x !== undefined || i.y !== undefined
       ? { x: i.x ?? comp.width / 2, y: i.y ?? comp.height / 2 }
       : undefined;
-  const id = await ctx.scene.create(i.kind, i.name, at);
-  if (!id) return fail(`Could not create a ${i.kind} layer — the insert produced no node.`);
-  // Bind the caller's handle BEFORE anything else, so a later call in the same
-  // batch can address this layer without a round-trip through the model.
-  bindAlias(ctx, i.id, id);
-  if (i.text !== undefined) await ctx.scene.setProp(id, 'content', i.text);
-  if (i.fill) await ctx.scene.setProp(id, 'fill', i.fill);
   // Polygon / star are PARAMETRIC — the same `fx.polystar` node the UI's
   // Polygon and Star tools create (ports.ts), whose outline `buildSnapshot`
   // recomputes from live parameters every frame. Writing `shapeType: 'polygon'`
@@ -315,13 +298,19 @@ const createLayer: AiTool['handler'] = async (input, ctx) => {
         ? { outerRoundness: i.roundness, innerRoundness: polystarType === 'star' ? i.roundness : 0 }
         : {}),
     };
-    await ctx.scene.setProp(id, 'shapeType', 'polystar');
-    // B5 gap: the parametric polystar block has no engine command yet.
-    ctx.engine.legacy('create_layer polystar (fx.polystar has no engine command)');
-    setNodePolystar(id, polystar);
-  } else if (i.shape) {
-    await ctx.scene.setProp(id, 'shapeType', i.shape);
   }
+  // The outline is part of the insert (B5): a rect or ellipse is the layer
+  // factory's own kind; a line or a polystar is inserted whole (pasteLayers).
+  const shape = i.kind === 'shape' && i.shape
+    ? (polystar ? { shapeType: 'polystar', polystar: polystar as unknown as Record<string, unknown> } : { shapeType: i.shape })
+    : undefined;
+  const id = await ctx.scene.create(i.kind, i.name, at, shape);
+  if (!id) return fail(`Could not create a ${i.kind} layer — the insert produced no node.`);
+  // Bind the caller's handle BEFORE anything else, so a later call in the same
+  // batch can address this layer without a round-trip through the model.
+  bindAlias(ctx, i.id, id);
+  if (i.text !== undefined) await ctx.scene.setProp(id, 'content', i.text);
+  if (i.fill) await ctx.scene.setProp(id, 'fill', i.fill);
   if (i.parent) await ctx.scene.reparent(id, i.parent);
 
   // GPU renderer builds its model matrix from layer.width × layer.scaleX and
@@ -416,7 +405,7 @@ const updateLayer: AiTool['handler'] = async (input, ctx) => {
 
   const sw = (patch: Record<string, unknown>): Command[] => [{ type: 'setLayerSwitches', layers: [i.nodeId], patch } as Command];
   if (i.threeD !== undefined && node) {
-    await engineOr(ctx.engine, 'update_layer threeD refused by the engine', sw({ threeD: !!i.threeD }), () => undefined, () => set3DEnabled(i.nodeId, !!i.threeD));
+    await ctx.engine.apply(sw({ threeD: !!i.threeD }));
     applied.push(`threeD=${!!i.threeD}`);
   }
   // Material switches. Without these `set_light` was a tool that could not
@@ -425,61 +414,59 @@ const updateLayer: AiTool['handler'] = async (input, ctx) => {
   // was the inspector checkbox. A light could be created, positioned and tuned,
   // and nothing in the scene would ever be lit by it.
   // Material Options are the catalog's `material/…` rows (B3z): ONE
-  // `setProperty` per option, a key at the playhead where the option is
-  // animated — what the Inspector sends. Clamped as the legacy setters clamp.
-  // A layer whose catalog does not address them (not 3D yet on a backend
-  // that refuses) keeps the legacy setters, as ONE named gap.
-  const material: Array<[string, number, () => void]> = [];
-  if (i.acceptsLights !== undefined) material.push(['acceptsLights', i.acceptsLights ? 1 : 0, () => setNodeAcceptsLights(i.nodeId, !!i.acceptsLights)]);
+  // `setProperties`, a key at the playhead where an option is animated — what
+  // the Inspector sends. Clamped as the legacy setters clamp. A layer whose
+  // catalog does not address them (not 3D) is told so — the rows exist only on
+  // a 3D layer, which `threeD: true` in the same call makes it.
+  const material: Array<[string, number]> = [];
+  if (i.acceptsLights !== undefined) material.push(['acceptsLights', i.acceptsLights ? 1 : 0]);
   for (const key of ['ambient', 'diffuse'] as const) {
     const v = i[key];
-    if (typeof v === 'number') material.push([key, Math.max(0, Math.min(100, v)), () => setNodeMaterialPct(i.nodeId, key, v, MATERIAL_PCT_DEFAULTS[key])]);
+    if (typeof v === 'number') material.push([key, Math.max(0, Math.min(100, v))]);
   }
-  if (typeof i.specular === 'number') { const v = i.specular; material.push(['specular', Math.max(0, Math.min(100, v)), () => setNodeSpecular(i.nodeId, v)]); }
-  if (typeof i.shininess === 'number') { const v = i.shininess; material.push(['shininess', Math.max(1, v), () => setNodeShininess(i.nodeId, v)]); }
+  if (typeof i.specular === 'number') material.push(['specular', Math.max(0, Math.min(100, i.specular))]);
+  if (typeof i.shininess === 'number') material.push(['shininess', Math.max(1, i.shininess)]);
   if (material.length > 0 && node) {
     const at = activePlayheadSeconds();
     const writes = material.map(([track, v]) => memberWrite(i.nodeId, track, v, at));
     const cmds = writes.every((w) => w !== null)
       ? [{ type: 'setProperties', writes: writes.map((w) => ({ prop: w!.prop, value: w!.value, ...(w!.time !== undefined ? { time: w!.time } : {}) })) } as Command]
       : null;
-    await engineOr(ctx.engine, 'update_layer material options the catalog does not address', cmds, () => undefined, () => { for (const [, , legacy] of material) legacy(); });
+    await engineOnly(ctx.engine, `update_layer material options: ${i.nodeId} has no Material Options (turn threeD on first)`, cmds, () => undefined);
     if (i.acceptsLights !== undefined) applied.push(`acceptsLights=${!!i.acceptsLights}`);
     for (const key of ['ambient', 'diffuse', 'specular', 'shininess'] as const) {
       if (typeof i[key] === 'number') applied.push(`${key}=${i[key]}`);
     }
   }
   if (i.name !== undefined && node) {
-    const name = String(i.name);
-    await engineOr(ctx.engine, 'update_layer rename refused by the engine', [{ type: 'renameLayer', layer: i.nodeId, name } as Command], () => undefined, () => { node.name = name; });
+    await ctx.engine.apply([{ type: 'renameLayer', layer: i.nodeId, name: String(i.name) } as Command]);
     applied.push('name');
   }
   if (i.visible !== undefined && node) {
-    await engineOr(ctx.engine, 'update_layer visibility refused by the engine', sw({ visible: !!i.visible }), () => undefined, () => { node.visible = !!i.visible; });
+    await ctx.engine.apply(sw({ visible: !!i.visible }));
     applied.push('visible');
   }
   if (i.locked !== undefined && node) {
-    await engineOr(ctx.engine, 'update_layer lock refused by the engine', sw({ locked: !!i.locked }), () => undefined, () => { node.locked = !!i.locked; });
+    await ctx.engine.apply(sw({ locked: !!i.locked }));
     applied.push('locked');
   }
   if (i.motionBlur !== undefined && node) {
-    await engineOr(ctx.engine, 'update_layer motion blur refused by the engine', sw({ motionBlur: !!i.motionBlur }), () => undefined, () => setNodeMotionBlur(i.nodeId, !!i.motionBlur));
+    await ctx.engine.apply(sw({ motionBlur: !!i.motionBlur }));
     applied.push(`motionBlur=${!!i.motionBlur}`);
   }
   if (i.blendMode !== undefined && node) {
-    await engineOr(ctx.engine, `update_layer blend mode '${i.blendMode}' refused by the engine`, [{ type: 'setBlendMode', layers: [i.nodeId], mode: i.blendMode } as Command], () => undefined, () => setNodeBlend(i.nodeId, i.blendMode as any));
+    await ctx.engine.apply([{ type: 'setBlendMode', layers: [i.nodeId], mode: i.blendMode } as Command]);
     applied.push(`blendMode=${i.blendMode}`);
   }
   if (i.removeMatte && node) {
-    await engineOr(ctx.engine, 'update_layer track matte refused by the engine', [trackMatteCommand(i.nodeId, undefined)], () => undefined, () => setNodeMatte(i.nodeId, undefined));
+    await ctx.engine.apply([trackMatteCommand(i.nodeId, undefined)]);
     applied.push('removeMatte');
   } else if (i.matte !== undefined && node) {
     // readMatte normalises whatever the model sent: the 1.2.0 {mode,inverted}
     // shape or the legacy four-value spelling. Tolerating both means the tool
     // schema and the prompt do not need a flag day. `setTrackMatte`, as the
     // Inspector's Track Matte menu sends it.
-    const matte = readMatte(i.matte);
-    await engineOr(ctx.engine, 'update_layer track matte refused by the engine', [trackMatteCommand(i.nodeId, matte)], () => undefined, () => setNodeMatte(i.nodeId, matte));
+    await ctx.engine.apply([trackMatteCommand(i.nodeId, readMatte(i.matte))]);
     applied.push(`matte=${JSON.stringify(i.matte)}`);
   }
 
@@ -791,8 +778,7 @@ const textAnimator: AiTool['handler'] = async (input, ctx) => {
 
   let index = i.index;
   if (index === undefined) {
-    addTextAnimator(i.nodeId);
-    index = readAnimatorData(node).length - 1;
+    index = await addTextAnimatorGroup(ctx.engine, i.nodeId);
   } else if (index >= readAnimatorData(node).length) {
     return fail(`${i.nodeId} has no animator at index ${index}. It has ${readAnimatorData(node).length}.`);
   }
@@ -808,7 +794,7 @@ const textAnimator: AiTool['handler'] = async (input, ctx) => {
   ]) {
     if (i[key] !== undefined) patch[key] = i[key];
   }
-  if (Object.keys(patch).length) updateAnimator(i.nodeId, index, patch);
+  if (Object.keys(patch).length) await patchTextAnimator(ctx.engine, i.nodeId, index, patch);
 
   // ── Animate the selector in the same call ────────────────────────────────
   // An animator whose selector never moves is a static style, not an animation.
@@ -878,22 +864,11 @@ const createMedia: AiTool['handler'] = async (input, ctx) => {
     return fail(`No imported asset with id '${assetId}'. Call list_assets first. Available ids: ${avail}.`);
   }
 
-  await insertMedia(asset);
-  // insertMedia selects the layer it just made — that selection is how we learn
-  // the new node's id (the inserter doesn't return it).
-  const id = ctx.scene.selection()[0] ?? useSelectionStore.getState().ids[0];
+  // The Project panel's insert (contain-fitted, SVG / audio routed), built
+  // off-document and sent as ONE pasteLayers; placed in the same build.
+  const id = await insertAssetLayer(ctx.engine, asset, { x, y });
   if (!id) return fail(`Placed "${asset.name}" but could not resolve the new layer id.`);
   bindAlias(ctx, alias, id);
-
-  if (x !== undefined || y !== undefined) {
-    const node = defaultSceneGraph.getNode(id);
-    const t = node?.components.find((c) => c.type === 'Transform');
-    if (t) {
-      if (x !== undefined) defaultSceneGraph.writeProp(id, t.id, 'x', x);
-      if (y !== undefined) defaultSceneGraph.writeProp(id, t.id, 'y', y);
-    }
-  }
-  refreshAfterLegacy(ctx);
   return ok(`Added ${asset.type} layer "${asset.name}" with id '${id}'. Animate it like any other layer.`, { id });
 };
 
@@ -954,22 +929,12 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
   const name = `${prompt.slice(0, 40).replace(/[^\w -]/g, '').trim() || 'generated'}.${ext}`;
   const file = new File([bytes as BlobPart], name, { type: res.mime });
 
-  const asset = await useAssetStore.getState().addAsset(file, null, { source: 'ai' });
-  await insertMedia(asset);
-
-  const id = ctx.scene.selection()[0] ?? useSelectionStore.getState().ids[0];
+  // The bytes become a footage item through the engine (`importBytes`: the
+  // same importer as a picked file), then a layer like any placed asset.
+  const asset = await importAssetBytes(ctx.engine, file);
+  const id = await insertAssetLayer(ctx.engine, asset, { x, y });
   if (!id) return fail(`Generated "${name}" and added it to the library, but could not resolve the new layer id.`);
   bindAlias(ctx, alias, id);
-
-  if (x !== undefined || y !== undefined) {
-    const node = defaultSceneGraph.getNode(id);
-    const t = node?.components.find((c) => c.type === 'Transform');
-    if (t) {
-      if (x !== undefined) defaultSceneGraph.writeProp(id, t.id, 'x', x);
-      if (y !== undefined) defaultSceneGraph.writeProp(id, t.id, 'y', y);
-    }
-  }
-  refreshAfterLegacy(ctx);
   // No credits any more — image generation runs on the user's own key and their
   // provider bills them directly, so there is nothing of ours to report.
   return ok(
@@ -980,6 +945,7 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
 };
 
 async function bytesToAsset(
+  ctx: ToolContext,
   res: AiMediaResult,
   name: string,
   mimeOverride?: string,
@@ -988,8 +954,7 @@ async function bytesToAsset(
   const mime = mimeOverride ?? res.mime;
   const bytes = decodeBase64Bytes(res.base64);
   const file = new File([bytes as BlobPart], name, { type: mime });
-  const asset = await useAssetStore.getState().addAsset(file, null, { source: 'ai' });
-  return { ok: true, asset };
+  return { ok: true, asset: await importAssetBytes(ctx.engine, file) };
 }
 
 const generateVideo: AiTool['handler'] = async (input, ctx) => {
@@ -1006,22 +971,12 @@ const generateVideo: AiTool['handler'] = async (input, ctx) => {
   if (!res.ok) return fail(`Video generation failed: ${res.message}. The scene is unchanged.`);
 
   const name = `${prompt.slice(0, 36).replace(/[^\w -]/g, '').trim() || 'generated'}.${res.extension}`;
-  const placed = await bytesToAsset(res, name, 'video/mp4');
+  const placed = await bytesToAsset(ctx, res, name, 'video/mp4');
   if (!placed.ok) return fail(placed.message);
 
-  await insertMedia(placed.asset);
-  const nodeId = ctx.scene.selection()[0] ?? useSelectionStore.getState().ids[0];
+  const nodeId = await insertAssetLayer(ctx.engine, placed.asset, { x, y });
   if (!nodeId) return fail(`Generated "${name}" but could not resolve the new layer id.`);
   bindAlias(ctx, alias, nodeId);
-  if (x !== undefined || y !== undefined) {
-    const node = defaultSceneGraph.getNode(nodeId);
-    const t = node?.components.find((c) => c.type === 'Transform');
-    if (t) {
-      if (x !== undefined) defaultSceneGraph.writeProp(nodeId, t.id, 'x', x);
-      if (y !== undefined) defaultSceneGraph.writeProp(nodeId, t.id, 'y', y);
-    }
-  }
-  refreshAfterLegacy(ctx);
   return ok(`Generated a video clip and placed it as layer '${nodeId}'. Asset "${name}" is in the library.`, { id: nodeId });
 };
 
@@ -1037,12 +992,10 @@ const generateSpeech: AiTool['handler'] = async (input, ctx) => {
   if (!res.ok) return fail(`Speech generation failed: ${res.message}.`);
 
   const name = `voiceover.${res.extension}`;
-  const placed = await bytesToAsset(res, name, 'audio/mpeg');
+  const placed = await bytesToAsset(ctx, res, name, 'audio/mpeg');
   if (!placed.ok) return fail(placed.message);
 
-  await insertMedia(placed.asset);
-  const nodeId = ctx.scene.selection()[0] ?? useSelectionStore.getState().ids[0];
-  refreshAfterLegacy(ctx);
+  const nodeId = await insertAssetLayer(ctx.engine, placed.asset);
   return ok(
     nodeId
       ? `Generated voice-over and added audio layer '${nodeId}'.`
@@ -1064,23 +1017,17 @@ const generate3dModel: AiTool['handler'] = async (input, ctx) => {
 
   const label = assetName?.trim()
     || `${prompt.slice(0, 36).replace(/[^\w -]/g, '').trim() || 'model'}.${res.extension}`;
-  const placed = await bytesToAsset(res, label, res.mime);
+  const placed = await bytesToAsset(ctx, res, label, res.mime);
   if (!placed.ok) return fail(placed.message);
 
   // Place a 3D null as a scene placeholder — the compositor does not yet draw
   // glTF meshes, but the asset is in the library and the layer anchors it.
   const comp = await ctx.comp.get();
-  const nodeId = await ctx.scene.create('null', label.replace(/\.(glb|gltf)$/i, '') || '3D Model', {
+  const nodeId = await insertModelPlaceholder(ctx.engine, label.replace(/\.(glb|gltf)$/i, '') || '3D Model', {
     x: comp.width / 2,
     y: comp.height / 2,
-  });
-  set3DEnabled(nodeId, true);
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (t) {
-    defaultSceneGraph.writeProp(nodeId, t.id, 'assetId', placed.asset.id);
-  }
-  refreshAfterLegacy(ctx);
+  }, placed.asset.id);
+  if (!nodeId) return fail(`Generated a 3D model (asset ${placed.asset.id}) but could not place its layer.`);
 
   return ok(
     `Generated a 3D model (asset ${placed.asset.id}) and placed null layer '${nodeId}' in 3D space. ` +
@@ -1137,7 +1084,7 @@ const importSvg: AiTool['handler'] = async (input, ctx) => {
     return fail('That is not SVG markup — it must contain an <svg> element with a viewBox.');
   }
 
-  const nodeId = insertSvgLayer(markup, name, {
+  const nodeId = await insertSvgMarkupLayer(ctx.engine, markup, name, {
     ...(x !== undefined ? { x } : {}),
     ...(y !== undefined ? { y } : {}),
   });
@@ -1148,7 +1095,6 @@ const importSvg: AiTool['handler'] = async (input, ctx) => {
     );
   }
   bindAlias(ctx, alias, nodeId);
-  refreshAfterLegacy(ctx);
   return ok(`Added SVG layer "${name}" with id '${nodeId}'. Animate it like any other layer.`, { id: nodeId });
 };
 
@@ -1230,32 +1176,17 @@ const createMediaFromAttachment: AiTool['handler'] = async (input, ctx) => {
     return fail(`Failed to decode base64 attachment: ${err instanceof Error ? err.message : err}`);
   }
 
-  let asset;
+  let asset: ImportedAsset;
   try {
-    // A reference image the user attached to the AI prompt: small (already
-    // re-encoded JPEG) and part of an AI flow, so it uploads to the cloud rather
-    // than the local-disk path user library imports take.
-    asset = await useAssetStore.getState().addAsset(file, null, { source: 'ai' });
+    // A reference image the user attached to the AI prompt, imported as
+    // footage through the engine (`importBytes`).
+    asset = await importAssetBytes(ctx.engine, file);
   } catch (err) {
-    return fail(`Failed to upload reference image: ${err instanceof Error ? err.message : err}`);
-  }
-  if (!asset) {
-    return fail(`Could not upload and create asset for reference image.`);
+    return fail(`Failed to import reference image: ${err instanceof Error ? err.message : err}`);
   }
 
-  await insertMedia(asset);
-  const id = ctx.scene.selection()[0] ?? useSelectionStore.getState().ids[0];
+  const id = await insertAssetLayer(ctx.engine, asset, { x, y });
   if (!id) return fail(`Placed attachment "${asset.name}" but could not resolve the new layer id.`);
-
-  if (x !== undefined || y !== undefined) {
-    const node = defaultSceneGraph.getNode(id);
-    const t = node?.components.find((c) => c.type === 'Transform');
-    if (t) {
-      if (x !== undefined) defaultSceneGraph.writeProp(id, t.id, 'x', x);
-      if (y !== undefined) defaultSceneGraph.writeProp(id, t.id, 'y', y);
-    }
-  }
-  refreshAfterLegacy(ctx);
   return ok(`Added attachment image layer "${asset.name}" with id '${id}'. Animate it like any other layer.`, { id });
 };
 
@@ -1289,12 +1220,12 @@ const createMask: AiTool['handler'] = async (input, ctx) => {
   if (i.expansion !== undefined) path.expansion = i.expansion;
   if (i.inverted !== undefined) path.inverted = i.inverted;
 
-  addMaskPath(i.nodeId, path);
-  refreshAfterLegacy(ctx);
+  // `addMask` (+ its Feather / Opacity / Expansion): the engine mints the id.
+  const maskId = await addMaskFromPath(ctx.engine, i.nodeId, path, maskToBezier(path));
   return ok(
     `Added a ${i.shape} mask (${Math.round(w)}×${Math.round(h)}, mode ${path.mode}) to ${i.nodeId} ` +
-      `with maskId '${path.id}'. It clips the layer to the ${path.inverted ? 'outside' : 'inside'} of the shape.`,
-    { maskId: path.id },
+      `with maskId '${maskId}'. It clips the layer to the ${path.inverted ? 'outside' : 'inside'} of the shape.`,
+    { maskId },
   );
 };
 
@@ -1579,14 +1510,14 @@ const mergePathsHandler: AiTool['handler'] = async (input, ctx) => {
   return ok(`Applied live merge '${i.op}'. Result: ${resultIds.join(', ')}. Sources stay editable.`, { resultIds });
 };
 
-/** Patch (creating if absent) a node's trim entry; returns its op id. */
-function applyTrim(nodeId: string, i: { start?: number; end?: number; offset?: number }): string {
+/** Patch (creating if absent) a node's trim entry through the engine; resolves to its op id. */
+async function applyTrim(ctx: ToolContext, nodeId: string, i: { start?: number; end?: number; offset?: number }): Promise<string> {
   const patch: Partial<PathOp> = {};
   if (i.start !== undefined) patch.start = i.start;
   if (i.end !== undefined) patch.end = i.end;
   if (i.offset !== undefined) patch.offset = i.offset;
-  const opId = ensureTrimOp(nodeId);
-  updatePathOp(nodeId, opId, patch);
+  const opId = await ensurePathOperator(ctx.engine, nodeId, 'trim');
+  await patchPathOperator(ctx.engine, nodeId, opId, patch);
   return opId;
 }
 
@@ -1634,7 +1565,7 @@ const setTrimPathHandler: AiTool['handler'] = async (input, ctx) => {
     }
     // The user's own Inspector ▸ "Convert to editable shapes", not a second
     // parser: same geometry, same carried transform, same Revert.
-    const groupId = convertSvgLayerToShapes(i.nodeId);
+    const groupId = await convertSvgLayer(ctx.engine, i.nodeId);
     if (!groupId) {
       return fail(
         `'${i.nodeId}' has no vector paths to convert (an SVG that only embeds a bitmap, for instance) — ` +
@@ -1645,7 +1576,7 @@ const setTrimPathHandler: AiTool['handler'] = async (input, ctx) => {
     for (const [handle, real] of ctx.aliases) if (real === i.nodeId) ctx.aliases.set(handle, groupId);
     const shapeIds = await shapeDescendants(ctx, groupId);
     if (!shapeIds.length) return fail(`Converted '${i.nodeId}' to group '${groupId}', but it holds no shape layers to trim.`);
-    const trims = shapeIds.map((id) => ({ nodeId: id, opId: applyTrim(id, i) }));
+    const trims = await mapSeq(shapeIds, async (id) => ({ nodeId: id, opId: await applyTrim(ctx, id, i) }));
     return ok(
       `Converted SVG layer '${i.nodeId}' into group '${groupId}' (${shapeIds.length} shape layer(s)) and set ` +
         `trim on each: start ${i.start ?? 0}%, end ${i.end ?? 100}%, offset ${i.offset ?? 0}%. '${i.nodeId}' no longer ` +
@@ -1668,7 +1599,7 @@ const setTrimPathHandler: AiTool['handler'] = async (input, ctx) => {
   // entry in the `fx.pathOps` chain since document version 1.4.0 — the same
   // ordered stack the deformers live in — so this creates the entry if the
   // layer has none and then patches it by id.
-  const opId = applyTrim(i.nodeId, i);
+  const opId = await applyTrim(ctx, i.nodeId, i);
   const t = readTrimOp(defaultSceneGraph.getNode(i.nodeId)!);
   return ok(
     `Trim path on '${i.nodeId}' is now start ${t?.start ?? 0}%, end ${t?.end ?? 100}%, offset ${t?.offset ?? 0}%. ` +
@@ -1747,7 +1678,7 @@ const addRepeaterHandler: AiTool['handler'] = async (input, ctx) => {
         : {}),
     };
     if (!Object.keys(patch).length) return fail(`Nothing to update on repeater '${i.opId}' — pass at least one field to change.`);
-    updatePathOp(i.nodeId, target.id, patch);
+    await patchPathOperator(ctx.engine, i.nodeId, target.id, patch);
     return ok(
       `Updated repeater '${target.id}' on '${i.nodeId}' (${Object.keys(patch).join(', ')}).`,
       { nodeId: i.nodeId, opId: target.id, repeaterCount: repeaters.length },
@@ -1761,7 +1692,7 @@ const addRepeaterHandler: AiTool['handler'] = async (input, ctx) => {
   // Field-for-field into the vocabulary the repeater OPERATOR actually reads.
   // The old shape shared exactly ONE name with it (`copies`), so even a write
   // that had landed would have produced N identical stacked copies.
-  const repOpId = addRepeaterOp(i.nodeId, {
+  const repOpId = await addPathOperator(ctx.engine, i.nodeId, 'repeater', {
     copies,
     offsetX: i.positionX ?? 0,
     offsetY: i.positionY ?? 0,
@@ -1827,28 +1758,25 @@ const addPathOperatorHandler: AiTool['handler'] = async (input, ctx) => {
     );
   }
 
-  // The TYPE's own defaults, not zigzag's: a wiggleTransform must inherit its
-  // 2 wiggles/second and correlation 50 or an unspecified call adds a frozen
-  // wiggle — an operator that appears to do nothing.
+  // The TYPE's own defaults, not zigzag's (the engine adds the operator with
+  // `defaultPathOpOf(type)`): a wiggleTransform must inherit its 2
+  // wiggles/second and correlation 50 or an unspecified call adds a frozen
+  // wiggle — an operator that appears to do nothing. Pushed onto the CHAIN
+  // (`contents`), then the named params written.
   const base = defaultPathOpOf(type);
-  const op: PathOp = {
-    ...base,
-    id: newPathOpId(),
-    type,
-    amount: i.amount ?? base.amount,
-    detail: i.detail ?? base.detail,
-    wigglesPerSecond: Math.max(0, i.wigglesPerSecond ?? base.wigglesPerSecond ?? 0),
-  };
-  // Push onto the CHAIN. `fx.pathOp` — the single slot this used to write — was
-  // replaced by `fx.pathOps` in document version 1.3.0, and the reader
-  // deliberately does not accept the old shape.
-  addPathOp(i.nodeId, op);
+  const opId = await addPathOperator(ctx.engine, i.nodeId, type, {
+    ...(i.amount !== undefined ? { amount: i.amount } : {}),
+    ...(i.detail !== undefined ? { detail: i.detail } : {}),
+    ...(i.wigglesPerSecond !== undefined || base.wigglesPerSecond !== undefined
+      ? { wigglesPerSecond: Math.max(0, i.wigglesPerSecond ?? base.wigglesPerSecond ?? 0) }
+      : {}),
+  });
 
   const chain = readPathOps(defaultSceneGraph.getNode(i.nodeId)!);
   return ok(
-    `Added '${type}' to '${i.nodeId}' (operator ${chain.length} in the chain, id '${op.id}'). ` +
-      `Keyframe 'pathop.${op.id}.amount' to animate the deformation.`,
-    { nodeId: i.nodeId, opId: op.id },
+    `Added '${type}' to '${i.nodeId}' (operator ${chain.length} in the chain, id '${opId}'). ` +
+      `Keyframe 'pathop.${opId}.amount' to animate the deformation.`,
+    { nodeId: i.nodeId, opId },
   );
 };
 
@@ -1883,8 +1811,8 @@ const createSkeletonRigHandler: AiTool['handler'] = async (input, ctx) => {
     y: b.y ?? 0,
     rotation: b.rotation ?? 0,
   }));
-  defaultSceneGraph.setSkeleton(i.layerId, { bones, ikTargets: [] });
-  refreshAfterLegacy(ctx);
+  // The whole rig as `layer/skeleton` (a rig preset's route, rigPaths.ts).
+  await ctx.engine.apply([{ type: 'setProperty', prop: { layer: i.layerId, path: 'layer/skeleton' }, value: { kind: 'json', value: JSON.stringify({ bones, ikTargets: [] }) } } as Command]);
   return ok(`Created skeleton rig with ${bones.length} bones on layer '${i.layerId}'.`, { layerId: i.layerId, boneCount: bones.length });
 };
 
@@ -1906,7 +1834,7 @@ const applyLayerStyleHandler: AiTool['handler'] = async (input, ctx) => {
   if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
   if (i.styleType === 'drop_shadow') {
-    updateDropShadow(i.nodeId, {
+    await patchLayerStyle(ctx.engine, i.nodeId, 'dropShadow', {
       enabled: true,
       color: i.color,
       opacity: i.opacity ?? 0.5,
@@ -1915,14 +1843,13 @@ const applyLayerStyleHandler: AiTool['handler'] = async (input, ctx) => {
       angle: i.angle ?? 90,
     });
   } else {
-    updateOuterGlow(i.nodeId, {
+    await patchLayerStyle(ctx.engine, i.nodeId, 'outerGlow', {
       enabled: true,
       color: i.color,
       opacity: i.opacity ?? 0.9,
       size: i.size ?? 16,
     });
   }
-  refreshAfterLegacy(ctx);
   return ok(`Applied ${i.styleType} layer style on '${i.nodeId}'.`);
 };
 
@@ -1930,18 +1857,18 @@ const recolorLottieVectorHandler: AiTool['handler'] = async (input, ctx) => {
   const { nodeId, color } = input as { nodeId: string; color: string };
   if (!await ctx.scene.has(nodeId)) return fail((await unknownNode(ctx, nodeId)));
 
-  let count = 0;
+  // Every shape's fill (`layer/fill`, a key at the playhead where animated) in
+  // ONE setProperties — the Inspector's fill write, per layer.
+  const at = activePlayheadSeconds();
+  const writes: PropertyWrite[] = [];
   const traverseAndRecolor = (id: string) => {
     const node = defaultSceneGraph.getNode(id);
     if (!node) return;
     const kind = readNodeKind(node);
     if (kind === 'shape') {
       const style = node.components.find((c) => c.type === 'Style');
-      // `node.components` is a fresh copy per read, so `style.props.fill = …`
-      // recoloured a throwaway. `writeProp` reaches the engine component.
-      if (style && defaultSceneGraph.writeProp(id, style.id, 'fill', color)) {
-        count++;
-      }
+      const w = style ? fieldWrite(id, style.id, 'fill', color, at) : null;
+      if (w) writes.push(w);
     }
     for (const childId of node.children) {
       traverseAndRecolor(childId);
@@ -1949,7 +1876,10 @@ const recolorLottieVectorHandler: AiTool['handler'] = async (input, ctx) => {
   };
 
   traverseAndRecolor(nodeId);
-  refreshAfterLegacy(ctx);
+  if (writes.length > 0) {
+    await ctx.engine.apply([{ type: 'setProperties', writes: writes.map((w) => ({ prop: w.prop, value: w.value, ...(w.time !== undefined ? { time: w.time } : {}) })) } as Command]);
+  }
+  const count = writes.length;
   return ok(`Recolored ${count} vector shapes inside Lottie/group '${nodeId}' to ${color}.`);
 };
 
@@ -2006,12 +1936,15 @@ const addPathMorph: AiTool['handler'] = async (input, ctx) => {
 // ── Registry wiring ───────────────────────────────────────────────
 
 /**
- * Mutating tools whose handlers write ONLY through the ToolContext facades (or
- * engine commands), audited for B5. Their writes go to the engine; anything the
- * API cannot express yet is named inside the facade / handler with
- * `ctx.engine.legacy(<gap>)`. Every OTHER mutating tool (text animators, masks,
- * media, path ops, rigs, layer styles, the compose recipes, …) still calls
- * legacy document helpers and is recorded as a gap wholesale by `buildAiTools`.
+ * Mutating tools whose handlers write ONLY through the ToolContext facades,
+ * engine commands and off-document builders sent as ONE engine command
+ * (hostWrites.ts) — audited for B5. A write the API cannot express is REFUSED
+ * (a failed tool call), never made around the engine. `export_video` writes
+ * no document state (the editor's render-job queue, persisted with the app's
+ * settings — not the project's `addRenderItems` queue). The one tool not
+ * listed, `merge_paths`, still edits source layers outside the engine (the
+ * live merge builder flags its operands in place) and is recorded as a gap
+ * wholesale by `buildAiTools`.
  */
 export const ENGINE_ROUTED_TOOLS: ReadonlySet<string> = new Set([
   'create_layer', 'delete_layer', 'reparent_layer', 'update_layer',
@@ -2019,6 +1952,14 @@ export const ENGINE_ROUTED_TOOLS: ReadonlySet<string> = new Set([
   'add_effect', 'update_effect', 'update_effect_param', 'update_composition', 'apply_preset',
   'set_spring', 'set_motion_blur', 'create_precomp', 'set_time_remap', 'set_light', 'set_shadow_stack',
   'create_puppet_rig', 'set_puppet_pin_keyframes', 'pose_skeleton',
+  // B5 finish: text animators, masks, media, SVG, path operators, rigs, layer
+  // styles, gradients and the compose recipes.
+  'text_animator', 'create_mask', 'create_media', 'create_media_from_attachment', 'generate_image',
+  'generate_video', 'generate_speech', 'generate_3d_model', 'import_svg', 'set_trim_path', 'add_repeater',
+  'add_path_operator', 'create_skeleton_rig', 'apply_layer_style', 'recolor_lottie_vector', 'create_gradient',
+  'add_surface_treatment', 'define_style', 'add_background', 'add_title', 'add_emblem', 'add_cards', 'stagger_in',
+  'add_camera_move', 'add_kinetic_title', 'add_light_sweep', 'add_ambient_orbs', 'add_lower_third', 'add_scene',
+  'add_transition', 'add_logo_reveal', 'add_radial_burst', 'add_path_morph', 'export_video',
 ]);
 
 const HANDLERS: Record<string, AiTool['handler']> = {

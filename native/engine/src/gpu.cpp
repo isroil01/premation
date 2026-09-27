@@ -95,11 +95,22 @@ std::optional<Gpu> create_gpu(bool wantSharedTexture, bool highPerformance, std:
   gpu.backend = backend_name(info.backendType);
 
   std::vector<wgpu::FeatureName> features;
-  if (wantSharedTexture && gpu.adapter.HasFeature(wgpu::FeatureName::SharedTextureMemoryDXGISharedHandle) &&
-      gpu.adapter.HasFeature(wgpu::FeatureName::SharedFenceDXGISharedHandle)) {
-    features.push_back(wgpu::FeatureName::SharedTextureMemoryDXGISharedHandle);
-    features.push_back(wgpu::FeatureName::SharedFenceDXGISharedHandle);
-    gpu.sharedTextureCapable = true;
+  // Route C (shared_texture_ffi*.cpp): the memory + fence pair of this OS.
+  if (wantSharedTexture) {
+#if defined(_WIN32)
+    constexpr wgpu::FeatureName kSharedMemory = wgpu::FeatureName::SharedTextureMemoryDXGISharedHandle;
+    constexpr wgpu::FeatureName kSharedFence = wgpu::FeatureName::SharedFenceDXGISharedHandle;
+#elif defined(__APPLE__)
+    constexpr wgpu::FeatureName kSharedMemory = wgpu::FeatureName::SharedTextureMemoryIOSurface;
+    constexpr wgpu::FeatureName kSharedFence = wgpu::FeatureName::SharedFenceMTLSharedEvent;
+#endif
+#if defined(_WIN32) || defined(__APPLE__)
+    if (gpu.adapter.HasFeature(kSharedMemory) && gpu.adapter.HasFeature(kSharedFence)) {
+      features.push_back(kSharedMemory);
+      features.push_back(kSharedFence);
+      gpu.sharedTextureCapable = true;
+    }
+#endif
   }
   // D2w: the render graph (float32 working space, rendering.ts's float32 path)
   // and E1's footage conversion (multi-planar NV12/P010 import, R16 planes) run

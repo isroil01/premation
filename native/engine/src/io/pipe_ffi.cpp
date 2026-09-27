@@ -71,6 +71,7 @@ bool claim_stdio(Pipes& pipes, std::string& error) {
   pipes.commandOut = from_handle(privateOut);
   pipes.framesOut = inherited_fd(3);
   pipes.framesIn = inherited_fd(4);
+  pipes.pixelsOut = inherited_fd(5);
   return true;
 }
 
@@ -122,6 +123,7 @@ bool claim_stdio(Pipes& pipes, std::string& error) {
   pipes.commandOut = Handle{privateOut};
   pipes.framesOut = inherited_fd(3);
   pipes.framesIn = inherited_fd(4);
+  pipes.pixelsOut = inherited_fd(5);
   return true;
 }
 

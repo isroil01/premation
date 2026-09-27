@@ -1,0 +1,197 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/trimFold.migration.test.ts › v1_3_0_to_v1_4_0 — registered in the chain brings a 1.3.0 document to the current version through the real walker",
+ "input": {
+  "version": "1.3.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "rect",
+     "name": "rect",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 200,
+       "y": 300
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "rect_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "shape",
+        "x": 200,
+        "y": 300,
+        "rotation": 0
+       }
+      },
+      {
+       "id": "rect_s",
+       "type": "Style",
+       "props": {
+        "opacity": 100,
+        "fill": "#2b7eff"
+       }
+      },
+      {
+       "id": "rect_fx",
+       "type": "fx",
+       "props": {
+        "pathOps": [
+         {
+          "id": "z1",
+          "type": "zigzag",
+          "amount": 16,
+          "detail": 5
+         },
+         {
+          "id": "trimop_rect",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 65,
+          "offset": 0
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {
+    "rect": {
+     "pathop.z1.amount": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 4
+       }
+      ]
+     },
+     "pathop.trimop_rect.end": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 0
+       },
+       {
+        "t": 2,
+        "v": 100
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "nodes": [
+    {
+     "id": "rect",
+     "name": "rect",
+     "parent": null,
+     "children": [],
+     "visible": true,
+     "locked": false,
+     "transform": {
+      "position": {
+       "x": 200,
+       "y": 300
+      },
+      "rotation": 0,
+      "scale": {
+       "x": 1,
+       "y": 1
+      }
+     },
+     "components": [
+      {
+       "id": "rect_t",
+       "type": "Transform",
+       "props": {
+        "__kind": "shape",
+        "x": 200,
+        "y": 300,
+        "rotation": 0
+       }
+      },
+      {
+       "id": "rect_s",
+       "type": "Style",
+       "props": {
+        "opacity": 100,
+        "fill": "#2b7eff"
+       }
+      },
+      {
+       "id": "rect_fx",
+       "type": "fx",
+       "props": {
+        "pathOps": [
+         {
+          "id": "z1",
+          "type": "zigzag",
+          "amount": 16,
+          "detail": 5
+         },
+         {
+          "id": "trimop_rect",
+          "type": "trim",
+          "amount": 0,
+          "detail": 0,
+          "start": 0,
+          "end": 65,
+          "offset": 0
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {
+    "rect": {
+     "pathop.z1.amount": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 4,
+        "id": "k1"
+       }
+      ]
+     },
+     "pathop.trimop_rect.end": {
+      "keyframes": [
+       {
+        "t": 0,
+        "v": 0,
+        "id": "k2"
+       },
+       {
+        "t": 2,
+        "v": 100,
+        "id": "k3"
+       }
+      ]
+     }
+    }
+   }
+  }
+ }
+}

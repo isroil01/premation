@@ -27,7 +27,7 @@
 import type { EnginePorts } from './ports';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import type { ProjectFile, VersionedDocument } from '@core/types';
-import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import { useAssetStore, type AssetSource, type ImportedAsset } from '@stores/assetStore';
 import { canImportFromDisk, fileNameOf, importMediaFile, mimeForPath } from '@core/assets/local/importFromDisk';
 import { probeMedia } from '@core/assets/mediaProbe';
 import {
@@ -154,6 +154,7 @@ export function createAppEnginePorts(
       const asset = await useAssetStore.getState().addAsset(blob, null, {
         id,
         ...(file.originPath ? { path: file.originPath } : {}),
+        ...(file.source ? { source: file.source as AssetSource } : {}),
       });
       if (!asset) throw new Error('the file could not be read or decoded');
       detachFromSession(asset.id);

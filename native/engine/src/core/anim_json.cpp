@@ -138,6 +138,7 @@ Json anim_to_json(const NodeAnim& a, std::string_view nodeId) {
     Json o = Json::object();
     o.set("src", Json::string(e.src));
     o.set("enabled", Json::boolean(e.enabled));
+    if (e.authored_by) o.set("authoredBy", Json::string(*e.authored_by));
     exprs.set(prop, std::move(o));
   }
   Json data = Json::object();
@@ -178,6 +179,7 @@ NodeAnim anim_from_json(const Json& snap) {
       ExprState e;
       e.src = m.value.at("src").str();
       e.enabled = !(m.value.at("enabled").is_bool() && !m.value.at("enabled").b());
+      if (m.value.at("authoredBy").is_string() && !m.value.at("authoredBy").str().empty()) e.authored_by = m.value.at("authoredBy").str();
       a.exprs.set(m.key, std::move(e));
     }
   }

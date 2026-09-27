@@ -1,18 +1,24 @@
 // Cross-engine parity of the time / composition family (tests/data/
-// time_comp_parity.json, written by src/core/rendering/timeCompCrossEngine.test.ts):
-// composition instances (sealed recursive passes, collapsed clones, Essential
-// Properties, the cycle guard), precomp and layer retime, frame blending,
-// temporal ghosts, auto-orient, points bound to nulls, Continuous Rasterization
-// and corner pin. Each case opens the SAME document the TypeScript exported (the
-// golden harness's sceneToProject), builds the snapshot and FrameScene with the
-// engine's own builder, and must reproduce the TypeScript's projection — and
-// report nothing unported.
+// time_comp_parity.json, frozen from the TypeScript engine's
+// timeCompCrossEngine.test.ts): composition instances (sealed recursive passes,
+// collapsed clones, Essential Properties, the cycle guard), precomp and layer
+// retime, frame blending, temporal ghosts, auto-orient, points bound to nulls,
+// Continuous Rasterization and corner pin. Each case opens the SAME document
+// the TypeScript exported (the golden harness's sceneToProject), builds the
+// snapshot and FrameScene with the engine's own builder, and must reproduce the
+// TypeScript's projection — and report nothing unported. PARITY_REBLESS=1
+// writes the C++ answers instead (parity_rebless.hpp): the projection below
+// (proj_layer / proj_renderable) mirrors the TypeScript's projLayer /
+// projRenderable key for key.
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
-#include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "docexpr.hpp"
 #include "docio.hpp"
@@ -20,26 +26,18 @@
 #include "path_ops.hpp"
 #include "json.hpp"
 #include "model.hpp"
+#include "parity_rebless.hpp"
 #include "snapshot_build.hpp"
 #include "scene_textures.hpp"
 #include "timeline.hpp"
 
 using premation::js::Json;
+using premation::test::json_numbers;
 namespace doc = premation::doc;
 namespace sc = premation::scene;
 namespace api = premation::api;
 
 namespace {
-
-Json load_fixture() {
-  std::ifstream f(std::string(PREMATION_ENGINE_TEST_DATA) + "/time_comp_parity.json", std::ios::binary);
-  REQUIRE(f.good());
-  std::stringstream ss;
-  ss << f.rdbuf();
-  auto j = premation::js::parse(ss.str());
-  REQUIRE(j.has_value());
-  return std::move(*j);
-}
 
 /// Collects the first mismatches by path.
 struct Cmp {
@@ -286,14 +284,160 @@ void cmp_renderables(Cmp& c, const std::string& at, const std::vector<api::Rende
   }
 }
 
+// ── the TypeScript projection (projLayer / projRenderable), for re-blessing ──
+
+Json jnum(double v) { return Json::number(v); }
+Json str_or_null(const std::optional<std::string>& v) { return v ? Json::string(*v) : Json::null(); }
+Json num_or_null(const std::optional<double>& v) { return v ? Json::number(*v) : Json::null(); }
+template <typename A>
+Json nums_or_null(const std::optional<A>& v) {
+  return v ? json_numbers(*v) : Json::null();
+}
+/// A member read as JSON.stringify writes it inside an array (undefined → null).
+Json elem(const Json& v) { return v.is_undefined() ? Json::null() : v; }
+
+Json proj_layers(const std::vector<sc::RLayer>& layers);
+
+Json proj_layer(const sc::RLayer& l) {
+  Json o = Json::object();
+  o.set("id", Json::string(l.id));
+  o.set("visible", Json::boolean(l.visible));
+  o.set("x", jnum(l.x));
+  o.set("y", jnum(l.y));
+  o.set("rotation", jnum(l.rotation));
+  o.set("scaleX", jnum(l.scaleX));
+  o.set("scaleY", jnum(l.scaleY));
+  o.set("anchorX", jnum(l.anchorX));
+  o.set("anchorY", jnum(l.anchorY));
+  o.set("opacity", jnum(l.opacity));
+  o.set("width", jnum(l.width));
+  o.set("height", jnum(l.height));
+  o.set("blend", Json::string(l.blend.empty() ? std::string("normal") : l.blend));
+  o.set("sourceTime", num_or_null(l.sourceTime));
+  if (l.frameBlend) {
+    Json fb = Json::object();
+    fb.set("a", jnum(l.frameBlend->a));
+    fb.set("b", jnum(l.frameBlend->b));
+    fb.set("weight", jnum(l.frameBlend->weight));
+    fb.set("mode", Json::string(l.frameBlend->mode.empty() ? std::string("mix") : l.frameBlend->mode));
+    o.set("frameBlend", std::move(fb));
+  } else {
+    o.set("frameBlend", Json::null());
+  }
+  o.set("cornerPin", nums_or_null(l.cornerPin));
+  o.set("continuousRaster", Json::boolean(l.continuousRaster));
+  Json::Array ms;
+  if (l.motionSamples.size() > 1) {
+    for (const sc::MotionSample& m : l.motionSamples) ms.push_back(json_numbers(std::array{m.x, m.y, m.rotation, m.scaleX, m.scaleY, m.opacity}));
+  }
+  o.set("motionSamples", Json::array(std::move(ms)));
+  const std::size_t maskPaths = l.mask.is_object() && l.mask.at("paths").is_array() ? l.mask.at("paths").arr().size() : 0;
+  o.set("maskPaths", jnum(static_cast<double>(maskPaths)));
+  if (l.pathPoints.is_array()) {
+    Json::Array pts;
+    for (const Json& q : l.pathPoints.arr()) {
+      pts.push_back(Json::array(Json::Array{elem(q.at("x")), elem(q.at("y")), elem(q.at("inX")), elem(q.at("inY")), elem(q.at("outX")),
+                                            elem(q.at("outY"))}));
+    }
+    o.set("pathPoints", Json::array(std::move(pts)));
+  } else {
+    o.set("pathPoints", Json::null());
+  }
+  if (l.subpaths.is_array()) {
+    Json::Array subs;
+    for (const Json& sp : l.subpaths.arr()) {
+      Json::Array pts;
+      for (const Json& q : sp.at("points").arr()) pts.push_back(Json::array(Json::Array{elem(q.at("x")), elem(q.at("y"))}));
+      subs.push_back(Json::array(std::move(pts)));
+    }
+    o.set("subpaths", Json::array(std::move(subs)));
+  } else {
+    o.set("subpaths", Json::null());
+  }
+  o.set("precompScene3d", Json::boolean(l.precompScene3d.has_value()));
+  o.set("depth", l.matrix ? jnum(l.depth) : Json::null());  // a 2D layer's depth is never read
+  o.set("matrix", nums_or_null(l.matrix));
+  o.set("world3d", nums_or_null(l.world3d));
+  o.set("quad3d", nums_or_null(l.quad3d));
+  o.set("lighting", nums_or_null(l.lighting));
+  const bool hasParticles = !l.particles.is_undefined() && !l.particles.is_null();
+  o.set("particles", hasParticles ? Json::string(premation::js::stringify(l.particles)) : Json::null());
+  o.set("contentAwareFillSrc", str_or_null(l.contentAwareFillSrc));
+  Json::Array sq;
+  if (l.motionSamples.size() > 1) {
+    for (const sc::MotionSample& m : l.motionSamples) sq.push_back(nums_or_null(m.quad));
+  }
+  o.set("sampleQuads", Json::array(std::move(sq)));
+  Json::Array paths;
+  for (const Json& e : l.effects) {
+    const Json& params = e.at("params");
+    if (!params.at("pathPoints").is_array()) continue;
+    Json ep = Json::object();
+    ep.set("id", e.at("id"));
+    ep.set("points", params.at("pathPoints"));
+    const Json& closed = params.at("pathClosed");
+    ep.set("closed", closed.is_undefined() ? Json::null() : closed);
+    paths.push_back(std::move(ep));
+  }
+  o.set("effectPaths", Json::array(std::move(paths)));
+  o.set("precompLayers", l.precompLayers ? proj_layers(*l.precompLayers) : Json::null());
+  return o;
+}
+
+Json proj_layers(const std::vector<sc::RLayer>& layers) {
+  Json::Array a;
+  for (const sc::RLayer& l : layers) a.push_back(proj_layer(l));
+  return Json::array(std::move(a));
+}
+
+Json proj_renderables(const std::vector<api::Renderable>& rs);
+
+Json proj_renderable(const api::Renderable& r) {
+  Json o = Json::object();
+  o.set("id", Json::string(r.id));
+  o.set("kind", Json::string(std::string(api::to_string(r.kind))));
+  o.set("textureKey", str_or_null(r.texture_key));
+  o.set("maskTextureKey", str_or_null(r.mask_texture_key));
+  o.set("modelMatrix", json_numbers(r.model_matrix));
+  o.set("bounds", json_numbers(std::array{r.bounds.x, r.bounds.y, r.bounds.width, r.bounds.height}));
+  o.set("opacity", jnum(r.opacity));
+  o.set("blend", Json::string(std::string(api::to_string(r.blend))));
+  o.set("cornerPin", r.corner_pin.empty() ? Json::null() : json_numbers(r.corner_pin));
+  Json::Array ms;
+  for (const api::RenderMotionSample& m : r.motion_samples) {
+    std::vector<double> v = m.model_matrix;
+    v.push_back(m.opacity);
+    ms.push_back(json_numbers(v));
+  }
+  o.set("motionSamples", Json::array(std::move(ms)));
+  if (r.precomp) {
+    Json pc = Json::object();
+    pc.set("flat", r.precomp->flat_width && r.precomp->flat_height ? json_numbers(std::array{*r.precomp->flat_width, *r.precomp->flat_height})
+                                                                  : Json::null());
+    pc.set("projection", r.precomp->camera3d ? json_numbers(r.precomp->camera3d->projection) : Json::null());
+    pc.set("renderables", proj_renderables(r.precomp_children));
+    o.set("precomp", std::move(pc));
+  } else {
+    o.set("precomp", Json::null());
+  }
+  return o;
+}
+
+Json proj_renderables(const std::vector<api::Renderable>& rs) {
+  Json::Array a;
+  for (const api::Renderable& r : rs) a.push_back(proj_renderable(r));
+  return Json::array(std::move(a));
+}
+
 }  // namespace
 
 TEST_CASE("time/comp parity: the C++ scene builder reproduces buildSnapshot + snapshotToFrameScene", "[scene][timecomp][parity]") {
-  const Json fixture = load_fixture();
-  const auto& cases = fixture.at("cases").arr();
+  premation::test::JsonFixture fx("time_comp_parity.json");
+  REQUIRE(fx.ok());
+  auto& cases = fx.root().find_mut("cases")->arr_mut();
   REQUIRE(cases.size() >= 7);
   std::size_t frames = 0;
-  for (const Json& c : cases) {
+  for (Json& c : cases) {
     const std::string name = c.at("name").str();
     INFO(name);
     doc::Document d;
@@ -307,7 +451,7 @@ TEST_CASE("time/comp parity: the C++ scene builder reproduces buildSnapshot + sn
     const std::string compId = c.at("compId").str();
     const bool mbOn = document.at("harness").at("motionBlurOn").b();
     const double fps = document.at("harness").at("fps").num();
-    for (const Json& f : c.at("frames").arr()) {
+    for (Json& f : c.find_mut("frames")->arr_mut()) {
       const double frame = f.at("frame").num();
       INFO("frame " << frame);
       const sc::BuildContext ctx{d, view, env, cache, nullptr, {}};
@@ -316,21 +460,34 @@ TEST_CASE("time/comp parity: the C++ scene builder reproduces buildSnapshot + sn
       const sc::Snapshot snap = sc::build_snapshot(ctx, sc::snapshot_comp_of(d, compId), frame / fps, mb);
       const sc::FrameBuild fb = sc::build_frame_scene(snap, 1);
       std::string unported;
-      for (const sc::LayerError& e : snap.layerErrors) unported += e.layerId + ": " + e.message + "; ";
+      Json::Array errors;
+      for (const sc::LayerError& e : snap.layerErrors) {
+        unported += e.layerId + ": " + e.message + "; ";
+        errors.push_back(Json::string(e.layerId + ": " + e.message));
+      }
       for (const auto& [id, what] : fb.unported) unported += id + ": " + what + "; ";
       INFO("unported: " << unported);
       CHECK(unported.empty());
-      Cmp cmp;
-      cmp_layers(cmp, "", snap.layers, f.at("layers"));
-      cmp_renderables(cmp, "", fb.scene.renderables, f.at("renderables"));
-      std::string first;
-      for (std::size_t i = 0; i < cmp.diffs.size() && i < 12; ++i) first += cmp.diffs[i] + "\n";
-      INFO(cmp.diffs.size() << " difference(s):\n" << first);
-      CHECK(cmp.diffs.empty());
+      CHECK(fx.answer(f, "errors", Json::array(std::move(errors))));
+      if (fx.reblessing()) {
+        // The whole projection, as projLayer / projRenderable wrote it.
+        (void)fx.answer(f, "layers", proj_layers(snap.layers));
+        (void)fx.answer(f, "renderables", proj_renderables(fb.scene.renderables));
+      } else {
+        // Compare mode keeps the path-by-path diff (numbers within 1e-9 relative).
+        Cmp cmp;
+        cmp_layers(cmp, "", snap.layers, f.at("layers"));
+        cmp_renderables(cmp, "", fb.scene.renderables, f.at("renderables"));
+        std::string first;
+        for (std::size_t i = 0; i < cmp.diffs.size() && i < 12; ++i) first += cmp.diffs[i] + "\n";
+        INFO(cmp.diffs.size() << " difference(s):\n" << first);
+        CHECK(cmp.diffs.empty());
+      }
       ++frames;
     }
   }
   CHECK(frames >= 14);
+  REQUIRE(fx.finish());
 }
 
 TEST_CASE("content-aware fill: a data: URL still decodes as the footage texture", "[scene][timecomp]") {

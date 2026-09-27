@@ -1,0 +1,270 @@
+{
+ "version": "1.9.0",
+ "scene": {
+  "version": "1.0.0",
+  "nodes": [
+   {
+    "id": "comp_root",
+    "name": "Composition 1",
+    "parent": null,
+    "children": [
+     "subj"
+    ],
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "visible": true,
+    "locked": false,
+    "components": [
+     {
+      "id": "comp_root_meta",
+      "type": "group",
+      "props": {
+       "__kind": "group"
+      }
+     }
+    ]
+   },
+   {
+    "id": "subj",
+    "name": "subj",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 160,
+      "y": 110
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "subj_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "shape",
+       "x": 160,
+       "y": 110,
+       "rotation": 0,
+       "width": 260,
+       "height": 180,
+       "shapeType": "rect"
+      }
+     },
+     {
+      "id": "subj_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#1d2740"
+      }
+     },
+     {
+      "id": "subj_fx",
+      "type": "fx",
+      "props": {
+       "mask": {
+        "paths": [
+         {
+          "id": "l",
+          "mode": "none",
+          "closed": true,
+          "feather": 0,
+          "opacity": 1,
+          "expansion": 0,
+          "inverted": false,
+          "points": [
+           {
+            "x": -105,
+            "y": -55,
+            "inX": -105,
+            "inY": -55,
+            "outX": -105,
+            "outY": -55
+           },
+           {
+            "x": -15,
+            "y": -55,
+            "inX": -15,
+            "inY": -55,
+            "outX": -15,
+            "outY": -55
+           },
+           {
+            "x": -15,
+            "y": 55,
+            "inX": -15,
+            "inY": 55,
+            "outX": -15,
+            "outY": 55
+           },
+           {
+            "x": -105,
+            "y": 55,
+            "inX": -105,
+            "inY": 55,
+            "outX": -105,
+            "outY": 55
+           }
+          ]
+         },
+         {
+          "id": "r",
+          "mode": "none",
+          "closed": true,
+          "feather": 0,
+          "opacity": 1,
+          "expansion": 0,
+          "inverted": false,
+          "points": [
+           {
+            "x": 15,
+            "y": -55,
+            "inX": 15,
+            "inY": -55,
+            "outX": 15,
+            "outY": -55
+           },
+           {
+            "x": 105,
+            "y": -55,
+            "inX": 105,
+            "inY": -55,
+            "outX": 105,
+            "outY": -55
+           },
+           {
+            "x": 105,
+            "y": 55,
+            "inX": 105,
+            "inY": 55,
+            "outX": 105,
+            "outY": 55
+           },
+           {
+            "x": 15,
+            "y": 55,
+            "inX": 15,
+            "inY": 55,
+            "outX": 15,
+            "outY": 55
+           }
+          ]
+         }
+        ]
+       },
+       "effects": [
+        {
+         "id": "veg",
+         "type": "vegas",
+         "params": {
+          "allMasks": true,
+          "strokeSequentially": true,
+          "segments": 6,
+          "length": 60,
+          "segmentDistribution": 0,
+          "rotation": 20,
+          "blendMode": 0,
+          "color": "#7dd3fc",
+          "width": 6,
+          "hardness": 100,
+          "startOpacity": 100,
+          "midOpacity": 60,
+          "midPosition": 50,
+          "endOpacity": 10,
+          "opacity": 100
+         }
+        }
+       ]
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   }
+  ]
+ },
+ "animation": {
+  "tracks": {},
+  "expressions": {}
+ },
+ "comps": {
+  "comp_root": {
+   "id": "comp_root",
+   "name": "comp_root",
+   "width": 320,
+   "height": 220,
+   "fps": 30,
+   "durationSeconds": 10,
+   "background": "#0c0c12"
+  }
+ },
+ "motionBlur": {
+  "enabled": false,
+  "shutterAngle": 180,
+  "shutterPhase": -90,
+  "samples": 8,
+  "adaptiveSampleLimit": 128
+ },
+ "colorManagement": {
+  "workingSpace": "srgb-linear",
+  "displayTransform": "srgb",
+  "bitDepth": 16
+ },
+ "projectItems": {
+  "folders": [],
+  "footage": {}
+ },
+ "openTabs": {
+  "tabOrder": [
+   "tab1"
+  ],
+  "activeTabId": "tab1",
+  "tabs": {
+   "tab1": {
+    "id": "tab1",
+    "compositionId": "comp_root",
+    "breadcrumbPath": [
+     "comp_root"
+    ],
+    "title": "comp_root",
+    "time": 0,
+    "frame": 0
+   }
+  }
+ },
+ "harness": {
+  "sceneId": "effect-vegas-all-masks",
+  "frames": [
+   0
+  ],
+  "fps": 30,
+  "size": {
+   "w": 320,
+   "h": 220
+  },
+  "motionBlurFps": null,
+  "motionBlurOn": false,
+  "overlays": null,
+  "viewerLut": false,
+  "assets": [],
+  "compId": "comp_root",
+  "viewerLutCube": null,
+  "media": [],
+  "tolerance": null,
+  "fidelityOnly": false,
+  "description": "Vegas on two rectangle masks, sequential, bunched, fading lights, blend Transparent."
+ }
+}

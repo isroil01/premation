@@ -35,9 +35,10 @@ import { isPluginOwned, buildCustomLayerNode } from './customLayers';
 import { expandPermissions, ALL_PERMISSIONS, PERMISSIONS } from './manifest';
 import { METHOD_PERMISSIONS } from './protocol';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { seedDefaultScene } from '@core/scene/seedDefaultScene';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
-import { defaultAnimation } from '@motion/animation';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 
 const PLUGIN = 'studio.acme.depth';
 const OTHER = 'studio.other.tools';
@@ -60,24 +61,25 @@ const pkg = (id: string, permissions: string[]) =>
 
 const specs = [{ key: 'plane-0', kind: 'shape', name: 'Plane 1', props: { y: 0 } }];
 
+let h: Harness & { engine: LocalEngine };
+
 beforeAll(async () => {
   useFakeWorkers();
   await usePluginStore.getState().hydrate();
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
   pluginHost.configure({ getSelection: () => [] });
 });
 afterAll(() => { pluginHost.setWorkerFactory(null); });
 
-beforeEach(() => {
+beforeEach(async () => {
+  // B5: plugin writes are engine commands — the app's engine, a fresh project.
+  h = await setupAppEngine();
   for (const p of [...usePluginStore.getState().plugins]) pluginHost.uninstall(p.manifest.id);
   resetLayerKindsForTests();
   resetNotifierForTests();
   resetRateLimitForTests();
-  defaultSceneGraph.clear();
-  defaultAnimation.clear();
-  seedDefaultScene();
   FakeWorker.last = null;
 });
+afterEach(async () => { await h.dispose(); });
 
 /**
  * Put a layer of the plugin's kind in the document, the way one really arrives.
@@ -97,7 +99,8 @@ beforeEach(() => {
  * sufficient rather than merely smaller.
  */
 function seedOwnLayer(id = 'n_hero'): string {
-  defaultSceneGraph.addNode(buildCustomLayerNode(id, PLUGIN, KIND as never, { name: 'Hero depth' }));
+  // A layer of the active composition (the API addresses layers of compositions only).
+  defaultSceneGraph.addChild(activeCompRootId() as string, buildCustomLayerNode(id, PLUGIN, KIND as never, { name: 'Hero depth' }));
   return id;
 }
 
@@ -138,13 +141,13 @@ describe('scene:write contains scene:proxy', () => {
 });
 
 describe('a plugin holding only scene:read + scene:proxy', () => {
-  it('builds its own proxy children', () => {
+  it('builds its own proxy children', async () => {
     const worker = bootPlugin(pkg(PLUGIN, ['scene:read', 'scene:proxy']), {
       granted: ['scene:read', 'scene:proxy'] as never,
     });
     const layerId = seedOwnLayer();
 
-    const reply = worker.callAndWait('scene.setProxyChildren', layerId, specs);
+    const reply = await worker.callAsync('scene.setProxyChildren', layerId, specs);
     expect(reply.ok).toBe(true);
 
     const children = defaultSceneGraph.getChildren(layerId);
@@ -162,9 +165,9 @@ describe('a plugin holding only scene:read + scene:proxy', () => {
     expect(reply.ok ? '' : reply.error).toMatch(/scene:write/);
   });
 
-  it('cannot delete a layer', () => {
+  it('cannot delete a layer', async () => {
     const writer = bootPlugin(pkg(OTHER, ['scene:write']), { granted: ['scene:write'] as never });
-    const victim = (writer.callAndWait('scene.createLayer', {
+    const victim = (await writer.callAsync('scene.createLayer', {
       kind: 'shape', name: 'Someone else s work',
     }) as { value: string }).value;
 
@@ -197,9 +200,9 @@ describe('a plugin holding only scene:read + scene:proxy', () => {
     expect(defaultSceneGraph.getChildren(theirLayer)).toHaveLength(0);
   });
 
-  it('cannot target an ordinary layer', () => {
+  it('cannot target an ordinary layer', async () => {
     const writer = bootPlugin(pkg(OTHER, ['scene:write']), { granted: ['scene:write'] as never });
-    const plain = (writer.callAndWait('scene.createLayer', {
+    const plain = (await writer.callAsync('scene.createLayer', {
       kind: 'shape', name: 'Plain',
     }) as { value: string }).value;
 
@@ -213,7 +216,7 @@ describe('a plugin holding only scene:read + scene:proxy', () => {
 });
 
 describe('the migration: plugins installed before this permission existed', () => {
-  it('still builds proxy children on scene:write alone', () => {
+  it('still builds proxy children on scene:write alone', async () => {
     /*
       Every proxy plugin currently installed holds `scene:write` and no
       `scene:proxy`, because the second did not exist when they were granted.
@@ -227,7 +230,7 @@ describe('the migration: plugins installed before this permission existed', () =
     });
     const layerId = seedOwnLayer();
 
-    const reply = worker.callAndWait('scene.setProxyChildren', layerId, specs);
+    const reply = await worker.callAsync('scene.setProxyChildren', layerId, specs);
     expect(reply.ok).toBe(true);
     expect(defaultSceneGraph.getChildren(layerId)).toHaveLength(1);
   });

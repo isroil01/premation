@@ -380,13 +380,17 @@ EnvSpecularMap build_env_specular_atlas(const EnvPixels& base, std::string id) {
   return out;
 }
 
-EnvPixels resample_equirect(std::span<const std::uint8_t> pixels, int width, int height, int outWidth, int outHeight, bool isLinear) {
+namespace {
+
+/// resampleEquirect over 8-bit samples (scale 1/255) or float ones (scale 1).
+template <class T>
+EnvPixels resample_equirect_of(std::span<const T> pixels, int width, int height, int outWidth, int outHeight, bool isLinear,
+                               double scale) {
   const int w = std::max(1, width);
   const int h = std::max(1, height);
   const auto wh = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
   const double ratio = std::floor(static_cast<double>(pixels.size()) / static_cast<double>(wh));
   const auto stride = static_cast<std::size_t>(std::max(3.0, std::min(4.0, ratio != 0 && !std::isnan(ratio) ? ratio : 3.0)));
-  constexpr double scale = 1.0 / 255;
   const auto srgb_to_linear = [](double c) { return c <= 0.04045 ? c / 12.92 : motion::js::pow((c + 0.055) / 1.055, 2.4); };
   EnvPixels out;
   out.width = std::max(1, std::min(outWidth, w));
@@ -427,6 +431,16 @@ EnvPixels resample_equirect(std::span<const std::uint8_t> pixels, int width, int
     }
   }
   return out;
+}
+
+}  // namespace
+
+EnvPixels resample_equirect(std::span<const std::uint8_t> pixels, int width, int height, int outWidth, int outHeight, bool isLinear) {
+  return resample_equirect_of(pixels, width, height, outWidth, outHeight, isLinear, 1.0 / 255);
+}
+
+EnvPixels resample_equirect(std::span<const float> pixels, int width, int height, int outWidth, int outHeight, bool isLinear) {
+  return resample_equirect_of(pixels, width, height, outWidth, outHeight, isLinear, 1.0);
 }
 
 std::array<float, 27> sh_project(const EnvPixels& px) { return sh_project(px.data, px.width, px.height); }

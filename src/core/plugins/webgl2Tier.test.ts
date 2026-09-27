@@ -40,7 +40,9 @@ import { resetLayerKindsForTests } from './layerKindRegistry';
 import { setWebgpuAvailable, checkCapabilities } from './capabilities';
 import { pluginEffectsCanRender } from '@core/effects/pluginEffectDefs';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { seedDefaultScene } from '@core/scene/seedDefaultScene';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 
 const PLUGIN = 'studio.acme.tint';
@@ -74,22 +76,27 @@ beforeAll(async () => {
 });
 afterAll(() => { pluginHost.setWorkerFactory(null); });
 
-beforeEach(() => {
+let h: Harness & { engine: LocalEngine };
+
+beforeEach(async () => {
+  // B5: plugin writes are engine commands — the app's engine, a fresh project
+  // (a real composition, every time).
+  h = await setupAppEngine();
   for (const p of [...usePluginStore.getState().plugins]) pluginHost.uninstall(p.manifest.id);
   resetEffectsForTests();
   resetLayerKindsForTests();
   setWebgpuAvailable(true);
-  defaultSceneGraph.clear();
-  seedDefaultScene();
   FakeWorker.last = null;
   useUIStore.setState({ notifications: [] });
 });
+afterEach(async () => { await h.dispose(); });
 afterEach(() => setWebgpuAvailable(true));
 
 /** Boot the plugin and create a layer to hang an effect on. */
-function boot(): { worker: FakeWorker; layerId: string } {
+async function boot(): Promise<{ worker: FakeWorker; layerId: string }> {
   const worker = bootPlugin(pkg(), { granted: ['scene:read', 'scene:write'] });
-  const layerId = (worker.callAndWait('scene.createLayer', {
+  // B5: an engine `pasteLayers` (async).
+  const layerId = (await worker.callAsync('scene.createLayer', {
     kind: 'shape', name: 'Target',
   }) as { value: string }).value;
   return { worker, layerId };
@@ -156,7 +163,7 @@ describe('effects.add on the WebGL2 tier', () => {
       which loses the user's work on every other machine.
     */
     setWebgpuAvailable(false);
-    const { worker, layerId } = boot();
+    const { worker, layerId } = await boot();
 
     const reply = await worker.callAsync('effects.add', layerId, `${PLUGIN}.tint`);
     expect(reply.ok).toBe(true);
@@ -165,7 +172,7 @@ describe('effects.add on the WebGL2 tier', () => {
 
   it('puts the effect in the document regardless', async () => {
     setWebgpuAvailable(false);
-    const { worker, layerId } = boot();
+    const { worker, layerId } = await boot();
     await worker.callAsync('effects.add', layerId, `${PLUGIN}.tint`);
 
     const node = defaultSceneGraph.getNode(layerId)!;
@@ -176,7 +183,7 @@ describe('effects.add on the WebGL2 tier', () => {
   it('returns a bare id on WebGPU, exactly as before', async () => {
     // The unchanged path. A plugin written before any of this reads the return
     // value as an id, and must keep being able to.
-    const { worker, layerId } = boot();
+    const { worker, layerId } = await boot();
     const reply = await worker.callAsync('effects.add', layerId, `${PLUGIN}.tint`);
     expect(typeof (reply.ok && reply.value)).toBe('string');
   });
@@ -185,7 +192,7 @@ describe('effects.add on the WebGL2 tier', () => {
     // Built-ins render fine on WebGL2. Flagging them would be a false alarm on
     // every effect in the app.
     setWebgpuAvailable(false);
-    const { worker, layerId } = boot();
+    const { worker, layerId } = await boot();
     const reply = await worker.callAsync('effects.add', layerId, 'blur');
     expect(typeof (reply.ok && reply.value)).toBe('string');
   });
@@ -200,7 +207,7 @@ describe('the toast', () => {
       as never showing it, at more cost.
     */
     setWebgpuAvailable(false);
-    const { worker, layerId } = boot();
+    const { worker, layerId } = await boot();
     for (let i = 0; i < 5; i++) await worker.callAsync('effects.add', layerId, `${PLUGIN}.tint`);
 
     const about = useUIStore.getState().notifications.filter((n) => /WebGPU/i.test(n.message));
@@ -209,7 +216,7 @@ describe('the toast', () => {
   });
 
   it('does not fire at all on WebGPU', async () => {
-    const { worker, layerId } = boot();
+    const { worker, layerId } = await boot();
     await worker.callAsync('effects.add', layerId, `${PLUGIN}.tint`);
     expect(useUIStore.getState().notifications.filter((n) => /WebGPU/i.test(n.message))).toHaveLength(0);
   });

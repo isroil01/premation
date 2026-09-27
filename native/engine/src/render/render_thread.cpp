@@ -1,13 +1,18 @@
 #include "render_thread.hpp"
 
 #include <algorithm>
+#include <cstring>
+#include <span>
+#include <string>
 #include <utility>
 
 #include "log.hpp"
 #include "overlay_geometry.hpp"
 #include "os_ffi.hpp"
+#include "premation/protocol/framing.hpp"
+#include "premation/protocol/pixel_channel.hpp"
 
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
 #include "shared_texture_ffi.hpp"
 #endif
 
@@ -28,18 +33,22 @@ struct RenderThread::SlotSet {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   bool shared = false;
+  /// Route A: every frame is read back into `readback[slot]` and sent on fd 5.
+  bool copy = false;
+  std::vector<wgpu::Buffer> readback;
+  std::uint32_t readbackRow = 0;  // bytes per row in `readback` (256-aligned, WebGPU's copy rule)
   /// Every slot allows copies in and out (the D4 frame cache).
   bool copyable = true;
   std::vector<wgpu::Texture> textures;  // every slot's texture (offscreen, or the shared slot's own)
   std::vector<wgpu::TextureView> views;
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
   std::unique_ptr<shared::SharedTexturePool> pool;
 #endif
   SteadyClock::time_point retiredAt{};
 
   SlotSet() = default;
   ~SlotSet() {
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
     if (pool) pool->close_remote_handles();
 #endif
   }
@@ -124,6 +133,19 @@ bool RenderThread::shared_supported() const {
   return sharedCapable_;
 }
 
+void RenderThread::set_copy(bool copy) {
+  {
+    const std::lock_guard<std::mutex> lock(m_);
+    const bool want = copy && static_cast<bool>(options_.sendPixels);
+    if (copy_ == want) return;
+    copy_ = want;
+    configDirty_ = true;
+  }
+  cv_.notify_all();
+}
+
+bool RenderThread::copy_supported() const { return static_cast<bool>(options_.sendPixels); }
+
 RenderCounters RenderThread::counters() const {
   const std::lock_guard<std::mutex> lock(m_);
   return counters_;
@@ -145,10 +167,11 @@ FrameCacheStats RenderThread::cache_stats() const {
 }
 
 std::string RenderThread::open_gpu() {
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
+  // Windows (NT handles) and macOS (IOSurfaces): a host to share with.
   const bool wantShared = options_.hostPid != 0;
 #else
-  const bool wantShared = false;
+  const bool wantShared = false;  // Linux: no shared route yet — the route-A copy
 #endif
   gpu_ = create_gpu(wantShared, options_.highPerformance, options_.vendorId);
   if (!gpu_) return "no GPU adapter / device (Dawn)";
@@ -220,7 +243,7 @@ void RenderThread::run(std::promise<std::string>& ready) {
   std::unique_lock<std::mutex> lock(m_);
   for (;;) {
     cv_.wait_for(lock, std::chrono::milliseconds(500), [this] {
-      return quit_ || configDirty_ || (pending_ && config_.open && slots_ && ring_.any_free());
+      return quit_ || configDirty_ || !tasks_.empty() || (pending_ && config_.open && slots_ && ring_.any_free());
     });
     if (quit_) break;
     if (gpu_->device_lost()) {
@@ -245,9 +268,16 @@ void RenderThread::run(std::promise<std::string>& ready) {
       configDirty_ = false;
       const ViewportConfig config = config_;
       const bool shared = shared_;
+      const bool copy = copy_;
       lock.unlock();
-      rebuild(config, shared);
+      rebuild(config, shared, copy);
       lock.lock();
+      continue;
+    }
+    if (!tasks_.empty()) {
+      // Queries between frames: a still or a pixel read never waits behind a
+      // playing viewport for more than the frame in hand.
+      run_tasks(lock);
       continue;
     }
     if (!pending_ || !config_.open || !slots_) continue;
@@ -263,12 +293,101 @@ void RenderThread::run(std::promise<std::string>& ready) {
     lastJob_ = std::move(job);
     lock.lock();
   }
+  // Queries still queued are dropped: their futures report a broken promise,
+  // which the core answers as an internal error (the engine is stopping).
+  tasks_.clear();
   lock.unlock();
   // Tear down on this thread, which created everything.
   close_gpu();
 }
 
-void RenderThread::rebuild(const ViewportConfig& config, bool shared) {
+void RenderThread::post(std::function<void()> task) {
+  {
+    const std::lock_guard<std::mutex> lock(m_);
+    if (quit_) return;  // the task (and its promise) is dropped: a broken promise
+    tasks_.push_back(std::move(task));
+  }
+  cv_.notify_all();
+}
+
+void RenderThread::run_tasks(std::unique_lock<std::mutex>& lock) {
+  while (!tasks_.empty()) {
+    std::function<void()> task = std::move(tasks_.front());
+    tasks_.pop_front();
+    lock.unlock();
+    task();
+    lock.lock();
+  }
+}
+
+std::future<StillImage> RenderThread::render_still(std::shared_ptr<BuiltFrame> frame, std::uint32_t width,
+                                                   std::uint32_t height) {
+  // shared_ptr: std::function needs a copyable closure; the promise is set
+  // exactly once, on the render thread, and read through its future.
+  auto promise = std::make_shared<std::promise<StillImage>>();
+  std::future<StillImage> result = promise->get_future();
+  post([this, promise, frame = std::move(frame), width, height] {
+    StillImage out;
+    if (!frame || !drawer_) {
+      out.answer = HookAnswer::unsupported;
+      out.error = frame ? "the render graph did not start on this GPU (C2 quads only)" : "no frame to draw";
+    } else if (width == 0 || height == 0) {
+      out.answer = HookAnswer::failed;
+      out.error = "an empty still";
+    } else {
+      std::string error;
+      if (drawer_->draw_still(*frame, width, height, out, error)) {
+        out.answer = HookAnswer::ready;
+      } else {
+        out = StillImage{};
+        out.answer = HookAnswer::failed;
+        out.error = std::move(error);
+        PREMATION_LOG(warn, "still_failed").kv("error", out.error);
+      }
+    }
+    promise->set_value(std::move(out));
+  });
+  return result;
+}
+
+std::future<WorkingPixels> RenderThread::read_pixels(std::uint32_t viewport, PixelRegion region) {
+  // shared_ptr: as render_still.
+  auto promise = std::make_shared<std::promise<WorkingPixels>>();
+  std::future<WorkingPixels> result = promise->get_future();
+  post([this, promise, viewport, region] {
+    WorkingPixels out;
+    if (!lastJob_ || lastJob_->viewport != viewport || !slots_) {
+      out.answer = HookAnswer::pending;
+      out.error = "viewport " + std::to_string(viewport) + " has shown no frame yet";
+    } else if (!lastJob_->built || !drawer_) {
+      out.answer = HookAnswer::unsupported;
+      out.error = "the viewport shows C2 quads: there is no working-space frame to read";
+    } else {
+      // The ring may have been rebuilt since the core clamped the region.
+      PixelRegion r = region;
+      r.x = std::min(r.x, slots_->width);
+      r.y = std::min(r.y, slots_->height);
+      r.width = std::min(r.width, slots_->width - r.x);
+      r.height = std::min(r.height, slots_->height - r.y);
+      std::string error;
+      if (r.width == 0 || r.height == 0) {
+        out.answer = HookAnswer::failed;
+        out.error = "the region is outside the viewport";
+      } else if (drawer_->read_working(*lastJob_->built, slots_->width, slots_->height, r, out, error)) {
+        out.answer = HookAnswer::ready;
+      } else {
+        out = WorkingPixels{};
+        out.answer = HookAnswer::failed;
+        out.error = std::move(error);
+        PREMATION_LOG(warn, "read_pixels_failed").kv("error", out.error);
+      }
+    }
+    promise->set_value(std::move(out));
+  });
+  return result;
+}
+
+void RenderThread::rebuild(const ViewportConfig& config, bool shared, bool copy) {
   auto next = std::make_unique<SlotSet>();
   next->generation = ++generation_;
   next->width = config.width;
@@ -281,7 +400,7 @@ void RenderThread::rebuild(const ViewportConfig& config, bool shared) {
   std::uint32_t count = 0;
   if (config.open && config.width > 0 && config.height > 0) {
     count = options_.slots;
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
     if (shared) {
       auto pool = std::make_unique<shared::SharedTexturePool>();
       std::string error;
@@ -314,6 +433,18 @@ void RenderThread::rebuild(const ViewportConfig& config, bool shared) {
         next->textures.push_back(std::move(t));
         announce.handles.push_back(0);
       }
+      if (copy) {
+        // Route A: one read-back buffer per slot, so a slot's copy never waits
+        // for another slot's map.
+        next->copy = true;
+        next->readbackRow = (config.width * 4U + 255U) & ~255U;
+        for (std::uint32_t i = 0; i < count; ++i) {
+          wgpu::BufferDescriptor bd{};
+          bd.size = std::uint64_t{next->readbackRow} * config.height;
+          bd.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
+          next->readback.push_back(gpu_->device.CreateBuffer(&bd));
+        }
+      }
     }
   }
   announce.shared = next->shared;
@@ -328,7 +459,8 @@ void RenderThread::rebuild(const ViewportConfig& config, bool shared) {
       .kv("width", config.width)
       .kv("height", config.height)
       .kv("count", count)
-      .kv("shared", slots_->shared);
+      .kv("shared", slots_->shared)
+      .kv("copy", slots_->copy);
   if (send_) send_(frames::Message{.v = std::move(announce)});
   const std::lock_guard<std::mutex> lock(m_);
   cv_.notify_all();
@@ -342,7 +474,7 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
   SlotSet& set = *slots_;
   const double startUs = os::epoch_us();
   const auto t0 = SteadyClock::now();
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
   shared::Slot* shared = set.pool ? &set.pool->slots()[slot] : nullptr;
   if (shared != nullptr && !set.pool->begin_access(*shared)) {
     PREMATION_LOG(error, "begin_access_failed").kv("slot", slot);
@@ -384,15 +516,34 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
     const wgpu::CommandBuffer cb = enc.Finish();
     gpu_->queue.Submit(1, &cb);
   }
-#ifdef _WIN32
+#if defined(PREMATION_SHARED_TEXTURE)
   if (shared != nullptr) (void)set.pool->end_access(*shared);
 #endif
+  if (set.copy) {
+    // Route A: the drawn slot into its read-back buffer, in queue order after the draw.
+    wgpu::CommandEncoder enc = gpu_->device.CreateCommandEncoder();
+    wgpu::TexelCopyTextureInfo src{};
+    src.texture = set.textures[slot];
+    wgpu::TexelCopyBufferInfo dst{};
+    dst.buffer = set.readback[slot];
+    dst.layout.bytesPerRow = set.readbackRow;
+    dst.layout.rowsPerImage = set.height;
+    const wgpu::Extent3D size{set.width, set.height, 1};
+    enc.CopyTextureToBuffer(&src, &dst, &size);
+    const wgpu::CommandBuffer cb = enc.Finish();
+    gpu_->queue.Submit(1, &cb);
+  }
   // Electron's rgba sharedTexture import takes no fence, so a frame is
   // complete on the GPU before its slot is announced (docs/VIEWPORT_ROUTE.md,
   // implication 6). The ring keeps throughput; this costs latency only.
   wait_idle(*gpu_);
   if (gpu_->device_lost()) {
     // The slot holds nothing: never announced; the loop recovers and draws the job again.
+    ring_.unacquire(slot);
+    return;
+  }
+  if (set.copy && !send_copy(set, slot)) {
+    // No pixels, no FrameReady: the host pairs the two and would wait for pixels forever.
     ring_.unacquire(slot);
     return;
   }
@@ -435,6 +586,57 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
     windowGpuMs_ = 0;
     windowStart_ = now;
   }
+}
+
+bool RenderThread::send_copy(SlotSet& set, std::uint32_t slot) {
+  const wgpu::Buffer& buffer = set.readback[slot];
+  const std::uint64_t size = std::uint64_t{set.readbackRow} * set.height;
+  bool mapped = false;
+  gpu_->instance.WaitAny(buffer.MapAsync(wgpu::MapMode::Read, 0, size, wgpu::CallbackMode::WaitAnyOnly,
+                                         [&mapped](wgpu::MapAsyncStatus status, wgpu::StringView) {
+                                           mapped = status == wgpu::MapAsyncStatus::Success;
+                                         }),
+                         UINT64_MAX);
+  if (!mapped) {
+    PREMATION_LOG(error, "copy_map_failed").kv("slot", slot);
+    return false;
+  }
+  const auto* src = static_cast<const std::uint8_t*>(buffer.GetConstMappedRange(0, static_cast<std::size_t>(size)));
+  if (src == nullptr) {
+    buffer.Unmap();
+    return false;
+  }
+  pixels::Header header;
+  header.generation = set.generation;
+  header.slot = slot;
+  header.width = set.width;
+  header.height = set.height;
+  header.bytesPerRow = set.width * 4U;  // tightly packed on the wire (VideoFrame's default layout)
+  const std::size_t payload = pixels::kHeaderBytes + pixels::pixel_bytes(header);
+  // One allocation per copied frame, on purpose: the pipe writer thread owns
+  // the bytes until they are written, and the ring bounds how many exist at
+  // once (a slot is not drawn again before the host releases it). Route A is
+  // the fallback path; the shared route allocates nothing per frame.
+  std::vector<std::uint8_t> framed(framing::kHeaderBytes + payload);
+  const auto length = static_cast<std::uint32_t>(payload);
+  for (std::size_t i = 0; i < framing::kHeaderBytes; ++i) {
+    framed[i] = static_cast<std::uint8_t>((length >> (8U * i)) & 0xFFU);
+  }
+  const std::span<std::uint8_t> out(framed);
+  pixels::encode_header(header, out.subspan(framing::kHeaderBytes, pixels::kHeaderBytes));
+  std::uint8_t* rows = framed.data() + framing::kHeaderBytes + pixels::kHeaderBytes;
+  const std::size_t rowBytes = header.bytesPerRow;
+  for (std::uint32_t y = 0; y < set.height; ++y) {
+    std::memcpy(rows + static_cast<std::size_t>(y) * rowBytes, src + static_cast<std::size_t>(y) * set.readbackRow,
+                rowBytes);
+  }
+  buffer.Unmap();
+  if (!options_.sendPixels(std::move(framed))) {
+    if (!pixelPipeGone_) PREMATION_LOG(warn, "pixel_stream_closed");
+    pixelPipeGone_ = true;
+    return false;
+  }
+  return true;
 }
 
 }  // namespace premation::render

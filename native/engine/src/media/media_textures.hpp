@@ -4,6 +4,8 @@
 //
 //     media:<source>:<frame>            one presentation frame
 //     media:<source>:<top>~<bottom>     a pulldown weave (even rows top, odd rows bottom)
+//     …#u / …#l                         Interpret Footage ▸ Fields: the upper / lower
+//                                       field kept, the other rebuilt (deinterlace.ts)
 //
 // (`media_hash()` builds them.) The engine's scene builder turns a layer's
 // source time into frames with time_map.hpp `plan_frames`, emits one ref per
@@ -25,6 +27,7 @@
 #include <cstdint>
 #include <list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -37,12 +40,15 @@ namespace premation::media {
 
 [[nodiscard]] std::string media_hash(SourceId source, std::int64_t frame);
 [[nodiscard]] std::string media_hash(SourceId source, std::int64_t top, std::int64_t bottom);
+/// With a field pass: `fields` 'u' / 'l' appends `#u` / `#l` (0 = none).
+[[nodiscard]] std::string media_hash(SourceId source, std::int64_t frame, std::optional<std::int64_t> bottom, char fields);
 
 /// Parsed form of a media hash (nullopt when `hash` is not one).
 struct MediaKey {
   SourceId source = 0;
   std::int64_t frame = 0;
   std::int64_t bottom = -1;  // ≥ 0: a weave
+  char fields = 0;           // 'u' / 'l': deinterlaced keeping that field
 };
 [[nodiscard]] std::optional<MediaKey> parse_media_hash(std::string_view hash) noexcept;
 
@@ -65,6 +71,12 @@ class MediaTextures final : public rg::ExternalTextureSource {
   void set_alpha(SourceId source, AlphaMode alpha);
   /// Converted textures kept (by hash) before recycling.
   void set_capacity(std::size_t n) noexcept { capacity_ = n; }
+
+  /// One presentation frame converted into a texture the CALLER owns (Pixel
+  /// Motion reads its pixels back): the exact frame in exact mode, else the
+  /// decoded one or the nearest (`exact` false). Give it back with recycle().
+  bool convert_frame(SourceId source, std::int64_t frame, ConvertedFrame& out, bool& exact, std::string& error);
+  void recycle(ConvertedFrame&& f) { converter_.recycle(std::move(f)); }
 
   /// Draws served from a nearest (not exact) frame / skipped, since the last call.
   struct Misses {

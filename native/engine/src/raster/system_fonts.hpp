@@ -2,7 +2,7 @@
 // fontconfig, matched the way Chromium's canvas resolves a family there
 // (Skia's SkFontConfigInterfaceDirect::matchFamilyName). Skia-free — the
 // fontconfig calls live in system_fonts_ffi.cpp; Windows keeps DirectWrite in
-// fonts_ffi.cpp, macOS (CoreText) is not ported.
+// fonts_ffi.cpp, macOS resolves through CoreText (font_catalog.hpp).
 #pragma once
 
 #include <optional>

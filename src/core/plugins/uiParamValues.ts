@@ -1,5 +1,6 @@
 /**
- * Reading and writing a contributed parameter's value on a layer.
+ * Reading a contributed parameter's value on a layer. Writes are engine
+ * commands (`plugin/<slug>/<panel>/<name>`, pluginParamCommands.ts — B5).
  *
  * `uiParams.ts` is the grammar; this is the storage. They are split because the
  * grammar is read by the registry's publish-time validator, which has no scene
@@ -20,16 +21,12 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import { usePluginStore } from '@stores/pluginStore';
 import type { Component } from '../types';
 import {
-  defaultParamProps,
   isPluginParamPath,
   paramAxes,
   paramHoldsValue,
-  pluginParamComponentId,
   pluginParamComponentType,
   pluginParamKey,
   pluginParamPath,
@@ -104,32 +101,6 @@ export function pluginParamComponent(
   return (node.components ?? []).find((c) => c.type === type) ?? null;
 }
 
-/**
- * The component id to write through, creating the component if it is absent.
- *
- * Seeded with every declared default rather than with the one key being
- * written: a half-populated component would make `params.get` answer
- * `undefined` for a parameter the schema says has a value, and every reader
- * would have to carry the same fallback.
- */
-export function ensurePluginParamComponent(
-  nodeId: string,
-  pluginId: string,
-  panel: PluginInspectorPanelContribution,
-): string | null {
-  const existing = pluginParamComponent(nodeId, pluginId, panel.id);
-  if (existing) return existing.id;
-  if (!defaultSceneGraph.getNode(nodeId)) return null;
-
-  const id = pluginParamComponentId(pluginId, panel.id);
-  const ok = defaultSceneGraph.addComponent(nodeId, {
-    id,
-    type: pluginParamComponentType(pluginId, panel.id),
-    props: defaultParamProps(panel),
-  });
-  return ok ? id : null;
-}
-
 /** One parameter's value — stored if it has been set, declared default if not. */
 export function readPluginParam(
   nodeId: string,
@@ -171,29 +142,3 @@ export function readPluginPanelValues(
   return out;
 }
 
-/**
- * Write one parameter. Returns false when the layer or the component is gone.
- *
- * `undoLabel` is optional so a DRAG can pass none: the row components already
- * bracket a gesture with their own history entry, and a second one per pointer
- * move is the fifty-undos-per-drag behaviour every native row here avoids.
- */
-export function writePluginParam(
-  nodeId: string,
-  pluginId: string,
-  panel: PluginInspectorPanelContribution,
-  schema: PluginParamSchema,
-  value: unknown,
-  axis?: string,
-  undoLabel?: string,
-): boolean {
-  if (!paramHoldsValue(schema)) return false;
-  const componentId = ensurePluginParamComponent(nodeId, pluginId, panel);
-  if (!componentId) return false;
-  const key = pluginParamKey(schema.name, axis);
-
-  const apply = (): boolean =>
-    updateNodeComponentProp(defaultSceneGraph, nodeId, componentId, key, value);
-
-  return undoLabel ? runDocumentEdit(undoLabel, apply) : apply();
-}

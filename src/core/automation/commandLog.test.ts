@@ -129,10 +129,10 @@ describe('record → replay', () => {
 
   it('says when a session wrote around the engine (a legacy AI turn): its replay would not be exact', async () => {
     const rec = await recordSession();
-    // A caller-chosen effect id is a named legacy gap (the engine mints ids).
+    // merge_paths still edits layers outside the engine: a named legacy gap.
     const turn = await runToolTurn('AI: legacy', [
       { name: 'create_layer', args: { id: 'b', kind: 'shape', name: 'Box' } },
-      { name: 'add_effect', args: { nodeId: 'b', type: 'glow', id: 'my_glow' } },
+      { name: 'merge_paths', args: { op: 'union', nodeIds: ['b', 'no_such_layer'] } },
     ]);
     expect(turn.outcome.kind).toBe('snapshot');
     await createLayerEdit('null', { name: 'After' });

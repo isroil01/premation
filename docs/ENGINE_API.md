@@ -321,7 +321,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `addHistoryCheckpoint` | control | B3z — History ▸ Snapshot: a NAMED entry that changes nothing, a point to jump back to. Clears redo like any entry; `gestureOpen` while a gesture is open. |
 | `restoreDocument` | edit | B3z — replace the whole document with a saved / cloud version (`.motion` JSON) as ONE undoable entry; history is kept, undo brings the document back exactly. Unreadable input is `decode` / `unsupported` and changes nothing. |
 | `newProject`, `openProject`, `revertProject` | io | Replace the document; clear history; the UI receives `documentReset`. |
-| `saveProject` | io | Temp file + rename. `copy:true` = Save a Copy (path and dirty flag unchanged). F2 `format`: `auto` (absent) keeps the target's form — an existing `.motion` bundle directory stays a bundle, else one JSON file; `json`; `bundle` — the page's `.motion` directory format (bundleCodec chunks, only changed chunks rewritten, manifest last; `motion-blob:` footage the target lacks copied in from the bundle the document came from, with its registry rows); `portable` — portableMotion.ts's STORE zip with reachable footage under `assets/` (Save Portable Copy; `copy:true` only, else `invalidArgument`). A bundle over a plain file, or `json` over a directory, is `io` and writes nothing. `openProject` / `revertProject` / `importProject` read a directory as a bundle. F2: `openProject` of a portable `.motion` ZIP opens an untitled copy (projectPath `''`, a `portable:` warning); the C++ engine unpacks its `assets/` footage content-addressed (SHA-256) into a staging bundle under `<temp>/premation-portable/<fnv(path)>` with registry rows (the layer's `assetId` kept) and rewrites each `src` to `motion-blob:<sha256>`, so a later bundle save collects it; STORE entries only (`io` for DEFLATE, a bad CRC, or a zip without a manifest/scene). The TypeScript engine unpacks through portableMotion.ts (port `readPortable`). |
+| `saveProject` | io | Temp file + rename. `copy:true` = Save a Copy (path and dirty flag unchanged). F2 `format`: `auto` (absent) keeps the target's form — an existing `.motion` bundle directory stays a bundle, else one JSON file; `json`; `bundle` — the page's `.motion` directory format (bundleCodec chunks, only changed chunks rewritten, manifest last; `motion-blob:` footage the target lacks copied in from the bundle the document came from, with its registry rows); `portable` — portableMotion.ts's STORE zip with reachable footage under `assets/` (Save Portable Copy; `copy:true` only, else `invalidArgument`). A bundle over a plain file, or `json` over a directory, is `io` and writes nothing. `openProject` / `revertProject` / `importProject` read a directory as a bundle. F2: `openProject` of a portable `.motion` ZIP opens an untitled copy (projectPath `''`, a `portable:` warning); the C++ engine unpacks its `assets/` footage content-addressed (SHA-256) into a staging bundle under `<temp>/premation-portable/<fnv(path)>` with registry rows (the layer's `assetId` kept) and rewrites each `src` to `motion-blob:<sha256>`, so a later bundle save collects it; STORE and DEFLATE entries (DEFLATE inflated to exactly its declared size through the shared zlib FFI, `core/deflate_ffi.cpp`, 2026-09-27; `io` for another method, a bad CRC, an entry that does not inflate to its size, or a zip without a manifest/scene). The TypeScript engine unpacks through portableMotion.ts (port `readPortable`). |
 | `collectFiles` | io | Copy project + used files to a folder; document unchanged. |
 | `setAutosave` | control | Recovery cadence (a preference the engine executes). |
 | `importProject` | edit | Import `.motion`/`.aep`/`.aepx` into a new folder. Inverse: remove every imported item. |
@@ -329,13 +329,15 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `setGuides` | edit | F2 — patch the persisted guide settings (rulers, grids, safe areas, motion-path display, overlay opacity, ruler guides, camera bookmarks); keys replace, sanitized as on open, unknown keys ignored. Malformed JSON is `decode`, a non-object `invalidArgument`. Inverse: the previous settings. |
 | `setSwatches` | edit | F2 — replace the project palette, in order. Colours canonicalized; a non-hex colour is `invalidArgument`; empty or repeated ids re-minted (`sw_doc_<n>`). Inverse: the previous palette. |
 | `setMaterials` | edit | F2 — replace the project material library, in order. `params` normalized; non-object params are `invalidArgument`; empty, repeated or `builtin:` ids re-minted (`mat_doc_<n>`). Inverse: the previous library. |
+| `setMotionBlur` | edit | F2 — patch the project's motion-blur record (motionBlurStore: the Enable Motion Blur master switch, shutter angle/phase, samples, adaptive limit), clamped as on open (angle 0…360, phase ±360, samples 2…32, limit 2…128); non-finite angle/phase `invalidArgument`. One record per document: every comp reports it as `CompSettings.motionBlur`, and `setCompositionSettings{motionBlur}` (the per-comp route) writes the same record with the same clamps (the C++ engine did not clamp before 2026-09-27). Inverse: the previous record. |
+| `setColorManagement` | edit | F2 — patch working space (`srgbLinear`/`acesCg`), display transform (`srgb`/`aces`/`pq`/`hlg`) and intermediate bit depth (16/32; anything else `invalidArgument`). Inverse: the previous settings. |
 
 ### 4.2 Items (footage, folders) and render queue
 
 | Command | Semantics / inverse |
 |---|---|
 | `importFiles` | Import files (sequence detection, target folder, interpretation, optional comp). Inverse: remove the items (files untouched). |
-| `importBytes` | B3 — import from bytes (a browser-picked / dropped file, a bundled sound, a generated image): the media port stores the bytes and returns the record. Inverse: remove the items (stored bytes untouched). |
+| `importBytes` | B3 — import from bytes (a browser-picked / dropped file, a bundled sound, a generated image): the media port stores the bytes and returns the record. B5 `source` per file: who made the bytes, stored on the record (`user` = absent, `ai`, `derived` — an automation client's generated image, kept off the Assets shelf); anything else is `invalidArgument`. Inverse: remove the items (stored bytes untouched). |
 | `relinkItem` | Point an item at another file (relink / Replace Footage). Inverse: old path (+ old interpretation unless kept). |
 | `reloadItems` | control — re-read from disk. |
 | `removeItems` | Remove items; with `removeUsingLayers` also their layers, otherwise error `locked` if used. Inverse: items and layers restored with the same ids and positions. |
@@ -408,7 +410,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `resetProperty` | Default value (a key at `time` if animated). Inverse: previous value/key. |
 | `setAnimated` | The stopwatch. On: one key at `time` with the current value. Off: remove all keys; static value = value at `time`. Inverse: exact previous keys/value. |
 | `setDimensionsSeparated` | Split/merge dimensions and their keys as AE does. Inverse: the previous keys exactly. |
-| `setExpression` | Set/replace; empty source removes. Returns diagnostics; a failing expression is stored disabled (AE). Inverse: previous source + enabled flag. |
+| `setExpression` | Set/replace; empty source removes. Returns diagnostics; a failing expression is stored disabled (AE). B5 `owner`: the plugin that wrote it (provenance, the expression's `authoredBy`, saved with the document); authorship is replaced, never inherited — a write without `owner` clears a plugin's mark. Inverse: previous source + enabled flag + owner. |
 | `setExpressionEnabled` | Inverse: previous flags. |
 | `convertExpressionToKeyframes` | Bake over a range at a step. Inverse: previous keys + expression. |
 | `linkProperty` | Pickwhip: sets an expression reading `target`. Inverse: previous expression. |
@@ -424,7 +426,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 
 | Command | Semantics / inverse |
 |---|---|
-| `addEffect` | By match name, on several layers, at a stack index, with initial params. Returns `effects/<id>` per layer. Inverse: remove them. |
+| `addEffect` | By match name, on several layers, at a stack index, with initial params. Returns `effects/<id>` per layer. B5 `id`: a caller-chosen effect id used on every layer (an AI library emitter's handle — it keys `effects/<id>/<param>` before the call returns); letters, digits, `_`, `-` (`invalidArgument`), one a layer already has is `conflict`; absent = the engine mints `fx_<n>`. Inverse: remove them. |
 | `addMask` | Path, mode (none/add/subtract/intersect/lighten/darken/difference), name, index, inverted. Inverse: remove. |
 | `addPropertyGroup` | Any other group under a parent path by match name: text animators, selectors, shape contents (rect, ellipse, polystar, path, fill, stroke, gradient fill/stroke, trim, repeater, merge, offset, round corners, twist, wiggle, zig-zag, pucker/bloat), layer styles, paint strokes, puppet pins, expression controls. Inverse: remove. |
 | `removePropertyGroups` | With their keys and expressions. Inverse: back at their index with the same ids. |
@@ -468,6 +470,48 @@ on an effect or mask path — one command, one inverse implementation.
 | `applyJobResult` | edit | Apply a finished `apply:false` job. Inverse: that entry. |
 | `setPluginEnabled` | control | Session enable/disable (installation stays in the editor's plugin manager). |
 | `setPluginData` | edit | Plugin data **in the document** (AE sequence data / arbitrary-data params) — today it is an in-memory LRU. Inverse: previous bytes. |
+
+**Engine jobs (2026-09-27, branch `engine-jobs`; C++ engine only — the TypeScript engine answers `startJob` `unsupported` and the UI then runs its page path).**
+The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
+`engine_core`: `jobs/job_runner`, `core/session_jobs.cpp`):
+
+1. **prepare** (core thread) validates the spec against the document and copies
+   out what the work reads — a footage layer's file (`motion-blob:` resolved in
+   the bundle, `file://` / `local-file://` decoded; a session `blob:` is
+   `unsupported`), its timing, the comp's rate. A refusal is `startJob`'s answer
+   and nothing is queued. Ids: `job_<n>` (session state; `getJobs` lists the last 64).
+2. **work** (a worker thread; two workers) decodes and analyses, never touching
+   the document; `jobProgress` (ephemeral, ≤ 20/s per job) carries `JobInfo`
+   {status, progress, message}. A job that loads a model (objectMatte) runs its
+   work in a child `premation-engine --job FILE` (JSON lines on stdout), so a
+   crash fails the job, not the engine; renders run a child `--export`.
+3. **apply** (core thread) writes the result through ordinary commands inside
+   ONE journal: one history entry, `origin: engine`, the label below, the usual
+   events; a failing command (the layer was deleted meanwhile) rolls the whole
+   result back and the job ends `failed` with that error. Held while a gesture
+   is open. `apply:false` holds the result: `jobFinished` (status `done`,
+   `applied:false`) → `applyJobResult` (once; again `jobFinished`, `applied:true`)
+   or `cancelJob` (drops it). A new / opened / reverted document cancels running
+   jobs and drops held results. `JobInfo.result` is the kind's summary (JSON).
+
+| Kind | Reference (TS) | Writes (one entry) | `result` |
+|---|---|---|---|
+| `trackMotion` | tracker.ts, patchMatch.ts, autoTrack.ts merge, planarFit / Homography; applyTrack.ts plans | with `applyTo`: keys spliced into the span (`addKeyframes` + `deleteKeyframes` of the keys the span drops) — follow (layer / camera POI), position-rotation-scale (2 points), corner pin (`addEffect corner-pin` if missing; RANSAC beyond 4 points); `stabilize:true`: planStabilize on the tracked layer. No `applyTo`: nothing ("Track Motion") | `{kind, direction, status, sourceWidth, sourceHeight, tracks:[[[t,x,y,conf,coasted]…]…]}` |
+| `stabilize` | globalMotion.ts + smoothStabilize.ts (similarity) | position (+ rotation, scale per `method`) keys on the layer | `{fittedPairs, totalPairs, …}` |
+| `autoTrace` | traceBitmap.ts + autoTrace.ts | `addMask` per ring (add / subtract), with `everyFrame` one `addKeyframes` of every path per frame ("Auto-trace") | `{pathsAdded, keyframes, frames}` |
+| `sceneDetect` | sceneEditDetect.ts / sceneEditDetectLayer.ts | "Cut N" / "Dissolve N" comp markers, or `splitLayers` at every cut | `{cutsCompSec, dissolvesCompSec, mode}` |
+| `objectMatte` | samPipeline.ts / samSegment.ts / objectMask.ts (SlimSAM ONNX pair) | `addMask` "Object mask" + feather 2 ("Object Mask") | `{contourPoints, engine, iou}` |
+| `audioAnalysis` | beatGrid + @motion/audio, audioKeyframes.ts, silenceRemoval.ts | `setKeyframes` on `audioAmplitude`; "Beat N" markers (`beatMarkers`); Remove Silence's split / delete / local-ripple steps on the paired layers | `{amplitude:{keyframes,keys}, beats:{bpm,tempoConfidence,beatsCompSec,onsetsCompSec}, silence:{ranges,totalSec,gaps,secondsRemoved,layers}}` |
+| `audioDuck` / `audioGate` | ducking.ts / audioGate.ts, audioDriver's detector | `audio/ducking` \| `audio/gate` record, expression on `audio/levels` cleared, `setKeyframes` on `audio/levels` ("Duck Music" / "Noise Gate") | `{keyframes, keys, start, end, fps, envelope, peakDuckDb?, closedFraction?}` |
+| `proxy` | assets/proxy.ts (rule + ffmpeg args) | `setProxy` of the file written temp + rename under `Proxies/` ("Create Proxy") | `{path, width, height}` |
+| `render` | engineExport.ts + ffmpegEncodeArgs.ts | nothing (files delivered to each item's output path) | `{outputs}` |
+| `prerender` | — | `importFiles` of the rendered files ("Pre-render") | `{outputs}` |
+| `transcribe` | captions/transcribe.ts | — `unsupported`: the page transcribes through the user's speech provider in Electron main (the key never leaves main); no local model ships | — |
+
+Limits: the jobs read FOOTAGE (a layer's own decoded frames), not a solo
+render of the layer — auto-trace ignores the layer's effects; retimed layers
+are refused. A job's result is not in the command log (it is not a request),
+so a replay after an engine crash does not reproduce it.
 
 ### 4.10 Transport and viewport — §6.
 
@@ -576,19 +620,19 @@ Queries answer at the revision in their `Response` and never change anything.
 | `copyLayers` | A `DocumentFragment` for the clipboard. |
 | `getMemberKeyframes` | B4: a layer's stored MEMBER keyframe lists (every animated track, catalog or not) — the keyframe assistants' input (§15.12). |
 | `copyKeyframes`, `copyEffects` | B4: the keyframe / effect clipboards in API form — whole keys per property (`pasteKeyframes`), effect captures (`pasteEffects`) (§15.12). |
-| `getWaveform` | Min/max (+ RMS) peaks per bucket per channel for a layer or item range. |
-| `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts. |
+| `getWaveform` | Min/max (+ RMS) peaks per bucket per channel for a layer or item range. `range` is SOURCE time (the window a clip bar shows; duration 0 = to the end); an audio layer sounds from its Audio component's asset, a footage layer / item from its asset; `buckets` 1–65536. The part of the window past the end of the source is zero buckets (bucket b always covers `start + b·duration/buckets`). No sound (a still, `hasAudioTrack: false`, an unopenable file) = `channels: 0`; still decoding = `busy`; no audio engine = `unsupported`. C++: the E2 peak pyramid (MediaClock::peaks); the TS engine answers `unsupported`. |
+| `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts, file path — the installed faces (C++: CoreText on macOS, DirectWrite on Windows, fontconfig on Linux; `query` filters family / style / PostScript name; OS-internal faces such as macOS's `.AppleSystemUIFont` are not listed). Empty under the test ports. |
 | `getSvgDocument`, `getCryptomatte` | B4: an SVG layer's stored document (or a converted group's retained source); an EXR item's Cryptomatte ID set (§15.12). |
-| `getItems`, `getThumbnail` | Item metadata (size, duration, rate, codec, alpha, audio, colour profile, missing, proxy); encoded thumbnail. |
+| `getItems`, `getThumbnail` | Item metadata (size, duration, rate, codec, alpha, audio, colour profile, missing, proxy); encoded thumbnail. `getThumbnail` (C++): a PNG (straight 8-bit RGBA) of a comp item's frame, a layer alone in its comp's frame (as if the one soloed layer), or a footage item's media (`time` = source time; a still ignores it); the source's aspect with the long side ≤ `maxSize` (0 = 256, ≤ 4096, never enlarged); transparent where nothing draws. Audio items and folders: `invalidArgument`; an unprobed size: `decode`; a renderer still busy after 10 s: `busy`; `--no-gpu`: `unsupported`. The TS engine answers `unsupported`. |
 | `listEffects`, `listGroupTypes`, `listPresets` | The effect catalog with full param schemas (drives the Effects & Presets panel and generic effect UIs); addable group types under a path; presets. |
 | `capturePreset` | B4: a layer's animation as a preset body (Save as Preset) — keys in the preset's own units, text animators, effects, expressions (§15.12). |
 | `getCapabilities` | GPU adapter/backend/VRAM/max texture, hardware decoders, export formats, colour management, float, plugin APIs, expression engines, threads. |
 | `listPlugins`, `getEffectUi` | G1: the native SDK plugins the engine found (loaded / disabled / failed with why / quarantined after ending the engine); a plugin effect's parameter UI at a time (UPDATE_PARAMS_UI: enabled, hidden, renamed). The TypeScript engine hosts no native plugins (empty list; builtin effects answer every param enabled). |
-| `hitTest` | Layers under a comp point at a time (topmost or all). |
+| `hitTest` | Layers under a comp point at a time (topmost or all). C++: the frame's drawn quads (the model matrix, projective for corner pins / 3D cards), topmost first — a layer's box, not its alpha; meshes, extrusions, models and generators by their bounds; adjustment layers, track-matte sources and edge-on planes are never hit; a collapsed precomp's or a cloner's draws are that layer; locked layers only with `includeLocked`. The TS engine answers `unsupported` (the editor's HitTester answers in the page). |
 | `getLayerBounds`, `getLayerTransforms` | Bounds/corners in comp/layer space (viewport: the overlay push, §15.12); 4×4 layer→comp matrices — what gizmos draw from. |
 | `getTextLayout` | The measured layout of a text layer: render / selection box, wrap, paragraph box, line-block placement, with hypothetical overrides (§15.12). |
 | `evaluateExpression` | Preview an expression without storing it. |
-| `readPixels` | Working-space pixel values of a viewport region (Info panel, eyedropper). |
+| `readPixels` | Working-space pixel values of a viewport region (Info panel, eyedropper). C++: `region` in the viewport's slot pixels (physical px, top-left origin; the pixels it touches, an empty one = the pixel under its corner, clamped to the slot, ≤ 256² pixels); the float scene colour before the display transform / viewer LUT, straight alpha, top-down; the frame the viewport last showed is drawn again offscreen to read it. No such viewport: `notFound`; nothing shown yet: `busy`; C2 quads / `--no-gpu`: `unsupported`. The TS engine answers `unsupported`. |
 | `findLayers`, `getDependencies` | Search; uses/used-by (flowchart, expression refs, precomp nesting). |
 | `getHistory`, `getRenderStats`, `getLayerErrors`, `getJobs`, `getRenderQueue` | Status. |
 | `getCommandLog` | Recorded requests since a revision (replay, bug reports, §12). |
@@ -647,6 +691,8 @@ compute.
 | `guidesChanged` | F2 — the guide settings (full replacement, as `DocumentSnapshot.guides`), after `setGuides`, a restore or their undo. |
 | `swatchesChanged` | F2 — the project palette (full replacement). |
 | `materialsChanged` | F2 — the project material library (full replacement). |
+| `motionBlurChanged` | F2 — the motion-blur record (full replacement, as `DocumentSnapshot.motionBlur`), after `setMotionBlur`, `setCompositionSettings{motionBlur}`, a restore or their undo; every comp's `compositionChanged` follows too. |
+| `colorManagementChanged` | F2 — colour management (full replacement, as `DocumentSnapshot.colorManagement`), after `setColorManagement`, `setProjectSettings`, a restore or their undo. |
 | `renderQueueChanged` | All render items. |
 
 Ephemeral (no revision, `fromRevision == toRevision`): `historyChanged`,
@@ -887,7 +933,7 @@ engine fd 4), framed like the command pipe:
 
 | Message | Direction | Meaning |
 |---|---|---|
-| `FrameSlots` | engine → host | A ring of N shared textures (generation, viewport, size, format, NT handles valid in the host). Retires every older generation. |
+| `FrameSlots` | engine → host | A ring of N slots (generation, viewport, size, format, one handle per slot). Retires every older generation. `shared: true` — Windows: NT handles valid in the host, owned by the engine; macOS: global IOSurfaceIDs the host resolves (`IOSurfaceLookup`, premation-host-bridge.node) and holds while the ring is current. `shared: false` — offscreen slots (headless) or route-A copies; handles are 0. |
 | `FrameReady` | engine → host | Slot N holds a finished frame (frame, comp time, the revision it shows, size, frames dropped since the last one, render timestamps for measurement). |
 | `FrameRelease` | host → engine | Chromium is done with a slot (a stale generation is ignored). |
 | `FramePing` / `FramePong` | host ⇄ engine | The supervisor's heartbeat, answered by the engine's document core thread. |
@@ -898,6 +944,27 @@ because Electron main cannot import packages/ — a standalone TypeScript module
 `electron/generated/frameChannel.ts` (+ a copy of the wire runtime), emitted by
 the same generator for exactly this family. The event ids 2100–2199 stay
 reserved and unused.
+
+**Frame routes are negotiated in Hello / Welcome capabilities:**
+
+| Capability | Route | Offered by the host | Offered by the engine |
+|---|---|---|---|
+| `frames.sharedTexture` | C: shared GPU textures | Windows; macOS when premation-host-bridge.node loads | Windows (DXGI shared handles) and macOS (IOSurface + MTLSharedEvent) when the device has the features and `--host-pid` is set |
+| `frames.copy` | A: read-back copies | always | when its fd 5 is open and it has a GPU |
+
+The engine uses shared slots when both sides offer them, otherwise copies when
+both offer those, otherwise offscreen slots (frames are announced and must be
+released, but carry no pixels).
+
+**Route A's pixel stream** is a third one-way pipe, engine fd 5 → host
+(`premation/protocol/pixel_channel.hpp`, TypeScript twin `electron/pixelChannel.ts`).
+Per copied frame the engine writes one message — the command pipe's 4-byte
+length, a 32-byte header (`'PXF1'`, generation, slot, width, height,
+bytesPerRow, format, reserved; little-endian), then the RGBA8 rows — and then
+the ordinary `FrameReady` on fd 3. The pipes are not ordered with respect to
+each other, so the host pairs the two by (generation, slot); the slot stays the
+host's until its `FrameRelease`, which bounds the bytes in flight to one frame
+per slot. It is not a schema type because its payload is raw pixels.
 
 ---
 
@@ -979,7 +1046,7 @@ B2 (2026-09-23) implements every command, query and event on today's engine:
 |---|---|
 | 91 edit commands | All dispatched. **86** implemented with exact inverses. **5** answer a typed error and change nothing: `convertLayer`, `separateLayer`, `autoTrace` (need font outlines / rendered pixels the TS engine only has inside editor dialogs — E3/D2), `invokeEffectAction` (native-SDK plugins, G1; JS plugins are not ported, plan §5 G2), `applyJobResult` (`notFound`: no engine jobs yet). Partial: `importProject` takes `.motion` only; `setInterpretation` refuses ignore/invert alpha, matte colour, start timecode and colour profile; `setCompositionSettings` refuses `backgroundGradient` and maps `motionBlur` onto the project-wide store (the TS engine has one); `setBlendMode` refuses the modes the TS renderer lacks; `setProxy` is footage-only; `reorderLayers`/`groupLayers` need one parent (parenting is nesting, below). |
 | 30 controls + io | All implemented. `openProject`/`saveProject`/`revertProject`/`collectFiles`/`importFiles` go through injected `EnginePorts` (`unsupported` when none is attached — B3 attaches the Electron ones). `startJob` answers `unsupported` (jobs run in the editor until E/F). Transport forwards to today's controller for the ACTIVE comp and keeps the rest as engine state; viewport/cache/preview controls are recorded state (the TS renderer still draws the viewport). |
-| 32 queries | 26 answered from the document. `getWaveform`, `getThumbnail`, `hitTest`, `getLayerBounds`, `getTextLayout`, `readPixels` answer `unsupported` (renderer-side until D2/E2); `getRenderStats`/`getLayerErrors`/`getJobs` answer empty (the editor's renderer owns those numbers today). |
+| 32 queries | 26 answered from the document. `getWaveform`, `getThumbnail`, `hitTest`, `readPixels` answer `unsupported` in the TS engine (renderer-side; `getLayerBounds` and `getTextLayout` are answered since b4-round2, §15.12); the C++ engine answers `getWaveform`, `getThumbnail`, `hitTest` and `readPixels` through its audio engine, frame builder and render thread (`unsupported` without them: `--no-gpu`, no audio); `getRenderStats`/`getLayerErrors`/`getJobs` answer empty (the editor's renderer owns those numbers today). |
 | 27 events | All 13 revisioned events emitted from the changed parts; ephemeral `historyChanged`, `dirtyChanged`, `transportChanged`, `playhead`, `projectSaved` emitted; the render/job/asset/font/autosave ones have no TS source yet. |
 
 ### 15.2 Undo: parts
@@ -1174,17 +1241,102 @@ and replays to a byte-identical saved project.
 
 What still writes AROUND the engine is pinned by the B5 ratchet
 (`npm run lint:automation-writes`, `scripts/lint/automationWritesReport.mjs`,
-`src/__tests__/automationWriteRatchet.{test.ts,json}`): 133 sites — ai 92, plugins 41,
-scripts/automation 0. Every one is a named fallback, not a default path: `LEGACY_GAPS`
-in toolContext.ts (kinds the layer factory lacks, caller-chosen effect ids, NTSC comp
-rates, puppet rigs, points data keys, per-member keys the API cannot address, a
-refusal); the plugin layer-kind machinery (`plugin:<id>/<kind>` creation, proxy
-subtrees, structured props, inspector params, param supervision — the TS engine
-refuses `component` layers); `scene.apply` (its all-or-nothing guarantee is a
-synchronous document snapshot; as an engine gesture it needs an abort that reverts
-on the first failing op); `animation.setExpression` from a plugin (the stored
-expression carries its owner plugin id; `setExpression` has no owner field); colour
-channel and non-Position vector keyframes from a plugin; composition-less nodes.
+`src/__tests__/automationWriteRatchet.{test.ts,json}`): 133 sites at B5's
+finish — ai 92, plugins 41. Every one was a named fallback, not a default path:
+`LEGACY_GAPS` in toolContext.ts (kinds the layer factory lacks, caller-chosen
+effect ids, NTSC comp rates, puppet rigs, points data keys, per-member keys the
+API cannot address, a refusal); the plugin layer-kind machinery
+(`plugin:<id>/<kind>` creation, proxy subtrees, structured props, inspector
+params, param supervision — the TS engine refuses `component` layers);
+`scene.apply` (its all-or-nothing guarantee is a synchronous document snapshot;
+as an engine gesture it needs an abort that reverts on the first failing op);
+`animation.setExpression` from a plugin (the stored expression carries its
+owner plugin id; `setExpression` has no owner field); colour channel and
+non-Position vector keyframes from a plugin; composition-less nodes.
+
+**B5 leftovers (2026-09-26).** The AI tool layer no longer writes around the
+engine (ratchet ai 92 → 1: the snapshot-commit recorder flush in
+`aiTransaction.ts`, which goes with the legacy recorder). A write the API cannot
+express EXACTLY is now REFUSED — a failed tool call addressed to the model,
+`LEGACY_GAPS` naming why — never made by a legacy writer; the pre-engine
+refusal fallbacks are gone. The routes:
+
+- **Inserts `createLayer` cannot carry** (a line or a parametric Polystar, a
+  contain-fitted footage layer, an SVG document or its editable shapes, a
+  model placeholder null) are built OFF-DOCUMENT with the legacy builder and
+  sent as ONE `pasteLayers` (`buildLayerFragment`, offDocument.ts — the UI's
+  own route); media bytes are `importBytes`. `src/core/ai/hostWrites.ts`.
+- **Keyframe writes a track the API does not key alone** (an easing without
+  an API name, a lone member's ease / handles, a member of an unseparated
+  vector) run the per-track writer off-document and send the property's
+  `setKeyframes` (`assistantKeyframeCommands`; `AssistantPlan.unaddressed`
+  refuses a track the catalog does not address instead of dropping it).
+- **Existing API the facades did not use yet:** `layer/puppet` /
+  `layer/skeleton` (whole rigs), `puppet/pins/<id>/position` keys (a pin's
+  Position), `layer/precompose` (a group's time-remap switch),
+  `setExpression.member` (a member of an unseparated vector),
+  `setCompositionSettings.frameRate` as an exact rational (NTSC through
+  `fpsToRational`), `addPropertyGroup` for text animators / path operators /
+  layer styles with `setProperties` of their params (`memberWrites`,
+  propRefs.ts: members of one property merge into ONE write), `addMask`,
+  `reorderLayers` (Send to Back), `trimLayers` (a scene's in-point),
+  `setLayerSwitches.threeD`, `layer/fillPaint`, `layer/strokes`.
+- **New:** `addEffect.id` — a caller-chosen effect id (both engines).
+
+**The plugin host** (ratchet plugins 41 → 1) no longer writes around the
+engine either (`src/core/plugins/hostApi.ts` has no legacy table):
+
+- `scene.createLayer` builds the layer off-document — a plugin layer kind
+  from its schema, an image layer bound to its asset, a primitive where the
+  menu insert puts it — and sends ONE `pasteLayers` into the ACTIVE
+  composition (a plugin layer used to be created as a composition-less root).
+  The menu's New ▸ <kind> is the same insert (`createCustomLayerFromMenu`).
+- `scene.apply` is ONE engine gesture: each op is the single call's command;
+  the first failing op aborts it (`endGesture{commit:false}`, which reverts
+  every op before it) and the error carries the op's index. One undo entry.
+- `animation.setExpression` → `setExpression` with **`owner`** (new, both
+  engines; the C++ `ExprState` gains `authored_by`, read and written as the
+  document's `authoredBy`). Colour-channel and other vector-member keyframes,
+  non-API easings and an empty `setKeyframes` run the per-track writer
+  off-document and send `setKeyframes` / `setAnimated` (assistantKeys.ts).
+- Structured `scene.setProperty` values are commands: `points` → the static
+  `layer/path.points` (or `setShapeOutline` on a layer with no outline yet),
+  `subpaths` → `setShapeOutline`, `fillPaint` → `layer/fillPaint`, `stroke` →
+  `layer/strokes` (structuredProps.ts).
+- `scene.setProxyChildren` → ONE batch: `deleteLayers` of the gone children,
+  `renameLayer` / `setProperty` / `setExpression{owner}` on the matched ones
+  (ids kept; a prop the API does not address refuses the regeneration), new
+  children built off-document and pasted into the proxy layer (engine ids).
+- `params.set` → the Inspector's own commands (pluginParamCommands.ts, moved
+  from layout/Inspector): the panel group seeded with its defaults, then the
+  param. Effect param supervision (`paramSupervision.ts`) → `setProperty` of
+  `effects/<id>/<param>`. `assets.createImage` → `importBytes` with
+  **`source: derived`** (new field, both engines).
+- A node that is not a layer of a composition is refused by name.
+- The load-time plugin-binding migration (`migratePluginBindings`) is part of
+  opening a document and moved to `src/core/persistence/pluginBindingMigration.ts`.
+
+What still writes around the engine (the ratchet: ai 1, plugins 1):
+`aiTransaction.ts`'s recorder flush before a snapshot commit (goes with the
+legacy recorder, below), and `proxySubtree.ts` `detachSubtree` — the ownership
+mark a USER edit clears on a generated subtree, from the write hook INSIDE the
+user's engine command (the `__ownedBy` mark is not an API property; it needs
+an engine-side rule in both engines: an authored write on an owned child
+clears the subtree's marks as part of the same command). The legacy debounce
+recorder (`LEGACY_DEBOUNCE_RECORDER`, `StoreSnapshotCommand`) cannot be
+deleted yet: the AI turn's snapshot commit still uses it for turns with a gap
+(`merge_paths`, `export_video`), and `runDocumentEdit` has callers outside the
+automation clients (src/core/scene, fonts, textTools, simulation, svg, and
+layout/Inspector/PolystarSection, layout/Scene/layerSwitchEdits).
+
+The Lottie importer's synchronous document context (`createLegacyDocumentContext`)
+moved to `src/core/lottie/lottieDocumentContext.ts`: it is an off-document
+builder, not an automation client. `export_video` writes no document state
+(the editor's render-job queue lives in the app's settings). The one tool
+still recorded as a gap wholesale (`buildAiTools`) is `merge_paths`: the
+live merge flags its operand layers in place (`fx.booleanOperand`), which
+no API property addresses yet — the same helper backs the canvas menu's
+Live Union / Subtract / Intersect.
 
 ### 15.7 G1 — static fields, optional properties and the data-model gaps
 
@@ -1195,8 +1347,8 @@ Mode / Units / Shape / Randomize Order / Lock Dimensions / Random Seed /
 expression, Path Options ▸ Path, style runs, fill paints — is a property of the
 catalog with `special: 'field'` (`src/core/engine/fields.ts`, C++
 `native/engine/src/core/fields.cpp`), typed by one spec table both engines read
-(`src/core/text/textFields.ts`, generated into the C++ catalog data by
-`GEN_NATIVE_CATALOG=1 npx jest crossEngineCatalog`). `setProperty` /
+(`src/core/text/textFields.ts`; the C++ catalog's copy is
+`native/engine/catalog/fields.json`, kept equal by `crossEngineCatalog.test.ts`). `setProperty` /
 `setProperties` / `resetProperty` type-check a field against its spec
 (`typeMismatch`, a choice outside the list `outOfRange`, a number outside
 min..max `outOfRange`); `setAnimated` / keys / expressions refuse it
@@ -1511,8 +1663,8 @@ table is DATA shared by both engines: `src/core/engine/controlSpecs.ts`
 
 G1's static FIELDS (§15.7) generalised from the Text component to every
 layer. `src/core/engine/layerFieldSpecs.ts` is a DATA table (`LAYER_FIELDS`,
-pure; generated into the C++ catalog as `fields.layer` by
-`GEN_NATIVE_CATALOG=1 npx jest crossEngineCatalog`), read by
+pure; the C++ catalog's copy is `fields.layer` in
+`native/engine/catalog/fields.json`, kept equal by `crossEngineCatalog.test.ts`), read by
 `src/core/engine/fields.ts` (owner `layer`) and `native/engine/src/core/fields.cpp`
 (`layer_*`). Each row is one static (`animatable: false`) property:
 
@@ -1777,9 +1929,9 @@ from the struct's maximum + 800.
   `scene/text_query.cpp` over the scene port's `TextMeasurer` on the frame
   builder's fonts (`TextQueries`, session_hooks.hpp; the new
   `TextMeasurer::measure_font_box`) — `unsupported` in the headless engine
-  (no fonts) and for styles outside the text port (vertical type, Fit Text to
-  Box, runs that change a line's size or leading, variable axes, Capitalize,
-  CJK wrapping). An anchored auto-height box's `size.y` may read 1 px taller
+  (no fonts) and for styles outside the text port (vertical type, runs that
+  change a line's size or leading, variable axes, Capitalize; Fit Text to Box
+  and CJK wrapping are the port's since d2w-round2). An anchored auto-height box's `size.y` may read 1 px taller
   than the TypeScript's (the port rounds before adding the anchor offset).
 - **`getLayerBounds {layers, time, space}`** (1061, now answered): readGeometry's
   box — the box the viewport selects, hit-tests and snaps with — at the time:

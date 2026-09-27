@@ -150,7 +150,12 @@ export interface SceneFacade {
   get(nodeId: string): Promise<SceneNodeView | undefined>;
   /** Closest existing ids to a bad one, for "did you mean" repair hints. */
   nearest(nodeId: string, limit?: number): Promise<string[]>;
-  create(kind: string, name: string, at?: { x: number; y: number }): Promise<string>;
+  /**
+   * Create a layer. `shape` (kind `shape` only) picks the drawn outline: a
+   * `rect` (default) or `ellipse`, or a shape the layer factory has no kind for
+   * (`line`, `polystar` with its parameters) — the host inserts that one whole.
+   */
+  create(kind: string, name: string, at?: { x: number; y: number }, shape?: LayerShapeSpec): Promise<string>;
   remove(nodeId: string): Promise<void>;
   /** Re-parent a node. By default the node keeps its WORLD pose (local transform
    *  is recompensated). Pass `{ preserveWorld: false }` to keep the LOCAL
@@ -177,13 +182,21 @@ export interface SceneFacade {
   removeEffect(nodeId: string, effectId: string): Promise<void>;
   /** Wrap layers into a nested composition and return the new composition LAYER's id. */
   precompose(nodeIds: readonly string[], name: string): Promise<string>;
-  /** Enable/disable time remapping on a group/precomp layer. */
+  /** Enable/disable time remapping on a group/precomp layer (a group's Precompose switch). */
   setTimeRemapEnabled(nodeId: string, enabled: boolean): Promise<boolean>;
   /** The editor's layer selection. Editor state, not document state — synchronous. */
   selection(): readonly string[];
   setPuppet(nodeId: string, puppet: unknown): Promise<void>;
   /** The layer's puppet pins (id + name), or undefined if the layer isn't rigged. */
   readPuppet(nodeId: string): Promise<{ pins: readonly { id: string; name: string }[] } | undefined>;
+}
+
+/** The outline a new shape layer is born with (`SceneFacade.create`). */
+export interface LayerShapeSpec {
+  /** `rect`, `ellipse`, `line`, `polystar`. */
+  shapeType: string;
+  /** The parametric Polystar (`fx.polystar`) when `shapeType` is `polystar`. */
+  polystar?: Record<string, unknown>;
 }
 
 export interface SceneNodeView {

@@ -66,12 +66,29 @@ Data decisions:
 
 ## Gaps to close in C++ before cutting the UI over
 
-- Queries answering `unsupported`: `getWaveform`, `getThumbnail`, `hitTest`,
-  `getLayerBounds`, `getTextLayout`, `readPixels`; `listFonts` and `getJobs` empty.
-- Commands answering `unsupported`: `startJob` (trackMotion, stabilize,
-  autoTrace, sceneDetect, objectMatte, transcribe, audioAnalysis, render,
-  prerender), `convertLayer`, `separateLayer`, `autoTrace`, `collectFiles`,
-  `.aep` `importProject`, portable-zip open.
+- Queries answering `unsupported`: `getLayerBounds`, `getTextLayout` (B4).
+  (`listFonts` answers from the OS font catalogue since
+  p0-platform; `getWaveform`, `getThumbnail`, `hitTest`, `readPixels` answer
+  from the C++ engine since d2w-round2.)
+- Commands answering `unsupported`: `convertLayer`, `separateLayer`,
+  `autoTrace` (the command; the JOB exists), `collectFiles`, `.aep` `importProject`.
+- **Jobs (2026-09-27, branch `engine-jobs`, written and syntax-checked, not
+  built or run):** the C++ engine runs `startJob` for trackMotion (position,
+  rotation/scale, corner pin, stabilize-by-point), stabilize (similarity),
+  autoTrace, sceneDetect, objectMatte (ONNX Runtime, child process),
+  audioAnalysis (beats, amplitude track, silence detect/remove), audioDuck,
+  audioGate, proxy, render and prerender (child `--export`); `getJobs` lists
+  them (ENGINE_API.md §4.9). UI callers ask the engine first
+  (`src/core/engine/engineJobs.ts`) and fall back to the page path on
+  `unsupported`. Still page-only: mask / planar tracks, Create Null & Apply,
+  mesh warp / camera solve / roto brush / content-aware fill, the smooth
+  stabilizer's subspace and rolling-shutter variants, auto-reframe (saliency
+  + a path — no job kind yet), and **transcribe** — the page sends the comp's
+  mixdown to the user's speech provider through Electron main, which holds
+  the key; no local model ships, so the engine refuses the job. Decision
+  needed: a bundled local model (whisper.cpp) or the engine calling the
+  provider with a key main hands over. Portable DEFLATE zips open in the
+  engine (2026-09-27).
 - **Frame-synchronous overlay geometry push** (world matrices, bounds, motion
   paths, pins/bones, text boxes on `FrameReady`) — replaces ~75 per-frame reads.
 - B4 exit fields (media type, proxy, playable URL, mographId, svg, essentialProps,
@@ -110,6 +127,14 @@ log in main; CoreText/fontconfig/DirectWrite `listFonts`.
 
 **Phase 1 — freeze data the C++ build takes from TS:** WGSL; catalog; vertical
 orientation table; parity re-bless modes; migration pairs; golden scenes as documents.
+*Done on `p1-freeze-data` (not yet verified on the test machine — see
+`docs/VERIFY_ON_TEST_MACHINE.md`):* `native/engine/shaders/wgsl/` +
+`materials.json` (`embed_wgsl.cmake`); `native/engine/catalog/*.json`
+(`embed_catalog.cmake`) with `engine-api:gen` emitting `generated/catalog.ts`
+and `native/protocol/generated/commands.json`; `raster/vertical_orientation.inc`
+hand-owned; every parity fixture frozen with `PARITY_REBLESS=1`
+(`tests/parity_rebless.hpp`); 45 migration pairs + `test_migrations.cpp`;
+`packages/render-tests/scenes/*.json` + `scripts/native-golden.mjs`.
 
 **Phase 2 — close gaps, flip defaults:** the C++ queries; the geometry push;
 B4 mirror fields; engine jobs (one per kind, incl. analysis/ML); port every

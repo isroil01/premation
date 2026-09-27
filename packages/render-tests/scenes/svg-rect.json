@@ -1,0 +1,179 @@
+{
+ "version": "1.9.0",
+ "scene": {
+  "version": "1.0.0",
+  "nodes": [
+   {
+    "id": "comp_root",
+    "name": "Composition 1",
+    "parent": null,
+    "children": [
+     "svg-rect"
+    ],
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "visible": true,
+    "locked": false,
+    "components": [
+     {
+      "id": "comp_root_meta",
+      "type": "group",
+      "props": {
+       "__kind": "group"
+      }
+     }
+    ]
+   },
+   {
+    "id": "svg-rect",
+    "name": "svg-rect",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 120,
+      "y": 120
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "svg-rect_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "svg",
+       "x": 120,
+       "y": 120,
+       "rotation": 0,
+       "width": 200,
+       "height": 200
+      }
+     },
+     {
+      "id": "svg-rect_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100
+      }
+     },
+     {
+      "id": "svg-rect_svg",
+      "type": "svg",
+      "props": {
+       "sourceMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 100 100\"><rect x=\"10\" y=\"20\" width=\"80\" height=\"60\" fill=\"#3a7bd5\"/></svg>",
+       "sanitizedMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 100 100\"><rect x=\"10\" y=\"20\" width=\"80\" height=\"60\" fill=\"#3a7bd5\"/></svg>",
+       "sanitizePolicy": 2,
+       "intrinsicWidth": 100,
+       "intrinsicHeight": 100,
+       "viewBox": [
+        0,
+        0,
+        100,
+        100
+       ],
+       "capabilities": {
+        "hasSMIL": false,
+        "hasCSSAnimation": false,
+        "hasEventTiming": false,
+        "hasScript": false,
+        "hasForeignObject": false,
+        "hasExternalRefs": false,
+        "hasText": false,
+        "hasRasterImage": false,
+        "pathCount": 1,
+        "intrinsicDuration": null
+       },
+       "fileName": "rect.svg"
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   }
+  ]
+ },
+ "animation": {
+  "tracks": {},
+  "expressions": {}
+ },
+ "comps": {
+  "comp_root": {
+   "id": "comp_root",
+   "name": "comp_root",
+   "width": 240,
+   "height": 240,
+   "fps": 30,
+   "durationSeconds": 10,
+   "background": "#101014"
+  }
+ },
+ "motionBlur": {
+  "enabled": false,
+  "shutterAngle": 180,
+  "shutterPhase": -90,
+  "samples": 8,
+  "adaptiveSampleLimit": 128
+ },
+ "colorManagement": {
+  "workingSpace": "srgb-linear",
+  "displayTransform": "srgb",
+  "bitDepth": 16
+ },
+ "projectItems": {
+  "folders": [],
+  "footage": {}
+ },
+ "openTabs": {
+  "tabOrder": [
+   "tab1"
+  ],
+  "activeTabId": "tab1",
+  "tabs": {
+   "tab1": {
+    "id": "tab1",
+    "compositionId": "comp_root",
+    "breadcrumbPath": [
+     "comp_root"
+    ],
+    "title": "comp_root",
+    "time": 0,
+    "frame": 0
+   }
+  }
+ },
+ "harness": {
+  "sceneId": "svg-rect",
+  "frames": [
+   0
+  ],
+  "fps": 30,
+  "size": {
+   "w": 240,
+   "h": 240
+  },
+  "motionBlurFps": null,
+  "motionBlurOn": false,
+  "overlays": null,
+  "viewerLut": false,
+  "assets": [],
+  "compId": "comp_root",
+  "viewerLutCube": null,
+  "media": [],
+  "tolerance": null,
+  "fidelityOnly": false,
+  "description": "SVG layer — Plain filled rectangle — the baseline."
+ }
+}

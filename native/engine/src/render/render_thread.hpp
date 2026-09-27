@@ -18,6 +18,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <future>
 #include <memory>
@@ -63,6 +64,21 @@ class BuiltFrameDrawer {
   /// D4: whether the frame `draw` just drew is final — false while footage on
   /// it may show a nearest decoded frame instead of the exact one.
   [[nodiscard]] virtual bool last_frame_exact() const { return false; }
+
+  /// getThumbnail: draw `frame` offscreen at width × height and encode it
+  /// (StillImage). False (with `error`) when it cannot.
+  virtual bool draw_still(const BuiltFrame& /*frame*/, std::uint32_t /*width*/, std::uint32_t /*height*/,
+                          StillImage& /*out*/, std::string& error) {
+    error = "this drawer cannot draw stills";
+    return false;
+  }
+  /// readPixels: `region` of `frame` (drawn for a width × height slot) in
+  /// working space — the frame is drawn again offscreen, then read.
+  virtual bool read_working(const BuiltFrame& /*frame*/, std::uint32_t /*width*/, std::uint32_t /*height*/,
+                            PixelRegion /*region*/, WorkingPixels& /*out*/, std::string& error) {
+    error = "this drawer cannot read working-space pixels";
+    return false;
+  }
 };
 
 /// RenderOptions::frameCacheBytes: size the cache from the adapter (frame_cache.hpp).
@@ -75,6 +91,10 @@ struct RenderOptions {
   /// Makes the drawer for built frames on the render thread's device (null = C2's quads only).
   std::function<std::unique_ptr<BuiltFrameDrawer>(const Gpu& gpu, std::string& error)> makeDrawer;
   std::uint32_t hostPid = 0;     // Electron main; shared handles are duplicated into it
+  /// Route A: queue one framed pixel message (premation/protocol/pixel_channel.hpp)
+  /// on the pixel stream (fd 5); false once that pipe is gone. Unset = no
+  /// pixel stream, so `frames.copy` is not offered.
+  std::function<bool(std::vector<std::uint8_t>)> sendPixels;
   std::uint32_t vendorId = 0;    // Chromium's GPU (PCI vendor id); 0 = power preference decides
   bool highPerformance = false;
 };
@@ -103,11 +123,17 @@ class RenderThread final : public FrameSink {
   void configure(const ViewportConfig& config) override;
   void set_shared(bool shared) override;
   [[nodiscard]] bool shared_supported() const override;
+  void set_copy(bool copy) override;
+  [[nodiscard]] bool copy_supported() const override;
   [[nodiscard]] RenderCounters counters() const override;
   [[nodiscard]] std::string adapter() const override;
   [[nodiscard]] std::string backend() const override;
   /// D4: the frame cache's counters (zeros when the cache is off).
   [[nodiscard]] FrameCacheStats cache_stats() const;
+  /// Run on the render thread between frames (below).
+  [[nodiscard]] std::future<StillImage> render_still(std::shared_ptr<BuiltFrame> frame, std::uint32_t width,
+                                                     std::uint32_t height) override;
+  [[nodiscard]] std::future<WorkingPixels> read_pixels(std::uint32_t viewport, PixelRegion region) override;
 
  private:
   struct SlotSet;
@@ -119,9 +145,14 @@ class RenderThread final : public FrameSink {
   void close_gpu();
   /// After a loss: close, then open again. False = the loss is fatal.
   bool recover_device();
-  void rebuild(const ViewportConfig& config, bool shared);
+  void rebuild(const ViewportConfig& config, bool shared, bool copy);
+  /// Route A: the slot's read-back buffer → one pixel message. False = nothing sent.
+  bool send_copy(SlotSet& set, std::uint32_t slot);
   void render(RenderJob& job, std::uint32_t slot, const ViewportConfig& config);
   void collect_retired(std::chrono::steady_clock::time_point now);
+  /// Queue `task` for the render thread (queries: stills, pixel reads).
+  void post(std::function<void()> task);
+  void run_tasks(std::unique_lock<std::mutex>& lock);
 
   RenderOptions options_;
   SendFrames send_;
@@ -134,8 +165,12 @@ class RenderThread final : public FrameSink {
   bool configDirty_ = false;
   ViewportConfig config_;
   bool shared_ = false;
+  bool copy_ = false;
   std::optional<RenderJob> pending_;
   std::uint32_t droppedPending_ = 0;  // superseded + clock-skipped since the last FrameReady
+  /// Query work for the render thread (render_still, read_pixels), run
+  /// between frames in arrival order; drained (answered) on stop.
+  std::deque<std::function<void()>> tasks_;
 
   // Render-thread-only state.
   std::optional<Gpu> gpu_;
@@ -149,6 +184,7 @@ class RenderThread final : public FrameSink {
   /// The job drawn last, drawn again on a recovered device.
   std::optional<RenderJob> lastJob_;
   std::uint32_t lossesSinceFrame_ = 0;
+  bool pixelPipeGone_ = false;  // logged once
 
   // Counters (m_).
   RenderCounters counters_;

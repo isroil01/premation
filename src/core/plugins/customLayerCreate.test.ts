@@ -55,12 +55,12 @@ beforeEach(() => {
   FakeWorker.last = null;
 });
 
-/** Layer ids currently in the graph, so a creation can be seen. */
-const customLayerIds = (): string[] =>
-  defaultSceneGraph.getRoots()
-    .map((r) => defaultSceneGraph.getNode(r.id))
-    .filter((n) => !!n && !!readCustomLayer(n))
-    .map((n) => n!.id);
+/** Custom layer ids currently in the graph (B5: inside the active composition), so a creation can be seen. */
+const customLayerIds = (): string[] => {
+  const out: string[] = [];
+  defaultSceneGraph.traverse((n) => { if (readCustomLayer(n)) out.push(n.id); });
+  return out;
+};
 
 describe('registration follows the plugin lifecycle', () => {
   it('registers declared kinds when the plugin is enabled, before its worker runs', () => {
@@ -87,11 +87,12 @@ describe('registration follows the plugin lifecycle', () => {
 });
 
 describe('scene.createLayer for a custom kind', () => {
-  it('creates the layer with every declared prop at its default', () => {
+  it('creates the layer with every declared prop at its default', async () => {
     const w = bootPlugin(kindPackage('studio.acme.lab'), { granted: ['scene:write'] });
     const before = customLayerIds().length;
 
-    w.callAndWait('scene.createLayer', { kind: 'studio.acme.lab.depthImage' });
+    // B5: an engine `pasteLayers` — the call answers once the engine applied it.
+    await w.callAsync('scene.createLayer', { kind: 'studio.acme.lab.depthImage' });
 
     const ids = customLayerIds();
     expect(ids).toHaveLength(before + 1);
@@ -104,10 +105,10 @@ describe('scene.createLayer for a custom kind', () => {
     });
   });
 
-  it('validates the props HOST-side and refuses what the schema forbids', () => {
+  it('validates the props HOST-side and refuses what the schema forbids', async () => {
     const w = bootPlugin(kindPackage('studio.acme.lab'), { granted: ['scene:write'] });
 
-    w.callAndWait('scene.createLayer', {
+    await w.callAsync('scene.createLayer', {
       kind: 'studio.acme.lab.depthImage',
       props: { focal: 500, mode: 'orbit', invented: true },
     });
@@ -122,7 +123,7 @@ describe('scene.createLayer for a custom kind', () => {
     expect(record.props.invented).toBeUndefined();
   });
 
-  it('is ONE undo entry, labelled with the plugin name', () => {
+  it('is ONE undo entry, labelled with the plugin name', async () => {
     const w = bootPlugin(kindPackage('studio.acme.lab'), { granted: ['scene:write'] });
     const history = getCommandSystem().getHistory();
     const pushed: string[] = [];
@@ -132,7 +133,7 @@ describe('scene.createLayer for a custom kind', () => {
       realPush(c as never);
     };
 
-    w.callAndWait('scene.createLayer', { kind: 'studio.acme.lab.depthImage', name: 'Hero depth' });
+    await w.callAsync('scene.createLayer', { kind: 'studio.acme.lab.depthImage', name: 'Hero depth' });
 
     // ONE entry for the whole creation, not one per property written. And the
     // label names the plugin: a user reading their undo stack has to be able to

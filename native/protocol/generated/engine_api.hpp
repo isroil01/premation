@@ -865,6 +865,10 @@ struct Swatch;
 struct SetSwatches;
 struct LibraryMaterial;
 struct SetMaterials;
+struct MotionBlurPatch;
+struct SetMotionBlur;
+struct ColorManagementPatch;
+struct SetColorManagement;
 struct InterpretationPatch;
 struct ImportFile;
 struct ImportFiles;
@@ -1019,6 +1023,9 @@ struct TranscribeJob;
 struct AudioAnalysisJob;
 struct RenderJob;
 struct PrerenderJob;
+struct ProxyJob;
+struct AudioDuckJob;
+struct AudioGateJob;
 struct JobSpec;
 struct StartJob;
 struct CancelJob;
@@ -1111,6 +1118,7 @@ struct PropertyTree;
 struct KeyframeSet;
 struct RenderSettings;
 struct RenderItemInfo;
+struct ColorManagementSettings;
 struct DocumentSnapshot;
 struct ExportedDocument;
 struct CompositionDetails;
@@ -1188,6 +1196,8 @@ struct TransitionsChangedEvent;
 struct GuidesChangedEvent;
 struct SwatchesChangedEvent;
 struct MaterialsChangedEvent;
+struct MotionBlurChangedEvent;
+struct ColorManagementChangedEvent;
 struct HistoryChangedEvent;
 struct DirtyChangedEvent;
 struct TransportChangedEvent;
@@ -1621,6 +1631,32 @@ struct SetMaterials {
   bool operator==(const SetMaterials&) const = default;
 };
 
+struct MotionBlurPatch {
+  std::optional<bool> enabled;
+  std::optional<double> shutter_angle;
+  std::optional<double> shutter_phase;
+  std::optional<std::uint32_t> samples_per_frame;
+  std::optional<std::uint32_t> adaptive_sample_limit;
+  bool operator==(const MotionBlurPatch&) const = default;
+};
+
+struct SetMotionBlur {
+  MotionBlurPatch patch;
+  bool operator==(const SetMotionBlur&) const = default;
+};
+
+struct ColorManagementPatch {
+  std::optional<RenderWorkingSpace> working_space;
+  std::optional<RenderDisplayTransform> display_transform;
+  std::optional<std::uint32_t> bit_depth;
+  bool operator==(const ColorManagementPatch&) const = default;
+};
+
+struct SetColorManagement {
+  ColorManagementPatch patch;
+  bool operator==(const SetColorManagement&) const = default;
+};
+
 struct InterpretationPatch {
   std::optional<AlphaMode> alpha;
   std::optional<Color> premultiplied_matte;
@@ -1658,6 +1694,7 @@ struct ImportBytesFile {
   std::optional<ItemId> folder;
   std::optional<InterpretationPatch> interpretation;
   std::optional<std::string> origin_path;
+  std::optional<std::string> source;
   bool operator==(const ImportBytesFile&) const = default;
 };
 
@@ -2233,6 +2270,7 @@ struct SetExpression {
   std::string source;
   bool enabled = false;
   std::optional<std::uint32_t> member;
+  std::optional<std::string> owner;
   bool operator==(const SetExpression&) const = default;
 };
 
@@ -2339,6 +2377,7 @@ struct AddEffect {
   std::string effect;
   std::optional<std::uint32_t> index;
   std::vector<PropertyInit> params;
+  std::optional<std::string> id;
   bool operator==(const AddEffect&) const = default;
 };
 
@@ -2671,6 +2710,11 @@ struct TrackMotionJob {
   TimeRange range;
   TrackDirection direction = TrackDirection::forward;
   std::optional<PropRef> apply_to;
+  std::optional<Time> origin;
+  std::optional<double> min_confidence;
+  std::optional<std::uint32_t> max_coast_frames;
+  std::optional<std::uint32_t> analysis_max_edge;
+  bool stabilize = false;
   bool operator==(const TrackMotionJob&) const = default;
 };
 
@@ -2679,6 +2723,7 @@ struct StabilizeJob {
   TimeRange range;
   double smoothness = 0.0;
   std::string method;
+  std::optional<std::uint32_t> analysis_max_edge;
   bool operator==(const StabilizeJob&) const = default;
 };
 
@@ -2687,6 +2732,11 @@ struct AutoTraceJob {
   TimeRange range;
   std::string channel;
   double threshold = 0.0;
+  std::optional<double> tolerance;
+  std::optional<double> blur;
+  std::optional<double> min_area;
+  bool every_frame = false;
+  bool invert = false;
   bool operator==(const AutoTraceJob&) const = default;
 };
 
@@ -2694,6 +2744,10 @@ struct SceneDetectJob {
   LayerId layer;
   bool create_markers = false;
   bool split_layers = false;
+  std::optional<double> threshold;
+  std::optional<double> min_shot_seconds;
+  std::optional<double> sensitivity;
+  std::optional<bool> dissolves;
   bool operator==(const SceneDetectJob&) const = default;
 };
 
@@ -2701,6 +2755,10 @@ struct ObjectMatteJob {
   LayerId layer;
   TimeRange range;
   std::vector<Vec2> prompts;
+  std::vector<Vec2> background_prompts;
+  std::string encoder_model;
+  std::string decoder_model;
+  std::optional<Rect> box;
   bool operator==(const ObjectMatteJob&) const = default;
 };
 
@@ -2715,6 +2773,18 @@ struct AudioAnalysisJob {
   LayerId layer;
   bool beats = false;
   bool amplitude_keyframes = false;
+  bool silence = false;
+  bool remove_silence = false;
+  std::optional<double> silence_threshold_db;
+  std::optional<double> silence_min_ms;
+  std::optional<double> silence_padding_ms;
+  std::optional<std::string> amplitude_channel;
+  std::optional<std::uint32_t> amplitude_smoothing;
+  std::optional<std::uint32_t> amplitude_frame_step;
+  std::optional<double> amplitude_min_delta;
+  std::optional<double> amplitude_gain;
+  bool beat_markers = false;
+  std::optional<std::uint32_t> beat_every;
   bool operator==(const AudioAnalysisJob&) const = default;
 };
 
@@ -2730,6 +2800,26 @@ struct PrerenderJob {
   bool operator==(const PrerenderJob&) const = default;
 };
 
+struct ProxyJob {
+  ItemId item;
+  std::string output_folder;
+  std::optional<std::uint32_t> max_edge;
+  bool operator==(const ProxyJob&) const = default;
+};
+
+struct AudioDuckJob {
+  LayerId music;
+  std::vector<LayerId> voices;
+  std::string params;
+  bool operator==(const AudioDuckJob&) const = default;
+};
+
+struct AudioGateJob {
+  LayerId layer;
+  std::string params;
+  bool operator==(const AudioGateJob&) const = default;
+};
+
 struct JobSpec {
   enum class Kind : std::uint32_t {
     track_motion = 1,
@@ -2741,8 +2831,11 @@ struct JobSpec {
     audio_analysis = 7,
     render = 8,
     prerender = 9,
+    proxy = 709,
+    audio_duck = 710,
+    audio_gate = 711,
   };
-  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob> v;
+  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob, ProxyJob, AudioDuckJob, AudioGateJob> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const JobSpec&) const = default;
 };
@@ -2799,6 +2892,8 @@ struct Command {
     set_guides = 22,
     set_swatches = 23,
     set_materials = 24,
+    set_motion_blur = 724,
+    set_color_management = 725,
     import_files = 50,
     import_bytes = 70,
     relink_item = 51,
@@ -2930,7 +3025,7 @@ struct Command {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, SetOverlayGeometry, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, SetMotionBlur, SetColorManagement, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, SetOverlayGeometry, StartJob, CancelJob, ApplyJobResult, SetPluginEnabled, SetPluginData> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Command&) const = default;
 };
@@ -3403,6 +3498,8 @@ struct CommandResult {
     set_guides = 22,
     set_swatches = 23,
     set_materials = 24,
+    set_motion_blur = 724,
+    set_color_management = 725,
     import_files = 50,
     import_bytes = 70,
     relink_item = 51,
@@ -3534,7 +3631,7 @@ struct CommandResult {
     set_plugin_enabled = 870,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ItemList, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
 };
@@ -3798,6 +3895,13 @@ struct RenderItemInfo {
   bool operator==(const RenderItemInfo&) const = default;
 };
 
+struct ColorManagementSettings {
+  RenderWorkingSpace working_space = RenderWorkingSpace::srgb_linear;
+  RenderDisplayTransform display_transform = RenderDisplayTransform::srgb;
+  std::uint32_t bit_depth = 0;
+  bool operator==(const ColorManagementSettings&) const = default;
+};
+
 struct DocumentSnapshot {
   Revision revision = 0;
   std::string project_path;
@@ -3812,6 +3916,8 @@ struct DocumentSnapshot {
   std::string guides;
   std::vector<Swatch> swatches;
   std::vector<LibraryMaterial> materials;
+  MotionBlurSettings motion_blur;
+  ColorManagementSettings color_management;
   bool operator==(const DocumentSnapshot&) const = default;
 };
 
@@ -4202,6 +4308,8 @@ struct JobInfo {
   JobStatus status = JobStatus::queued;
   double progress = 0.0;
   std::string message;
+  std::string result;
+  bool applied = false;
   bool operator==(const JobInfo&) const = default;
 };
 
@@ -4405,6 +4513,16 @@ struct MaterialsChangedEvent {
   bool operator==(const MaterialsChangedEvent&) const = default;
 };
 
+struct MotionBlurChangedEvent {
+  MotionBlurSettings motion_blur;
+  bool operator==(const MotionBlurChangedEvent&) const = default;
+};
+
+struct ColorManagementChangedEvent {
+  ColorManagementSettings color_management;
+  bool operator==(const ColorManagementChangedEvent&) const = default;
+};
+
 struct HistoryChangedEvent {
   HistoryState state;
   std::string undo_label;
@@ -4513,6 +4631,8 @@ struct Event {
     guides_changed = 2014,
     swatches_changed = 2015,
     materials_changed = 2016,
+    motion_blur_changed = 2716,
+    color_management_changed = 2717,
     history_changed = 2050,
     dirty_changed = 2051,
     transport_changed = 2052,
@@ -4528,7 +4648,7 @@ struct Event {
     fonts_changed = 2062,
     autosaved = 2063,
   };
-  std::variant<DocumentResetEvent, ProjectSettingsChangedEvent, ItemsChangedEvent, ItemsRemovedEvent, CompositionChangedEvent, LayersChangedEvent, LayersRemovedEvent, LayerOrderChangedEvent, PropertiesChangedEvent, KeyframesChangedEvent, PropertyGroupsChangedEvent, MarkersChangedEvent, RenderQueueChangedEvent, TransitionsChangedEvent, GuidesChangedEvent, SwatchesChangedEvent, MaterialsChangedEvent, HistoryChangedEvent, DirtyChangedEvent, TransportChangedEvent, PlayheadEvent, RenderStatsUpdatedEvent, CacheChangedEvent, EngineErrorEvent, LayerErrorsEvent, JobProgressEvent, JobFinishedEvent, ProjectSavedEvent, AssetStatusChangedEvent, FontsChangedEvent, AutosavedEvent> v;
+  std::variant<DocumentResetEvent, ProjectSettingsChangedEvent, ItemsChangedEvent, ItemsRemovedEvent, CompositionChangedEvent, LayersChangedEvent, LayersRemovedEvent, LayerOrderChangedEvent, PropertiesChangedEvent, KeyframesChangedEvent, PropertyGroupsChangedEvent, MarkersChangedEvent, RenderQueueChangedEvent, TransitionsChangedEvent, GuidesChangedEvent, SwatchesChangedEvent, MaterialsChangedEvent, MotionBlurChangedEvent, ColorManagementChangedEvent, HistoryChangedEvent, DirtyChangedEvent, TransportChangedEvent, PlayheadEvent, RenderStatsUpdatedEvent, CacheChangedEvent, EngineErrorEvent, LayerErrorsEvent, JobProgressEvent, JobFinishedEvent, ProjectSavedEvent, AssetStatusChangedEvent, FontsChangedEvent, AutosavedEvent> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Event&) const = default;
 };
@@ -5141,6 +5261,14 @@ void encode(wire::Writer& w, const LibraryMaterial& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, LibraryMaterial& out);
 void encode(wire::Writer& w, const SetMaterials& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetMaterials& out);
+void encode(wire::Writer& w, const MotionBlurPatch& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, MotionBlurPatch& out);
+void encode(wire::Writer& w, const SetMotionBlur& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetMotionBlur& out);
+void encode(wire::Writer& w, const ColorManagementPatch& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ColorManagementPatch& out);
+void encode(wire::Writer& w, const SetColorManagement& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetColorManagement& out);
 void encode(wire::Writer& w, const InterpretationPatch& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, InterpretationPatch& out);
 void encode(wire::Writer& w, const ImportFile& v);
@@ -5449,6 +5577,12 @@ void encode(wire::Writer& w, const RenderJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderJob& out);
 void encode(wire::Writer& w, const PrerenderJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PrerenderJob& out);
+void encode(wire::Writer& w, const ProxyJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ProxyJob& out);
+void encode(wire::Writer& w, const AudioDuckJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, AudioDuckJob& out);
+void encode(wire::Writer& w, const AudioGateJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, AudioGateJob& out);
 void encode(wire::Writer& w, const JobSpec& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, JobSpec& out);
 void encode(wire::Writer& w, const StartJob& v);
@@ -5633,6 +5767,8 @@ void encode(wire::Writer& w, const RenderSettings& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderSettings& out);
 void encode(wire::Writer& w, const RenderItemInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderItemInfo& out);
+void encode(wire::Writer& w, const ColorManagementSettings& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ColorManagementSettings& out);
 void encode(wire::Writer& w, const DocumentSnapshot& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, DocumentSnapshot& out);
 void encode(wire::Writer& w, const ExportedDocument& v);
@@ -5787,6 +5923,10 @@ void encode(wire::Writer& w, const SwatchesChangedEvent& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SwatchesChangedEvent& out);
 void encode(wire::Writer& w, const MaterialsChangedEvent& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, MaterialsChangedEvent& out);
+void encode(wire::Writer& w, const MotionBlurChangedEvent& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, MotionBlurChangedEvent& out);
+void encode(wire::Writer& w, const ColorManagementChangedEvent& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ColorManagementChangedEvent& out);
 void encode(wire::Writer& w, const HistoryChangedEvent& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, HistoryChangedEvent& out);
 void encode(wire::Writer& w, const DirtyChangedEvent& v);

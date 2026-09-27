@@ -152,9 +152,10 @@ class FontSet {
   bool load_manifest(const std::filesystem::path& manifest, std::string& error);
   /// Map a generic / unknown family to a registered one (e.g. "system-ui" → "Arial").
   void alias(std::string from, std::string to);
-  /// Register every installed face of a SYSTEM family (DirectWrite on Windows;
-  /// elsewhere not implemented yet). CSS generic names map the way Blink's
-  /// defaults do on this OS (system-ui → Segoe UI, sans-serif → Arial, …).
+  /// Register every installed face of a SYSTEM family (DirectWrite on Windows,
+  /// CoreText on macOS through font_catalog.hpp, fontconfig on Linux). CSS
+  /// generic names map the way Blink's defaults do on this OS (Windows:
+  /// system-ui → Segoe UI, sans-serif → Arial; macOS: sans-serif → Helvetica, …).
   /// Returns how many faces were added. Call before shaping from threads:
   /// shaping only reads the set.
   std::size_t add_system_family(const std::string& family);

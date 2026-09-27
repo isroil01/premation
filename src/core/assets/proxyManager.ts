@@ -12,6 +12,7 @@
  * invariant.
  */
 
+import { startEngineJob } from '@core/engine/engineJobs';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import {
@@ -91,6 +92,23 @@ const current = (assetId: string): ImportedAsset | undefined =>
  * leave the editor working).
  */
 export async function startProxy(assetId: string): Promise<ProxyRefusal | null> {
+  // The engine transcodes the proxy itself when it runs jobs (the proxy job:
+  // the same rule and arguments, written beside the project and attached with
+  // setProxy — the item's proxy then arrives through the mirror).
+  const engineAsset = current(assetId);
+  if (engineAsset && engineAsset.type === 'video' && engineAsset.proxy?.status !== 'generating') {
+    const handle = await startEngineJob<{ path: string }>({ kind: 'proxy', value: { item: assetId, outputFolder: '' } }).catch(() => null);
+    if (handle) {
+      write(assetId, { status: 'generating' });
+      const out = await handle.done;
+      if (current(assetId)?.proxy?.status === 'generating') {
+        if (out.status === 'done' && out.result?.path) write(assetId, { status: 'ready', src: out.result.path });
+        else if (out.status === 'failed') write(assetId, { status: 'failed', error: out.error?.message ?? 'The proxy could not be made.' });
+        else write(assetId, null);
+      }
+      return null;
+    }
+  }
   const asset = current(assetId);
   const refusal = proxyRefusal(asset);
   if (refusal || !asset) return refusal ?? 'source-unreadable';

@@ -1106,7 +1106,7 @@ export interface NewProject {
   template?: string;
 }
 
-/** Open a .motion project (or a recovery file). Clears history; the UI receives documentReset. F2: a portable `.motion` zip (Save Portable Copy's form) opens as an UNTITLED copy — projectPath '' (Save asks where), its embedded footage made reachable by the engine (C++: unpacked content-addressed into a staging bundle, srcs `motion-blob:<sha256>`; TypeScript: session object URLs), and a `portable:` warning. A compressed (DEFLATE) zip entry or a zip that is not a project is `io`. */
+/** Open a .motion project (or a recovery file). Clears history; the UI receives documentReset. F2: a portable `.motion` zip (Save Portable Copy's form) opens as an UNTITLED copy — projectPath '' (Save asks where), its embedded footage made reachable by the engine (C++: unpacked content-addressed into a staging bundle, srcs `motion-blob:<sha256>`; TypeScript: session object URLs), and a `portable:` warning. STORE and DEFLATE entries are read (another compression method, a damaged entry or a zip that is not a project is `io`). */
 export interface OpenProject {
   path: string;
 }
@@ -1175,6 +1175,43 @@ export interface SetSwatches {
 /** F2 — replace the project material library, in order. `params` are normalized (every axis clamped, unknown keys dropped); params that are not a JSON object are `invalidArgument`; an empty, repeated or `builtin:` id is re-minted (`mat_doc_<n>`), names are trimmed and a blank one becomes "Material", a swatch that is not `#rrggbb` is dropped. Inverse: the previous library. */
 export interface SetMaterials {
   materials: LibraryMaterial[];
+}
+
+/** F2 — patch of the project's motion-blur record (motionBlurStore: the composition's Enable Motion Blur master switch, shutter angle / phase, samples per frame, adaptive sample limit). One record per document — every composition reports it as `CompSettings.motionBlur`, and `setCompositionSettings{motionBlur}` writes the same record. Only present fields change. */
+export interface MotionBlurPatch {
+  enabled?: boolean;
+  /** Degrees, clamped to 0…360. */
+  shutterAngle?: number;
+  /** Degrees, clamped to −360…360. */
+  shutterPhase?: number;
+  /** Rounded and clamped to 2…32. */
+  samplesPerFrame?: number;
+  /** Rounded and clamped to 2…128. */
+  adaptiveSampleLimit?: number;
+}
+
+/** F2 — the project's colour management (colorManagementStore: working space, display transform, intermediate bit depth), as the snapshot and `colorManagementChanged` report it. */
+export interface ColorManagementSettings {
+  workingSpace: RenderWorkingSpace;
+  displayTransform: RenderDisplayTransform;
+  /** 16 (half float) or 32 (float). */
+  bitDepth: number;
+}
+
+export interface ColorManagementPatch {
+  workingSpace?: RenderWorkingSpace;
+  displayTransform?: RenderDisplayTransform;
+  bitDepth?: number;
+}
+
+/** F2 — patch the motion-blur record (the master switch and shutter). Values are clamped as on open. Inverse: the previous record. */
+export interface SetMotionBlur {
+  patch: MotionBlurPatch;
+}
+
+/** F2 — patch colour management. A bit depth other than 16 or 32 is `invalidArgument` (nothing changes). `setProjectSettings{workingSpace, bitDepth}` also writes this record where the renderer can honour the value. Inverse: the previous settings. */
+export interface SetColorManagement {
+  patch: ColorManagementPatch;
 }
 
 export interface OpenProjectResult {
@@ -1254,6 +1291,12 @@ export interface ImportBytesFile {
   interpretation?: InterpretationPatch;
   /** Where the bytes came from, when there is a file behind them (recorded for relink); absent = none. */
   originPath?: string;
+  /**
+   * B5 — who made the bytes, stored on the record (`source`): `user` (absent), `ai` (an AI tool's generated or
+   * attached media), `derived` (an automation client's generated image — kept off the Assets panel's shelf).
+   * Anything else is `invalidArgument`.
+   */
+  source?: string;
 }
 
 /** B3 — import footage from bytes. The media port stores the bytes (the project bundle / the device library, content-addressed) and returns the record; the item is added in the same undoable entry (undo removes the item; the stored bytes stay, as for importFiles). An empty list or empty data is `invalidArgument`; bytes the importer cannot decode are `io`. */
@@ -1995,12 +2038,16 @@ export interface SetDimensionsSeparated {
  * `member`: Premation's per-dimension expression on an UNSEPARATED vector (one axis's field in the inspector) —
  * only that dimension carries the source (its number, or component `member` of a vector result); absent = the
  * property's expression, on every dimension. A separated dimension is its own property (`transform/position/x`).
+ * B5 `owner`: the PLUGIN that wrote it (expression provenance, stored as the expression's `authoredBy` and saved
+ * with the document: a user can tell a formula they wrote from one a plugin left behind). Authorship is REPLACED,
+ * never inherited — a write without `owner` (the user's own edit) clears a plugin's mark.
  */
 export interface SetExpression {
   prop: PropRef;
   source: string;
   enabled: boolean;
   member?: number;
+  owner?: string;
 }
 
 /** Enable / disable expressions (the `=` switch). `member`: only that dimension's expression (see setExpression). */
@@ -2147,12 +2194,18 @@ export interface KeyframeIds {
   ids: KeyframeId[];
 }
 
-/** Add an effect to each layer (at `index` in the stack, absent = end). Returns the new group paths ('effects/<id>') in layer order. */
+/**
+ * Add an effect to each layer (at `index` in the stack, absent = end). Returns the new group paths ('effects/<id>') in layer order.
+ * B5 `id`: a CALLER-CHOSEN effect id, used on every layer (an automation client's handle: an AI library emitter keys
+ * `effects/<id>/<param>` before the call returns). Letters, digits, '_' and '-' only (`invalidArgument`); a layer that
+ * already has an effect with that id is `conflict`. Absent = the engine mints `fx_<n>`.
+ */
 export interface AddEffect {
   layers: LayerId[];
   effect: string;
   index?: number;
   params: PropertyInit[];
+  id?: string;
 }
 
 /** Add a mask. Returns 'masks/<id>'. */
@@ -2534,32 +2587,67 @@ export interface TrackMotionJob {
   direction: TrackDirection;
   /** Where to apply: a layer's transform, an effect point, a mask. Absent = keep as tracker data only. */
   applyTo?: PropRef;
+  /** The time the points' positions are given at (layer pixels on that frame). Default: `range.start` for `forward`, the range's last frame for `backward`, the playhead clamped into the range for `both` (tracked outward from there, autoTrack.ts). */
+  origin?: Time;
+  /** NCC below this is a lost frame: the point coasts on its last confident velocity (tracker.ts `minConfidence`, default 0.55). */
+  minConfidence?: number;
+  /** Consecutive coasted frames before a point is given up (tracker.ts `maxCoastFrames`, default 8). */
+  maxCoastFrames?: number;
+  /** Long edge the footage is decoded at for the analysis (the TS analysis tier; default 960, 0 = full size). Points, sizes and the result stay in layer pixels. */
+  analysisMaxEdge?: number;
+  /** Stabilize Motion (trackerStore mode `stabilize`, applyTrack.ts planStabilize): point 0's inverse motion written as position keys on the TRACKED layer; `applyTo` is not read. Kind `position` only. */
+  stabilize: boolean;
 }
 
+/** `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%). */
 export interface StabilizeJob {
   layer: LayerId;
   range: TimeRange;
   smoothness: number;
   method: string;
+  /** Long edge the footage is decoded at (the TS analysis tier; default 960, 0 = full size). The flow itself runs at most 480 px wide, as smoothStabilize.ts. */
+  analysisMaxEdge?: number;
 }
 
+/** `channel`: `alpha`, `luminance`, `red`, `green`, `blue`; `threshold` 0…1. Only the frame at `range.start` is traced unless `everyFrame` (then one mask path key per frame of the range). */
 export interface AutoTraceJob {
   layer: LayerId;
   range: TimeRange;
   channel: string;
   threshold: number;
+  /** Path simplification tolerance in pixels (autoTrace.ts `tolerance`, default 1.5). */
+  tolerance?: number;
+  /** Blur radius (px) applied to the channel before thresholding (default 0). */
+  blur?: number;
+  /** Smallest traced area, pixels (default 16). */
+  minArea?: number;
+  everyFrame: boolean;
+  /** Invert the matte before tracing. */
+  invert: boolean;
 }
 
+/** Scene Edit Detection (sceneEditDetect.ts): cuts and dissolves in a video layer's visible span, from 64-bin luma-histogram distances with an adaptive threshold. `createMarkers`: composition markers "Cut N" / "Dissolve N"; `splitLayers`: the layer split at every cut (markers win when both are set). `threshold` is the L1 floor (0…2, default 0.3), `sensitivity` the multiple of the local median (default 5), `minShotSeconds` absent = 6 frames; `dissolves` default true. */
 export interface SceneDetectJob {
   layer: LayerId;
   createMarkers: boolean;
   splitLayers: boolean;
+  threshold?: number;
+  minShotSeconds?: number;
+  sensitivity?: number;
+  dissolves?: boolean;
 }
 
+/** `prompts` are foreground clicks in layer pixels at `range.start`; `backgroundPrompts` background clicks. The matte is applied as masks traced from the segmentation. */
 export interface ObjectMatteJob {
   layer: LayerId;
   range: TimeRange;
   prompts: Vec2[];
+  backgroundPrompts: Vec2[];
+  /** The SAM encoder / decoder ONNX files (the page's bundled `models/object-matte/*` or the user's install). Empty = the engine's default search (PREMATION_SAM_DIR). */
+  encoderModel: string;
+  decoderModel: string;
+  /** A drawn box prompt in layer pixels at `range.start` (objectMask.ts marquee). It wins over `prompts` / `backgroundPrompts` when both arrive: its centre is the foreground point, and nothing outside it (plus an 8% + 4 px margin) is kept. */
+  box?: Rect;
 }
 
 export interface TranscribeJob {
@@ -2568,10 +2656,50 @@ export interface TranscribeJob {
   createCaptions: boolean;
 }
 
+/** One audio analysis over a layer's sound (an audio layer, or a video layer's own track). */
 export interface AudioAnalysisJob {
   layer: LayerId;
+  /** Beat grid (beatGrid.ts analyseLayerBeats): bpm, confidence, beats and onsets in composition seconds in the summary. */
   beats: boolean;
+  /** Amplitude envelope → keyframes (audioKeyframes.ts): on the layer's `audioAmplitude` slider control. */
   amplitudeKeyframes: boolean;
+  /** Silence detection (silenceRemoval.ts detectSilences); with `removeSilence` the silent stretches are cut out of the layer and the layers playing the same file in its composition, gaps closed. */
+  silence: boolean;
+  removeSilence: boolean;
+  silenceThresholdDb?: number;
+  silenceMinMs?: number;
+  silencePaddingMs?: number;
+  /** `both` (default), `left`, `right` — the channel the amplitude envelope follows. */
+  amplitudeChannel?: string;
+  /** Envelope smoothing window in frames (default 1 = none). */
+  amplitudeSmoothing?: number;
+  /** Sample every Nth frame (default 1), keep a frame only when it moves ≥ minDelta (0–100, default 2), scale by gain (default 1) — AudioKeyframeOptions. */
+  amplitudeFrameStep?: number;
+  amplitudeMinDelta?: number;
+  amplitudeGain?: number;
+  /** With `beats`: composition markers "Beat N" on every `beatEvery`-th beat (default 1; at most 512) — Markers on Beats. Without it the grid is the summary only (Animate on Beats reads it). */
+  beatMarkers: boolean;
+  beatEvery?: number;
+}
+
+/** Ducking (ducking.ts planDucking): lower `music`'s level under the voice (`voices[0]`; the page's dialog ducks under one layer) over the composition's work area, as Audio Levels keyframes, and remember the parameters (`audio/ducking`). `params` is the DuckingParams JSON (duckDb, thresholdDb, attackMs, releaseMs, holdMs); absent keys take the defaults. */
+export interface AudioDuckJob {
+  music: LayerId;
+  voices: LayerId[];
+  params: string;
+}
+
+/** Noise gate (audioGate.ts computeGateEnvelope + planGate): close the layer's level while it is quiet, over its audible span inside the work area, as Audio Levels keyframes, and remember the parameters (`audio/gate`). `params` is the GateParams JSON (thresholdDb, attackMs, holdMs, releaseMs, rangeDb). */
+export interface AudioGateJob {
+  layer: LayerId;
+  params: string;
+}
+
+/** A low-resolution editing proxy for a footage item (assets/proxy.ts): transcoded by ffmpeg into `outputFolder` (default: next to the project, `Proxies/`), then attached with setProxy. `maxEdge` default 960. */
+export interface ProxyJob {
+  item: ItemId;
+  outputFolder: string;
+  maxEdge?: number;
 }
 
 export interface RenderJob {
@@ -2594,7 +2722,10 @@ export type JobSpec =
   | { kind: 'transcribe'; value: TranscribeJob }
   | { kind: 'audioAnalysis'; value: AudioAnalysisJob }
   | { kind: 'render'; value: RenderJob }
-  | { kind: 'prerender'; value: PrerenderJob };
+  | { kind: 'prerender'; value: PrerenderJob }
+  | { kind: 'proxy'; value: ProxyJob }
+  | { kind: 'audioDuck'; value: AudioDuckJob }
+  | { kind: 'audioGate'; value: AudioGateJob };
 export type JobSpecKind = JobSpec['kind'];
 
 export interface StartJob {
@@ -2778,6 +2909,10 @@ export interface DocumentSnapshot {
   guides: string;
   swatches: Swatch[];
   materials: LibraryMaterial[];
+  /** F2 — the project's motion-blur record (setMotionBlur). */
+  motionBlur: MotionBlurSettings;
+  /** F2 — the project's colour management (setColorManagement). */
+  colorManagement: ColorManagementSettings;
 }
 
 /** The document as saveProject would write it: a .motion project's JSON, UTF-8. */
@@ -3387,6 +3522,10 @@ export interface JobInfo {
   status: JobStatus;
   progress: number;
   message: string;
+  /** The finished job's summary, JSON (kind-specific, ENGINE_API.md §4.9); '' until done. */
+  result: string;
+  /** Whether its result was applied (false while running, with apply=false, or when it changes nothing). */
+  applied: boolean;
 }
 
 export interface GetHistory {}
@@ -3511,6 +3650,16 @@ export interface MaterialsChangedEvent {
   materials: LibraryMaterial[];
 }
 
+/** F2 — the motion-blur record (full replacement), after setMotionBlur, setCompositionSettings{motionBlur}, a restore or their undo. Every composition's `compositionChanged` follows too (CompSettings.motionBlur). */
+export interface MotionBlurChangedEvent {
+  motionBlur: MotionBlurSettings;
+}
+
+/** F2 — colour management (full replacement), after setColorManagement, setProjectSettings, a restore or their undo. */
+export interface ColorManagementChangedEvent {
+  colorManagement: ColorManagementSettings;
+}
+
 export interface HistoryChangedEvent {
   state: HistoryState;
   undoLabel: string;
@@ -3596,7 +3745,7 @@ export interface FrameSlots {
   width: number;
   height: number;
   format: PixelFormat;
-  /** true: `handles` are NT handles valid in the host process (sharedTexture import); the ENGINE owns them — the host never closes one. false: offscreen slots (headless, tests); handles are 0. */
+  /** true: shared slots for sharedTexture import — Windows: NT handles valid in the host process, owned by the ENGINE (the host never closes one); macOS: global IOSurfaceIDs the host resolves with IOSurfaceLookup and holds while the ring is current. false: offscreen slots (headless, tests, the route-A copy); handles are 0. */
   shared: boolean;
   /** One per slot, at most 16. */
   handles: number[];
@@ -4150,6 +4299,8 @@ export type Command =
   | ({ type: 'setGuides' } & SetGuides)
   | ({ type: 'setSwatches' } & SetSwatches)
   | ({ type: 'setMaterials' } & SetMaterials)
+  | ({ type: 'setMotionBlur' } & SetMotionBlur)
+  | ({ type: 'setColorManagement' } & SetColorManagement)
   | ({ type: 'importFiles' } & ImportFiles)
   | ({ type: 'importBytes' } & ImportBytes)
   | ({ type: 'relinkItem' } & RelinkItem)
@@ -4304,6 +4455,8 @@ export type CommandResult =
   | ({ type: 'setGuides' } & Empty)
   | ({ type: 'setSwatches' } & Empty)
   | ({ type: 'setMaterials' } & Empty)
+  | ({ type: 'setMotionBlur' } & Empty)
+  | ({ type: 'setColorManagement' } & Empty)
   | ({ type: 'importFiles' } & ItemList)
   | ({ type: 'importBytes' } & ItemList)
   | ({ type: 'relinkItem' } & Empty)
@@ -4545,6 +4698,8 @@ export type Event =
   | ({ type: 'guidesChanged' } & GuidesChangedEvent)
   | ({ type: 'swatchesChanged' } & SwatchesChangedEvent)
   | ({ type: 'materialsChanged' } & MaterialsChangedEvent)
+  | ({ type: 'motionBlurChanged' } & MotionBlurChangedEvent)
+  | ({ type: 'colorManagementChanged' } & ColorManagementChangedEvent)
   | ({ type: 'historyChanged' } & HistoryChangedEvent)
   | ({ type: 'dirtyChanged' } & DirtyChangedEvent)
   | ({ type: 'transportChanged' } & TransportChangedEvent)
@@ -4583,6 +4738,8 @@ export interface CommandArgs {
   setGuides: SetGuides;
   setSwatches: SetSwatches;
   setMaterials: SetMaterials;
+  setMotionBlur: SetMotionBlur;
+  setColorManagement: SetColorManagement;
   importFiles: ImportFiles;
   importBytes: ImportBytes;
   relinkItem: RelinkItem;
@@ -4737,6 +4894,8 @@ export interface CommandResults {
   setGuides: Empty;
   setSwatches: Empty;
   setMaterials: Empty;
+  setMotionBlur: Empty;
+  setColorManagement: Empty;
   importFiles: ItemList;
   importBytes: ItemList;
   relinkItem: Empty;
@@ -4978,6 +5137,8 @@ export interface EventPayloads {
   guidesChanged: GuidesChangedEvent;
   swatchesChanged: SwatchesChangedEvent;
   materialsChanged: MaterialsChangedEvent;
+  motionBlurChanged: MotionBlurChangedEvent;
+  colorManagementChanged: ColorManagementChangedEvent;
   historyChanged: HistoryChangedEvent;
   dirtyChanged: DirtyChangedEvent;
   transportChanged: TransportChangedEvent;

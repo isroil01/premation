@@ -270,7 +270,8 @@ describe('the permission gate', () => {
       folders: [],
     });
     const w = bootPlugin(testPackage(['scene:write'], 'com.gate.layer'));
-    const r = w.callAndWait('scene.createLayer', { kind: 'image', assetId: 'img-1' });
+    // B5: an engine `pasteLayers` — the call answers once the engine applied it.
+    const r = await w.callAsync('scene.createLayer', { kind: 'image', assetId: 'img-1' });
     expect({ ok: r.ok, error: r.ok === false ? r.error : '' }).toEqual({ ok: true, error: '' });
 
     const node = defaultSceneGraph.getNode(String(r.ok === true ? r.value : ''));

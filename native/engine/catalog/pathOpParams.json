@@ -1,0 +1,20 @@
+[
+  "amount",
+  "detail",
+  "wigglesPerSecond",
+  "correlation",
+  "wiggleRotation",
+  "wiggleScale",
+  "miterLimit",
+  "start",
+  "end",
+  "offset",
+  "copies",
+  "offsetX",
+  "offsetY",
+  "offsetRotation",
+  "offsetScale",
+  "offsetOpacity",
+  "anchorX",
+  "anchorY"
+]

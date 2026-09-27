@@ -290,10 +290,16 @@ export const groupHandlers: HandlerTable = {
     if (cmd.layers.length === 0) fail('invalidArgument', 'no layers given');
     const def = effectDefFor(cmd.effect);
     if (!def) fail('notFound', `no effect '${cmd.effect}'`, { detail: JSON.stringify({ effect: cmd.effect }) });
+    // B5: a caller-chosen id (an automation client's handle), the same on every layer.
+    if (cmd.id !== undefined && !/^[A-Za-z0-9_-]+$/.test(cmd.id)) fail('invalidArgument', `effect id '${cmd.id}' may use only letters, digits, '_' and '-'`);
     const ids = cmd.layers.map((layer) => {
       requireLayer(layer);
       const count = getNodeEffects(layer).length;
       if (cmd.index !== undefined && cmd.index > count) fail('outOfRange', `index ${cmd.index} is past the ${count} effects of '${layer}'`, { layer });
+      if (cmd.id !== undefined) {
+        if (getNodeEffects(layer).some((e) => e.id === cmd.id)) fail('conflict', `layer '${layer}' already has an effect '${cmd.id}'`, { layer, path: `effects/${cmd.id}` });
+        return cmd.id;
+      }
       return ctx.mintGroupId('fx_', (id) => getNodeEffects(layer).some((e) => e.id === id));
     });
     return {

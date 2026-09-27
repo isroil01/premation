@@ -6,6 +6,8 @@
 #pragma once
 
 #include <functional>
+#include <future>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <utility>
@@ -59,6 +61,20 @@ class SimulatedSink final : public FrameSink {
   }
   [[nodiscard]] std::string adapter() const override { return "none (simulated)"; }
   [[nodiscard]] std::string backend() const override { return "none"; }
+
+  /// Tests: what render_still / read_pixels answer (unset = no renderer, the
+  /// FrameSink defaults). Called on the caller's thread.
+  std::function<StillImage(std::uint32_t width, std::uint32_t height)> onStill;
+  std::function<WorkingPixels(std::uint32_t viewport, PixelRegion region)> onReadPixels;
+  [[nodiscard]] std::future<StillImage> render_still(std::shared_ptr<BuiltFrame> frame, std::uint32_t width,
+                                                     std::uint32_t height) override {
+    if (!onStill) return FrameSink::render_still(std::move(frame), width, height);
+    return ready_future(onStill(width, height));
+  }
+  [[nodiscard]] std::future<WorkingPixels> read_pixels(std::uint32_t viewport, PixelRegion region) override {
+    if (!onReadPixels) return FrameSink::read_pixels(viewport, region);
+    return ready_future(onReadPixels(viewport, region));
+  }
 
   void release(std::uint32_t generation, std::uint32_t slot) {
     const std::lock_guard<std::mutex> lock(m_);

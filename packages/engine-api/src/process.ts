@@ -120,6 +120,8 @@ export interface EngineFrameMeta {
    * layer's records merge, arrays concatenating). Absent without a subscription.
    */
   geometry?: OverlayLayerGeometry[];
+  /** How the frame travelled: a shared GPU texture (route C) or a pixel copy (route A). Absent = shared. */
+  route?: 'shared' | 'copy';
 }
 
 /** Receives a frame; must call `release()` exactly once when done (after drawing). */

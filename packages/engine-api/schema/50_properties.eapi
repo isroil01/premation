@@ -30,7 +30,10 @@ command setDimensionsSeparated = 404 { layer: LayerId = 1; path: PropPath = 2; s
 /// `member`: Premation's per-dimension expression on an UNSEPARATED vector (one axis's field in the inspector) —
 /// only that dimension carries the source (its number, or component `member` of a vector result); absent = the
 /// property's expression, on every dimension. A separated dimension is its own property (`transform/position/x`).
-command setExpression = 405 { prop: PropRef = 1; source: string = 2; enabled: bool = 3; member?: u32 = 4; } -> ExpressionResult;
+/// B5 `owner`: the PLUGIN that wrote it (expression provenance, stored as the expression's `authoredBy` and saved
+/// with the document: a user can tell a formula they wrote from one a plugin left behind). Authorship is REPLACED,
+/// never inherited — a write without `owner` (the user's own edit) clears a plugin's mark.
+command setExpression = 405 { prop: PropRef = 1; source: string = 2; enabled: bool = 3; member?: u32 = 4; owner?: string = 5; } -> ExpressionResult;
 /// Enable / disable expressions (the `=` switch). `member`: only that dimension's expression (see setExpression).
 command setExpressionEnabled = 406 { props: PropRef[] = 1; enabled: bool = 2; member?: u32 = 3; }
 /// Animation ▸ Keyframe Assistant ▸ Convert Expression to Keyframes (After Effects): sample the property once per
@@ -120,7 +123,10 @@ family "PropertyGroups";
 enum MaskMode { none = 0; add = 1; subtract = 2; intersect = 3; lighten = 4; darken = 5; difference = 6; }
 
 /// Add an effect to each layer (at `index` in the stack, absent = end). Returns the new group paths ('effects/<id>') in layer order.
-command addEffect = 600 { layers: LayerId[] = 1; effect: string = 2; index?: u32 = 3; params: PropertyInit[] = 4; } -> GroupList;
+/// B5 `id`: a CALLER-CHOSEN effect id, used on every layer (an automation client's handle: an AI library emitter keys
+/// `effects/<id>/<param>` before the call returns). Letters, digits, '_' and '-' only (`invalidArgument`); a layer that
+/// already has an effect with that id is `conflict`. Absent = the engine mints `fx_<n>`.
+command addEffect = 600 { layers: LayerId[] = 1; effect: string = 2; index?: u32 = 3; params: PropertyInit[] = 4; id?: string = 5; } -> GroupList;
 /// Add a mask. Returns 'masks/<id>'.
 command addMask = 601 { layer: LayerId = 1; path: BezierPath = 2; mode: MaskMode = 3; name?: string = 4; index?: u32 = 5; inverted: bool = 6; } -> GroupList;
 /// Add any other group under `parent` by match name: text animator ('text/animators', 'ADBE Text Animator'), selector, shape content (rect, ellipse, polystar, path, fill, stroke, gradient fill/stroke, trim, repeater, merge, offset, round corners, twist, wiggle, zig-zag, pucker), layer style, paint stroke, puppet pin, expression control, essential property.

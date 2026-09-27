@@ -1,10 +1,12 @@
-// The engine's four pipes. Every OS call for them lives in pipe_ffi.cpp.
+// The engine's pipes. Every OS call for them lives in pipe_ffi.cpp.
 //
 //   stdin   fd 0  command pipe, host → engine   (framed EngineMessages)
 //   stdout  fd 1  command pipe, engine → host   (framed EngineMessages)
 //   stderr  fd 2  structured log (JSON lines)
 //   fd 3          frame channel, engine → host  (Slots, FrameReady, Pong)
 //   fd 4          frame channel, host → engine  (Release, Ping)
+//   fd 5          pixel stream,  engine → host  (route-A frame copies,
+//                 premation/protocol/pixel_channel.hpp; optional)
 //
 // Why stdio and not a named pipe: the child's stdio pipes need no name, no
 // security descriptor, no rendezvous and no cleanup; they close by themselves
@@ -41,10 +43,11 @@ struct Pipes {
   Handle commandOut;
   Handle framesOut;  // fd 3
   Handle framesIn;   // fd 4
+  Handle pixelsOut;  // fd 5 (absent when the host does not take route-A copies)
 };
 
 /// Take stdin/stdout for the protocol (binary, private stdout duplicate, fd 1
-/// redirected to stderr) and look for fds 3/4. False only when stdin/stdout
+/// redirected to stderr) and look for fds 3/4/5. False only when stdin/stdout
 /// are unusable.
 bool claim_stdio(Pipes& pipes, std::string& error);
 

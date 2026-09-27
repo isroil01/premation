@@ -5,6 +5,9 @@
 #include <unordered_map>
 #include <cmath>
 #include <set>
+#include <string>
+#include <tuple>
+#include <utility>
 
 #include "anim_json.hpp"
 #include "catalog_data.hpp"
@@ -91,6 +94,131 @@ std::vector<GroupType> group_types() {
   }
   return out;
 }
+
+/// getWaveform's source: the media file a layer or an item sounds from.
+struct SoundSource {
+  std::string src;       // '' = no sound (answered as channels = 0)
+  bool silent = false;   // the asset says it has no audio track
+};
+
+std::string str_prop(const Json& props, std::string_view key) {
+  const Json& v = props.at(key);
+  return v.is_string() ? v.str() : std::string();
+}
+
+/// A footage / audio asset's sound (its `src`; an image or a video without an
+/// audio track has none).
+SoundSource asset_sound(const Json& asset) {
+  SoundSource s;
+  s.src = str_prop(asset, "src");
+  const std::string type = str_prop(asset, "type");
+  const Json& md = asset.at("metadata");
+  const bool noTrack = md.at("hasAudioTrack").is_bool() && !md.at("hasAudioTrack").b();
+  if (type == "image" || (type != "audio" && noTrack)) s.silent = true;
+  return s;
+}
+
+/// The source a layer's sound comes from, resolved as the audio program's
+/// voice builder does (engine_frames.cpp audio_voices / video_voices): an
+/// audio layer's Audio component (`__assetId` → the asset's src, else `__src`),
+/// a footage layer's asset. Any other layer has no sound of its own.
+SoundSource layer_sound(const Document& d, const std::string& layer) {
+  const Node& n = require_layer(d, layer);
+  const std::string kind = n.kind();
+  if (kind == "audio") {
+    const Component* a = n.comp("Audio");
+    if (a == nullptr) return {};
+    SoundSource s;
+    s.src = str_prop(a->props, "__src");
+    const std::string assetId = str_prop(a->props, "__assetId");
+    if (!assetId.empty()) {
+      if (const Json* asset = find_asset(d, assetId); asset != nullptr && !str_prop(*asset, "src").empty()) {
+        s.src = str_prop(*asset, "src");
+      }
+    }
+    return s;
+  }
+  if (kind == "video") {
+    std::string assetId;
+    std::string rawSrc;
+    for (const Component& comp : n.components) {
+      if (!str_prop(comp.props, "assetId").empty()) assetId = str_prop(comp.props, "assetId");
+      if (!str_prop(comp.props, "__assetId").empty()) assetId = str_prop(comp.props, "__assetId");
+      if (!str_prop(comp.props, "src").empty()) rawSrc = str_prop(comp.props, "src");
+    }
+    const Json* asset = assetId.empty() ? nullptr : find_asset(d, assetId);
+    if (asset == nullptr) return SoundSource{rawSrc, false};
+    SoundSource s = asset_sound(*asset);
+    if (s.src.empty()) s.src = rawSrc;
+    return s;
+  }
+  fail(ErrorCode::invalid_argument, "layer '" + layer + "' has no sound of its own (an audio or footage layer)", {.layer = layer});
+}
+
+/// hitTest: every id the frame of `comp` can name → the layer of `comp` it
+/// belongs to. A layer names itself; a collapsed precomp's children draw in
+/// `comp`'s frame under their own ids, which belong to the precomp layer
+/// (through any depth of collapsed nesting).
+std::unordered_map<std::string, std::string> hit_owners(const Document& d, const std::string& comp) {
+  constexpr std::size_t kMaxDepth = 16;
+  std::unordered_map<std::string, std::string> owner;
+  struct Pending {
+    std::string comp;
+    std::string outer;  // the layer of `comp` everything under here belongs to
+    std::size_t depth;
+  };
+  std::vector<Pending> todo;
+  std::set<std::string> seen;  // a comp nested twice maps to the first owner (emplace keeps it)
+  for (const std::string& id : layer_ids_of_comp(d, comp)) {
+    owner.emplace(id, id);
+    if (const Node* n = d.node(id)) {
+      if (auto ref = read_comp_ref(*n)) todo.push_back({std::move(*ref), id, 1});
+    }
+  }
+  while (!todo.empty()) {
+    Pending p = std::move(todo.back());
+    todo.pop_back();
+    if (p.depth > kMaxDepth || p.comp == comp || !seen.insert(p.comp + "|" + p.outer).second) continue;
+    for (const std::string& id : layer_ids_of_comp(d, p.comp)) {
+      owner.emplace(id, p.outer);
+      if (const Node* n = d.node(id)) {
+        if (auto ref = read_comp_ref(*n)) todo.push_back({std::move(*ref), p.outer, p.depth + 1});
+      }
+    }
+  }
+  return owner;
+}
+
+/// getThumbnail: the default and the largest long side.
+constexpr std::uint32_t kDefaultThumbnail = 256;
+constexpr std::uint32_t kMaxThumbnail = 4096;
+
+/// A still of srcW × srcH with its long side at most `maxSize` (never enlarged).
+std::pair<std::uint32_t, std::uint32_t> fit_still(double srcW, double srcH, std::uint32_t maxSize) {
+  const double s = std::min(1.0, static_cast<double>(maxSize) / std::max(srcW, srcH));
+  const auto side = [&](double v) { return static_cast<std::uint32_t>(std::clamp(std::round(v * s), 1.0, static_cast<double>(maxSize))); };
+  return {side(srcW), side(srcH)};
+}
+
+/// readPixels reads at most this many pixels (a 256 × 256 region).
+constexpr std::uint64_t kMaxReadPixels = 256ULL * 256ULL;
+
+/// A still's or a pixel read's hook answer that is not `ready` → the error.
+[[noreturn]] void fail_hook(HookAnswer a, const std::string& error, std::string_view what) {
+  switch (a) {
+    case HookAnswer::unsupported:
+      fail(ErrorCode::unsupported, error.empty() ? std::string(what) + " needs the engine's renderer" : error);
+    case HookAnswer::pending:
+      fail(ErrorCode::busy, error.empty() ? std::string(what) + ": not ready yet, ask again" : error);
+    case HookAnswer::ready:
+    case HookAnswer::failed:
+      break;
+  }
+  fail(ErrorCode::internal, error.empty() ? std::string(what) + " failed" : error);
+}
+
+/// getWaveform buckets: enough for a clip bar across an 8K-wide timeline.
+constexpr std::uint32_t kMaxWaveformBuckets = 1U << 16U;
 
 }  // namespace
 
@@ -415,13 +543,48 @@ struct Q {
     for (const auto& id : q.layers) (void)require_layer(d, id);
     return query_result_for<api::CopyLayers>(encode_fragment(pc, q.layers));
   }
-  api::QueryResult operator()(const api::GetWaveform&) const {
-    fail(ErrorCode::unsupported, "waveform peaks are computed by the editor's audio engine until audio moves into the engine (E2)");
+  api::QueryResult operator()(const api::GetWaveform& q) const {
+    if (q.layer.has_value() == q.item.has_value()) fail(ErrorCode::invalid_argument, "give a layer or an item");
+    if (q.buckets == 0 || q.buckets > kMaxWaveformBuckets) {
+      fail(ErrorCode::out_of_range, "buckets must be 1.." + std::to_string(kMaxWaveformBuckets));
+    }
+    if (q.range.start < 0 || q.range.duration < 0) fail(ErrorCode::out_of_range, "the range must not be negative");
+    SoundSource s;
+    if (q.layer) {
+      s = layer_sound(d, *q.layer);
+    } else {
+      const Json* asset = find_asset(d, *q.item);
+      if (asset == nullptr) {
+        if (is_comp_item(d, *q.item)) {
+          fail(ErrorCode::invalid_argument, "a composition has no waveform of its own; ask for a layer's", {.item = *q.item});
+        }
+        fail(ErrorCode::not_found, "no footage item '" + *q.item + "'", {.item = *q.item});
+      }
+      s = asset_sound(*asset);
+    }
+    // No sound: an empty answer (no channels), not an error — the bar draws flat.
+    if (s.silent || s.src.empty()) return query_result_for<api::GetWaveform>(api::WaveformPeaks{});
+    if (!c.waveform) fail(ErrorCode::unsupported, "this engine was built without audio (E2)");
+    api::WaveformPeaks out;
+    // The range is SOURCE time (the window a clip bar shows, waveform.ts
+    // peaksInRange); duration 0 = to the end of the source.
+    switch (c.waveform(s.src, flicks_to_seconds(q.range.start), flicks_to_seconds(q.range.duration), q.buckets, out)) {
+      case HookAnswer::unsupported:
+        fail(ErrorCode::unsupported, "this engine was built without audio (E2)");
+      case HookAnswer::pending:
+        fail(ErrorCode::busy, "the source is still decoding; ask again", {.detail = s.src});
+      case HookAnswer::failed:
+        fail(ErrorCode::decode, "the source's peaks could not be read", {.detail = s.src});
+      case HookAnswer::ready:
+        break;
+    }
+    return query_result_for<api::GetWaveform>(std::move(out));
   }
-  api::QueryResult operator()(const api::ListFonts&) const {
-    // The TypeScript engine lists the page's loaded font faces; the engine
-    // process has no font catalogue until text moves into it (D/E).
-    return query_result_for<api::ListFonts>(api::FontList{});
+  api::QueryResult operator()(const api::ListFonts& q) const {
+    // The installed fonts (CoreText / DirectWrite / fontconfig, the process's
+    // font catalogue — raster/font_catalog.hpp). The test ports have none, so
+    // replays stay deterministic across machines.
+    return query_result_for<api::ListFonts>(c.fonts ? c.fonts(q.query) : api::FontList{});
   }
   api::QueryResult operator()(const api::GetItems& q) const {
     api::ItemDetails out;
@@ -432,8 +595,55 @@ struct Q {
     }
     return query_result_for<api::GetItems>(std::move(out));
   }
-  api::QueryResult operator()(const api::GetThumbnail&) const {
-    fail(ErrorCode::unsupported, "thumbnails are rendered by the editor until the engine owns rendering (D2)");
+  api::QueryResult operator()(const api::GetThumbnail& q) const {
+    if (q.item.has_value() == q.layer.has_value()) fail(ErrorCode::invalid_argument, "give an item or a layer");
+    if (q.max_size > kMaxThumbnail) fail(ErrorCode::out_of_range, "maxSize must be at most " + std::to_string(kMaxThumbnail));
+    if (q.time < 0) fail(ErrorCode::out_of_range, "the time must not be negative");
+    const std::uint32_t maxSize = q.max_size == 0 ? kDefaultThumbnail : q.max_size;
+    StillRequest r;
+    double w = 0;
+    double h = 0;
+    if (q.layer) {
+      (void)require_layer(d, *q.layer);
+      const auto comp = comp_of_layer(d, *q.layer);
+      if (!comp) fail(ErrorCode::not_found, "layer '" + *q.layer + "' is in no composition", {.layer = *q.layer});
+      r.comp = *comp;
+      r.isolateLayer = *q.layer;
+      r.time = q.time;
+      const api::CompSettings cs = comp_settings(d, *comp);
+      w = cs.width;
+      h = cs.height;
+    } else if (is_comp_item(d, *q.item)) {
+      r.comp = *q.item;
+      r.time = q.time;
+      const api::CompSettings cs = comp_settings(d, *q.item);
+      w = cs.width;
+      h = cs.height;
+    } else if (const Json* asset = find_asset(d, *q.item)) {
+      const std::string type = str_prop(*asset, "type");
+      if (type == "audio") fail(ErrorCode::invalid_argument, "an audio item has no picture; ask getWaveform", {.item = *q.item});
+      r.footageSrc = str_prop(*asset, "src");
+      if (r.footageSrc.empty()) fail(ErrorCode::not_found, "the footage is missing", {.item = *q.item});
+      r.video = type == "video";
+      r.sourceSec = flicks_to_seconds(q.time);  // footage: SOURCE time
+      const Json& md = asset->at("metadata");
+      w = md.at("width").is_number() ? md.at("width").num() : 0;
+      h = md.at("height").is_number() ? md.at("height").num() : 0;
+      r.sourceWidth = w;
+      r.sourceHeight = h;
+    } else if (resolve_item(d, *q.item)) {
+      fail(ErrorCode::invalid_argument, "a folder has no thumbnail", {.item = *q.item});
+    } else {
+      fail(ErrorCode::not_found, "no item '" + *q.item + "'", {.item = *q.item});
+    }
+    if (!(w >= 1) || !(h >= 1) || !std::isfinite(w) || !std::isfinite(h)) {
+      fail(ErrorCode::decode, "the source's size is not known (not probed yet)", {.layer = q.layer, .item = q.item});
+    }
+    std::tie(r.width, r.height) = fit_still(w, h, maxSize);
+    if (!c.still) fail(ErrorCode::unsupported, "getThumbnail needs the engine's renderer; this engine has none");
+    StillImage img = c.still(r);
+    if (img.answer != HookAnswer::ready) fail_hook(img.answer, img.error, "getThumbnail");
+    return query_result_for<api::GetThumbnail>(api::Thumbnail{img.width, img.height, std::move(img.format), std::move(img.data)});
   }
   api::QueryResult operator()(const api::ListEffects& q) const {
     api::EffectCatalog out;
@@ -503,8 +713,32 @@ struct Q {
     out.params = native_effect_ui(d, q.layer, q.effect, q.time.value_or(0));
     return query_result_for<api::GetEffectUi>(std::move(out));
   }
-  api::QueryResult operator()(const api::HitTest&) const {
-    fail(ErrorCode::unsupported, "'hitTest' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2");
+  api::QueryResult operator()(const api::HitTest& q) const {
+    require_comp(d, q.comp);
+    if (!std::isfinite(q.point.x) || !std::isfinite(q.point.y)) fail(ErrorCode::invalid_argument, "the point must be finite");
+    std::vector<std::string> ids;
+    if (!c.hitTest || !c.hitTest(q.comp, q.time, q.point, ids)) {
+      fail(ErrorCode::unsupported, "'hitTest' needs the engine's frame builder (D2w); this engine has none");
+    }
+    const auto owner = hit_owners(d, q.comp);
+    api::HitResult out;
+    std::set<std::string> taken;
+    for (std::string& id : ids) {
+      // The walk names what one layer of this comp draws by prefixing its id
+      // (comp_instance.cpp, cloner_port.cpp, frame_build.cpp): `layer::fb` (a
+      // Frame Mix draw), `instance::inner` (a collapsed precomp's children),
+      // `cloner~c3::child` (a cloner's copies) — each is that layer.
+      if (const std::size_t sep = id.find("::"); sep != std::string::npos) id.resize(sep);
+      if (const std::size_t sep = id.find("~c"); sep != std::string::npos) id.resize(sep);
+      const auto it = owner.find(id);
+      if (it == owner.end()) continue;  // a clone, a generated draw: no layer of this comp
+      const Node* n = d.node(it->second);
+      if (n == nullptr || (n->locked && !q.include_locked)) continue;
+      if (!taken.insert(it->second).second) continue;
+      out.layers.push_back(it->second);
+      if (q.mode == api::HitMode::topmost) break;
+    }
+    return query_result_for<api::HitTest>(std::move(out));
   }
   api::QueryResult operator()(const api::GetLayerBounds& q) const {
     // B4 round 2: readGeometry's box at the time (core/layer_geometry.cpp; text through the text port),
@@ -557,8 +791,36 @@ struct Q {
     api::TextLayout out = c.text->text_layout(n, q.overrides ? &*q.overrides : nullptr);
     return query_result_for<api::GetTextLayout>(std::move(out));
   }
-  api::QueryResult operator()(const api::ReadPixels&) const {
-    fail(ErrorCode::unsupported, "'readPixels' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2");
+  api::QueryResult operator()(const api::ReadPixels& q) const {
+    const api::Rect& g = q.region;
+    if (!std::isfinite(g.x) || !std::isfinite(g.y) || !std::isfinite(g.width) || !std::isfinite(g.height) || g.width < 0 ||
+        g.height < 0) {
+      fail(ErrorCode::invalid_argument, "the region must be finite, with no negative size");
+    }
+    if (!c.viewportSlot || !c.readPixels) fail(ErrorCode::unsupported, "readPixels needs the engine's renderer; this engine has none");
+    const auto slot = c.viewportSlot(q.viewport);
+    if (!slot) fail(ErrorCode::not_found, "viewport " + std::to_string(q.viewport) + " is not open");
+    // The region is in the slot's physical pixels (top-left origin), the pixels
+    // it touches; an empty one is the pixel under its corner (a point sample).
+    const double x0 = std::floor(g.x);
+    const double y0 = std::floor(g.y);
+    const double x1 = std::max(x0 + 1, std::ceil(g.x + g.width));
+    const double y1 = std::max(y0 + 1, std::ceil(g.y + g.height));
+    const double cx0 = std::max(0.0, x0);
+    const double cy0 = std::max(0.0, y0);
+    const double cx1 = std::min(static_cast<double>(slot->first), x1);
+    const double cy1 = std::min(static_cast<double>(slot->second), y1);
+    if (!(cx1 > cx0) || !(cy1 > cy0)) fail(ErrorCode::out_of_range, "the region is outside the viewport");
+    const auto rw = static_cast<std::uint64_t>(cx1 - cx0);
+    const auto rh = static_cast<std::uint64_t>(cy1 - cy0);
+    if (rw * rh > kMaxReadPixels) {
+      fail(ErrorCode::out_of_range, "read at most " + std::to_string(kMaxReadPixels) + " pixels at once");
+    }
+    const PixelRegion region{static_cast<std::uint32_t>(cx0), static_cast<std::uint32_t>(cy0), static_cast<std::uint32_t>(rw),
+                             static_cast<std::uint32_t>(rh)};
+    WorkingPixels px = c.readPixels(q.viewport, region);
+    if (px.answer != HookAnswer::ready) fail_hook(px.answer, px.error, "readPixels");
+    return query_result_for<api::ReadPixels>(api::PixelSamples{px.width, px.height, std::move(px.rgba)});
   }
   api::QueryResult operator()(const api::GetLayerTransforms& q) const {
     api::LayerTransformList out;

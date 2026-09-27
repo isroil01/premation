@@ -29,7 +29,9 @@ import { resetNotifierForTests, flush } from './layerChangeNotifier';
 import { resetRateLimitForTests } from './proxySubtree';
 import { customPropPath, isPluginOwned, readCustomLayer } from './customLayers';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { seedDefaultScene } from '@core/scene/seedDefaultScene';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { defaultAnimation } from '@motion/animation';
 
@@ -100,7 +102,12 @@ beforeAll(async () => {
 });
 afterAll(() => { pluginHost.setWorkerFactory(null); });
 
-beforeEach(() => {
+let h: Harness & { engine: LocalEngine };
+
+beforeEach(async () => {
+  // B5: plugin writes are engine commands — the app's engine, a fresh project
+  // (a real composition, every time).
+  h = await setupAppEngine();
   /*
     The layer-name resolver, which the app wires at boot (`Providers.tsx`) and
     a bare engine does not have. Needed here because a proxy child's binding
@@ -122,29 +129,29 @@ beforeEach(() => {
   resetLayerKindsForTests();
   resetNotifierForTests();
   resetRateLimitForTests();
-  defaultSceneGraph.clear();
-  seedDefaultScene();
 });
+afterEach(async () => { await h.dispose(); });
 
 /** Install, create a layer, and build its subtree — the author's whole loop. */
-function buildDepthLayer(planes = 3): { worker: FakeWorker; layerId: string } {
+async function buildDepthLayer(planes = 3): Promise<{ worker: FakeWorker; layerId: string }> {
   const worker = bootPlugin(pkg(), { granted: ['scene:read', 'scene:write', 'animation:write'] });
 
   worker.callAndWait('scene.onLayerChanged', 'depthImage');
-  const layerId = worker.callAndWait('scene.createLayer', {
+  // B5: both are engine batches — the calls answer once the engine applied them.
+  const layerId = await worker.callAsync('scene.createLayer', {
     kind: `${PLUGIN}.depthImage`,
     name: 'Hero depth',
     props: { focal: 60, planes },
   }) as unknown as { value: string };
 
   const id = (layerId as { value: string }).value;
-  worker.callAndWait('scene.setProxyChildren', id, planeSpecs('Hero depth', planes));
+  await worker.callAsync('scene.setProxyChildren', id, planeSpecs('Hero depth', planes));
   return { worker, layerId: id };
 }
 
 describe('the whole author loop', () => {
-  it('creates a layer whose declared props hold what the plugin asked for', () => {
-    const { layerId } = buildDepthLayer();
+  it('creates a layer whose declared props hold what the plugin asked for', async () => {
+    const { layerId } = await buildDepthLayer();
     const record = readCustomLayer(defaultSceneGraph.getNode(layerId)!)!;
     expect(record).toMatchObject({
       pluginId: PLUGIN,
@@ -153,20 +160,20 @@ describe('the whole author loop', () => {
     });
   });
 
-  it('generates a marked subtree', () => {
-    const { layerId } = buildDepthLayer();
+  it('generates a marked subtree', async () => {
+    const { layerId } = await buildDepthLayer();
     const children = defaultSceneGraph.getChildren(layerId);
     expect(children).toHaveLength(3);
     for (const child of children) expect(isPluginOwned(child)).toBe(true);
     expect(children.map((c) => c.name)).toEqual(['Plane 1', 'Plane 2', 'Plane 3']);
   });
 
-  it('rebuilds on an authored edit, keeping the ids of planes that survive', () => {
-    const { worker, layerId } = buildDepthLayer(3);
+  it('rebuilds on an authored edit, keeping the ids of planes that survive', async () => {
+    const { worker, layerId } = await buildDepthLayer(3);
     const before = defaultSceneGraph.getChildren(layerId).map((c) => c.id);
 
     // The user drags `planes` from 3 to 4 — one authored edit, one rebuild.
-    worker.callAndWait('scene.setProxyChildren', layerId, planeSpecs('Hero depth', 4));
+    await worker.callAsync('scene.setProxyChildren', layerId, planeSpecs('Hero depth', 4));
 
     const after = defaultSceneGraph.getChildren(layerId).map((c) => c.id);
     expect(after).toHaveLength(4);
@@ -175,8 +182,8 @@ describe('the whole author loop', () => {
     expect(after.slice(0, 3).sort()).toEqual(before.sort());
   });
 
-  it('delivers the authored edit to the plugin, once', () => {
-    const { worker, layerId } = buildDepthLayer();
+  it('delivers the authored edit to the plugin, once', async () => {
+    const { worker, layerId } = await buildDepthLayer();
     const node = defaultSceneGraph.getNode(layerId)!;
     const component = node.components.find((c) => c.type.startsWith('pluginLayer:'))!;
 
@@ -191,14 +198,14 @@ describe('the whole author loop', () => {
 });
 
 describe('the property the whole design turns on', () => {
-  it('ANIMATES with the plugin uninstalled', () => {
+  it('ANIMATES with the plugin uninstalled', async () => {
     /*
       The decisive test. If a proxy subtree stopped animating when its plugin
       went away, `render: 'proxy'` would not be a fallback strategy — it would
       be a slower way to lose a user's work, and `shader` would have been no
       worse.
     */
-    const { layerId } = buildDepthLayer();
+    const { layerId } = await buildDepthLayer();
     const planeIds = defaultSceneGraph.getChildren(layerId).map((c) => c.id);
 
     // The user animates the parent's authored property.
@@ -218,8 +225,8 @@ describe('the property the whole design turns on', () => {
     expect(defaultSceneGraph.getChildren(layerId)).toHaveLength(3);
   });
 
-  it('leaves the parent layer inert but intact after the uninstall', () => {
-    const { layerId } = buildDepthLayer();
+  it('leaves the parent layer inert but intact after the uninstall', async () => {
+    const { layerId } = await buildDepthLayer();
     pluginHost.uninstall(PLUGIN);
 
     // Every authored value survives, which is what makes reinstalling a
@@ -228,8 +235,8 @@ describe('the property the whole design turns on', () => {
     expect(record.props).toMatchObject({ focal: 60, planes: 3 });
   });
 
-  it('attributes every expression it wrote', () => {
-    const { layerId } = buildDepthLayer();
+  it('attributes every expression it wrote', async () => {
+    const { layerId } = await buildDepthLayer();
     const planeIds = defaultSceneGraph.getChildren(layerId).map((c) => c.id);
 
     // Proxy output is expression-bearing by design, so a document fills with

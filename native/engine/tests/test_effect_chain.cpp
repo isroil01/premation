@@ -1,22 +1,24 @@
 // E4: the CPU effect CHAIN (effects/effect_chain.cpp) against the TS bake path
 // (bakeWorkerCore.ts runBakeJob → effectBake.ts applyEffectChain), on the
-// recording canvas: tests/data/effect_chain_parity.json, written by
-// src/core/effects/effectChainCrossEngine.test.ts. Every case must issue the
+// recording canvas: tests/data/effect_chain_parity.json, frozen from the
+// TypeScript engine's effectChainCrossEngine.test.ts; PARITY_REBLESS=1 writes
+// the C++ answers instead (parity_rebless.hpp). Every case must issue the
 // TS's Canvas2D program op for op — every putImageData carries the FNV-1a 64
 // of its bytes, so each pixel pass is checked byte for byte where it lands —
 // and end on the same bytes, on 1 thread and on 4. Each case's effects must
-// also take the TS's route through the chain.
+// also take the TS's route through the chain. (Re-blessing records the
+// 1-thread answers; the 4-thread run is then checked against them.)
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <cstdio>
-#include <fstream>
 #include <map>
 #include <memory>
-#include <sstream>
 #include <string>
 
 #include "effects/effect_chain.hpp"
+#include "json.hpp"
+#include "parity_rebless.hpp"
 #include "raster/json.hpp"
 #include "recording_canvas.hpp"
 
@@ -58,13 +60,14 @@ std::string fnv(std::span<const std::uint8_t> bytes) {
 
 }  // namespace
 
-TEST_CASE("effect chain: the C++ bake issues the TS bake's Canvas2D program and bytes", "[effects][chain]") {
-  std::ifstream in(std::string(PREMATION_ENGINE_TEST_DATA) + "/effect_chain_parity.json", std::ios::binary);
-  std::stringstream ss;
-  ss << in.rdbuf();
+TEST_CASE("effect chain: the C++ bake issues the TS bake's Canvas2D program and bytes", "[effects][chain][parity]") {
+  test::JsonFixture fixture("effect_chain_parity.json");
+  REQUIRE(fixture.ok());
+  // The chain reads raster::json: a read-only copy of the inputs (JSON.stringify's
+  // numbers parse back bit-identical); the answers are read and written on `fixture`.
   Value fx;
   std::string err;
-  REQUIRE(raster::json::parse(ss.str(), fx, err));
+  REQUIRE(raster::json::parse(js::stringify(fixture.root()), fx, err));
 
   std::map<std::string, std::vector<std::uint8_t>> images;
   for (std::size_t i = 0; i < fx["images"].size(); ++i) images[fx["images"].keys()[i]] = base64(fx["images"].items()[i]["b64"].str());
@@ -78,7 +81,11 @@ TEST_CASE("effect chain: the C++ bake issues the TS bake's Canvas2D program and 
   std::size_t ops_same = 0;
   std::size_t puts = 0;
   const auto& cases = fx["cases"].items();
-  for (const auto& c : cases) {
+  js::Json::Array& rows = fixture.root().find_mut("cases")->arr_mut();
+  REQUIRE(rows.size() == cases.size());
+  for (std::size_t ci = 0; ci < cases.size(); ++ci) {
+    const Value& c = cases[ci];
+    js::Json& row = rows[ci];
     const std::string name = c["name"].str();
     INFO(name);
     const Value& img = fx["images"][c["image"].str()];
@@ -87,54 +94,71 @@ TEST_CASE("effect chain: the C++ bake issues the TS bake's Canvas2D program and 
     const Value* mask = c.has("mask") ? &c["mask"] : nullptr;
 
     bool routes_ok = true;
+    js::Json::Array routes;
     for (std::size_t i = 0; i < c["effects"].size(); ++i) {
       const std::string_view got = effects::effect_route(c["effects"][i]);
+      routes.push_back(js::Json::string(std::string(got)));
       if (got != c["routes"][i].str()) {
         routes_ok = false;
-        std::printf("  %s: effect %zu (%s) routes to %.*s, TS %s\n", name.c_str(), i, c["effects"][i]["type"].str().c_str(),
-                    static_cast<int>(got.size()), got.data(), c["routes"][i].str().c_str());
+        if (!fixture.reblessing()) {
+          std::printf("  %s: effect %zu (%s) routes to %.*s, TS %s\n", name.c_str(), i, c["effects"][i]["type"].str().c_str(),
+                      static_cast<int>(got.size()), got.data(), c["routes"][i].str().c_str());
+        }
       }
     }
     if (routes_ok) ++routes_same;
-    CHECK(routes_ok);
+    CHECK(fixture.answer(row, "routes", js::Json::array(std::move(routes))));
 
     for (effects::ThreadPool* pool : {static_cast<effects::ThreadPool*>(nullptr), &pool4}) {
       auto rec = std::make_shared<raster::test::Recording>();
       raster::test::RecordingCanvas oc(rec, w, h);
       effects::ChainReport report;
       const std::vector<std::uint8_t> out = effects::run_bake_job(oc, images[c["image"].str()], c["effects"], c["fillOpacity"].num(1), mask, pool, report);
-      const auto& want = c["ops"].items();
       const auto& got = rec->ops;
-      std::size_t same = 0;
-      std::size_t first = want.size();
-      for (std::size_t i = 0; i < std::min(want.size(), got.size()); ++i) {
-        if (want[i].str() == got[i]) ++same;
-        else if (first == want.size()) first = i;
-      }
-      const bool bytes = fnv(out) == c["hash"].str();
-      if (pool == nullptr && out != images[c["image"].str()]) ++changed;
-      if (pool == nullptr) {
-        ops_total += want.size();
-        ops_same += same;
-        puts += static_cast<std::size_t>(std::ranges::count_if(want, [](const Value& op) { return op.str().find("\"putImageData\"") != std::string::npos; }));
-        if (bytes) ++bytes_same;
-        if (same == want.size() && got.size() == want.size() && bytes) ++exact;
-      }
-      if (same != want.size() || got.size() != want.size()) {
-        const std::size_t i = std::min(first, std::min(want.size(), got.size()));
-        std::printf("  %s (%s): first difference at op %zu of %zu (C++ issued %zu)\n    TS : %s\n    C++: %s\n", name.c_str(),
-                    pool == nullptr ? "1 thread" : "4 threads", i, want.size(), got.size(), i < want.size() ? want[i].str().c_str() : "(end)",
-                    i < got.size() ? got[i].c_str() : "(end)");
+      const std::string hash = fnv(out);
+      js::Json::Array gotOps;
+      for (const std::string& op : got) gotOps.push_back(js::Json::string(op));
+      js::Json gotJson = js::Json::array(std::move(gotOps));
+      {
+        // Against the fixture as it stands (when re-blessing, the 4-thread run
+        // sees the 1-thread C++ answers just stored).
+        const js::Json::Array& want = row.at("ops").arr();
+        std::size_t same = 0;
+        std::size_t first = want.size();
+        for (std::size_t i = 0; i < std::min(want.size(), got.size()); ++i) {
+          if (want[i].str() == got[i]) ++same;
+          else if (first == want.size()) first = i;
+        }
+        const bool bytes = hash == row.at("hash").str();
+        if (pool == nullptr && out != images[c["image"].str()]) ++changed;
+        if (pool == nullptr) {
+          ops_total += want.size();
+          ops_same += same;
+          puts += static_cast<std::size_t>(std::ranges::count_if(want, [](const js::Json& op) { return op.str().find("\"putImageData\"") != std::string::npos; }));
+          if (bytes) ++bytes_same;
+          if (same == want.size() && got.size() == want.size() && bytes) ++exact;
+        }
+        if ((same != want.size() || got.size() != want.size()) && !(fixture.reblessing() && pool == nullptr)) {
+          const std::size_t i = std::min(first, std::min(want.size(), got.size()));
+          std::printf("  %s (%s): first difference at op %zu of %zu (C++ issued %zu)\n    TS : %s\n    C++: %s\n", name.c_str(),
+                      pool == nullptr ? "1 thread" : "4 threads", i, want.size(), got.size(), i < want.size() ? want[i].str().c_str() : "(end)",
+                      i < got.size() ? got[i].c_str() : "(end)");
+        }
       }
       for (const auto& u : report.unported) std::printf("  %s: unported %s\n", name.c_str(), u.c_str());
       CHECK(report.unported.empty());
-      CHECK(got.size() == want.size());
-      CHECK(same == want.size());
-      CHECK(bytes);
+      if (pool == nullptr) {
+        CHECK(fixture.answer(row, "ops", std::move(gotJson)));
+        CHECK(fixture.answer(row, "hash", js::Json::string(hash)));
+      } else {
+        CHECK(row.at("ops") == gotJson);
+        CHECK(row.at("hash").str() == hash);
+      }
     }
   }
   std::printf("effect chain vs effectBake.ts: %d/%zu cases exact (program + bytes), %d/%zu final bytes, %zu/%zu ops identical "
               "(%zu byte-checked putImageData), %d/%zu routes, %d cases change pixels; %zu pixel + %zu drawn effect types in the chain\n",
               exact, cases.size(), bytes_same, cases.size(), ops_same, ops_total, puts, routes_same, cases.size(), changed,
               effects::pixel_effect_types().size(), effects::chain_pixel_effects().size() - effects::pixel_effect_types().size());
+  REQUIRE(fixture.finish());
 }

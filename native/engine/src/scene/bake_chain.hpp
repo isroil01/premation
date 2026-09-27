@@ -39,6 +39,13 @@ struct SharedPool {
 void bake_layer_raster(raster::Canvas2D& ctx, const Json& spec, double bw, double bh, double ss,
                        std::vector<std::string>& unsupported, SharedPool pool = {});
 
+/// Footage (AppTextureProvider bakeImageBitmap / setVideoBaked): `ctx` holds
+/// the decoded frame drawn at the bake size; `spec` is {effects, width,
+/// height, fillOpacity?, mask?} in layer px. The mask matte is drawn in the
+/// layer's centred space scaled onto the bitmap, then the stack runs with its
+/// px lengths × (bake width / layer width).
+void bake_footage(raster::Canvas2D& ctx, const Json& spec, std::vector<std::string>& unsupported, SharedPool pool = {});
+
 /// `bakedEffectSpread(layer)` (vectorDraw.ts): how far a CPU-baked chain paints
 /// outside the layer box, px (0 when the layer is not baked).
 [[nodiscard]] double baked_effect_spread(const RLayer& l);

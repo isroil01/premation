@@ -52,12 +52,20 @@ struct MeasuredStyle {
   bool hasLineRuns = false;              ///< character runs that change a line's height
   /// Set by wrapping: the wrapped content's soft-break line numbers.
   std::optional<std::vector<int>> softBreakLines;
+  /// Set by wrapping a Fit Text to Box style (measureText.ts fitScaleOf): the
+  /// type scale ≤ 1 its box holds all of its text at; it wraps at
+  /// boxWidth / fitScale and draws scaled (textExtras.fitScale).
+  std::optional<double> fitScale;
 };
 
-/// textExtras.ts softBreakLines(raw, wrapped) for a wrap that REPLACED spaces
-/// (same length): the wrapped line numbers that end in a soft break. nullopt
-/// when the wrap inserted characters (the CJK path, not ported).
-[[nodiscard]] std::optional<std::vector<int>> soft_break_lines(std::string_view raw, std::string_view wrapped);
+/// textExtras.ts softBreakLines(raw, wrapped): the wrapped line numbers that
+/// end in a soft break — a '\n' with no '\n' under it in `raw`, whether the
+/// wrap REPLACED a space (same length) or INSERTED the break (CJK, longer).
+/// A wrapped string shorter than `raw` (never produced) reads as all hard.
+[[nodiscard]] std::vector<int> soft_break_lines(std::string_view raw, std::string_view wrapped);
+
+/// measureText.ts MIN_FIT_SCALE: Fit Text to Box never shrinks below this.
+inline constexpr double kMinFitScale = 0.05;
 
 /// `readMeasuredTextStyle(node, overrides)` — nullopt when the node has no text
 /// content. `overrides` are the sampled animated values (fontSize, …) as the
@@ -91,8 +99,8 @@ class TextMeasurer {
   /// outline on. Null = no canvas (text bodies report unported).
   [[nodiscard]] virtual const raster::CanvasOptions* canvas_options() const noexcept { return nullptr; }
   /// `wrappedStyle(s)`: paragraph text with its content wrapped at the box and
-  /// its soft breaks recorded; point text unchanged. nullopt = a wrap outside
-  /// the port (CJK line breaking, Fit Text to Box); `why` names it.
+  /// its soft breaks recorded (and a Fit Text to Box style its fitScale);
+  /// point text unchanged. nullopt = a wrap outside the port; `why` names it.
   [[nodiscard]] virtual std::optional<MeasuredStyle> wrapped_style(const MeasuredStyle& s, std::string* why) = 0;
   /// `measureTextBoxes(s).font` on the style's own (uncased) content — the
   /// selection box (B4 round 2: getTextLayout.box, getLayerBounds). Paragraph

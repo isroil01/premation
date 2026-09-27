@@ -100,6 +100,7 @@ std::optional<ParagraphBoxProps> read_paragraph_box(const doc::Node& n, const st
 
 /// measureText.ts `measureParagraphBox` for a WRAPPED horizontal style (boxPlacementOf's uniform-leading branch).
 struct ParagraphMeasure {
+  double fitScale = 1;
   double boxWidth = 0;
   double boxHeight = 0;
   bool fixedHeight = false;
@@ -114,14 +115,17 @@ ParagraphMeasure measure_paragraph_box(const MeasuredStyle& s) {
   const double lineHeightPx = s.fontSize * (s.lineHeight != 0 ? s.lineHeight : kDefaultLineHeight);
   const auto [offsets, total] = raster::line_offsets(raster::hard_ends_of(n, s.softBreakLines), lineHeightPx + s.paragraphSpacing,
                                                      s.spaceBefore.value_or(0), s.spaceAfter.value_or(0));
+  // Fit Text to Box: the lines are laid out at the unscaled font against box / k, then drawn scaled by k.
+  const double k = s.fitScale && *s.fitScale > 0 ? *s.fitScale : 1;
   raster::BoxLinePlacement placement{0, static_cast<int>(n), false};
   if (s.boxHeight) {
     std::vector<double> ys(offsets.size());
     for (std::size_t i = 0; i < offsets.size(); ++i) ys[i] = offsets[i] - total / 2;  // centredLineYs
-    placement = raster::place_lines_in_box(ys, std::vector<double>{lineHeightPx}, *s.boxHeight, s.boxVerticalAlign);
+    placement = raster::place_lines_in_box(ys, std::vector<double>{lineHeightPx}, *s.boxHeight / k, s.boxVerticalAlign);
   }
   ParagraphMeasure out;
-  out.contentHeight = total + lineHeightPx;  // fit scale 1 (Fit Text to Box is outside the port)
+  out.fitScale = k;
+  out.contentHeight = (total + lineHeightPx) * k;
   out.boxWidth = s.boxWidth.value_or(0);
   out.boxHeight = s.boxHeight ? *s.boxHeight : out.contentHeight;
   out.fixedHeight = s.boxHeight.has_value();
@@ -129,7 +133,7 @@ ParagraphMeasure measure_paragraph_box(const MeasuredStyle& s) {
   out.lineCount = static_cast<int>(n);
   out.visibleLines = placement.visible;
   // Auto height with an authored height: the TOP edge of that box stays put.
-  out.lineOffsetY = !s.boxHeight && s.boxAnchorHeight ? (out.contentHeight - *s.boxAnchorHeight) / 2 : placement.dy;
+  out.lineOffsetY = !s.boxHeight && s.boxAnchorHeight ? (out.contentHeight - *s.boxAnchorHeight) / 2 : placement.dy * k;
   return out;
 }
 
@@ -229,7 +233,7 @@ api::TextLayout text_layout_of(TextMeasurer& m, const doc::Node& original, const
     p.box_height = para->boxHeight;
     p.fixed_height = para->fixedHeight;
     p.overflow = para->overflow;
-    p.fit_scale = 1;
+    p.fit_scale = para->fitScale;
     p.content_height = para->contentHeight;
     p.line_count = static_cast<std::uint32_t>(para->lineCount);
     p.visible_lines = static_cast<std::uint32_t>(std::max(0, para->visibleLines));
@@ -241,12 +245,13 @@ api::TextLayout text_layout_of(TextMeasurer& m, const doc::Node& original, const
   }
   // paragraphTextCommands' lineBlockPlacement: where the lines start and how far the block sits off centre.
   const std::optional<std::pair<double, double>> indents =
-      s.boxWidth ? std::optional<std::pair<double, double>>({s.leftIndent.value_or(0), s.rightIndent.value_or(0)}) : std::nullopt;
+      s.boxWidth ? std::optional<std::pair<double, double>>({s.leftIndent.value_or(0) * (para ? para->fitScale : 1), s.rightIndent.value_or(0) * (para ? para->fitScale : 1)})
+                 : std::nullopt;
   out.line_block.x = tr.sx * line_block_anchor_x(align_of(n), size->first, indents, first_paragraph_rtl(n));
   out.line_block.y = para ? (para->fixedHeight ? tr.sy * para->lineOffsetY : para->lineOffsetY) : 0;
   out.style_scale = api::Vec2{tr.sx, tr.sy};
   out.on_path = has_text_path(n);
-  out.font_size = s.fontSize;
+  out.font_size = s.fontSize;  // the stored size: a Fit Text to Box bake multiplies it by paragraph.fitScale
   out.letter_spacing = s.letterSpacing;
   out.paragraph_spacing = s.paragraphSpacing;
   return out;

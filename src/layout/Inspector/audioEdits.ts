@@ -49,7 +49,7 @@ import {
   type ApplyDriverResult,
   type AudioDriver,
 } from '@core/audio/audioDriver';
-import { amplitudeEnvelope, ensureAudioBuffer, planAudioKeyframes, type AudioKeyframeOptions } from '@core/audio/audioKeyframes';
+import { AUDIO_AMPLITUDE_PROP, amplitudeEnvelope, ensureAudioBuffer, planAudioKeyframes, type AudioKeyframeOptions } from '@core/audio/audioKeyframes';
 import { mergeIntervals, rangesToCompIntervals, type RemoveSilencesResult, type SilenceRange } from '@core/audio/silenceRemoval';
 import { apiUnitFactor } from '@core/engine/props';
 import { documentMirror } from '@stores/documentMirror';
@@ -68,6 +68,7 @@ import { memberHasExpression } from '@core/mirror/memberExpressions';
 import { numbersOfValue } from '@core/mirror/trackIndex';
 import type { AudioWaveformConfig } from '@core/audio/audioWaveformGen';
 import { jsonFieldCommands } from './layerFieldEdits';
+import { runEngineJob } from '@core/engine/engineJobs';
 import { clearExpressionCommands, inOneEntry, removeAnimationCommands, spliceKeysEdit, type EntryStep, type KeySplice, type SpliceKey } from './keySpliceEdits';
 
 /** The layer's Audio Levels property, or null when the engine does not address it. */
@@ -106,6 +107,14 @@ export async function fadeEdit(nodeIds: readonly string[], side: FadeSide, durat
 
 /** Duck `musicId` under `voiceId`: the record + the level track, ONE entry ("Duck Music"). */
 export async function duckEdit(musicId: string, voiceId: string, params: DuckingParams): Promise<ApplyDuckingResult> {
+  // The engine decodes the voice, follows it and writes the record + level track (audioDuck job).
+  const viaEngine = await runEngineJob<{ keyframes: number; peakDuckDb?: number }>({
+    kind: 'audioDuck', value: { music: musicId, voices: [voiceId], params: JSON.stringify(params) },
+  });
+  if (viaEngine) {
+    if (viaEngine.status !== 'done') return { keyframes: 0, peakDuckDb: 0, error: viaEngine.error?.message ?? 'The ducking could not be written.' };
+    return { keyframes: viaEngine.result?.keyframes ?? 0, peakDuckDb: viaEngine.result?.peakDuckDb ?? 0 };
+  }
   // Engine-side until E2: the voice's decode + sidechain envelope and the level plan over it.
   const plan = await planDucking(musicId, voiceId, params);
   if (plan.error) return { keyframes: 0, peakDuckDb: 0, error: plan.error };
@@ -317,6 +326,19 @@ function sourceFrameToCompTime(bars: ReadonlyArray<{ startSec: number; inSec: nu
  * ONE entry ("Convert audio to keyframes"). Resolves to the keys written.
  */
 export async function convertAudioToKeyframesEdit(nodeId: string, opts: AudioKeyframeOptions): Promise<number> {
+  // The engine decodes and writes the track itself (audioAnalysis job) when it
+  // runs jobs; the page path below is the TypeScript engine's.
+  if (opts.prop === AUDIO_AMPLITUDE_PROP) {
+    const viaEngine = await runEngineJob<{ amplitude?: { keyframes: number } }>({
+      kind: 'audioAnalysis',
+      value: {
+        layer: nodeId, beats: false, amplitudeKeyframes: true, silence: false, removeSilence: false, beatMarkers: false,
+        amplitudeFrameStep: Math.max(1, Math.floor(opts.frameStep)), amplitudeMinDelta: opts.minDelta,
+        amplitudeSmoothing: Math.max(1, Math.floor(opts.smoothing)), amplitudeGain: opts.gain,
+      },
+    });
+    if (viaEngine) return viaEngine.status === 'done' ? viaEngine.result?.amplitude?.keyframes ?? 0 : 0;
+  }
   // Engine-side until E2: the decode (the editor's audio engine) — the envelope
   // and its keys are pure maths over the buffer.
   const buffer = await ensureAudioBuffer(nodeId);

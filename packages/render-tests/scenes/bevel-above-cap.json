@@ -1,0 +1,172 @@
+{
+ "version": "1.9.0",
+ "scene": {
+  "version": "1.0.0",
+  "nodes": [
+   {
+    "id": "comp_root",
+    "name": "Composition 1",
+    "parent": null,
+    "children": [
+     "s"
+    ],
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "visible": true,
+    "locked": false,
+    "components": [
+     {
+      "id": "comp_root_meta",
+      "type": "group",
+      "props": {
+       "__kind": "group"
+      }
+     }
+    ]
+   },
+   {
+    "id": "s",
+    "name": "s",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 640,
+      "y": 480
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "s_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "shape",
+       "x": 640,
+       "y": 480,
+       "rotation": 0,
+       "width": 1200,
+       "height": 880,
+       "shapeType": "rect"
+      }
+     },
+     {
+      "id": "s_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#3080ff"
+      }
+     },
+     {
+      "id": "s_fx",
+      "type": "fx",
+      "props": {
+       "layerStyles": {
+        "bevel": {
+         "enabled": true,
+         "size": 60,
+         "depth": 100,
+         "direction": "up",
+         "angle": 135,
+         "altitude": 45,
+         "highlightColor": "#ffffff",
+         "highlightOpacity": 0.75,
+         "shadowColor": "#000000",
+         "shadowOpacity": 0.75,
+         "useGlobalLight": false
+        }
+       }
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   }
+  ]
+ },
+ "animation": {
+  "tracks": {},
+  "expressions": {}
+ },
+ "comps": {
+  "comp_root": {
+   "id": "comp_root",
+   "name": "comp_root",
+   "width": 1280,
+   "height": 960,
+   "fps": 30,
+   "durationSeconds": 10,
+   "background": "#0c0c12"
+  }
+ },
+ "motionBlur": {
+  "enabled": false,
+  "shutterAngle": 180,
+  "shutterPhase": -90,
+  "samples": 8,
+  "adaptiveSampleLimit": 128
+ },
+ "colorManagement": {
+  "workingSpace": "srgb-linear",
+  "displayTransform": "srgb",
+  "bitDepth": 16
+ },
+ "projectItems": {
+  "folders": [],
+  "footage": {}
+ },
+ "openTabs": {
+  "tabOrder": [
+   "tab1"
+  ],
+  "activeTabId": "tab1",
+  "tabs": {
+   "tab1": {
+    "id": "tab1",
+    "compositionId": "comp_root",
+    "breadcrumbPath": [
+     "comp_root"
+    ],
+    "title": "comp_root",
+    "time": 0,
+    "frame": 0
+   }
+  }
+ },
+ "harness": {
+  "sceneId": "bevel-above-cap",
+  "frames": [
+   0
+  ],
+  "fps": 30,
+  "size": {
+   "w": 1280,
+   "h": 960
+  },
+  "motionBlurFps": null,
+  "motionBlurOn": false,
+  "overlays": null,
+  "viewerLut": false,
+  "assets": [],
+  "compId": "comp_root",
+  "viewerLutCube": null,
+  "media": [],
+  "tolerance": null,
+  "fidelityOnly": false,
+  "description": "Same bevel at 2× — full resolution on the GPU; the CPU pass computes on the capped buffer and upsamples."
+ }
+}

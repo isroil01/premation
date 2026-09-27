@@ -68,6 +68,10 @@ struct ImportBytesFile {
   interpretation?: InterpretationPatch = 5;
   /// Where the bytes came from, when there is a file behind them (recorded for relink); absent = none.
   originPath?: string = 6;
+  /// B5 — who made the bytes, stored on the record (`source`): `user` (absent), `ai` (an AI tool's generated or
+  /// attached media), `derived` (an automation client's generated image — kept off the Assets panel's shelf).
+  /// Anything else is `invalidArgument`.
+  source?: string = 7;
 }
 /// B3 — import footage from bytes. The media port stores the bytes (the project bundle / the device library, content-addressed) and returns the record; the item is added in the same undoable entry (undo removes the item; the stored bytes stay, as for importFiles). An empty list or empty data is `invalidArgument`; bytes the importer cannot decode are `io`.
 command importBytes = 70 { files: ImportBytesFile[] = 1; } -> ItemList;

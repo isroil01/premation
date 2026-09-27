@@ -1,4 +1,4 @@
-// The builtin WGSL table (extracted verbatim from packages/renderer).
+// The builtin WGSL table (shaders/wgsl, embedded by shaders/embed_wgsl.cmake).
 #include <cstdint>
 #include <iterator>
 #include <span>

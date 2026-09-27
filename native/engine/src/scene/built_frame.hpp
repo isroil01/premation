@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "engine_api.hpp"
@@ -20,6 +21,9 @@ struct BuiltFrame {
   /// Font families the document's text names (the render thread's FontSet
   /// loads new ones before rasterising — FontSet is filled before shaping).
   std::vector<std::string> fontFamilies;
+  /// Where relative media paths resolve (FrameBuilder::set_media_base; the
+  /// render thread's texture feed follows it). '' = none.
+  std::string mediaBase;
 };
 
 }  // namespace premation

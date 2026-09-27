@@ -8,22 +8,27 @@ ThreadPool::ThreadPool(unsigned threads) {
   unsigned n = threads == 0 ? std::max(1U, std::thread::hardware_concurrency()) : threads;
   workers_.reserve(n - 1);
   for (unsigned i = 1; i < n; ++i) {
-    workers_.emplace_back([this](const std::stop_token& st) { worker_loop(st); });
+    workers_.emplace_back([this] { worker_loop(); });
   }
 }
 
 ThreadPool::~ThreadPool() {
-  for (auto& w : workers_) w.request_stop();
+  {
+    // Under the lock: a worker between its predicate check and its wait would
+    // otherwise miss the notify and sleep forever.
+    const std::lock_guard lock(m_);
+    stop_ = true;
+  }
   wake_.notify_all();
-  // jthread joins on destruction.
+  workers_.clear();  // joins every worker
 }
 
-void ThreadPool::worker_loop(const std::stop_token& stop) {
+void ThreadPool::worker_loop() {
   std::size_t seen = 0;
   std::unique_lock lock(m_);
   while (true) {
-    wake_.wait(lock, stop, [&] { return generation_ != seen && next_ < n_; });
-    if (stop.stop_requested()) return;
+    wake_.wait(lock, [&] { return stop_ || (generation_ != seen && next_ < n_); });
+    if (stop_) return;
     seen = generation_;
     while (next_ < n_) {
       const int b = next_;

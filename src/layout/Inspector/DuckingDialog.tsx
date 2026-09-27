@@ -31,6 +31,7 @@ import {
   type DuckingParams,
 } from '@core/audio/ducking';
 import { duckEdit, reduckEdit, removeDuckingEdit } from './audioEdits';
+import { previewEngineJob } from '@core/engine/engineJobs';
 import styles from './AudioToolDialog.module.css';
 
 interface Props {
@@ -75,30 +76,41 @@ export function DuckingDialog({ nodeId, onDone }: Props): JSX.Element {
     let alive = true;
     setAnalysing(true);
     const timer = setTimeout(() => {
-      // Engine-side until E2: the voice's decode and its sidechain envelope.
-      void computeDuckEnvelope(voiceNodeId, params)
-        .then((env) => {
-          if (!alive) return;
-          setAnalysing(false);
-          if (!env) {
-            setPreview(null);
-            return;
-          }
-          let peak = 0;
-          for (const g of env.gainDb) if (g < peak) peak = g;
-          setPreview({ keyframes: thinLevels(env.gainDb).length, peakDb: Math.round(peak * 10) / 10 });
-        })
-        .catch(() => {
-          if (!alive) return;
-          setAnalysing(false);
-          setPreview(null);
+      void (async () => {
+        // The engine's audioDuck job when it runs jobs: its summary is the readout.
+        const viaEngine = await previewEngineJob<{ keyframes: number; peakDuckDb?: number }>({
+          kind: 'audioDuck', value: { music: nodeId, voices: [voiceNodeId], params: JSON.stringify(params) },
         });
+        if (viaEngine) {
+          if (!alive) return;
+          setAnalysing(false);
+          setPreview(viaEngine.status === 'done' && viaEngine.result
+            ? { keyframes: viaEngine.result.keyframes, peakDb: viaEngine.result.peakDuckDb ?? 0 }
+            : null);
+          return;
+        }
+        // The TypeScript engine's path: the page decodes the voice and follows it.
+        const env = await computeDuckEnvelope(voiceNodeId, params);
+        if (!alive) return;
+        setAnalysing(false);
+        if (!env) {
+          setPreview(null);
+          return;
+        }
+        let peak = 0;
+        for (const g of env.gainDb) if (g < peak) peak = g;
+        setPreview({ keyframes: thinLevels(env.gainDb).length, peakDb: Math.round(peak * 10) / 10 });
+      })().catch(() => {
+        if (!alive) return;
+        setAnalysing(false);
+        setPreview(null);
+      });
     }, 200);
     return (): void => {
       alive = false;
       clearTimeout(timer);
     };
-  }, [key, voiceNodeId]);
+  }, [key, voiceNodeId, nodeId]);
 
   const report = (result: ApplyDuckingResult, verb: string): void => {
     useUIStore.getState().notify(

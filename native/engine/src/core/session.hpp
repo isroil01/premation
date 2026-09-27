@@ -20,11 +20,14 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
+#include <future>
 #include <memory>
 #include <optional>
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "docexpr.hpp"
@@ -33,6 +36,8 @@
 #include "events.hpp"
 #include "frame_scene.hpp"
 #include "history.hpp"
+#include "jobs/job_api.hpp"
+#include "jobs/job_runner.hpp"
 #include "model.hpp"
 #include "overlay_geometry.hpp"
 #include "premation/protocol/frame_channel.hpp"
@@ -40,6 +45,10 @@
 #include "timeline.hpp"
 
 namespace premation {
+
+namespace doc {
+struct StillRequest;  // queries.hpp
+}  // namespace doc
 
 class Outbox {
  public:
@@ -66,6 +75,9 @@ struct SessionOptions {
   bool testPorts = false;
   /// With testPorts: mirror the in-memory project files to this directory (FakePorts).
   std::string testPortsDir;
+  /// `listFonts`: the installed fonts matching a query (the engine process
+  /// passes its font catalogue). Unset, or with testPorts: an empty list.
+  std::function<api::FontList(const std::string&)> systemFonts;
 };
 
 class Session {
@@ -90,6 +102,7 @@ class Session {
 
   /// When the clock next needs `tick` (a frame is due); nullopt when stopped.
   [[nodiscard]] std::optional<Clock::time_point> next_deadline() const;
+
   void tick(Clock::time_point now);
 
   /// Goodbye sent or received: the process should shut down.
@@ -109,6 +122,9 @@ class Session {
   /// E2: the audio master clock + the document's sound (audio/transport_clock.hpp's
   /// seam). Null = the wall clock paces playback, no sound.
   void set_media_clock(MediaClock* clock) noexcept { mediaClock_ = clock; }
+  /// Engine jobs (jobs/job_api.hpp): the kinds this build runs. Null (the
+  /// headless engine, most tests) = startJob answers `unsupported`.
+  void set_job_kinds(jobs::JobKinds* kinds) noexcept { jobKinds_ = kinds; }
 
  private:
   enum class Phase : std::uint8_t { awaiting_hello, open, closed };
@@ -126,10 +142,14 @@ class Session {
   friend struct ControlVisitor;
   friend struct EditVisitor;
   friend struct QueryVisitor;
+  friend class SessionJobApply;
   [[nodiscard]] bool is_edit(const api::Command& cmd) const;
   std::vector<api::CommandResult> run_edits(const std::vector<const api::Command*>& commands, api::Origin origin,
                                             const std::optional<std::string>& batchLabel);
   api::CommandResult run_control(const api::Command& cmd, api::Origin origin, Clock::time_point now);
+  /// One edit command inside the open journal (run_edits' body; a job's apply
+  /// runs its commands through it). `label`: the entry label it would give.
+  api::CommandResult run_in_journal(const api::Command& cmd, api::Origin origin, std::string* label);
   doc::HCtx handler_ctx(api::Origin origin);
   doc::PCtx pctx();
   void ensure_timelines();
@@ -150,8 +170,17 @@ class Session {
 
   // ── queries ──
   api::QueryResult run_query(const api::Query& q);
+  /// The folder relative media resolve against (FrameBuilder::set_media_base).
+  [[nodiscard]] std::string media_base() const;
+  /// getThumbnail: build (frame builder) and draw (render thread) a still.
+  StillImage render_still(const doc::StillRequest& r);
+  /// A render-thread answer, waited for at most kRenderQueryTimeout.
+  template <class T>
+  T await_render(std::future<T> result, std::string_view what);
+  static constexpr std::chrono::seconds kRenderQueryTimeout{10};
 
   // ── transport ──
+  [[nodiscard]] std::optional<Clock::time_point> next_clock_deadline() const;
   void start_playback(Clock::time_point now, std::optional<api::Time> from);
   void stop_playback();
   void rebase_playback(Clock::time_point now);
@@ -264,6 +293,31 @@ class Session {
   Clock::time_point mediaReadAt_{};   // …at this time
   void sync_audio();
   void announce_layer_errors(const std::string& comp, std::vector<api::LayerError> errors);
+
+  // ── jobs (jobs/job_api.hpp; ENGINE_API.md §4.9) ──
+  struct JobRecord {
+    api::JobInfo info;
+    bool apply = true;
+    /// A finished result not applied yet (apply=false → applyJobResult; or held while a gesture is open).
+    std::unique_ptr<jobs::JobResult> result;
+  };
+  jobs::JobKinds* jobKinds_ = nullptr;
+  std::unique_ptr<jobs::JobRunner> runner_;
+  std::vector<JobRecord> jobs_;
+  std::uint64_t jobSeq_ = 0;
+  Clock::time_point jobsPolled_{};
+  api::CommandResult start_job(const api::StartJob& c);
+  api::CommandResult cancel_job(const api::CancelJob& c);
+  JobRecord* find_job(const std::string& id);
+  /// Drain the runner: progress events, results applied (core thread, from tick()).
+  void poll_jobs(Clock::time_point now);
+  /// Apply a held result as ONE history entry (origin engine). False with the error recorded on the job.
+  bool apply_job(JobRecord& r);
+  void emit_job(const JobRecord& r, bool finished, const std::optional<api::EngineError>& error);
+  /// A new / opened document: running jobs read the old one — cancel them, drop held results.
+  void drop_jobs();
+  /// applyJobResult: the held result's commands inside the request's journal.
+  api::CommandResult apply_job_in_journal(const api::ApplyJobResult& c, api::Origin origin, std::string& label);
 };
 
 /// The seq of a Request inside an EngineMessage that failed to decode (so

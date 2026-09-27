@@ -1,0 +1,148 @@
+{
+ "comment": "Frozen from the TypeScript migrations (src/core/project/migrations): the input a migration test fed to migrateDocument or to one step, and what the production chain made of it. Checked by native/engine/tests/test_migrations.cpp; re-bless from C++ with PARITY_REBLESS=1, review the diff.",
+ "source": "src/core/project/migrations/migrations.test.ts › migrateDocument — the real 1.1.0 → 1.2.0 step (matte reshape) migrates a v1.0.0 document through BOTH steps",
+ "input": {
+  "version": "1.0.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": [
+    {
+     "id": "a",
+     "components": [
+      {
+       "type": "fx",
+       "props": {
+        "matte": {
+         "mode": "alpha",
+         "inverted": true
+        }
+       }
+      }
+     ]
+    },
+    {
+     "id": "b",
+     "components": [
+      {
+       "type": "fx",
+       "props": {
+        "matte": {
+         "mode": "luma",
+         "inverted": true,
+         "sourceId": "a"
+        }
+       }
+      }
+     ]
+    },
+    {
+     "id": "group",
+     "components": [],
+     "children": [
+      {
+       "id": "nested",
+       "components": [
+        {
+         "type": "fx",
+         "props": {
+          "matte": {
+           "mode": "luma",
+           "inverted": false
+          }
+         }
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "plain",
+     "components": [
+      {
+       "type": "fx",
+       "props": {
+        "blendMode": "screen"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {},
+   "expressions": {}
+  }
+ },
+ "output": {
+  "version": "1.9.0",
+  "scene": {
+   "version": "1.0.0",
+   "nodes": [
+    {
+     "id": "a",
+     "components": [
+      {
+       "type": "fx",
+       "props": {
+        "matte": {
+         "mode": "alpha",
+         "inverted": true
+        }
+       }
+      }
+     ]
+    },
+    {
+     "id": "b",
+     "components": [
+      {
+       "type": "fx",
+       "props": {
+        "matte": {
+         "mode": "luma",
+         "inverted": true,
+         "sourceId": "a"
+        }
+       }
+      }
+     ]
+    },
+    {
+     "id": "group",
+     "components": [],
+     "children": [
+      {
+       "id": "nested",
+       "components": [
+        {
+         "type": "fx",
+         "props": {
+          "matte": {
+           "mode": "luma",
+           "inverted": false
+          }
+         }
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "plain",
+     "components": [
+      {
+       "type": "fx",
+       "props": {
+        "blendMode": "screen"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "animation": {
+   "tracks": {},
+   "expressions": {}
+  }
+ }
+}

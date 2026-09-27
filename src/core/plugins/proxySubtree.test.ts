@@ -16,9 +16,11 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { seedDefaultScene } from '@core/scene/seedDefaultScene';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { activeCompRootId } from '@core/scene/activeComp';
 import { defaultAnimation } from '@motion/animation';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 import { buildCustomLayerNode, customPropPath, isPluginOwned, ownerOf } from './customLayers';
 import {
   detachSubtree,
@@ -47,28 +49,28 @@ const KIND: LayerKindContribution = {
 
 const child = (key: string, name = key): ProxyChildSpec => ({ key, kind: 'shape', name });
 
-beforeAll(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-});
+let h: Harness & { engine: LocalEngine };
 
-beforeEach(() => {
-  defaultSceneGraph.clear();
-  seedDefaultScene();
+beforeEach(async () => {
+  // B5: a regeneration is ONE engine batch — the app's engine, a fresh
+  // project, the proxy layer inside its composition.
+  h = await setupAppEngine();
   resetRateLimitForTests();
   resetNotifierForTests();
-  defaultSceneGraph.addNode(buildCustomLayerNode('depth-1', PLUGIN, KIND));
+  defaultSceneGraph.addChild(activeCompRootId() as string, buildCustomLayerNode('depth-1', PLUGIN, KIND));
 });
+afterEach(async () => { await h.dispose(); });
 
 const childIds = (): string[] => defaultSceneGraph.getChildren('depth-1').map((c) => c.id);
 
 describe('regeneration diffs rather than recreating', () => {
-  it('preserves the ids of unchanged children', () => {
-    regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b'), child('c')]);
+  it('preserves the ids of unchanged children', async () => {
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b'), child('c')]);
     const before = childIds();
     expect(before).toHaveLength(3);
 
     // Same keys, different content — the normal case when a parameter changes.
-    const result = regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [
+    const result = await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [
       { ...child('a'), props: { x: 40 } },
       { ...child('b'), props: { x: 80 } },
       { ...child('c'), props: { x: 120 } },
@@ -81,34 +83,27 @@ describe('regeneration diffs rather than recreating', () => {
     expect(result.updated).toEqual(before);
   });
 
-  it('adds only what is new and removes only what is gone', () => {
-    regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b')]);
+  it('adds only what is new and removes only what is gone', async () => {
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b')]);
     const keptId = childIds()[0]!;
 
-    const result = regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('c')]);
+    const result = await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('c')]);
 
     expect(result.created).toHaveLength(1);
     expect(result.removed).toHaveLength(1);
     expect(childIds()).toContain(keptId);
   });
 
-  it('is ONE undo entry for the whole subtree', () => {
-    const history = (setCommandSystem as never, defaultCommandHistory());
-    const pushed: string[] = [];
-    const real = history.push.bind(history);
-    (history as unknown as { push: (c: { label: string }) => void }).push = (c) => {
-      pushed.push(c.label);
-      real(c as never);
-    };
-
-    regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b'), child('c')]);
+  it('is ONE undo entry for the whole subtree', async () => {
+    const before = historyLabels().length;
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b'), child('c')]);
 
     // Not one press of Ctrl+Z per generated layer.
-    expect(pushed).toEqual(['Acme Lab: update layers']);
+    expect(historyLabels().slice(before)).toEqual(['Acme Lab: update layers']);
   });
 
-  it('marks every generated child in the DOCUMENT, not only in the UI', () => {
-    regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a')]);
+  it('marks every generated child in the DOCUMENT, not only in the UI', async () => {
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a')]);
     const node = defaultSceneGraph.getNode(childIds()[0]!)!;
     // A user opening this project elsewhere has to be able to see these layers
     // are managed — the layer tree reads the same stored field.
@@ -116,14 +111,14 @@ describe('regeneration diffs rather than recreating', () => {
     expect(ownerOf(node)).toBe(PLUGIN);
   });
 
-  it('writes bindings with authoredBy, so plugin expressions are attributable', () => {
+  it('writes bindings with authoredBy, so plugin expressions are attributable', async () => {
     /*
       Proxy output is expression-bearing by design, so a document fills up with
       expressions the user never wrote. Without an origin label, "why does this
       layer have an expression on it" is unanswerable months later and is not
       recoverable from anything else in the file.
     */
-    regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [{
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [{
       ...child('a'),
       expressions: { x: `layer('Depth Image', '${customPropPath('focal')}')` },
     }]);
@@ -136,8 +131,8 @@ describe('regeneration diffs rather than recreating', () => {
 });
 
 describe('a user takes the subtree over', () => {
-  beforeEach(() => {
-    regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b')]);
+  beforeEach(async () => {
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b')]);
   });
 
   it('detaches the WHOLE subtree on a manual edit, and destroys nothing', () => {
@@ -151,22 +146,22 @@ describe('a user takes the subtree over', () => {
     expect(childIds()).toEqual(ids);
   });
 
-  it('then REFUSES the next regeneration rather than overwriting', () => {
+  it('then REFUSES the next regeneration rather than overwriting', async () => {
     // Silently overwriting is exactly what the ownership mark exists to prevent.
     noteManualEdit(childIds()[0]!);
     const ids = childIds();
 
-    const result = regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a')]);
+    const result = await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a')]);
 
     expect(result.refused).toBe('detached');
     expect(childIds()).toEqual(ids);
   });
 
-  it('does not detach while the plugin is regenerating its own children', () => {
+  it('does not detach while the plugin is regenerating its own children', async () => {
     // Both go through the same scene-graph calls. Without the guard, the first
     // write of a regeneration would detach the subtree being regenerated.
     const ids = childIds();
-    regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b')]);
+    await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a'), child('b')]);
     for (const id of ids) expect(isPluginOwned(defaultSceneGraph.getNode(id)!)).toBe(true);
   });
 
@@ -177,10 +172,10 @@ describe('a user takes the subtree over', () => {
 });
 
 describe('the host stops a regeneration loop', () => {
-  it('cuts a plugin off after too many regenerations in one window', () => {
+  it('cuts a plugin off after too many regenerations in one window', async () => {
     let allowed = 0;
     for (let i = 0; i < 40; i += 1) {
-      const result = regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a')], 1000);
+      const result = await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a')], 1000);
       if (result.updated.length > 0 || result.created.length > 0) allowed += 1;
     }
     // Bounded by the host, not by author discipline: the failure mode is a
@@ -190,13 +185,13 @@ describe('the host stops a regeneration loop', () => {
     expect(allowed).toBeGreaterThan(0);
   });
 
-  it('lets it start again in the next window', () => {
+  it('lets it start again in the next window', async () => {
     for (let i = 0; i < 40; i += 1) {
-      regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a')], 1000);
+      await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a')], 1000);
     }
     // A rate limit that never forgives is a plugin permanently broken by one
     // bad second.
-    const later = regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a')], 5000);
+    const later = await regenerateProxyChildren('depth-1', PLUGIN, 'Acme Lab', [child('a')], 5000);
     expect(later.updated.length + later.created.length).toBeGreaterThan(0);
   });
 });
@@ -283,9 +278,3 @@ describe('onLayerChanged is for authored edits only', () => {
   });
 });
 
-/** The live history service, without importing the whole command surface. */
-function defaultCommandHistory(): { push: (c: unknown) => void } {
-  const { getCommandSystem } = require('@core/commands/CommandSystem') as
-    typeof import('@core/commands/CommandSystem');
-  return getCommandSystem().getHistory() as unknown as { push: (c: unknown) => void };
-}

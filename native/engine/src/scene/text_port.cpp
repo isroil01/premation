@@ -5,12 +5,14 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <map>
 #include <string>
 
 #include "eval.hpp"
 #include "fxstate.hpp"
 #include "jsmath.hpp"
+#include "line_break.hpp"
 #include "text_measure.hpp"
 #include "text_unicode.hpp"
 
@@ -75,6 +77,22 @@ Json pt(double x, double y) {
   o.set("x", Json::number(x));
   o.set("y", Json::number(y));
   return o;
+}
+
+/// textAnimators.ts identityGlyphTransform(ch), in its key order.
+Json identity_glyph(const std::string& ch) {
+  Json g = Json::object();
+  g.set("char", Json::string(ch));
+  g.set("displayChar", Json::string(ch));
+  g.set("dx", Json::number(0));
+  g.set("dy", Json::number(0));
+  g.set("scale", Json::number(1));
+  g.set("scaleY", Json::number(1));
+  g.set("rotation", Json::number(0));
+  g.set("opacity", Json::number(1));
+  g.set("fillOpacity", Json::number(1));
+  for (const char* k : {"tracking", "lineSpacing", "blur", "skew", "strokeWidth"}) g.set(k, Json::number(0));
+  return g;
 }
 
 }  // namespace
@@ -322,6 +340,46 @@ Json text_stroke_paint(const doc::Node& n, const Values& a) {
   return Json();
 }
 
+namespace {
+
+/// lineBreak.ts alignIndicesToWrap: a CJK wrap INSERTS its soft breaks, so the
+/// runs and the animator glyphs — indexed on the raw text — move onto the
+/// wrapped text: runs shift past every inserted break, the glyphs gain an
+/// identity '\n' at each. A wrap that only replaced spaces changes nothing.
+void align_to_wrap(RLayer& l, const std::string& raw, const std::string& wrapped) {
+  const bool runs = l.runs.is_array();
+  const bool glyphs = l.glyphs.is_array();
+  if (!(runs || glyphs) || wrapped.size() <= raw.size()) return;
+  const std::vector<std::size_t> inserted =
+      raster::inserted_break_indices(raster::split_graphemes(raw), raster::split_graphemes(wrapped));
+  if (inserted.empty()) return;
+  if (glyphs) {
+    std::vector<Json> out = l.glyphs.arr();
+    for (const std::size_t j : inserted) {
+      const auto at = static_cast<std::ptrdiff_t>(std::min(j, out.size()));
+      out.insert(out.begin() + at, identity_glyph("\n"));
+    }
+    Json a = Json::array();
+    for (Json& g : out) a.arr_mut().push_back(std::move(g));
+    l.glyphs = std::move(a);
+  }
+  if (runs) {
+    Json a = Json::array();
+    for (const Json& r : l.runs.arr()) {
+      Json shifted = r;
+      if (r.at("start").is_number() && r.at("end").is_number()) {
+        const auto [start, end] = raster::shift_span_for_inserted_breaks(r.at("start").num(), r.at("end").num(), inserted);
+        shifted.set("start", Json::number(start));
+        shifted.set("end", Json::number(end));
+      }
+      a.arr_mut().push_back(std::move(shifted));
+    }
+    l.runs = std::move(a);
+  }
+}
+
+}  // namespace
+
 std::string paragraph_layer(RLayer& l, const doc::Node& n, TextMeasurer* measurer, const std::string& raw) {
   // wrappedLayerText: hasTextPath ? 0 : readNumProp(node, 'boxWidth').
   if (doc::read_text_path_config(n)) return {};
@@ -342,6 +400,7 @@ std::string paragraph_layer(RLayer& l, const doc::Node& n, TextMeasurer* measure
   if (!wrapped) return why.empty() ? "paragraph text (box wrapping)" : why;
   if (style->hasLineRuns) return "paragraph text: runs that change line height";
   l.text = wrapped->content;
+  align_to_wrap(l, raw, wrapped->content);
   // textExtrasForNode(node, style.softBreakLines, …).
   Json x = l.textExtras.is_object() ? l.textExtras : Json::object();
   std::string align;
@@ -362,7 +421,10 @@ std::string paragraph_layer(RLayer& l, const doc::Node& n, TextMeasurer* measure
   if (box && box->boxHeight) {
     x.set("boxHeight", Json::number(*box->boxHeight));
     if (!box->boxVerticalAlign.empty()) x.set("boxVerticalAlign", Json::string(box->boxVerticalAlign));
-    if (box->boxFit) return "paragraph text: Fit Text to Box";
+    // Fit Text to Box: the painter draws the wrap scaled by the fit (compactTextExtras: 0 < k < 1).
+    if (box->boxFit && wrapped->fitScale && *wrapped->fitScale > 0 && *wrapped->fitScale < 1) {
+      x.set("fitScale", Json::number(*wrapped->fitScale));
+    }
   } else if (box && box->boxAnchorHeight) {
     return "paragraph text: anchored auto-height box";
   }
@@ -752,21 +814,7 @@ Json evaluate_text_animators(std::string_view text, const std::vector<Json>& ani
   const std::vector<std::string> chars = raster::split_graphemes(text);
   std::vector<Json> glyphs;
   glyphs.reserve(chars.size());
-  for (const auto& ch : chars) {
-    // identityGlyphTransform(ch), in its key order.
-    Json g = Json::object();
-    g.set("char", Json::string(ch));
-    g.set("displayChar", Json::string(ch));
-    g.set("dx", Json::number(0));
-    g.set("dy", Json::number(0));
-    g.set("scale", Json::number(1));
-    g.set("scaleY", Json::number(1));
-    g.set("rotation", Json::number(0));
-    g.set("opacity", Json::number(1));
-    g.set("fillOpacity", Json::number(1));
-    for (const char* k : {"tracking", "lineSpacing", "blur", "skew", "strokeWidth"}) g.set(k, Json::number(0));
-    glyphs.push_back(std::move(g));
-  }
+  for (const auto& ch : chars) glyphs.push_back(identity_glyph(ch));
   std::map<std::string, UnitMap, std::less<>> units;
   const auto units_for = [&](const std::string& basedOn) -> const UnitMap& {
     auto it = units.find(basedOn);

@@ -6,8 +6,10 @@
 
 #include <array>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "engine_api.hpp"
@@ -85,12 +87,57 @@ struct ViewportConfig {
          a.resolution != b.resolution;
 }
 
+/// How the engine's media or render side answered a query the document core
+/// cannot answer from document data (session_hooks.hpp, FrameSink).
+enum class HookAnswer : std::uint8_t {
+  unsupported,  ///< this build has no such system (the query answers `unsupported`)
+  pending,      ///< not ready yet — a source still decoding (`busy`, ask again)
+  ready,        ///< answered
+  failed,       ///< tried and failed (`internal`, with why)
+};
+
 struct RenderCounters {
   std::uint64_t rendered = 0;
   std::uint64_t dropped = 0;     // ring full or superseded before rendering
   double gpuFrameMs = 0;         // mean over the last second
   double fps = 0;                // delivered frames per second, last second
 };
+
+/// getThumbnail: a frame the render thread drew offscreen and encoded.
+struct StillImage {
+  HookAnswer answer = HookAnswer::unsupported;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::string format;  // "png": straight-alpha 8-bit RGBA, sRGB-tagged
+  std::vector<std::uint8_t> data;
+  std::string error;   // why not, when answer != ready
+};
+
+/// readPixels: a region of the frame a viewport shows, in working space (the
+/// float scene colour before the display transform and the viewer LUT),
+/// straight alpha, top-down rows.
+struct WorkingPixels {
+  HookAnswer answer = HookAnswer::unsupported;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::vector<float> rgba;
+  std::string error;
+};
+
+/// A slot-pixel rectangle (top-left origin), already clamped to the slot.
+struct PixelRegion {
+  std::uint32_t x = 0;
+  std::uint32_t y = 0;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+};
+
+template <class T>
+[[nodiscard]] std::future<T> ready_future(T value) {
+  std::promise<T> p;
+  p.set_value(std::move(value));
+  return p.get_future();
+}
 
 /// The render side as the document core sees it. Implemented by the render
 /// thread (render/render_thread.cpp) and by a null sink in tests and fuzzing.
@@ -109,9 +156,31 @@ class FrameSink {
   /// Use shared (cross-process) slot textures. Called once, from Hello.
   virtual void set_shared(bool shared) = 0;
   [[nodiscard]] virtual bool shared_supported() const = 0;
+  /// Route A: read each frame back and write it to the pixel stream (fd 5,
+  /// pixel_channel.hpp) before its FrameReady — for hosts that cannot import
+  /// shared textures. Called once, from Hello, and only when not shared.
+  virtual void set_copy(bool /*copy*/) {}
+  [[nodiscard]] virtual bool copy_supported() const { return false; }
   [[nodiscard]] virtual RenderCounters counters() const = 0;
   [[nodiscard]] virtual std::string adapter() const = 0;
   [[nodiscard]] virtual std::string backend() const = 0;
+
+  /// getThumbnail: draw `frame` (built for a width × height surface) offscreen
+  /// and encode it. The future is ready once the render thread got to it,
+  /// between viewport frames. Default: no renderer (`unsupported`).
+  [[nodiscard]] virtual std::future<StillImage> render_still(std::shared_ptr<BuiltFrame> /*frame*/,
+                                                             std::uint32_t /*width*/, std::uint32_t /*height*/) {
+    StillImage out;
+    out.error = "this engine has no renderer (--no-gpu)";
+    return ready_future(std::move(out));
+  }
+  /// readPixels: `region` of the frame last drawn for `viewport`, in working
+  /// space. Default: no renderer (`unsupported`).
+  [[nodiscard]] virtual std::future<WorkingPixels> read_pixels(std::uint32_t /*viewport*/, PixelRegion /*region*/) {
+    WorkingPixels out;
+    out.error = "this engine has no renderer (--no-gpu)";
+    return ready_future(std::move(out));
+  }
 };
 
 }  // namespace premation

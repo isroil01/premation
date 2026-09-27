@@ -4,11 +4,11 @@
 // The TypeScript twins: src/core/engine/textLayoutQuery.ts and the text branch
 // of src/core/workspace/geometry.ts `readGeometry`.
 //
-// Inside the port: horizontal point and paragraph text (greedy word wrap,
-// indents, paragraph spacing, anchored auto-height boxes). Outside it (the
-// answer is `unsupported`, naming why): vertical type, Fit Text to Box, runs
-// that change a line's size or leading, variable axes, Capitalize case, CJK
-// line breaking — the same limits the scene port reports as unported.
+// Inside the port: horizontal point and paragraph text (greedy word wrap, CJK
+// breaking, Fit Text to Box, indents, paragraph spacing, anchored auto-height
+// boxes). Outside it (the answer is `unsupported`, naming why): vertical type,
+// runs that change a line's size or leading, variable axes, Capitalize case —
+// the same limits the scene port reports as unported.
 #pragma once
 
 #include <optional>

@@ -6,9 +6,9 @@
  * This module is DATA shared by both engines: the TypeScript catalog
  * (`src/core/engine/controlProps.ts`) and the legacy helpers
  * (`src/core/animation/expressionControls.ts`) read it directly, the C++
- * catalog (`native/engine/src/core/controls.cpp`) reads the copy
- * `crossEngineCatalog.test.ts` generates into catalog_data.inc
- * (`fields.control`). Pure — no scene graph, no stores. Row order is the
+ * catalog (`native/engine/src/core/controls.cpp`) reads its own copy in
+ * native/engine/catalog/fields.json (`control`; crossEngineCatalog.test.ts
+ * fails when the two differ). Pure — no scene graph, no stores. Row order is the
  * `listGroupTypes` order.
  *
  * Storage is the document's as it has always been: one plain number per

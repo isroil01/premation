@@ -16,6 +16,7 @@
 //                    [--plugin-journal F]  the plugin crash journal (quarantines a plugin that killed the engine)
 //                    [--version]
 //   premation-engine --export JOB.json     F1: render one export job and exit (export/export_job.hpp)
+//   premation-engine --job JOB.json        an engine job's crash-isolated half (jobs/child_job.hpp)
 //
 // stdin/stdout: the command pipe; fd 3/4: the frame channel; stderr: log.
 // See engine_process.hpp for the thread structure and exit codes.
@@ -30,6 +31,11 @@
 #include <string>
 
 #include "export_job.hpp"
+#endif
+#if defined(PREMATION_HAVE_JOBS)
+#include <string>
+
+#include "jobs/child_job.hpp"
 #endif
 
 namespace {
@@ -61,6 +67,20 @@ int run(int argc, char** argv) {
       return premation::exporter::run_export(std::string(v));
 #else
       std::fprintf(stderr, "premation-engine: built without export (F1)\n");
+      return 3;
+#endif
+    } else if (k == "--job") {
+      // A job that loads a model runs here, in a process of its own
+      // (jobs/child_job.hpp): JSON lines on stdout, the engine that started it
+      // reads them. A crash here fails that job only.
+#if defined(PREMATION_HAVE_JOBS)
+      if (v.empty()) {
+        std::fprintf(stderr, "premation-engine: --job needs a job file\n");
+        return 64;
+      }
+      return premation::jobs::child_main(std::string(v));
+#else
+      std::fprintf(stderr, "premation-engine: built without engine jobs\n");
       return 3;
 #endif
     } else if (k == "--no-gpu") {

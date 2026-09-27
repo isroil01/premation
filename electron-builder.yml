@@ -32,16 +32,29 @@ icon: build/icon.png
 extraResources:
   - from: build/icon.png
     to: build/icon.png
-  # The C++ engine process (NATIVE_CORE_PLAN C3) at <resources>/engine/, where
-  # electron/engineSupervisor.ts looks in a packaged app. scripts/stageEngine.cjs
-  # (the beforePack hook below) copies it into build/engine/ ONLY when it was
-  # built — an empty folder ships nothing, and the app runs on the TypeScript
-  # engine as before. Windows: Dawn loads dxcompiler.dll + dxil.dll at runtime.
+  # The C++ engine process at <resources>/engine/, where
+  # electron/engineSupervisor.ts looks in a packaged app. It is REQUIRED:
+  # scripts/stageEngine.cjs (the beforePack hook below) stages the build for
+  # this platform + arch into build/engine/ and fails the package when it is
+  # missing (docs/TS_ENGINE_REMOVAL.md: one engine). Beside it:
+  #   Windows  dxcompiler.dll + dxil.dll — Dawn loads DXC at runtime
+  #   macOS    premation-host-bridge.node — main's IOSurface lookup (route C)
+  #   Linux    any shared libraries the engine was linked against (*.so, *.so.N)
   - from: build/engine
     to: engine
     filter:
       - premation-engine*
+      - premation-host-bridge.node
       - '*.dll'
+      - '*.so'
+      - '*.so.*'
+  # The Object Matte model pair (scripts/fetchObjectMatte.cjs) OUTSIDE app.asar
+  # too: the engine's objectMatte job reads the files itself (it cannot read an
+  # archive); main points it here with PREMATION_SAM_DIR (engineHost.ts).
+  - from: dist/models/object-matte
+    to: models/object-matte
+    filter:
+      - '*.onnx'
 
 beforePack: ./scripts/stageEngine.cjs
 
@@ -134,6 +147,15 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # The engine and the host bridge are nested Mach-O files outside any
+  # framework: named here so they are always signed (hardened runtime,
+  # entitlementsInherit) before the app is sealed — an unsigned nested binary
+  # is a notarization rejection. The engine needs disable-library-validation
+  # (it dlopen()s native SDK plugins signed by their authors); the bridge is
+  # loaded by Electron main, which already has it.
+  binaries:
+    - Contents/Resources/engine/premation-engine
+    - Contents/Resources/engine/premation-host-bridge.node
   # electron-builder signs every nested binary, framework and helper it finds.
   # Missed components are the single most common notarization rejection, so this
   # is left ON rather than narrowed for build speed.

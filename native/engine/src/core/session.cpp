@@ -192,6 +192,12 @@ void Session::handle_hello(const api::Hello& hello) {
                           hello.capabilities.end();
   const bool shared = wantShared && sink_.shared_supported();
   sink_.set_shared(shared);
+  // Route A (docs/VIEWPORT_ROUTE.md): a host that cannot import this engine's
+  // shared slots (Linux, macOS without the host bridge) takes read-back copies.
+  const bool wantCopy = std::find(hello.capabilities.begin(), hello.capabilities.end(), "frames.copy") !=
+                        hello.capabilities.end();
+  const bool copy = !shared && wantCopy && sink_.copy_supported();
+  sink_.set_copy(copy);
   api::Welcome w;
   w.protocol_major = api::kProtocolMajor;
   w.protocol_minor = api::kProtocolMinor;
@@ -201,6 +207,7 @@ void Session::handle_hello(const api::Hello& hello) {
   w.session_id = options_.sessionId;
   w.capabilities = {"frames.channel", "frames.offscreen", "heartbeat"};
   if (sink_.shared_supported()) w.capabilities.emplace_back("frames.sharedTexture");
+  if (sink_.copy_supported()) w.capabilities.emplace_back("frames.copy");
   api::EngineMessage m;
   m.v = std::move(w);
   out_.send(m);
@@ -209,7 +216,8 @@ void Session::handle_hello(const api::Hello& hello) {
       .kv("client", hello.client)
       .kv("clientVersion", hello.client_version)
       .kv("minor", hello.protocol_minor)
-      .kv("sharedFrames", shared);
+      .kv("sharedFrames", shared)
+      .kv("copyFrames", copy);
 }
 
 void Session::close(api::GoodbyeReason reason, std::string message) {
@@ -437,22 +445,17 @@ std::vector<api::CommandResult> Session::run_edits(const std::vector<const api::
   doc_.begin();
   for (std::size_t i = 0; i < commands.size(); ++i) {
     const api::Command& cmd = *commands[i];
-    const std::string name = command_name(cmd);
-    doc::HCtx x = handler_ctx(origin);
     const std::optional<std::uint32_t> index = indexed ? std::optional<std::uint32_t>(static_cast<std::uint32_t>(i)) : std::nullopt;
     // The failure is recorded and re-thrown OUTSIDE the handler: a throw from
     // inside a catch funclet crashes the clang-cl ASan runtime's SEH handler.
     std::optional<api::EngineError> failed;
     try {
-      api::CommandResult r = std::visit(EditVisitor{x, name}, cmd.v);
-      // stampMissingKeyIds over what this command touched, then syncTimelines.
-      doc::ChangeSet sofar;
-      doc_.peek_journal(sofar.before);
-      stamp_missing_key_ids(sofar, x);
-      doc::tl_sync_all(doc_);
+      std::string own;
+      // A held job result is its own commands, in this journal (one entry).
+      const auto* applyJob = std::get_if<api::ApplyJobResult>(&cmd.v);
+      api::CommandResult r = applyJob != nullptr ? apply_job_in_journal(*applyJob, origin, own) : run_in_journal(cmd, origin, &own);
       results.push_back(std::move(r));
-      if (!batchLabel) label = x.label ? *x.label : humanize(name);
-      keys_.invalidate();
+      if (!batchLabel) label = std::move(own);
     } catch (const EngineFail& f) {
       failed = with_index(f.error, index);
     } catch (const std::exception& e) {
@@ -478,6 +481,21 @@ std::vector<api::CommandResult> Session::run_edits(const std::vector<const api::
   emit_status();
   request_render();
   return results;
+}
+
+api::CommandResult Session::run_in_journal(const api::Command& cmd, api::Origin origin, std::string* label) {
+  const std::string name = command_name(cmd);
+  if (!is_edit(cmd)) fail(ErrorCode::invalid_argument, "'" + name + "' is not an edit command");
+  doc::HCtx x = handler_ctx(origin);
+  api::CommandResult r = std::visit(EditVisitor{x, name}, cmd.v);
+  // stampMissingKeyIds over what this command touched, then syncTimelines.
+  doc::ChangeSet sofar;
+  doc_.peek_journal(sofar.before);
+  stamp_missing_key_ids(sofar, x);
+  doc::tl_sync_all(doc_);
+  keys_.invalidate();
+  if (label != nullptr) *label = x.label ? *x.label : humanize(name);
+  return r;
 }
 
 // ── history and controls ────────────────────────────────────────────────────
@@ -544,6 +562,7 @@ void Session::load_new_project(api::ResetReason reason, bool emit) {
 }
 
 void Session::after_load(api::ResetReason reason, bool emit) {
+  drop_jobs();
   ensure_timelines();
   history_.clear();
   gesture_.reset();
@@ -759,11 +778,8 @@ struct ControlVisitor {
     fail(ErrorCode::unsupported, "no collect-files port is attached to this engine");
   }
   R operator()(const api::ReloadItems&) const { return result_for<api::ReloadItems>(); }
-  R operator()(const api::StartJob&) const {
-    fail(ErrorCode::unsupported, "jobs run in the editor today (tracking, stabilize, object matte, transcription, render); "
-                                 "they move into the engine in phase E/F");
-  }
-  R operator()(const api::CancelJob& c) const { fail(ErrorCode::not_found, "no job '" + c.job + "'"); }
+  R operator()(const api::StartJob& c) const { return s.start_job(c); }
+  R operator()(const api::CancelJob& c) const { return s.cancel_job(c); }
   R operator()(const api::SetPluginEnabled& c) const {
     // G1: native SDK plugins live in this process (src/plugins); JavaScript
     // plugins are the editor's and are not ported (plan §5 G2).
@@ -910,7 +926,8 @@ api::CommandResult Session::run_control(const api::Command& cmd, api::Origin ori
 // ── queries ─────────────────────────────────────────────────────────────────
 
 api::QueryResult Session::run_query(const api::Query& q) {
-  doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}, &catalogCache_, {}, nullptr};
+  doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}, &catalogCache_, {}, {}};
+  if (!options_.testPorts) c.fonts = options_.systemFonts;
   c.text = frameBuilder_ != nullptr ? frameBuilder_->text_queries() : nullptr;
   c.revision = revision_;
   c.projectPath = projectPath_;
@@ -946,10 +963,85 @@ api::QueryResult Session::run_query(const api::Query& q) {
     if (!comp.empty() && comp != layerErrorsComp_) return std::vector<api::LayerError>{};
     return layerErrors_;
   };
+  if (frameBuilder_ != nullptr) {
+    c.hitTest = [this](const std::string& comp, api::Time time, api::Vec2 point, std::vector<std::string>& out) {
+      frameBuilder_->set_media_base(media_base());
+      return frameBuilder_->hit_test(doc_, view_, exprEnv_, exprCache_, comp, time, point, out);
+    };
+  }
+  c.still = [this](const doc::StillRequest& r) { return render_still(r); };
+  c.viewportSlot = [this](std::uint32_t viewport) -> std::optional<std::pair<std::uint32_t, std::uint32_t>> {
+    if (!viewport_.open || viewport_.viewport != viewport || viewport_.width == 0 || viewport_.height == 0) return std::nullopt;
+    return std::pair{viewport_.width, viewport_.height};
+  };
+  c.readPixels = [this](std::uint32_t viewport, PixelRegion region) {
+    return await_render<WorkingPixels>(sink_.read_pixels(viewport, region), "readPixels");
+  };
+  if (mediaClock_ != nullptr) {
+    c.waveform = [this](std::string_view src, double fromSec, double durationSec, std::uint32_t buckets,
+                        api::WaveformPeaks& out) { return mediaClock_->peaks(src, fromSec, durationSec, buckets, out); };
+  }
+  // Jobs are session state (jobs_), not the document's.
+  if (std::holds_alternative<api::GetJobs>(q.v)) {
+    api::JobList list;
+    for (const JobRecord& r : jobs_) list.jobs.push_back(r.info);
+    return query_result_for<api::GetJobs>(std::move(list));
+  }
   // Queries never write the document: bar lookups come from an index for the
   // duration (timeline.hpp TlReadScope).
   const doc::TlReadScope readOnly;
   return doc::run_query(q, c);
+}
+
+std::string Session::media_base() const {
+  // project_open.cpp's rule: a bundle holds its media; a JSON file's sit beside it.
+  if (projectPath_.empty()) return {};
+  if (!bundleRoot_.empty() && bundleRoot_ == projectPath_) return projectPath_;
+  // The folder, by the UTF-8 string itself (a std::filesystem::path from a
+  // narrow string is the ANSI code page on Windows).
+  const std::size_t slash = projectPath_.find_last_of("/\\");
+  return slash == std::string::npos ? std::string() : projectPath_.substr(0, slash);
+}
+
+template <class T>
+T Session::await_render(std::future<T> result, std::string_view what) {
+  // The render thread answers between frames; a device-lost recovery or a
+  // heavy frame in hand can hold it — the query says `busy` rather than block
+  // the document core longer.
+  if (result.wait_for(kRenderQueryTimeout) != std::future_status::ready) {
+    T out;
+    out.answer = HookAnswer::pending;
+    out.error = std::string(what) + ": the renderer is busy; ask again";
+    return out;
+  }
+  try {
+    return result.get();
+  } catch (const std::future_error&) {
+    T out;
+    out.answer = HookAnswer::failed;
+    out.error = std::string(what) + ": the renderer stopped";
+    return out;
+  }
+}
+
+StillImage Session::render_still(const doc::StillRequest& r) {
+  if (frameBuilder_ == nullptr) {
+    StillImage out;
+    out.error = "getThumbnail needs the engine's scene builder (D2w); this engine draws C2 quads only";
+    return out;
+  }
+  frameBuilder_->set_media_base(media_base());
+  std::shared_ptr<BuiltFrame> frame =
+      r.footageSrc.empty()
+          ? frameBuilder_->build_still(doc_, view_, exprEnv_, exprCache_, r.comp, r.time, r.width, r.height, r.isolateLayer)
+          : frameBuilder_->build_footage_still(doc_, r.footageSrc, r.video, r.sourceSec, r.sourceWidth, r.sourceHeight,
+                                               r.width, r.height);
+  if (!frame) {
+    StillImage out;
+    out.error = "the scene builder cannot build this still";
+    return out;
+  }
+  return await_render<StillImage>(sink_.render_still(std::move(frame), r.width, r.height), "getThumbnail");
 }
 
 // ── transport ───────────────────────────────────────────────────────────────
@@ -1061,6 +1153,18 @@ void Session::stop_playback() {
 }
 
 std::optional<Clock::time_point> Session::next_deadline() const {
+  // Jobs: the core loop wakes to drain them (progress, results) every 50 ms.
+  std::optional<Clock::time_point> jobs;
+  if (runner_ && runner_->live() > 0) jobs = jobsPolled_ + std::chrono::milliseconds(50);
+  for (const JobRecord& r : jobs_) {
+    if (r.result && r.apply && r.info.status == api::JobStatus::done && !r.info.applied) jobs = jobsPolled_ + std::chrono::milliseconds(50);
+  }
+  const std::optional<Clock::time_point> clock = next_clock_deadline();
+  if (jobs && clock) return std::min(*jobs, *clock);
+  return jobs ? jobs : clock;
+}
+
+std::optional<Session::Clock::time_point> Session::next_clock_deadline() const {
   if (!playing_) return std::nullopt;
   const auto c = active_comp();
   if (!c) return std::nullopt;
@@ -1080,6 +1184,7 @@ std::optional<Clock::time_point> Session::next_deadline() const {
 }
 
 void Session::tick(Clock::time_point now) {
+  if (phase_ == Phase::open && (runner_ || !jobs_.empty())) poll_jobs(now);
   if (!playing_ || phase_ != Phase::open) return;
   const auto c = active_comp();
   if (!c) {
@@ -1217,6 +1322,7 @@ void Session::submit_frame(std::uint32_t clockDropped) {
     // outside the port come back as layerErrors, never as a blank frame.
     std::vector<api::LayerError> errors;
     const auto t0 = Clock::now();
+    frameBuilder_->set_media_base(media_base());
     job.built = frameBuilder_->build(doc_, view_, exprEnv_, exprCache_, *c, time_, viewport_, playing_, errors);
     // Measurement only (RenderStats.cpuFrameMs): an exponential moving average.
     const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();

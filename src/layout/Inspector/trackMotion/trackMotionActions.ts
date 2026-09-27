@@ -9,7 +9,8 @@
  * renders, so nothing here needs React.
  */
 
-import type { LayerInfo } from '@motion/engine-api';
+import { secondsToFlicks, type LayerInfo, type TrackKind } from '@motion/engine-api';
+import { runEngineJob, startEngineJob } from '@core/engine/engineJobs';
 import { documentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useTrackerStore, type AutoPhase, type TrackerMode, type TrackerResult } from '@stores/trackerStore';
@@ -212,6 +213,24 @@ export function trackMotionActions(ctx: TrackMotionContext) {
         );
         return;
       }
+      const range = { start: secondsToFlicks(time), duration: secondsToFlicks(Math.max(0, endCompTime - time) + 1 / Math.max(1, fps)) };
+      if (mode === 'smooth' && stabVariant === 'similarity') {
+        // The engine's stabilize job when it runs jobs (the similarity solve:
+        // tracks and writes the keys in one entry).
+        const viaEngine = await runEngineJob<{ fittedPairs: number; totalPairs: number; keyframes?: number }>(
+          { kind: 'stabilize', value: { layer: nodeId, range, smoothness: 50, method: 'positionRotationScale' } },
+          { onProgress: (f) => store.getState().setProgress(f) },
+        );
+        if (viaEngine) {
+          store.getState().finishTracking(
+            null,
+            viaEngine.status === 'done'
+              ? `Stabilized (${stabVariant}): fitted ${viaEngine.result?.fittedPairs ?? 0}/${viaEngine.result?.totalPairs ?? 0} frame pairs.`
+              : viaEngine.error?.message ?? 'Stabilize was cancelled.',
+          );
+          return;
+        }
+      }
       if (mode === 'smooth') {
         // Like mask mode, smooth tracks AND applies in one action — its
         // "points" are the whole flow grid, and the result is keyframes.
@@ -235,6 +254,52 @@ export function trackMotionActions(ctx: TrackMotionContext) {
       // applyCornerPinTrack overdetermined enough to outvote occlusion.
       const stored = store.getState().points;
       const pts = mode === 'corner' && store.getState().dense ? densifyQuad(stored) : stored;
+      // The engine's point tracker when it runs jobs: analysis only (no
+      // applyTo) — Apply below plans and writes from the samples as before.
+      const kind: TrackKind = mode === 'transform' ? 'positionRotationScale' : mode === 'corner' ? 'perspectiveCorner' : 'position';
+      let cancelEngine: (() => void) | null = null;
+      const handle = await startEngineJob<{ status: 'completed' | 'lost' | 'partial'; sourceWidth: number; sourceHeight: number; tracks: Array<Array<[number, number, number, number, number]>> }>(
+        {
+          kind: 'trackMotion',
+          value: {
+            layer: nodeId,
+            kind,
+            points: pts.map((p) => ({
+              feature: { x: p.x, y: p.y, width: 2 * featureHalf + 1, height: 2 * featureHalf + 1 },
+              search: { x: p.x, y: p.y, width: 2 * searchHalf + 1, height: 2 * searchHalf + 1 },
+              attach: { x: 0, y: 0 },
+            })),
+            range,
+            direction: 'forward',
+            origin: secondsToFlicks(time),
+            stabilize: false,
+          },
+        },
+        {
+          onProgress: (f) => {
+            store.getState().setProgress(f);
+            // A cleared store means the user pressed Cancel.
+            if (!store.getState().tracking) cancelEngine?.();
+          },
+        },
+      );
+      if (handle) {
+        cancelEngine = handle.cancel;
+        const viaEngine = await handle.done;
+        const res = viaEngine.result;
+        if (viaEngine.status !== 'done' || !res) {
+          store.getState().finishTracking(null, viaEngine.error?.message ?? 'Tracking was cancelled.');
+          return;
+        }
+        const tracks = res.tracks.map((t) => t.map(([compTime, x, y, confidence, coasted]) => ({ compTime, x, y, confidence, coasted: coasted === 1 })));
+        const status = res.status === 'lost' ? 'lost' : 'completed';
+        const coasted = tracks.flat().filter((smp) => smp.coasted).length;
+        store.getState().finishTracking(
+          { tracks, sourceWidth: res.sourceWidth, sourceHeight: res.sourceHeight, status },
+          summarize(tracks, status, coasted > 0 ? ` · ${coasted} coasted` : ''),
+        );
+        return;
+      }
       const r = await trackVideoLayerPoints({
         nodeId,
         startCompTime: time,
@@ -476,6 +541,40 @@ export function trackMotionActions(ctx: TrackMotionContext) {
 
   /** SAM-class click segment → an Add mask on this layer (`addMask` + its 2 px feather, one entry). */
   const onSegmentSam = async (): Promise<void> => {
+    // The engine segments the real frame with SAM when it runs jobs (the
+    // objectMatte job — the model in a child engine process) and adds the mask.
+    {
+      const p0 = points[0];
+      const box = points.length >= 2
+        ? {
+            x: Math.min(points[0]!.x, points[1]!.x),
+            y: Math.min(points[0]!.y, points[1]!.y),
+            width: Math.abs(points[1]!.x - points[0]!.x),
+            height: Math.abs(points[1]!.y - points[0]!.y),
+          }
+        : undefined;
+      const viaEngine = p0 ? await runEngineJob<{ contourPoints: number }>({
+        kind: 'objectMatte',
+        value: {
+          layer: nodeId,
+          range: { start: secondsToFlicks(time), duration: secondsToFlicks(1 / Math.max(1, fps)) },
+          prompts: [{ x: p0.x, y: p0.y }],
+          backgroundPrompts: [],
+          encoderModel: '',
+          decoderModel: '',
+          ...(box ? { box } : {}),
+        },
+      }) : null;
+      if (viaEngine) {
+        store.getState().finishTracking(
+          null,
+          viaEngine.status === 'done'
+            ? `Segment (SAM): ${viaEngine.result?.contourPoints ?? 0} contour points → mask path. Use Track mask / Roto Brush to propagate.`
+            : `Segment: ${viaEngine.error?.message ?? 'cancelled'}`,
+        );
+        return;
+      }
+    }
     // The layer's DRAWN box at the playhead (the engine's `getLayerBounds`), which the mask vertices scale into.
     const g = await fetchLayerBox(nodeId, compTime(getTime()));
     const w = src?.width ?? 64;
