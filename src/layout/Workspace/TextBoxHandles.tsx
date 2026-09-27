@@ -16,15 +16,18 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { secondsToFlicks, type OverlayKind } from '@motion/engine-api';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readGeometry } from '@core/workspace/geometry';
+import { playheadSeconds } from '@core/timeline/timelineView';
 import { useTextEditStore, TEXT_EDIT_KEEP_ATTR } from '@stores/textEditStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
+import { documentMirror } from '@stores/documentMirror';
+import { MAIN_VIEWPORT, overlayLayer, overlayScreenPlacement, requestOverlayLayers } from '@stores/overlayGeometry';
 import { useMirrorRevision } from '@hooks/useMirror';
-import { readParagraphBox } from '@core/text/textExtras';
-import { measureTextNodeParagraphBox } from '@core/text/measureText';
+import { useTextLayout } from '@hooks/useTextLayout';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorParagraphBox } from '@layout/Text/textMirror';
 import { BOX_HANDLES, handleLocalPosition, type BoxHandle } from '@core/text/paragraphBox';
 import { beginBoxReflow, type BoxReflowSession } from './textBoxReflow';
 import styles from './TextBoxHandles.module.css';
@@ -34,7 +37,7 @@ const HANDLE_CURSOR: Record<BoxHandle, string> = {
   ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize',
 };
 
-/** Which layer's box to show, if any: the one being edited, else the Type tool's selection. */
+/** Which layer's box to show, if any: the one being edited, else the Type tool's selection (B4: from the mirror). */
 export function textBoxTargetId(
   editingId: string | null,
   activeTool: string,
@@ -43,10 +46,14 @@ export function textBoxTargetId(
   const typeTool = activeTool === 'text' || activeTool === 'vertical-text';
   const id = editingId ?? (typeTool && selection.length === 1 ? selection[0]! : null);
   if (!id) return null;
-  const node = defaultSceneGraph.getNode(id);
-  if (!node || !node.components.some((c) => c.type === 'Text')) return null;
-  return readParagraphBox(node) ? id : null;
+  const m = documentMirror();
+  const layer = m.layer(id);
+  if (!layer || uiKindOf(layer) !== 'text') return null;
+  return mirrorParagraphBox(m, id) ? id : null;
 }
+
+/** What the text box handles ask of the overlay geometry push: the layer's matrix and its measured box. */
+const TEXT_BOX_KINDS: ReadonlyArray<OverlayKind> = ['transform', 'textBox'];
 
 export function TextBoxHandles({ overflow: liveOverflow }: {
   /** The in-place editor's overflow for the text being TYPED (not yet
@@ -58,13 +65,20 @@ export function TextBoxHandles({ overflow: liveOverflow }: {
   const selection = useSelectionStore((s) => s.ids);
   useMirrorRevision();
   const target = textBoxTargetId(editingId, activeTool, selection);
-  const node = target ? defaultSceneGraph.getNode(target) : null;
-  const overflow = liveOverflow ?? (node ? measureTextNodeParagraphBox(node)?.overflow === true : false);
+  // The layer's measured paragraph box (the engine's getTextLayout).
+  const layout = useTextLayout(target);
+  const overflow = liveOverflow ?? layout?.paragraph?.overflow === true;
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const outlineRef = useRef<HTMLDivElement | null>(null);
   const handleRefs = useRef<Partial<Record<BoxHandle, HTMLDivElement | null>>>({});
   const dragRef = useRef<{ session: BoxReflowSession; x: number; y: number; zoom: number; pointerId: number } | null>(null);
+
+  // The box and matrix come with each frame (the overlay geometry push, B4).
+  useEffect(() => {
+    void requestOverlayLayers(MAIN_VIEWPORT, 'textBox', target ? [target] : [], TEXT_BOX_KINDS);
+    return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'textBox', [], TEXT_BOX_KINDS); };
+  }, [target]);
 
   // Glue to the layer every frame, like the in-place editor.
   useEffect(() => {
@@ -72,21 +86,27 @@ export function TextBoxHandles({ overflow: liveOverflow }: {
     let raf = 0;
     const place = (): void => {
       const root = rootRef.current;
-      const n = defaultSceneGraph.getNode(target);
-      const p = getWorkspaceController().getNodeScreenPlacement(target);
-      const g = n ? readGeometry(n) : null;
-      if (root && p && g) {
-        const kx = p.zoom * (p.scaleX ?? 1);
-        const ky = p.zoom * (p.scaleY ?? 1);
-        const w = g.width * kx;
-        const h = g.height * ky;
-        const oy = (g.offsetY ?? 0) * ky;
+      const ws = getWorkspaceController().ws;
+      const g = overlayLayer(MAIN_VIEWPORT, target, secondsToFlicks(playheadSeconds()));
+      const p = overlayScreenPlacement(g, (q) => ws.worldToScreen(q));
+      const box = g?.textBox;
+      if (root && p && box && box.length >= 4) {
+        const zoom = ws.camera.zoom;
+        const kx = zoom * p.scaleX;
+        const ky = zoom * p.scaleY;
+        const w = box[2]! * kx;
+        const h = box[3]! * ky;
+        // The push's box is local x, y, width, height; the handles lay out on a
+        // box centred on the layer origin shifted by (ox, oy) — the box's own
+        // centre (readGeometry's offsetY; x is centred for the page's boxes).
+        const ox = (box[0]! + box[2]! / 2) * kx;
+        const oy = (box[1]! + box[3]! / 2) * ky;
         root.style.left = `${p.x}px`;
         root.style.top = `${p.y}px`;
         root.style.transform = `rotate(${p.rotationDeg}deg)`;
         const outline = outlineRef.current;
         if (outline) {
-          outline.style.left = `${-w / 2}px`;
+          outline.style.left = `${-w / 2 + ox}px`;
           outline.style.top = `${-h / 2 + oy}px`;
           outline.style.width = `${w}px`;
           outline.style.height = `${h}px`;
@@ -95,7 +115,7 @@ export function TextBoxHandles({ overflow: liveOverflow }: {
           const el = handleRefs.current[hid];
           if (!el) continue;
           const at = handleLocalPosition(hid, w, h, oy);
-          el.style.left = `${at.x}px`;
+          el.style.left = `${at.x + ox}px`;
           el.style.top = `${at.y}px`;
         }
       }
@@ -141,7 +161,7 @@ export function TextBoxHandles({ overflow: liveOverflow }: {
             e.stopPropagation();
             const session = beginBoxReflow(target, hid);
             if (!session) return;
-            const zoom = getWorkspaceController().getNodeScreenPlacement(target)?.zoom ?? 1;
+            const zoom = getWorkspaceController().ws.camera.zoom;
             dragRef.current = { session, x: e.clientX, y: e.clientY, zoom: zoom || 1, pointerId: e.pointerId };
             try {
               e.currentTarget.setPointerCapture(e.pointerId);

@@ -26,16 +26,18 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { secondsToFlicks, type OverlayKind } from '@motion/engine-api';
 import { useSelectionStore } from '@stores/selectionStore';
+import { documentMirror } from '@stores/documentMirror';
+import { MAIN_VIEWPORT, overlayLayer, requestOverlayLayers } from '@stores/overlayGeometry';
+import { useMirrorTree } from '@hooks/useMirror';
+import { mirrorEffects } from '@core/mirror/effects';
+import { readTrack } from '@core/mirror/selection';
 import { useEffectHandleStore } from '@stores/effectHandleStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { defaultAnimation } from '@motion/animation';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
-import { getNodeEffects, effectPropPath } from '@core/effects/effects';
-import { readGeometry } from '@core/workspace/geometry';
+import { effectPropPath } from '@core/effects/effects';
 import { layerScreenMapping } from './layerScreen';
 import {
   collectEffectHandles,
@@ -55,6 +57,9 @@ import { trackValueCommands } from './viewportEdits';
 const VERTEX_R = 5;
 const TANGENT_R = 3.5;
 
+/** The overlay geometry the handles map through: the layer's drawn box. */
+const HANDLE_KINDS: ReadonlyArray<OverlayKind> = ['bounds'];
+
 export function EffectHandleOverlay(): JSX.Element | null {
   // Frame-coalesced: a drag bumps the revision per pointer event, and this
   // overlay only needs to track it visually. Also the memo key below — the raw
@@ -70,15 +75,21 @@ export function EffectHandleOverlay(): JSX.Element | null {
   const [hovered, setHovered] = useState<string | null>(null);
 
   const nodeId = activeNode && ids.includes(activeNode) ? activeNode : null;
-  const node = nodeId ? defaultSceneGraph.getNode(nodeId) : null;
+  // B4: the effect stack from the mirror; the layer's drawn box from the overlay
+  // geometry push (asked for here, whatever else subscribes the layer).
+  const tree = useMirrorTree(nodeId);
+  const [, setGeoTick] = useState(0);
+  useEffect(() => {
+    // Re-render once the engine has the subscription: the box exists from then.
+    void requestOverlayLayers(MAIN_VIEWPORT, 'effectHandles', nodeId ? [nodeId] : [], HANDLE_KINDS).then(() => setGeoTick((t) => t + 1));
+    return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'effectHandles', [], HANDLE_KINDS); };
+  }, [nodeId]);
+  const node = nodeId ? documentMirror().layer(nodeId) ?? null : null;
   const effect = node && activeEffect
-    ? getNodeEffects(nodeId!).find((e) => e.id === activeEffect) ?? null
+    ? mirrorEffects(tree).find((e) => e.id === activeEffect) ?? null
     : null;
-  const geom = node ? readGeometry(node) : null;
-
-  // Display only: the keyframe-axis time the handles are SAMPLED at (B4's mirror
-  // replaces it); the drag's writes go through the engine in comp time.
-  const layerT = nodeId ? keyAxisTimeForDisplay(nodeId, time) : 0;
+  const box = nodeId ? overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(time))?.box : undefined;
+  const geom = box && box.length >= 4 ? { width: box[2]!, height: box[3]! } : null;
 
   /**
    * Handles at their LIVE positions — animated values folded in, so a handle on
@@ -89,13 +100,14 @@ export function EffectHandleOverlay(): JSX.Element | null {
     if (!effect || !geom || !nodeId) return [];
     if (!hasEffectHandles(effect.type)) return [];
     const params: Record<string, unknown> = { ...(effect.params ?? {}) };
+    const m = documentMirror();
     for (const key of Object.keys(params)) {
-      const v = defaultAnimation.sample(nodeId, effectPropPath(effect.id, key), layerT);
+      const v = readTrack(m, nodeId, effectPropPath(effect.id, key), time);
       if (typeof v === 'number') params[key] = v;
     }
     return collectEffectHandles(effect.type, params, geom.width, geom.height);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scene rev drives this
-  }, [effect, geom?.width, geom?.height, nodeId, layerT, sceneTick]);
+  }, [effect, geom?.width, geom?.height, nodeId, time, sceneTick]);
 
   const camera = getWorkspaceController().ws.camera;
 

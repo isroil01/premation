@@ -28,7 +28,7 @@ import { mirrorMaskIds } from '@core/mirror/masks';
 import { compOfLayer, isCompItem, isLayer } from '@core/engine/doc';
 import { compTime, type TrackRef } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';
-import { readTransformProp } from '@core/scene/transformWrite';
+import { trackValuesAt } from '@stores/trackValues';
 import { staggerOffsets, type StaggerOptions } from '@core/animation/staggerOffsets';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { engine } from '@core/engine/engineInstance';
@@ -372,18 +372,16 @@ async function sendTransform(label: string, entries: ReadonlyArray<{ nodeId: str
 /**
  * AE's Centre Anchor Point in Layer Content over the selection: the anchor
  * goes to 0,0 (the content centre) and Position moves by the same offset so
- * nothing jumps — read at the playhead (`readTransformProp`), as the legacy
- * command did. One entry for the whole selection. False → legacy.
+ * nothing jumps — evaluated at the time by the engine (`trackValuesAt`, B4).
+ * One entry for the whole selection. False → legacy.
  */
-export function centreAnchorEdit(nodeIds: readonly string[], seconds: number): Promise<boolean> {
-  const entries = nodeIds.flatMap((nodeId) => {
-    const ax = readTransformProp(nodeId, 'anchorX', 0);
-    const ay = readTransformProp(nodeId, 'anchorY', 0);
-    if (ax === 0 && ay === 0) return [];
-    const x = readTransformProp(nodeId, 'x', 0);
-    const y = readTransformProp(nodeId, 'y', 0);
-    return [{ nodeId, values: { anchorX: 0, anchorY: 0, x: x - ax, y: y - ay } }];
-  });
+export async function centreAnchorEdit(nodeIds: readonly string[], seconds: number): Promise<boolean> {
+  const entries: Array<{ nodeId: string; values: Record<string, number> }> = [];
+  for (const nodeId of nodeIds) {
+    const [ax = 0, ay = 0, x = 0, y = 0] = await trackValuesAt(nodeId, ['anchorX', 'anchorY', 'x', 'y'], seconds);
+    if (ax === 0 && ay === 0) continue;
+    entries.push({ nodeId, values: { anchorX: 0, anchorY: 0, x: x - ax, y: y - ay } });
+  }
   return sendTransform('Centre Anchor Point', entries, seconds);
 }
 

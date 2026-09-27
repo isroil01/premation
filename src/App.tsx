@@ -73,7 +73,7 @@ import { installLegacyTimelineSync } from '@core/engine/timelineUpkeep';
 import { useGesture } from '@hooks/useGesture';
 import { flicksToSeconds, type Command } from '@motion/engine-api';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
-import { getTimelineController, getRemappedTime } from '@core/timeline/TimelineController';
+import { getTimelineController } from '@core/timeline/TimelineController';
 import {
   goToNextKeyframe,
   goToPrevKeyframe,
@@ -83,7 +83,8 @@ import {
   setTimelineScrollPixels,
 } from '@core/timeline/timelineView';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { staticOrDefaultValue } from '@core/inspector/propertyValue';
+import { readTrack } from '@core/mirror/selection';
+import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { MASK_ANIM_PROP, buildStaticPropertyTree } from '@core/timeline/propertyTree';
 import { modifiedPropertyRows } from '@core/animation/modifiedProps';
 import { useTimelinePixelsPerSecond, useTimelineRuler, useTimelineTracks } from '@layout/Timeline/useTimelineModel';
@@ -106,7 +107,6 @@ import { usePluginPanelRegistration } from '@layout/Plugins/usePluginPanels';
 import { availablePanelDefs } from '@layout/EditorLayout/panelDefs';
 import type { TimelineModel, TimelineTrack } from '@layout/Timeline';
 import {
-  defaultAnimation,
   POSITION_PSEUDO_PROP,
   type EasingKind,
 } from '@motion/animation';
@@ -143,24 +143,23 @@ import { useAssetStore } from '@stores/assetStore';
 import { customPrompt, customAlert } from '@components/Modal';
 
 /**
- * The value a property HAS at `layerT`: the sampled keyframe when the property
- * is animated, else its static component prop, else the type's default.
+ * The value a property HAS at comp `seconds`: the evaluated value when the
+ * property is animated, else its static value, else the type's default — from
+ * the document MIRROR (B4: `readTrack` answers stored units for every catalog
+ * track — effect params, path operators and text animators included; an
+ * animated value is the engine's, batched per time and revision).
  *
  * One definition on purpose. The stopwatch, the add-keyframe command and the
  * timeline's value fields all need this answer, and three copies of the rule is
  * three chances to key a different number than the one on screen — which is
  * exactly how "Enable animation" on Position once wrote y:= x.
- *
- * `layerT` must be the LAYER's time (`getRemappedTime`), not raw comp time.
  */
-function propertyValueAt(nodeId: string, prop: string, layerT: number): number {
-  const sampled = defaultAnimation.sample(nodeId, prop, layerT);
-  if (sampled !== undefined) return sampled;
-  // The static value, through the one reader that understands STRUCTURED paths
-  // as well as flat component props. The timeline's tree keys effect params,
-  // path operators and text animators now; a component scan answers 0 for all
-  // three, so a stopwatch on a 40px Glow radius used to key it to 0.
-  return staticOrDefaultValue(nodeId, prop);
+function propertyValueAt(nodeId: string, prop: string, seconds: number): number {
+  const m = documentMirror();
+  const v = readTrack(m, nodeId, prop, seconds);
+  if (v !== undefined) return v;
+  const meta = mirrorPropertyMeta(prop, m.layer(nodeId), m.tree(nodeId));
+  return typeof meta.defaultValue === 'number' ? meta.defaultValue : 0;
 }
 
 function setNodeColor(nodeId: string, color: string): void {
@@ -881,13 +880,13 @@ function EditorShellInner(): JSX.Element {
    * The timeline's value fields — AE shows a live, scrubbable value beside every
    * property, so an animation can be built without crossing to the inspector.
    *
-   * Reads on the layer's axis (`getRemappedTime`) because that is what the
-   * renderer samples and what every write below uses. Reading one axis and
-   * writing another is what made a value set at 5s appear to overwrite the
-   * keyframe at 1s.
+   * Reads at COMPOSITION time, as every write below sends it: the engine maps
+   * it onto each property's key axis (the mirror's values are evaluated there).
+   * Reading one axis and writing another is what made a value set at 5s appear
+   * to overwrite the keyframe at 1s.
    */
   const handlePropertyValue = (trackId: string, prop: string): number =>
-    propertyValueAt(trackId, prop, getRemappedTime(trackId, playheadNow()));
+    propertyValueAt(trackId, prop, playheadNow());
 
   /**
    * Proportional Scrubbing (AE 26.2).
@@ -916,9 +915,9 @@ function EditorShellInner(): JSX.Element {
       scrubRef.current = null;
       return;
     }
-    const layerT = (id: string) => getRemappedTime(id, playheadNow());
+    const now = playheadNow();
     const starts = new Map<string, number>();
-    for (const e of sel.entries) starts.set(propertyKey(e), propertyValueAt(e.nodeId, e.prop, layerT(e.nodeId)));
+    for (const e of sel.entries) starts.set(propertyKey(e), propertyValueAt(e.nodeId, e.prop, now));
     scrubRef.current = { trackId, prop, entries: sel.entries, starts };
   };
   const handlePropertyScrubEnd = (): void => {

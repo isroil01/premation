@@ -33,12 +33,12 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { secondsToFlicks, type OverlayKind } from '@motion/engine-api';
+import { MAIN_VIEWPORT, overlayLayer, requestOverlayLayers } from '@stores/overlayGeometry';
 import { useTrackerStore } from '@stores/trackerStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { readGeometry } from '@core/workspace/geometry';
 import { trackSampleToComp } from '@core/tracking/applyTrack';
 import { runAutoTrack } from '@core/tracking/autoTrackCommand';
 import { runObjectMaskPick } from '@core/tracking/objectMask';
@@ -73,6 +73,9 @@ function confidenceAlpha(confidence: number): number {
   const t = (confidence - 0.55) / (0.95 - 0.55);
   return 0.35 + 0.55 * Math.max(0, Math.min(1, t));
 }
+
+/** The overlay geometry the tracked layer's points map through: its drawn box. */
+const TRACK_KINDS: ReadonlyArray<OverlayKind> = ['bounds'];
 
 export function TrackPointOverlay(): JSX.Element | null {
   // Frame-coalesced — visual tracking only; the raw rev re-rendered per
@@ -113,8 +116,16 @@ export function TrackPointOverlay(): JSX.Element | null {
   // The original worry (selection alone putting chrome over the viewport)
   // is still covered: `armed` is set only while the section is mounted.
   const active = armed && nodeId ? nodeId : null;
-  const node = active ? defaultSceneGraph.getNode(active) : null;
-  const geom = node ? readGeometry(node) : null;
+  // B4: the tracked layer's drawn box from the overlay geometry push (asked for
+  // here: the Motion Source need not be selected).
+  const [, setGeoTick] = useState(0);
+  useEffect(() => {
+    // Re-render once the engine has the subscription: the box exists from then.
+    void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', active ? [active] : [], TRACK_KINDS).then(() => setGeoTick((t) => t + 1));
+    return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', [], TRACK_KINDS); };
+  }, [active]);
+  const box = active ? overlayLayer(MAIN_VIEWPORT, active, secondsToFlicks(time))?.box : undefined;
+  const geom = box && box.length >= 4 ? { width: box[2]!, height: box[3]! } : null;
   // The footage's display size from the mirror (`sourceDisplaySize`'s twin).
   const src = active ? mirrorSourceDisplaySize(documentMirror(), active) : null;
 
@@ -424,7 +435,7 @@ export function TrackPointOverlay(): JSX.Element | null {
   // While picking there may be no point yet — the surface still has to be
   // there to receive the click.
   const picking = autoPhase === 'picking';
-  if (!node || !geom || !src || !sourceToScreen || (points.length === 0 && !picking)) return null;
+  if (!active || !geom || !src || !sourceToScreen || (points.length === 0 && !picking)) return null;
 
   const screenPts = points.map((p) => sourceToScreen(p.x, p.y));
   const boxCornerPts = (centre: { x: number; y: number }, half: number): Array<{ x: number; y: number }> => [
@@ -459,7 +470,7 @@ export function TrackPointOverlay(): JSX.Element | null {
           .filter((s) => Math.abs(s.compTime - time) <= PATH_WINDOW_S)
           .map((s) => {
             const c = trackSampleToComp(
-              node.id, s.x, s.y, s.compTime, result.sourceWidth, result.sourceHeight, comp,
+              active, s.x, s.y, s.compTime, result.sourceWidth, result.sourceHeight, comp,
             );
             if (!c) return null;
             return {
