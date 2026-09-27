@@ -145,10 +145,10 @@ switch (step) {
     const files = rest.includes('--engine')
       ? '.*[/\\\\]native[/\\\\](libs|engine[/\\\\]src[/\\\\](render_graph|media|raster|audio|scene))[/\\\\].*'
       : '.*[/\\\\]native[/\\\\]libs[/\\\\].*';
-    // LLVM for Windows ships run-clang-tidy as a Python script in share/clang, not an exe on PATH.
-    const llvmScript = join(process.env.ProgramFiles ?? 'C:/Program Files', 'LLVM', 'share', 'clang', 'run-clang-tidy');
-    if (process.platform === 'win32' && existsSync(llvmScript)) run('python', [llvmScript, '-p', db, '-quiet', files]);
-    else run('run-clang-tidy', ['-p', db, '-quiet', files]);
+    // LLVM for Windows ships run-clang-tidy as an extensionless Python script in bin/, which cmd cannot run.
+    const llvmScript = join(process.env.ProgramFiles ?? 'C:/Program Files', 'LLVM', 'bin', 'run-clang-tidy');
+    if (process.platform === 'win32' && existsSync(llvmScript)) run('python', [`"${llvmScript}"`, '-p', db, '-quiet', `"${files}"`], { cwd: nativeDir }); // quoted: `run` uses a shell; cwd: its check list comes from native/.clang-tidy
+    else run('run-clang-tidy', ['-p', db, '-quiet', files], { cwd: nativeDir });
     break;
   }
   case 'wasm': {

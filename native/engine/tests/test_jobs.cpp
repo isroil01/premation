@@ -153,8 +153,8 @@ TEST_CASE("jobs: without job kinds startJob is unsupported", "[jobs]") {
 }
 
 TEST_CASE("jobs: a finished job's result is ONE undoable entry written through commands", "[jobs]") {
+  FakeKinds kinds;  // before the harness: its runner's workers read `kinds` until the harness joins them
   Harness h;
-  FakeKinds kinds;
   h.session.set_job_kinds(&kinds);
   (void)h.hello();
   const auto comp = make_comp(h);
@@ -183,8 +183,8 @@ TEST_CASE("jobs: a finished job's result is ONE undoable entry written through c
 }
 
 TEST_CASE("jobs: apply=false holds the result for applyJobResult", "[jobs]") {
+  FakeKinds kinds;  // before the harness: its runner's workers read `kinds` until the harness joins them
   Harness h;
-  FakeKinds kinds;
   h.session.set_job_kinds(&kinds);
   (void)h.hello();
   const auto comp = make_comp(h);
@@ -203,8 +203,8 @@ TEST_CASE("jobs: apply=false holds the result for applyJobResult", "[jobs]") {
 }
 
 TEST_CASE("jobs: cancel stops a running job and nothing is applied", "[jobs]") {
+  FakeKinds kinds;  // before the harness: its runner's workers read `kinds` until the harness joins them
   Harness h;
-  FakeKinds kinds;
   kinds.release = false;
   h.session.set_job_kinds(&kinds);
   (void)h.hello();
@@ -221,8 +221,8 @@ TEST_CASE("jobs: cancel stops a running job and nothing is applied", "[jobs]") {
 }
 
 TEST_CASE("jobs: a result whose commands fail changes nothing and fails the job", "[jobs]") {
+  FakeKinds kinds;  // before the harness: its runner's workers read `kinds` until the harness joins them
   Harness h;
-  FakeKinds kinds;
   h.session.set_job_kinds(&kinds);
   (void)h.hello();
   const auto comp = make_comp(h);
@@ -240,8 +240,8 @@ TEST_CASE("jobs: a result whose commands fail changes nothing and fails the job"
 }
 
 TEST_CASE("jobs: prepare refusals answer startJob and queue nothing; a new project drops jobs", "[jobs]") {
+  FakeKinds kinds;  // before the harness: its runner's workers read `kinds` until the harness joins them
   Harness h;
-  FakeKinds kinds;
   kinds.release = false;
   h.session.set_job_kinds(&kinds);
   (void)h.hello();

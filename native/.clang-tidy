@@ -16,6 +16,12 @@
 #       Every function here takes runs of doubles (x1, y1, x2, y2, x). The
 #       check fires on all of them and the fix (strong types per coordinate)
 #       is not worth its weight at a C ABI boundary of plain doubles.
+#   cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+#       New in LLVM 21 and fires on every `operator[]`. Its fix is `.at()`,
+#       which throws — this library is noexcept behind a C ABI no exception may
+#       cross — and std::span has no `.at()` before C++26. Indexing here follows
+#       an explicit size check (validate_packed_keyframe, the span wrap on
+#       entry); ASan/UBSan run the same code with bounds instrumented.
 #   cppcoreguidelines-pro-bounds-pointer-arithmetic
 #       Stays ON. Internally everything is std::span; the only raw pointers are
 #       the C ABI's, wrapped into spans on entry (motion_eval.cpp).
@@ -33,7 +39,8 @@ Checks: >
   -cppcoreguidelines-avoid-magic-numbers,
   -readability-magic-numbers,
   -modernize-use-trailing-return-type,
-  -bugprone-easily-swappable-parameters
+  -bugprone-easily-swappable-parameters,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*(native[/\\](include|libs)[/\\]).*'
 FormatStyle: file

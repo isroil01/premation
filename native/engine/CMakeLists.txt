@@ -1241,3 +1241,13 @@ if(MOTION_BUILD_TESTS)
   endif()
   add_test(NAME engine_jobs_tests COMMAND engine_jobs_tests --reporter compact)
 endif()
+
+# ASan on Windows: the runtime DLL (cmake/sanitizers.cmake) next to every engine
+# executable, as tests/CMakeLists.txt does for motion_tests — they all build
+# into this directory, so ctest and a direct run find it.
+if(MOTION_ASAN_RUNTIME_DIR)
+  add_custom_target(engine_asan_runtime ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MOTION_ASAN_RUNTIME_DIR}/clang_rt.asan_dynamic-x86_64.dll" "${CMAKE_CURRENT_BINARY_DIR}"
+    VERBATIM)
+endif()
