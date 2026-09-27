@@ -28,6 +28,7 @@ import { readAepProject } from './aepRead';
 import { planAepImport, type AepImportPlan } from './aepPlan';
 import { applyAepPlan, type AepApplyResult } from './aepApply';
 import type { AepProject } from './aepModel';
+import type { AepImportSummary, EngineClient } from '@motion/engine-api';
 
 /** File names this importer claims. */
 export const AEP_EXTENSIONS = ['aep', 'aepx'] as const;
@@ -141,6 +142,54 @@ export async function importAepPath(path: string): Promise<AepImportResult | Aep
   }
   if (!bytes || bytes.byteLength === 0) return { ok: false, message: `"${path}" could not be read.` };
   return importAepBytes(bytes, path);
+}
+
+/** What the ENGINE's `importProject` of an `.aep` answered (the C++ engine converts it itself: core/aep). */
+export interface EngineAepImport {
+  ok: true;
+  summary: AepImportSummary;
+  warnings: string[];
+  missingFootage: string[];
+  openComp?: string;
+}
+
+/**
+ * Import an After Effects project through the engine that owns the document
+ * (`importProject{path}`: read, planned and applied in the engine — one undo
+ * entry). Null when this engine does not convert `.aep` (the TypeScript
+ * engine answers `unsupported`: the page importer above runs instead).
+ */
+export async function importAepThroughEngine(
+  client: EngineClient,
+  path: string,
+): Promise<EngineAepImport | AepImportFailure | null> {
+  const res = await client.execute({ type: 'importProject', path });
+  if (!res.ok) {
+    if (res.error.code === 'unsupported') return null;
+    return { ok: false, message: res.error.message };
+  }
+  const r = res.value;
+  if (!r.summary) return null;
+  return {
+    ok: true,
+    summary: r.summary,
+    warnings: r.warnings,
+    missingFootage: r.missingFootage,
+    ...(r.openComp ? { openComp: r.openComp } : {}),
+  };
+}
+
+/** summarizeAepImport over the engine's counts. */
+export function summarizeEngineAepImport(result: EngineAepImport): string {
+  const s = result.summary;
+  const parts = [
+    `${s.comps} composition${s.comps === 1 ? '' : 's'}`,
+    `${s.layers} layer${s.layers === 1 ? '' : 's'}`,
+  ];
+  if (s.keyframes > 0) parts.push(`${s.keyframes} keyframes`);
+  if (s.effects > 0) parts.push(`${s.effects} effect${s.effects === 1 ? '' : 's'}`);
+  if (s.masks > 0) parts.push(`${s.masks} mask${s.masks === 1 ? '' : 's'}`);
+  return parts.join(', ');
 }
 
 /**

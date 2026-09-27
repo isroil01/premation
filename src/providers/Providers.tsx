@@ -70,7 +70,7 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { getEventBus } from '@core/events/EventBus';
 import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager, getFileManager } from '@core/services/coreServices';
-import { bootEngine, shutdownEngine } from '@core/engine/engineInstance';
+import { bootEngine, engine, shutdownEngine } from '@core/engine/engineInstance';
 import { engineOwnsDocumentNow, setEngineOwnsDocument } from '@core/engine/engineOwnership';
 import { processEngineOwnsDocument } from '@core/engine/process/processEngine';
 import { installEngineOwnedSession } from './engineOwnedSession';
@@ -349,6 +349,27 @@ async function pickAndOpenAfterEffectsProject(): Promise<void> {
   resetProjectWorkspace();
 
   notify(`Opening “${file.name}”…`, 'info');
+  // The C++ engine as owner converts the project itself (importProject{path},
+  // core/aep): one undo entry, the footage imported by path.
+  const diskPath = window.motionEditor?.file?.pathOf?.(file) ?? '';
+  if (engineOwnsDocumentNow() && diskPath) {
+    const { importAepThroughEngine } = await import('@core/aep/aepImport');
+    const { reportEngineAepImport } = await import('@core/aep/aepImportReport');
+    const viaEngine = await importAepThroughEngine(engine(), diskPath).catch((err: unknown) => ({
+      ok: false as const,
+      message: err instanceof Error ? err.message : 'the file could not be read',
+    }));
+    if (viaEngine) {
+      if (!viaEngine.ok) {
+        reportAepImportFailure(file.name, viaEngine.message);
+        return;
+      }
+      if (viaEngine.openComp) await engine().execute({ type: 'setActiveComposition', comp: viaEngine.openComp });
+      afterProjectLoaded();
+      reportEngineAepImport(file.name, viaEngine);
+      return;
+    }
+  }
   let result: Awaited<ReturnType<typeof importAepFile>>;
   try {
     result = await importAepFile(file);
