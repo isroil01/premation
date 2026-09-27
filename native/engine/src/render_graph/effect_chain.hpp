@@ -94,5 +94,9 @@ void emit_silhouette(PassContext& ctx, Commands& cmds, const Mat3& mvp, const Co
                      const TexRef& tex, const SamplerRef& smp, const Rect& uv);
 void emit_matte_combine(PassContext& ctx, Commands& cmds, const Mat3& mvp, Blend blend, const TexRef& tex,
                         const SamplerRef& smp, const TexRef& matte, const ColorTransform& mode, const Rect& uv);
+/// blend-combine.wgsl: `tex` (source) composited over `backdrop` with the W3C
+/// separable / non-separable blend `mode.m[0]` (1 multiply, 2 screen, …).
+void emit_blend_combine(PassContext& ctx, Commands& cmds, const Mat3& mvp, Blend blend, const TexRef& tex,
+                        const SamplerRef& smp, const TexRef& backdrop, const ColorTransform& mode, const Rect& uv);
 
 }  // namespace premation::rg

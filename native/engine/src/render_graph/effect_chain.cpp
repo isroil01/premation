@@ -574,7 +574,8 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       // Lightning painted alone at the layer raster's size (TexKind::overlay):
       // drawn through the layer's own placement with the effect's composite:
       // 0 over, 1 lighter, 2 screen, 4 source-atop (effects_port.cpp
-      // gpu_overlay_effect: each equals drawing the primitives on the layer).
+      // gpu_overlay_effect: each equals drawing the primitives on the layer),
+      // 3 multiply through blend-combine.
       const TexRef ov = ctx.texture(fx.text("overlayKey"));
       if (!ov || selfR == nullptr) {
         note.path = FxPath::skipped;
@@ -586,6 +587,27 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       // 10 + PAINT_STYLE (Path Stroke / Scribble): 10 over, 11 in place of the
       // layer (on transparent), 12 the layer revealed by the paint (destination-in).
       const double mode = fx.num("mode");
+      if (mode == 3) {
+        // Multiply (Lightning / Audio Waveform composite 3). Canvas multiply with
+        // source-over is associative (in 1 − premultiplied colour it is the
+        // union a + b − ab), so the primitives multiplied onto transparent are
+        // one overlay O, and O multiplied onto the layer equals painting them
+        // there one by one. Cs(1 − Ab) + Cb(1 − As) + Cs·Cb has no fixed-function
+        // blend state: O is placed in the buffer's space (f1), then combined
+        // with the buffer by blend-combine's W3C multiply (mode 1).
+        Commands place;
+        emit_textured(ctx, place, layerMvp, Color::white(), 1, Blend::none, ov, ctx.linear_clamp(), layerUv, kIdentityColor,
+                      ov.sampleLinear);
+        ctx.draw_into(f1, place, true);
+        ColorTransform multiply;
+        multiply.m = {1, 0, 0, 0, 0, 0, 0, 0, 0};
+        Commands comp;
+        emit_blend_combine(ctx, comp, mvp, Blend::none, texOf(f1), ctx.linear_clamp(), curTex, multiply, targetUv);
+        ctx.draw_into(f0, comp, true);
+        curTex = texOf(f0);
+        curName = f0;
+        continue;
+      }
       Commands comp;
       if (mode != 11) {
         emit_textured(ctx, comp, mvp, Color::white(), 1, Blend::none, curTex, ctx.linear_clamp(), targetUv, kIdentityColor, true);

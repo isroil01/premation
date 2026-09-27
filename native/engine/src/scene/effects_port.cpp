@@ -621,11 +621,13 @@ bool gpu_overlay_effect(const RLayer& l, const Json& e) {
     // equals painting them on the layer one by one for over, lighter and screen
     // (each is associative, and the first primitive lands on transparent as
     // itself) and for source-atop (Σ atop B = (P1 over … over Pn) atop B, so
-    // the overlay is painted source-over and landed atop). Multiply lands as
-    // Cs·(1 − Ab) + Cb·(1 − As) + Cs·Cb, which no fixed-function blend state
-    // expresses: it keeps the CPU bake.
+    // the overlay is painted source-over and landed atop). Multiply is
+    // associative too (in 1 − premultiplied colour it is a + b − ab): the overlay
+    // is painted multiply on transparent and the chain lands it with
+    // blend-combine's multiply, Cs·(1 − Ab) + Cb·(1 − As) + Cs·Cb (no
+    // fixed-function blend state expresses it).
     const double mode = motion::js::round(effect_number(e, "composite"));
-    if (mode != 0 && mode != 1 && mode != 2 && mode != 4) return false;
+    if (mode != 0 && mode != 1 && mode != 2 && mode != 3 && mode != 4) return false;
   }
   // The overlay is painted at the size of the layer's OWN raster (a shape with
   // a path raster, or text), which a layer mask would not shape the same way.

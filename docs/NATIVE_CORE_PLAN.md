@@ -619,6 +619,18 @@ drop shadow → 2.8; Audio Waveform@active 652 → 3.3, Audio Spectrum@active 17
 → 3.3, Scribble@active 69 → 1.2, Path Stroke@active 55 → 1.1, CC RepeTile@active
 70 → 1.2, Hue/Saturation 66 → 1.3, Timecode 8.5, Numbers / Lightning 1.3–1.5. The CPU bake (and the SIMD kernels) stay the
 parity path (`PREMATION_CPU_BAKE=1`, the golden gate) and the device-less fallback.
+Multiply too (2026-09-28): canvas multiply over source-over is associative (in
+1 − premultiplied colour it is a + b − ab), so Lightning / Audio Waveform in
+Multiply paint their overlay multiply-on-transparent and the chain lands it
+through blend-combine's W3C multiply (placed in the buffer's space first).
+1080p, 30 frames: Audio Waveform@active in Multiply 638 → 1.9 ms, Lightning in
+Multiply 23.9 → 1.5 ms; against the CPU bake 2.0 % of pixels > 16/255 (the
+same order as the already-routed source-atop case, 1.8 %: the chain composites
+in linear light where the canvas composites encoded values). Still on the CPU
+bake on the route's own terms: Vegas' mask / path modes or Vegas behind another
+effect, a drawn effect on a layer a mask shapes, Scribble filling mask regions,
+path-following effects outside the overlay set, a faded / scoped effect with
+several chain entries, footage (no raster of its own) and precomp containers.
 
 **D2w time/comp (2026-09-25): nested compositions, retime, ghosts, particles and
 cloners build from the C++ document.** New files beside `snapshot_build` /
