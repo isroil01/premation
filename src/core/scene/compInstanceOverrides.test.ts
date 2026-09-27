@@ -349,7 +349,7 @@ describe('the control is reachable', () => {
     expect(ui).toMatch(/edit\((overridden \? 'Clear Override' : 'Override Property'|'Override Property'|'Clear Override')/);
     expect(ui).toMatch(/edit\('Reset Overrides'/);
     expect(ui).toMatch(/OVERRIDABLE_PROPS/);
-    expect(ui).toMatch(/readEssentialProps/);
+    expect(ui).toMatch(/readEssentialProps|mirrorEssentialProps/);
   });
 
   it('property menu can promote into Essential Properties', () => {

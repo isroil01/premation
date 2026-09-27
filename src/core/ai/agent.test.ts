@@ -18,6 +18,9 @@ import { defaultAnimation } from '@motion/animation';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { useAssetStore } from '@stores/assetStore';
 import { getCommandSystem, setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+
+let h: Awaited<ReturnType<typeof setupAppEngine>>;
 
 function bootCommandSystem(): void {
   const services: any = {
@@ -101,7 +104,7 @@ describe('layer-time conversion (B1)', () => {
       { keyframes: [{ nodeId: 'title', prop: 'x', t: 3, value: 100, easing: 'bezier', bezier: [0.34, 1.56, 0.64, 1] }] },
       ctx,
     );
-    expect(res.ok).toBe(true);
+    expect(res.ok ? true : res.content).toBe(true);
 
     const kf = calls.find((c) => c.fn === 'setKeyframe')!;
     const bez = calls.find((c) => c.fn === 'setBezier')!;
@@ -123,7 +126,7 @@ describe('layer-time conversion (B1)', () => {
       { targets: [{ nodeId: 'title', prop: 'opacity', t: 3, easing: 'bezier', bezier: [0, 0, 1, 1] }] },
       ctx,
     );
-    expect(res.ok).toBe(true);
+    expect(res.ok ? true : res.content).toBe(true);
     expect(calls.find((c) => c.fn === 'setEasing')!.t).toBe(3);
     expect(calls.find((c) => c.fn === 'setBezier')!.t).toBe(3);
   });
@@ -141,7 +144,8 @@ describe('layer-time conversion (B1)', () => {
 describe('one prompt, one undo entry', () => {
   beforeAll(bootCommandSystem);
 
-  beforeEach(resetDocument);
+  beforeEach(async () => { h = await setupAppEngine(); });
+  afterEach(async () => { await h.dispose(); });
 
   const ctx = (): ToolContext => createToolContext(new AbortController().signal);
 
@@ -270,8 +274,8 @@ describe('one prompt, one undo entry', () => {
 // ── Handler behaviour that keeps the model on the rails ───────────
 
 describe('tool results teach the model', () => {
-  beforeAll(bootCommandSystem);
-  beforeEach(resetDocument);
+  beforeEach(async () => { h = await setupAppEngine(); });
+  afterEach(async () => { await h.dispose(); });
 
   const ctx = (): ToolContext => createToolContext(new AbortController().signal);
 
@@ -310,7 +314,7 @@ describe('tool results teach the model', () => {
         { nodeId: id, prop: 'rotationY', t: 1, value: 180 },
       ],
     }, c);
-    expect(ok.ok).toBe(true);
+    expect(ok.ok ? true : ok.content).toBe(true);
     expect(defaultAnimation.tracksFor(id).map((t) => t.prop)).toContain('rotationY');
   });
 
@@ -340,7 +344,7 @@ describe('tool results teach the model', () => {
         { nodeId: id, prop: 'focalLength', t: 2, value: 35 },
       ],
     }, c);
-    expect(okRes.ok).toBe(true);
+    expect(okRes.ok ? true : okRes.content).toBe(true);
     const props = defaultAnimation.tracksFor(id).map((t) => t.prop);
     expect(props).toContain('z');
     expect(props).toContain('focalLength');
@@ -352,7 +356,7 @@ describe('tool results teach the model', () => {
     const res = await reg.execute('create_layer', { kind: 'shape', name: 'Framed' }, c);
     const id = (res.data as { id: string }).id;
     const m = await reg.execute('create_mask', { nodeId: id, shape: 'ellipse', feather: 20, mode: 'add' }, c);
-    expect(m.ok).toBe(true);
+    expect(m.ok ? true : m.content).toBe(true);
     expect((m.data as { maskId: string }).maskId).toBeTruthy();
     expect(m.content.toLowerCase()).toContain('mask');
   });
@@ -368,11 +372,11 @@ describe('tool results teach the model', () => {
     });
 
     const listed = await reg.execute('list_assets', {}, c);
-    expect(listed.ok).toBe(true);
+    expect(listed.ok ? true : listed.content).toBe(true);
     expect(listed.content).toContain('asset_logo');
 
     const made = await reg.execute('create_media', { assetId: 'asset_logo', x: 100, y: 100 }, c);
-    expect(made.ok).toBe(true);
+    expect(made.ok ? true : made.content).toBe(true);
     const id = (made.data as { id: string }).id;
     expect(id).toBeTruthy();
     // It is a real, animatable layer now.
@@ -411,7 +415,7 @@ describe('tool results teach the model', () => {
     const reg = registry();
     const c = ctx();
     const r = await reg.execute('add_title', { text: 'NOVA', level: 'title', style: 'premium' }, c);
-    expect(r.ok).toBe(true);
+    expect(r.ok ? true : r.content).toBe(true);
     const id = (r.data as { id: string }).id;
     const props = defaultAnimation.tracksFor(id).map((t) => t.prop);
     // A real entrance = opacity AND a transform animate, not a static layer.
@@ -428,7 +432,7 @@ describe('tool results teach the model', () => {
     const reg = registry();
     const c = ctx();
     const r = await reg.execute('add_cards', { count: 3, style: 'premium' }, c);
-    expect(r.ok).toBe(true);
+    expect(r.ok ? true : r.content).toBe(true);
     const ids = (r.data as { ids: string[] }).ids;
     expect(ids).toHaveLength(3);
     // Cards sit at distinct x positions (a row, not a stack)…
@@ -455,7 +459,7 @@ describe('tool results teach the model', () => {
     const c = ctx();
     await reg.execute('add_title', { text: 'Depth', style: 'premium' }, c);
     const move = await reg.execute('add_camera_move', { kind: 'push_in' }, c);
-    expect(move.ok).toBe(true);
+    expect(move.ok ? true : move.content).toBe(true);
     const camNode = (await c.scene.all()).find((n) => n.kind === 'camera')!;
     expect(camNode).toBeDefined();
     const zTrack = defaultAnimation.tracksFor(camNode.id).find((t) => t.prop === 'z');
@@ -491,7 +495,7 @@ describe('tool results teach the model', () => {
     const res = await reg.execute('create_layer', { kind: 'shape', name: 'Box' }, c);
     const id = (res.data as { id: string }).id;
     const one = await reg.execute('set_keyframes', { keyframes: [{ nodeId: id, prop: 'opacity', t: 0, value: 50 }] }, c);
-    expect(one.ok).toBe(true);
+    expect(one.ok ? true : one.content).toBe(true);
     expect(one.content).toContain('ONE keyframe');
   });
 
@@ -501,7 +505,7 @@ describe('tool results teach the model', () => {
     const res = await reg.execute('create_layer', { kind: 'shape', name: 'Box' }, c);
     const id = (res.data as { id: string }).id;
     const fx = await reg.execute('add_effect', { nodeId: id, type: 'blur', amount: 12 }, c);
-    expect(fx.ok).toBe(true);
+    expect(fx.ok ? true : fx.content).toBe(true);
     const effectId = (fx.data as { effectId: string }).effectId;
     expect(fx.content).toContain(`effect.${effectId}`);
     const anim = await reg.execute('set_keyframes', {
@@ -510,7 +514,7 @@ describe('tool results teach the model', () => {
         { nodeId: id, prop: `effect.${effectId}`, t: 1, value: 0 },
       ],
     }, c);
-    expect(anim.ok).toBe(true);
+    expect(anim.ok ? true : anim.content).toBe(true);
   });
 
   it('does not apply an expression that fails to compile', async () => {
@@ -529,7 +533,7 @@ describe('tool results teach the model', () => {
     const res = await reg.execute('create_layer', { kind: 'shape', name: 'Box' }, c);
     const id = (res.data as { id: string }).id;
     const ok = await reg.execute('set_expression', { nodeId: id, prop: 'x', expression: 'wiggle(2, 30)' }, c);
-    expect(ok.ok).toBe(true);
+    expect(ok.ok ? true : ok.content).toBe(true);
     expect(ok.content).toContain('overrides any keyframed value');
   });
 
@@ -554,7 +558,7 @@ describe('tool results teach the model', () => {
     defaultAnimation.setExpressionEnabled(id, 'x', false);
 
     const out = await reg.execute('set_expression', { nodeId: id, prop: 'x', expression: 'time * 90' }, c);
-    expect(out.ok).toBe(true);
+    expect(out.ok ? true : out.content).toBe(true);
     expect(out.content).toContain('DISABLED');
     expect(out.content).not.toContain('It now overrides');
     // …and the claim is true: the write landed, the bit did not move.
@@ -607,7 +611,7 @@ describe('tool results teach the model', () => {
         { name: 'Pin 2', x: 10, y: 20 },
       ],
     }, c);
-    expect(ok.ok).toBe(true);
+    expect(ok.ok ? true : ok.content).toBe(true);
     expect(ok.content).toContain('Created puppet rig with 2 pins');
     // The result must teach the model the pin ids and the track-path convention.
     expect(ok.content).toContain('puppet.<pinId>.rotation');
@@ -642,7 +646,7 @@ describe('tool results teach the model', () => {
         { timeSec: 1, x: 0, y: 60 },
       ],
     }, c);
-    expect(ok.ok).toBe(true);
+    expect(ok.ok ? true : ok.content).toBe(true);
     expect((ok.data as { keyframes: number }).keyframes).toBe(2);
     // The pin's position data track now carries the keyframes.
     const track = defaultAnimation.getDataTrack(id, `puppet.${pinId}.position`);

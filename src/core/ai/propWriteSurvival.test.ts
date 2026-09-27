@@ -97,7 +97,7 @@ describe('a mutating tool\'s write survives a read-back', () => {
         { nodeId: 'stroke', start: 0, end: 40, offset: 12 },
         ctx(),
       );
-      expect(res.ok).toBe(true);
+      expect(res.ok ? true : res.content).toBe(true);
 
       const trim = readTrimOp(back('stroke'));
       expect(trim).not.toBeNull();
@@ -137,7 +137,7 @@ describe('a mutating tool\'s write survives a read-back', () => {
         },
         ctx(),
       );
-      expect(res.ok).toBe(true);
+      expect(res.ok ? true : res.content).toBe(true);
 
       const rep = readRepeaterOp(back('dot'));
       expect(rep).not.toBeNull();
@@ -173,7 +173,7 @@ describe('a mutating tool\'s write survives a read-back', () => {
         { nodeId: 'star', op: 'puckerBloat', amount: 35 },
         ctx(),
       );
-      expect(res.ok).toBe(true);
+      expect(res.ok ? true : res.content).toBe(true);
 
       const ops = readPathOps(back('star'));
       expect(ops).toHaveLength(1);
@@ -207,7 +207,7 @@ describe('a mutating tool\'s write survives a read-back', () => {
         { nodeId: 'vec', color: '#ff0066' },
         ctx(),
       );
-      expect(res.ok).toBe(true);
+      expect(res.ok ? true : res.content).toBe(true);
       const style = back('vec').components.find((c) => c.type === 'Style');
       expect(style?.props.fill).toBe('#ff0066');
     });

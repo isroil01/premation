@@ -20,37 +20,8 @@ import { ToolRegistry } from '@motion/ai-tools';
 import { runBackendDirector } from './DirectorRunner';
 import { buildAiTools } from './toolHandlers';
 import { createToolContext } from './toolContext';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { getCommandSystem, setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { setToken } from '@core/api/client';
-
-function bootCommandSystem(): void {
-  const services: any = {
-    undo: { push: () => {}, undo: () => {}, redo: () => {}, canUndo: () => false, canRedo: () => false },
-    selection: { get: () => [], set: () => {}, clear: () => {} },
-    panels: { open: () => {}, close: () => {}, toggle: () => {}, isOpen: () => false },
-    workspace: { setActive: () => {}, getActive: () => '' },
-    get: () => undefined,
-  };
-  setCommandSystem(new CommandSystem({ services, getState: () => ({}) }));
-}
-
-function resetDocument(): void {
-  defaultAnimation.clear();
-  defaultSceneGraph.clear();
-  defaultSceneGraph.addNode({
-    id: 'comp_root',
-    name: 'Composition 1',
-    parent: null,
-    children: [],
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true,
-    locked: false,
-    components: [{ id: 'comp_root_meta', type: 'group', props: { __kind: 'group' } }],
-  });
-  getCommandSystem().getHistory().clear();
-}
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 
 /** A Response whose body streams the given SSE events, as the backend sends them. */
 function sseResponse(events: unknown[]): Response {
@@ -72,17 +43,20 @@ function sseResponse(events: unknown[]): Response {
 let registry: ToolRegistry;
 let lastRequestBody: any;
 
+let h: Awaited<ReturnType<typeof setupAppEngine>>;
+
 beforeAll(() => {
-  bootCommandSystem();
   registry = new ToolRegistry();
   for (const t of buildAiTools()) registry.register(t);
   setToken('test-token');
 });
 
-beforeEach(() => {
-  resetDocument();
+beforeEach(async () => {
+  h = await setupAppEngine();
   lastRequestBody = undefined;
 });
+
+afterEach(async () => { await h.dispose(); });
 
 function mockFetch(events: unknown[]): void {
   (globalThis as any).fetch = jest.fn(async (_url: string, init: any) => {

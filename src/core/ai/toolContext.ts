@@ -78,7 +78,7 @@ import { bumpScene } from '@stores/sceneStore';
 import { engine } from '@core/engine/engineInstance';
 import { layerSubtree } from '@core/engine/doc';
 import { keyTargetFor, keyAddressable, separateDimensionsCommand, apiColorOfHex, effectParamCommand, propWriteCommand, ENGINE_EASINGS, activePlayheadSeconds } from '@core/engine/trackWrites';
-import { propRefForTrack, memberWrite } from '@core/engine/propRefs';
+import { propRefForTrack, memberWrite, memberWrites } from '@core/engine/propRefs';
 import { readRuns } from '@core/text/richText';
 import { apiUnitFactor, keyAxisSeconds } from '@core/engine/props';
 import { fpsToRational } from '@core/engine/time';
@@ -87,6 +87,7 @@ import { assistantKeyframeCommands, type AssistantPlan } from '@core/engine/assi
 import type { ID, SceneNode } from '@core/types';
 import { ownerOf, spreadPlacement, transformComponent } from './propOwner';
 import { EngineTurnSession } from './aiEngineSession';
+import { effectDefFor, readNodeEffects } from '@core/effects/effects';
 
 /**
  * Property paths the render pipeline actually samples.
@@ -310,6 +311,32 @@ function vectorMemberKey(nodeId: string, prop: string, value: number, t: number)
   if (!r || !r.animatable || r.members.length < 2 || !r.members.includes(prop) || r.valueType === 'color') return null;
   const w = memberWrite(nodeId, prop, value, t);
   return w ? { prop: w.prop, value: w.value } : null;
+}
+
+/**
+ * A bare `effect.<id>` track (the pre-param form) is that effect's primary
+ * numeric parameter, `effect.<id>.<key>` — what the engine addresses.
+ */
+function effectTrackOf(nodeId: string, prop: string): string {
+  const m = /^effect\.([^.]+)$/.exec(prop);
+  const node = m ? defaultSceneGraph.getNode(nodeId as ID) : undefined;
+  if (!m || !node) return prop;
+  const fx = readNodeEffects(node).find((e) => e.id === m[1]);
+  const primary = fx ? effectDefFor(fx.type)?.params.find((p) => p.type === 'number') : undefined;
+  return primary ? `${prop}.${primary.key}` : prop;
+}
+
+/**
+ * The uniform `scale` shorthand (recipes key it) as ONE key of the whole Scale
+ * vector, every axis the layer has at `value` — the engine has no uniform
+ * scale property (AE's Scale is the vector with its link on).
+ */
+function uniformScaleKey(nodeId: string, value: number, t: number): { prop: PropRef; value: Value } | null {
+  if (!defaultSceneGraph.getNode(nodeId as ID)) return null;
+  const axes = propRefForTrack(nodeId, 'scaleX')?.members.filter((m) => m === 'scaleX' || m === 'scaleY' || m === 'scaleZ') ?? [];
+  if (axes.length < 2) return null;
+  const ws = memberWrites(nodeId, Object.fromEntries(axes.map((m) => [m, value])), t);
+  return ws && ws.length === 1 ? { prop: ws[0]!.prop, value: ws[0]!.value } : null;
 }
 
 const fpsNow = (): number => useCompositionStore.getState().fps || 30;
@@ -571,7 +598,8 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
   return {
     isValidProp: async (_nodeId, prop) => isAnimatableProp(prop),
 
-    setKeyframe: async (nodeId, prop, t, value, easing) => {
+    setKeyframe: async (nodeId, rawProp, t, value, easing) => {
+      const prop = effectTrackOf(nodeId, rawProp);
       if (!Number.isFinite(value)) throw new AiEngineError('invalidArgument', `keyframe value for '${prop}' is not a finite number`);
       const target = keyTargetFor(nodeId, prop);
       const named = easing === undefined || ENGINE_EASINGS.has(easing);
@@ -593,7 +621,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
       // One member of a vector property that has no separate dimensions
       // (Scale X / Y, an anchor axis — AE keys the whole vector): a key of the
       // whole value at t, the other members at their value there (G1).
-      const w = !target && named ? vectorMemberKey(nodeId, prop, value, t) : null;
+      const w = !target && named ? (prop === 'scale' ? uniformScaleKey(nodeId, value, t) : vectorMemberKey(nodeId, prop, value, t)) : null;
       if (w) {
         await session.apply([{ type: 'addKeyframes', keys: [{ prop: w.prop, time: secondsToFlicks(t), value: w.value, ...(easing ? { easing: easing as Easing } : {}), spatialIn: [], spatialOut: [] }] } as Command]);
         return;
@@ -633,12 +661,27 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
     // seeds default handles and continuity exactly as the legacy setter always
     // did, and a lone member's ease becomes the key's per-dimension ease.
     setEasing: async (nodeId, prop, t, easing) => {
+      // An addressable key and a named easing: patch the engine's key directly.
+      const target = ENGINE_EASINGS.has(easing) ? keyTargetFor(nodeId, prop) : null;
+      const id = target ? await keyIdAt(session, target.ref, t) : null;
+      if (id) {
+        await session.apply([{ type: 'updateKeyframes', patches: [{ id, easing: easing as Easing, spatialIn: [], spatialOut: [] }] } as Command]);
+        return;
+      }
       await sendKeyPlan(session, assistantKeyframeCommands([nodeId], () => {
         defaultAnimation.setEasing(nodeId, prop, compToKeyframeTime(nodeId, t), easing as EasingKind);
       }), `set_easing ${prop}`);
     },
     setBezier: async (nodeId, prop, t, bezier) => {
       const handles: [number, number, number, number] = [bezier[0]!, bezier[1]!, bezier[2]!, bezier[3]!];
+      // An addressable key: patch it on the engine (its easing curve), no page rebuild.
+      const target = keyTargetFor(nodeId, prop);
+      const id = target ? await keyIdAt(session, target.ref, t) : null;
+      if (id) {
+        const [x1, y1, x2, y2] = handles;
+        await session.apply([{ type: 'updateKeyframes', patches: [{ id, easing: 'bezier', bezier: { x1, y1, x2, y2 }, spatialIn: [], spatialOut: [] }] } as Command]);
+        return;
+      }
       await sendKeyPlan(session, assistantKeyframeCommands([nodeId], () => {
         defaultAnimation.setBezier(nodeId, prop, compToKeyframeTime(nodeId, t), handles);
       }), `set_easing ${prop}`);

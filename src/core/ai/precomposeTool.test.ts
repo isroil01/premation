@@ -65,7 +65,7 @@ const compLayerIn = (rootId: string): SceneNode | undefined =>
 describe('create_precomp', () => {
   it('makes a real composition and a composition layer in the layers’ place', async () => {
     const res = await registry().execute('create_precomp', { nodeIds: ['a', 'b'], name: 'Logo' }, ctx());
-    expect(res.ok).toBe(true);
+    expect(res.ok ? true : res.content).toBe(true);
 
     const inst = compLayerIn('comp_root')!;
     expect(inst).toBeDefined();
@@ -85,7 +85,7 @@ describe('create_precomp', () => {
       { nodeId: inst.id, keys: [{ t: 0, sourceT: 0 }, { t: 1, sourceT: 2 }] },
       ctx(),
     );
-    expect(res.ok).toBe(true);
+    expect(res.ok ? true : res.content).toBe(true);
     expect(defaultAnimation.isAnimated(inst.id, 'timeRemap')).toBe(true);
     // Its precomp flag is what makes it render its comp — never cleared.
     expect(isPrecomp(defaultSceneGraph.getNode(inst.id)!)).toBe(true);

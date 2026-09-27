@@ -468,6 +468,7 @@ on an effect or mask path — one command, one inverse implementation.
 | `startJob` | control | Track motion (position … planar, forward/backward/both, apply to a property), stabilize, auto-trace, scene detect, object matte, transcribe, audio analysis, render queue items, pre-render. A job never edits while it runs; on success its result is applied as **one** history entry (`origin: engine`) unless `apply:false`. |
 | `cancelJob` | control | Nothing is applied. |
 | `applyJobResult` | edit | Apply a finished `apply:false` job. Inverse: that entry. |
+| `setContentAwareFill` | edit | The layer's content-aware fill frames (the Content-Aware Fill job's result): the filled frame nearest the layer's time stands in for its footage; empty `frames` clears it. Inverse: the previous record. |
 | `setPluginEnabled` | control | Session enable/disable (installation stays in the editor's plugin manager). |
 | `setPluginData` | edit | Plugin data **in the document** (AE sequence data / arbitrary-data params) — today it is an in-memory LRU. Inverse: previous bytes. |
 

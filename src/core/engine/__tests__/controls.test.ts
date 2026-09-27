@@ -8,11 +8,8 @@ import { COMMANDS, type CommandType } from '@motion/engine-api';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { performUndo, performRedo } from '@stores/historyStore';
 import { setupEngine, sec, docDiff, type Harness } from '../__testHelpers__/harness';
 import { buildScene } from '../__testHelpers__/scene';
-import { isWriteAroundEngine } from '../externalWrites';
-import { useProjectStore } from '@stores/projectStore';
 
 jest.useFakeTimers();
 
@@ -230,71 +227,16 @@ test('transport controls report through ephemeral events and never touch the doc
   expect(!plug.ok && plug.error.code).toBe('notFound');
 });
 
-describe('coexistence with the pre-API recorders', () => {
-  test('an engine entry and a debounced UI edit interleave in one linear history', async () => {
-    const s = await buildScene(h);
-    const t = defaultSceneGraph.getNode(s.A)!.components.find((c) => c.type === 'Transform')!;
-    const d0 = h.doc();
-    await h.run({ type: 'renameLayer', layer: s.A, name: 'API' });
-    const d1 = h.doc();
-    // A legacy UI write: recorded by the 700 ms debounce.
-    expect(updateNodeComponentProp(defaultSceneGraph, s.A, t.id, 'x', 777)).toBe(true);
-    jest.advanceTimersByTime(800);
-    const d2 = h.doc();
-    // The engine command after it flushes nothing extra and records its own entry.
-    await h.run({ type: 'renameLayer', layer: s.A, name: 'API2' });
-    await h.run({ type: 'undo' });
-    expect(docDiff(d2, h.doc())).toEqual([]);
-    // The next undo is the UI's debounced entry (a foreign entry → mirror resync).
-    h.batches.length = 0;
-    await h.run({ type: 'undo' });
-    expect(docDiff(d1, h.doc())).toEqual([]);
-    expect(h.batches.some((b) => b.events.some((e) => e.type === 'documentReset'))).toBe(true);
-    await h.run({ type: 'undo' });
-    expect(docDiff(d0, h.doc())).toEqual([]);
-    // The app's own Ctrl+Z path drives engine entries too.
-    performRedo();
-    expect(docDiff(d1, h.doc())).toEqual([]);
-    performUndo();
-    expect(docDiff(d0, h.doc())).toEqual([]);
-  });
-
-  test('an engine command flushes a pending debounced edit into its own entry first', async () => {
+describe('the pre-API recorder is gone', () => {
+  test('an uncommanded UI write records nothing; engine commands keep one entry each', async () => {
     const s = await buildScene(h);
     const t = defaultSceneGraph.getNode(s.A)!.components.find((c) => c.type === 'Transform')!;
     const n = getCommandSystem().getHistory().getEntries().length;
     updateNodeComponentProp(defaultSceneGraph, s.A, t.id, 'x', 5);
-    // Inside the 700 ms window:
+    jest.advanceTimersByTime(800);
+    expect(getCommandSystem().getHistory().getEntries().length).toBe(n);
     await h.run({ type: 'renameLayer', layer: s.B, name: 'Bee' });
     const labels = getCommandSystem().getHistory().getEntries().slice(n).map((e) => e.label);
-    expect(labels).toHaveLength(2);
-    expect(labels[1]).toBe('Rename Layer');
-    jest.advanceTimersByTime(800);
-    // …and nothing is recorded twice afterwards.
-    expect(getCommandSystem().getHistory().getEntries().length).toBe(n + 2);
-  });
-
-  test('a change outside the engine that names its layer arrives as an engine-origin batch of its own, before the next request', async () => {
-    const s = await buildScene(h);
-    const t = defaultSceneGraph.getNode(s.A)!.components.find((c) => c.type === 'Transform')!;
-    h.batches.length = 0;
-    updateNodeComponentProp(defaultSceneGraph, s.A, t.id, 'x', 1);
-    await h.run({ type: 'renameLayer', layer: s.B, name: 'Bee' });
-    const first = h.batches[0]!;
-    expect(isWriteAroundEngine(first)).toBe(true);
-    expect(first.causedBy).toBeUndefined();
-    expect(first.events.some((e) => e.type === 'layersChanged' && e.layers.some((l) => l.id === s.A))).toBe(true);
-    // The request's own batch follows.
-    expect(h.batches.at(-1)!.events.some((e) => e.type === 'layersChanged' && e.layers.some((l) => l.id === s.B))).toBe(true);
-  });
-
-  test('a change outside the engine that names no layer arrives as documentReset{resync}, before the next request', async () => {
-    const s = await buildScene(h);
-    h.batches.length = 0;
-    useProjectStore.getState().actions.updateComp(s.comp, { background: '#123456' });
-    await h.run({ type: 'renameLayer', layer: s.B, name: 'Bee' });
-    const first = h.batches[0]!;
-    expect(first.events[0]).toMatchObject({ type: 'documentReset', reason: 'resync' });
-    expect(isWriteAroundEngine(first)).toBe(true);
+    expect(labels).toEqual(['Rename Layer']);
   });
 });

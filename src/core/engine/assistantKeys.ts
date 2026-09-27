@@ -30,7 +30,10 @@ type KeyLists = Map<string, Keyframe[]>;
 
 function keyLists(layer: string): KeyLists {
   try {
-    return new Map(keyframeSets(layer).map((s) => [s.prop.path, s.keyframes]));
+    // A separated Position's combined property lists its dimensions' keys but
+    // cannot take keys itself: only keyable properties are sent.
+    const cat = catalogFor(layer);
+    return new Map(keyframeSets(layer).filter((s) => cat.byPath.get(s.prop.path)?.animatable !== false).map((s) => [s.prop.path, s.keyframes]));
   } catch {
     return new Map();
   }
@@ -63,7 +66,7 @@ function forcedPaths(layer: string, members: ReadonlySet<string> | undefined): S
   } catch {
     return out;
   }
-  for (const b of props) if (b.members.some((m) => members.has(m))) out.add(b.path);
+  for (const b of props) if (b.animatable && b.members.some((m) => members.has(m))) out.add(b.path);
   return out;
 }
 

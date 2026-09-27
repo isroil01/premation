@@ -134,8 +134,10 @@ describe('an AI turn on the engine', () => {
     const result = defaultSceneGraph.getNode(resultId)!;
     const fx = result.components.find((c) => c.type === 'fx')!.props;
     expect(fx.booleanOp).toBe('union');
-    expect(fx.booleanSources).toEqual(['ma', 'mb']);
-    for (const id of ['ma', 'mb']) {
+    // The engine mints the layer ids; the model's aliases ('ma', 'mb') resolve to them.
+    const operands = [0, 1].map((i) => (r.results[i]!.data as { id: string }).id);
+    expect(fx.booleanSources).toEqual(operands);
+    for (const id of operands) {
       const n = defaultSceneGraph.getNode(id)!;
       expect(n.visible).toBe(false);
       expect(n.components.find((c) => c.type === 'fx')?.props.booleanOperand).toBe(true);

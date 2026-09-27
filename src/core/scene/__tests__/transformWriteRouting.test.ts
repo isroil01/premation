@@ -51,6 +51,9 @@ const ALLOWED = [
   // Automation surfaces: they construct nodes and are covered by the F11 audit.
   'core/ai/',
   'core/plugins/',
+  // The Lottie importer's builder: it only runs OFF-document (a scratch graph
+  // inside buildLayerFragment), moved out of core/ai/ in B5.
+  'core/lottie/lottieDocumentContext.ts',
   'core/inspector/InspectorAPI.ts',
 ];
 
