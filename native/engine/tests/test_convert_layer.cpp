@@ -220,6 +220,78 @@ TEST_CASE("separateLayer: one shape layer per run, the original removed, one ent
   CHECK(is_error(h.run(cmd(api::SeparateLayer{text})), api::ErrorCode::unsupported));
 }
 
+namespace {
+
+/// A layer point through the layer→comp matrix (column-major 4×4) at `t`.
+std::pair<double, double> to_comp(Harness& h, const api::LayerId& layer, double px, double py, api::Time t = 0) {
+  api::GetLayerTransforms q;
+  q.layers = {layer};
+  q.time = t;
+  const auto r = h.ask(qry(q));
+  REQUIRE(is_ok(r));
+  const auto list = result_as<api::LayerTransformList>(std::get<api::QueryResult>(r.outcome.v));
+  REQUIRE(list.transforms.size() == 1);
+  const auto& m = list.transforms[0].matrix;
+  REQUIRE(m.size() == 16);
+  return {m[0] * px + m[4] * py + m[12], m[1] * px + m[5] * py + m[13]};
+}
+
+}  // namespace
+
+TEST_CASE("convertLayer uncompose: the precomp's layers in place under a carrier, one entry", "[convert]") {
+  Harness h;
+  FakeGeometry geo;
+  h.session.set_convert_geometry(&geo);
+  (void)h.hello();
+  const auto outer = make_comp(h);
+  const auto inner = make_comp(h);
+  api::CreateLayer solid;
+  solid.comp = inner;
+  solid.kind = api::LayerKind::solid;
+  solid.init.push_back(api::PropertyInit{"transform/position", vec2(100, 50)});
+  solid.init.push_back(api::PropertyInit{"transform/rotation", scalar(15)});
+  const auto sr = h.run(cmd(solid));
+  REQUIRE(is_ok(sr));
+  const auto innerSolid = result_layer(sr);
+  api::CreateLayer pre;
+  pre.comp = outer;
+  pre.kind = api::LayerKind::precomp;
+  pre.source = inner;
+  pre.init.push_back(api::PropertyInit{"transform/position", vec2(300, 200)});
+  pre.init.push_back(api::PropertyInit{"transform/rotation", scalar(30)});
+  pre.init.push_back(api::PropertyInit{"transform/scale", vec2(50, 80)});
+  const auto pr = h.run(cmd(pre));
+  REQUIRE(is_ok(pr));
+  const auto precomp = result_layer(pr);
+  // Where the inner solid's corner lands on the outer comp through the precomp.
+  const auto expect = [&](double px, double py) {
+    const auto [ix, iy] = to_comp(h, innerSolid, px, py);
+    return to_comp(h, precomp, ix - 320, iy - 180);
+  };
+  const auto e0 = expect(0, 0);
+  const auto e1 = expect(40, -25);
+  const std::size_t entries = history_len(h);
+
+  const auto r = convert(h, precomp, api::LayerConversion::uncompose);
+  REQUIRE(is_ok(r));
+  const auto made = result_as<api::LayerList>(r).layers;
+  REQUIRE(made.size() == 2);  // the carrier, the solid
+  CHECK(history_len(h) == entries + 1);
+  CHECK(h.session.document().node(precomp) == nullptr);
+  const auto g0 = to_comp(h, made[1], 0, 0);
+  const auto g1 = to_comp(h, made[1], 40, -25);
+  CHECK_THAT(g0.first, WithinAbs(e0.first, 1e-6));
+  CHECK_THAT(g0.second, WithinAbs(e0.second, 1e-6));
+  CHECK_THAT(g1.first, WithinAbs(e1.first, 1e-6));
+  CHECK_THAT(g1.second, WithinAbs(e1.second, 1e-6));
+  CHECK(undo_label(h) == "Uncompose");
+  CHECK(h.session.document().node(precomp) != nullptr);
+
+  // Not a precomp: invalid. A precomp with an effect: refused, nothing written.
+  const auto plain = make_layer(h, outer, api::LayerKind::solid);
+  CHECK(is_error(convert(h, plain, api::LayerConversion::uncompose), api::ErrorCode::invalid_argument));
+}
+
 TEST_CASE("convertLayer bakeTransform: a keyed copy, out of its parent, one entry", "[convert]") {
   Harness h;
   FakeGeometry geo;

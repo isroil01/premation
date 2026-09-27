@@ -55,7 +55,8 @@ maybe('convertLayer in the C++ engine', () => {
     expect(await lastLabel()).toBe('Create Shapes from Text');
     let all = await nodes();
     const shape = all.get(made[0]!)!;
-    expect(shape.name).toBe('OK Outlines (traced)');
+    // The font's own Béziers (a plain centred style), not the trace.
+    expect(shape.name).toBe('OK Outlines (outlines)');
     const runs = shape.components.find((c) => c.type === 'Geometry')!.props.subpaths as unknown[];
     // "O" is an outer ring and a counter, "K" one ring.
     expect(runs.length).toBeGreaterThanOrEqual(3);
@@ -85,11 +86,11 @@ maybe('convertLayer in the C++ engine', () => {
     expect(masks).toContain('"mode":"subtract"');
   });
 
-  it('refuses what it does not convert yet, naming why', async () => {
+  it('refuses a conversion the layer kind has none of', async () => {
     const comp = unwrap(await client.execute({ type: 'createComposition', settings: { name: 'Refuse' }, fromItems: [] })).item;
     const solid = unwrap(await client.execute({ type: 'createLayer', comp, kind: 'solid', init: [] })).layer;
     const r = await client.execute({ type: 'convertLayer', layer: solid, conversion: 'uncompose' });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error.code).toBe('unsupported');
+    if (!r.ok) expect(r.error.code).toBe('invalidArgument');
   });
 });

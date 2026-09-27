@@ -820,6 +820,10 @@ ShapedText FontSet::shape(std::string_view text, const ShapeRequest& req) const 
   return out;
 }
 
+namespace {
+std::vector<std::vector<OutlineCubic>> path_cubics_impl(const SkPath& skPath, double ySign);
+}  // namespace
+
 std::optional<GlyphOutlineUnits> FontSet::glyph_outline(std::string_view cluster, const css::Font& font) const {
   const std::vector<CodePoint> cps = decode_utf8(cluster);
   if (cps.size() != 1) return std::nullopt;
@@ -849,15 +853,41 @@ std::optional<GlyphOutlineUnits> FontSet::glyph_outline(std::string_view cluster
   sk.setSubpixel(true);
   const std::optional<SkPath> path = sk.getPath(static_cast<SkGlyphID>(gid));
   if (!path) return std::nullopt;
-  const auto P = [](SkPoint p) { return std::make_pair(static_cast<double>(p.fX), -static_cast<double>(p.fY)); };
+  out.contours = path_cubics_impl(*path, -1.0);
+  if (out.contours.empty()) return std::nullopt;
+  return out;
+}
+
+std::vector<std::vector<OutlineCubic>> FontSet::glyph_path(const Glyph& g, const ShapedText& run) const {
+  if (g.face < 0 || static_cast<std::size_t>(g.face) >= impl_->faces.size() || !(run.sizePx > 0)) return {};
+  // The glyph as the canvas draws it: the run's size and variations, Blink's
+  // synthetic bold / oblique, unhinted (a path has no pixel grid).
+  SkFont sk = ffi::sk_font_for(*this, g.face, run.axes, run.sizePx, g.fakeBold, g.fakeItalic);
+  sk.setHinting(static_cast<SkFontHinting>(0));  // kNone
+  sk.setSubpixel(true);
+  const std::optional<SkPath> path = sk.getPath(static_cast<SkGlyphID>(g.id));
+  if (!path) return {};
+  return path_cubics_impl(*path, 1.0);
+}
+
+}  // namespace premation::raster
+
+namespace premation::raster {
+namespace {
+
+/// Skia path → closed contours of cubics (quadratics degree-elevated);
+/// `ySign` −1 flips to y up (font units), +1 keeps Skia's y down.
+std::vector<std::vector<OutlineCubic>> path_cubics_impl(const SkPath& skPath, double ySign) {
+  std::vector<std::vector<OutlineCubic>> contours;
+  const auto P = [ySign](SkPoint p) { return std::make_pair(static_cast<double>(p.fX), ySign * static_cast<double>(p.fY)); };
   std::vector<OutlineCubic>* cur = nullptr;
-  SkPath::Iter it(*path, true);
+  SkPath::Iter it(skPath, true);
   while (const auto rec = it.next()) {
     const auto& pts = rec->fPoints;
     switch (rec->fVerb) {
       case SkPathVerb::kMove:
-        out.contours.emplace_back();
-        cur = &out.contours.back();
+        contours.emplace_back();
+        cur = &contours.back();
         break;
       case SkPathVerb::kLine: {
         if (cur == nullptr) break;
@@ -888,9 +918,10 @@ std::optional<GlyphOutlineUnits> FontSet::glyph_outline(std::string_view cluster
       case SkPathVerb::kClose: break;
     }
   }
-  std::erase_if(out.contours, [](const auto& c) { return c.empty(); });
-  if (out.contours.empty()) return std::nullopt;
-  return out;
+  std::erase_if(contours, [](const auto& c) { return c.empty(); });
+  return contours;
 }
+
+}  // namespace
 
 }  // namespace premation::raster
