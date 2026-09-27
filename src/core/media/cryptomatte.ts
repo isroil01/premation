@@ -148,10 +148,21 @@ export function coverageToRgba8(coverage: Float32Array): Uint8ClampedArray<Array
 // ── Per-asset cache, beside the float planes ─────────────────────────────────
 
 const cache = new Map<string, CryptomatteSet>();
+const changeListeners = new Set<(assetId: string) => void>();
 
 export function setCryptomatteForAsset(assetId: string, set: CryptomatteSet | null): void {
   if (set) cache.set(assetId, set);
   else cache.delete(assetId);
+  // The decode, not a document edit: the engine announces it (`assetStatusChanged`, LocalEngine.attachBus).
+  for (const l of changeListeners) l(assetId);
+}
+
+/** Told when an asset's Cryptomatte set is decoded or dropped. Returns the unsubscribe. */
+export function onCryptomatteChanged(listener: (assetId: string) => void): () => void {
+  changeListeners.add(listener);
+  return () => {
+    changeListeners.delete(listener);
+  };
 }
 
 export function getCryptomatteForAsset(assetId: string): CryptomatteSet | undefined {

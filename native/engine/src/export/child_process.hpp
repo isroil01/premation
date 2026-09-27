@@ -21,8 +21,11 @@ namespace premation::exporter {
 class ChildProcess {
  public:
   /// Start `exe args…`. Null with `error` when the OS refuses (ENOENT etc.).
+  /// `captureStdout`: the child's stdout is a pipe read_stdout() reads (engine
+  /// jobs, jobs/child_job.cpp); else it is discarded.
   static std::unique_ptr<ChildProcess> spawn(const std::string& exe, const std::vector<std::string>& args,
-                                             const std::string& stderrPath, std::string& error);
+                                             const std::string& stderrPath, std::string& error,
+                                             bool captureStdout = false);
   ~ChildProcess();
   ChildProcess(const ChildProcess&) = delete;
   ChildProcess& operator=(const ChildProcess&) = delete;
@@ -33,8 +36,12 @@ class ChildProcess {
   bool write(std::span<const std::uint8_t> bytes) noexcept;
   /// Close stdin (end of input) and wait for the exit code.
   int finish() noexcept;
-  /// Kill the child (cancel / failure). Safe to call more than once.
+  /// Kill the child (cancel / failure). Safe to call more than once; may be
+  /// called from another thread while read_stdout() blocks (it then ends).
   void kill() noexcept;
+  /// Blocking read of the child's stdout (spawned with captureStdout): bytes
+  /// read, 0 at end of stream (the child exited or was killed), −1 on error.
+  long read_stdout(std::span<std::uint8_t> into) noexcept;
 
  private:
   ChildProcess() = default;

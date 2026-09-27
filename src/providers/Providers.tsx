@@ -125,11 +125,9 @@ import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { loadBlockTower } from '@core/scene/seedBlockTower';
 import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
-import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { applyRigPresetEdit } from '@core/engine/rigPaths';
-import { readGeometry } from '@core/workspace/geometry';
 import { eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
 import {
   eligibleExpressionProps,
@@ -139,8 +137,11 @@ import {
   timeReverseKeyframes,
   easyEaseAll,
 } from '@core/animation/keyframeAssistants';
-import { openSmootherDialog, smootherTracks } from '@layout/Motion/SmootherDialog';
-import { openWigglerDialog, wigglerTracks } from '@layout/Motion/WigglerDialog';
+import { openSmootherDialog, smootherTracks, smootherTracksOf } from '@layout/Motion/SmootherDialog';
+import { openWigglerDialog, wigglerTracks, wigglerTracksOf } from '@layout/Motion/WigglerDialog';
+import { fetchMemberTracks, memberTracksNow } from '@stores/memberTracks';
+import { fetchLayerBox } from '@stores/layerBoxes';
+import { compTime } from '@core/engine/propRefs';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { AudioPlaybackBridge } from '@hooks/useAudioPlayback';
@@ -163,6 +164,8 @@ import { nullsFromPathEdit, shapesFromTextEdit } from '@layout/Scene/layerCreate
 import { buildPathCommands } from '@core/workspace/pathCommands';
 import { canCreateShapesFromText } from '@core/scene/shapesFromText';
 import { autoTraceLayer } from '@core/effects/autoTrace';
+import { runEngineJob } from '@core/engine/engineJobs';
+import { secondsToFlicks } from '@motion/engine-api';
 import { centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
@@ -1111,7 +1114,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       icon: 'skip-back',
       enabled: () => {
         const id = useSelectionStore.getState().ids[0];
-        return !!id && defaultAnimation.animatedProps(id).length > 0;
+        // The engine's member lists (every animated track, catalog or not), last known — asked on first use.
+        return !!id && (memberTracksNow(id)?.length ?? 0) > 0;
       },
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
@@ -1131,7 +1135,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       icon: 'track',
       enabled: () => {
         const id = useSelectionStore.getState().ids[0];
-        return !!id && defaultAnimation.animatedProps(id).length > 0;
+        // The engine's member lists (every animated track, catalog or not), last known — asked on first use.
+        return !!id && (memberTracksNow(id)?.length ?? 0) > 0;
       },
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
@@ -1166,7 +1171,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         // A real dialog rather than `customPrompt`: tolerance is a look-at-it
         // control, and the prompt could not express WHICH tracks to touch at
         // all. The dialog previews live and commits as one undo entry.
-        if (smootherTracks(id).length === 0) {
+        // The exact member lists (the engine's `getMemberKeyframes`), not the menu's last known ones.
+        if (smootherTracksOf(id, await fetchMemberTracks(id)).length === 0) {
           notify('Needs a track with 3+ keyframes', 'warning');
           return;
         }
@@ -1193,7 +1199,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         if (!id) return;
         // Was a prompt that parsed "5, 25" out of a string — two numbers with
         // different units, unlabelled, and rejected wholesale on a typo.
-        if (wigglerTracks(id).length === 0) {
+        if (wigglerTracksOf(await fetchMemberTracks(id, ['x', 'y'])).size === 0) {
           notify('Animate position first (2+ keyframes on x or y)', 'warning');
           return;
         }
@@ -1509,12 +1515,9 @@ function buildRigPresetCommands(): ReadonlyArray<Command> {
     execute: async () => {
       const nodeId = useSelectionStore.getState().ids[0];
       if (!nodeId) return;
-      const node = defaultSceneGraph.getNode(nodeId);
-      if (!node) return;
-      // Sized from the layer's own box, so the rig fits the artwork. `readGeometry`
-      // reports the UNSCALED size, which is what keeps a scaled layer from getting
-      // a differently-proportioned skeleton.
-      const geom = readGeometry(node);
+      // Sized from the layer's own box (the engine's `getLayerBounds`), so the rig fits the artwork. The
+      // box is the UNSCALED size, which is what keeps a scaled layer from getting a differently-proportioned skeleton.
+      const geom = await fetchLayerBox(nodeId, compTime(getTime()));
       // One entry: a whole-rig `layer/skeleton` write (ENGINE_API.md §15.9).
       const problems = await applyRigPresetEdit(
         nodeId,
@@ -1882,6 +1885,35 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         const endSec = range && wa ? (wa.start + wa.duration - 1) / fps : undefined;
         const noteId = useUIStore.getState().notify({ level: 'info', message: 'Auto-trace: rendering…', durationMs: 0 });
         try {
+          // The engine traces the layer's frames itself when it runs jobs (the autoTrace job).
+          const endS = endSec ?? startSec;
+          const viaEngine = await runEngineJob<{ pathsAdded: number; keyframes: number }>(
+            {
+              kind: 'autoTrace',
+              value: {
+                layer: id,
+                range: { start: secondsToFlicks(startSec), duration: secondsToFlicks(Math.max(0, endS - startSec) + 1 / Math.max(1, fps)) },
+                channel: 'alpha',
+                threshold: threshold / 255,
+                everyFrame: range,
+                invert: false,
+              },
+            },
+            { onProgress: (f) => { useUIStore.getState().notify({ level: 'info', message: `Auto-trace: ${Math.round(f * 100)}%`, durationMs: 600 }); } },
+          );
+          if (viaEngine) {
+            useUIStore.getState().dismissNotification(noteId);
+            const n = viaEngine.result?.pathsAdded ?? 0;
+            if (viaEngine.status === 'failed') notify(`Auto-trace failed: ${viaEngine.error?.message ?? 'unknown error'}`, 'error');
+            else if (viaEngine.status === 'done') {
+              notify(
+                n === 0 ? 'Auto-trace found nothing above the threshold'
+                  : `Auto-trace: ${n} mask path${n === 1 ? '' : 's'}${viaEngine.result?.keyframes ? `, ${viaEngine.result.keyframes} keyframes` : ''}`,
+                n === 0 ? 'warning' : 'success',
+              );
+            }
+            return;
+          }
           const r = await autoTraceLayer({
             nodeId: id, startSec, endSec, threshold,
             onProgress: (f) => {

@@ -73,6 +73,7 @@ import { Transport } from './transport';
 import { KeyIndex } from './keyIndex';
 import { stampMissingKeyIds } from './stamp';
 import { refreshLegacyUi } from './legacyRefresh';
+import { onCryptomatteChanged } from '@core/media/cryptomatte';
 
 /** Bars mirror their node (name, enabled, locked, membership) — refresh every comp's mirror. */
 function syncTimelines(): void {
@@ -231,6 +232,8 @@ export class LocalEngine extends EngineClientBase {
         if (!isMediaDecodeRepaint(p as never)) mark(p?.nodeId || undefined);
       }),
       bus.on('DocumentChanged', () => mark()),
+      // B4: an EXR's Cryptomatte manifest decoded — media state, not an edit: announced so `getCryptomatte` is re-asked.
+      { dispose: onCryptomatteChanged((item) => this.emitEphemeral([{ type: 'assetStatusChanged', item, status: 'ready', message: 'cryptomatte' }])) },
     ];
   }
 

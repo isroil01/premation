@@ -214,7 +214,7 @@ function alignMenuItems(ids: ReadonlyArray<string>): ContextMenuItem[] {
     ...ALIGN_ITEMS.map((a): ContextMenuItem => ({
       id: `align-${a.id}`,
       label: a.label,
-      onSelect: () => alignLayers(ids, a.id, 'selection', comp.width, comp.height),
+      onSelect: () => { void alignLayers(ids, a.id, 'selection', comp.width, comp.height); },
     })),
     { id: 'align-sep', separator: true },
     ...(['distribute-h', 'distribute-v'] as const).map((mode): ContextMenuItem => ({
@@ -223,7 +223,7 @@ function alignMenuItems(ids: ReadonlyArray<string>): ContextMenuItem[] {
       // AE greys distribution out below three layers, because two layers are
       // already evenly distributed and the command would be a no-op.
       disabled: ids.length < 3,
-      onSelect: () => alignLayers(ids, mode as AlignMode, 'selection', comp.width, comp.height),
+      onSelect: () => { void alignLayers(ids, mode as AlignMode, 'selection', comp.width, comp.height); },
     })),
   ];
 }

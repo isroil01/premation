@@ -422,6 +422,15 @@ export type PurgeKind =
   | 'images';
 export const PurgeKindValues = ['all', 'ram', 'disk', 'undo', 'images'] as const;
 
+/** B4 — what the overlay geometry push carries for each subscribed layer (FrameGeometry, 95_frames). */
+export type OverlayKind =
+  | 'transform'
+  | 'bounds'
+  | 'motionPath'
+  | 'rig'
+  | 'textBox';
+export const OverlayKindValues = ['transform', 'bounds', 'motionPath', 'rig', 'textBox'] as const;
+
 export type TrackKind =
   | 'position'
   | 'positionRotation'
@@ -436,6 +445,13 @@ export type TrackDirection =
   | 'backward'
   | 'both';
 export const TrackDirectionValues = ['forward', 'backward', 'both'] as const;
+
+/** B4 — what a layer holds of an SVG document (LayerInfo.svg). */
+export type SvgRole =
+  | 'none'
+  | 'layer'
+  | 'converted';
+export const SvgRoleValues = ['none', 'layer', 'converted'] as const;
 
 export type PropertyKind =
   | 'property'
@@ -1090,7 +1106,7 @@ export interface NewProject {
   template?: string;
 }
 
-/** Open a .motion project (or a recovery file). Clears history; the UI receives documentReset. F2: a portable `.motion` zip (Save Portable Copy's form) opens as an UNTITLED copy — projectPath '' (Save asks where), its embedded footage made reachable by the engine (C++: unpacked content-addressed into a staging bundle, srcs `motion-blob:<sha256>`; TypeScript: session object URLs), and a `portable:` warning. A compressed (DEFLATE) zip entry or a zip that is not a project is `io`. */
+/** Open a .motion project (or a recovery file). Clears history; the UI receives documentReset. F2: a portable `.motion` zip (Save Portable Copy's form) opens as an UNTITLED copy — projectPath '' (Save asks where), its embedded footage made reachable by the engine (C++: unpacked content-addressed into a staging bundle, srcs `motion-blob:<sha256>`; TypeScript: session object URLs), and a `portable:` warning. STORE and DEFLATE entries are read (another compression method, a damaged entry or a zip that is not a project is `io`). */
 export interface OpenProject {
   path: string;
 }
@@ -1159,6 +1175,43 @@ export interface SetSwatches {
 /** F2 — replace the project material library, in order. `params` are normalized (every axis clamped, unknown keys dropped); params that are not a JSON object are `invalidArgument`; an empty, repeated or `builtin:` id is re-minted (`mat_doc_<n>`), names are trimmed and a blank one becomes "Material", a swatch that is not `#rrggbb` is dropped. Inverse: the previous library. */
 export interface SetMaterials {
   materials: LibraryMaterial[];
+}
+
+/** F2 — patch of the project's motion-blur record (motionBlurStore: the composition's Enable Motion Blur master switch, shutter angle / phase, samples per frame, adaptive sample limit). One record per document — every composition reports it as `CompSettings.motionBlur`, and `setCompositionSettings{motionBlur}` writes the same record. Only present fields change. */
+export interface MotionBlurPatch {
+  enabled?: boolean;
+  /** Degrees, clamped to 0…360. */
+  shutterAngle?: number;
+  /** Degrees, clamped to −360…360. */
+  shutterPhase?: number;
+  /** Rounded and clamped to 2…32. */
+  samplesPerFrame?: number;
+  /** Rounded and clamped to 2…128. */
+  adaptiveSampleLimit?: number;
+}
+
+/** F2 — the project's colour management (colorManagementStore: working space, display transform, intermediate bit depth), as the snapshot and `colorManagementChanged` report it. */
+export interface ColorManagementSettings {
+  workingSpace: RenderWorkingSpace;
+  displayTransform: RenderDisplayTransform;
+  /** 16 (half float) or 32 (float). */
+  bitDepth: number;
+}
+
+export interface ColorManagementPatch {
+  workingSpace?: RenderWorkingSpace;
+  displayTransform?: RenderDisplayTransform;
+  bitDepth?: number;
+}
+
+/** F2 — patch the motion-blur record (the master switch and shutter). Values are clamped as on open. Inverse: the previous record. */
+export interface SetMotionBlur {
+  patch: MotionBlurPatch;
+}
+
+/** F2 — patch colour management. A bit depth other than 16 or 32 is `invalidArgument` (nothing changes). `setProjectSettings{workingSpace, bitDepth}` also writes this record where the renderer can honour the value. Inverse: the previous settings. */
+export interface SetColorManagement {
+  patch: ColorManagementPatch;
 }
 
 export interface OpenProjectResult {
@@ -2512,6 +2565,13 @@ export interface SetInteracting {
   interacting: boolean;
 }
 
+/** B4 — subscribe a viewport's overlays to FRAME-SYNCHRONOUS geometry (docs/TS_ENGINE_REMOVAL.md "Gaps"): from its next frame on, every FrameReady of `viewport` is preceded on the frame channel by FrameGeometry messages for `layers`, evaluated at that frame's own time and revision — the world matrices, drawn boxes, motion paths and text boxes the selection outline, gizmos and motion path draw, instead of a query per played frame. Replaces the viewport's previous subscription; no layers or no kinds = unsubscribe. Layers that do not exist are skipped. A control: no history, no revision. */
+export interface SetOverlayGeometry {
+  viewport: number;
+  layers: LayerId[];
+  kinds: OverlayKind[];
+}
+
 export interface TrackPointSpec {
   /** Feature region centre + size, search region size, in layer pixels. */
   feature: Rect;
@@ -2527,32 +2587,67 @@ export interface TrackMotionJob {
   direction: TrackDirection;
   /** Where to apply: a layer's transform, an effect point, a mask. Absent = keep as tracker data only. */
   applyTo?: PropRef;
+  /** The time the points' positions are given at (layer pixels on that frame). Default: `range.start` for `forward`, the range's last frame for `backward`, the playhead clamped into the range for `both` (tracked outward from there, autoTrack.ts). */
+  origin?: Time;
+  /** NCC below this is a lost frame: the point coasts on its last confident velocity (tracker.ts `minConfidence`, default 0.55). */
+  minConfidence?: number;
+  /** Consecutive coasted frames before a point is given up (tracker.ts `maxCoastFrames`, default 8). */
+  maxCoastFrames?: number;
+  /** Long edge the footage is decoded at for the analysis (the TS analysis tier; default 960, 0 = full size). Points, sizes and the result stay in layer pixels. */
+  analysisMaxEdge?: number;
+  /** Stabilize Motion (trackerStore mode `stabilize`, applyTrack.ts planStabilize): point 0's inverse motion written as position keys on the TRACKED layer; `applyTo` is not read. Kind `position` only. */
+  stabilize: boolean;
 }
 
+/** `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%). */
 export interface StabilizeJob {
   layer: LayerId;
   range: TimeRange;
   smoothness: number;
   method: string;
+  /** Long edge the footage is decoded at (the TS analysis tier; default 960, 0 = full size). The flow itself runs at most 480 px wide, as smoothStabilize.ts. */
+  analysisMaxEdge?: number;
 }
 
+/** `channel`: `alpha`, `luminance`, `red`, `green`, `blue`; `threshold` 0…1. Only the frame at `range.start` is traced unless `everyFrame` (then one mask path key per frame of the range). */
 export interface AutoTraceJob {
   layer: LayerId;
   range: TimeRange;
   channel: string;
   threshold: number;
+  /** Path simplification tolerance in pixels (autoTrace.ts `tolerance`, default 1.5). */
+  tolerance?: number;
+  /** Blur radius (px) applied to the channel before thresholding (default 0). */
+  blur?: number;
+  /** Smallest traced area, pixels (default 16). */
+  minArea?: number;
+  everyFrame: boolean;
+  /** Invert the matte before tracing. */
+  invert: boolean;
 }
 
+/** Scene Edit Detection (sceneEditDetect.ts): cuts and dissolves in a video layer's visible span, from 64-bin luma-histogram distances with an adaptive threshold. `createMarkers`: composition markers "Cut N" / "Dissolve N"; `splitLayers`: the layer split at every cut (markers win when both are set). `threshold` is the L1 floor (0…2, default 0.3), `sensitivity` the multiple of the local median (default 5), `minShotSeconds` absent = 6 frames; `dissolves` default true. */
 export interface SceneDetectJob {
   layer: LayerId;
   createMarkers: boolean;
   splitLayers: boolean;
+  threshold?: number;
+  minShotSeconds?: number;
+  sensitivity?: number;
+  dissolves?: boolean;
 }
 
+/** `prompts` are foreground clicks in layer pixels at `range.start`; `backgroundPrompts` background clicks. The matte is applied as masks traced from the segmentation. */
 export interface ObjectMatteJob {
   layer: LayerId;
   range: TimeRange;
   prompts: Vec2[];
+  backgroundPrompts: Vec2[];
+  /** The SAM encoder / decoder ONNX files (the page's bundled `models/object-matte/*` or the user's install). Empty = the engine's default search (PREMATION_SAM_DIR). */
+  encoderModel: string;
+  decoderModel: string;
+  /** A drawn box prompt in layer pixels at `range.start` (objectMask.ts marquee). It wins over `prompts` / `backgroundPrompts` when both arrive: its centre is the foreground point, and nothing outside it (plus an 8% + 4 px margin) is kept. */
+  box?: Rect;
 }
 
 export interface TranscribeJob {
@@ -2561,10 +2656,50 @@ export interface TranscribeJob {
   createCaptions: boolean;
 }
 
+/** One audio analysis over a layer's sound (an audio layer, or a video layer's own track). */
 export interface AudioAnalysisJob {
   layer: LayerId;
+  /** Beat grid (beatGrid.ts analyseLayerBeats): bpm, confidence, beats and onsets in composition seconds in the summary. */
   beats: boolean;
+  /** Amplitude envelope → keyframes (audioKeyframes.ts): on the layer's `audioAmplitude` slider control. */
   amplitudeKeyframes: boolean;
+  /** Silence detection (silenceRemoval.ts detectSilences); with `removeSilence` the silent stretches are cut out of the layer and the layers playing the same file in its composition, gaps closed. */
+  silence: boolean;
+  removeSilence: boolean;
+  silenceThresholdDb?: number;
+  silenceMinMs?: number;
+  silencePaddingMs?: number;
+  /** `both` (default), `left`, `right` — the channel the amplitude envelope follows. */
+  amplitudeChannel?: string;
+  /** Envelope smoothing window in frames (default 1 = none). */
+  amplitudeSmoothing?: number;
+  /** Sample every Nth frame (default 1), keep a frame only when it moves ≥ minDelta (0–100, default 2), scale by gain (default 1) — AudioKeyframeOptions. */
+  amplitudeFrameStep?: number;
+  amplitudeMinDelta?: number;
+  amplitudeGain?: number;
+  /** With `beats`: composition markers "Beat N" on every `beatEvery`-th beat (default 1; at most 512) — Markers on Beats. Without it the grid is the summary only (Animate on Beats reads it). */
+  beatMarkers: boolean;
+  beatEvery?: number;
+}
+
+/** Ducking (ducking.ts planDucking): lower `music`'s level under the voice (`voices[0]`; the page's dialog ducks under one layer) over the composition's work area, as Audio Levels keyframes, and remember the parameters (`audio/ducking`). `params` is the DuckingParams JSON (duckDb, thresholdDb, attackMs, releaseMs, holdMs); absent keys take the defaults. */
+export interface AudioDuckJob {
+  music: LayerId;
+  voices: LayerId[];
+  params: string;
+}
+
+/** Noise gate (audioGate.ts computeGateEnvelope + planGate): close the layer's level while it is quiet, over its audible span inside the work area, as Audio Levels keyframes, and remember the parameters (`audio/gate`). `params` is the GateParams JSON (thresholdDb, attackMs, holdMs, releaseMs, rangeDb). */
+export interface AudioGateJob {
+  layer: LayerId;
+  params: string;
+}
+
+/** A low-resolution editing proxy for a footage item (assets/proxy.ts): transcoded by ffmpeg into `outputFolder` (default: next to the project, `Proxies/`), then attached with setProxy. `maxEdge` default 960. */
+export interface ProxyJob {
+  item: ItemId;
+  outputFolder: string;
+  maxEdge?: number;
 }
 
 export interface RenderJob {
@@ -2587,7 +2722,10 @@ export type JobSpec =
   | { kind: 'transcribe'; value: TranscribeJob }
   | { kind: 'audioAnalysis'; value: AudioAnalysisJob }
   | { kind: 'render'; value: RenderJob }
-  | { kind: 'prerender'; value: PrerenderJob };
+  | { kind: 'prerender'; value: PrerenderJob }
+  | { kind: 'proxy'; value: ProxyJob }
+  | { kind: 'audioDuck'; value: AudioDuckJob }
+  | { kind: 'audioGate'; value: AudioGateJob };
 export type JobSpecKind = JobSpec['kind'];
 
 export interface StartJob {
@@ -2698,6 +2836,8 @@ export interface LayerInfo {
   managedBy: string;
   /** B4 — for the root group of an INSERTED motion-graphics element: the library item it came from (`__mographId`), '' otherwise. The Inspector's fill-in-the-blanks section keys on it. */
   mographId: string;
+  /** B4 — `layer`: an SVG layer that stores its document (getSvgDocument reads it; Convert to Editable Shapes); `converted`: a group converted from one that still retains the original source (Revert to Original SVG); `none` otherwise. */
+  svg: SvgRole;
 }
 
 /** B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`). */
@@ -2769,6 +2909,10 @@ export interface DocumentSnapshot {
   guides: string;
   swatches: Swatch[];
   materials: LibraryMaterial[];
+  /** F2 — the project's motion-blur record (setMotionBlur). */
+  motionBlur: MotionBlurSettings;
+  /** F2 — the project's colour management (setColorManagement). */
+  colorManagement: ColorManagementSettings;
 }
 
 /** The document as saveProject would write it: a .motion project's JSON, UTF-8. */
@@ -2844,6 +2988,49 @@ export interface GetMarkers {
 /** Serialize layers (with the items they reference) for the clipboard; pasteLayers consumes it. */
 export interface CopyLayers {
   layers: LayerId[];
+}
+
+/** B4 — Edit ▸ Copy of KEYFRAMES in API form: the whole keys `keys` names (every dimension of each — After Effects copies a key, not a member), grouped per property in the order the ids first name them, each set's keys in time order at their composition times. `pasteKeyframes` puts a set onto any layer's property of the same path (the editor lands the earliest copied key at the playhead, spacing kept). Unknown ids are skipped: none found answers an empty clipboard. */
+export interface CopyKeyframes {
+  keys: KeyframeId[];
+}
+
+/** B4 — a layer's stored MEMBER keyframe lists: every animated member track (a keyed track — `x` keyed apart from `y` on an unseparated Position, a colour channel, an effect param, a track outside the catalog — then the expression-only ones), in the engine's order, with its keyframe records in the stored form the keyframe assistants (The Smoother, The Wiggler, the motion editor) transform. The API's own key lists are per PROPERTY (§3.3); these are the assistants' input, written back as `setKeyframes` per property. `members` narrows to those tracks (empty = all). */
+export interface GetMemberKeyframes {
+  layer: LayerId;
+  members: string[];
+}
+
+/** B4 — Edit ▸ Copy of EFFECTS in API form: the layer's effects `effects` names (`effects/<id>`; empty = the whole stack), in stack order, captured as `pasteEffects` takes them — a JSON array of `{effect: <the stored effect: type, params, enabled, opacity, maskId, labelColor, …>, tracks: {<param suffix>: Keyframe[]}}` (stored keyframe records on the layer's keyframe axis; suffix '' = the legacy single-scalar track). Two captures of the same effect compare equal as strings until it changes (the editor's "still as copied" test). Unknown effect paths are skipped. */
+export interface CopyEffects {
+  layer: LayerId;
+  effects: PropPath[];
+}
+
+/** B4 — one member track (getMemberKeyframes). */
+export interface MemberTrack {
+  /** The stored track name (`x`, `scaleX`, `opacity`, `effect.<id>.<param>`, …). */
+  member: string;
+  /** The API property that owns the member ('' outside the catalog) and its index among the property's members. */
+  path: PropPath;
+  index: number;
+  /** The keyframe records as stored, JSON: `[{t: keyframe-axis seconds, value: stored units, easing?, bezier?, si?, so?, spatialInterp?, continuous?, roving?, id?, label?}]` ('[]' for an expression-only member). */
+  keyframes: string;
+  count: number;
+  /** The member carries an expression (enabled or not). */
+  hasExpression: boolean;
+}
+
+export interface MemberTracks {
+  tracks: MemberTrack[];
+}
+
+/** B4 — copyEffects' answer. */
+export interface CopiedEffects {
+  /** The captures as JSON (see copyEffects); '[]' when none. */
+  effects: string;
+  /** The `effects/<id>` path of each capture, in the same order. */
+  paths: PropPath[];
 }
 
 export interface CompositionDetails {
@@ -2925,6 +3112,16 @@ export interface GetItems {
   items: ItemId[];
 }
 
+/** B4 — the SVG document a layer stores (LayerInfo.svg): an SVG layer's file name, intrinsic size, view box, capability scan, playback mode and markup, or a converted group's retained source. `role` none (every other field empty) for any other layer. */
+export interface GetSvgDocument {
+  layer: LayerId;
+}
+
+/** B4 — the Cryptomatte ID set a footage item's EXR carries (layer names and their objects, from the file's manifest): what Layer ▸ ID Matte lists. Empty when the file has none or was not decoded yet. `unsupported` where the engine does not decode EXR (the C++ engine, until its media decode reads EXR). */
+export interface GetCryptomatte {
+  item: ItemId;
+}
+
 /** A frame thumbnail of an item or layer (project panel, timeline filmstrip). Encoded image bytes. */
 export interface GetThumbnail {
   item?: ItemId;
@@ -2946,6 +3143,34 @@ export interface Thumbnail {
   height: number;
   format: string;
   data: Uint8Array;
+}
+
+/** B4 — getSvgDocument's answer. */
+export interface SvgDocument {
+  role: SvgRole;
+  fileName: string;
+  intrinsicWidth: number;
+  intrinsicHeight: number;
+  viewBox?: Rect;
+  /** The import's capability scan (SvgCapabilities) as JSON: paths, text, gradients, filters, SMIL / CSS animation, … */
+  capabilities: string;
+  /** Re-rasterised at the playhead (SMIL / CSS) rather than a static texture. */
+  livePlayback: boolean;
+  /** The original markup (what Revert to Original SVG restores). */
+  sourceMarkup: string;
+  /** The sanitised markup the layer renders, under `sanitizePolicy` (the editor re-sanitises an older policy's from the source). */
+  sanitizedMarkup: string;
+  sanitizePolicy: number;
+}
+
+/** B4 — one Cryptomatte layer of an EXR (its channel prefix, e.g. "CryptoObject") and its objects' names, manifest order. */
+export interface CryptomatteLayerInfo {
+  name: string;
+  objects: string[];
+}
+
+export interface CryptomatteInfo {
+  layers: CryptomatteLayerInfo[];
 }
 
 export interface EffectParamInfo {
@@ -2987,6 +3212,11 @@ export interface ListGroupTypes {
 
 export interface ListPresets {
   category: string;
+}
+
+/** B4 — Save as Preset: the layer's animation as a preset BODY, in the preset format `applyPreset` replays (the Motion Presets panel stores it in the user's library under a name). Keyframe tracks rebased to t = 0 and converted out of pixels into the units each property travels in (position → comp fractions, type metrics → font sizes, against the layer's own composition), text animators, the effect stack in the preset's own id namespace (`fx0`, … with its `effect.<id>.*` tracks re-pointed) and enabled expressions. `notFound` for no such layer. */
+export interface CapturePreset {
+  layer: LayerId;
 }
 
 export interface GetCapabilities {}
@@ -3058,6 +3288,14 @@ export interface PresetList {
   presets: PresetInfo[];
 }
 
+/** B4 — capturePreset's answer. */
+export interface CapturedPreset {
+  /** The preset body as JSON: `{tracks: [{prop, unit?, keyframes: [{t, value, easing?, bezier?, …}]}], animators?, requires?: 'text', effects?: [{id, type, params?}], expressions?: [{prop, expr}]}` — every field of an AnimationPreset but its name and folder. Track names are the stored (legacy) prop paths the preset format uses, not API paths. '{}' when `empty`. */
+  preset: string;
+  /** Nothing to save: no keyframes, animators, effects or enabled expressions on the layer. */
+  empty: boolean;
+}
+
 export interface Capabilities {
   gpuAdapter: string;
   gpuBackend: string;
@@ -3116,10 +3354,11 @@ export interface GetLayerTransforms {
   time: Time;
 }
 
-/** Text layout for in-viewport editing (caret, selection, hit-testing glyphs). */
+/** Text layout: how a text layer's lines measure (B4: the render box, the selection box, the wrap, the paragraph box, where the line block sits in the layer). The STORED style is measured (animated values at their base, as Convert / Box Auto-Size hold the text still) with `overrides` winning — a "where would the lines sit if…" before a write. `time` is reserved for evaluated layouts (glyph boxes for in-viewport editing). `invalidArgument` for a layer with no text; `unsupported` where the engine cannot measure (no fonts: the headless engine, a jsdom page) or the style is outside its text port (the message says which). */
 export interface GetTextLayout {
   layer: LayerId;
   time: Time;
+  overrides?: TextLayoutOverrides;
 }
 
 /** Evaluate an expression without storing it (expression editor preview). */
@@ -3161,9 +3400,69 @@ export interface LayerTransformList {
 }
 
 export interface TextLayout {
+  /** Per-glyph boxes for in-viewport editing — not filled yet (both engines answer empty; the text-edit overlay still measures in the page). */
   glyphs: GlyphBox[];
+  /** Lines as laid out (after the paragraph wrap). */
   lines: number;
+  /** The SELECTION box: the font-metric box of the laid-out lines, relative to the layer origin (x = −advance / 2), before the Character panel's scale. Stable while typing (font metrics, not ink). */
   box: Rect;
+  /** B4 — the RENDER box (the texture the text rasterises into, padding included): measureTextSize's {w, h}. */
+  size: Vec2;
+  /** B4 — the content as laid out: paragraph text with each soft wrap as '\n' (one space replaced per wrap, so character indices keep); point text unchanged. */
+  wrapped: string;
+  /** B4 — the wrapped line numbers that end in a SOFT wrap (not a typed return). */
+  softBreaks: number[];
+  /** B4 — the paragraph box; absent for point text (and text on a path). */
+  paragraph?: ParagraphLayout;
+  /** B4 — where the line block sits in the layer, local units after the Character panel's scale: the x its lines start / centre / end at (by alignment and first-paragraph direction, indents included) and its vertical offset from the centred position. What a Point ⇄ Paragraph conversion holds still (the difference of two answers; the render padding cancels). */
+  lineBlock: Vec2;
+  /** B4 — the Character panel's whole-layer glyph scale (horizontal / vertical scale, × 0.65 for super / subscript). */
+  styleScale: Vec2;
+  /** B4 — the text rides a mask path (point text: no box). */
+  onPath: boolean;
+  /** B4 — the style measured (overrides applied): what a Fit Text to Box bake multiplies. */
+  fontSize: number;
+  letterSpacing: number;
+  paragraphSpacing: number;
+}
+
+/** B4 — getTextLayout's hypothetical style: each set field replaces the stored one for the measurement only. */
+export interface TextLayoutOverrides {
+  content?: string;
+  /** 0 = point text. */
+  boxWidth?: number;
+  /** 0 = no authored height (auto height). */
+  boxHeight?: number;
+  /** 'off' | 'height' | 'fit'. */
+  boxAutoSize?: string;
+  fontSize?: number;
+  letterSpacing?: number;
+  paragraphSpacing?: number;
+}
+
+/** B4 — a paragraph text layer's box as it measures (measureParagraphBox + readParagraphBox). */
+export interface ParagraphLayout {
+  boxWidth: number;
+  /** The box's height: authored when fixed, the text's own when auto. */
+  boxHeight: number;
+  fixedHeight: boolean;
+  /** Text runs past the bottom of a fixed box (AE's red overflow mark). */
+  overflow: boolean;
+  /** Fit Text to Box's type scale; 1 otherwise. */
+  fitScale: number;
+  /** The height the lines occupy as drawn (after the fit scale), px. */
+  contentHeight: number;
+  lineCount: number;
+  /** Lines actually drawn (the rest are clipped by a fixed box). */
+  visibleLines: number;
+  /** How far the line block sits below where it would sit centred on the origin, px (a fixed box aligning its lines top / bottom; an anchored auto-height box). */
+  lineOffsetY: number;
+  /** The resolved auto-size mode: 'off' | 'height' | 'fit' (no stored height is auto height whatever the mode says). */
+  autoSize: string;
+  /** 'top' | 'center' | 'bottom'. */
+  verticalAlign: string;
+  /** The STORED box height (0 = none): an auto-height box keeps the top edge of a box this tall. */
+  storedHeight: number;
 }
 
 export interface ExpressionEvaluation {
@@ -3223,6 +3522,10 @@ export interface JobInfo {
   status: JobStatus;
   progress: number;
   message: string;
+  /** The finished job's summary, JSON (kind-specific, ENGINE_API.md §4.9); '' until done. */
+  result: string;
+  /** Whether its result was applied (false while running, with apply=false, or when it changes nothing). */
+  applied: boolean;
 }
 
 export interface GetHistory {}
@@ -3347,6 +3650,16 @@ export interface MaterialsChangedEvent {
   materials: LibraryMaterial[];
 }
 
+/** F2 — the motion-blur record (full replacement), after setMotionBlur, setCompositionSettings{motionBlur}, a restore or their undo. Every composition's `compositionChanged` follows too (CompSettings.motionBlur). */
+export interface MotionBlurChangedEvent {
+  motionBlur: MotionBlurSettings;
+}
+
+/** F2 — colour management (full replacement), after setColorManagement, setProjectSettings, a restore or their undo. */
+export interface ColorManagementChangedEvent {
+  colorManagement: ColorManagementSettings;
+}
+
 export interface HistoryChangedEvent {
   state: HistoryState;
   undoLabel: string;
@@ -3457,6 +3770,41 @@ export interface FrameReady {
   height: number;
 }
 
+/** B4 — one subscribed layer's overlay geometry at the frame's time (setOverlayGeometry). Fields of kinds not subscribed are empty. Composition space is comp px, y down; `t` values are the layer's keyframe-axis seconds (what a Position key stores — the page's motion-path window and hover test compare them). One layer's geometry may arrive as SEVERAL records in a frame (the payload cap): the host merges them, CONCATENATING arrays in arrival order. */
+export interface OverlayLayerGeometry {
+  layer: LayerId;
+  /** transform: the column-major 4×4 layer → comp matrix (getLayerTransforms: a 3D layer's world matrix, else the 2D chain as a 4×4). */
+  matrix: number[];
+  /** bounds: readGeometry's LOCAL box as x, y, width, height (getLayerBounds, layer space) … */
+  box: number[];
+  /** … and its four corners through the 2D world chain: x0, y0 … x3, y3 (getLayerBounds, comp space). */
+  corners: number[];
+  /** motionPath: the trajectory of the layer's Position, sampled over its keyed span (16 per key segment, at least 8), as t, x, y, z quadruples: x / y through the parent's world matrix at the frame's time (comp space), z the layer's raw z (0 for 2D; the page projects a 3D layer through its view camera). */
+  path: number[];
+  /** motionPath: one entry per Position key time: t, x, y, z, inX, inY, outX, outY — the key's point and its spatial tangent handles at their effective positions (comp space; NaN where a handle does not exist: the path's ends, a linear vertex). */
+  pathKeys: number[];
+  /** rig: puppet pins as x, y pairs and bones as x0, y0, x1, y1 in comp space — not produced yet (both engines send them empty until the rig sampler moves engine-side). */
+  pins: number[];
+  bones: number[];
+  /** textBox: a text layer's measured box, LOCAL x, y, width, height (the fixed paragraph box, else the font-metric selection box). */
+  textBox: number[];
+  /** motionPath: the trajectory at every composition frame of the keyed span (AE's velocity dots): t, x, y, z quadruples as `path`. */
+  pathFrames: number[];
+  /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`). */
+  pathNow: number[];
+}
+
+/** Engine → host. The overlay geometry of the NEXT FrameReady of `viewport` with this generation and frame (B4, setOverlayGeometry). One frame's records may span several messages (the 4096-byte payload cap; a layer's kinds can arrive in separate records, and they merge): the host collects them until `last`, then delivers them with that FrameReady. Sent only while the viewport has a subscription. */
+export interface FrameGeometry {
+  viewport: number;
+  generation: number;
+  frame: number;
+  time: Time;
+  revision: Revision;
+  layers: OverlayLayerGeometry[];
+  last: boolean;
+}
+
 /** Engine → host. Heartbeat answer, sent by the document core thread. */
 export interface FramePong {
   nonce: number;
@@ -3482,6 +3830,7 @@ export type FrameChannelMessage =
   | ({ type: 'slots' } & FrameSlots)
   | ({ type: 'frameReady' } & FrameReady)
   | ({ type: 'pong' } & FramePong)
+  | ({ type: 'geometry' } & FrameGeometry)
   | ({ type: 'release' } & FrameRelease)
   | ({ type: 'ping' } & FramePing);
 export type FrameChannelMessageType = FrameChannelMessage['type'];
@@ -3950,6 +4299,8 @@ export type Command =
   | ({ type: 'setGuides' } & SetGuides)
   | ({ type: 'setSwatches' } & SetSwatches)
   | ({ type: 'setMaterials' } & SetMaterials)
+  | ({ type: 'setMotionBlur' } & SetMotionBlur)
+  | ({ type: 'setColorManagement' } & SetColorManagement)
   | ({ type: 'importFiles' } & ImportFiles)
   | ({ type: 'importBytes' } & ImportBytes)
   | ({ type: 'relinkItem' } & RelinkItem)
@@ -4074,6 +4425,7 @@ export type Command =
   | ({ type: 'setCacheBudget' } & SetCacheBudget)
   | ({ type: 'purgeCache' } & PurgeCache)
   | ({ type: 'setInteracting' } & SetInteracting)
+  | ({ type: 'setOverlayGeometry' } & SetOverlayGeometry)
   | ({ type: 'startJob' } & StartJob)
   | ({ type: 'cancelJob' } & CancelJob)
   | ({ type: 'applyJobResult' } & ApplyJobResult)
@@ -4103,6 +4455,8 @@ export type CommandResult =
   | ({ type: 'setGuides' } & Empty)
   | ({ type: 'setSwatches' } & Empty)
   | ({ type: 'setMaterials' } & Empty)
+  | ({ type: 'setMotionBlur' } & Empty)
+  | ({ type: 'setColorManagement' } & Empty)
   | ({ type: 'importFiles' } & ItemList)
   | ({ type: 'importBytes' } & ItemList)
   | ({ type: 'relinkItem' } & Empty)
@@ -4227,6 +4581,7 @@ export type CommandResult =
   | ({ type: 'setCacheBudget' } & Empty)
   | ({ type: 'purgeCache' } & Empty)
   | ({ type: 'setInteracting' } & Empty)
+  | ({ type: 'setOverlayGeometry' } & Empty)
   | ({ type: 'startJob' } & JobRef)
   | ({ type: 'cancelJob' } & Empty)
   | ({ type: 'applyJobResult' } & ItemList)
@@ -4247,13 +4602,19 @@ export type Query =
   | ({ type: 'getMotionPath' } & GetMotionPath)
   | ({ type: 'getMarkers' } & GetMarkers)
   | ({ type: 'copyLayers' } & CopyLayers)
+  | ({ type: 'copyKeyframes' } & CopyKeyframes)
+  | ({ type: 'getMemberKeyframes' } & GetMemberKeyframes)
+  | ({ type: 'copyEffects' } & CopyEffects)
   | ({ type: 'getWaveform' } & GetWaveform)
   | ({ type: 'listFonts' } & ListFonts)
   | ({ type: 'getItems' } & GetItems)
+  | ({ type: 'getSvgDocument' } & GetSvgDocument)
+  | ({ type: 'getCryptomatte' } & GetCryptomatte)
   | ({ type: 'getThumbnail' } & GetThumbnail)
   | ({ type: 'listEffects' } & ListEffects)
   | ({ type: 'listGroupTypes' } & ListGroupTypes)
   | ({ type: 'listPresets' } & ListPresets)
+  | ({ type: 'capturePreset' } & CapturePreset)
   | ({ type: 'getCapabilities' } & GetCapabilities)
   | ({ type: 'listPlugins' } & ListPlugins)
   | ({ type: 'getEffectUi' } & GetEffectUi)
@@ -4286,13 +4647,19 @@ export type QueryResult =
   | ({ type: 'getMotionPath' } & PropertySamples)
   | ({ type: 'getMarkers' } & MarkerList)
   | ({ type: 'copyLayers' } & DocumentFragment)
+  | ({ type: 'copyKeyframes' } & KeyframeSets)
+  | ({ type: 'getMemberKeyframes' } & MemberTracks)
+  | ({ type: 'copyEffects' } & CopiedEffects)
   | ({ type: 'getWaveform' } & WaveformPeaks)
   | ({ type: 'listFonts' } & FontList)
   | ({ type: 'getItems' } & ItemDetails)
+  | ({ type: 'getSvgDocument' } & SvgDocument)
+  | ({ type: 'getCryptomatte' } & CryptomatteInfo)
   | ({ type: 'getThumbnail' } & Thumbnail)
   | ({ type: 'listEffects' } & EffectCatalog)
   | ({ type: 'listGroupTypes' } & GroupTypeList)
   | ({ type: 'listPresets' } & PresetList)
+  | ({ type: 'capturePreset' } & CapturedPreset)
   | ({ type: 'getCapabilities' } & Capabilities)
   | ({ type: 'listPlugins' } & PluginList)
   | ({ type: 'getEffectUi' } & EffectUi)
@@ -4331,6 +4698,8 @@ export type Event =
   | ({ type: 'guidesChanged' } & GuidesChangedEvent)
   | ({ type: 'swatchesChanged' } & SwatchesChangedEvent)
   | ({ type: 'materialsChanged' } & MaterialsChangedEvent)
+  | ({ type: 'motionBlurChanged' } & MotionBlurChangedEvent)
+  | ({ type: 'colorManagementChanged' } & ColorManagementChangedEvent)
   | ({ type: 'historyChanged' } & HistoryChangedEvent)
   | ({ type: 'dirtyChanged' } & DirtyChangedEvent)
   | ({ type: 'transportChanged' } & TransportChangedEvent)
@@ -4369,6 +4738,8 @@ export interface CommandArgs {
   setGuides: SetGuides;
   setSwatches: SetSwatches;
   setMaterials: SetMaterials;
+  setMotionBlur: SetMotionBlur;
+  setColorManagement: SetColorManagement;
   importFiles: ImportFiles;
   importBytes: ImportBytes;
   relinkItem: RelinkItem;
@@ -4493,6 +4864,7 @@ export interface CommandArgs {
   setCacheBudget: SetCacheBudget;
   purgeCache: PurgeCache;
   setInteracting: SetInteracting;
+  setOverlayGeometry: SetOverlayGeometry;
   startJob: StartJob;
   cancelJob: CancelJob;
   applyJobResult: ApplyJobResult;
@@ -4522,6 +4894,8 @@ export interface CommandResults {
   setGuides: Empty;
   setSwatches: Empty;
   setMaterials: Empty;
+  setMotionBlur: Empty;
+  setColorManagement: Empty;
   importFiles: ItemList;
   importBytes: ItemList;
   relinkItem: Empty;
@@ -4646,6 +5020,7 @@ export interface CommandResults {
   setCacheBudget: Empty;
   purgeCache: Empty;
   setInteracting: Empty;
+  setOverlayGeometry: Empty;
   startJob: JobRef;
   cancelJob: Empty;
   applyJobResult: ItemList;
@@ -4666,13 +5041,19 @@ export interface QueryArgs {
   getMotionPath: GetMotionPath;
   getMarkers: GetMarkers;
   copyLayers: CopyLayers;
+  copyKeyframes: CopyKeyframes;
+  getMemberKeyframes: GetMemberKeyframes;
+  copyEffects: CopyEffects;
   getWaveform: GetWaveform;
   listFonts: ListFonts;
   getItems: GetItems;
+  getSvgDocument: GetSvgDocument;
+  getCryptomatte: GetCryptomatte;
   getThumbnail: GetThumbnail;
   listEffects: ListEffects;
   listGroupTypes: ListGroupTypes;
   listPresets: ListPresets;
+  capturePreset: CapturePreset;
   getCapabilities: GetCapabilities;
   listPlugins: ListPlugins;
   getEffectUi: GetEffectUi;
@@ -4705,13 +5086,19 @@ export interface QueryResults {
   getMotionPath: PropertySamples;
   getMarkers: MarkerList;
   copyLayers: DocumentFragment;
+  copyKeyframes: KeyframeSets;
+  getMemberKeyframes: MemberTracks;
+  copyEffects: CopiedEffects;
   getWaveform: WaveformPeaks;
   listFonts: FontList;
   getItems: ItemDetails;
+  getSvgDocument: SvgDocument;
+  getCryptomatte: CryptomatteInfo;
   getThumbnail: Thumbnail;
   listEffects: EffectCatalog;
   listGroupTypes: GroupTypeList;
   listPresets: PresetList;
+  capturePreset: CapturedPreset;
   getCapabilities: Capabilities;
   listPlugins: PluginList;
   getEffectUi: EffectUi;
@@ -4750,6 +5137,8 @@ export interface EventPayloads {
   guidesChanged: GuidesChangedEvent;
   swatchesChanged: SwatchesChangedEvent;
   materialsChanged: MaterialsChangedEvent;
+  motionBlurChanged: MotionBlurChangedEvent;
+  colorManagementChanged: ColorManagementChangedEvent;
   historyChanged: HistoryChangedEvent;
   dirtyChanged: DirtyChangedEvent;
   transportChanged: TransportChangedEvent;

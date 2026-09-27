@@ -36,6 +36,10 @@ event guidesChanged = 2014 { guides: string = 1; }
 event swatchesChanged = 2015 { swatches: Swatch[] = 1; }
 /// F2 — the project material library (full replacement).
 event materialsChanged = 2016 { materials: LibraryMaterial[] = 1; }
+/// F2 — the motion-blur record (full replacement), after setMotionBlur, setCompositionSettings{motionBlur}, a restore or their undo. Every composition's `compositionChanged` follows too (CompSettings.motionBlur).
+event motionBlurChanged = 2716 { motionBlur: MotionBlurSettings = 1; }
+/// F2 — colour management (full replacement), after setColorManagement, setProjectSettings, a restore or their undo.
+event colorManagementChanged = 2717 { colorManagement: ColorManagementSettings = 1; }
 
 family "StatusEvents";
 

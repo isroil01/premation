@@ -166,6 +166,15 @@ std::optional<double> sample_keys(const std::vector<Key>& keys, double t) {
   return motion::eval::sample(motion::eval::StructSource{std::span<const motion_keyframe>(scratch)}, t);
 }
 
+std::pair<std::optional<double>, std::optional<double>> effective_spatial_tangents_of(const std::vector<Key>& keys, std::size_t i) {
+  if (i >= keys.size()) return {};
+  thread_local std::vector<motion_keyframe> scratch;
+  scratch.resize(keys.size());
+  for (std::size_t k = 0; k < keys.size(); ++k) scratch[k] = to_motion(keys[k]);
+  const auto tg = motion::eval::effective_spatial_tangents(motion::eval::StructSource{std::span<const motion_keyframe>(scratch)}, i);
+  return {tg.has_si ? std::optional<double>(tg.si) : std::nullopt, tg.has_so ? std::optional<double>(tg.so) : std::nullopt};
+}
+
 // ── data tracks ──────────────────────────────────────────────────────────
 
 const DataTrack* anim_data_track(const Document& d, std::string_view node, std::string_view prop) {

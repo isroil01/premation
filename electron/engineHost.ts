@@ -44,11 +44,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { handle, on } from './ipcGuard';
-import { peekEnvelope, withCausedBy, withEnvelopeSeq, type EngineFrameMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
+import { peekEnvelope, withCausedBy, withEnvelopeSeq, type EngineFrameMessage, type FrameGeometryMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
 import { EngineCommandLog } from './engineCommandLog';
 import type { PixelFrame } from './pixelChannel';
 import { hostBridgePath, loadIoSurfaceBridge } from './ioSurfaceBridge';
 import { ntHandleSource, slotHandleSourceFor, type SlotHandleSource, type SlotTextureHandle } from './sharedTextureHandles';
+import { resolveFfmpegBinary } from './ffmpegBinary';
 import { EngineGoneError } from './engineTransport';
 import {
   EngineSupervisor,
@@ -150,6 +151,8 @@ export interface ForwardedFrameMeta {
   sentUs: number;
   /** How the frame travelled: a shared texture (route C) or a pixel copy (route A). */
   route: 'shared' | 'copy';
+  /** B4 round 2: the frame's overlay geometry (setOverlayGeometry), the FrameGeometry parts merged. */
+  geometry?: FrameGeometryMessage['layers'];
 }
 
 export interface FrameForwarderStats {
@@ -212,6 +215,8 @@ export class FrameForwarder {
     this.copyWaiting.clear();
     this.copyPixels.clear();
     this.copyInPage.clear();
+    this.geometry = null;
+    this.frameGeometry.clear();
   }
 
   /**
@@ -264,13 +269,47 @@ export class FrameForwarder {
       // An import in flight may still be using an older ring's handle.
       if (this.inFlight) this.retirePending = true;
       else this.handles.retire(m.generation);
+      this.geometry = null;
+      this.frameGeometry.clear();
+      return;
+    }
+    if (m.type === 'geometry') {
+      this.onGeometry(m);
       return;
     }
     if (m.type === 'frameReady') this.onFrameReady(m);
   }
 
+  /**
+   * B4 round 2: the overlay geometry of the NEXT FrameReady (setOverlayGeometry) —
+   * collected over its parts, then handed to the page WITH that frame (its meta),
+   * so the overlays draw the geometry of the very frame they are drawn over.
+   */
+  private geometry: { viewport: number; generation: number; frame: number; layers: FrameGeometryMessage['layers']; complete: boolean } | null = null;
+  /** A ready frame's geometry until its meta is built (route A may wait for its pixels), by slot key. */
+  private readonly frameGeometry = new Map<string, FrameGeometryMessage['layers']>();
+
+  private onGeometry(g: FrameGeometryMessage): void {
+    const cur = this.geometry;
+    const same = cur !== null && !cur.complete && cur.viewport === g.viewport && cur.generation === g.generation && cur.frame === g.frame;
+    this.geometry = same
+      ? { ...cur, layers: [...cur.layers, ...g.layers], complete: g.last }
+      : { viewport: g.viewport, generation: g.generation, frame: g.frame, layers: [...g.layers], complete: g.last };
+  }
+
+  /** The collected geometry for `f` (and forget it): only a complete set for this very frame. */
+  private takeGeometry(f: FrameReadyMessage): FrameGeometryMessage['layers'] | undefined {
+    const g = this.geometry;
+    this.geometry = null;
+    return g && g.complete && g.viewport === f.viewport && g.generation === f.generation && g.frame === f.frame ? g.layers : undefined;
+  }
+
   private onFrameReady(f: FrameReadyMessage): void {
     this.stats.engineDropped += f.dropped;
+    // The frame's overlay geometry travels with it on either route (meta()).
+    const geometry = this.takeGeometry(f);
+    if (geometry) this.frameGeometry.set(slotKey(f.generation, f.slot), geometry);
+    else this.frameGeometry.delete(slotKey(f.generation, f.slot));
     const ring = this.rings.get(f.generation);
     if (ring && !ring.shared && this.deps.sendPixels) {
       // Route A: forward once the pixels are here too.
@@ -382,11 +421,15 @@ export class FrameForwarder {
   }
 
   private meta(f: FrameReadyMessage, route: ForwardedFrameMeta['route']): ForwardedFrameMeta {
+    const key = slotKey(f.generation, f.slot);
+    const geometry = this.frameGeometry.get(key);
+    this.frameGeometry.delete(key);
     return {
       viewport: f.viewport, generation: f.generation, slot: f.slot, frame: f.frame, time: f.time, revision: f.revision,
       width: f.width, height: f.height, dropped: f.dropped, renderStartUs: f.renderStartUs, renderDoneUs: f.renderDoneUs,
       sentUs: (this.deps.now?.() ?? Date.now()) * 1000,
       route,
+      ...(geometry ? { geometry } : {}),
     };
   }
 
@@ -540,7 +583,19 @@ export class EngineHost {
       {
         spawn: (exe, args) =>
           // fd 3/4 frame channel, fd 5 route-A pixel stream (pixelChannel.ts).
-          spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'], windowsHide: true }) as unknown as EngineChild,
+          spawn(exe, args, {
+            stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'],
+            windowsHide: true,
+            // Engine jobs (proxies) run the same ffmpeg an export does (ffmpegBinary.ts).
+            env: {
+              ...process.env,
+              PREMATION_FFMPEG: resolveFfmpegBinary({ vars: process.env, resourcesPath: o.resourcesPath, platform: process.platform, exists: existsSync }),
+              // The objectMatte job's SAM pair: <resources>/models/object-matte when
+              // packaged (electron-builder extraResources), dist/ in development.
+              PREMATION_SAM_DIR: process.env.PREMATION_SAM_DIR
+                ?? (o.isPackaged ? path.join(o.resourcesPath, 'models', 'object-matte') : path.join(o.appPath, 'dist', 'models', 'object-matte')),
+            },
+          }) as unknown as EngineChild,
         resolveExe,
         gpuVendor: () => chromiumGpuVendor(o.getGPUInfo),
         hostPid: o.hostPid,

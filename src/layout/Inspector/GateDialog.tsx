@@ -30,6 +30,7 @@ import {
   type GateParams,
 } from '@core/audio/audioGate';
 import { gateEdit, removeGateEdit } from './audioEdits';
+import { previewEngineJob, runEngineJob } from '@core/engine/engineJobs';
 import styles from './AudioToolDialog.module.css';
 
 interface Props {
@@ -68,28 +69,40 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
     let alive = true;
     setAnalysing(true);
     const timer = setTimeout(() => {
-      // Engine-side until E2: the layer's decode and its envelope.
-      void computeGateEnvelope(nodeId)
-        .then((res) => {
-          if (!alive) return;
-          if (!res) {
-            setPreview(null);
-            return;
+      void (async () => {
+        // The engine's audioGate job when it runs jobs: its summary is the readout.
+        const viaEngine = await previewEngineJob<{ keyframes: number; closedFraction?: number }>({
+          kind: 'audioGate', value: { layer: nodeId, params: key },
+        });
+        if (viaEngine) {
+          if (alive) {
+            setPreview(viaEngine.status === 'done' && viaEngine.result
+              ? { keyframes: viaEngine.result.keyframes, closedFraction: viaEngine.result.closedFraction ?? 0 }
+              : null);
           }
-          const curve = gateLevels(res.env, { ...params, fps: res.fps });
-          let closed = 0;
-          for (const v of curve) if (v < -0.5) closed++;
-          setPreview({
-            keyframes: planGate(res.env, {
-              ...params,
-              fps: res.fps,
-              startCompSec: res.start,
-              baseLevelDb: staticLevelDb(documentMirror(), nodeId),
-              toKeyframeTime: (t) => t,
-            }).length,
-            closedFraction: curve.length > 0 ? closed / curve.length : 0,
-          });
-        })
+          return;
+        }
+        // The TypeScript engine's path: the page decodes and follows the level.
+        const res = await computeGateEnvelope(nodeId);
+        if (!alive) return;
+        if (!res) {
+          setPreview(null);
+          return;
+        }
+        const curve = gateLevels(res.env, { ...params, fps: res.fps });
+        let closed = 0;
+        for (const v of curve) if (v < -0.5) closed++;
+        setPreview({
+          keyframes: planGate(res.env, {
+            ...params,
+            fps: res.fps,
+            startCompSec: res.start,
+            baseLevelDb: staticLevelDb(documentMirror(), nodeId),
+            toKeyframeTime: (t) => t,
+          }).length,
+          closedFraction: curve.length > 0 ? closed / curve.length : 0,
+        });
+      })()
         .catch(() => { if (alive) setPreview(null); })
         .finally(() => { if (alive) setAnalysing(false); });
     }, 250);
@@ -106,7 +119,14 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
   const run = async (): Promise<void> => {
     setBusy(true);
     try {
-      // Engine-side until E2 (as the preview).
+      const viaEngine = await runEngineJob<{ keyframes: number }>({ kind: 'audioGate', value: { layer: nodeId, params: JSON.stringify(params) } });
+      if (viaEngine) {
+        if (viaEngine.status === 'done') notify(`Gated — ${viaEngine.result?.keyframes ?? 0} level keyframes written.`);
+        else if (viaEngine.status === 'failed') notify(viaEngine.error?.message ?? 'The gate could not be written.', 'warning');
+        onDone();
+        return;
+      }
+      // The TypeScript engine's path: the page decodes (as the preview).
       const res = await computeGateEnvelope(nodeId);
       if (!res) {
         notify('That layer has no decodable audio to gate.', 'warning');

@@ -52,7 +52,7 @@ export function AlignPanel(): JSX.Element {
   const distributeMin = distributeMinimum(alignTo);
   const count = selectedIds.length;
 
-  const run = (mode: AlignMode): void => alignLayers(selectedIds, mode, alignTo, compWidth, compHeight);
+  const run = (mode: AlignMode): void => { void alignLayers(selectedIds, mode, alignTo, compWidth, compHeight); };
 
   const renderButton = (a: { id: AlignMode; icon: IconName; label: string }, min: number): JSX.Element => {
     const disabled = count < min;

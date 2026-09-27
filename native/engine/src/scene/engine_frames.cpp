@@ -34,6 +34,7 @@
 #include "scene_renderer.hpp"
 #include "scene_textures.hpp"
 #include "text_measure.hpp"
+#include "text_query.hpp"
 #include "time_conv.hpp"
 #include "timeline.hpp"
 
@@ -125,12 +126,24 @@ std::vector<std::string> document_families(const doc::Document& d) {
 
 // ── the core-thread builder ───────────────────────────────────────────────
 
-class EngineFrameBuilder final : public FrameBuilder {
+class EngineFrameBuilder final : public FrameBuilder, public TextQueries {
  public:
   explicit EngineFrameBuilder(const EngineFramesOptions& o) : fonts_(o), measurer_(make_canvas_measurer(fonts_.canvas)) {}
   void bind_audio(MediaClock* clock) override { audio_ = clock; }
   void set_media_base(std::string_view dir) override {
     if (dir != mediaBase_) mediaBase_ = std::string(dir);
+  }
+
+  // B4 round 2: text measured on the same fonts the frames are built with (core thread, like build()).
+  TextQueries* text_queries() noexcept override { return this; }
+  api::TextLayout text_layout(const doc::Node& n, const api::TextLayoutOverrides* overrides) override {
+    register_families(n);
+    return text_layout_of(*measurer_, n, overrides);
+  }
+  std::optional<TextGeometry> text_geometry(const doc::Node& n,
+                                            const std::vector<std::pair<std::string, double>>& overrides) override {
+    register_families(n);
+    return text_geometry_of(*measurer_, n, overrides);
   }
 
   std::shared_ptr<BuiltFrame> build(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
@@ -276,6 +289,24 @@ class EngineFrameBuilder final : public FrameBuilder {
   }
 
  private:
+  /// The families one text node names (document_families for a node), registered before measuring it.
+  void register_families(const doc::Node& n) {
+    std::vector<std::string> fams;
+    for (const doc::Component& c : n.components) {
+      const Json& f = c.props.at("fontFamily");
+      if (f.is_string()) split_families(f.str(), fams);
+      const Json& runs = c.props.at("richText").at("runs");
+      if (!runs.is_array()) continue;
+      for (const Json& r : runs.arr()) {
+        const Json& rf = r.at("fontFamily");
+        if (rf.is_string()) split_families(rf.str(), fams);
+      }
+    }
+    bool added = false;
+    for (const std::string& f : fams) added = fonts_.add(f) || added;
+    if (added) measurer_ = make_canvas_measurer(fonts_.canvas);
+  }
+
   /// Register the document's font families before measuring text (the
   /// measurer is rebuilt when the FontSet grew); returns them.
   std::vector<std::string> register_fonts(const doc::Document& d) {

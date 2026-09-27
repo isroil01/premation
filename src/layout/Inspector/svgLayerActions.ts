@@ -8,14 +8,14 @@
  */
 
 import type { ContextMenuItem } from '@stores/contextMenuStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { forgetSvgLayerSrc, readSvgLayer } from '@core/svg/svgLayer';
-import type { Command } from '@motion/engine-api';
+import { forgetSvgLayerSrc, type SvgLayerData } from '@core/svg/svgLayer';
+import type { SvgCapabilities } from '@core/svg/svgCapabilities';
+import type { Command, SvgDocument } from '@motion/engine-api';
+import { engine } from '@core/engine/engineInstance';
 import {
   buildSvgShapeGroup,
   describeConversion,
   buildRevertedSvgLayer,
-  canRevertToSvg,
   notifyNoSvgGeometry,
   notifySvgConverted,
   type BuiltSvgShapes,
@@ -28,11 +28,37 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { childOrderOf } from '@core/mirror/layerTree';
 import { customConfirm } from '@components/Modal';
 
+/** An SVG layer's stored document as the SVG helpers take it (the engine's `getSvgDocument`), or null for any other layer. */
+export function svgLayerDataOf(doc: SvgDocument | null | undefined): SvgLayerData | null {
+  if (!doc || doc.role !== 'layer' || !doc.sanitizedMarkup) return null;
+  let capabilities = {} as SvgCapabilities;
+  try {
+    capabilities = JSON.parse(doc.capabilities) as SvgCapabilities;
+  } catch {
+    /* an unreadable scan reads as none */
+  }
+  return {
+    sourceMarkup: doc.sourceMarkup,
+    sanitizedMarkup: doc.sanitizedMarkup,
+    intrinsicWidth: doc.intrinsicWidth,
+    intrinsicHeight: doc.intrinsicHeight,
+    viewBox: doc.viewBox ? [doc.viewBox.x, doc.viewBox.y, doc.viewBox.width, doc.viewBox.height] : null,
+    capabilities,
+    fileName: doc.fileName,
+    livePlayback: doc.livePlayback,
+  };
+}
+
+/** The layer's SVG document, asked of the engine (null when it is not an SVG layer). */
+export async function fetchSvgLayerData(nodeId: string): Promise<SvgLayerData | null> {
+  const res = await engine().query({ type: 'getSvgDocument', layer: nodeId });
+  return res.ok ? svgLayerDataOf(res.value) : null;
+}
+
 /** Ask what conversion costs, then do it. Resolves to the new group id or null. */
 export async function confirmAndConvertSvg(nodeId: string): Promise<string | null> {
-  // B4-gap: the SVG layer's stored document (`svg` component: capability scan for the dialog) — no API field (see SvgSection).
-  const node = defaultSceneGraph.getNode(nodeId);
-  const data = node ? readSvgLayer(node) : null;
+  // The capability scan for the dialog: the engine's `getSvgDocument`.
+  const data = await fetchSvgLayerData(nodeId);
   if (!data) return null;
   const ok = await customConfirm(
     'Convert to Editable Shapes',
@@ -52,9 +78,7 @@ export async function confirmAndConvertSvg(nodeId: string): Promise<string | nul
 export async function convertSvgToShapes(nodeId: string): Promise<string | null> {
   const layer = documentMirror().layer(nodeId);
   if (!layer) return null;
-  // B4-gap: the SVG layer's stored document (`svg` component) — no API field (see SvgSection).
-  const node = defaultSceneGraph.getNode(nodeId);
-  const data = node ? readSvgLayer(node) : null;
+  const data = await fetchSvgLayerData(nodeId);
   if (!data) return null;
   const comp = activeCompIdNow() ?? 'comp_root';
   let result: BuiltSvgShapes | null = null;
@@ -147,11 +171,8 @@ function subtreeOf(id: string): string[] {
 export function svgContextMenuItems(nodeId: string): ContextMenuItem[] {
   const layer = documentMirror().layer(nodeId);
   if (!layer) return [];
-  // B4-gap: whether the layer stores an SVG document (an svg layer's `svg` component; a converted group's retained source) — no API field (see SvgSection).
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return [];
-
-  if (readSvgLayer(node)) {
+  // What the layer holds of an SVG document: `LayerInfo.svg` (an SVG layer / a converted group that retains its source).
+  if (layer.svg === 'layer') {
     return [
       { id: 'svg-sep', separator: true },
       {
@@ -161,7 +182,7 @@ export function svgContextMenuItems(nodeId: string): ContextMenuItem[] {
       },
     ];
   }
-  if (canRevertToSvg(nodeId)) {
+  if (layer.svg === 'converted') {
     return [
       { id: 'svg-sep', separator: true },
       {

@@ -243,11 +243,28 @@ export function planAlign(
   const boxes = ids
     .map((id) => ({ id, b: getBounds(id) }))
     .filter((v): v is { id: string; b: Bounds } => v.b !== null);
+  return planAlignBoxes(boxes, mode, alignTo, compWidth, compHeight).map((m) => {
+    const p = toParentSpace(m.id, m.cx, m.cy);
+    return { id: m.id, cx: m.cx, cy: m.cy, x: p.x, y: p.y };
+  });
+}
+
+/**
+ * The new comp-space box CENTRES an align / distribute gives `boxes` — pure
+ * (no scene, no store): the caller measured the boxes and turns each centre
+ * into the Position it writes. Only boxes that actually move are listed.
+ */
+export function planAlignBoxes(
+  boxes: ReadonlyArray<{ id: string; b: Bounds }>,
+  mode: AlignMode,
+  alignTo: 'selection' | 'composition' = 'selection',
+  compWidth: number = 1920,
+  compHeight: number = 1080,
+): Array<{ id: string; cx: number; cy: number }> {
   if (boxes.length === 0) return [];
-  const out: AlignMove[] = [];
+  const out: Array<{ id: string; cx: number; cy: number }> = [];
   const move = (id: string, cx: number, cy: number): void => {
-    const p = toParentSpace(id, cx, cy);
-    out.push({ id, cx, cy, x: p.x, y: p.y });
+    out.push({ id, cx, cy });
   };
 
   if (isDistributeMode(mode)) {

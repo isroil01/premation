@@ -38,7 +38,6 @@ import {
   effectDefFor,
   effectOpacityPath,
   effectPropPath,
-  getNodeEffects,
   newInstanceParamsOf,
   paramsOf,
   parseColorChannels,
@@ -48,9 +47,10 @@ import {
   type EffectType,
 } from '@core/effects/effects';
 import {
-  captureEffect,
+  holdCopiedEffects,
   listEffectPresets,
   readEffectClipboard,
+  storeEffectPreset,
   type CopiedEffect,
 } from '@core/effects/effectClipboard';
 import {
@@ -292,15 +292,7 @@ export async function pasteEffectsEdit(targets: ReadonlyArray<string>): Promise<
   const layers = layersOf(targets);
   const items = readEffectClipboard();
   if (layers.length === 0 || items.length === 0) return;
-  const live = items.every((it) => {
-    if (!it.sourceNodeId || !isLayer(it.sourceNodeId)) return false;
-    // B4-gap: the clipboard holds the legacy capture (`captureEffect`: stored params, tracks,
-    // expressions); telling "still as copied" apart needs the same capture of the live effect.
-    const cur = getNodeEffects(it.sourceNodeId).find((e) => e.id === it.effect.id);
-    if (!cur) return false;
-    const { sourceNodeId: _src, ...copied } = it;
-    return sameJson(captureEffect(it.sourceNodeId, cur), copied);
-  });
+  const live = await clipboardStillLive(items);
   if (live) {
     await edit(items.length === 1 ? 'Paste Effect' : 'Paste Effects', {
       type: 'copyPropertyGroups',
@@ -310,6 +302,52 @@ export async function pasteEffectsEdit(targets: ReadonlyArray<string>): Promise<
     return;
   }
   await pasteSnapshotEdit(items.length === 1 ? 'Paste Effect' : 'Paste Effects', items, layers);
+}
+
+/** The engine's captures (`copyEffects`) of `effectIds` on `layer` (empty = the whole stack), each with its source. */
+async function captureEffects(layer: string, effectIds: ReadonlyArray<string> = []): Promise<CopiedEffect[]> {
+  if (!isLayer(layer)) return [];
+  const res = await engine().query({ type: 'copyEffects', layer, effects: effectIds.map((id) => `effects/${id}`) });
+  if (!res.ok) return [];
+  try {
+    const parsed = JSON.parse(res.value.effects) as unknown;
+    return Array.isArray(parsed) ? (parsed as CopiedEffect[]).map((c) => ({ ...c, sourceNodeId: layer })) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Whether every copied effect is still on its source layer exactly as copied —
+ * the same capture of the live effect (the engine's `copyEffects`) compares
+ * equal. Then Paste is the API's `copyPropertyGroups`.
+ */
+async function clipboardStillLive(items: ReadonlyArray<CopiedEffect>): Promise<boolean> {
+  const bySource = new Map<string, string[]>();
+  for (const it of items) {
+    if (!it.sourceNodeId || !isLayer(it.sourceNodeId)) return false;
+    bySource.set(it.sourceNodeId, [...(bySource.get(it.sourceNodeId) ?? []), it.effect.id]);
+  }
+  const now = new Map<string, CopiedEffect>();
+  for (const [source, ids] of bySource) {
+    for (const c of await captureEffects(source, ids)) now.set(`${source}\u0000${c.effect.id}`, c);
+  }
+  return items.every((it) => {
+    const cur = now.get(`${it.sourceNodeId}\u0000${it.effect.id}`);
+    return cur !== undefined && sameJson(cur, it);
+  });
+}
+
+/** Edit ▸ Copy of effects: the engine captures them (`copyEffects`; none named = the whole stack). Resolves how many were copied. */
+export async function copyEffectsEdit(nodeId: string, effectIds: ReadonlyArray<string> = []): Promise<number> {
+  const items = await captureEffects(nodeId, effectIds);
+  holdCopiedEffects(items);
+  return items.length;
+}
+
+/** Save the layer's whole effect stack as the preset `name` (the engine's capture). Resolves false when it has no effects. */
+export async function saveEffectPresetEdit(nodeId: string, name: string): Promise<boolean> {
+  return storeEffectPreset(name, await captureEffects(nodeId));
 }
 
 /**

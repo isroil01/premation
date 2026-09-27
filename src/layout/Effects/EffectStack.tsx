@@ -69,7 +69,6 @@ import {
   type EffectParamValue,
   type CurvePoints,
 } from '@core/effects/effects';
-import { copyEffects } from '@core/effects/effectClipboard';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { buildPropertyMenu } from '@core/inspector/propertyMenu';
 import { layerTimeFor } from '@core/inspector/multiSelection';
@@ -89,6 +88,7 @@ import {
   removeEffectEdit,
   resetEffectEdit,
   setEffectEnabledEdit,
+  copyEffectsEdit,
 } from './effectEdits';
 import panel from './EffectsPanel.module.css';
 import row from '@layout/Inspector/TextAnimatorControls.module.css';
@@ -688,7 +688,7 @@ function effectLabelColorMenuItems(
 function effectHeaderMenuItems(nodeId: string, effectId: string, name: string): ContextMenuItem[] {
   return [
     { id: 'fx-duplicate', label: 'Duplicate', icon: 'copy', onSelect: () => { void duplicateEffectEdit(nodeId, effectId, name); } },
-    { id: 'fx-copy', label: 'Copy', onSelect: () => copyEffects(nodeId, [effectId]) },
+    { id: 'fx-copy', label: 'Copy', onSelect: () => { void copyEffectsEdit(nodeId, [effectId]); } },
     { id: 'fx-sep', separator: true },
     { id: 'fx-reset', label: 'Reset', onSelect: () => { void resetEffectEdit(nodeId, effectId, name); } },
     { id: 'fx-remove', label: 'Remove', danger: true, onSelect: () => { void removeEffectEdit(nodeId, effectId, name); } },

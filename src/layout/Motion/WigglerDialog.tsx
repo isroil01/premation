@@ -23,7 +23,8 @@ import { Button } from '@components/Button';
 import { ValueField } from '@components/ValueField';
 import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
-import { defaultAnimation, type Keyframe, type PropPath } from '@motion/animation';
+import type { Keyframe, PropPath } from '@motion/animation';
+import { fetchMemberTracks, memberTracksNow, type MemberKeys } from '@stores/memberTracks';
 import { wiggleTrackKeyframes } from '@core/animation/keyframeAssistants';
 import { beginTrackPreview } from './assistantPreview';
 import styles from './AssistantDialog.module.css';
@@ -39,32 +40,38 @@ const DIMENSIONS: ReadonlyArray<{ id: WiggleDimension; label: string }> = [
   { id: 'y', label: 'Y only' },
 ];
 
-/** The position axes The Wiggler can act on. */
+/** The position axes The Wiggler can act on (x and y are wiggled as MEMBER tracks), from the engine's member key lists. */
+export function wigglerTracksOf(members: ReadonlyArray<MemberKeys>): Map<PropPath, ReadonlyArray<Keyframe>> {
+  const out = new Map<PropPath, ReadonlyArray<Keyframe>>();
+  for (const axis of ['x', 'y'] as const) {
+    const t = members.find((m) => m.member === axis);
+    if (t && t.keyframes.length >= MIN_KEYFRAMES) out.set(axis, t.keyframes);
+  }
+  return out;
+}
+
+/** The axes over the last known member lists (menus: fetched on first ask, re-asked per revision). */
 export function wigglerTracks(nodeId: string): PropPath[] {
-  // B4-gap: the per-MEMBER keyframe lists (x keyed apart from y on an
-  // unseparated Position) — the API keys a whole property (ENGINE_API.md §3.3),
-  // and the preview writes these lists back verbatim (assistantPreview.ts,
-  // B3-legacy); per-member key lists in the API would close both.
-  return (['x', 'y'] as const).filter(
-    (p) => (defaultAnimation.getTrackKeyframes(nodeId, p)?.length ?? 0) >= MIN_KEYFRAMES,
-  );
+  return [...wigglerTracksOf(memberTracksNow(nodeId) ?? []).keys()];
 }
 
 interface WigglerBodyProps {
   nodeId: string;
   tracks: ReadonlyArray<PropPath>;
+  /** The axes' keyframes as stored at open (the preview's "before"). */
+  originals: ReadonlyMap<PropPath, ReadonlyArray<Keyframe>>;
   close: () => void;
   onDone: (summary: string | null) => void;
 }
 
-function WigglerBody({ nodeId, tracks, close, onDone }: WigglerBodyProps): JSX.Element {
+function WigglerBody({ nodeId, tracks, originals, close, onDone }: WigglerBodyProps): JSX.Element {
   const [frequency, setFrequency] = useState(5);
   const [amplitude, setAmplitude] = useState(25);
   const [seed, setSeed] = useState(1);
   const [dimension, setDimension] = useState<WiggleDimension>('both');
   const [added, setAdded] = useState(0);
 
-  const [preview] = useState(() => ({ current: beginTrackPreview(nodeId, tracks, 'The Wiggler') }));
+  const [preview] = useState(() => ({ current: beginTrackPreview(nodeId, originals, 'The Wiggler') }));
   const settled = useRef(false);
 
   const targets = useMemo(
@@ -221,9 +228,11 @@ function WigglerBody({ nodeId, tracks, close, onDone }: WigglerBodyProps): JSX.E
  * Open The Wiggler for `nodeId`. Resolves to the summary line for the caller's
  * notification, or `null` when the user cancelled.
  */
-export function openWigglerDialog(nodeId: string): Promise<string | null> {
-  const tracks = wigglerTracks(nodeId);
-  if (tracks.length === 0) return Promise.resolve(null);
+export async function openWigglerDialog(nodeId: string): Promise<string | null> {
+  // The exact member lists at open (the preview's "before"), asked of the engine.
+  const originals = wigglerTracksOf(await fetchMemberTracks(nodeId, ['x', 'y']));
+  const tracks = [...originals.keys()];
+  if (tracks.length === 0) return null;
   return new Promise((resolve) => {
     let done = false;
     const finish = (summary: string | null): void => {
@@ -239,7 +248,7 @@ export function openWigglerDialog(nodeId: string): Promise<string | null> {
       variant: 'floating',
       onClose: () => finish(null),
       render: (close) => (
-        <WigglerBody nodeId={nodeId} tracks={tracks} close={close} onDone={finish} />
+        <WigglerBody nodeId={nodeId} tracks={tracks} originals={originals} close={close} onDone={finish} />
       ),
     });
   });

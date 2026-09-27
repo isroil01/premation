@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 
+#include "docio.hpp"
 #include "fxstate.hpp"
 #include "handlers_layers.hpp"
 #include "props.hpp"
@@ -375,13 +376,15 @@ ResultOf<api::SetCompositionSettings> handle(const api::SetCompositionSettings& 
   }
   if (c.patch.work_area) set_work_area(d, c.comp, c.patch.work_area->start, c.patch.work_area->duration);
   if (c.patch.motion_blur) {
+    // The same record setMotionBlur patches, clamped as motionBlurStore.restore does.
     const api::MotionBlurSettings& mb = *c.patch.motion_blur;
-    MotionBlur& m = d.motion_blur_mut();
-    m.shutterAngle = mb.shutter_angle;
-    m.shutterPhase = mb.shutter_phase;
-    m.samples = mb.samples_per_frame;
-    m.adaptiveSampleLimit = mb.adaptive_sample_limit;
-    if (mb.enabled) m.enabled = *mb.enabled;
+    api::MotionBlurPatch p;
+    p.enabled = mb.enabled;
+    p.shutter_angle = mb.shutter_angle;
+    p.shutter_phase = mb.shutter_phase;
+    p.samples_per_frame = mb.samples_per_frame;
+    p.adaptive_sample_limit = mb.adaptive_sample_limit;
+    apply_motion_blur_patch(d, p);
   }
   return {};
 }

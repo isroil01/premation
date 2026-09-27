@@ -74,6 +74,15 @@ export function copyAllEffects(nodeId: string): void {
   if (all.length) clipboard = all.map((e) => ({ ...captureEffect(nodeId, e), sourceNodeId: nodeId }));
 }
 
+/**
+ * Hold `items` as the clipboard — captures the ENGINE made (`copyEffects`,
+ * layout/Effects/effectEdits.ts); module state, never the document. An empty
+ * list leaves the clipboard as it was.
+ */
+export function holdCopiedEffects(items: readonly CopiedEffect[]): void {
+  if (items.length > 0) clipboard = items.map((it) => ({ ...it }));
+}
+
 /** What is on the clipboard (read-only view for the paste edit). */
 export function readEffectClipboard(): readonly CopiedEffect[] {
   return clipboard;
@@ -160,6 +169,18 @@ export function saveEffectPreset(nodeId: string, name: string): boolean {
   if (all.length === 0) return false;
   const items = all.map((e) => captureEffect(nodeId, e));
   writePresets([...readPresets().filter((p) => p.name !== name), { name, items }]);
+  return true;
+}
+
+/**
+ * Store captured effects (the engine's `copyEffects` of a whole stack) as the
+ * preset `name`, replacing any of the same name — the editor's library
+ * (localStorage), never the document. False when there is nothing to store.
+ */
+export function storeEffectPreset(name: string, items: readonly CopiedEffect[]): boolean {
+  if (items.length === 0) return false;
+  const clean = items.map(({ sourceNodeId: _src, ...rest }) => rest);
+  writePresets([...readPresets().filter((p) => p.name !== name), { name, items: clean }]);
   return true;
 }
 

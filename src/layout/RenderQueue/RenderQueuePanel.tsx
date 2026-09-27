@@ -225,6 +225,7 @@ export function RenderQueuePanel(): JSX.Element {
       transparent: settings.transparent,
       quality: settings.quality,
       ...(settings.proresProfile ? { proresProfile: settings.proresProfile } : {}),
+      ...(settings.bitDepth === 16 ? { bitDepth: 16 as const } : {}),
     });
   };
 

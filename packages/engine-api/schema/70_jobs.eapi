@@ -2,6 +2,14 @@
 // the document while it runs; when it finishes, its result is applied as ONE
 // history entry labelled with the job (origin = engine), unless apply=false.
 // Command ids: 850–899.
+//
+// 2026-09-27 (engine-jobs): the C++ engine runs jobs itself (src/jobs): the
+// inputs are read from the document when the job starts, the work runs on a
+// worker thread (a job that loads a model runs in a child engine process, so
+// a crash there fails the job, not the engine), progress arrives as
+// `jobProgress`, and the result is written through the same commands the UI
+// would send — one history entry, undoable. `JobInfo.result` carries each
+// kind's summary as JSON (documented per kind in docs/ENGINE_API.md §4.9).
 
 family "Jobs";
 
@@ -23,14 +31,97 @@ struct TrackMotionJob {
   direction: TrackDirection = 5;
   /// Where to apply: a layer's transform, an effect point, a mask. Absent = keep as tracker data only.
   applyTo?: PropRef = 6;
+  /// The time the points' positions are given at (layer pixels on that frame). Default: `range.start` for `forward`, the range's last frame for `backward`, the playhead clamped into the range for `both` (tracked outward from there, autoTrack.ts).
+  origin?: Time = 706;
+  /// NCC below this is a lost frame: the point coasts on its last confident velocity (tracker.ts `minConfidence`, default 0.55).
+  minConfidence?: f64 = 707;
+  /// Consecutive coasted frames before a point is given up (tracker.ts `maxCoastFrames`, default 8).
+  maxCoastFrames?: u32 = 708;
+  /// Long edge the footage is decoded at for the analysis (the TS analysis tier; default 960, 0 = full size). Points, sizes and the result stay in layer pixels.
+  analysisMaxEdge?: u32 = 709;
+  /// Stabilize Motion (trackerStore mode `stabilize`, applyTrack.ts planStabilize): point 0's inverse motion written as position keys on the TRACKED layer; `applyTo` is not read. Kind `position` only.
+  stabilize: bool = 710;
 }
 
-struct StabilizeJob { layer: LayerId = 1; range: TimeRange = 2; smoothness: f64 = 3; method: string = 4; }
-struct AutoTraceJob { layer: LayerId = 1; range: TimeRange = 2; channel: string = 3; threshold: f64 = 4; }
-struct SceneDetectJob { layer: LayerId = 1; createMarkers: bool = 2; splitLayers: bool = 3; }
-struct ObjectMatteJob { layer: LayerId = 1; range: TimeRange = 2; prompts: Vec2[] = 3; }
+/// `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%).
+struct StabilizeJob {
+  layer: LayerId = 1;
+  range: TimeRange = 2;
+  smoothness: f64 = 3;
+  method: string = 4;
+  /// Long edge the footage is decoded at (the TS analysis tier; default 960, 0 = full size). The flow itself runs at most 480 px wide, as smoothStabilize.ts.
+  analysisMaxEdge?: u32 = 704;
+}
+/// `channel`: `alpha`, `luminance`, `red`, `green`, `blue`; `threshold` 0…1. Only the frame at `range.start` is traced unless `everyFrame` (then one mask path key per frame of the range).
+struct AutoTraceJob {
+  layer: LayerId = 1;
+  range: TimeRange = 2;
+  channel: string = 3;
+  threshold: f64 = 4;
+  /// Path simplification tolerance in pixels (autoTrace.ts `tolerance`, default 1.5).
+  tolerance?: f64 = 704;
+  /// Blur radius (px) applied to the channel before thresholding (default 0).
+  blur?: f64 = 705;
+  /// Smallest traced area, pixels (default 16).
+  minArea?: f64 = 706;
+  everyFrame: bool = 707;
+  /// Invert the matte before tracing.
+  invert: bool = 708;
+}
+/// Scene Edit Detection (sceneEditDetect.ts): cuts and dissolves in a video layer's visible span, from 64-bin luma-histogram distances with an adaptive threshold. `createMarkers`: composition markers "Cut N" / "Dissolve N"; `splitLayers`: the layer split at every cut (markers win when both are set). `threshold` is the L1 floor (0…2, default 0.3), `sensitivity` the multiple of the local median (default 5), `minShotSeconds` absent = 6 frames; `dissolves` default true.
+struct SceneDetectJob {
+  layer: LayerId = 1;
+  createMarkers: bool = 2;
+  splitLayers: bool = 3;
+  threshold?: f64 = 703;
+  minShotSeconds?: f64 = 704;
+  sensitivity?: f64 = 705;
+  dissolves?: bool = 706;
+}
+/// `prompts` are foreground clicks in layer pixels at `range.start`; `backgroundPrompts` background clicks. The matte is applied as masks traced from the segmentation.
+struct ObjectMatteJob {
+  layer: LayerId = 1;
+  range: TimeRange = 2;
+  prompts: Vec2[] = 3;
+  backgroundPrompts: Vec2[] = 703;
+  /// The SAM encoder / decoder ONNX files (the page's bundled `models/object-matte/*` or the user's install). Empty = the engine's default search (PREMATION_SAM_DIR).
+  encoderModel: string = 704;
+  decoderModel: string = 705;
+  /// A drawn box prompt in layer pixels at `range.start` (objectMask.ts marquee). It wins over `prompts` / `backgroundPrompts` when both arrive: its centre is the foreground point, and nothing outside it (plus an 8% + 4 px margin) is kept.
+  box?: Rect = 706;
+}
 struct TranscribeJob { layer: LayerId = 1; language: string = 2; createCaptions: bool = 3; }
-struct AudioAnalysisJob { layer: LayerId = 1; beats: bool = 2; amplitudeKeyframes: bool = 3; }
+/// One audio analysis over a layer's sound (an audio layer, or a video layer's own track).
+struct AudioAnalysisJob {
+  layer: LayerId = 1;
+  /// Beat grid (beatGrid.ts analyseLayerBeats): bpm, confidence, beats and onsets in composition seconds in the summary.
+  beats: bool = 2;
+  /// Amplitude envelope → keyframes (audioKeyframes.ts): on the layer's `audioAmplitude` slider control.
+  amplitudeKeyframes: bool = 3;
+  /// Silence detection (silenceRemoval.ts detectSilences); with `removeSilence` the silent stretches are cut out of the layer and the layers playing the same file in its composition, gaps closed.
+  silence: bool = 703;
+  removeSilence: bool = 704;
+  silenceThresholdDb?: f64 = 705;
+  silenceMinMs?: f64 = 706;
+  silencePaddingMs?: f64 = 707;
+  /// `both` (default), `left`, `right` — the channel the amplitude envelope follows.
+  amplitudeChannel?: string = 708;
+  /// Envelope smoothing window in frames (default 1 = none).
+  amplitudeSmoothing?: u32 = 709;
+  /// Sample every Nth frame (default 1), keep a frame only when it moves ≥ minDelta (0–100, default 2), scale by gain (default 1) — AudioKeyframeOptions.
+  amplitudeFrameStep?: u32 = 710;
+  amplitudeMinDelta?: f64 = 711;
+  amplitudeGain?: f64 = 712;
+  /// With `beats`: composition markers "Beat N" on every `beatEvery`-th beat (default 1; at most 512) — Markers on Beats. Without it the grid is the summary only (Animate on Beats reads it).
+  beatMarkers: bool = 713;
+  beatEvery?: u32 = 714;
+}
+/// Ducking (ducking.ts planDucking): lower `music`'s level under the voice (`voices[0]`; the page's dialog ducks under one layer) over the composition's work area, as Audio Levels keyframes, and remember the parameters (`audio/ducking`). `params` is the DuckingParams JSON (duckDb, thresholdDb, attackMs, releaseMs, holdMs); absent keys take the defaults.
+struct AudioDuckJob { music: LayerId = 1; voices: LayerId[] = 2; params: string = 3; }
+/// Noise gate (audioGate.ts computeGateEnvelope + planGate): close the layer's level while it is quiet, over its audible span inside the work area, as Audio Levels keyframes, and remember the parameters (`audio/gate`). `params` is the GateParams JSON (thresholdDb, attackMs, holdMs, releaseMs, rangeDb).
+struct AudioGateJob { layer: LayerId = 1; params: string = 2; }
+/// A low-resolution editing proxy for a footage item (assets/proxy.ts): transcoded by ffmpeg into `outputFolder` (default: next to the project, `Proxies/`), then attached with setProxy. `maxEdge` default 960.
+struct ProxyJob { item: ItemId = 1; outputFolder: string = 2; maxEdge?: u32 = 3; }
 struct RenderJob { items: RenderItemId[] = 1; }
 /// Pre-render (Pre-render / proxy creation) of compositions to files.
 struct PrerenderJob { comps: ItemId[] = 1; outputFolder: string = 2; format: string = 3; }
@@ -45,6 +136,9 @@ union JobSpec {
   audioAnalysis: AudioAnalysisJob = 7;
   render: RenderJob = 8;
   prerender: PrerenderJob = 9;
+  proxy: ProxyJob = 709;
+  audioDuck: AudioDuckJob = 710;
+  audioGate: AudioGateJob = 711;
 }
 
 command startJob = 850 [control] { job: JobSpec = 1; apply: bool = 2; } -> JobRef;

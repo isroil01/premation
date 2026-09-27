@@ -60,6 +60,10 @@ struct MatteState {
 [[nodiscard]] std::vector<api::Swatch> swatch_infos(const Document& d);
 /// F2: model.ts `materialInfos()`.
 [[nodiscard]] std::vector<api::LibraryMaterial> material_infos(const Document& d);
+/// F2: the motion-blur record as CompSettings.motionBlur / DocumentSnapshot.motionBlur report it.
+[[nodiscard]] api::MotionBlurSettings motion_blur_info(const Document& d);
+/// F2: colorManagementStore.settings() as the API reports it.
+[[nodiscard]] api::ColorManagementSettings color_management_info(const Document& d);
 
 [[nodiscard]] api::ItemInfo footage_info(const Json& asset);
 [[nodiscard]] api::ItemInfo folder_info(const Folder& f);
@@ -73,6 +77,8 @@ struct MatteState {
 [[nodiscard]] std::vector<api::PropertyInfo> property_tree(const PCtx& c, std::string_view layer, const Catalog& cat,
                                                            std::string_view root = {}, std::uint32_t depth = 0);
 [[nodiscard]] std::vector<api::KeyframeSet> keyframe_sets(const PCtx& c, std::string_view layer, const Catalog& cat);
+/// B4: LayerInfo.svg — the `svg` component's sanitized markup (an SVG layer) or only its retained source (a converted group) (model.ts svgRoleOf).
+[[nodiscard]] api::SvgRole svg_role_of(const Node& n);
 
 [[nodiscard]] api::DocumentSnapshot document_snapshot(const PCtx& c, api::Revision revision, const std::string& projectPath,
                                                       bool dirty, bool includeProperties, bool includeKeyframes);

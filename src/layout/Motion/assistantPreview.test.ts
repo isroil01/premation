@@ -21,6 +21,7 @@ import { buildScene } from '@core/engine/__testHelpers__/scene';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import { compTime } from '@core/engine/propRefs';
+import { fetchMemberTracks } from '@stores/memberTracks';
 import { beginTrackPreview } from './assistantPreview';
 
 let h: Harness & { engine: LocalEngine };
@@ -43,9 +44,14 @@ afterEach(async () => { await h.dispose(); });
 
 const track = (prop: string): Keyframe[] => defaultAnimation.getTrackKeyframes(NODE, prop) ?? [];
 
+/** The preview's "before", as the dialogs capture it: the engine's member key lists (`getMemberKeyframes`). */
+async function originals(props: string[]): Promise<Map<string, Keyframe[]>> {
+  return new Map((await fetchMemberTracks(NODE, props)).map((t) => [t.member, t.keyframes]));
+}
+
 it('restores the exact document on cancel, after several lossy previews', async () => {
   const before = h.doc();
-  const preview = beginTrackPreview(NODE, ['x', 'y'], 'The Smoother');
+  const preview = beginTrackPreview(NODE, await originals(['x', 'y']), 'The Smoother');
   for (const keep of [2, 5, 3]) {
     preview.apply(new Map([['x', preview.original('x').filter((_, i) => i % keep === 0)]]));
     await engineIdle();
@@ -57,7 +63,7 @@ it('restores the exact document on cancel, after several lossy previews', async 
 });
 
 it('re-applies from the ORIGINAL each time, never from the last preview', async () => {
-  const preview = beginTrackPreview(NODE, ['x', 'y'], 'The Smoother');
+  const preview = beginTrackPreview(NODE, await originals(['x', 'y']), 'The Smoother');
   const thin = (keep: (i: number) => boolean) => new Map((['x', 'y'] as const).map((p) => [p, preview.original(p).filter((_, i) => keep(i))]));
   // A preview that deletes almost everything, then one that keeps more: the
   // second is only possible from the originals.
@@ -70,7 +76,7 @@ it('re-applies from the ORIGINAL each time, never from the last preview', async 
 });
 
 it('a member thinned alone keeps the keys its sibling still has (one key per time, ENGINE_API §3.3)', async () => {
-  const preview = beginTrackPreview(NODE, ['x', 'y'], 'The Smoother');
+  const preview = beginTrackPreview(NODE, await originals(['x', 'y']), 'The Smoother');
   preview.apply(new Map([['x', preview.original('x').filter((_, i) => i % 2 === 0)]]));
   await preview.commit();
   await engineIdle();
@@ -80,7 +86,7 @@ it('a member thinned alone keeps the keys its sibling still has (one key per tim
 
 it('records nothing while previewing and ONE entry on commit', async () => {
   const n = historyLabels().length;
-  const preview = beginTrackPreview(NODE, ['x'], 'The Smoother');
+  const preview = beginTrackPreview(NODE, await originals(['x']), 'The Smoother');
   const original = preview.original('x');
   for (const stride of [2, 3, 4, 5]) {
     preview.apply(new Map([['x', original.filter((_, i) => i % stride === 0)]]));
@@ -95,7 +101,7 @@ it('records nothing while previewing and ONE entry on commit', async () => {
 it('records nothing at all when cancelled', async () => {
   const before = h.doc();
   const n = historyLabels().length;
-  const preview = beginTrackPreview(NODE, ['x'], 'The Smoother');
+  const preview = beginTrackPreview(NODE, await originals(['x']), 'The Smoother');
   preview.apply(new Map([['x', preview.original('x').slice(0, 3)]]));
   await preview.restore();
   await preview.commit();
@@ -106,13 +112,13 @@ it('records nothing at all when cancelled', async () => {
 
 it('ignores props it did not capture', async () => {
   const yBefore = JSON.stringify(track('y').map((k) => [k.t, k.value]));
-  const preview = beginTrackPreview(NODE, ['x'], 'The Smoother');
+  const preview = beginTrackPreview(NODE, await originals(['x']), 'The Smoother');
   preview.apply(new Map([['y', []]]));
   await preview.commit();
   await engineIdle();
   expect(JSON.stringify(track('y').map((k) => [k.t, k.value]))).toBe(yBefore);
 });
 
-it('captures nothing for a track with no keyframes', () => {
-  expect(beginTrackPreview(NODE, ['rotation'], 'The Smoother').props).toEqual([]);
+it('captures nothing for a track with no keyframes', async () => {
+  expect(beginTrackPreview(NODE, await originals(['rotation']), 'The Smoother').props).toEqual([]);
 });

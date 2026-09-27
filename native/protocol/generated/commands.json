@@ -100,6 +100,16 @@
     "type": "setMaterials"
   },
   {
+    "id": 724,
+    "kind": "edit",
+    "type": "setMotionBlur"
+  },
+  {
+    "id": 725,
+    "kind": "edit",
+    "type": "setColorManagement"
+  },
+  {
     "id": 50,
     "kind": "edit",
     "type": "importFiles"
@@ -718,6 +728,11 @@
     "id": 812,
     "kind": "control",
     "type": "setInteracting"
+  },
+  {
+    "id": 1771,
+    "kind": "control",
+    "type": "setOverlayGeometry"
   },
   {
     "id": 850,

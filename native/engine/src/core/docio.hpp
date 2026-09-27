@@ -35,6 +35,9 @@ RestoreResult restore_document(Document& d, EditorView& v, const Json& doc, cons
 
 /// guidesStore.restore(s) over the current guides `g` (only the keys `s` carries, as the store does).
 [[nodiscard]] Json restore_guides(Json g, const Json& s);
+/// motionBlurStore.restore over the document's record: only present fields, clamped
+/// (angle 0…360, phase −360…360, samples 2…32, adaptive limit 2…128). Journaled (the `mb` part).
+void apply_motion_blur_patch(Document& d, const api::MotionBlurPatch& p);
 /// guidesStore.settings(): the persisted fields, the optional ones only when not default.
 [[nodiscard]] Json guides_settings(const Json& g);
 /// swatchStore canonicalHex.

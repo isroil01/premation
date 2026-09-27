@@ -1,8 +1,9 @@
-/** Project settings, project import, jobs, plugin data (ENGINE_API.md §4.1, §4.9). */
+/** Project settings, motion blur, colour management, project import, jobs, plugin data (ENGINE_API.md §4.1, §4.9). */
 
 import { defaultAnimation } from '@motion/animation';
 import type { ProjectSettings } from '@motion/engine-api';
 import { useColorManagementStore } from '@stores/colorManagementStore';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
 import { useAssetStore, replaceProjectItems } from '@stores/assetStore';
 import { getProjectSettings, setProjectSettingsState } from '@core/project/documentExtras';
@@ -106,6 +107,49 @@ export const miscHandlers: HandlerTable = {
       label: 'Materials',
       apply: () => {
         useMaterialStore.getState().restore(raw);
+        return {};
+      },
+    };
+  },
+
+  /** F2: the motion-blur record (motionBlurStore); the store's setters clamp exactly as on open. */
+  setMotionBlur: (cmd) => {
+    const p = cmd.patch;
+    if ((p.shutterAngle !== undefined && !Number.isFinite(p.shutterAngle)) || (p.shutterPhase !== undefined && !Number.isFinite(p.shutterPhase))) {
+      fail('invalidArgument', 'shutter angle and phase must be finite');
+    }
+    const s = newScope();
+    s.keys.add(K.mb);
+    return {
+      scope: s,
+      label: 'Motion Blur',
+      apply: () => {
+        useMotionBlurStore.getState().restore({
+          ...(p.enabled !== undefined ? { enabled: p.enabled } : {}),
+          ...(p.shutterAngle !== undefined ? { shutterAngle: p.shutterAngle } : {}),
+          ...(p.shutterPhase !== undefined ? { shutterPhase: p.shutterPhase } : {}),
+          ...(p.samplesPerFrame !== undefined ? { samples: p.samplesPerFrame } : {}),
+          ...(p.adaptiveSampleLimit !== undefined ? { adaptiveSampleLimit: p.adaptiveSampleLimit } : {}),
+        });
+        return {};
+      },
+    };
+  },
+
+  /** F2: colour management (colorManagementStore). */
+  setColorManagement: (cmd) => {
+    const p = cmd.patch;
+    if (p.bitDepth !== undefined && p.bitDepth !== 16 && p.bitDepth !== 32) fail('invalidArgument', 'the bit depth is 16 or 32');
+    const s = newScope();
+    s.keys.add(K.cm);
+    return {
+      scope: s,
+      label: 'Color Management',
+      apply: () => {
+        const cm = useColorManagementStore.getState();
+        if (p.workingSpace !== undefined) cm.setWorkingSpace(p.workingSpace === 'acesCg' ? 'aces-cg' : 'srgb-linear');
+        if (p.displayTransform !== undefined) cm.setDisplayTransform(p.displayTransform);
+        if (p.bitDepth !== undefined) cm.setBitDepth(p.bitDepth === 32 ? 32 : 16);
         return {};
       },
     };

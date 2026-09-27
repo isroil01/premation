@@ -20,6 +20,7 @@ import { useMirrorJson } from '@hooks/useMirrorFields';
 import { applyRigPresetEdit, rigPaths } from '@core/engine/rigPaths';
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
+import { fetchLayerBox } from '@stores/layerBoxes';
 import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bindPoseBones, type IKTarget, type SkeletonRig } from '@core/rig/skeletonCommands';
@@ -335,14 +336,13 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
           onChange={(e) => {
             const id = e.target.value as RigPresetId;
             if (!id) return;
-            // B4-gap: the layer's drawn size (readGeometry: text/group/shape bounds over the scene node) sizes the preset.
-            const geom = readGeometry(node);
+            // The layer's drawn size (the engine's `getLayerBounds`: text / group / shape box) sizes the preset.
             // One `layer/skeleton` write (REPLACES the rig); an invalid rig is refused before anything is sent.
-            void applyRigPresetEdit(
+            void fetchLayerBox(nodeId, compTime(workspaceTime)).then((geom) => applyRigPresetEdit(
               nodeId,
               RIG_PRESETS[id]({ width: geom?.width ?? 200, height: geom?.height ?? 200 }),
               `Auto-Rig ${RIG_PRESET_LABELS[id]}`,
-            ).then((problems) => {
+            )).then((problems) => {
               if (problems.length > 0) {
                 // Never silently: a refused rig with no message reads as a dead
                 // control, which is worse than the error.

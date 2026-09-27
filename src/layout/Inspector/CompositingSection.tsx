@@ -6,7 +6,7 @@ import { PickWhip } from '@components/PickWhip';
 import { documentMirror } from '@stores/documentMirror';
 import { useActiveMotionBlur } from '@hooks/useMirrorFrame';
 import { activeCompIdNow } from '@hooks/useMirror';
-import { flicksToSeconds, type Command, type LayerInfo, type MotionBlurSettings as MotionBlurSettingsApi } from '@motion/engine-api';
+import { flicksToSeconds, type Command, type CryptomatteInfo, type LayerInfo, type MotionBlurSettings as MotionBlurSettingsApi } from '@motion/engine-api';
 import { mirrorEligibleParents, mirrorParentOf } from '@core/mirror/parenting';
 import { mirrorMatte } from '@core/mirror/layerFacts';
 import { retimableLayerIds } from '@core/mirror/motionAssist';
@@ -16,7 +16,7 @@ import { MATTE_OPTIONS, matteOptionId, applyMatteOption, setMatteSource } from '
 import { FRAME_BLENDS, type FrameBlend } from '@core/scene/layerTime';
 import type { LayerQuality } from '@core/effects/layerQuality';
 import { Segmented } from '@components/Segmented';
-import { cryptomatteForNode } from '@core/media/cryptomatteCommands';
+import { useCryptomatte } from '@hooks/useCryptomatte';
 import { createIdMatteLayerEdit } from './idMatteEdits';
 import { edit } from '@core/engine/uiEdits';
 import { getTime } from '@stores/playbackClockStore';
@@ -58,23 +58,21 @@ function setSwitch(nodeId: string, id: 'adjustment' | 'motionBlur', on: boolean)
   void applyLayerSwitch([nodeId], spec);
 }
 
-/** "ID matte: <object>" entries for a layer whose EXR carries a Cryptomatte set; empty otherwise. */
-function idMatteItems(nodeId: string): DropdownItem[] {
-  // B4-gap: the EXR's Cryptomatte set (decoded manifest on the media side) — no API datum (see CompositingSection).
-  const found = cryptomatteForNode(nodeId);
-  if (!found) return [];
+/** "ID matte: <object>" entries for a layer whose EXR carries a Cryptomatte set (the engine's `getCryptomatte`); empty otherwise. */
+function idMatteItems(nodeId: string, crypto: CryptomatteInfo | null): DropdownItem[] {
+  if (!crypto || crypto.layers.length === 0) return [];
   const items: DropdownItem[] = [{ type: 'separator' }];
   let shown = 0;
-  for (const layer of found.set.layers) {
+  for (const layer of crypto.layers) {
     for (const obj of layer.objects) {
       if (shown >= 40) break;
       shown += 1;
       items.push({
         type: 'item',
-        id: `crypto:${layer.name}:${obj.name}`,
-        label: `ID matte: ${obj.name}${found.set.layers.length > 1 ? ` (${layer.name})` : ''}`,
+        id: `crypto:${layer.name}:${obj}`,
+        label: `ID matte: ${obj}${crypto.layers.length > 1 ? ` (${layer.name})` : ''}`,
         // Import + insert + reorder + matte through the engine, one entry (idMatteEdits.ts).
-        onSelect: () => { void createIdMatteLayerEdit(nodeId, layer.name, [obj.name]); },
+        onSelect: () => { void createIdMatteLayerEdit(nodeId, layer.name, [obj]); },
       });
     }
   }
@@ -96,6 +94,8 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
   };
 
   const layer = useCompLayersWatch(nodeId);
+  const source = layer?.source ? documentMirror().item(layer.source) : undefined;
+  const crypto = useCryptomatte(source?.kind === 'footage' ? source.id : null);
   const m = documentMirror();
   // The matte-source list: the other layers under the same parent, back to front (the order it has always used).
   const siblings = layer ? siblingsOf(m, layer) : [];
@@ -167,7 +167,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
     // Cryptomatte (plan C2): an EXR that carries ID mattes offers each object
     // here. Picking one bakes its coverage to a grey PNG layer above this one
     // and sets it as the luma matte — a matte layer like any other after that.
-    ...idMatteItems(nodeId),
+    ...idMatteItems(nodeId, crypto),
   ];
 
   // 3. Switches

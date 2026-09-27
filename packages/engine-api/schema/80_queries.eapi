@@ -48,6 +48,9 @@ struct CompInfo {
   transitions: Transition[] = 5;
 }
 
+/// B4 — what a layer holds of an SVG document (LayerInfo.svg).
+enum SvgRole { none = 0; layer = 1; converted = 2; }
+
 /// The layer header the timeline and layer panel draw (no property tree).
 struct LayerInfo {
   id: LayerId = 1;
@@ -79,6 +82,8 @@ struct LayerInfo {
   managedBy: string = 119;
   /// B4 — for the root group of an INSERTED motion-graphics element: the library item it came from (`__mographId`), '' otherwise. The Inspector's fill-in-the-blanks section keys on it.
   mographId: string = 120;
+  /// B4 — `layer`: an SVG layer that stores its document (getSvgDocument reads it; Convert to Editable Shapes); `converted`: a group converted from one that still retains the original source (Revert to Original SVG); `none` otherwise.
+  svg: SvgRole = 920;
 }
 
 /// B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`).
@@ -152,6 +157,10 @@ struct DocumentSnapshot {
   guides: string = 11;
   swatches: Swatch[] = 12;
   materials: LibraryMaterial[] = 13;
+  /// F2 — the project's motion-blur record (setMotionBlur).
+  motionBlur: MotionBlurSettings = 713;
+  /// F2 — the project's colour management (setColorManagement).
+  colorManagement: ColorManagementSettings = 714;
 }
 
 /// The document as saveProject would write it: a .motion project's JSON, UTF-8.
@@ -183,6 +192,35 @@ query getMotionPath = 1007 { layer: LayerId = 1; range: TimeRange = 2; samples: 
 query getMarkers = 1008 { owner: MarkerOwner = 1; range?: TimeRange = 2; } -> MarkerList;
 /// Serialize layers (with the items they reference) for the clipboard; pasteLayers consumes it.
 query copyLayers = 1009 { layers: LayerId[] = 1; } -> DocumentFragment;
+/// B4 — Edit ▸ Copy of KEYFRAMES in API form: the whole keys `keys` names (every dimension of each — After Effects copies a key, not a member), grouped per property in the order the ids first name them, each set's keys in time order at their composition times. `pasteKeyframes` puts a set onto any layer's property of the same path (the editor lands the earliest copied key at the playhead, spacing kept). Unknown ids are skipped: none found answers an empty clipboard.
+query copyKeyframes = 1889 { keys: KeyframeId[] = 1; } -> KeyframeSets;
+/// B4 — a layer's stored MEMBER keyframe lists: every animated member track (a keyed track — `x` keyed apart from `y` on an unseparated Position, a colour channel, an effect param, a track outside the catalog — then the expression-only ones), in the engine's order, with its keyframe records in the stored form the keyframe assistants (The Smoother, The Wiggler, the motion editor) transform. The API's own key lists are per PROPERTY (§3.3); these are the assistants' input, written back as `setKeyframes` per property. `members` narrows to those tracks (empty = all).
+query getMemberKeyframes = 1893 { layer: LayerId = 1; members: string[] = 2; } -> MemberTracks;
+/// B4 — Edit ▸ Copy of EFFECTS in API form: the layer's effects `effects` names (`effects/<id>`; empty = the whole stack), in stack order, captured as `pasteEffects` takes them — a JSON array of `{effect: <the stored effect: type, params, enabled, opacity, maskId, labelColor, …>, tracks: {<param suffix>: Keyframe[]}}` (stored keyframe records on the layer's keyframe axis; suffix '' = the legacy single-scalar track). Two captures of the same effect compare equal as strings until it changes (the editor's "still as copied" test). Unknown effect paths are skipped.
+query copyEffects = 1890 { layer: LayerId = 1; effects: PropPath[] = 2; } -> CopiedEffects;
+
+/// B4 — one member track (getMemberKeyframes).
+struct MemberTrack {
+  /// The stored track name (`x`, `scaleX`, `opacity`, `effect.<id>.<param>`, …).
+  member: string = 1;
+  /// The API property that owns the member ('' outside the catalog) and its index among the property's members.
+  path: PropPath = 2;
+  index: u32 = 3;
+  /// The keyframe records as stored, JSON: `[{t: keyframe-axis seconds, value: stored units, easing?, bezier?, si?, so?, spatialInterp?, continuous?, roving?, id?, label?}]` ('[]' for an expression-only member).
+  keyframes: string = 4;
+  count: u32 = 5;
+  /// The member carries an expression (enabled or not).
+  hasExpression: bool = 6;
+}
+struct MemberTracks { tracks: MemberTrack[] = 1; }
+
+/// B4 — copyEffects' answer.
+struct CopiedEffects {
+  /// The captures as JSON (see copyEffects); '[]' when none.
+  effects: string = 1;
+  /// The `effects/<id>` path of each capture, in the same order.
+  paths: PropPath[] = 2;
+}
 
 struct CompositionDetails { comp: CompInfo = 1; layers: LayerInfo[] = 2; }
 struct LayerDetails { layers: LayerInfo[] = 1; }
@@ -228,12 +266,36 @@ struct FontAxisInfo { tag: string = 1; name: string = 2; min: f64 = 3; max: f64 
 query getWaveform = 1020 { layer?: LayerId = 1; item?: ItemId = 2; range: TimeRange = 3; buckets: u32 = 4; } -> WaveformPeaks;
 query listFonts = 1021 { query: string = 1; } -> FontList;
 query getItems = 1022 { items: ItemId[] = 1; } -> ItemDetails;
+/// B4 — the SVG document a layer stores (LayerInfo.svg): an SVG layer's file name, intrinsic size, view box, capability scan, playback mode and markup, or a converted group's retained source. `role` none (every other field empty) for any other layer.
+query getSvgDocument = 1891 { layer: LayerId = 1; } -> SvgDocument;
+/// B4 — the Cryptomatte ID set a footage item's EXR carries (layer names and their objects, from the file's manifest): what Layer ▸ ID Matte lists. Empty when the file has none or was not decoded yet. `unsupported` where the engine does not decode EXR (the C++ engine, until its media decode reads EXR).
+query getCryptomatte = 1892 { item: ItemId = 1; } -> CryptomatteInfo;
 /// A frame thumbnail of an item or layer (project panel, timeline filmstrip). Encoded image bytes.
 query getThumbnail = 1023 { item?: ItemId = 1; layer?: LayerId = 2; time: Time = 3; maxSize: u32 = 4; } -> Thumbnail;
 
 struct FontList { fonts: FontInfo[] = 1; }
 struct ItemDetails { items: ItemInfo[] = 1; }
 struct Thumbnail { width: u32 = 1; height: u32 = 2; format: string = 3; data: bytes = 4; }
+/// B4 — getSvgDocument's answer.
+struct SvgDocument {
+  role: SvgRole = 1;
+  fileName: string = 2;
+  intrinsicWidth: f64 = 3;
+  intrinsicHeight: f64 = 4;
+  viewBox?: Rect = 5;
+  /// The import's capability scan (SvgCapabilities) as JSON: paths, text, gradients, filters, SMIL / CSS animation, …
+  capabilities: string = 6;
+  /// Re-rasterised at the playhead (SMIL / CSS) rather than a static texture.
+  livePlayback: bool = 7;
+  /// The original markup (what Revert to Original SVG restores).
+  sourceMarkup: string = 8;
+  /// The sanitised markup the layer renders, under `sanitizePolicy` (the editor re-sanitises an older policy's from the source).
+  sanitizedMarkup: string = 9;
+  sanitizePolicy: u32 = 10;
+}
+/// B4 — one Cryptomatte layer of an EXR (its channel prefix, e.g. "CryptoObject") and its objects' names, manifest order.
+struct CryptomatteLayerInfo { name: string = 1; objects: string[] = 2; }
+struct CryptomatteInfo { layers: CryptomatteLayerInfo[] = 1; }
 
 family "Catalog";
 
@@ -268,6 +330,8 @@ query listEffects = 1040 { category: string = 1; } -> EffectCatalog;
 /// Which group match names can be added under a parent path (the Add ▸ menus).
 query listGroupTypes = 1041 { layer: LayerId = 1; parent: PropPath = 2; } -> GroupTypeList;
 query listPresets = 1042 { category: string = 1; } -> PresetList;
+/// B4 — Save as Preset: the layer's animation as a preset BODY, in the preset format `applyPreset` replays (the Motion Presets panel stores it in the user's library under a name). Keyframe tracks rebased to t = 0 and converted out of pixels into the units each property travels in (position → comp fractions, type metrics → font sizes, against the layer's own composition), text animators, the effect stack in the preset's own id namespace (`fx0`, … with its `effect.<id>.*` tracks re-pointed) and enabled expressions. `notFound` for no such layer.
+query capturePreset = 1888 { layer: LayerId = 1; } -> CapturedPreset;
 query getCapabilities = 1043 {} -> Capabilities;
 /// G1 — the native SDK plugins the engine process found (docs/PLUGIN_SDK.md), in load order: loaded, disabled for this session, failed (with why), or quarantined (it ended the engine last time; setPluginEnabled retries it). The TypeScript engine hosts no native plugins: an empty list.
 query listPlugins = 1086 {} -> PluginList;
@@ -307,6 +371,13 @@ struct GroupTypeInfo { matchName: string = 1; displayName: string = 2; category:
 struct GroupTypeList { types: GroupTypeInfo[] = 1; }
 struct PresetInfo { id: string = 1; name: string = 2; category: string = 3; description: string = 4; }
 struct PresetList { presets: PresetInfo[] = 1; }
+/// B4 — capturePreset's answer.
+struct CapturedPreset {
+  /// The preset body as JSON: `{tracks: [{prop, unit?, keyframes: [{t, value, easing?, bezier?, …}]}], animators?, requires?: 'text', effects?: [{id, type, params?}], expressions?: [{prop, expr}]}` — every field of an AnimationPreset but its name and folder. Track names are the stored (legacy) prop paths the preset format uses, not API paths. '{}' when `empty`.
+  preset: string = 1;
+  /// Nothing to save: no keyframes, animators, effects or enabled expressions on the layer.
+  empty: bool = 2;
+}
 
 struct Capabilities {
   gpuAdapter: string = 1;
@@ -347,8 +418,8 @@ struct GlyphBox { index: u32 = 1; line: u32 = 2; box: Rect = 3; baseline: f64 = 
 query hitTest = 1060 { comp: ItemId = 1; time: Time = 2; point: Vec2 = 3; mode: HitMode = 4; includeLocked: bool = 5; } -> HitResult;
 query getLayerBounds = 1061 { layers: LayerId[] = 1; time: Time = 2; space: BoundsSpace = 3; includeEffects: bool = 4; viewport?: u32 = 5; } -> LayerBoundsList;
 query getLayerTransforms = 1062 { layers: LayerId[] = 1; time: Time = 2; } -> LayerTransformList;
-/// Text layout for in-viewport editing (caret, selection, hit-testing glyphs).
-query getTextLayout = 1063 { layer: LayerId = 1; time: Time = 2; } -> TextLayout;
+/// Text layout: how a text layer's lines measure (B4: the render box, the selection box, the wrap, the paragraph box, where the line block sits in the layer). The STORED style is measured (animated values at their base, as Convert / Box Auto-Size hold the text still) with `overrides` winning — a "where would the lines sit if…" before a write. `time` is reserved for evaluated layouts (glyph boxes for in-viewport editing). `invalidArgument` for a layer with no text; `unsupported` where the engine cannot measure (no fonts: the headless engine, a jsdom page) or the style is outside its text port (the message says which).
+query getTextLayout = 1063 { layer: LayerId = 1; time: Time = 2; overrides?: TextLayoutOverrides = 802; } -> TextLayout;
 /// Evaluate an expression without storing it (expression editor preview).
 query evaluateExpression = 1064 { prop: PropRef = 1; time: Time = 2; source: string = 3; } -> ExpressionEvaluation;
 /// Pixel values under a point of a viewport (Info panel, eyedropper), in working space.
@@ -360,7 +431,69 @@ query getDependencies = 1067 { layer?: LayerId = 1; item?: ItemId = 2; } -> Depe
 struct HitResult { layers: LayerId[] = 1; }
 struct LayerBoundsList { bounds: LayerBounds[] = 1; }
 struct LayerTransformList { transforms: LayerTransform[] = 1; }
-struct TextLayout { glyphs: GlyphBox[] = 1; lines: u32 = 2; box: Rect = 3; }
+struct TextLayout {
+  /// Per-glyph boxes for in-viewport editing — not filled yet (both engines answer empty; the text-edit overlay still measures in the page).
+  glyphs: GlyphBox[] = 1;
+  /// Lines as laid out (after the paragraph wrap).
+  lines: u32 = 2;
+  /// The SELECTION box: the font-metric box of the laid-out lines, relative to the layer origin (x = −advance / 2), before the Character panel's scale. Stable while typing (font metrics, not ink).
+  box: Rect = 3;
+  /// B4 — the RENDER box (the texture the text rasterises into, padding included): measureTextSize's {w, h}.
+  size: Vec2 = 803;
+  /// B4 — the content as laid out: paragraph text with each soft wrap as '\n' (one space replaced per wrap, so character indices keep); point text unchanged.
+  wrapped: string = 804;
+  /// B4 — the wrapped line numbers that end in a SOFT wrap (not a typed return).
+  softBreaks: u32[] = 805;
+  /// B4 — the paragraph box; absent for point text (and text on a path).
+  paragraph?: ParagraphLayout = 806;
+  /// B4 — where the line block sits in the layer, local units after the Character panel's scale: the x its lines start / centre / end at (by alignment and first-paragraph direction, indents included) and its vertical offset from the centred position. What a Point ⇄ Paragraph conversion holds still (the difference of two answers; the render padding cancels).
+  lineBlock: Vec2 = 807;
+  /// B4 — the Character panel's whole-layer glyph scale (horizontal / vertical scale, × 0.65 for super / subscript).
+  styleScale: Vec2 = 808;
+  /// B4 — the text rides a mask path (point text: no box).
+  onPath: bool = 809;
+  /// B4 — the style measured (overrides applied): what a Fit Text to Box bake multiplies.
+  fontSize: f64 = 810;
+  letterSpacing: f64 = 811;
+  paragraphSpacing: f64 = 812;
+}
+/// B4 — getTextLayout's hypothetical style: each set field replaces the stored one for the measurement only.
+struct TextLayoutOverrides {
+  content?: string = 1;
+  /// 0 = point text.
+  boxWidth?: f64 = 2;
+  /// 0 = no authored height (auto height).
+  boxHeight?: f64 = 3;
+  /// 'off' | 'height' | 'fit'.
+  boxAutoSize?: string = 4;
+  fontSize?: f64 = 5;
+  letterSpacing?: f64 = 6;
+  paragraphSpacing?: f64 = 7;
+}
+/// B4 — a paragraph text layer's box as it measures (measureParagraphBox + readParagraphBox).
+struct ParagraphLayout {
+  boxWidth: f64 = 1;
+  /// The box's height: authored when fixed, the text's own when auto.
+  boxHeight: f64 = 2;
+  fixedHeight: bool = 3;
+  /// Text runs past the bottom of a fixed box (AE's red overflow mark).
+  overflow: bool = 4;
+  /// Fit Text to Box's type scale; 1 otherwise.
+  fitScale: f64 = 5;
+  /// The height the lines occupy as drawn (after the fit scale), px.
+  contentHeight: f64 = 6;
+  lineCount: u32 = 7;
+  /// Lines actually drawn (the rest are clipped by a fixed box).
+  visibleLines: u32 = 8;
+  /// How far the line block sits below where it would sit centred on the origin, px (a fixed box aligning its lines top / bottom; an anchored auto-height box).
+  lineOffsetY: f64 = 9;
+  /// The resolved auto-size mode: 'off' | 'height' | 'fit' (no stored height is auto height whatever the mode says).
+  autoSize: string = 10;
+  /// 'top' | 'center' | 'bottom'.
+  verticalAlign: string = 11;
+  /// The STORED box height (0 = none): an auto-height box keeps the top edge of a box this tall.
+  storedHeight: f64 = 12;
+}
 struct ExpressionEvaluation { value?: Value = 1; diagnostics: ExpressionDiagnostic[] = 2; }
 struct PixelSamples { width: u32 = 1; height: u32 = 2; rgba: f32[] = 3; }
 struct Dependencies { uses: PropRef[] = 1; usedBy: PropRef[] = 2; items: ItemId[] = 3; }
@@ -406,6 +539,10 @@ struct JobInfo {
   status: JobStatus = 3;
   progress: f64 = 4;
   message: string = 5;
+  /// The finished job's summary, JSON (kind-specific, ENGINE_API.md §4.9); '' until done.
+  result: string = 705;
+  /// Whether its result was applied (false while running, with apply=false, or when it changes nothing).
+  applied: bool = 706;
 }
 
 query getHistory = 1080 {} -> HistoryState;

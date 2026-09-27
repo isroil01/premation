@@ -17,7 +17,8 @@ import { Checkbox } from '@components/Checkbox';
 import { ValueField } from '@components/ValueField';
 import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
-import { defaultAnimation, type Keyframe, type PropPath } from '@motion/animation';
+import type { Keyframe, PropPath } from '@motion/animation';
+import { fetchMemberTracks, memberTracksNow, type MemberKeys } from '@stores/memberTracks';
 import { smoothTrackKeyframes } from '@core/animation/keyframeAssistants';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { documentMirror } from '@stores/documentMirror';
@@ -31,25 +32,27 @@ export interface SmootherTrack {
   prop: PropPath;
   label: string;
   count: number;
+  /** The track's keyframes as stored (the engine's `getMemberKeyframes`): the preview's "before". */
+  keyframes: ReadonlyArray<Keyframe>;
 }
 
-/** The tracks The Smoother can act on, in the engine's own property order. */
-export function smootherTracks(nodeId: string): SmootherTrack[] {
-  const out: SmootherTrack[] = [];
+/**
+ * The tracks The Smoother can act on — every MEMBER track with enough keys
+ * (x and y of an unseparated Position are keyed and smoothed independently),
+ * in the engine's own order, from `members` (the engine's member key lists).
+ */
+export function smootherTracksOf(nodeId: string, members: ReadonlyArray<MemberKeys>): SmootherTrack[] {
   const m = documentMirror();
   const layer = m.layer(nodeId);
   const tree = m.tree(nodeId);
-  // B4-gap: the per-MEMBER keyframe lists (x and y of an unseparated Position
-  // keyed — and smoothed — independently). The API keys a whole property (one
-  // keyframe per time for every dimension, ENGINE_API.md §3.3), and the
-  // Smoother's preview writes these lists back verbatim (assistantPreview.ts,
-  // B3-legacy); per-member key lists in the API would close both.
-  for (const prop of defaultAnimation.animatedProps(nodeId)) {
-    const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
-    if (!kfs || kfs.length < MIN_KEYFRAMES) continue;
-    out.push({ prop, label: mirrorPropertyMeta(prop, layer, tree).label, count: kfs.length });
-  }
-  return out;
+  return members
+    .filter((t) => t.keyframes.length >= MIN_KEYFRAMES)
+    .map((t) => ({ prop: t.member, label: mirrorPropertyMeta(t.member, layer, tree).label, count: t.keyframes.length, keyframes: t.keyframes }));
+}
+
+/** `smootherTracksOf` over the last known member lists (menus: fetched on first ask, re-asked per revision). */
+export function smootherTracks(nodeId: string): SmootherTrack[] {
+  return smootherTracksOf(nodeId, memberTracksNow(nodeId) ?? []);
 }
 
 interface SmootherBodyProps {
@@ -66,7 +69,7 @@ function SmootherBody({ nodeId, tracks, close, onDone }: SmootherBodyProps): JSX
   );
   const [after, setAfter] = useState(0);
 
-  const [preview] = useState(() => ({ current: beginTrackPreview(nodeId, tracks.map((t) => t.prop), 'The Smoother') }));
+  const [preview] = useState(() => ({ current: beginTrackPreview(nodeId, new Map(tracks.map((t) => [t.prop, t.keyframes])), 'The Smoother') }));
   // Set by OK/Cancel so the unmount cleanup knows whether the preview has
   // already been settled. Without it, closing via the scrim would leave the
   // last previewed value applied and unrecorded.
@@ -205,9 +208,10 @@ function SmootherBody({ nodeId, tracks, close, onDone }: SmootherBodyProps): JSX
  * Open The Smoother for `nodeId`. Returns the summary line for the caller's
  * notification, or `null` when the user cancelled or nothing changed.
  */
-export function openSmootherDialog(nodeId: string): Promise<string | null> {
-  const tracks = smootherTracks(nodeId);
-  if (tracks.length === 0) return Promise.resolve(null);
+export async function openSmootherDialog(nodeId: string): Promise<string | null> {
+  // The exact member lists at open (the preview's "before"), asked of the engine.
+  const tracks = smootherTracksOf(nodeId, await fetchMemberTracks(nodeId));
+  if (tracks.length === 0) return null;
   return new Promise((resolve) => {
     let done = false;
     const finish = (summary: string | null): void => {

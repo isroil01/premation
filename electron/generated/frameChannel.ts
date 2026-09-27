@@ -12,6 +12,9 @@ export type PixelFormat =
   | 'rgba8unorm';
 export const PixelFormatValues = ['rgba8unorm'] as const;
 
+/** A layer (scene node) id. Stable for the layer's lifetime, survives save/load and undo. */
+export type LayerId = string;
+
 /** Time in FLICKS: 1/705,600,000 s. Integer, exact for every standard and NTSC frame rate. Comp time unless a field says otherwise. */
 export type Time = number;
 
@@ -50,6 +53,41 @@ export interface FrameReady {
   height: number;
 }
 
+/** B4 — one subscribed layer's overlay geometry at the frame's time (setOverlayGeometry). Fields of kinds not subscribed are empty. Composition space is comp px, y down; `t` values are the layer's keyframe-axis seconds (what a Position key stores — the page's motion-path window and hover test compare them). One layer's geometry may arrive as SEVERAL records in a frame (the payload cap): the host merges them, CONCATENATING arrays in arrival order. */
+export interface OverlayLayerGeometry {
+  layer: LayerId;
+  /** transform: the column-major 4×4 layer → comp matrix (getLayerTransforms: a 3D layer's world matrix, else the 2D chain as a 4×4). */
+  matrix: number[];
+  /** bounds: readGeometry's LOCAL box as x, y, width, height (getLayerBounds, layer space) … */
+  box: number[];
+  /** … and its four corners through the 2D world chain: x0, y0 … x3, y3 (getLayerBounds, comp space). */
+  corners: number[];
+  /** motionPath: the trajectory of the layer's Position, sampled over its keyed span (16 per key segment, at least 8), as t, x, y, z quadruples: x / y through the parent's world matrix at the frame's time (comp space), z the layer's raw z (0 for 2D; the page projects a 3D layer through its view camera). */
+  path: number[];
+  /** motionPath: one entry per Position key time: t, x, y, z, inX, inY, outX, outY — the key's point and its spatial tangent handles at their effective positions (comp space; NaN where a handle does not exist: the path's ends, a linear vertex). */
+  pathKeys: number[];
+  /** rig: puppet pins as x, y pairs and bones as x0, y0, x1, y1 in comp space — not produced yet (both engines send them empty until the rig sampler moves engine-side). */
+  pins: number[];
+  bones: number[];
+  /** textBox: a text layer's measured box, LOCAL x, y, width, height (the fixed paragraph box, else the font-metric selection box). */
+  textBox: number[];
+  /** motionPath: the trajectory at every composition frame of the keyed span (AE's velocity dots): t, x, y, z quadruples as `path`. */
+  pathFrames: number[];
+  /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`). */
+  pathNow: number[];
+}
+
+/** Engine → host. The overlay geometry of the NEXT FrameReady of `viewport` with this generation and frame (B4, setOverlayGeometry). One frame's records may span several messages (the 4096-byte payload cap; a layer's kinds can arrive in separate records, and they merge): the host collects them until `last`, then delivers them with that FrameReady. Sent only while the viewport has a subscription. */
+export interface FrameGeometry {
+  viewport: number;
+  generation: number;
+  frame: number;
+  time: Time;
+  revision: Revision;
+  layers: OverlayLayerGeometry[];
+  last: boolean;
+}
+
 /** Engine → host. Heartbeat answer, sent by the document core thread. */
 export interface FramePong {
   nonce: number;
@@ -75,6 +113,7 @@ export type FrameChannelMessage =
   | ({ type: 'slots' } & FrameSlots)
   | ({ type: 'frameReady' } & FrameReady)
   | ({ type: 'pong' } & FramePong)
+  | ({ type: 'geometry' } & FrameGeometry)
   | ({ type: 'release' } & FrameRelease)
   | ({ type: 'ping' } & FramePing);
 export type FrameChannelMessageType = FrameChannelMessage['type'];
@@ -214,6 +253,116 @@ function decS_FrameReady(r: Reader, end: number, o: any): FrameReady {
   o.height = v_height;
   return o;
 }
+function encS_OverlayLayerGeometry(w: Writer, v: OverlayLayerGeometry): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.matrix; if (a.length) { w.byte(18); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.box; if (a.length) { w.byte(26); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.corners; if (a.length) { w.byte(34); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.path; if (a.length) { w.byte(42); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.pathKeys; if (a.length) { w.byte(50); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.pins; if (a.length) { w.byte(58); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.bones; if (a.length) { w.byte(66); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.textBox; if (a.length) { w.byte(74); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.pathFrames; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.pathNow; if (a.length) { w.byte(90); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+}
+function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayerGeometry {
+  const l_matrix: number[] = [];
+  const l_box: number[] = [];
+  const l_corners: number[] = [];
+  const l_path: number[] = [];
+  const l_pathKeys: number[] = [];
+  const l_pins: number[] = [];
+  const l_bones: number[] = [];
+  const l_textBox: number[] = [];
+  const l_pathFrames: number[] = [];
+  const l_pathNow: number[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: { const e = r.ldEnd(); while (r.pos < e) l_matrix.push(r.f64()); r.expectAt(e); break; }
+      case 26: { const e = r.ldEnd(); while (r.pos < e) l_box.push(r.f64()); r.expectAt(e); break; }
+      case 34: { const e = r.ldEnd(); while (r.pos < e) l_corners.push(r.f64()); r.expectAt(e); break; }
+      case 42: { const e = r.ldEnd(); while (r.pos < e) l_path.push(r.f64()); r.expectAt(e); break; }
+      case 50: { const e = r.ldEnd(); while (r.pos < e) l_pathKeys.push(r.f64()); r.expectAt(e); break; }
+      case 58: { const e = r.ldEnd(); while (r.pos < e) l_pins.push(r.f64()); r.expectAt(e); break; }
+      case 66: { const e = r.ldEnd(); while (r.pos < e) l_bones.push(r.f64()); r.expectAt(e); break; }
+      case 74: { const e = r.ldEnd(); while (r.pos < e) l_textBox.push(r.f64()); r.expectAt(e); break; }
+      case 82: { const e = r.ldEnd(); while (r.pos < e) l_pathFrames.push(r.f64()); r.expectAt(e); break; }
+      case 90: { const e = r.ldEnd(); while (r.pos < e) l_pathNow.push(r.f64()); r.expectAt(e); break; }
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('OverlayLayerGeometry.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.matrix = l_matrix;
+  o.box = l_box;
+  o.corners = l_corners;
+  o.path = l_path;
+  o.pathKeys = l_pathKeys;
+  o.pins = l_pins;
+  o.bones = l_bones;
+  o.textBox = l_textBox;
+  o.pathFrames = l_pathFrames;
+  o.pathNow = l_pathNow;
+  return o;
+}
+function encS_FrameGeometry(w: Writer, v: FrameGeometry): void {
+  w.byte(8); w.u32(v.viewport);
+  w.byte(16); w.u32(v.generation);
+  w.byte(24); w.i64(v.frame);
+  w.byte(32); w.i64(v.time);
+  w.byte(40); w.u64(v.revision);
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_OverlayLayerGeometry(w, a[i]!); w.endLd(s); } } }
+  w.byte(56); w.bool(v.last);
+}
+function decS_FrameGeometry(r: Reader, end: number, o: any): FrameGeometry {
+  const l_layers: OverlayLayerGeometry[] = [];
+  let h_viewport = false;
+  let h_generation = false;
+  let h_frame = false;
+  let h_time = false;
+  let h_revision = false;
+  let h_last = false;
+  let v_viewport: number | undefined;
+  let v_generation: number | undefined;
+  let v_frame: number | undefined;
+  let v_time: number | undefined;
+  let v_revision: number | undefined;
+  let v_last: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_viewport = r.u32(); h_viewport = true; break;
+      case 16: v_generation = r.u32(); h_generation = true; break;
+      case 24: v_frame = r.i64(); h_frame = true; break;
+      case 32: v_time = r.i64(); h_time = true; break;
+      case 40: v_revision = r.u64(); h_revision = true; break;
+      case 50: l_layers.push(decS_OverlayLayerGeometry(r, r.ldEnd(), {})); break;
+      case 56: v_last = r.bool(); h_last = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_viewport) throw new DecodeError('FrameGeometry.viewport: missing', 'missingField');
+  if (!h_generation) throw new DecodeError('FrameGeometry.generation: missing', 'missingField');
+  if (!h_frame) throw new DecodeError('FrameGeometry.frame: missing', 'missingField');
+  if (!h_time) throw new DecodeError('FrameGeometry.time: missing', 'missingField');
+  if (!h_revision) throw new DecodeError('FrameGeometry.revision: missing', 'missingField');
+  if (!h_last) throw new DecodeError('FrameGeometry.last: missing', 'missingField');
+  o.viewport = v_viewport;
+  o.generation = v_generation;
+  o.frame = v_frame;
+  o.time = v_time;
+  o.revision = v_revision;
+  o.layers = l_layers;
+  o.last = v_last;
+  return o;
+}
 function encS_FramePong(w: Writer, v: FramePong): void {
   w.byte(8); w.u64(v.nonce);
   w.byte(16); w.u64(v.revision);
@@ -297,6 +446,7 @@ function encU_FrameChannelMessage(w: Writer, v: FrameChannelMessage): void {
     case 'slots': w.byte(10); { const s = w.beginLd(); encS_FrameSlots(w, v); w.endLd(s); } return;
     case 'frameReady': w.byte(18); { const s = w.beginLd(); encS_FrameReady(w, v); w.endLd(s); } return;
     case 'pong': w.byte(26); { const s = w.beginLd(); encS_FramePong(w, v); w.endLd(s); } return;
+    case 'geometry': w.byte(34); { const s = w.beginLd(); encS_FrameGeometry(w, v); w.endLd(s); } return;
     case 'release': w.varint(130); { const s = w.beginLd(); encS_FrameRelease(w, v); w.endLd(s); } return;
     case 'ping': w.varint(138); { const s = w.beginLd(); encS_FramePing(w, v); w.endLd(s); } return;
     default: throw new RangeError('FrameChannelMessage: unknown type ' + String((v as { type?: unknown }).type));
@@ -311,6 +461,7 @@ function decU_FrameChannelMessage(r: Reader, end: number): FrameChannelMessage {
       case 10: out = decS_FrameSlots(r, r.ldEnd(), { type: 'slots' }) as FrameChannelMessage; break;
       case 18: out = decS_FrameReady(r, r.ldEnd(), { type: 'frameReady' }) as FrameChannelMessage; break;
       case 26: out = decS_FramePong(r, r.ldEnd(), { type: 'pong' }) as FrameChannelMessage; break;
+      case 34: out = decS_FrameGeometry(r, r.ldEnd(), { type: 'geometry' }) as FrameChannelMessage; break;
       case 130: out = decS_FrameRelease(r, r.ldEnd(), { type: 'release' }) as FrameChannelMessage; break;
       case 138: out = decS_FramePing(r, r.ldEnd(), { type: 'ping' }) as FrameChannelMessage; break;
       default: r.skip(key);
@@ -335,6 +486,8 @@ function mk<V>(enc: (w: Writer, v: V) => void, dec: (r: Reader, end: number) => 
 export const codecs = {
   FrameSlots: mk<FrameSlots>(encS_FrameSlots, (r, e) => decS_FrameSlots(r, e, {})),
   FrameReady: mk<FrameReady>(encS_FrameReady, (r, e) => decS_FrameReady(r, e, {})),
+  OverlayLayerGeometry: mk<OverlayLayerGeometry>(encS_OverlayLayerGeometry, (r, e) => decS_OverlayLayerGeometry(r, e, {})),
+  FrameGeometry: mk<FrameGeometry>(encS_FrameGeometry, (r, e) => decS_FrameGeometry(r, e, {})),
   FramePong: mk<FramePong>(encS_FramePong, (r, e) => decS_FramePong(r, e, {})),
   FrameRelease: mk<FrameRelease>(encS_FrameRelease, (r, e) => decS_FrameRelease(r, e, {})),
   FramePing: mk<FramePing>(encS_FramePing, (r, e) => decS_FramePing(r, e, {})),

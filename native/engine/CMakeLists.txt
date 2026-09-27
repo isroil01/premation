@@ -36,10 +36,15 @@ set(ENGINE_CORE_SOURCES
   src/core/log.cpp
   src/core/history.cpp
   src/core/session.cpp
+  src/core/session_jobs.cpp
+  src/jobs/job_runner.cpp
+  src/jobs/job_inputs.cpp
 )  # the D1b document model adds its sources in its own block at the end
 add_library(engine_core STATIC ${ENGINE_CORE_SOURCES})
 target_include_directories(engine_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
-target_link_libraries(engine_core PUBLIC engine_protocol motion::eval PRIVATE motion::options)
+# Threads: the job runner's workers (src/jobs/job_runner.cpp).
+find_package(Threads REQUIRED)
+target_link_libraries(engine_core PUBLIC engine_protocol motion::eval Threads::Threads PRIVATE motion::options)
 if(MSVC)
   target_compile_options(engine_core PRIVATE /bigobj)  # std::visit over the command union
 endif()
@@ -197,6 +202,8 @@ if(MOTION_BUILD_TESTS)
     tests/test_bundle_io.cpp
     tests/test_framing.cpp
     tests/test_session.cpp
+    tests/test_b4_round2.cpp
+    tests/test_jobs.cpp
     tests/test_paint_strokes.cpp
     tests/test_paths.cpp
     tests/test_proxy_ownership.cpp
@@ -343,6 +350,7 @@ set(ENGINE_DOC_SOURCES
   src/core/anim_json.cpp
   src/core/bundle_io.cpp
   src/core/catalog_data.cpp
+  src/core/deflate_ffi.cpp
   src/core/docexpr.cpp
   src/core/docio.cpp
   src/core/engine_ctx.cpp
@@ -367,12 +375,15 @@ set(ENGINE_DOC_SOURCES
   src/core/handlers_strokes.cpp
   src/core/handlers_paths.cpp
   src/core/layer_clone.cpp
+  src/core/layer_geometry.cpp
   src/core/meta.cpp
   src/core/model.cpp
   src/core/native_effects.cpp
+  src/core/overlay_geometry.cpp
   src/core/parenting.cpp
   src/core/particle_props.cpp
   src/core/plugin_props.cpp
+  src/core/presets_capture.cpp
   src/core/props.cpp
   src/core/ptree.cpp
   src/core/queries.cpp
@@ -393,6 +404,10 @@ target_link_libraries(engine_json PUBLIC motion::jsmath PRIVATE motion::options)
 target_sources(engine_core PRIVATE ${ENGINE_DOC_SOURCES})
 target_link_libraries(engine_core PUBLIC engine_json)
 target_link_libraries(engine_core PUBLIC motion::expr motion::transform motion::jsmath)
+# zlib: CRC-32 + DEFLATE for portable zips (core/deflate_ffi.cpp) and the export
+# writers' PNG / zip entries — the one zlib binding, shared.
+find_package(ZLIB REQUIRED)
+target_link_libraries(engine_core PUBLIC ZLIB::ZLIB)
 # ── G1: the native plugin SDK host (src/plugins, GPU-free half) ────────────
 #   engine_plugins   manifest scan, module load (module_ffi), per-call crash
 #                    guard (guard_ffi), the quarantine journal (journal_ffi), the
@@ -597,6 +612,7 @@ if(TARGET engine_fuzz)
                  ${_libs_dir}/motion_transform/transform.cpp ${_libs_dir}/motion_transform/motion_transform.cpp)
   target_include_directories(engine_fuzz PRIVATE ${_libs_dir}/motion_expr ${_libs_dir}/motion_jsmath
                              ${_libs_dir}/motion_transform)
+  target_link_libraries(engine_fuzz PRIVATE ZLIB::ZLIB Threads::Threads)  # core/deflate_ffi.cpp (C only: malloc/free across the CRT); the job runner
   if(WIN32)
     target_link_options(engine_fuzz PRIVATE ${_doc_stack})
   endif()
@@ -972,6 +988,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/light_wash.cpp
     src/scene/frame_build.cpp
     src/scene/text_measure.cpp
+    src/scene/text_query.cpp        # B4 round 2: getTextLayout / getLayerBounds' text boxes over text_measure
     src/scene/scene_textures.cpp
     src/scene/image_decode_ffi.cpp
     src/scene/svg_layer.cpp
@@ -1078,11 +1095,9 @@ add_library(engine_export_core STATIC
   src/export/child_process_ffi.cpp
   src/export/png_write.cpp
   src/export/jpeg_write.cpp
-  src/export/zlib_ffi.cpp
   src/export/zip_write.cpp)
 target_include_directories(engine_export_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/export)
-find_package(ZLIB REQUIRED)
-target_link_libraries(engine_export_core PUBLIC engine_core ZLIB::ZLIB PRIVATE motion::options)
+target_link_libraries(engine_export_core PUBLIC engine_core PRIVATE motion::options)
 if(WIN32)
   target_compile_definitions(engine_export_core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   target_link_libraries(engine_export_core PRIVATE windowscodecs ole32)
@@ -1115,4 +1130,79 @@ if(MOTION_BUILD_TESTS)
     target_compile_definitions(engine_export_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
   endif()
   add_test(NAME engine_export_tests COMMAND engine_export_tests --reporter compact)
+endif()
+# ── Engine jobs (src/jobs; kept in its own block) ───────────────────────────
+#   the runner + Session half is engine_core (jobs/job_runner, job_inputs,
+#   core/session_jobs.cpp); here are the kinds:
+#   engine_jobs_core   the pure analyses, decode- and GPU-free: audio
+#                      (silences, amplitude, beats, detector, ducking, gate),
+#                      scene detection, the render's encode args, the tracker
+#                      + stabilizer, auto-trace, SAM pre/post-processing, and
+#                      the track apply plans (document reads + commands)
+#   engine_jobs        the kinds (kind_*.cpp), footage frames / sound
+#                      (media_input_ffi.cpp: ffmpeg), the child-process job
+#                      host (child_job.cpp), ONNX Runtime for SAM
+#                      (sam_ort_ffi.cpp, vcpkg `engine` feature) — linked into
+#                      premation-engine as PREMATION_HAVE_JOBS
+add_library(engine_jobs_core STATIC
+  src/jobs/audio_analysis.cpp
+  src/jobs/scene_detect.cpp
+  src/jobs/encode_args.cpp
+  src/jobs/media_input.cpp
+  src/jobs/tracking.cpp
+  src/jobs/stabilize.cpp
+  src/jobs/track_apply.cpp
+  src/jobs/trace_bitmap.cpp
+  src/jobs/sam_pipeline.cpp
+)
+target_include_directories(engine_jobs_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/jobs)
+target_link_libraries(engine_jobs_core PUBLIC engine_core engine_scene_core motion::jsmath PRIVATE motion::options)
+if(MSVC)
+  target_compile_options(engine_jobs_core PRIVATE /bigobj)
+endif()
+
+if(FFMPEG_FOUND AND TARGET engine_audio)
+  add_library(engine_jobs STATIC
+    src/jobs/media_input_ffi.cpp
+    src/jobs/child_job.cpp
+    src/jobs/job_kinds.cpp
+    src/jobs/kind_audio.cpp
+    src/jobs/kind_scene_detect.cpp
+    src/jobs/kind_proxy.cpp
+    src/jobs/kind_render.cpp
+    src/jobs/kind_track_motion.cpp
+    src/jobs/kind_stabilize.cpp
+    src/jobs/kind_auto_trace.cpp
+    src/jobs/kind_object_matte.cpp
+    src/jobs/sam_ort_ffi.cpp
+  )
+  target_include_directories(engine_jobs SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+  target_link_directories(engine_jobs PUBLIC ${FFMPEG_LIBRARY_DIRS})
+  target_link_libraries(engine_jobs PUBLIC engine_jobs_core engine_audio engine_export_core ${FFMPEG_LIBRARIES} PRIVATE motion::options)
+  find_package(onnxruntime CONFIG QUIET)
+  if(onnxruntime_FOUND)
+    target_link_libraries(engine_jobs PRIVATE onnxruntime::onnxruntime)
+    target_compile_definitions(engine_jobs PRIVATE PREMATION_HAVE_ONNXRUNTIME=1)
+  else()
+    message(STATUS "premation-engine: onnxruntime not found — the object-matte job answers unsupported")
+  endif()
+  if(MSVC)
+    target_compile_options(engine_jobs PRIVATE /bigobj)
+    target_compile_definitions(engine_jobs PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+  endif()
+  if(TARGET premation-engine)
+    target_link_libraries(premation-engine PRIVATE engine_jobs)
+    target_compile_definitions(premation-engine PRIVATE PREMATION_HAVE_JOBS=1)
+  endif()
+else()
+  message(STATUS "premation-engine: ffmpeg or the audio decoder missing — engine jobs build their pure core only")
+endif()
+
+if(MOTION_BUILD_TESTS)
+  add_executable(engine_jobs_tests tests/test_jobs_audio.cpp tests/test_jobs_trace.cpp tests/test_jobs_tracking.cpp)
+  target_link_libraries(engine_jobs_tests PRIVATE engine_jobs_core motion::options Catch2::Catch2WithMain)
+  if(MSVC)
+    target_compile_options(engine_jobs_tests PRIVATE /bigobj)
+  endif()
+  add_test(NAME engine_jobs_tests COMMAND engine_jobs_tests --reporter compact)
 endif()

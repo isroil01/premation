@@ -70,7 +70,7 @@ export async function copyEdit(): Promise<CopyKind> {
   if (copyPathFromSelection()) return 'path';
   const kf = useKeyframeSelectionStore.getState().ids;
   if (kf.size > 0) {
-    copyKeyframes(kf);
+    await copyKeyframes(kf);
     held = { kind: 'keyframes' };
     return 'keyframes';
   }

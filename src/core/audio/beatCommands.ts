@@ -25,6 +25,7 @@ import { animateLayers } from '@core/animation/choreography';
 import { hash32 } from '@core/animation/entranceArchetypes';
 import { currentFeel } from '@core/animation/choreographyCommands';
 import { analyseLayerBeats, beatsForLayers, everyNthBeat, findAudioLayer, LOW_CONFIDENCE } from './beatGrid';
+import { previewEngineJob, runEngineJob } from '@core/engine/engineJobs';
 
 /** How many markers one press may add — a 5-minute track at 174 BPM is 870. */
 const MAX_MARKERS = 512;
@@ -43,8 +44,28 @@ function targets(): string[] {
   return useSelectionStore.getState().ids.filter((id) => defaultSceneGraph.getNode(id) !== undefined);
 }
 
+interface EngineBeats {
+  beats?: { bpm: number; tempoConfidence: number; beatsCompSec: number[] };
+}
+
 /** A grid, or a sentence explaining why there isn't one. */
 async function grid(): Promise<Awaited<ReturnType<typeof analyseLayerBeats>>> {
+  // The engine's analysis when it runs jobs (analysis only: nothing written).
+  const layer = findAudioLayer(targets()[0]);
+  if (layer) {
+    const viaEngine = await previewEngineJob<EngineBeats & { beats?: { onsetsCompSec?: number[] } }>({
+      kind: 'audioAnalysis',
+      value: { layer, beats: true, beatMarkers: false, amplitudeKeyframes: false, silence: false, removeSilence: false },
+    });
+    if (viaEngine) {
+      const b = viaEngine.result?.beats;
+      if (viaEngine.status === 'done' && b && b.beatsCompSec.length > 0) {
+        return { nodeId: layer, bpm: b.bpm, tempoConfidence: b.tempoConfidence, beatsCompSec: b.beatsCompSec, onsetsCompSec: b.onsetsCompSec ?? [] };
+      }
+      notify('Could not find a pulse in that audio — it may be speech, ambience, or unreadable.', 'warning');
+      return null;
+    }
+  }
   const found = await analyseLayerBeats(targets()[0]);
   if (!found) {
     notify(
@@ -66,6 +87,31 @@ function confidenceNote(tempoConfidence: number): string {
 }
 
 async function markBeats(every: number): Promise<void> {
+  // The engine analyses the audio layer and writes the markers itself (the
+  // audioAnalysis job) when it runs jobs; the page path below is the
+  // TypeScript engine's.
+  const layer = findAudioLayer(targets()[0]);
+  if (layer) {
+    const viaEngine = await runEngineJob<EngineBeats>({
+      kind: 'audioAnalysis',
+      value: { layer, beats: true, beatMarkers: true, beatEvery: every, amplitudeKeyframes: false, silence: false, removeSilence: false },
+    });
+    if (viaEngine) {
+      const b = viaEngine.result?.beats;
+      if (viaEngine.status !== 'done' || !b || b.beatsCompSec.length === 0) {
+        notify(viaEngine.error?.message ?? 'Could not find a pulse in that audio — it may be speech, ambience, or unreadable.', 'warning');
+        return;
+      }
+      const n = Math.min(MAX_MARKERS, Math.ceil(b.beatsCompSec.length / Math.max(1, every)));
+      notify(
+        `${n} beat marker${n === 1 ? '' : 's'} at ${Math.round(b.bpm)} BPM`
+        + (every > 1 ? ` (every ${every}${every === 2 ? 'nd' : 'th'} beat)` : '')
+        + '.' + confidenceNote(b.tempoConfidence),
+        'success',
+      );
+      return;
+    }
+  }
   const found = await grid();
   if (!found) return;
 

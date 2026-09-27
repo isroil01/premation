@@ -27,7 +27,7 @@ import {
   listPresets,
   deletePreset,
   presetFolder,
-  saveCurrentAsPreset,
+  saveUserPreset,
   exportPresets,
   importPresets,
   importPresetObjects,
@@ -35,6 +35,7 @@ import {
   USER_PRESET_FOLDER,
   PRESET_BUNDLE_FORMAT,
   type AnimationPreset,
+  type CapturedPresetBody,
   type PresetImportResult,
 } from '@core/animation/animationPresets';
 import { downloadBlob } from '@core/export/exportManager';
@@ -51,6 +52,7 @@ import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { getEventBus } from '@core/events/EventBus';
 import { PresetPreview } from './PresetPreview';
 import { edit } from '@core/engine/uiEdits';
+import { engine } from '@core/engine/engineInstance';
 import { compTime } from '@core/engine/propRefs';
 import styles from './MotionPresetsPanel.module.css';
 
@@ -225,23 +227,32 @@ export function MotionPresetsBody(): JSX.Element {
     const id = selectedIds[0];
     const name = saveName.trim();
     if (!id || !name) return;
-    // B4-gap: capturing the layer's animation, text animators, effects and
-    // expressions as a preset reads the engine (captureAnimation over the
-    // animation engine and scene node, in the preset's own units) — the API has
-    // no query that returns a layer as a preset (a `capturePreset {layer}` query
-    // beside `applyPreset` would close it).
-    const ok = saveCurrentAsPreset(id, name);
-    notify(
-      ok
-        ? { level: 'success', message: `Saved "${name}" to ${USER_PRESET_FOLDER}`, durationMs: 2200 }
-        : { level: 'warning', message: 'Nothing to save — animate the layer first', durationMs: 2400 },
-    );
-    if (ok) {
+    // The engine captures the layer as a preset body (`capturePreset`: keys in the
+    // preset's own units, animators, effects, expressions); the library is the editor's.
+    void engine().query({ type: 'capturePreset', layer: id }).then((res) => {
+      let body: CapturedPresetBody | null = null;
+      if (res.ok && !res.value.empty) {
+        try {
+          body = JSON.parse(res.value.preset) as CapturedPresetBody;
+        } catch {
+          body = null;
+        }
+      }
+      if (!body) {
+        notify(
+          res.ok
+            ? { level: 'warning', message: 'Nothing to save — animate the layer first', durationMs: 2400 }
+            : { level: 'warning', message: `Could not capture the layer: ${res.error.message}`, durationMs: 2800 },
+        );
+        return;
+      }
+      saveUserPreset(name, body);
+      notify({ level: 'success', message: `Saved "${name}" to ${USER_PRESET_FOLDER}`, durationMs: 2200 });
       setSaveName('');
       setSaving(false);
       void syncPresetToCloud(name);
-    }
-    libraryChanged();
+      libraryChanged();
+    });
   };
 
   const syncPresetToCloud = async (name: string): Promise<void> => {

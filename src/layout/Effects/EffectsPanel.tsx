@@ -26,10 +26,8 @@ import { pluginEffectsCanRender, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pl
 import { addEffectAndReveal, revealEffectsInProperties } from './revealEffectControls';
 import { useAllEffectDefs, useEffectFavorites } from './effectCatalog';
 import {
-  copyAllEffects,
   hasEffectClipboard,
   effectClipboardSize,
-  saveEffectPreset,
   deleteEffectPreset,
   listEffectPresets,
 } from '@core/effects/effectClipboard';
@@ -58,7 +56,9 @@ import {
   applyEffectPresetEdit,
   enableSimulationEdit,
   maskValueCommands,
+  copyEffectsEdit,
   pasteEffectsEdit,
+  saveEffectPresetEdit,
   removeMaskEdit,
   renameMaskEdit,
   setMaskInvertedEdit,
@@ -480,8 +480,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
           title="Copy this layer's whole effect stack"
           onClick={() => {
             if (!primary) return;
-            copyAllEffects(primary);
-            bumpClipboard((n) => n + 1);
+            void copyEffectsEdit(primary).then(() => bumpClipboard((n) => n + 1));
           }}
         >
           <Icon name="copy" size="sm" /> Copy Stack
@@ -514,7 +513,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
                 '',
                 { placeholder: 'My preset', confirmLabel: 'Save' },
               );
-              if (name?.trim()) { saveEffectPreset(primary, name.trim()); bumpClipboard((n) => n + 1); }
+              if (name?.trim() && await saveEffectPresetEdit(primary, name.trim())) bumpClipboard((n) => n + 1);
             })();
           }}
         >
