@@ -125,6 +125,29 @@ export function engineOwnsDocument(env: Record<string, string | undefined>, pref
   return !(pref === 'ui' || pref === 'ts' || pref === 'off');
 }
 
+/**
+ * The viewport frame route main offers the engine. `auto` (default): the
+ * shared texture (route C) where this OS can import it, the route-A copy
+ * otherwise. `PREMATION_VIEWPORT_ROUTE=copy` offers ONLY the copy, even where
+ * shared textures work — how route A (the macOS-without-bridge / Linux path)
+ * is exercised on a Windows box, and a field switch if a GPU driver breaks
+ * shared-texture import.
+ */
+export function viewportRoute(env: Record<string, string | undefined>): 'auto' | 'copy' {
+  const v = env.PREMATION_VIEWPORT_ROUTE?.trim().toLowerCase();
+  return v === 'copy' || v === 'a' ? 'copy' : 'auto';
+}
+
+/**
+ * The frame capabilities main's Hello offers. Both where slots can be imported
+ * here (the engine takes shared slots when it can and falls back to copies
+ * when it cannot); only the copy otherwise (no handle source, or the route
+ * forced to copy).
+ */
+export function offeredFrameCapabilities(canImportShared: boolean): string[] {
+  return canImportShared ? ['frames.sharedTexture', 'frames.copy'] : ['frames.copy'];
+}
+
 function readText(p: string): string | null {
   try {
     return readFileSync(p, 'utf8');
@@ -478,6 +501,8 @@ export interface EngineHostOptions {
   sharedTexture: SharedTextureApi | null;
   /** The OS (tests); default process.platform. Decides how slot handles are imported. */
   platform?: NodeJS.Platform;
+  /** The environment the route switch reads (tests); default process.env. */
+  env?: Record<string, string | undefined>;
   supervisor?: Partial<SupervisorOptions>;
   /** G1: the native plugin folder (bundles with premation-plugin.json) the engine scans. */
   nativePluginDir?: string;
@@ -558,8 +583,11 @@ export class EngineHost {
       });
     // Route C where this OS can import the engine's slots; otherwise (Linux,
     // macOS without the host bridge, no sharedTexture module) the engine is
-    // not offered `frames.sharedTexture`.
-    const handles = o.enabled && o.sharedTexture
+    // not offered `frames.sharedTexture`. PREMATION_VIEWPORT_ROUTE=copy forces
+    // route A everywhere (viewportRoute).
+    const forceCopy = viewportRoute(o.env ?? process.env) === 'copy';
+    if (o.enabled && forceCopy) log('[engine] viewport route forced to copy (PREMATION_VIEWPORT_ROUTE=copy)');
+    const handles = o.enabled && o.sharedTexture && !forceCopy
       ? slotHandleSourceFor(
         platform,
         () => loadIoSurfaceBridge({ platform, file: hostBridgePath(resolveExe(), process.env), exists: existsSync, log: (m) => log(`[engine] warn ${m}`) }),
@@ -585,9 +613,7 @@ export class EngineHost {
       this.supervisor = null;
       return;
     }
-    // Both offered where both work: the engine takes shared slots when it can
-    // and falls back to copies (route A) when it cannot.
-    const capabilities = handles ? ['frames.sharedTexture', 'frames.copy'] : ['frames.copy'];
+    const capabilities = offeredFrameCapabilities(handles !== null);
     this.supervisor = new EngineSupervisor(
       {
         spawn: (exe, args) =>

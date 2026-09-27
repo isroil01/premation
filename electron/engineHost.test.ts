@@ -7,7 +7,7 @@
 
 jest.mock('electron', () => ({ ipcMain: { handle: () => undefined, on: () => undefined } }));
 
-import { FrameForwarder, engineBackendEnabled, engineOwnsDocument, nativePluginArgs, type ForwardedFrameMeta, type SharedTextureApi } from './engineHost';
+import { FrameForwarder, engineBackendEnabled, engineOwnsDocument, nativePluginArgs, offeredFrameCapabilities, viewportRoute, type ForwardedFrameMeta, type SharedTextureApi } from './engineHost';
 import type { PixelFrame } from './pixelChannel';
 import type { IoSurfaceBridge } from './ioSurfaceBridge';
 import { ioSurfaceSource, type SlotTextureHandle as SharedTextureImportHandle } from './sharedTextureHandles';
@@ -33,6 +33,17 @@ describe('engineBackendEnabled', () => {
   it('the environment wins over the preference', () => {
     expect(engineBackendEnabled({ PREMATION_ENGINE: 'ts' }, 'engine.json', read('{"backend":"process"}'))).toBe(false);
     expect(engineBackendEnabled({ PREMATION_ENGINE: 'process' }, 'engine.json', read('{"backend":"ts"}'))).toBe(true);
+  });
+});
+
+describe('viewportRoute / offeredFrameCapabilities', () => {
+  it('offers the shared texture and the copy by default, only the copy when forced', () => {
+    expect(viewportRoute({})).toBe('auto');
+    expect(viewportRoute({ PREMATION_VIEWPORT_ROUTE: 'shared' })).toBe('auto');
+    expect(viewportRoute({ PREMATION_VIEWPORT_ROUTE: ' Copy ' })).toBe('copy');
+    expect(viewportRoute({ PREMATION_VIEWPORT_ROUTE: 'a' })).toBe('copy');
+    expect(offeredFrameCapabilities(true)).toEqual(['frames.sharedTexture', 'frames.copy']);
+    expect(offeredFrameCapabilities(false)).toEqual(['frames.copy']);
   });
 });
 
