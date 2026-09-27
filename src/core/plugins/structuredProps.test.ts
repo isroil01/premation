@@ -12,11 +12,10 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { seedDefaultScene } from '@core/scene/seedDefaultScene';
-import { insertPrimitive } from '@core/scene/sceneInsert';
-import { useSelectionStore } from '@stores/selectionStore';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { getNodeStroke } from '@core/paint/stroke';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
 import { createHostApi } from './hostApi';
 import { MAX_PATH_POINTS, MAX_GRADIENT_STOPS, STRUCTURED_PROP_NAMES } from './structuredProps';
 import type { PluginManifest } from './manifest';
@@ -41,9 +40,11 @@ const api = createHostApi(manifest, {
   granted: () => new Set(['scene:write']) as never,
 });
 
-function newLayer(kind = 'shape'): string {
-  insertPrimitive(kind as never, kind);
-  return useSelectionStore.getState().ids[0]!;
+let h: Harness & { engine: LocalEngine };
+
+/** A shape layer of the active composition, made through the engine (B5: the plugin verbs are engine commands). */
+async function newLayer(): Promise<string> {
+  return (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'Shape', init: [] })).layer;
 }
 
 /** The `Geometry` component's props, which is where an outline lands. */
@@ -56,22 +57,13 @@ function geometry(id: string): Record<string, unknown> | undefined {
 const setProp = (id: string, prop: string, value: unknown): unknown =>
   api['scene.setProperty']!(id, prop, value);
 
-beforeAll(() => {
-  const services = {
-    undo: { push: () => {}, undo: () => {}, redo: () => {}, canUndo: () => false, canRedo: () => false },
-    selection: { get: () => [], set: () => {}, clear: () => {} },
-    panels: { open: () => {}, close: () => {}, toggle: () => {}, isOpen: () => false },
-    workspace: { setActive: () => {}, getActive: () => '' },
-    get: () => undefined,
-  } as never;
-  setCommandSystem(new CommandSystem({ services, getState: () => ({}) }));
-  seedDefaultScene();
-});
+beforeEach(async () => { h = await setupAppEngine(); });
+afterEach(async () => { await h.dispose(); });
 
 describe('geometry', () => {
-  it('writes an outline a plugin built', () => {
-    const id = newLayer();
-    expect(setProp(id, 'points', [
+  it('writes an outline a plugin built', async () => {
+    const id = await newLayer();
+    expect(await setProp(id, 'points', [
       { x: -50, y: -50 },
       { x: 50, y: -50 },
       { x: 0, y: 50 },
@@ -82,25 +74,25 @@ describe('geometry', () => {
     expect(pts[1]).toEqual({ x: 50, y: -50, inX: 0, inY: 0, outX: 0, outY: 0 });
   });
 
-  it('★ defaults the tangents, so a polyline is {x, y} and nothing else', () => {
+  it('★ defaults the tangents, so a polyline is {x, y} and nothing else', async () => {
     // The shape a generator writes first. Requiring all six fields would make
     // the simplest possible plugin four times longer for no expressive gain.
-    const id = newLayer();
-    setProp(id, 'points', [{ x: 0, y: 0 }, { x: 10, y: 10 }]);
+    const id = await newLayer();
+    await setProp(id, 'points', [{ x: 0, y: 0 }, { x: 10, y: 10 }]);
     expect((geometry(id)!.points as Array<Record<string, number>>)[0]).toEqual({
       x: 0, y: 0, inX: 0, inY: 0, outX: 0, outY: 0,
     });
   });
 
-  it('keeps the curve handles an author did supply', () => {
-    const id = newLayer();
-    setProp(id, 'points', [{ x: 0, y: 0, inX: -5, inY: 0, outX: 5, outY: 0 }]);
+  it('keeps the curve handles an author did supply', async () => {
+    const id = await newLayer();
+    await setProp(id, 'points', [{ x: 0, y: 0, inX: -5, inY: 0, outX: 5, outY: 0 }]);
     expect((geometry(id)!.points as Array<Record<string, number>>)[0]).toMatchObject({ inX: -5, outX: 5 });
   });
 
-  it('writes several outlines through subpaths', () => {
-    const id = newLayer();
-    expect(setProp(id, 'subpaths', [
+  it('writes several outlines through subpaths', async () => {
+    const id = await newLayer();
+    expect(await setProp(id, 'subpaths', [
       { points: [{ x: 0, y: 0 }, { x: 10, y: 0 }] },
       { points: [{ x: 2, y: 2 }, { x: 8, y: 2 }], open: true },
     ])).toBe(true);
@@ -112,38 +104,38 @@ describe('geometry', () => {
 });
 
 describe('the value is parsed, not cast', () => {
-  it('★ refuses NaN rather than storing a path with no bounds', () => {
+  it('★ refuses NaN rather than storing a path with no bounds', async () => {
     // This is the case that matters most. `NaN` propagates silently into the
     // rasterizer and the hit-tester, where it becomes a layer that cannot be
     // drawn, measured or clicked — and nothing points back at the plugin.
-    const id = newLayer();
+    const id = await newLayer();
     expect(() => setProp(id, 'points', [{ x: Number.NaN, y: 0 }])).toThrow(/finite number/);
     expect(geometry(id)?.points).not.toEqual([{ x: Number.NaN, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 }]);
   });
 
-  it('refuses Infinity for the same reason', () => {
-    const id = newLayer();
+  it('refuses Infinity for the same reason', async () => {
+    const id = await newLayer();
     expect(() => setProp(id, 'points', [{ x: 0, y: Number.POSITIVE_INFINITY }])).toThrow(/finite number/);
   });
 
-  it('names the offending index, so an author can find it in a generated path', () => {
-    const id = newLayer();
+  it('names the offending index, so an author can find it in a generated path', async () => {
+    const id = await newLayer();
     expect(() => setProp(id, 'points', [{ x: 0, y: 0 }, { x: 1, y: 'up' }])).toThrow(/points\[1\]\.y/);
   });
 
-  it('★ refuses a path past the bound instead of clamping it', () => {
+  it('★ refuses a path past the bound instead of clamping it', async () => {
     // Clamping would hand back a path that is not the one the plugin built,
     // with no way to notice. The bound is a refusal on purpose.
-    const id = newLayer();
+    const id = await newLayer();
     const huge = Array.from({ length: MAX_PATH_POINTS + 1 }, (_, i) => ({ x: i, y: 0 }));
     expect(() => setProp(id, 'points', huge)).toThrow(/limit is 10000/);
   });
 
-  it('★ leaves the document untouched when validation fails partway', () => {
+  it('★ leaves the document untouched when validation fails partway', async () => {
     // The parse walks the array in order, so a bad point at the end is the case
     // where a careless implementation has already written the good ones.
-    const id = newLayer();
-    setProp(id, 'points', [{ x: 1, y: 1 }]);
+    const id = await newLayer();
+    await setProp(id, 'points', [{ x: 1, y: 1 }]);
     const before = JSON.stringify(geometry(id)!.points);
 
     expect(() => setProp(id, 'points', [
@@ -152,8 +144,8 @@ describe('the value is parsed, not cast', () => {
     expect(JSON.stringify(geometry(id)!.points)).toBe(before);
   });
 
-  it('refuses a prototype-polluting key', () => {
-    const id = newLayer();
+  it('refuses a prototype-polluting key', async () => {
+    const id = await newLayer();
     const evil = JSON.parse('[{"x":0,"y":0,"__proto__":{"polluted":true}}]') as unknown;
     expect(() => setProp(id, 'points', evil)).toThrow(/__proto__/);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
@@ -161,16 +153,16 @@ describe('the value is parsed, not cast', () => {
 });
 
 describe('paint', () => {
-  it('sets a solid fill', () => {
-    const id = newLayer();
-    expect(setProp(id, 'fillPaint', { type: 'solid', color: '#ff0000' })).toBe(true);
+  it('sets a solid fill', async () => {
+    const id = await newLayer();
+    expect(await setProp(id, 'fillPaint', { type: 'solid', color: '#ff0000' })).toBe(true);
   });
 
-  it('sets a gradient and MINTS the stop ids itself', () => {
+  it('sets a gradient and MINTS the stop ids itself', async () => {
     // An id arriving from a worker is either a collision with a host-generated
     // one or a handle to something the plugin should not be able to name.
-    const id = newLayer();
-    expect(setProp(id, 'fillPaint', {
+    const id = await newLayer();
+    expect(await setProp(id, 'fillPaint', {
       type: 'linear',
       angle: 45,
       stops: [{ offset: 0, color: '#000000' }, { offset: 1, color: '#ffffff' }],
@@ -184,9 +176,9 @@ describe('paint', () => {
     for (const stop of fill!.stops) expect(typeof stop.id).toBe('string');
   });
 
-  it('★ ignores a stop id the plugin supplied', () => {
-    const id = newLayer();
-    setProp(id, 'fillPaint', {
+  it('★ ignores a stop id the plugin supplied', async () => {
+    const id = await newLayer();
+    await setProp(id, 'fillPaint', {
       type: 'linear',
       stops: [
         { offset: 0, color: '#000000', id: 'forged' },
@@ -199,53 +191,53 @@ describe('paint', () => {
     expect(json).not.toContain('forged');
   });
 
-  it('refuses a colour the renderers do not agree on', () => {
-    const id = newLayer();
+  it('refuses a colour the renderers do not agree on', async () => {
+    const id = await newLayer();
     expect(() => setProp(id, 'fillPaint', { type: 'solid', color: 'red' })).toThrow(/hex colour/);
     expect(() => setProp(id, 'fillPaint', { type: 'solid', color: 'rgb(1,2,3)' })).toThrow(/hex colour/);
   });
 
-  it('accepts #rgb, #rrggbb and #rrggbbaa', () => {
-    const id = newLayer();
+  it('accepts #rgb, #rrggbb and #rrggbbaa', async () => {
+    const id = await newLayer();
     for (const c of ['#f00', '#ff0000', '#ff0000cc']) {
-      expect(setProp(id, 'fillPaint', { type: 'solid', color: c })).toBe(true);
+      expect(await setProp(id, 'fillPaint', { type: 'solid', color: c })).toBe(true);
     }
   });
 
-  it('refuses a one-stop gradient, which has no ramp', () => {
-    const id = newLayer();
+  it('refuses a one-stop gradient, which has no ramp', async () => {
+    const id = await newLayer();
     expect(() => setProp(id, 'fillPaint', {
       type: 'linear', stops: [{ offset: 0, color: '#000000' }],
     })).toThrow(/at least two stops/);
   });
 
-  it('refuses more stops than the bound', () => {
-    const id = newLayer();
+  it('refuses more stops than the bound', async () => {
+    const id = await newLayer();
     const stops = Array.from({ length: MAX_GRADIENT_STOPS + 1 }, () => ({ offset: 0, color: '#000000' }));
     expect(() => setProp(id, 'fillPaint', { type: 'linear', stops })).toThrow(/limit is 64/);
   });
 
-  it('refuses an unknown paint type by naming the three that exist', () => {
-    const id = newLayer();
+  it('refuses an unknown paint type by naming the three that exist', async () => {
+    const id = await newLayer();
     expect(() => setProp(id, 'fillPaint', { type: 'conic', stops: [] })).toThrow(/solid.*linear.*radial/);
   });
 });
 
 describe('stroke', () => {
-  it('sets width and colour', () => {
-    const id = newLayer();
-    expect(setProp(id, 'stroke', { width: 4, color: '#00ff00' })).toBe(true);
+  it('sets width and colour', async () => {
+    const id = await newLayer();
+    expect(await setProp(id, 'stroke', { width: 4, color: '#00ff00' })).toBe(true);
     const s = getNodeStroke(id)!;
     expect(s.width).toBe(4);
     expect(s.color).toBe('#00ff00');
   });
 
-  it('★ patches rather than replaces, so setting width keeps the cap', () => {
+  it('★ patches rather than replaces, so setting width keeps the cap', async () => {
     // A stroke has ten fields. An author changing one should not have to
     // restate the other nine to avoid resetting them to defaults.
-    const id = newLayer();
-    setProp(id, 'stroke', { width: 4, color: '#00ff00', cap: 'round', dash: [6, 3] });
-    setProp(id, 'stroke', { width: 9 });
+    const id = await newLayer();
+    await setProp(id, 'stroke', { width: 4, color: '#00ff00', cap: 'round', dash: [6, 3] });
+    await setProp(id, 'stroke', { width: 9 });
 
     const s = getNodeStroke(id)!;
     expect(s.width).toBe(9);
@@ -254,20 +246,20 @@ describe('stroke', () => {
     expect(s.color).toBe('#00ff00');
   });
 
-  it('refuses an alignment that is not one of the three', () => {
-    const id = newLayer();
+  it('refuses an alignment that is not one of the three', async () => {
+    const id = await newLayer();
     expect(() => setProp(id, 'stroke', { align: 'middle' })).toThrow(/inside, center, outside/);
   });
 
-  it('refuses a negative width', () => {
-    const id = newLayer();
+  it('refuses a negative width', async () => {
+    const id = await newLayer();
     expect(() => setProp(id, 'stroke', { width: -1 })).toThrow(/between 0 and/);
   });
 });
 
 describe('the gate around all of it', () => {
-  it('★ refuses a structured value on a prop that does not take one, and lists the ones that do', () => {
-    const id = newLayer();
+  it('★ refuses a structured value on a prop that does not take one, and lists the ones that do', async () => {
+    const id = await newLayer();
     let message = '';
     try { setProp(id, 'opacity', { type: 'solid', color: '#ff0000' }); }
     catch (e) { message = (e as Error).message; }
@@ -275,22 +267,22 @@ describe('the gate around all of it', () => {
     for (const name of STRUCTURED_PROP_NAMES) expect(message).toContain(name);
   });
 
-  it('still refuses a scalar of the wrong type, and now points at the structured props', () => {
-    const id = newLayer();
+  it('still refuses a scalar of the wrong type, and now points at the structured props', async () => {
+    const id = await newLayer();
     expect(() => setProp(id, 'opacity', (() => undefined) as unknown)).toThrow(/number, string or boolean/);
   });
 
   it('leaves ordinary scalar writes exactly as they were', async () => {
-    const id = newLayer();
+    const id = await newLayer();
     // An engine `setProperty` since B5: the verb resolves.
     expect(await setProp(id, 'opacity', 50)).toBe(true);
   });
 
-  it('★ refuses null, which typeof calls an object', () => {
+  it('★ refuses null, which typeof calls an object', async () => {
     // `typeof null === 'object'` is the oldest trap in JS, and the routing
     // check here is a typeof. Without the explicit null test it would reach
     // the structured planner and fail with a message about paths.
-    const id = newLayer();
+    const id = await newLayer();
     expect(() => setProp(id, 'points', null)).toThrow(/number, string or boolean/);
   });
 });
