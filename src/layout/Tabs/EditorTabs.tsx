@@ -95,6 +95,8 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
   // can appear here; they just must not block the live selection.
   const lastPreviewed = useLastFootagePreview((s) => s.asset);
   const selectionIds = useSelectionStore((s) => s.ids);
+  // B4-gap: the Footage viewer opens the page's asset RECORD (its object URL, type) — `ItemInfo`
+  // carries no playable media URL (a media-URL field or `getThumbnail` would close it).
   const assets = useAssetStore((s) => s.assets);
   const singleSelectedLayer = selectionIds.length === 1 ? selectionIds[0]! : null;
   const selectedLayerInfo = useMirrorLayer(singleSelectedLayer);

@@ -21,9 +21,7 @@ import type { AccordionItem } from '@components/Accordion';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { getEventBus } from '@core/events/EventBus';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodePuppet } from '@core/rig/puppet';
-import { readNodeSkeleton } from '@core/rig/skeletonCommands';
+import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
 import { BoneControls } from '@layout/Inspector/BoneControls';
 import { PuppetControls } from '@layout/Inspector/PuppetControls';
 import { renderInspector } from '@layout/Inspector/InspectorContent';
@@ -59,6 +57,11 @@ export function RigPanel(): JSX.Element {
 
 function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?: string }): JSX.Element {
   const activeTool = useUIStore((s) => s.activeTool);
+  // B4: the layer and its rig groups from the mirror — `puppet` / `skeleton`
+  // exist in the property tree exactly when the layer stores that rig
+  // (rigProps.ts `rigGroupPaths`), and the tree key wakes this on add / remove.
+  const layer = useMirrorLayer(nodeId);
+  const tree = useMirrorTree(layer ? nodeId : null);
   if (!nodeId) {
     return (
       <EmptyState
@@ -78,12 +81,11 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
       />
     );
   }
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return <div className={styles.empty}>No node data</div>;
+  if (!layer) return <div className={styles.empty}>No node data</div>;
 
   const items: AccordionItem[] = [];
-  const hasSkeleton = !!readNodeSkeleton(node);
-  const hasPuppet = !!readNodePuppet(node);
+  const hasSkeleton = !!tree?.nodes.has('skeleton');
+  const hasPuppet = !!tree?.nodes.has('puppet');
 
   if (hasSkeleton || activeTool === 'bone' || !hasPuppet) {
     items.push({

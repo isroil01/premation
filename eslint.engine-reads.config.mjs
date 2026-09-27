@@ -27,6 +27,9 @@ export default [
       '**/*.test.{ts,tsx}', '**/__tests__/**', '**/__testHelpers__/**', '**/*.d.ts', '**/*.stories.tsx',
       // The mirror and its hooks are the sanctioned reader: they talk to the engine API only.
       'src/stores/documentMirror*.ts', 'src/hooks/useMirror*.ts',
+      // The F2 replica binders: engine → page store from the mirror, a user's store edit → one engine
+      // command (docs/NATIVE_CORE_PLAN.md §5 F2). Sanctioned the same way the mirror is.
+      'src/stores/engineDocumentStores.ts', 'src/stores/engineItemsView.ts',
     ],
   },
   {

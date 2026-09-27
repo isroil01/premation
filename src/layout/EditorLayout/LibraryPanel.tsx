@@ -295,6 +295,7 @@ function MographCard({ item }: { item: MographItem }): JSX.Element {
       onClick={async () => {
         // The item's rigged layer set (shapes, styled text, keys, expressions) is built
         // off-document and lands as ONE pasteLayers entry; then its choreography previews.
+        // B4-kept: the builder runs against the TS engine's scratch state (an engine-side builder, not a display read).
         const ids = await insertBuiltLayers(`Insert ${item.name}`, (activeCompIdNow() ?? 'comp_root'), () => buildMographItem(item.id));
         if (ids === null) return; // refused — already toasted
         const id = ids[0];

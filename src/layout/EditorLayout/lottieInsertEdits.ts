@@ -13,6 +13,16 @@ import { insertBuiltLayers } from '@core/engine/offDocument';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { buildLottieFile, buildLottieItem, getLottieItem, prepareLottieFile, previewLottieItem } from '@core/library/lottieLibrary';
 import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
+import { documentMirror } from '@stores/documentMirror';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
+import { settingsDurationSeconds } from '@core/mirror/compFacts';
+
+/** The active composition's size and length (the document mirror, B4); the default comp when there is none. */
+function activeCompFrame(): { width: number; height: number; durationSeconds: number } {
+  const s = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+  if (!s) return { width: DEFAULT_COMPOSITION.width, height: DEFAULT_COMPOSITION.height, durationSeconds: DEFAULT_COMPOSITION.durationSeconds };
+  return { width: s.width, height: s.height, durationSeconds: settingsDurationSeconds(s) };
+}
 
 /**
  * Insert a bundled Lottie item, centred at (x, y) (comp centre when omitted).
@@ -21,6 +31,7 @@ import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lott
 export async function insertLottieItemEdit(lottieId: string, x?: number, y?: number): Promise<string[] | null> {
   const item = getLottieItem(lottieId);
   if (!item) return [];
+  // B4-kept: the builder runs OFF-document against the TS engine's scratch state (insertBuiltLayers → ONE pasteLayers).
   const ids = await insertBuiltLayers(`Insert ${item.name}`, (activeCompIdNow() ?? 'comp_root'), () => buildLottieItem(lottieId, x, y));
   if (ids && ids.length > 0) previewLottieItem(lottieId);
   return ids;
@@ -30,7 +41,7 @@ export async function insertLottieItemEdit(lottieId: string, x?: number, y?: num
 export async function importLottieFileEdit(file: File): Promise<void> {
   let prepared;
   try {
-    prepared = await prepareLottieFile(file);
+    prepared = await prepareLottieFile(file, activeCompFrame);
   } catch (err) {
     reportLottieImportFailure(file.name, err);
     return;

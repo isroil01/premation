@@ -39,6 +39,9 @@ let seq = 0;
 const rand = () => Math.random().toString(36).slice(2, 6);
 
 // ── serialize a live subtree into a template (deep, id-free) ──────────
+// B4-gap: the saved component format is the legacy SerializedNode (every component record, persisted in
+// localStorage); `copyLayers` answers a DocumentFragment instead — closing it means storing fragments
+// (and a pasteLayers insert) with a migration for the components users already saved.
 function serialize(nodeId: string): SerializedNode | null {
   const n = defaultSceneGraph.getNode(nodeId);
   if (!n) return null;

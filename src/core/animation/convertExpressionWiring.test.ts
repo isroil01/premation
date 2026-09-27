@@ -38,6 +38,7 @@ import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appE
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import { engineIdle } from '@core/engine/engineInstance';
 import { catalogFor } from '@core/engine/props';
+import { documentMirror } from '@stores/documentMirror';
 
 const NODE = 'wire-node';
 const COMMAND_ID = 'animation.convertExpressionToKeyframes';
@@ -135,15 +136,28 @@ describe('the command', () => {
     expect(command()!.enabled?.()).toBe(false);
   });
 
-  test('is enabled once the selected layer has an ENABLED expression', () => {
-    defaultAnimation.setExpression(NODE, 'x', 'time * 90');
-    useSelectionStore.getState().set([NODE]);
-    expect(command()!.enabled?.()).toBe(true);
+  test('is enabled once the selected layer has an ENABLED expression', async () => {
+    // The predicate reads the document mirror (B4), so the layer and its
+    // expression are made through the app's engine.
+    const { h, layer } = await engineLayerWith({ x: 'time * 90' });
+    try {
+      const mirrored = async (): Promise<void> => {
+        await engineIdle();
+        documentMirror().tree(layer);
+        await documentMirror().whenIdle();
+      };
+      await mirrored();
+      expect(command()!.enabled?.()).toBe(true);
 
-    // …and goes back to disabled when the expression is switched off, which is
-    // the same predicate `execute` uses. One question, two callers.
-    defaultAnimation.setExpressionEnabled(NODE, 'x', false);
-    expect(command()!.enabled?.()).toBe(false);
+      // …and goes back to disabled when the expression is switched off, which is
+      // the same question `execute` asks. One question, two callers.
+      const b = catalogFor(layer).byMember.get('x')!;
+      await h.run({ type: 'setExpression', prop: { layer, path: b.path }, source: 'time * 90', enabled: false, member: b.members.indexOf('x') });
+      await mirrored();
+      expect(command()!.enabled?.()).toBe(false);
+    } finally {
+      await h.dispose();
+    }
   });
 
   test('EXECUTING it bakes — not merely "the id exists"', async () => {

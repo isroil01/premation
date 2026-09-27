@@ -18,7 +18,7 @@ import {
 import { allLayerKinds } from '@core/plugins/layerKindRegistry';
 import { createCustomLayerFromMenu } from '@core/plugins/createCustomLayerFromMenu';
 import { insertBuiltLayers } from '@core/engine/offDocument';
-import { graph as docGraph, isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/engine/doc';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { isPickArmed } from '@stores/trackerStore';
@@ -26,7 +26,7 @@ import { pruneKeyframeSelectionToNodes, useKeyframeSelectionStore } from '@store
 import { prunePropertySelectionToNodes } from '@stores/propertySelectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { copyEdit, cutEdit, pasteEdit } from './clipboardEdits';
-import { audioSliderNullEdit, expressionBakeEdit, exponentialScaleEdit } from './menuCommandEdits';
+import { audioSliderNullEdit, canExponentialScale, expressionBakeEdit, exponentialScaleEdit, hasBakeableExpression } from './menuCommandEdits';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { goToMarkerIndex, isTransportPlaying, pauseTransport, playTransport, seekPlayhead } from '@core/timeline/timelineView';
 import { documentMirror } from '@stores/documentMirror';
@@ -128,11 +128,8 @@ import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { applyRigPresetEdit } from '@core/engine/rigPaths';
-import { eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
-import {
-  eligibleExpressionProps,
-  BAKE_REFUSAL_TEXT,
-} from '@core/animation/convertExpressionToKeyframes';
+import { REFUSAL_TEXT } from '@core/animation/exponentialScale';
+import { BAKE_REFUSAL_TEXT } from '@core/animation/convertExpressionToKeyframes';
 import {
   timeReverseKeyframes,
   easyEaseAll,
@@ -143,9 +140,9 @@ import { fetchMemberTracks, memberTracksNow } from '@stores/memberTracks';
 import { fetchLayerBox } from '@stores/layerBoxes';
 import { compTime } from '@core/engine/propRefs';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import { AudioPlaybackBridge } from '@hooks/useAudioPlayback';
 import { installExpressionProviders } from '@core/engine/expressionProviders';
+import { installSceneRevisionUpkeep } from '@core/engine/sceneRevisionUpkeep';
 import { ProjectCommands } from '@layout/Menu';
 import { CommandPalette } from '@layout/CommandPalette';
 import { PresentationMode } from '@layout/Presentation/PresentationMode';
@@ -158,17 +155,16 @@ import { openSolidSettings } from '@layout/Composition/LayerSettingsDialog';
 import { openCameraDialog, openLightDialog } from '@layout/Workspace/SceneInsertDialogs';
 import { runSceneEditDetection, type SceneEditMode } from '@core/tracking/sceneEditCommand';
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
-import { findNavTarget } from '@core/workspace/cameraNav';
-import { pathVertices } from '@core/scene/nullsFromPaths';
+import { compHas3DContent } from '@core/mirror/compLayers';
+import { componentPropValue } from '@core/mirror/componentProps';
 import { nullsFromPathEdit, shapesFromTextEdit } from '@layout/Scene/layerCreateEdits';
 import { buildPathCommands } from '@core/workspace/pathCommands';
-import { canCreateShapesFromText } from '@core/scene/shapesFromText';
 import { autoTraceLayer } from '@core/effects/autoTrace';
 import { runEngineJob } from '@core/engine/engineJobs';
 import { secondsToFlicks } from '@motion/engine-api';
 import { centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
+import { settingsDurationSeconds, settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffectEdit } from '@layout/Effects/effectEdits';
 import { easePresetOnKeys } from '@layout/Timeline/keyframeEdits';
@@ -558,7 +554,7 @@ function buildCameraToolCommands(): ReadonlyArray<Command> {
       label: 'Camera Tool (Unified / Orbit / Pan / Dolly)',
       icon: 'camera',
       shortcut: { key: 'c' },
-      enabled: () => findNavTarget() !== null,
+      enabled: () => canNavigateCamera(),
       execute: () => {
         useGuidesStore.getState().cycleCameraTool();
         const mode = useGuidesStore.getState().cameraTool;
@@ -580,7 +576,7 @@ function buildCameraToolCommands(): ReadonlyArray<Command> {
       id: asCommandId('tool.cameraUnified'),
       label: 'Unified Camera Tool',
       icon: 'camera',
-      enabled: () => findNavTarget() !== null,
+      enabled: () => canNavigateCamera(),
       execute: () => {
         useGuidesStore.getState().setCameraTool('unified');
         notify('Unified Camera: left-drag orbits, middle-drag pans, right-drag dollies — Esc to exit', 'info');
@@ -663,9 +659,9 @@ function buildMarkerCommands(): ReadonlyArray<Command> {
     // Honest disable: with fewer than N markers the key does nothing, and a
     // command that reports itself enabled while doing nothing is the dead-control
     // shape this codebase keeps finding.
-    // B4-gap: comp markers — a marker the legacy M key adds reaches the mirror a
-    // microtask later, and a Shift+digit in the same tick must already see it.
-    enabled: () => getTimelineController().compMarkerCount() >= n,
+    // The active composition's markers, from the document mirror at call time
+    // (B4): a key press is its own task, so a marker added before it has landed.
+    enabled: () => (documentMirror().comp(activeCompIdNow() ?? '')?.markers.length ?? 0) >= n,
     execute: () => {
       if (!goToMarkerIndex(n)) {
         notify(`No comp marker ${n}`, 'info');
@@ -769,8 +765,10 @@ function buildPrimitive3DCommands(): ReadonlyArray<Command> {
     // active comp root itself.
     enabled: () => true,
     execute: () => {
-      insert3DPrimitive(id);
-      notify(`${label} added`, 'success');
+      // Built off-document, inserted as ONE pasteLayers entry.
+      void insertBuiltLayers(`New ${label}`, activeCompIdNow() ?? 'comp_root', () => insert3DPrimitive(id)).then((ids) => {
+        if (ids && ids.length > 0) notify(`${label} added`, 'success');
+      });
     },
   }));
 }
@@ -891,6 +889,40 @@ function buildEasingCommands(): ReadonlyArray<Command> {
 
 /** The playhead in comp seconds — where the registry's transform commands read and key. */
 const playheadSeconds = (): number => getTime();
+
+// ── Command predicates over the document mirror (B4: read at call time) ──
+
+/**
+ * Camera navigation is possible — `cameraNav.findNavTarget() !== null`, which
+ * holds exactly when the active composition has 3D content that is not a
+ * camera or a light (every branch of it ends in `compHasAny3D`).
+ */
+function canNavigateCamera(): boolean {
+  return compHas3DContent(documentMirror(), activeCompIdNow(), false);
+}
+
+/**
+ * A single shape layer with a drawn outline that has vertices at the playhead
+ * (`nullsFromPaths.pathVertices`): its Path (`layer/path.points`) — the value
+ * at the playhead when keyed, else the static outline. A rectangle primitive
+ * has no outline to rig.
+ */
+function hasPathVertices(id: string): boolean {
+  const m = documentMirror();
+  if (uiKindOf(m.layer(id)) !== 'shape') return false;
+  const info = m.property(id, 'layer/path.points');
+  if (!info) return false;
+  const v = info.animated ? m.valueAt(id, info.path, secondsToFlicks(playheadSeconds())) : info.value;
+  return v?.kind === 'path' && v.value.vertices.length > 0;
+}
+
+/** A text layer with something to outline (`shapesFromText.canCreateShapesFromText`). */
+function hasOutlinableText(id: string): boolean {
+  const m = documentMirror();
+  if (uiKindOf(m.layer(id)) !== 'text') return false;
+  const content = componentPropValue(m, id, 'content');
+  return typeof content === 'string' && content.trim() !== '';
+}
 
 function buildBuiltinCommands(): ReadonlyArray<Command> {
   return [
@@ -1080,16 +1112,17 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       /**
        * Exponential Scale — AE's other keyframe assistant.
        *
-       * `enabled` and `execute` both go through `eligibleScaleTracks`, so the
-       * command cannot grey itself out for a layer it would have handled, or
-       * offer itself for one it would refuse. One predicate, two callers.
+       * `enabled` asks the question `execute` does — the Scale property's
+       * first → last keys, not refused (`canExponentialScale`, the mirror at
+       * call time) — so the command cannot grey itself out for a layer it
+       * would have handled, or offer itself for one it would refuse.
        */
       id: asCommandId('animation.exponentialScale'),
       label: 'Exponential Scale',
       icon: 'trending-up',
       enabled: () => {
         const ids = useSelectionStore.getState().ids;
-        return ids.length === 1 && eligibleScaleTracks(ids[0]!).length > 0;
+        return ids.length === 1 && canExponentialScale(ids[0]!);
       },
       execute: () => {
         const nodeId = useSelectionStore.getState().ids[0];
@@ -1320,8 +1353,9 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       /**
        * Convert Expression to Keyframes — AE's keyframe assistant.
        *
-       * `enabled` and `execute` both go through `eligibleExpressionProps`, so
-       * the command cannot offer itself for a layer it would refuse (§2·0).
+       * `enabled` asks the mirror for an enabled expression on a property the
+       * bake addresses (`hasBakeableExpression`), so the command does not
+       * offer itself for a layer it would refuse (§2·0).
        *
        * The count is worth reporting rather than a bare "done": a bake writes
        * one keyframe per frame, so a two-second layer produces sixty, and a
@@ -1333,7 +1367,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       icon: 'keyframe',
       enabled: () => {
         const ids = useSelectionStore.getState().ids;
-        return ids.length === 1 && eligibleExpressionProps(ids[0]!).length > 0;
+        return ids.length === 1 && hasBakeableExpression(ids[0]!);
       },
       execute: () => {
         const nodeId = useSelectionStore.getState().ids[0];
@@ -1802,9 +1836,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       label: 'Create Nulls From Path Points',
       enabled: () => {
         const ids = useSelectionStore.getState().ids;
-        if (ids.length !== 1) return false;
-        const n = docGraph.getNode(ids[0]!);
-        return !!n && readNodeKind(n) === 'shape' && pathVertices(n, playheadSeconds()).length > 0;
+        return ids.length === 1 && hasPathVertices(ids[0]!);
       },
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
@@ -1821,9 +1853,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       label: 'Create Nulls From Path Points (Points Follow Nulls)',
       enabled: () => {
         const ids = useSelectionStore.getState().ids;
-        if (ids.length !== 1) return false;
-        const n = docGraph.getNode(ids[0]!);
-        return !!n && readNodeKind(n) === 'shape' && pathVertices(n, playheadSeconds()).length > 0;
+        return ids.length === 1 && hasPathVertices(ids[0]!);
       },
       execute: () => {
         const id = useSelectionStore.getState().ids[0];
@@ -1842,7 +1872,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       label: 'Create Shapes From Text',
       enabled: () => {
         const ids = useSelectionStore.getState().ids;
-        return ids.length === 1 && canCreateShapesFromText(ids[0]!);
+        return ids.length === 1 && hasOutlinableText(ids[0]!);
       },
       execute: async () => {
         const id = useSelectionStore.getState().ids[0];
@@ -1868,10 +1898,11 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: async () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        const c = getTimelineController();
-        const now = c.currentSeconds;
-        const wa = c.timeline.getRanges().workArea;
-        const fps = c.timeline.getFrameRate().fps;
+        // The playhead, the SET work area (seconds, end exclusive) and the rate — the active comp in the mirror.
+        const settings = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+        const now = playheadSeconds();
+        const wa = settingsSetWorkArea(settings);
+        const fps = settingsFps(settings);
         const choice = await customPrompt(
           'Auto-trace',
           'Trace the current frame, or every frame of the work area? Type "frame" or "range". Optional threshold 0–255 after a space (default 128).',
@@ -1881,8 +1912,8 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         const [modeRaw, thrRaw] = choice.trim().split(/\s+/);
         const range = (modeRaw ?? '').toLowerCase().startsWith('r');
         const threshold = Math.max(0, Math.min(255, Number(thrRaw) || 128));
-        const startSec = range && wa ? wa.start / fps : now;
-        const endSec = range && wa ? (wa.start + wa.duration - 1) / fps : undefined;
+        const startSec = range && wa ? wa.start : now;
+        const endSec = range && wa ? wa.end - 1 / Math.max(1, fps) : undefined;
         const noteId = useUIStore.getState().notify({ level: 'info', message: 'Auto-trace: rendering…', durationMs: 0 });
         try {
           // The engine traces the layer's frames itself when it runs jobs (the autoTrace job).
@@ -2514,19 +2545,9 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // engine-side wiring, see core/engine/expressionProviders.ts. Must run
         // before any engine emit (seeding below) reaches its listeners.
         installExpressionProviders();
-        // Keyframe edits refresh the timeline tracks + inspector + viewport.
-        //
-        // Media decode/upload repaints are NOT edits and must not come through
-        // here. They arrive on the same event at the source's frame rate, and
-        // bumping the scene for each one ran a full scene-graph walk, content
-        // re-hash and React reconcile per decoded video frame — while the
-        // viewport's own render loop was already filtering these events out for
-        // exactly that reason. The viewport still repaints for them; it just
-        // does it without pretending the document changed.
-        track(getEventBus().on('AnimationChanged', (payload) => {
-          if (isMediaDecodeRepaint(payload)) return;
-          bumpScene();
-        }));
+        // Keyframe edits move the TS engine's scene revision (never for a media
+        // decode repaint): engine-side upkeep, see core/engine/sceneRevisionUpkeep.ts.
+        track(installSceneRevisionUpkeep());
 
         // Native (Electron) menu items dispatch through the same CommandSystem.
         // `menu.action:` ids are the model's onSelect-only entries (workspace
@@ -2625,6 +2646,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             // at comp resolution through the deterministic offline path.
             enabled: () => true,
             execute: async () => {
+              // B4-kept: the in-page TS renderer's inputs (the comp record + compSizeOf over the live
+              // document, the controller's frame) — leaves with the renderer (D5), like buildSnapshot's.
               const c = useCompositionStore.getState().comp();
               const frame = Math.round(getTimelineController().timeline.currentFrame);
               const blob = await renderStillFrame(
@@ -2648,6 +2671,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             // deterministic path as Save Frame As; only the destination differs.
             enabled: () => typeof navigator !== 'undefined' && !!navigator.clipboard?.write,
             execute: async () => {
+              // B4-kept: the in-page TS renderer's inputs (the comp record + compSizeOf over the live
+              // document, the controller's frame) — leaves with the renderer (D5), like buildSnapshot's.
               const c = useCompositionStore.getState().comp();
               const frame = Math.round(getTimelineController().timeline.currentFrame);
               const blob = await renderStillFrame(
