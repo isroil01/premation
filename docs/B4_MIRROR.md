@@ -226,6 +226,46 @@ points and masks from the mirror — a parity-checked step of its own).
   from the pushed matrix + text box; their reflow drag reads the mirror and
   asks `getTextLayout` / `getLayerTransforms` at press.
 
+### b4-round4 (2026-09-28, the ratchet 519 → 381)
+
+- Queries / fields: `getSearchFacts` (the Layers panel's Effects / Expressions
+  search), `evaluateExpression {member}` + Source Text preview,
+  `LayerInfo.pluginSchemaVersion` (Custom Layer section). Both engines,
+  C++ tests in `tests/test_b4_round3.cpp`.
+- Per area (one commit each): text 9 → 6, layers 16 → 3, inspector 67 → 57,
+  comps/assets/dialogs 37 → 25, AI/plugins/commands 38 → 18, other 114 → 73,
+  effects 3 → 0, timeline 13 → 10, viewport/tools 222 → 189.
+- New mirror readers: `core/mirror/clipBars.ts` (the controller's clip bars
+  from `LayerTiming`), `mographFields.ts`, `customLayer.ts`,
+  `layerSettings.ts`; engine-side upkeep out of the shell:
+  `core/engine/modelUpkeep.ts`, `sceneRevisionUpkeep.ts`.
+- Rules: `WRITE_VERB` counts `insert3D…` (it escaped by its digit — the 3D
+  inserts now go off-document through `insertBuiltLayers`); the F2 replica
+  binders (`engineDocumentStores.ts`, `engineItemsView.ts`) are sanctioned like
+  the mirror.
+- Gaps found and left marked `B4-gap` (what closes each): a playable media URL
+  on `ItemInfo` (sfx insert, footage tab, assemble / multicam, audio voice),
+  a proxy record on `ItemInfo` or proxy jobs, `getDocumentColors` (swatches),
+  `LayerInfo.caption` (transcripts), slot rect / fit fields (templates), a
+  `mapLayerTime` query (open precomp at the mapped time), a precompose dry-run
+  (deformer fx), `getSourceSize` (Fit), data tracks in `getMemberKeyframes`
+  (stagger), `model/targetNames`, a `LayerInfo.multicamAngle`, stored-vs-default
+  on `PropertyInfo` (text style capture, per-corner radii, Swap Fill/Stroke),
+  grapheme-indexed `text/styleRuns` reads, CSS `rgb()/rgba()` parsed by both
+  engines' colour fields (the TS engine reads a stored `rgba()` fill as white).
+- Left on purpose: engine jobs (tracking, audio analysis, bakes, roto, auto
+  trace, scene-edit detection), the page renderer's inputs (viewport, Layer
+  viewer, export, still frames), the transport tick, the AE row projection.
+- viewport/tools (189): the overlays and ports still read evaluated geometry
+  per frame — PuppetOverlay / BoneOverlay (pins and bones are not in the push:
+  the rig sampler must run engine-side first), the 3D gizmo / axis widget /
+  focus plane / scene reference geometry (the view camera and 3D projection per
+  view are not in the push), TextEditOverlay (glyph boxes: `TextLayout.glyphs`
+  is not filled), and useWorkspace's SceneGraphPort. The geometry-backed
+  SceneGraphPort (anchors, 3D projection, extruded hulls, clip gating, path
+  points, masks from the mirror + push) is a parity-checked step of its own and
+  was not started.
+
 ## 5. What is left (2026-09-24: 681 reads, from 765)
 
 The ratchet (`node scripts/lint/engineReadsReport.mjs`) by area: viewport/tools

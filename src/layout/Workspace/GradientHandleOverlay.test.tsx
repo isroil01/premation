@@ -33,6 +33,7 @@ import { defaultAnimation } from '@motion/animation';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { Command } from '@motion/engine-api';
 import { engineIdle } from '@core/engine/engineInstance';
+import { propRefForTrack } from '@core/engine/propRefs';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
@@ -533,7 +534,10 @@ describe('a text stroke gradient', () => {
 
   it('a grip drag keyframes strokeAngle when that track is live — ONE undo entry, static paint untouched', async () => {
     await withStrokeGradient();
-    defaultAnimation.setKeyframe(T, 'strokeAngle', 0, 0);
+    // Keyed through the engine (the "live" test reads the mirror's key list, B4).
+    const ref = propRefForTrack(T, 'strokeAngle')!.ref;
+    await h.run({ type: 'setAnimated', prop: ref, animated: true, time: 0 });
+    await act(async () => { await engineIdle(); });
     freshHistory();
     useGradientEditStore.getState().arm(T, 0, 'stroke');
     const { container } = await renderOverlay();

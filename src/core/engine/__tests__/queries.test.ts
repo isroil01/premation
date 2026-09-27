@@ -1,6 +1,6 @@
 /** Every query (ENGINE_API.md §7): answers, never changes the document, and unknown ids are typed errors. */
 
-import { QUERIES, unwrap, type Query, type QueryType } from '@motion/engine-api';
+import { QUERIES, unwrap, type DocumentFragment, type Query, type QueryType } from '@motion/engine-api';
 import { setupEngine, sec, type Harness } from '../__testHelpers__/harness';
 import { buildScene, type Scene } from '../__testHelpers__/scene';
 import { hasCanvas } from '@core/effects/__testHelpers__/canvasFidelity';
@@ -228,7 +228,7 @@ test('answers carry the document as the engine holds it', async () => {
 });
 
 test('LayerInfo.pluginSchemaVersion: a custom plugin layer\'s stored schema version (the C++ test_b4_round3 twin)', async () => {
-  const frag = (await h.query({ type: 'copyLayers', layers: [s.A] })) as { data: Uint8Array };
+  const frag = (await h.query({ type: 'copyLayers', layers: [s.A] })) as DocumentFragment;
   const base = new TextDecoder().decode(frag.data);
   const withComponent = async (component: string): Promise<number | undefined> => {
     const key = '"components":[';

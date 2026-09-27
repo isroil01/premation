@@ -2124,6 +2124,13 @@ from the struct's maximum + 800.
   match names).
 - A composition ROOT row in the Layers panel has no eye / lock / solo (it is an
   item, not a layer): the tree reads none, where it read the root node's flags.
+- **`LayerInfo.pluginSchemaVersion?`** (921): a custom plugin layer's stored
+  `__schemaVersion` (1 when the record has none; absent for any other layer —
+  `readCustomLayer`'s rule: the first `pluginLayer:<kind>` component whose
+  `__kind` resolves to plugin + kind ids). TS `model.ts
+  pluginSchemaVersionOf`, C++ `readmodel.cpp plugin_schema_version_of`. The
+  Custom Layer section builds its record from the mirror
+  (`core/mirror/customLayer.ts`).
 - **Overlay geometry consumers**: `requestOverlayLayers(viewport, owner,
   layers, kinds)` (src/stores/overlayGeometry.ts) — each overlay asks for its
   own layers and kinds; the viewport's `setOverlayGeometry` is their union.

@@ -70,7 +70,11 @@ Data decisions:
   b4-round2 (the C++ text answer needs the full engine's fonts: `unsupported`
   headless; viewport-space bounds and `includeEffects` stay `unsupported` —
   the overlay geometry push carries screen geometry). `evaluateExpression`
-  takes a `member` and previews Source Text since b4-round3.
+  takes a `member` and previews Source Text since b4-round3; `getSearchFacts`
+  and `LayerInfo.pluginSchemaVersion` since b4-round4. Still missing for the
+  UI's last reads: rig pins / bones and 3D view projection in the overlay push,
+  `TextLayout.glyphs`, an `ItemInfo` media URL + proxy record, and the other
+  fields listed in B4_MIRROR.md "b4-round4".
   (`listFonts` answers from the OS font catalogue since
   p0-platform; `getWaveform`, `getThumbnail`, `hitTest`, `readPixels` answer
   from the C++ engine since d2w-round2.)

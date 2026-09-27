@@ -36,6 +36,8 @@ import type { ColorStop, FillPaint } from '@core/paint/fill';
 import { fillPaintCommands, fillStopsCommands, strokePatchCommands, textStrokePaintCommands } from '@layout/Inspector/appearance/paintEdits';
 import { trackRef, valueCommands } from '@layout/Inspector/inspectorEdits';
 import { fieldCommands } from '@layout/Text/textEdits';
+import { documentMirror } from '@stores/documentMirror';
+import { isTrackAnimated } from '@core/mirror/selection';
 
 // ── Numeric props through the viewport's "dual path" ─────────────────
 //
@@ -335,7 +337,7 @@ export function gradientGeometryCommands(
   const keyed: Record<string, number> = {};
   let anyStatic = false;
   for (const w of writes) {
-    const live = tracked && (opts.autoKeyframe || defaultAnimation.isAnimated(t.nodeId, w.track));
+    const live = tracked && (opts.autoKeyframe || isTrackAnimated(documentMirror(), t.nodeId, w.track));
     if (live && trackRef(t.nodeId, w.track)) keyed[w.track] = w.value;
     else anyStatic = true;
   }
