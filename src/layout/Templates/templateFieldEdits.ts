@@ -123,6 +123,8 @@ export async function fillMediaFieldEdit(field: TemplateField, file: File, secon
   const cmds: Command[] = [{ type: 'replaceLayerSource', layer: nodeId, source: asset.id, keepSize: true }];
   const w = asset.metadata?.width;
   const h = asset.metadata?.height;
+  // B4-gap: the slot rect and fit (`__slotW/__slotH/__slotFit` on the Transform — no catalog path); closes with
+  // those as layer properties.
   const box = slotBoxFor(nodeId, w && h ? { width: Math.round(w * (asset.interpret?.par ?? 1)), height: h } : null);
   if (box) {
     cmds.push(

@@ -128,6 +128,7 @@ const PURE_READS = new Set([
   'materialParamsOf', 'normalizeMaterialParams', // core/scene/material: reshapes / normalises the record given
   'primitiveLayerBox', // core/scene/primitiveLayer: the bounds of the mesh built from the spec given
   'isDistributeMode', // core/scene/alignNodes: a type guard over a static table
+  'planAlignBoxes', // core/scene/alignNodes: box-centre maths over the boxes given (distributeBoxes + the static DISTRIBUTE table); alignLayers measures them with getLayerBounds
   'defaultAudioDriver', 'expressionBlocker', // core/audio/audioDriver: a default record; a check over the AudioDriver given
   'defaultAudioWaveform', // core/audio/audioWaveformGen: a default record
   'detectSilences', 'totalSilenceSec', // core/audio/silenceRemoval: analysis over the samples / ranges given
@@ -184,6 +185,18 @@ const PURE_READS = new Set([
   'animPresetThumbnail', // core/template/animPresets: renders the preset into its OWN throwaway graph + animation engine (previewSpec), never the document
   'panelAssetSelectionIds', // core/composition/assetSelection: the Assets panel's published selection (editor state), not the document
   'essentialPropMenuItems', // core/inspector/propertyMenu: reads the document MIRROR (CompSettings.essentialProps); its onSelect is the promotion writer (the write ratchet's)
+  // B4 comps/assets/dialogs + AI/plugins/commands (checked: arguments only — no singleton, store, controller or document on any path).
+  'mintAssetId', // core/assets/local/importFromDisk: a fresh `asset_<shortId>` for a drag payload
+  'detectImageSequence', // core/scene/imageSequence: parses the file names it is given
+  'computeFit', // core/source/fitCommands: fit arithmetic over the source and frame sizes given
+  'emptySceneProject', // core/scene/sceneProjectIO: a fresh ProjectFile holding the default composition root (a literal)
+  // B4 other (checked: session state, the module's own state or the arguments — no singleton, store, controller or document on any path).
+  'markProjectDirty', 'afterProjectSaved', 'afterProjectLoaded', 'baselineProjectHistory', // core/project/projectSession: the active tab's dirty flag (editor session state), the crash-recovery snapshot, the undo baseline (historyBaseline) — no document read (the module counts for resetProjectWorkspace's controller reset)
+  'isRestoringDocument', // core/api/cloudDocument: the module's own restore-depth counter ("a restore is in progress"), not the document
+  'refuseExponentialScale', 'planExponentialScale', // core/animation/exponentialScale: the refusal test and the per-frame ramp over the ExpScaleRange / fps given
+  'readOsClipboardSvg', // core/commands/clipboard: SVG markup from the OS clipboard (navigator.clipboard) — not the document
+  'prepareLottieFile', // core/library/lottieLibrary: reads the File and plans it against the comp frame its `activeComp` argument answers (the caller: the mirror)
+  'previewLottieItem', 'previewMographItem', // core/library/{lottie,mograph}Library: a static catalog item's choreography window + previewChoreography (transport only; the mograph one starts at the tab's playhead)
 ]);
 
 /**

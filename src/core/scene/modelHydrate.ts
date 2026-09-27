@@ -21,7 +21,6 @@ import {
   readNodeModelRef,
   modelPrimitiveFor,
 } from './modelMesh';
-import { getEventBus } from '@core/events/EventBus';
 import { bumpScene } from '@stores/sceneStore';
 import type { SceneNode } from '@core/types';
 
@@ -76,14 +75,4 @@ export async function hydrateModels(): Promise<number> {
   } finally {
     scanning = false;
   }
-}
-
-/** Boot hook: hydrate now and after every structural scene change (opens,
- *  undo restores, pasted subtrees). Returns the uninstaller. */
-export function installModelHydration(): () => void {
-  void hydrateModels();
-  const sub = getEventBus().on('SceneGraphChanged', () => {
-    void hydrateModels();
-  });
-  return () => sub.dispose();
 }

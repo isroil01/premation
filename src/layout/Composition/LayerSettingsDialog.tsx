@@ -71,7 +71,8 @@ function LayerSettingsBody({ target, kind, initial, close }: BodyProps): JSX.Ele
       });
     } else {
       // The New Solid builder (comp-sized, centred, colour, name, size) runs off-document and
-      // lands as ONE pasteLayers entry, selected (offDocument.ts).
+      // lands as ONE pasteLayers entry, selected (offDocument.ts). B4-kept: `buildSolidLayer` is that builder —
+      // a write into the scratch graph, not a display read.
       void insertBuiltLayers('New Solid', activeCompIdNow() ?? 'comp_root', () => buildSolidLayer(values));
     }
     close();

@@ -36,6 +36,7 @@ import { resolveSelectionKey, storedTimeOf } from '@core/mirror/keySelection';
 import { documentMirror } from '@stores/documentMirror';
 import { fetchMemberTracks, memberTracksNow } from '@stores/memberTracks';
 import {
+  barOf,
   moveBar,
   moveBars,
   rippleInsertGapAtPlayhead,
@@ -73,7 +74,10 @@ import { installLegacyTimelineSync } from '@core/engine/timelineUpkeep';
 import { useGesture } from '@hooks/useGesture';
 import { flicksToSeconds, type Command } from '@motion/engine-api';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { mirrorBarOf, mirrorCompBars, type MirrorBar } from '@core/mirror/clipBars';
+import { settingsFps } from '@core/mirror/compFacts';
+import { mirrorCompIdForTransition, mirrorTransitionAtCut } from '@core/mirror/transitions';
+import { activeCompIdNow } from '@hooks/useMirror';
 import {
   goToNextKeyframe,
   goToPrevKeyframe,
@@ -90,7 +94,7 @@ import { modifiedPropertyRows } from '@core/animation/modifiedProps';
 import { useTimelinePixelsPerSecond, useTimelineRuler, useTimelineTracks } from '@layout/Timeline/useTimelineModel';
 import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
 import { bindAdaptiveResolution } from '@stores/renderQualityStore';
-import { installModelHydration } from '@core/scene/modelHydrate';
+import { installModelHydration } from '@core/engine/modelUpkeep';
 import { usePropertySelectionStore, propertyKey, distributeScrub } from '@stores/propertySelectionStore';
 import { mirrorMaskShapeKeyed } from '@core/mirror/masks';
 import { EditorLayout } from '@layout/EditorLayout';
@@ -113,8 +117,6 @@ import {
 import { openKeyframeVelocityDialog } from '@layout/Timeline/KeyframeVelocityDialog';
 import { addTransitionEdit, removeTransitionsEdit, setTransitionEdit } from '@layout/Timeline/transitionEdits';
 import {
-  transitionAtCut,
-  compIdForTransition,
   DEFAULT_TRANSITION_FRAMES,
   TRANSITION_KINDS,
   TRANSITION_LABEL,
@@ -258,7 +260,8 @@ function EditorShellInner(): JSX.Element {
   );
 
   // Imported 3D models: re-parse stored .glb sources into the session mesh
-  // registry after a project opens (and repoint dead texture object URLs).
+  // registry after a project opens (and repoint dead texture object URLs) —
+  // engine-side upkeep (core/engine/modelUpkeep.ts), installed with the shell.
   useEffect(() => installModelHydration(), []);
 
   // Register the default panels exactly once.
@@ -397,7 +400,11 @@ function EditorShellInner(): JSX.Element {
     let lastL = 0;
     let lastM = 0;
 
-    /** Rows derived from the property TREE — the model only builds rows for expanded tracks. */
+    /**
+     * Rows derived from the property TREE — the model only builds rows for expanded tracks.
+     * B4-kept: the row ids are the legacy AE row projection's (`buildStaticPropertyTree`, the timeline exit
+     * table's `buildPropertyRows` row) — they move with that projection onto the mirror tree.
+     */
     const effectRows = (ids: readonly string[]): string[] => [
       ...new Set(ids.flatMap((id) => buildStaticPropertyTree(id).filter((r) => r.group === 'effects').map((r) => r.prop))),
     ];
@@ -550,6 +557,8 @@ function EditorShellInner(): JSX.Element {
         // AE's UU: animated, expressed, OR set away from the default — read
         // from the scene and engine, not the model (which only builds rows for
         // expanded tracks and cannot see an un-keyed 50 % scale).
+        // B4-kept: `modifiedPropertyRows` compares every STORED prop (catalog or not) with its default and
+        // names rows in the legacy row projection — it moves with that projection (see effectRows).
         const withRows = targetIds
           .map((id) => ({ id, rows: modifiedPropertyRows(id) }))
           .filter((v) => v.rows.length > 0);
@@ -1137,18 +1146,28 @@ function EditorShellInner(): JSX.Element {
    * nothing later on the track it is an identical delete wearing a longer name,
    * which is half of what made two delete entries confusing.
    */
+  /**
+   * B4: a timeline clip id's bar in the ACTIVE composition and that composition's bars, from the mirror's layer
+   * timings (`clipBars.ts`, the controller's bars: one per layer, none inside a group), in frames of its rate. A
+   * composition has ONE track, so "the same track" is the composition.
+   */
+  const activeCompBars = (clipId: string): { bar: MirrorBar | null; bars: MirrorBar[] } => {
+    const m = documentMirror();
+    const comp = activeCompIdNow();
+    const fps = settingsFps(comp ? m.comp(comp)?.settings : undefined);
+    const nodeId = barOf(clipId)?.nodeId;
+    const bar = comp && nodeId && m.layer(nodeId)?.comp === comp ? mirrorBarOf(m, nodeId, fps) : null;
+    return { bar, bars: bar ? mirrorCompBars(m, comp, fps) : [] };
+  };
   const hasLaterClipOnTrack = (clipId: string): boolean => {
-    const c = getTimelineController();
-    const layer = c.timeline.getLayer(clipId);
-    if (!layer) return false;
-    const track = c.timeline.getTrack(layer.trackId);
-    return !!track?.layers.some((l) => l.id !== clipId && l.start >= layer.end);
+    const { bar, bars } = activeCompBars(clipId);
+    if (!bar) return false;
+    return bars.some((l) => l.nodeId !== bar.nodeId && l.start >= bar.end);
   };
 
   const handleClipContextMenu = (clipId: string, x: number, y: number): void => {
-    const c = getTimelineController();
-    const layer = c.timeline.getLayer(clipId);
-    const nodeId = layer?.sourceId;
+    const { bar: layer, bars: compBars } = activeCompBars(clipId);
+    const nodeId = layer?.nodeId;
     // B4: the layer's source item and its time config (Reverse = a negative stretch, Freeze Frame) from the mirror.
     const m = documentMirror();
     const mirrorLayer = nodeId ? m.layer(nodeId) : undefined;
@@ -1172,8 +1191,7 @@ function EditorShellInner(): JSX.Element {
      * dissolve while thinking about where this shot ends — and offering both
      * would need two submenus that are indistinguishable in the menu.
      */
-    const compBars = layer ? c.layersOfComp() : [];
-    const others = compBars.filter((l) => l.sourceId && l.sourceId !== nodeId && l.id !== layer?.id);
+    const others = compBars.filter((l) => l.nodeId !== nodeId);
     /*
      * "Abuts" is not enough on its own: once a cross dissolve is applied the two
      * bars OVERLAP by the transition's length, so a search for a seam finds
@@ -1198,13 +1216,15 @@ function EditorShellInner(): JSX.Element {
         )
       : undefined;
     const cut =
-      nodeId && neighbourAfter?.sourceId
-        ? { leftNodeId: nodeId, rightNodeId: neighbourAfter.sourceId }
-        : nodeId && neighbourBefore?.sourceId
-          ? { leftNodeId: neighbourBefore.sourceId, rightNodeId: nodeId }
+      nodeId && neighbourAfter
+        ? { leftNodeId: nodeId, rightNodeId: neighbourAfter.nodeId }
+        : nodeId && neighbourBefore
+          ? { leftNodeId: neighbourBefore.nodeId, rightNodeId: nodeId }
           : null;
-    const existingTransition = cut
-      ? transitionAtCut(compIdForTransition(cut), cut.leftNodeId, cut.rightNodeId)
+    // B4: the cut's transition from the mirror (`MirrorComp.transitions`, the API's records).
+    const atCut = cut ? mirrorTransitionAtCut(m, mirrorCompIdForTransition(m, cut), cut.leftNodeId, cut.rightNodeId) : undefined;
+    const existingTransition = atCut
+      ? { id: atCut.id, leftNodeId: atCut.left, kind: atCut.kind, alignment: atCut.alignment }
       : undefined;
 
     openContextMenu(x, y, [
@@ -1214,7 +1234,7 @@ function EditorShellInner(): JSX.Element {
         onSelect: () => {
           // Every bar has a layer behind it (syncFromScene seeds bars only from
           // layers, and removes a bar whose layer goes), so there is no bar-only path.
-          if (nodeId) void splitLayersAt([nodeId], c.currentSeconds);
+          if (nodeId) void splitLayersAt([nodeId], playheadSeconds());
         },
       },
       {
@@ -1279,7 +1299,7 @@ function EditorShellInner(): JSX.Element {
             // keys and markers (negative = reverse). One undo step either way.
             const allowed = retimableLayerIds(documentMirror(), [nodeId]).length > 0 ? parsed >= 1 : parsed !== 0;
             if (!isNaN(parsed) && allowed && Math.abs(parsed) <= 1000) {
-              void timeStretchEdit([nodeId], parsed, 'in', c.currentSeconds);
+              void timeStretchEdit([nodeId], parsed, 'in', playheadSeconds());
             }
           }
         },
@@ -1300,7 +1320,7 @@ function EditorShellInner(): JSX.Element {
         onSelect: () => {
           if (!nodeId || !time) return;
           if (!time.freeze) {
-            void freezeFrameEdit(nodeId, c.currentSeconds);
+            void freezeFrameEdit(nodeId, playheadSeconds());
             return;
           }
           void unfreezeEdit([nodeId]);
@@ -1315,6 +1335,7 @@ function EditorShellInner(): JSX.Element {
               onSelect: () => openInterpretFootage(asset),
             },
             // AE's Layer ▸ Scene Edit Detection. Video only: a still has no cuts.
+            // B4-kept: an engine job run from the UI (decodes the clip's pixels) — not registered as an engine job yet (G).
             ...(asset.type === 'video' && nodeId
               ? [
                   {

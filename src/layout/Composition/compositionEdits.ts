@@ -195,6 +195,8 @@ export async function precomposeEdit(
   if (!res.ok) return { error: res.error.message || res.error.code };
   const r = res.value[0] as { comp: string; layer: string };
   useSelectionStore.getState().set([r.layer]);
+  // B4-gap: opening the precomp maps the playhead IN through the layer's time (remap, stretch, reverse —
+  // `innerTimeOf`); the mirror has no layer-time mapping. Closes with a `mapLayerTime {layer, time}` query.
   if (opts.openNew) openLayerComposition(r.layer);
   return r;
 }

@@ -305,7 +305,8 @@ function PrimitiveDialog({ close }: { close: () => void }): JSX.Element {
   const set = (f: keyof PrimitiveSpec) => (v: number): void => setSpec((p) => ({ ...p, [f]: v }));
 
   const create = (): void => {
-    insert3DPrimitive(type, mesh ? spec : undefined);
+    // Built off-document, inserted as ONE pasteLayers entry.
+    void insertBuiltLayers('New 3D Primitive', activeCompIdNow() ?? 'comp_root', () => insert3DPrimitive(type, mesh ? spec : undefined));
     close();
   };
 

@@ -37,7 +37,7 @@ import {
 } from '@core/api/client';
 import { usePagedList } from '@hooks/usePagedList';
 import { clearRecovery } from '@core/persistence/recovery';
-import { sceneProjectIO } from '@core/scene/sceneProjectIO';
+import { emptySceneProject } from '@core/scene/sceneProjectIO';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import { DashboardPluginsTab } from './DashboardPluginsTab';
 import { DashboardCustomizeTab } from './DashboardCustomizeTab';
@@ -230,6 +230,9 @@ export function DashboardPage(): JSX.Element {
   const [selectedTrashIds, setSelectedTrashIds] = useState<Set<string>>(new Set());
 
   // Shared AssetStore (synchronized with Editor Assets tab)
+  // B4-gap: the cards draw the asset's playable `src` (object / blob URL) and Delete Permanently takes the
+  // RECORDS (their library blobs) — ItemInfo carries neither; closes with `getThumbnail` for the cards and an
+  // engine-side permanent delete.
   const storeAssets = useAssetStore((s) => s.assets);
   const folders = useAssetStore((s) => s.folders);
   // The asset store IS the document's item list (captureProjectItems saves every folder and item
@@ -453,7 +456,7 @@ export function DashboardPage(): JSX.Element {
         transparent: setupTransparent,
         startFrame: 0,
       };
-      const scene = sceneProjectIO.createEmpty(compName);
+      const scene = emptySceneProject();
       if (scene.nodes[0]) scene.nodes[0].name = compName;
       const initialDoc: EditorDocument = {
         version: '1.1.0',

@@ -176,6 +176,8 @@ export async function insertImageSequenceEdit(files: readonly File[], fps = 30):
   const info = await engine().query({ type: 'getComposition', comp });
   const size = info.ok ? info.value.comp.settings : { width: 1920, height: 1080 };
   const ids = await insertBuiltLayers(`Insert ${detected.base}`, comp, () => {
+    // B4-kept: the off-document builder (a WRITE into the scratch graph that lands as one pasteLayers);
+    // `makeNode` is counted because its module reads the composition store (text size default).
     const node = makeNode('image', detected.base);
     const t = node.components.find((c) => c.type === 'Transform');
     if (t) {

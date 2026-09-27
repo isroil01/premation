@@ -137,6 +137,8 @@ export function buildAssetCommands(): ReadonlyArray<Command> {
       // B4: the panel's selection that is still footage, from the document mirror.
       enabled: () => canRevealAssets() && panelAssetSelectionIds().filter((id) => documentMirror().item(id)?.kind === 'footage').length === 1,
       execute: async () => {
+        // B4-gap: Reveal falls back to the bundle blob behind the record's `src` (`motion-blob:<hash>`) when
+        // the import kept no path; ItemInfo.path is the import path only. Closes with the item's stored source ref.
         const [asset] = selectedPanelAssets();
         if (asset) await revealAsset(asset);
       },

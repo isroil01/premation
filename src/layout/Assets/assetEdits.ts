@@ -30,6 +30,11 @@ import { LABEL_COLORS } from '@core/scene/labelColor';
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
+/**
+ * B4-gap: the imports resolve to the asset RECORDS their callers place (playable `src`, probed metadata,
+ * interpretation) — ItemInfo has no playable source; closes with the item's media URL in the API (the
+ * same datum the Assets panel's cards need).
+ */
 function assetById(id: string): ImportedAsset | undefined {
   return useAssetStore.getState().assets.find((a) => a.id === id);
 }
@@ -225,13 +230,14 @@ export async function renameItemEdit(id: string, name: string): Promise<void> {
 
 /** Move items into `folder` (null = project root). Items already there are skipped. */
 export async function moveItemsEdit(ids: readonly string[], folder: string | null): Promise<void> {
-  const s = useAssetStore.getState();
+  // B4: the footage items and folders (the asset store's records — compositions were never moved here) and
+  // their parent folder, from the document mirror.
+  const m = documentMirror();
   const moving = ids.filter((id) => {
     if (id === folder) return false;
-    const a = s.assets.find((x) => x.id === id);
-    if (a) return (a.folderId ?? null) !== folder;
-    const f = s.folders.find((x) => x.id === id);
-    return !!f && (f.parentId ?? null) !== folder;
+    const item = m.item(id);
+    if (!item || (item.kind !== 'footage' && item.kind !== 'folder')) return false;
+    return (item.parent ?? null) !== folder;
   });
   if (moving.length === 0) return;
   await edit(moving.length === 1 ? 'Move to Folder' : `Move ${plural(moving.length, 'Item')} to Folder`, {
@@ -268,7 +274,8 @@ export async function removeItemsEdit(ids: readonly string[], label: string): Pr
 export async function setItemTagsEdit(changes: ReadonlyArray<{ id: string; tags: readonly string[] }>): Promise<void> {
   const cmds: Command[] = [];
   for (const c of changes) {
-    const cur = assetById(c.id)?.tags ?? [];
+    const item = documentMirror().item(c.id);
+    const cur = item?.kind === 'footage' ? item.tags : [];
     if (cur.length === c.tags.length && cur.every((t, i) => t === c.tags[i])) continue;
     cmds.push({ type: 'setItemTags', item: c.id, tags: [...c.tags] });
   }

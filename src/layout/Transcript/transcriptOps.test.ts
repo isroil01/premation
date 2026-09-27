@@ -26,6 +26,7 @@ import type { CommandServices } from '@core/commands/Command';
 import type { SceneNode } from '@core/types';
 import { deleteTimeRanges, transcribeScope } from './transcriptOps';
 import { useTranscriptStore } from './transcriptStore';
+import { resetDocumentMirror } from '@stores/documentMirror';
 
 const FPS = 30;
 
@@ -74,6 +75,10 @@ function bars(): Array<[number, number]> {
 }
 
 beforeEach(() => {
+  // The scope and the toast counts read the document MIRROR (B4). These fixtures write the scene and the bars
+  // directly (no engine command, no event the mirror hears), so each test starts a fresh mirror: its first read
+  // (inside the function under test, after the fixture) loads the document as it is then.
+  resetDocumentMirror();
   setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
   getTimelineController().reset();
   resetScene();
