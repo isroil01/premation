@@ -513,12 +513,21 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
     setTimeRemapEnabled: async (nodeId, enabled) => {
       const node = defaultSceneGraph.getNode(nodeId as ID);
       if (!node) return false;
+      const cmds: Command[] = [];
       // A composition LAYER is always a precomp — its flag is what makes it
-      // render its comp at all, so it is never cleared here.
-      if (readCompRef(node)) return true;
+      // render its comp at all, so it is never cleared here. On a group,
       // `precomp` is the flag buildSnapshot checks before it will sample
-      // timeRemap at all: a group's Precompose switch, `layer/precompose`.
-      await session.apply([{ type: 'setProperty', prop: { layer: nodeId, path: 'layer/precompose' }, value: { kind: 'bool', value: enabled } } as Command]);
+      // timeRemap at all: its Precompose switch, `layer/precompose`.
+      if (!readCompRef(node)) {
+        cmds.push({ type: 'setProperty', prop: { layer: nodeId, path: 'layer/precompose' }, value: { kind: 'bool', value: enabled } } as Command);
+      }
+      // The Time Remap PROPERTY exists only once remapping is enabled (AE's
+      // Enable Time Remapping: its two boundary keys) — keys on `timeRemap`
+      // are addressed through it. Disabling leaves an existing remap alone.
+      if (enabled && !defaultAnimation.isAnimated(nodeId, 'timeRemap')) {
+        cmds.push({ type: 'setTimeRemap', layer: nodeId, enabled: true } as Command);
+      }
+      if (cmds.length > 0) await session.apply(cmds);
       return true;
     },
 
