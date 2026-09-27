@@ -39,8 +39,13 @@ api::EngineError internal_error(std::string message) {
 class SessionJobApply final : public jobs::JobApply {
  public:
   SessionJobApply(Session& s, api::Origin origin) : s_(s), origin_(origin) {}
-  api::CommandResult run(const api::Command& cmd) override { return s_.run_in_journal(cmd, origin_, nullptr); }
+  api::CommandResult run(const api::Command& cmd) override {
+    edits.push_back(cmd);
+    return s_.run_in_journal(cmd, origin_, nullptr);
+  }
   [[nodiscard]] const doc::Document& document() const override { return s_.doc_; }
+
+  std::vector<api::Command> edits;
 
  private:
   Session& s_;
@@ -117,8 +122,8 @@ bool Session::apply_job(JobRecord& r) {
   const std::string label = r.result->label();
   std::optional<api::EngineError> failed;
   doc_.begin();
+  SessionJobApply a(*this, api::Origin::engine);
   try {
-    SessionJobApply a(*this, api::Origin::engine);
     r.result->apply(a);
   } catch (const doc::EngineFail& f) {
     failed = f.error;
@@ -147,6 +152,30 @@ bool Session::apply_job(JobRecord& r) {
     send_events(from, revision_, std::move(events), std::nullopt, api::Origin::engine);
     emit_status();
     request_render();
+    // The applied edit, as the request a crash replay writes instead of
+    // running startJob again (schema LogRecord.job).
+    if (!a.edits.empty()) {
+      api::CommandBatch batch;
+      batch.label = label;
+      batch.commands = std::move(a.edits);
+      api::Request req;
+      req.origin = api::Origin::engine;
+      req.body.v = std::move(batch);
+      api::LogRecord rec;
+      rec.request = std::move(req);
+      rec.revision_after = revision_;
+      rec.job = r.info.id;
+      const auto stale = std::find_if(log_.begin(), log_.end(), [&](const api::LogRecord& row) {
+        if (!row.job || *row.job != r.info.id) return false;
+        if (row.request.body.kind() != api::RequestBody::Kind::command) return false;
+        return std::get<api::Command>(row.request.body.v).kind() == api::Command::Kind::start_job;
+      });
+      if (stale != log_.end()) log_.erase(stale);
+      log_.push_back(rec);
+      api::EngineMessage msg;
+      msg.v = std::move(rec);
+      out_.send(msg);
+    }
   }
   emit_job(r, true, std::nullopt);
   return true;

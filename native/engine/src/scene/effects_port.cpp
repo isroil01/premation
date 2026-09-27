@@ -1,4 +1,5 @@
 #include "effects_port.hpp"
+#include "stamp_field.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -554,13 +555,27 @@ std::vector<api::RenderEffect> extract_spatial_effects(const RLayer& l, bool onl
 
 // ── E4: the GPU route for a layer the TypeScript bakes ─────────────────────
 
+bool scribble_has_paths(const RLayer& l) {
+  if (!l.mask.is_object() || !l.mask.at("paths").is_array()) return false;
+  for (const Json& p : l.mask.at("paths").arr()) {
+    if (p.at("points").is_array() && p.at("points").arr().size() >= 2) return true;
+  }
+  return false;
+}
+
 bool gpu_draws_canvas_effect(const RLayer& l, const Json& e) {
+  const std::string t = type_of(e);
+  // Plexus is a point cloud (stamp_field.cpp), not a read of the bake.
+  if (t == "plexus") return true;
+  // Scribble with no mask path draws nothing (scribble.ts). The fill-opacity
+  // chain is the whole effect; a mask still needs the CPU region scan.
+  if (t == "scribble") return !scribble_has_paths(l);
   // Vegas over the layer's own alpha (the contour mode, not mask / path
   // strokes): its contours come from the content raster (TexKind::contours),
   // so its input must BE that raster — a shape with a raster of its own, no
-  // layer mask, and Vegas first in the stack (fill opacity only scales the
-  // alpha, which the threshold absorbs: contour_request_spec).
-  if (type_of(e) != "vegas") return false;
+  // layer mask, and Vegas first in the stack. Fill opacity is a later chain
+  // entry, so the contour is of the unfaded content (contour_request_spec).
+  if (t != "vegas") return false;
   if (l.kind != LayerKind::shape || !needs_shape_raster(l)) return false;
   if (l.mask.is_object() && l.mask.at("paths").is_array() && !l.mask.at("paths").arr().empty()) return false;
   const Json p = doc::params_of(e);
@@ -577,6 +592,16 @@ std::string contour_key(std::string_view layerId) { return "vegas:" + std::strin
 
 std::optional<api::RenderEffect> gpu_canvas_effect_entry(const RLayer& l, const Json& e) {
   if (!gpu_draws_canvas_effect(l, e)) return std::nullopt;
+  if (type_of(e) == "plexus") {
+    const auto stamp = stamp_for_effect(l, e);
+    if (!stamp) return std::nullopt;
+    return FxWriter("stamp-field")
+        .text("stampKey", stamp->key)
+        .num("instances", static_cast<double>(stamp->instances))
+        .num("over", stamp->over)
+        .done();
+  }
+  if (type_of(e) == "scribble") return std::nullopt;  // nothing to draw
   const Json params = doc::params_of(e);
   const auto n = [&](std::string_view k) {
     const Json& v = param_of(params, k);
@@ -609,12 +634,12 @@ std::optional<Json> contour_request_spec(const RLayer& l) {
   for (const Json& e : l.effects) {
     if (!effect_enabled(e) || !gpu_draws_canvas_effect(l, e)) continue;
     const double threshold = std::max(1.0, std::min(254.0, effect_number(e, "threshold")));
-    // The CPU Vegas reads the FADED alpha: a contour of fo·a at t is the
-    // contour of a at t / fo (marching squares interpolates linearly).
-    const double fo = l.fillOpacity ? std::max(0.0, std::min(1.0, *l.fillOpacity)) : 1.0;
+    // The content raster is unfaded: the GPU route applies fill opacity after
+    // the contour. Folding it into the threshold rebuilt the contour on every
+    // fill-opacity frame (the E4 bench, ~1 s at 1080p).
     Json spec = Json::object();
     spec.set("source", Json::string("path:" + l.id));
-    spec.set("threshold", Json::number(fo > 0 ? threshold / fo : 255));
+    spec.set("threshold", Json::number(threshold));
     spec.set("width", Json::number(l.width));
     spec.set("height", Json::number(l.height));
     spec.set("padding", Json::number(raster_padding(l)));
@@ -677,23 +702,17 @@ const char* gpu_effect_route_blocker(const RLayer& l) {
     if (!effect_enabled(e)) continue;
     const std::string t = type_of(e);
     if (is_canvas2d_only(t) && !gpu_draws_canvas_effect(l, e)) return "a Canvas2D-only effect";
-    // Ordered inside the bake: the GPU applies the layer's colour matrix and
-    // LUT strip at the content draw, BEFORE its chain, so an interleaved grade
-    // would move.
-    if (is_lut_effect(t)) return "a per-channel LUT effect";
-    if (is_color_effect(t)) return "a colour-matrix / CSS colour effect";
     if (is_temporal(t)) continue;  // the snapshot's time plumbing, baked or not
     if (!is_native_effect(t) && doc::registry().effect(t) == nullptr) return "a plugin effect (G2)";
-    if (t == "write-on") {
-      const Json& mode = doc::params_of(e).at("writeOnMode");
-      if (mode.is_number() && motion::js::round(mode.num()) == 0) return "a path-following effect (Write-on brush)";
-    }
     if (t != "beam-path") {
       const Json& pm = e.at("params").at("pathMaskId");
       if (pm.is_string() && !pm.str().empty()) return "a path-following effect";
     }
+    // Colour grades and per-channel LUTs are chain entries (color-matrix /
+    // channel-lut), so they stay in stack order after fill opacity.
+    const bool grade = (is_color_effect(t) && t != "opacity") || is_lut_effect(t);
     const bool chained = is_ported_spatial(t) || is_more_spatial(t) || is_native_effect(t) || t == "apply-color-lut" ||
-                         (is_canvas2d_only(t) && gpu_draws_canvas_effect(l, e));
+                         (is_canvas2d_only(t) && gpu_draws_canvas_effect(l, e)) || grade;
     if (!chained) return "an effect with no GPU chain entry";
     const std::optional<double> a = effect_opacity_of(e);
     const bool faded = a && *a < 1;
@@ -723,11 +742,37 @@ std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
   if (vector && l.fillOpacity && *l.fillOpacity < 1) {
     out.push_back(FxWriter("fill-opacity").num("amount", std::max(0.0, std::min(1.0, *l.fillOpacity))).done());
   }
+  std::size_t lutOrdinal = 0;
   for (const Json& e : l.effects) {
     if (!effect_enabled(e)) continue;
     const std::size_t at = out.size();
     const std::string t = type_of(e);
-    if (is_canvas2d_only(t)) {
+    if (t == "write-on") {
+      if (const auto stamp = stamp_for_effect(l, e)) {
+        out.push_back(FxWriter("stamp-field")
+                          .text("stampKey", stamp->key)
+                          .num("instances", static_cast<double>(stamp->instances))
+                          .num("over", stamp->over)
+                          .done());
+      } else {
+        effect_entries(e, l, out);  // classic line / path
+      }
+    } else if (is_color_effect(t) && t != "opacity") {
+      M3 em{};
+      std::array<double, 3> eo{};
+      const doc::EffectDef* def = doc::registry().effect(t);
+      const doc::EffectParamDef* primary = def != nullptr ? def->primary() : nullptr;
+      const double amt = effect_number(e, primary != nullptr ? primary->key : std::string("amount"));
+      if (build_matrix(e, amt, em, eo)) {
+        out.push_back(FxWriter("color-matrix")
+                          .nums("m", {em[0], em[1], em[2], em[3], em[4], em[5], em[6], em[7], em[8]})
+                          .nums("offset", {eo[0], eo[1], eo[2]})
+                          .done());
+      }
+    } else if (is_lut_effect(t)) {
+      out.push_back(FxWriter("channel-lut").text("lutKey", channel_lut_key(l.id, lutOrdinal)).done());
+      ++lutOrdinal;
+    } else if (is_canvas2d_only(t)) {
       if (auto drawn = gpu_canvas_effect_entry(l, e)) out.push_back(std::move(*drawn));
     } else {
       effect_entries(e, l, out);

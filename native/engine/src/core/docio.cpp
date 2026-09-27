@@ -532,15 +532,36 @@ int compare_versions(std::string_view a, std::string_view b) {
   return 0;
 }
 
+/// Every scene node, including nested precomp children (the TS migrations walk
+/// `node.children`, not only the root list). A child that is a string id is a
+/// scene-graph reference, not a nested node, and is skipped.
 template <class F>
-void each_fx(Json& doc, F&& fn) {
-  Json* nodes = doc.find_mut("scene") != nullptr ? doc.find_mut("scene")->find_mut("nodes") : nullptr;
+void each_scene_node(Json& n, F& fn) {
+  fn(n);
+  Json* children = n.find_mut("children");
+  if (children == nullptr || !children->is_array()) return;
+  for (Json& ch : children->arr_mut()) {
+    if (ch.is_object()) each_scene_node(ch, fn);
+  }
+}
+
+template <class F>
+void each_scene_node_in(Json& doc, F&& fn) {
+  Json* scene = doc.find_mut("scene");
+  Json* nodes = scene != nullptr ? scene->find_mut("nodes") : nullptr;
   if (nodes == nullptr || !nodes->is_array()) return;
   for (Json& n : nodes->arr_mut()) {
-    Json* comps = n.find_mut("components");
-    if (comps == nullptr || !comps->is_array()) continue;
-    for (Json& c : comps->arr_mut()) fn(n, c);
+    if (n.is_object()) each_scene_node(n, fn);
   }
+}
+
+template <class F>
+void each_fx(Json& doc, F&& fn) {
+  each_scene_node_in(doc, [&](Json& n) {
+    Json* comps = n.find_mut("components");
+    if (comps == nullptr || !comps->is_array()) return;
+    for (Json& c : comps->arr_mut()) fn(n, c);
+  });
 }
 
 /// `readMatte(v)`.
@@ -719,11 +740,9 @@ void m_1_6(Json& doc) {
 }
 
 void m_1_7(Json& doc) {
-  Json* nodes = doc.find_mut("scene") != nullptr ? doc.find_mut("scene")->find_mut("nodes") : nullptr;
-  if (nodes == nullptr || !nodes->is_array()) return;
-  for (Json& n : nodes->arr_mut()) {
+  each_scene_node_in(doc, [](Json& n) {
     Json* comps = n.find_mut("components");
-    if (comps == nullptr || !comps->is_array()) continue;
+    if (comps == nullptr || !comps->is_array()) return;
     for (Json& c : comps->arr_mut()) {
       if (!(c.at("type").is_string() && c.at("type").str() == "Transform")) continue;
       Json* p = c.find_mut("props");
@@ -733,7 +752,7 @@ void m_1_7(Json& doc) {
       if (p->at("falloff").is_undefined()) p->set("falloff", Json::string("legacy"));
       break;  // lightTransform: the first matching component
     }
-  }
+  });
 }
 
 void m_1_8(Json& doc) {
@@ -753,22 +772,19 @@ void m_1_8(Json& doc) {
       }
     }
   }
-  Json* nodes = doc.find_mut("scene") != nullptr ? doc.find_mut("scene")->find_mut("nodes") : nullptr;
-  if (nodes != nullptr && nodes->is_array()) {
-    for (Json& n : nodes->arr_mut()) {
-      Json* comps = n.find_mut("components");
-      if (comps == nullptr || !comps->is_array()) continue;
-      for (Json& c : comps->arr_mut()) {
-        if (!(c.at("type").is_string() && c.at("type").str() == "fx")) continue;
-        Json* props = c.find_mut("props");
-        Json* ma = props != nullptr ? props->find_mut("maskAnim") : nullptr;
-        if (ma == nullptr || !ma->is_array()) continue;
-        for (Json& k : ma->arr_mut()) {
-          if (k.is_object()) keys.push_back(&k);
-        }
+  each_scene_node_in(doc, [&](Json& n) {
+    Json* comps = n.find_mut("components");
+    if (comps == nullptr || !comps->is_array()) return;
+    for (Json& c : comps->arr_mut()) {
+      if (!(c.at("type").is_string() && c.at("type").str() == "fx")) continue;
+      Json* props = c.find_mut("props");
+      Json* ma = props != nullptr ? props->find_mut("maskAnim") : nullptr;
+      if (ma == nullptr || !ma->is_array()) continue;
+      for (Json& k : ma->arr_mut()) {
+        if (k.is_object()) keys.push_back(&k);
       }
     }
-  }
+  });
   double max = 0;
   bool missing = false;
   for (const Json* k : keys) {

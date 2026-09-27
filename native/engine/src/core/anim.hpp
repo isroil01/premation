@@ -28,6 +28,9 @@ namespace premation::doc {
 
 [[nodiscard]] const std::vector<Key>* anim_track(const Document& d, std::string_view node, std::string_view prop);
 [[nodiscard]] bool anim_is_animated(const Document& d, std::string_view node, std::string_view prop);
+/// The key curve alone (what `anim_sample` returns when the property has no
+/// enabled expression). Callable off the document thread.
+[[nodiscard]] std::optional<double> anim_sample_keys(const std::vector<Key>& keys, double t);
 /// `setTrackKeyframes` (empty removes the track).
 void anim_set_track(Document& d, std::string_view node, std::string_view prop, std::vector<Key> keys);
 void anim_remove_track(Document& d, std::string_view node, std::string_view prop);

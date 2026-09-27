@@ -18,6 +18,8 @@
 
 import type { EngineClient, EngineError, EventBatch, JobInfo, JobSpec } from '@motion/engine-api';
 import { engine } from './engineInstance';
+import { engineOwnsDocumentNow } from './engineOwnership';
+import { materializeSessionFootage } from './sessionFootage';
 
 export interface EngineJobOutcome<R = unknown> {
   status: 'done' | 'failed' | 'cancelled';
@@ -59,6 +61,16 @@ function parse<R>(text: string): R | null {
  */
 export async function startEngineJob<R = unknown>(spec: JobSpec, opts: StartEngineJobOptions = {}): Promise<EngineJobHandle<R> | null> {
   const client = opts.client ?? engine();
+  // The C++ engine cannot open blob:/data: session footage. When it owns the
+  // document, write those bytes to a cache file and relink before the job.
+  // A failure leaves the job to report the footage it still cannot read.
+  if (engineOwnsDocumentNow()) {
+    try {
+      await materializeSessionFootage(client, spec);
+    } catch {
+      /* the job's own error is the one the caller shows */
+    }
+  }
   // Subscribed BEFORE the request: a job's events for an id we do not know yet are buffered.
   let id: string | null = null;
   const early: EventBatch[] = [];

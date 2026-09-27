@@ -119,8 +119,8 @@ std::shared_ptr<const EnvAsset> environment_asset(const doc::Document& d, std::s
     // else the asset's original path. Only when neither is reachable does the
     // sky fall back to the PNG, as the TS does once its float cache is gone.
     std::string exrWhy;
-    if (auto sky = exr_sky(assetId, src, asset->at("path").is_string() ? asset->at("path").str() : std::string(), exrWhy)) {
-      return sky;
+    if (auto loaded = exr_sky(assetId, src, asset->at("path").is_string() ? asset->at("path").str() : std::string(), exrWhy)) {
+      return loaded;
     }
     if (ends_with_ci(src, ".exr")) {
       why = exrWhy.empty() ? "the EXR sky could not be read" : exrWhy;

@@ -13,6 +13,7 @@
 #include "bake_chain.hpp"
 #include "corner_pin.hpp"
 #include "effects_port.hpp"
+#include "stamp_field.hpp"
 #include "lut_port.hpp"
 #include "jsmath.hpp"
 #include "misc_port.hpp"
@@ -542,6 +543,16 @@ void Flattener::feed(const RLayer& l) {
     }
   }
   if (l.gpuEffects) {
+    for (const StampTexture& s : stamp_textures(l)) {  // E4: Plexus / Write-on brush stamps
+      TextureRequest r;
+      r.key = s.key;
+      r.kind = TexKind::pixels;
+      r.pxWidth = s.width;
+      r.pxHeight = s.height;
+      r.pixels = s.rgba;
+      r.layerId = l.id;
+      textures_.push_back(std::move(r));
+    }
     if (auto spec = contour_request_spec(l)) {  // E4: a GPU Vegas' contours, made once per content
       TextureRequest r;
       r.key = contour_key(l.id);
@@ -618,7 +629,8 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
     if (l.fill) rep = *l.fill;
     else if (l.fillPaint.is_object() && l.fillPaint.at("type").str() == "solid") rep = l.fillPaint.at("color").str();
     Rgba c = color_from_hex(rep);
-    if (!l.effects.empty()) {
+    // A GPU-routed stack grades in the chain, after fill opacity and in effect order.
+    if (!l.effects.empty() && !l.gpuEffects) {
       const ColorMatrix cm = effect_color_matrix(l.effects);
       const auto rgb = grade_uniform_lut(l, apply_color_matrix(cm, {c.r, c.g, c.b}));  // gradeUniformColor
       c = {rgb[0], rgb[1], rgb[2], c.a};
@@ -637,7 +649,7 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
   }
   if (kind == api::RenderableKind::text) r.texture_key = "text:" + l.id;
   if (!baked && l.mask.is_object() && !l.mask.at("paths").arr().empty()) r.mask_texture_key = "mask:" + l.id;
-  if (!baked && textured && has_lut_effect(l)) r.lut_texture_key = "lut:" + l.id;
+  if (!baked && !l.gpuEffects && textured && has_lut_effect(l)) r.lut_texture_key = "lut:" + l.id;
   if (l.matte && l.matteSourceId) {
     api::RenderMatte m;
     m.mode = l.matte->luma ? api::RenderMatteMode::luma : api::RenderMatteMode::alpha;
@@ -646,7 +658,7 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
     r.matte = m;
   }
   if (textured) {
-    if (!baked && !l.effects.empty()) {
+    if (!baked && !l.gpuEffects && !l.effects.empty()) {
       const ColorMatrix cm = effect_color_matrix(l.effects);
       if (!cm.identity) {
         api::RenderColorMatrix wm;

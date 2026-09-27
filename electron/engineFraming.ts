@@ -186,8 +186,10 @@ const text = new TextDecoder();
 // ── envelope ─────────────────────────────────────────────────────────────────
 
 /** EngineMessage union field numbers (schema 10_envelope.eapi). */
-export type EnvelopeKind = 'hello' | 'welcome' | 'request' | 'response' | 'events' | 'goodbye';
-const KINDS: Record<number, EnvelopeKind> = { 1: 'hello', 2: 'welcome', 3: 'request', 4: 'response', 5: 'events', 6: 'goodbye' };
+export type EnvelopeKind = 'hello' | 'welcome' | 'request' | 'response' | 'events' | 'goodbye' | 'logRecord';
+const KINDS: Record<number, EnvelopeKind> = {
+  1: 'hello', 2: 'welcome', 3: 'request', 4: 'response', 5: 'events', 6: 'goodbye', 1006: 'logRecord',
+};
 
 export interface EnvelopePeek {
   kind: EnvelopeKind;
@@ -220,6 +222,52 @@ export function peekEnvelope(msg: Uint8Array): EnvelopePeek | null {
     if (caused !== undefined) peek.seq = caused;
   }
   return peek;
+}
+
+function lenField(body: Uint8Array, field: number): Uint8Array | null {
+  const inner = fields(body);
+  if (!inner) return null;
+  const found = inner.find((x) => x.field === field && x.body);
+  return found?.body ?? null;
+}
+
+/** Job id in a startJob response (CommandResult field 850 → JobRef.job). */
+export function startJobIdFromResponse(response: Uint8Array): string | null {
+  const peek = peekEnvelope(response);
+  if (!peek || peek.kind !== 'response') return null;
+  const outcome = lenField(peek.body, 3);
+  const result = outcome ? lenField(outcome, 1) : null;
+  const jobRef = result ? lenField(result, 850) : null;
+  const job = jobRef ? lenField(jobRef, 1) : null;
+  if (!job || job.length === 0) return null;
+  return text.decode(job);
+}
+
+export interface AppliedJobEdit {
+  /** Encoded EngineMessage{request} of the batch the job applied. */
+  bytes: Uint8Array;
+  revisionAfter: number;
+  /** LogRecord.job — which startJob this edit replaces. */
+  job?: string;
+}
+
+/**
+ * EngineMessage{logRecord} → the request it carries, wrapped as
+ * EngineMessage{request}, plus the revision and job id. Null when the
+ * message is not a log record or has no request.
+ */
+export function appliedRequestFromLogRecord(msg: Uint8Array): AppliedJobEdit | null {
+  const peek = peekEnvelope(msg);
+  if (!peek || peek.kind !== 'logRecord') return null;
+  const request = lenField(peek.body, 1);
+  const inner = fields(peek.body);
+  const rev = inner?.find((x) => x.field === 2 && x.wire === WT_VARINT);
+  if (!request || !rev) return null;
+  const w = new ProtoWriter();
+  w.bytesField(3, request);
+  const jobBody = lenField(peek.body, 4);
+  const job = jobBody && jobBody.length > 0 ? text.decode(jobBody) : undefined;
+  return { bytes: w.done(), revisionAfter: rev.num, ...(job ? { job } : {}) };
 }
 
 // ── F2: main as the ONE client of the engine (command log, several windows) ──

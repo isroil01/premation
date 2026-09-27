@@ -51,7 +51,7 @@ template <class T>
 T query(Harness& h, api::Query q) {
   const auto r = h.ask(std::move(q));
   REQUIRE(is_ok(r));
-  return std::get<T>(std::get<api::QueryResult>(r.outcome.v).v);
+  return result_as<T>(std::get<api::QueryResult>(r.outcome.v));
 }
 
 api::Value value_of(Harness& h, const api::LayerId& layer, const std::string& path, api::Time t, bool evaluated = true) {
@@ -514,6 +514,58 @@ TEST_CASE("session: the clock emits frames at comp fps and drops rather than dri
     REQUIRE_FALSE(h.session.playing());
     REQUIRE(h.session.time() == 299 * (kSec / 30));
   }
+}
+
+TEST_CASE("session: cacheFirst stores every frame of the range, then plays it", "[session][transport][d4]") {
+  Harness h(64);
+  (void)h.hello();
+  const auto comp = make_comp(h, 30);
+  (void)make_layer(h, comp);
+  api::SetActiveComposition active;
+  active.comp = comp;
+  REQUIRE(is_ok(h.run(cmd(active))));
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 320;
+  v.height = 180;
+  v.device_pixel_ratio = 1;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  REQUIRE(is_ok(h.run(cmd(api::SetLoop{api::LoopMode::once}))));
+
+  api::Play play;
+  play.rate = 1;
+  play.range = api::PlayRange::custom;
+  play.custom = api::TimeRange{0, 5 * (kSec / 30)};
+  play.cache_first = true;
+  const auto before = h.frames_ready().size();
+  REQUIRE(is_ok(h.run(cmd(play))));
+  // The play request's tick stores frame 0. Further ticks store the rest, then start the clock.
+  for (int i = 0; i < 8; ++i) {
+    h.release_all();
+    h.advance(std::chrono::milliseconds(1));
+  }
+  const auto ready = h.frames_ready();
+  std::vector<std::int64_t> frames;
+  for (std::size_t i = before; i < ready.size(); ++i) frames.push_back(ready[i].frame);
+  REQUIRE(frames.size() >= 6);
+  REQUIRE(frames[0] == 0);
+  REQUIRE(frames[1] == 1);
+  REQUIRE(frames[2] == 2);
+  REQUIRE(frames[3] == 3);
+  REQUIRE(frames[4] == 4);
+  REQUIRE(frames[5] == 0);  // playback starts on the first stored frame
+  for (std::size_t i = before; i < before + 5; ++i) REQUIRE(ready[i].dropped == 0);
+
+  for (int i = 0; i < 250; ++i) {
+    h.release_all();
+    h.advance(std::chrono::milliseconds(1));
+  }
+  REQUIRE_FALSE(h.session.playing());
+  const auto after = h.frames_ready();
+  std::uint32_t dropped = 0;
+  for (std::size_t i = before + 5; i < after.size(); ++i) dropped += after[i].dropped;
+  REQUIRE(dropped == 0);
+  REQUIRE(h.session.time() == 4 * (kSec / 30));
 }
 
 TEST_CASE("session: a full ring drops frames and never blocks; stale releases are ignored", "[session][frames]") {

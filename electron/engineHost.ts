@@ -612,6 +612,7 @@ export class EngineHost {
     sup.on('frame', (m) => this.frames.onFrame(m));
     sup.on('pixels', (p) => this.frames.onPixels(p));
     sup.on('events', (b) => this.relayEvents(b.bytes, b.causedBy));
+    sup.on('log-record', (edit) => this.commandLog.absorbJobEdit(edit.bytes, edit.revisionAfter, edit.job));
     sup.on('state', (s) => this.push('engine:state', s));
     sup.on('engine-restarted', (info: EngineRestartedInfo) => void this.recoverRestarted(info));
     sup.on('fallback', (info: FallbackInfo) => {

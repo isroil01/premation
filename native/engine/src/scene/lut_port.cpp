@@ -149,28 +149,46 @@ std::optional<CubeLut> read_cube_lut_param(const Json& e) {
   return lut;
 }
 
+std::string channel_lut_key(std::string_view layerId, std::size_t ordinal) {
+  std::string k = "lutfx:";
+  k += layerId;
+  k += ':';
+  k += std::to_string(ordinal);
+  return k;
+}
+
+void push_channel_strip(std::vector<TextureRequest>& out, std::string key, const ChannelLut& lut, const std::string& layerId) {
+  TextureRequest r;
+  r.key = std::move(key);
+  r.kind = TexKind::pixels;
+  r.pxWidth = 256;
+  r.pxHeight = 1;
+  r.pixels.resize(256 * 4);
+  for (std::size_t i = 0; i < 256; ++i) {
+    r.pixels[i * 4] = strip_byte(lut.r[i]);
+    r.pixels[i * 4 + 1] = strip_byte(lut.g[i]);
+    r.pixels[i * 4 + 2] = strip_byte(lut.b[i]);
+    r.pixels[i * 4 + 3] = 255;
+  }
+  r.layerId = layerId;
+  out.push_back(std::move(r));
+}
+
 void append_lut_textures(const RLayer& l, std::vector<TextureRequest>& out) {
   // MotionRendererBackend: only the enabled LUT effects are composed.
+  // Each one also gets its own strip so the GPU chain can grade in stack order
+  // (after fill opacity, and between spatial effects) instead of once up front.
   std::vector<Json> lutEffects;
+  std::size_t ordinal = 0;
   for (const Json& e : l.effects) {
-    if (effect_enabled(e) && is_lut_effect_type(type_of(e))) lutEffects.push_back(e);
+    if (!effect_enabled(e) || !is_lut_effect_type(type_of(e))) continue;
+    if (const auto one = tables_for(e)) push_channel_strip(out, channel_lut_key(l.id, ordinal), *one, l.id);
+    ++ordinal;
+    lutEffects.push_back(e);
   }
   if (!lutEffects.empty()) {
     if (const auto lut = build_channel_lut(lutEffects)) {
-      TextureRequest r;
-      r.key = "lut:" + l.id;
-      r.kind = TexKind::pixels;
-      r.pxWidth = 256;
-      r.pxHeight = 1;
-      r.pixels.resize(256 * 4);
-      for (std::size_t i = 0; i < 256; ++i) {
-        r.pixels[i * 4] = strip_byte(lut->r[i]);
-        r.pixels[i * 4 + 1] = strip_byte(lut->g[i]);
-        r.pixels[i * 4 + 2] = strip_byte(lut->b[i]);
-        r.pixels[i * 4 + 3] = 255;
-      }
-      r.layerId = l.id;
-      out.push_back(std::move(r));
+      push_channel_strip(out, "lut:" + l.id, *lut, l.id);
     }
   }
   const Json* cubeFx = nullptr;

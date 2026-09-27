@@ -6,7 +6,7 @@
  */
 
 import { decodeEngineMessage, encodeEngineMessage, type Command, type EngineMessage, type Response } from '@motion/engine-api';
-import { peekRequest, responseIsError, withCausedBy, withEnvelopeSeq } from './engineFraming';
+import { appliedRequestFromLogRecord, peekRequest, responseIsError, withCausedBy, withEnvelopeSeq } from './engineFraming';
 import { CMD, EngineCommandLog } from './engineCommandLog';
 
 let seq = 0;
@@ -96,5 +96,42 @@ describe('EngineCommandLog', () => {
     const log = new EngineCommandLog(false);
     log.record(req({ type: 'newProject' } as Command), ok(1), 1);
     expect(log.length).toBe(0);
+  });
+
+  it('replaces the finished job and leaves a still-running job to replay', () => {
+    const log = new EngineCommandLog();
+    const start = (layer: string) => req({
+      type: 'startJob',
+      job: { kind: 'sceneDetect', value: { layer, createMarkers: true, splitLayers: false } },
+      apply: true,
+    } as Command);
+    const started = (job: string, revision: number): Uint8Array => encodeEngineMessage({
+      kind: 'response',
+      value: { seq: 1, revision, outcome: { kind: 'command', value: { type: 'startJob', job } as never } },
+    });
+    log.record(start('A'), started('job_1', 2), 2);
+    log.record(req({ type: 'renameLayer', layer: 'A', name: 'Plate' } as Command), ok(3), 3);
+    log.record(start('B'), started('job_2', 3), 3);
+    const applied = appliedRequestFromLogRecord(encodeEngineMessage({
+      kind: 'logRecord',
+      value: {
+        request: {
+          seq: 0,
+          origin: 'engine',
+          body: { kind: 'batch', value: { label: 'Scene Edit', commands: [{ type: 'renameLayer', layer: 'A', name: 'Cut' } as Command] } },
+        },
+        revisionAfter: 4,
+        documentHash: 0,
+        job: 'job_2',
+      },
+    }))!;
+    log.absorbJobEdit(applied.bytes, applied.revisionAfter, applied.job);
+    const plan = log.plan();
+    expect(plan).toHaveLength(3);
+    expect(plan[0]).toMatchObject({ commandId: CMD.startJob, jobId: 'job_1' });
+    expect(plan.some((e) => e.jobId === 'job_2')).toBe(false);
+    expect(plan[2]!.revisionAfter).toBe(4);
+    const batch = decodeEngineMessage(plan[2]!.bytes) as Extract<EngineMessage, { kind: 'request' }>;
+    expect(batch.value.body).toMatchObject({ kind: 'batch', value: { label: 'Scene Edit' } });
   });
 });

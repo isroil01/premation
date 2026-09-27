@@ -214,7 +214,8 @@
     "stroke-sdf",
     "style-fill",
     "fx-effect-scope",
-    "vegas-gpu"
+    "vegas-gpu",
+    "stamp-field"
   ],
   "materials": [
     {
@@ -7935,6 +7936,42 @@
     {
       "name": "VEGAS_FX_MATERIAL",
       "shader": "vegas-gpu",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 3,
+          "type": "texture",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "STAMP_FIELD_FX_MATERIAL",
+      "shader": "stamp-field",
       "layout": [
         {
           "binding": 0,

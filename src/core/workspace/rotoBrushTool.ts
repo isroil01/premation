@@ -21,11 +21,13 @@
  *                   back to, exactly as `rotoBrush.pathFromMatte` does
  */
 
+import { secondsToFlicks } from '@motion/engine-api';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readGeometry } from '@core/workspace/geometry';
 import { getNodeMask, type MaskPath, type MaskPoint } from '@core/effects/mask';
 import { segmentSam, type SamPointPrompt, type SamSegmentRequest, type SamSegmentResult } from '@core/tracking/samSegment';
 import { matteToPath } from '@core/tracking/rotoMatte';
+import { startEngineJob } from '@core/engine/engineJobs';
 import { runRotoBrush, type RotoBrushResult } from '@core/tracking/rotoBrush';
 import { sourceDisplaySize } from '@core/tracking/trackerSource';
 import { assetIdOf } from '@core/source/sourceInfo';
@@ -202,7 +204,7 @@ export async function segmentStrokesToMask(
  * Propagate the matte forward from `fromSec` to `toSec` with the tracker,
  * seeded at the first foreground stroke's first point (source pixels).
  */
-export function propagateRotoForward(
+export async function propagateRotoForward(
   nodeId: string,
   strokes: readonly RotoStroke[],
   fromSec: number,
@@ -222,6 +224,35 @@ export function propagateRotoForward(
     x: (p0.x / Math.max(1, g.width) + 0.5) * size.width,
     y: (p0.y / Math.max(1, g.height) + 0.5) * size.height,
   };
+  const startF = Math.round(fromSec * fps);
+  const endF = Math.round(toSec * fps);
+  let cancel: (() => void) | null = null;
+  const handle = await startEngineJob<{ frames: number; keyframes: number }>(
+    {
+      kind: 'rotoBrush',
+      value: {
+        layer: nodeId,
+        range: {
+          start: secondsToFlicks(startF / Math.max(1, fps)),
+          duration: secondsToFlicks(Math.max(1, endF - startF + 1) / Math.max(1, fps)),
+        },
+        seed,
+        feather: featherPx,
+      },
+    },
+    {
+      onProgress: (f) => {
+        if (onProgress?.(f) === false) cancel?.();
+      },
+    },
+  );
+  if (handle) {
+    cancel = handle.cancel;
+    const out = await handle.done;
+    if (out.status === 'cancelled') return { keyframes: 0, frames: 0, status: 'cancelled' };
+    if (out.status !== 'done') throw new Error(out.error?.message ?? 'Roto Brush failed');
+    return { keyframes: out.result?.keyframes ?? 0, frames: out.result?.frames ?? 0, status: 'completed' };
+  }
   return runRotoBrush({
     nodeId, seed, startCompTime: fromSec, endCompTime: toSec, fps, featherPx,
     ...(onProgress ? { onProgress } : {}),

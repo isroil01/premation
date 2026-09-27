@@ -1450,6 +1450,7 @@ function encS_LogRecord(w: Writer, v: T.LogRecord): void {
   w.byte(10); { const s = w.beginLd(); encS_Request(w, v.request); w.endLd(s); }
   w.byte(16); w.u64(v.revisionAfter);
   w.byte(24); w.u64(v.documentHash);
+  if (v.job !== undefined) { w.byte(34); w.str(v.job); }
 }
 function decS_LogRecord(r: Reader, end: number, o: any): T.LogRecord {
   let h_request = false;
@@ -1458,12 +1459,14 @@ function decS_LogRecord(r: Reader, end: number, o: any): T.LogRecord {
   let v_request: T.Request | undefined;
   let v_revisionAfter: number | undefined;
   let v_documentHash: number | undefined;
+  let v_job: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_request = decS_Request(r, r.ldEnd(), {}); h_request = true; break;
       case 16: v_revisionAfter = r.u64(); h_revisionAfter = true; break;
       case 24: v_documentHash = r.u64(); h_documentHash = true; break;
+      case 34: v_job = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -1474,6 +1477,7 @@ function decS_LogRecord(r: Reader, end: number, o: any): T.LogRecord {
   o.request = v_request;
   o.revisionAfter = v_revisionAfter;
   o.documentHash = v_documentHash;
+  if (v_job !== undefined) o.job = v_job;
   return o;
 }
 function encS_Undo(w: Writer, v: T.Undo): void {

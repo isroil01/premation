@@ -30,7 +30,9 @@ import {
   encodePing,
   encodeRelease,
   frame,
+  appliedRequestFromLogRecord,
   peekEnvelope,
+  type AppliedJobEdit,
   type EngineFrameMessage,
   type GoodbyeReason,
   type HelloInfo,
@@ -75,6 +77,8 @@ export interface TransportListeners {
   events?: (batch: EventBatchBytes) => void;
   frame?: (msg: EngineFrameMessage) => void;
   goodbye?: (reason: GoodbyeReason, message: string) => void;
+  /** A job's applied edit (EngineMessage{logRecord}), already wrapped as a request. */
+  logRecord?: (edit: AppliedJobEdit) => void;
   /** The connection is over (any cause). Called once. */
   closed?: (why: string) => void;
 }
@@ -262,6 +266,11 @@ export class EngineTransport {
           ...(peek.seq !== undefined ? { causedBy: peek.seq } : {}),
         });
         return;
+      case 'logRecord': {
+        const edit = appliedRequestFromLogRecord(msg);
+        if (edit) this.listeners.logRecord?.(edit);
+        return;
+      }
       case 'goodbye': {
         const g = decodeGoodbye(peek.body) ?? { reason: 'protocolError' as const, message: '' };
         this.listeners.goodbye?.(g.reason, g.message);

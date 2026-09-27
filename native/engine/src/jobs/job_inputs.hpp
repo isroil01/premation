@@ -11,6 +11,7 @@
 
 #include "engine_api.hpp"
 #include "job_api.hpp"
+#include "model.hpp"
 
 namespace premation::jobs {
 
@@ -32,11 +33,32 @@ struct FootageLayer {
   /// source plays from composition 0 (audioClipTimings → []).
   bool hasBar = true;
 
-  /// Composition seconds at which SOURCE second `s` plays (normal speed, the
-  /// layer's stretch; time remap is refused by `footage_layer`).
-  [[nodiscard]] double comp_seconds(double sourceSec) const noexcept;
+  /// How `source_seconds` maps composition time. `none` is stretch
+  /// (`start + source * stretch`). `frames` is Time Remap / precomp time.
+  /// `speed` is the Speed % integral.
+  enum class RetimeKind : std::uint8_t { none, frames, speed };
+  RetimeKind retimeKind = RetimeKind::none;
+  /// Keys of `timeRemap`, `precompTime`, or `timeSpeed`, copied at prepare.
+  std::vector<doc::Key> retimeKeys;
+  /// One timeline bar's clip map (retime.ts `retimeClipOf`).
+  struct RetimeClipMap {
+    double startFrame = 0;
+    double endFrame = 0;
+    double offsetSec = 0;
+    double inSec = 0;
+  };
+  std::vector<RetimeClipMap> retimeClips;
+  /// Set when the retime property has an enabled expression: source seconds
+  /// at each composition frame from `retimeSampleFirst`, so the worker never
+  /// evaluates the expression. Empty means the key curve above.
+  std::int64_t retimeSampleFirst = 0;
+  std::vector<double> retimeSamples;
+
+  /// Composition seconds at which SOURCE second `s` plays (stretch, or the
+  /// inverse of a retimed `source_seconds`).
+  [[nodiscard]] double comp_seconds(double sourceSec) const;
   /// The source second that plays at composition second `c`.
-  [[nodiscard]] double source_seconds(double compSec) const noexcept;
+  [[nodiscard]] double source_seconds(double compSec) const;
   [[nodiscard]] double in_seconds() const noexcept;
   [[nodiscard]] double out_seconds() const noexcept;
 
@@ -56,7 +78,7 @@ enum class Need : std::uint8_t { picture, sound };
 
 /// The footage layer `id`: its file resolved (resolve_footage_path). Throws
 /// EngineFail — notFound (no such layer), invalidArgument (not footage, no
-/// picture / no sound for `need`, a time-remapped layer), unsupported (a
+/// picture / no sound for `need`), unsupported (a
 /// session-only `blob:` source the engine cannot read).
 [[nodiscard]] FootageLayer footage_layer(const JobDocContext& ctx, std::string_view id, Need need);
 

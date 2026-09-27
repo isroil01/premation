@@ -64,7 +64,7 @@ struct Controls {
   T query(api::Query q) {
     const auto r = h.ask(std::move(q));
     REQUIRE(is_ok(r));
-    return std::get<T>(std::get<api::QueryResult>(r.outcome.v).v);
+    return result_as<T>(std::get<api::QueryResult>(r.outcome.v));
   }
   api::Value value(const api::LayerId& layer, const std::string& path, api::Time t = 0, bool evaluated = false) {
     api::GetPropertyValues q;

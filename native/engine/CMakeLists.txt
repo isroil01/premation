@@ -989,6 +989,7 @@ endif()
 if(TARGET engine_raster AND TARGET engine_render_graph)
   add_library(engine_scene STATIC
     src/scene/effects_port.cpp
+    src/scene/stamp_field.cpp
     src/scene/effects_spatial.cpp
     src/scene/effects_spatial_a.cpp
     src/scene/effects_spatial_b.cpp
@@ -1047,6 +1048,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   endif()
   if(MSVC)
     target_compile_options(engine_scene PRIVATE /bigobj)
+    target_compile_definitions(engine_scene PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv in native_scene.cpp
   endif()
 
   add_executable(premation-scene tools/premation_scene.cpp)
@@ -1067,6 +1069,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)
     if(MSVC)
       target_compile_options(engine_scene_tests PRIVATE /bigobj)
+      target_compile_definitions(engine_scene_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv in parity_rebless.hpp
     endif()
     add_test(NAME engine_scene_tests COMMAND engine_scene_tests --reporter compact)
   endif()
@@ -1174,6 +1177,11 @@ add_library(engine_jobs_core STATIC
   src/jobs/camera_solve.cpp
   src/jobs/trace_bitmap.cpp
   src/jobs/sam_pipeline.cpp
+  src/jobs/roto_matte.cpp
+  src/jobs/content_aware.cpp
+  src/jobs/reframe_path.cpp
+  src/jobs/saliency.cpp
+  src/jobs/reframe_analyse.cpp
 )
 target_include_directories(engine_jobs_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/jobs)
 target_link_libraries(engine_jobs_core PUBLIC engine_core engine_scene_core motion::jsmath PRIVATE motion::options)
@@ -1194,6 +1202,9 @@ if(FFMPEG_FOUND AND TARGET engine_audio)
     src/jobs/kind_track_apply.cpp
     src/jobs/kind_stabilize.cpp
     src/jobs/kind_auto_trace.cpp
+    src/jobs/kind_roto_brush.cpp
+    src/jobs/kind_content_aware.cpp
+    src/jobs/kind_auto_reframe.cpp
     src/jobs/kind_object_matte.cpp
     src/jobs/sam_ort_ffi.cpp
   )
@@ -1221,7 +1232,9 @@ endif()
 
 if(MOTION_BUILD_TESTS)
   add_executable(engine_jobs_tests tests/test_jobs_audio.cpp tests/test_jobs_trace.cpp tests/test_jobs_tracking.cpp
-                                 tests/test_jobs_round2.cpp)
+                                 tests/test_jobs_round2.cpp tests/test_roto_matte.cpp tests/test_content_aware.cpp
+                                 tests/test_reframe_path.cpp tests/test_saliency.cpp
+                                 tests/test_reframe_analyse.cpp tests/test_job_retime.cpp)
   target_link_libraries(engine_jobs_tests PRIVATE engine_jobs_core motion::options Catch2::Catch2WithMain)
   if(MSVC)
     target_compile_options(engine_jobs_tests PRIVATE /bigobj)

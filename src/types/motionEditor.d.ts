@@ -589,6 +589,8 @@ export interface MotionEditorApi {
     /** Binary read for packed `.motion` zips. */
     readBytes?(path: string): Promise<Uint8Array | null>;
     writeBytes?(path: string, bytes: Uint8Array): Promise<void>;
+    /** `<userData>/session-footage`, created if missing. Cache for session blob footage. */
+    sessionFootageDir?(): Promise<string>;
   };
   /**
    * `.motion` directory-bundle access (local-first storage). `root` is the

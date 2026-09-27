@@ -331,7 +331,17 @@ api::Outcome Session::handle_request_body(const api::Request& request, Clock::ti
         } else {
           r = run_control(cmd, request.origin, now);
         }
-        log_.push_back(api::LogRecord{request, revision_, 0});
+        api::LogRecord row{request, revision_, 0, std::nullopt};
+        if (cmd.kind() == api::Command::Kind::start_job) {
+          const std::optional<std::string> id = std::visit(
+              [](const auto& x) -> std::optional<std::string> {
+                if constexpr (std::is_same_v<std::decay_t<decltype(x)>, api::JobRef>) return x.job;
+                else return std::nullopt;
+              },
+              r.v);
+          if (id) row.job = *id;
+        }
+        log_.push_back(std::move(row));
         o.v = std::move(r);
         return o;
       }
@@ -355,7 +365,7 @@ api::Outcome Session::handle_request_body(const api::Request& request, Clock::ti
         }
         api::BatchResult results;
         if (!cmds.empty()) results.results = run_edits(cmds, request.origin, batch.label);
-        log_.push_back(api::LogRecord{request, revision_, 0});
+        log_.push_back(api::LogRecord{request, revision_, 0, std::nullopt});
         o.v = std::move(results);
         return o;
       }
@@ -900,6 +910,10 @@ struct ControlVisitor {
     if (c.custom) s.customRange_ = *c.custom;
     if (c.from) s.seek_to(*c.from);
     s.transportState_ = c.cache_first ? api::TransportState::caching : api::TransportState::playing;
+    // No viewport: there is nowhere to store frames, so play at once.
+    if (s.transportState_ == api::TransportState::caching && !s.viewport_.open) {
+      s.transportState_ = api::TransportState::playing;
+    }
     s.start_playback(now, std::nullopt);
     return result_for<api::Play>();
   }
@@ -917,6 +931,11 @@ struct ControlVisitor {
   R operator()(const api::Seek& c) const {
     if (!s.active_comp()) fail(ErrorCode::not_found, "no composition to seek");
     s.seek_to(c.time);
+    if (s.transportState_ == api::TransportState::caching) {
+      // A seek interrupts the fill; playback continues from here with what is stored.
+      s.transportState_ = api::TransportState::playing;
+      s.cacheInFlight_ = false;
+    }
     if (s.playing_) s.rebase_playback(now);
     s.emit_transport();
     s.emit_playhead();
@@ -1199,7 +1218,9 @@ void Session::start_playback(Clock::time_point now, std::optional<api::Time> fro
   lastU_ = playBaseU_;
   clockDropped_ = 0;
   lastStats_ = now;
-  if (mediaClock_ != nullptr) {  // E2: the audio clock starts with the transport
+  // cacheFirst stores the range before the clock runs, so audio waits with it.
+  const bool filling = transportState_ == api::TransportState::caching;
+  if (!filling && mediaClock_ != nullptr) {  // E2: the audio clock starts with the transport
     sync_audio();
     const double fd = doc::flicks_to_seconds(frame_dur());
     const MediaClock::Loop lp = loop_ == api::LoopMode::once        ? MediaClock::Loop::once
@@ -1211,8 +1232,57 @@ void Session::start_playback(Clock::time_point now, std::optional<api::Time> fro
   }
   emit_transport();
   emit_playhead();
+  if (filling) {
+    cacheFrame_ = r.first;
+    cacheInFlight_ = false;
+    renderDirty_ = false;
+    return;
+  }
   submit_frame(0);
   renderDirty_ = false;
+}
+
+void Session::fill_cache(Clock::time_point now) {
+  const Range r = play_range();
+  if (cacheInFlight_) {
+    if (sink_.counters().rendered == cacheSeenRendered_) {
+      if (now - lastStats_ >= std::chrono::seconds(1)) emit_stats(now);
+      return;
+    }
+    cacheInFlight_ = false;
+  }
+  if (cacheFrame_ > r.last) {
+    // The range is stored. Play it from the start play() chose, on the clock.
+    transportState_ = api::TransportState::playing;
+    set_time(playFrom_);
+    playBase_ = now;
+    playBaseU_ = frame_ - r.first;
+    lastK_ = 0;
+    lastU_ = playBaseU_;
+    clockDropped_ = 0;
+    if (mediaClock_ != nullptr) {
+      sync_audio();
+      const double fd = doc::flicks_to_seconds(frame_dur());
+      const MediaClock::Loop lp = loop_ == api::LoopMode::once        ? MediaClock::Loop::once
+                                  : loop_ == api::LoopMode::ping_pong ? MediaClock::Loop::pingPong
+                                                                      : MediaClock::Loop::loop;
+      mediaClock_->play(doc::flicks_to_seconds(time_), rate_, lp, static_cast<double>(r.first) * fd,
+                        static_cast<double>(r.last + 1) * fd);
+      mediaPaced_ = false;
+    }
+    emit_transport();
+    emit_playhead();
+    submit_frame(0);
+    renderDirty_ = false;
+    return;
+  }
+  set_time(cacheFrame_ * frame_dur());
+  emit_playhead();
+  cacheSeenRendered_ = sink_.counters().rendered;
+  submit_frame(0);
+  cacheInFlight_ = true;
+  ++cacheFrame_;
+  if (now - lastStats_ >= std::chrono::seconds(1)) emit_stats(now);
 }
 
 void Session::rebase_playback(Clock::time_point now) {
@@ -1235,6 +1305,7 @@ void Session::rebase_playback(Clock::time_point now) {
 void Session::stop_playback() {
   if (!playing_) return;
   playing_ = false;
+  cacheInFlight_ = false;
   transportState_ = api::TransportState::stopped;
   if (mediaClock_ != nullptr) mediaClock_->pause();
   mediaPaced_ = false;
@@ -1254,6 +1325,10 @@ std::optional<Clock::time_point> Session::next_deadline() const {
 
 std::optional<Session::Clock::time_point> Session::next_clock_deadline() const {
   if (!playing_) return std::nullopt;
+  if (transportState_ == api::TransportState::caching) {
+    // Poll until the frame in flight is stored, then take the next one.
+    return Clock::now() + std::chrono::milliseconds(1);
+  }
   const auto c = active_comp();
   if (!c) return std::nullopt;
   const double fps = doc::comp_fps(doc_, *c) * std::abs(rate_);
@@ -1274,6 +1349,10 @@ std::optional<Session::Clock::time_point> Session::next_clock_deadline() const {
 void Session::tick(Clock::time_point now) {
   if (phase_ == Phase::open && (runner_ || !jobs_.empty())) poll_jobs(now);
   if (!playing_ || phase_ != Phase::open) return;
+  if (transportState_ == api::TransportState::caching) {
+    fill_cache(now);
+    return;
+  }
   const auto c = active_comp();
   if (!c) {
     stop_playback();

@@ -89,7 +89,8 @@ Fn as_fn(void* p) {
 }
 
 /// Bind the six entry points with `suffix` ("" or "_74"); false if any is missing.
-bool bind(void* lib, const std::string& suffix, Icu& icu) {
+/// Not named `bind`: a `std::string` argument pulls `std::bind` in by ADL.
+bool bind_symbols(void* lib, const std::string& suffix, Icu& icu) {
   const auto get = [&](const char* base) { return symbol(lib, std::string(base) + suffix); };
   icu.open = as_fn<FnOpen>(get("ubrk_open"));
   icu.setText = as_fn<FnSetText>(get("ubrk_setText"));
@@ -109,12 +110,12 @@ Icu load_icu() {
     if (lib == nullptr) return false;
     // Unsuffixed first (Windows, macOS, ICU built with U_DISABLE_RENAMING), then
     // the version the file name says, then any version (a bare libicuuc.so).
-    if (bind(lib, "", icu)) {
+    if (bind_symbols(lib, "", icu)) {
       icu.info = name;
       return true;
     }
     for (int v = version > 0 ? version : kNewest; v >= (version > 0 ? version : kOldest); --v) {
-      if (bind(lib, "_" + std::to_string(v), icu)) {
+      if (bind_symbols(lib, "_" + std::to_string(v), icu)) {
         icu.info = "icu " + std::to_string(v) + " (" + name + ")";
         return true;
       }

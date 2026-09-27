@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -60,6 +61,10 @@ struct CubeLut {
 /// `lut:<id>` when a per-channel LUT effect is enabled, `cubelut:<id>` for the
 /// first enabled Apply Color LUT whose table parses. Appended to `out`.
 void append_lut_textures(const RLayer& l, std::vector<TextureRequest>& out);
+
+/// One enabled LUT effect's own strip (`lutfx:<layerId>:<ordinal>`), the key the
+/// GPU chain's `channel-lut` entry samples. `ordinal` counts enabled LUT effects.
+[[nodiscard]] std::string channel_lut_key(std::string_view layerId, std::size_t ordinal);
 
 /// The `apply-color-lut` chain entry extractSpatialEffects writes (nullopt when
 /// the stored table does not parse — the TypeScript then omits the entry).

@@ -1038,6 +1038,12 @@ export interface LogRecord {
   revisionAfter: Revision;
   /** Hash of the document after applying (0 = not recorded). */
   documentHash: number;
+  /**
+   * When set, this record is the edit a job applied. Electron main drops that
+   * job's `startJob` and keeps this request, so a crash replay writes the
+   * result instead of running the job again.
+   */
+  job?: string;
 }
 
 /** Undo the newest history entry. Undo is itself a revision: the document moves forward to a state equal to an older one. */

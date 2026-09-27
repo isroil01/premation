@@ -40,6 +40,7 @@ import type { Readable, Writable } from 'node:stream';
 import { FrameDecoder, type HelloInfo, type EngineFrameMessage, type WelcomeInfo, type GoodbyeReason } from './engineFraming';
 import { MAX_PIXEL_PAYLOAD, decodePixelFrame, type PixelFrame } from './pixelChannel';
 import { EngineGoneError, EngineGoodbyeError, EngineTransport, type EventBatchBytes } from './engineTransport';
+import type { AppliedJobEdit } from './engineFraming';
 
 // ── dependencies ─────────────────────────────────────────────────────────────
 
@@ -127,6 +128,7 @@ export interface SupervisorEvents {
   'engine-restarted': [EngineRestartedInfo];
   fallback: [FallbackInfo];
   events: [EventBatchBytes];
+  'log-record': [AppliedJobEdit];
   frame: [EngineFrameMessage];
   /** Route A: one copied frame from the engine's fd 5 (paired with its FrameReady by the host). */
   pixels: [PixelFrame];
@@ -300,6 +302,7 @@ export class EngineSupervisor {
       { commandIn: stdin, commandOut: stdout, framesOut, framesIn },
       {
         events: (b) => this.emitter.emit('events', b),
+        logRecord: (edit) => this.emitter.emit('log-record', edit),
         frame: (m) => this.onFrame(m),
         goodbye: (reason: GoodbyeReason, message: string) => this.log('warn', 'engine_goodbye', { reason, message }),
       },

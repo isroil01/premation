@@ -20638,6 +20638,7 @@ void encode(wire::Writer& w, const LogRecord& v) {
   w.varint(10U); { const std::size_t s = w.begin_ld(); encode(w, v.request); w.end_ld(s); }
   w.varint(16U); w.varint(v.revision_after);
   w.varint(24U); w.varint(v.document_hash);
+  if (v.job.has_value()) { w.varint(34U); w.str(*v.job); }
 }
 
 Status decode(wire::Reader& r, LogRecord& out) {
@@ -20661,6 +20662,12 @@ Status decode(wire::Reader& r, LogRecord& out) {
       case 24U: {
         if (!r.varint(out.document_hash)) return Status::truncated;
         has_document_hash = true;
+        break;
+      }
+      case 34U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.job = std::move(e);
         break;
       }
       default:

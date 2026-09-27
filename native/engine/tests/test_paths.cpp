@@ -209,7 +209,8 @@ TEST_CASE("paths: editPathTopology replays a structural edit on every state", "[
   gk.props = {mask};
   const auto keys = h.ask(qry(gk));
   REQUIRE(is_ok(keys));
-  for (const auto& k : std::get<api::KeyframeSets>(std::get<api::QueryResult>(keys.outcome.v).v).sets.at(0).keyframes) {
+  const api::KeyframeSets sets = result_as<api::KeyframeSets>(std::get<api::QueryResult>(keys.outcome.v));
+  for (const auto& k : sets.sets.at(0).keyframes) {
     CHECK(std::get<api::BezierPath>(k.value.v).vertices.size() == 8);
   }
   api::EditPathTopology open;

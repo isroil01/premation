@@ -36,6 +36,7 @@ import { documentMirror } from '@stores/documentMirror';
 import { bindEngineDocumentStores } from '@stores/engineDocumentStores';
 import { bindEngineComps, bindEngineItems } from '@stores/engineItemsView';
 import { edit } from '@core/engine/uiEdits';
+import { engineCanReadFootage, materializeUnreadableFootage } from '@core/engine/sessionFootage';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { openModal } from '@stores/modalStore';
@@ -44,6 +45,37 @@ import { Button } from '@components/Button';
 
 const RECOVERY_KEY = 'premation.engineRecovery.v1';
 const AUTOSAVE_MS = 60_000;
+
+/**
+ * Rewrite session footage the engine cannot open, once per mirror update.
+ * A relink lands another `items` update; that pass finds a disk path and stops.
+ */
+function watchSessionFootage(): () => void {
+  let busy = false;
+  let queued = false;
+  const kick = (): void => {
+    if (busy) {
+      queued = true;
+      return;
+    }
+    const ids = [...documentMirror().items.values()]
+      .filter((item) => item.kind === 'footage' && !engineCanReadFootage(item.path))
+      .map((item) => item.id);
+    if (ids.length === 0) return;
+    busy = true;
+    void materializeUnreadableFootage(engine(), ids)
+      .catch(() => { /* the item stays unreadable; the next items update retries */ })
+      .finally(() => {
+        busy = false;
+        if (!queued) return;
+        queued = false;
+        kick();
+      });
+  };
+  const stop = documentMirror().subscribe(['items'], kick);
+  kick();
+  return stop;
+}
 
 function notify(message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info'): void {
   useUIStore.getState().notify({ level, message, durationMs: 2600 });
@@ -137,6 +169,11 @@ export async function installEngineOwnedSession(track: (dispose: () => void) => 
   // fields stay the page's); the project store's compositions follow CompInfo.
   track(bindEngineItems(documentMirror()));
   track(bindEngineComps(documentMirror()));
+  // Session blob:/data: footage is not a path the engine process can open.
+  // Write it to the cache and relink as the mirror learns about the item, so
+  // the viewport and jobs both see a file. A relink updates the mirror, which
+  // runs this again; the second pass finds a disk path and stops.
+  track(watchSessionFootage());
   let lastTab: string | null = null;
   track(useProjectStore.subscribe((s) => {
     if (s.activeTabId === lastTab) return;

@@ -79,10 +79,12 @@ Proxy make_proxy(Harness& h) {
   REQUIRE(is_ok(res));
   api::DocumentFragment frag = std::get<api::DocumentFragment>(std::get<api::QueryResult>(res.outcome.v).v);
   std::string text(frag.data.begin(), frag.data.end());
-  const auto t = text.find("\"Transform\"");
+  // copyLayers canonicalises key order, so a component is
+  // {"id","props","type":"Transform"} — the props object sits BEFORE the type.
+  const auto t = text.find("\"type\":\"Transform\"");
   REQUIRE(t != std::string::npos);
   const std::string props = "\"props\":{";
-  const auto at = text.find(props, t);
+  const auto at = text.rfind(props, t);
   REQUIRE(at != std::string::npos);
   text.insert(at + props.size(), "\"__ownedByPlugin\":\"studio.acme.lab\",");
   frag.data.assign(text.begin(), text.end());

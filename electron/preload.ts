@@ -150,6 +150,7 @@ const bridge = {
     readBytes: (filePath: string) => ipcRenderer.invoke('file:readBytes', filePath),
     writeBytes: (filePath: string, bytes: Uint8Array) =>
       ipcRenderer.invoke('file:writeBytes', filePath, bytes),
+    sessionFootageDir: () => ipcRenderer.invoke('file:sessionFootageDir'),
   },
 
   bundle: {

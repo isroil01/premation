@@ -35,14 +35,24 @@ void draw_to_target(PassContext& ctx, RenderTarget& t, const Commands& cmds) {
   rp.End();
 }
 
+/// The next power of two at least `asked`, capped at the field maximum. A stroke
+/// that grows from 4 px to 6 px stays inside one bucket, so the field built for
+/// the first width is reused (fx_cache.hpp).
+double field_depth(double asked) {
+  double built = 1;
+  while (built < asked && built < kMaxSdfRange) built *= 2;
+  return built;
+}
+
 DistanceField distance_field(PassContext& ctx, const TexRef& src, double range, std::uint64_t key) {
   if (!src || src.width == 0 || src.height == 0) return {};
   const std::uint32_t w = src.width;
   const std::uint32_t h = src.height;
-  const double r = std::clamp(std::ceil(range), 1.0, kMaxSdfRange);
+  const double asked = std::clamp(std::ceil(range), 1.0, kMaxSdfRange);
+  const double r = field_depth(asked);
   FxCache* cache = ctx.fxCache;
   if (cache != nullptr && key != 0) {
-    if (FxCache::Slot* s = cache->find(key, r, w, h)) {
+    if (FxCache::Slot* s = cache->find(key, asked, w, h)) {
       bool created = false;
       RenderTarget& t = ctx.dev.target(s->name, w, h, kFieldFormat, 1, false, &created);
       if (!created) {

@@ -16,6 +16,8 @@
 
 import { asCommandId } from '@app-types/common';
 import type { Command } from '@core/commands/Command';
+import { runEngineJob } from '@core/engine/engineJobs';
+import { engine } from '@core/engine/engineInstance';
 import { useUIStore } from '@stores/uiStore';
 import { useProjectStore } from '@stores/projectStore';
 import {
@@ -63,6 +65,26 @@ async function reframeTo(preset: AspectPreset): Promise<void> {
   });
 
   try {
+    const viaEngine = await runEngineJob<{ samples: number; cuts: number; keyframes: number; comp?: string }>({
+      kind: 'autoReframe',
+      value: { comp: comp.id, width: target.width, height: target.height },
+    });
+    if (viaEngine) {
+      if (viaEngine.status === 'cancelled') return;
+      if (viaEngine.status !== 'done') {
+        throw new AutoReframeError(viaEngine.error?.message || 'Auto-reframe failed.');
+      }
+      const made = viaEngine.result?.comp;
+      if (made) await engine().execute({ type: 'setActiveComposition', comp: made });
+      ui.notify({
+        level: 'success',
+        message:
+          `Reframed to ${target.width}×${target.height} — ${viaEngine.result?.cuts ?? 0} shot change(s), `
+          + `${viaEngine.result?.keyframes ?? 0} keyframe(s). The original is untouched.`,
+        durationMs: 6000,
+      });
+      return;
+    }
     const result = await autoReframeComposition({ sourceCompId: comp.id, target });
     ui.notify({
       level: 'success',

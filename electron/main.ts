@@ -312,6 +312,14 @@ function registerFileIpc(): void {
     await writeFileAtomic(filePath, Buffer.from(bytes));
   });
 
+  // Session `blob:` / `data:` footage the C++ engine cannot open. The page
+  // writes those bytes here, then relinkItem points the item at the file.
+  handle('file:sessionFootageDir', async () => {
+    const dir = path.join(app.getPath('userData'), 'session-footage');
+    await mkdir(dir, { recursive: true });
+    return dir;
+  });
+
   handle('file:readBytes', async (_event, filePath: string) => {
     try {
       return await readFile(filePath);

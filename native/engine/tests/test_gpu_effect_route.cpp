@@ -11,6 +11,7 @@
 
 #include "contour_texture.hpp"
 #include "effects_port.hpp"
+#include "lut_port.hpp"
 #include "json.hpp"
 #include "native_scene.hpp"
 
@@ -88,20 +89,94 @@ TEST_CASE("gpu route: effect opacity and a scoped mask ride on the effect's one 
 
 TEST_CASE("gpu route: a fully faded unscoped effect is dropped, as applyEffectChain skips it", "[scene][e4]") {
   sc::RLayer l = shape_layer();
+  // Stroke opacity is blended on the GPU, so it does not bake by itself. Fill
+  // opacity is what puts the layer on the route; the faded stroke is then skipped.
+  l.fillOpacity = 0.4;
   l.effects.push_back(effect(R"({"id":"a","type":"stroke","opacity":0,"params":{"width":6,"opacity":100}})"));
   REQUIRE(sc::gpu_effect_route(l));
   l.gpuEffects = true;
-  CHECK(sc::extract_gpu_route_effects(l).empty());
+  const auto chain = sc::extract_gpu_route_effects(l);
+  REQUIRE(chain.size() == 1);
+  CHECK(chain[0].type == "fill-opacity");
+}
+
+TEST_CASE("gpu route: a colour grade and a LUT run after fill opacity", "[scene][e4]") {
+  sc::RLayer l = shape_layer();
+  l.fillOpacity = 0.9;
+  SECTION("a colour matrix") {
+    l.effects.push_back(effect(R"({"id":"a","type":"brightness","params":{"brightness":150}})"));
+    REQUIRE(sc::gpu_effect_route(l));
+    l.gpuEffects = true;
+    const auto chain = sc::extract_gpu_route_effects(l);
+    REQUIRE(chain.size() == 2);
+    CHECK(chain[0].type == "fill-opacity");
+    CHECK(chain[1].type == "color-matrix");
+    const auto* m = param(chain[1], "m");
+    REQUIRE(m != nullptr);
+    CHECK(m->numbers.size() == 9);
+  }
+  SECTION("a per-channel LUT") {
+    l.effects.push_back(effect(R"({"id":"a","type":"levels","params":{}})"));
+    REQUIRE(sc::gpu_effect_route(l));
+    l.gpuEffects = true;
+    const auto chain = sc::extract_gpu_route_effects(l);
+    REQUIRE(chain.size() == 2);
+    CHECK(chain[0].type == "fill-opacity");
+    CHECK(chain[1].type == "channel-lut");
+    const auto* key = param(chain[1], "lutKey");
+    REQUIRE(key != nullptr);
+    CHECK(key->text == sc::channel_lut_key("L", 0));
+  }
+}
+
+TEST_CASE("gpu route: plexus, an empty scribble and a write-on brush stamp on the GPU", "[scene][e4]") {
+  sc::RLayer l = shape_layer();
+  l.fillOpacity = 0.9;
+  SECTION("plexus") {
+    l.effects.push_back(effect(R"({"id":"a","type":"plexus","params":{"pointCount":4,"maxDistance":0,"pointSize":3}})"));
+    REQUIRE(sc::gpu_effect_route(l));
+    l.gpuEffects = true;
+    const auto chain = sc::extract_gpu_route_effects(l);
+    REQUIRE(chain.size() == 2);
+    CHECK(chain[0].type == "fill-opacity");
+    CHECK(chain[1].type == "stamp-field");
+    const auto* n = param(chain[1], "instances");
+    REQUIRE(n != nullptr);
+    CHECK(n->number == 4);
+  }
+  SECTION("scribble with no mask draws nothing, so only fill opacity remains") {
+    l.effects.push_back(effect(R"({"id":"a","type":"scribble","params":{}})"));
+    REQUIRE(sc::gpu_effect_route(l));
+    l.gpuEffects = true;
+    const auto chain = sc::extract_gpu_route_effects(l);
+    REQUIRE(chain.size() == 1);
+    CHECK(chain[0].type == "fill-opacity");
+  }
+  SECTION("write-on brush") {
+    l.effects.push_back(effect(R"({"id":"a","type":"write-on","params":{"writeOnMode":0,"brushSize":8}})"));
+    REQUIRE(sc::gpu_effect_route(l));
+    l.gpuEffects = true;
+    const auto chain = sc::extract_gpu_route_effects(l);
+    REQUIRE(chain.size() == 2);
+    CHECK(chain[1].type == "stamp-field");
+    const auto* n = param(chain[1], "instances");
+    REQUIRE(n != nullptr);
+    CHECK(n->number == 1);
+  }
 }
 
 TEST_CASE("gpu route: what the chain cannot express keeps the CPU bake", "[scene][e4]") {
   sc::RLayer l = shape_layer();
   l.fillOpacity = 0.5;
-  SECTION("an interleaved per-channel LUT") {
-    l.effects.push_back(effect(R"({"id":"a","type":"levels","params":{}})"));
+  SECTION("a CSS opacity effect (no matrix and no chain entry)") {
+    l.effects.push_back(effect(R"({"id":"a","type":"opacity","params":{"amount":50}})"));
   }
   SECTION("a Canvas2D-only effect the GPU does not draw") {
-    l.effects.push_back(effect(R"({"id":"a","type":"plexus","params":{}})"));
+    l.effects.push_back(effect(R"({"id":"a","type":"path-stroke","params":{}})"));
+  }
+  SECTION("Scribble that has a mask path to fill") {
+    l.mask = effect(R"({"paths":[{"id":"m1","closed":true,"points":[{"x":0,"y":0},{"x":10,"y":0},{"x":0,"y":10}]}]})");
+    l.effects.push_back(effect(R"({"id":"a","type":"scribble","params":{}})"));
   }
   SECTION("Vegas behind another effect (its contours are the raw content's)") {
     l.effects.push_back(effect(R"({"id":"a","type":"stroke","params":{"width":4}})"));

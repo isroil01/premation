@@ -186,6 +186,8 @@ class Session {
   // ── transport ──
   [[nodiscard]] std::optional<Clock::time_point> next_clock_deadline() const;
   void start_playback(Clock::time_point now, std::optional<api::Time> from);
+  /// cacheFirst: store every frame of the play range, one at a time, then play it.
+  void fill_cache(Clock::time_point now);
   void stop_playback();
   void rebase_playback(Clock::time_point now);
   void set_time(api::Time t);
@@ -272,6 +274,11 @@ class Session {
   std::int64_t lastU_ = 0;
   api::Time playFrom_ = 0;       // where play started (pause{returnToStart})
   std::uint32_t clockDropped_ = 0;
+  /// cacheFirst fill: the next frame index to store, and the render count when
+  /// the in-flight frame was submitted (it landed when `rendered` moves).
+  std::int64_t cacheFrame_ = 0;
+  std::uint64_t cacheSeenRendered_ = 0;
+  bool cacheInFlight_ = false;
   std::uint64_t playheadSkipped_ = 0;
   Clock::time_point lastStats_{};
 

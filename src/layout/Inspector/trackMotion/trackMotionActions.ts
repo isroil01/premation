@@ -595,6 +595,42 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     store.getState().beginTracking();
     try {
       const rotoEnd = durationSeconds ?? time + 2;
+      const end = Math.max(time + 1 / fps, rotoEnd);
+      let cancelRoto: (() => void) | null = null;
+      const rotoJob = await startEngineJob<{ frames: number; keyframes: number }>(
+        {
+          kind: 'rotoBrush',
+          value: {
+            layer: nodeId,
+            range: {
+              start: secondsToFlicks(time),
+              duration: secondsToFlicks(Math.max(0, end - time) + 1 / Math.max(1, fps)),
+            },
+            seed: { x: points[0]?.x ?? src.width / 2, y: points[0]?.y ?? src.height / 2 },
+            tolerance: 40,
+            feather: 2,
+          },
+        },
+        {
+          onProgress: (f) => {
+            store.getState().setProgress(f);
+            if (!store.getState().tracking) cancelRoto?.();
+          },
+        },
+      );
+      if (rotoJob) {
+        cancelRoto = rotoJob.cancel;
+        const out = await rotoJob.done;
+        if (out.status === 'failed') throw new Error(out.error?.message ?? 'Roto Brush failed');
+        const r = out.result;
+        store.getState().finishTracking(
+          null,
+          out.status === 'cancelled'
+            ? 'Roto Brush cancelled.'
+            : `Roto Brush: ${r?.keyframes ?? 0} mask keyframes over ${r?.frames ?? 0} frames (completed). Refine with Track mask.`,
+        );
+        return;
+      }
       const r = await runRotoBrush({
         nodeId,
         seed: { x: points[0]?.x ?? src.width / 2, y: points[0]?.y ?? src.height / 2, tolerance: 40 },
@@ -620,6 +656,40 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     store.getState().beginTracking();
     try {
       const fillEnd = durationSeconds ?? time + 1;
+      const end = Math.max(time + 1 / fps, Math.min(time + 2, fillEnd));
+      let cancelFill: (() => void) | null = null;
+      const fillJob = await startEngineJob<{ frames: number; filledPixels: number }>(
+        {
+          kind: 'contentAwareFill',
+          value: {
+            layer: nodeId,
+            range: {
+              start: secondsToFlicks(time),
+              duration: secondsToFlicks(Math.max(0, end - time) + 1 / Math.max(1, fps)),
+            },
+            outputFolder: '',
+          },
+        },
+        {
+          onProgress: (f) => {
+            store.getState().setProgress(f);
+            if (!store.getState().tracking) cancelFill?.();
+          },
+        },
+      );
+      if (fillJob) {
+        cancelFill = fillJob.cancel;
+        const out = await fillJob.done;
+        if (out.status === 'failed') throw new Error(out.error?.message ?? 'Content-Aware Fill failed');
+        const r = out.result;
+        store.getState().finishTracking(
+          null,
+          out.status === 'cancelled'
+            ? 'Content-Aware Fill cancelled.'
+            : `Content-Aware Fill: ${r?.frames ?? 0} frames, ${r?.filledPixels ?? 0} px (completed). Mask the hole first.`,
+        );
+        return;
+      }
       const r = await runContentAwareFill({
         nodeId,
         startCompTime: time,

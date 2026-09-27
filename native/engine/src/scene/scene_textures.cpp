@@ -247,12 +247,23 @@ void SceneTextures::prepare(const std::vector<TextureRequest>& reqs, std::vector
       // into timecode / strobe-light / particle-systems), which ARE keyed — so a
       // baked layer whose stack does not animate keeps its bake across frames.
       for (const char* k : {"x", "y", "rotation", "scaleX", "scaleY", "depth", "opacity", "blend", "sourceTime"}) keyed.erase(k);
+      // GPU route: the chain applies fill opacity and the effect stack, and the
+      // painters do not read them. Leaving them in the key re-rasterizes the
+      // shape on every fill-opacity frame (the E4 bench).
+      if (!r.spec.at("__baked").b()) {
+        keyed.erase("fillOpacity");
+        keyed.erase("effects");
+      }
       h = fnv1a(tail.data(), fnv1a(js::stringify(keyed)));
     } else if (r.kind == TexKind::text && r.spec.is_object()) {
       // The layer scale picks the tier (in `tail`); the text painters never read it.
       js::Json keyed = r.spec;
       keyed.erase("scaleX");
       keyed.erase("scaleY");
+      if (!r.spec.at("__baked").b()) {
+        keyed.erase("fillOpacity");
+        keyed.erase("effects");
+      }
       h = fnv1a(tail.data(), fnv1a(js::stringify(keyed)));
     } else {
       h = fnv1a(tail.data(), fnv1a(spec));

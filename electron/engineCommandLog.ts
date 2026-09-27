@@ -24,7 +24,7 @@
  * (engineHost renumbers every window's requests).
  */
 
-import { peekRequest, responseIsError } from './engineFraming';
+import { peekRequest, responseIsError, startJobIdFromResponse } from './engineFraming';
 
 /** Command ids (packages/engine-api/schema: the Command union's field numbers). */
 export const CMD = {
@@ -38,6 +38,7 @@ export const CMD = {
   setActiveComposition: 807,
   setViewport: 808,
   closeViewport: 809,
+  startJob: 850,
 } as const;
 
 const REPLAY_SKIP = new Set<number>([CMD.play, CMD.pause, CMD.step]);
@@ -52,6 +53,8 @@ export interface LoggedRequest {
   commandId?: number;
   /** Supersession key for view controls ('' = none). */
   key: string;
+  /** Set on startJob, from the response's JobRef, so a later log record can replace that one job. */
+  jobId?: string;
 }
 
 export class EngineCommandLog {
@@ -78,7 +81,35 @@ export class EngineCommandLog {
     let key = '';
     if (id === CMD.setViewport || id === CMD.closeViewport) key = `viewport:${req.firstVarint ?? 0}`;
     else if (id !== undefined && LAST_ONLY.has(id)) key = `cmd:${id}`;
-    this.entries.push({ bytes: Uint8Array.from(request), revisionAfter, ...(id !== undefined ? { commandId: id } : {}), key });
+    const jobId = id === CMD.startJob ? startJobIdFromResponse(response) ?? undefined : undefined;
+    this.entries.push({
+      bytes: Uint8Array.from(request),
+      revisionAfter,
+      ...(id !== undefined ? { commandId: id } : {}),
+      key,
+      ...(jobId ? { jobId } : {}),
+    });
+  }
+
+  /**
+   * A job finished and the engine sent the edit it applied. Drop that job's
+   * startJob (replay must not run the job again) and append the applied
+   * request where the edit landed.
+   */
+  absorbJobEdit(request: Uint8Array, revisionAfter: number, job?: string): void {
+    if (!this.enabled) return;
+    const idx = job
+      ? this.entries.findIndex((e) => e.commandId === CMD.startJob && e.jobId === job)
+      : this.entries.findIndex((e) => e.commandId === CMD.startJob);
+    if (idx >= 0) this.entries.splice(idx, 1);
+    const peek = peekRequest(request);
+    if (!peek || peek.body === 'query') return;
+    this.entries.push({
+      bytes: Uint8Array.from(request),
+      revisionAfter,
+      ...(peek.commandId !== undefined ? { commandId: peek.commandId } : {}),
+      key: '',
+    });
   }
 
   /** What a restarted engine is sent, in order (see the file header). */

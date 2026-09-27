@@ -632,7 +632,9 @@ bool RenderThread::send_copy(SlotSet& set, std::uint32_t slot) {
   }
   buffer.Unmap();
   if (!options_.sendPixels(std::move(framed))) {
-    if (!pixelPipeGone_) PREMATION_LOG(warn, "pixel_stream_closed");
+    if (!pixelPipeGone_) {
+      PREMATION_LOG(warn, "pixel_stream_closed");
+    }
     pixelPipeGone_ = true;
     return false;
   }

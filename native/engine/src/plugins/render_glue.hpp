@@ -35,7 +35,10 @@
 #include <string>
 #include <tuple>
 
-#include "effect_chain.hpp"
+// Not "effect_chain.hpp": src/effects/effect_chain.hpp is a different header, and
+// an include path that lists src/effects first would bind that name instead.
+#include "../render_graph/effect_chain.hpp"
+#include "../render_graph/device.hpp"
 
 namespace premation::plugins {
 

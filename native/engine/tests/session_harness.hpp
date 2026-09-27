@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -36,6 +37,20 @@ api::Query qry(T x) {
   return q;
 }
 
+/// `std::get<T>` is ill-formed when a query result type is shared by two
+/// queries (KeyframeSets, PropertySamples). Visit matches the active alternative.
+template <class T>
+T result_as(const api::QueryResult& result) {
+  std::optional<T> found;
+  std::visit(
+      [&](const auto& x) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(x)>, T>) found = x;
+      },
+      result.v);
+  if (!found) throw std::logic_error("query result is not the requested type");
+  return std::move(*found);
+}
+
 inline api::Value vec2(double x, double y) { return doc::v_vec2(x, y); }
 inline api::Value scalar(double x) { return doc::v_scalar(x); }
 
@@ -45,7 +60,7 @@ class Harness final : public Outbox {
 
   explicit Harness(std::uint32_t slots = 3, std::string portsDir = {})
       : sink([this](const frames::Message& m) { frameMsgs.push_back(m); }, slots),
-        session(*this, sink, SessionOptions{.testPorts = true, .testPortsDir = std::move(portsDir)}) {
+        session(*this, sink, SessionOptions{.testPorts = true, .testPortsDir = std::move(portsDir), .systemFonts = {}}) {
     log::set_min_level(log::Level::error);  // corrupted traffic logs a warning per message
   }
 

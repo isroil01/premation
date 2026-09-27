@@ -372,6 +372,8 @@ bool effect_ported(const api::RenderEffect& e, std::string& why) {
   if (t == "native-plugin") return true;  // G1: run by the plugin host (NativeEffectHost)
   if (t == "fill-opacity") return true;   // E4: the GPU route's fill opacity (below)
   if (t == "vegas") return true;          // E4: the GPU Vegas over its contour texture (below)
+  if (t == "color-matrix" || t == "channel-lut") return true;  // E4: a grade in stack order (below)
+  if (t == "stamp-field") return true;  // E4: Plexus / Write-on brush (below)
   if (fx_table().count(t) != 0 || p_table().count(t) != 0 || field_table().count(t) != 0 || known_single(t)) return true;
   why = "effect " + t;
   return false;
@@ -492,6 +494,10 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       continue;
     }
 
+    // A missing LUT strip or stamp table leaves the buffer alone (no half-applied scope blend).
+    if (type == "channel-lut" && !ctx.texture(fx.text("lutKey"))) continue;
+    if (type == "stamp-field" && !ctx.texture(fx.text("stampKey"))) continue;
+
     // E4: an effect scoped to one mask path blends back through its coverage,
     // drawn now (before the effect) into the buffer's space.
     TexRef scope;
@@ -510,6 +516,80 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     }
     if (((fx.has("effectOpacity") && fx.num("effectOpacity") < 1) || scope) && type != "plugin") {
       blendBack = BlendBack{curTex, curName, std::max(0.0, fx.num("effectOpacity", 1)), scope};
+    }
+
+    if (type == "stamp-field") {
+      // Stamps accumulate in f1, then land on the layer: 0 over, 1 alone,
+      // 2 reveal, 3 lighten, 4 screen, 5 multiply, 6 only where the layer is.
+      const TexRef data = ctx.texture(fx.text("stampKey"));
+      const auto instances = static_cast<std::uint32_t>(std::max(0.0, fx.num("instances")));
+      if (!data || instances == 0 || selfR == nullptr) {
+        note.path = FxPath::skipped;
+        touch.keep = true;
+        continue;
+      }
+      const Mat3 layerMvp = space != nullptr ? mul(mvp, model_from_rect(space->box)) : mvp_for(vp, mat3_of(selfR->model_matrix));
+      const Rect layerUv = selfR->uv_rect ? rect_of(*selfR->uv_rect) : Rect{0, 0, 1, 1};
+      Packer pk = ctx.packer();
+      pk.mat3(layerMvp).rect(layerUv).working_rgba(Color::white());
+      pk.vec4(0, 0, 0, 0).vec4(0, 0, 0, 0);
+      Commands stamps;
+      DrawItem& it = stamps.add(Mat::STAMP_FIELD_FX_MATERIAL, Blend::normal, pk.span());
+      it.texture = curTex;
+      it.sampler = ctx.linear_clamp();
+      it.mask = data;
+      it.instanceCount = instances;
+      ctx.draw_into(f1, stamps, true);
+      const TexRef painted = texOf(f1);
+      const double over = fx.num("over");
+      if (over == 1) {
+        curTex = painted;
+        curName = f1;
+        continue;
+      }
+      Commands comp;
+      if (over == 2 || over == 6) {
+        ColorTransform alphaMode;
+        alphaMode.m = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+        emit_matte_combine(ctx, comp, mvp, Blend::none, over == 2 ? curTex : painted, ctx.linear_clamp(), over == 2 ? painted : curTex,
+                           alphaMode, targetUv);
+      } else if (over == 3 || over == 4 || over == 5) {
+        emit_textured(ctx, comp, mvp, Color::white(), 1, Blend::none, curTex, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+        emit_textured(ctx, comp, mvp, Color::white(), 1, over == 3 ? Blend::lighten : over == 4 ? Blend::screen : Blend::multiply, painted,
+                      ctx.linear_clamp(), targetUv, kIdentityColor, true);
+      } else {
+        emit_textured(ctx, comp, mvp, Color::white(), 1, Blend::none, curTex, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+        emit_textured(ctx, comp, mvp, Color::white(), 1, Blend::normal, painted, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+      }
+      ctx.draw_into(f0, comp, true);
+      curTex = texOf(f0);
+      curName = f0;
+      continue;
+    }
+
+    if (type == "color-matrix" || type == "channel-lut") {
+      // After fill opacity (and any earlier spatial effect): unpremultiply, grade
+      // the straight colour, premultiply again. Same blit the content draw used
+      // to run before the chain, now in stack order. Scope and effect opacity
+      // blend this result back over the input, as they do for every other entry.
+      ColorTransform ct;
+      if (type == "color-matrix") {
+        const auto m = fx.nums("m");
+        const auto o = fx.nums("offset");
+        for (std::size_t i = 0; i < 9 && i < m.size(); ++i) ct.m.at(i) = m[i];
+        for (std::size_t i = 0; i < 3 && i < o.size(); ++i) ct.offset.at(i) = o[i];
+      }
+      const TexRef lut = type == "channel-lut" ? ctx.texture(fx.text("lutKey")) : TexRef{};
+      Commands grade;
+      DrawItem& it = grade.add(type == "channel-lut" ? Mat::LUT_TEXTURED_LINEAR_MATERIAL : Mat::TEXTURED_LINEAR_MATERIAL,
+                               Blend::none, pack_textured(ctx.packer(), mvp, targetUv, Color::white(), 1, ct, true));
+      it.texture = curTex;
+      it.sampler = ctx.linear_clamp();
+      if (lut) it.mask = lut;
+      ctx.draw_into(f0, grade, true);
+      curTex = texOf(f0);
+      curName = f0;
+      continue;
     }
 
     if (type == "native-plugin") {

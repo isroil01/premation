@@ -138,4 +138,8 @@ struct LogRecord {
   revisionAfter: Revision = 2;
   /// Hash of the document after applying (0 = not recorded).
   documentHash: u64 = 3;
+  /// When set, this record is the edit a job applied. Electron main drops that
+  /// job's `startJob` and keeps this request, so a crash replay writes the
+  /// result instead of running the job again.
+  job?: string = 4;
 }

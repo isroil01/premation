@@ -4444,6 +4444,7 @@ struct LogRecord {
   Request request;
   Revision revision_after = 0;
   std::uint64_t document_hash = 0;
+  std::optional<std::string> job;
   bool operator==(const LogRecord&) const = default;
 };
 
