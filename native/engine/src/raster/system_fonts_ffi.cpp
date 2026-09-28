@@ -132,7 +132,7 @@ std::string linux_generic_family(std::string_view family) {
   return std::string(family);
 }
 
-std::string blink_alternate_family(std::string_view family) {
+std::string_view blink_alternate_family(std::string_view family) {
   if (iequals(family, "Courier")) return "Courier New";
   if (iequals(family, "Courier New")) return "Courier";
   if (iequals(family, "Times")) return "Times New Roman";
@@ -145,7 +145,7 @@ std::string blink_alternate_family(std::string_view family) {
 std::optional<std::string> resolve_system_family(std::string_view cssFamily, int weight, bool italic) {
   const std::string family = linux_generic_family(cssFamily);
   if (auto hit = match_system_family(family, weight, italic)) return hit;
-  const std::string alt = blink_alternate_family(family);
+  const std::string alt(blink_alternate_family(family));
   if (alt.empty()) return std::nullopt;
   return match_system_family(alt, weight, italic);
 }

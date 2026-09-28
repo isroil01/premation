@@ -9,7 +9,9 @@
 #include <cmath>
 #include <map>
 #include <numbers>
+#include <ranges>
 #include <tuple>
+#include <utility>
 
 namespace premation::raster::svg {
 namespace {
@@ -99,14 +101,33 @@ bool decode_entities(std::string_view in, std::string& out, std::string& error) 
   return true;
 }
 
+/// One element's xmlns declarations. A vector of (prefix, uri) pairs, not a map:
+/// an element declares a handful at most, and an empty scope (the common case)
+/// then costs no allocation (MSVC's std::map allocates its sentinel even empty).
 struct NsScope {
-  std::map<std::string, std::string, std::less<>> prefixes;  // "" = default namespace
+  std::vector<std::pair<std::string, std::string>> prefixes;  // "" = default namespace
+
+  /// xmlns[:prefix]="uri"; a repeated prefix keeps the last value.
+  void bind(std::string_view prefix, const std::string& uri) {
+    for (auto& [p, u] : prefixes) {
+      if (p == prefix) {
+        u = uri;
+        return;
+      }
+    }
+    prefixes.emplace_back(prefix, uri);
+  }
+  [[nodiscard]] const std::string* find(std::string_view prefix) const {
+    for (const auto& [p, u] : prefixes) {
+      if (p == prefix) return &u;
+    }
+    return nullptr;
+  }
 };
 
 std::string resolve_ns(const std::vector<NsScope>& scopes, std::string_view prefix) {
-  for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-    const auto f = it->prefixes.find(prefix);
-    if (f != it->prefixes.end()) return f->second;
+  for (const NsScope& scope : std::ranges::reverse_view(scopes)) {
+    if (const std::string* uri = scope.find(prefix)) return *uri;
   }
   if (prefix == "xml") return "http://www.w3.org/XML/1998/namespace";
   return {};
@@ -325,8 +346,8 @@ bool parse_xml(std::string_view src, Document& out, std::string& error) {
     }
     NsScope scope;
     for (const auto& [k, v] : rawAttrs) {
-      if (k == "xmlns") scope.prefixes[""] = v;
-      else if (k.starts_with("xmlns:")) scope.prefixes[k.substr(6)] = v;
+      if (k == "xmlns") scope.bind("", v);
+      else if (k.starts_with("xmlns:")) scope.bind(std::string_view(k).substr(6), v);
     }
     scopes.push_back(std::move(scope));
     Node n;
@@ -878,7 +899,7 @@ AspectRatio parse_aspect_ratio(std::string_view s) {
   AspectRatio out;
   if (w == "none") {
     out.none = true;
-  } else if (w.size() == 8 && w.substr(0, 1) == "x" && w.substr(4, 1) == "Y") {
+  } else if (w.size() == 8 && w.starts_with('x') && w[4] == 'Y') {
     const std::string_view ax = w.substr(1, 3);
     const std::string_view ay = w.substr(5, 3);
     const auto al = [](std::string_view a) -> std::uint8_t { return a == "Min" ? 1 : a == "Mid" ? 2 : a == "Max" ? 3 : 0; };
@@ -1147,7 +1168,7 @@ int element_sibling(const Document& doc, int node, int dir) {
   const auto it = std::ranges::find(kids, node);
   if (it == kids.end()) return -1;
   auto idx = static_cast<std::ptrdiff_t>(it - kids.begin());
-  for (idx += dir; idx >= 0 && idx < static_cast<std::ptrdiff_t>(kids.size()); idx += dir) {
+  for (idx += dir; idx >= 0 && std::cmp_less(idx, kids.size()); idx += dir) {
     const int k = kids[static_cast<std::size_t>(idx)];
     if (doc.nodes[static_cast<std::size_t>(k)].element) return k;
   }
@@ -1380,24 +1401,23 @@ bool is_presentation(std::string_view p) {
 class Cascader {
  public:
   Cascader(const Document& doc, std::vector<Style>& styles, std::vector<std::string>& unsupported)
-      : doc_(doc), styles_(styles), unsupported_(unsupported) {}
+      : doc_(&doc), styles_(&styles), unsupported_(&unsupported) {}
 
   void run(std::string_view extraCss) {
-    for (std::size_t i = 0; i < doc_.nodes.size(); ++i) {
-      const Node& n = doc_.nodes[i];
+    for (const Node& n : doc_->nodes) {
       if (!n.element || !n.svgNs || n.name != "style" || n.shadow) continue;
       if (const std::string* t = n.attr("type"); t != nullptr && !t->empty() && lower(trim(*t)) != "text/css") continue;
       std::string text;
       for (const int k : n.children) {
-        const Node& c = doc_.nodes[static_cast<std::size_t>(k)];
+        const Node& c = doc_->nodes[static_cast<std::size_t>(k)];
         if (!c.element) text += c.text;
       }
-      parse_sheet(text, rules_, unsupported_);
+      parse_sheet(text, rules_, *unsupported_);
     }
-    if (!extraCss.empty()) parse_sheet(extraCss, rules_, unsupported_);
-    styles_.assign(doc_.nodes.size(), Style{});
+    if (!extraCss.empty()) parse_sheet(extraCss, rules_, *unsupported_);
+    styles_->assign(doc_->nodes.size(), Style{});
     // Parents precede children in the node array (parse order, clones appended after their host).
-    for (std::size_t i = 0; i < doc_.nodes.size(); ++i) compute(static_cast<int>(i));
+    for (std::size_t i = 0; i < doc_->nodes.size(); ++i) compute(static_cast<int>(i));
   }
 
  private:
@@ -1407,15 +1427,15 @@ class Cascader {
   };
 
   void compute(int idx) {
-    const Node& n = doc_.nodes[static_cast<std::size_t>(idx)];
-    const Style parent = n.parent >= 0 ? styles_[static_cast<std::size_t>(n.parent)] : Style{};
+    const Node& n = doc_->nodes[static_cast<std::size_t>(idx)];
+    const Style parent = n.parent >= 0 ? (*styles_)[static_cast<std::size_t>(n.parent)] : Style{};
     Style s = inherit_from(parent);
     if (!n.element) {
-      styles_[static_cast<std::size_t>(idx)] = parent;
+      (*styles_)[static_cast<std::size_t>(idx)] = parent;
       return;
     }
     // UA sheet: overflow: hidden on svg:not(:root), symbol, image, marker, pattern, foreignObject.
-    if (idx != doc_.root && (n.name == "svg" || n.name == "symbol" || n.name == "image" || n.name == "marker" ||
+    if (idx != doc_->root && (n.name == "svg" || n.name == "symbol" || n.name == "image" || n.name == "marker" ||
                              n.name == "pattern" || n.name == "foreignObject")) {
       s.overflowVisible = false;
     } else {
@@ -1423,7 +1443,7 @@ class Cascader {
     }
     std::map<std::string, Winner, std::less<>> win;
     std::size_t order = 0;
-    const auto offer = [&](const std::string& prop, const std::string& value, std::tuple<int, int, std::uint32_t, std::size_t> key) {
+    const auto offer = [&](const std::string& prop, const std::string& value, const std::tuple<int, int, std::uint32_t, std::size_t>& key) {
       // Shorthands expand to their longhands at the same priority.
       if (prop == "marker") {
         for (const char* p : {"marker-start", "marker-mid", "marker-end"}) offer_one(win, p, value, key);
@@ -1451,7 +1471,7 @@ class Cascader {
       std::uint32_t best = 0;
       bool matched = false;
       for (const Complex& cx : r.selectors) {
-        if (match_from(doc_, idx, cx, cx.parts.size() - 1)) {
+        if (match_from(*doc_, idx, cx, cx.parts.size() - 1)) {
           matched = true;
           best = std::max(best, cx.specificity);
         }
@@ -1467,11 +1487,11 @@ class Cascader {
     for (const auto& [prop, w] : win) {
       if (prop != "color") apply(s, parent, prop, w.value);
     }
-    styles_[static_cast<std::size_t>(idx)] = std::move(s);
+    (*styles_)[static_cast<std::size_t>(idx)] = std::move(s);
   }
 
   static void offer_one(std::map<std::string, Winner, std::less<>>& win, const std::string& prop, const std::string& value,
-                        std::tuple<int, int, std::uint32_t, std::size_t> key) {
+                        const std::tuple<int, int, std::uint32_t, std::size_t>& key) {
     auto it = win.find(prop);
     if (it == win.end()) win.emplace(prop, Winner{key, value});
     else if (key > it->second.key) it->second = Winner{key, value};
@@ -1512,7 +1532,7 @@ class Cascader {
   }
 
   void note(std::string what) {
-    if (std::ranges::find(unsupported_, what) == unsupported_.end()) unsupported_.push_back(std::move(what));
+    if (std::ranges::find(*unsupported_, what) == unsupported_->end()) unsupported_->push_back(std::move(what));
   }
 
   // NOLINTNEXTLINE(readability-function-cognitive-complexity) — one branch per property, as Blink's property table
@@ -1761,9 +1781,10 @@ class Cascader {
     return l;
   }
 
-  const Document& doc_;
-  std::vector<Style>& styles_;
-  std::vector<std::string>& unsupported_;
+  // Never null: views of the caller's document and outputs for one cascade.
+  const Document* doc_;
+  std::vector<Style>* styles_;
+  std::vector<std::string>* unsupported_;
   std::vector<Rule> rules_;
 };
 

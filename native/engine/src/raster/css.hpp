@@ -62,7 +62,7 @@ struct FilterOp {
 /// the bake chain's CSS effects — rather than parsed) and takes over from blurPx.
 struct Filter {
   Filter() = default;
-  Filter(double blur) : blurPx(blur) {}  // NOLINT(google-explicit-constructor): `Filter{blur}` / `= {blur}` as when it was an aggregate
+  explicit Filter(double blur) : blurPx(blur) {}
   double blurPx = 0.0;
   std::vector<FilterOp> ops;
 };

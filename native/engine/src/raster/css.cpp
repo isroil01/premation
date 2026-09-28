@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <numbers>
 #include <system_error>
 
 namespace premation::raster::css {
@@ -305,24 +306,24 @@ namespace {
 
 std::array<std::uint8_t, 256> identity_table() {
   std::array<std::uint8_t, 256> t{};
-  for (std::size_t i = 0; i < 256; ++i) t[i] = static_cast<std::uint8_t>(i);
+  for (std::size_t i = 0; std::uint8_t& e : t) e = static_cast<std::uint8_t>(i++);
   return t;
 }
 /// FEComponentTransfer LINEAR: slope · i + 255 · intercept, clamped, truncated.
 std::array<std::uint8_t, 256> linear_table(double slope, double intercept) {
   std::array<std::uint8_t, 256> t{};
-  for (std::size_t i = 0; i < 256; ++i) {
-    const double v = clamp(slope * static_cast<double>(i) + 255 * intercept, 0, 255);
-    t[i] = static_cast<std::uint8_t>(v);
+  for (std::size_t i = 0; std::uint8_t& e : t) {
+    const double v = clamp(slope * static_cast<double>(i++) + 255 * intercept, 0, 255);
+    e = static_cast<std::uint8_t>(v);
   }
   return t;
 }
 /// FEComponentTransfer TABLE over two values.
 std::array<std::uint8_t, 256> table2(double v0, double v1) {
   std::array<std::uint8_t, 256> t{};
-  for (std::size_t i = 0; i < 256; ++i) {
-    const double c = static_cast<double>(i) / 255.0;
-    t[i] = static_cast<std::uint8_t>(clamp(255.0 * (v0 + c * (v1 - v0)), 0, 255));
+  for (std::size_t i = 0; std::uint8_t& e : t) {
+    const double c = static_cast<double>(i++) / 255.0;
+    e = static_cast<std::uint8_t>(clamp(255.0 * (v0 + c * (v1 - v0)), 0, 255));
   }
   return t;
 }
@@ -345,7 +346,7 @@ FilterOp saturate_op(double s) {
                   0.072 - 0.072 * s, 0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s});
 }
 FilterOp hue_rotate_op(double deg) {
-  const double rad = deg * 3.141592653589793 / 180.0;
+  const double rad = deg * std::numbers::pi / 180.0;
   const double c = std::cos(rad);
   const double s = std::sin(rad);
   return matrix3({0.213 + c * 0.787 - s * 0.213, 0.715 - c * 0.715 - s * 0.715, 0.072 - c * 0.072 + s * 0.928,
@@ -439,7 +440,7 @@ std::optional<Filter> parse_filter_list(std::string_view in) {
       double scale = 1;
       if (a.ends_with("deg")) a.remove_suffix(3);
       else if (a.ends_with("turn")) { a.remove_suffix(4); scale = 360; }
-      else if (a.ends_with("rad")) { a.remove_suffix(3); scale = 180 / 3.141592653589793; }
+      else if (a.ends_with("rad")) { a.remove_suffix(3); scale = 180 / std::numbers::pi; }
       const auto v = number(a);
       if (!v) return std::nullopt;
       out.ops.push_back(hue_rotate_op(*v * scale));

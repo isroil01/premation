@@ -11,6 +11,7 @@
 // fonts_ffi.cpp), which uses the same generic-family defaults as here.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -49,12 +50,12 @@ struct ScriptSample {
   const char* script;
   char32_t codePoint;
 };
-inline constexpr ScriptSample kScriptSamples[] = {
+inline constexpr std::array<ScriptSample, 16> kScriptSamples{{
     {"Latn", U'A'},     {"Grek", U'Ω'}, {"Cyrl", U'Ж'}, {"Armn", U'Ա'}, {"Hebr", U'א'},
     {"Arab", U'ا'}, {"Deva", U'क'}, {"Beng", U'অ'}, {"Taml", U'க'}, {"Thai", U'ก'},
     {"Geor", U'ა'}, {"Hang", U'가'}, {"Hira", U'あ'}, {"Kana", U'ア'}, {"Hani", U'一'},
     {"Ethi", U'ሀ'},
-};
+}};
 
 /// Every installed face, enumerated once per process (thread-safe) and sorted
 /// (family, weight, italic, style, postScriptName) so the order never depends

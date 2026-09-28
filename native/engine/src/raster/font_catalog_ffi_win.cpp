@@ -59,9 +59,17 @@ std::string pick(IDWriteLocalizedStrings* strings) {
 }
 
 double css_stretch(DWRITE_FONT_STRETCH s) {
-  static constexpr std::array<double, 10> kPercent{100, 50, 62.5, 75, 87.5, 100, 112.5, 125, 150, 200};
-  const auto i = static_cast<std::size_t>(s);
-  return i < kPercent.size() ? kPercent[i] : 100.0;
+  switch (s) {
+    case DWRITE_FONT_STRETCH_ULTRA_CONDENSED: return 50;
+    case DWRITE_FONT_STRETCH_EXTRA_CONDENSED: return 62.5;
+    case DWRITE_FONT_STRETCH_CONDENSED: return 75;
+    case DWRITE_FONT_STRETCH_SEMI_CONDENSED: return 87.5;
+    case DWRITE_FONT_STRETCH_SEMI_EXPANDED: return 112.5;
+    case DWRITE_FONT_STRETCH_EXPANDED: return 125;
+    case DWRITE_FONT_STRETCH_EXTRA_EXPANDED: return 150;
+    case DWRITE_FONT_STRETCH_ULTRA_EXPANDED: return 200;
+    default: return 100.0;  // undefined, normal, out of range
+  }
 }
 
 /// The font's file and collection index (local files only).
@@ -120,7 +128,7 @@ std::vector<CatalogFace> enumerate_system_fonts() {
   std::vector<CatalogFace> out;
   ComPtr<IDWriteFactory> factory;
   if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
-                                 reinterpret_cast<IUnknown**>(factory.GetAddressOf())))) {
+                                 reinterpret_cast<IUnknown**>(factory.GetAddressOf())))) {  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): COM out-parameter typed IUnknown**
     return out;
   }
   ComPtr<IDWriteFontCollection> collection;

@@ -8,7 +8,9 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <span>
 #include <tuple>
+#include <utility>
 
 #include "system_fonts.hpp"
 
@@ -59,19 +61,18 @@ std::string tag_string(std::uint32_t tag) {
 }
 
 void sort_catalog(std::vector<CatalogFace>& faces) {
-  std::sort(faces.begin(), faces.end(), [](const CatalogFace& a, const CatalogFace& b) {
+  std::ranges::sort(faces, [](const CatalogFace& a, const CatalogFace& b) {
     const std::string fa = lower(a.family);
     const std::string fb = lower(b.family);
     return std::tie(fa, a.stretch, a.weight, a.italic, a.style, a.postScriptName, a.path, a.ttcIndex) <
            std::tie(fb, b.stretch, b.weight, b.italic, b.style, b.postScriptName, b.path, b.ttcIndex);
   });
   // The same face reached twice (an OS listing a file under two collections).
-  faces.erase(std::unique(faces.begin(), faces.end(),
-                          [](const CatalogFace& a, const CatalogFace& b) {
-                            return a.family == b.family && a.postScriptName == b.postScriptName && a.path == b.path &&
-                                   a.ttcIndex == b.ttcIndex && a.style == b.style;
-                          }),
-              faces.end());
+  const auto dups = std::ranges::unique(faces, [](const CatalogFace& a, const CatalogFace& b) {
+    return a.family == b.family && a.postScriptName == b.postScriptName && a.path == b.path && a.ttcIndex == b.ttcIndex &&
+           a.style == b.style;
+  });
+  faces.erase(dups.begin(), dups.end());
 }
 
 const std::vector<CatalogFace>& system_font_catalog() {
@@ -95,7 +96,7 @@ const std::vector<CatalogFace>& unlisted_faces(const std::string& family) {
   static std::mutex m;
   static std::map<std::string, std::vector<CatalogFace>, std::less<>> cache;
   const std::string key = lower(family);
-  const std::lock_guard<std::mutex> lock(m);
+  const std::scoped_lock lock(m);
   if (const auto it = cache.find(key); it != cache.end()) return it->second;
   std::vector<CatalogFace> faces = detail::unlisted_family_faces(family);
   for (CatalogFace& f : faces) f.hidden = true;
@@ -156,56 +157,60 @@ std::vector<CatalogFace> system_family_faces(std::string_view installedFamily) {
 
 namespace {
 
-std::uint32_t be32(const std::uint8_t* p) {
-  return (std::uint32_t{p[0]} << 24U) | (std::uint32_t{p[1]} << 16U) | (std::uint32_t{p[2]} << 8U) | std::uint32_t{p[3]};
+// Big-endian reads at byte `at` of `b` (the callers check `at + 4` / `at + 2` <= b.size()).
+std::uint32_t be32(std::span<const std::uint8_t> b, std::size_t at) {
+  return (std::uint32_t{b[at]} << 24U) | (std::uint32_t{b[at + 1]} << 16U) | (std::uint32_t{b[at + 2]} << 8U) |
+         std::uint32_t{b[at + 3]};
 }
-std::uint16_t be16(const std::uint8_t* p) { return static_cast<std::uint16_t>((p[0] << 8U) | p[1]); }
+std::uint16_t be16(std::span<const std::uint8_t> b, std::size_t at) {
+  return static_cast<std::uint16_t>((unsigned{b[at]} << 8U) | unsigned{b[at + 1]});
+}
 
 bool read_at(std::ifstream& in, std::uint64_t at, std::size_t n, std::vector<std::uint8_t>& out) {
   out.assign(n, 0);
   in.clear();
   in.seekg(static_cast<std::streamoff>(at));
   in.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(n));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): bytes
-  return static_cast<std::size_t>(in.gcount()) == n;
+  return std::cmp_equal(in.gcount(), n);
 }
 
 /// nameID 6 (PostScript) of the sfnt whose table directory starts at `offset`.
 std::string postscript_name_at(std::ifstream& in, std::uint64_t offset) {
   std::vector<std::uint8_t> b;
   if (!read_at(in, offset, 12, b)) return {};
-  const std::uint16_t tables = be16(b.data() + 4);
+  const std::uint16_t tables = be16(b, 4);
   if (!read_at(in, offset + 12, std::size_t{tables} * 16U, b)) return {};
   std::uint32_t nameOffset = 0;
   std::uint32_t nameLength = 0;
   for (std::uint16_t i = 0; i < tables; ++i) {
-    const std::uint8_t* rec = b.data() + std::size_t{i} * 16U;
-    if (be32(rec) == 0x6E616D65U) {  // 'name'
-      nameOffset = be32(rec + 8);
-      nameLength = be32(rec + 12);
+    const std::size_t rec = std::size_t{i} * 16U;
+    if (be32(b, rec) == 0x6E616D65U) {  // 'name'
+      nameOffset = be32(b, rec + 8);
+      nameLength = be32(b, rec + 12);
       break;
     }
   }
   if (nameLength < 6 || nameLength > (1U << 20U)) return {};
   std::vector<std::uint8_t> name;
   if (!read_at(in, nameOffset, nameLength, name)) return {};
-  const std::uint16_t count = be16(name.data() + 2);
-  const std::uint16_t strings = be16(name.data() + 4);
+  const std::uint16_t count = be16(name, 2);
+  const std::uint16_t strings = be16(name, 4);
   for (std::uint16_t i = 0; i < count; ++i) {
     const std::size_t r = 6 + std::size_t{i} * 12U;
     if (r + 12 > name.size()) break;
-    const std::uint16_t platform = be16(name.data() + r);
-    const std::uint16_t nameId = be16(name.data() + r + 6);
-    const std::uint16_t len = be16(name.data() + r + 8);
-    const std::size_t at = std::size_t{strings} + be16(name.data() + r + 10);
+    const std::uint16_t platform = be16(name, r);
+    const std::uint16_t nameId = be16(name, r + 6);
+    const std::uint16_t len = be16(name, r + 8);
+    const std::size_t at = std::size_t{strings} + be16(name, r + 10);
     if (nameId != 6 || at + len > name.size()) continue;
     std::string ps;
     if (platform == 3 || platform == 0) {
       for (std::size_t k = 0; k + 1 < len; k += 2) {  // UTF-16BE; PostScript names are ASCII
-        const std::uint16_t cu = be16(name.data() + at + k);
+        const std::uint16_t cu = be16(name, at + k);
         if (cu < 0x80) ps.push_back(static_cast<char>(cu));
       }
     } else if (platform == 1) {
-      ps.assign(reinterpret_cast<const char*>(name.data() + at), len);  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): Mac Roman ASCII
+      ps.assign(name.begin() + static_cast<std::ptrdiff_t>(at), name.begin() + static_cast<std::ptrdiff_t>(at + len));  // Mac Roman ASCII
     } else {
       continue;
     }
@@ -220,13 +225,13 @@ int collection_index(const std::string& path, std::string_view postScriptName) {
   if (path.empty() || postScriptName.empty()) return 0;
   std::ifstream in(path, std::ios::binary);
   std::vector<std::uint8_t> head;
-  if (!in || !read_at(in, 0, 12, head) || be32(head.data()) != 0x74746366U) return 0;  // 'ttcf'
-  const std::uint32_t fonts = be32(head.data() + 8);
+  if (!in || !read_at(in, 0, 12, head) || be32(head, 0) != 0x74746366U) return 0;  // 'ttcf'
+  const std::uint32_t fonts = be32(head, 8);
   if (fonts == 0 || fonts > 4096) return 0;
   std::vector<std::uint8_t> offsets;
   if (!read_at(in, 12, std::size_t{fonts} * 4U, offsets)) return 0;
   for (std::uint32_t i = 0; i < fonts; ++i) {
-    if (postscript_name_at(in, be32(offsets.data() + std::size_t{i} * 4U)) == postScriptName) {
+    if (postscript_name_at(in, be32(offsets, std::size_t{i} * 4U)) == postScriptName) {
       return static_cast<int>(i);
     }
   }
@@ -276,7 +281,7 @@ std::optional<CatalogFace> resolve_system_font(std::string_view family, int weig
   const std::string mapped = generic_family_default(family);
   if (auto hit = lookup(mapped)) return hit;
   // Blink retries once with the alternate name (Arial ↔ Helvetica, Courier ↔ Courier New, …).
-  const std::string alt = blink_alternate_family(mapped);
+  const std::string alt(blink_alternate_family(mapped));
   if (!alt.empty()) return lookup(alt);
   return std::nullopt;
 #endif
