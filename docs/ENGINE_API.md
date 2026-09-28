@@ -2341,6 +2341,28 @@ from the struct's maximum + 800.
     `LayerInfo.caption?` (922) and `LayerInfo.multicamAngle?` (923). The proxy
     record stays page session state (the proxy job's), not document state.
 
+### 15.15 B4 round 6 — paint strokes on their group (both engines, 2026-09-28)
+
+- **A paint stroke's group `paint/<id>` carries the stroke** (TS `props.ts`
+  group naming, C++ `props.cpp`): `name` = the Paint panel's display name
+  (`strokeDisplayNames`: "Brush 1", "Eraser 1", "Clone 1"), `matchName` =
+  `paint:<mode>` (`paint`, `erase`, `clone`), `enabled` = the stroke's
+  visibility (`visible !== false`). Before, the group was named by its id and
+  always enabled, so the panel read the TS scene to list its strokes.
+- **`layer/paintOnTransparent`** (bool, default false; `fx.paint.onTransparent`,
+  only on a layer with paint): the Paint on Transparent switch as a layer
+  field — `layerFieldSpecs.ts` ⇄ `catalog/fields.json`.
+- **Events**: a group's own `enabled` / `name` / `matchName` is part of its
+  parent's `#children:` signature (TS `events.ts`, C++ `events.cpp`), so hiding
+  a stroke or switching an effect off emits the parent's
+  `propertyGroupsChanged` and the mirror's child infos follow.
+- TS catalog: a keyed paint `Path` (`paint.<id>.path`) stays a path data track
+  (it was listed as a scalar once it had members, so `getKeyframes` answered
+  none and the panel could not see it was animated).
+- Parity: the d1 / undo fixtures were re-blessed for this; the differing
+  records were VALUE-only and confined to the two paint sessions (G2 "paint
+  stroke normalisation", B3 "paint strokes") — no outcome or step moved.
+
 
 ## 16. Files
 

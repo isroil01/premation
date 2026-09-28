@@ -325,6 +325,57 @@ points and masks from the mirror — a parity-checked step of its own).
     (convertLayer in C++ only), live merge planning, NodeInspector's raw
     component list, asset store internals.
 
+### b4-round6 (2026-09-28, the ratchet 146 → 117)
+
+Owner decision for this round: the C++ engine is the only engine. Reads that
+exist only for the TypeScript page renderer / TS engine may be deleted, and
+the engine-job fallbacks (~55 sites) are being removed on
+`p4-remove-fallbacks`, so they were not touched here.
+
+- **Selection pruning and Select All** (Providers) follow the mirror: pruning
+  runs once per engine batch that changes `layers` / `comps`; Select All is
+  the active comp's `MirrorComp.layers`. The shell / viewport revision
+  triggers (App, Workspace, SecondaryViewPane) use the mirror revision;
+  `useSceneRevisionFrame` deleted.
+- **Paint panel**: a stroke's name / mode / visibility are on its `paint/<id>`
+  group and Paint on Transparent is `layer/paintOnTransparent` (both engines,
+  ENGINE_API §15.15); the panel reads `core/mirror/paintStrokes.ts`.
+- **Composition navigation + Mini-Flowchart**:
+  `layout/Composition/compNavigationEdits.ts` (open, navigator, Shift+Esc,
+  containing comp, tab repair) and `core/mirror/compNetwork.ts` (the network,
+  what a layer opens). Targets and existence off the mirror; the playhead
+  crosses through `mapLayerTime`, so the tab switches at once and the mapped
+  time lands when the engine answers. A legacy precomp GROUP that carries a
+  settings record is a composition in the mirror (`isCompItem`), so its
+  members and the instances inside it are covered; a legacy group WITHOUT a
+  record (never opened in a tab) still opens, but lists no upstream — getDocument
+  does not list its members. `core/composition/compNavigation.ts` stays only
+  for the TS engine's `mapLayerTime` answer and TS precompose.
+- **Audio mix trigger**: `useAudioPlayback` re-reads on the mirror revision
+  and project items (no TS scene revision, no Timeline Engine clip events;
+  `useClipRevision` deleted), and does not read the scene at all while the
+  engine plays the audio. `readAudioLayers` itself stays for the page
+  WebAudio mix, which goes with the TS path.
+- Presentation's wireframe overlay reads through the page-frame seam
+  (`pageFrameWireframeNodes`); NodeInspector (dead code) deleted.
+- Left (117): the engine-job fallbacks (p4's), and —
+  - **Dirty tracking in non-owner mode** (Providers, 3 bus subscriptions):
+    only the TS-engine session runs it (owner mode syncs dirty from the
+    mirror in `engineOwnedSession.tsx`); it goes with that mode (phase 4).
+    Following the mirror `doc` key instead would mark a freshly loaded
+    document dirty.
+  - **Providers command builders** (`build*Commands`, motion sketch, keyframe
+    assistants' fallbacks, fit / centre fallbacks, block tower seed,
+    projectDocumentIO, seedDefaultScene): registrations whose predicates and
+    bodies run the TS engine — each goes with its command's move or the TS
+    engine's removal.
+  - Singles still reading the TS engine: buildPropertyRows / App (the AE row
+    projection), usePlaybackClock's pump (transport, marked B4-kept),
+    useWorkspace face picking / paint space / parentWorld2DAt, layerScreen
+    (needs a layer-space matrix query — none exists; getLayerBounds is boxes
+    only), masks / shapes from text (convertLayer is C++ only), live merge,
+    clipboard path copy, the asset / auth / composition store internals.
+
 ## 5. What is left (2026-09-24: 681 reads, from 765)
 
 The ratchet (`node scripts/lint/engineReadsReport.mjs`) by area: viewport/tools
