@@ -75,7 +75,7 @@ function confidenceAlpha(confidence: number): number {
 }
 
 /** The overlay geometry the tracked layer's points map through: its drawn box. */
-const TRACK_KINDS: ReadonlyArray<OverlayKind> = ['bounds'];
+const TRACK_KINDS: ReadonlyArray<OverlayKind> = ['bounds', 'transform'];
 
 export function TrackPointOverlay(): JSX.Element | null {
   // Frame-coalesced — visual tracking only; the raw rev re-rendered per
@@ -118,10 +118,10 @@ export function TrackPointOverlay(): JSX.Element | null {
   const active = armed && nodeId ? nodeId : null;
   // B4: the tracked layer's drawn box from the overlay geometry push (asked for
   // here: the Motion Source need not be selected).
-  const [, setGeoTick] = useState(0);
+  const [geoTick, setGeoTick] = useState(0);
   useEffect(() => {
     // Re-render once the engine has the subscription: the box exists from then.
-    void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', active ? [active] : [], TRACK_KINDS).then(() => setGeoTick((t) => t + 1));
+    void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', active ? [active] : [], TRACK_KINDS, active ? ['active'] : []).then(() => setGeoTick((t) => t + 1));
     return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', [], TRACK_KINDS); };
   }, [active]);
   const box = active ? overlayLayer(MAIN_VIEWPORT, active, secondsToFlicks(time))?.box : undefined;
@@ -132,8 +132,8 @@ export function TrackPointOverlay(): JSX.Element | null {
   const camera = getWorkspaceController().ws.camera;
   const mapping = useMemo(
     () => (active ? layerScreenMapping(active, time, comp, camera) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton
-    [active, time, comp.width, comp.height, sceneTick],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton; the geometry tick re-reads the push
+    [active, time, comp.width, comp.height, sceneTick, geoTick],
   );
 
   const sourceToScreen = useMemo(() => {

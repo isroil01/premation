@@ -48,7 +48,7 @@ function capturePointer(svg: SVGSVGElement, pointerId: number): void {
 }
 
 /** The overlay geometry the bones draw from: the rig (pose, goals, skinned mesh) and the layer's box. */
-const BONE_KINDS: ReadonlyArray<OverlayKind> = ['rig', 'bounds'];
+const BONE_KINDS: ReadonlyArray<OverlayKind> = ['rig', 'bounds', 'transform'];
 
 /** Pointer travel (screen px) below which a down→up pair still counts as a click. */
 const CLICK_SLOP_PX = 3;
@@ -240,7 +240,7 @@ export function BoneOverlay(): JSX.Element | null {
   const active = activeTool === 'bone' && !!selectedNodeId;
   const skel = useMirrorJson<SkeletonRig>(active ? selectedNodeId : null, 'layer/skeleton');
   useEffect(() => {
-    void requestOverlayLayers(MAIN_VIEWPORT, 'boneRig', active ? [selectedNodeId!] : [], BONE_KINDS).then(() => setTick((t) => t + 1));
+    void requestOverlayLayers(MAIN_VIEWPORT, 'boneRig', active ? [selectedNodeId!] : [], BONE_KINDS, active ? ['active'] : []).then(() => setTick((t) => t + 1));
     void setOverlayRigFocus(MAIN_VIEWPORT, active ? { pin: '', bone: selectedBoneId ?? '', authoring: false } : undefined);
     return () => {
       void requestOverlayLayers(MAIN_VIEWPORT, 'boneRig', [], BONE_KINDS);
