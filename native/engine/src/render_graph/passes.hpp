@@ -27,6 +27,9 @@ inline constexpr std::string_view kFxLut = "fx-lut";
 /// mask drawn into the chain buffer's space (effect_chain.cpp).
 inline constexpr std::string_view kFxSilhouette = "fx-silhouette";
 inline constexpr std::string_view kFxScopeMask = "fx-scope-mask";
+/// The input of a faded / scoped effect that spans several chain entries,
+/// kept until its last entry blends back over it (effect_chain.cpp).
+inline constexpr std::string_view kFxBlendInput = "fx-blend-input";
 inline constexpr std::array<std::string_view, 4> kPrecompTargets = {"precomp-target-0", "precomp-target-1",
                                                                     "precomp-target-2", "precomp-target-3"};
 inline constexpr std::uint32_t kBackdropDownscale = 2;

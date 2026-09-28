@@ -173,3 +173,40 @@ TEST_CASE("E4: fill opacity fades the contents and shapes the stroke by the silh
   CHECK(px(32, 24, 2) < 20);   // fill 0: the contents are gone (black background shows)
   CHECK(px(14, 24, 0) > 200);  // the outside stroke is still drawn at full strength
 }
+
+TEST_CASE("E4: a faded effect of several chain entries blends back once over its input (blendSpan)") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  auto file = solid_scene(0, 0, 1);
+  // Two entries of ONE effect at 50 %: red, then green over it. applyEffectChain
+  // blends the effect's final output (green) back over the input (blue) once:
+  // half green, half blue — not a quarter-green / three-eighths-red chain of
+  // per-entry blends.
+  api::RenderEffect red;
+  red.type = "fill";
+  red.params.push_back(color_param("color", 1, 0, 0, 1));
+  red.params.push_back(num_param("effectOpacity", 0.5));
+  red.params.push_back(num_param("blendSpan", 2));
+  api::RenderEffect green;
+  green.type = "fill";
+  green.params.push_back(color_param("color", 0, 1, 0, 1));
+  file.scene.renderables[0].effects = {red, green};
+  Frame frame;
+  FrameStats s;
+  REQUIRE(renderer->render(file, &frame, s, err));
+  CHECK(s.gpuError.empty());
+  CHECK(s.effects.blendSpans == 1);
+  const auto px = [&](std::uint32_t x, std::uint32_t y, std::size_t c) { return frame.rgba.at((std::size_t{y} * 64 + x) * 4 + c); };
+  // The reference: ONE fill entry (green) at 50 % — the per-entry blend the chain already had.
+  auto one = solid_scene(0, 0, 1);
+  api::RenderEffect g1 = green;
+  g1.params.push_back(num_param("effectOpacity", 0.5));
+  one.scene.renderables[0].effects = {g1};
+  Frame ref;
+  FrameStats s1;
+  REQUIRE(renderer->render(one, &ref, s1, err));
+  const auto rp = [&](std::size_t c) { return static_cast<int>(ref.rgba.at((std::size_t{24} * 64 + 32) * 4 + c)); };
+  CHECK(px(32, 24, 0) < 20);
+  for (std::size_t c = 0; c < 3; ++c) CHECK(std::abs(static_cast<int>(px(32, 24, c)) - rp(c)) <= 1);
+}

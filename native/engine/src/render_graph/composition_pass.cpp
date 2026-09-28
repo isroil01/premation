@@ -240,7 +240,8 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     std::vector<std::string> w = {std::string(kSceneColor), std::string(kLayerTarget), std::string(kBlur1),
                                   std::string(kBlur2),      std::string(kBlur3),       std::string(kMatteTarget),
                                   std::string(kDofTarget),  std::string(kFxHist),     std::string(kFxLut),
-                                  std::string(kGeneratorTarget), std::string(kFxSilhouette), std::string(kFxScopeMask)};
+                                  std::string(kGeneratorTarget), std::string(kFxSilhouette), std::string(kFxScopeMask),
+                                  std::string(kFxBlendInput)};
     for (const auto n : kPrecompTargets) w.emplace_back(n);
     return w;
   }

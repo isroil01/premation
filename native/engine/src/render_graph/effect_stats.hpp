@@ -52,6 +52,8 @@ struct EffectStats {
   /// Styles shaped by a fill-opacity silhouette; entries blended back through a scoped mask.
   std::uint32_t silhouetteStyles = 0;
   std::uint32_t scoped = 0;
+  /// Faded / scoped effects of several chain entries blended back once over their kept input.
+  std::uint32_t blendSpans = 0;
   std::uint32_t skipped = 0;
   /// Set by the caller before the frame: keep one record per entry.
   bool keepPaths = false;

@@ -17,7 +17,7 @@
 //       --gpu-effects (also for --batch): layers the TypeScript bakes run their
 //       stack on the GPU chain when they can (E4, the engine's default); the
 //       per-frame effect paths are reported beside the times.
-//   premation-scene --gen-effect-bench <dir> [--active effect_chain_bench.json]
+//   premation-scene --gen-effect-bench <dir> [--active effect_chain_bench.json] [--effect-opacity N] [--scoped 1]
 //       writes the E4 per-effect bench projects (see gen_effect_bench).
 //   premation-scene --mesh-check <scenes> --fonts <fonts.json> [--only a,b]
 //       every extrudedMesh of the exported FrameScenes rebuilt by the C++ mesh
@@ -39,6 +39,7 @@
 #include <map>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -802,14 +803,20 @@ js::Json synthetic_document(int layers) {
 /// project per case of that file — every effect at its `@active` point of the
 /// declared ranges and the stacks — named `fxbench-<case>` with `@` and other
 /// non-name characters as `_`. Same subject, same animated fill opacity.
-int gen_effect_bench(const fs::path& dir, const fs::path& active) {
+/// `--effect-opacity N` gives every effect that Effect Opacity (%);
+/// `--scoped 1` scopes every effect to a layer mask path (`maskId`) — the
+/// cases whose GPU route needs the chain to blend an effect back over its input.
+int gen_effect_bench(const fs::path& dir, const fs::path& active, std::optional<double> effectOpacity, bool scoped) {
   using js::Json;
   /// (case id, the fx `effects` array as JSON text)
   std::vector<std::pair<std::string, std::string>> cases;
   cases.emplace_back("none", "[]");
   for (const doc::EffectDef& def : doc::registry().effects) {
     if (def.gpuOnly) continue;
-    cases.emplace_back(def.type, R"([{"id":"fx","type":")" + def.type + R"(","params":)" +
+    std::string extra;
+    if (effectOpacity) extra += R"(,"opacity":)" + js::number_to_string(*effectOpacity);
+    if (scoped) extra += R"(,"maskId":"m1")";
+    cases.emplace_back(def.type, R"([{"id":"fx","type":")" + def.type + R"(")" + extra + R"(,"params":)" +
                                      js::stringify(doc::new_instance_params_of(def)) + "}]");
   }
   if (!active.empty()) {
@@ -845,6 +852,7 @@ int gen_effect_bench(const fs::path& dir, const fs::path& active) {
         R"({"id":"subj_s","type":"Style","props":{"opacity":100,"fill":"#000","fillOpacity":90}},)"
         R"({"id":"subj_fx","type":"fx","props":{"fill":{"type":"linear","angle":30,"stops":[{"id":"a","offset":0,"color":"#2b3cff"},{"id":"b","offset":1,"color":"#ff7a1a"}]},"effects":)" +
         fx +
+        (scoped ? std::string(R"(,"mask":{"paths":[{"id":"m1","mode":"add","closed":true,"feather":0,"opacity":1,"expansion":0,"inverted":false,"points":[{"x":-500,"y":-300,"inX":-500,"inY":-300,"outX":-500,"outY":-300},{"x":500,"y":-300,"inX":500,"inY":-300,"outX":500,"outY":-300},{"x":500,"y":300,"inX":500,"inY":300,"outX":500,"outY":300},{"x":-500,"y":300,"inX":-500,"inY":300,"outX":-500,"outY":300}]}]})") : std::string()) +
         R"(}}]}]},)"
         R"("animation":{"tracks":{"subj":{"fillOpacity":{"nodeId":"subj","prop":"fillOpacity","keyframes":[{"t":0,"value":90},{"t":2,"value":95}]}}},"expressions":{}},)"
         R"("comps":{"comp_root":{"id":"comp_root","name":"comp_root","width":1920,"height":1080,"fps":30,"durationSeconds":10,"background":"#0c0c12"}},)"
@@ -999,7 +1007,9 @@ int run(int argc, char** argv) {
     if (!read_file(opt["readback-table"], o.table) || o.table.size() != 65536) o.table.clear();
   }
   if (opt.contains("gen-effect-bench")) {
-    return gen_effect_bench(opt["gen-effect-bench"], opt.contains("active") ? fs::path(opt["active"]) : fs::path());
+    return gen_effect_bench(opt["gen-effect-bench"], opt.contains("active") ? fs::path(opt["active"]) : fs::path(),
+                            opt.contains("effect-opacity") ? std::optional<double>(std::stod(opt["effect-opacity"])) : std::nullopt,
+                            opt.contains("scoped") && opt["scoped"] == "1");
   }
   if (opt.contains("synthetic")) {
     o.synthetic = std::stoi(opt["synthetic"]);
