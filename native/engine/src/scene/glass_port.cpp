@@ -59,7 +59,7 @@ std::optional<double> stored_num(const Json& style, std::string_view key) {
 
 /// `resolveGlassColor(param, stored, av, fallback)`.
 std::string resolve_color(std::string_view param, const Json& stored, const Values& av, std::string_view fallback) {
-  const std::string base = stored.is_string() ? stored.str() : std::string(fallback);
+  std::string base = stored.is_string() ? stored.str() : std::string(fallback);  // not const: returned by move
   const std::string path = "glass." + std::string(param);
   const auto r = av.get(path + "_r");
   const auto g = av.get(path + "_g");

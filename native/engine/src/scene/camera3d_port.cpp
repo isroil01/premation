@@ -200,7 +200,7 @@ double pct(const Json& v, double fallback) {
   return v.is_number() ? std::max(0.0, std::min(100.0, v.num())) : fallback;
 }
 
-std::string shadow_mode(const Json& v) {
+std::string_view shadow_mode(const Json& v) {
   if ((v.is_string() && v.str() == "only") || (v.is_number() && v.num() == 2)) return "only";
   if ((v.is_bool() && !v.b()) || (v.is_string() && v.str() == "off") || (v.is_number() && v.num() == 0)) return "off";
   if (v.is_number()) {
@@ -229,7 +229,7 @@ Material read_node_material(const doc::Node& n, const AnimatedLookup& animated) 
   Json p = t != nullptr && t->props.is_object() ? t->props : empty;
   if (animated) {
     for (const std::string_view k : kAnimatable) {
-      if (const auto v = animated(k)) p.set(std::string(k), Json::number(*v));
+      if (const auto v = animated(k)) p.set(k, Json::number(*v));
     }
   }
   Material m;

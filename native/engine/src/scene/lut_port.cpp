@@ -91,7 +91,7 @@ std::optional<ChannelLut> build_channel_lut(const std::vector<Json>& effects) {
   std::vector<ChannelLut> active;
   for (const Json& e : effects) {
     if (!effect_enabled(e)) continue;
-    if (auto t = tables_for(e)) active.push_back(std::move(*t));
+    if (const auto t = tables_for(e)) active.push_back(*t);
   }
   if (active.empty()) return std::nullopt;
   ChannelLut lut{identity_table(), identity_table(), identity_table()};
@@ -163,7 +163,7 @@ void push_channel_strip(std::vector<TextureRequest>& out, std::string key, const
   r.kind = TexKind::pixels;
   r.pxWidth = 256;
   r.pxHeight = 1;
-  r.pixels.resize(256 * 4);
+  r.pixels.resize(std::size_t{256} * 4);
   for (std::size_t i = 0; i < 256; ++i) {
     r.pixels[i * 4] = strip_byte(lut.r[i]);
     r.pixels[i * 4 + 1] = strip_byte(lut.g[i]);

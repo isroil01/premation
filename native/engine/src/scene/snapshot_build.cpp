@@ -6,8 +6,10 @@
 #include <functional>
 #include <map>
 #include <numbers>
+#include <ranges>
 #include <set>
 #include <unordered_map>
+#include <utility>
 
 #include "cloner_port.hpp"
 #include "comp_instance.hpp"
@@ -414,7 +416,7 @@ double Walk::remap(const std::string& id, double ttIn, bool subFrame, bool extra
       pid = p->parent;
     }
     if (std::ranges::any_of(chain, [&](const doc::Node* pc) { return has_retime(d_, sid(pc->id)); })) {
-      for (auto it = chain.rbegin(); it != chain.rend(); ++it) tt = retimed_at((*it)->id, tt).value_or(tt);
+      for (const auto& link : std::ranges::reverse_view(chain)) tt = retimed_at(link->id, tt).value_or(tt);
     }
   }
   // Governing clips (buildRemap baseMap).
@@ -747,8 +749,8 @@ RLayer Walk::precomp_container(const doc::Node& group, std::optional<NestedComp>
         now.x = gv.get("x").value_or(gb.x);
         now.y = gv.get("y").value_or(gb.y);
         now.rotation = gv.get("rotation").value_or(gb.rotation);
-        now.scaleX = gv.get("scale") ? *gv.get("scale") : gv.get("scaleX").value_or(gb.scaleX);
-        now.scaleY = gv.get("scale") ? *gv.get("scale") : gv.get("scaleY").value_or(gb.scaleY);
+        now.scaleX = gv.get("scale").value_or(gv.get("scaleX").value_or(gb.scaleX));
+        now.scaleY = gv.get("scale").value_or(gv.get("scaleY").value_or(gb.scaleY));
         l.motionSamples = instance_world_samples(l.motionSamples, now, gWorld);
       }
     }
@@ -941,7 +943,7 @@ void apply_source_text(RLayer& l, const motion::expr::SourceTextResult& result) 
     const std::vector<std::string> ga = raster::split_graphemes(before);
     const std::vector<std::string> gb = raster::split_graphemes(after);
     int pre = 0;
-    while (pre < static_cast<int>(ga.size()) && pre < static_cast<int>(gb.size()) && ga[static_cast<std::size_t>(pre)] == gb[static_cast<std::size_t>(pre)]) ++pre;
+    while (std::cmp_less(pre, ga.size()) && std::cmp_less(pre, gb.size()) && ga[static_cast<std::size_t>(pre)] == gb[static_cast<std::size_t>(pre)]) ++pre;
     int suf = 0;
     while (suf < static_cast<int>(ga.size()) - pre && suf < static_cast<int>(gb.size()) - pre &&
            ga[ga.size() - 1 - static_cast<std::size_t>(suf)] == gb[gb.size() - 1 - static_cast<std::size_t>(suf)]) {

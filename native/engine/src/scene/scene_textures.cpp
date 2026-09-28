@@ -541,7 +541,8 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
 #if defined(PREMATION_HAVE_MEDIA)
 namespace {
 
-float half_bits_to_float(std::uint16_t h) noexcept {
+float half_bits_to_float(std::uint16_t half) noexcept {
+  const std::uint32_t h = half;  // unsigned before any shift (a uint16_t promotes to int)
   const std::uint32_t sign = (h & 0x8000U) << 16U;
   const std::uint32_t exp = (h >> 10U) & 0x1FU;
   std::uint32_t mant = h & 0x3FFU;
@@ -550,11 +551,12 @@ float half_bits_to_float(std::uint16_t h) noexcept {
     if (mant == 0) {
       bits = sign;
     } else {  // subnormal: normalise
-      int e = -1;
-      do {
+      int e = 0;
+      mant <<= 1U;
+      while ((mant & 0x400U) == 0) {
         ++e;
         mant <<= 1U;
-      } while ((mant & 0x400U) == 0);
+      }
       bits = sign | (static_cast<std::uint32_t>(127 - 15 - e) << 23U) | ((mant & 0x3FFU) << 13U);
     }
   } else if (exp == 31) {
@@ -692,7 +694,7 @@ std::string SceneTextures::pixel_motion_ref(const TextureRequest& r, std::uint32
   // (MotionRendererBackend.feedPixelMotion — nearest, never a half-warped guess),
   // for a pair that is one frame, and for woven (pulldown) frames.
   const media::FramePick& near = t < 0.5 ? a : b;
-  const std::string nearest = media::media_hash(id, near.index, near.bottom, r.fields);
+  std::string nearest = media::media_hash(id, near.index, near.bottom, r.fields);  // not const: returned by move
   if (a.index == b.index || a.bottom || b.bottom || dev_ == nullptr || mediaFrames_ == nullptr) return nearest;
   std::array<char, 96> sig{};
   std::snprintf(sig.data(), sig.size(), "img:pm:%u:%lld:%lld:%.4f:%c", id, static_cast<long long>(a.index),  // NOLINT(cppcoreguidelines-pro-type-vararg)
@@ -796,7 +798,8 @@ std::string SceneTextures::footage_bake_ref(const TextureRequest& r, const std::
   const auto bh = static_cast<std::uint32_t>(h);
   std::array<char, 48> dims{};
   std::snprintf(dims.data(), dims.size(), "|%ux%u|%c", bw, bh, r.fields != 0 ? r.fields : '-');  // NOLINT(cppcoreguidelines-pro-type-vararg)
-  const std::string hash = "img:bake:" + hex64(fnv1a(js::stringify(r.spec), fnv1a(dims.data(), fnv1a(baseHash))));
+  // Not const: returned by move.
+  std::string hash = "img:bake:" + hex64(fnv1a(js::stringify(r.spec), fnv1a(dims.data(), fnv1a(baseHash))));
   if (const std::shared_ptr<const RasterEntry> hit = find(hash)) {
     ++stats.rasterHits;
     for (const std::string& u : hit->unsupported) stats.unsupported.emplace_back(r.key, u);

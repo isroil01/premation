@@ -2,6 +2,8 @@
 #include "mesh_check.hpp"
 
 #include <algorithm>
+#include <bit>
+#include <cstdint>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -64,7 +66,7 @@ Rebuilt rebuild_extrusion(const std::string& key, const raster::CanvasOptions& c
   for (std::size_t i = 3; i < tail.size(); ++i) {
     if (tail[i] == "f") req.frontCap = true;
     else if (tail[i] == "nfb") req.frontBevel = false;
-    else if (tail[i].starts_with("h")) req.holeBevelScale = std::stod(tail[i].substr(1));
+    else if (tail[i].starts_with('h')) req.holeBevelScale = std::stod(tail[i].substr(1));
   }
 
   RLayer l;
@@ -202,9 +204,9 @@ void compare(const std::string& where, const api::RenderExtrudedMesh& ts, const 
   for (std::size_t i = 0; i < std::min(nv, tv); ++i) {
     float a = 0;
     float b = 0;
-    std::memcpy(&a, me.vertices.data() + (i * 4), 4);
-    std::memcpy(&b, ts.vertices.data() + (i * 4), 4);
-    if (std::memcmp(&a, &b, 4) != 0) {
+    std::memcpy(&a, &me.vertices[i * 4], 4);
+    std::memcpy(&b, &ts.vertices[i * 4], 4);
+    if (std::bit_cast<std::uint32_t>(a) != std::bit_cast<std::uint32_t>(b)) {
       ++bitDiffs;
       if (firstDiff == SIZE_MAX) firstDiff = i;
       maxd = std::max(maxd, static_cast<double>(std::abs(a - b)));

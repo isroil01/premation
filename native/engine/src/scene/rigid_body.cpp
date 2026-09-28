@@ -449,9 +449,16 @@ std::string signature_of(const std::vector<BodySeed>& seeds, const World& w, dou
   return s;
 }
 
-std::mutex gM;
-std::unordered_map<std::string, History> gHistories;  // under gM
-std::list<std::string> gOrder;                        // LRU of signatures, under gM
+/// The process-wide simulation histories by signature (function-local: built on first use).
+struct HistoryCache {
+  std::mutex m;
+  std::unordered_map<std::string, History> histories;  // under m
+  std::list<std::string> order;                        // LRU of signatures, under m
+};
+HistoryCache& history_cache() {
+  static HistoryCache cache;
+  return cache;
+}
 constexpr std::size_t kMaxHistories = 16;
 
 }  // namespace
@@ -479,19 +486,20 @@ std::map<std::string, Pose> poses_at(const std::vector<BodySeed>& seeds, const W
   const std::string sig = signature_of(seeds, world, fps);
   State state;
   {
-    const std::scoped_lock lock(gM);
-    auto it = gHistories.find(sig);
-    if (it == gHistories.end()) {
-      if (gHistories.size() >= kMaxHistories && !gOrder.empty()) {
-        gHistories.erase(gOrder.back());
-        gOrder.pop_back();
+    HistoryCache& hc = history_cache();
+    const std::scoped_lock lock(hc.m);
+    auto it = hc.histories.find(sig);
+    if (it == hc.histories.end()) {
+      if (hc.histories.size() >= kMaxHistories && !hc.order.empty()) {
+        hc.histories.erase(hc.order.back());
+        hc.order.pop_back();
       }
-      it = gHistories.emplace(sig, History{}).first;
+      it = hc.histories.emplace(sig, History{}).first;
       it->second.snaps.emplace(0, init_state(seeds));
-      gOrder.push_front(sig);
+      hc.order.push_front(sig);
     } else {
-      gOrder.remove(sig);
-      gOrder.push_front(sig);
+      hc.order.remove(sig);
+      hc.order.push_front(sig);
     }
     History& h = it->second;
     // nearestSnapshotAt: the largest snapshotted frame ≤ target (0 is pinned).

@@ -43,7 +43,7 @@ struct P2 {
 std::vector<P2> rounded_rect_outline(double w, double h, double r, double arcSegments) {
   const double a = w / 2;
   const double b = h / 2;
-  const double rr = std::max(0.0, std::min(r, std::min(a, b)));
+  const double rr = std::max(0.0, std::min({r, a, b}));
   std::vector<P2> pts;
   const int n = static_cast<int>(std::max(1.0, std::floor(arcSegments)));
   struct Corner {

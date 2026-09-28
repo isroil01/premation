@@ -41,7 +41,7 @@ struct SystemFace {
 /// Blink's FontCache::AlternateFamilyName: Arial <-> Helvetica, Courier <->
 /// Courier New, Times <-> Times New Roman: the name Blink retries when a family
 /// is not found. "" when none.
-[[nodiscard]] std::string blink_alternate_family(std::string_view family);
+[[nodiscard]] std::string_view blink_alternate_family(std::string_view family);
 
 /// What a canvas `font` family resolves to on Linux Chromium: the generic
 /// mapping (linux_generic_family), match_system_family, then one retry with

@@ -309,7 +309,7 @@ void mesh_to_api(const std::string& key, const mesh::ExtrudedMesh& m, api::Rende
     out.indices.resize(m.indices.size() * sizeof(std::uint16_t));
     for (std::size_t i = 0; i < m.indices.size(); ++i) {
       const auto v = static_cast<std::uint16_t>(m.indices[i]);
-      std::memcpy(out.indices.data() + (i * 2), &v, 2);
+      std::memcpy(&out.indices[i * 2], &v, 2);
     }
   }
   out.ranges.clear();

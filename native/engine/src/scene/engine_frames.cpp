@@ -648,11 +648,11 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
       std::size_t i = 0;
       for (; i + 8 <= b.size(); i += 8) {
         std::uint64_t w = 0;
-        std::memcpy(&w, b.data() + i, 8);
+        std::memcpy(&w, b.subspan(i, 8).data(), 8);
         mix(w);
       }
       std::uint64_t tail = 0;
-      if (i < b.size()) std::memcpy(&tail, b.data() + i, b.size() - i);
+      if (i < b.size()) std::memcpy(&tail, b.subspan(i).data(), b.size() - i);
       mix(tail ^ (static_cast<std::uint64_t>(b.size()) << 56U));
     }
     void str(std::string_view s) { bytes({reinterpret_cast<const std::uint8_t*>(s.data()), s.size()}); }  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): chars → bytes
@@ -725,7 +725,7 @@ class EngineAudio final : public MediaClock {
     peaks.clear();
     duration = 0;
     if (doc_ == nullptr) return false;
-    const doc::Node* n = doc_->node(std::string(layerId));
+    const doc::Node* n = doc_->node(layerId);
     if (n == nullptr) return true;
     const doc::Component* a = n->comp("Audio");
     if (a == nullptr) return true;

@@ -12,6 +12,7 @@
 #include <map>
 #include <numbers>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <utility>
@@ -1245,7 +1246,7 @@ Json waveform_points(std::span<const float> peaks, double duration, double width
   }
   Json out = Json::array();
   for (Json& p : top) out.arr_mut().push_back(std::move(p));
-  for (auto it = bottom.rbegin(); it != bottom.rend(); ++it) out.arr_mut().push_back(std::move(*it));
+  for (auto& item : std::ranges::reverse_view(bottom)) out.arr_mut().push_back(std::move(item));
   return out;
 }
 

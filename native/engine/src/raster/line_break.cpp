@@ -19,8 +19,8 @@ void append_utf16(std::u16string& out, char32_t cp) {
     return;
   }
   const char32_t v = cp - 0x10000;
-  out.push_back(static_cast<char16_t>(0xD800 + (v >> 10)));
-  out.push_back(static_cast<char16_t>(0xDC00 + (v & 0x3FF)));
+  out.push_back(static_cast<char16_t>(0xD800U + (v >> 10U)));
+  out.push_back(static_cast<char16_t>(0xDC00U + (v & 0x3FFU)));
 }
 
 }  // namespace

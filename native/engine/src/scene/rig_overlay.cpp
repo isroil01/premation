@@ -216,7 +216,7 @@ std::optional<api::OverlayRig> DocRigQueries::rig_overlay(const doc::Document& d
   if (!r.model) return std::nullopt;
   const RigModel& m = *r.model;
   api::OverlayRig out;
-  for (const RigPinOut& p : m.pins) {
+  for (const RigPinOut& p : m.pins()) {
     api::RigPinPose o;
     o.id = p.id;
     o.kind = p.kind;
@@ -228,9 +228,9 @@ std::optional<api::OverlayRig> DocRigQueries::rig_overlay(const doc::Document& d
     o.scale = p.scale;
     out.pins.push_back(std::move(o));
   }
-  for (const RigBoneOut& b : m.bones) out.bones.push_back(bone_pose(b));
-  for (const RigIkOut& g : m.ik) out.ik.push_back(ik_goal(g));
-  xy_pairs(m.vertices, out.vertices);
+  for (const RigBoneOut& b : m.bones()) out.bones.push_back(bone_pose(b));
+  for (const RigIkOut& g : m.ik()) out.ik.push_back(ik_goal(g));
+  xy_pairs(m.vertices(), out.vertices);
   xy_pairs(m.rest(), out.rest);
   out.triangles.assign(m.triangles().begin(), m.triangles().end());
   out.edges = m.lattice_edges();
@@ -252,8 +252,8 @@ api::RigPose DocRigQueries::rig_pose(const doc::Document& d, const doc::EditorVi
     out.anchors.push_back(anchor ? api::Vec2{(*anchor)[0], (*anchor)[1]} : api::Vec2{rest[0], rest[1]});
   }
   if (!r.model) return out;
-  for (const RigBoneOut& b : r.model->bones) out.bones.push_back(bone_pose(b));
-  for (const RigIkOut& g : r.model->ik) out.ik.push_back(ik_goal(g));
+  for (const RigBoneOut& b : r.model->bones()) out.bones.push_back(bone_pose(b));
+  for (const RigIkOut& g : r.model->ik()) out.ik.push_back(ik_goal(g));
   out.vertex_count = static_cast<std::uint32_t>(r.model->rest().size() / 4);
   if (vertex) {
     for (auto& [bone, weight] : r.model->vertex_weights(*vertex)) out.weights.push_back(api::RigBoneWeight{bone, weight});

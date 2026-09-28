@@ -132,7 +132,7 @@ std::string morph_tag(const std::vector<double>& weights) {
     const std::int32_t q = mjs::to_int32(mjs::round(w * 4096));
     const auto uq = static_cast<std::uint32_t>(q);
     h = fnv_step(h, uq & 0xFFFFU);
-    h = fnv_step(h, static_cast<std::uint32_t>(q >> 16) & 0xFFFFU);  // `>>` is arithmetic
+    h = fnv_step(h, (uq >> 16U) & 0xFFFFU);  // the TS `>>` is arithmetic; the mask keeps only bits 16..31, the same either way
   }
   return base36(h);
 }
@@ -163,10 +163,11 @@ const std::map<double, std::string>* joint_layer_map_for(const std::string& mesh
     id = r.parentOf(*id);
   }
   if (!rootId) return nullptr;
-  if (const auto hit = cache.find(*rootId); hit != cache.end()) return hit->second ? &*hit->second : nullptr;
+  const std::string& root = *rootId;
+  if (const auto hit = cache.find(root); hit != cache.end()) return hit->second ? &*hit->second : nullptr;
 
   std::map<double, std::string> map;
-  std::vector<std::string> stack{*rootId};
+  std::vector<std::string> stack{root};
   while (!stack.empty()) {
     const std::string id = std::move(stack.back());
     stack.pop_back();
@@ -176,8 +177,8 @@ const std::map<double, std::string>* joint_layer_map_for(const std::string& mesh
     if (gi && gi->first == modelKey && !map.contains(gi->second)) map.emplace(gi->second, id);
     for (const std::string& c : n->children) stack.push_back(c);
   }
-  const auto it = cache.emplace(*rootId, std::move(map)).first;
-  return &*it->second;
+  const auto& stored = cache.emplace(root, std::move(map)).first->second;
+  return stored ? &*stored : nullptr;  // always engaged: just emplaced
 }
 
 std::string pose_hash(const std::vector<float>& mats) {

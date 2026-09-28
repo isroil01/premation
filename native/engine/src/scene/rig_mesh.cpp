@@ -133,6 +133,9 @@ struct RestMesh {
   }
 };
 
+/// The sampled value when present and finite, else `fallback` (the TS `Number.isFinite(v) ? v : fb`).
+double finite_or(const std::optional<double>& v, double fallback) { return v.has_value() && std::isfinite(*v) ? *v : fallback; }
+
 StoredPin read_pin(const Json& p) {
   StoredPin s;
   s.id = jkey(p.at("id"));
@@ -365,7 +368,7 @@ RestMesh finish_rest_mesh(std::vector<float> vertices, std::vector<std::uint16_t
 /// buildSilhouetteMesh — nullopt when the outline cannot be triangulated.
 std::optional<RestMesh> build_silhouette_mesh(double width, double height, double pad, const MeshRig& rig,
                                               const std::vector<V2>& silhouette) {
-  const std::vector<V2> poly = silhouette;
+  const std::vector<V2>& poly = silhouette;
   const double minArea = jmax(1, width * height * 1e-4);
   if (std::abs(polygon_area(poly)) < minArea) return std::nullopt;
   const std::vector<Tri> tris = ear_clip(poly);
@@ -722,6 +725,7 @@ double cot_angle(double ax, double ay, double bx, double by, double cx, double c
 ArapTopology build_topology(const RestMesh& mesh) {
   ArapTopology t;
   const std::size_t n = mesh.n();
+  const std::uint64_t radix = std::max<std::uint64_t>(n, 1);  // the edge key's radix: n (1 for an empty mesh)
   t.n = n;
   t.restX.resize(n);
   t.restY.resize(n);
@@ -735,7 +739,7 @@ ArapTopology build_topology(const RestMesh& mesh) {
   const auto addEdge = [&](std::uint32_t a, std::uint32_t b, double w) {
     const std::uint64_t lo = std::min(a, b);
     const std::uint64_t hi = std::max(a, b);
-    const std::uint64_t key = lo * n + hi;
+    const std::uint64_t key = lo * radix + hi;
     const auto [it, fresh] = edgeAt.try_emplace(key, edges.size());
     if (fresh) edges.emplace_back(key, 0.0 + w);
     else edges[it->second].second = edges[it->second].second + w;
@@ -767,8 +771,8 @@ ArapTopology build_topology(const RestMesh& mesh) {
   };
   std::vector<std::vector<Nb>> lists(n);
   for (const auto& [key, w] : edges) {
-    const std::uint64_t lo = key / n;
-    const std::uint64_t hi = key - lo * n;
+    const std::uint64_t lo = key / radix;
+    const std::uint64_t hi = key - lo * radix;
     lists[lo].push_back({hi, w});
     lists[hi].push_back({lo, w});
   }
@@ -806,7 +810,7 @@ ArapTopology build_topology(const RestMesh& mesh) {
     queue[tail++] = seed;
     while (head < tail) {
       const std::size_t i = queue[head++];
-      for (auto k = static_cast<std::size_t>(t.off[i]); k < static_cast<std::size_t>(t.off[i + 1]); ++k) {
+      for (auto k = static_cast<std::size_t>(t.off[i]); std::cmp_less(k, t.off[i + 1]); ++k) {
         const auto j = static_cast<std::size_t>(t.nbrIdx[k]);
         if (t.comp[j] == -1) {
           t.comp[j] = id;
@@ -883,7 +887,7 @@ ReducedFactor reduced_factor(const ArapTopology& topo, const std::vector<std::ui
     for (std::size_t p = 0; p < m; ++p) {
       const std::size_t i = f.freeOf[p];
       A[p * m + p] = effDiag[i];
-      for (auto k = static_cast<std::size_t>(topo.off[i]); k < static_cast<std::size_t>(topo.off[i + 1]); ++k) {
+      for (auto k = static_cast<std::size_t>(topo.off[i]); std::cmp_less(k, topo.off[i + 1]); ++k) {
         const std::int64_t q = f.compactOf[static_cast<std::size_t>(topo.nbrIdx[k])];
         if (q >= 0) {
           const std::size_t at = p * m + static_cast<std::size_t>(q);
@@ -971,7 +975,7 @@ std::vector<float> deform_arap_with_handles(const std::vector<DeformPin>& pins, 
     for (std::size_t i = 0; i < n; ++i) {
       const double si = sVert[i];
       double d = 0;
-      for (auto k = static_cast<std::size_t>(topo.off[i]); k < static_cast<std::size_t>(topo.off[i + 1]); ++k) {
+      for (auto k = static_cast<std::size_t>(topo.off[i]); std::cmp_less(k, topo.off[i + 1]); ++k) {
         const auto j = static_cast<std::size_t>(topo.nbrIdx[k]);
         const double fct = 1 + kStiffK * 0.5 * (si + sVert[j]);
         const double w = topo.nbrW[k] * fct;
@@ -1024,7 +1028,7 @@ std::vector<float> deform_arap_with_handles(const std::vector<DeformPin>& pins, 
         continue;
       }
       double s00 = 0, s01 = 0, s10 = 0, s11 = 0;
-      for (auto k = static_cast<std::size_t>(off[i]); k < static_cast<std::size_t>(off[i + 1]); ++k) {
+      for (auto k = static_cast<std::size_t>(off[i]); std::cmp_less(k, off[i + 1]); ++k) {
         const auto j = static_cast<std::size_t>(nbrIdx[k]);
         const double w = effNbrW[k];
         const double ex = topo.restX[i] - topo.restX[j];
@@ -1052,7 +1056,7 @@ std::vector<float> deform_arap_with_handles(const std::vector<DeformPin>& pins, 
         double rby = 0;
         const double ci = cosV[i];
         const double si = sinV[i];
-        for (auto k = static_cast<std::size_t>(off[i]); k < static_cast<std::size_t>(off[i + 1]); ++k) {
+        for (auto k = static_cast<std::size_t>(off[i]); std::cmp_less(k, off[i + 1]); ++k) {
           const auto j = static_cast<std::size_t>(nbrIdx[k]);
           const double w = effNbrW[k];
           const double ex = topo.restX[i] - topo.restX[j];
@@ -1085,7 +1089,7 @@ std::vector<float> deform_arap_with_handles(const std::vector<DeformPin>& pins, 
           double accY = 0;
           const double ci = cosV[i];
           const double si = sinV[i];
-          for (auto k = static_cast<std::size_t>(off[i]); k < static_cast<std::size_t>(off[i + 1]); ++k) {
+          for (auto k = static_cast<std::size_t>(off[i]); std::cmp_less(k, off[i + 1]); ++k) {
             const auto j = static_cast<std::size_t>(nbrIdx[k]);
             const double w = effNbrW[k];
             const double ex = topo.restX[i] - topo.restX[j];
@@ -1195,7 +1199,8 @@ std::vector<float> apply_bend_pins(const std::vector<float>& base, const std::ve
       o[i * 4 + 1] = f32(vy + w * (ty - vy));
     }
   }
-  return out ? std::move(*out) : base;
+  if (out) return std::move(*out);
+  return base;
 }
 
 std::vector<float> apply_bend_pins_arap(const std::vector<float>& base, const std::vector<DeformPin>& drivers,
@@ -1327,11 +1332,11 @@ std::vector<DeformPin> resolve_live_pins(const std::vector<StoredPin>& pins, dou
   out.reserve(pins.size());
   for (const StoredPin& pin : pins) {
     const bool bend = pin.kind == "bend";
-    const bool stat = !bend && pin.position.has_value();
+    const auto* stat = !bend && pin.position.has_value() ? &*pin.position : nullptr;  // a static pin's rest position
     DeformPin d;
     d.id = pin.id;
-    d.x = stat ? (*pin.position)[0] : pin.x;
-    d.y = stat ? (*pin.position)[1] : pin.y;
+    d.x = stat != nullptr ? (*stat)[0] : pin.x;
+    d.y = stat != nullptr ? (*stat)[1] : pin.y;
     if (!bend) {
       if (const auto live = anim.sampleData("puppet." + pin.id + ".position", t)) {
         if (live->is_array() && !live->arr().empty() && live->arr()[0].is_object() && live->arr()[0].has("x")) {
@@ -1503,6 +1508,8 @@ struct IkTarget {
   double x = 0, y = 0;
   std::optional<double> chainLength;
   std::optional<V2> pole;
+  /// The pole, or nullptr without one.
+  [[nodiscard]] const V2* pole_point() const noexcept { return pole.has_value() ? &*pole : nullptr; }
 };
 
 /// ikChainIds: the target bone and its ancestors, root-first. Indices into `bones` (last id wins).
@@ -1535,6 +1542,7 @@ std::vector<Bone> apply_ik(const std::vector<Bone>& bones, const std::vector<IkT
     const Bone& end = out[endIt->second];
     const WorldMap world = compute_world(out);
     std::vector<V2> joints;
+    joints.reserve(chain.size() + 1);
     for (const std::size_t ci : chain) joints.push_back(bone_root(world.at(out[ci].id)));
     joints.push_back(bone_tip(world.at(end.id), end.length));
     std::vector<double> lengths;
@@ -1555,10 +1563,10 @@ std::vector<Bone> apply_ik(const std::vector<Bone>& bones, const std::vector<IkT
       const V2 j1 = joints[1];
       const V2 j2 = joints[2];
       bool bendPositive = false;
-      if (t.pole) {
+      if (const V2* pole = t.pole_point()) {
         const double ax = target.x - j0.x;
         const double ay = target.y - j0.y;
-        bendPositive = ax * (t.pole->y - j0.y) - ay * (t.pole->x - j0.x) >= 0;
+        bendPositive = ax * (pole->y - j0.y) - ay * (pole->x - j0.x) >= 0;
       } else {
         bendPositive = (j1.x - j0.x) * (j2.y - j1.y) - (j1.y - j0.y) * (j2.x - j1.x) >= 0;
       }
@@ -1623,12 +1631,13 @@ struct EdgeGraph {
 
 EdgeGraph build_edge_graph(const RestMesh& mesh) {
   const std::size_t n = mesh.n();
+  const std::uint64_t radix = std::max<std::uint64_t>(n, 1);  // the edge key's radix: n (1 for an empty mesh)
   std::unordered_map<std::uint64_t, std::size_t> seen;
   std::vector<std::pair<std::uint64_t, double>> edges;
   const auto addEdge = [&](std::uint32_t a, std::uint32_t b) {
     const std::uint64_t lo = std::min(a, b);
     const std::uint64_t hi = std::max(a, b);
-    const std::uint64_t key = lo * n + hi;
+    const std::uint64_t key = lo * radix + hi;
     if (!seen.try_emplace(key, edges.size()).second) return;
     const double dx = static_cast<double>(mesh.v[lo * 4 + 0]) - static_cast<double>(mesh.v[hi * 4 + 0]);
     const double dy = static_cast<double>(mesh.v[lo * 4 + 1]) - static_cast<double>(mesh.v[hi * 4 + 1]);
@@ -1646,8 +1655,8 @@ EdgeGraph build_edge_graph(const RestMesh& mesh) {
   std::vector<std::size_t> degree(n, 0);
   double lenSum = 0;
   for (const auto& [key, len] : edges) {
-    const std::uint64_t lo = key / n;
-    const std::uint64_t hi = key - lo * n;
+    const std::uint64_t lo = key / radix;
+    const std::uint64_t hi = key - lo * radix;
     ++degree[lo];
     ++degree[hi];
     lenSum += len;
@@ -1658,8 +1667,8 @@ EdgeGraph build_edge_graph(const RestMesh& mesh) {
   g.nbrLen.assign(g.off[n], 0);
   std::vector<std::size_t> cursor(g.off.begin(), g.off.begin() + static_cast<std::ptrdiff_t>(n));
   for (const auto& [key, len] : edges) {
-    const std::uint64_t lo = key / n;
-    const std::uint64_t hi = key - lo * n;
+    const std::uint64_t lo = key / radix;
+    const std::uint64_t hi = key - lo * radix;
     g.nbrIdx[cursor[lo]] = hi;
     g.nbrLen[cursor[lo]] = len;
     ++cursor[lo];
@@ -1680,7 +1689,7 @@ class MinHeap {
     v_.push_back(vert);
     std::size_t i = d_.size() - 1;
     while (i > 0) {
-      const std::size_t p = (i - 1) >> 1;
+      const std::size_t p = (i - 1) >> 1U;
       if (d_[p] < d_[i] || (d_[p] == d_[i] && v_[p] <= v_[i])) break;
       std::swap(d_[p], d_[i]);
       std::swap(v_[p], v_[i]);
@@ -1833,6 +1842,7 @@ std::vector<VertexWeight> apply_weight_paint(const std::vector<VertexWeight>& au
   double paintedTotal = 0;
   for (const auto& p : painted) paintedTotal = paintedTotal + p.second;
   std::vector<VertexWeight> merged;
+  merged.reserve(painted.size() + autoW.size());
   std::vector<VertexWeight> autoUnpainted;
   for (const VertexWeight& w : autoW) {
     if (std::ranges::none_of(painted, [&](const auto& p) { return p.first == w.boneId; })) autoUnpainted.push_back(w);
@@ -1942,13 +1952,13 @@ std::vector<IkTarget> resolve_active_ik_targets(const Json& skel, double t, cons
     const auto poleY = anim.sample("ikPole." + boneId + ".y", t);
     IkTarget r;
     r.boneId = boneId;
-    r.x = num(liveX) ? *liveX : jn(tg.at("x"));
-    r.y = num(liveY) ? *liveY : jn(tg.at("y"));
+    r.x = finite_or(liveX, jn(tg.at("x")));
+    r.y = finite_or(liveY, jn(tg.at("y")));
     r.chainLength = jopt(tg.at("chainLength"));
     const Json& storedPole = tg.at("pole");
     if (num(poleX) || num(poleY)) {
-      r.pole = V2{num(poleX) ? *poleX : (storedPole.at("x").is_number() ? storedPole.at("x").num() : 0),
-                  num(poleY) ? *poleY : (storedPole.at("y").is_number() ? storedPole.at("y").num() : 0)};
+      r.pole = V2{finite_or(poleX, storedPole.at("x").is_number() ? storedPole.at("x").num() : 0),
+                  finite_or(poleY, storedPole.at("y").is_number() ? storedPole.at("y").num() : 0)};
     } else if (storedPole.is_object()) {
       r.pole = V2{jn(storedPole.at("x")), jn(storedPole.at("y"))};
     }
@@ -2226,13 +2236,13 @@ std::vector<RigIkOut> resolve_ik_goals(const Json& skel, double t, const RigSamp
     RigIkOut r;
     r.bone = boneId;
     r.enabled = !(tg.at("enabled").is_bool() && !tg.at("enabled").b());
-    r.x = num(liveX) ? *liveX : jn(tg.at("x"));
-    r.y = num(liveY) ? *liveY : jn(tg.at("y"));
+    r.x = finite_or(liveX, jn(tg.at("x")));
+    r.y = finite_or(liveY, jn(tg.at("y")));
     r.chainLength = jopt(tg.at("chainLength"));
     const Json& storedPole = tg.at("pole");
     if (num(poleX) || num(poleY)) {
-      r.pole = std::array<double, 2>{num(poleX) ? *poleX : (storedPole.at("x").is_number() ? storedPole.at("x").num() : 0),
-                                     num(poleY) ? *poleY : (storedPole.at("y").is_number() ? storedPole.at("y").num() : 0)};
+      r.pole = std::array<double, 2>{finite_or(poleX, storedPole.at("x").is_number() ? storedPole.at("x").num() : 0),
+                                     finite_or(poleY, storedPole.at("y").is_number() ? storedPole.at("y").num() : 0)};
     } else if (storedPole.is_object()) {
       r.pole = std::array<double, 2>{jn(storedPole.at("x")), jn(storedPole.at("y"))};
     }
@@ -2286,7 +2296,7 @@ struct RigModel::Impl {
   }
 };
 
-RigModel::RigModel(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+RigModel::RigModel(std::unique_ptr<Impl> impl, Pose pose) : impl_(std::move(impl)), pose_(std::move(pose)) {}
 RigModel::RigModel(RigModel&&) noexcept = default;
 RigModel& RigModel::operator=(RigModel&&) noexcept = default;
 RigModel::~RigModel() = default;
@@ -2308,10 +2318,10 @@ std::vector<std::uint32_t> RigModel::lattice_edges() const {
         if (a > b) std::swap(a, b);
         if (!seen.insert(a * 65536U + b).second) continue;
         if (boxesOnly) {
-          const double ax = r[a * 4];
-          const double ay = r[a * 4 + 1];
-          const double bx = r[b * 4];
-          const double by = r[b * 4 + 1];
+          const double ax = r[std::size_t{a} * 4];
+          const double ay = r[(std::size_t{a} * 4) + 1];
+          const double bx = r[std::size_t{b} * 4];
+          const double by = r[(std::size_t{b} * 4) + 1];
           if (std::abs(ax - bx) > 1e-3 && std::abs(ay - by) > 1e-3) continue;
         }
         out.push_back(a);
@@ -2519,12 +2529,8 @@ std::optional<RigModel> build_rig_model(const RigInputs& in, const RigSampler& a
     pinsOut.push_back(std::move(o));
   }
 
-  RigModel model(std::move(impl));
-  model.pins = std::move(pinsOut);
-  model.bones = std::move(bonesOut);
-  model.ik = std::move(ikOut);
-  model.vertices = std::move(vertices);
-  return model;
+  return RigModel(std::move(impl), RigModel::Pose{.pins = std::move(pinsOut), .bones = std::move(bonesOut), .ik = std::move(ikOut),
+                                                 .vertices = std::move(vertices)});
 }
 
 }  // namespace premation::scene

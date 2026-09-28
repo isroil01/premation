@@ -34,7 +34,8 @@ std::array<double, 3> hex_rgb(const Json& hex) {
     if (d < 0) return {255, 255, 255};
     n = n * 16 + d;
   }
-  return {static_cast<double>((n >> 16) & 255), static_cast<double>((n >> 8) & 255), static_cast<double>(n & 255)};
+  const auto u = static_cast<unsigned>(n);  // six hex digits: 0 … 0xFFFFFF
+  return {static_cast<double>((u >> 16U) & 255U), static_cast<double>((u >> 8U) & 255U), static_cast<double>(u & 255U)};
 }
 
 }  // namespace

@@ -35,13 +35,18 @@ constexpr std::array<Ahead, 4> kAhead{{
     {0, -1, -1, -1},
 }};
 
+/// The row-major index of cell (x, y) in a grid `w` wide (all non-negative), computed in size_t.
+std::size_t cell(int x, int y, int w) {
+  return (static_cast<std::size_t>(y) * static_cast<std::size_t>(w)) + static_cast<std::size_t>(x);
+}
+
 std::vector<std::uint8_t> to_mask(std::span<const std::uint8_t> src, int w, int h, int stride, double threshold) {
   const int mw = w + 2;
   std::vector<std::uint8_t> mask(static_cast<std::size_t>(mw) * static_cast<std::size_t>(h + 2));
   for (int y = 0; y < h; ++y) {
     for (int x = 0; x < w; ++x) {
       const auto at = (static_cast<std::size_t>((y * w) + x) * static_cast<std::size_t>(stride)) + static_cast<std::size_t>(stride - 1);
-      if (static_cast<double>(src[at]) >= threshold) mask[static_cast<std::size_t>(((y + 1) * mw) + (x + 1))] = 1;
+      if (static_cast<double>(src[at]) >= threshold) mask[cell(x + 1, y + 1, mw)] = 1;
     }
   }
   return mask;
@@ -49,14 +54,14 @@ std::vector<std::uint8_t> to_mask(std::span<const std::uint8_t> src, int w, int 
 
 std::vector<Pt2> follow_edges(const std::vector<std::uint8_t>& mask, int mw, int startX, int startY, int startDir,
                               std::vector<std::uint8_t>& visited) {
-  const auto inside = [&](int px, int py) { return mask[static_cast<std::size_t>((py * mw) + px)] == 1; };
+  const auto inside = [&](int px, int py) { return mask[cell(px, py, mw)] == 1; };
   std::vector<Pt2> pts;
   int cx = startX;
   int cy = startY;
   int dir = startDir;
   long long guard = static_cast<long long>(mw) * mw * 4;
   bool first = true;
-  do {
+  while (true) {
     const Ahead& ahead = kAhead[static_cast<std::size_t>(dir)];
     const bool R = inside(cx + ahead.rx, cy + ahead.ry);
     const bool L = inside(cx + ahead.lx, cy + ahead.ly);
@@ -64,17 +69,18 @@ std::vector<Pt2> follow_edges(const std::vector<std::uint8_t>& mask, int mw, int
     if (R && !L) {
       // straight on
     } else if (R && L) {
-      dir = (dir + 3) & 3;
+      dir = (dir + 3) % 4;
     } else {
-      dir = (dir + 1) & 3;
+      dir = (dir + 1) % 4;
     }
     if (first || dir != before) pts.push_back({static_cast<double>(cx), static_cast<double>(cy)});
     first = false;
     const Ahead& a = kAhead[static_cast<std::size_t>(dir)];
-    visited[static_cast<std::size_t>(((cy + a.ry) * mw) + (cx + a.rx))] = 1;
+    visited[cell(cx + a.rx, cy + a.ry, mw)] = 1;
     cx += kDX[static_cast<std::size_t>(dir)];
     cy += kDY[static_cast<std::size_t>(dir)];
-  } while ((cx != startX || cy != startY) && --guard > 0);
+    if ((cx == startX && cy == startY) || --guard <= 0) break;
+  }
   return pts;
 }
 
@@ -164,7 +170,7 @@ std::vector<TracedContour> trace_bitmap(std::span<const std::uint8_t> src, int w
   std::vector<std::uint8_t> visitedOuter(mask.size());
   std::vector<std::uint8_t> visitedHole(mask.size());
   std::vector<TracedContour> out;
-  const auto at = [&](int x, int y) { return static_cast<std::size_t>((y * mw) + x); };
+  const auto at = [&](int x, int y) { return cell(x, y, mw); };
   for (int py = 1; py <= h; ++py) {
     for (int px = 1; px <= w; ++px) {
       const bool here = mask[at(px, py)] == 1;

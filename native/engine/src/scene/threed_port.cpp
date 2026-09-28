@@ -73,7 +73,7 @@ bool auto_oriented_to_camera(const doc::Node& n) {
 
 std::array<double, 16> to_arr(const xf::Mat4& m) {
   std::array<double, 16> a{};
-  std::copy(m.begin(), m.end(), a.begin());
+  std::ranges::copy(m, a.begin());
   return a;
 }
 
@@ -89,7 +89,7 @@ std::string shadow_tint(const std::optional<std::string>& fill, double transmiss
   const auto n = static_cast<std::uint32_t>(std::stoul(std::string(f), nullptr, 16));
   const auto ch = [&](unsigned shift) {
     const double v = motion::js::round(static_cast<double>((n >> shift) & 0xFFU) * std::min(1.0, transmission));
-    static constexpr char kHex[] = "0123456789abcdef";
+    constexpr std::string_view kHex = "0123456789abcdef";
     const auto iv = static_cast<unsigned>(v);
     std::string s;
     s.push_back(kHex[(iv >> 4U) & 0xFU]);
@@ -131,7 +131,8 @@ Scene3D::Scene3D(Scene3DHost& host, const BuildContext& c, const SnapshotComp& c
 
 xf::Projected Scene3D::project(xf::Vec3 p) const {
   if (ortho_) return xf::project_ortho(p, *ortho_, comp_.width, comp_.height);
-  return xf::project_point(p, *camera_);
+  // setup() sets camera_ whenever the view is not orthographic; the default camera is its own fallback.
+  return xf::project_point(p, camera_ ? *camera_ : xf::default_camera(comp_.width, comp_.height));
 }
 
 std::optional<xf::Node3DTransform> Scene3D::local3d(const std::string& id) {
@@ -154,8 +155,8 @@ std::optional<xf::Node3DTransform> Scene3D::local3d(const std::string& id) {
   v.orientation_x = av.get("orientationX").value_or(t3(*n, "orientationX"));
   v.orientation_y = av.get("orientationY").value_or(t3(*n, "orientationY"));
   v.orientation_z = av.get("orientationZ").value_or(t3(*n, "orientationZ"));
-  v.scale_x = av.get("scaleX") ? *av.get("scaleX") : av.get("scale").value_or(g->scale_x);
-  v.scale_y = av.get("scaleY") ? *av.get("scaleY") : av.get("scale").value_or(g->scale_y);
+  v.scale_x = av.get("scaleX").value_or(av.get("scale").value_or(g->scale_x));
+  v.scale_y = av.get("scaleY").value_or(av.get("scale").value_or(g->scale_y));
   v.scale_z = av.get("scaleZ").value_or(1);
   v.anchor_x = av.get("anchorX").value_or(ax);
   v.anchor_y = av.get("anchorY").value_or(ay);
@@ -288,8 +289,8 @@ xf::Camera Scene3D::camera_from_node(const doc::Node& n, const std::function<std
   p.orientation_z = roll;
   p.orientation_x = oriX;
   p.orientation_y = oriY;
-  const std::string id = n.id;
-  return xf::camera_from_props(p, comp_.width, comp_.height, [this, id](xf::Vec3 v) { return to_world_point(id, v); });
+  // Init-captures: a non-const std::string member keeps the closure nothrow-movable.
+  return xf::camera_from_props(p, comp_.width, comp_.height, [this, id = n.id](xf::Vec3 v) { return to_world_point(id, v); });
 }
 
 void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
@@ -300,8 +301,7 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
     if (custom) {
       camera_ = *comp_.customViewCamera;
     } else if (viewCam_ != nullptr) {
-      const std::string id = viewCam_->id;
-      camera_ = camera_from_node(*viewCam_, [this, id](std::string_view k) { return h_.values3d(id).get(k); });
+      camera_ = camera_from_node(*viewCam_, [this, id = viewCam_->id](std::string_view k) { return h_.values3d(id).get(k); });
     } else {
       camera_ = xf::default_camera(comp_.width, comp_.height);
     }
@@ -312,8 +312,7 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
   }
   // Depth of field (off in ortho / custom views and Draft 3D).
   if (!(ortho_ || custom || comp_.draft3d) && viewCam_ != nullptr) {
-    const std::string id = viewCam_->id;
-    dof_ = read_node_dof(*viewCam_, comp_.width, comp_.height, [this, id](std::string_view k) { return h_.values3d(id).get(k); });
+    dof_ = read_node_dof(*viewCam_, comp_.width, comp_.height, [this, id = viewCam_->id](std::string_view k) { return h_.values3d(id).get(k); });
   }
 
   // Cast-shadow lights (projected copies; the first two mapped lights take maps instead).
@@ -527,8 +526,8 @@ bool Scene3D::place(const doc::Node& n, const Values& a, double baseX, double ba
   s.ownX = s.parent3d ? a.get("x").value_or(baseX) : world.x;
   s.ownY = s.parent3d ? a.get("y").value_or(baseY) : world.y;
   s.ownRot = s.parent3d ? a.get("rotation").value_or(baseRot) : world.rotation;
-  s.ownScaleX = s.parent3d ? (a.get("scaleX") ? *a.get("scaleX") : a.get("scale").value_or(baseScaleX)) : world.scale_x;
-  s.ownScaleY = s.parent3d ? (a.get("scaleY") ? *a.get("scaleY") : a.get("scale").value_or(baseScaleY)) : world.scale_y;
+  s.ownScaleX = s.parent3d ? a.get("scaleX").value_or(a.get("scale").value_or(baseScaleX)) : world.scale_x;
+  s.ownScaleY = s.parent3d ? a.get("scaleY").value_or(a.get("scale").value_or(baseScaleY)) : world.scale_y;
   s.depth = project({world.x, world.y, s.z3}).depth;
   s.faceRotX = s.rotX;
   s.faceRotY = s.rotY;
@@ -582,8 +581,8 @@ std::function<std::array<double, 6>(double, double)> Scene3D::matrix_at(const do
   const double localX = a.get("x").value_or(baseX);
   const double localY = a.get("y").value_or(baseY);
   const double localRot = a.get("rotation").value_or(baseRot);
-  const std::string id = h_.anim_id3d(n.id);
-  return [this, id, localX, localY, localRot, s](double ti, double tc) {
+  // Init-captures copy into non-const members, so the closure moves without copying strings.
+  return [this, id = h_.anim_id3d(n.id), localX, localY, localRot, s = s](double ti, double tc) {
     const auto sample = [&](std::string_view p, double tt) { return doc::anim_sample(c_.d, c_.expr, c_.cache, id, p, tt); };
     const auto sc = sample("scale", ti);
     const double rX = s.faceRotX != s.rotX ? s.faceRotX : sample("rotationX", ti).value_or(s.rotX);
@@ -594,8 +593,7 @@ std::function<std::array<double, 6>(double, double)> Scene3D::matrix_at(const do
     if (cameraAnimated_ && viewCam_ != nullptr) {
       auto it = subFrameCameras_.find(tc);
       if (it == subFrameCameras_.end()) {
-        const std::string camId = h_.anim_id3d(viewCam_->id);
-        const xf::Camera cam = camera_from_node(*viewCam_, [this, camId, tc](std::string_view k) {
+        const xf::Camera cam = camera_from_node(*viewCam_, [this, camId = h_.anim_id3d(viewCam_->id), tc](std::string_view k) {
           return doc::anim_sample(c_.d, c_.expr, c_.cache, camId, k, tc);
         });
         it = subFrameCameras_.emplace(tc, cam).first;
@@ -1770,7 +1768,7 @@ void Scene3D::emit(Snapshot& s, const std::vector<RLayer>& layers) const {
     const xf::OrthoMatrices om = xf::ortho_camera_matrices(*ortho_, comp_.width, comp_.height);
     cam.view = mat_vec(om.view);
     cam.projection = mat_vec(om.projection);
-  } else {
+  } else if (camera_) {  // always set when not orthographic (setup)
     cam.view = mat_vec(xf::camera_view_matrix(*camera_));
     cam.projection = mat_vec(xf::camera_projection_matrix(*camera_));
     cam.eye = {camera_->position.x, camera_->position.y, camera_->position.z};

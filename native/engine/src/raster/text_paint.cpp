@@ -875,7 +875,7 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
       }
       if (tr->scale != 1 || tr->scaleY != 1) ctx.scale(tr->scale, tr->scaleY);
       if (tr->opacity != 1) ctx.setGlobalAlpha(ctx.globalAlpha() * std::max(0.0, tr->opacity));
-      if (tr->blur > 0 && tr->blurY.value_or(tr->blur) == tr->blur) ctx.setFilter({tr->blur});
+      if (tr->blur > 0 && tr->blurY.value_or(tr->blur) == tr->blur) ctx.setFilter(css::Filter{tr->blur});
     }
     if (item.pivot) ctx.translate(item.x - item.pivot->first, item.y - item.pivot->second);
     if (tr != nullptr && (tr->anchorX.value_or(0) != 0 || tr->anchorY.value_or(0) != 0)) ctx.translate(-tr->anchorX.value_or(0), -tr->anchorY.value_or(0));
@@ -889,7 +889,7 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
     const double by = tr != nullptr ? std::max(0.0, tr->blurY.value_or(tr->blur)) : 0;
     if (tr != nullptr && bx != by) {
       unsupported.emplace_back("2-D animator blur (anisotropic scratch composite) — drawn isotropic");
-      ctx.setFilter({(bx + by) / 2});
+      ctx.setFilter(css::Filter{(bx + by) / 2});
     }
     for (const Part p : which) paintPart(p, item, fs, ss, strokeW, fillAlpha, 0, 0, strokeAlpha);
     ctx.restore();

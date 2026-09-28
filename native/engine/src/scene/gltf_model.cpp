@@ -42,7 +42,7 @@ struct ParseError : std::runtime_error {
 std::uint32_t u32le(std::span<const std::uint8_t> b, std::size_t o) {
   if (o + 4 > b.size()) throw ParseError("Offset is outside the bounds of the DataView");
   std::uint32_t v = 0;
-  std::memcpy(&v, b.data() + o, 4);
+  std::memcpy(&v, b.subspan(o, 4).data(), 4);
   return v;
 }
 
@@ -136,7 +136,7 @@ class Reader {
   Reader(const Json& g, std::vector<Buffer> buffers) : g_(g), buffers_(std::move(buffers)) {}
 
   /// viewBytes(viewIndex): the view as (storage, absolute offset, length).
-  Buffer view(double viewIndex) const {
+  [[nodiscard]] Buffer view(double viewIndex) const {
     const Json& v = g_.at("bufferViews").arr().size() > 0 && viewIndex >= 0 && viewIndex == std::floor(viewIndex) &&
                             static_cast<std::size_t>(viewIndex) < g_.at("bufferViews").arr().size()
                         ? g_.at("bufferViews").arr()[static_cast<std::size_t>(viewIndex)]
@@ -171,25 +171,25 @@ class Reader {
     const std::size_t n = component_bytes(type);
     if (n == 0) throw ParseError("accessor " + idx_str(accessor) + ": componentType " + idx_str(type));
     if (at + n > s.size()) throw ParseError("Offset is outside the bounds of the DataView");
-    const std::uint8_t* p = s.data() + at;
+    const std::span<const std::uint8_t> p = std::span(s).subspan(at, n);
     if (type == 5126) {
       float f = 0;
-      std::memcpy(&f, p, 4);
+      std::memcpy(&f, p.data(), 4);
       return static_cast<double>(f);
     }
     if (type == 5125) {
       std::uint32_t v = 0;
-      std::memcpy(&v, p, 4);
+      std::memcpy(&v, p.data(), 4);
       return static_cast<double>(v);
     }
     if (type == 5123) {
       std::uint16_t v = 0;
-      std::memcpy(&v, p, 2);
+      std::memcpy(&v, p.data(), 2);
       return normalized ? v / 65535.0 : static_cast<double>(v);
     }
     if (type == 5122) {
       std::int16_t v = 0;
-      std::memcpy(&v, p, 2);
+      std::memcpy(&v, p.data(), 2);
       return normalized ? std::max(v / 32767.0, -1.0) : static_cast<double>(v);
     }
     if (type == 5121) return normalized ? p[0] / 255.0 : static_cast<double>(p[0]);
@@ -198,7 +198,7 @@ class Reader {
   }
 
   /// readAccessorF32.
-  std::vector<float> accessor(const Json& indexJ) const {
+  [[nodiscard]] std::vector<float> accessor(const Json& indexJ) const {
     const double index = num_or(indexJ, kNaN);
     const auto& accs = g_.at("accessors").arr();
     const bool ok = index >= 0 && index == std::floor(index) && static_cast<std::size_t>(index) < accs.size();
@@ -218,7 +218,7 @@ class Reader {
     if (!a.at("bufferView").is_undefined()) {
       const double vi = num_or(a.at("bufferView"), kNaN);
       const Buffer v = view(vi);
-      const double elemBytes = static_cast<double>(comps * compBytes);
+      const auto elemBytes = static_cast<double>(comps * compBytes);
       const std::optional<double> st = stride(vi);
       const double step = st && *st > 0 ? *st : elemBytes;
       const double base = static_cast<double>(v.offset) + (present(a.at("byteOffset")) ? num_or(a.at("byteOffset"), 0) : 0);
@@ -251,7 +251,7 @@ class Reader {
     return out;
   }
 
-  std::vector<std::uint32_t> indices(const Json& index) const {
+  [[nodiscard]] std::vector<std::uint32_t> indices(const Json& index) const {
     const std::vector<float> raw = accessor(index);
     std::vector<std::uint32_t> out(raw.size());
     for (std::size_t i = 0; i < raw.size(); ++i) out[i] = to_uint32(static_cast<double>(raw[i]));
@@ -356,6 +356,7 @@ Parsed parse_json(const Json& g, const Buffer* glbBin) {
   }
   if (!unsupported.empty()) {
     std::vector<std::string> kinds;
+    kinds.reserve(unsupported.size());
     for (const auto& u : unsupported) kinds.push_back(hint_for(u));
     throw ParseError("This model needs " + join(unsupported, ", ") + " (" + join(kinds, ", ") + "), which is not supported yet. " +
                      "Re-export it without compression (e.g. Blender ▸ glTF ▸ uncheck Compression).");
@@ -536,9 +537,10 @@ std::shared_ptr<const Model> build_model(std::string_view modelKey, std::span<co
     ModelSkin ms;
     ms.joints = sk.joints;
     ms.invBind.resize(sk.joints.size() * 16);
+    const auto* inverseBind = sk.inverseBindMatrices ? &*sk.inverseBindMatrices : nullptr;
     for (std::size_t j = 0; j < sk.joints.size(); ++j) {
       std::array<double, 16> conv = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-      if (sk.inverseBindMatrices) conv = conjugate_gltf_matrix(*sk.inverseBindMatrices, j * 16);
+      if (inverseBind != nullptr) conv = conjugate_gltf_matrix(*inverseBind, j * 16);
       for (std::size_t k = 0; k < 16; ++k) ms.invBind[(j * 16) + k] = static_cast<float>(conv[k]);
     }
     m->skins.push_back(std::move(ms));
@@ -562,7 +564,7 @@ std::optional<Parsed> parse(std::span<const std::uint8_t> data, std::string& err
         const std::uint32_t type = u32le(data, off + 4);
         if (off + 8 + len > data.size()) throw ParseError("Invalid typed array length: " + std::to_string(len));
         if (type == kChunkJson) {
-          const std::string_view text(reinterpret_cast<const char*>(data.data() + off + 8), len);  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+          const std::string_view text(reinterpret_cast<const char*>(data.subspan(off + 8, len).data()), len);  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
           json = js::parse(text);
           if (!json) throw ParseError("GLB JSON chunk does not parse");
         } else if (type == kChunkBin) {

@@ -120,7 +120,7 @@ void paint_mask_matte(Canvas2D& g, const Value& mask, double w, double h, std::v
     for (const auto& pt : (*path)["points"].items()) variable = variable || pt["feather"].is_number();
     if (variable) unsupported.emplace_back("variable (per-vertex) mask feather (maskFeather.ts)");
     const double feather = (*path)["feather"].num(0);
-    if (feather > 0) g.setFilter({feather / 2});
+    if (feather > 0) g.setFilter(css::Filter{feather / 2});
     g.setFillStyle(white);
     g.fill(*p, FillRule::evenodd);
     g.restore();

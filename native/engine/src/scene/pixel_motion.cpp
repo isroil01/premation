@@ -257,22 +257,22 @@ void deinterlace_data(std::span<std::uint8_t> data, int width, int height, bool 
   const int keepParity = keepUpper ? 0 : 1;
   const Sz rowBytes = uz(width) * 4;
   for (int y = 0; y < height; ++y) {
-    if ((y & 1) == keepParity) continue;
+    if (y % 2 == keepParity) continue;  // y >= 0
     const int above = y - 1;
     const int below = y + 1;
     const Sz row = uz(y) * rowBytes;
     if (above < 0) {  // top edge: only the kept row below exists
-      std::memmove(data.data() + row, data.data() + (uz(below) * rowBytes), rowBytes);
+      std::memmove(data.subspan(row).data(), data.subspan(uz(below) * rowBytes).data(), rowBytes);
       continue;
     }
     if (below >= height) {
-      std::memmove(data.data() + row, data.data() + (uz(above) * rowBytes), rowBytes);
+      std::memmove(data.subspan(row).data(), data.subspan(uz(above) * rowBytes).data(), rowBytes);
       continue;
     }
     const Sz ra = uz(above) * rowBytes;
     const Sz rb = uz(below) * rowBytes;
     for (Sz x = 0; x < rowBytes; ++x) {
-      data[row + x] = static_cast<std::uint8_t>((data[ra + x] + data[rb + x] + 1) >> 1);  // +1 rounds to nearest
+      data[row + x] = static_cast<std::uint8_t>((unsigned{data[ra + x]} + data[rb + x] + 1U) >> 1U);  // +1 rounds to nearest
     }
   }
 }

@@ -30,6 +30,18 @@
 #   clang-analyzer-optin.performance.Padding
 #       RLayer mirrors the TS RenderLayer's field order so the port reads against
 #       it; the snapshot holds a few hundred per frame, so the padding is noise.
+#   clang-analyzer-optin.core.EnumCastOutOfRange
+#       Fires inside Dawn's webgpu_enum_class_bitmasks.h on every combined
+#       `BufferUsage::A | BufferUsage::B` (scene_textures.cpp's uploads): a combined
+#       bitmask is by design not an enumerator — the reason media and render_graph give.
+#
+# One check option, not a disabled check:
+#   bugprone-exception-escape.IgnoredExceptions: bad_alloc, bad_array_new_length
+#       MSVC's STL allocates in the move constructors of std::map / std::unordered_map
+#       (a fresh sentinel for the moved-from side), so every implicitly moved struct
+#       holding one (RestMesh, exr::Image) "may throw" from its move constructor.
+#       Allocation failure in premation-engine ends the process and the supervisor
+#       restarts it (CLAUDE.md); every other exception type is still checked.
 Checks: >
   -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
   -cppcoreguidelines-pro-bounds-constant-array-index,
@@ -39,6 +51,10 @@ Checks: >
   -bugprone-branch-clone,
   -readability-function-cognitive-complexity,
   -bugprone-float-loop-counter,
-  -clang-analyzer-security.FloatLoopCounter
+  -clang-analyzer-security.FloatLoopCounter,
+  -clang-analyzer-optin.core.EnumCastOutOfRange
+CheckOptions:
+  - key: bugprone-exception-escape.IgnoredExceptions
+    value: 'bad_alloc,bad_array_new_length'
 InheritParentConfig: true
 HeaderFilterRegex: '.*(native[/\\](include|libs)|scene)[/\\].*'

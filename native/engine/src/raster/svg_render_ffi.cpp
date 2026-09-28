@@ -127,11 +127,11 @@ SystemFonts& system_fonts() {
 class Painter {
  public:
   Painter(const Document& doc, const std::vector<Style>& styles, const RasterizeOptions& opts, std::vector<std::string>& notes)
-      : doc_(doc), st_(styles), opts_(opts), notes_(notes) {}
+      : doc_(&doc), st_(&styles), opts_(&opts), notes_(&notes) {}
 
   void draw_root(SkCanvas* c, double w, double h) {
-    const Node& root = doc_.nodes[static_cast<std::size_t>(doc_.root)];
-    const Style& s = style(doc_.root);
+    const Node& root = doc_->nodes[static_cast<std::size_t>(doc_->root)];
+    const Style& s = style(doc_->root);
     if (s.displayNone) return;
     if (root.attr("transform") != nullptr) note("transform on the root <svg>");
     Mat2D vbm;
@@ -146,26 +146,26 @@ class Painter {
     }
     c->save();
     c->concat(to_sk(vbm));
-    with_effects(c, doc_.root, vp, 0, [&] { render_children(c, doc_.root, vp, 0); });
+    with_effects(c, doc_->root, vp, 0, [&] { render_children(c, doc_->root, vp, 0); });
     c->restore();
   }
 
  private:
   // ── helpers ──
-  [[nodiscard]] const Node& node(int i) const { return doc_.nodes[static_cast<std::size_t>(i)]; }
-  [[nodiscard]] const Style& style(int i) const { return st_[static_cast<std::size_t>(i)]; }
+  [[nodiscard]] const Node& node(int i) const { return doc_->nodes[static_cast<std::size_t>(i)]; }
+  [[nodiscard]] const Style& style(int i) const { return (*st_)[static_cast<std::size_t>(i)]; }
   void note(std::string what) {
-    if (std::ranges::find(notes_, what) == notes_.end()) notes_.push_back(std::move(what));
+    if (std::ranges::find(*notes_, what) == notes_->end()) notes_->push_back(std::move(what));
   }
   [[nodiscard]] bool is(int i, std::string_view name) const {
     const Node& n = node(i);
     return n.element && n.svgNs && n.name == name;
   }
   [[nodiscard]] int ref(int from) const {
-    const int t = doc_.by_id(href_id(doc_.href(from)));
+    const int t = doc_->by_id(href_id(doc_->href(from)));
     return t;
   }
-  [[nodiscard]] int by_id(std::string_view id) const { return doc_.by_id(id); }
+  [[nodiscard]] int by_id(std::string_view id) const { return doc_->by_id(id); }
 
   /// A length attribute resolved against `ref` (for %), or `def` when absent / invalid.
   [[nodiscard]] double len(int i, std::string_view attr, double def, double ref) const {
@@ -1312,7 +1312,7 @@ class Painter {
     const Node& n = node(i);
     const Style& s = style(i);
     if (s.hidden) return;
-    const std::string* href = doc_.href(i);
+    const std::string* href = doc_->href(i);
     if (href == nullptr || trim(*href).empty()) return;
     std::string mime;
     const auto bytes = data_url_bytes(*href, &mime);
@@ -1324,12 +1324,12 @@ class Painter {
       note("<image> of an SVG");
       return;
     }
-    if (!opts_.decodeImage) {
+    if (!opts_->decodeImage) {
       note("<image> (no decoder)");
       return;
     }
     Bitmap bm;
-    if (!opts_.decodeImage(*bytes, bm) || bm.width == 0 || bm.height == 0) return;  // a broken image draws nothing
+    if (!opts_->decodeImage(*bytes, bm) || bm.width == 0 || bm.height == 0) return;  // a broken image draws nothing
     // Premultiply as the browser's image decode does (SkMulDiv255Round).
     for (std::size_t k = 0; k + 3 < bm.rgba.size(); k += 4) {
       const unsigned a = bm.rgba[k + 3];
@@ -1388,7 +1388,7 @@ class Painter {
   };
 
   const FontSet* fonts_for(const Style& s) {
-    if (opts_.fonts != nullptr) return opts_.fonts;
+    if (opts_->fonts != nullptr) return opts_->fonts;
     SystemFonts& sf = system_fonts();
     if (!sf.set) {
 #if defined(_WIN32)
@@ -1583,8 +1583,8 @@ class Painter {
     for (const Glyph& g : s.glyphs) {
       const double mid = offset + r.x + g.x + g.advance / 2;
       if (mid < 0 || mid > static_cast<double>(cm.length())) continue;
-      SkPoint pos;
-      SkVector tan;
+      SkPoint pos{};
+      SkVector tan{};
       if (!cm.getPosTan(f(mid), &pos, &tan)) continue;
       const SkFont font = ffi::sk_font_for(fonts, g.face, s.axes, s.sizePx, g.fakeBold, g.fakeItalic);
       const auto& run = builder.allocRunRSXform(font, 1);
@@ -1674,10 +1674,11 @@ class Painter {
     }
   }
 
-  const Document& doc_;
-  const std::vector<Style>& st_;
-  const RasterizeOptions& opts_;
-  std::vector<std::string>& notes_;
+  // Never null: views of the caller's document, styles, options and notes for one render.
+  const Document* doc_;
+  const std::vector<Style>* st_;
+  const RasterizeOptions* opts_;
+  std::vector<std::string>* notes_;
   std::vector<int> patternStack_;
   std::vector<int> clipStack_;
   std::vector<int> maskStack_;

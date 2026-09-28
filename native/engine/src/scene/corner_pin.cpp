@@ -126,7 +126,7 @@ std::optional<ResolvedPin> resolve_corner_pin(const std::optional<CornerPin>& pi
 
 void apply_corner_pin(const std::optional<CornerPin>& pin, const Mat3& model, api::Renderable& r) {
   const std::optional<ResolvedPin> p = resolve_corner_pin(pin, model);
-  if (!p) return;
+  if (!p || !pin) return;
   r.model_matrix.assign(p->renderModel.m.begin(), p->renderModel.m.end());
   r.bounds = p->bounds;
   for (api::RenderMotionSample& s : r.motion_samples) {

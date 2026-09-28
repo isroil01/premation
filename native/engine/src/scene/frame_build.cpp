@@ -924,7 +924,7 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
         continue;
       }
       if (l.light) {  // a light's screen-blended glow quad
-        out.push_back(light_to_renderable(l, parent, parentOpacity));
+        out.push_back(light_to_renderable(l, *l.light, parent, parentOpacity));
         TextureRequest tr;  // AppTextureProvider rasterizeLight (light_wash.cpp)
         tr.key = "light:" + l.id;
         tr.kind = TexKind::light;

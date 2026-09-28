@@ -21,8 +21,9 @@ void apply_three_d(const RLayer& l, const Mat3& parent, api::Renderable& r, cons
 /// FrameScene.ts `depthEligible3D(r)`.
 [[nodiscard]] bool depth_eligible_3d(const api::Renderable& r);
 
-/// `lightToRenderable(layer, parent, parentOpacity)`.
-[[nodiscard]] api::Renderable light_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity);
+/// `lightToRenderable(layer, parent, parentOpacity)`; `lw` is the layer's light (`*l.light`).
+[[nodiscard]] api::Renderable light_to_renderable(const RLayer& l, const LightWash& lw, const Mat3& parent,
+                                                  double parentOpacity);
 
 /// The end of `snapshotToFrameScene`: enforceExtrusionPathAgreement, has3d,
 /// dropMeshesEverywhere and the scene's 3D fields. Returns has3d (it forces

@@ -137,48 +137,50 @@ enum class Join : std::uint8_t { miter, round, bevel, miterClip, arcs };
 enum class Anchor : std::uint8_t { start, middle, end };
 
 /// Computed style of one element (the properties the renderer reads).
+/// Within each group the wide members come first and the one-byte flags and
+/// enums last, so the few hundred per document do not carry ~50 bytes of padding.
 struct Style {
   // inherited
   Paint fill{Paint::Kind::color, {0, 0, 0, 1}, {}, Paint::Kind::none, {}};
   Paint stroke;
   double fillOpacity = 1.0;
   double strokeOpacity = 1.0;
-  bool fillEvenOdd = false;
-  bool clipEvenOdd = false;
   Length strokeWidth{1.0, Unit::number};
-  Cap cap = Cap::butt;
-  Join join = Join::miter;
   double miterLimit = 4.0;
   std::vector<Length> dashArray;
   Length dashOffset;
-  bool hidden = false;  // visibility: hidden / collapse
   std::string markerStart, markerMid, markerEnd;
   css::Color color{0, 0, 0, 1};
   std::vector<std::string> fontFamily;  // empty = the standard font
   double fontSizePx = 16.0;
-  int fontWeight = 400;
-  bool italic = false;
-  Anchor anchor = Anchor::start;
-  bool filtersLinearRGB = true;
   double letterSpacing = 0.0;
   double wordSpacing = 0.0;
+  int fontWeight = 400;
+  Cap cap = Cap::butt;
+  Join join = Join::miter;
+  Anchor anchor = Anchor::start;
+  bool fillEvenOdd = false;
+  bool clipEvenOdd = false;
+  bool hidden = false;  // visibility: hidden / collapse
+  bool italic = false;
+  bool filtersLinearRGB = true;
   bool crispEdges = false;
   bool pixelatedImages = false;
   bool paintOrderStrokeFirst = false;
   bool paintOrderMarkersBeforeStroke = false;
   // not inherited
   double opacity = 1.0;
-  bool displayNone = false;
   std::string clipPath, mask, filter;  // url ids ("" = none)
-  bool filterUnsupported = false;      // a CSS filter function list
   css::Color stopColor{0, 0, 0, 1};
   double stopOpacity = 1.0;
   css::Color floodColor{0, 0, 0, 1};
   double floodOpacity = 1.0;
   css::Color lightingColor{255, 255, 255, 1};
+  std::string blendMode;  // mix-blend-mode ("" = normal)
+  bool displayNone = false;
+  bool filterUnsupported = false;  // a CSS filter function list
   bool overflowVisible = false;
   bool maskAlpha = false;
-  std::string blendMode;  // mix-blend-mode ("" = normal)
   bool isolate = false;
 };
 

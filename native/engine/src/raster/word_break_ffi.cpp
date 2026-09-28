@@ -69,7 +69,7 @@ struct Icu {
 
 void* open_library(const char* name) {
 #if defined(_WIN32)
-  return reinterpret_cast<void*>(LoadLibraryA(name));
+  return reinterpret_cast<void*>(LoadLibraryA(name));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): HMODULE as the opaque dlopen-style handle
 #else
   return dlopen(name, RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -77,7 +77,7 @@ void* open_library(const char* name) {
 
 void* symbol(void* lib, const std::string& name) {
 #if defined(_WIN32)
-  return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(lib), name.c_str()));
+  return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(lib), name.c_str()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): FARPROC as the opaque dlsym-style symbol
 #else
   return dlsym(lib, name.c_str());
 #endif
@@ -140,13 +140,19 @@ const Icu& icu() {
   return kIcu;
 }
 
-std::atomic<bool> gDisabled{false};  // test seam only
+/// The test seam (set_word_segmenter_disabled_for_test).
+std::atomic<bool>& disabled_flag() noexcept {
+  static std::atomic<bool> disabled{false};
+  return disabled;
+}
 
 /// One word iterator per thread, opened on first use (ubrk_open is costly and
-/// an iterator is not thread-safe); closed when the thread exits.
+/// an iterator is not thread-safe); closed when the thread exits. The deleter
+/// carries ubrk_close itself, so closing never touches the (throwing) loader.
 struct IteratorCloser {
+  FnClose close = nullptr;
   void operator()(UBreakIterator* it) const noexcept {
-    if (it != nullptr) icu().close(it);
+    if (it != nullptr && close != nullptr) close(it);
   }
 };
 
@@ -155,13 +161,15 @@ UBreakIterator* thread_iterator() {
   thread_local bool tried = false;
   if (!tried) {
     tried = true;
+    const Icu& lib = icu();
+    if (!lib.ok()) return nullptr;
     UErrorCode err = 0;
     // V8 segments with the default locale; ICU's word rules are the root
     // rules for every locale Chromium ships except a few with tailorings
     // that do not touch the scripts the joins matter for.
-    UBreakIterator* raw = icu().open(kUbrkWord, "en_US", nullptr, 0, &err);
-    if (err <= 0) it.reset(raw);
-    else if (raw != nullptr) icu().close(raw);
+    UBreakIterator* raw = lib.open(kUbrkWord, "en_US", nullptr, 0, &err);
+    if (err <= 0) it = std::unique_ptr<UBreakIterator, IteratorCloser>(raw, IteratorCloser{lib.close});
+    else if (raw != nullptr) lib.close(raw);
   }
   return it.get();
 }
@@ -169,7 +177,7 @@ UBreakIterator* thread_iterator() {
 }  // namespace
 
 std::optional<std::vector<WordSegment>> word_segments(std::u16string_view text) {
-  if (gDisabled || !icu().ok()) return std::nullopt;
+  if (disabled_flag() || !icu().ok()) return std::nullopt;
   UBreakIterator* it = thread_iterator();
   if (it == nullptr) return std::nullopt;
   UErrorCode err = 0;
@@ -189,6 +197,6 @@ std::optional<std::vector<WordSegment>> word_segments(std::u16string_view text) 
 
 std::string word_segmenter_info() { return icu().ok() ? icu().info : std::string(); }
 
-void set_word_segmenter_disabled_for_test(bool disabled) { gDisabled = disabled; }
+void set_word_segmenter_disabled_for_test(bool disabled) { disabled_flag() = disabled; }
 
 }  // namespace premation::raster

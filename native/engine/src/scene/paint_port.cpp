@@ -33,10 +33,10 @@ double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
 
 std::string hex2(double v) {
   static constexpr std::string_view kHex = "0123456789abcdef";
-  const auto b = static_cast<int>(std::floor(clamp01(v) * 255 + 0.5));  // Math.round
+  const auto b = static_cast<unsigned>(std::floor(clamp01(v) * 255 + 0.5));  // Math.round: 0 … 255
   std::string s;
-  s.push_back(kHex[static_cast<std::size_t>(b >> 4)]);
-  s.push_back(kHex[static_cast<std::size_t>(b & 15)]);
+  s.push_back(kHex[b >> 4U]);
+  s.push_back(kHex[b & 15U]);
   return s;
 }
 
@@ -51,7 +51,8 @@ std::array<double, 3> parse_hex(const std::string& c) {
     if (d < 0) return {1, 1, 1};
     n = n * 16 + d;
   }
-  return {((n >> 16) & 255) / 255.0, ((n >> 8) & 255) / 255.0, (n & 255) / 255.0};
+  const auto u = static_cast<unsigned>(n);  // six hex digits: 0 … 0xFFFFFF
+  return {((u >> 16U) & 255U) / 255.0, ((u >> 8U) & 255U) / 255.0, (u & 255U) / 255.0};
 }
 
 bool is_points(const Json& v) {

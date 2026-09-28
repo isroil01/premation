@@ -35,6 +35,8 @@ std::optional<double> opt_num(const Value& v) { return v.is_number() ? std::opti
 std::optional<std::string> opt_str(const Value& v) { return v.is_string() ? std::optional<std::string>(v.str()) : std::nullopt; }
 /// JS truthiness of an optional string (absent or '' = false).
 bool truthy(const std::optional<std::string>& s) { return s.has_value() && !s->empty(); }
+/// JS `s || ''`: the string, or "" when absent (so a truthy test is `!str_of(s).empty()`).
+std::string_view str_of(const std::optional<std::string>& s) { return s.has_value() ? std::string_view(*s) : std::string_view(); }
 
 struct Xf {
   std::optional<double> anchorX, anchorY, x, y, scale, rotation;
@@ -171,7 +173,10 @@ double dyn_factor(const std::optional<std::string>& src, double pressure, double
   return 1;
 }
 
-bool dyn_on(const std::optional<std::string>& v) { return truthy(v) && *v != "off"; }
+bool dyn_on(const std::optional<std::string>& v) {
+  const std::string_view s = str_of(v);
+  return !s.empty() && s != "off";
+}
 
 std::vector<Dab> dabs_of(const Stroke& stroke, double minStep) {
   const auto& pts = stroke.points;
@@ -222,9 +227,13 @@ std::vector<Dab> dabs_of(const Stroke& stroke, double minStep) {
   return out;
 }
 
-bool has_stroke_transform(const std::optional<Xf>& t) {
-  return t && (t->anchorX != t->x || t->anchorY != t->y || t->scale != std::optional<double>(100) ||
-               t->rotation != std::optional<double>(0));
+/// The stroke's transform when it moves anything (hasStrokeTransform), else nullptr.
+const Xf* stroke_transform(const std::optional<Xf>& t) {
+  if (!t.has_value()) return nullptr;
+  const Xf& x = *t;
+  const bool moves = x.anchorX != x.x || x.anchorY != x.y || x.scale != std::optional<double>(100) ||
+                     x.rotation != std::optional<double>(0);
+  return moves ? &x : nullptr;
 }
 
 Affine transform_matrix(const Xf& t) {
@@ -284,15 +293,16 @@ Affine mul(const Affine& a, const Affine& b) {
 }
 
 Affine stroke_device_matrix(const Affine& ctxM, const Stroke& s) {
-  return has_stroke_transform(s.transform) ? mul(ctxM, transform_matrix(*s.transform)) : ctxM;
+  const Xf* xf = stroke_transform(s.transform);
+  return xf != nullptr ? mul(ctxM, transform_matrix(*xf)) : ctxM;
 }
 
 bool is_direct_stroke(const Stroke& s) {
   if (uses_dabs(s)) return false;
   if (s.start.value_or(0) > 0 || s.end.value_or(1) < 1) return false;
-  if (has_stroke_transform(s.transform)) return false;
-  if (truthy(s.channels) && *s.channels != "rgba") return false;
-  if (truthy(s.blend) && *s.blend != "normal") return false;
+  if (stroke_transform(s.transform) != nullptr) return false;
+  if (const std::string_view ch = str_of(s.channels); !ch.empty() && ch != "rgba") return false;
+  if (const std::string_view bl = str_of(s.blend); !bl.empty() && bl != "normal") return false;
   if (s.mode == "clone" && (truthy(s.cloneSourceId) || s.cloneTime)) return false;
   if (s.mode == "erase" && s.eraseMode == "lastStroke") return false;
   return true;
@@ -300,9 +310,10 @@ bool is_direct_stroke(const Stroke& s) {
 
 /// blendOp: AE Mode → canvas composite operation.
 std::string blend_op(const std::optional<std::string>& blend) {
-  if (!truthy(blend) || *blend == "normal") return "source-over";
-  if (*blend == "add") return "lighter";
-  return *blend;
+  const std::string_view b = str_of(blend);
+  if (b.empty() || b == "normal") return "source-over";
+  if (b == "add") return "lighter";
+  return std::string(b);
 }
 
 double luminance(const std::string& hex) {
@@ -319,7 +330,8 @@ double luminance(const std::string& hex) {
     if (v < 0) return 1;
     n = n * 16 + v;
   }
-  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+  const auto u = static_cast<unsigned>(n);  // six hex digits: 0 … 0xFFFFFF
+  return (0.2126 * ((u >> 16U) & 255U) + 0.7152 * ((u >> 8U) & 255U) + 0.0722 * (u & 255U)) / 255;
 }
 
 std::string num(double v) { return motion::js::number_to_string(v); }
@@ -328,7 +340,7 @@ std::string num(double v) { return motion::js::number_to_string(v); }
 /// scoped to the pass here (a raster may run on any worker thread).
 class Pass {
  public:
-  explicit Pass(Canvas2D& root) : root_(root) {}
+  explicit Pass(Canvas2D& root) : root_(&root) {}
 
   void draw(const Value& paint);
 
@@ -352,7 +364,7 @@ class Pass {
   bool fill_clone(Canvas2D& bctx, const Stroke& s, const Affine& m, const Bounds& b, Canvas2D* source);
   void composite(Canvas2D& dest, const Buffer& buf, const Stroke& s);
 
-  Canvas2D& root_;
+  Canvas2D* root_;  // never null (a pointer, not a reference member: Pass stays assignable)
   std::map<std::string, std::unique_ptr<Canvas2D>> scratch_;
   std::list<std::pair<std::string, std::unique_ptr<Canvas2D>>> stamps_;  // LRU: front = oldest
   std::vector<std::unique_ptr<Canvas2D>> owned_;                          // snapshots, paint layer
@@ -392,7 +404,7 @@ Canvas2D* Pass::scratch(const std::string& role, double w, double h) {
   if (!c || c->width() < w || c->height() < h) {
     const double cw = std::max(w, c ? static_cast<double>(c->width()) : 0.0);
     const double ch = std::max(h, c ? static_cast<double>(c->height()) : 0.0);
-    c = root_.create_canvas(static_cast<std::uint32_t>(cw), static_cast<std::uint32_t>(ch));
+    c = root_->create_canvas(static_cast<std::uint32_t>(cw), static_cast<std::uint32_t>(ch));
   }
   Canvas2D& ctx = *c;
   ctx.setTransform({});
@@ -417,7 +429,7 @@ Canvas2D* Pass::stamp(double diameterPx, double hardness, double roundness, doub
     }
   }
   const double size = std::ceil(d) + 2;
-  auto c = root_.create_canvas(static_cast<std::uint32_t>(size), static_cast<std::uint32_t>(size));
+  auto c = root_->create_canvas(static_cast<std::uint32_t>(size), static_cast<std::uint32_t>(size));
   Canvas2D& sc = *c;
   sc.translate(size / 2, size / 2);
   sc.rotate(a * kDeg);
@@ -461,34 +473,35 @@ void Pass::draw(const Value& paint) {
   const bool selfClone = std::ranges::any_of(strokes, [](const Stroke& s) { return s.mode == "clone" && !truthy(s.cloneSourceId); });
   Canvas2D* source = nullptr;
   if (selfClone || onTransparent) {
-    owned_.push_back(snapshot_of(root_));
+    owned_.push_back(snapshot_of(*root_));
     source = owned_.back().get();
   }
   if (onTransparent) {
     // Paint On Transparent: the layer's own pixels leave the picture.
-    root_.save();
-    root_.setTransform({});
-    (void)root_.setGlobalCompositeOperation("source-over");
-    root_.clearRect(0, 0, root_.width(), root_.height());
-    root_.restore();
+    root_->save();
+    root_->setTransform({});
+    (void)root_->setGlobalCompositeOperation("source-over");
+    root_->clearRect(0, 0, root_->width(), root_->height());
+    root_->restore();
   }
   render_strokes(strokes, source);
 }
 
 void Pass::render_strokes(const std::vector<Stroke>& strokes, Canvas2D* source) {
-  Canvas2D& ctx = root_;
+  Canvas2D& ctx = *root_;
   const double k = device_scale_of(ctx);
 
   // Last Stroke Only erasers cut their target inside its own buffer.
-  std::map<std::string, std::size_t> index;
+  std::map<std::string, std::size_t, std::less<>> index;
   for (std::size_t i = 0; i < strokes.size(); ++i) index[strokes[i].id] = i;
-  std::map<std::string, std::vector<const Stroke*>> targeted;
+  std::map<std::string, std::vector<const Stroke*>, std::less<>> targeted;
   for (std::size_t i = 0; i < strokes.size(); ++i) {
     const Stroke& s = strokes[i];
-    if (s.mode != "erase" || s.eraseMode != "lastStroke" || !truthy(s.eraseTargetId)) continue;
-    const auto ti = index.find(*s.eraseTargetId);
+    const std::string_view target = str_of(s.eraseTargetId);
+    if (s.mode != "erase" || s.eraseMode != "lastStroke" || target.empty()) continue;
+    const auto ti = index.find(target);
     if (ti == index.end() || ti->second >= i) continue;
-    targeted[*s.eraseTargetId].push_back(&s);
+    targeted[std::string(target)].push_back(&s);
   }
 
   // Paint Only erasers need the paint kept apart from the layer's source.
@@ -510,7 +523,7 @@ void Pass::render_strokes(const std::vector<Stroke>& strokes, Canvas2D* source) 
     const std::vector<const Stroke*>* erasers = er != targeted.end() ? &er->second : nullptr;
     // Channel-restricted paint edits the layer's own channels, not the paint layer.
     Canvas2D& dest = s.mode == "erase" ? (s.eraseMode == "paintOnly" ? *pctx : ctx)
-                     : truthy(s.channels) && *s.channels != "rgba" ? ctx
+                     : !str_of(s.channels).empty() && str_of(s.channels) != "rgba" ? ctx
                                                                     : *pctx;
     const bool both = s.mode == "erase" && s.eraseMode != "paintOnly" && pctx != &ctx;
 
@@ -776,8 +789,8 @@ double paint_reach(const json::Value& paint) {
   for (const auto& v : paint["strokes"].items()) {
     const Stroke s = read_stroke(v);
     double r = s.size / 2 + 3 * blur_sigma(s);
-    if (has_stroke_transform(s.transform)) {
-      r *= std::abs(value(s.transform->scale)) / 100;
+    if (const Xf* xf = stroke_transform(s.transform)) {
+      r *= std::abs(value(xf->scale)) / 100;
       // transformShift: max distance the transform moves a corner of the stroke's bounds.
       double shift = 0;
       if (!s.points.empty()) {
@@ -791,7 +804,7 @@ double paint_reach(const json::Value& paint) {
           maxX = std::max(maxX, p.x);
           maxY = std::max(maxY, p.y);
         }
-        const Affine m = transform_matrix(*s.transform);
+        const Affine m = transform_matrix(*xf);
         for (const auto& [x, y] : std::array<std::pair<double, double>, 4>{{{minX, minY}, {maxX, minY}, {minX, maxY}, {maxX, maxY}}}) {
           shift = std::max(shift, js_hypot(m[0] * x + m[2] * y + m[4] - x, m[1] * x + m[3] * y + m[5] - y));
         }

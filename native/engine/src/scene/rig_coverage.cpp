@@ -130,10 +130,12 @@ CoverageLookup image_coverage_mask(std::string_view key, std::string_view src, c
     }
     decoded = decode_image_file(p, img, error);
   }
-  std::shared_ptr<const rig::CoverageMask> m = decoded ? mask_of(img) : nullptr;
+  std::shared_ptr<const rig::CoverageMask> m;
+  if (decoded) m = mask_of(img);
   const std::scoped_lock lock(cache().mu);
-  cache().masks.emplace(cacheKey, m);  // a failure is remembered: the bbox grid from now on
-  out.mask = std::move(m);
+  // A failure (null) is remembered too: the bbox grid from now on. The cached entry
+  // is the answer (a racing thread may have stored the same key first).
+  out.mask = cache().masks.try_emplace(std::move(cacheKey), std::move(m)).first->second;
   return out;
 }
 
