@@ -42,7 +42,7 @@
  */
 
 import { useUIStore } from '@stores/uiStore';
-import { detectSceneEdits } from '@core/tracking/sceneEditDetectLayer';
+import { requireEngineJob, startEngineJob } from '@core/engine/engineJobs';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -169,7 +169,6 @@ export async function detectForAssembly(
   nodeId: string,
   opts: AssembleOptions,
 ): Promise<{ cutsCompSec: number[]; status: 'completed' | 'cancelled' }> {
-  const fps = getTimelineController().fpsForNode(nodeId) || 30;
   let liveId = useUIStore.getState().notify({
     level: 'info',
     message: 'Assemble from Footage: reading frames… 0%',
@@ -177,24 +176,34 @@ export async function detectForAssembly(
   });
   let last = -1;
   try {
-    const result = await detectSceneEdits({
-      nodeId,
-      fps,
-      ...(opts.sensitivity !== undefined ? { sensitivity: opts.sensitivity } : {}),
-      onProgress: (f) => {
-        const pct = Math.round(f * 100);
-        if (pct !== last && pct % 5 === 0) {
-          last = pct;
-          useUIStore.getState().dismissNotification(liveId);
-          liveId = useUIStore.getState().notify({
-            level: 'info',
-            message: `Assemble from Footage: reading frames… ${pct}%`,
-            durationMs: 0,
-          });
-        }
+    // The engine walks the footage (the sceneDetect job, analysis only — the
+    // assembly edit is the caller's one entry).
+    const handle = requireEngineJob(await startEngineJob<{ cutsCompSec: number[] }>(
+      {
+        kind: 'sceneDetect',
+        value: { layer: nodeId, createMarkers: false, splitLayers: false, ...(opts.sensitivity !== undefined ? { sensitivity: opts.sensitivity } : {}) },
       },
-    });
-    return { cutsCompSec: result.cutsCompSec, status: result.status };
+      {
+        apply: false,
+        onProgress: (f) => {
+          const pct = Math.round(f * 100);
+          if (pct !== last && pct % 5 === 0) {
+            last = pct;
+            useUIStore.getState().dismissNotification(liveId);
+            liveId = useUIStore.getState().notify({
+              level: 'info',
+              message: `Assemble from Footage: reading frames… ${pct}%`,
+              durationMs: 0,
+            });
+          }
+        },
+      },
+    ), 'Assemble from Footage');
+    const out = await handle.done;
+    handle.cancel();  // the result is read, never applied
+    if (out.status === 'cancelled') return { cutsCompSec: [], status: 'cancelled' };
+    if (out.status !== 'done') throw new Error(out.error?.message ?? 'the cuts could not be read');
+    return { cutsCompSec: out.result?.cutsCompSec ?? [], status: 'completed' };
   } finally {
     useUIStore.getState().dismissNotification(liveId);
   }
