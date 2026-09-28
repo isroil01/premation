@@ -73,7 +73,6 @@ import {
   type PositionKeyIds,
   type PositionTracks,
 } from './viewportEdits';
-import { parentWorld2DAt } from '@core/scene/layerSpace';
 import { Matrix } from '@motion/scene';
 import { useTextEditStore } from '@stores/textEditStore';
 import { openContextMenu } from '@stores/contextMenuStore';
@@ -82,7 +81,8 @@ import { createOnionSkinPainter } from '@core/rendering/onionSkinPainter';
 import type { PaintMode } from '@core/paint/paintStrokes';
 import { commitPaintDrag } from '@core/engine/paintEdits';
 import { ctrlDragBrush, penSample } from '@core/paint/paintCapture';
-import { paintSpaceAt, thinSamples, type PaintSpace } from '@core/paint/paintSpace';
+import { thinSamples, type PaintSpace } from '@core/paint/paintSpace';
+import { paintSpaceFromPush } from './paintSpaceFromPush';
 import { usePaintStore } from '@stores/paintStore';
 import { publishProbe, clearProbe } from './useWorkspaceProbe';
 import {
@@ -1538,15 +1538,23 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     const controller = getWorkspaceController();
     const sync = (ids: readonly string[]): void => {
       void requestOverlayLayers(MAIN_VIEWPORT, 'selection', ids, ids.length === 1 ? OVERLAY_KINDS_ONE : OVERLAY_KINDS_MANY);
+      // A single layer's parent: its matrix maps a motion-path drag back into the space the path is keyed in.
+      const parent = ids.length === 1 ? documentMirror().layer(ids[0]!)?.parent : undefined;
+      void requestOverlayLayers(MAIN_VIEWPORT, 'selectionParent', parent ? [parent] : [], ['transform']);
+      // The Paint panel's clone source on another layer: its space maps an Alt-click aim.
+      const source = usePaintStore.getState().cloneSourceLayerId;
+      void requestOverlayLayers(MAIN_VIEWPORT, 'paintSource', source && !ids.includes(source) ? [source] : [], ['transform']);
     };
     sync(useSelectionStore.getState().ids);
     const unSel = useSelectionStore.subscribe((st) => sync(st.ids));
+    const unSource = usePaintStore.subscribe((st, prev) => { if (st.cloneSourceLayerId !== prev.cloneSourceLayerId) sync(useSelectionStore.getState().ids); });
     const unGeo = subscribeOverlayGeometry(MAIN_VIEWPORT, () => controller.requestRender());
     // B4 round 5: the main view mode's camera rides every frame (camera navigation,
     // the motion path's 3D projection and the looked-through test read it — viewNav.ts).
     const unView = requestMainViewCamera();
     return () => {
       unSel();
+      unSource();
       unGeo();
       unView();
     };
@@ -1891,7 +1899,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         // for a 3D layer the view on screen. Resolved once and carried on the
         // drag, so the whole stroke maps through the pose it was drawn over.
         const comp = compSize();
-        const space = paintSpaceAt(node.id, playheadTime(), { width: comp.w, height: comp.h });
+        const space = paintSpaceFromPush(node.id, playheadTime(), { width: comp.w, height: comp.h });
         const pressLocal = space?.toLocal(cp) ?? null;
         if (!space || !pressLocal) {
           // Edge-on to the view (or scaled to nothing): there is no surface
@@ -1930,7 +1938,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             const srcId = paintSettings.cloneSourceLayerId && paintSettings.cloneSourceLayerId !== node.id
               ? paintSettings.cloneSourceLayerId
               : node.id;
-            const srcSpace = srcId === node.id ? space : paintSpaceAt(srcId, playheadTime(), { width: comp.w, height: comp.h });
+            const srcSpace = srcId === node.id ? space : paintSpaceFromPush(srcId, playheadTime(), { width: comp.w, height: comp.h });
             const at = srcSpace?.toLocal(cp) ?? null;
             if (!at) return;
             paintSettings.set({ cloneSource: { nodeId: srcId, x: at.x, y: at.y, compX: cp.x, compY: cp.y }, alignedOffset: null });
@@ -3203,7 +3211,12 @@ function paintOverlay(
  * comp coordinates would teleport the key by the parent's transform.
  */
 function compToPath(nodeId: string, time: number, p: { x: number; y: number }): { x: number; y: number } {
-  return Matrix.transformPoint(Matrix.invert(parentWorld2DAt(nodeId, time)), p);
+  const parent = documentMirror().layer(nodeId)?.parent;
+  if (!parent) return p;
+  // The parent's layer → comp matrix from the push (the 2D chain; a 3D parent's world, sliced to its plane).
+  const m = overlayLayer(MAIN_VIEWPORT, parent, secondsToFlicks(time))?.matrix;
+  if (!m || m.length < 16) return p;
+  return Matrix.transformPoint(Matrix.invert({ a: m[0]!, b: m[1]!, c: m[4]!, d: m[5]!, e: m[12]!, f: m[13]! }), p);
 }
 
 /**
