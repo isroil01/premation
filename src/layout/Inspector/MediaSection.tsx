@@ -12,7 +12,6 @@
  * second, weaker path to each would have been the worse of the two fixes.
  */
 
-import { useEffect, useMemo, useState } from 'react';
 import { InspectorRow } from '@components/Inspector';
 import { Switch } from '@components/Switch';
 import type { AlphaInterpretation } from '@core/source/sourceInfo';
@@ -27,8 +26,6 @@ import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { isLayer } from '@core/engine/doc';
 import { values } from '@core/engine/propRefs';
 import { engine } from '@core/engine/engineInstance';
-import { audioEngine } from '@core/audio/AudioEngine';
-import { audioVoiceFor } from '@core/audio/silenceRemoval';
 import {
   AUDIO_LEVEL_DB_PROP, MIN_LEVEL_DB, MAX_LEVEL_DB,
   AUDIO_PAN_PROP, MIN_PAN, MAX_PAN,
@@ -119,25 +116,12 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
     eng.send(label, scalarValueCommands(track, [{ nodeId, value: v }], { seconds: getTime() }));
   };
 
-  // Kick the decode so the section can report whether this file has sound at
-  // all, and re-render when the engine settles.
-  const [, setDecodeTick] = useState(0);
-  useEffect(() => audioEngine.onChange(() => setDecodeTick((n) => n + 1)), []);
-  // Engine-side until E2: the editor's audio decoder needs the playable media
-  // URL, which the API does not carry (it has the item's file path).
-  const audioVoice = useMemo(() => (isVideo && sourceId ? audioVoiceFor(nodeId) : undefined), [isVideo, nodeId, sourceId]);
-  const audioAssetId = audioVoice?.assetId;
-  const audioSrc = audioVoice?.src;
-  useEffect(() => {
-    if (audioAssetId && audioSrc) void audioEngine.load(audioAssetId, audioSrc);
-  }, [audioAssetId, audioSrc]);
-  // Real stream data when the import probe read the container; otherwise the
-  // decode outcome, which is all a web import can offer. `probedAudio === false`
-  // is the only case that justifies hiding the section outright — an unprobed
-  // file that has simply not finished decoding must not look like a silent one.
+  // Whether this file has sound at all: the import probe's stream data when it
+  // read the container, else the engine's own answer (`LayerInfo.hasAudio`).
+  // `probedAudio === false` is the only case that justifies hiding the section
+  // outright on a probe.
   const probedAudio = isVideo && probedItem?.audioProbed === true ? probedItem.hasAudio : null;
-  const decodeState = audioAssetId ? audioEngine.decodeState(audioAssetId) : 'pending';
-  const silent = probedAudio === false || (probedAudio === null && decodeState === 'silent');
+  const silent = probedAudio === false || (probedAudio === null && layer?.hasAudio === false);
 
   // Freeze mutes audio (held frame). Time remap expands into varispeed
   // segments — see audioRetimeSegments. Stretch/reverse use playbackRate.
@@ -307,9 +291,7 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
                     />
                   </InspectorRow>
                   <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-                    {decodeState === 'pending'
-                      ? 'Decoding the audio track…'
-                      : "Plays and exports with the layer's timeline bar — keyframe Level to duck under a voiceover."}
+                    {"Plays and exports with the layer's timeline bar — keyframe Level to duck under a voiceover."}
                   </p>
                 </>
               )}

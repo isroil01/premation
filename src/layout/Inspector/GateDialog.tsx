@@ -20,16 +20,10 @@ import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorProperty } from '@hooks/useMirror';
-import { gateOf, staticLevelDb } from '@core/mirror/audio';
+import { gateOf } from '@core/mirror/audio';
 import { setAudioToolOpener } from '@core/audio/audioCommands';
-import {
-  computeGateEnvelope,
-  gateLevels,
-  planGate,
-  DEFAULT_GATE,
-  type GateParams,
-} from '@core/audio/audioGate';
-import { gateEdit, removeGateEdit } from './audioEdits';
+import { DEFAULT_GATE, type GateParams } from '@core/audio/audioGate';
+import { removeGateEdit } from './audioEdits';
 import { previewEngineJob, runEngineJob } from '@core/engine/engineJobs';
 import styles from './AudioToolDialog.module.css';
 
@@ -58,11 +52,10 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
     setParams((p) => ({ ...p, [k]: v }));
 
   /*
-    Preview, debounced. Every slider drag would otherwise start a decode and an
+    Preview, debounced: every slider drag would otherwise start a decode and an
     envelope pass over the whole work area on each pointer move. The numbers
-    come from `planGate` and `gateLevels` — the same two the bake runs — so the
-    count shown is the count written, which is the property that makes a
-    preview worth having at all.
+    are the engine's audioGate job summary (apply: false) — the same pass the
+    bake runs — so the count shown is the count written.
   */
   const key = JSON.stringify(params);
   useEffect(() => {
@@ -70,38 +63,14 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
     setAnalysing(true);
     const timer = setTimeout(() => {
       void (async () => {
-        // The engine's audioGate job when it runs jobs: its summary is the readout.
         const viaEngine = await previewEngineJob<{ keyframes: number; closedFraction?: number }>({
           kind: 'audioGate', value: { layer: nodeId, params: key },
         });
-        if (viaEngine) {
-          if (alive) {
-            setPreview(viaEngine.status === 'done' && viaEngine.result
-              ? { keyframes: viaEngine.result.keyframes, closedFraction: viaEngine.result.closedFraction ?? 0 }
-              : null);
-          }
-          return;
+        if (alive) {
+          setPreview(viaEngine && viaEngine.status === 'done' && viaEngine.result
+            ? { keyframes: viaEngine.result.keyframes, closedFraction: viaEngine.result.closedFraction ?? 0 }
+            : null);
         }
-        // The TypeScript engine's path: the page decodes and follows the level.
-        const res = await computeGateEnvelope(nodeId);
-        if (!alive) return;
-        if (!res) {
-          setPreview(null);
-          return;
-        }
-        const curve = gateLevels(res.env, { ...params, fps: res.fps });
-        let closed = 0;
-        for (const v of curve) if (v < -0.5) closed++;
-        setPreview({
-          keyframes: planGate(res.env, {
-            ...params,
-            fps: res.fps,
-            startCompSec: res.start,
-            baseLevelDb: staticLevelDb(documentMirror(), nodeId),
-            toKeyframeTime: (t) => t,
-          }).length,
-          closedFraction: curve.length > 0 ? closed / curve.length : 0,
-        });
       })()
         .catch(() => { if (alive) setPreview(null); })
         .finally(() => { if (alive) setAnalysing(false); });
@@ -120,25 +89,9 @@ export function GateDialog({ nodeId, onDone }: Props): JSX.Element {
     setBusy(true);
     try {
       const viaEngine = await runEngineJob<{ keyframes: number }>({ kind: 'audioGate', value: { layer: nodeId, params: JSON.stringify(params) } });
-      if (viaEngine) {
-        if (viaEngine.status === 'done') notify(`Gated — ${viaEngine.result?.keyframes ?? 0} level keyframes written.`);
-        else if (viaEngine.status === 'failed') notify(viaEngine.error?.message ?? 'The gate could not be written.', 'warning');
-        onDone();
-        return;
-      }
-      // The TypeScript engine's path: the page decodes (as the preview).
-      const res = await computeGateEnvelope(nodeId);
-      if (!res) {
-        notify('That layer has no decodable audio to gate.', 'warning');
-        return;
-      }
-      const out = await gateEdit(nodeId, res.env, {
-        ...params,
-        fps: res.fps,
-        startCompSec: res.start,
-      });
-      if (out.error) notify(out.error, 'warning');
-      else notify(`Gated — ${out.keyframes} level keyframes written.`);
+      if (!viaEngine) notify('The noise gate runs in the engine, and this engine does not run it.', 'warning');
+      else if (viaEngine.status === 'done') notify(`Gated — ${viaEngine.result?.keyframes ?? 0} level keyframes written.`);
+      else if (viaEngine.status === 'failed') notify(viaEngine.error?.message ?? 'The gate could not be written.', 'warning');
       onDone();
     } finally {
       setBusy(false);

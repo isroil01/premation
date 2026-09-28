@@ -23,11 +23,10 @@ import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { getTime, useThrottledTime } from '@stores/playbackClockStore';
 import { documentMirror } from '@stores/documentMirror';
-import { activeCompIdNow, useMirrorKeys, useRetainTree } from '@hooks/useMirror';
+import { useMirrorKeys, useRetainTree } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import {
   audioClipTimings,
-  settingsFps,
   sourceSeconds,
   staticLevelDb,
   staticPan,
@@ -35,10 +34,9 @@ import {
 } from '@core/mirror/audio';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { AudioEffectsSection } from './AudioEffectsSection';
+import { previewEngineJob } from '@core/engine/engineJobs';
 import {
   ensureAudioBuffer,
-  amplitudeEnvelope,
-  planAudioKeyframes,
   AUDIO_AMPLITUDE_PROP,
   DEFAULT_AUDIO_KEYFRAME_OPTIONS,
   type AudioKeyframeOptions,
@@ -369,8 +367,8 @@ function AudioToKeyframes({ nodeId }: { nodeId: string }): JSX.Element {
   const [smoothing, setSmoothing] = useState(3);
   const [gain, setGain] = useState(1);
   const [busy, setBusy] = useState(false);
-  /** Envelope for the preview count; null until decoded. */
-  const [env, setEnv] = useState<number[] | null>(null);
+  /** The keyframe count the conversion would write (the engine's dry run); null until known. */
+  const [estimate, setEstimate] = useState<number | null>(null);
   const [decoding, setDecoding] = useState(false);
 
   const preset = DETAIL_PRESETS.find((d) => d.id === detail) ?? DETAIL_PRESETS[1];
@@ -382,28 +380,34 @@ function AudioToKeyframes({ nodeId }: { nodeId: string }): JSX.Element {
     gain,
   }), [preset.frameStep, preset.minDelta, smoothing, gain]);
 
-  // Decode + sample the envelope once the popover opens, so the estimate is
-  // real rather than a guess. Cancelled on close so a slow decode can't write
-  // state into an unmounted popover.
+  // The estimate is the engine's own dry run (the audioAnalysis job with
+  // apply: false), debounced, so the count shown is the count written.
+  // Cancelled on close so a slow analysis can't write into an unmounted popover.
   useEffect(() => {
-    if (!open || env !== null) return;
+    if (!open) return;
     let cancelled = false;
     setDecoding(true);
-    void (async () => {
-      // Engine-side until E2: the decode (the envelope is pure maths over it).
-      const buffer = await ensureAudioBuffer(nodeId);
-      if (cancelled) return;
-      // The active composition's rate (the conversion writes on its frame grid).
-      const fps = settingsFps(documentMirror().comp(activeCompIdNow() ?? '')?.settings);
-      setEnv(buffer ? amplitudeEnvelope(buffer, fps) : []);
-      setDecoding(false);
-    })();
+    const timer = setTimeout(() => {
+      void previewEngineJob<{ amplitude?: { keyframes: number } }>({
+        kind: 'audioAnalysis',
+        value: {
+          layer: nodeId, beats: false, amplitudeKeyframes: true, silence: false, removeSilence: false, beatMarkers: false,
+          amplitudeFrameStep: Math.max(1, Math.floor(options.frameStep)), amplitudeMinDelta: options.minDelta,
+          amplitudeSmoothing: Math.max(1, Math.floor(options.smoothing)), amplitudeGain: options.gain,
+        },
+      }).then((out) => {
+        if (cancelled) return;
+        setEstimate(out && out.status === 'done' ? out.result?.amplitude?.keyframes ?? 0 : null);
+        setDecoding(false);
+      }, () => {
+        if (!cancelled) setDecoding(false);
+      });
+    }, 250);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
-  }, [open, env, nodeId]);
-
-  const estimate = useMemo(() => (env ? planAudioKeyframes(env, options).length : null), [env, options]);
+  }, [open, options, nodeId]);
 
   const apply = async (): Promise<void> => {
     setBusy(true);
