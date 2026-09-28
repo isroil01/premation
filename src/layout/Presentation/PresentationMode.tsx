@@ -13,7 +13,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { createPortal } from 'react-dom';
 import { Icon } from '@components/Icon';
 import { usePresentationStore } from '@stores/presentationStore';
@@ -36,7 +35,7 @@ import { useActiveMirrorComp } from '@hooks/useMirror';
 import { settingsDurationSeconds, settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
 import { framesToTimecode } from '@core/time/timecode';
 import { openExportDialog } from '@layout/Export/ExportDialog';
-import { pageStillFrame } from '@core/rendering/pageFrame';
+import { pageFrameWireframeNodes, pageStillFrame } from '@core/rendering/pageFrame';
 import styles from './PresentationMode.module.css';
 
 const QUALITY_ORDER: PreviewResolution[] = [1, 2, 3, 4];
@@ -84,7 +83,7 @@ export function PresentationMode(): JSX.Element | null {
   // boxes come from the main viewport's scene, which follows the same view mode.
   const wireframeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const wireframeOverlay = useMemo(
-    () => ({ canvasRef: wireframeCanvasRef, nodes: () => getWorkspaceController().sceneNodes() }),
+    () => ({ canvasRef: wireframeCanvasRef, nodes: pageFrameWireframeNodes }),
     [],
   );
   const { initError } = useViewportRenderer(

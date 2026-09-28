@@ -16,7 +16,7 @@
  */
 
 import type { LayerInfo } from '@motion/engine-api';
-import { openLayerComposition } from '@core/composition/compNavigation';
+import { openLayerComposition } from '@layout/Composition/compNavigationEdits';
 import { documentMirror } from '@stores/documentMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { useLayerViewerStore } from '@stores/layerViewerStore';

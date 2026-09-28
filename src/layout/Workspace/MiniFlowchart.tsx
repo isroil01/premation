@@ -21,11 +21,9 @@ import { useDismissOnOutside } from '@hooks/useDismissOnOutside';
 import { useMiniFlowchartStore } from '@stores/miniFlowchartStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useMirrorRevision } from '@hooks/useMirror';
-// B4-gap: the network walks INTO a legacy precomp group, whose members getDocument does not list (the model
-// stops at the barrier; the mirror fetches them one id at a time) — closes with the group's members in the
-// document snapshot (`MirrorComp` for a precomp group) or a `getCompNetwork` query.
-import { compNetworkOf, type NetworkEntry, type UpstreamSort } from '@core/composition/compNetwork';
-import { openContainingComposition, openLayerComposition } from '@core/composition/compNavigation';
+import { documentMirror } from '@stores/documentMirror';
+import { mirrorCompNetwork, type NetworkEntry, type UpstreamSort } from '@core/mirror/compNetwork';
+import { openContainingComposition, openLayerComposition } from '@layout/Composition/compNavigationEdits';
 import styles from './MiniFlowchart.module.css';
 
 type Column = 'down' | 'up';
@@ -36,14 +34,14 @@ export function MiniFlowchart(): JSX.Element | null {
   const open = useMiniFlowchartStore((s) => s.open);
   const hide = useMiniFlowchartStore((s) => s.hide);
   const compId = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
-  // Any document revision can change the network (compNetworkOf walks the scene).
+  // Any document revision can change the network (the network reads the mirror).
   const rev = useMirrorRevision();
   const [sort, setSort] = useState<UpstreamSort>('name');
   const [sel, setSel] = useState<{ col: Column; i: number }>({ col: 'up', i: 0 });
   const rootRef = useRef<HTMLDivElement>(null);
 
   const net = useMemo(
-    () => (open && compId ? compNetworkOf(compId, sort) : null),
+    () => (open && compId ? mirrorCompNetwork(documentMirror(), compId, sort) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [open, compId, sort, rev],
   );
@@ -51,7 +49,7 @@ export function MiniFlowchart(): JSX.Element | null {
   // Start on the side that has something, and take focus so the keys land here.
   useEffect(() => {
     if (!open) return;
-    const n = compId ? compNetworkOf(compId) : null;
+    const n = compId ? mirrorCompNetwork(documentMirror(), compId) : null;
     setSel({ col: n && n.upstream.length === 0 && n.downstream.length > 0 ? 'down' : 'up', i: 0 });
     requestAnimationFrame(() => rootRef.current?.focus());
   }, [open, compId]);

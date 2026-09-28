@@ -1,25 +1,21 @@
 /**
- * useAudioPlayback — bridges the transport to the {@link audioEngine}.
+ * useAudioPlayback — bridges the transport to the page {@link audioEngine}.
  *
- * Mounted once near the app root. It watches the active workspace's play-state
- * and playhead time, the scene revision, and the timeline's CLIP revision, and
- * calls `audioEngine.sync` so audio layers play in time with the composition
- * (and stop on pause/unmount). The engine itself handles seek/loop drift, so
- * this stays a thin subscription.
+ * Mounted once near the app root. When the C++ engine draws the viewport it
+ * plays the audio itself (E2, `play{audio:true}`, the audio clock paces the
+ * picture) and this bridge only keeps the page mix silent. Otherwise it
+ * watches the active workspace's play-state and playhead time and calls
+ * `audioEngine.sync` so audio layers play in time with the composition.
  *
- * The clip subscription is what makes a bar edit audible immediately: audio
- * timing now comes from the timeline clip (see `audioScene`), and clip edits go
- * through the Timeline Engine's own history — they never bump the scene
- * revision. Without this, trimming or sliding a bar while PAUSED left the
- * engine holding stale timing until something else happened to move the
- * playhead.
+ * B4: the layer list is re-read when the document mirror moves (any engine
+ * change event — layer timing, levels, clip trims all arrive as events) or the
+ * project items change (an import/relink), not off the TS scene revision or
+ * the Timeline Engine's clip events.
  */
 
 import { useEffect, useRef, type ReactElement } from 'react';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { useSceneRevision } from '@stores/sceneStore';
-import { useClipRevision } from '@hooks/useClipRevision';
-import { useAssetStore } from '@stores/assetStore';
+import { useMirrorItems, useMirrorRevision } from '@hooks/useMirror';
 import { audioEngine, type AudioLayerState } from '@core/audio/AudioEngine';
 import { readAudioLayers } from '@core/audio/audioScene';
 import { playbackHealth } from '@core/rendering/videoPlaybackDiag';
@@ -42,11 +38,10 @@ export function useAudioPlayback(): void {
   // Scope to the ACTIVE composition: unscoped, a multi-comp project played
   // every comp's audio at once — the same bleed the export mixdown had.
   const compositionId = ws?.compositionId;
-  const rev = useSceneRevision((s) => s.rev);
-  // Bumped whenever a clip bar is added, removed, moved, trimmed or split.
-  const clipRev = useClipRevision();
-  // Asset identity: an import/relink changes audio sources without a scene rev.
-  const assets = useAssetStore((s) => s.assets);
+  // Any engine change event (a layer's timing, levels, a clip trim) moves it.
+  const rev = useMirrorRevision();
+  // Item identity: an import/relink changes audio sources.
+  const items = useMirrorItems();
   // Subscribed, not just read: without this, flipping Include Audio mid-preview
   // would not reach the engine until the next playhead tick — and while paused,
   // never.
@@ -59,7 +54,7 @@ export function useAudioPlayback(): void {
   // readAudioLayers() walks the ENTIRE scene graph and linear-scans the asset
   // list — running it on every playhead mirror (once per comp frame, 30-60x/s)
   // was pure per-frame garbage: the layer list only changes on scene/clip/
-  // asset edits. Cache it on those revisions; the per-frame sync just passes
+  // item edits. Cache it on those revisions; the per-frame sync just passes
   // the cached list with the fresh time.
   const cache = useRef<{ key: string; at: number; layers: AudioLayerState[] } | null>(null);
 
@@ -71,7 +66,13 @@ export function useAudioPlayback(): void {
   const mutedRef = useRef(false);
 
   useEffect(() => {
-    const key = `${rev}:${clipRev}:${assets.length}:${compositionId ?? ''}`;
+    if (engineAudio) {
+      // The engine plays the audio; keep the page mix silent and unread.
+      cache.current = null;
+      audioEngine.sync(false, time, []);
+      return;
+    }
+    const key = `${rev}:${items.size}:${compositionId ?? ''}`;
     const now = performance.now();
     let entry = cache.current;
     if (!entry || entry.key !== key || (playing && now - entry.at > PLAYBACK_REFRESH_MS)) {
@@ -87,8 +88,8 @@ export function useAudioPlayback(): void {
     // `includeAudio` is the Preview panel's switch (AE's Mute Audio / Include
     // Audio). Distinct from the master mute on the engine, which the user flips
     // to silence monitoring without changing what a preview is FOR.
-    audioEngine.sync(playing && !engineAudio && !mutedRef.current && previewIncludesAudio(), time, entry.layers);
-  }, [playing, time, rev, clipRev, assets, compositionId, includeAudio, engineAudio]);
+    audioEngine.sync(playing && !mutedRef.current && previewIncludesAudio(), time, entry.layers);
+  }, [playing, time, rev, items, compositionId, includeAudio, engineAudio]);
 
   useEffect(() => () => audioEngine.sync(false, 0, []), []);
 }

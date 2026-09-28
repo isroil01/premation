@@ -17,6 +17,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { compSizeOf } from '@core/composition/compSizes';
 import { resolveViewCameraInput } from '@core/workspace/cameraNav';
+import { createSceneGraphPort } from '@core/workspace/ports';
 import type { MotionBlurConfig } from '@core/effects/motionBlur';
 import { clipGeometrySignature } from '@core/timeline/TimelineController';
 import { memoizedSceneContentHash } from './sceneContentHash';
@@ -140,4 +141,16 @@ export function pageFrameSnapshot(input: PageFrameInput): RenderSnapshot {
     ...(input.alpha ? { transparent: true, backgroundPaint: undefined } : {}),
     ...(input.extra ?? {}),
   } as SnapshotComp);
+}
+
+let wireframePort: ReturnType<typeof createSceneGraphPort> | null = null;
+
+/**
+ * The page renderer's layers with their world geometry — what a page surface's
+ * Quality = Wireframe overlay outlines (the page frame hides those layers'
+ * pixels, so the boxes belong to the same frame). Goes with the page renderer.
+ */
+export function pageFrameWireframeNodes(): Iterable<{ id: string; worldBounds: { x: number; y: number; width: number; height: number }; worldCorners?: ReadonlyArray<{ x: number; y: number }> } | null | undefined> {
+  wireframePort ??= createSceneGraphPort();
+  return wireframePort.getNodes();
 }

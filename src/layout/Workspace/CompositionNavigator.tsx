@@ -21,7 +21,7 @@ import { useProjectStore } from '@stores/projectStore';
 import { useMiniFlowchartStore } from '@stores/miniFlowchartStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys } from '@hooks/useMirror';
-import { installCompNavigation, navigateToCrumb } from '@core/composition/compNavigation';
+import { installCompNavigation, navigateToCrumb } from '@layout/Composition/compNavigationEdits';
 import styles from './CompositionNavigator.module.css';
 
 export function CompositionNavigator(): JSX.Element | null {

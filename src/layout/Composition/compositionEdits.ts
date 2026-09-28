@@ -23,7 +23,7 @@ import { framesToFlicks } from '@core/engine/time';
 import { labelIndexOf } from '@core/engine/model';
 import { isLayer } from '@core/engine/doc';
 import { parseColorChannels } from '@core/effects/effects';
-import { openLayerComposition } from '@core/composition/compNavigation';
+import { openLayerCompositionWhenKnown } from './compNavigationEdits';
 import type { AutoOrientMode } from '@core/scene/autoOrient';
 import { mirrorAutoOrientMode, mirrorCanAutoOrient, mirrorCanBe3D } from '@core/mirror/layerFacts';
 import { mirrorPristineCompToAdopt, settingsFps } from '@core/mirror/compFacts';
@@ -195,10 +195,8 @@ export async function precomposeEdit(
   if (!res.ok) return { error: res.error.message || res.error.code };
   const r = res.value[0] as { comp: string; layer: string };
   useSelectionStore.getState().set([r.layer]);
-  // B4-gap: opening the precomp maps the playhead IN through the layer's time (remap, stretch, reverse —
-  // `innerTimeOf`); compNavigation still reads the TS engine. The `mapLayerTime {layer, time}` query exists
-  // (both engines) — compNavigation's move onto it is the step left.
-  if (opts.openNew) openLayerComposition(r.layer);
+  // Opening it maps the playhead IN through the new layer (`mapLayerTime`) once the mirror has it.
+  if (opts.openNew) void openLayerCompositionWhenKnown(r.layer);
   return r;
 }
 

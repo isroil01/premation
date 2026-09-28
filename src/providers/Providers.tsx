@@ -188,7 +188,7 @@ import {
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import { deleteCompositionEdit, deleteCompositionWarning } from '@layout/Scene/sceneEdits';
-import { canOpenPreviousComposition, openPreviousComposition } from '@core/composition/compNavigation';
+import { canOpenPreviousComposition, openPreviousComposition } from '@layout/Composition/compNavigationEdits';
 import { useMiniFlowchartStore } from '@stores/miniFlowchartStore';
 
 interface ProvidersProps {

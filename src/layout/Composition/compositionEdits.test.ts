@@ -12,7 +12,7 @@ import { engineIdle } from '@core/engine/engineInstance';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeFill } from '@core/paint/fill';
 import { readAutoOrientMode } from '@core/scene/autoOrient';
-import { repairNestedTabs } from '@core/composition/compNavigation';
+import { repairNestedTabs } from './compNavigationEdits';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
