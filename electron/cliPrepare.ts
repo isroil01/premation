@@ -17,6 +17,12 @@ export interface PrepareRequest {
   /** Composition id or name; absent = the first real one. */
   comp?: string;
   listComps?: boolean;
+  /** A recorded command log, applied first: base64 EngineMessage{request} each (commandLog.ts). */
+  requests?: readonly string[];
+  /** One data row into the composition's template fields (field id → cell). */
+  fill?: Readonly<Record<string, string>>;
+  /** Replace the composition's captions with these (seconds; text already wrapped) — the setCaptions command. */
+  captions?: { cues: ReadonlyArray<{ start: number; end: number; text: string }>; style?: string };
   /** Retarget to width : height = `ratio` (a new composition, the autoReframe job). */
   reframe?: { ratio: number };
   /** Transcribe the composition's sound with the user's speech provider. */
@@ -48,6 +54,12 @@ export interface PrepareResult {
   cues?: CaptionCue[];
   compName?: string;
   reframed?: { comp: string; width: number; height: number };
+  /** Caption layers made by `captions`. */
+  captionLayers?: number;
+  /** What `requests` did. */
+  replayed?: { applied: number; refused: number; firstError?: string };
+  /** What `fill` wrote (field ids), skipped (media / other kinds) and could not write. */
+  fill?: { filled: string[]; skipped: string[]; failed: string[] };
   saved?: string;
 }
 
@@ -159,6 +171,17 @@ export async function runEnginePrepare(req: PrepareRequest, deps: PrepareDeps): 
           return;
         case 'reframed':
           result.reframed = { comp: String(msg.comp ?? ''), width: Number(msg.width) || 0, height: Number(msg.height) || 0 };
+          return;
+        case 'replayed':
+          result.replayed = { applied: Number(msg.applied) || 0, refused: Number(msg.refused) || 0, ...(typeof msg.firstError === 'string' ? { firstError: msg.firstError } : {}) };
+          return;
+        case 'filled': {
+          const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+          result.fill = { filled: ids(msg.filled), skipped: ids(msg.skipped), failed: ids(msg.failed) };
+          return;
+        }
+        case 'captions':
+          result.captionLayers = Number(msg.layers) || 0;
           return;
         case 'saved':
           result.saved = String(msg.path ?? '');

@@ -166,6 +166,7 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   cancelJob: { id: 851, kind: 'control', coalesce: false, family: "Jobs", result: "Empty", doc: "" },
   applyJobResult: { id: 852, kind: 'edit', coalesce: false, family: "Jobs", result: "ItemList", doc: "Apply a finished job's result (when started with apply=false). One history entry." },
   setContentAwareFill: { id: 1852, kind: 'edit', coalesce: false, family: "Jobs", result: "Empty", doc: "The layer's content-aware fill (the content-aware fill job's result; the page stored the same record as `fx.contentAwareFill`): the frame nearest the layer's time stands in for its footage. Empty `frames` clears it. Inverse: the previous record." },
+  setCaptions: { id: 1853, kind: 'edit', coalesce: false, family: "Jobs", result: "LayerList", doc: "P4 — REPLACE `comp`'s captions (captionLayers.ts captionEditCommands): its caption layers (LayerInfo.caption) are deleted, then one text layer per cue is created, its bar the cue window, centred at the bottom (`style` JSON: fontSizeRatio 0.05, fontWeight 700, fill '#ffffff', bottomMarginRatio 0.1 — sizes as fractions of the composition), marked as a caption. ONE history entry. Returns the new layers in cue order." },
   setPluginEnabled: { id: 870, kind: 'control', coalesce: false, family: "Plugins", result: "Empty", doc: "Enable/disable an installed plugin for this session (install/uninstall stays in the editor's plugin manager)." },
   setPluginData: { id: 871, kind: 'edit', coalesce: false, family: "Plugins", result: "Empty", doc: "Store plugin data in the DOCUMENT (AE sequence data / arbitrary-data params). Undoable, saved with the project." },
 };
@@ -259,4 +260,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":80,"structs":468,"unions":11,"commands":153,"queries":49,"events":33} as const;
+export const SCHEMA_COUNTS = {"enums":80,"structs":470,"unions":11,"commands":154,"queries":49,"events":33} as const;

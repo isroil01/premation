@@ -206,6 +206,11 @@ struct ContentAwareFillFrame { time: Time = 1; src: string = 2; }
 /// The layer's content-aware fill (the content-aware fill job's result; the page stored the same record as `fx.contentAwareFill`): the frame nearest the layer's time stands in for its footage. Empty `frames` clears it. Inverse: the previous record.
 command setContentAwareFill = 1852 { layer: LayerId = 1; frames: ContentAwareFillFrame[] = 2; }
 
+/// One caption to create: its cue window (composition time) and the text it shows (already wrapped, `\n` between lines).
+struct CaptionInput { start: Time = 1; end: Time = 2; text: string = 3; }
+/// P4 — REPLACE `comp`'s captions (captionLayers.ts captionEditCommands): its caption layers (LayerInfo.caption) are deleted, then one text layer per cue is created, its bar the cue window, centred at the bottom (`style` JSON: fontSizeRatio 0.05, fontWeight 700, fill '#ffffff', bottomMarginRatio 0.1 — sizes as fractions of the composition), marked as a caption. ONE history entry. Returns the new layers in cue order.
+command setCaptions = 1853 { comp: ItemId = 1; cues: CaptionInput[] = 2; style?: string = 3; } -> LayerList;
+
 family "Plugins";
 
 /// Enable/disable an installed plugin for this session (install/uninstall stays in the editor's plugin manager).

@@ -5,9 +5,15 @@
 // One Session is driven in process (the real command handlers, jobs and file
 // ports, the codec's structs directly): open the project, then
 //
+//   requests [base64]      a recorded command log, applied first (each an
+//                          EngineMessage{request}); {"ev":"replayed","applied","refused","firstError"?}
 //   listComps              {"ev":"comps","comps":[{id,name,width,height,fps,durationSeconds,pristine}]}
 //   reframe {ratio}        the autoReframe job on the selected composition, applied;
 //                          {"ev":"reframed","comp":ID,"width":W,"height":H}
+//   fill {fieldId: cell}    one data row into the template fields (text, colour,
+//                          number; one batch); {"ev":"filled","filled","skipped","failed"}
+//   captions {cues, style?} setCaptions on the selected composition (before a
+//                          reframe); {"ev":"captions","layers":N}
 //   transcribe {…}         the transcribe job (the user's speech provider; the
 //                          credential is main's, passed in the job file and never
 //                          echoed); {"ev":"cues","cues":[{start,end,text}],"compName":S}

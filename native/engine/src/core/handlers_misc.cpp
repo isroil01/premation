@@ -10,7 +10,11 @@
 #include "core/aep/aep_read.hpp"
 #include "docio.hpp"
 #include "fxstate.hpp"
+#include "jsmath.hpp"
 #include "handlers_items.hpp"
+#include "handlers_layers.hpp"
+#include "readmodel.hpp"
+#include "scene.hpp"
 #include "time_conv.hpp"
 
 namespace premation::doc {
@@ -455,6 +459,93 @@ ResultOf<api::SetContentAwareFill> handle(const api::SetContentAwareFill& c, HCt
   record.set("frames", std::move(frames));
   sg_set_fx(d, c.layer, "contentAwareFill", std::move(record));
   return {};
+}
+
+namespace {
+bool is_caption_node(const Node& n) {
+  for (const Component& c : n.components) {
+    const Json& v = c.props.at("__caption");
+    if (v.is_bool() && v.b()) return true;
+  }
+  return false;
+}
+double style_num(const Json& s, std::string_view key, double fallback) {
+  const Json& v = s.at(key);
+  return v.is_number() && std::isfinite(v.num()) ? v.num() : fallback;
+}
+}  // namespace
+
+/// captionLayers.ts makeCaptionNode + captionEditCommands, as one edit.
+ResultOf<api::SetCaptions> handle(const api::SetCaptions& c, HCtx& x) {
+  Document& d = x.d;
+  require_comp(d, c.comp);
+  x.label = "Add " + std::to_string(c.cues.size()) + (c.cues.size() == 1 ? " caption" : " captions");
+  Json style = Json::object();
+  if (c.style && !c.style->empty()) {
+    std::optional<Json> parsed = js::parse(*c.style);
+    if (!parsed || !parsed->is_object()) fail(ErrorCode::invalid_argument, "style must be a JSON object");
+    style = std::move(*parsed);
+  }
+  const double sizeRatio = style_num(style, "fontSizeRatio", 0.05);
+  const double weight = style_num(style, "fontWeight", 700);
+  const double marginRatio = style_num(style, "bottomMarginRatio", 0.1);
+  const std::string fill = style.at("fill").is_string() ? style.at("fill").str() : std::string("#ffffff");
+  for (std::size_t i = 0; i < c.cues.size(); ++i) {
+    if (c.cues[i].end <= c.cues[i].start) fail(ErrorCode::invalid_argument, "caption " + std::to_string(i + 1) + " ends before it starts");
+  }
+
+  // Replacing, not adding: a second import over the first would be doubled text.
+  std::vector<std::string> old;
+  if (const Node* root = d.node(c.comp)) {
+    for (const std::string& id : root->children) {
+      if (const Node* n = d.node(id); n != nullptr && is_caption_node(*n)) old.push_back(id);
+    }
+  }
+  if (!old.empty()) {
+    api::DeleteLayers del;
+    del.layers = old;
+    (void)handle(del, x);
+  }
+
+  const api::CompSettings cs = comp_settings(d, c.comp);
+  const double w = cs.width;
+  const double h = cs.height;
+  const double fontSize = std::max(8.0, motion::js::round(h * sizeRatio));
+  api::LayerList out;
+  for (std::size_t i = 0; i < c.cues.size(); ++i) {
+    const api::CaptionInput& cue = c.cues[i];
+    std::size_t lines = 1;
+    for (const char ch : cue.text) lines += ch == '\n' ? 1 : 0;
+    const std::string firstLine = cue.text.substr(0, cue.text.find('\n'));
+    api::CreateLayer cl;
+    cl.comp = c.comp;
+    cl.kind = api::LayerKind::text;
+    cl.name = firstLine.empty() ? "Caption " + std::to_string(i + 1) : firstLine.substr(0, 40);
+    cl.index = static_cast<std::uint32_t>(i);
+    cl.in_point = cue.start;
+    cl.out_point = cue.end;
+    const std::string id = handle(cl, x).layer;
+    const Node& n = require_layer(d, id);
+    std::string tid;
+    std::string cid;
+    for (const Component& comp : n.components) {
+      if (comp.type == "Transform") tid = comp.id;
+      if (comp.type == "Text") cid = comp.id;
+    }
+    if (tid.empty() || cid.empty()) fail(ErrorCode::internal, "a text layer without its Transform / Text");
+    (void)sg_write_prop(d, id, tid, "x", Json::number(motion::js::round(w / 2)));
+    // Anchored off the bottom, lifted by the lines it has.
+    (void)sg_write_prop(d, id, tid, "y", Json::number(motion::js::round(h - h * marginRatio - fontSize * static_cast<double>(lines - 1))));
+    (void)sg_write_prop(d, id, tid, "width", Json::number(motion::js::round(w * 0.8)));
+    (void)sg_write_prop(d, id, cid, "content", Json::string(cue.text));
+    (void)sg_write_prop(d, id, cid, "fontSize", Json::number(fontSize));
+    (void)sg_write_prop(d, id, cid, "fontWeight", Json::number(weight));
+    (void)sg_write_prop(d, id, cid, "fill", Json::string(fill));
+    (void)sg_write_prop(d, id, cid, "align", Json::string("center"));
+    (void)sg_write_prop(d, id, cid, "__caption", Json::boolean(true));
+    out.layers.push_back(id);
+  }
+  return out;
 }
 
 }  // namespace premation::doc

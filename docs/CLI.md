@@ -32,9 +32,13 @@ retargeted composition (`reframe --aspect`, the autoReframe job) and
 transcribes (`captions`, the transcribe job with the OpenAI key from Settings
 ▸ AI). `--scale` and a `png` still are export options.
 
-Not in the engine yet, and refused with a clear line (post-launch):
-`--captions` (burn-in caption layers), `--data` (one file per table row) and
-`--commands` (command-log replay). The HDR10 / HLG formats are gone until the
+The document edits a render asks for run in `--prepare` too, on a saved copy
+the export then renders, in this order: `--commands` (a recorded command log —
+main encodes each request with the generated codec, `electron/commandLog.ts`),
+a `--data` row (the template fields filled by the engine, one render per row,
+`electron/dataTable.ts` names the files), `--captions` (the engine's
+`setCaptions`: one caption layer per cue, `electron/captionText.ts` parses the
+file), then `--aspect`. The HDR10 / HLG formats are gone until the
 engine writes PQ/HLG.
 
 What the headless process does **not** boot is everything a render has no

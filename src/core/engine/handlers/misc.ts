@@ -295,6 +295,17 @@ export const miscHandlers: HandlerTable = {
       },
     };
   },
+
+  /**
+   * Burn-in captions (the CLI's --captions) are the C++ engine's: the harness
+   * checks the cues in its order and refuses.
+   */
+  setCaptions: (cmd) => {
+    cmd.cues.forEach((c, i) => {
+      if (!(c.end > c.start)) fail('invalidArgument', `caption ${i} ends before it starts`);
+    });
+    return fail('unsupported', 'Captions are made by the C++ engine (setCaptions)');
+  },
 };
 
 function toBase64(bytes: Uint8Array): string {
