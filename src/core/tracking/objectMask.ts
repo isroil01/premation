@@ -58,6 +58,7 @@ export async function runObjectMaskPick(opts: {
         backgroundPrompts: [],
         encoderModel: '',
         decoderModel: '',
+        replaceMasks: [],
         ...(opts.box
           ? { box: { x: Math.min(opts.box.x0, opts.box.x1), y: Math.min(opts.box.y0, opts.box.y1), width: Math.abs(opts.box.x1 - opts.box.x0), height: Math.abs(opts.box.y1 - opts.box.y0) } }
           : {}),

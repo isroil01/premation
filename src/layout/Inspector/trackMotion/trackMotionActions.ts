@@ -511,6 +511,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
           backgroundPrompts: [],
           encoderModel: '',
           decoderModel: '',
+          replaceMasks: [],
           ...(box ? { box } : {}),
         },
       }) : null;

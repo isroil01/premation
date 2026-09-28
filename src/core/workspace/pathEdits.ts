@@ -32,7 +32,7 @@ import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { isLayer } from '@core/engine/doc';
 import { bezierToPoints } from '@core/engine/props';
 import { compTime, paths, ref, values } from '@core/engine/propRefs';
-import { readNodeMask, type MaskPath } from '@core/effects/mask';
+import { readNodeMask } from '@core/effects/mask';
 import type { ID } from '@core/types';
 import { vertexStatesOfPoints } from './toolEdits';
 
@@ -252,52 +252,6 @@ export function topologyCommand(t: OutlineTarget, op: Extract<Command, { type: '
 export function rotoBezierCommand(t: OutlineTarget, on: boolean): Command {
   const path = t.maskId !== null ? paths.mask(t.maskId, 'rotoBezier') : 'layer/pathRotoBezier';
   return { type: 'setProperty', prop: ref(t.nodeId, path), value: values.bool(on) };
-}
-
-/**
- * The Roto Brush's matte as the layer's roto mask — ONE entry: the tool's
- * previous paths (`drop`) go, the new outline is added at the end of the mask
- * list with its name and mode, and its feather is set on the new mask. The
- * feather needs the id `addMask` mints, so the two steps run inside one engine
- * gesture. Resolves to the new mask's id, or null (toasted) when it failed.
- */
-export async function rotoMaskEdit(nodeId: string, drop: ReadonlyArray<string>, path: MaskPath, label = 'Roto Brush'): Promise<string | null> {
-  if (!isLayer(nodeId)) return null;
-  const client = engine();
-  const opened = await client.beginGesture(label);
-  if (!opened.ok) {
-    reportEngineError(label, opened.error);
-    return null;
-  }
-  const add: Command = {
-    type: 'addMask', layer: nodeId, path: outlinePathValue(path.points, path.closed).value, mode: path.mode, inverted: path.inverted,
-    ...(path.name ? { name: path.name } : {}),
-  };
-  const cmds: Command[] = [
-    ...(drop.length > 0 ? [{ type: 'removePropertyGroups', groups: drop.map((id) => ref(nodeId, paths.maskGroup(id))) } as Command] : []),
-    add,
-  ];
-  const res = await client.batch(label, cmds);
-  let id: string | null = null;
-  if (res.ok) {
-    const groups = (res.value[res.value.length - 1] as { groups?: string[] } | undefined)?.groups ?? [];
-    id = groups[0]?.split('/')[1] ?? null;
-  } else {
-    reportEngineError(label, res.error);
-  }
-  if (id && path.feather !== 0) {
-    const fr = await client.execute({ type: 'setProperty', prop: ref(nodeId, paths.mask(id, 'feather')), value: values.scalar(path.feather) });
-    if (!fr.ok) {
-      reportEngineError(label, fr.error);
-      id = null;
-    }
-  }
-  const ended = await client.endGesture(opened.value.gesture, id !== null);
-  if (!ended.ok) {
-    reportEngineError(label, ended.error);
-    return null;
-  }
-  return id;
 }
 
 /** Send `cmds` as one entry; false when there was nothing to send or it failed. */

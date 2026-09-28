@@ -2737,6 +2737,12 @@ export interface ObjectMatteJob {
   decoderModel: string;
   /** A drawn box prompt in layer pixels at `range.start` (objectMask.ts marquee). It wins over `prompts` / `backgroundPrompts` when both arrive: its centre is the foreground point, and nothing outside it (plus an 8% + 4 px margin) is kept. */
   box?: Rect;
+  /** The mask the result writes (P4, the Roto Brush tool): its name (absent = "Object mask"), mode (absent = none: geometry for Track mask, not a cut) and feather (absent = 2 px). */
+  maskName?: string;
+  maskMode?: MaskMode;
+  feather?: number;
+  /** Masks of `layer` (their ids, `masks/<id>`) removed in the same history entry as the new one is added — a re-segment replacing the tool's previous outline. */
+  replaceMasks: string[];
 }
 
 /**

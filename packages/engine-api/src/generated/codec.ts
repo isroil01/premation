@@ -7643,10 +7643,15 @@ function encS_ObjectMatteJob(w: Writer, v: T.ObjectMatteJob): void {
   w.varint(5634); w.str(v.encoderModel);
   w.varint(5642); w.str(v.decoderModel);
   if (v.box !== undefined) { w.varint(5650); { const s = w.beginLd(); encS_Rect(w, v.box); w.endLd(s); } }
+  if (v.maskName !== undefined) { w.varint(5658); w.str(v.maskName); }
+  if (v.maskMode !== undefined) { w.varint(5664); w.varint(enc_MaskMode(v.maskMode)); }
+  if (v.feather !== undefined) { w.varint(5673); w.f64(v.feather); }
+  { const a = v.replaceMasks; for (let i = 0; i < a.length; i++) { w.varint(5682); w.str(a[i]!); } }
 }
 function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   const l_prompts: T.Vec2[] = [];
   const l_backgroundPrompts: T.Vec2[] = [];
+  const l_replaceMasks: string[] = [];
   let h_layer = false;
   let h_range = false;
   let h_encoderModel = false;
@@ -7656,6 +7661,9 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   let v_encoderModel: string | undefined;
   let v_decoderModel: string | undefined;
   let v_box: T.Rect | undefined;
+  let v_maskName: string | undefined;
+  let v_maskMode: T.MaskMode | undefined;
+  let v_feather: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7666,6 +7674,10 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
       case 5634: v_encoderModel = r.str(); h_encoderModel = true; break;
       case 5642: v_decoderModel = r.str(); h_decoderModel = true; break;
       case 5650: v_box = decS_Rect(r, r.ldEnd(), {}); break;
+      case 5658: v_maskName = r.str(); break;
+      case 5664: v_maskMode = dec_MaskMode(r.varint()); break;
+      case 5673: v_feather = r.f64(); break;
+      case 5682: l_replaceMasks.push(r.str()); break;
       default: r.skip(key);
     }
   }
@@ -7681,6 +7693,10 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   o.encoderModel = v_encoderModel;
   o.decoderModel = v_decoderModel;
   if (v_box !== undefined) o.box = v_box;
+  if (v_maskName !== undefined) o.maskName = v_maskName;
+  if (v_maskMode !== undefined) o.maskMode = v_maskMode;
+  if (v_feather !== undefined) o.feather = v_feather;
+  o.replaceMasks = l_replaceMasks;
   return o;
 }
 function encS_TranscribeJob(w: Writer, v: T.TranscribeJob): void {
