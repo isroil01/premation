@@ -258,6 +258,10 @@ motion::xf::Camera read_scene_camera(const SpaceCtx& c, double w, double h, doub
 
 }  // namespace
 
+std::optional<motion::xf::Node3DTransform> local_3d_at(const SpaceCtx& c, const Node& n, double seconds) {
+  return resolve_node_3d(c, n, seconds);
+}
+
 std::optional<motion::xf::Mat4> parent_world_at(const SpaceCtx& c, std::string_view node, double seconds) {
   return parent_world_matrix_at(c, node, seconds);
 }

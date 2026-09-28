@@ -330,6 +330,16 @@
     "type": "setLayerComment"
   },
   {
+    "id": 1940,
+    "kind": "edit",
+    "type": "poseIk3D"
+  },
+  {
+    "id": 1941,
+    "kind": "edit",
+    "type": "bakeIk3D"
+  },
+  {
     "id": 300,
     "kind": "edit",
     "type": "setLayerTiming"

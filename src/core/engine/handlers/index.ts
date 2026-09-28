@@ -13,6 +13,7 @@ import { itemHandlers } from './items';
 import { markerHandlers } from './markers';
 import { miscHandlers } from './misc';
 import { transitionHandlers } from './transitions';
+import { dynamicsHandlers } from './dynamics';
 
 export const EDIT_HANDLERS: HandlerTable = {
   ...miscHandlers,
@@ -27,4 +28,5 @@ export const EDIT_HANDLERS: HandlerTable = {
   ...pathHandlers,
   ...markerHandlers,
   ...transitionHandlers,
+  ...dynamicsHandlers,
 };

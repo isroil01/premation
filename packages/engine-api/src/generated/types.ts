@@ -1841,6 +1841,37 @@ export interface SetLayerComment {
   comment: string;
 }
 
+/** B4 round 8 — 3D IK solver options (boneIK3d.ts IK_DEFAULTS: 12 sweeps, 0.5 px, 0.6 rad per step). */
+export interface IkOptions {
+  /** CCD sweeps over the chain. */
+  iterations?: number;
+  /** Stop early when the tip lands within this many px of the target. */
+  tolerance?: number;
+  /** Per-step rotation clamp, radians (the damping that keeps CCD stable). */
+  maxStepRad?: number;
+}
+
+export interface IkResult {
+  /** Frames solved (1 for a pose). */
+  frames: number;
+}
+
+/** B4 round 8 — 3D IK on ordinary layers (Ik3DSection, boneIK3d.ts): CCD over `chain` (root → tip, a parent chain of 3D layers; the tip is the end effector and keeps its own rotation) aimed at `target`'s world origin at comp `time`. Every joint but the tip gets its solved X / Y / Z Rotation at `time` (setProperty rules: a keyed rotation gets a key there, else the static value). One entry. `invalidArgument` for a chain shorter than two or a joint that is not 3D. */
+export interface PoseIk3D {
+  chain: LayerId[];
+  target: LayerId;
+  time: Time;
+  options?: IkOptions;
+}
+
+/** B4 round 8 — IK baked against an ANIMATED target (boneIK3d.ts planIk3DBake): solved at every composition frame of `range` (both ends included), each solve seeded from the previous pose, and every joint but the tip's X / Y / Z Rotation REPLACED by one linear key per frame. One entry; `IkResult.frames` = the frames solved. */
+export interface BakeIk3D {
+  chain: LayerId[];
+  target: LayerId;
+  range: TimeRange;
+  options?: IkOptions;
+}
+
 /** A self-contained piece of document (layers + the items they reference) as produced by copyLayers. Opaque to the UI. */
 export interface DocumentFragment {
   /** Fragment format version. */
@@ -4792,6 +4823,8 @@ export type Command =
   | ({ type: 'separateLayer' } & SeparateLayer)
   | ({ type: 'autoTrace' } & AutoTrace)
   | ({ type: 'setLayerComment' } & SetLayerComment)
+  | ({ type: 'poseIk3D' } & PoseIk3D)
+  | ({ type: 'bakeIk3D' } & BakeIk3D)
   | ({ type: 'setLayerTiming' } & SetLayerTiming)
   | ({ type: 'moveLayersInTime' } & MoveLayersInTime)
   | ({ type: 'trimLayers' } & TrimLayers)
@@ -4949,6 +4982,8 @@ export type CommandResult =
   | ({ type: 'separateLayer' } & LayerList)
   | ({ type: 'autoTrace' } & GroupList)
   | ({ type: 'setLayerComment' } & Empty)
+  | ({ type: 'poseIk3D' } & IkResult)
+  | ({ type: 'bakeIk3D' } & IkResult)
   | ({ type: 'setLayerTiming' } & Empty)
   | ({ type: 'moveLayersInTime' } & Empty)
   | ({ type: 'trimLayers' } & Empty)
@@ -5249,6 +5284,8 @@ export interface CommandArgs {
   separateLayer: SeparateLayer;
   autoTrace: AutoTrace;
   setLayerComment: SetLayerComment;
+  poseIk3D: PoseIk3D;
+  bakeIk3D: BakeIk3D;
   setLayerTiming: SetLayerTiming;
   moveLayersInTime: MoveLayersInTime;
   trimLayers: TrimLayers;
@@ -5406,6 +5443,8 @@ export interface CommandResults {
   separateLayer: LayerList;
   autoTrace: GroupList;
   setLayerComment: Empty;
+  poseIk3D: IkResult;
+  bakeIk3D: IkResult;
   setLayerTiming: Empty;
   moveLayersInTime: Empty;
   trimLayers: Empty;

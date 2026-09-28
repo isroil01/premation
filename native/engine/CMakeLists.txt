@@ -412,6 +412,7 @@ set(ENGINE_DOC_SOURCES
   src/core/fxstate.cpp
   src/core/handlers_common.cpp
   src/core/handlers_comps.cpp
+  src/core/handlers_dynamics.cpp
   src/core/handlers_groups.cpp
   src/core/handlers_items.cpp
   src/core/handlers_layers.cpp

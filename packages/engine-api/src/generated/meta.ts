@@ -81,6 +81,8 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   separateLayer: { id: 214, kind: 'edit', coalesce: false, family: "Layers", result: "LayerList", doc: "Split a camera/text/shape into per-part layers (Create Shapes → Separate, Break Apart text)." },
   autoTrace: { id: 215, kind: 'edit', coalesce: false, family: "Layers", result: "GroupList", doc: "Auto-trace a layer's alpha/luma into masks over a range (Layer ▸ Auto-trace)." },
   setLayerComment: { id: 216, kind: 'edit', coalesce: false, family: "Layers", result: "Empty", doc: "The layer's comment (Comments column)." },
+  poseIk3D: { id: 1940, kind: 'edit', coalesce: false, family: "Layers", result: "IkResult", doc: "B4 round 8 — 3D IK on ordinary layers (Ik3DSection, boneIK3d.ts): CCD over `chain` (root → tip, a parent chain of 3D layers; the tip is the end effector and keeps its own rotation) aimed at `target`'s world origin at comp `time`. Every joint but the tip gets its solved X / Y / Z Rotation at `time` (setProperty rules: a keyed rotation gets a key there, else the static value). One entry. `invalidArgument` for a chain shorter than two or a joint that is not 3D." },
+  bakeIk3D: { id: 1941, kind: 'edit', coalesce: false, family: "Layers", result: "IkResult", doc: "B4 round 8 — IK baked against an ANIMATED target (boneIK3d.ts planIk3DBake): solved at every composition frame of `range` (both ends included), each solve seeded from the previous pose, and every joint but the tip's X / Y / Z Rotation REPLACED by one linear key per frame. One entry; `IkResult.frames` = the frames solved." },
   setLayerTiming: { id: 300, kind: 'edit', coalesce: true, family: "LayerTime", result: "Empty", doc: "The primitive for every bar edit: set in/out/start/stretch of several layers. Trim and move are this command." },
   moveLayersInTime: { id: 301, kind: 'edit', coalesce: true, family: "LayerTime", result: "Empty", doc: "Move layers in time by `delta`. ripple=true shifts every later layer in the composition by the same amount." },
   trimLayers: { id: 302, kind: 'edit', coalesce: true, family: "LayerTime", result: "Empty", doc: "Trim one edge of each layer to `time`. ripple=true closes/opens the gap for later layers." },
@@ -259,4 +261,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":80,"structs":471,"unions":11,"commands":153,"queries":49,"events":33} as const;
+export const SCHEMA_COUNTS = {"enums":80,"structs":475,"unions":11,"commands":155,"queries":49,"events":33} as const;

@@ -4467,6 +4467,112 @@ function decS_SetLayerComment(r: Reader, end: number, o: any): T.SetLayerComment
   o.comment = v_comment;
   return o;
 }
+function encS_IkOptions(w: Writer, v: T.IkOptions): void {
+  if (v.iterations !== undefined) { w.byte(8); w.u32(v.iterations); }
+  if (v.tolerance !== undefined) { w.byte(17); w.f64(v.tolerance); }
+  if (v.maxStepRad !== undefined) { w.byte(25); w.f64(v.maxStepRad); }
+}
+function decS_IkOptions(r: Reader, end: number, o: any): T.IkOptions {
+  let v_iterations: number | undefined;
+  let v_tolerance: number | undefined;
+  let v_maxStepRad: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_iterations = r.u32(); break;
+      case 17: v_tolerance = r.f64(); break;
+      case 25: v_maxStepRad = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (v_iterations !== undefined) o.iterations = v_iterations;
+  if (v_tolerance !== undefined) o.tolerance = v_tolerance;
+  if (v_maxStepRad !== undefined) o.maxStepRad = v_maxStepRad;
+  return o;
+}
+function encS_IkResult(w: Writer, v: T.IkResult): void {
+  w.byte(8); w.u32(v.frames);
+}
+function decS_IkResult(r: Reader, end: number, o: any): T.IkResult {
+  let h_frames = false;
+  let v_frames: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_frames = r.u32(); h_frames = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_frames) throw new DecodeError('IkResult.frames: missing', 'missingField');
+  o.frames = v_frames;
+  return o;
+}
+function encS_PoseIk3D(w: Writer, v: T.PoseIk3D): void {
+  { const a = v.chain; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(18); w.str(v.target);
+  w.byte(24); w.i64(v.time);
+  if (v.options !== undefined) { w.byte(34); { const s = w.beginLd(); encS_IkOptions(w, v.options); w.endLd(s); } }
+}
+function decS_PoseIk3D(r: Reader, end: number, o: any): T.PoseIk3D {
+  const l_chain: string[] = [];
+  let h_target = false;
+  let h_time = false;
+  let v_target: string | undefined;
+  let v_time: number | undefined;
+  let v_options: T.IkOptions | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_chain.push(r.str()); break;
+      case 18: v_target = r.str(); h_target = true; break;
+      case 24: v_time = r.i64(); h_time = true; break;
+      case 34: v_options = decS_IkOptions(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_target) throw new DecodeError('PoseIk3D.target: missing', 'missingField');
+  if (!h_time) throw new DecodeError('PoseIk3D.time: missing', 'missingField');
+  o.chain = l_chain;
+  o.target = v_target;
+  o.time = v_time;
+  if (v_options !== undefined) o.options = v_options;
+  return o;
+}
+function encS_BakeIk3D(w: Writer, v: T.BakeIk3D): void {
+  { const a = v.chain; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(18); w.str(v.target);
+  w.byte(26); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  if (v.options !== undefined) { w.byte(34); { const s = w.beginLd(); encS_IkOptions(w, v.options); w.endLd(s); } }
+}
+function decS_BakeIk3D(r: Reader, end: number, o: any): T.BakeIk3D {
+  const l_chain: string[] = [];
+  let h_target = false;
+  let h_range = false;
+  let v_target: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  let v_options: T.IkOptions | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_chain.push(r.str()); break;
+      case 18: v_target = r.str(); h_target = true; break;
+      case 26: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 34: v_options = decS_IkOptions(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_target) throw new DecodeError('BakeIk3D.target: missing', 'missingField');
+  if (!h_range) throw new DecodeError('BakeIk3D.range: missing', 'missingField');
+  o.chain = l_chain;
+  o.target = v_target;
+  o.range = v_range;
+  if (v_options !== undefined) o.options = v_options;
+  return o;
+}
 function encS_DocumentFragment(w: Writer, v: T.DocumentFragment): void {
   w.byte(8); w.u32(v.version);
   w.byte(18); w.bytes(v.data);
@@ -15822,6 +15928,8 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_LiftRange(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_SetOverlayGeometry(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_SetContentAwareFill(w, v); w.endLd(s); } return;
+    case 'poseIk3D': w.varint(15522); { const s = w.beginLd(); encS_PoseIk3D(w, v); w.endLd(s); } return;
+    case 'bakeIk3D': w.varint(15530); { const s = w.beginLd(); encS_BakeIk3D(w, v); w.endLd(s); } return;
     default: throw new RangeError('Command: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -15984,6 +16092,8 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 7770: out = decS_LiftRange(r, r.ldEnd(), { type: 'liftRange' }) as T.Command; break;
       case 14170: out = decS_SetOverlayGeometry(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.Command; break;
       case 14818: out = decS_SetContentAwareFill(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.Command; break;
+      case 15522: out = decS_PoseIk3D(r, r.ldEnd(), { type: 'poseIk3D' }) as T.Command; break;
+      case 15530: out = decS_BakeIk3D(r, r.ldEnd(), { type: 'bakeIk3D' }) as T.Command; break;
       default: r.skip(key);
     }
   }
@@ -16146,6 +16256,8 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_TimeRangeEdit(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'poseIk3D': w.varint(15522); { const s = w.beginLd(); encS_IkResult(w, v); w.endLd(s); } return;
+    case 'bakeIk3D': w.varint(15530); { const s = w.beginLd(); encS_IkResult(w, v); w.endLd(s); } return;
     default: throw new RangeError('CommandResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16308,6 +16420,8 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 7770: out = decS_TimeRangeEdit(r, r.ldEnd(), { type: 'liftRange' }) as T.CommandResult; break;
       case 14170: out = decS_Empty(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.CommandResult; break;
       case 14818: out = decS_Empty(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.CommandResult; break;
+      case 15522: out = decS_IkResult(r, r.ldEnd(), { type: 'poseIk3D' }) as T.CommandResult; break;
+      case 15530: out = decS_IkResult(r, r.ldEnd(), { type: 'bakeIk3D' }) as T.CommandResult; break;
       default: r.skip(key);
     }
   }
@@ -16779,6 +16893,10 @@ export const codecs = {
   SeparateLayer: mk<T.SeparateLayer>(encS_SeparateLayer, (r, e) => decS_SeparateLayer(r, e, {})),
   AutoTrace: mk<T.AutoTrace>(encS_AutoTrace, (r, e) => decS_AutoTrace(r, e, {})),
   SetLayerComment: mk<T.SetLayerComment>(encS_SetLayerComment, (r, e) => decS_SetLayerComment(r, e, {})),
+  IkOptions: mk<T.IkOptions>(encS_IkOptions, (r, e) => decS_IkOptions(r, e, {})),
+  IkResult: mk<T.IkResult>(encS_IkResult, (r, e) => decS_IkResult(r, e, {})),
+  PoseIk3D: mk<T.PoseIk3D>(encS_PoseIk3D, (r, e) => decS_PoseIk3D(r, e, {})),
+  BakeIk3D: mk<T.BakeIk3D>(encS_BakeIk3D, (r, e) => decS_BakeIk3D(r, e, {})),
   DocumentFragment: mk<T.DocumentFragment>(encS_DocumentFragment, (r, e) => decS_DocumentFragment(r, e, {})),
   LayerRef: mk<T.LayerRef>(encS_LayerRef, (r, e) => decS_LayerRef(r, e, {})),
   LayerList: mk<T.LayerList>(encS_LayerList, (r, e) => decS_LayerList(r, e, {})),

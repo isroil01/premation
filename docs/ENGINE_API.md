@@ -2365,6 +2365,28 @@ from the struct's maximum + 800.
   records were VALUE-only and confined to the two paint sessions (G2 "paint
   stroke normalisation", B3 "paint strokes") — no outcome or step moved.
 
+### 15.16 B4 round 8 — the row projection and 3D IK in the engine (both engines, 2026-09-29)
+
+- **`getTimelineRows {layers}`** (1935 → `TimelineRowSets`): the timeline's
+  After Effects row projection of each layer — both engines' static property
+  tree (TS `propertyTree.ts buildStaticPropertyTree`, C++ `ptree.cpp
+  build_static_property_tree`, which now carries `valueProps`): the rows in
+  AE's twirl order, each with `members` (the tracks its stopwatch keys),
+  `merged` (Position's pseudo track), `valueProps`, `valueUnit` and
+  `maskTrack`. Unknown ids answer no set. The timeline's property rows, the
+  E / M / MM / F reveal keys and UU read it (`stores/timelineRows.ts`);
+  `timelineRowsNative.test` compares both engines field by field.
+- **`poseIk3D {chain, target, time, options?}`** (1940) and **`bakeIk3D
+  {chain, target, range, options?}`** (1941) → `IkResult {frames}`: 3D IK on
+  ordinary layers (boneIK3d.ts; C++ `handlers_dynamics.cpp`). CCD over a parent
+  chain of 3D layers (root → tip; the tip is the end effector) aimed at the
+  target's world origin; the pose writes every joint but the tip's X / Y / Z
+  Rotation at `time` (setProperty rules), the bake solves every composition
+  frame of the range (each solve seeded by the previous) and replaces those
+  rotations with one linear key per frame. `IkOptions {iterations, tolerance,
+  maxStepRad}` default to 12 / 0.5 px / 0.6 rad. One entry each;
+  `ikNative.test` compares the solved angles of both engines.
+
 
 ## 16. Files
 

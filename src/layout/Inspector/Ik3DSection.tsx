@@ -14,12 +14,11 @@
  * to bend, so the section stays away rather than offering two buttons that
  * would always warn.
  *
- * Pose calls `poseIk3DAtTarget` — the SAME function the palette command
- * executes. Bake is the engine route (B3z): the same solve
- * (`planIk3DBake`, which the palette's `bakeIk3DToTarget` also runs) sent as
- * ONE batch of keyframe commands (ikEdits.ts) — one undo entry. The solver
- * options exposed here (iterations, damping, tolerance) are the real
- * `IkOptions`; leaving them at the defaults reproduces the palette's solve.
+ * Pose and Bake are the engine's `poseIk3D` / `bakeIk3D` commands (ikEdits.ts,
+ * the same ones the palette commands send) — one undo entry each; the solver
+ * runs in the engine. The options exposed here (iterations, damping,
+ * tolerance) are the commands' `IkOptions`; leaving them at the defaults
+ * reproduces the palette's solve.
  */
 
 import { useState } from 'react';
@@ -31,13 +30,12 @@ import { PickWhip } from '@components/PickWhip';
 import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
-import { edit } from '@core/engine/uiEdits';
 import { mirrorEligibleParents } from '@core/mirror/parenting';
 import { mirrorIkChainFromTip } from '@core/mirror/layerFacts';
-import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
+import { settingsDurationSeconds } from '@core/mirror/compFacts';
 import { IK_DEFAULTS, type IkOptions } from '@core/scene/boneIK3d';
-import { poseIk3DAtTarget } from '@core/scene/ikCommands';
-import { ik3DBakeCommands } from './ikEdits';
+import { bakeIk3DEdit, poseIk3DEdit } from './ikEdits';
+import { getTime } from '@stores/playbackClockStore';
 import { useCompLayersWatch } from './inspectorMirror';
 import s from './Ik3DSection.module.css';
 
@@ -48,18 +46,22 @@ async function bakeChain(chain: string[], target: string, opts: IkOptions): Prom
   const notify = (level: 'success' | 'warning', message: string): void => {
     useUIStore.getState().notify({ level, message, durationMs: level === 'warning' ? 6000 : 4500 });
   };
-  // The active composition's rate and length, read at call time.
+  // The active composition's length, read at call time (the engine solves at its own rate).
   const settings = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
-  const fps = settingsFps(settings);
-  const plan = await ik3DBakeCommands(chain, target, 0, Math.max(0, settingsDurationSeconds(settings)), fps, opts);
-  if (!plan) {
+  const frames = await bakeIk3DEdit(chain, target, 0, Math.max(0, settingsDurationSeconds(settings)), opts);
+  if (frames === 0) {
     notify('warning', 'Could not bake — chain or target failed to resolve.');
     return;
   }
-  const res = await edit('Bake 3D IK', plan.commands);
-  if (!res.ok) return;
   const joints = chain.length - 1;
-  notify('success', `Baked IK: ${plan.frames} frames of rotation keyframes on ${joints} joint${joints === 1 ? '' : 's'}.`);
+  notify('success', `Baked IK: ${frames} frames of rotation keyframes on ${joints} joint${joints === 1 ? '' : 's'}.`);
+}
+
+/** Pose the chain at `target` once, at the playhead: one engine command, one undo entry. */
+async function poseAt(chain: string[], target: string, opts: IkOptions): Promise<void> {
+  const ok = await poseIk3DEdit(chain, target, getTime(), opts);
+  const joints = chain.length - 1;
+  if (ok) useUIStore.getState().notify({ level: 'success', message: `Posed ${joints} joint${joints === 1 ? '' : 's'} toward the target.`, durationMs: 4500 });
 }
 
 /** True when this layer can be the tip of a solvable 3D chain. */
@@ -181,7 +183,7 @@ export function Ik3DSection({ nodeId }: { nodeId: string }): JSX.Element | null 
           size="sm"
           variant="secondary"
           disabled={!target}
-          onClick={() => { if (target) poseIk3DAtTarget(chain, target, opts); }}
+          onClick={() => { if (target) void poseAt(chain, target, opts); }}
           title="Solve once at the playhead and write the pose onto the joints"
         >
           Pose at target
