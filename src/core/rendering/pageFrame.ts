@@ -23,6 +23,7 @@ import { memoizedSceneContentHash } from './sceneContentHash';
 import { isMediaDecodeRepaint } from './mediaRepaint';
 import { getEventBus } from '@core/events/EventBus';
 import { renderStillFrame } from '@core/export/offlineRenderer';
+import { useCompositionStore } from '@stores/compositionStore';
 import { buildSnapshot, type SnapshotFocus, type SnapshotComp } from './buildSnapshot';
 import type { RenderOverlays, RenderSnapshot, RenderView } from './RenderBackend';
 
@@ -93,6 +94,15 @@ export function onPageFrameChanged(cb: (change: PageFrameChange) => void): () =>
 }
 
 /**
+ * The export / preview renderer's composition input for `comp`: the record
+ * scoped to its own subtree, with the engine's composition-size lookup
+ * (nested comps) — what runExport and the export preview take.
+ */
+export function pageRenderComp(comp: CompositionSettings, transparent: boolean): CompositionSettings & { rootId: string; transparent: boolean; compSizeOf: typeof compSizeOf } {
+  return { ...comp, rootId: comp.id, transparent, compSizeOf };
+}
+
+/**
  * One frame of `comp` at composition frame `frame`, rendered through the
  * deterministic offline path as a PNG (Save Frame As / Copy Frame).
  */
@@ -101,6 +111,19 @@ export function pageStillFrame(comp: CompositionSettings, frame: number): Promis
     { width: comp.width, height: comp.height, fps: comp.fps, durationSec: comp.durationSeconds, comp: { ...comp, rootId: comp.id, compSizeOf } },
     frame,
   );
+}
+
+/**
+ * The active composition's frame at `seconds` (clamped into it) from the
+ * TypeScript engine's OWN composition record — for a render made while a
+ * document is swapped into this engine (version compare), where the mirror
+ * still describes the live document. Null when the renderer produced nothing.
+ */
+export async function pageActiveStillFrameAt(seconds: number): Promise<Blob | null> {
+  const c = useCompositionStore.getState().comp();
+  const last = Math.max(0, Math.round(c.durationSeconds * c.fps) - 1);
+  const frame = Math.max(0, Math.min(Math.round(seconds * c.fps), last));
+  return pageStillFrame(c, frame);
 }
 
 /** The TypeScript engine's snapshot of `input.comp` at `input.time` for the page renderer. */
