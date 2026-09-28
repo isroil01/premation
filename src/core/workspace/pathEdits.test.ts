@@ -29,7 +29,6 @@ import {
   setFirstVertexCommand,
   toggleClosed,
 } from './pathCommands';
-import { segmentStrokesToMask, ROTO_PATH_NAME } from './rotoBrushTool';
 
 const square = (s: number): BezierPath => ({
   vertices: [-s, -s, s, -s, s, s, -s, s], inTangents: [], outTangents: [], closed: true, featherPoints: [], vertexStates: [],
@@ -205,43 +204,6 @@ describe('Convert Mask to Shape Layer', () => {
   });
 });
 
-describe('Roto Brush mask', () => {
-  const W = 64;
-  const readPixels = async (): Promise<{ rgba: Uint8ClampedArray; width: number; height: number }> =>
-    ({ rgba: new Uint8ClampedArray(W * W * 4), width: W, height: W });
-  // A filled square in the middle of the source.
-  const segment = async (): Promise<{ mask: Uint8Array }> => {
-    const mask = new Uint8Array(W * W);
-    for (let y = 16; y < 48; y++) for (let x = 16; x < 48; x++) mask[y * W + x] = 255;
-    return { mask } as never;
-  };
-  const strokes = [{ kind: 'fg' as const, points: [{ x: 0, y: 0 }] }] as never;
-
-  it('writes the matte as a named, feathered mask and a re-segment replaces it — one entry each', async () => {
-    const { layer, mask: keep } = await maskedSolid(square(10), 'Roto');
-    const before = h.doc();
-    const entries = historyLabels().length;
-    const first = await segmentStrokesToMask(layer, strokes, 0, { featherPx: 3, readPixels, segment: segment as never });
-    expect(first).not.toBeNull();
-    expect(historyLabels().length).toBe(entries + 1);
-    let paths = readNodeMask(defaultSceneGraph.getNode(layer)!)!.paths;
-    expect(paths.map((p) => p.id)).toEqual([keep, first]);
-    const roto = paths[1]!;
-    expect(roto).toMatchObject({ name: ROTO_PATH_NAME, mode: 'add', closed: true, feather: 3, inverted: false });
-    expect(roto.points.length).toBeGreaterThanOrEqual(3);
-
-    const second = await segmentStrokesToMask(layer, strokes, 0, { featherPx: 5, replacePathId: first, readPixels, segment: segment as never });
-    expect(second).not.toBeNull();
-    expect(historyLabels().length).toBe(entries + 2);
-    paths = readNodeMask(defaultSceneGraph.getNode(layer)!)!.paths;
-    expect(paths.map((p) => p.id)).toEqual([keep, second]);
-    expect(paths[1]!.feather).toBe(5);
-
-    await h.run({ type: 'undo' });
-    await h.run({ type: 'undo' });
-    expect(h.doc()).toEqual(before);
-  });
-});
 
 // A DRAWN shape layer's own outline is `layer/path.points` (a path value):
 // its verbs are engine edits too — ONE entry each that undo restores exactly

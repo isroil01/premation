@@ -24,7 +24,7 @@
  */
 
 import type { OutputFormat } from '@stores/renderQueueStore';
-import type { ExportQuality } from '@core/export/videoSink';
+import type { ExportQuality } from '@core/export/renderSpec';
 
 export interface OutputTemplate {
   name: string;

@@ -51,6 +51,8 @@ export interface EngineExportSpec {
   fps?: number;
   width?: number;
   height?: number;
+  /** Uniform scale of the comp size when neither width nor height is given. */
+  scale?: number;
   quality?: 'high' | 'medium' | 'draft';
   proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
   transparent?: boolean;
@@ -111,11 +113,20 @@ export interface EngineExportDeps {
   log?(message: string): void;
 }
 
-/** The formats the engine path writes: the raw pipe, plus zipped image sequences. */
-const ENGINE_FORMATS: ReadonlySet<string> = new Set<string>(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+/**
+ * The formats the engine path writes: the raw pipe into ffmpeg, zipped image
+ * sequences, a still PNG (a one-frame sequence) and the WAV mixdown (the
+ * engine's audio-only job).
+ */
+const ENGINE_FORMATS: ReadonlySet<string> = new Set<string>(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence', 'png', 'wav']);
 
 function isSequence(format: string): boolean {
   return format === 'png-sequence' || format === 'jpg-sequence' || format === 'exr-sequence';
+}
+
+/** The engine writes these itself: no ffmpeg command line is sent. */
+function writesWithoutEncoder(format: string): boolean {
+  return isSequence(format) || format === 'png' || format === 'wav';
 }
 
 function resolvedChapters(raw: unknown): Array<{ startMs: number; endMs: number; title: string }> | null {
@@ -155,13 +166,20 @@ function videoEncoderOf(spec: EngineExportSpec): VideoEncoder {
 export function engineJobFile(spec: EngineExportSpec, workDir: string): Record<string, unknown> {
   const job: Record<string, unknown> = { projectPath: spec.projectPath, workDir };
   if (spec.comp) job.comp = spec.comp;
-  for (const k of ['startFrame', 'endFrame', 'fps', 'width', 'height'] as const) {
+  for (const k of ['startFrame', 'endFrame', 'fps', 'width', 'height', 'scale'] as const) {
     if (typeof spec[k] === 'number') job[k] = spec[k];
   }
   if (typeof spec.transparent === 'boolean') job.transparent = spec.transparent;
   if (spec.bitDepth === 16) job.depth = 16;
-  // A GIF carries no sound (buildEncodeArgs drops it), so the engine skips the mix.
-  job.audio = spec.format !== 'gif' && !isSequence(spec.format);
+  // A GIF and a still carry no sound (buildEncodeArgs drops it), so the engine skips the mix.
+  job.audio = spec.format !== 'gif' && spec.format !== 'png' && !isSequence(spec.format);
+  // WAV: only the mix, written to workDir/audio.wav (no GPU, no picture).
+  if (spec.format === 'wav') {
+    job.audioOnly = true;
+    job.audio = true;
+  }
+  // A still: a one-frame PNG sequence, unzipped (workDir/frames/frame_00000.png).
+  if (spec.format === 'png') job.sequence = 'png';
   if (spec.format === 'png-sequence') job.sequence = 'png-zip';
   if (spec.format === 'jpg-sequence') job.sequence = 'jpg-zip';
   if (spec.format === 'exr-sequence') job.sequence = 'exr-zip';
@@ -191,6 +209,8 @@ export function engineEncodeArgs(spec: EngineExportSpec, pre: EnginePreflight, o
 
 /** Where the engine writes the encode before it is delivered. */
 export function engineOutputFile(workDir: string, format: string): string {
+  if (format === 'png') return path.join(workDir, 'frames', 'frame_00000.png');
+  if (format === 'wav') return path.join(workDir, 'audio.wav');
   if (format === 'png-sequence') return path.join(workDir, 'frames.png.zip');
   if (format === 'jpg-sequence') return path.join(workDir, 'frames.jpg.zip');
   if (format === 'exr-sequence') return path.join(workDir, 'frames.exr.zip');
@@ -289,7 +309,11 @@ export function startEngineExport(
             compName: String(msg.compName ?? ''),
           };
           cb.started?.(preflight);
-          if (!isSequence(spec.format)) {
+          if (spec.format === 'wav' && preflight.audio === null) {
+            terminal = { kind: 'failed', message: 'This composition has no audible audio in the export range — nothing to write. Check layer mute states and the work area.' };
+            return;
+          }
+          if (!writesWithoutEncoder(spec.format)) {
             const encode = { bin: deps.ffmpegPath(), args: engineEncodeArgs(spec, preflight, out) };
             proc.stdin?.write(`${JSON.stringify({ encode })}\n`);
           }
@@ -301,6 +325,7 @@ export function startEngineExport(
           return;
         }
         case 'done':
+          if (terminal?.kind === 'failed') return;
           terminal = { kind: 'completed', frames: Number(msg.frames), stats: (msg.stats ?? undefined) as Record<string, unknown> | undefined };
           return;
         case 'error':
@@ -336,6 +361,12 @@ export function startEngineExport(
     if (exit.error) {
       finish({ kind: 'fallback', reason: `premation-engine could not start: ${exit.error.message}` });
       return;
+    }
+    // An audio-only job ends at its preflight line (export_job.hpp: `audio`
+    // names the mix, then exit 0 with no "done").
+    const pre = preflight as EnginePreflight | null;
+    if (!terminal && spec.format === 'wav' && exit.code === EXPORT_EXIT.ok && pre?.audio) {
+      terminal = { kind: 'completed', frames: pre.frames };
     }
     const outcome = terminal as EngineExportOutcome | null;
     if (exit.code === EXPORT_EXIT.ok && outcome?.kind === 'completed') {

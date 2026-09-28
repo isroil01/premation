@@ -21,7 +21,7 @@ import { cloudProjectsEnabled } from '@core/config/edition';
 import { getCloudProjectId } from '@stores/cloudProjectStore';
 import { useUIStore } from '@stores/uiStore';
 import type { ExportFormat } from '@core/export/exportManager';
-import type { ExportQuality, ProresProfile } from '@core/export/videoSink';
+import type { ExportQuality, ProresProfile } from '@core/export/renderSpec';
 
 export interface ServerEncode {
   format: RenderContainer;

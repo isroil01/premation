@@ -14,7 +14,7 @@
 
 import { create } from 'zustand';
 import type { ExportFormat } from '@core/export/exportManager';
-import type { ExportQuality, ProresProfile } from '@core/export/videoSink';
+import type { ExportQuality, ProresProfile } from '@core/export/renderSpec';
 
 export type RangeMode = 'full' | 'work';
 

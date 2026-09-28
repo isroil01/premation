@@ -16,7 +16,6 @@ const DIALOG = [
   readFileSync(join(DIR, 'ExportDialog.tsx'), 'utf8'),
   readFileSync(join(DIR, 'ExportForm.tsx'), 'utf8'),
 ].join('\n');
-const MANAGER = readFileSync(join(__dirname, '..', '..', 'core', 'export', 'exportManager.ts'), 'utf8');
 
 describe('Export composition dialog', () => {
   it('opens at lg so preview and settings sit side by side', () => {
@@ -36,8 +35,6 @@ describe('Export composition dialog', () => {
     expect(DIALOG).toMatch(/Entire composition/);
     expect(DIALOG).toMatch(/Work area/);
     expect(DIALOG).toMatch(/useWorkArea/);
-    expect(MANAGER).toMatch(/useWorkArea\?: boolean/);
-    expect(MANAGER).toMatch(/opts\.useWorkArea === false/);
   });
 
   it('pins the filename and Export action in a DialogFooter', () => {

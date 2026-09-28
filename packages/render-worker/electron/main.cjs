@@ -7,65 +7,41 @@
  * that nothing implemented, so every automation render reached `queued` and
  * stopped there.
  *
- * Shape: one Electron main process that is both an HTTP server and a pixel
- * factory. A request renders in its OWN offscreen BrowserWindow through the
- * editor's real `renderOffline` path, frames are staged to a temp directory as
- * `frame_%04d.jpg|png` (the naming contract shared with the desktop export and
- * with motion-back), ffmpeg muxes them, and the result is uploaded to
- * Cloudinary. The response is the contract motion-back validates:
+ * Shape: one Electron main process serving HTTP; every render is the C++
+ * engine's (`premation-engine --export`, engineRender.cjs): the engine opens
+ * the document, renders it offline and pipes raw frames into ffmpeg with
+ * encode.cjs's matrix, and the result is uploaded to Cloudinary. The response
+ * is the contract motion-back validates:
  *
  *   { "videoUrl": "https://…", "renderDurationMs": 1234 }
  *
- * A window per job is required, not tidy: `restoreDocument` MERGES, so a reused
- * JS context inherits the previous document's timelines and comps.
+ * The offscreen-window render on the TypeScript renderer is gone
+ * (docs/TS_ENGINE_REMOVAL.md phase 4): a document the engine cannot render
+ * fails the job with the engine's reason.
  *
  * Env:
  *   RENDER_WORKER_SECRET   required — bearer token motion-back sends
  *   PORT                   default 4100
  *   CLOUDINARY_URL         cloudinary://<key>:<secret>@<cloud>  (required to upload)
  *   RENDER_WORKER_MAX_CONCURRENT   default 1
- *   RENDER_WORKER_JOB_TIMEOUT_MS   default 900000 (15 min, matches motion-back)
  *   RENDER_WORKER_MAX_BODY_BYTES   default 67108864 (64 MB)
  *   FFMPEG_PATH            default 'ffmpeg' on PATH
+ *   PREMATION_ENGINE_PATH  the engine binary (default: resources/engine beside the app)
  */
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app } = require('electron');
 const http = require('node:http');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const { spawn } = require('node:child_process');
 const { promises: fs, existsSync } = require('node:fs');
-const { CONTAINER_MIME, resolveEncode, wantsAlpha, encodeArgs } = require('./encode.cjs');
-const { renderViaEngine } = require('./engineRender.cjs');
-
-// Deterministic software rendering, headless-safe — the same flag set the
-// golden-frame harness pins, and for the same reason: output must not depend on
-// which GPU the box happens to have. See packages/render-tests/electron/main.cjs
-// for why the sandbox is off unconditionally rather than only under CI.
-app.commandLine.appendSwitch('enable-unsafe-swiftshader');
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
-app.commandLine.appendSwitch('disable-gpu-sandbox');
-app.commandLine.appendSwitch('no-sandbox');
-app.commandLine.appendSwitch('use-gl', 'angle');
-app.commandLine.appendSwitch('use-angle', 'swiftshader');
-app.disableHardwareAcceleration();
+const { CONTAINER_MIME, resolveEncode, wantsAlpha } = require('./encode.cjs');
+const { renderViaEngine, resolveEngine } = require('./engineRender.cjs');
 
 const PORT = positiveInt(process.env.PORT, 4100);
 const SECRET = (process.env.RENDER_WORKER_SECRET ?? '').trim();
 const MAX_CONCURRENT = positiveInt(process.env.RENDER_WORKER_MAX_CONCURRENT, 1);
-const JOB_TIMEOUT_MS = positiveInt(process.env.RENDER_WORKER_JOB_TIMEOUT_MS, 15 * 60_000);
 const MAX_BODY_BYTES = positiveInt(process.env.RENDER_WORKER_MAX_BODY_BYTES, 64 * 1024 * 1024);
-const RENDER_HTML = path.join(__dirname, '..', 'dist-render', 'render', 'index.html');
-/**
- * Render through `premation-engine --export` first (engineRender.cjs), the
- * offscreen window only when the engine cannot take the job. Opt-in with
- * RENDER_WORKER_ENGINE=1. (The desktop's PREMATION_EXPORT_ENGINE alias is gone:
- * the desktop always renders in the engine. This whole worker is deleted in
- * phase 4 with the TypeScript renderer — docs/TS_ENGINE_REMOVAL.md.)
- */
-const ENGINE_RENDER = process.env.RENDER_WORKER_ENGINE === '1';
-
 function positiveInt(raw, fallback) {
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : fallback;
@@ -73,105 +49,6 @@ function positiveInt(raw, fallback) {
 
 function log(...args) {
   console.log('[render-worker]', ...args);
-}
-
-// ── Job execution ─────────────────────────────────────────────────────
-
-/**
- * In-flight renders, keyed by `webContents.id`.
- *
- * The three IPC channels are registered ONCE and dispatch through this map by
- * sender, which is what keeps concurrent jobs isolated: a renderer can only
- * ever reach its own entry, because the key is the sender's identity rather
- * than anything the page can say.
- */
-const jobsByWindow = new Map();
-
-ipcMain.handle('worker:job', (event) => job(event).spec);
-
-ipcMain.handle('worker:frame', async (event, index, base64, ext) => {
-  const { dir } = job(event);
-  // Frame naming is a contract shared with the desktop export (exportManager's
-  // frameFileName) and with ffmpeg's `%04d` input pattern: 4-digit zero
-  // padding, which is a MINIMUM width, so renders past 9999 frames still match.
-  const name = `frame_${String(index).padStart(4, '0')}.${ext === 'png' ? 'png' : 'jpg'}`;
-  await fs.writeFile(path.join(dir, name), Buffer.from(base64, 'base64'));
-});
-
-ipcMain.handle('worker:done', (event, result, error) => {
-  const entry = job(event);
-  if (error) entry.fail(new Error(String(error).slice(0, 2000)));
-  else entry.ok(result);
-});
-
-ipcMain.on('worker:progress', () => { /* advisory; motion-back polls the DB */ });
-
-function job(event) {
-  const entry = jobsByWindow.get(event.sender.id);
-  if (!entry) throw new Error('This renderer has no active job.');
-  return entry;
-}
-
-/**
- * Render one document to staged frames in `dir`.
- *
- * Resolves with the frame count / extension / fps the mux step needs. The
- * window is always destroyed, including on the timeout path — an orphaned
- * offscreen window holds a GL context and a copy of the document.
- */
-function renderToFrames(spec, dir) {
-  return new Promise((resolve, reject) => {
-    const win = new BrowserWindow({
-      show: false,
-      width: 16,
-      height: 16,
-      webPreferences: {
-        offscreen: true,
-        preload: path.join(__dirname, 'preload.cjs'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        // The document's image/video layers are fetched by the renderer, and
-        // they are Cloudinary URLs on a different origin than file://.
-        webSecurity: false,
-        backgroundThrottling: false,
-      },
-    });
-
-    const id = win.webContents.id;
-    let settled = false;
-    const finish = (fn, arg) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      jobsByWindow.delete(id);
-      if (!win.isDestroyed()) win.destroy();
-      fn(arg);
-    };
-
-    const timer = setTimeout(
-      () => finish(reject, new Error(`Render exceeded ${JOB_TIMEOUT_MS}ms.`)),
-      JOB_TIMEOUT_MS,
-    );
-
-    jobsByWindow.set(id, {
-      spec,
-      dir,
-      ok: (result) => finish(resolve, result),
-      fail: (err) => finish(reject, err),
-    });
-
-    win.webContents.on('render-process-gone', (_e, details) =>
-      finish(reject, new Error(`Renderer process gone: ${details.reason}`)),
-    );
-    win.webContents.on('did-fail-load', (_e, code, desc) =>
-      finish(reject, new Error(`Render page failed to load (${code}): ${desc}`)),
-    );
-    // Offscreen windows only produce frames while "painting"; without a
-    // subscriber Chromium can idle the compositor and the render loop starves.
-    win.webContents.setFrameRate(30);
-
-    win.loadFile(RENDER_HTML).catch((err) => finish(reject, err));
-  });
 }
 
 // ── ffmpeg ────────────────────────────────────────────────────────────
@@ -183,47 +60,6 @@ function resolveFfmpeg() {
   const bundled = path.join(process.resourcesPath ?? '', 'ffmpeg', name);
   if (process.resourcesPath && existsSync(bundled)) return bundled;
   return 'ffmpeg';
-}
-
-/**
- * Mux staged frames into an mp4.
- *
- * Flags mirror the desktop export's h264 branch so an automation render and a
- * hand-made export are the same file: yuv420p for universal playback, even
- * dimensions (yuv420p rejects odd ones), `+faststart` so the result streams
- * without a full download — which is what a social upload pipeline needs.
- */
-function encodeVideo(dir, ext, fps, output) {
-  const input = path.join(dir, `frame_%04d.${ext}`);
-  const { container } = resolveEncode(output);
-  const out = path.join(dir, `out.${container}`);
-  // The codec, pixel format, quality and container flags come from the same
-  // matrix motion-back uses for a frames upload (encode.cjs), so a server-side
-  // render and an editor export of one comp are the same file. Alpha rides
-  // through only when the frames are PNG — see `renderEntry`'s staging.
-  const args = [
-    '-y',
-    '-framerate', String(fps),
-    '-i', input,
-    ...encodeArgs(output, { hasAudio: false, hasAlphaFrames: ext === 'png', fps }),
-    out,
-  ];
-
-  return new Promise((resolve, reject) => {
-    const ff = spawn(resolveFfmpeg(), args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    let stderr = '';
-    ff.stderr.on('data', (d) => { stderr += d.toString(); });
-    ff.on('error', (err) =>
-      reject(
-        err.code === 'ENOENT'
-          ? new Error('ffmpeg was not found. Install it or set FFMPEG_PATH.')
-          : err,
-      ),
-    );
-    ff.on('close', (code) =>
-      code === 0 ? resolve(out) : reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-800)}`)),
-    );
-  });
 }
 
 // ── Upload ────────────────────────────────────────────────────────────
@@ -302,18 +138,11 @@ async function runJob(payload) {
       output: { ...output, container, codec, quality, alpha: wantsAlpha(output) },
       durationSeconds: payload.durationSeconds,
     };
-    let encoded = null;
-    if (ENGINE_RENDER) {
-      const viaEngine = await renderViaEngine(spec, dir, { ffmpegPath: resolveFfmpeg() });
-      if (viaEngine.kind === 'done') encoded = viaEngine.file;
-      else if (viaEngine.kind === 'failed') throw new Error(viaEngine.message);
-      else log(`job ${jobId}: rendering in the window (${viaEngine.reason})`);
+    const viaEngine = await renderViaEngine(spec, dir, { ffmpegPath: resolveFfmpeg() });
+    if (viaEngine.kind !== 'done') {
+      throw new Error(viaEngine.kind === 'failed' ? viaEngine.message : `The engine could not render this document: ${viaEngine.reason}`);
     }
-    if (!encoded) {
-      const staged = await renderToFrames(spec, dir);
-      if (!staged || !staged.frames) throw new Error('The renderer staged no frames.');
-      encoded = await encodeVideo(dir, staged.ext, staged.fps, spec.output);
-    }
+    const encoded = viaEngine.file;
     const videoUrl = await uploadVideo(encoded, jobId, container);
     return { videoUrl, container, codec, mime: CONTAINER_MIME[container], renderDurationMs: Date.now() - startedAt };
   } finally {
@@ -455,8 +284,8 @@ app.whenReady().then(async () => {
     app.exit(1);
     return;
   }
-  if (!existsSync(RENDER_HTML)) {
-    console.error(`[render-worker] Render bundle missing at ${RENDER_HTML}. Run \`npm run build\` in packages/render-worker first.`);
+  if (!resolveEngine()) {
+    console.error('[render-worker] premation-engine was not found. Set PREMATION_ENGINE_PATH to the engine binary.');
     app.exit(1);
     return;
   }
@@ -480,5 +309,5 @@ app.whenReady().then(async () => {
   server.listen(PORT, () => log(`listening on :${PORT} (max ${MAX_CONCURRENT} concurrent)`));
 });
 
-// No windows are open between jobs, and that must not quit the app.
+// No windows are ever open, and that must not quit the app.
 app.on('window-all-closed', () => { /* keep serving */ });

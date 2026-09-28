@@ -5,25 +5,24 @@ The private renderer behind motion-back's Automation API. It implements the
 had no implementation anywhere — so every automation render reached `queued` and
 stayed there.
 
-It renders through the editor's **own** `renderOffline` path (`@core/export/offlineRenderer`),
-the same code a desktop export runs, so an automation MP4 and a hand-made export
-are the same pixels by construction rather than by agreement.
+It renders through the C++ engine — `premation-engine --export`, the same
+job the desktop's export queue and `premation render` run — so an automation
+MP4 and a hand-made export are the same pixels by construction.
 
 ## Pipeline
 
 ```
-POST /render  ──►  offscreen BrowserWindow (one per job)
-                      restoreDocument(document)
-                      renderOffline(...) ──► frame_0000.jpg, frame_0001.jpg, …
-                   ffmpeg  ──►  out.mp4  (h264, yuv420p, +faststart)
+POST /render  ──►  premation-engine --export JOB.json   (engineRender.cjs)
+                      the document written as project.motion, opened by the engine
+                      raw RGBA frames ──► ffmpeg (encode.cjs's matrix) ──► out.mp4
                    Cloudinary signed upload
               ◄──  { videoUrl, renderDurationMs }
 ```
 
-**One window per job, always destroyed afterwards.** `restoreDocument` is a
-MERGE — it applies only the keys a document carries — so a reused JS context
-inherits the previous document's timelines, comps and motion-blur settings. A
-fresh context is the only way "render exactly this document" is true.
+A document the engine cannot render (a feature its preflight reports as not
+ported, a GPU that will not start) fails the job with the engine's reason: the
+offscreen-window render on the TypeScript renderer is gone
+(docs/TS_ENGINE_REMOVAL.md phase 4).
 
 ## Running it
 
@@ -33,8 +32,7 @@ workspace, so run both commands from **this directory** and they resolve
 
 ```bash
 cd packages/render-worker
-npm run build
-RENDER_WORKER_SECRET=… CLOUDINARY_URL=cloudinary://… npm start
+PREMATION_ENGINE_PATH=…/premation-engine RENDER_WORKER_SECRET=… CLOUDINARY_URL=cloudinary://… npm start
 ```
 
 `node smoke.mjs` posts a keyframed test document and checks the whole pipeline.
@@ -48,9 +46,9 @@ Default 3 seconds (`TIKTOK_SMOKE_SECONDS=30` for full-length).
 `npm run benchmark` measures render time for the same scenario (default 30s, 900 frames).
 Set `BENCHMARK_CONCURRENT=2` when `RENDER_WORKER_MAX_CONCURRENT >= 2`.
 
-`npm run build` must run before `npm start`; the worker refuses to boot without
-the bundle, and refuses to boot without a secret rather than listen
-unauthenticated.
+The worker refuses to boot without the engine binary (`PREMATION_ENGINE_PATH`, or
+`resources/engine` beside a packaged app), and without a secret rather than
+listen unauthenticated.
 
 ffmpeg must be on `PATH` (or set `FFMPEG_PATH`).
 
@@ -61,8 +59,8 @@ ffmpeg must be on `PATH` (or set `FFMPEG_PATH`).
 | `RENDER_WORKER_SECRET` | — | **Required.** Must equal motion-back's `RENDER_WORKER_SECRET` |
 | `PORT` | `4100` | |
 | `CLOUDINARY_URL` | — | `cloudinary://<key>:<secret>@<cloud>`; without it renders succeed then fail at upload |
-| `RENDER_WORKER_MAX_CONCURRENT` | `1` | Renders are CPU-bound under SwiftShader; raise only with cores to spare |
-| `RENDER_WORKER_JOB_TIMEOUT_MS` | `900000` | Keep at or below motion-back's `RENDER_WORKER_TIMEOUT_MS` |
+| `RENDER_WORKER_MAX_CONCURRENT` | `1` | Each render is one engine process on the GPU; raise only with GPU memory to spare |
+| `PREMATION_ENGINE_PATH` | `resources/engine` | The engine binary |
 | `RENDER_WORKER_MAX_BODY_BYTES` | `67108864` | A document with many layers is large; this bounds it |
 | `FFMPEG_PATH` | `ffmpeg` | |
 
@@ -114,10 +112,8 @@ Failed jobs are evicted so a genuine retry can run.
 
 ## Rendering determinism
 
-The same SwiftShader flag set as the golden-frame harness
-(`packages/render-tests`), so output does not depend on which GPU the box has.
-That also means renders are **CPU-bound**: budget roughly a core per concurrent
-job and expect a 1080p render to run slower than realtime.
+The engine's export is deterministic (frame time is `index / fps`, never
+wall-clock); it renders on the box's GPU through Dawn.
 
 ## Known limits
 
@@ -126,8 +122,7 @@ job and expect a 1080p render to run slower than realtime.
 - **No alpha.** A transparent composition is flattened onto its own background
   colour by the renderer (`deliverableComp`), which matches what the author sees
   in the editor. mp4 cannot carry alpha at all.
-- **No audio.** The staged-frame path is video-only; the desktop export's
-  `render:stageAudio` equivalent is not wired here yet.
+- **No audio.** The worker asks the engine for video only (`audio: false`).
 - **No plugin effects.** Custom plugin layers are not installed in the worker, so
   a document depending on one renders without it rather than failing. Templates
   built from stock layers and effects are unaffected.

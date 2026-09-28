@@ -3,16 +3,16 @@
  *
  * The dialog used to be a set of buttons with no picture: the first time anyone
  * saw an export was after the file was written, which is how a black render made
- * it all the way to a player before anyone noticed. This renders real export
- * frames through the real export path, scrubbable across the export range, and
- * says so plainly when a frame has nothing in it.
+ * it all the way to a player before anyone noticed. This shows the ENGINE's
+ * frame of the composition (`getThumbnail` — the renderer the export runs),
+ * scrubbable across the export range.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { IconButton } from '@components/IconButton';
-import type { SnapshotComp } from '@core/rendering/buildSnapshot';
-import { createExportPreviewRenderer, type ExportPreviewRenderer } from '@core/export/exportPreview';
+import { secondsToFlicks } from '@motion/engine-api';
+import { engine } from '@core/engine/engineInstance';
 import styles from './ExportPreview.module.css';
 
 interface ExportPreviewProps {
@@ -23,7 +23,10 @@ interface ExportPreviewProps {
   durationSec: number;
   /** Comp time the export range begins at — nonzero when a work area is set. */
   startSec?: number;
-  comp: SnapshotComp;
+  /** The composition exported. */
+  compId: string;
+  /** Show a checkerboard behind the frame (the export keeps alpha). */
+  transparent?: boolean;
   /** Paused while an export is running — the GPU is busy with real frames. */
   disabled?: boolean;
   /** Still-frame export: hide the range scrubber. */
@@ -45,18 +48,18 @@ export function ExportPreview({
   fps,
   durationSec,
   startSec = 0,
-  comp,
+  compId,
+  transparent = false,
   disabled = false,
   singleFrame = false,
 }: ExportPreviewProps): JSX.Element {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const rendererRef = useRef<ExportPreviewRenderer | null>(null);
+  // The frame shown: an object URL over the engine's encoded thumbnail.
+  const [src, setSrc] = useState<string | null>(null);
+  const urlRef = useRef<string | null>(null);
   // The scrubber addresses frames WITHIN the export range; comp time is derived.
   // Tracking the frame index rather than a time keeps the slider exact and makes
   // "frame 1 of N" mean the first frame of the export, not of the composition.
   const [frame, setFrame] = useState(0);
-  const [blank, setBlank] = useState(false);
-  const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -65,25 +68,9 @@ export function ExportPreview({
   const clampedFrame = Math.max(0, Math.min(frame, frameCount - 1));
   const time = startSec + clampedFrame / fps;
 
-  // One renderer (and one GPU context) for the dialog's lifetime.
-  useEffect(() => {
-    let host = hostRef.current;
-    let renderer: ExportPreviewRenderer;
-    try {
-      renderer = createExportPreviewRenderer();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      return;
-    }
-    rendererRef.current = renderer;
-    renderer.canvas.className = styles.canvas ?? '';
-    host?.appendChild(renderer.canvas);
-    return () => {
-      rendererRef.current = null;
-      renderer.canvas.remove();
-      renderer.dispose();
-      host = null;
-    };
+  // The last frame's URL is revoked when the dialog goes.
+  useEffect(() => () => {
+    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
   }, []);
 
   // Continuous playback loop at the composition's frame rate.
@@ -117,19 +104,27 @@ export function ExportPreview({
     }
   }, [disabled, singleFrame]);
 
-  // Re-render whenever the preview time or any output setting changes. A render
-  // in flight is left to finish and its result discarded — the generation guard
+  // Ask again whenever the preview time or the size changes. A request in
+  // flight is left to finish and its answer discarded — the `cancelled` guard
   // is what stops a fast scrub from painting frames out of order.
   useEffect(() => {
-    const renderer = rendererRef.current;
-    if (!renderer || disabled) return;
+    if (disabled || !compId) return;
     let cancelled = false;
     void (async () => {
       try {
-        const frameRes = await renderer.render({ width, height, fps, comp, time });
+        const res = await engine().query({
+          type: 'getThumbnail',
+          item: compId,
+          time: secondsToFlicks(time),
+          maxSize: Math.min(1280, Math.max(width, height)),
+        });
         if (cancelled) return;
-        setBlank(frameRes.blank);
-        setWarnings(frameRes.warnings);
+        if (!res.ok) throw new Error(res.error.message);
+        const t = res.value;
+        const url = URL.createObjectURL(new Blob([t.data as BlobPart], { type: `image/${t.format || 'png'}` }));
+        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+        urlRef.current = url;
+        setSrc(url);
         setError(null);
         setReady(true);
       } catch (err) {
@@ -139,7 +134,7 @@ export function ExportPreview({
     return () => {
       cancelled = true;
     };
-  }, [width, height, fps, comp, time, disabled]);
+  }, [width, height, compId, time, disabled]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -179,10 +174,10 @@ export function ExportPreview({
       onKeyDown={handleKeyDown}
     >
       <div
-        ref={hostRef}
-        className={comp.transparent ? styles.stageTransparent : styles.stage}
+        className={transparent ? styles.stageTransparent : styles.stage}
         style={{ aspectRatio: `${Math.max(1, width)} / ${Math.max(1, height)}` }}
       >
+        {src ? <img className={styles.canvas} src={src} alt="" draggable={false} /> : null}
         {error ? (
           <div className={styles.overlayError}>
             <Icon name="warning" size="md" />
@@ -190,23 +185,6 @@ export function ExportPreview({
           </div>
         ) : !ready ? (
           <div className={styles.overlayMuted}>Preparing preview…</div>
-        ) : warnings.length > 0 ? (
-          <div className={styles.overlayWarn}>
-            <Icon name="warning" size="md" />
-            <span>
-              {/* The exact refusal the export will stop on — surfaced here
-                  instead of dying at frame N mid-render. */}
-              The export would stop on this frame: {warnings[0]}
-            </span>
-          </div>
-        ) : blank ? (
-          <div className={styles.overlayWarn}>
-            <Icon name="warning" size="md" />
-            <span>
-              Nothing is visible at this frame — an export starting here would look empty. Check layer
-              visibility, the work area, and whether this composition is the active one.
-            </span>
-          </div>
         ) : null}
       </div>
 

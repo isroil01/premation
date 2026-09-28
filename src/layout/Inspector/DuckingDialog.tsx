@@ -23,13 +23,7 @@ import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayers, useMirrorProperty, useMirrorSelect } from '@hooks/useMirror';
 import { duckingOf, soundLayersIn } from '@core/mirror/audio';
 import { setAudioToolOpener } from '@core/audio/audioCommands';
-import {
-  computeDuckEnvelope,
-  thinLevels,
-  DEFAULT_DUCKING,
-  type ApplyDuckingResult,
-  type DuckingParams,
-} from '@core/audio/ducking';
+import { DEFAULT_DUCKING, type ApplyDuckingResult, type DuckingParams } from '@core/audio/ducking';
 import { duckEdit, reduckEdit, removeDuckingEdit } from './audioEdits';
 import { previewEngineJob } from '@core/engine/engineJobs';
 import styles from './AudioToolDialog.module.css';
@@ -64,9 +58,8 @@ export function DuckingDialog({ nodeId, onDone }: Props): JSX.Element {
   };
 
   // Preview, debounced: every slider drag would otherwise start an FFT pass
-  // over the whole work area on each pointer move. The numbers come from
-  // `computeDuckEnvelope` + `thinLevels` — the same two the bake runs — so the
-  // count shown is the count written.
+  // over the whole work area on each pointer move. The numbers are the engine's
+  // audioDuck job summary (apply: false) — the pass the bake runs.
   const key = `${voiceNodeId}|${JSON.stringify(params)}`;
   useEffect(() => {
     if (!voiceNodeId) {
@@ -77,29 +70,14 @@ export function DuckingDialog({ nodeId, onDone }: Props): JSX.Element {
     setAnalysing(true);
     const timer = setTimeout(() => {
       void (async () => {
-        // The engine's audioDuck job when it runs jobs: its summary is the readout.
         const viaEngine = await previewEngineJob<{ keyframes: number; peakDuckDb?: number }>({
           kind: 'audioDuck', value: { music: nodeId, voices: [voiceNodeId], params: JSON.stringify(params) },
         });
-        if (viaEngine) {
-          if (!alive) return;
-          setAnalysing(false);
-          setPreview(viaEngine.status === 'done' && viaEngine.result
-            ? { keyframes: viaEngine.result.keyframes, peakDb: viaEngine.result.peakDuckDb ?? 0 }
-            : null);
-          return;
-        }
-        // The TypeScript engine's path: the page decodes the voice and follows it.
-        const env = await computeDuckEnvelope(voiceNodeId, params);
         if (!alive) return;
         setAnalysing(false);
-        if (!env) {
-          setPreview(null);
-          return;
-        }
-        let peak = 0;
-        for (const g of env.gainDb) if (g < peak) peak = g;
-        setPreview({ keyframes: thinLevels(env.gainDb).length, peakDb: Math.round(peak * 10) / 10 });
+        setPreview(viaEngine && viaEngine.status === 'done' && viaEngine.result
+          ? { keyframes: viaEngine.result.keyframes, peakDb: viaEngine.result.peakDuckDb ?? 0 }
+          : null);
       })().catch(() => {
         if (!alive) return;
         setAnalysing(false);

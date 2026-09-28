@@ -32,9 +32,13 @@ import { parseDataTable, matchColumns, DataTableError, type DataTable } from '@c
 import { patternVariesPerRow, OutputPatternError, resolveOutputName } from '@core/template/batchRender';
 import { BATCH_FORMATS, batchFileName, runEditorBatchRender } from '@core/template/batchRenderEditor';
 import { canChooseOutputDir, useRenderQueueStore } from '@stores/renderQueueStore';
-import type { OutputFormat } from '@core/export/renderJob';
+import type { OutputFormat } from '@core/export/renderSpec';
 import type { TemplateField } from '@core/template/templateTypes';
 import { getTime } from '@stores/playbackClockStore';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
+import { joinOutputPath, renderAndWait } from '@layout/Export/supervisorQueue';
 import { fillDataRowEdit } from './templateFieldEdits';
 import styles from './DataFillSection.module.css';
 
@@ -141,21 +145,38 @@ export function DataFillSection({ fields }: { fields: ReadonlyArray<TemplateFiel
     let dir = useRenderQueueStore.getState().outputDir;
     if (!dir && canChooseOutputDir()) {
       dir = await useRenderQueueStore.getState().chooseOutputDir();
-      if (!dir) return;
     }
+    if (!dir) return;
+    const outDir = dir;
 
     const abort = new AbortController();
     abortRef.current = abort;
     const from = resumeFrom ?? 0;
     setBatch({ fraction: from / table.rows.length, done: from, total: table.rows.length });
     try {
-      // B4-kept: a batch render — the TS renderer's job over the engine's document (renderer input, D5/F1).
+      // Each row: the filled document rendered by the engine export (snapshot, queue, wait).
       const summary = await runEditorBatchRender({
         table,
         fields,
         pattern,
         format,
-        outputDir: dir,
+        renderFile: async (fileName, onProgress, signal) => {
+          const compId = activeCompIdNow();
+          const s = activeCompSettingsNow();
+          if (!compId || !s) throw new Error('There is no active composition to render.');
+          await renderAndWait({
+            compositionId: compId,
+            compositionName: s.name,
+            format,
+            width: s.width,
+            height: s.height,
+            fps: settingsFps(s),
+            range: { startSec: 0, endSec: settingsDurationSeconds(s) },
+            quality: 'high',
+            transparent: s.transparent === true,
+            outPath: joinOutputPath(outDir, fileName),
+          }, { onProgress, signal });
+        },
         startRow: from,
         signal: abort.signal,
         onProgress: (fraction) => setBatch((b) => (b ? { ...b, fraction } : b)),

@@ -6,7 +6,6 @@ import { solveSfmCameraPath } from './sfmCamera';
 import { bundleAdjust, yprToR } from './bundleAdjust';
 import { projectPoint } from './triangulate';
 import { grabCutMatte } from './grabCut';
-import { pqOetfChannel, hlgOetfChannel, applyHdrTransferRgb } from '@core/export/hdrTransfer';
 import { decodePackBits, decodePsd } from '@core/media/psd';
 import { exrToFloatRgba } from '@core/media/floatExr';
 import { encodeExr, decodeExr } from '@core/media/exr';
@@ -185,75 +184,6 @@ describe('grabCut', () => {
     });
     expect(mask[16 * w + 16]).toBe(255);
     expect(mask[2 * w + 2]).toBe(0);
-  });
-});
-
-describe('hdrTransfer', () => {
-  it('maps mid grey through PQ and HLG into 0..1', () => {
-    expect(pqOetfChannel(0)).toBeCloseTo(0, 5);
-    expect(pqOetfChannel(1)).toBeGreaterThan(0.5);
-    expect(hlgOetfChannel(0)).toBeCloseTo(0, 5);
-    expect(hlgOetfChannel(1)).toBeCloseTo(1, 2);
-    const [r] = applyHdrTransferRgb(0.18, 0.18, 0.18, 'pq');
-    expect(r).toBeGreaterThan(0);
-    expect(r).toBeLessThan(1);
-  });
-
-  it('accumulates MaxCLL / MaxFALL and formats x265 master-display', async () => {
-    const {
-      createHdrMasteringAccumulator,
-      x265HdrParams,
-      x265MasterDisplay,
-      formatHdrCapabilityNote,
-      formatHdrExportDoneNote,
-    } = await import('@core/export/hdrTransfer');
-    const acc = createHdrMasteringAccumulator(1000);
-    const rgba = new Float32Array(4 * 4);
-    for (let i = 0; i < 4; i++) {
-      rgba[i * 4] = 1;
-      rgba[i * 4 + 1] = 1;
-      rgba[i * 4 + 2] = 1;
-      rgba[i * 4 + 3] = 1;
-    }
-    acc.accumulateLinearFrame(rgba, true);
-    const stats = acc.finish();
-    expect(stats.maxCll).toBeGreaterThanOrEqual(900);
-    expect(x265MasterDisplay(stats)).toContain('L(10000000,');
-    expect(x265HdrParams('pq', stats)).toContain('max-cll=');
-    expect(x265HdrParams('pq', stats)).toContain('master-display=');
-    expect(formatHdrCapabilityNote(true)).toMatch(/libx265/);
-    expect(formatHdrCapabilityNote(false)).toMatch(/no libx265/i);
-    expect(formatHdrCapabilityNote(null)).toMatch(/Checking/);
-    expect(formatHdrExportDoneNote('libx265', { maxCll: 900, maxFall: 200 })).toMatch(/MaxCLL 900/);
-    expect(formatHdrExportDoneNote('libx264')).toMatch(/H\.264/);
-  });
-
-  it('neutralizes PQ/HLG display transform around HDR encode (no double OETF)', async () => {
-    const { withNeutralDisplayForHdrEncode } = await import('@core/export/hdrTransfer');
-    let display: 'srgb' | 'aces' | 'pq' | 'hlg' = 'pq';
-    const seen: string[] = [];
-    await withNeutralDisplayForHdrEncode(
-      async () => {
-        seen.push(display);
-        return 1;
-      },
-      (v) => { display = v; },
-      () => display,
-    );
-    expect(seen).toEqual(['srgb']);
-    expect(display).toBe('pq');
-
-    display = 'aces';
-    await withNeutralDisplayForHdrEncode(
-      async () => {
-        seen.push(display);
-        return 1;
-      },
-      (v) => { display = v; },
-      () => display,
-    );
-    expect(seen).toEqual(['srgb', 'aces']);
-    expect(display).toBe('aces');
   });
 });
 

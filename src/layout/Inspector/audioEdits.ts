@@ -35,12 +35,11 @@ import type { Command, PropRef } from '@motion/engine-api';
 import { edit } from '@core/engine/uiEdits';
 import { engine } from '@core/engine/engineInstance';
 import { compTime, propRefForTrack, values } from '@core/engine/propRefs';
-import { compOfLayer, isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/engine/doc';
 import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { AUDIO_LEVEL_DB_PROP } from '@core/audio/audioParams';
 import { DEFAULT_FADE_SEC, type FadeSide } from '@core/audio/audioFades';
-import { planDucking, type ApplyDuckingResult, type DuckingParams } from '@core/audio/ducking';
-import { planGate, DEFAULT_GATE, type GateParams } from '@core/audio/audioGate';
+import type { ApplyDuckingResult, DuckingParams } from '@core/audio/ducking';
 import {
   audioDriverExpression,
   computeDriverEnvelope,
@@ -49,27 +48,23 @@ import {
   type ApplyDriverResult,
   type AudioDriver,
 } from '@core/audio/audioDriver';
-import { AUDIO_AMPLITUDE_PROP, amplitudeEnvelope, ensureAudioBuffer, planAudioKeyframes, type AudioKeyframeOptions } from '@core/audio/audioKeyframes';
-import { mergeIntervals, rangesToCompIntervals, type RemoveSilencesResult, type SilenceRange } from '@core/audio/silenceRemoval';
+import type { AudioKeyframeOptions } from '@core/audio/audioKeyframes';
 import { apiUnitFactor } from '@core/engine/props';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import {
-  audioClipTimings,
   audioDriversOf,
   driverRangeOf,
   duckingOf,
   gateOf,
   planFadeKeysIn,
-  settingsFps,
-  staticLevelDb,
 } from '@core/mirror/audio';
 import { memberHasExpression } from '@core/mirror/memberExpressions';
 import { numbersOfValue } from '@core/mirror/trackIndex';
 import type { AudioWaveformConfig } from '@core/audio/audioWaveformGen';
 import { jsonFieldCommands } from './layerFieldEdits';
 import { runEngineJob } from '@core/engine/engineJobs';
-import { clearExpressionCommands, inOneEntry, removeAnimationCommands, spliceKeysEdit, type EntryStep, type KeySplice, type SpliceKey } from './keySpliceEdits';
+import { clearExpressionCommands, removeAnimationCommands, spliceKeysEdit, type KeySplice, type SpliceKey } from './keySpliceEdits';
 
 /** The layer's Audio Levels property, or null when the engine does not address it. */
 export function levelRef(nodeId: string): PropRef | null {
@@ -111,24 +106,9 @@ export async function duckEdit(musicId: string, voiceId: string, params: Ducking
   const viaEngine = await runEngineJob<{ keyframes: number; peakDuckDb?: number }>({
     kind: 'audioDuck', value: { music: musicId, voices: [voiceId], params: JSON.stringify(params) },
   });
-  if (viaEngine) {
-    if (viaEngine.status !== 'done') return { keyframes: 0, peakDuckDb: 0, error: viaEngine.error?.message ?? 'The ducking could not be written.' };
-    return { keyframes: viaEngine.result?.keyframes ?? 0, peakDuckDb: viaEngine.result?.peakDuckDb ?? 0 };
-  }
-  // Engine-side until E2: the voice's decode + sidechain envelope and the level plan over it.
-  const plan = await planDucking(musicId, voiceId, params);
-  if (plan.error) return { keyframes: 0, peakDuckDb: 0, error: plan.error };
-  const ref = levelRef(musicId);
-  if (!ref) return { keyframes: 0, peakDuckDb: 0, error: 'That layer has no audio level to duck.' };
-  const ok = await spliceKeysEdit(
-    'Duck Music',
-    [{ prop: ref, keys: scalarKeys(plan.keys), replace: 'all', axisTrack: AUDIO_LEVEL_DB_PROP }],
-    [
-      { type: 'setProperty', prop: { layer: musicId, path: 'audio/ducking' }, value: values.json(plan.record) },
-      ...clearExpressionCommands(ref, [AUDIO_LEVEL_DB_PROP]),
-    ],
-  );
-  return ok ? { keyframes: plan.keys.length, peakDuckDb: plan.peakDuckDb } : { keyframes: 0, peakDuckDb: 0, error: 'The ducking could not be written.' };
+  if (!viaEngine) return { keyframes: 0, peakDuckDb: 0, error: 'Ducking runs in the engine, and this engine does not run it.' };
+  if (viaEngine.status !== 'done') return { keyframes: 0, peakDuckDb: 0, error: viaEngine.error?.message ?? 'The ducking could not be written.' };
+  return { keyframes: viaEngine.result?.keyframes ?? 0, peakDuckDb: viaEngine.result?.peakDuckDb ?? 0 };
 }
 
 /** Re-run the ducking recorded on a layer. */
@@ -152,31 +132,6 @@ export async function removeDuckingEdit(musicId: string): Promise<boolean> {
 }
 
 // ── Noise gate ─────────────────────────────────────────────────────────
-
-/** Bake a gate from `env` (computeGateEnvelope's), ONE entry ("Noise Gate"). */
-export async function gateEdit(
-  nodeId: string,
-  env: Float32Array,
-  opts: { fps: number; startCompSec: number } & Partial<GateParams>,
-): Promise<{ keyframes: number; error?: string }> {
-  const m = documentMirror();
-  const ref = levelRef(nodeId);
-  if (!ref || !m.layer(nodeId)) return { keyframes: 0, error: 'That layer is gone.' };
-  // Composition seconds: the engine converts to the layer's axis (the dedupe
-  // of frames landing on one layer time happens in the splice).
-  const keys = planGate(env, { ...opts, baseLevelDb: staticLevelDb(m, nodeId), toKeyframeTime: (t) => t });
-  if (keys.length === 0) return { keyframes: 0, error: 'Nothing to gate in this range.' };
-  const params: GateParams = { ...DEFAULT_GATE, ...opts };
-  const ok = await spliceKeysEdit(
-    'Noise Gate',
-    [{ prop: ref, keys: keys.map((k) => ({ seconds: k.t, value: values.scalar(k.value) })), replace: 'all', axisTrack: AUDIO_LEVEL_DB_PROP }],
-    [
-      { type: 'setProperty', prop: { layer: nodeId, path: 'audio/gate' }, value: values.json(params) },
-      ...clearExpressionCommands(ref, [AUDIO_LEVEL_DB_PROP]),
-    ],
-  );
-  return ok ? { keyframes: keys.length } : { keyframes: 0, error: 'The gate could not be written.' };
-}
 
 /** Forget the gate AND remove the level track it wrote, ONE entry. */
 export async function removeGateEdit(nodeId: string): Promise<boolean> {
@@ -308,55 +263,20 @@ export async function removeDriverEdit(nodeId: string, prop: string): Promise<vo
 // ── Convert audio to keyframes ─────────────────────────────────────────
 
 /**
- * Comp time of a SOURCE frame through the layer's bar (audioKeyframes'
- * rule): a bar-less layer plays from comp 0; a frame the bar trims away has no
- * comp time (no key for it).
- */
-function sourceFrameToCompTime(bars: ReadonlyArray<{ startSec: number; inSec: number; outSec: number }>, frame: number, fps: number): number | null {
-  const sourceSec = frame / fps;
-  if (bars.length === 0) return sourceSec;
-  for (const t of bars) {
-    if (sourceSec >= t.inSec && sourceSec < t.outSec) return t.startSec + (sourceSec - t.inSec);
-  }
-  return null;
-}
-
-/**
  * The loudness envelope as the layer's `audioAmplitude` track (replacing it),
- * ONE entry ("Convert audio to keyframes"). Resolves to the keys written.
+ * ONE entry: the engine's audioAnalysis job decodes and writes it. Resolves to
+ * the keys written (0 when nothing was, or the engine does not run it).
  */
 export async function convertAudioToKeyframesEdit(nodeId: string, opts: AudioKeyframeOptions): Promise<number> {
-  // The engine decodes and writes the track itself (audioAnalysis job) when it
-  // runs jobs; the page path below is the TypeScript engine's.
-  if (opts.prop === AUDIO_AMPLITUDE_PROP) {
-    const viaEngine = await runEngineJob<{ amplitude?: { keyframes: number } }>({
-      kind: 'audioAnalysis',
-      value: {
-        layer: nodeId, beats: false, amplitudeKeyframes: true, silence: false, removeSilence: false, beatMarkers: false,
-        amplitudeFrameStep: Math.max(1, Math.floor(opts.frameStep)), amplitudeMinDelta: opts.minDelta,
-        amplitudeSmoothing: Math.max(1, Math.floor(opts.smoothing)), amplitudeGain: opts.gain,
-      },
-    });
-    if (viaEngine) return viaEngine.status === 'done' ? viaEngine.result?.amplitude?.keyframes ?? 0 : 0;
-  }
-  // Engine-side until E2: the decode (the editor's audio engine) — the envelope
-  // and its keys are pure maths over the buffer.
-  const buffer = await ensureAudioBuffer(nodeId);
-  if (!buffer) return 0;
-  const m = documentMirror();
-  // The active composition's rate (what the timeline's frame grid is).
-  const fps = settingsFps(m.comp(activeCompIdNow() ?? '')?.settings);
-  const bars = audioClipTimings(m, nodeId);
-  const plan: Array<{ seconds: number; value: number }> = [];
-  for (const k of planAudioKeyframes(amplitudeEnvelope(buffer, fps), opts)) {
-    const compSec = sourceFrameToCompTime(bars, k.frame, fps);
-    if (compSec !== null) plan.push({ seconds: compSec, value: k.value });
-  }
-  if (plan.length === 0) return 0;
-  const r = propRefForTrack(nodeId, opts.prop);
-  if (!r) return 0;
-  const ok = await spliceKeysEdit('Convert audio to keyframes', [{ prop: r.ref, keys: scalarKeys(plan), replace: 'all', axisTrack: opts.prop }]);
-  return ok ? plan.length : 0;
+  const out = await runEngineJob<{ amplitude?: { keyframes: number } }>({
+    kind: 'audioAnalysis',
+    value: {
+      layer: nodeId, beats: false, amplitudeKeyframes: true, silence: false, removeSilence: false, beatMarkers: false,
+      amplitudeFrameStep: Math.max(1, Math.floor(opts.frameStep)), amplitudeMinDelta: opts.minDelta,
+      amplitudeSmoothing: Math.max(1, Math.floor(opts.smoothing)), amplitudeGain: opts.gain,
+    },
+  });
+  return out && out.status === 'done' ? out.result?.amplitude?.keyframes ?? 0 : 0;
 }
 
 // ── Level, pan, mute, timing ───────────────────────────────────────────
@@ -392,92 +312,6 @@ export function barTimingCommand(
 export function unbarredTimingCommand(nodeId: string, field: 'start' | 'in' | 'out', v: number): Command {
   const path = field === 'start' ? 'audio/clipStart' : field === 'in' ? 'audio/clipIn' : 'audio/clipOut';
   return { type: 'setProperty', prop: { layer: nodeId, path }, value: values.scalar(v) };
-}
-
-// ── Silence removal ────────────────────────────────────────────────────
-
-/** One frame's worth of seconds — the tolerance for "this edge is that edge". */
-const epsilon = (fps: number): number => 0.5 / Math.max(1, fps);
-
-interface Bar { layer: string; start: number; end: number }
-
-/**
- * The bars (comp seconds) of `layers`, read as the document now stands — the
- * mirror at call time: a step runs after the previous step's response, and the
- * engine delivers a request's events before its response (ENGINE_API.md §8.1).
- */
-function barsOf(layers: ReadonlySet<string>): Bar[] {
-  const m = documentMirror();
-  const out: Bar[] = [];
-  for (const id of layers) {
-    for (const t of audioClipTimings(m, id)) out.push({ layer: id, start: t.startSec, end: t.startSec + (t.outSec - t.inSec) });
-  }
-  return out;
-}
-
-/**
- * Remove `ranges` (SOURCE seconds) from every layer in `nodeIds` (the paired
- * set, `pairedAudioNodeIds`), keeping them in sync — ONE entry ("Remove
- * Silence"). Last interval first; per interval: split every paired bar that
- * crosses an edge (`splitLayers`; the right part is a new layer and joins the
- * set), delete the parts wholly inside, then close the gap on the PAIRED bars
- * only — never the comp-wide ripple, which would drag unrelated layers along.
- */
-export async function removeSilencesEdit(nodeIds: readonly string[], ranges: readonly SilenceRange[]): Promise<RemoveSilencesResult> {
-  const m = documentMirror();
-  const present = nodeIds.filter((id) => m.layer(id) !== undefined && isLayer(id));
-  if (present.length === 0) return { gaps: 0, secondsRemoved: 0, clipsDeleted: 0, error: 'Those layers are gone.' };
-  if (ranges.length === 0) return { gaps: 0, secondsRemoved: 0, clipsDeleted: 0, error: 'Nothing to remove.' };
-  const comp = compOfLayer(present[0]!);
-  // The layer's own composition's rate (a layer inside a precomp runs at the precomp's).
-  const fps = settingsFps(m.comp(m.layer(present[0]!)!.comp)?.settings);
-  const intervals = mergeIntervals(present.flatMap((id) => rangesToCompIntervals(audioClipTimings(m, id), ranges)));
-  if (intervals.length === 0 || !comp) {
-    return { gaps: 0, secondsRemoved: 0, clipsDeleted: 0, error: 'Every silent stretch is already trimmed off these clips.' };
-  }
-  const working = new Set(present);
-  const eps = epsilon(fps);
-  let clipsDeleted = 0;
-  const steps: EntryStep[] = [];
-  for (let i = intervals.length - 1; i >= 0; i--) {
-    const iv = intervals[i]!;
-    for (const at of [iv.start, iv.end]) {
-      steps.push(() => {
-        const frame = Math.round(at * fps);
-        const crossing = [...new Set(barsOf(working)
-          .filter((b) => frame > Math.round(b.start * fps) && frame < Math.round(b.end * fps))
-          .map((b) => b.layer))];
-        return crossing.length > 0 ? [{ type: 'splitLayers', layers: crossing, time: compTime(at) } as Command] : [];
-      });
-      // Fold the right-hand halves into the working set.
-      steps.push((earlier) => {
-        const last = earlier[earlier.length - 1] as Array<{ type: string; layers?: string[] }> | undefined;
-        for (const r of last ?? []) if (r.type === 'splitLayers') for (const id of r.layers ?? []) working.add(id);
-        return [];
-      });
-    }
-    steps.push(() => {
-      const inside = [...new Set(barsOf(working)
-        .filter((b) => b.end > b.start && b.start >= iv.start - eps && b.end <= iv.end + eps)
-        .map((b) => b.layer))];
-      for (const id of inside) working.delete(id);
-      clipsDeleted += inside.length;
-      return inside.length > 0 ? [{ type: 'deleteLayers', layers: inside } as Command] : [];
-    });
-    steps.push(() => {
-      const gap = iv.end - iv.start;
-      const later = [...new Set(barsOf(working).filter((b) => b.start >= iv.end - eps).map((b) => b.layer))];
-      // Relative is right here: a one-shot action, not a gesture's message.
-      return later.length > 0 ? [{ type: 'moveLayersInTime', layers: later, delta: -compTime(gap), ripple: false } as Command] : [];
-    });
-  }
-  const res = await inOneEntry('Remove Silence', steps);
-  if (!res) return { gaps: 0, secondsRemoved: 0, clipsDeleted: 0, error: 'The silences could not be removed.' };
-  return {
-    gaps: intervals.length,
-    secondsRemoved: intervals.reduce((sum, iv) => sum + (iv.end - iv.start), 0),
-    clipsDeleted,
-  };
 }
 
 // ── Audio Waveform generator (shape layers) ─────────────────────────────

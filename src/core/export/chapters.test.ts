@@ -8,9 +8,6 @@
  * survives the ffmetadata parser at all.
  */
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { chaptersFromMarkers, formatFfmetadata, formatCarriesChapters } from './chapters';
 
 describe('chaptersFromMarkers', () => {
@@ -186,28 +183,6 @@ describe('formatFfmetadata', () => {
   Checked as text, for the same reason: neither side imports the other, so no
   compiler is ever in a position to notice.
 */
-describe('the chapter payload crosses the IPC boundary intact', () => {
-  const ROOT = join(__dirname, '..', '..', '..');
-  const mainSrc = readFileSync(join(ROOT, 'electron', 'main.ts'), 'utf8');
-  const bridgeSrc = readFileSync(join(ROOT, 'src', 'types', 'motionEditor.d.ts'), 'utf8');
-
-  it('declares the same field name on both sides', () => {
-    expect(bridgeSrc).toContain('chaptersFfmetadata?: string;');
-    expect(mainSrc).toContain('chaptersFfmetadata?: string;');
-  });
-
-  it('the main process maps chapters onto the output', () => {
-    // `-map_chapters` and not `-map_metadata`: the latter would also replace the
-    // output's global metadata with the metadata of a chapters-only file.
-    expect(mainSrc).toContain("'-map_chapters'");
-  });
-
-  it('the sink sends the field the handler reads', () => {
-    const sinkSrc = readFileSync(join(__dirname, 'videoSink.ts'), 'utf8');
-    expect(sinkSrc).toContain('chaptersFfmetadata:');
-  });
-});
-
 describe('formatCarriesChapters', () => {
   it('accepts the MP4/MOV family, including the HDR presets that mux to MP4', () => {
     expect(formatCarriesChapters('mp4')).toBe(true);

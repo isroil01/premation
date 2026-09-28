@@ -31,7 +31,7 @@ import {
   type OutputFormat,
   type RenderJob,
 } from '@stores/renderQueueStore';
-import { canEncodeLocally } from '@core/export/videoSink';
+import { canEncodeLocally } from '@core/export/renderSpec';
 import { OutputModuleDialog, type OutputSettings } from './OutputModuleDialog';
 import { customConfirm } from '@components/Modal/Dialogs';
 import { useExportQueueStore } from '@stores/exportQueueStore';
@@ -45,8 +45,6 @@ const FORMAT_LABEL: Record<OutputFormat, string> = {
   webm: 'WebM VP9',
   mov: 'ProRes MOV',
   gif: 'Animated GIF',
-  hdr10: 'HDR10 MP4',
-  hlg: 'HLG MP4',
   'png-sequence': 'PNG Sequence',
   'jpg-sequence': 'JPEG Sequence',
   'exr-sequence': 'EXR Sequence',
@@ -234,10 +232,6 @@ export function RenderQueuePanel(): JSX.Element {
   // Half-rendered jobs holding a staging dir. They change what the main button
   // means (Resume All, not Render All) and are what Discard would destroy.
   const resumableCount = jobs.filter((j) => j.status === 'paused' || j.status === 'stopped').length;
-  // Jobs whose frames were staged by a PREVIOUS run of the app. They are
-  // ordinary stopped jobs to the runner, but they deserve to be named: a queue
-  // that silently repopulated itself after a crash would look like a bug.
-  const fromLastSession = jobs.filter((j) => j._adopt);
   const backgroundLive = backgroundJobs.filter((j) => !isFinishedStatus(j.status)).length;
 
   return (
@@ -326,39 +320,6 @@ export function RenderQueuePanel(): JSX.Element {
           <Icon name="close" size="sm" /> Clear Done
         </button>
       </div>
-
-      {/*
-        The one thing the panel has to SAY rather than merely show.
-
-        These jobs did not come from this session, and their progress bars are
-        describing files written by a process that no longer exists. Announcing
-        that, with the count of frames already on disk, is the difference
-        between "the app remembered my render" and "why is this here".
-      */}
-      {fromLastSession.length > 0 && (
-        <div className={styles.resumeBanner}>
-          <Icon name="history" size="sm" />
-          <span className={styles.resumeBannerText}>
-            {fromLastSession.length} render{fromLastSession.length !== 1 ? 's' : ''} from your last
-            session {fromLastSession.length !== 1 ? 'have' : 'has'} frames already on disk
-            {' — '}
-            {fromLastSession
-              .map((j) => `${j.compositionName} at frame ${j.resumeFrame ?? 0}`)
-              .join(', ')}
-            .
-          </span>
-          {!isRunning && (
-            <button
-              type="button"
-              className={styles.toolbarBtnPrimary}
-              onClick={startAll}
-              title="Continue these renders from the frame they stopped on"
-            >
-              <Icon name="play" size="sm" /> Resume from last session
-            </button>
-          )}
-        </div>
-      )}
 
       {/* ── Job list ─────────────────────────────────────────────── */}
       <div className={styles.jobList}>
@@ -471,11 +432,11 @@ export function RenderQueuePanel(): JSX.Element {
                   className={`${styles.statusChip} ${statusClass(job.status)}`}
                   title={
                     job.resumeFrame != null && (job.status === 'paused' || job.status === 'stopped')
-                      ? `${job.resumeFrame} frames already rendered${job._adopt ? ' by your last session' : ''} — resumes at frame ${job.resumeFrame}`
+                      ? `${job.resumeFrame} frames already rendered — resumes at frame ${job.resumeFrame}`
                       : undefined
                   }
                 >
-                  {job._adopt ? 'Last session' : statusLabel(job.status)}
+                  {statusLabel(job.status)}
                   {job.resumeFrame != null && (job.status === 'paused' || job.status === 'stopped')
                     ? ` · frame ${job.resumeFrame}`
                     : ''}

@@ -543,9 +543,7 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
         const exp = await exportCompositionVideo({ ...cfg, signal });
         exportNote = !exp.ok
           ? `\n\nExport failed: ${exp.message}`
-          : exp.mode === 'queue'
-            ? `\n\nQueued ${cfg.format ?? 'mp4'} export in the Render Queue (job ${exp.jobId})${exp.started ? ' and started it.' : '.'}`
-            : `\n\nExported the composition as ${cfg.format ?? 'mp4'}${exp.videoCodec ? ` (${exp.videoCodec})` : ''}.`;
+          : `\n\nQueued ${cfg.format ?? 'mp4'} export in the Render Queue (job ${exp.jobId})${exp.started ? ' and started it.' : '.'}`;
       }
     }
 

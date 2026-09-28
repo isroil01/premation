@@ -58,6 +58,10 @@ jest.mock('@stores/renderQueueStore', () => ({
   canChooseOutputDir: () => true,
   useRenderQueueStore: { getState: () => ({ outputDir: '/out', chooseOutputDir }) },
 }));
+jest.mock('@layout/Export/supervisorQueue', () => ({
+  joinOutputPath: (dir: string, name: string) => `${dir}/${name}`,
+  renderAndWait: jest.fn(async () => undefined),
+}));
 
 const field = (id: string, kind: TemplateField['kind'] = 'text'): TemplateField =>
   ({ id, label: id, kind, default: '', target: { nodeId: 'n', componentType: 'Text', prop: 'content' } });
@@ -193,10 +197,10 @@ describe('DataFillSection', () => {
 
       await waitFor(() => expect(runEditorBatchRender).toHaveBeenCalled());
       const opts = runEditorBatchRender.mock.calls[0]?.[0] as unknown as {
-        pattern: string; outputDir: string; table: { rows: unknown[] };
+        pattern: string; renderFile: unknown; table: { rows: unknown[] };
       };
       expect(opts.pattern).toBe('{index}');
-      expect(opts.outputDir).toBe('/out');
+      expect(typeof opts.renderFile).toBe('function');
       expect(opts.table.rows).toHaveLength(2);
     });
 

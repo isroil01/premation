@@ -74,10 +74,10 @@ describe('export paths mark their frames for export', () => {
   it('finds the export sources at all', () => {
     // Guards the guard: an empty directory listing would make every assertion
     // below vacuously true, which is the classic way a source test dies.
+    // The page's export pipeline is gone (the engine exports); offlineRenderer
+    // remains for the page stills (AI feedback, version compare).
     expect(files.length).toBeGreaterThan(3);
     expect(files).toContain('offlineRenderer.ts');
-    expect(files).toContain('exportManager.ts');
-    expect(files).toContain('exportPreview.ts');
   });
 
   it('finds buildSnapshot calls to check', () => {
@@ -85,9 +85,9 @@ describe('export paths mark their frames for export', () => {
       (n, f) => n + buildSnapshotCalls(readFileSync(path.join(EXPORT_DIR, f), 'utf8')).length,
       0,
     );
-    // Four today. Asserted as a minimum, not an equality — a fifth path should
-    // make this file check MORE, not fail for existing.
-    expect(total).toBeGreaterThanOrEqual(4);
+    // Asserted as a minimum, not an equality — a new path should make this
+    // file check MORE, not fail for existing.
+    expect(total).toBeGreaterThanOrEqual(1);
   });
 
   it('every buildSnapshot call in the export directory passes exportComp', () => {

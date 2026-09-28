@@ -1,21 +1,15 @@
 /**
- * Export pipeline — renders the current composition to real files.
+ * The document exports — files made from the project's DATA, not rendered
+ * pixels: the re-openable project JSON, the editorial cut lists (EDL, OTIO,
+ * FCPXML, ALE), the .mogrt template package and Lottie.
  *
- * Every format shares one deterministic frame loop (offlineRenderer: frame time
- * is exactly `index / fps`, never wall-clock), so an export is reproducible and
- * matches the viewport. What differs is where the frames go:
- *
- *  - MP4 / WebM / MOV / GIF — a {@link VideoSink}: ffmpeg in a child process on
- *    the desktop, WebCodecs in the browser. See videoSink.ts.
- *  - PNG / JPEG sequence — image bytes packed into a zip by a worker.
- *  - PNG — one frame, snapped to the frame grid.
- *  - Lottie — the scene's shapes and transform tracks as bodymovin JSON.
- *  - JSON — the editable project document, re-openable with File ▸ Open.
+ * Rendered formats (MP4, WebM, MOV, GIF, image sequences, a still PNG and the
+ * WAV mixdown) are the ENGINE's: the Export form queues them on main's export
+ * supervisor (`premation-engine --export`, electron/engineExport.ts). The
+ * page's render pipeline — `runExport`, the video sinks, the WebM muxer, the
+ * GIF encoder and the raw pipe — is gone (docs/TS_ENGINE_REMOVAL.md phase 4).
  */
 
-import { createRenderBackend } from '@core/rendering/createRenderBackend';
-import type { RenderBackend } from '@core/rendering/RenderBackend';
-import { buildSnapshot, COMP_WIDTH, COMP_HEIGHT, type SnapshotComp } from '@core/rendering/buildSnapshot';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation, pointsToLottieBezier } from '@motion/animation';
 import { shapeOutline } from '@core/scene/pathOps';
@@ -31,37 +25,16 @@ import {
 import { paintBlendToLottie } from '@core/rendering/raster/paintBlend';
 import { paintRenderOrder } from '@core/rendering/raster/vectorDraw';
 import { liveDocument } from '@core/project/liveDocument';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 import { compRootOf } from '@core/scene/parenting';
 import type { SceneNode } from '@core/types';
-import { renderOffline, renderStillFrame, exportView, exportComp, resolveRange, EXPORT_YIELD_BUDGET_MS, type OfflineRenderParams } from './offlineRenderer';
-import { FramePipeline, CanvasPool, defaultConcurrency } from './framePipeline';
-import { useMotionBlurStore } from '@stores/motionBlurStore';
-import { type ZipEntry } from './zip';
-import { encodeGifBytes, encodeZipBytes } from './encodeClient';
-import { mixdownAudio } from '@core/audio/audioMixdown';
-import { type GifFrame } from './gifEncoder';
-import {
-  canEncodeLocally,
-  canvasBytes,
-  createVideoSink,
-  reopenVideoSink,
-  type ExportQuality,
-  type ProresProfile,
-  type VideoFormat,
-  type VideoSinkResult,
-} from './videoSink';
-import type { ExportChapter } from './chapters';
-import type { VideoEncoderId } from './rawPipe';
-
 import { useUIStore } from '@stores/uiStore';
 import { exportEdlText } from './exportEdl';
 import { exportOtioText } from './exportOtio';
 import { exportFcpxmlText } from './exportFcpxml';
 import { exportAleText } from './exportAle';
 import { exportMogrtZip } from './exportMogrt';
-import { encodeExr } from '@core/media/exr';
+import { canEncodeLocally, type VideoFormat } from './renderSpec';
 import { exportFormatCode, failureReason, track as trackEvent } from '@core/analytics/productEvents';
 
 export type ExportFormat =
@@ -71,147 +44,33 @@ export type ExportFormat =
   | 'jpg-sequence'
   | 'exr-sequence'
   | 'wav'
-  | 'json'
-  | 'lottie'
-  | 'edl'
-  | 'otio'
-  | 'fcpxml'
-  | 'ale'
-  | 'mogrt';
+  | DataExportFormat;
+
+/** The formats this module writes (no pixels). */
+export type DataExportFormat = 'json' | 'lottie' | 'edl' | 'otio' | 'fcpxml' | 'ale' | 'mogrt';
+
+const DATA_FORMATS: ReadonlySet<string> = new Set<DataExportFormat>(['json', 'lottie', 'edl', 'otio', 'fcpxml', 'ale', 'mogrt']);
+
+/** Whether `format` is a document export (this module) rather than an engine render. */
+export function isDataExportFormat(format: string): format is DataExportFormat {
+  return DATA_FORMATS.has(format);
+}
 
 export interface ExportOptions {
-  format: ExportFormat;
+  format: DataExportFormat;
+  /** Lottie: the frame size and timing. */
   width: number;
   height: number;
   fps: number;
   duration: number;
-  /** Current playhead time (for the single-frame PNG). */
-  time: number;
-  /** Comp size + background (defaults to 1920×1080 near-black when omitted).
-   *  `transparent` yields real alpha in PNG, WebM and MOV output. */
-  comp?: SnapshotComp;
-  /** Encoder quality tier. Draft trades visible quality for speed. */
-  quality?: ExportQuality;
-  /** mov only — which ProRes flavour to encode. Defaults to 4444 (alpha). */
-  proresProfile?: ProresProfile;
-  /**
-   * mp4 only — the H.264/HEVC encoder (Settings ▸ Export ▸ Video encoder).
-   * Software by default; a hardware encoder is probed by the desktop shell and
-   * falls back to software with a `warning` on the result.
-   */
-  videoEncoder?: VideoEncoderId;
-  /**
-   * Feed frames to ffmpeg as raw RGBA over a pipe (the desktop default) or
-   * stage them as image files first (Settings ▸ Export ▸ "Stream frames to the
-   * encoder" off). Staging is what the render-worker service and a resumable
-   * queue job use regardless; `false` here forces it for a one-shot export.
-   */
-  rawPipe?: boolean;
-  /**
-   * Chapter marks for the delivered file, derived from the composition's
-   * markers by `chaptersFromMarkers`.
-   *
-   * Passed in already-resolved rather than read from the timeline here for the
-   * same reason `range` is: an export must deliver what was asked for at the
-   * moment it was asked for, and a queued job that re-read the live marker list
-   * at render time would ship chapters the user never saw. Absent — which is
-   * what every non-dialog caller, the render queue and the headless CLI
-   * included, leaves it — means no chapters and no extra ffmpeg input.
-   */
-  chapters?: ReadonlyArray<ExportChapter>;
-  /**
-   * When false, ignore the timeline work area and export the whole composition.
-   * Default (undefined/true) keeps the existing behaviour: a set work area is
-   * the export range.
-   */
-  useWorkArea?: boolean;
-  /**
-   * EXPLICIT export range in seconds (end exclusive) — wins over the live work
-   * area. Queued render jobs capture their range at QUEUE time and pass it
-   * here: without this, every queued job read `getWorkArea()` at RUN time — a
-   * live, global value — so queueing comp A, then editing comp B's work area,
-   * rendered comp A's picture over comp B's frame range.
-   */
-  range?: { startSec: number; endSec: number };
-  /**
-   * Base filename (no extension) for the delivered file. The dialog's footer
-   * has always displayed one — and nothing downstream ever read it: the save
-   * dialog offered `motion-export-<timestamp>` regardless.
-   */
-  baseName?: string;
+  /** Lottie: the composition to export (absent = every layer). */
+  rootId?: string;
   onProgress?: (fraction: number) => void;
-  /** Cooperative cancellation for the whole export (frame loop and encoder).
-   *  Aborting rejects with a DOMException 'AbortError'. */
-  signal?: AbortSignal;
-  /**
-   * Make this render survive a RESTART of the app, described by this value.
-   *
-   * The staging dir gets a `resume.json` holding it verbatim, so a later
-   * session can list the half-finished render and rebuild the job that was
-   * producing it. The render queue passes its `RenderJobSpec`; everyone else
-   * leaves this undefined, which is what says "if this is interrupted, it is
-   * simply gone" — the right answer for a one-shot export dialog and for a
-   * headless CLI invocation that has already exited.
-   */
-  resumeSpec?: unknown;
 }
 
 /** True when an error is the cooperative-cancel rejection. */
 export function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'AbortError';
-}
-
-/** Viewport motion-blur settings, threaded into export so it matches preview. */
-function exportMotionBlur(fps: number): import('@core/effects/motionBlur').MotionBlurConfig | undefined {
-  const mb = useMotionBlurStore.getState();
-  return mb.enabled ? { enabled: true, shutterAngle: mb.shutterAngle, shutterPhase: mb.shutterPhase, samples: mb.samples, adaptiveSampleLimit: mb.adaptiveSampleLimit, fps } : undefined;
-}
-
-/** Longest edge of a project poster frame. Big enough for a retina card. */
-const THUMBNAIL_MAX_EDGE = 480;
-
-/**
- * Render one frame as a small JPEG, for a project's poster frame.
- *
- * Same renderer the viewport and every export use, so a card shows what the
- * project actually looks like rather than a generic icon. Scaled down here
- * rather than uploaded full-size: a 4K poster costs the user a slow list for
- * no visible gain.
- *
- * Returns null when there is nothing to draw — the caller must not upload a
- * blank frame and call it a preview.
- */
-export async function renderThumbnailBlob(
-  comp: SnapshotComp & { width: number; height: number },
-  time = 0,
-): Promise<Blob | null> {
-  const scale = Math.min(1, THUMBNAIL_MAX_EDGE / Math.max(comp.width, comp.height));
-  const width = Math.max(1, Math.round(comp.width * scale));
-  const height = Math.max(1, Math.round(comp.height * scale));
-
-  const { canvas, backend } = makeCanvas(width, height);
-  try {
-    if (backend.readyPromise) await backend.readyPromise;
-    backend.renderFrame(
-      buildSnapshot(
-        defaultSceneGraph,
-        defaultAnimation,
-        time,
-        undefined,
-        undefined,
-        exportView(width, height, comp),
-        undefined, // no motion blur on a still
-        // A poster frame is never transparent: it sits on a card, and a
-        // transparent JPEG is just a black one.
-        exportComp({ ...comp, transparent: false }),
-      ),
-    );
-    return await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.72));
-  } catch {
-    return null;
-  } finally {
-    backend.dispose();
-  }
 }
 
 /** Trigger a browser download for a blob. */
@@ -229,151 +88,6 @@ function download(blob: Blob, filename: string): void {
   // 10 minutes, not 4 seconds: revoking mid-write aborts the save of a large
   // blob (multi-hundred-MB sequence zips on slow disks) in some browsers.
   setTimeout(() => URL.revokeObjectURL(url), 10 * 60 * 1000);
-}
-
-function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; backend: RenderBackend } {
-  const canvas = document.createElement('canvas');
-  const backend = createRenderBackend('auto', 'auxiliary');
-  backend.attach(canvas);
-  backend.resize(w, h, 1);
-  return { canvas, backend };
-}
-
-function activeWorkArea(opts: ExportOptions): { start: number; end: number } | null {
-  if (opts.range) return { start: opts.range.startSec, end: opts.range.endSec };
-  if (opts.useWorkArea === false) return null;
-  return getTimelineController().getWorkArea();
-}
-
-function offlineParams(opts: ExportOptions): OfflineRenderParams {
-  const wa = activeWorkArea(opts);
-  return {
-    width: opts.width,
-    height: opts.height,
-    fps: opts.fps,
-    durationSec: opts.duration,
-    comp: opts.comp,
-    motionBlur: exportMotionBlur(opts.fps),
-    // getWorkArea's end is EXCLUSIVE (start + duration); resolveRange's is
-    // INCLUSIVE. Passing it straight through rendered one extra frame from
-    // OUTSIDE the work area on every partial-range export — and since the
-    // audio mixdown used the correct length, ffmpeg's `-shortest` then
-    // trimmed the picture back only when the comp had sound: same project,
-    // two different durations depending on a mute layer.
-    ...(wa
-      ? {
-          startFrame: Math.round(wa.start * opts.fps),
-          endFrame: Math.max(Math.round(wa.start * opts.fps), Math.round(wa.end * opts.fps) - 1),
-        }
-      : {}),
-  };
-}
-
-/**
- * Zero-padding width for frame filenames. THIS IS A SHARED CONTRACT: both the
- * desktop shell (electron/main.ts) and motion-back's render worker glob
- * `frame_%04d.jpg`, so this must stay 4.
- *
- * It used to be `String(total).length`, which produced `frame_000.jpg` for any
- * render under 1000 frames — ffmpeg then matched nothing and every MP4 export
- * under ~33s failed, reported as "backend offline". Frames past 9999 are fine:
- * `%04d` is a MINIMUM width, so ffmpeg still matches `frame_10000.jpg`.
- *
- * @see motion-back/src/render/render.worker.ts
- */
-export const FRAME_SEQUENCE_PAD = 4;
-
-/** The filename a given frame index is packed under. Shared by both consumers. */
-export function frameFileName(frame: number, ext: 'png' | 'jpg'): string {
-  return `frame_${String(frame).padStart(FRAME_SEQUENCE_PAD, '0')}.${ext}`;
-}
-
-/**
- * Deterministic image-sequence export: render every frame offline and pack the
- * PNG/JPEG stills into one STORE zip. Reproducible — identical bytes each run.
- */
-export async function renderSequenceZip(
-  opts: ExportOptions,
-  ext: 'png' | 'jpg',
-  onProgress?: (f: number) => void,
-  signal?: AbortSignal,
-  /** Extra files to pack alongside the frames (e.g. the mixed audio.wav). */
-  extraEntries: ReadonlyArray<ZipEntry> = [],
-): Promise<Blob> {
-  const type = ext === 'png' ? 'image/png' : 'image/jpeg';
-  // Multi-frame staging, as in the desktop video sink: the render hands each
-  // frame to a pooled canvas and moves on while several encodes run. Entries
-  // are slotted by frame index so completion order never reorders the zip.
-  const entries: ZipEntry[] = [];
-  const pipeline = new FramePipeline();
-  let pool: CanvasPool | null = null;
-  // The zip writer is classic 32-bit (no ZIP64): offsets truncate past 4GB
-  // and the whole archive is assembled in memory. Enforced DURING the render
-  // — a 1080p PNG sequence crosses the limit around ~2000 frames, and the old
-  // behaviour was to render for an hour and then die (or corrupt) at
-  // assembly. 3.5GB leaves headroom for the central directory + the worker's
-  // second copy of the entries.
-  const ZIP_BYTE_LIMIT = 3.5 * 1024 * 1024 * 1024;
-  let zipBytes = 0;
-  await renderOffline(
-    offlineParams(opts),
-    async (canvas, frame, count) => {
-      pool ??= new CanvasPool(canvas.width, canvas.height, defaultConcurrency() + 1);
-      const p = pool;
-      const snap = p.snapshot(canvas);
-      const name = frameFileName(frame, ext);
-      const slot = frame;
-      await pipeline.push(async () => {
-        try {
-          const data = await canvasBytes(snap, type, ext === 'jpg' ? 0.92 : undefined);
-          zipBytes += data.byteLength;
-          entries[slot] = { name, data };
-        } finally {
-          p.release(snap);
-        }
-      });
-      if (zipBytes > ZIP_BYTE_LIMIT) {
-        throw new Error(
-          `The ${ext.toUpperCase()} sequence exceeds the browser zip's 3.5GB limit at frame ${frame} of ${count}. `
-          + 'Export a shorter range, use JPG frames, or use the desktop app for video output.',
-        );
-      }
-      onProgress?.((frame + 1) / count);
-    },
-    signal,
-  );
-  await pipeline.drain();
-  if (entries.length === 0) throw new Error('No frames were rendered.');
-  // Assemble the archive off the main thread (falls back to sync if no worker).
-  const bytes = await encodeZipBytes([...entries, ...extraEntries]);
-  return new Blob([bytes as BlobPart], { type: 'application/zip' });
-}
-
-async function exportPNG(opts: ExportOptions): Promise<void> {
-  // Through renderStillFrame, NOT a bespoke render: this path used to call
-  // renderFrame once on a cold backend with no media convergence and no
-  // diagnostics gate — a comp with footage exported the transparent
-  // placeholder (or a half-decoded frame), and a broken compositing op that
-  // every other export REFUSES on shipped silently in a still.
-  const frame = opts.fps > 0 ? Math.round(opts.time * opts.fps) : 0;
-  const frameTime = opts.fps > 0 ? frame / opts.fps : opts.time;
-  const blob = await renderStillFrame({
-    width: opts.width,
-    height: opts.height,
-    fps: opts.fps,
-    durationSec: opts.duration,
-    comp: opts.comp,
-    motionBlur: exportMotionBlur(opts.fps),
-  }, frame);
-  opts.onProgress?.(1);
-  throwIfAborted(opts.signal);
-  if (!blob) throw new Error('The frame could not be encoded to PNG.');
-  download(blob, `${opts.baseName ?? `motion-frame-${frameTime.toFixed(2)}s`}.png`);
-}
-
-/** Throw the standard cancellation rejection when the signal has fired. */
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
 }
 
 /**
@@ -425,472 +139,6 @@ function exportALE(opts: ExportOptions): void {
   const text = exportAleText();
   opts.onProgress?.(1);
   download(new Blob([text], { type: 'text/plain' }), 'timeline.ale');
-}
-
-/** sRGB byte → approximate linear light. */
-function srgbToLinear(u: number): number {
-  const c = u / 255;
-  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-}
-
-/**
- * RGBA planes → EXR bytes. `rgba` must be linear light with ASSOCIATED
- * (premultiplied) alpha — the OpenEXR convention. The GPU readback is already
- * premultiplied; the canvas fallback premultiplies before calling this.
- */
-function encodeExrFromLinearRgba(w: number, h: number, rgba: Float32Array): Uint8Array {
-  const n = w * h;
-  const r = new Float32Array(n);
-  const g = new Float32Array(n);
-  const b = new Float32Array(n);
-  const a = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    r[i] = rgba[i * 4]!;
-    g[i] = rgba[i * 4 + 1]!;
-    b[i] = rgba[i * 4 + 2]!;
-    a[i] = rgba[i * 4 + 3]!;
-  }
-  const buf = encodeExr({
-    width: w,
-    height: h,
-    channels: [
-      { name: 'R', data: r },
-      { name: 'G', data: g },
-      { name: 'B', data: b },
-      { name: 'A', data: a },
-    ],
-  });
-  return new Uint8Array(buf);
-}
-
-/** Read canvas pixels into an OpenEXR HALF RGB file (display-referred → linear). */
-async function canvasToExrBytes(canvas: HTMLCanvasElement): Promise<Uint8Array> {
-  const w = canvas.width;
-  const h = canvas.height;
-  const scratch = document.createElement('canvas');
-  scratch.width = w;
-  scratch.height = h;
-  const ctx = scratch.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('EXR: no 2d context');
-  ctx.drawImage(canvas, 0, 0);
-  const { data } = ctx.getImageData(0, 0, w, h);
-  const n = w * h;
-  const rgba = new Float32Array(n * 4);
-  for (let i = 0; i < n; i++) {
-    // getImageData hands back STRAIGHT alpha; EXR stores associated
-    // (premultiplied) — multiply colour by alpha after linearizing.
-    const a = data[i * 4 + 3]! / 255;
-    rgba[i * 4] = srgbToLinear(data[i * 4]!) * a;
-    rgba[i * 4 + 1] = srgbToLinear(data[i * 4 + 1]!) * a;
-    rgba[i * 4 + 2] = srgbToLinear(data[i * 4 + 2]!) * a;
-    rgba[i * 4 + 3] = a;
-  }
-  return encodeExrFromLinearRgba(w, h, rgba);
-}
-
-export async function renderExrSequenceZip(
-  opts: ExportOptions,
-  onProgress?: (f: number) => void,
-  signal?: AbortSignal,
-): Promise<Blob> {
-  const audio = await exportAudioEntries(opts);
-  const entries: ZipEntry[] = [];
-  await renderOffline(
-    offlineParams(opts),
-    async (canvas, frame, count, backend) => {
-      const linear =
-        (await backend?.readLinearRgbaAsync?.())
-        ?? backend?.readLinearRgba?.()
-        ?? null;
-      // Exact-size match only: a stale readback from a previous resolution
-      // would decode as garbled rows, which is worse than the canvas fallback.
-      const data = linear && linear.length === canvas.width * canvas.height * 4
-        ? encodeExrFromLinearRgba(canvas.width, canvas.height, linear)
-        : await canvasToExrBytes(canvas);
-      entries.push({
-        name: `frame_${String(frame).padStart(FRAME_SEQUENCE_PAD, '0')}.exr`,
-        data,
-      });
-      onProgress?.((frame + 1) / count);
-    },
-    signal,
-  );
-  if (entries.length === 0) throw new Error('No frames were rendered.');
-  const bytes = await encodeZipBytes([...entries, ...audio]);
-  onProgress?.(1);
-  return new Blob([bytes as BlobPart], { type: 'application/zip' });
-}
-
-async function exportExrSequence(opts: ExportOptions): Promise<void> {
-  const blob = await renderExrSequenceZip(opts, opts.onProgress, opts.signal);
-  download(blob, `${opts.baseName ?? defaultBaseName()}-exr-sequence.zip`);
-}
-
-// ── Video / GIF export ───────────────────────────────────────────────
-
-/**
- * Render every frame into a video sink and produce one file.
- *
- * On the desktop this stages frames to a temp dir and encodes them with ffmpeg
- * in a child process; in the browser it encodes with WebCodecs. Either way the
- * loop is the deterministic one (frame time = index / fps), so two exports of the
- * same project are identical, and the sink reports how many frames it actually
- * received — a zero-frame encode throws instead of writing a black file.
- *
- * @see videoSink.ts for why MediaRecorder is no longer used.
- */
-export async function renderVideo(
-  opts: ExportOptions,
-  format: VideoFormat,
-  onProgress?: (f: number) => void,
-  signal?: AbortSignal,
-): Promise<VideoSinkResult> {
-  const audio = await exportAudioBytes(opts);
-  const sink = createVideoSink({
-    format,
-    width: opts.width,
-    height: opts.height,
-    fps: opts.fps,
-    quality: opts.quality ?? 'high',
-    ...(opts.proresProfile ? { proresProfile: opts.proresProfile } : {}),
-    ...(opts.videoEncoder ? { videoEncoder: opts.videoEncoder } : {}),
-    ...(opts.rawPipe === false ? { pipeline: 'staged' as const } : {}),
-    transparent: !!opts.comp?.transparent,
-    ...(opts.chapters?.length ? { chapters: opts.chapters } : {}),
-    ...(audio ? { audioWav: audio } : {}),
-  });
-  if (!sink) throw new Error(unsupportedFormatMessage(format));
-
-  const { withNeutralDisplayForHdrEncode } = await import('./hdrTransfer');
-  const { useColorManagementStore } = await import('@stores/colorManagementStore');
-  const runEncode = async (): Promise<VideoSinkResult> => {
-    try {
-      await renderOffline(
-        { ...offlineParams(opts), yieldBudgetMs: EXPORT_YIELD_BUDGET_MS },
-        async (canvas, frame, count, backend) => {
-          // The backend rides along as the sink's optional float-linear frame
-          // source (the HDR sink stages from it instead of 8-bit sRGB bytes).
-          await sink.addFrame(canvas, frame, backend);
-          // Encoding is the bulk of the work for a video, so hold the reported
-          // progress just short of done until the encode itself finishes.
-          onProgress?.(((frame + 1) / count) * 0.95);
-        },
-        signal,
-      );
-      throwIfAborted(signal);
-      const result = await sink.finish();
-      onProgress?.(1);
-      return result;
-    } catch (err) {
-      await sink.dispose();
-      throw err;
-    }
-  };
-
-  // HDR delivery bakes PQ/HLG once in the sink — neutralize viewport ODT first.
-  if (format === 'hdr10' || format === 'hlg') {
-    const cm = useColorManagementStore.getState();
-    return withNeutralDisplayForHdrEncode(
-      runEncode,
-      (v) => cm.setDisplayTransform(v),
-      () => cm.displayTransform,
-    );
-  }
-  return runEncode();
-}
-
-/**
- * A video render the queue can PAUSE and RESUME without losing staged frames.
- *
- * The desktop sink already makes this cheap: every frame lands as an image in a
- * per-job temp dir and ffmpeg encodes ONCE at the end from `frame_%04d` — so a
- * paused render is nothing more exotic than "the loop stopped after frame N and
- * the files for 0..N are still there". Resume restarts the loop at N+1, staging
- * into the SAME sink; nothing already rendered is re-rendered or re-encoded.
- *
- * `run` treats the abort signal as PAUSE, not failure: it resolves with the
- * next offset instead of throwing, and deliberately does NOT dispose the sink —
- * disposal is exactly the thing a pause must not do (it deletes the staging
- * dir, which was the entire pre-existing behaviour this replaces). Real errors
- * still throw, after disposing.
- *
- * Session-scoped on purpose: the sink handle lives in memory, so quitting the
- * app still loses the partial render (as AE's queue does). What a pause no
- * longer loses is the work.
- *
- * Frames staged before a pause reflect the project AS IT WAS — editing between
- * pause and resume produces a file that changes content mid-way. That is
- * inherent to resumable rendering, not a bug to fix here.
- */
-export interface ResumableVideoRender {
-  /** Frames in the export range — the denominator for progress. */
-  totalFrames: number;
-  /**
-   * Render frames starting at `fromOffset` (0-based within the export range)
-   * into the sink. Resolves `{done: true}` after the last frame stages, or
-   * `{done: false, nextOffset}` when the signal fired mid-run.
-   */
-  run(
-    fromOffset: number,
-    onProgress?: (f: number) => void,
-    signal?: AbortSignal,
-  ): Promise<{ done: true } | { done: false; nextOffset: number }>;
-  /** Encode the staged frames into the deliverable. */
-  finish(): Promise<VideoSinkResult>;
-  /** Abandon the render and delete the staging dir. */
-  dispose(): Promise<void>;
-  /**
-   * The staging dir's id, or null before the first frame lands.
-   *
-   * This is the one value that lets a queue REMEMBER which directory on disk
-   * belongs to which of its jobs. Without it a relaunched app can only guess
-   * (by comparing what a manifest says it was rendering against what the queue
-   * has), and a duplicated job would make that guess ambiguous.
-   */
-  stagingJobId(): string | null;
-}
-
-/**
- * A staging dir left behind by a previous run of the app, and how far it got.
- *
- * Handed back by `render:adoptJob` after it has re-registered the directory in
- * main under its original id. `stagedFrames` is counted off the FILES, not read
- * from the manifest, so resuming at it can neither restage work that exists nor
- * leave a hole ffmpeg would silently truncate at.
- */
-export interface ResumableRenderAdoption {
-  jobId: string;
-  stagedFrames: number;
-}
-
-/**
- * A resumable render, or null where resuming is impossible — the browser sinks
- * stream their encode as frames arrive, so a paused stream has no staging to
- * come back to. Callers fall back to the one-shot `renderVideo` there.
- *
- * With `adopt`, the render attaches to a staging dir a PREVIOUS SESSION opened
- * rather than opening its own. Everything after that point is identical: the
- * frame loop starts at the offset the caller asks for and `finish()` encodes
- * one sequence of files, which is why a resume across a restart needed no
- * second render path.
- */
-export async function createResumableVideoRender(
-  opts: ExportOptions,
-  format: VideoFormat,
-  adopt?: ResumableRenderAdoption,
-): Promise<ResumableVideoRender | null> {
-  if (!canEncodeLocally()) return null;
-  // Computed even when adopting, and deliberately: the wav is already staged in
-  // the dir from the first run, so nothing rewrites it — but `finish()` decides
-  // whether to tell ffmpeg the file HAS audio from this field, and a resumed
-  // render that left it undefined would deliver a silent video.
-  const audio = await exportAudioBytes(opts);
-
-  const params = offlineParams(opts);
-  const { start, end } = resolveRange(params);
-  const totalFrames = end - start + 1;
-
-  const sinkParams = {
-    format,
-    width: opts.width,
-    height: opts.height,
-    fps: opts.fps,
-    quality: opts.quality ?? 'high',
-    ...(opts.proresProfile ? { proresProfile: opts.proresProfile } : {}),
-    ...(opts.videoEncoder ? { videoEncoder: opts.videoEncoder } : {}),
-    ...(opts.rawPipe === false ? { pipeline: 'staged' as const } : {}),
-    transparent: !!opts.comp?.transparent,
-    ...(opts.chapters?.length ? { chapters: opts.chapters } : {}),
-    ...(audio ? { audioWav: audio } : {}),
-    // What lets a LATER RUN of the app find this render's frames. Only present
-    // when the caller asked to be resumable — see `VideoSinkParams.resume`.
-    ...(opts.resumeSpec !== undefined
-      ? { resume: { spec: opts.resumeSpec, totalFrames } }
-      : {}),
-  };
-  const sink = adopt
-    ? reopenVideoSink(sinkParams, adopt.jobId, adopt.stagedFrames)
-    : createVideoSink(sinkParams);
-  if (!sink) return null;
-
-  const isHdr = format === 'hdr10' || format === 'hlg';
-
-  return {
-    totalFrames,
-    async run(fromOffset, onProgress, signal) {
-      let staged = fromOffset;
-      const body = async (): Promise<{ done: true } | { done: false; nextOffset: number }> => {
-        try {
-          await renderOffline(
-            // The loop's own range does the skipping: nothing before the resume
-            // point is rendered, let alone re-staged.
-            { ...params, startFrame: start + fromOffset, endFrame: end, yieldBudgetMs: EXPORT_YIELD_BUDGET_MS },
-            async (canvas, frame, _count, backend) => {
-              // `frame` is 0-based within THIS run; the sink needs the offset
-              // within the whole export range, or a resume would restage over
-              // frame_0000 and the encode would begin mid-composition.
-              await sink.addFrame(canvas, fromOffset + frame, backend);
-              staged = fromOffset + frame + 1;
-              onProgress?.((staged / totalFrames) * 0.95);
-            },
-            signal,
-          );
-          return { done: true };
-        } catch (err) {
-          if (isAbortError(err)) return { done: false, nextOffset: staged };
-          await sink.dispose();
-          throw err;
-        }
-      };
-      if (!isHdr) return body();
-      const { withNeutralDisplayForHdrEncode } = await import('./hdrTransfer');
-      const { useColorManagementStore } = await import('@stores/colorManagementStore');
-      const cm = useColorManagementStore.getState();
-      return withNeutralDisplayForHdrEncode(
-        body,
-        (v) => cm.setDisplayTransform(v),
-        () => cm.displayTransform,
-      );
-    },
-    async finish() {
-      const result = await sink.finish();
-      return result;
-    },
-    stagingJobId: () => sink.stagingJobId?.() ?? null,
-    dispose: () => sink.dispose(),
-  };
-}
-
-/** Why a format can't be produced here, in terms the user can act on. */
-function unsupportedFormatMessage(format: VideoFormat): string {
-  if (format === 'webm') {
-    return 'This browser cannot encode video. Use the desktop app, or export a PNG sequence.';
-  }
-  return `${format.toUpperCase()} export needs the desktop app (it encodes with ffmpeg). In the browser, export WebM or a PNG sequence instead.`;
-}
-
-/**
- * Deliver a finished encode: a native save dialog on the desktop, a download in
- * the browser. Returns false when the user cancelled the save dialog.
- */
-async function deliver(result: VideoSinkResult, filenameBase: string): Promise<boolean> {
-  const filename = `${filenameBase}.${result.ext}`;
-  if (result.kind === 'file') {
-    // The bytes stay on disk and are MOVED to the chosen path — a multi-gigabyte
-    // export never passes through the renderer heap.
-    return (await result.save(filename)) !== null;
-  }
-  download(result.blob, filename);
-  return true;
-}
-
-/** True when this build hands finished renders to the OS rather than the browser. */
-export { canEncodeLocally };
-
-/** A timestamped default filename, so repeat exports don't collide. */
-function defaultBaseName(): string {
-  return `motion-export-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}`;
-}
-
-async function exportVideoFormat(
-  opts: ExportOptions,
-  format: VideoFormat,
-): Promise<ExportResult> {
-  // GIF has a dedicated encoder in the browser (no browser will mux one), so it
-  // only routes through the video sink where ffmpeg is available.
-  if (format === 'gif' && !canEncodeLocally()) {
-    const blob = await renderGifBlob(opts, opts.onProgress, opts.signal);
-    download(blob, `${opts.baseName ?? defaultBaseName()}.gif`);
-    return {};
-  }
-  const result = await renderVideo(opts, format, opts.onProgress, opts.signal);
-  const delivered = await deliver(result, opts.baseName ?? defaultBaseName());
-  if (!delivered) {
-    if (result.kind === 'file') await result.discard();
-    throw new DOMException('The user cancelled the save dialog.', 'AbortError');
-  }
-  const mastering = result.hdrMastering;
-  return {
-    videoCodec: result.kind === 'file' ? result.videoCodec : result.videoCodec,
-    ...(result.kind === 'file' && result.warning ? { warning: result.warning } : {}),
-    ...(mastering
-      ? { hdrMastering: { maxCll: mastering.maxCll, maxFall: mastering.maxFall } }
-      : {}),
-  };
-}
-
-/**
- * Peak renderer memory a browser GIF encode would need. The encoder quantises
- * the whole animation at once, so every frame's RGBA is resident.
- *
- * Without a guard, a 1080p 10-second GIF asks for ~2.5 GB and takes the tab down
- * with it — an out-of-memory crash mid-export, with no explanation.
- */
-const GIF_MEMORY_BUDGET_BYTES = 512 * 1024 * 1024;
-
-/**
- * Encode an animated GIF in the browser. Desktop builds use ffmpeg instead (via
- * the video sink), which palettises across the whole animation and streams
- * frames through disk rather than RAM.
- */
-export async function renderGifBlob(
-  opts: ExportOptions,
-  onProgress?: (f: number) => void,
-  signal?: AbortSignal,
-): Promise<Blob> {
-  const { start, end } = resolveRange(offlineParams(opts));
-  const estimate = opts.width * opts.height * 4 * (end - start + 1);
-  if (estimate > GIF_MEMORY_BUDGET_BYTES) {
-    throw new Error(
-      `A ${opts.width}×${opts.height} GIF of this length needs about ${Math.round(estimate / 1e6)} MB of memory to encode in the browser. ` +
-        'Lower the resolution, shorten the range, or export from the desktop app.',
-    );
-  }
-
-  const frames: GifFrame[] = [];
-  // Read pixels through a 2D scratch canvas rather than off the render surface:
-  // `getContext('2d')` returns null on a canvas the GPU backend has claimed, and
-  // the old code silently skipped such frames — so a GIF came out empty with no
-  // error at all.
-  const scratch = document.createElement('canvas');
-  scratch.width = opts.width;
-  scratch.height = opts.height;
-  const sctx = scratch.getContext('2d', { willReadFrequently: true });
-  if (!sctx) throw new Error('GIF export needs a 2D canvas, which this browser did not provide.');
-
-  await renderOffline(
-    offlineParams(opts),
-    async (canvas, frame, count) => {
-      sctx.clearRect(0, 0, opts.width, opts.height);
-      sctx.drawImage(canvas, 0, 0, opts.width, opts.height);
-      frames.push({
-        width: opts.width,
-        height: opts.height,
-        pixels: sctx.getImageData(0, 0, opts.width, opts.height).data,
-      });
-      onProgress?.(((frame + 1) / count) * 0.9);
-    },
-    signal,
-  );
-  if (frames.length === 0) throw new Error('No frames were rendered.');
-
-  // LZW-encode off the main thread so the app stays responsive (this pass used
-  // to freeze the whole window, cursor included). Falls back to sync if the
-  // worker is unavailable.
-  const bytes = await encodeGifBytes(frames, opts.fps);
-  if (bytes.length === 0) throw new Error('GIF encoding produced no data.');
-  onProgress?.(1);
-  return new Blob([bytes as BlobPart], { type: 'image/gif' });
-}
-
-async function exportSequence(opts: ExportOptions, ext: 'png' | 'jpg'): Promise<void> {
-  // The mixed audio rides along in the archive: a frame sequence is normally
-  // headed for another editor, and shipping the picture without the sound means
-  // re-exporting just to get it.
-  const audio = await exportAudioEntries(opts);
-  const blob = await renderSequenceZip(opts, ext, opts.onProgress, opts.signal, audio);
-  opts.onProgress?.(1);
-  download(blob, `${opts.baseName ?? defaultBaseName()}-${ext}-sequence.zip`);
 }
 
 /** "#ff8800" (also #rgb / #rgba / #rrggbbaa) → Lottie's normalized [r, g, b] triple. */
@@ -1302,7 +550,7 @@ function exportLottie(opts: ExportOptions): void {
   const op = Math.round(opts.duration * fr);
   // Scoped to THIS composition: flattenScene walks the whole project, so a
   // multi-comp project exported every comp's layers stacked into one Lottie.
-  const rootId = opts.comp?.rootId;
+  const rootId = opts.rootId;
   const layers = flattenScene(defaultSceneGraph)
     .filter((n) => (rootId ? compRootOf(n.id) === rootId && n.id !== rootId : true))
     .filter((n) => readNodeKind(n) !== 'group')
@@ -1398,108 +646,31 @@ function exportLottie(opts: ExportOptions): void {
 }
 
 /**
- * The export range in seconds — derived from the SAME frame arithmetic the
- * picture uses (offlineParams → resolveRange), so audio length always equals
- * frameCount / fps exactly. Deriving it independently from seconds left audio
- * shorter than video by up to a frame (work areas, fractional rates), and
- * ffmpeg's `-shortest` silently dropped the final video frame(s) whenever the
- * comp had sound.
+ * A document export — the Export panel and the assistant both come through
+ * here for the data formats, so this is the one place one is reported.
  */
-function exportRange(opts: ExportOptions): { startSec: number; endSec: number } {
-  const wa = activeWorkArea(opts);
-  if (wa) {
-    const startFrame = Math.round(wa.start * opts.fps);
-    const endFrame = Math.max(startFrame, Math.round(wa.end * opts.fps) - 1);
-    const startSec = startFrame / opts.fps;
-    return { startSec, endSec: startSec + (endFrame - startFrame + 1) / opts.fps };
-  }
-  const frames = Math.max(1, Math.round(opts.duration * opts.fps));
-  return { startSec: 0, endSec: frames / opts.fps };
-}
-
-/**
- * The comp's mixed audio as WAV bytes, or undefined when the comp is silent.
- *
- * Mixed over the same window the frames cover ({@link exportRange}), so picture
- * and sound can never drift apart. A failure here is never fatal: a silent video
- * beats a failed export.
- */
-async function exportAudioBytes(opts: ExportOptions): Promise<Uint8Array | undefined> {
-  const { startSec, endSec } = exportRange(opts);
-  const mix = await mixdownAudio(startSec, endSec, opts.comp?.rootId).catch(() => null);
-  if (!mix) return undefined;
-  return new Uint8Array(await mix.wav.arrayBuffer());
-}
-
-/** The mixed comp audio as a zip entry, for sequence exports. */
-export async function exportAudioEntries(opts: ExportOptions): Promise<ZipEntry[]> {
-  const bytes = await exportAudioBytes(opts);
-  return bytes ? [{ name: 'audio.wav', data: bytes }] : [];
-}
-
-/**
- * Audio-only export: the comp's mixdown as a WAV, over the same range and with
- * the same frame arithmetic every other format uses. Unlike the video paths a
- * silent comp is an ERROR here — the whole point of the format is the sound,
- * and a zero-byte-of-signal WAV with a success toast would be the export bug
- * this module keeps having to un-ship.
- */
-async function exportWavAudio(opts: ExportOptions): Promise<void> {
-  const { startSec, endSec } = exportRange(opts);
-  const mix = await mixdownAudio(startSec, endSec, opts.comp?.rootId);
-  throwIfAborted(opts.signal);
-  if (!mix) {
-    throw new Error(
-      'This composition has no audible audio in the export range — nothing to write. '
-      + 'Check layer mute states and the work area.',
-    );
-  }
-  opts.onProgress?.(1);
-  download(mix.wav, `${opts.baseName ?? defaultBaseName()}.wav`);
-}
-
-type ExportResult = { videoCodec?: string; warning?: string; hdrMastering?: { maxCll: number; maxFall: number } };
-
-/**
- * Every local export — the Export panel and the assistant both come through
- * here, so this is the one place an export is reported. A cancel is neither a
- * completion nor a failure and reports nothing past its start.
- */
-export async function runExport(opts: ExportOptions): Promise<ExportResult> {
+export async function runDataExport(opts: ExportOptions): Promise<void> {
   const format = exportFormatCode(String(opts.format));
   const started = Date.now();
   trackEvent('export_started', { format, target: 'local' });
   try {
-    const result = await runExportFormat(opts);
+    await runDataExportFormat(opts);
     trackEvent('export_completed', { format, target: 'local', seconds: (Date.now() - started) / 1000 });
-    return result;
   } catch (err) {
     if (!isAbortError(err)) trackEvent('export_failed', { format, target: 'local', reason: failureReason(err) });
     throw err;
   }
 }
 
-async function runExportFormat(opts: ExportOptions): Promise<ExportResult> {
+async function runDataExportFormat(opts: ExportOptions): Promise<void> {
   switch (opts.format) {
-    case 'png': await exportPNG(opts); return {};
-    case 'png-sequence': await exportSequence(opts, 'png'); return {};
-    case 'jpg-sequence': await exportSequence(opts, 'jpg'); return {};
-    case 'exr-sequence': await exportExrSequence(opts); return {};
-    case 'wav': await exportWavAudio(opts); return {};
-    case 'json': await exportJSON(opts); return {};
-    case 'edl': exportEDL(opts); return {};
-    case 'otio': exportOTIO(opts); return {};
-    case 'fcpxml': exportFCPXML(opts); return {};
-    case 'ale': exportALE(opts); return {};
-    case 'mogrt': await exportMogrt(opts); return {};
-    case 'lottie': exportLottie(opts); return {};
-    case 'webm':
-    case 'mp4':
-    case 'gif':
-    case 'mov':
-    case 'hdr10':
-    case 'hlg':
-      return exportVideoFormat(opts, opts.format);
+    case 'json': await exportJSON(opts); return;
+    case 'edl': exportEDL(opts); return;
+    case 'otio': exportOTIO(opts); return;
+    case 'fcpxml': exportFCPXML(opts); return;
+    case 'ale': exportALE(opts); return;
+    case 'mogrt': await exportMogrt(opts); return;
+    case 'lottie': exportLottie(opts); return;
     default:
       throw new Error(`Unsupported export format "${String(opts.format)}".`);
   }
@@ -1523,16 +694,14 @@ export interface ExportPreset {
  */
 export const EXPORT_PRESETS: ExportPreset[] = [
   { format: 'mp4', label: 'MP4 · H.264', ext: 'mp4', hint: 'Plays everywhere. Best default for sharing.', desktopOnly: true },
-  { format: 'hdr10', label: 'MP4 · HDR10 (PQ)', ext: 'mp4', hint: 'ST.2084 PQ + BT.2020. Probes host ffmpeg: HEVC 10-bit + MaxCLL/MaxFALL when libx265 is present; otherwise tagged H.264 High 10 (no MaxCLL SEI).', desktopOnly: true },
-  { format: 'hlg', label: 'MP4 · HLG', ext: 'mp4', hint: 'Hybrid Log-Gamma + BT.2020. Same encode path as HDR10 — HEVC preferred, H.264 High 10 fallback.', desktopOnly: true },
-  { format: 'webm', label: 'WebM · VP9', ext: 'webm', hint: 'Smaller than MP4, keeps transparency, ideal for the web.' },
+  { format: 'webm', label: 'WebM · VP9', ext: 'webm', hint: 'Smaller than MP4, keeps transparency, ideal for the web.', desktopOnly: true },
   { format: 'mov', label: 'MOV · ProRes', ext: 'mov', hint: 'For editing in another app. 4444 keeps alpha; the 422 profiles halve the file for opaque delivery.', desktopOnly: true },
-  { format: 'gif', label: 'Animated GIF', ext: 'gif', hint: 'No audio, 256 colours. Keep it short and small.' },
-  { format: 'wav', label: 'Audio only · WAV', ext: 'wav', hint: 'The comp’s mixed audio as 48kHz 16-bit stereo PCM. No picture.' },
-  { format: 'png-sequence', label: 'PNG sequence', ext: 'zip', hint: 'Lossless frames with alpha, zipped. The archival option.' },
-  { format: 'jpg-sequence', label: 'JPEG sequence', ext: 'zip', hint: 'Smaller frames, no alpha.' },
-  { format: 'exr-sequence', label: 'EXR sequence', ext: 'zip', hint: 'Half-float linear RGB per frame. Prefers GPU linear RT readback (WebGL2 sync / WebGPU async); falls back to display undo-gamma.' },
-  { format: 'png', label: 'Still frame', ext: 'png', hint: 'The current frame as one PNG.' },
+  { format: 'gif', label: 'Animated GIF', ext: 'gif', hint: 'No audio, 256 colours. Keep it short and small.', desktopOnly: true },
+  { format: 'wav', label: 'Audio only · WAV', ext: 'wav', hint: 'The comp’s mixed audio as 48kHz 16-bit stereo PCM. No picture.', desktopOnly: true },
+  { format: 'png-sequence', label: 'PNG sequence', ext: 'zip', hint: 'Lossless frames with alpha, zipped. The archival option.', desktopOnly: true },
+  { format: 'jpg-sequence', label: 'JPEG sequence', ext: 'zip', hint: 'Smaller frames, no alpha.', desktopOnly: true },
+  { format: 'exr-sequence', label: 'EXR sequence', ext: 'zip', hint: 'Half-float linear RGB per frame. Prefers GPU linear RT readback (WebGL2 sync / WebGPU async); falls back to display undo-gamma.', desktopOnly: true },
+  { format: 'png', label: 'Still frame', ext: 'png', hint: 'The current frame as one PNG.', desktopOnly: true },
   { format: 'lottie', label: 'Lottie', ext: 'json', hint: 'Vector animation for web/mobile players. Shapes only.' },
   { format: 'json', label: 'Project file', ext: 'json', hint: 'The editable document, re-openable with File ▸ Open.' },
   { format: 'edl', label: 'EDL (CMX 3600)', ext: 'edl', hint: 'Clip list for Premiere / Avid. No nested comps or AAF.' },
@@ -1548,4 +717,3 @@ export function availableExportPresets(): ExportPreset[] {
   return EXPORT_PRESETS.filter((p) => local || !p.desktopOnly);
 }
 
-export const DEFAULT_COMP = { width: COMP_WIDTH, height: COMP_HEIGHT };

@@ -16,10 +16,11 @@
  * afterwards is one click in the mask list for anyone who DOES want the cut.
  */
 
-import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useTrackerStore } from '@stores/trackerStore';
-import { sourceDisplaySize } from './trackerSource';
+import { documentMirror } from '@stores/documentMirror';
+import { settingsFps } from '@core/mirror/compFacts';
+import { engine } from '@core/engine/engineInstance';
 import { requireEngineJob, runEngineJob } from '@core/engine/engineJobs';
 import { secondsToFlicks } from '@motion/engine-api';
 
@@ -40,7 +41,8 @@ export async function runObjectMaskPick(opts: {
 }): Promise<void> {
   const store = useTrackerStore;
   if (store.getState().tracking || store.getState().autoPhase === 'analyzing') return;
-  const fps = useCompositionStore.getState().fps || 30;
+  const own = documentMirror().layer(opts.nodeId);
+  const fps = settingsFps(own ? documentMirror().comp(own.comp)?.settings : undefined);
   const activeTab = useProjectStore.getState().activeTabId;
   const time = activeTab ? useProjectStore.getState().tabs[activeTab]?.time ?? 0 : 0;
   const prevResult = store.getState().result;
@@ -56,6 +58,7 @@ export async function runObjectMaskPick(opts: {
         backgroundPrompts: [],
         encoderModel: '',
         decoderModel: '',
+        replaceMasks: [],
         ...(opts.box
           ? { box: { x: Math.min(opts.box.x0, opts.box.x1), y: Math.min(opts.box.y0, opts.box.y1), width: Math.abs(opts.box.x1 - opts.box.x0), height: Math.abs(opts.box.y1 - opts.box.y0) } }
           : {}),
@@ -64,8 +67,9 @@ export async function runObjectMaskPick(opts: {
     if (out.status !== 'done') throw new Error(out.error?.message ?? 'Object mask was cancelled.');
     // Land in mask mode: the produced path's next steps — Track mask, or a
     // path-following effect — both live there.
-    const display = sourceDisplaySize(opts.nodeId);
-    if (display) store.getState().setMode('mask', display.width, display.height);
+    const size = await engine().query({ type: 'getSourceSize', layers: [opts.nodeId] });
+    const display = size.ok ? size.value.sizes[0] : undefined;
+    if (display && display.width > 0) store.getState().setMode('mask', display.width, display.height);
     store.getState().finishTracking(
       prevResult,
       `Object mask: ${out.result?.contourPoints ?? 0} points (neural). ` +

@@ -13,9 +13,7 @@ import { engineIdle } from '@core/engine/engineInstance';
 import { readPropertyValue } from '@core/inspector/multiSelection';
 import { staticOrDefaultValue } from '@core/inspector/propertyValue';
 import { effectPropPath, getNodeEffects } from '@core/effects/effects';
-import type { TrackPlan } from '@core/tracking/applyTrack';
 import { propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
-import { applyTrackPlanEdit } from './trackApplyEdits';
 import { getNodeMask } from '@core/effects/mask';
 import { canReparent } from '@core/scene/parenting';
 import { sourceDisplaySize } from '@core/tracking/trackerSource';
@@ -83,22 +81,6 @@ test('an effect member keeps its value like the scene reader', async () => {
     expect([k, memberStoredAt(m, s.B, track, 0)]).toEqual([k, readPropertyValue(s.B, track, 0) ?? staticOrDefaultValue(s.B, track)]);
   }
   expect(memberStoredAt(m, s.B, effectPropPath(id, 'bottomRightX'), 0)).not.toBe(0);
-});
-
-test('a plan keys once per member group, the unkeyed member keeping its value; an effect plan reuses its effect', async () => {
-  const plan = (writes: TrackPlan['writes'], effectType?: string): TrackPlan => ({ label: 'Apply Motion Track', layer: s.B, writes, count: 1, ...(effectType ? { effectType } : {}) });
-  expect(await applyTrackPlanEdit(plan([{ track: 'x', keys: [{ compTime: 0.5, value: 50 }] }]))).toBe(1);
-  await engineIdle();
-  expect(readPropertyValue(s.B, 'x', 0.5)).toBeCloseTo(50, 6);
-  expect(readPropertyValue(s.B, 'y', 0.5)).toBeCloseTo(150, 6);
-
-  const pin = plan([{ track: 'topLeftX', keys: [{ compTime: 0, value: 10 }, { compTime: 1, value: 20 }] }], 'corner-pin');
-  expect(await applyTrackPlanEdit(pin)).toBe(1);
-  expect(await applyTrackPlanEdit(pin)).toBe(1);
-  await engineIdle();
-  const pins = getNodeEffects(s.B).filter((e) => e.type === 'corner-pin');
-  expect(pins).toHaveLength(1);
-  expect(readPropertyValue(s.B, effectPropPath(pins[0]!.id, 'topLeftX'), 1)).toBeCloseTo(20, 6);
 });
 
 test('parenting to the tracked null follows canReparent (self, loops, other comps)', async () => {

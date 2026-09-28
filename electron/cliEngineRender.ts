@@ -8,20 +8,22 @@
  * Render Queue item and an editor export are one encode. Nothing is drawn in a
  * window.
  *
- * The engine renders every CLI render (the flag is gone — docs/TS_ENGINE_REMOVAL.md
- * phase 4). What still needs the editor (`needsEditor`: the hidden window in
- * cliRender.ts, on the TypeScript engine until those CLI features are ported):
- *   - `--aspect` (reframe builds a new composition first), `--captions`,
- *     `--commands`, `--data` (they edit the document before rendering),
- *   - `--scale` without an explicit size (the comp size is read in the page),
- *   - formats the engine does not write (a single `png` still, HDR).
- * A frame the engine's preflight refuses, or an engine that will not start or
- * crashes, FAILS the render — there is no window fallback for it.
+ * The engine renders every CLI render (docs/TS_ENGINE_REMOVAL.md phase 4).
+ * `--aspect` first runs `premation-engine --prepare` (cliPrepare.ts): the
+ * engine's autoReframe job makes the retargeted composition and saves a copy of
+ * the project, which the export then renders. `--scale` is the engine's own
+ * job option. Not in the engine yet, and refused with a clear line
+ * (`needsEditor`, post-launch — docs/TS_ENGINE_REMOVAL.md): `--captions`
+ * (caption layers), `--commands` (a TypeScript-engine command log) and
+ * `--data` (template fill). A frame the engine's preflight refuses, or an
+ * engine that will not start or crashes, FAILS the render.
  *
  * Electron-free: the engine launch is injected (tested in cliEngineRender.test.ts).
  */
 
+import path from 'node:path';
 import type { CliRenderJob } from './cliArgs';
+import { ASPECT_RATIOS, runEnginePrepare, type PrepareDeps } from './cliPrepare';
 import {
   engineIneligible,
   startEngineExport,
@@ -32,29 +34,32 @@ import {
 
 export type CliEngineOutcome =
   | { kind: 'done'; frames: number; width: number; height: number; fps: number; compositionName: string }
-  /** A CLI feature the engine path does not have yet: the hidden editor window renders it. */
+  /** A CLI feature the engine does not have yet (nothing was written). */
   | { kind: 'needsEditor'; reason: string }
   | { kind: 'failed'; message: string };
 
-/** The engine export spec for a CLI render, or why the render needs the editor. */
+/**
+ * The engine export spec for a CLI render (`--aspect` is applied before, by
+ * `runCliEngineRender`), or why the engine cannot do it.
+ */
 export function cliEngineSpec(job: CliRenderJob, enginePath: string | null): { spec: EngineExportSpec } | { reason: string } {
-  if (job.aspect) return { reason: '--aspect reframes the composition in the editor first' };
-  if (job.captionsPath !== undefined) return { reason: '--captions imports captions in the editor first' };
-  if (job.commandsPath !== undefined) return { reason: '--commands replays a command log in the editor first' };
-  if (job.dataPath !== undefined) return { reason: '--data renders one file per row in the editor' };
-  if (job.scale !== undefined && job.scale !== 1 && (job.width === undefined || job.height === undefined)) {
-    return { reason: '--scale reads the composition size in the editor' };
-  }
+  if (job.captionsPath !== undefined) return { reason: '--captions (caption layers) is not in the engine yet' };
+  if (job.commandsPath !== undefined) return { reason: '--commands (command-log replay) is not in the engine yet' };
+  if (job.dataPath !== undefined) return { reason: '--data (one file per table row) is not in the engine yet' };
   const spec: EngineExportSpec = {
     projectPath: job.projectPath,
     outPath: job.outPath,
     format: job.format,
     ...(job.comp !== undefined ? { comp: job.comp } : {}),
     ...(job.startFrame !== undefined ? { startFrame: job.startFrame } : {}),
-    ...(job.endFrame !== undefined ? { endFrame: job.endFrame } : {}),
+    // A still is ONE frame: the range's first (frame 0 when none is given).
+    ...(job.format === 'png'
+      ? { startFrame: job.startFrame ?? 0, endFrame: job.startFrame ?? 0 }
+      : job.endFrame !== undefined ? { endFrame: job.endFrame } : {}),
     ...(job.fps !== undefined ? { fps: job.fps } : {}),
     ...(job.width !== undefined ? { width: job.width } : {}),
     ...(job.height !== undefined ? { height: job.height } : {}),
+    ...(job.scale !== undefined && job.scale !== 1 && job.width === undefined && job.height === undefined ? { scale: job.scale } : {}),
     ...(job.quality !== undefined ? { quality: job.quality } : {}),
     ...(job.proresProfile !== undefined ? { proresProfile: job.proresProfile } : {}),
     ...(job.transparent !== undefined ? { transparent: job.transparent } : {}),
@@ -65,19 +70,34 @@ export function cliEngineSpec(job: CliRenderJob, enginePath: string | null): { s
 
 /**
  * Render `job` in the engine. `needsEditor` means the job uses a CLI feature
- * only the editor window has (nothing was written); `failed` is any other
- * ending that did not write the file.
+ * the engine does not have yet (nothing was written); `failed` is any other
+ * ending that did not write the file. `prepare` is injected for tests.
  */
 export async function runCliEngineRender(
   job: CliRenderJob,
   deps: EngineExportDeps,
   onProgress: (fraction: number) => void,
+  prepare: typeof runEnginePrepare = runEnginePrepare,
 ): Promise<CliEngineOutcome> {
   if (!deps.enginePath) return { kind: 'failed', message: 'premation-engine is not available (reinstall Premation).' };
   const planned = cliEngineSpec(job, deps.enginePath);
   if ('reason' in planned) return { kind: 'needsEditor', reason: planned.reason };
+  const id = `cli-${Date.now().toString(36)}`;
+  let spec = planned.spec;
+  if (job.aspect) {
+    // The engine's autoReframe job makes the retargeted composition; the
+    // export renders a saved copy of the project, targeting it.
+    const ratio = ASPECT_RATIOS[job.aspect];
+    if (!ratio) return { kind: 'failed', message: `Unknown aspect "${job.aspect}".` };
+    const workDir = deps.workDirFor(`${id}-prepare`);
+    const prepDeps: PrepareDeps = { enginePath: deps.enginePath, workDir };
+    const saveTo = path.join(workDir, 'project.motion');
+    const prepared = await prepare({ projectPath: job.projectPath, ...(job.comp !== undefined ? { comp: job.comp } : {}), reframe: { ratio }, saveTo }, prepDeps);
+    if (!prepared.ok) return { kind: 'failed', message: prepared.message };
+    spec = { ...spec, projectPath: saveTo, comp: prepared.result.comp };
+  }
   let pre: EnginePreflight | null = null;
-  const run = startEngineExport(`cli-${Date.now().toString(36)}`, planned.spec, {
+  const run = startEngineExport(id, spec, {
     progress: onProgress,
     started: (info) => { pre = info; },
   }, deps);

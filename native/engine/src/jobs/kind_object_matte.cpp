@@ -13,7 +13,10 @@
 //                    trace its outline (trace_bitmap.hpp) → the contour JSON.
 //   apply (core)     addMask (mode none, "Object mask") + its feather 2 — the
 //                    path objectMask.ts writes: geometry for Track mask and
-//                    the path effects, not a cut.
+//                    the path effects, not a cut. The Roto Brush tool asks for
+//                    its own name / mode / feather and names the masks the new
+//                    one replaces (removed in the same entry); the summary's
+//                    "mask" is the new mask's id.
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -65,33 +68,58 @@ double num_or(const Json& o, std::string_view key, double fallback) {
 
 class ObjectMatteResult final : public JobResult {
  public:
-  ObjectMatteResult(std::string layer, api::BezierPath path, double iou)
-      : layer_(std::move(layer)), path_(std::move(path)), iou_(iou) {}
+  /// How the mask is written (the spec's maskName / maskMode / feather / replaceMasks).
+  struct MaskOut {
+    std::string name = "Object mask";
+    api::MaskMode mode = api::MaskMode::none;
+    double feather = 2;
+    std::vector<std::string> replace;
+  };
+
+  ObjectMatteResult(std::string layer, api::BezierPath path, double iou, MaskOut out)
+      : layer_(std::move(layer)), path_(std::move(path)), iou_(iou), out_(std::move(out)) {}
 
   [[nodiscard]] std::string summary_json() const override {
-    return "{\"contourPoints\":" + std::to_string(path_.vertices.size() / 2) + ",\"engine\":\"onnx\",\"iou\":" +
-           json_number(iou_) + "}";
+    Json s = Json::object();
+    s.set("contourPoints", Json::number(static_cast<double>(path_.vertices.size() / 2)));
+    s.set("engine", Json::string("onnx"));
+    s.set("iou", Json::number(iou_));
+    if (!mask_.empty()) s.set("mask", Json::string(mask_));
+    return js::stringify(s);
   }
   [[nodiscard]] std::string label() const override { return "Object Mask"; }
   [[nodiscard]] bool has_edits() const override { return path_.vertices.size() >= 6; }
 
   void apply(JobApply& a) const override {
+    if (!out_.replace.empty()) {
+      api::RemovePropertyGroups drop;
+      for (const std::string& id : out_.replace) drop.groups.push_back(api::PropRef{layer_, "masks/" + id});
+      (void)a.run(command(std::move(drop)));
+    }
     api::AddMask m;
     m.layer = layer_;
     m.path = path_;
-    m.mode = api::MaskMode::none;
-    m.name = "Object mask";
+    m.mode = out_.mode;
+    m.name = out_.name;
     const std::string group = mask_group_of(a.run(command(std::move(m))));
-    api::SetProperty feather;
-    feather.prop = api::PropRef{layer_, group + "/feather"};
-    feather.value = doc::v_scalar(2);
-    (void)a.run(command(std::move(feather)));
+    if (out_.feather != 0) {
+      api::SetProperty feather;
+      feather.prop = api::PropRef{layer_, group + "/feather"};
+      feather.value = doc::v_scalar(out_.feather);
+      (void)a.run(command(std::move(feather)));
+    }
+    // "masks/<id>" -> "<id>": what the summary names (the next re-segment's replaceMasks).
+    const std::size_t slash = group.find('/');
+    mask_ = slash == std::string::npos ? group : group.substr(slash + 1);
   }
 
  private:
   std::string layer_;
   api::BezierPath path_;
   double iou_;
+  MaskOut out_;
+  // Set by apply (the summary is read after it): the new mask's id.
+  mutable std::string mask_;
 };
 
 /// The model file: the spec's, else `$PREMATION_SAM_DIR/<file>`; '' when neither.
@@ -244,9 +272,18 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
   input.set("encoder", Json::string(encoder));
   input.set("decoder", Json::string(decoder));
 
+  ObjectMatteResult::MaskOut maskOut;
+  if (spec.mask_name && !spec.mask_name->empty()) maskOut.name = *spec.mask_name;
+  if (spec.mask_mode) maskOut.mode = *spec.mask_mode;
+  if (spec.feather) {
+    if (!std::isfinite(*spec.feather) || *spec.feather < 0) fail(ErrorCode::invalid_argument, "feather must be >= 0", {.layer = spec.layer});
+    maskOut.feather = *spec.feather;
+  }
+  maskOut.replace = spec.replace_masks;
+
   PreparedJob job;
   job.kind = "objectMatte";
-  job.work = [layer = fl.layer, inputJson = js::stringify(input)](JobControl& control) -> std::unique_ptr<JobResult> {
+  job.work = [layer = fl.layer, inputJson = js::stringify(input), maskOut = std::move(maskOut)](JobControl& control) -> std::unique_ptr<JobResult> {
     const std::optional<std::string> out = run_child("objectMatte", inputJson, control);
     if (!out) return nullptr;
     const std::optional<Json> r = js::parse(*out);
@@ -267,7 +304,7 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
     if (path.vertices.size() < 6) fail(ErrorCode::not_found, kNothingFound, {.layer = layer});
     path.in_tangents.assign(path.vertices.size(), 0.0);
     path.out_tangents.assign(path.vertices.size(), 0.0);
-    return std::make_unique<ObjectMatteResult>(layer, std::move(path), num_or(*r, "iou", 0));
+    return std::make_unique<ObjectMatteResult>(layer, std::move(path), num_or(*r, "iou", 0), maskOut);
   };
   return job;
 }

@@ -2837,6 +2837,10 @@ struct ObjectMatteJob {
   std::string encoder_model;
   std::string decoder_model;
   std::optional<Rect> box;
+  std::optional<std::string> mask_name;
+  std::optional<MaskMode> mask_mode;
+  std::optional<double> feather;
+  std::vector<std::string> replace_masks;
   bool operator==(const ObjectMatteJob&) const = default;
 };
 

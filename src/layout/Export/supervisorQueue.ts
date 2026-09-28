@@ -1,59 +1,58 @@
 /**
- * Where a queued or exported render runs: main's supervisor, or this window.
+ * Every rendered file goes through main's export supervisor — the ENGINE
+ * export (`premation-engine --export`, electron/engineExport.ts). There is no
+ * in-window render any more (docs/TS_ENGINE_REMOVAL.md phase 4): the Export
+ * dialog/panel, Add to Queue, the Render Queue panel's Render All, the data
+ * batch and the assistant's export all end here.
  *
- * One decision shared by the Export dialog/panel (Export and Add to Queue) and
- * the Render Queue panel's own Add Comp, so the three cannot disagree about
- * which builds render out of process.
- *
- * The in-window queue (`renderQueueStore`) is NOT retired by this. It is still
- * the whole queue on the web/hosted edition, with `exportInProcess` on, for
- * formats the headless render cannot write (HDR), for projects whose snapshot
- * could not carry their footage — and for every job an older version persisted
- * (`renderQueuePersist`), which reloads and resumes in-window exactly as before.
+ * The editor's part: an output path, a snapshot of the project where main
+ * said to write it, and a job on main's queue. `renderAndWait` additionally
+ * follows the job to its end, for the callers that go row by row.
  */
 
 import type { ExportFormat } from '@core/export/exportManager';
-import { buildSupervisorSpec, exportSupervisorAvailable, exportSupervisorClient } from '@core/export/exportSupervisorClient';
+import {
+  buildSupervisorSpec,
+  exportSupervisorAvailable,
+  exportSupervisorClient,
+  isFinishedStatus,
+  type ExportJobRecord,
+  type SupervisorSpecInput,
+} from '@core/export/exportSupervisorClient';
 import { currentProjectSnapshotIsPortable } from '@core/export/snapshotPortability';
 import { getProjectManager } from '@core/services/coreServices';
 import { documentMirror } from '@stores/documentMirror';
 import { useExportQueueStore } from '@stores/exportQueueStore';
-import { usePreferenceStore } from '@stores/preferenceStore';
-import { canChooseOutputDir, useRenderQueueStore, type RenderJob } from '@stores/renderQueueStore';
+import { canChooseOutputDir, setRenderQueueSubmitter, useRenderQueueStore, type RenderJob } from '@stores/renderQueueStore';
 import { useUIStore } from '@stores/uiStore';
 
-/**
- * Formats the out-of-process path can take: everything the headless CLI can
- * render to a file. The rest (Lottie, WAV, the editorial formats, a single
- * PNG, the HDR presets) stay in-window.
- */
-const SUPERVISED: ReadonlySet<string> = new Set<ExportFormat>(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+/** The formats the engine export writes. The document exports (Lottie, JSON, the cut lists) are `runDataExport`'s. */
+const ENGINE_FORMATS: ReadonlySet<string> = new Set<ExportFormat>([
+  'mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence', 'png', 'wav',
+]);
+
+/** Whether the engine export writes `format`. */
+export function isEngineFormat(format: ExportFormat | string): boolean {
+  return ENGINE_FORMATS.has(format);
+}
 
 /**
- * Whether an export of `format` should go to the main-owned queue.
- *
- * Desktop with the bridge and the preference at its default (off = out of
- * process). The web edition has no supervisor and takes the in-window path;
- * so does anyone who turned `exportInProcess` on.
- *
- * And only when the snapshot can carry the project to another window
- * (`currentProjectSnapshotIsPortable`): a non-local-first build writes a single
- * JSON whose footage is still `blob:` URLs only THIS window can read, and even a
- * local-first bundle cannot collect a layer's `blob:` with no library entry
- * behind it. Rendering those in the hidden window would deliver black layers
- * with a "completed" status, so they render in-window, as they always did.
- * Checked last — the scene walk is the only non-trivial cost here and every
- * other condition is a lookup.
+ * Why nothing can be rendered right now, or null. Only the desktop app has the
+ * engine; and the snapshot must carry the footage — a `blob:` URL only this
+ * window can read would render as a black layer.
  */
-export function shouldUseSupervisor(format: ExportFormat | string, exportInProcess: boolean): boolean {
-  return (
-    !exportInProcess
-    && SUPERVISED.has(format)
-    && exportSupervisorAvailable()
-    // B4: portability is a test on each footage item's media (`blob:` URLs only this window can read):
-    // `ItemInfo.mediaUrl` from the document mirror.
-    && currentProjectSnapshotIsPortable(mirrorFootageMedia())
-  );
+export function engineExportRefusal(): string | null {
+  if (!exportSupervisorAvailable()) return 'Rendering needs the desktop app: files are rendered by the engine.';
+  // B4: portability is a test on each footage item's media (`ItemInfo.mediaUrl`).
+  if (!currentProjectSnapshotIsPortable(mirrorFootageMedia())) {
+    return 'Some footage in this project lives only in this window (it was never saved to disk), so the engine cannot read it. Re-import it from a file and export again.';
+  }
+  return null;
+}
+
+/** Whether an export of `format` can be queued on the engine now. */
+export function shouldUseSupervisor(format: ExportFormat | string): boolean {
+  return isEngineFormat(format) && engineExportRefusal() === null;
 }
 
 /** Every footage item's id and media URL ('' when it has none), project order. */
@@ -69,17 +68,51 @@ export function joinOutputPath(dir: string, name: string): string {
   return `${dir.replace(/[\\/]+$/, '')}${sep}${name}`;
 }
 
-/** What a queued render needs — the in-window queue's spec, minus its runtime fields. */
+/** What a queued render needs — the Render Queue's spec, minus its runtime fields. */
 export type QueueJobInput = Omit<RenderJob, 'id' | 'status' | 'progress'>;
+
+function specInput(job: QueueJobInput): Omit<SupervisorSpecInput, 'projectPath' | 'outPath'> {
+  return {
+    compositionId: job.compositionId ?? '',
+    compositionName: job.compositionName,
+    format: job.format,
+    width: job.width,
+    height: job.height,
+    fps: job.fps,
+    range: { startSec: job.rangeStartSec ?? 0, endSec: job.rangeEndSec ?? job.durationSec },
+    quality: job.quality ?? 'high',
+    ...(job.proresProfile ? { proresProfile: job.proresProfile } : {}),
+    ...(job.bitDepth === 16 ? { bitDepth: 16 as const } : {}),
+    ...(job.videoEncoder ? { videoEncoder: job.videoEncoder } : {}),
+    transparent: job.transparent,
+    ...(job.chapters && job.chapters.length > 0 ? { chapters: job.chapters } : {}),
+  };
+}
+
+/**
+ * Snapshot the project and put one job on main's queue. Throws on a refusal or
+ * a failure before the job exists; everything after is the job's own record.
+ */
+export async function queueEngineRender(
+  input: Omit<SupervisorSpecInput, 'projectPath'>,
+  priority = 0,
+): Promise<string> {
+  const refusal = engineExportRefusal();
+  if (refusal) throw new Error(refusal);
+  const { id, projectPath } = await exportSupervisorClient.reserve();
+  await getProjectManager().snapshotTo(projectPath);
+  const spec = buildSupervisorSpec({ ...input, projectPath });
+  await useExportQueueStore.getState().connect();
+  await exportSupervisorClient.enqueue(id, spec, priority);
+  return id;
+}
 
 /**
  * Put a job on main's queue from a Render Queue spec: output folder (chosen once
- * and remembered, the queue's contract — see `renderQueueStore.outputDir`),
- * reserve, snapshot, enqueue. Resolves the job id, or null when nothing was
- * queued (folder dialog cancelled, or a failure already reported as a toast).
- *
- * Unlike the in-window queue this STARTS the render — main's queue runs what
- * it holds, one at a time, in priority order. That is the queue.
+ * and remembered — see `renderQueueStore.outputDir`), reserve, snapshot,
+ * enqueue. Resolves the job id, or null when nothing was queued (folder dialog
+ * cancelled, or a failure already reported as a toast). Main's queue runs what
+ * it holds, one at a time, in priority order.
  */
 export async function enqueueSupervisorJob(job: QueueJobInput, priority = 0): Promise<string | null> {
   const ui = useUIStore.getState();
@@ -92,31 +125,10 @@ export async function enqueueSupervisorJob(job: QueueJobInput, priority = 0): Pr
     // a second question with a different dialog.
     if (!dir) return null;
   }
-  const outPath = dir ? joinOutputPath(dir, fileName) : await exportSupervisorClient.chooseOutputPath(fileName);
-  if (!outPath) return null;
   try {
-    const { id, projectPath } = await exportSupervisorClient.reserve();
-    await getProjectManager().snapshotTo(projectPath);
-    const spec = buildSupervisorSpec({
-      compositionId: job.compositionId ?? '',
-      compositionName: job.compositionName,
-      format: job.format,
-      width: job.width,
-      height: job.height,
-      fps: job.fps,
-      range: { startSec: job.rangeStartSec ?? 0, endSec: job.rangeEndSec ?? job.durationSec },
-      quality: job.quality ?? 'high',
-      ...(job.proresProfile ? { proresProfile: job.proresProfile } : {}),
-      ...(job.bitDepth === 16 ? { bitDepth: 16 as const } : {}),
-      ...(job.videoEncoder ? { videoEncoder: job.videoEncoder } : {}),
-      transparent: job.transparent,
-      ...(job.chapters && job.chapters.length > 0 ? { chapters: job.chapters } : {}),
-      projectPath,
-      outPath,
-    });
-    await useExportQueueStore.getState().connect();
-    await exportSupervisorClient.enqueue(id, spec, priority);
-    return id;
+    const outPath = dir ? joinOutputPath(dir, fileName) : await exportSupervisorClient.chooseOutputPath(fileName);
+    if (!outPath) return null;
+    return await queueEngineRender({ ...specInput(job), outPath }, priority);
   } catch (err) {
     ui.notify({ level: 'error', message: err instanceof Error ? err.message : 'The render could not be queued', durationMs: 8000 });
     return null;
@@ -124,19 +136,49 @@ export async function enqueueSupervisorJob(job: QueueJobInput, priority = 0): Pr
 }
 
 /**
- * Add a render to "the queue" — main's when this build and project can use it,
- * the in-window one otherwise. The single entry point for Add to Queue (Export
- * dialog/panel) and Add Comp (Render Queue panel).
+ * Add a render to the queue — main's, always. The single entry point for Add
+ * to Queue (Export dialog/panel) and Add Comp (Render Queue panel).
  *
- * Synchronous on purpose: callers close their dialog on the answer. The
- * supervisor half continues in the background (a folder dialog may still
- * open, and failures arrive as toasts).
+ * Synchronous on purpose: callers close their dialog on the answer. The rest
+ * continues in the background (a folder dialog may still open, and failures
+ * arrive as toasts).
  */
-export function addToRenderQueue(job: QueueJobInput): { where: 'supervisor' | 'window'; done: Promise<string | null> } {
-  const { exportInProcess } = usePreferenceStore.getState();
-  if (shouldUseSupervisor(job.format, exportInProcess)) {
-    return { where: 'supervisor', done: enqueueSupervisorJob(job) };
-  }
-  const id = useRenderQueueStore.getState().addJob(job);
-  return { where: 'window', done: Promise.resolve(id) };
+export function addToRenderQueue(job: QueueJobInput): { where: 'supervisor'; done: Promise<string | null> } {
+  return { where: 'supervisor', done: enqueueSupervisorJob(job) };
 }
+
+/**
+ * Render one file on the engine and resolve when the job ends: `completed`
+ * resolves, `failed` rejects with the job's error, `cancelled` (including an
+ * abort of `signal`, which cancels the job) rejects with an AbortError.
+ */
+export async function renderAndWait(
+  input: Omit<SupervisorSpecInput, 'projectPath'>,
+  opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
+): Promise<ExportJobRecord> {
+  if (opts.signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
+  await useExportQueueStore.getState().connect();
+  const id = await queueEngineRender(input);
+  return new Promise<ExportJobRecord>((resolve, reject) => {
+    const onAbort = (): void => { void exportSupervisorClient.cancel(id); };
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
+    const check = (jobs: ReadonlyArray<ExportJobRecord>): boolean => {
+      const job = jobs.find((j) => j.id === id);
+      if (!job) return false;
+      opts.onProgress?.(job.progress.fraction);
+      if (!isFinishedStatus(job.status)) return false;
+      opts.signal?.removeEventListener('abort', onAbort);
+      if (job.status === 'completed') resolve(job);
+      else if (job.status === 'cancelled') reject(new DOMException('Render cancelled', 'AbortError'));
+      else reject(new Error(job.error ?? 'The render failed.'));
+      return true;
+    };
+    if (check(useExportQueueStore.getState().jobs)) return;
+    const unsubscribe = useExportQueueStore.subscribe((s) => {
+      if (check(s.jobs)) unsubscribe();
+    });
+  });
+}
+
+// Render All in the Render Queue panel hands its pending jobs over through this.
+setRenderQueueSubmitter((job) => enqueueSupervisorJob(job));

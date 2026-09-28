@@ -8,10 +8,11 @@
  * the input differs (`-f rawvideo -pix_fmt rgba … -i pipe:0` instead of a
  * frame sequence).
  *
- * Returns `{ kind: 'fallback' }` whenever the engine cannot take the job — no
- * engine binary, a frame its preflight reports as not ported, a GPU that will
- * not start, an engine crash — and main.cjs then renders the job in its
- * offscreen window as before. A failure of the encode itself is `failed`.
+ * Returns `{ kind: 'fallback' }` (the historical name) whenever the engine
+ * cannot take the job — no engine binary, a frame its preflight reports as not
+ * ported, a GPU that will not start, an engine crash — and main.cjs fails the
+ * job with that reason (there is no other renderer). A failure of the encode
+ * itself is `failed`.
  *
  * Electron-free (spawn and fs injectable) so it is tested against a fake
  * engine (engineRender.test.cjs).
@@ -28,7 +29,7 @@ const EXIT = { ok: 0, failed: 1, fallback: 3, cancelled: 4, usage: 64 };
 
 /**
  * The engine binary: PREMATION_ENGINE_PATH, else the one packaged beside the
- * app (resources/engine), else null (the window path renders everything).
+ * app (resources/engine), else null (the worker refuses to start).
  */
 function resolveEngine(env = process.env, resourcesPath = process.resourcesPath, exists = existsSync) {
   const explicit = (env.PREMATION_ENGINE_PATH ?? '').trim();
@@ -164,7 +165,7 @@ async function renderViaEngine(spec, dir, deps = {}) {
       else if (terminal && terminal.kind !== 'done') resolve(terminal);
       else {
         // No terminal line: the engine crashed; its encoder died with it and
-        // nothing was delivered — the window path renders the job.
+        // nothing was delivered.
         const why = signal ? `signal ${signal}` : `exit code ${code}`;
         resolve({ kind: 'fallback', reason: `premation-engine stopped unexpectedly (${why})${stderrTail ? `: ${stderrTail.slice(-300)}` : ''}` });
       }

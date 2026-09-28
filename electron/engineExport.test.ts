@@ -180,6 +180,39 @@ describe('startEngineExport', () => {
     expect(r.moved).toEqual([[abs('jobs', 'j1', 'engine', 'out.mp4'), abs('out', 'promo.mp4')]]);
   });
 
+  it('a still PNG: a one-frame unzipped sequence, no encoder, the frame delivered', async () => {
+    expect(engineJobFile(spec({ format: 'png', startFrame: 5, endFrame: 5 }), abs('w'))).toMatchObject({ sequence: 'png', audio: false, startFrame: 5, endFrame: 5 });
+    const r = rig();
+    const run = startEngineExport('j1', spec({ format: 'png', startFrame: 5, endFrame: 5, outPath: abs('out', 'still.png') }), { progress: () => undefined }, r.deps);
+    await until(() => r.engines.length === 1);
+    const e = r.engines[0]!;
+    e.say({ ev: 'preflight', ok: true, ...pre, frames: 1, audio: null });
+    e.say({ ev: 'done', frames: 1 });
+    e.exit(EXPORT_EXIT.ok);
+    await expect(run.done).resolves.toMatchObject({ kind: 'completed', frames: 1 });
+    expect(e.received).toEqual([]);
+    expect(r.moved).toEqual([[abs('jobs', 'j1', 'engine', 'frames', 'frame_00000.png'), abs('out', 'still.png')]]);
+  });
+
+  it('WAV: the audio-only job, delivered from its preflight line; silence fails', async () => {
+    expect(engineJobFile(spec({ format: 'wav' }), abs('w'))).toMatchObject({ audioOnly: true, audio: true });
+    const r = rig();
+    const run = startEngineExport('j1', spec({ format: 'wav', outPath: abs('out', 'mix.wav') }), { progress: () => undefined }, r.deps);
+    await until(() => r.engines.length === 1);
+    r.engines[0]!.say({ ev: 'preflight', ok: true, ...pre });
+    r.engines[0]!.exit(EXPORT_EXIT.ok);
+    await expect(run.done).resolves.toEqual({ kind: 'completed', frames: 48 });
+    expect(r.moved).toEqual([[abs('jobs', 'j1', 'engine', 'audio.wav'), abs('out', 'mix.wav')]]);
+
+    const silent = startEngineExport('j2', spec({ format: 'wav' }), { progress: () => undefined }, r.deps);
+    await until(() => r.engines.length === 2);
+    r.engines[1]!.say({ ev: 'preflight', ok: true, ...pre, audio: null });
+    r.engines[1]!.exit(EXPORT_EXIT.ok);
+    const out = await silent.done;
+    expect(out.kind).toBe('failed');
+    expect((out as { message: string }).message).toMatch(/no audible audio/);
+  });
+
   it('an unported frame in preflight falls back, delivering nothing', async () => {
     const r = rig();
     const run = startEngineExport('j1', spec(), { progress: () => undefined }, r.deps);

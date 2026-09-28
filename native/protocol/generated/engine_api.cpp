@@ -10072,6 +10072,10 @@ void encode(wire::Writer& w, const ObjectMatteJob& v) {
   w.varint(5634U); w.str(v.encoder_model);
   w.varint(5642U); w.str(v.decoder_model);
   if (v.box.has_value()) { w.varint(5650U); { const std::size_t s = w.begin_ld(); encode(w, *v.box); w.end_ld(s); } }
+  if (v.mask_name.has_value()) { w.varint(5658U); w.str(*v.mask_name); }
+  if (v.mask_mode.has_value()) { w.varint(5664U); w.varint(static_cast<std::uint32_t>(*v.mask_mode)); }
+  if (v.feather.has_value()) { w.varint(5673U); w.f64(*v.feather); }
+  for (const auto& e : v.replace_masks) { w.varint(5682U); w.str(e); }
 }
 
 Status decode(wire::Reader& r, ObjectMatteJob& out) {
@@ -10117,6 +10121,29 @@ Status decode(wire::Reader& r, ObjectMatteJob& out) {
         Rect e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.box = std::move(e);
+        break;
+      }
+      case 5658U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.mask_name = std::move(e);
+        break;
+      }
+      case 5664U: {
+        MaskMode e = MaskMode::none;
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; }
+        out.mask_mode = std::move(e);
+        break;
+      }
+      case 5673U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.feather = std::move(e);
+        break;
+      }
+      case 5682U: {
+        auto& e = out.replace_masks.emplace_back();
+        if (!r.str(e)) return Status::truncated;
         break;
       }
       default:

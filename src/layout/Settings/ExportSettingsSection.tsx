@@ -14,9 +14,9 @@ import { useEffect, useState } from 'react';
 import { cn } from '@utils/cn';
 import { Switch } from '@components/Switch';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { canEncodeLocally } from '@core/export/videoSink';
+import { canEncodeLocally } from '@core/export/renderSpec';
 import { exportSupervisorAvailable } from '@core/export/exportSupervisorClient';
-import { VIDEO_ENCODER_LABELS, isVideoEncoderId, type VideoEncoderId } from '@core/export/rawPipe';
+import { VIDEO_ENCODER_LABELS, isVideoEncoderId, type VideoEncoderId } from '@core/export/renderSpec';
 import styles from './CustomizeDialog.module.css';
 
 /** Hardware encoders main vouched for; null while the probe is still running. */

@@ -1,25 +1,24 @@
 /**
  * "Render every row" from inside the editor.
  *
- * The loop itself is `renderDataRows` — shared, unchanged, and identical to the
- * one the headless CLI drives. What differs, and all this module supplies, is
- * where a render comes FROM and where a file GOES: the active composition's own
- * settings, and the folder the desktop shell already asks the Render Queue for.
+ * The loop itself is `renderDataRows` — fill a row, render it, next row, put
+ * the template back. What this module supplies is the file naming and the
+ * format list; the render of one row is injected (`renderFile`): the Data
+ * panel hands each row to the ENGINE export (supervisorQueue.renderAndWait —
+ * snapshot the filled document, queue it, wait for the file), so a row's file
+ * is written by the same renderer as every other export.
  *
- * Deliberately not part of the Render Queue. A queued job carries settings and
- * renders the LIVE scene graph when it runs, so N queued rows would all render
- * the last row's document — see `batchRender.ts` for the full argument. This
- * runs the rows itself, in order, awaiting each.
+ * Deliberately not the Render Queue: a queued job renders the document as it
+ * is when it RUNS, so N queued rows would all render the last row. This runs
+ * the rows itself, in order, awaiting each.
  */
 
-import { renderJobOutput, outputExtFor, type OutputFormat, type RenderJobSpec } from '@core/export/renderJob';
-import { downloadBlob } from '@core/export/exportManager';
-import { useCompositionStore } from '@stores/compositionStore';
+import { outputExtFor, type OutputFormat } from '@core/export/renderSpec';
 import { renderDataRows, resolveOutputName, type BatchRenderSummary } from './batchRender';
 import type { DataTable } from './dataTable';
 import type { TemplateField } from './templateTypes';
 
-/** Formats offered for a batch. A short list on purpose — see below. */
+/** Formats offered for a batch. A short list on purpose. */
 export const BATCH_FORMATS: ReadonlyArray<{ format: OutputFormat; label: string }> = [
   { format: 'mp4', label: 'MP4 · H.264' },
   { format: 'webm', label: 'WebM · VP9' },
@@ -33,11 +32,8 @@ export interface EditorBatchOptions {
   /** File-name pattern with `{token}`s — see `resolveOutputName`. */
   pattern: string;
   format: OutputFormat;
-  /**
-   * Folder every row lands in. Null in a browser build, where each row is
-   * handed to the browser's download machinery instead.
-   */
-  outputDir: string | null;
+  /** Render the current (filled) document to the file named `fileName`. Rejects on failure. */
+  renderFile: (fileName: string, onProgress: (fraction: number) => void, signal: AbortSignal) => Promise<void>;
   onRow?: (outcome: { index: number; outputPath: string; error?: string }, total: number) => void;
   onProgress?: (fraction: number) => void;
   /** Skip rows before this one — resuming a batch that was stopped. */
@@ -55,56 +51,15 @@ export function batchFileName(pattern: string, format: OutputFormat): string {
   return pattern.toLowerCase().endsWith(`.${ext}`) ? pattern : `${pattern}.${ext}`;
 }
 
-/** Render one file per row of `table` into `outputDir`. */
+/** Render one file per row of `table`. */
 export async function runEditorBatchRender(opts: EditorBatchOptions): Promise<BatchRenderSummary> {
-  const { table, fields, pattern, format, outputDir, onRow, onProgress, startRow, signal } = opts;
-  const comp = useCompositionStore.getState().comp();
-
-  const spec = (outputPath: string): RenderJobSpec => ({
-    compositionName: comp.name,
-    compositionId: comp.id,
-    outputPath,
-    format,
-    width: comp.width,
-    height: comp.height,
-    compWidth: comp.width,
-    compHeight: comp.height,
-    fps: comp.fps,
-    durationSec: comp.durationSeconds,
-    transparent: comp.transparent,
-    background: comp.background,
-    quality: 'high',
-  });
-
+  const { table, fields, pattern, format, renderFile, onRow, onProgress, startRow, signal } = opts;
   return renderDataRows({
     table,
     fields,
     namer: (row, index) =>
       batchFileName(resolveOutputName(pattern, row, index, table.rows.length), format),
-    renderRow: async (outputPath, rowProgress, rowSignal) => {
-      const output = await renderJobOutput(spec(outputPath), rowProgress, rowSignal);
-      if (output.kind === 'paused') {
-        // Only reachable if the signal fires mid-row, and the loop stops on the
-        // same signal — so treat it as the cancellation it is rather than
-        // reporting a file that was never written.
-        throw new Error('Cancelled');
-      }
-      if (output.kind === 'blob') {
-        downloadBlob(output.blob, outputPath);
-        return;
-      }
-      if (!outputDir) {
-        // No folder to write into (a browser build): hand it over the same way
-        // a blob result goes, rather than silently discarding a finished render.
-        await output.save(outputPath);
-        return;
-      }
-      // NOT overwriting, unlike the CLI. A person watching a panel has a folder
-      // that may already hold last week's batch, and " (2)" is recoverable
-      // where a replaced file is not. The CLI's opposite choice is about a
-      // pipeline needing a knowable artifact path.
-      await output.saveTo(outputDir, outputPath);
-    },
+    renderRow: (outputPath, rowProgress, rowSignal) => renderFile(outputPath, rowProgress, rowSignal),
     ...(onRow
       ? { onRow: (outcome, total) => onRow({ index: outcome.index, outputPath: outcome.outputPath, ...(outcome.error ? { error: outcome.error } : {}) }, total) }
       : {}),

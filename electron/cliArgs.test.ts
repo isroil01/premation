@@ -91,10 +91,9 @@ describe('parseCli — render defaults', () => {
     expect(job(parseCli(['render', 'a.motion', '--out', 'clip.webm'])).format).toBe('webm');
   });
 
-  it('lets --format win over the output name, which is how HDR is reachable at all', () => {
-    // Both HDR presets write .mp4, so the extension can never imply them.
-    const parsed = job(parseCli(['render', 'a.motion', '--out', 'clip.mp4', '--format', 'hdr10']));
-    expect(parsed.format).toBe('hdr10');
+  it('lets --format win over the output name', () => {
+    const parsed = job(parseCli(['render', 'a.motion', '--out', 'clip.mp4', '--format', 'mov']));
+    expect(parsed.format).toBe('mov');
     expect(parsed.outPath).toBe('clip.mp4');
   });
 
@@ -371,11 +370,6 @@ describe('extensionFor', () => {
     for (const format of CLI_FORMATS) {
       expect(extensionFor(format)).toMatch(/^[a-z0-9]+$/);
     }
-  });
-
-  it('writes both HDR presets into an .mp4 container, since ".hdr10" is not a file', () => {
-    expect(extensionFor('hdr10')).toBe('mp4');
-    expect(extensionFor('hlg')).toBe('mp4');
   });
 
   it('zips every image sequence', () => {

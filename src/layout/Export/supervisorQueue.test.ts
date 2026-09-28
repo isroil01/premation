@@ -1,21 +1,19 @@
 /**
- * Which queue a render goes to, and what the supervisor half does with it.
+ * Every rendered file goes to main's export supervisor (the engine export).
  *
- * Pins the gate (`shouldUseSupervisor`: bridge, preference, format, snapshot
- * portability) and the routing shared by the Export dialog's Add to Queue and
- * the Render Queue panel's Add Comp: desktop jobs go to main (reserve →
- * snapshotTo → enqueue), everything else stays in the in-window queue.
+ * Pins the gate (`shouldUseSupervisor`: bridge, format, snapshot portability)
+ * and the routing shared by the Export dialog's Add to Queue and the Render
+ * Queue panel's Add Comp: reserve → snapshotTo → enqueue on main.
  */
 
 jest.mock('@core/export/exportManager', () => ({ downloadBlob: jest.fn() }));
-jest.mock('@core/export/renderJob', () => ({
-  outputExtFor: () => 'mp4',
-  renderJobOutput: jest.fn(),
-}));
 const snapshotTo = jest.fn(async (_path: string) => undefined);
 jest.mock('@core/services/coreServices', () => ({
   ...jest.requireActual('@core/services/coreServices'),
   getProjectManager: () => ({ snapshotTo }),
+}));
+jest.mock('@stores/documentMirror', () => ({
+  documentMirror: () => ({ items: new Map(), status: 'ready', comp: () => undefined }),
 }));
 const portable = jest.fn((_library: unknown) => true);
 jest.mock('@core/export/snapshotPortability', () => ({
@@ -24,7 +22,6 @@ jest.mock('@core/export/snapshotPortability', () => ({
 
 import { addToRenderQueue, enqueueSupervisorJob, joinOutputPath, shouldUseSupervisor, type QueueJobInput } from './supervisorQueue';
 import { useRenderQueueStore } from '@stores/renderQueueStore';
-import { usePreferenceStore } from '@stores/preferenceStore';
 import { resetExportQueueForTest } from '@stores/exportQueueStore';
 import { useUIStore } from '@stores/uiStore';
 import type { ExportJobSpec } from '@core/export/exportSupervisorClient';
@@ -86,7 +83,6 @@ beforeEach(() => {
   portable.mockReset().mockReturnValue(true);
   resetExportQueueForTest();
   useUIStore.setState({ jobs: [], notifications: [] });
-  usePreferenceStore.setState({ exportInProcess: false });
   useRenderQueueStore.setState({ jobs: [], outputDir: null });
   installBridge();
 });
@@ -96,35 +92,30 @@ afterAll(() => {
 });
 
 describe('shouldUseSupervisor', () => {
-  it('takes the headless formats on desktop with the preference at its default', () => {
-    for (const f of ['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']) {
-      expect(shouldUseSupervisor(f, false)).toBe(true);
+  it('takes every format the engine export writes', () => {
+    for (const f of ['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence', 'png', 'wav']) {
+      expect(shouldUseSupervisor(f)).toBe(true);
     }
   });
 
-  it('leaves formats with no headless render in-window', () => {
-    for (const f of ['hdr10', 'hlg', 'wav', 'png', 'lottie', 'json']) {
-      expect(shouldUseSupervisor(f, false)).toBe(false);
+  it('leaves the document exports to runDataExport', () => {
+    for (const f of ['lottie', 'json', 'edl', 'mogrt']) {
+      expect(shouldUseSupervisor(f)).toBe(false);
     }
   });
 
-  it('exportInProcess keeps everything in-window', () => {
-    expect(shouldUseSupervisor('mp4', true)).toBe(false);
-  });
-
-  it('no bridge (web/hosted) → in-window', () => {
+  it('no bridge → refused', () => {
     delete (window as unknown as { motionEditor?: unknown }).motionEditor;
-    expect(shouldUseSupervisor('mp4', false)).toBe(false);
+    expect(shouldUseSupervisor('mp4')).toBe(false);
   });
 
-  it('a project the snapshot cannot carry (non-local-first, editor-only footage) → in-window', () => {
+  it('a project the snapshot cannot carry (editor-only footage) → refused', () => {
     portable.mockReturnValue(false);
-    expect(shouldUseSupervisor('mp4', false)).toBe(false);
+    expect(shouldUseSupervisor('mp4')).toBe(false);
   });
 
-  it('does not walk the scene when a cheaper condition already said no', () => {
-    shouldUseSupervisor('mp4', true);
-    shouldUseSupervisor('hdr10', false);
+  it('does not walk the scene for a format the engine does not write', () => {
+    shouldUseSupervisor('lottie');
     expect(portable).not.toHaveBeenCalled();
   });
 });
@@ -175,24 +166,11 @@ describe('addToRenderQueue', () => {
     expect(useUIStore.getState().notifications.some((n) => /disk full/.test(n.message))).toBe(true);
   });
 
-  it('exportInProcess on → the in-window queue, as before', async () => {
-    usePreferenceStore.setState({ exportInProcess: true });
-    const { where, done } = addToRenderQueue(job());
-    expect(where).toBe('window');
-    const id = await done;
-    expect(useRenderQueueStore.getState().jobs.map((j) => j.id)).toEqual([id]);
-    expect(enqueued).toHaveLength(0);
-  });
-
-  it('HDR stays in-window (no headless HDR render)', () => {
-    expect(addToRenderQueue(job({ format: 'hdr10' })).where).toBe('window');
-    expect(useRenderQueueStore.getState().jobs).toHaveLength(1);
-  });
-
-  it('non-portable project → in-window, resumable path intact', () => {
+  it('non-portable project → refused with a toast, nothing enqueued', async () => {
     portable.mockReturnValue(false);
-    expect(addToRenderQueue(job()).where).toBe('window');
-    expect(useRenderQueueStore.getState().jobs[0]).toMatchObject({ status: 'queued', format: 'mp4', rangeStartSec: 1, rangeEndSec: 3 });
+    expect(await addToRenderQueue(job()).done).toBeNull();
+    expect(enqueued).toHaveLength(0);
+    expect(useUIStore.getState().notifications.some((n) => /engine cannot read/.test(n.message))).toBe(true);
   });
 });
 
