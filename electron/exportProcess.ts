@@ -1,29 +1,21 @@
 /**
- * The export supervisor — desktop export as a job queue OWNED BY MAIN, with
- * each job rendered in a hidden BrowserWindow of its own.
+ * The export supervisor — desktop export as a job queue OWNED BY MAIN, each
+ * job rendered by its own `premation-engine --export` process
+ * (electron/engineExport.ts; NATIVE_CORE_PLAN F1).
  *
- * This is T2 step 2 of docs/NATIVE_CORE_PLAN.md. Step 1 (raw RGBA to ffmpeg
- * over `render:streamChunk`, hardware encoders) is reused unchanged: the hidden
- * window runs the SAME `src/core/cli/headlessRender.ts` the `premation render`
- * CLI runs, so its frames leave through the same sink into the same ffmpeg
- * child that main already owns. What moves here is the QUEUE — which job is
- * running, what it has got to, what happens when something dies.
+ * The C++ engine is the only renderer (docs/TS_ENGINE_REMOVAL.md phase 4):
+ * the hidden-window (Chromium / TypeScript) render path and its worker IPC are
+ * gone. A spec the engine cannot write, or a frame its preflight refuses,
+ * FAILS the job with the engine's reason instead of continuing in a window.
  *
- * Why a window per job, and why main holds the state:
+ * Why main holds the state:
  *
- *  - **A renderer crash cannot kill a render.** The editor window is not
- *    involved once a job is queued: the spec and a snapshot of the project on
- *    disk are all a job needs, and both live outside the editor's process.
- *    Close the editor, crash it, reload it — the hidden window keeps drawing.
- *  - **A render crash cannot kill the editor.** An OOM on an 8K comp takes
- *    down the hidden window's renderer process and nothing else. The job goes
- *    to `failed` with the reason, the window is destroyed, its ffmpeg child is
- *    killed and its staging dir removed. The editor is not told anything it
- *    has to survive; it is told a job failed.
- *  - **Never a reused JS context.** `restoreDocument` MERGES (see
- *    packages/render-worker/electron/main.cjs), so a second job in the same
- *    window would inherit the first job's comps and timelines. One window, one
- *    job, destroyed at the end whatever the outcome.
+ *  - **An editor crash cannot kill a render.** The editor is not involved once
+ *    a job is queued: the spec and a snapshot of the project on disk are all a
+ *    job needs, and both live outside the editor's process.
+ *  - **A render crash cannot kill the editor.** An engine that dies takes its
+ *    own ffmpeg child with it (a Windows job object); the job goes to `failed`
+ *    with the reason and its staging dir is removed.
  *
  * The queue is persisted to `<userData>/export-queue.json` (temp-then-rename,
  * like every other file this app writes) so it survives a restart. A job that
@@ -31,7 +23,7 @@
  * nothing to resume from — and can be retried from its snapshot with one call.
  *
  * Everything Electron-specific is injected (`SupervisorDeps`), which is what
- * lets `exportProcess.test.ts` run the state machine against a fake window and
+ * lets `exportProcess.test.ts` run the state machine against a fake engine and
  * a fake disk. The real wiring is `createExportSupervisor` at the bottom.
  */
 
@@ -40,8 +32,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { writeFileAtomic } from './atomicWrite';
-import { hiddenRenderWebPreferences, rendererEntry } from './cliRender';
-import { handle, on } from './ipcGuard';
+import { handle } from './ipcGuard';
 import {
   engineIneligible,
   startEngineExport,
@@ -71,7 +62,7 @@ export type ExportJobStatus =
   | 'failed'
   | 'cancelled';
 
-/** The statuses in which a job holds a window. */
+/** The statuses in which a job holds an engine process. */
 export const ACTIVE_STATUSES: ReadonlySet<ExportJobStatus> = new Set(['preparing', 'rendering', 'encoding']);
 /** The statuses a job can be retried from. */
 export const RETRYABLE_STATUSES: ReadonlySet<ExportJobStatus> = new Set(['failed', 'cancelled']);
@@ -142,9 +133,9 @@ export interface ExportJobRecord {
   /** How many times this job has been started. 1 on its first run. */
   attempts: number;
   /**
-   * Which renderer is producing (or produced) the current attempt: `engine`
-   * (premation-engine --export, F1) or `chromium` (a hidden window). Absent on
-   * records written before F1 and on jobs that have not started.
+   * Which renderer produced the attempt: `engine` (premation-engine --export).
+   * `chromium` survives only on records written before phase 4 (the hidden
+   * window path is gone). Absent on jobs that have not started.
    */
   renderer?: 'engine' | 'chromium';
 }
@@ -153,54 +144,28 @@ export type ExportQueueEvent =
   | { type: 'snapshot'; jobs: ExportJobRecord[] }
   | { type: 'job'; job: ExportJobRecord };
 
-/** What the hidden window is handed when it asks for its job — the CLI's own shape. */
-export type WorkerTask = { kind: 'render'; job: Omit<ExportJobSpec, 'label' | 'totalFrames'> };
-
-/** What the hidden window reports when it is finished — the CLI's own shape. */
-export type WorkerReport =
-  | { ok: true; outPath: string; frames: number; warnings?: string[] }
-  | { ok: false; message: string };
-
-/** A hidden window, as the supervisor sees it. The real one wraps BrowserWindow. */
-export interface WorkerWindow {
-  /** The `webContents.id` — how a worker's IPC is matched to its job. */
-  readonly id: number;
-  load(): Promise<void>;
-  destroy(): void;
-  isDestroyed(): boolean;
-  /** `gone` = renderer process died, `unresponsive` = hung, `fail-load` = the app did not load. */
-  on(event: 'gone' | 'unresponsive' | 'fail-load', cb: (detail: string) => void): void;
-}
-
 /**
- * F1: runs a job in premation-engine instead of a window (electron/engineExport.ts).
- * Injected so the state machine is tested against a fake engine.
+ * Runs a job in premation-engine (electron/engineExport.ts). Injected so the
+ * state machine is tested against a fake engine.
  */
 export interface EngineLauncher {
-  /** Why this spec renders in a window (null = the engine may take it). */
+  /** Why the engine cannot render this spec (null = it can); the job then fails with it. */
   ineligible(spec: ExportJobSpec): string | null;
   start(jobId: string, spec: ExportJobSpec, cb: EngineExportCallbacks): EngineExportRun;
 }
 
 export interface SupervisorDeps {
-  createWindow(): WorkerWindow;
-  /** F1: the engine path; absent/null = every job renders in a window (the default). */
-  engine?: EngineLauncher | null;
+  /** The engine that renders every job. */
+  engine: EngineLauncher;
   /** The queue file. `read` resolves null when there is none yet. */
   persist: { read(): Promise<string | null>; write(text: string): Promise<void> };
   /** Create the job's snapshot directory and return the project path inside it. */
   prepareSnapshot(id: string): Promise<string>;
   /** Delete a job's snapshot directory (best-effort). */
   removeSnapshot(id: string): Promise<void>;
-  /**
-   * Kill the ffmpeg children and remove the staging dirs of every render job
-   * a window created (`render:beginJob` is keyed by sender). Called whenever a
-   * window is torn down before its job completed.
-   */
-  abortRenderJobsOwnedBy(webContentsId: number): void | Promise<void>;
-  /** Windows rendering at once. Default 1 (`MOTION_EXPORT_MAX_CONCURRENT`). */
+  /** Jobs rendering at once. Default 1 (`MOTION_EXPORT_MAX_CONCURRENT`). */
   maxConcurrent?: number;
-  /** How long a window has to boot and ask for its job. */
+  /** How long an engine job has to pass its preflight and start rendering. */
   bootTimeoutMs?: number;
   /** How long a job may make no progress before it is declared stuck. */
   stallTimeoutMs?: number;
@@ -228,8 +193,8 @@ function positiveInt(raw: string | undefined, fallback: number): number {
 
 /**
  * Validate a spec that arrived over IPC. Throws with a sentence — the renderer
- * shows it — rather than queueing a job that fails minutes later in a window
- * nobody can see.
+ * shows it — rather than queueing a job that fails minutes later where nobody
+ * can see.
  */
 export function validateSpec(raw: unknown): ExportJobSpec {
   if (!raw || typeof raw !== 'object') throw new Error('An export job needs a spec.');
@@ -303,12 +268,10 @@ function freshProgress(totalFrames: number): ExportJobProgress {
   return { fraction: 0, frame: 0, totalFrames, fps: null, etaSec: null };
 }
 
-/** A running job: its window or its engine process, and its clocks. */
+/** A running job: its engine process, and its clocks. */
 interface Run {
   jobId: string;
-  /** The hidden window rendering it (the Chromium path). */
-  win: WorkerWindow | null;
-  /** The engine job rendering it (F1); replaced by `win` when it falls back. */
+  /** The engine job rendering it. */
   engine: EngineExportRun | null;
   watchdog: ReturnType<typeof setTimeout> | null;
   /** When the first frame was reported — the rate is measured from here. */
@@ -320,8 +283,6 @@ interface Run {
 export class ExportSupervisor {
   private readonly jobs = new Map<string, ExportJobRecord>();
   private readonly runs = new Map<string, Run>();
-  /** webContents id → job id, so a worker can only ever reach its own job. */
-  private readonly bySender = new Map<number, string>();
   private readonly listeners = new Set<(event: ExportQueueEvent) => void>();
   private readonly idleWaiters: Array<() => void> = [];
   private readonly maxConcurrent: number;
@@ -345,7 +306,7 @@ export class ExportSupervisor {
 
   /**
    * Read the queue back from disk. A job that was active when the process
-   * ended is failed with a stated reason: its window, its ffmpeg child and its
+   * ended is failed with a stated reason: its engine, its ffmpeg child and its
    * half-written stream are gone, and pretending it is still rendering would
    * be a progress bar with nothing behind it.
    */
@@ -396,14 +357,12 @@ export class ExportSupervisor {
   // ── The queue ──────────────────────────────────────────────────────────
 
   /**
-   * F1: what a job may ask for here. `engineExport` = the engine path is on
-   * (the default; PREMATION_EXPORT_ENGINE=0 turns it off); `bitDepth16` = a mov job
-   * may ask for 16 bits per channel (rgba64le from the engine's half-float
-   * surface — the window path has 8 and warns when it has to fall back).
+   * What a job may ask for here: every job renders in the engine, and a mov
+   * job may ask for 16 bits per channel (rgba64le from the engine's
+   * half-float surface).
    */
   capabilities(): { engineExport: boolean; bitDepth16: boolean } {
-    const on = this.deps.engine != null;
-    return { engineExport: on, bitDepth16: on };
+    return { engineExport: true, bitDepth16: true };
   }
 
   list(): ExportJobRecord[] {
@@ -492,7 +451,7 @@ export class ExportSupervisor {
     return true;
   }
 
-  /** Jobs holding a window right now. */
+  /** Jobs rendering right now. */
   activeCount(): number {
     return this.runs.size;
   }
@@ -545,26 +504,23 @@ export class ExportSupervisor {
     job.progress = freshProgress(job.spec.totalFrames);
     delete job.error;
 
-    const run: Run = { jobId: job.id, win: null, engine: null, watchdog: null, renderStartedAt: null, lastEmitAt: 0, settled: false };
+    const run: Run = { jobId: job.id, engine: null, watchdog: null, renderStartedAt: null, lastEmitAt: 0, settled: false };
     this.runs.set(job.id, run);
     const engine = this.deps.engine;
-    const why = engine ? engine.ineligible(job.spec) : 'off';
-    if (engine && why === null) {
-      this.startEngine(job, run, engine);
+    const why = engine.ineligible(job.spec);
+    if (why !== null) {
+      this.settle(job, 'failed', `This export cannot be rendered: ${why}.`);
       return;
     }
-    if (engine && why !== 'off') this.log(`job ${job.id}: rendering in a window (${why})`);
-    this.startWindow(job, run);
+    this.startEngine(job, run, engine);
   }
 
-  /** F1: the job in premation-engine; a `fallback` outcome continues it in a window. */
+  /** The job in premation-engine. */
   private startEngine(job: ExportJobRecord, run: Run, engine: EngineLauncher): void {
     job.renderer = 'engine';
-    let started = false;
     const handle = engine.start(job.id, job.spec, {
       started: () => {
         if (run.settled || run.engine !== handle) return;
-        started = true;
         this.kick(run);
       },
       progress: (fraction) => {
@@ -573,7 +529,6 @@ export class ExportSupervisor {
       },
     });
     run.engine = handle;
-    // Preflight + GPU start share the window path's boot clock.
     this.arm(run, this.bootTimeoutMs, () =>
       this.settle(job, 'failed', `The export engine did not start rendering within ${Math.round(this.bootTimeoutMs / 1000)}s.`));
     this.persist();
@@ -595,61 +550,10 @@ export class ExportSupervisor {
           return;
         case 'fallback':
         default:
-          // Not delivered, nothing to undo: the same attempt continues on the
-          // Chromium path, which is the reference renderer.
-          this.log(`job ${job.id}: engine → window (${outcome.kind === 'fallback' ? outcome.reason : 'unknown'})${started ? ' after it had started' : ''}`);
-          run.engine = null;
-          run.renderStartedAt = null;
-          job.progress = freshProgress(job.spec.totalFrames);
-          job.status = 'preparing';
-          this.startWindow(job, run);
+          // The engine is the only renderer: what it cannot render is a failure, with its reason.
+          this.settle(job, 'failed', `The engine could not render this export: ${outcome.kind === 'fallback' ? outcome.reason : 'unknown reason'}.`);
       }
     });
-  }
-
-  private startWindow(job: ExportJobRecord, run: Run): void {
-    job.renderer = 'chromium';
-    let win: WorkerWindow;
-    try {
-      win = this.deps.createWindow();
-    } catch (err) {
-      this.settle(job, 'failed', `Could not open a render window: ${(err as Error).message}`);
-      return;
-    }
-    run.win = win;
-    this.bySender.set(win.id, job.id);
-
-    // Every window event is ignored once this run has settled: a renderer
-    // that dies AFTER reporting success (the window is being destroyed) must
-    // not rewrite a completed job as failed.
-    win.on('gone', (reason) => {
-      if (run.settled) return;
-      this.settle(
-        job,
-        'failed',
-        `The export renderer stopped unexpectedly (${reason}). `
-          + 'A very large composition can exhaust memory; try a smaller scale or a shorter range.',
-      );
-    });
-    win.on('unresponsive', () => {
-      if (!run.settled) this.settle(job, 'failed', 'The export renderer stopped responding.');
-    });
-    win.on('fail-load', (detail) => {
-      if (!run.settled) this.settle(job, 'failed', `The editor could not be loaded (${detail}).`);
-    });
-
-    this.arm(run, this.bootTimeoutMs, () =>
-      this.settle(
-        job,
-        'failed',
-        `The export renderer did not start within ${Math.round(this.bootTimeoutMs / 1000)}s. `
-          + 'This usually means no GPU is available.',
-      ));
-
-    this.persist();
-    this.emitJob(job);
-    this.log(`job ${job.id} started (${job.spec.label})`);
-    win.load().catch((err) => this.settle(job, 'failed', `The render window could not load: ${(err as Error).message}`));
   }
 
   private arm(run: Run, ms: number, onFire: () => void): void {
@@ -668,33 +572,7 @@ export class ExportSupervisor {
       ));
   }
 
-  /** The hidden window asks for its job. Null when this sender has none. */
-  takeJob(senderId: number): WorkerTask | null {
-    const jobId = this.bySender.get(senderId);
-    const job = jobId ? this.jobs.get(jobId) : undefined;
-    const run = jobId ? this.runs.get(jobId) : undefined;
-    if (!job || !run || run.settled) return null;
-    this.kick(run);
-    if (job.status === 'preparing') {
-      job.status = 'rendering';
-      this.persist();
-      this.emitJob(job);
-    }
-    const { label: _label, totalFrames: _total, ...request } = job.spec;
-    void _label; void _total;
-    return { kind: 'render', job: request };
-  }
-
-  /** A progress report from the hidden window. */
-  reportProgress(senderId: number, fraction: unknown): void {
-    const jobId = this.bySender.get(senderId);
-    const job = jobId ? this.jobs.get(jobId) : undefined;
-    const run = jobId ? this.runs.get(jobId) : undefined;
-    if (!job || !run || run.settled) return;
-    this.progressOf(job, run, fraction);
-  }
-
-  /** Progress from either renderer: restart the stall clock, update the rate, emit (coalesced). */
+  /** Progress from the engine: restart the stall clock, update the rate, emit (coalesced). */
   private progressOf(job: ExportJobRecord, run: Run, fraction: unknown): void {
     this.kick(run);
     const f = typeof fraction === 'number' && Number.isFinite(fraction) ? Math.max(0, Math.min(1, fraction)) : 0;
@@ -723,34 +601,9 @@ export class ExportSupervisor {
     }
   }
 
-  /** The hidden window's one terminal report. */
-  reportDone(senderId: number, report: unknown): void {
-    const jobId = this.bySender.get(senderId);
-    const job = jobId ? this.jobs.get(jobId) : undefined;
-    const run = jobId ? this.runs.get(jobId) : undefined;
-    if (!job || !run || run.settled) return;
-    const r = report as WorkerReport | null;
-    if (!r || typeof r !== 'object') {
-      this.settle(job, 'failed', 'The export renderer finished without saying what happened.');
-      return;
-    }
-    if (!r.ok) {
-      this.settle(job, 'failed', typeof r.message === 'string' ? r.message : 'Export failed.');
-      return;
-    }
-    job.progress = { ...job.progress, fraction: 1, frame: job.spec.totalFrames, etaSec: 0 };
-    if (Array.isArray(r.warnings) && r.warnings.length > 0) job.warnings = r.warnings.map(String);
-    if (job.spec.bitDepth === 16) {
-      // The window path has 8 bits per channel and nothing more to give.
-      job.warnings = [...(job.warnings ?? []), 'Rendered at 8 bits per channel: 16-bit output needs the engine, which could not render this job.'];
-    }
-    this.settle(job, 'completed');
-  }
-
   /**
-   * Every exit goes through here: the window is destroyed, its render jobs in
-   * main are torn down unless it completed, the record is written, listeners
-   * are told, and the next job starts.
+   * Every exit goes through here: an unfinished engine job is stopped, the
+   * record is written, listeners are told, and the next job starts.
    */
   private settle(job: ExportJobRecord, status: 'completed' | 'failed' | 'cancelled', error?: string): void {
     // A finished job is finished. Belt to the per-run guard above: nothing —
@@ -765,20 +618,6 @@ export class ExportSupervisor {
       this.runs.delete(job.id);
       // An engine job: its process takes its own ffmpeg child down with it.
       if (run.engine && status !== 'completed') run.engine.cancel();
-      const win = run.win;
-      if (win) {
-        this.bySender.delete(win.id);
-        // ffmpeg first, window second: a window destroyed mid-chunk leaves
-        // main's stream waiting on a pipe nobody will write to again.
-        if (status !== 'completed') {
-          void Promise.resolve(this.deps.abortRenderJobsOwnedBy(win.id)).catch(() => undefined);
-        }
-        try {
-          win.destroy();
-        } catch {
-          /* already gone */
-        }
-      }
     }
     job.status = status;
     job.finishedAt = this.now();
@@ -868,22 +707,13 @@ export const EXPORT_IPC_CHANNELS = [
   'export:capabilities',
   'export:subscribe',
   'export:chooseOutputPath',
-  'export:workerJob',
-  'export:workerProgress',
-  'export:workerDone',
 ] as const;
 
 /** The push channel: `ExportQueueEvent`s to every subscribed editor window. */
 export const EXPORT_EVENT_CHANNEL = 'export:event';
 
 /**
- * Wire the supervisor to the renderer.
- *
- * Two audiences on one module: the EDITOR (enqueue, cancel, subscribe …) and
- * the hidden WORKER windows (workerJob, workerProgress, workerDone). The worker
- * channels dispatch by `event.sender.id`, so a window can only ever reach the
- * job that was created for it — the same isolation the render-worker service
- * uses, and the reason there is no job id in those messages.
+ * Wire the supervisor to the editor (enqueue, cancel, subscribe …).
  */
 export function registerExportSupervisorIpc(
   supervisor: ExportSupervisor,
@@ -918,14 +748,6 @@ export function registerExportSupervisorIpc(
     return supervisor.list();
   });
   handle('export:chooseOutputPath', (_e, defaultName: string) => chooseOutputPath(String(defaultName ?? 'export.mp4')));
-
-  handle('export:workerJob', (e: IpcMainInvokeEvent) => {
-    const task = supervisor.takeJob(e.sender.id);
-    if (!task) throw new Error('This window has no export job.');
-    return task;
-  });
-  on('export:workerProgress', (e, fraction: unknown) => supervisor.reportProgress(e.sender.id, fraction));
-  on('export:workerDone', (e, report: unknown) => supervisor.reportDone(e.sender.id, report));
 }
 
 /** The save dialog an export's destination is picked in — BEFORE the render, unlike the in-process path. */
@@ -941,46 +763,16 @@ async function defaultChooseOutputPath(defaultName: string): Promise<string | nu
 
 // ── Electron wiring ─────────────────────────────────────────────────────
 
-/** A hidden BrowserWindow with exactly the CLI's preferences, wrapped for the supervisor. */
-function electronWorkerWindow(): WorkerWindow {
-  const win = new BrowserWindow({
-    show: false,
-    width: 1280,
-    height: 720,
-    webPreferences: hiddenRenderWebPreferences(),
-  });
-  const wc = win.webContents;
-  return {
-    id: wc.id,
-    on(event, cb) {
-      if (event === 'gone') wc.on('render-process-gone', (_e, details) => cb(details.reason));
-      else if (event === 'unresponsive') win.on('unresponsive', () => cb('unresponsive'));
-      else wc.on('did-fail-load', (_e, code, description) => cb(`${code} ${description}`));
-    },
-    load() {
-      const entry = rendererEntry();
-      return 'url' in entry ? win.loadURL(entry.url) : win.loadFile(entry.file, { hash: '/render' });
-    },
-    destroy() {
-      if (!win.isDestroyed()) win.destroy();
-    },
-    isDestroyed: () => win.isDestroyed(),
-  };
-}
-
 /** Where the queue file and the per-job snapshots live. */
 export function exportRoot(): string {
   return path.join(app.getPath('userData'), 'export-jobs');
 }
 
-/** Build the real supervisor: userData paths, real windows, real disk. */
-export function createExportSupervisor(opts: {
-  abortRenderJobsOwnedBy(webContentsId: number): void | Promise<void>;
-}): ExportSupervisor {
+/** Build the real supervisor: userData paths, the real engine, real disk. */
+export function createExportSupervisor(): ExportSupervisor {
   const root = exportRoot();
   const queueFile = path.join(root, 'export-queue.json');
   return new ExportSupervisor({
-    createWindow: electronWorkerWindow,
     persist: {
       read: () => readFile(queueFile, 'utf8').catch(() => null),
       write: (text) => writeFileAtomic(queueFile, text, { mkdirp: true }),
@@ -991,24 +783,12 @@ export function createExportSupervisor(opts: {
       return path.join(dir, 'project.motion');
     },
     removeSnapshot: (id) => rm(path.join(root, id), { recursive: true, force: true }),
-    abortRenderJobsOwnedBy: opts.abortRenderJobsOwnedBy,
     maxConcurrent: positiveInt(process.env.MOTION_EXPORT_MAX_CONCURRENT, 1),
-    engine: exportEngineEnabled(process.env) ? createEngineLauncher(root) : null,
+    engine: createEngineLauncher(root),
   });
 }
 
-/**
- * F1's flag: engine export jobs, default ON since 2026-09-28 (the golden gate
- * green, the real-app Render Queue run, 13/13 alpha scenes through the CLI —
- * NATIVE_CORE_PLAN F1). `PREMATION_EXPORT_ENGINE=0` keeps every job on the
- * Chromium window path; every job the engine cannot run falls back to it anyway.
- */
-export function exportEngineEnabled(env: Record<string, string | undefined>): boolean {
-  const v = env.PREMATION_EXPORT_ENGINE?.trim().toLowerCase();
-  return !(v === '0' || v === 'off' || v === 'false');
-}
-
-/** The real engine launcher: premation-engine from the usual places, ffmpeg as the Chromium path finds it. */
+/** The real engine launcher: premation-engine from the usual places, ffmpeg as main finds it. */
 function createEngineLauncher(root: string): EngineLauncher {
   const enginePath = resolveEngineExecutable({
     isPackaged: app.isPackaged,

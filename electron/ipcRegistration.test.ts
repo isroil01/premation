@@ -101,9 +101,6 @@ describe('IPC registration goes through one door', () => {
       'export:retry',
       'export:setPriority',
       'export:subscribe',
-      'export:workerDone',
-      'export:workerJob',
-      'export:workerProgress',
     ]);
     // And the list the module exports for the preload/docs agrees with the source.
     const listed = [...src.matchAll(/^\s+'(export:[A-Za-z]+)',$/gm)].map((m) => m[1]).sort();

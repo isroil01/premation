@@ -259,19 +259,6 @@ const bridge = {
     },
   },
 
-  /**
-   * The same queue's WORKER side — what a hidden export window uses.
-   *
-   * Mirrors `cli` exactly, and the /render route tries `cli.job()` first, then
-   * this: main answers whichever launch this window is. Both reject in a
-   * normal editor session, which is what keeps the route inert there.
-   */
-  exportWorker: {
-    job: () => ipcRenderer.invoke('export:workerJob'),
-    progress: (fraction: number) => ipcRenderer.send('export:workerProgress', fraction),
-    done: (report: unknown) => ipcRenderer.send('export:workerDone', report),
-  },
-
   diag: {
     /** One-off GPU/WebGPU report from the renderer, appended to
      *  <userData>/gpu-diagnostics.log so a packaged build with DevTools disabled

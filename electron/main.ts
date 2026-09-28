@@ -1861,13 +1861,13 @@ app.whenReady().then(() => {
   registerIndexIpc(app);
   registerThumbIpc(app);
   registerRevealIpc();
-  const renderIpc = registerRenderIpc();
-  // Desktop export as a main-owned queue, each job in a hidden window of its
-  // own (electron/exportProcess.ts). The queue file is read now, so jobs left
-  // from a previous session are listed the moment the editor asks; they start
-  // once the editor window is up, so a queued render never begins on a
-  // machine whose editor has not even painted.
-  exportSupervisor = createExportSupervisor({ abortRenderJobsOwnedBy: renderIpc.abortJobsOwnedBy });
+  registerRenderIpc();
+  // Desktop export as a main-owned queue, each job in its own
+  // `premation-engine --export` process (electron/exportProcess.ts). The queue
+  // file is read now, so jobs left from a previous session are listed the
+  // moment the editor asks; they start once the editor window is up, so a
+  // queued render never begins on a machine whose editor has not even painted.
+  exportSupervisor = createExportSupervisor();
   registerExportSupervisorIpc(exportSupervisor);
   installExportQuitGuard(exportSupervisor);
   const supervisorLoaded = exportSupervisor.load();

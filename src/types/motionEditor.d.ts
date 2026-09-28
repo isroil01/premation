@@ -763,15 +763,6 @@ export interface MotionEditorApi {
     onEvent?(handler: (event: ExportQueueEvent) => void): () => void;
   };
 
-  /**
-   * The same queue's worker side — answers only in a hidden export window,
-   * with the CLI's request and report shapes. See `src/pages/RenderPage.tsx`.
-   */
-  exportWorker?: {
-    job?(): Promise<CliTaskRequest>;
-    progress?(fraction: number): void;
-    done?(report: CliDoneReport): void;
-  };
 
   /** Diagnostics forwarded to the main-process log (DevTools-less builds). */
   diag?: {

@@ -324,7 +324,7 @@ async function pickAndImportTemplatePackage(): Promise<void> {
   if (!res.ok) {
     notify(
       res.error.code === 'unsupported'
-        ? 'Template packages are imported by the C++ engine — this session runs the TypeScript engine.'
+        ? 'Template packages are imported by the engine, which is not running here.'
         : `Could not import “${file.name}”: ${res.error.message}`,
       'error',
     );
@@ -362,8 +362,16 @@ async function pickAndOpenAfterEffectsProject(): Promise<void> {
   const { confirmDiscardChanges } = await import('@core/project/confirmDiscard');
   if (!await confirmDiscardChanges('Open an After Effects project')) return;
 
-  const { importAepFile } = await import('@core/aep/aepImport');
-  const { reportAepImport, reportAepImportFailure } = await import('@core/aep/aepImportReport');
+  const { importAepThroughEngine } = await import('@core/aep/aepImport');
+  const { reportEngineAepImport, reportAepImportFailure } = await import('@core/aep/aepImportReport');
+  // The engine converts the project from its path (importProject{path},
+  // core/aep): one undo entry, the footage imported by path. The page
+  // importer that ran on the TypeScript engine is not used here any more.
+  const diskPath = window.motionEditor?.file?.pathOf?.(file) ?? '';
+  if (!diskPath) {
+    reportAepImportFailure(file.name, 'opening an After Effects project needs the desktop app');
+    return;
+  }
 
   // A blank document first: the import ADDS compositions, and adding four of
   // someone else's on top of the user's own would produce a project belonging
@@ -373,45 +381,17 @@ async function pickAndOpenAfterEffectsProject(): Promise<void> {
   resetProjectWorkspace();
 
   notify(`Opening “${file.name}”…`, 'info');
-  // The C++ engine as owner converts the project itself (importProject{path},
-  // core/aep): one undo entry, the footage imported by path.
-  const diskPath = window.motionEditor?.file?.pathOf?.(file) ?? '';
-  if (engineOwnsDocumentNow() && diskPath) {
-    const { importAepThroughEngine } = await import('@core/aep/aepImport');
-    const { reportEngineAepImport } = await import('@core/aep/aepImportReport');
-    const viaEngine = await importAepThroughEngine(engine(), diskPath).catch((err: unknown) => ({
-      ok: false as const,
-      message: err instanceof Error ? err.message : 'the file could not be read',
-    }));
-    if (viaEngine) {
-      if (!viaEngine.ok) {
-        reportAepImportFailure(file.name, viaEngine.message);
-        return;
-      }
-      if (viaEngine.openComp) await engine().execute({ type: 'setActiveComposition', comp: viaEngine.openComp });
-      afterProjectLoaded();
-      reportEngineAepImport(file.name, viaEngine);
-      return;
-    }
-  }
-  let result: Awaited<ReturnType<typeof importAepFile>>;
-  try {
-    result = await importAepFile(file);
-  } catch (err) {
-    reportAepImportFailure(file.name, err instanceof Error ? err.message : 'the file could not be read');
+  const viaEngine = await importAepThroughEngine(engine(), diskPath).catch((err: unknown) => ({
+    ok: false as const,
+    message: err instanceof Error ? err.message : 'the file could not be read',
+  }));
+  if (!viaEngine || !viaEngine.ok) {
+    reportAepImportFailure(file.name, viaEngine ? viaEngine.message : 'this engine does not convert After Effects projects');
     return;
   }
-  if (!result.ok) {
-    reportAepImportFailure(file.name, result.message);
-    return;
-  }
-  // The same document transition Open and New make, and it needs the same
-  // undo re-baseline: one Ctrl+Z after an import must not reach back into
-  // whatever was open before it.
-  baselineProjectHistory('Open After Effects Project');
-  bumpScene();
+  if (viaEngine.openComp) await engine().execute({ type: 'setActiveComposition', comp: viaEngine.openComp });
   afterProjectLoaded();
-  reportAepImport(file.name, result);
+  reportEngineAepImport(file.name, viaEngine);
 }
 
 /**
