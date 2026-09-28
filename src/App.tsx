@@ -91,7 +91,7 @@ import { readTrack } from '@core/mirror/selection';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { MASK_ANIM_PROP } from '@core/timeline/propertyTree';
 import { fetchTimelineRows, timelineRowsNow } from '@stores/timelineRows';
-import { modifiedPropertyRows } from '@core/animation/modifiedProps';
+import { modifiedRowsOf } from '@layout/Timeline/modifiedRows';
 import { useTimelinePixelsPerSecond, useTimelineRuler, useTimelineTracks } from '@layout/Timeline/useTimelineModel';
 import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
 import { bindAdaptiveResolution } from '@stores/renderQualityStore';
@@ -553,20 +553,20 @@ function EditorShellInner(): JSX.Element {
         // AE's UU: animated, expressed, OR set away from the default — read
         // from the scene and engine, not the model (which only builds rows for
         // expanded tracks and cannot see an un-keyed 50 % scale).
-        // B4-kept: `modifiedPropertyRows` compares every STORED prop (catalog or not) with its default and
-        // names rows in the legacy row projection — it moves with that projection (see effectRows).
-        const withRows = targetIds
-          .map((id) => ({ id, rows: modifiedPropertyRows(id) }))
-          .filter((v) => v.rows.length > 0);
-        const filter = new Set<string>();
-        for (const v of withRows) for (const r of v.rows) filter.add(r);
-        setRevealFilter(filter.size > 0 ? [...filter] : null);
-        setExpandedIds((cur) => {
-          const revealed = targetIds.every((id: string) => cur.includes(id));
-          const set = new Set(cur);
-          if (revealed) for (const id of targetIds) set.delete(id);
-          else for (const v of withRows) set.add(v.id);
-          return [...set];
+        // The engine's rows and stored values (layout/Timeline/modifiedRows.ts), asked now.
+        const at = playheadNow();
+        void Promise.all(targetIds.map(async (id: string) => ({ id, rows: await modifiedRowsOf(id, at) }))).then((all) => {
+          const withRows = all.filter((v) => v.rows.length > 0);
+          const filter = new Set<string>();
+          for (const v of withRows) for (const r of v.rows) filter.add(r);
+          setRevealFilter(filter.size > 0 ? [...filter] : null);
+          setExpandedIds((cur) => {
+            const revealed = targetIds.every((id: string) => cur.includes(id));
+            const set = new Set(cur);
+            if (revealed) for (const id of targetIds) set.delete(id);
+            else for (const v of withRows) set.add(v.id);
+            return [...set];
+          });
         });
         return;
       }
