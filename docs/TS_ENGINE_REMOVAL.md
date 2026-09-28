@@ -9,6 +9,13 @@
 > This supersedes the "TypeScript fallback kept behind a flag" rule of
 > `NATIVE_CORE_PLAN.md` §0 and `CLAUDE.md`; both are updated when phase 4 lands.
 > Work lands on `native-core` only; it is never merged into `main` or `dev`.
+>
+> **Confirmed 2026-09-28:** the C++ engine is the default now (viewport,
+> document owner, export — f56f215f) and stays so without waiting for
+> bit-identity on the 10 ceiling frames; no TypeScript fallback is preserved
+> for its own sake — new work does not add page fallbacks, and phase 4 deletes
+> the existing ones. Benchmarks and real-hardware testing come after the build
+> is complete.
 
 Measured on `native-core` @ ff03f0f1: about **270k production lines and 175k
 test lines** of TypeScript engine go. Rough size: 5–8 months for one small team.

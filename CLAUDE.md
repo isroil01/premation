@@ -74,8 +74,9 @@ Electron (electron/)  →  Editor (src/layout, src/components, src/stores, src/h
 - No engine code in the UI process: not in the renderer page and not as an
   N-API addon in Electron main. Native engine code runs in the
   `premation-engine` process; a crash there restarts the engine, never the app.
-- Every native replacement ships behind a flag with the TypeScript fallback
-  intact, and flips default only when bit-identical on the golden gate.
+- One engine (owner decision, docs/TS_ENGINE_REMOVAL.md): the C++ engine is
+  the default and the only target. Do not add TypeScript fallbacks; the
+  existing TS engine, flags and page fallbacks are being deleted (phase 4).
 
 ## Repo traps
 
