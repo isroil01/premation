@@ -60,7 +60,8 @@ const SINGLETONS = new Set(['defaultSceneGraph', 'defaultAnimation']);
  * applies at a call site: the project store's tabs, dirty flags and active tab
  * are editor session state; its `comps` records are the document).
  */
-const ENGINE_MARKER = /\b(defaultSceneGraph|defaultAnimation|getTimelineController|useCompositionStore|useAssetStore|useSceneStore|useMotionBlurStore|getNode\(|readNodeKind\(|catalogFor\()/;
+// (`useAssetStore` / `useCompositionStore` are no markers since round 7: mirror projections, see DOC_STORES.)
+const ENGINE_MARKER = /\b(defaultSceneGraph|defaultAnimation|getTimelineController|useSceneStore|useMotionBlurStore|getNode\(|readNodeKind\(|catalogFor\()/;
 const PROJECT_STORE_MARKER = /\buseProjectStore\b/;
 const PROJECT_COMPS_MARKER = /\bcomps\b/;
 
