@@ -292,15 +292,23 @@ class PathNote {
  public:
   PathNote(EffectStats* stats, std::string_view layer, std::string_view type) : stats_(stats), layer_(layer), type_(type) {}
   ~PathNote() {
-    if (stats_ != nullptr) stats_->record(layer_, type_, path);
+    if (stats_ == nullptr) return;
+    try {
+      stats_->record(layer_, type_, path_);
+    } catch (...) {
+      // Diagnostics only: out of memory for the per-entry log stops the log (the counters
+      // already counted), never the frame. A destructor must not throw.
+      stats_->keepPaths = false;
+    }
   }
   PathNote(const PathNote&) = delete;
   PathNote& operator=(const PathNote&) = delete;
   PathNote(PathNote&&) = delete;
   PathNote& operator=(PathNote&&) = delete;
-  FxPath path = FxPath::gpu;
+  void set(FxPath path) noexcept { path_ = path; }
 
  private:
+  FxPath path_ = FxPath::gpu;
   EffectStats* stats_;
   std::string_view layer_;
   std::string_view type_;
@@ -312,15 +320,17 @@ class Touch {
  public:
   explicit Touch(bool& pristine) : pristine_(&pristine) {}
   ~Touch() {
-    if (!keep) *pristine_ = false;
+    if (!keep_) *pristine_ = false;
   }
   Touch(const Touch&) = delete;
   Touch& operator=(const Touch&) = delete;
   Touch(Touch&&) = delete;
   Touch& operator=(Touch&&) = delete;
-  bool keep = false;
+  /// The entry left the buffer as it was (the input stays pristine).
+  void keep() noexcept { keep_ = true; }
 
  private:
+  bool keep_ = false;
   bool* pristine_;
 };
 
@@ -523,7 +533,7 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     if (type == "fill-opacity") {
       // effectBake.ts applyEffectChain: snapshot the silhouette, then fade the
       // contents (destination-in against a flat alpha — Ao = Ad × fill).
-      touch.keep = true;
+      touch.keep();
       const double a = std::max(0.0, std::min(1.0, fx.num("amount", 1)));
       Commands sil;
       emit_textured(ctx, sil, mvp, Color::white(), 1, Blend::none, curTex, ctx.linear_clamp(), targetUv, kIdentityColor, true);
@@ -559,8 +569,8 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       const TexRef data = ctx.texture(fx.text("stampKey"));
       const auto instances = static_cast<std::uint32_t>(std::max(0.0, fx.num("instances")));
       if (!data || instances == 0 || selfR == nullptr) {
-        note.path = FxPath::skipped;
-        touch.keep = true;
+        note.set(FxPath::skipped);
+        touch.keep();
         continue;
       }
       const Mat3 layerMvp = space != nullptr ? mul(mvp, model_from_rect(space->box)) : mvp_for(vp, mat3_of(selfR->model_matrix));
@@ -611,8 +621,8 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       // 3 multiply through blend-combine.
       const TexRef ov = ctx.texture(fx.text("overlayKey"));
       if (!ov || selfR == nullptr) {
-        note.path = FxPath::skipped;
-        touch.keep = true;
+        note.set(FxPath::skipped);
+        touch.keep();
         continue;
       }
       const Mat3 layerMvp = space != nullptr ? mul(mvp, model_from_rect(space->box)) : mvp_for(vp, mat3_of(selfR->model_matrix));
@@ -706,11 +716,11 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       call.maps = &maps;
       call.space = space;
       call.poolHasMatte = poolHasMatte;
-      note.path = FxPath::skipped;
+      note.set(FxPath::skipped);
       if (call.source != nullptr && ctx.nativeFx->apply(ctx, call)) {
         curTex = texOf(f0);
         curName = f0;
-        note.path = FxPath::native_plugin;
+        note.set(FxPath::native_plugin);
       }
       continue;
     }
@@ -735,7 +745,7 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
           pk.mat3(mvp).rect(targetUv).vec4(spreadTex, fromSil ? fillOpacity : 1.0, 0, 0);
           const Commands d = one(Mat::SDF_DILATE_FX_MATERIAL, pk.span(), df.tex, Blend::none);
           ctx.draw_into(dilateDest, d, true);
-          note.path = df.reused ? FxPath::gpu_sdf_cached : FxPath::gpu_sdf;
+          note.set(df.reused ? FxPath::gpu_sdf_cached : FxPath::gpu_sdf);
         } else {
           const Commands d = one(Mat::STROKE_MATERIAL,
                                  pack_stroke(ctx.packer(), mvp, targetUv, Color::white(), spreadTex, kx / pw, ky / ph, 3), curTex);
@@ -1037,7 +1047,7 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       if (styled) {
         rows = style_fill_rows(type, std::move(rows));
         m = Mat::STYLE_FILL_FX_MATERIAL;
-        note.path = FxPath::gpu_silhouette;
+        note.set(FxPath::gpu_silhouette);
       }
       Commands c = one(m, pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), curTex);
       c.last().mask = ref;
@@ -1065,7 +1075,7 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         ctx.draw_into(f0, sc, true);
         curTex = texOf(f0);
         curName = f0;
-        note.path = df.reused ? FxPath::gpu_sdf_cached : FxPath::gpu_sdf;
+        note.set(df.reused ? FxPath::gpu_sdf_cached : FxPath::gpu_sdf);
         continue;
       }
     }
@@ -1077,8 +1087,8 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       // mode puts them with the contents (canvas_effects_generate apply_vegas).
       const TexRef data = ctx.texture(fx.text("contourKey"));
       if (!data || selfR == nullptr) {
-        note.path = FxPath::skipped;
-        touch.keep = true;
+        note.set(FxPath::skipped);
+        touch.keep();
         continue;
       }
       const Mat3 layerMvp = space != nullptr ? mul(mvp, model_from_rect(space->box)) : mvp_for(vp, mat3_of(selfR->model_matrix));
@@ -1102,7 +1112,7 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       it.instanceCount = maxInstances;
       ctx.draw_into(f1, vcmds, true);
       const TexRef strokes = texOf(f1);
-      note.path = FxPath::gpu_contours;
+      note.set(FxPath::gpu_contours);
       const double blend = fx.num("blendMode");
       if (blend == 0) {  // clear, then the strokes alone
         curTex = strokes;

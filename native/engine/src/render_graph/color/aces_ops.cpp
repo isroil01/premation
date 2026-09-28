@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <numbers>
 
 namespace premation::rg::color::aces {
 namespace {
@@ -13,7 +14,7 @@ constexpr float kNoiseLimit = 1e-2F;
 /// angle, centred on red.
 float hue_weight(float red, float grn, float blu, float invWidth) noexcept {
   const float a = 2.F * red - (grn + blu);
-  constexpr float kSqrt3 = 1.7320508075688772F;
+  constexpr float kSqrt3 = std::numbers::sqrt3_v<float>;
   const float b = kSqrt3 * (grn - blu);
   const float hue = std::atan2(b, a);
   const float knotCoord = hue * invWidth + 2.F;
@@ -32,8 +33,8 @@ float hue_weight(float red, float grn, float blu, float invWidth) noexcept {
 
 /// CalcSatWeight.
 float sat_weight(float red, float grn, float blu) noexcept {
-  const float minVal = std::min(red, std::min(grn, blu));
-  const float maxVal = std::max(red, std::max(grn, blu));
+  const float minVal = std::min({red, grn, blu});
+  const float maxVal = std::max({red, grn, blu});
   return (std::max(1e-10F, maxVal) - std::max(1e-10F, minVal)) / std::max(kNoiseLimit, maxVal);
 }
 
