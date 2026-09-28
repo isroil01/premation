@@ -23,11 +23,7 @@
  * keyframe span start, exactly as `compToKeyframeTime` composes them.
  */
 
-import { asCommandId } from '@app-types/common';
-import type { Command } from '@core/commands/Command';
 import { defaultAnimation } from '@motion/animation';
-import { customPrompt } from '@components/Modal';
-import { useUIStore } from '@stores/uiStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -37,8 +33,7 @@ import { getNodeLayerTime, updateNodeLayerTime, type FrameBlend } from '@core/sc
 import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
 import { runAnimEdit } from './animationCommands';
 import { runAsOneHistoryEntrySync } from '@core/composition/compositeEdit';
-import { hasRetime, RETIME_PROPS, type RetimeMode } from './retime';
-import { SPEED_PRESETS, applySpeedPreset, setRetimeMode } from './retimeCommands';
+import { hasRetime, RETIME_PROPS } from './retime';
 import {
   clampStretch,
   clampSignedStretch,
@@ -108,10 +103,6 @@ export function timeTargets(): string[] {
 /** Time Stretch: any selected layer. */
 export function stretchTargets(): string[] {
   return useSelectionStore.getState().ids.filter(stretchable);
-}
-
-function notify(message: string): void {
-  useUIStore.getState().notify({ level: 'info', message, durationMs: 3500 });
 }
 
 /** Reverse (or un-reverse) every selected footage layer. */
@@ -415,118 +406,4 @@ export function freezeOnLastFrame(ids: ReadonlyArray<string>): number {
     c.timeline.history.run({ label: 'Freeze On Last Frame', do: () => set('next'), undo: () => set('prev') });
   }
   return plans.length;
-}
-
-export interface LayerTimeCommandDeps {
-  /** Opens the Time Stretch dialog. Injected: core cannot import the layout layer. */
-  openTimeStretch?: (ids: ReadonlyArray<string>) => void;
-}
-
-export function buildLayerTimeCommands(deps: LayerTimeCommandDeps = {}): ReadonlyArray<Command> {
-  const enabled = (): boolean => timeTargets().length > 0;
-  return [
-    {
-      id: asCommandId('time.reverseLayer'),
-      label: 'Time-Reverse Layer',
-      description: 'Play the selected footage backwards (toggle)',
-      icon: 'clock',
-      // AE's chord for Time-Reverse LAYER. It used to sit on Time-Reverse
-      // Keyframes, which AE ships with no default shortcut.
-      shortcut: { key: 'r', meta: true, alt: true },
-      enabled,
-      execute: () => toggleReverse(timeTargets()),
-    },
-    {
-      id: asCommandId('time.freezeFrame'),
-      label: 'Freeze Frame',
-      description: 'Hold the selected footage on the frame under the playhead (toggle)',
-      icon: 'clock',
-      enabled,
-      execute: () => toggleFreeze(timeTargets(), playhead()),
-    },
-    {
-      id: asCommandId('time.freezeOnLastFrame'),
-      label: 'Freeze On Last Frame',
-      description: 'Time-remap the selected footage to hold its last frame to the end of the composition',
-      icon: 'clock',
-      enabled,
-      execute: () => {
-        const n = freezeOnLastFrame(timeTargets());
-        if (n === 0) notify('Nothing to freeze — the selected layers have no clip on the timeline.');
-      },
-    },
-    {
-      id: asCommandId('time.timeStretch'),
-      label: 'Time Stretch…',
-      description: 'Stretch the selected layers, holding the in-point, out-point or current frame in place (footage changes speed; other layers stretch their keyframes)',
-      icon: 'clock',
-      // Every layer, as in AE — not just footage.
-      enabled: () => stretchTargets().length > 0,
-      execute: async () => {
-        const ids = stretchTargets();
-        if (ids.length === 0) return;
-        if (deps.openTimeStretch) { deps.openTimeStretch(ids); return; }
-        // Headless fallback (no dialog host): the old one-field prompt.
-        const current = stretchValueOf(ids[0]!);
-        const raw = await customPrompt('Time Stretch', 'Stretch factor (% of original duration — 200 = half speed, 50 = double speed)', String(current));
-        if (raw === null) return;
-        const pct = Number(raw);
-        // Negative (reverse) only when no footage is selected — footage reverses with Time-Reverse Layer.
-        const footage = ids.some(retimable);
-        if (!Number.isFinite(pct) || pct === 0 || (footage && pct < 0)) {
-          notify(footage ? 'Enter a percentage above 0.' : 'Enter a percentage other than 0.');
-          return;
-        }
-        await applyTimeStretch(ids, pct, 'in');
-      },
-    },
-    {
-      id: asCommandId('time.enableTimeRemap'),
-      label: 'Enable Time Remapping',
-      description: 'Keyframe the source time of the selected footage (toggle)',
-      icon: 'clock',
-      enabled,
-      execute: () => toggleTimeRemap(timeTargets(), playhead()),
-    },
-    // The two retime modes Twixtor and AE's Timewarp offer, plus the way back.
-    // Switching converts what the layer had (see `retimeCommands.setRetimeMode`).
-    ...([
-      ['speed', 'Retime: Speed %', 'Keyframe playback speed as a percentage — ramps and velocity edits'],
-      ['frames', 'Retime: Frame Number', 'Keyframe which source frame shows at each moment'],
-      ['normal', 'Retime: Normal Speed', 'Remove speed and frame retiming from the selected layers'],
-    ] as ReadonlyArray<[RetimeMode, string, string]>).map(([mode, label, description]) => ({
-      id: asCommandId(`time.retime.${mode}`),
-      label,
-      description,
-      icon: 'clock',
-      enabled,
-      execute: () => {
-        if (setRetimeMode(timeTargets(), mode)) {
-          notify('Converted to Speed %. The frames at your old keys are kept; check the curve between them.');
-        }
-      },
-    })),
-    ...SPEED_PRESETS.map((p) => ({
-      id: asCommandId(`time.speedPreset.${p.id}`),
-      label: `Speed Preset: ${p.label}`,
-      description: `${p.hint} — across each selected clip`,
-      icon: 'clock',
-      enabled,
-      execute: () => {
-        if (applySpeedPreset(timeTargets(), p.id) === 0) notify('The selected layers have no clip bar to shape a preset across.');
-      },
-    })),
-    ...([
-      ['none', 'Frame Blend: Off'],
-      ['mix', 'Frame Blend: Frame Mix'],
-      ['pixelMotion', 'Frame Blend: Pixel Motion'],
-    ] as ReadonlyArray<[FrameBlend, string]>).map(([mode, label]) => ({
-      id: asCommandId(`time.frameBlend.${mode}`),
-      label,
-      description: 'Frame blending for slowed or stretched footage',
-      icon: 'clock',
-      enabled,
-      execute: () => setFrameBlend(timeTargets(), mode),
-    })),
-  ];
 }

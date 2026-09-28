@@ -18,52 +18,27 @@
  * `consumeExpressionEditorRequest`.
  */
 
-import { asCommandId } from '@app-types/common';
-import type { Command } from '@core/commands/Command';
 import { defaultAnimation } from '@motion/animation';
-import { usePropertySelectionStore, type PropertyRef } from '@stores/propertySelectionStore';
+import type { PropertyRef } from '@stores/propertySelectionStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import type { ContextMenuItem } from '@stores/contextMenuStore';
 import { runAnimEdit } from './animationCommands';
+import { ADD_EXPRESSION_COMMAND, DEFAULT_EXPRESSION, requestExpressionEditor } from './expressionEditorRequests';
 
-/** AE's default: the property's own value, so adding one is visually a no-op. */
-export const DEFAULT_EXPRESSION = 'value';
+// The request plumbing and the shortcut targets live in expressionEditorRequests (no document reads);
+// re-exported here for the TypeScript-engine callers below and their tests.
+export {
+  ADD_EXPRESSION_COMMAND,
+  DEFAULT_EXPRESSION,
+  consumeExpressionEditorRequest,
+  expressionTargets,
+  onExpressionEditorRequest,
+  requestExpressionEditor,
+  setFocusedExpressionRow,
+} from './expressionEditorRequests';
 
-export const ADD_EXPRESSION_COMMAND = 'anim.addExpression';
-
-const sameRef = (a: PropertyRef, b: PropertyRef): boolean => a.nodeId === b.nodeId && a.prop === b.prop;
-
-// ── Opening a row's editor ──────────────────────────────────────────────────
-
-type EditorRequestListener = (ref: PropertyRef) => void;
-const editorListeners = new Set<EditorRequestListener>();
-/** A request no mounted row answered yet, and when it was made. */
-let pending: { ref: PropertyRef; at: number } | null = null;
-/** A row mounting later than this after the request does not pop open. */
-const PENDING_TTL_MS = 3000;
-
-export function requestExpressionEditor(ref: PropertyRef): void {
-  pending = { ref, at: Date.now() };
-  for (const listener of [...editorListeners]) listener(ref);
-}
-
-export function onExpressionEditorRequest(listener: EditorRequestListener): () => void {
-  editorListeners.add(listener);
-  return () => {
-    editorListeners.delete(listener);
-  };
-}
-
-/** True (once) when an editor was requested for this row and nobody has opened it yet. */
-export function consumeExpressionEditorRequest(nodeId: string, prop: string): boolean {
-  if (!pending || !sameRef(pending.ref, { nodeId, prop })) return false;
-  const fresh = Date.now() - pending.at <= PENDING_TTL_MS;
-  pending = null;
-  return fresh;
-}
-
-/** Bring the row on screen — its layer selected, the Properties panel open — and ask it to open its editor. */
+/** Bring the row on screen: its layer selected, the Properties panel open; then ask it to open its editor. */
 function revealExpressionEditor(ref: PropertyRef): void {
   const selection = useSelectionStore.getState();
   if (!selection.ids.includes(ref.nodeId)) selection.set([ref.nodeId]);
@@ -73,21 +48,6 @@ function revealExpressionEditor(ref: PropertyRef): void {
     /* headless: no layout to open */
   }
   requestExpressionEditor(ref);
-}
-
-// ── Which property a shortcut acts on ───────────────────────────────────────
-
-let focusedRow: PropertyRef | null = null;
-
-/** The inspector row holding keyboard focus (set/cleared by the row itself). */
-export function setFocusedExpressionRow(ref: PropertyRef | null): void {
-  focusedRow = ref;
-}
-
-/** The focused inspector row wins; otherwise the timeline's selected property rows. */
-export function expressionTargets(): PropertyRef[] {
-  if (focusedRow) return [focusedRow];
-  return [...usePropertySelectionStore.getState().entries];
 }
 
 // ── The three writes ────────────────────────────────────────────────────────
@@ -180,41 +140,6 @@ export function expressionMenuItems(nodeId: string, props: ReadonlyArray<string>
       disabled: withExpr.length === 0,
       onSelect: () => {
         removeExpression(refs);
-      },
-    },
-  ];
-}
-
-export function buildExpressionCommands(): ReadonlyArray<Command> {
-  return [
-    {
-      id: asCommandId(ADD_EXPRESSION_COMMAND),
-      label: 'Add Expression',
-      description: 'Add an expression to the selected property and open its editor',
-      // AE's chord. `=` resolves from e.code 'Equal', so Shift's `+` (and
-      // macOS Option's `±`) still match — see `chordKeyFromEvent`.
-      shortcut: { key: '=', alt: true, shift: true },
-      enabled: () => expressionTargets().length > 0,
-      execute: () => {
-        addExpression(expressionTargets());
-      },
-    },
-    {
-      id: asCommandId('anim.removeExpression'),
-      label: 'Remove Expression',
-      description: 'Remove the expression from the selected property',
-      enabled: () => expressionTargets().some(hasExpr),
-      execute: () => {
-        removeExpression(expressionTargets());
-      },
-    },
-    {
-      id: asCommandId('anim.toggleExpression'),
-      label: 'Enable/Disable Expression',
-      description: 'Turn the selected property’s expression on or off, keeping its source',
-      enabled: () => expressionTargets().some(hasExpr),
-      execute: () => {
-        toggleExpressionEnabled(expressionTargets());
       },
     },
   ];

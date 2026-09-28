@@ -25,14 +25,13 @@ import { prunePropertySelectionToNodes } from '@stores/propertySelectionStore';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { copyEdit, cutEdit, pasteEdit } from './clipboardEdits';
 import { audioSliderNullEdit, canExponentialScale, expressionBakeEdit, exponentialScaleEdit, hasBakeableExpression } from './menuCommandEdits';
-import { goToMarkerIndex, isTransportPlaying, pauseTransport, playTransport, seekPlayhead } from '@core/timeline/timelineView';
+import { goToMarkerIndex, isTransportPlaying, pauseTransport, playTransport } from '@core/timeline/timelineView';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
 import { getTime } from '@stores/playbackClockStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { openProjectPath } from '@core/project/openProjectPath';
 import { openLocalMotionFile, saveToComputer } from '@core/project/localProjectIO';
 import { offerRelink } from '@layout/Project/RelinkAssetsDialog';
@@ -44,16 +43,11 @@ import {
   type AssembleTarget,
 } from '@layout/Assets/footageAssembly';
 import { panelAssetSelectionIds, selectedPanelAssets, selectedPanelFootage } from '@core/composition/assetSelection';
-import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { baselineHistoryEdit } from '@core/engine/historyBaseline';
 import { performUndo, performRedo } from '@stores/historyStore';
 import { attachRenderBackendEvents } from '@stores/renderBackendStore';
-import { Button } from '@components/Button';
 import { openAbout } from '@layout/Help/AboutDialog';
-import { dismissStartScreen } from '@layout/Start/useStartScreenVisible';
-import { getAutosaveController } from '@core/persistence/AutosaveController';
-import { readRecovery, clearRecovery, restoreRecovery } from '@core/persistence/recovery';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { usePresentationStore } from '@stores/presentationStore';
 import { useGuidesStore } from '@stores/guidesStore';
@@ -88,12 +82,12 @@ import type { SaveOutcome } from '@core/project/ProjectManager';
 import { canSyncCurrentProject, syncCurrentProject } from '@core/sync/syncCurrentProject';
 import { pageStillFrame } from '@core/rendering/pageFrame';
 import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
-import { buildCaptionCommands } from '@core/captions/captionCommands';
+import { buildCaptionCommands } from './commands/captionCommands';
 import { buildChoreographyCommands } from '@core/animation/choreographyCommands';
 import { buildBeatCommands } from '@core/audio/beatCommands';
 import { buildSpeedRampCommands } from '@core/animation/speedRampCommands';
-import { buildLayerTimeCommands } from '@core/animation/layerTimeCommands';
-import { buildExpressionCommands } from '@core/animation/expressionCommands';
+import { buildLayerTimeCommands } from './commands/layerTimeCommands';
+import { buildExpressionCommands } from './commands/expressionCommands';
 import { buildLayerTransformCommands } from '@core/scene/layerTransformCommands';
 import { resetTransformEdit } from '@layout/Timeline/resetEdits';
 import { openTimeStretchDialog } from '@layout/Composition/TimeStretchDialog';
@@ -114,7 +108,6 @@ import { openCustomizeDialog } from '@layout/Settings/openCustomizeDialog';
 import { openVersionHistory } from '@layout/History/VersionHistoryPanel';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
-import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { loadBlockTower } from '@core/scene/seedBlockTower';
 import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
@@ -131,7 +124,6 @@ import { fetchMemberTracks, memberTracksNow } from '@stores/memberTracks';
 import { fetchLayerBox } from '@stores/layerBoxes';
 import { compTime } from '@core/engine/propRefs';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
-import { AudioPlaybackBridge } from '@hooks/useAudioPlayback';
 import { installExpressionProviders } from '@core/engine/expressionProviders';
 import { installSceneRevisionUpkeep } from '@core/engine/sceneRevisionUpkeep';
 import { ProjectCommands } from '@layout/Menu';
@@ -2933,15 +2925,9 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
 
         // Default property editors + starter scene content.
         try { registerDefaultEditors(); } catch { /* ignore */ }
-        // A pop-out window must NOT seed its own scene. It renders a detached
-        // view of the composition you already have open, and windowSync fills it
-        // in from the editor shell. Seeding here is what made a popped-out Scene
-        // panel list a completely different (demo) composition.
-        // Owner mode seeds nothing: the first document is the engine's own
-        // newProject, which the page's replica receives too (engineOwnedSession).
-        if (!isPopoutWindow() && !ownsDocument) {
-          try { seedDefaultScene(); } catch { /* ignore */ }
-        }
+        // Nothing is seeded: the first document is the engine's own
+        // newProject, which the page's replica receives too
+        // (engineOwnedSession); a pop-out window is filled by windowSync.
         try { void useAssetStore.getState().initialize(); } catch { /* ignore */ }
 
         // History: the "Open" baseline (a load boundary). Every edit after it
@@ -2986,88 +2972,16 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           pruneKeyframeSelectionToNodes(nodeIds);
         }));
 
-        // Dirty tracking + autosave (crash recovery). Edits mark the active
-        // document dirty (amber dot); autosave persists a recovery snapshot
-        // every 60s while dirty, never clearing the unsaved indicator.
-        // Owner mode (D5 / F2): the engine's session does all three, from the
-        // mirror (engineOwnedSession.tsx) — the TypeScript bus is the replica's.
+        // Dirty tracking, autosave and crash recovery: the engine's session
+        // does all three, from the mirror (engineOwnedSession.tsx). Without an
+        // engine host (the headless CLI window) there is nothing to track.
         if (engineOwnsDocumentNow()) {
           try {
             await installEngineOwnedSession(track);
           } catch (err) {
             console.error('[boot] the engine-owned session failed to start', err);
           }
-        } else try {
-          const markDirty = (): void => {
-            const s = useProjectStore.getState();
-            if (s.activeTabId && !s.tabs[s.activeTabId]?.dirty) s.actions.markDirty(s.activeTabId, true);
-          };
-          // A landed video decode is not an unsaved edit — before this the
-          // amber dot appeared just from playing footage back.
-          track(getEventBus().on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) markDirty(); }));
-          track(getEventBus().on('NodeUpdated', markDirty));
-          track(getEventBus().on('SceneGraphChanged', markDirty));
-          getAutosaveController().start({
-            intervalMs: 60_000,
-            now: () => Date.now(),
-            getTime: () => {
-              const s = useProjectStore.getState();
-              return (s.activeTabId ? s.tabs[s.activeTabId]?.time : 0) ?? 0;
-            },
-            isDirty: () => {
-              const s = useProjectStore.getState();
-              return !!(s.activeTabId && s.tabs[s.activeTabId]?.dirty);
-            },
-          });
-        } catch { /* ignore */ }
-
-        // Crash recovery: offer to restore the previous unsaved session.
-        // (Owner mode: the engine's recovery record, offered above.)
-        if (!engineOwnsDocumentNow()) try {
-          const rec = readRecovery();
-          if (rec) {
-            const mins = Math.max(1, Math.round((Date.now() - rec.savedAt) / 60_000));
-            openModal({
-              // Fixed id so StrictMode's double-invoke can't stack duplicates.
-              id: 'recovery-modal',
-              title: 'Recover unsaved work?',
-              size: 'sm',
-              render: () => (
-                <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-md)', lineHeight: 1.6 }}>
-                  Premation found unsaved changes from your last session
-                  (about {mins} min ago). Restore them, or discard and start fresh.
-                </div>
-              ),
-              footer: (close) => (
-                <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'flex-end' }}>
-                  <Button variant="ghost" size="sm" onClick={() => { clearRecovery(); close(); }}>Discard</Button>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => {
-                      const t = restoreRecovery(rec);
-                      // Was `Math.round(t * 60)` — a hardcoded 60 fps that put
-                      // the frame number on a different clock from the comp for
-                      // every project not shot at 60.
-                      seekPlayhead(t);
-                      bumpScene();
-                      // The history baseline after crash recovery (a load boundary).
-                      void baselineHistoryEdit('Recovered');
-                      const s = useProjectStore.getState();
-                      if (s.activeTabId) s.actions.markDirty(s.activeTabId, true);
-                      // The scene is back; get the project browser out of its way.
-                      dismissStartScreen();
-                      notify('Session recovered', 'success');
-                      close();
-                    }}
-                  >
-                    Restore
-                  </Button>
-                </div>
-              ),
-            });
-          }
-        } catch { /* ignore */ }
+        }
       } finally {
         bootTask.end();
       }
@@ -3103,7 +3017,6 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
   return (
     <>
       {children}
-      <AudioPlaybackBridge />
       <CommandPalette />
       <PresentationMode />
       <OnboardingOverlay onDone={() => getSettingsManager().set('onboarding.seen', true)} />

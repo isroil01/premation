@@ -6,17 +6,15 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { setCommandSystem, CommandSystem, getCommandSystem, chordFromEvent } from '@core/commands/CommandSystem';
+import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
 import { usePropertySelectionStore } from '@stores/propertySelectionStore';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
 import {
   addExpression,
-  buildExpressionCommands,
   consumeExpressionEditorRequest,
   DEFAULT_EXPRESSION,
   expressionMenuItems,
-  expressionTargets,
   onExpressionEditorRequest,
   removeExpression,
   setFocusedExpressionRow,
@@ -112,30 +110,5 @@ describe('the timeline row menu', () => {
 
     expressionMenuItems(ID, ['x', 'y'])[1]!.onSelect?.();
     expect(labels()[1]).toEqual(['Enable Expression', false]);
-  });
-});
-
-describe('Alt+Shift+=', () => {
-  it('is bound on `=` and resolves from e.code Equal, whatever character the modifiers produce', () => {
-    const cmd = buildExpressionCommands().find((c) => String(c.id) === 'anim.addExpression')!;
-    expect(cmd.shortcut).toEqual({ key: '=', alt: true, shift: true });
-    for (const key of ['+', '±', '=']) {
-      const ev = { key, code: 'Equal', altKey: true, shiftKey: true, ctrlKey: false, metaKey: false } as KeyboardEvent;
-      expect(chordFromEvent(ev)).toMatchObject({ key: '=', alt: true, shift: true });
-    }
-  });
-
-  it('acts on the focused inspector row first, else the selected timeline property rows', () => {
-    const cmd = buildExpressionCommands().find((c) => String(c.id) === 'anim.addExpression')!;
-    expect(cmd.enabled?.()).toBe(false);
-
-    usePropertySelectionStore.getState().select({ nodeId: ID, prop: 'x' });
-    expect(expressionTargets()).toEqual([{ nodeId: ID, prop: 'x' }]);
-
-    setFocusedExpressionRow({ nodeId: ID, prop: 'opacity' });
-    expect(expressionTargets()).toEqual([{ nodeId: ID, prop: 'opacity' }]);
-    void cmd.execute({} as never);
-    expect(defaultAnimation.hasExpression(ID, 'opacity')).toBe(true);
-    expect(defaultAnimation.hasExpression(ID, 'x')).toBe(false);
   });
 });

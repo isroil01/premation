@@ -11,8 +11,7 @@ import { isPersistableProxy, type ProxyRecord } from '@core/assets/proxy';
 import { probeMedia } from '@core/assets/mediaProbe';
 import { maybeIngestForImport } from '@core/assets/ingest';
 import { useUIStore } from '@stores/uiStore';
-import { bumpScene, bumpSceneRevision } from '@stores/sceneStore';
-import { rebindAssetSrcs } from '@core/scene/assetRebind';
+import { bumpScene } from '@stores/sceneStore';
 import { failureReason, mediaKindOf, track as trackEvent } from '@core/analytics/productEvents';
 import { publishAssetSessions } from './assetSession';
 
@@ -1338,13 +1337,9 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         else delete a.proxy;
       });
       saveProxies(get().assets);
-      // Revision only — NOT `bumpScene()`. A proxy finishing (or starting: it
-      // is automatic for restored footage) is device-local state, not an edit.
-      // The structural event is wired to "unsaved change", so an untouched
-      // project read "Unsaved changes" three seconds after it opened and asked
-      // to discard work nobody had done; it also cost a full timeline
-      // reconcile and a stray undo step. The renderer only needs the re-read.
-      bumpSceneRevision();
+      // No scene bump: a proxy finishing (or starting: it is automatic for
+      // restored footage) is device-local state, not an edit, and the engine
+      // draws the viewport — the page renderer's re-read is gone.
     },
 
     /**
@@ -1465,10 +1460,10 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
           }
         });
         // The urls minted above are NEW — any already-restored document still
-        // points its layers at the dead ones it was saved with. Reconnect by
-        // assetId (see assetRebind.ts); restoreDocument runs the same call for
-        // the opposite arrival order.
-        rebindAssetSrcs(get().assets);
+        // points its layers at the dead ones it was saved with — which only
+        // the TypeScript page renderer decoded. The engine opens footage by
+        // path (watchSessionFootage writes session blobs to disk), so nothing
+        // is re-pointed here.
       } catch (err) {
         console.error('[AssetStore] failed to initialize from IndexedDB:', err);
       }
