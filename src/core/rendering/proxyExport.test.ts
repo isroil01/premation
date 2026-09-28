@@ -134,7 +134,6 @@ describe('structural guards', () => {
   const OUTPUT_PATHS = [
     'src/core/export/exportManager.ts',
     'src/core/export/offlineRenderer.ts',
-    'src/core/export/exportPreview.ts',
     'src/core/rendering/componentThumbs.ts',
   ];
 

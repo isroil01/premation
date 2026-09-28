@@ -182,51 +182,9 @@ const bridge = {
   },
 
   render: {
-    beginJob: (info?: { spec?: unknown; format?: string; totalFrames?: number }) =>
-      ipcRenderer.invoke('render:beginJob', info),
-    /** Renders a previous session left half-staged on disk. */
-    listResumableJobs: () => ipcRenderer.invoke('render:listResumableJobs'),
-    /** Re-register one of them under its original id, and say where it got to. */
-    adoptJob: (jobId: string) => ipcRenderer.invoke('render:adoptJob', jobId),
-    /** Delete a staging dir the queue has decided not to finish. */
-    discardJob: (jobId: string) => ipcRenderer.invoke('render:discardJob', jobId),
-    stageFrame: (jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png') =>
-      ipcRenderer.invoke('render:stageFrame', jobId, index, bytes, ext),
-    stageAudio: (jobId: string, bytes: Uint8Array) => ipcRenderer.invoke('render:stageAudio', jobId, bytes),
-    encode: (jobId: string, opts: unknown) => ipcRenderer.invoke('render:encode', jobId, opts),
-    /** Streaming encode: open one ffmpeg child, feed it raw RGBA, finish. */
-    streamPreference: () => ipcRenderer.invoke('render:streamPreference') as Promise<'stream' | 'staged'>,
-    openStream: (jobId: string, opts: unknown) => ipcRenderer.invoke('render:openStream', jobId, opts),
-    streamFrame: (jobId: string, index: number, bytes: Uint8Array) =>
-      ipcRenderer.invoke('render:streamFrame', jobId, index, bytes),
-    /** One piece of a frame; resolves once it has drained into ffmpeg (the ack). */
-    streamChunk: (jobId: string, index: number, offset: number, bytes: Uint8Array, last: boolean) =>
-      ipcRenderer.invoke('render:streamChunk', jobId, index, offset, bytes, last),
-    finishStream: (jobId: string) => ipcRenderer.invoke('render:finishStream', jobId),
     /** Hardware encoders that pass a smoke encode on this machine (cached per session). */
     probeEncoders: () => ipcRenderer.invoke('render:probeEncoders'),
-    /** Whether host ffmpeg can encode HEVC (libx265) for HDR10/HLG delivery. */
-    probeHdr: () => ipcRenderer.invoke('render:probeHdr') as Promise<{ libx265: boolean }>,
-    cancel: (jobId: string) => ipcRenderer.invoke('render:cancel', jobId),
-    save: (jobId: string, defaultName: string) => ipcRenderer.invoke('render:save', jobId, defaultName),
-    saveTo: (jobId: string, dir: string, filename: string, overwrite?: boolean) =>
-      ipcRenderer.invoke('render:saveTo', jobId, dir, filename, overwrite),
     chooseOutputDir: () => ipcRenderer.invoke('render:chooseOutputDir'),
-    cleanJob: (jobId: string) => ipcRenderer.invoke('render:cleanJob', jobId),
-  },
-
-  /**
-   * The headless CLI's channel, and the only one the /render route uses.
-   *
-   * PULL, not push: the page asks for its job when it is ready, so there is no
-   * race between the window finishing its load and the route mounting. Absent
-   * outside a `premation render` launch — `job()` simply rejects, and the
-   * route treats that as "not a CLI run" and does nothing.
-   */
-  cli: {
-    job: () => ipcRenderer.invoke('cli:job'),
-    progress: (fraction: number) => ipcRenderer.send('cli:progress', fraction),
-    done: (report: unknown) => ipcRenderer.send('cli:done', report),
   },
 
   /**

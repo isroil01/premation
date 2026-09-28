@@ -1,7 +1,7 @@
 /**
  * The editor's typed client for the main-owned export queue.
  *
- * Main renders each job in a hidden window of its own (electron/exportProcess.ts);
+ * Main renders each job in the engine (electron/exportProcess.ts → engineExport.ts);
  * the editor's part is small and this module is all of it: build a spec from
  * the form's choices, write a snapshot of the project where main said to,
  * enqueue, and watch. Nothing here holds a frame, a sink or a window, which is
@@ -18,8 +18,7 @@ import type {
   ExportJobStatus,
   ExportQueueEvent,
 } from '@app-types/motionEditor';
-import type { RenderJobSpec } from '@core/export/renderJob';
-import { frameRangeToSeconds } from '@core/cli/headlessRender';
+import type { RenderJobSpec } from '@core/export/renderSpec';
 
 export type { ExportJobRecord, ExportJobSpec, ExportJobStatus, ExportQueueEvent };
 
@@ -120,9 +119,6 @@ export function frameRangeFor(range: { startSec: number; endSec: number }, fps: 
 /** A queue job from the form's choices. Pure, so the mapping is testable. */
 export function buildSupervisorSpec(input: SupervisorSpecInput): ExportJobSpec {
   const { startFrame, endFrame } = frameRangeFor(input.range, input.fps);
-  // Round-trip check in the type: the seconds the window will compute from
-  // these frames are the seconds that were captured here.
-  void frameRangeToSeconds;
   const name = input.outPath.replace(/^.*[\\/]/, '');
   const spec: ExportJobSpec = {
     projectPath: input.projectPath,

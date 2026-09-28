@@ -18,7 +18,6 @@ import {
   type ExportJobRecord,
   type ExportQueueEvent,
 } from './exportSupervisorClient';
-import { frameRangeToSeconds } from '@core/cli/headlessRender';
 
 type Handler = (event: unknown) => void;
 
@@ -95,7 +94,6 @@ describe('buildSupervisorSpec', () => {
     expect(spec.startFrame).toBe(0);
     expect(spec.endFrame).toBe(23);
     expect(spec.totalFrames).toBe(24);
-    expect(frameRangeToSeconds(spec.startFrame!, spec.endFrame!, 24)).toEqual({ rangeStartSec: 0, rangeEndSec: 1 });
     expect(spec.label).toBe('Promo → promo.mp4');
     expect(spec.comp).toBe('comp-1');
   });

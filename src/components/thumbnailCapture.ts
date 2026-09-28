@@ -1,33 +1,26 @@
 /**
  * Project-thumbnail capture on the MAIN thread, at idle.
  *
- * This used to run in a Web Worker (`src/workers/thumbnailWorker.ts`) and never
- * produced a thumbnail. `renderThumbnailBlob` creates its canvas with
- * `document.createElement`, a worker has no `document`, so every capture threw
- * before rendering and the worker posted `null` — which both callers read as
- * "nothing to upload" and dropped without a word.
- *
- * Moving the draw to an OffscreenCanvas inside the worker would not have
- * rescued it. A worker imports its OWN copies of the scene-graph and animation
- * singletons, and those are empty there — the project lives on the main thread
- * — so the best a worker could ever render is a blank comp of the right size.
- *
- * So the render runs where the scene is: one small frame through the same GPU
- * path export uses, scheduled with `requestIdleCallback` (a timeout fallback
- * where it is missing) so it lands between interactions rather than inside one.
+ * The frame is the ENGINE's (`getThumbnail` on the active composition — the
+ * renderer every export uses), asked for with `requestIdleCallback` (a timeout
+ * fallback where it is missing) so it lands between interactions rather than
+ * inside one. The page renderer that drew it before is gone
+ * (docs/TS_ENGINE_REMOVAL.md phase 4).
  */
 
-import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
-import { documentMirror } from '@stores/documentMirror';
+import { engine } from '@core/engine/engineInstance';
 import { activeCompIdNow } from '@hooks/useMirror';
-import { compRecordFromSettings } from '@core/mirror/compFacts';
 
-/** The active composition's size and background, from the document mirror (B4); the default comp when there is none. */
-function activeCompFrame(): { width: number; height: number; background: string; transparent: boolean } {
+/** Longest edge of a project poster frame. Big enough for a retina card. */
+const THUMBNAIL_MAX_EDGE = 480;
+
+/** The active composition's first frame from the engine, as an image blob; null when there is none. */
+async function engineThumbnail(): Promise<Blob | null> {
   const id = activeCompIdNow();
-  const comp = id ? documentMirror().comp(id) : undefined;
-  const c = comp ? compRecordFromSettings(comp.id, comp.settings) : DEFAULT_COMPOSITION;
-  return { width: c.width, height: c.height, background: c.background, transparent: c.transparent };
+  if (!id) return null;
+  const res = await engine().query({ type: 'getThumbnail', item: id, time: 0, maxSize: THUMBNAIL_MAX_EDGE });
+  if (!res.ok || res.value.data.length === 0) return null;
+  return new Blob([res.value.data as BlobPart], { type: `image/${res.value.format || 'png'}` });
 }
 
 type IdleHandle = { cancel(): void };
@@ -57,14 +50,8 @@ export function captureThumbnailWhenIdle(
   let cancelled = false;
   const handle = whenIdle(() => {
     if (cancelled) return;
-    // Read at render time, not at schedule time: an idle callback can land
-    // seconds later, after a comp-size edit.
-    const c = activeCompFrame();
-    // Lazy: the export stack is only needed once a capture actually runs.
-    void import('@core/export/exportManager')
-      .then(({ renderThumbnailBlob }) =>
-        renderThumbnailBlob({ width: c.width, height: c.height, background: c.background, transparent: c.transparent }),
-      )
+    // Asked at idle time, not at schedule time: the comp may have changed.
+    void engineThumbnail()
       .catch(() => null)
       .then((blob) => {
         if (!cancelled) onBlob(blob ?? null);

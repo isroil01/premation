@@ -30,7 +30,7 @@
  * with no directory behind it is a number the user cannot check.
  */
 
-import type { RenderJobSpec } from './renderJob';
+import type { RenderJobSpec } from './renderSpec';
 
 /**
  * The statuses a job can be written down in. `done` and `skipped` are finished

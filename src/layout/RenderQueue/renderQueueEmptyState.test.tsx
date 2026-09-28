@@ -14,10 +14,6 @@
 // sentence would make this test fail for reasons that have nothing to do with
 // the queue.
 jest.mock('@core/export/exportManager', () => ({ downloadBlob: jest.fn() }));
-jest.mock('@core/export/renderJob', () => ({
-  outputExtFor: () => 'mp4',
-  renderJobOutput: jest.fn(),
-}));
 
 import { render, screen, fireEvent } from '@testing-library/react';
 import { RenderQueuePanel } from './RenderQueuePanel';

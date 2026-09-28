@@ -1,15 +1,13 @@
 /**
  * Export helper for the AI `export_video` tool and post-generative auto-export.
  *
- * Default path queues a Render Queue job (pauseable, reusable output folder).
- * `immediate` still runs `runExport` for one-shot download/save.
+ * Both modes put a Render Queue job on the list (reusable output folder); the
+ * ENGINE renders it (main's export supervisor). `immediate` also hands it to
+ * main's queue at once — there is no in-page render any more
+ * (docs/TS_ENGINE_REMOVAL.md phase 4).
  */
 
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { runExport, type ExportOptions } from '@core/export/exportManager';
-import type { VideoFormat } from '@core/export/videoSink';
 import { useCompositionStore } from '@stores/compositionStore';
-import { exportComp } from '@core/export/offlineRenderer';
 import {
   outputExtFor,
   useRenderQueueStore,
@@ -30,7 +28,6 @@ export interface AiExportRequest {
 }
 
 export type AiExportResult =
-  | { ok: true; mode: 'immediate'; videoCodec?: string }
   | { ok: true; mode: 'queue'; jobId: string; started: boolean }
   | { ok: false; message: string };
 
@@ -67,7 +64,7 @@ export function queueCompositionVideo(req: AiExportRequest = {}): AiExportResult
   useLayoutStore.getState().openPanel('renderQueue');
 
   let started = false;
-  if (req.start !== false && useRenderQueueStore.getState().outputDir) {
+  if (req.mode === 'immediate' || (req.start !== false && useRenderQueueStore.getState().outputDir)) {
     useRenderQueueStore.getState().startAll();
     started = true;
   }
@@ -76,37 +73,5 @@ export function queueCompositionVideo(req: AiExportRequest = {}): AiExportResult
 }
 
 export async function exportCompositionVideo(req: AiExportRequest = {}): Promise<AiExportResult> {
-  const mode = req.mode ?? 'queue';
-  if (mode === 'queue') return queueCompositionVideo(req);
-
-  const tl = getTimelineController();
-  const time = tl.currentSeconds;
-  const compSettings = useCompositionStore.getState().comp();
-  const format = (req.format ?? 'mp4') as VideoFormat;
-  const opts: ExportOptions = {
-    format,
-    width: compSettings.width,
-    height: compSettings.height,
-    fps: compSettings.fps,
-    duration: compSettings.durationSeconds,
-    time,
-    comp: exportComp({
-      width: compSettings.width,
-      height: compSettings.height,
-      background: compSettings.background,
-      transparent: compSettings.transparent,
-    }),
-    quality: req.quality ?? 'high',
-    useWorkArea: req.useWorkArea ?? true,
-    signal: req.signal,
-    onProgress: req.onProgress,
-  };
-
-  try {
-    const result = await runExport(opts);
-    return { ok: true, mode: 'immediate', videoCodec: result.videoCodec };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, message };
-  }
+  return Promise.resolve(queueCompositionVideo(req));
 }

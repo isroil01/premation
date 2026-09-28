@@ -70,6 +70,8 @@ struct JobSpec {
   std::optional<double> fps;
   std::optional<double> width;
   std::optional<double> height;
+  /// Uniform output scale of the comp size when neither width nor height is given (`premation render --scale`).
+  std::optional<double> scale;
   std::optional<bool> transparent;
   /// E3 fonts manifest (PREMATION_FONTS_MANIFEST when empty).
   std::string fontsManifest;

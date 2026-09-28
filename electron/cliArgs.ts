@@ -22,8 +22,6 @@ export const CLI_FORMATS = [
   'mov',
   'webm',
   'gif',
-  'hdr10',
-  'hlg',
   'png-sequence',
   'jpg-sequence',
   'exr-sequence',
@@ -275,13 +273,6 @@ export function extensionFor(format: CliFormat): string {
     case 'jpg-sequence':
     case 'exr-sequence':
       return 'zip';
-    // Both HDR presets encode into an MP4 container; a ".hdr10" file has never
-    // existed. Same rule as `outputExtFor` in the renderer — deliberately
-    // duplicated rather than shared, because the two live in separate
-    // TypeScript projects and one three-line switch is cheaper than a bridge.
-    case 'hdr10':
-    case 'hlg':
-      return 'mp4';
     default:
       return format;
   }

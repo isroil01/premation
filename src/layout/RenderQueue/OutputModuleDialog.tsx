@@ -8,11 +8,10 @@ import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import { DialogFooter, enterShouldConfirm } from '@components/Modal';
 import { OutputFormat } from '@stores/renderQueueStore';
-import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/videoSink';
+import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/renderSpec';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { exportSupervisorClient } from '@core/export/exportSupervisorClient';
-import { usePreferenceStore } from '@stores/preferenceStore';
 import { shouldUseSupervisor } from '@layout/Export/supervisorQueue';
 import {
   listOutputTemplates,
@@ -99,7 +98,7 @@ export function OutputModuleDialog({
     void exportSupervisorClient.capabilities().then((c) => { if (!cancelled) setBitDepth16(c.bitDepth16); });
     return () => { cancelled = true; };
   }, []);
-  const offerBitDepth = format === 'mov' && bitDepth16 && shouldUseSupervisor(format, usePreferenceStore.getState().exportInProcess);
+  const offerBitDepth = format === 'mov' && bitDepth16 && shouldUseSupervisor(format);
   // MOV alpha only exists in 4444 — the 422 family has no alpha plane.
   const supportsAlpha = ALPHA_FORMATS.has(format) && (format !== 'mov' || proresProfile === '4444');
 

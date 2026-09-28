@@ -268,8 +268,9 @@ bool make_plan(const doc::Document& d, const JobSpec& job, Plan& p, std::string&
     p.width = job.width.value_or(std::round(*job.height * aspect));
     p.height = job.height.value_or(std::round(*job.width / aspect));
   } else {
-    p.width = p.compW;
-    p.height = p.compH;
+    const double s = job.scale.value_or(1);
+    p.width = std::round(p.compW * s);
+    p.height = std::round(p.compH * s);
   }
   p.width = std::max(1.0, std::trunc(p.width));
   p.height = std::max(1.0, std::trunc(p.height));
@@ -620,7 +621,7 @@ bool parse_job(const Json& j, JobSpec& out, std::string& error) {
     }
     *dst = static_cast<std::int64_t>(std::floor(v.num()));
   }
-  for (const auto& [k, dst] : {std::pair<const char*, std::optional<double>*>{"fps", &out.fps}, {"width", &out.width}, {"height", &out.height}}) {
+  for (const auto& [k, dst] : {std::pair<const char*, std::optional<double>*>{"fps", &out.fps}, {"width", &out.width}, {"height", &out.height}, {"scale", &out.scale}}) {
     const Json& v = j.at(k);
     if (v.is_undefined() || v.is_null()) continue;
     if (!v.is_finite_number() || !(v.num() > 0)) {

@@ -279,40 +279,6 @@ export type UpdateStatus =
   | { kind: 'unsupported'; reason: string }
   | { kind: 'error'; message: string };
 
-/*
-  ★ The two shapes below are DUPLICATED from electron/renderResume.ts, for the
-  same reason `UpdateStatus` is duplicated from electron/updaterPolicy.ts: the
-  renderer must not import main-process sources (they pull in `electron`, which
-  does not resolve in a browser build) and main must not import from `src/`.
-  `renderResumeContract.test.ts` compares the two copies as text.
-
-  `spec` is `unknown` on both sides deliberately. It is the render queue's own
-  `RenderJobSpec`, round-tripped through JSON on disk by a process that never
-  reads a field of it — so main is in no position to promise its shape back, and
-  `renderQueueStore` validates what it gets.
-*/
-
-/** A previous session's render that still has frames on disk. */
-export interface ResumableRenderJob {
-  jobId: string;
-  spec: unknown;
-  format: string;
-  totalFrames: number;
-  stagedFrames: number;
-  createdAt: number;
-}
-
-/** A re-registered job: its dir is live again under the same id. */
-export interface AdoptedRenderJob {
-  jobId: string;
-  spec: unknown;
-  format: string;
-  totalFrames: number;
-  stagedFrames: number;
-  nextFrame: number;
-  frameExt: 'jpg' | 'png';
-}
-
 /** Where one plugins folder came from. Shown beside the plugin, so not a boolean. */
 export type PluginPathKind = 'user' | 'machine' | 'env';
 
@@ -610,138 +576,12 @@ export interface MotionEditorApi {
     cancelProxy?(assetId: string): Promise<boolean>;
   };
 
+  /** What is left of the render IPC: the files are rendered by the engine (exportSupervisor). */
   render?: {
-    /**
-     * Open a staging dir. `info` is what makes the render RESUMABLE across a
-     * restart: it is written to `resume.json` in the dir, so a later session can
-     * find the frames and know what they were for. Omitted, the job stages
-     * exactly as before and is never offered back — which is right for one-shot
-     * exports and for the headless CLI.
-     */
-    beginJob?(info?: { spec?: unknown; format?: string; totalFrames?: number }): Promise<string>;
-    /** Renders a previous session left half-staged on disk, newest first. */
-    listResumableJobs?(): Promise<ResumableRenderJob[]>;
-    /**
-     * Re-register one of those dirs under its ORIGINAL id, so `stageFrame` and
-     * `encode` reach it again, and report how many contiguous frames are really
-     * there. Null when the id names nothing resumable.
-     */
-    adoptJob?(jobId: string): Promise<AdoptedRenderJob | null>;
-    /** Delete a staging dir the queue decided not to finish. */
-    discardJob?(jobId: string): Promise<void>;
-    stageFrame?(jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png'): Promise<void>;
-    stageAudio?(jobId: string, bytes: Uint8Array): Promise<void>;
-    encode?(
-      jobId: string,
-      opts: {
-        format: 'mp4' | 'webm' | 'gif' | 'mov';
-        fps: number;
-        hasAudio?: boolean;
-        quality?: 'high' | 'medium' | 'draft';
-        /** mov only — ProRes flavour ffmpeg encodes. Defaults to 4444. */
-        proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
-        /** ST.2084 PQ or HLG — HEVC 10-bit with BT.2020 tags when ffmpeg has libx265. */
-        hdr?: 'pq' | 'hlg';
-        /** Measured MaxCLL / MaxFALL + mastering display (HDR10 SEI foothold). */
-        hdrMastering?: {
-          maxCll: number;
-          maxFall: number;
-          displayMaxNits: number;
-          displayMinNits: number;
-        };
-        /**
-         * Chapter marks as FFMETADATA1 TEXT (see `@core/export/chapters`).
-         *
-         * Text rather than a chapter array because the main process cannot
-         * import from `src/` — formatting there would duplicate the escaping
-         * rules. Written to a file beside the staged frames and pulled in as an
-         * extra ffmpeg INPUT, since ffmpeg can only read chapters from a
-         * container. Honoured for MP4/MOV only; the WebM muxer has no Chapters
-         * element at all.
-         */
-        chaptersFfmetadata?: string;
-        /**
-         * mp4 only — the encoder for the H.264/HEVC stream. `libx264` (the
-         * default) is the software path every file has been encoded with; the
-         * hardware names are opt-in and PROBED in main: an encoder the build
-         * lacks or the machine cannot run falls back to libx264, and the
-         * result's `warning` says so.
-         */
-        videoEncoder?: 'libx264' | 'h264_nvenc' | 'hevc_nvenc' | 'h264_qsv' | 'h264_videotoolbox';
-      },
-    ): Promise<{ path: string; frames: number; videoCodec?: string; warning?: string }>;
-    /**
-     * Streaming encode — the fast path `encode` is the fallback for.
-     *
-     * One ffmpeg child is opened on a job dir and fed raw 8-bit RGBA frames
-     * (width × height × 4 bytes, strictly in order from 0) as they render; the
-     * same command line as `encode` bar the video input, writing the same
-     * `out.<ext>`, so `save`/`saveTo`/`cancel`/`cleanJob` apply unchanged.
-     * `streamFrame` resolves once ffmpeg's stdin has drained — awaiting it is
-     * the back-pressure. Not for HDR (mastering metadata needs every frame
-     * first). `streamPreference` is 'staged' when MOTION_EXPORT_PIPELINE says so.
-     */
-    streamPreference?(): Promise<'stream' | 'staged'>;
-    openStream?(
-      jobId: string,
-      opts: {
-        format: 'mp4' | 'webm' | 'gif' | 'mov';
-        fps: number;
-        width: number;
-        height: number;
-        hasAudio?: boolean;
-        quality?: 'high' | 'medium' | 'draft';
-        proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
-        /** The frames carry real alpha (webm keeps it). */
-        alpha?: boolean;
-        chaptersFfmetadata?: string;
-        /** As for `encode`: mp4 only, opt-in, probed before the child opens. */
-        videoEncoder?: 'libx264' | 'h264_nvenc' | 'hevc_nvenc' | 'h264_qsv' | 'h264_videotoolbox';
-      },
-    ): Promise<{ videoEncoder: string; warning?: string } | void>;
-    /** A whole frame in one message. Superseded by `streamChunk`; kept for older mains. */
-    streamFrame?(jobId: string, index: number, bytes: Uint8Array): Promise<void>;
-    /**
-     * One piece of frame `index` starting at byte `offset`; `last` completes
-     * the frame. Resolves once the piece has drained into ffmpeg's stdin —
-     * that resolution is the ACK the raw pipe's back-pressure is built on
-     * (`@core/export/rawPipe`). Pieces are at most 4 MiB; main refuses larger.
-     */
-    streamChunk?(jobId: string, index: number, offset: number, bytes: Uint8Array, last: boolean): Promise<void>;
-    finishStream?(jobId: string): Promise<{ path: string; frames: number }>;
     /** Hardware encoders that pass a smoke encode on this machine. Cached per session. */
     probeEncoders?(): Promise<{ hardware: Array<'h264_nvenc' | 'hevc_nvenc' | 'h264_qsv' | 'h264_videotoolbox'> }>;
-    /**
-     * Probe host ffmpeg for HEVC (libx265). Used by the Export dialog so HDR10/HLG
-     * can warn before encode when MaxCLL/MaxFALL SEI will not be written.
-     */
-    probeHdr?(): Promise<{ libx265: boolean }>;
-    /** Kill an in-flight encode (Cancel / queue Pause). */
-    cancel?(jobId: string): Promise<void>;
-    /** Native save dialog, then move the encoded file there. Null if cancelled. */
-    save?(jobId: string, defaultName: string): Promise<{ path: string } | null>;
-    /** Move the encoded file into an already-chosen folder, no dialog. A
-     *  clashing name is suffixed ` (2)` unless `overwrite` says otherwise —
-     *  the render queue never overwrites, the headless CLI always does. */
-    saveTo?(jobId: string, dir: string, filename: string, overwrite?: boolean): Promise<{ path: string }>;
     /** Directory picker for the render queue's output folder. */
     chooseOutputDir?(): Promise<string | null>;
-    cleanJob?(jobId: string): Promise<void>;
-  };
-
-  /**
-   * The headless CLI (`premation render`). Present only in a desktop build,
-   * and only answering during a CLI launch — a normal editor session has no
-   * `cli:job` handler registered, so `job()` rejects and the /render route
-   * stands down. See electron/cliRender.ts.
-   */
-  cli?: {
-    /** The job this process was launched to perform. Rejects if there is none. */
-    job?(): Promise<CliTaskRequest>;
-    /** Render progress 0–1. Fire-and-forget; it also resets the stall watchdog. */
-    progress?(fraction: number): void;
-    /** The one terminal report. The process exits on it. */
-    done?(report: CliDoneReport): void;
   };
 
   /**

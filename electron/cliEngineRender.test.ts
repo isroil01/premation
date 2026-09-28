@@ -1,8 +1,8 @@
 /**
  * `premation render` through the engine (cliEngineRender.ts): which CLI jobs
  * the engine takes, and the three endings the CLI acts on — done (the file is
- * delivered, the report carries the preflight's size and rate), fallback (the
- * hidden window renders it), failed.
+ * delivered, the report carries the preflight's size and rate), a CLI feature
+ * the engine does not have yet, failed; and `--aspect` through --prepare.
  */
 
 import { EventEmitter } from 'node:events';
@@ -60,17 +60,43 @@ const job = (over: Partial<CliRenderJob> = {}): CliRenderJob => ({
 });
 
 describe('premation render through premation-engine --export', () => {
-  it('takes a plain render and leaves the editor-only ones to the window', () => {
+  it('takes a plain render and refuses what the engine does not do yet', () => {
     const plain = cliEngineSpec(job({ startFrame: 0, endFrame: 29, quality: 'draft', transparent: false }), ENGINE);
     expect(plain).toEqual({ spec: expect.objectContaining({ projectPath: job().projectPath, format: 'mp4', startFrame: 0, endFrame: 29, quality: 'draft' }) });
-    expect(cliEngineSpec(job({ aspect: '9:16' }), ENGINE)).toHaveProperty('reason');
+    expect(cliEngineSpec(job({ aspect: '9:16' }), ENGINE)).toHaveProperty('spec');
     expect(cliEngineSpec(job({ captionsPath: 'c.srt' }), ENGINE)).toHaveProperty('reason');
     expect(cliEngineSpec(job({ commandsPath: 'c.jsonl' }), ENGINE)).toHaveProperty('reason');
     expect(cliEngineSpec(job({ dataPath: 'rows.csv' }), ENGINE)).toHaveProperty('reason');
-    expect(cliEngineSpec(job({ scale: 0.5 }), ENGINE)).toHaveProperty('reason');
+    expect(cliEngineSpec(job({ scale: 0.5 }), ENGINE)).toEqual({ spec: expect.objectContaining({ scale: 0.5 }) });
     expect(cliEngineSpec(job({ scale: 0.5, width: 960, height: 540 }), ENGINE)).toHaveProperty('spec');
-    expect(cliEngineSpec(job({ format: 'png' }), ENGINE)).toHaveProperty('reason');
+    expect(cliEngineSpec(job({ format: 'png', startFrame: 12, endFrame: 40 }), ENGINE)).toEqual({ spec: expect.objectContaining({ format: 'png', startFrame: 12, endFrame: 12 }) });
     expect(cliEngineSpec(job(), null)).toEqual({ reason: 'premation-engine is not available' });
+  });
+
+  it('--aspect: prepares the reframed copy, then renders it targeting the new composition', async () => {
+    const prepare = jest.fn(async () => ({ ok: true as const, result: { comp: 'comp_9x16', reframed: { comp: 'comp_9x16', width: 1080, height: 1920 } } }));
+    let jobFile = '';
+    const r = deps((e) => {
+      e.say({ ev: 'preflight', ok: true, frames: 1, width: 1080, height: 1920, fps: 30, alpha: false, depth: 8, audio: null, comp: 'comp_9x16', compName: 'Promo 1080×1920' });
+      e.say({ ev: 'done', frames: 1 });
+      e.exit(0);
+    });
+    r.deps.fs!.writeFile = async (_p, text) => { jobFile = text; };
+    const out = await runCliEngineRender(job({ aspect: '9:16', comp: 'Promo' }), r.deps, () => undefined, prepare);
+    expect(out).toMatchObject({ kind: 'done', width: 1080, height: 1920 });
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ projectPath: job().projectPath, comp: 'Promo', reframe: { ratio: 9 / 16 } }),
+      expect.objectContaining({ enginePath: ENGINE }),
+    );
+    const sent = JSON.parse(jobFile) as { projectPath: string; comp: string };
+    expect(sent.comp).toBe('comp_9x16');
+    expect(sent.projectPath).toMatch(/project\.motion$/);
+  });
+
+  it('--aspect: a failed prepare fails the render, and nothing is exported', async () => {
+    const prepare = jest.fn(async () => ({ ok: false as const, message: 'Auto-reframe failed: no footage' }));
+    const r = deps(() => { throw new Error('must not spawn'); });
+    expect(await runCliEngineRender(job({ aspect: '1:1' }), r.deps, () => undefined, prepare)).toEqual({ kind: 'failed', message: 'Auto-reframe failed: no footage' });
   });
 
   it('renders, delivers the file and reports the preflight size and rate', async () => {
@@ -101,8 +127,8 @@ describe('premation render through premation-engine --export', () => {
       e.exit(1);
     });
     expect(await runCliEngineRender(job(), encoder.deps, () => undefined)).toEqual({ kind: 'failed', message: 'ffmpeg exited 1' });
-    // Editor-only jobs never start the engine.
+    // What the engine does not do yet never starts it.
     const never = deps(() => { throw new Error('spawned'); });
-    expect(await runCliEngineRender(job({ aspect: '1:1' }), never.deps, () => undefined)).toMatchObject({ kind: 'needsEditor' });
+    expect(await runCliEngineRender(job({ dataPath: 'rows.csv' }), never.deps, () => undefined)).toMatchObject({ kind: 'needsEditor' });
   });
 });

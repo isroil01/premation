@@ -75,7 +75,7 @@ describe('only the interactive viewport opts in', () => {
   });
 
   it('no export / CLI / render-queue source mentions the flag', () => {
-    const outputs = ['src/core/export', 'src/core/cli', 'src/layout/Export', 'src/layout/RenderQueue'].flatMap(walk);
+    const outputs = ['src/core/export', 'src/layout/Export', 'src/layout/RenderQueue'].flatMap(walk);
     expect(outputs.length).toBeGreaterThan(0);
     expect(outputs.filter((f) => read(f).includes('wireframeLayers'))).toEqual([]);
   });

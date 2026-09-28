@@ -1,12 +1,13 @@
 /**
  * ExportForm — pick a format, see exactly what will be written, export it.
  *
- * The preview is the point: every frame it shows comes from the real export path
- * (same snapshot builder, same comp scoping, same 1:1 comp→frame view), so a
- * render that would come out empty is visible here instead of in a media player.
+ * The preview is the point: every frame it shows is the ENGINE's (the renderer
+ * the export runs), so a render that would come out wrong is visible here
+ * instead of in a media player.
  *
- * Nothing in this form blocks the editor. Frames are rasterised between yields
- * and, on the desktop, encoded by ffmpeg in a separate process.
+ * Nothing in this form blocks the editor: a rendered format is a job on main's
+ * export supervisor (`premation-engine --export`); the document formats
+ * (Lottie, JSON, the cut lists) are written by `runDataExport`.
  *
  * ── Two hosts, one form ──────────────────────────────────────────────────
  * This renders inside the Export DIALOG (the top-bar button) and inside the
@@ -23,7 +24,6 @@ import { cn } from '@utils/cn';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { usePlaybackClockStore } from '@stores/playbackClockStore';
 import { useActiveCompRecord } from '@hooks/useActiveCompRecord';
-import { pageRenderComp } from '@core/rendering/pageFrame';
 import { useUIStore } from '@stores/uiStore';
 import { outputExtFor, type OutputFormat } from '@stores/renderQueueStore';
 import { useLayoutStore } from '@stores/layoutStore';
@@ -33,15 +33,12 @@ import { activeCompSettingsNow, useActiveTabCompSettings } from '@hooks/useMirro
 import { activeCompIdNow } from '@hooks/useMirror';
 import { settingsHasWorkArea, settingsSetWorkArea } from '@core/mirror/compFacts';
 import { flicksToSeconds } from '@motion/engine-api';
-import { runExport, isAbortError, availableExportPresets, type ExportFormat, type ExportPreset } from '@core/export/exportManager';
-import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/videoSink';
+import { runDataExport, isAbortError, isDataExportFormat, availableExportPresets, type ExportFormat, type ExportPreset } from '@core/export/exportManager';
+import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/renderSpec';
 import { chaptersFromMarkers, formatCarriesChapters, type ExportChapter } from '@core/export/chapters';
-import { formatHdrCapabilityNote, formatHdrExportDoneNote } from '@core/export/hdrTransfer';
 import { openHelp } from '@layout/Help/openHelp';
-import { getProjectManager } from '@core/services/coreServices';
-import { buildSupervisorSpec, exportSupervisorClient } from '@core/export/exportSupervisorClient';
-import { useExportQueueStore } from '@stores/exportQueueStore';
-import { addToRenderQueue, shouldUseSupervisor } from './supervisorQueue';
+import { exportSupervisorClient } from '@core/export/exportSupervisorClient';
+import { addToRenderQueue, engineExportRefusal, queueEngineRender, shouldUseSupervisor } from './supervisorQueue';
 import { ExportPreview } from './ExportPreview';
 import { ExportQueueList } from './ExportQueueList';
 import { useExportFormStore } from './exportFormStore';
@@ -62,10 +59,10 @@ const QUALITY: ReadonlyArray<{ value: ExportQuality; label: string; hint: string
   { value: 'draft', label: 'Draft', hint: 'Fast and visibly compressed. For checking timing.' },
 ];
 
-const MOVING: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif']);
-const QUEUEABLE: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
-const RANGED: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif', 'wav', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
-const HAS_AUDIO: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+const MOVING: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif']);
+const QUEUEABLE: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+const RANGED: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif', 'wav', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+const HAS_AUDIO: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
 const ALPHA_FORMATS: ReadonlySet<ExportFormat> = new Set(['webm', 'mov', 'png', 'png-sequence', 'gif', 'exr-sequence']);
 const NON_RASTER: ReadonlySet<ExportFormat> = new Set(['wav', 'lottie', 'json', 'edl', 'otio', 'fcpxml', 'ale', 'mogrt']);
 
@@ -73,7 +70,7 @@ const NON_RASTER: ReadonlySet<ExportFormat> = new Set(['wav', 'lottie', 'json', 
 const PRORES_PROFILES: ReadonlyArray<ProresProfile> = ['4444', 'hq', '422', 'lt', 'proxy'];
 
 const FORMAT_GROUPS: ReadonlyArray<{ id: string; label: string; formats: ExportFormat[] }> = [
-  { id: 'video', label: 'Video', formats: ['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif'] },
+  { id: 'video', label: 'Video', formats: ['mp4', 'webm', 'mov', 'gif'] },
   { id: 'frames', label: 'Frames', formats: ['png-sequence', 'jpg-sequence', 'exr-sequence', 'png'] },
   { id: 'audio', label: 'Audio', formats: ['wav'] },
   { id: 'editorial', label: 'Editorial', formats: ['otio', 'fcpxml', 'edl', 'ale'] },
@@ -83,8 +80,8 @@ const FORMAT_GROUPS: ReadonlyArray<{ id: string; label: string; formats: ExportF
 /** The job id the immediate export runs under — one at a time, by design. */
 export const EXPORT_JOB_ID = 'export';
 
-// The supervisor-or-window decision lives in ./supervisorQueue, shared with the
-// Render Queue panel; re-exported so existing importers keep one name for it.
+// Whether the engine export can take a format now lives in ./supervisorQueue,
+// shared with the Render Queue panel; re-exported so importers keep one name.
 export { shouldUseSupervisor };
 
 function dataPreviewMeta(format: ExportFormat): { icon: import('@components/Icon').IconName; title: string } {
@@ -227,66 +224,59 @@ export function useExportModel(duration: number, fps: number): ExportModel {
     return chaptersForRange(startSec, endSec, fps);
   }, [chapters, supportsChapters, captureRange, fps]);
 
-  const comp = useMemo(
-    () => pageRenderComp(baseComp, alpha),
-    [baseComp, alpha],
-  );
-
   const activePreset = presetByFormat.get(format);
   const outputName = `${fileStem(compName ?? 'composition')}.${activePreset?.ext ?? format}`;
   const busy = progress !== null;
 
   /**
-   * The out-of-process export: where the file goes, a snapshot of the project
-   * for the hidden window to open, and a job on main's queue. Nothing waits
-   * on the render — the queue list under the form and the status-bar tray
-   * follow it, and this window can be closed.
+   * A rendered format: where the file goes, a snapshot of the project for the
+   * engine to open, and a job on main's queue. Nothing waits on the render —
+   * the queue list under the form and the status-bar tray follow it, and this
+   * window can be closed. A still is the one frame under the playhead.
    *
-   * Errors before the job exists (the dialog cancelled, the snapshot failing
-   * to write) are reported here; everything after is the job's own record.
+   * Errors before the job exists (a refusal, the dialog cancelled, the
+   * snapshot failing to write) are reported here; everything after is the
+   * job's own record.
    */
   const exportViaSupervisor = useCallback(async (): Promise<void> => {
     const ui = useUIStore.getState();
+    const refusal = engineExportRefusal();
+    if (refusal) {
+      ui.notify({ level: 'error', message: refusal, durationMs: 8000 });
+      return;
+    }
     const outPath = await exportSupervisorClient.chooseOutputPath(outputName);
     if (!outPath) return;
     const chapterMarks = captureChapters();
     const { exportVideoEncoder } = usePreferenceStore.getState();
+    const range = format === 'png' ? { startSec: time, endSec: time + 1 / Math.max(1, fps) } : captureRange();
     try {
-      const { id, projectPath } = await exportSupervisorClient.reserve();
-      await getProjectManager().snapshotTo(projectPath);
-      const spec = buildSupervisorSpec({
+      await queueEngineRender({
         compositionId: baseComp.id,
         compositionName: compName ?? 'Composition',
         format,
         width,
         height,
         fps,
-        range: captureRange(),
+        range,
         quality,
         ...(format === 'mov' ? { proresProfile } : {}),
         ...(format === 'mp4' ? { videoEncoder: exportVideoEncoder } : {}),
-        // F1: offered only when main's engine export path is on (useEngineExportCaps).
         ...(format === 'mov' && bitDepth === 16 ? { bitDepth: 16 as const } : {}),
         transparent: alpha,
         ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
-        projectPath,
         outPath,
       });
-      await useExportQueueStore.getState().connect();
-      await exportSupervisorClient.enqueue(id, spec);
-      ui.notify({ level: 'success', message: `Queued ${spec.label} — it renders in the background`, durationMs: 3000 });
+      ui.notify({ level: 'success', message: `Queued ${outputName} — it renders in the background`, durationMs: 3000 });
     } catch (err) {
       ui.notify({ level: 'error', message: err instanceof Error ? err.message : 'The export could not be queued', durationMs: 8000 });
     }
-  }, [outputName, captureChapters, captureRange, baseComp.id, compName, format, width, height, fps, quality, proresProfile, bitDepth, alpha]);
+  }, [outputName, captureChapters, captureRange, baseComp.id, compName, format, width, height, fps, time, quality, proresProfile, bitDepth, alpha]);
 
   const doExport = useCallback(async (): Promise<void> => {
     const store = useExportFormStore.getState();
     if (store.progress !== null) return;
-    // Read at click time, like the range: the pipeline and encoder are
-    // preferences, and what was set when Export was pressed is what runs.
-    const { exportRawPipe, exportVideoEncoder, exportInProcess } = usePreferenceStore.getState();
-    if (shouldUseSupervisor(format, exportInProcess)) {
+    if (!isDataExportFormat(format)) {
       await exportViaSupervisor();
       return;
     }
@@ -294,36 +284,20 @@ export function useExportModel(duration: number, fps: number): ExportModel {
     store.begin(controller);
     const ui = useUIStore.getState();
     ui.startJob({ id: EXPORT_JOB_ID, label: `Exporting ${outputName}`, progress: 0 });
-    const chapterMarks = captureChapters();
     try {
-      const done = await runExport({
+      await runDataExport({
         format,
         width,
         height,
         fps,
         duration,
-        time,
-        quality,
-        ...(format === 'mov' ? { proresProfile } : {}),
-        ...(format === 'mp4' ? { videoEncoder: exportVideoEncoder } : {}),
-        rawPipe: exportRawPipe,
-        ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
-        // Captured NOW, not read live mid-render: what you clicked is what
-        // renders, even if the work area moves while the export runs.
-        range: captureRange(),
-        baseName: fileStem(compName ?? 'composition'),
-        comp,
+        rootId: baseComp.id,
         onProgress: (p) => {
           useExportFormStore.getState().setProgress(p);
           useUIStore.getState().updateJob(EXPORT_JOB_ID, { progress: p });
         },
-        signal: controller.signal,
       });
-      const hdrNote = formatHdrExportDoneNote(done.videoCodec, done.hdrMastering);
-      useUIStore.getState().finishJob(EXPORT_JOB_ID, { status: 'done', message: `Export complete${hdrNote}` });
-      // A hardware encoder that fell back to software is a finished export
-      // with something to say, not a failure — said once, here.
-      if (done.warning) useUIStore.getState().notify({ level: 'warning', message: done.warning, durationMs: 8000 });
+      useUIStore.getState().finishJob(EXPORT_JOB_ID, { status: 'done', message: 'Export complete' });
     } catch (err) {
       if (isAbortError(err)) {
         useUIStore.getState().finishJob(EXPORT_JOB_ID, { status: 'cancelled', message: 'Export cancelled' });
@@ -337,7 +311,7 @@ export function useExportModel(duration: number, fps: number): ExportModel {
     } finally {
       useExportFormStore.getState().end();
     }
-  }, [format, width, height, fps, duration, time, quality, proresProfile, compName, comp, captureRange, captureChapters, outputName, exportViaSupervisor]);
+  }, [format, width, height, fps, duration, baseComp.id, outputName, exportViaSupervisor]);
 
   const queueJob = useCallback((): boolean => {
     if (!QUEUEABLE.has(format)) return false;
@@ -350,9 +324,8 @@ export function useExportModel(duration: number, fps: number): ExportModel {
     // reason: markers are live editor state.
     const range = captureRange();
     const chapterMarks = captureChapters();
-    // Main's queue on desktop (the job starts rendering in its own window),
-    // the in-window queue otherwise — see `addToRenderQueue`.
-    const { where } = addToRenderQueue({
+    // Main's queue: the job starts rendering in the engine — see `addToRenderQueue`.
+    addToRenderQueue({
       compositionName: compName ?? 'Comp 1',
       compositionId: baseComp.id,
       background: baseComp.background,
@@ -378,9 +351,7 @@ export function useExportModel(duration: number, fps: number): ExportModel {
     useLayoutStore.getState().openPanel('renderQueue');
     useUIStore.getState().notify({
       level: 'success',
-      message: where === 'supervisor'
-        ? 'Added to Render Queue (F6) — it renders in the background'
-        : 'Added to Render Queue (F6)',
+      message: 'Added to Render Queue (F6) — it renders in the background',
       durationMs: 2600,
     });
     return true;
@@ -482,13 +453,7 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
   );
   const writeChapters = chapters && supportsChapters && chapterCount > 0;
 
-  const comp = useMemo(
-    () => pageRenderComp(baseComp, alpha),
-    [baseComp, alpha],
-  );
-
-  // F1: 16 bits per channel exists only on the engine export path (main's
-  // PREMATION_EXPORT_ENGINE flag) and only for the out-of-process export.
+  // 16 bits per channel: mov only, when main's engine export says it can.
   const bitDepth = useExportFormStore((s) => s.bitDepth);
   const [bitDepth16, setBitDepth16] = useState(false);
   useEffect(() => {
@@ -496,27 +461,7 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
     void exportSupervisorClient.capabilities().then((c) => { if (!cancelled) setBitDepth16(c.bitDepth16); });
     return () => { cancelled = true; };
   }, []);
-  const offerBitDepth = format === 'mov' && bitDepth16 && shouldUseSupervisor(format, usePreferenceStore.getState().exportInProcess);
-
-  /** null = probing / unknown; true/false = host ffmpeg has libx265. */
-  const [hdrLibx265, setHdrLibx265] = useState<boolean | null>(null);
-  const isHdrFormat = format === 'hdr10' || format === 'hlg';
-  useEffect(() => {
-    if (!isHdrFormat) return;
-    let cancelled = false;
-    setHdrLibx265(null);
-    const probe = window.motionEditor?.render?.probeHdr;
-    if (!probe) {
-      setHdrLibx265(false);
-      return;
-    }
-    void probe().then((r) => {
-      if (!cancelled) setHdrLibx265(!!r?.libx265);
-    }).catch(() => {
-      if (!cancelled) setHdrLibx265(false);
-    });
-    return () => { cancelled = true; };
-  }, [isHdrFormat]);
+  const offerBitDepth = format === 'mov' && bitDepth16 && shouldUseSupervisor(format);
 
   const frameCount = format === 'png' ? 1 : Math.max(1, Math.round(rangeDuration * fps));
   const qualityHint = QUALITY.find((q) => q.value === quality)?.hint;
@@ -534,7 +479,8 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
               durationSec={format === 'png' ? 1 / Math.max(1, fps) : rangeDuration}
               startSec={format === 'png' ? time : rangeStart}
               singleFrame={format === 'png'}
-              comp={comp}
+              compId={baseComp.id}
+              transparent={alpha}
               disabled={busy}
             />
           ) : (
@@ -626,18 +572,6 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
           </div>
 
           {activePreset ? <p className={styles.formatHint}>{activePreset.hint}</p> : null}
-          {isHdrFormat ? (
-            <p
-              className={cn(
-                styles.hdrNote,
-                hdrLibx265 === false && styles.hdrNoteWarn,
-                hdrLibx265 === true && styles.hdrNoteOk,
-              )}
-              role="status"
-            >
-              {formatHdrCapabilityNote(hdrLibx265)}
-            </p>
-          ) : null}
 
           {showRange ? (
             <div className={styles.section}>

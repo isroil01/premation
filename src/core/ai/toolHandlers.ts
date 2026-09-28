@@ -1053,15 +1053,10 @@ const exportVideoTool: AiTool['handler'] = async (input, ctx) => {
   if (!result.ok) {
     return fail(`Export failed: ${result.message}. The composition is unchanged.`);
   }
-  if (result.mode === 'queue') {
-    return ok(
-      `Queued ${format ?? 'mp4'} export as job '${result.jobId}' in the Render Queue` +
-      (result.started ? ' and started rendering.' : '. Open Render Queue to choose an output folder and Start.'),
-      { jobId: result.jobId },
-    );
-  }
   return ok(
-    `Exported the composition as ${format ?? 'mp4'}${result.videoCodec ? ` (${result.videoCodec})` : ''}.`,
+    `Queued ${format ?? 'mp4'} export as job '${result.jobId}' in the Render Queue` +
+    (result.started ? ' and started rendering.' : '. Open Render Queue to choose an output folder and Start.'),
+    { jobId: result.jobId },
   );
 };
 

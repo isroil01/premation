@@ -2,73 +2,27 @@
  * The main-process half of `premation render` — drive one headless render and
  * exit with a meaningful code.
  *
- * It opens the real renderer in a hidden window. That is the design, not a
- * shortcut: the export pipeline is a DOM pipeline (see the header of
- * `src/core/cli/headlessRender.ts`), so the only way to guarantee the CLI ships
- * the file the editor would have shipped is to BE the editor, with its window
- * never shown. Everything a GUI launch does and a render does not need — the
- * application menu, the auto-updater, the managed backend, GPU diagnostics —
- * is skipped by `main.ts` before this is called.
+ * The ENGINE renders (`premation-engine --export`, cliEngineRender.ts): no
+ * window is opened. The hidden editor window that rendered on the TypeScript
+ * engine is gone (docs/TS_ENGINE_REMOVAL.md phase 4).
  *
- * Three things this owns that the renderer cannot:
+ * Three things this owns:
  *
  *  - **Paths.** Only this side has `path` and the cwd, so every path is made
- *    absolute here and the renderer is handed nothing it has to interpret.
+ *    absolute here.
  *  - **Output.** stdout, the exit code, and the `--log` file.
- *  - **The watchdog.** A render that stops making progress must fail the build
- *    rather than hold a CI runner until its own timeout kills the job with no
- *    explanation.
+ *  - **Refusals.** Anything that cannot run is a printed line and exit 1.
  */
 
-import { BrowserWindow, app } from 'electron';
+import { app } from 'electron';
 import path from 'node:path';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { handle, on } from './ipcGuard';
 import type { CliOutputOptions, CliRenderJob } from './cliArgs';
 import { runCliEngineRender } from './cliEngineRender';
+import { describeComposition, formatCaptions, runEnginePrepare } from './cliPrepare';
+import { getKeyForProvider } from './aiKeyVault';
 import { resolveEngineExecutable } from './engineSupervisor';
 import { resolveFfmpegBinary } from './ffmpegBinary';
-
-/**
- * How long a render may make no progress at all before it is declared stuck.
- *
- * Generous on purpose: one 8K frame with heavy effects legitimately takes
- * minutes, and a false timeout that kills a real render is worse than a stuck
- * render that eventually times out. The clock resets on every progress report,
- * so this bounds the gap between frames, never the render.
- */
-const STALL_TIMEOUT_MS = 15 * 60 * 1000;
-
-/** How long the renderer has to boot and ask for its job before we give up. */
-const BOOT_TIMEOUT_MS = 2 * 60 * 1000;
-
-/** What the renderer sends back when it is finished, one way or the other. */
-export type CliRenderReport =
-  | {
-      ok: true;
-      outPath: string;
-      compositionName: string;
-      frames: number;
-      width: number;
-      height: number;
-      fps: number;
-      warnings: string[];
-    }
-  | { ok: false; message: string }
-  /** `comps` — a listing rather than a render. */
-  | { ok: true; comps: string[] }
-  /** `captions` — a transcript, for this process to write. */
-  | { ok: true; captions: { text: string; cues: number; compositionName: string }; warnings: string[] }
-  /** `--data` — one render per row, reported as a whole. */
-  | {
-      ok: true;
-      batch: {
-        rendered: number;
-        failed: number;
-        rows: Array<{ outputPath: string; error?: string }>;
-      };
-      warnings: string[];
-    };
 
 /**
  * A render job with its data table already read.
@@ -93,46 +47,6 @@ export interface CliTask {
     | { kind: 'comps'; projectPath: string }
     | { kind: 'captions'; projectPath: string; outPath: string; comp?: string; language?: string };
   output: CliOutputOptions;
-}
-
-/**
- * Where the renderer lives — the dev server, or the packaged bundle.
- *
- * Shared with the export supervisor (electron/exportProcess.ts), whose hidden
- * windows load the same `#/render` route: one definition of "the app", so the
- * CLI and a queued export can never open different builds.
- */
-export function rendererEntry(): { url: string } | { file: string } {
-  return process.env.NODE_ENV === 'development'
-    ? { url: `${(process.env.PREMATION_DEV_URL ?? 'http://localhost:5173').replace(/\/+$/, '')}/#/render` }
-    : { file: path.join(__dirname, '..', 'dist', 'index.html') };
-}
-
-/**
- * The web preferences of a hidden render window — the CLI's and the export
- * supervisor's alike. Same preload and sandbox as the editor window, plus the
- * one switch a hidden render cannot work without (see `backgroundThrottling`).
- */
-export function hiddenRenderWebPreferences(): Electron.WebPreferences {
-  return {
-    preload: path.join(__dirname, 'preload.js'),
-    contextIsolation: true,
-    nodeIntegration: false,
-    sandbox: true,
-    webgl: true,
-    devTools: false,
-    /*
-      The whole reason a hidden render works at all.
-
-      Chromium throttles timers in a window that is not visible — to roughly
-      one tick per second — and the offline render loop yields between frames
-      (`scheduler.yield`, falling back to `setTimeout`). Throttled, a 600-frame
-      render would take ten minutes of pure waiting and then trip the stall
-      watchdog. This is the switch that says "this window is not idle, it is
-      working".
-    */
-    backgroundThrottling: false,
-  };
 }
 
 /**
@@ -285,234 +199,100 @@ export async function runCliTask(task: CliTask): Promise<number> {
     return 1;
   }
 
-  if (task.request.kind === 'render') {
-    const what = task.request.job.aspect ? `Reframing to ${task.request.job.aspect} and rendering` : 'Rendering';
-    print.line(`${what} ${path.basename(task.request.job.projectPath)} → ${task.request.job.outPath}`);
-  } else if (task.request.kind === 'captions') {
-    print.line(`Transcribing ${path.basename(task.request.projectPath)} → ${task.request.outPath}`);
-  }
+  const enginePath = resolveEngineExecutable({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath ?? '',
+    appPath: app.getAppPath(),
+    platform: process.platform,
+    vars: process.env,
+    exists: existsSync,
+  });
+  const workDirFor = (id: string): string => path.join(app.getPath('temp'), 'premation-cli', id);
 
-  // The engine renders it: `premation-engine --export`, no window. Only the
-  // CLI features the engine path does not have yet (`needsEditor`: --aspect,
-  // --captions, --commands, --data, a png still, HDR) go to the hidden editor
-  // window below (cliEngineRender.ts).
-  if (task.request.kind === 'render') {
-    const job = task.request.job;
-    const t0 = Date.now();
-    const viaEngine = await runCliEngineRender(job, {
-      enginePath: resolveEngineExecutable({
-        isPackaged: app.isPackaged,
-        resourcesPath: process.resourcesPath ?? '',
-        appPath: app.getAppPath(),
-        platform: process.platform,
-        vars: process.env,
-        exists: existsSync,
-      }),
-      ffmpegPath: () => resolveFfmpegBinary({ vars: process.env, resourcesPath: process.resourcesPath ?? '', platform: process.platform, exists: existsSync }),
-      workDirFor: (id) => path.join(app.getPath('temp'), 'premation-cli', id),
-      log: (m) => print.event({ event: 'engine', message: `engine: ${m}` }),
-    }, (f) => {
-      const pct = Math.round(Math.max(0, Math.min(1, f)) * 100);
-      print.progress(`  ${String(pct).padStart(3)}%`, { fraction: f, percent: pct });
-    });
-    if (viaEngine.kind === 'done') {
-      const elapsedMs = Date.now() - t0;
-      print.event({
-        event: 'done',
-        message: `Wrote ${job.outPath} — ${viaEngine.frames} frame(s), `
-          + `${viaEngine.width}×${viaEngine.height} @ ${viaEngine.fps}fps, in ${(elapsedMs / 1000).toFixed(1)}s (engine)`,
-        outPath: job.outPath,
-        compositionName: viaEngine.compositionName,
-        frames: viaEngine.frames,
-        width: viaEngine.width,
-        height: viaEngine.height,
-        fps: viaEngine.fps,
-        elapsedMs,
-        warnings: [],
-        renderer: 'engine',
-      });
-      return 0;
-    }
-    if (viaEngine.kind === 'failed') {
-      print.event({ event: 'error', message: viaEngine.message });
+  if (task.request.kind === 'comps') {
+    const out = await runEnginePrepare({ projectPath: task.request.projectPath, listComps: true }, { enginePath, workDir: workDirFor(`comps-${Date.now().toString(36)}`) });
+    if (!out.ok) {
+      print.event({ event: 'error', message: out.message });
       return 1;
     }
-    print.event({ event: 'editor-render', message: `Rendering in the editor: ${viaEngine.reason}` });
+    const comps = out.result.comps ?? [];
+    if (task.output.json) print.event({ event: 'comps', comps: comps.map(describeComposition) });
+    else for (const c of comps) print.line(describeComposition(c));
+    return 0;
   }
 
-  const started = Date.now();
-  let settled = false;
-  let resolveRun: (code: number) => void = () => undefined;
-  const finished = new Promise<number>((resolve) => { resolveRun = resolve; });
-
-  /** Every exit goes through here, so the window and the timers always close. */
-  const finish = (code: number): void => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(watchdog);
-    resolveRun(code);
-  };
-
-  let watchdog = setTimeout(
-    () => {
-      print.event({
-        event: 'error',
-        message: `The renderer did not start within ${Math.round(BOOT_TIMEOUT_MS / 1000)}s. `
-          + 'This usually means no GPU is available to this process.',
-      });
-      finish(1);
-    },
-    BOOT_TIMEOUT_MS,
-  );
-
-  /** Restart the stall clock — called on every sign of life. */
-  const kick = (): void => {
-    clearTimeout(watchdog);
-    watchdog = setTimeout(() => {
-      print.event({
-        event: 'error',
-        message: `The render made no progress for ${Math.round(STALL_TIMEOUT_MS / 60000)} minutes and was stopped.`,
-      });
-      finish(1);
-    }, STALL_TIMEOUT_MS);
-  };
-
-  // The renderer PULLS its job rather than being pushed one, so there is no
-  // race between `did-finish-load` and the route mounting: whenever the page is
-  // ready, it asks, and the answer is already here.
-  handle('cli:job', () => {
-    kick();
-    return task.request;
-  });
-
-  on('cli:progress', (_event, fraction: unknown) => {
-    kick();
-    const f = typeof fraction === 'number' ? Math.max(0, Math.min(1, fraction)) : 0;
-    const pct = Math.round(f * 100);
-    print.progress(`  ${String(pct).padStart(3)}%`, { fraction: f, percent: pct });
-  });
-
-  on('cli:done', (_event, report: unknown) => {
-    const result = report as CliRenderReport;
-    const elapsedMs = Date.now() - started;
-    if (!result || typeof result !== 'object') {
-      print.event({ event: 'error', message: 'The renderer finished without saying what happened.' });
-      finish(1);
-      return;
+  if (task.request.kind === 'captions') {
+    const req = task.request;
+    print.line(`Transcribing ${path.basename(req.projectPath)} → ${req.outPath}`);
+    const t0 = Date.now();
+    // The key is main's (the AI key vault), handed to the engine for this one request.
+    const credential = await getKeyForProvider('openai').catch(() => null);
+    if (!credential) {
+      print.event({ event: 'error', message: 'No OpenAI key is set: add one in Settings ▸ AI to transcribe.' });
+      return 1;
     }
-    if (!result.ok) {
-      print.event({ event: 'error', message: result.message, elapsedMs });
-      finish(1);
-      return;
+    const out = await runEnginePrepare({
+      projectPath: req.projectPath,
+      ...(req.comp !== undefined ? { comp: req.comp } : {}),
+      transcribe: { provider: 'openai', credential, ...(req.language ? { language: req.language } : {}) },
+    }, { enginePath, workDir: workDirFor(`captions-${Date.now().toString(36)}`) });
+    if (!out.ok) {
+      print.event({ event: 'error', message: out.message });
+      return 1;
     }
-    if ('comps' in result) {
-      if (task.output.json) print.event({ event: 'comps', comps: result.comps });
-      else for (const line of result.comps) print.line(line);
-      finish(0);
-      return;
+    const cues = out.result.cues ?? [];
+    try {
+      writeFileSync(req.outPath, formatCaptions(cues, req.outPath), 'utf8');
+    } catch (e) {
+      print.event({ event: 'error', message: `Could not write "${req.outPath}": ${(e as Error).message}` });
+      return 1;
     }
-    if ('captions' in result) {
-      // WRITTEN HERE, not in the renderer: this process already resolved and
-      // validated the path, and a second place that decides where a file goes
-      // is a second place for them to disagree.
-      const target = task.request.kind === 'captions' ? task.request.outPath : '';
-      try {
-        writeFileSync(target, result.captions.text, 'utf8');
-      } catch (e) {
-        print.event({ event: 'error', message: `Could not write "${target}": ${(e as Error).message}` });
-        finish(1);
-        return;
-      }
-      for (const warning of result.warnings) {
-        print.event({ event: 'warning', message: `warning: ${warning}` });
-      }
-      print.event({
-        event: 'done',
-        message: `Wrote ${target} — ${result.captions.cues} caption(s) from "${result.captions.compositionName}" `
-          + `in ${(elapsedMs / 1000).toFixed(1)}s`,
-        outPath: target,
-        cues: result.captions.cues,
-        compositionName: result.captions.compositionName,
-        elapsedMs,
-        warnings: result.warnings,
-      });
-      finish(0);
-      return;
-    }
-    if ('batch' in result) {
-      for (const warning of result.warnings) {
-        print.event({ event: 'warning', message: `warning: ${warning}` });
-      }
-      for (const row of result.batch.rows) {
-        // Every row named, failures included. A batch that reports only a
-        // count leaves the reader diffing a folder against a spreadsheet.
-        if (row.error) print.event({ event: 'row', message: `  failed  ${row.outputPath}: ${row.error}`, outputPath: row.outputPath, error: row.error });
-        else print.line(`  wrote   ${row.outputPath}`);
-      }
-      print.event({
-        event: 'done',
-        message: `Rendered ${result.batch.rendered} of ${result.batch.rendered + result.batch.failed} row(s) `
-          + `in ${((Date.now() - started) / 1000).toFixed(1)}s`,
-        rendered: result.batch.rendered,
-        failed: result.batch.failed,
-        rows: result.batch.rows,
-        elapsedMs,
-        warnings: result.warnings,
-      });
-      // A batch with any failed row fails the build. The successful files are
-      // still on disk and named in the log; what a pipeline must not do is
-      // treat "39 of 40" as a green run.
-      finish(result.batch.failed > 0 ? 1 : 0);
-      return;
-    }
-    for (const warning of result.warnings) {
-      print.event({ event: 'warning', message: `warning: ${warning}` });
-    }
+    const elapsedMs = Date.now() - t0;
     print.event({
       event: 'done',
-      message: `Wrote ${result.outPath} — ${result.frames} frame(s), `
-        + `${result.width}×${result.height} @ ${result.fps}fps, in ${(elapsedMs / 1000).toFixed(1)}s`,
-      outPath: result.outPath,
-      compositionName: result.compositionName,
-      frames: result.frames,
-      width: result.width,
-      height: result.height,
-      fps: result.fps,
+      message: `Wrote ${req.outPath} — ${cues.length} caption(s) from "${out.result.compName ?? ''}" in ${(elapsedMs / 1000).toFixed(1)}s`,
+      outPath: req.outPath,
+      cues: cues.length,
+      compositionName: out.result.compName ?? '',
       elapsedMs,
-      warnings: result.warnings,
+      warnings: [],
     });
-    finish(0);
-  });
+    return 0;
+  }
 
-  const win = new BrowserWindow({
-    show: false,
-    width: 1280,
-    height: 720,
-    webPreferences: hiddenRenderWebPreferences(),
+  const job = task.request.job;
+  const what = job.aspect ? `Reframing to ${job.aspect} and rendering` : 'Rendering';
+  print.line(`${what} ${path.basename(job.projectPath)} → ${job.outPath}`);
+  const t0 = Date.now();
+  const outcome = await runCliEngineRender(job, {
+    enginePath,
+    ffmpegPath: () => resolveFfmpegBinary({ vars: process.env, resourcesPath: process.resourcesPath ?? '', platform: process.platform, exists: existsSync }),
+    workDirFor,
+    log: (m) => print.event({ event: 'engine', message: `engine: ${m}` }),
+  }, (f) => {
+    const pct = Math.round(Math.max(0, Math.min(1, f)) * 100);
+    print.progress(`  ${String(pct).padStart(3)}%`, { fraction: f, percent: pct });
   });
-
-  // A renderer that dies — an OOM on a huge comp, a GPU process crash — must
-  // fail the build rather than hang until the watchdog. There is no window to
-  // show the user, so the only report is this line.
-  win.webContents.on('render-process-gone', (_e, details) => {
+  if (outcome.kind === 'done') {
+    const elapsedMs = Date.now() - t0;
     print.event({
-      event: 'error',
-      message: `The renderer stopped unexpectedly (${details.reason}). `
-        + 'A very large composition can exhaust memory; try --scale or a shorter --range.',
+      event: 'done',
+      message: `Wrote ${job.outPath} — ${outcome.frames} frame(s), `
+        + `${outcome.width}×${outcome.height} @ ${outcome.fps}fps, in ${(elapsedMs / 1000).toFixed(1)}s`,
+      outPath: job.outPath,
+      compositionName: outcome.compositionName,
+      frames: outcome.frames,
+      width: outcome.width,
+      height: outcome.height,
+      fps: outcome.fps,
+      elapsedMs,
+      warnings: [],
+      renderer: 'engine',
     });
-    finish(1);
-  });
-  win.webContents.on('did-fail-load', (_e, code, description) => {
-    print.event({ event: 'error', message: `The editor could not be loaded (${code} ${description}).` });
-    finish(1);
-  });
-
-  const entry = rendererEntry();
-  void ('url' in entry ? win.loadURL(entry.url) : win.loadFile(entry.file, { hash: '/render' }));
-
-  const code = await finished;
-  if (!win.isDestroyed()) win.destroy();
-  return code;
+    return 0;
+  }
+  print.event({ event: 'error', message: outcome.kind === 'failed' ? outcome.message : `This render needs a feature the engine CLI does not have yet: ${outcome.reason}.` });
+  return 1;
 }
 
 /**

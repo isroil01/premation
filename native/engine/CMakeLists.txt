@@ -133,10 +133,13 @@ if(Dawn_FOUND)
   add_executable(premation-engine
     src/main.cpp
     src/engine_process.cpp
+    src/cli_prepare.cpp
     src/io/pipe_ffi.cpp
     src/io/framed_writer.cpp
   )
   target_include_directories(premation-engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/io)
+  # `--prepare` (cli_prepare.cpp): the CLI's document edits (reframe, transcribe, comps) in the engine.
+  target_compile_definitions(premation-engine PRIVATE PREMATION_HAVE_PREPARE=1)
   target_link_libraries(premation-engine PRIVATE engine_gpu motion::options)
 
   add_executable(premation-viewport-proto proto/proto_main.cpp proto/scene.cpp proto/wire.cpp)

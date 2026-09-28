@@ -27,6 +27,11 @@
 #include <string_view>
 
 #include "engine_process.hpp"
+#if defined(PREMATION_HAVE_PREPARE)
+#include <string>
+
+#include "cli_prepare.hpp"
+#endif
 #if defined(PREMATION_HAVE_EXPORT)
 #include <string>
 
@@ -67,6 +72,19 @@ int run(int argc, char** argv) {
       return premation::exporter::run_export(std::string(v));
 #else
       std::fprintf(stderr, "premation-engine: built without export (F1)\n");
+      return 3;
+#endif
+    } else if (k == "--prepare") {
+      // The CLI's document half (cli_prepare.hpp): open, reframe / transcribe /
+      // list, save a copy for --export. JSON lines on stdout, then exit.
+#if defined(PREMATION_HAVE_PREPARE)
+      if (v.empty()) {
+        std::fprintf(stderr, "premation-engine: --prepare needs a job file\n");
+        return 64;
+      }
+      return premation::cli::run_prepare(std::string(v));
+#else
+      std::fprintf(stderr, "premation-engine: built without --prepare\n");
       return 3;
 #endif
     } else if (k == "--job") {
