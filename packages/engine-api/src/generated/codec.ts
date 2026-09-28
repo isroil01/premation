@@ -7763,6 +7763,8 @@ function encS_AudioAnalysisJob(w: Writer, v: T.AudioAnalysisJob): void {
   if (v.amplitudeGain !== undefined) { w.varint(5697); w.f64(v.amplitudeGain); }
   w.varint(5704); w.bool(v.beatMarkers);
   if (v.beatEvery !== undefined) { w.varint(5712); w.u32(v.beatEvery); }
+  if (v.driver !== undefined) { w.varint(5722); w.str(v.driver); }
+  if (v.driverComp !== undefined) { w.varint(5730); w.str(v.driverComp); }
 }
 function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJob {
   let h_layer = false;
@@ -7786,6 +7788,8 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
   let v_amplitudeGain: number | undefined;
   let v_beatMarkers: boolean | undefined;
   let v_beatEvery: number | undefined;
+  let v_driver: string | undefined;
+  let v_driverComp: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7804,6 +7808,8 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
       case 5697: v_amplitudeGain = r.f64(); break;
       case 5704: v_beatMarkers = r.bool(); h_beatMarkers = true; break;
       case 5712: v_beatEvery = r.u32(); break;
+      case 5722: v_driver = r.str(); break;
+      case 5730: v_driverComp = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -7829,6 +7835,8 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
   if (v_amplitudeGain !== undefined) o.amplitudeGain = v_amplitudeGain;
   o.beatMarkers = v_beatMarkers;
   if (v_beatEvery !== undefined) o.beatEvery = v_beatEvery;
+  if (v_driver !== undefined) o.driver = v_driver;
+  if (v_driverComp !== undefined) o.driverComp = v_driverComp;
   return o;
 }
 function encS_AudioDuckJob(w: Writer, v: T.AudioDuckJob): void {

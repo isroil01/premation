@@ -10243,6 +10243,8 @@ void encode(wire::Writer& w, const AudioAnalysisJob& v) {
   if (v.amplitude_gain.has_value()) { w.varint(5697U); w.f64(*v.amplitude_gain); }
   w.varint(5704U); w.boolean(v.beat_markers);
   if (v.beat_every.has_value()) { w.varint(5712U); w.varint(*v.beat_every); }
+  if (v.driver.has_value()) { w.varint(5722U); w.str(*v.driver); }
+  if (v.driver_comp.has_value()) { w.varint(5730U); w.str(*v.driver_comp); }
 }
 
 Status decode(wire::Reader& r, AudioAnalysisJob& out) {
@@ -10338,6 +10340,18 @@ Status decode(wire::Reader& r, AudioAnalysisJob& out) {
         std::uint32_t e = 0;
         if (!r.u32(e)) return Status::bad_value;
         out.beat_every = std::move(e);
+        break;
+      }
+      case 5722U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.driver = std::move(e);
+        break;
+      }
+      case 5730U: {
+        ItemId e;
+        if (!r.str(e)) return Status::truncated;
+        out.driver_comp = std::move(e);
         break;
       }
       default:

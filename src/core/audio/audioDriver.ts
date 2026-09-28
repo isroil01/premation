@@ -48,15 +48,11 @@
  */
 
 import { fftInPlace } from '@motion/audio';
-import { defaultAnimation, type Keyframe } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
+import { getTimelineController } from '@core/timeline/TimelineController';
 import type { SceneNode } from '@core/types';
-import { ensureAudioBuffer } from './audioKeyframes';
-import { readAudioClipTimings } from './audioScene';
-import { mixdownBuffer } from './audioMixdown';
+import { previewEngineJob } from '@core/engine/engineJobs';
 
 // ── Analysis ────────────────────────────────────────────────────────
 
@@ -569,38 +565,7 @@ export function alignSamplesToRange(
   return out;
 }
 
-/** Test seam for the comp mixdown, which needs an OfflineAudioContext. */
-let mixdown: (startSec: number, endSec: number) => Promise<DriverBuffer | null> =
-  (a, b) => mixdownBuffer(a, b) as Promise<DriverBuffer | null>;
-export function __setDriverMixdownForTest(
-  fn?: (startSec: number, endSec: number) => Promise<DriverBuffer | null>,
-): void {
-  mixdown = fn ?? ((a, b) => mixdownBuffer(a, b) as Promise<DriverBuffer | null>);
-}
-
-/** Comp-aligned mono samples for a driver's source over `[start, end)`. */
-export async function driverSamples(
-  d: AudioDriver,
-  startSec: number,
-  endSec: number,
-): Promise<{ samples: Float32Array; sampleRate: number } | null> {
-  if (d.sourceLayerId === MIX_SOURCE) {
-    const buf = await mixdown(startSec, endSec);
-    if (!buf) return null;
-    // Already laid out on the export timeline starting at `startSec`.
-    return { samples: mixToMono(buf), sampleRate: buf.sampleRate };
-  }
-  const buf = (await ensureAudioBuffer(d.sourceLayerId)) as DriverBuffer | null;
-  if (!buf) return null;
-  const mono = mixToMono(buf);
-  const timings = readAudioClipTimings(d.sourceLayerId);
-  return {
-    samples: alignSamplesToRange(mono, buf.sampleRate, timings, startSec, endSec),
-    sampleRate: buf.sampleRate,
-  };
-}
-
-// ── Range, preview, apply ───────────────────────────────────────────
+// ── Range and the envelope (the engine's) ───────────────────────────
 
 /** The bake range: the work area when one is set, else the whole comp. */
 export function driverRange(): { start: number; end: number; fps: number } {
@@ -613,39 +578,12 @@ export function driverRange(): { start: number; end: number; fps: number } {
 
 export interface DriverEnvelope {
   /** Detector output, 0..1 per frame. What the preview strip draws. */
-  raw: Float32Array;
-  /** `raw` through the curve and range — the values a bake would write. */
-  mapped: Float32Array;
+  raw: readonly number[];
+  /** `raw` through the curve and range — the values a bake writes. */
+  mapped: readonly number[];
   start: number;
   end: number;
   fps: number;
-}
-
-/**
- * Compute a driver's envelope without writing anything. The panel's preview
- * strip and {@link applyAudioDriver} both go through here, so what is drawn is
- * what would be baked — not an approximation of it.
- */
-export async function computeDriverEnvelope(
-  d: AudioDriver,
-  range = driverRange(),
-): Promise<DriverEnvelope | null> {
-  const src = await driverSamples(d, range.start, range.end);
-  if (!src) return null;
-  const raw = analyseAudioEnvelope(src.samples, src.sampleRate, range.fps, {
-    band: d.band,
-    attackMs: d.attackMs,
-    releaseMs: d.releaseMs,
-    gate: d.gate,
-    normalize: d.normalize,
-  });
-  const mapped = mapEnvelope(raw, {
-    min: d.min,
-    max: d.max,
-    curve: d.curve,
-    smoothFrames: d.smoothFrames,
-  });
-  return { raw, mapped, start: range.start, end: range.end, fps: range.fps };
 }
 
 export interface ApplyDriverResult {
@@ -660,86 +598,25 @@ export interface ApplyDriverResult {
 }
 
 /**
- * Apply a driver to its property: one expression, or one bake, as ONE undo
- * entry — and remember the parameters either way so the panel can re-bake.
- *
- * Baking clears any expression on the property first: leaving a stale
- * `value + audio * 200` on top of a freshly baked track would multiply the two
- * and produce motion that matches neither the preview nor the panel.
+ * A driver's envelope from the ENGINE (the audioAnalysis job's `driver` mode:
+ * the source layer's decode, or the composition `comp`'s offline mix, over the
+ * work area at its rate). The panel's preview strip and the bake both come
+ * from here, so what is drawn is what is baked. Null when the engine could not
+ * analyse it (no sound in range, no engine).
  */
-export async function applyAudioDriver(nodeId: string, d: AudioDriver): Promise<ApplyDriverResult> {
-  const blocker = d.mode === 'expression' ? expressionBlocker(d) : null;
-  const expr = d.mode === 'expression' ? audioDriverExpression(d) : null;
-
-  if (expr) {
-    writeAudioDriver(nodeId, { ...d, mode: 'expression' });
-    runAnimEdit('Audio driver', () => {
-      defaultAnimation.batch(() => {
-        // The expression IS the value; a leftover baked track underneath it is
-        // dead weight that reappears the moment the expression is disabled.
-        defaultAnimation.removeTrack(nodeId, d.prop);
-        defaultAnimation.setExpression(nodeId, d.prop, expr);
-      });
-    });
-    return { mode: 'expression', keyframes: 0 };
-  }
-
-  const range = driverRange();
-  const env = await computeDriverEnvelope(d, range);
-  if (!env || env.mapped.length === 0) {
-    return {
-      mode: 'baked',
-      keyframes: 0,
-      ...(blocker ? { fellBackBecause: blocker } : {}),
-      error: d.sourceLayerId === MIX_SOURCE
-        ? 'No audible audio in this range — import audio, or check the layer is not muted.'
-        : 'That layer’s audio has not decoded (or has no sound in this range).',
-    };
-  }
-
-  const seen = new Set<number>();
-  const keyframes: Keyframe[] = [];
-  for (let f = 0; f < env.mapped.length; f++) {
-    const compTime = range.start + f / range.fps;
-    if (compTime > range.end + 1e-9) break;
-    // The canonical keyframe axis, so the track survives trimming, sliding and
-    // time-stretching the target layer afterwards.
-    const t = compToKeyframeTime(nodeId, compTime, d.prop);
-    if (seen.has(t)) continue;
-    seen.add(t);
-    keyframes.push({ t, value: Math.round((env.mapped[f] ?? 0) * 1000) / 1000, easing: 'linear' });
-  }
-  if (keyframes.length === 0) {
-    return { mode: 'baked', keyframes: 0, error: 'Nothing to write in this range.' };
-  }
-
-  writeAudioDriver(nodeId, { ...d, mode: 'baked' });
-  runAnimEdit('Audio driver', () => {
-    defaultAnimation.batch(() => {
-      defaultAnimation.setExpression(nodeId, d.prop, '');
-      defaultAnimation.setKeyframes(nodeId, d.prop, keyframes);
-    });
+export async function computeDriverEnvelope(d: AudioDriver, comp: string): Promise<DriverEnvelope | null> {
+  const out = await previewEngineJob<{ driver?: DriverEnvelope }>({
+    kind: 'audioAnalysis',
+    value: {
+      layer: d.sourceLayerId === MIX_SOURCE ? '' : d.sourceLayerId,
+      beats: false,
+      amplitudeKeyframes: false,
+      silence: false,
+      removeSilence: false,
+      beatMarkers: false,
+      driver: JSON.stringify(d),
+      driverComp: comp,
+    },
   });
-  return {
-    mode: 'baked',
-    keyframes: keyframes.length,
-    ...(blocker ? { fellBackBecause: blocker } : {}),
-  };
-}
-
-/**
- * Remove a driver: forget the parameters AND undo what it wrote (the baked
- * track or the generated expression), in one undo entry.
- */
-export function removeAudioDriver(nodeId: string, prop: string): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const d = node ? readAudioDriver(node, prop) : null;
-  forgetAudioDriver(nodeId, prop);
-  if (!d) return;
-  runAnimEdit('Remove audio driver', () => {
-    defaultAnimation.batch(() => {
-      if (d.mode === 'expression') defaultAnimation.setExpression(nodeId, prop, '');
-      else defaultAnimation.removeTrack(nodeId, prop);
-    });
-  });
+  return out && out.status === 'done' ? out.result?.driver ?? null : null;
 }

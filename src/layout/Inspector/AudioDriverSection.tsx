@@ -9,7 +9,7 @@
  * has no other answer until the bake lands, and re-baking to find out is the
  * loop this section exists to remove.
  *
- * The strip is drawn from `computeDriverEnvelope`, the same function the bake
+ * The strip is drawn from `computeDriverEnvelope` (the engine's analysis), the same one the bake
  * calls. A cheaper "good enough for preview" path was the obvious shortcut and
  * would have been the usual lie: the two would agree on the easy cases and
  * disagree exactly where the parameters are doing something interesting.
@@ -181,8 +181,8 @@ export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element 
     }
     let alive = true;
     const timer = setTimeout(() => {
-      // Engine-side until E2: the source decode (or the comp mixdown) and its envelope.
-      void computeDriverEnvelope(draft, range)
+      // The engine's analysis: the source decode (or the comp mix) and its envelope.
+      void computeDriverEnvelope(draft, comp?.id ?? '')
         .then((e) => { if (alive) setEnv(e); })
         .catch(() => { if (alive) setEnv(null); });
     }, 180);

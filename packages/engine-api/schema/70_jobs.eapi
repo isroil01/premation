@@ -138,6 +138,9 @@ struct AudioAnalysisJob {
   /// With `beats`: composition markers "Beat N" on every `beatEvery`-th beat (default 1; at most 512) — Markers on Beats. Without it the grid is the summary only (Animate on Beats reads it).
   beatMarkers: bool = 713;
   beatEvery?: u32 = 714;
+  /// P4 — an Audio driver's envelope (audioDriver.ts computeDriverEnvelope): `driver` is the AudioDriver JSON (band — 'full' | 'low' | 'mid' | 'high' | {lo, hi} Hz — attackMs, releaseMs, gate, normalize, min, max, curve, smoothFrames). The source is `layer`'s sound, or with `layer` '' the composition `driverComp`'s mix (a child engine's offline mix, as transcribe). Over the work area (else the whole composition) at its frame rate. Summary `driver: {raw: [0..1 per frame], mapped: [the property's units], start, end, fps}`. Nothing is written — the page splices the keys (one entry with the driver record).
+  driver?: string = 715;
+  driverComp?: ItemId = 716;
 }
 /// Ducking (ducking.ts planDucking): lower `music`'s level under the voice (`voices[0]`; the page's dialog ducks under one layer) over the composition's work area, as Audio Levels keyframes, and remember the parameters (`audio/ducking`). `params` is the DuckingParams JSON (duckDb, thresholdDb, attackMs, releaseMs, holdMs); absent keys take the defaults.
 struct AudioDuckJob { music: LayerId = 1; voices: LayerId[] = 2; params: string = 3; }

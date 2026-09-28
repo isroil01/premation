@@ -61,7 +61,7 @@ import {
 } from '@core/mirror/audio';
 import { memberHasExpression } from '@core/mirror/memberExpressions';
 import { numbersOfValue } from '@core/mirror/trackIndex';
-import type { AudioWaveformConfig } from '@core/audio/audioWaveformGen';
+import type { AudioWaveformConfig } from '@core/mirror/audioWaveform';
 import { jsonFieldCommands } from './layerFieldEdits';
 import { runEngineJob } from '@core/engine/engineJobs';
 import { clearExpressionCommands, removeAnimationCommands, spliceKeysEdit, type KeySplice, type SpliceKey } from './keySpliceEdits';
@@ -201,9 +201,10 @@ export async function driverEdit(nodeId: string, d: AudioDriver): Promise<ApplyD
   }
 
   // The bake range of the active composition (its work area, else all of it).
-  const range = driverRangeOf(documentMirror().comp(activeCompIdNow() ?? '')?.settings);
+  const comp = activeCompIdNow() ?? '';
+  const range = driverRangeOf(documentMirror().comp(comp)?.settings);
   // Engine-side until E2: the source's decode (or the comp mixdown) and its envelope.
-  const env = await computeDriverEnvelope(d, range);
+  const env = await computeDriverEnvelope(d, comp);
   if (!env || env.mapped.length === 0) {
     return {
       mode: 'baked',
