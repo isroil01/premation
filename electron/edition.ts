@@ -15,8 +15,9 @@
  * RENDERER while its IPC stays registered in main is not a gate — the renderer
  * is the untrusted side of this boundary. So each capability that contacts a
  * host we do not control is gated HERE by not registering the channels at all
- * when the matching predicate is false (today: plugins via `pluginsEnabled`).
- * The assistant is on in both editions; its IPC is always registered.
+ * when the matching predicate is false. The assistant is on in both editions;
+ * its IPC is always registered. (The JavaScript plugin system and its
+ * `pluginsEnabled` / `pluginPublishEnabled` gates are gone — G2, not ported.)
  *
  * ── The two-readers problem, and what forces them to agree ──────────────────
  *
@@ -113,41 +114,11 @@ export function __setEditionForTests(next: Edition | null): void {
  * `ai:cancel` and `ai:image`. The local edition spends keys from the OS
  * keystore; the server edition ignores these channels and posts to motion-back.
  *
- * `aiProxy` and `pluginNet` are the only code in this process that contacts a
- * third-party host. Plugin net stays gated by `pluginsEnabled()`; the assistant
- * contacts a provider only when the user has connected a key and run a prompt.
+ * `aiProxy` is the only code in this process that contacts a third-party host;
+ * the assistant contacts a provider only when the user has connected a key and
+ * run a prompt.
  */
 export const aiEnabled = (): boolean => true;
-
-/**
- * Plugins, in this process.
- *
- * Mirrors `pluginsEnabled()` on the renderer side: ON in both editions, because
- * the local edition installs plugins from local files (see the renderer's note
- * for why that needs no backend). When true, `registerPluginNetIpc` registers
- * `pluginNet:*` — the transport for `motion.net.fetch`.
- *
- * `pluginNet` is the second channel here that reaches a host we do not control,
- * and unlike `aiProxy` the host is chosen by a third party's manifest. It stays
- * safe to register in a local build for the same reasons it is in a hosted one:
- * a request is made only for a plugin the user granted `net:fetch`, only to a
- * host that plugin's manifest declared and the consent screen showed, and the
- * guards (https, private addresses, redirects, size, rate) are in
- * `pluginNetFetch`, not in the edition.
- */
-export const pluginsEnabled = (): boolean => true;
-
-/**
- * Publishing a plugin to the registry, in this process.
- *
- * Server edition only. When false, `installPluginPublishIpc` is never called and
- * the publish channels do not exist — an `ipcRenderer.invoke` against them
- * rejects with "No handler registered", the correct answer rather than a soft
- * refusal a caller could retry. Publishing needs an account and a registry,
- * neither of which the local edition has, and the channel opens a file picker:
- * a UI affordance in a build with no way to use what it produces.
- */
-export const pluginPublishEnabled = (): boolean => isServerEdition();
 
 /**
  * Shout if the renderer's edition disagrees with this process's.

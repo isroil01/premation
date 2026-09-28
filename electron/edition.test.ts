@@ -20,8 +20,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   aiEnabled,
-  pluginsEnabled,
-  pluginPublishEnabled,
   getEdition,
   isLocalEdition,
   parseEdition,
@@ -61,31 +59,6 @@ describe('the main process resolves its own edition', () => {
     // Local spends keys from the OS keystore; that is intentional BYOK, not a
     // leak of cloud-only channels.
     expect(aiEnabled()).toBe(true);
-  });
-
-  it('keeps plugins on in the local edition, and publishing off', () => {
-    process.env.MOTION_EDITION = 'local';
-    __setEditionForTests(null);
-    /*
-      What these control: main.ts calls `registerPluginNetIpc` only when
-      `pluginsEnabled()` is true, and `installPluginPublishIpc` only when
-      `pluginPublishEnabled()` is. The local edition installs plugins from local
-      files, so a plugin granted `net:fetch` needs its transport — still limited
-      to the hosts its manifest declared. Publishing needs an account and a
-      registry, which the local edition does not have, so those channels must
-      not exist here: renderer-side hiding is not a gate on this side.
-    */
-    expect(pluginsEnabled()).toBe(true);
-    expect(pluginPublishEnabled()).toBe(false);
-  });
-
-  it('leaves plugins and publishing on by default, like every other capability', () => {
-    // An unconfigured build behaves as it always did. A typo in a deploy env
-    // must not silently ship a paying customer a build with no plugins.
-    delete process.env.MOTION_EDITION;
-    __setEditionForTests(null);
-    expect(pluginsEnabled()).toBe(true);
-    expect(pluginPublishEnabled()).toBe(true);
   });
 
   it('survives an unreadable packaged manifest', () => {

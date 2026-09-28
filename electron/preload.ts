@@ -343,116 +343,6 @@ const bridge = {
   },
 
   /**
-   * A plugin's outbound requests.
-   *
-   * Deliberately NOT the general `fetch(url, init)` bridge the comment above
-   * refuses, and the distinction is what rides along. `api.request` is
-   * dangerous because main attaches the user's bearer to it, so an open relay
-   * would spend that credential on any URL. These verbs attach nothing — no
-   * token, no cookie, no key. They exist because the app shell's CSP does not
-   * name a plugin's hosts, and the alternative was widening `connect-src` for
-   * the whole renderer.
-   *
-   * What still needs defending is the user's own network, and main defends it
-   * at the socket: https only, the RESOLVED address refused if it is private,
-   * one hop per call, a byte cap and a timeout. `ipcGuard` keeps both verbs out
-   * of reach of a plugin panel, which is a subframe.
-   */
-  pluginNet: {
-    /** One hop. A 3xx comes back as a 3xx — main never follows a redirect. */
-    request: (req: unknown) => ipcRenderer.invoke('plugin:net-request', req),
-    /**
-     * Every address a name resolves to.
-     *
-     * The renderer cannot resolve DNS, and without this the rebinding check
-     * cannot run there at all — a declared host pointing at `127.0.0.1` would
-     * pass every check that reads the name as text.
-     */
-    resolve: (hostname: string) => ipcRenderer.invoke('plugin:net-resolve', hostname),
-  },
-
-  /**
-   * Plugins that live in a FOLDER on this machine — the desktop half of the
-   * install story (electron/pluginLoader.ts).
-   *
-   * Its own namespace rather than more keys on `pluginNet`, because it is a
-   * different capability with a different risk: that one opens sockets, this
-   * one reads directories. Everything here is read-only, and the set of
-   * directories is decided in main — `read` takes a path but refuses one that
-   * is not inside a configured plugins folder, so the renderer can name a
-   * package and cannot name a file.
-   *
-   * `openFolder` takes no argument for the same reason: it opens the user's own
-   * plugins directory (creating it, which is what makes the instruction
-   * actionable) and nothing else.
-   */
-  plugins: {
-    /** The directories a scan looks in, with where each came from. */
-    paths: () => ipcRenderer.invoke('plugins:paths'),
-    /** Candidates, with `plugin.json` text for folders. No package is read. */
-    scan: () => ipcRenderer.invoke('plugins:scan'),
-    /** One package: `{ files, binaries }` for a folder, raw bytes for an archive. */
-    read: (path: string) => ipcRenderer.invoke('plugins:read', path),
-    openFolder: () => ipcRenderer.invoke('plugins:openFolder'),
-    /** Watch the folders and push `onChanged`. Developer mode turns this on. */
-    watch: (enabled: boolean) => ipcRenderer.invoke('plugins:watch', enabled),
-    /** "Something in a plugins folder changed" — no path, because the renderer
-     *  re-scans anyway and a half-written directory is not worth acting on. */
-    onChanged: (handler: () => void) => {
-      const listener = (): void => handler();
-      ipcRenderer.on('plugins:changed', listener);
-      return () => ipcRenderer.removeListener('plugins:changed', listener);
-    },
-  },
-
-  /**
-   * A plugin's COMPILED module, in a process of its own.
-   *
-   * `platform` and `arch` are constants rather than calls, and they are this
-   * process's own: the binary is picked by `process.platform`-`process.arch`,
-   * and a renderer deriving them from a user-agent string would report an
-   * arm64 Mac as x64 — which is a binary that loads and then crashes, instead
-   * of one that is refused with a sentence.
-   *
-   * Everything else is a verb main validates. There is no "read this binary"
-   * and no way to name a directory outside a plugins folder; see
-   * electron/pluginNativeIpc.ts for the three checks on the other side.
-   */
-  pluginNative: {
-    platform: process.platform,
-    arch: process.arch,
-    load: (request: unknown) => ipcRenderer.invoke('pluginNative:load', request),
-    call: (request: unknown) => ipcRenderer.invoke('pluginNative:call', request),
-    unload: (pluginId: string, reason?: string) =>
-      ipcRenderer.invoke('pluginNative:unload', pluginId, reason),
-    status: () => ipcRenderer.invoke('pluginNative:status'),
-    stage: (request: unknown) => ipcRenderer.invoke('pluginNative:stage', request),
-    unstage: (pluginId: string) => ipcRenderer.invoke('pluginNative:unstage', pluginId),
-    /** Plugin ids with a staging directory — names only. Input to the boot sweep. */
-    staged: () => ipcRenderer.invoke('pluginNative:staged'),
-    /** Crash, restart and session-disable — they happen to idle processes too. */
-    onEvent: (handler: (event: unknown) => void) => {
-      const listener = (_e: unknown, event: unknown): void => handler(event);
-      ipcRenderer.on('pluginNative:event', listener);
-      return () => ipcRenderer.removeListener('pluginNative:event', listener);
-    },
-  },
-
-  /**
-   * Publish a package the user chose, signed with a key the app never keeps.
-   *
-   * The renderer hands over BYTES and a visibility choice and receives a
-   * result. Main picks the key file, signs, attaches the session and uploads, so
-   * the two secrets involved — the private signing key and the access token —
-   * are never in the renderer beside the payload.
-   *
-   * Note what is absent and stays absent: there is no verb for "give me the
-   * key" and none for "remember the key". Both would move the one secret whose
-   * theft cannot be undone by blocking a version.
-   */
-  pluginPublish: (req: unknown) => ipcRenderer.invoke('plugin:publish', req),
-
-  /**
    * Session state and the two operations that change it.
    *
    * `status` returns claims — signed in, who, when the access token expires,
@@ -538,20 +428,6 @@ const bridge = {
       ipcRenderer.on('oauth:result', listener);
       return () => ipcRenderer.removeListener('oauth:result', listener);
     },
-  },
-
-  /**
-   * `premation://plugin/<id>` — open a plugin's page.
-   *
-   * The id was validated in the main process before it was sent, and the
-   * renderer validates it AGAIN before using it. That is not belt-and-braces
-   * for its own sake: IPC is its own boundary, and the receiving side is about
-   * to put the value into a fetch and a store lookup.
-   */
-  onPluginDeepLink: (handler: (payload: { id: string }) => void) => {
-    const listener = (_event: unknown, payload: { id: string }): void => handler(payload);
-    ipcRenderer.on('deeplink:plugin', listener);
-    return () => ipcRenderer.removeListener('deeplink:plugin', listener);
   },
 
   onMenuCommand: (handler: (commandId: string) => void) => {

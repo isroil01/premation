@@ -26,10 +26,6 @@ import { writeFileAtomic } from './atomicWrite';
 
 /**
  * What a dialog is for. Each remembers its own folder.
- *
- * The publisher signing-key picker (pluginPublish.ts) is deliberately absent:
- * that flow promises the app keeps nothing about the key, and where the key
- * file lives is part of "nothing".
  */
 export type DialogDirKind = 'project' | 'media' | 'outputFolder';
 
