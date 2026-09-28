@@ -348,6 +348,8 @@ class Session {
   JobRecord* find_job(const std::string& id);
   /// JobDocContext.layerToComp over this document (world2DAt; nullopt for 3D).
   std::function<std::optional<std::array<double, 6>>(std::string_view, double)> layer_to_comp();
+  /// JobDocContext.layerSize over this document (layer_geometry_at's base box).
+  std::function<std::optional<std::array<double, 2>>(std::string_view, double)> layer_size();
   /// Drain the runner: progress events, results applied (core thread, from tick()).
   void poll_jobs(Clock::time_point now);
   /// Apply a held result as ONE history entry (origin engine). False with the error recorded on the job.

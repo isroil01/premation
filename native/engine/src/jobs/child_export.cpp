@@ -132,6 +132,13 @@ std::optional<js::Json> run_child_export(const js::Json& job, const fs::path& wo
 std::optional<std::vector<RgbaImage>> render_layer_alone(const std::string& projectJson, const std::string& comp, const std::string& layer,
                                                         std::int64_t first, std::int64_t last, JobControl& control, const std::string& label,
                                                         double from, double to) {
+  return render_layers_alone(projectJson, comp, {layer}, first, last, control, label, from, to);
+}
+
+std::optional<std::vector<RgbaImage>> render_layers_alone(const std::string& projectJson, const std::string& comp,
+                                                         const std::vector<std::string>& layers, std::int64_t first, std::int64_t last,
+                                                         JobControl& control, const std::string& label, double from, double to) {
+  if (layers.empty()) fail(ErrorCode::invalid_argument, "no layer to render");
   TempTree tree("premation-solo");
   const fs::path project = tree.path / "project.motion";
   {
@@ -149,7 +156,12 @@ std::optional<std::vector<RgbaImage>> render_layer_alone(const std::string& proj
   job.set("audio", js::Json::boolean(false));
   job.set("depth", js::Json::number(8));
   job.set("sequence", js::Json::string("png"));
-  job.set("isolateLayer", js::Json::string(layer));
+  job.set("isolateLayer", js::Json::string(layers.front()));
+  if (layers.size() > 1) {
+    js::Json more = js::Json::array();
+    for (std::size_t i = 1; i < layers.size(); ++i) more.arr_mut().push_back(js::Json::string(layers[i]));
+    job.set("isolateLayers", std::move(more));
+  }
   const double mid = from + (to - from) * 0.8;
   if (!run_child_export(job, tree.path, control, label, from, mid)) return std::nullopt;
   std::optional<std::vector<RgbaImage>> frames = read_png_frames(tree.path, control, label, mid, to);

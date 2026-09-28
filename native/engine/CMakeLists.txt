@@ -1255,6 +1255,7 @@ if(FFMPEG_FOUND AND TARGET engine_audio)
     src/jobs/kind_roto_brush.cpp
     src/jobs/kind_content_aware.cpp
     src/jobs/kind_auto_reframe.cpp
+    src/jobs/kind_rig_logo.cpp
     src/jobs/kind_transcribe.cpp
     src/jobs/child_export.cpp
     src/jobs/kind_object_matte.cpp

@@ -23,6 +23,7 @@ void set_ffmpeg_executable(std::string path);
 [[nodiscard]] PreparedJob prepare_roto_brush(const api::RotoBrushJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_content_aware_fill(const api::ContentAwareFillJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_auto_reframe(const api::AutoReframeJob& spec, const JobDocContext& ctx);
+[[nodiscard]] PreparedJob prepare_rig_logo(const api::RigLogoJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_scene_detect(const api::SceneDetectJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_audio_analysis(const api::AudioAnalysisJob& spec, const JobDocContext& ctx);

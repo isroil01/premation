@@ -174,6 +174,8 @@ struct RotoBrushJob { layer: LayerId = 1; range: TimeRange = 2; seed: Vec2 = 3; 
 struct ContentAwareFillJob { layer: LayerId = 1; range: TimeRange = 2; outputFolder: string = 3; }
 /// Auto-reframe (autoReframe.ts autoReframeComposition): `comp` rendered small (160 px wide, 12 frames/s) by a child engine, saliency + shot cuts per frame (saliency.ts, sceneEditDetect.ts), a dead-zone / lag camera path (reframePath.ts); a NEW composition `width`×`height` holding `comp` as a precomp layer scaled to cover, with the pan keyed on its separated position. The source is untouched.
 struct AutoReframeJob { comp: ItemId = 1; width: u32 = 2; height: u32 = 3; name?: string = 4; deadZone?: f64 = 5; lagSeconds?: f64 = 6; }
+/// Rig Logo for Animation (rigLogo.ts): the selection as ONE riggable layer with a starter puppet — an "Anchor" pin at the bottom centre and a "Wave" pin at the top centre (layer space). One image or shape layer holding nothing is rigged in place; anything else (a group, a precomp, text, several layers) is drawn alone on a transparent comp at `time` (absent = the playhead) by a child engine, cropped to its pixels (+4 px), imported as a PNG (importBytes, source `derived`) and placed as an image layer "<name> (Rigged)" where it drew, above the topmost selected layer — and that is rigged. The layers must share a composition. Result: {mode: 'self' | 'rasterize', layer} (layer = the rigged one, once applied).
+struct RigLogoJob { layers: LayerId[] = 1; time?: Time = 2; }
 
 union JobSpec {
   trackMotion: TrackMotionJob = 1;
@@ -192,6 +194,7 @@ union JobSpec {
   rotoBrush: RotoBrushJob = 1712;
   contentAwareFill: ContentAwareFillJob = 1713;
   autoReframe: AutoReframeJob = 1714;
+  rigLogo: RigLogoJob = 1715;
 }
 
 command startJob = 850 [control] { job: JobSpec = 1; apply: bool = 2; } -> JobRef;

@@ -103,6 +103,8 @@ struct JobSpec {
   /// Render only this layer (and what it holds), as if it were the one soloed
   /// layer — a job's solo render of a layer (jobs/child_export.hpp). '' = all.
   std::string isolateLayer;
+  /// More layers drawn alone together with `isolateLayer` (a job's solo render of a selection).
+  std::vector<std::string> isolateLayers;
   /// HDR delivery (hdr_convert.hpp): "pq" (HDR10) or "hlg"; '' = SDR. Implies
   /// depth 16 and an opaque frame, and overrides the project's viewer
   /// transform with sRGB; the raw frames are PQ / HLG code values in BT.2020

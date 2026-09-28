@@ -1056,6 +1056,7 @@ struct TrackApplyJob;
 struct RotoBrushJob;
 struct ContentAwareFillJob;
 struct AutoReframeJob;
+struct RigLogoJob;
 struct JobSpec;
 struct StartJob;
 struct CancelJob;
@@ -2962,6 +2963,12 @@ struct AutoReframeJob {
   bool operator==(const AutoReframeJob&) const = default;
 };
 
+struct RigLogoJob {
+  std::vector<LayerId> layers;
+  std::optional<Time> time;
+  bool operator==(const RigLogoJob&) const = default;
+};
+
 struct JobSpec {
   enum class Kind : std::uint32_t {
     track_motion = 1,
@@ -2980,8 +2987,9 @@ struct JobSpec {
     roto_brush = 1712,
     content_aware_fill = 1713,
     auto_reframe = 1714,
+    rig_logo = 1715,
   };
-  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob, ProxyJob, AudioDuckJob, AudioGateJob, TrackApplyJob, RotoBrushJob, ContentAwareFillJob, AutoReframeJob> v;
+  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob, ProxyJob, AudioDuckJob, AudioGateJob, TrackApplyJob, RotoBrushJob, ContentAwareFillJob, AutoReframeJob, RigLogoJob> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const JobSpec&) const = default;
 };
@@ -6033,6 +6041,8 @@ void encode(wire::Writer& w, const ContentAwareFillJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ContentAwareFillJob& out);
 void encode(wire::Writer& w, const AutoReframeJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, AutoReframeJob& out);
+void encode(wire::Writer& w, const RigLogoJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RigLogoJob& out);
 void encode(wire::Writer& w, const JobSpec& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, JobSpec& out);
 void encode(wire::Writer& w, const StartJob& v);

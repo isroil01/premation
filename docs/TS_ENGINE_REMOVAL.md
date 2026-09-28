@@ -306,12 +306,20 @@ paths (371 → 367).
 - *Render worker* renders only through `premation-engine --export`; its
   offscreen window, render page, preload and Vite bundle are deleted.
 
-Still on the page (no engine job yet — **post-launch** C++ jobs): the audio
-driver bake (`computeDriverEnvelope`), the Audio Waveform generator's read,
-particle / physics bakes (`bakeDynamics`), the IK3D bake, environment SH
-(`ensureEnvironmentSh`), Rig Logo for Animation, footage assembly, live
-merge, and the page stills (`offlineRenderer.renderStillFrame`: AI filmstrip
-/ render feedback, version compare). These keep the TypeScript renderer,
+Moved to the engine in p4-round3: the page stills (the AI filmstrip / render
+feedback use `getThumbnail`, version compare the new `renderDocumentStill`
+query — `offlineRenderer.renderStillFrame` and `documentSwap.ts` are
+deleted); the audio driver bake (the `audioAnalysis` job's `driver`; the
+Audio Waveform config is read from the mirror); Assemble from Footage (the
+`sceneDetect` job; the page scene-edit detector is deleted); Rig Logo for
+Animation (the `rigLogo` job: one image / shape layer rigged in place,
+anything else rendered alone — several layers together, `isolateLayers` —
+cropped, imported with `importBytes` and rigged; the page rasterize is
+deleted); HDR10 / HLG exports; CLI `--captions` / `--data` / `--commands`.
+
+Still on the page (no engine job yet — **post-launch** C++ jobs): particle /
+physics bakes (`bakeDynamics`), the IK3D bake, environment SH
+(`ensureEnvironmentSh`) and live merge. These keep the TypeScript renderer,
 effects and evaluation referenced, so step 4 (deleting those packages) is
 post-launch too. The `EditorTabs` strip is left for the UI cleanup.
 

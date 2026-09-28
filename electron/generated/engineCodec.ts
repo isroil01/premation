@@ -8179,6 +8179,26 @@ function decS_AutoReframeJob(r: Reader, end: number, o: any): T.AutoReframeJob {
   if (v_lagSeconds !== undefined) o.lagSeconds = v_lagSeconds;
   return o;
 }
+function encS_RigLogoJob(w: Writer, v: T.RigLogoJob): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  if (v.time !== undefined) { w.byte(16); w.i64(v.time); }
+}
+function decS_RigLogoJob(r: Reader, end: number, o: any): T.RigLogoJob {
+  const l_layers: string[] = [];
+  let v_time: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      case 16: v_time = r.i64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.layers = l_layers;
+  if (v_time !== undefined) o.time = v_time;
+  return o;
+}
 function encS_StartJob(w: Writer, v: T.StartJob): void {
   w.byte(10); { const s = w.beginLd(); encU_JobSpec(w, v.job); w.endLd(s); }
   w.byte(16); w.bool(v.apply);
@@ -15597,6 +15617,7 @@ function encU_JobSpec(w: Writer, v: T.JobSpec): void {
     case 'rotoBrush': w.varint(13698); { const s = w.beginLd(); encS_RotoBrushJob(w, v.value); w.endLd(s); } return;
     case 'contentAwareFill': w.varint(13706); { const s = w.beginLd(); encS_ContentAwareFillJob(w, v.value); w.endLd(s); } return;
     case 'autoReframe': w.varint(13714); { const s = w.beginLd(); encS_AutoReframeJob(w, v.value); w.endLd(s); } return;
+    case 'rigLogo': w.varint(13722); { const s = w.beginLd(); encS_RigLogoJob(w, v.value); w.endLd(s); } return;
     default: throw new RangeError('JobSpec: unknown kind ' + String((v as { kind?: unknown }).kind));
   }
 }
@@ -15622,6 +15643,7 @@ function decU_JobSpec(r: Reader, end: number): T.JobSpec {
       case 13698: out = { kind: 'rotoBrush', value: decS_RotoBrushJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13706: out = { kind: 'contentAwareFill', value: decS_ContentAwareFillJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13714: out = { kind: 'autoReframe', value: decS_AutoReframeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13722: out = { kind: 'rigLogo', value: decS_RigLogoJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       default: r.skip(key);
     }
   }
@@ -16901,6 +16923,7 @@ export const codecs = {
   RotoBrushJob: mk<T.RotoBrushJob>(encS_RotoBrushJob, (r, e) => decS_RotoBrushJob(r, e, {})),
   ContentAwareFillJob: mk<T.ContentAwareFillJob>(encS_ContentAwareFillJob, (r, e) => decS_ContentAwareFillJob(r, e, {})),
   AutoReframeJob: mk<T.AutoReframeJob>(encS_AutoReframeJob, (r, e) => decS_AutoReframeJob(r, e, {})),
+  RigLogoJob: mk<T.RigLogoJob>(encS_RigLogoJob, (r, e) => decS_RigLogoJob(r, e, {})),
   JobSpec: mk<T.JobSpec>(encU_JobSpec, decU_JobSpec),
   StartJob: mk<T.StartJob>(encS_StartJob, (r, e) => decS_StartJob(r, e, {})),
   CancelJob: mk<T.CancelJob>(encS_CancelJob, (r, e) => decS_CancelJob(r, e, {})),

@@ -175,10 +175,12 @@ struct DocCopy {
   std::unique_ptr<Fonts> fonts;
   std::unique_ptr<sc::TextMeasurer> measurer;
   std::string isolateLayer;
+  std::vector<std::string> isolateAlso;
 
   bool open(const OpenedProject& p, const std::string& comp, const JobSpec& job, const std::vector<std::string>& families,
             std::string& err) {
     isolateLayer = job.isolateLayer;
+    isolateAlso = job.isolateLayers;
     try {
       (void)doc::restore_document(d, view, p.document, p.sessionAssets);
     } catch (const std::exception& e) {
@@ -204,6 +206,7 @@ struct DocCopy {
     c.mediaBase = mediaBase;
     c.waveform = waveform;
     c.isolateLayer = isolateLayer;
+    c.isolateAlso = isolateAlso;
     return c;
   }
 };
@@ -660,6 +663,9 @@ bool parse_job(const Json& j, JobSpec& out, std::string& error) {
   if (j.at("preflightOnly").is_bool()) out.preflightOnly = j.at("preflightOnly").b();
   if (j.at("audioOnly").is_bool()) out.audioOnly = j.at("audioOnly").b();
   if (j.at("isolateLayer").is_string()) out.isolateLayer = j.at("isolateLayer").str();
+  for (const Json& id : j.at("isolateLayers").arr()) {
+    if (id.is_string() && !id.str().empty()) out.isolateLayers.push_back(id.str());
+  }
   if (out.audioOnly) out.audio = true;
   if (j.at("buildThreads").is_finite_number()) out.buildThreads = static_cast<unsigned>(std::clamp(j.at("buildThreads").num(), 0.0, 64.0));
   if (j.at("inFlight").is_finite_number()) out.inFlight = static_cast<unsigned>(std::clamp(j.at("inFlight").num(), 1.0, 8.0));

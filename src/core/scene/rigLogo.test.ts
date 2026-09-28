@@ -1,67 +1,22 @@
 /**
- * Rig Logo — decision logic + starter rig + honest rig-tool gating.
- *
- * The GPU rasterize never runs in jest (no WebGL/canvas), so the rasterize seam
- * is injected. These tests cover the branch that MATTERS: when we rig in place
- * vs. when we rasterize, that a starter rig lands, and that the AI rig handlers
- * reject un-riggable (group/precomp) targets.
+ * Rig Logo — the page half: the riggable-kind predicate (the AI tools and the
+ * layer menus gate on it) and the orchestrator around the engine's `rigLogo`
+ * job. The decision (rig in place vs rasterize), the render, the import and
+ * the pins are the job's, tested against the real engine in
+ * src/core/engine/__tests__/rigLogoNative.test.ts.
  */
 
-import SceneGraph from './SceneGraph';
-import { SCENE_KIND_PROP, type SceneKind } from './seedDefaultScene';
-import {
-  resolveRigTarget,
-  starterPuppetPins,
-  isRiggableKind,
-  isRiggableLeafNode,
-  rigLogoForAnimation,
-  type RasterResult,
-} from './rigLogo';
-import type { SceneNode } from '@core/types';
+import { isRiggableKind, rigLogoForAnimation, type RigLogoDeps } from './rigLogo';
 
-// ── Test scene helpers ─────────────────────────────────────────────
-
-function makeNode(id: string, kind: SceneKind, opts: { x?: number; y?: number; w?: number; h?: number } = {}): SceneNode {
-  const x = opts.x ?? 0;
-  const y = opts.y ?? 0;
-  const components: SceneNode['components'] =
-    kind === 'group'
-      ? [{ id: `${id}_m`, type: 'group', props: { [SCENE_KIND_PROP]: 'group' } }]
-      : [
-          {
-            id: `${id}_t`,
-            type: 'Transform',
-            props: { [SCENE_KIND_PROP]: kind, x, y, width: opts.w ?? 100, height: opts.h ?? 100, rotation: 0, scaleX: 1, scaleY: 1 },
-          },
-          { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#fff' } },
-        ];
-  return {
-    id,
-    name: id,
-    parent: null,
-    children: [],
-    transform: { position: { x, y }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true,
-    locked: false,
-    components,
-  };
-}
-
-function readPuppet(graph: SceneGraph, id: string): { pins: Array<{ id: string; name: string; x: number; y: number }> } | undefined {
-  const node = graph.getNode(id);
-  const fx = node?.components.find((c) => c.type === 'fx');
-  return fx?.props.puppet as { pins: Array<{ id: string; name: string; x: number; y: number }> } | undefined;
-}
-
-const noopDeps = () => ({
+const deps = (over: Partial<RigLogoDeps> = {}) => ({
+  getSelection: () => ['g1'],
   setSelection: jest.fn(),
   setActiveTool: jest.fn(),
   notify: jest.fn(),
+  ...over,
 });
 
-// ── Kind predicates ────────────────────────────────────────────────
-
-describe('riggable-kind predicates', () => {
+describe('riggable-kind predicate', () => {
   it('shape/image are riggable; group/null/camera are not', () => {
     expect(isRiggableKind('shape')).toBe(true);
     expect(isRiggableKind('image')).toBe(true);
@@ -71,181 +26,43 @@ describe('riggable-kind predicates', () => {
   });
 
   it('text is NOT directly riggable — it routes through Rig Logo (§12.10)', () => {
-    // It used to report riggable while resolveRigTarget refused to rig it in
-    // place and buildSnapshot gave it neither a silhouette nor an alpha mask.
     expect(isRiggableKind('text')).toBe(false);
   });
-
-  it('a text selection resolves to the rasterize path, not in-place rigging', () => {
-    const g = new SceneGraph();
-    g.addNode(makeNode('t1', 'text'));
-    expect(resolveRigTarget(['t1'], g)).toEqual({ mode: 'rasterize', roots: ['t1'] });
-  });
-
-  it('isRiggableLeafNode follows the kind for a single node', () => {
-    const g = new SceneGraph();
-    const shape = makeNode('s1', 'shape');
-    const group = makeNode('g1', 'group');
-    g.addNode(shape);
-    g.addNode(group);
-    expect(isRiggableLeafNode(g.getNode('s1'), g)).toBe(true);
-    expect(isRiggableLeafNode(g.getNode('g1'), g)).toBe(false);
-    expect(isRiggableLeafNode(undefined, g)).toBe(false);
-  });
 });
-
-// ── resolveRigTarget decision ──────────────────────────────────────
-
-describe('resolveRigTarget', () => {
-  it('a single image/shape LEAF rigs in place (no rasterize)', () => {
-    const g = new SceneGraph();
-    g.addNode(makeNode('img', 'image'));
-    g.addNode(makeNode('shp', 'shape'));
-    expect(resolveRigTarget(['img'], g)).toEqual({ mode: 'self', targetId: 'img' });
-    expect(resolveRigTarget(['shp'], g)).toEqual({ mode: 'self', targetId: 'shp' });
-  });
-
-  it('a group (multi-part logo) rasterizes', () => {
-    const g = new SceneGraph();
-    g.addNode(makeNode('logo', 'group'));
-    g.addChild('logo', makeNode('p1', 'shape', { x: 0 }));
-    g.addChild('logo', makeNode('p2', 'shape', { x: 200 }));
-    const d = resolveRigTarget(['logo'], g);
-    expect(d).toEqual({ mode: 'rasterize', roots: ['logo'] });
-  });
-
-  it('a multi-selection of shapes rasterizes as one piece', () => {
-    const g = new SceneGraph();
-    g.addNode(makeNode('a', 'shape'));
-    g.addNode(makeNode('b', 'shape'));
-    const d = resolveRigTarget(['a', 'b'], g);
-    expect(d).toEqual({ mode: 'rasterize', roots: ['a', 'b'] });
-  });
-
-  it('a shape that has children is NOT a plain leaf → rasterize', () => {
-    const g = new SceneGraph();
-    g.addNode(makeNode('parent', 'shape'));
-    g.addChild('parent', makeNode('child', 'shape'));
-    expect(resolveRigTarget(['parent'], g)).toEqual({ mode: 'rasterize', roots: ['parent'] });
-  });
-
-  it('empty selection → null', () => {
-    const g = new SceneGraph();
-    expect(resolveRigTarget([], g)).toBeNull();
-  });
-});
-
-// ── Starter rig ────────────────────────────────────────────────────
-
-describe('starterPuppetPins', () => {
-  it('drops an anchor (bottom-center) and a wave mover (top-center) in local space', () => {
-    const rig = starterPuppetPins(200, 100);
-    expect(rig.pins).toHaveLength(2);
-    expect(rig.pins[0]).toMatchObject({ name: 'Anchor', x: 0, y: 50 });
-    expect(rig.pins[1]).toMatchObject({ name: 'Wave', x: 0, y: -50 });
-    // Ordinal ids from the shared allocator. This used to assert the old
-    // `pin_<ts>_<i>` timestamp convention — the very convention that let two
-    // pins authored in the same millisecond collide (§12.7).
-    expect(rig.pins[0]!.id).toBe('pin_1');
-    expect(rig.pins[1]!.id).toBe('pin_2');
-  });
-
-  it('is deterministic — the same call twice yields the same ids', () => {
-    expect(starterPuppetPins(200, 100)).toEqual(starterPuppetPins(200, 100));
-  });
-
-  it('does not reissue ids already used by the layer it rigs', () => {
-    const rig = starterPuppetPins(200, 100, ['pin_1', 'pin_3']);
-    expect(rig.pins.map((p) => p.id)).toEqual(['pin_2', 'pin_4']);
-  });
-});
-
-// ── Orchestrator: rigLogoForAnimation ──────────────────────────────
 
 describe('rigLogoForAnimation', () => {
-  it('single leaf → rigs in place, never rasterizes', async () => {
-    const g = new SceneGraph();
-    g.addNode(makeNode('img', 'image', { w: 300, h: 120 }));
-    const rasterize = jest.fn<Promise<RasterResult | null>, unknown[]>();
-    const d = noopDeps();
-
-    await rigLogoForAnimation({
-      graph: g,
-      getSelection: () => ['img'],
-      rasterize: rasterize as never,
-      ...d,
-    });
-
-    expect(rasterize).not.toHaveBeenCalled();
-    expect(readPuppet(g, 'img')?.pins).toHaveLength(2);
+  it('runs the job on the selection, then selects the rigged layer and picks the Puppet Pin tool', async () => {
+    const run = jest.fn(async () => ({ ok: true as const, result: { mode: 'rasterize' as const, layer: 'img9' } }));
+    const d = deps({ getSelection: () => ['g1', 's2'], run, seconds: () => 1.5 });
+    await rigLogoForAnimation(d);
+    expect(run).toHaveBeenCalledWith(['g1', 's2'], 1.5);
+    expect(d.setSelection).toHaveBeenCalledWith(['img9']);
     expect(d.setActiveTool).toHaveBeenCalledWith('puppet-pin');
-    expect(d.setSelection).toHaveBeenCalledWith(['img']);
     expect(d.notify).toHaveBeenCalledWith(expect.objectContaining({ level: 'success' }));
   });
 
-  it('group → rasterizes, inserts an image layer, and rigs THAT with a starter rig', async () => {
-    const g = new SceneGraph();
-    g.addNode(makeNode('logo', 'group'));
-    g.addChild('logo', makeNode('p1', 'shape', { x: -50 }));
-    g.addChild('logo', makeNode('p2', 'shape', { x: 50 }));
-
-    let sel: string[] = ['logo'];
-    const rasterize = jest.fn(async () => ({
-      dataUrl: 'data:image/png;base64,AAAA',
-      compWidth: 220,
-      compHeight: 110,
-      centerX: 0,
-      centerY: 0,
-      name: 'logo (Rigged)',
-    }));
-    const addAsset = jest.fn(async () => ({ id: 'asset_1', name: 'logo (Rigged).png', type: 'image' as const, src: 'blob:x', size: 4 }));
-    const insertMedia = jest.fn(async () => {
-      // Mirror the real insertMedia: create an image layer + select it.
-      g.addNode(makeNode('newimg', 'image', { w: 220, h: 110 }));
-      sel = ['newimg'];
-    });
-    const toFile = jest.fn(async () => new File([new Uint8Array([1, 2, 3])], 'logo.png', { type: 'image/png' }));
-    const d = noopDeps();
-
-    await rigLogoForAnimation({
-      graph: g,
-      getSelection: () => sel,
-      rasterize,
-      addAsset,
-      insertMedia,
-      toFile,
-      ...d,
-    });
-
-    expect(rasterize).toHaveBeenCalledTimes(1);
-    expect(addAsset).toHaveBeenCalledTimes(1);
-    expect(insertMedia).toHaveBeenCalledTimes(1);
-    // The NEW image layer carries the starter rig, not the group.
-    expect(readPuppet(g, 'newimg')?.pins).toHaveLength(2);
-    expect(readPuppet(g, 'logo')).toBeUndefined();
-    expect(d.setActiveTool).toHaveBeenCalledWith('puppet-pin');
-  });
-
-  it('no selection → notifies and does nothing', async () => {
-    const g = new SceneGraph();
-    const rasterize = jest.fn();
-    const d = noopDeps();
-    await rigLogoForAnimation({ graph: g, getSelection: () => [], rasterize: rasterize as never, ...d });
-    expect(rasterize).not.toHaveBeenCalled();
+  it('no selection → notifies and never starts the job', async () => {
+    const run = jest.fn();
+    const d = deps({ getSelection: () => [], run });
+    await rigLogoForAnimation(d);
+    expect(run).not.toHaveBeenCalled();
     expect(d.notify).toHaveBeenCalledWith(expect.objectContaining({ level: 'warning' }));
   });
 
-  it('rasterize returning null (media not decoded) → error notify, no throw', async () => {
-    const g = new SceneGraph();
-    g.addNode(makeNode('logo', 'group'));
-    g.addChild('logo', makeNode('p1', 'shape'));
-    const d = noopDeps();
-    await rigLogoForAnimation({
-      graph: g,
-      getSelection: () => ['logo'],
-      rasterize: async () => null,
-      ...d,
-    });
-    expect(d.notify).toHaveBeenCalledWith(expect.objectContaining({ level: 'error' }));
+  it('a refused or failed job → an error notification with the engine\'s reason, no throw', async () => {
+    const d = deps({ run: async () => ({ ok: false as const, message: 'The selection draws nothing at this time.' }) });
+    await rigLogoForAnimation(d);
+    expect(d.notify).toHaveBeenCalledWith(expect.objectContaining({ level: 'error', message: 'The selection draws nothing at this time.' }));
+    expect(d.setActiveTool).not.toHaveBeenCalled();
+    const thrown = deps({ run: async () => { throw new Error('Rig Logo for Animation runs in the engine, and this engine does not run it.'); } });
+    await rigLogoForAnimation(thrown);
+    expect(thrown.notify).toHaveBeenCalledWith(expect.objectContaining({ level: 'error', message: expect.stringMatching(/runs in the engine/) }));
+  });
+
+  it('a cancelled job does nothing', async () => {
+    const d = deps({ run: async () => null });
+    await rigLogoForAnimation(d);
+    expect(d.notify).not.toHaveBeenCalled();
+    expect(d.setSelection).not.toHaveBeenCalled();
   });
 });

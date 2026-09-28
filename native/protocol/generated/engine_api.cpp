@@ -10838,8 +10838,37 @@ Status decode(wire::Reader& r, AutoReframeJob& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const RigLogoJob& v) {
+  for (const auto& e : v.layers) { w.varint(10U); w.str(e); }
+  if (v.time.has_value()) { w.varint(16U); w.svarint(*v.time); }
+}
+
+Status decode(wire::Reader& r, RigLogoJob& out) {
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        auto& e = out.layers.emplace_back();
+        if (!r.str(e)) return Status::truncated;
+        break;
+      }
+      case 16U: {
+        Time e = 0;
+        if (!r.svarint(e)) return Status::truncated;
+        out.time = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  return Status::ok;
+}
+
 JobSpec::Kind JobSpec::kind() const noexcept {
-  static constexpr std::array<Kind, 16> kKinds = {Kind::track_motion, Kind::stabilize, Kind::auto_trace, Kind::scene_detect, Kind::object_matte, Kind::transcribe, Kind::audio_analysis, Kind::render, Kind::prerender, Kind::proxy, Kind::audio_duck, Kind::audio_gate, Kind::track_apply, Kind::roto_brush, Kind::content_aware_fill, Kind::auto_reframe};
+  static constexpr std::array<Kind, 17> kKinds = {Kind::track_motion, Kind::stabilize, Kind::auto_trace, Kind::scene_detect, Kind::object_matte, Kind::transcribe, Kind::audio_analysis, Kind::render, Kind::prerender, Kind::proxy, Kind::audio_duck, Kind::audio_gate, Kind::track_apply, Kind::roto_brush, Kind::content_aware_fill, Kind::auto_reframe, Kind::rig_logo};
   return kKinds[v.index()];
 }
 
@@ -10861,6 +10890,7 @@ void encode(wire::Writer& w, const JobSpec& v) {
     case 13: w.varint(13698U); { const std::size_t s = w.begin_ld(); encode(w, std::get<13>(v.v)); w.end_ld(s); } return;
     case 14: w.varint(13706U); { const std::size_t s = w.begin_ld(); encode(w, std::get<14>(v.v)); w.end_ld(s); } return;
     case 15: w.varint(13714U); { const std::size_t s = w.begin_ld(); encode(w, std::get<15>(v.v)); w.end_ld(s); } return;
+    case 16: w.varint(13722U); { const std::size_t s = w.begin_ld(); encode(w, std::get<16>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -10996,6 +11026,14 @@ Status decode(wire::Reader& r, JobSpec& out) {
         AutoReframeJob e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.v.emplace<15>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 13722U: {
+        if (seen) return Status::multiple_variants;
+        RigLogoJob e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<16>(std::move(e));
         seen = true;
         break;
       }
@@ -27480,7 +27518,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 481> kNames = {
+constexpr std::array<std::string_view, 482> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -27742,6 +27780,7 @@ constexpr std::array<std::string_view, 481> kNames = {
     "RotoBrushJob",
     "ContentAwareFillJob",
     "AutoReframeJob",
+    "RigLogoJob",
     "JobSpec",
     "StartJob",
     "CancelJob",
@@ -28229,6 +28268,7 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "RotoBrushJob") return roundtrip<RotoBrushJob>(bytes, out);
   if (type == "ContentAwareFillJob") return roundtrip<ContentAwareFillJob>(bytes, out);
   if (type == "AutoReframeJob") return roundtrip<AutoReframeJob>(bytes, out);
+  if (type == "RigLogoJob") return roundtrip<RigLogoJob>(bytes, out);
   if (type == "JobSpec") return roundtrip<JobSpec>(bytes, out);
   if (type == "StartJob") return roundtrip<StartJob>(bytes, out);
   if (type == "CancelJob") return roundtrip<CancelJob>(bytes, out);

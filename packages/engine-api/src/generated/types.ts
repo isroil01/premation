@@ -2872,6 +2872,12 @@ export interface AutoReframeJob {
   lagSeconds?: number;
 }
 
+/** Rig Logo for Animation (rigLogo.ts): the selection as ONE riggable layer with a starter puppet — an "Anchor" pin at the bottom centre and a "Wave" pin at the top centre (layer space). One image or shape layer holding nothing is rigged in place; anything else (a group, a precomp, text, several layers) is drawn alone on a transparent comp at `time` (absent = the playhead) by a child engine, cropped to its pixels (+4 px), imported as a PNG (importBytes, source `derived`) and placed as an image layer "<name> (Rigged)" where it drew, above the topmost selected layer — and that is rigged. The layers must share a composition. Result: {mode: 'self' | 'rasterize', layer} (layer = the rigged one, once applied). */
+export interface RigLogoJob {
+  layers: LayerId[];
+  time?: Time;
+}
+
 export type JobSpec =
   | { kind: 'trackMotion'; value: TrackMotionJob }
   | { kind: 'stabilize'; value: StabilizeJob }
@@ -2888,7 +2894,8 @@ export type JobSpec =
   | { kind: 'trackApply'; value: TrackApplyJob }
   | { kind: 'rotoBrush'; value: RotoBrushJob }
   | { kind: 'contentAwareFill'; value: ContentAwareFillJob }
-  | { kind: 'autoReframe'; value: AutoReframeJob };
+  | { kind: 'autoReframe'; value: AutoReframeJob }
+  | { kind: 'rigLogo'; value: RigLogoJob };
 export type JobSpecKind = JobSpec['kind'];
 
 export interface StartJob {

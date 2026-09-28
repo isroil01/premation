@@ -173,6 +173,7 @@ std::string job_kind_name(const api::JobSpec& spec) {
     case api::JobSpec::Kind::roto_brush: return "rotoBrush";
     case api::JobSpec::Kind::content_aware_fill: return "contentAwareFill";
     case api::JobSpec::Kind::auto_reframe: return "autoReframe";
+    case api::JobSpec::Kind::rig_logo: return "rigLogo";
   }
   return "job";
 }
