@@ -2,14 +2,16 @@
  * Interpret Footage: Main Dialog — After Effects canonical dialog for conforming
  * and reinterpreting imported footage (fps, PAR, alpha, looping).
  *
- * Stored on the ASSET in useAssetStore, so setting it once fixes every layer
+ * Stored on the ITEM (the footage record), so setting it once fixes every layer
  * referencing this footage across all compositions in the project.
  */
 
 import { useState } from 'react';
 import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
-import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import type { ImportedAsset } from '@stores/assetStore';
+import { documentMirror } from '@stores/documentMirror';
+import { itemAsset } from '@core/mirror/itemAssets';
 import type { AlphaInterpretation, FootageInterpretation } from '@core/source/sourceInfo';
 import { canProbePulldown, probePulldown } from '@core/video/pulldownProbe';
 import { interpretFootageEdit } from './assetEdits';
@@ -131,11 +133,11 @@ function InterpretFootageBody({
     };
 
     // Read the item as it is NOW (the dialog is floating; it may have changed).
-    // B4-gap: the patch is a diff against the STORED interpretation (conform fps as typed, alpha unset =
-    // straight); `ItemInfo.interpretation` states conform as a Rational and unset alpha as `auto`, so a diff
-    // against it would send changes nobody made. Closes with the stored float rate and an "alpha unset" fact
-    // on Interpretation.
-    const live = useAssetStore.getState().assets.find((a) => a.id === asset.id) ?? asset;
+    // B4: the stored interpretation from the document mirror (`itemAsset` inverts ItemInfo.interpretation:
+    // `auto` alpha reads as unset, an NTSC conform rate as the typed three decimals), so the patch is a diff
+    // against what is stored.
+    const info = documentMirror().item(asset.id);
+    const live = (info ? itemAsset(info) : null) ?? asset;
     void interpretFootageEdit(live, patch);
     close();
   };

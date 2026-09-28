@@ -13,7 +13,8 @@ import { engineIdle } from '@core/engine/engineInstance';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { TemplateField } from '@core/template/templateTypes';
 import { useTemplateStore } from '@stores/templateStore';
-import { fillDataRowEdit, fillMediaFieldEdit, templateFieldCommands } from './templateFieldEdits';
+import { fillDataRowEdit, fillMediaFieldEdit, slotBoxOf, templateFieldCommands, templateFieldValues } from './templateFieldEdits';
+import { documentMirror } from '@stores/documentMirror';
 import { declareSlot } from '@core/template/mediaSlots';
 import { useAssetStore } from '@stores/assetStore';
 
@@ -147,5 +148,29 @@ describe('media slot fill (from a picked File)', () => {
     // The fake importer reports 640 × 360: contained in the 400 × 400 slot.
     expect(prop(V, 'Transform', 'width')).toBe(400);
     expect(prop(V, 'Transform', 'height')).toBe(225);
+  });
+});
+
+describe('reads through the engine (B4 round 5)', () => {
+  it('templateFieldValues: Source Text, the Fill Color as hex, a slot media URL', async () => {
+    const v = await templateFieldValues([textField(), colorField(), mediaField()], 0);
+    expect(v.headline).toBe(prop(s.T, 'Text', 'content'));
+    expect(v.accent).toMatch(/^#[0-9a-f]{6}([0-9a-f]{2})?$/);
+    expect(v.clip).toBe(documentMirror().item(s.footage)?.mediaUrl);
+    expect(v.clip).toBeTruthy();
+  });
+
+  it('slotBoxOf: the slot fields written through the engine decide the box', async () => {
+    const V = s.V;
+    await h.batch('slot', [
+      { type: 'setProperty', prop: { layer: V, path: 'layer/slotFit' }, value: { kind: 'choice', value: 'cover' } },
+      { type: 'setProperty', prop: { layer: V, path: 'layer/slotWidth' }, value: { kind: 'scalar', value: 300 } },
+      { type: 'setProperty', prop: { layer: V, path: 'layer/slotHeight' }, value: { kind: 'scalar', value: 200 } },
+    ]);
+    // Cover keeps the slot rect (the crop is in UV space).
+    expect(await slotBoxOf(V, { width: 640, height: 360 }, 0)).toEqual({ width: 300, height: 200 });
+    await h.run({ type: 'setProperty', prop: { layer: V, path: 'layer/slotFit' }, value: { kind: 'choice', value: 'contain' } });
+    expect(await slotBoxOf(V, { width: 640, height: 360 }, 0)).toEqual({ width: 300, height: 169 });
+    expect(await slotBoxOf(V, null, 0)).toBeNull();
   });
 });

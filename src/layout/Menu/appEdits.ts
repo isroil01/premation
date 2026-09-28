@@ -14,8 +14,7 @@
  */
 
 import type { Command, LayerKind, LayerSwitchesPatch, PropRef } from '@motion/engine-api';
-import { defaultAnimation, expandKeyframeProp, type EasingKind } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { expandKeyframeProp, type EasingKind } from '@motion/animation';
 import { layerFlagDef, type LayerFlag } from '@core/scene/layerFlags';
 import { nextQuality, type LayerQuality } from '@core/effects/layerQuality';
 import { documentMirror } from '@stores/documentMirror';
@@ -33,7 +32,7 @@ import { staggerOffsets, type StaggerOptions } from '@core/animation/staggerOffs
 import { mirrorHasBar } from '@core/mirror/clipBars';
 import { fetchMemberTracks } from '@stores/memberTracks';
 import { engine } from '@core/engine/engineInstance';
-import { computeFit, intrinsicSizeOf, type FitMode, type Size } from '@core/source/fitCommands';
+import { computeFit, type FitMode, type Size } from '@core/source/fitCommands';
 import { motionBlurMasterOnCommands } from '@layout/Scene/layerSwitchEdits';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
@@ -399,16 +398,13 @@ export function centreInCompEdit(nodeIds: readonly string[], frame: Size, second
 }
 
 /** Fit / Fill / Native Size over the selection (`computeFit` on each layer's intrinsic size). One entry. */
-export function fitLayersEdit(nodeIds: readonly string[], frame: Size, mode: FitMode, seconds: number): Promise<boolean> {
-  const entries = nodeIds.flatMap((nodeId) => {
-    // B4-gap: the layer's intrinsic SOURCE size (`sourceOf`: probed footage, image sequences, SVG natural size,
-    // a precomp's frame, the per-kind fallback) — ItemInfo covers sized footage only; closes with a
-    // `getSourceSize {layers}` query (or `LayerInfo.sourceSize`).
-    const node = defaultSceneGraph.getNode(nodeId);
-    const intrinsic = node ? intrinsicSizeOf(node) : null;
-    if (!node || !intrinsic) return [];
-    const fitted = computeFit(intrinsic, frame, mode);
-    return [{ nodeId, values: { width: fitted.width, height: fitted.height, scaleX: 1, scaleY: 1 } }];
+export async function fitLayersEdit(nodeIds: readonly string[], frame: Size, mode: FitMode, seconds: number): Promise<boolean> {
+  // B4: each layer's intrinsic SOURCE size from the engine (`getSourceSize`: probed footage × its pixel aspect,
+  // a precomp's frame, the per-kind default); layers with none are left out.
+  const res = await engine().query({ type: 'getSourceSize', layers: [...nodeIds] });
+  const entries = (res.ok ? res.value.sizes : []).map((s) => {
+    const fitted = computeFit({ width: s.width, height: s.height }, frame, mode);
+    return { nodeId: s.layer, values: { width: fitted.width, height: fitted.height, scaleX: 1, scaleY: 1 } };
   });
   return sendTransform('Fit Layer', entries, seconds);
 }
@@ -464,14 +460,12 @@ export async function easyEaseAllEdit(nodeId: string): Promise<boolean | 'none'>
 }
 
 /**
- * Whether a layer owns any keyframe (scalar tracks, data tracks) — display read.
- * B4-gap: DATA tracks outside the catalog (puppet pins, Lottie-imported paths) — `getMemberKeyframes` lists the
- * scalar member tracks and expressions only, and the mirror's key lists cover catalog properties only; closes
- * with `getMemberKeyframes` reporting data tracks too (or a `LayerInfo.hasKeyframes`).
+ * Whether a layer owns any keyframe — keyed member tracks, catalog or not, and keyed DATA tracks (puppet pins,
+ * Lottie-imported paths, a text source): the engine's `getMemberKeyframes {includeData}` (B4 round 5).
  */
-function hasKeys(nodeId: string): boolean {
-  return defaultAnimation.animatedProps(nodeId).some((p) => (defaultAnimation.getTrackKeyframes(nodeId, p)?.length ?? 0) > 0)
-    || defaultAnimation.getDataAnimatedPropPaths(nodeId).length > 0;
+async function hasKeys(nodeId: string): Promise<boolean> {
+  const res = await engine().query({ type: 'getMemberKeyframes', layer: nodeId, members: [], includeData: true });
+  return res.ok && res.value.tracks.some((t) => t.count > 0);
 }
 
 /**
@@ -486,7 +480,9 @@ export async function staggerKeyframesEdit(
   pattern: StaggerOptions,
   label = 'Sequence layers',
 ): Promise<boolean | 'none'> {
-  const animated = [...new Set(nodeIds)].filter((id) => isLayer(id) && hasKeys(id));
+  const layers = [...new Set(nodeIds)].filter((id) => isLayer(id));
+  const keyed = await Promise.all(layers.map(hasKeys));
+  const animated = layers.filter((_, i) => keyed[i]);
   if (animated.length < 2) return 'none';
   const offsets = staggerOffsets(animated.length, pattern);
   const items = animated

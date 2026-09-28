@@ -132,13 +132,19 @@ describe('managing the palette', () => {
     expect(useSwatchStore.getState().swatches.map((s) => s.name)).toEqual(['B']);
   });
 
-  it('promotes a document colour into the palette', () => {
-    defaultSceneGraph.addNode(shapeNode('a', { fill: { type: 'solid', color: '#c0ffee' } }));
-
-    render(<SwatchesPanel />);
-    fireEvent.click(screen.getByLabelText('Add #c0ffee to project swatches'));
-
-    expect(useSwatchStore.getState().swatches.map((s) => s.hex)).toEqual(['#c0ffee']);
+  it('promotes a document colour into the palette', async () => {
+    // A real layer of the composition: the colours are the engine's getDocumentColors answer (B4).
+    const h = await setupAppEngine();
+    try {
+      const { layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'a', init: [] });
+      await h.run({ type: 'setProperty', prop: { layer, path: 'layer/fills' }, value: { kind: 'json', value: JSON.stringify([{ type: 'solid', color: '#c0ffee' }]) } });
+      await engineIdle();
+      render(<SwatchesPanel />);
+      fireEvent.click(await screen.findByLabelText('Add #c0ffee to project swatches'));
+      expect(useSwatchStore.getState().swatches.map((s) => s.hex)).toEqual(['#c0ffee']);
+    } finally {
+      await h.dispose();
+    }
   });
 });
 

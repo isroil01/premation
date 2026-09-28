@@ -19,7 +19,7 @@ import { useMemo } from 'react';
 import type { Command } from '@motion/engine-api';
 import { ValueField } from '@components/ValueField';
 import { Icon } from '@components/Icon';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { plainValue, storedNumber, trackRefIn } from '@core/mirror/trackIndex';
 import { edit } from '@core/engine/uiEdits';
 import { isTrackAnimated } from '@core/mirror/selection';
 import { documentMirror } from '@stores/documentMirror';
@@ -47,29 +47,33 @@ export function CornerRows({ nodeId }: { nodeId: string }): JSX.Element | null {
   // B4: wake on the radii / the link switch (info, keys, value) of this layer.
   const watchIds = useMemo(() => [nodeId], [nodeId]);
   useMirrorTrackWatch(watchIds, WATCHED);
-  // B4-gap: the stored per-corner radii and link flag — an UNSTORED corner is
-  // latent in the API and reads the registry default (0) where the renderer
-  // falls back to the uniform radius (cornerRadii.ts), and an absent
-  // `cornersLinked` reads `true` where a legacy doc derives it from equal
-  // corners; the mirror cannot tell absent from default, so read the Style.
-  const node = defaultSceneGraph.getNode(nodeId);
-  const props = (node?.components.find((c) => c.type === 'Style')?.props ?? {}) as Record<string, unknown>;
-  const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
-  const cornerRadius = num(props.cornerRadius, 0);
-  const radii: Record<Corner, number> = {
-    TL: num(props.cornerRadiusTL, cornerRadius),
-    TR: num(props.cornerRadiusTR, cornerRadius),
-    BR: num(props.cornerRadiusBR, cornerRadius),
-    BL: num(props.cornerRadiusBL, cornerRadius),
+  // B4: the STORED per-corner radii and link flag (PropertyInfo.stored) — an
+  // unstored corner falls back to the uniform radius as the renderer does
+  // (cornerRadii.ts), and an unstored `cornersLinked` is derived from equal
+  // corners (a legacy document), where the API would report the defaults.
+  const m = documentMirror();
+  const tree = m.tree(nodeId);
+  const storedRadius = (t: string): number | undefined => {
+    const r = trackRefIn(tree, t);
+    return r && r.info.stored === true ? storedNumber(r, r.info.value) : undefined;
   };
+  const cornerRadius = storedRadius('cornerRadius') ?? 0;
+  const radii: Record<Corner, number> = {
+    TL: storedRadius(track('TL')) ?? cornerRadius,
+    TR: storedRadius(track('TR')) ?? cornerRadius,
+    BR: storedRadius(track('BR')) ?? cornerRadius,
+    BL: storedRadius(track('BL')) ?? cornerRadius,
+  };
+  const linkedInfo = tree?.nodes.get('layer/cornersLinked');
+  const linkedStored = linkedInfo?.stored === true ? plainValue(linkedInfo.value) : undefined;
   const cornersLinked = (() => {
-    if (props.cornersLinked === false) return false;
-    if (props.cornersLinked === true) return true;
+    if (linkedStored === false) return false;
+    if (linkedStored === true) return true;
     // Legacy docs with only `cornerRadius` (or equal individuals) stay linked.
     return radii.TL === radii.TR && radii.TR === radii.BR && radii.BR === radii.BL;
   })();
 
-  if (!node) return null;
+  if (!m.layer(nodeId)) return null;
 
   /** Every corner and the uniform radius := r. */
   const allValues = (r: number): Record<string, number> => ({

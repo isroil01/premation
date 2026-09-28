@@ -201,6 +201,8 @@ const PURE_READS = new Set([
   'readOsClipboardSvg', // core/commands/clipboard: SVG markup from the OS clipboard (navigator.clipboard) — not the document
   'prepareLottieFile', // core/library/lottieLibrary: reads the File and plans it against the comp frame its `activeComp` argument answers (the caller: the mirror)
   'previewLottieItem', 'previewMographItem', // core/library/{lottie,mograph}Library: a static catalog item's choreography window + previewChoreography (transport only; the mograph one starts at the tab's playhead)
+  // B4 round 5 items (checked: arguments only).
+  'fittedBoxFor', // core/template/mediaSlots: the box a slot's layer takes for the source size, slot rect and fit policy given (computeFit)
 ]);
 
 /**

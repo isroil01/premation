@@ -11,7 +11,7 @@ import { documentMirror } from '@stores/documentMirror';
 import { readAuthoredFields } from '@core/template/templateAuthoring';
 import { activeCompIdNow } from '@hooks/useMirror';
 import {
-  mirrorAuthoredFields, removeAuthoredFieldEdit, renameAuthoredFieldEdit, renameAuthoredFieldIdEdit, withFieldId,
+  exposeLayerAsFieldEdit, mirrorAuthoredFields, removeAuthoredFieldEdit, renameAuthoredFieldEdit, renameAuthoredFieldIdEdit, withFieldId,
 } from './templateAuthoringEdits';
 
 const FIELDS = [
@@ -58,4 +58,27 @@ test('a rejected input id sends nothing', async () => {
   expect(await renameAuthoredFieldIdEdit('title', 'Not A Slug')).toBe(false);
   expect(historyLabels().length).toBe(n);
   expect(withFieldId(FIELDS as never, 'title', ' headline ')?.[0]?.id).toBe('headline');
+});
+
+test('Expose as field (B4 round 5): a media slot declared through the engine, one entry, the id kept on re-expose', async () => {
+  const { items: [clip] } = await h.run({ type: 'importFiles', files: [{ path: 'C:/m/clip.mp4', asSequence: false, createComposition: false }] });
+  const { layer } = await h.run({ type: 'createLayer', comp, kind: 'video', name: 'Hero Clip', source: clip, init: [] });
+  await documentMirror().whenIdle();
+  const n = historyLabels().length;
+  const field = await exposeLayerAsFieldEdit(layer!, 0);
+  await engineIdle();
+  expect(historyLabels().slice(n)).toEqual(['Expose Template Field']);
+  expect(field).toMatchObject({ id: 'heroClip', kind: 'media', fit: 'contain', target: { nodeId: layer, componentType: 'Transform', prop: 'src' } });
+  expect(field!.default).toBe(documentMirror().item(clip!)?.mediaUrl);
+  await documentMirror().whenIdle();
+  expect(mirrorAuthoredFields(comp).map((f) => f.id)).toEqual(['title', 'accent', 'heroClip']);
+  const tree = await h.query({ type: 'getPropertyTree', layer: layer!, path: 'layer/slotFit', depth: 1 });
+  expect(tree.nodes[0]!.value).toEqual({ kind: 'choice', value: 'contain' });
+  const w = await h.query({ type: 'getPropertyTree', layer: layer!, path: 'layer/slotWidth', depth: 1 });
+  expect((w.nodes[0]!.value as { value: number }).value).toBeGreaterThan(0);
+  // Re-exposing the same target keeps its id (no duplicate).
+  const again = await exposeLayerAsFieldEdit(layer!, 0);
+  await documentMirror().whenIdle();
+  expect(again!.id).toBe('heroClip');
+  expect(mirrorAuthoredFields(comp).filter((f) => f.target.nodeId === layer)).toHaveLength(1);
 });

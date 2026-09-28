@@ -33,12 +33,12 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorTrackWatch, useMirrorTree } from '@hooks/useMirror';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { jsonField } from '@core/mirror/layerFields';
 import { isTrackAnimated, readTrack, trackRef as mirrorTrackRef } from '@core/mirror/selection';
 import { mirrorHasTransform } from '@core/mirror/layerFacts';
 import { storedNumber, tracksIn } from '@core/mirror/trackIndex';
 import { edit } from '@core/engine/uiEdits';
-import { MORPH_PROP_PREFIX, morphTargetLabels } from '@core/scene/modelMorph';
+import { MORPH_PROP_PREFIX } from '@core/scene/modelMorph';
 import { scalarValueCommands, stopwatchCommands, trackRef, valueCommands } from './inspectorEdits';
 import { useEngineEdit, type EngineEdit } from './useEngineEdit';
 import s from './ModelSection.module.css';
@@ -50,6 +50,22 @@ const STEP = 0.01;
 
 /** A morph weight's track name (`morph0`…`morphN-1`). */
 const MORPH_TRACK = new RegExp(`^${MORPH_PROP_PREFIX}\\d+$`);
+
+/**
+ * Slider labels (`morphTargetLabels`' mirror twin): one per target — the
+ * contiguous `morph0…` weights or the stored names, whichever is longer — the
+ * file's own name where it gave one, `Target N` (1-based) where it did not.
+ */
+export function mirrorMorphLabels(names: unknown[] | undefined, morphTracks: ReadonlyArray<string>): string[] {
+  const have = new Set(morphTracks);
+  let n = 0;
+  while (have.has(`${MORPH_PROP_PREFIX}${n}`)) n += 1;
+  const list = Array.isArray(names) ? names.map((x) => (typeof x === 'string' ? x : '')) : [];
+  return Array.from({ length: Math.max(n, list.length) }, (_, i) => {
+    const given = list[i];
+    return given && given.trim() !== '' ? given : `Target ${i + 1}`;
+  });
+}
 
 interface MorphRowProps {
   nodeId: string;
@@ -141,10 +157,8 @@ export function ModelSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const m = documentMirror();
   if (!m.layer(nodeId) || !mirrorHasTransform(tree)) return null;
 
-  // B4-gap: the model's blend-shape NAMES and target count (the Model component's `targetNames` / mesh) — no API
-  // field; the weights themselves are the `morph<i>` properties. Closes with a `model/targetNames` field.
-  const node = defaultSceneGraph.getNode(nodeId);
-  const labels = node ? morphTargetLabels(node) : [];
+  // B4: the blend-shape NAMES (`model/targetNames`) and one weight property per target (`morph<i>`).
+  const labels = mirrorMorphLabels(jsonField<unknown[]>(m, nodeId, 'model/targetNames'), morphTracks);
   if (labels.length === 0) return null;
 
   /**

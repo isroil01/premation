@@ -16,7 +16,7 @@ import type { ExportFormat } from '@core/export/exportManager';
 import { buildSupervisorSpec, exportSupervisorAvailable, exportSupervisorClient } from '@core/export/exportSupervisorClient';
 import { currentProjectSnapshotIsPortable } from '@core/export/snapshotPortability';
 import { getProjectManager } from '@core/services/coreServices';
-import { useAssetStore } from '@stores/assetStore';
+import { documentMirror } from '@stores/documentMirror';
 import { useExportQueueStore } from '@stores/exportQueueStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { canChooseOutputDir, useRenderQueueStore, type RenderJob } from '@stores/renderQueueStore';
@@ -50,10 +50,17 @@ export function shouldUseSupervisor(format: ExportFormat | string, exportInProce
     !exportInProcess
     && SUPERVISED.has(format)
     && exportSupervisorAvailable()
-    // B4-gap: portability is a test on each record's `src` (`blob:` URLs only this window can read) — ItemInfo
-    // has no source URL; closes with the item's stored source ref in the API.
-    && currentProjectSnapshotIsPortable(useAssetStore.getState().assets)
+    // B4: portability is a test on each footage item's media (`blob:` URLs only this window can read):
+    // `ItemInfo.mediaUrl` from the document mirror.
+    && currentProjectSnapshotIsPortable(mirrorFootageMedia())
   );
+}
+
+/** Every footage item's id and media URL ('' when it has none), project order. */
+function mirrorFootageMedia(): Array<{ id: string; src: string }> {
+  const out: Array<{ id: string; src: string }> = [];
+  for (const i of documentMirror().items.values()) if (i.kind === 'footage') out.push({ id: i.id, src: i.mediaUrl ?? '' });
+  return out;
 }
 
 /** `dir` + `name` with the directory's own separator. */

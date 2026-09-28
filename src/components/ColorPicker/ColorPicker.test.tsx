@@ -12,25 +12,9 @@ import { render, screen, fireEvent, within, act } from '@testing-library/react';
 import { ColorPicker, colorManagementSummary } from './ColorPicker';
 import { useColorManagementStore } from '@stores/colorManagementStore';
 import { useSwatchStore } from '@stores/swatchStore';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import type { SceneNode } from '@core/types';
-
-function shapeNode(id: string, color: string): SceneNode {
-  return {
-    id,
-    name: id,
-    parent: null,
-    children: [],
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true,
-    locked: false,
-    components: [
-      { id: `${id}_meta`, type: 'group', props: { [SCENE_KIND_PROP]: 'shape' } },
-      { id: `${id}_fx`, type: 'fx', props: { fill: { type: 'solid', color } } },
-    ],
-  };
-}
 
 /**
  * jsdom has no ResizeObserver, and Radix's Popover constructs one on open.
@@ -123,8 +107,13 @@ describe('the Swatches strip', () => {
 });
 
 describe('the Document strip', () => {
-  it('derives on open, not before', () => {
-    defaultSceneGraph.addNode(shapeNode('a', '#c0ffee'));
+  it('derives on open, not before', async () => {
+    // A real layer of the composition: the colours are the engine's getDocumentColors answer (B4).
+    const h = await setupAppEngine();
+    const { layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'a', init: [] });
+    await h.run({ type: 'setProperty', prop: { layer, path: 'layer/fills' }, value: { kind: 'json', value: JSON.stringify([{ type: 'solid', color: '#c0ffee' }]) } });
+    await engineIdle();
+    useSwatchStore.setState({ documentColors: [] });
     render(<ColorPicker value="#123456" onChange={jest.fn()} />);
 
     // Closed: nothing has walked the graph.
@@ -133,8 +122,10 @@ describe('the Document strip', () => {
 
     open();
 
-    const strip = screen.getByLabelText('Document colors');
+    // The engine's getDocumentColors answer lands asynchronously (B4).
+    const strip = await screen.findByLabelText('Document colors');
     expect(within(strip).getByLabelText('Use #c0ffee')).toBeTruthy();
+    await h.dispose();
   });
 
   it('does not draw an empty strip for an unpainted document', () => {

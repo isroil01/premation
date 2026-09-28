@@ -15,27 +15,30 @@
  * It registers AFTER the layer gizmo's listener, so when a device handle and a
  * transform handle overlap the layer gizmo wins — it is the more specific
  * intent, and it claims the event with `stopPropagation`.
+ *
+ * B4 round 5: the handles, the view camera and each device's parent matrix
+ * come from the overlay geometry push (the same records the wireframes draw),
+ * resolved engine-side at the frame on screen.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Project3D, type Vec3 } from '@motion/scene';
+import type { Vec3 } from '@motion/scene';
 import { Gizmo3D } from '@motion/workspace';
 import { useGuidesStore } from '@stores/guidesStore';
-import { useCurrentTime } from '@stores/playbackClockStore';
 import { useSelectionStore } from '@stores/selectionStore';
+import { documentMirror } from '@stores/documentMirror';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
-import { isSceneCameraView, orthoViewOf } from '@core/scene/cameraViewMode';
+import { isSceneCameraView } from '@core/scene/cameraViewMode';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
-import { viewDragToWorldDelta } from '@core/workspace/ports';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
-import { currentViewCamera } from '@core/workspace/viewProjection';
 import {
-  collectDeviceHandles,
-  dragDeviceHandleTo,
+  deviceHandlesFrom,
+  dragDeltaThrough,
   hitTestDeviceHandle,
+  projectorOf,
   type DeviceHandle,
-} from '@core/workspace/deviceHandles';
+} from '@core/mirror/viewGeometry';
+import { dragDeviceHandle } from '@core/workspace/deviceHandleDrag';
 
 interface DeviceDrag {
   handle: DeviceHandle;
@@ -47,30 +50,26 @@ interface DeviceDrag {
 
 export function useDeviceHandles(stageRef: React.RefObject<HTMLElement | null>) {
   const camera3dMode = useGuidesStore((s) => s.camera3dMode);
-  const { width: compWidth, height: compHeight } = useActiveCompSize();
-  const time = useCurrentTime();
   // The camera this view looks THROUGH gets no handle — the same suppression
   // the wireframe already has, resolved from the same shared hook so the two
   // can never disagree about which camera that is.
-  const { activeCameraId } = useSceneRefGeometry(camera3dMode);
+  const { activeCameraId, camera, compWidth, compHeight, sceneLayers, recordOf } = useSceneRefGeometry(camera3dMode);
   const viewingThrough = isSceneCameraView(camera3dMode) ? activeCameraId : null;
 
   const [hovered, setHovered] = useState<DeviceHandle | null>(null);
   const dragRef = useRef<DeviceDrag | null>(null);
 
-  // The list the overlay DRAWS. Recomputed on any scene mutation (the revision
-  // subscription above) and on time, so a keyframed camera's dot tracks it.
-  // Deliberately the same collector the hit test calls: a dot the pointer can
-  // see but not grab is worse than no dot at all.
-  const sceneRev = useMirrorRevisionFrame();
+  // The list the overlay DRAWS — the pushed records of the frame on screen, so a
+  // keyframed camera's dot tracks it. Deliberately the same list the hit test
+  // uses: a dot the pointer can see but not grab is worse than no dot at all.
   const handles = useMemo(
-    () => collectDeviceHandles(time, compWidth, compHeight, viewingThrough),
-    [time, compWidth, compHeight, sceneRev, camera3dMode, viewingThrough],
+    () => deviceHandlesFrom(documentMirror(), sceneLayers, recordOf, viewingThrough),
+    [sceneLayers, recordOf, viewingThrough],
   );
 
   // Live values for the listeners, which are installed once per stage.
-  const stateRef = useRef({ camera3dMode, compWidth, compHeight, time, viewingThrough });
-  stateRef.current = { camera3dMode, compWidth, compHeight, time, viewingThrough };
+  const stateRef = useRef({ camera3dMode, compWidth, compHeight, camera, handles });
+  stateRef.current = { camera3dMode, compWidth, compHeight, camera, handles };
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -85,21 +84,10 @@ export function useDeviceHandles(stageRef: React.RefObject<HTMLElement | null>) 
     };
     const tolerance = (): number => 12 / (getWorkspaceController().getView().scale || 1);
 
-    /** Project a world point exactly as the overlay draws it. */
+    /** Project a world point exactly as the overlay draws it (the view's pushed camera). */
     const projector = (): ((p: Vec3) => { x: number; y: number }) => {
-      const { camera3dMode: mode, compWidth: w, compHeight: h, time: t } = stateRef.current;
-      const ortho = orthoViewOf(mode);
-      if (ortho) return (p) => Project3D.projectOrtho(p, ortho, w, h);
-      // `currentViewCamera` is the shared resolver — the renderer, the gizmos
-      // and this all read the same camera, which is what keeps a handle on its
-      // own wireframe.
-      const cam = currentViewCamera(w, h, t, mode);
-      return cam ? (p: Vec3) => Project3D.projectPoint(p, cam) : (p: Vec3) => ({ x: p.x, y: p.y });
-    };
-
-    const handlesNow = (): DeviceHandle[] => {
-      const { compWidth: w, compHeight: h, time: t, viewingThrough: vt } = stateRef.current;
-      return collectDeviceHandles(t, w, h, vt);
+      const { camera3dMode: mode, compWidth: w, compHeight: h, camera: cam } = stateRef.current;
+      return projectorOf(mode, cam, w, h);
     };
 
     const onPointerDown = (e: PointerEvent) => {
@@ -108,7 +96,7 @@ export function useDeviceHandles(stageRef: React.RefObject<HTMLElement | null>) 
       if (useGuidesStore.getState().cameraTool !== 'none') return;
 
       const compPt = compLocal(e);
-      const hit = hitTestDeviceHandle(compPt, handlesNow(), projector(), tolerance());
+      const hit = hitTestDeviceHandle(compPt, stateRef.current.handles, projector(), tolerance());
       if (!hit) return;
 
       e.stopPropagation();
@@ -129,24 +117,20 @@ export function useDeviceHandles(stageRef: React.RefObject<HTMLElement | null>) 
       const compPt = compLocal(e);
       const drag = dragRef.current;
       if (!drag) {
-        setHovered(hitTestDeviceHandle(compPt, handlesNow(), projector(), tolerance()));
+        setHovered(hitTestDeviceHandle(compPt, stateRef.current.handles, projector(), tolerance()));
         return;
       }
-      const { camera3dMode: mode, compWidth: w, compHeight: h, time: t } = stateRef.current;
+      const { camera3dMode: mode, camera: cam } = stateRef.current;
       const delta = { x: compPt.x - drag.startComp.x, y: compPt.y - drag.startComp.y };
       // The SAME projected-delta → world conversion the layer drag uses, so a
       // handle tracks the cursor identically in every view. Depth comes from
       // where the handle started, so a distant camera does not lag the pointer.
-      const worldDelta = viewDragToWorldDelta(delta, mode, drag.startWorld, w, h, t);
-      dragDeviceHandleTo(
-        drag.handle,
-        {
-          x: drag.startWorld.x + worldDelta.x,
-          y: drag.startWorld.y + worldDelta.y,
-          z: drag.startWorld.z + worldDelta.z,
-        },
-        t,
-      );
+      const worldDelta = dragDeltaThrough(delta, mode, cam, drag.startWorld);
+      dragDeviceHandle(drag.handle, {
+        x: drag.startWorld.x + worldDelta.x,
+        y: drag.startWorld.y + worldDelta.y,
+        z: drag.startWorld.z + worldDelta.z,
+      });
     };
 
     const onPointerUp = (e: PointerEvent) => {

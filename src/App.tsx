@@ -141,7 +141,7 @@ import { openContextMenu } from '@stores/contextMenuStore';
 import { useResponsiveLayout } from '@hooks/useResponsiveLayout';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
-import { useAssetStore } from '@stores/assetStore';
+import { itemAsset } from '@core/mirror/itemAssets';
 import { customPrompt, customAlert } from '@components/Modal';
 
 /**
@@ -1172,9 +1172,10 @@ function EditorShellInner(): JSX.Element {
     const m = documentMirror();
     const mirrorLayer = nodeId ? m.layer(nodeId) : undefined;
     const assetId = mirrorLayer?.source && m.item(mirrorLayer.source)?.kind === 'footage' ? mirrorLayer.source : undefined;
-    // B4-gap: Interpret Footage and Scene Edit Detection take the asset RECORD (the import's interpretation / media
-    // fields the dialog edits), not an ItemInfo.
-    const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : null;
+    // B4: Interpret Footage takes the item as the page's asset record, built from the mirror's ItemInfo
+    // (its interpretation, media type and media URL).
+    const assetInfo = assetId ? m.item(assetId) : undefined;
+    const asset = assetInfo ? itemAsset(assetInfo) : null;
     const time = mirrorLayer ? { reverse: mirrorLayer.timing.stretch < 0, freeze: mirrorLayer.timing.freeze !== undefined } : null;
 
     /*

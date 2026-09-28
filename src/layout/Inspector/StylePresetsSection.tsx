@@ -10,7 +10,6 @@
 import { useMemo } from 'react';
 import type { Command, PropertyInit } from '@motion/engine-api';
 import { STYLE_PRESETS, type StylePreset, type StylePresetCategory } from '@core/style/stylePresets';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayer, useMirrorProperty } from '@hooks/useMirror';
 import { colorValueHex } from '@core/mirror/paintFields';
@@ -21,7 +20,7 @@ import { LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS } from '@core/effec
 import { parseColorChannels } from '@core/effects/effects';
 import { STYLE_FIELDS } from '@core/engine/effectFieldSpecs';
 import { isLayer } from '@core/engine/doc';
-import { paths, ref, values as apiValues } from '@core/engine/propRefs';
+import { componentOfType, paths, ref, values as apiValues } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';
 import { fieldCommands } from '@layout/Text/textEdits';
 import { strokesCommands } from './appearance/paintEdits';
@@ -91,9 +90,9 @@ export function StylePresetsSection({ nodeId }: { nodeId: string }): JSX.Element
   const apply = (id: string, label: string): void => {
     const preset = STYLE_PRESETS.find((p) => p.id === id);
     if (!preset) return;
-    // B4-gap: the layer's Style / Text COMPONENT (its id, which `componentPropsCommands` writes opacity through) — closes when opacity is addressed by path here.
-    const styleComp = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === 'Style' || c.type === 'Text');
-    const plan = stylePresetCommands(nodeId, styleComp, preset, accent, getTime());
+    // The Style / Text component's id is the write seam's (`componentPropsCommands` writes opacity through it, B3).
+    const styleId = componentOfType(nodeId, 'Style') ?? componentOfType(nodeId, 'Text');
+    const plan = stylePresetCommands(nodeId, styleId ? { id: styleId } : undefined, preset, accent, getTime());
     if (plan.cmds.length === 0) {
       useUIStore.getState().notify({ level: 'warning', message: `“${label}” does not apply to this layer`, durationMs: 3000 });
       return;
@@ -200,7 +199,8 @@ const CORNER_TRACKS = ['cornerRadius', 'cornerRadiusTL', 'cornerRadiusTR', 'corn
  */
 export function stylePresetCommands(
   nodeId: string,
-  styleComp: { id: string; props: Readonly<Record<string, unknown>> } | undefined,
+  /** The layer's Style / Text component (its id: the opacity write's target). */
+  styleComp: { id: string } | undefined,
   preset: StylePreset,
   accent: string,
   seconds: number,
@@ -243,7 +243,8 @@ export function stylePresetCommands(
     }
     // Written unconditionally: a preset states a COMPLETE look, so switching
     // away from Glass clears the frost (0 = absent). A Text layer has none.
-    if (preset.backdropBlur !== undefined || styleComp.props.backdropBlur !== undefined) {
+    // B4: a STORED backdrop blur (PropertyInfo.stored) from the mirror.
+    if (preset.backdropBlur !== undefined || documentMirror().property(nodeId, 'layer/backdropBlur')?.stored === true) {
       const blur = fieldCommands(nodeId, 'layer/backdropBlur', preset.backdropBlur ?? 0);
       if (blur.length === 0 && preset.backdropBlur) unaddressed.push('backdropBlur');
       cmds.push(...blur);

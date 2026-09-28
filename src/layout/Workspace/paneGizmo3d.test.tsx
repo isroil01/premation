@@ -105,6 +105,17 @@ function reset(): void {
 beforeEach(reset);
 afterEach(reset);
 
+/**
+ * B4 round 5: the gizmo reads the layer's pushed geometry (the overlay push's
+ * scene3d record), which exists once the engine has the overlay's subscription
+ * — let it land.
+ */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await engineIdle();
+  });
+}
+
 describe('a pane places its handles through ITS OWN view', () => {
   // A 3D layer of the composition, built through the engine: the gizmo's
   // 3D gate reads the layer header from the document mirror (B4).
@@ -123,12 +134,12 @@ describe('a pane places its handles through ITS OWN view', () => {
     await h.dispose();
   });
 
-  it('projects through the pane’s ortho axis and framing, not the main viewport’s', () => {
+  it('projects through the pane’s ortho axis and framing, not the main viewport’s', async () => {
     act(() => useSelectionStore.getState().set([layerId]));
 
     const paneView: RenderView = { scale: 0.5, offsetX: 12, offsetY: 34 };
     const pane = render(<GizmoHarness mode="top" view={paneView} />);
-    act(() => undefined);
+    await settle();
 
     const { width, height } = useCompositionStore.getState();
     const expected = Project3D.projectOrtho(START, 'top', width, height);
@@ -144,7 +155,7 @@ describe('a pane places its handles through ITS OWN view', () => {
     // Same layer, same moment, a viewport reading the globals: a different
     // projection (front) placed by a different transform.
     const main = render(<GizmoHarness />);
-    act(() => undefined);
+    await settle();
     const mainExpected = Project3D.projectOrtho(START, 'front', width, height);
     const mainAt = centreDot(main.container);
     expect(mainAt.x).toBeCloseTo(mainExpected.x, 6);
@@ -156,13 +167,13 @@ describe('a pane places its handles through ITS OWN view', () => {
     expect(mainAt).not.toEqual(at);
   });
 
-  it('two panes on different axes disagree with each other', () => {
+  it('two panes on different axes disagree with each other', async () => {
     act(() => useSelectionStore.getState().set([layerId]));
     const view: RenderView = { scale: 1, offsetX: 0, offsetY: 0 };
 
     const top = render(<GizmoHarness mode="top" view={view} />);
     const right = render(<GizmoHarness mode="right" view={view} />);
-    act(() => undefined);
+    await settle();
     expect(centreDot(top.container)).not.toEqual(centreDot(right.container));
   });
 });
@@ -198,7 +209,7 @@ describe('through the engine API', () => {
     const { container, getByTestId } = render(
       <GizmoHarness mode="top" view={{ scale: 1, offsetX: 0, offsetY: 0 }} />,
     );
-    act(() => undefined);
+    await settle();
     // The pane view is 1:1 and unpanned, so comp px ARE screen px.
     const tip = xArmTip(container);
     const stage = getByTestId('stage');
@@ -229,7 +240,7 @@ describe('through the engine API', () => {
     const { getByTestId } = render(
       <GizmoHarness mode="top" view={{ scale: 1, offsetX: 0, offsetY: 0 }} />,
     );
-    act(() => undefined);
+    await settle();
     const stage = getByTestId('stage');
     const before = h.doc();
     const entries = historyLabels().length;
@@ -249,7 +260,7 @@ describe('through the engine API', () => {
     const { container, getByTestId } = render(
       <GizmoHarness mode="top" view={{ scale: 1, offsetX: 0, offsetY: 0 }} />,
     );
-    act(() => undefined);
+    await settle();
     const stage = getByTestId('stage');
     const tip = xArmTip(container);
     const entries = historyLabels().length;

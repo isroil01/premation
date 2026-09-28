@@ -51,8 +51,7 @@ import { isPaintableLayer } from '@core/mirror/layerKinds';
 import { mirrorLabelColor } from '@core/mirror/layerLabels';
 import { isMirrorDescendantOf } from '@core/mirror/layerTree';
 import { hasPositionKeys } from '@core/mirror/motionFacts';
-import { currentViewProjector } from '@core/workspace/viewProjection';
-import { isLookedThrough } from '@core/workspace/ports';
+import { isLookedThroughNow, navTargetNow, navUnavailableNow, orbitPivotNow, requestMainViewCamera, viewProjectorNow } from './viewNav';
 
 
 import { getWorkspaceController, type WorkspaceController } from '@core/workspace/WorkspaceController';
@@ -101,10 +100,7 @@ import { framePerf, perfBegin, perfEnd, PerfStage, installPerfDevGlobal } from '
 import {
   cancelSmoothDolly,
   dollyNavBy,
-  describeNavUnavailable,
-  findNavTarget,
   orbitNavBy,
-  resolveOrbitPivot,
   smoothDollyNavBy,
   trackNavBy,
   unifiedNavModeFor,
@@ -1558,9 +1554,13 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     sync(useSelectionStore.getState().ids);
     const unSel = useSelectionStore.subscribe((st) => sync(st.ids));
     const unGeo = subscribeOverlayGeometry(MAIN_VIEWPORT, () => controller.requestRender());
+    // B4 round 5: the main view mode's camera rides every frame (camera navigation,
+    // the motion path's 3D projection and the looked-through test read it — viewNav.ts).
+    const unView = requestMainViewCamera();
     return () => {
       unSel();
       unGeo();
+      unView();
     };
   }, []);
 
@@ -1641,12 +1641,13 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     };
 
     const startCameraNav = (e: PointerEvent, mode: CameraNavMode, opts?: { suppressContextMenu?: boolean }): boolean => {
-      const target = findNavTarget();
+      // B4 round 5: the target from the frame on screen (the pushed view camera, viewNav.ts).
+      const target = navTargetNow();
       if (!target) {
         // Say WHY rather than doing nothing. Inertness here is correct — a
         // camera only moves 3D layers — but silent inertness is indistinguishable
         // from a broken tool, and was reported as one.
-        const why = describeNavUnavailable();
+        const why = navUnavailableNow();
         if (why) useUIStore.getState().notify({ level: 'info', message: why, durationMs: 6000 });
         return false;
       }
@@ -1654,7 +1655,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // start, from the pointer's comp position — only for scene cameras;
       // views keep their promote-to-custom-view orbit (orbitNavBy ignores it).
       const pivot = mode === 'orbit' && target.kind === 'scene'
-        ? resolveOrbitPivot(
+        ? orbitPivotNow(
             controller.ws.screenToWorld(local(e)),
             compRef.current.width,
             compRef.current.height,
@@ -1711,7 +1712,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         return;
       }
       if (e.key !== 'Alt' || camNav || altHintCursor) return;
-      if (!findNavTarget()) return;
+      if (!navTargetNow()) return;
       overlay.style.cursor = 'move';
       altHintCursor = true;
     };
@@ -2508,7 +2509,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         || useGuidesStore.getState().cameraTool === 'dolly'
         || useGuidesStore.getState().cameraTool === 'unified'
       ) {
-        if (findNavTarget()) {
+        if (navTargetNow()) {
           // Smooth dolly: wheel ticks feed an rAF easer instead of stepping z
           // (or a custom view's distance) directly — see cameraNav.ts.
           smoothDollyNavBy(e.deltaY, compRef.current.width, compRef.current.height);
@@ -3362,7 +3363,7 @@ function motionPathProjector(
   const is3D = m.layer(nodeId)?.switches.threeD === true;
   // For a 3D layer the trajectory goes through the SAME camera the renderer uses; the projector is
   // built at the playhead (the path shows where the trajectory lies in the view you look at now).
-  const project = is3D ? currentViewProjector(comp.w, comp.h, time) : null;
+  const project = is3D ? viewProjectorNow(comp.w, comp.h, time) : null;
   return (x, y, z) => {
     if (!project) return controller.ws.worldToScreen({ x, y });
     const q = project({ x, y, z });
@@ -3591,7 +3592,7 @@ function paintMotionPath(
   const m = documentMirror();
   if (!hasPositionKeys(m, nodeId)) return;
   // A camera's own path, seen through that camera, is a line across the frame.
-  if (isLookedThrough(nodeId)) return;
+  if (isLookedThroughNow(nodeId)) return;
   const win = motionPathWindowFor(nodeId, time);
   if (!win) return;
   // The engine's motion path for the frame on screen (the overlay geometry push): comp-space

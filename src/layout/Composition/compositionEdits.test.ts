@@ -84,6 +84,19 @@ it('Pre-compose: one entry, the new layer selected; undo restores the layers exa
   expect(defaultSceneGraph.getNode(s.A)?.parent).toBe(made.comp);
 });
 
+it('Pre-compose with Open New Composition: the new comp opens with a navigator trail back (the mirror + mapLayerTime)', async () => {
+  const r = await precomposeEdit([s.B], { name: 'Pre-comp 1', mode: 'move', adjustDuration: false, openNew: true });
+  expect('comp' in r).toBe(true);
+  const made = r as { comp: string; layer: string };
+  await engineIdle();
+  for (let i = 0; i < 4; i++) await Promise.resolve();
+  const st = useProjectStore.getState();
+  const tab = st.tabs[st.activeTabId!]!;
+  expect(tab.compositionId).toBe(made.comp);
+  expect(tab.breadcrumbPath).toEqual([s.comp, made.comp]);
+  expect(useSelectionStore.getState().ids).toEqual([]);
+});
+
 it('Pre-compose refusals come back as a message, not a half edit', async () => {
   const before = h.doc();
   const r = await precomposeEdit([s.A, s.B], { name: 'x', mode: 'leave', adjustDuration: false, openNew: false });

@@ -23,7 +23,8 @@ import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { layersUsingItem } from '@core/engine/doc';
 import { rateOf } from '@layout/Composition/compositionEdits';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
-import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import type { ImportedAsset } from '@stores/assetStore';
+import { itemAsset } from '@core/mirror/itemAssets';
 import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
 import { LABEL_COLORS } from '@core/scene/labelColor';
@@ -31,12 +32,15 @@ import { LABEL_COLORS } from '@core/scene/labelColor';
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
 /**
- * B4-gap: the imports resolve to the asset RECORDS their callers place (playable `src`, probed metadata,
- * interpretation) — ItemInfo has no playable source; closes with the item's media URL in the API (the
- * same datum the Assets panel's cards need).
+ * B4: the imports resolve to the asset RECORDS their callers place (playable media, probed metadata,
+ * interpretation), built from the engine's ItemInfo at the answer's revision (`ItemInfo.mediaUrl` is the
+ * media) — asked right after the import, so the records do not wait for the mirror's events.
  */
-function assetById(id: string): ImportedAsset | undefined {
-  return useAssetStore.getState().assets.find((a) => a.id === id);
+async function importedAssets(ids: readonly string[]): Promise<ImportedAsset[]> {
+  if (ids.length === 0) return [];
+  const res = await engine().query({ type: 'getItems', items: [...ids] });
+  if (!res.ok) return [];
+  return res.value.items.map(itemAsset).filter((a): a is ImportedAsset => !!a);
 }
 
 // ── Import (by path) ──────────────────────────────────────────────────
@@ -60,7 +64,7 @@ export async function importPathsEdit(paths: readonly string[], folder: string |
   const all = await edit(label, { type: 'importFiles', files: paths.map(file) }, { quiet: true });
   if (all.ok) {
     const ids = (all.value[0] as { items?: string[] } | undefined)?.items ?? [];
-    return { imported: ids.map(assetById).filter((a): a is ImportedAsset => !!a), failed: [] };
+    return { imported: await importedAssets(ids), failed: [] };
   }
   if (paths.length === 1) return { imported: [], failed: [...paths] };
 
@@ -75,7 +79,7 @@ export async function importPathsEdit(paths: readonly string[], folder: string |
   for (const path of paths) {
     const res = await client.execute({ type: 'importFiles', files: [file(path)] });
     const id = res.ok ? (res.value as { items?: string[] }).items?.[0] : undefined;
-    const asset = id ? assetById(id) : undefined;
+    const asset = id ? (await importedAssets([id]))[0] : undefined;
     if (asset) imported.push(asset);
     else failed.push(path);
   }
@@ -128,7 +132,7 @@ export async function importBrowserFilesEdit(items: readonly BrowserFileImport[]
   const all = await edit(name, { type: 'importBytes', files: await Promise.all(items.map(bytesFileOf)) }, { quiet: true });
   if (all.ok) {
     const ids = (all.value[0] as { items?: string[] } | undefined)?.items ?? [];
-    return { imported: ids.map(assetById).filter((a): a is ImportedAsset => !!a), failed: [], failedFiles: [] };
+    return { imported: await importedAssets(ids), failed: [], failedFiles: [] };
   }
   if (items.length === 1) {
     reportEngineError(name, all.error);
@@ -146,7 +150,7 @@ export async function importBrowserFilesEdit(items: readonly BrowserFileImport[]
   for (const item of items) {
     const res = await client.execute({ type: 'importBytes', files: [await bytesFileOf(item)] });
     const id = res.ok ? (res.value as { items?: string[] }).items?.[0] : undefined;
-    const asset = id ? assetById(id) : undefined;
+    const asset = id ? (await importedAssets([id]))[0] : undefined;
     if (asset) imported.push(asset);
     else failedFiles.push(item.file);
   }

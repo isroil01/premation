@@ -275,7 +275,9 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         device.queue.onSubmittedWorkDone().then(p.release, p.release);
         const now = performance.now();
         // B4 round 2: the overlays read THIS frame's geometry (the records it carried) from now on.
-        if (isViewport && p.meta.geometry) publishFrameGeometry(p.meta.viewport, p.meta.time, p.meta.revision, p.meta.geometry);
+        if (isViewport && (p.meta.geometry || p.meta.geometryViews)) {
+          publishFrameGeometry(p.meta.viewport, p.meta.time, p.meta.revision, p.meta.geometry ?? [], p.meta.geometryViews);
+        }
         stats.drawn += 1;
         stats.lastRevision = p.meta.revision;
         stats.lastFrame = p.meta.frame;

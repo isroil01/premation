@@ -17,9 +17,9 @@
  * subscribe (`subscribeOverlayGeometry`) to repaint when a frame's geometry lands.
  */
 
-import { flicksToSeconds, type OverlayKind, type OverlayLayerGeometry } from '@motion/engine-api';
+import { flicksToSeconds, type OverlayKind, type OverlayLayerGeometry, type OverlayRequest, type OverlayRig, type OverlayRigOptions, type OverlayView } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
-import { overlayGeometryAt } from '@core/engine/overlayGeometry';
+import { overlayGeometryAt, overlayViewsAt } from '@core/engine/overlayGeometry';
 import { documentMirror } from './documentMirror';
 
 /** The editor's main viewport (EngineSurface's ENGINE_SURFACE_VIEWPORT): the id the overlays subscribe under in both engines. */
@@ -33,6 +33,14 @@ interface FrameSet {
   time: number;
   revision: number;
   layers: Map<string, OverlayLayer>;
+  /** B4 round 5: the subscribed views' cameras, by mode. */
+  views: Map<string, OverlayView>;
+}
+
+function viewsByMode(views: ReadonlyArray<OverlayView> | undefined): Map<string, OverlayView> {
+  const out = new Map<string, OverlayView>();
+  for (const v of views ?? []) out.set(v.mode, v);
+  return out;
 }
 
 const pushed = new Map<number, FrameSet>();
@@ -49,7 +57,7 @@ function merge(records: ReadonlyArray<OverlayLayerGeometry>): Map<string, Overla
   for (const r of records) {
     const cur = out.get(r.layer);
     if (!cur) {
-      out.set(r.layer, { ...r, matrix: [...r.matrix], box: [...r.box], corners: [...r.corners], path: [...r.path], pathKeys: [...r.pathKeys], pins: [...r.pins], bones: [...r.bones], textBox: [...r.textBox], pathFrames: [...r.pathFrames], pathNow: [...r.pathNow] });
+      out.set(r.layer, { ...r, matrix: [...r.matrix], box: [...r.box], corners: [...r.corners], path: [...r.path], pathKeys: [...r.pathKeys], pins: [...r.pins], bones: [...r.bones], textBox: [...r.textBox], pathFrames: [...r.pathFrames], pathNow: [...r.pathNow], ...(r.rig ? { rig: copyRig(r.rig) } : {}) });
       continue;
     }
     cur.matrix.push(...r.matrix);
@@ -62,8 +70,33 @@ function merge(records: ReadonlyArray<OverlayLayerGeometry>): Map<string, Overla
     cur.textBox.push(...r.textBox);
     cur.pathFrames.push(...r.pathFrames);
     cur.pathNow.push(...r.pathNow);
+    // B4 round 5: the scene3d record rides one of the layer's records (the first).
+    if (r.scene && !cur.scene) cur.scene = r.scene;
+    // B4 round 5: a long rig spans records — its arrays concatenate.
+    if (r.rig) cur.rig = cur.rig ? mergeRig(cur.rig, r.rig) : copyRig(r.rig);
   }
   return out;
+}
+
+function copyRig(r: OverlayRig): OverlayRig {
+  return {
+    pins: [...r.pins], bones: [...r.bones], ik: [...r.ik], vertices: [...r.vertices], rest: [...r.rest],
+    triangles: [...r.triangles], edges: [...r.edges], weights: [...r.weights], pinPath: [...r.pinPath], pinKeys: [...r.pinKeys],
+  };
+}
+
+function mergeRig(cur: OverlayRig, r: OverlayRig): OverlayRig {
+  cur.pins.push(...r.pins);
+  cur.bones.push(...r.bones);
+  cur.ik.push(...r.ik);
+  cur.vertices.push(...r.vertices);
+  cur.rest.push(...r.rest);
+  cur.triangles.push(...r.triangles);
+  cur.edges.push(...r.edges);
+  cur.weights.push(...r.weights);
+  cur.pinPath.push(...r.pinPath);
+  cur.pinKeys.push(...r.pinKeys);
+  return cur;
 }
 
 function notify(viewport: number): void {
@@ -80,52 +113,90 @@ export function setEngineDrivenViewport(viewport: number, driven: boolean): void
 }
 
 /** EngineSurface: a drawn frame's geometry (the records its meta carried). */
-export function publishFrameGeometry(viewport: number, time: number, revision: number, records: ReadonlyArray<OverlayLayerGeometry>): void {
-  pushed.set(viewport, { time, revision, layers: merge(records) });
+export function publishFrameGeometry(
+  viewport: number,
+  time: number,
+  revision: number,
+  records: ReadonlyArray<OverlayLayerGeometry>,
+  views?: ReadonlyArray<OverlayView>,
+): void {
+  pushed.set(viewport, { time, revision, layers: merge(records), views: viewsByMode(views) });
   notify(viewport);
 }
 
 /**
- * Subscribe the viewport's overlays to `layers` × `kinds` (`setOverlayGeometry`,
- * both engines). Sent only when it changes.
+ * Subscribe the viewport's overlays (`setOverlayGeometry`, both engines): one
+ * group per overlay (its layers × ITS kinds) and the view modes whose cameras
+ * the frames carry. Sent only when it changes.
  */
-export function subscribeOverlayLayers(viewport: number, layers: ReadonlyArray<string>, kinds: ReadonlyArray<OverlayKind>): Promise<void> {
-  const key = `${layers.join('\u0001')}\u0000${kinds.join(',')}`;
+function subscribeOverlayGroups(viewport: number, groups: ReadonlyArray<OverlayRequest>, views: ReadonlyArray<string>): Promise<void> {
+  // B4 round 5: the rig overlay's focus rides the same control (setOverlayRigFocus).
+  const rig = rigFocus.get(viewport);
+  lastGroups.set(viewport, { groups: [...groups], views: [...views] });
+  const key = `${groups.map((g) => `${g.layers.join('\u0001')}\u0002${g.kinds.join(',')}`).join('\u0003')}\u0000${views.join('\u0001')}`
+    + (rig ? `\u0000${rig.pin}\u0001${rig.bone}\u0001${rig.authoring ? 1 : 0}` : '');
   if (subscribed.get(viewport) === key) return pendingSubscription.get(viewport) ?? Promise.resolve();
   subscribed.set(viewport, key);
   computed.delete(viewport);
   // Records computed between the send and the engine taking it were for the old
   // subscription: drop them once it has landed (a control moves no revision).
-  const landed = engine().execute({ type: 'setOverlayGeometry', viewport, layers: [...layers], kinds: [...kinds] }).then(() => {
-    if (subscribed.get(viewport) === key) computed.delete(viewport);
-  });
+  const landed = engine()
+    .execute({ type: 'setOverlayGeometry', viewport, layers: [], kinds: [], groups: groups.map((g) => ({ layers: [...g.layers], kinds: [...g.kinds] })), views: [...views], ...(rig ? { rig: { ...rig } } : {}) })
+    .then(() => {
+      if (subscribed.get(viewport) === key) computed.delete(viewport);
+    });
   pendingSubscription.set(viewport, landed);
   return landed;
 }
 
-/** Each overlay's own request, by viewport then owner: the subscription sent is their union. */
-const requests = new Map<number, Map<string, { layers: readonly string[]; kinds: readonly OverlayKind[] }>>();
+/** B4 round 5: the rig overlay's focus per viewport (setOverlayGeometry `rig`), and the groups last sent with it. */
+const rigFocus = new Map<number, OverlayRigOptions>();
+const lastGroups = new Map<number, { groups: OverlayRequest[]; views: string[] }>();
+
+/**
+ * The rig overlay's editor-side focus (the selected pin's motion path, the
+ * selected bone's weights, the Puppet Pin tool's authoring mesh) — sent with
+ * the viewport's subscription when it changes; undefined clears it.
+ */
+export function setOverlayRigFocus(viewport: number, focus: OverlayRigOptions | undefined): Promise<void> {
+  if (focus) rigFocus.set(viewport, { pin: focus.pin, bone: focus.bone, authoring: focus.authoring });
+  else rigFocus.delete(viewport);
+  const last = lastGroups.get(viewport) ?? { groups: [], views: [] };
+  return subscribeOverlayGroups(viewport, last.groups, last.views);
+}
+
+/** Each overlay's own request, by viewport then owner: the subscription sent is one group per owner. */
+const requests = new Map<number, Map<string, { layers: readonly string[]; kinds: readonly OverlayKind[]; views: readonly string[] }>>();
 
 /**
  * One overlay's share of the viewport's subscription (the selection chrome,
- * the text box handles, the puppet pins…): `owner` names it, an empty `layers`
- * withdraws it. The viewport is subscribed to the UNION — every requested layer
- * with every requested kind (`setOverlayGeometry` has one kind list) — sent
- * only when the union changes. Resolves once the engine has the subscription
- * (a React overlay re-renders then: its records exist from that point).
+ * the text box handles, the puppet pins, the 3D reference geometry…): `owner`
+ * names it; no layers × kinds and no views withdraws it. Each owner is its own
+ * group — its layers get ITS kinds (B4 round 5; before, every requested layer
+ * got every kind any overlay asked for) — and `views` are the view modes whose
+ * resolved view camera the frames should carry (`overlayView`). Sent only when
+ * a request changes. Resolves once the engine has the subscription (a React
+ * overlay re-renders then: its records exist from that point).
  */
-export function requestOverlayLayers(viewport: number, owner: string, layers: ReadonlyArray<string>, kinds: ReadonlyArray<OverlayKind>): Promise<void> {
+export function requestOverlayLayers(
+  viewport: number,
+  owner: string,
+  layers: ReadonlyArray<string>,
+  kinds: ReadonlyArray<OverlayKind>,
+  views: ReadonlyArray<string> = [],
+): Promise<void> {
   let byOwner = requests.get(viewport);
   if (!byOwner) requests.set(viewport, (byOwner = new Map()));
-  if (layers.length === 0 || kinds.length === 0) byOwner.delete(owner);
-  else byOwner.set(owner, { layers: [...layers], kinds: [...kinds] });
-  const allLayers: string[] = [];
-  const allKinds: OverlayKind[] = [];
+  const hasLayers = layers.length > 0 && kinds.length > 0;
+  if (!hasLayers && views.length === 0) byOwner.delete(owner);
+  else byOwner.set(owner, { layers: hasLayers ? [...layers] : [], kinds: hasLayers ? [...kinds] : [], views: [...views] });
+  const groups: OverlayRequest[] = [];
+  const allViews: string[] = [];
   for (const r of byOwner.values()) {
-    for (const l of r.layers) if (!allLayers.includes(l)) allLayers.push(l);
-    for (const k of r.kinds) if (!allKinds.includes(k)) allKinds.push(k);
+    if (r.layers.length > 0) groups.push({ layers: [...r.layers], kinds: [...r.kinds] });
+    for (const v of r.views) if (!allViews.includes(v)) allViews.push(v);
   }
-  return subscribeOverlayLayers(viewport, allLayers, allKinds);
+  return subscribeOverlayGroups(viewport, groups, allViews);
 }
 
 /**
@@ -153,14 +224,29 @@ export function overlayScreenPlacement(
  * revision). Undefined for a layer not subscribed, gone, or before the first frame.
  */
 export function overlayLayer(viewport: number, layer: string, time: number): OverlayLayer | undefined {
-  if (engineDriven.has(viewport)) return pushed.get(viewport)?.layers.get(layer);
+  return frameSet(viewport, time)?.layers.get(layer);
+}
+
+/** The frame set the viewport shows at comp time `time` (flicks): the pushed one, else the TypeScript engine's (once per time and revision). */
+function frameSet(viewport: number, time: number): FrameSet | undefined {
+  if (engineDriven.has(viewport)) return pushed.get(viewport);
   const rev = documentMirror().revision;
   let set = computed.get(viewport);
   if (!set || set.time !== time || set.revision !== rev) {
-    set = { time, revision: rev, layers: merge(overlayGeometryAt(viewport, flicksToSeconds(time))) };
+    const seconds = flicksToSeconds(time);
+    set = { time, revision: rev, layers: merge(overlayGeometryAt(viewport, seconds)), views: viewsByMode(overlayViewsAt(viewport, seconds)) };
     computed.set(viewport, set);
   }
-  return set.layers.get(layer);
+  return set;
+}
+
+/**
+ * B4 round 5: the resolved view camera of `mode` for the frame the viewport
+ * shows at comp time `time` (flicks) — requested with `requestOverlayLayers(…,
+ * views)`. Undefined before the first frame of the subscription.
+ */
+export function overlayView(viewport: number, mode: string, time: number): OverlayView | undefined {
+  return frameSet(viewport, time)?.views.get(mode);
 }
 
 /** Told when a frame's geometry lands for `viewport` (engine-driven viewports). */

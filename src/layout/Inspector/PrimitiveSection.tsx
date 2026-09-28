@@ -30,13 +30,10 @@ import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorTree } from '@hooks/useMirror';
-import { mirrorPrimitive } from '@core/mirror/layerFacts';
+import { mirrorPrimitive, mirrorPrimitiveAfter } from '@core/mirror/layerFacts';
 import { getTime } from '@stores/playbackClockStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { values } from '@core/engine/propRefs';
-import type { SceneNode } from '@core/types';
 import {
-  readNodePrimitive,
   primitiveLayerBox,
   PRIMITIVE_FIELDS,
   PRIMITIVE_LABELS,
@@ -55,14 +52,10 @@ import s from './PrimitiveSection.module.css';
  * layer has no such field.
  */
 export function primitiveCommands(nodeId: string, patch: Partial<PrimitiveSpec>, seconds: number): Command[] {
-  // B4-gap: the STORED primitive params — a type switch fills the UNSTORED ones
-  // from the new type's defaults (readNodePrimitive), while the catalog reports
-  // every `primitive/*` param at the old type's value, so a mirror spec would
-  // size the box wrongly. Closes when `setProperty primitive/type` returns (or
-  // the engine writes) the layer box itself.
-  const node = defaultSceneGraph.getNode(nodeId);
-  const comp = node?.components.find((c) => c.type === 'Primitive');
-  if (!node || !comp) return [];
+  // B4: the STORED primitive params (PropertyInfo.stored) from the mirror — a
+  // type switch fills the UNSTORED ones from the new type's defaults.
+  const tree = documentMirror().tree(nodeId);
+  if (!tree?.nodes.has('primitive')) return [];
   const writes: PropertyWrite[] = [];
   for (const [k, v] of Object.entries(patch)) {
     const path = `primitive/${k}`;
@@ -73,7 +66,7 @@ export function primitiveCommands(nodeId: string, patch: Partial<PrimitiveSpec>,
   if (writes.length === 0) return [];
   // The spec as the renderer will read it AFTER the write (a type switch fills
   // unstored params from the NEW type's defaults).
-  const next = readNodePrimitive({ ...node, components: [{ ...comp, props: { ...comp.props, ...patch } }] } as SceneNode);
+  const next = mirrorPrimitiveAfter(tree, patch);
   if (next) {
     const box = primitiveLayerBox(next);
     writes.push(...trackWrites(nodeId, { width: box.width, height: box.height }, seconds));

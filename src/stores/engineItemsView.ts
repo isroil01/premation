@@ -25,13 +25,16 @@
  * bind time.
  */
 
-import type { CompSettings, Interpretation, ItemInfo } from '@motion/engine-api';
+import type { CompSettings, ItemInfo } from '@motion/engine-api';
 import { useAssetStore, replaceProjectItems, type AssetFolder, type ImportedAsset } from './assetStore';
 import { useProjectStore, type CompositionSettings } from './projectStore';
 import type { MirrorComp } from './documentMirror';
 import { channelsToHex } from '@core/mirror/paintFields';
 import { LABEL_COLORS } from '@core/scene/labelColor';
-import type { FootageInterpretation } from '@core/source/sourceInfo';
+import { interpretOf, itemMediaType, rationalFps } from '@core/mirror/itemAssets';
+
+/** model.ts `interpretationOf`, inverted (core/mirror/itemAssets.ts). */
+export { interpretOf };
 
 /** What the binders read from the document mirror (DocumentMirror satisfies it). */
 export interface ItemsMirrorView {
@@ -42,39 +45,9 @@ export interface ItemsMirrorView {
 
 const FLICKS_PER_SECOND = 705_600_000;
 
-function rationalFps(r: ItemInfo['frameRate']): number | undefined {
-  return r && r.den > 0 && r.num > 0 ? r.num / r.den : undefined;
-}
-
 /** `setItemLabel` stores footage labels by palette id (model.ts `labelIdOf`). */
 function labelIdOf(index: number): string | undefined {
   return index > 0 ? LABEL_COLORS[index - 1]?.id : undefined;
-}
-
-/** model.ts `interpretationOf`, inverted: only the fields a default leaves unset stay unset. */
-export function interpretOf(i: Interpretation | undefined, prev: FootageInterpretation | undefined): FootageInterpretation | undefined {
-  if (!i) return prev;
-  const next: FootageInterpretation = { ...(prev ?? {}) };
-  if (i.alpha === 'premultiplied' || i.alpha === 'straight') next.alpha = i.alpha;
-  else delete next.alpha;
-  const conform = rationalFps(i.conformFrameRate);
-  if (conform) next.conformFps = conform;
-  else delete next.conformFps;
-  if (i.pixelAspect !== 1 && Number.isFinite(i.pixelAspect) && i.pixelAspect > 0) next.par = i.pixelAspect;
-  else delete next.par;
-  if (i.fieldOrder === 'upperFirst') next.fields = 'upper';
-  else if (i.fieldOrder === 'lowerFirst') next.fields = 'lower';
-  else delete next.fields;
-  if (i.loops !== 1 && Number.isFinite(i.loops) && i.loops >= 0) next.loopCount = i.loops;
-  else delete next.loopCount;
-  if (typeof i.removePulldown === 'number') next.pulldownPhase = i.removePulldown;
-  else delete next.pulldownPhase;
-  return Object.keys(next).length > 0 ? next : undefined;
-}
-
-function typeOf(info: ItemInfo): ImportedAsset['type'] {
-  if (!info.hasVideo) return 'audio';
-  return info.duration > 0 ? 'video' : 'image';
 }
 
 /** A file path as the media layer reads it (desktop: the path itself; `file://` URLs pass through). */
@@ -95,7 +68,7 @@ export function assetFromItem(info: ItemInfo, prev: ImportedAsset | undefined): 
   if (info.codec) md.codec = info.codec;
   if (info.audioChannels > 0) md.audioChannels = info.audioChannels;
   const next: ImportedAsset = {
-    ...(prev ?? { id: info.id, type: typeOf(info), src: srcForPath(info.path), size: 0 }),
+    ...(prev ?? { id: info.id, type: itemMediaType(info), src: info.mediaUrl ?? srcForPath(info.path), size: 0 }),
     id: info.id,
     name: info.name,
     folderId: info.parent ?? null,

@@ -22,10 +22,11 @@ import { sec, type Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 
 
-// The overlay only needs a placement to position itself; the scene graph is real.
+// The overlay only needs the view's camera to position itself (the layer's
+// matrix and box come from the overlay geometry push, B4); the document is real.
 jest.mock('@core/workspace/WorkspaceController', () => ({
   getWorkspaceController: () => ({
-    getNodeScreenPlacement: () => ({ x: 400, y: 300, zoom: 1, rotationDeg: 0, scaleX: 1, scaleY: 1 }),
+    ws: { camera: { zoom: 1 }, worldToScreen: (p: { x: number; y: number }) => ({ x: p.x, y: p.y }) },
     requestRender: () => {},
   }),
 }));
@@ -342,9 +343,10 @@ describe('TextEditOverlay', () => {
       ]);
     };
     // Centred in a 300px box: the 24px line block starts 138px down, as drawn.
+    // (The box is the engine's `getTextLayout` answer — B4: wait for it to land.)
     await put(300, 'center');
     const { getByRole, unmount } = render(<TextEditOverlay />);
-    act(() => useTextEditStore.getState().begin(T));
+    await act(async () => { useTextEditStore.getState().begin(T); await engineIdle(); });
     let box = getByRole('textbox') as HTMLElement;
     expect(box.style.overflow).toBe('hidden');
     expect(parseFloat(box.style.paddingTop)).toBeCloseTo(138, 3);
@@ -356,12 +358,13 @@ describe('TextEditOverlay', () => {
     // does not fit raises the overflow flag before anything is committed.
     await put(30, 'bottom');
     const again = render(<TextEditOverlay />);
-    act(() => useTextEditStore.getState().begin(T));
+    await act(async () => { useTextEditStore.getState().begin(T); await engineIdle(); });
     box = again.getByRole('textbox') as HTMLElement;
     expect(parseFloat(box.style.paddingTop || '0')).toBeCloseTo(6, 3);
-    act(() => {
+    await act(async () => {
       box.innerText = 'Hi\nthere';
       fireEvent.input(box);
+      await engineIdle();
     });
     expect(box.getAttribute('data-overflow')).toBe('true');
     expect(parseFloat(box.style.paddingTop || '0')).toBe(0);

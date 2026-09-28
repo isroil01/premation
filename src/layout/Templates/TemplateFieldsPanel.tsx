@@ -28,7 +28,6 @@ import { templateThumbnail, createTemplatePlayer } from '@core/template/template
 import { ANIM_PRESETS, insertAnimPreset, animPresetThumbnail, createAnimPresetPlayer, type AnimPreset } from '@core/template/animPresets';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import type { TemplateDefinition, TemplateField } from '@core/template/templateTypes';
-import { exposeNodeAsField } from '@core/template/templateAuthoring';
 import { publishCurrentTemplate } from '@core/automation/publishTemplate';
 import { isPublicFieldId } from '@core/automation/fieldIds';
 import { cloudProjectsEnabled } from '@core/config/edition';
@@ -39,7 +38,7 @@ import { useTemplateStore, type TemplateFieldSend } from '@stores/templateStore'
 import { useGesture } from '@hooks/useGesture';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
 import { DataFillSection } from './DataFillSection';
-import { mirrorAuthoredFields, removeAuthoredFieldEdit, renameAuthoredFieldEdit, renameAuthoredFieldIdEdit } from './templateAuthoringEdits';
+import { exposeLayerAsFieldEdit, mirrorAuthoredFields, removeAuthoredFieldEdit, renameAuthoredFieldEdit, renameAuthoredFieldIdEdit } from './templateAuthoringEdits';
 import { useSelectionStore } from '@stores/selectionStore';
 import styles from './TemplateFieldsPanel.module.css';
 
@@ -195,11 +194,9 @@ export function TemplateAuthoringSection(): JSX.Element | null {
 
   const exposeSelected = (): void => {
     if (!selectedId) return;
-    // B4-gap: a legacy WRITER that infers the field from the node's components (Text content, the Transform
-    // `src` URL, Style fill) and stamps the slot rect (`__slotW/__slotH/__slotFit`, no catalog path); closes
-    // with the slot props in the catalog and the layer's source URL in the API, then a
-    // `setCompositionSettings.templateFields` edit like templateAuthoringEdits.
-    exposeNodeAsField(selectedId);
+    // B4: inferred from the mirror / engine (Source Text, the source's media URL, the Fill Color); the slot
+    // fields and the manifest written as ONE engine entry (templateAuthoringEdits).
+    void exposeLayerAsFieldEdit(selectedId);
   };
 
   const publish = async (): Promise<void> => {

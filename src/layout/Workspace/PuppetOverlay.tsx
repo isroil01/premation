@@ -1,43 +1,29 @@
 import React, { useCallback, useEffect, useState, useRef } from 'react';
+import { secondsToFlicks, type OverlayKind } from '@motion/engine-api';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize } from '@hooks/useMirrorFrame';
+import { useMirrorJson } from '@hooks/useMirrorFields';
 import { layerScreenMapping } from './layerScreen';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { readGeometry } from '@core/workspace/geometry';
-import { readNodePuppet, deform, pinKindOf, pinColor, pinHasTransformGizmo, restPointFromDeformed } from '@core/rig/puppet';
-import { resolveLivePins } from '@core/rig/livePins';
-import { resolveActiveIkTargets } from '@core/rig/liveIkTargets';
-import { nodeRestMesh } from '@core/rig/rigMeshInputs';
-import { useAssetStore } from '@stores/assetStore';
+import { pinColor, pinHasTransformGizmo, type PinKind, type PuppetRig } from '@core/rig/puppet';
 import { SketchRecorder, DEFAULT_SKETCH_TOLERANCE } from '@core/rig/puppetSketch';
-import { readNodeSkeleton, bindPoseBones } from '@core/rig/skeletonCommands';
-import { computeWorldTransforms, type Bone } from '@core/rig/skeleton';
-import { resolveLiveBones } from '@core/rig/liveBones';
-import {
-  applyIk,
-  getSkeletonBinding,
-  skinRigVertices,
-  unskinPoint,
-  skinPointAt,
-  type IkTargetResolved,
-  type SkeletonBinding,
-} from '@core/rig/rigDeform';
-import type { Mat2D } from '@core/rig/mat2d';
-import { dataPathTangents } from '@motion/animation';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { edit } from '@core/engine/uiEdits';
 import { engine } from '@core/engine/engineInstance';
 import { compTime } from '@core/engine/propRefs';
 import { rigPaths, rigMatch, rigValues, rigKey, rigRemove } from '@core/engine/rigPaths';
 import { useGesture } from '@hooks/useGesture';
+import {
+  MAIN_VIEWPORT, overlayLayer, requestOverlayLayers, setOverlayRigFocus, subscribeOverlayGeometry,
+} from '@stores/overlayGeometry';
+import { rigRestPoints, RigPointerQueue } from './rigPointer';
 
 /** Radius (screen px) of the advanced-pin gizmo ring. */
 const GIZMO_R = 26;
 
+/** The overlay geometry the pins draw from: the rig (pins, lattice, focus path) and the layer's box. */
+const PUPPET_KINDS: ReadonlyArray<OverlayKind> = ['rig', 'bounds'];
 
 /**
  * Pointer capture is a nicety, not a precondition: it keeps a drag alive when
@@ -55,47 +41,25 @@ function capturePointer(svg: SVGSVGElement, pointerId: number): void {
 }
 
 /**
- * Unique mesh edges as one SVG path.
+ * The puppet lattice as one SVG path, from the engine's edge list.
  *
- * After Effects' Puppet overlay is a regular lattice, not a filled triangulation.
- * Drawing every triangle as its own stroked polygon doubled every shared edge
- * and read as a noisy blueprint. Grid mode keeps only rest-axis edges so the
- * lattice is boxes; silhouette mode (an outline ear-clip) still needs every
- * edge or the wireframe would vanish.
+ * After Effects' Puppet overlay is a regular lattice, not a filled
+ * triangulation: the engine sends the mesh's unique edges (a grid mesh keeps
+ * only its rest-axis edges — boxes; an outline mesh every edge), drawn here at
+ * the deformed positions (OverlayRig.vertices / edges).
  */
 function puppetLatticePath(
-  rest: Float32Array,
-  posed: Float32Array,
-  triangles: Uint16Array,
+  posed: readonly number[],
+  edges: readonly number[],
   toScreen: (x: number, y: number) => { x: number; y: number },
-  boxesOnly: boolean,
 ): string {
-  const seen = new Set<number>();
   let d = '';
-  for (let i = 0; i < triangles.length; i += 3) {
-    const tri = [triangles[i]!, triangles[i + 1]!, triangles[i + 2]!];
-    for (let e = 0; e < 3; e++) {
-      let a = tri[e]!;
-      let b = tri[(e + 1) % 3]!;
-      if (a > b) {
-        const t = a;
-        a = b;
-        b = t;
-      }
-      const key = a * 65536 + b;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (boxesOnly) {
-        const ax = rest[a * 4]!;
-        const ay = rest[a * 4 + 1]!;
-        const bx = rest[b * 4]!;
-        const by = rest[b * 4 + 1]!;
-        if (Math.abs(ax - bx) > 1e-3 && Math.abs(ay - by) > 1e-3) continue;
-      }
-      const p = toScreen(posed[a * 4]!, posed[a * 4 + 1]!);
-      const q = toScreen(posed[b * 4]!, posed[b * 4 + 1]!);
-      d += `M${p.x.toFixed(2)} ${p.y.toFixed(2)}L${q.x.toFixed(2)} ${q.y.toFixed(2)}`;
-    }
+  for (let i = 0; i + 1 < edges.length; i += 2) {
+    const a = edges[i]!;
+    const b = edges[i + 1]!;
+    const p = toScreen(posed[a * 2]!, posed[a * 2 + 1]!);
+    const q = toScreen(posed[b * 2]!, posed[b * 2 + 1]!);
+    d += `M${p.x.toFixed(2)} ${p.y.toFixed(2)}L${q.x.toFixed(2)} ${q.y.toFixed(2)}`;
   }
   return d;
 }
@@ -107,6 +71,9 @@ export function PuppetOverlay(): JSX.Element | null {
   const activeWorkspace = useActiveWorkspace();
   const time = activeWorkspace?.time ?? 0;
   const comp = useActiveCompSize();
+  const active = activeTool === 'puppet-pin' && !!selectedNodeId;
+  // B4: the stored rig from the mirror (mesh expansion); everything posed comes with the frame.
+  const puppetRig = useMirrorJson<PuppetRig>(active ? selectedNodeId : null, 'layer/puppet');
 
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [hoveredPinId, setHoveredPinId] = useState<string | null>(null);
@@ -115,6 +82,8 @@ export function PuppetOverlay(): JSX.Element | null {
     startScreen: { x: number; y: number };
     /** Alt-drag rotates; the gizmo's square handle scales; Ctrl records. */
     mode: 'move' | 'rotate' | 'scale' | 'sketch';
+    /** The rotate / scale pivot (the pin before the skeleton) at pointer-down. */
+    center: { x: number; y: number };
     startAngleDeg: number;
     startRotationDeg: number;
     startDist?: number;
@@ -130,11 +99,15 @@ export function PuppetOverlay(): JSX.Element | null {
     /** Index of the key in the pin's position track (the handles' order). */
     index: number;
     which: 'in' | 'out';
+    /** The key's stored (rest-space) point, read off the frame at pointer-down. */
+    point: { x: number; y: number };
     /** The key's engine id, once the getKeyframes query answered. */
     keyId: string | null;
   } | null>(null);
   /** One pin drag / gizmo drag / tangent drag = one engine gesture = one undo entry. */
   const gesture = useGesture();
+  /** A drag's pointer points go back through the rig pose asynchronously: its writes run in order. */
+  const queueRef = useRef(new RigPointerQueue());
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   // Drag/element-origin guard: pointerup synthesizes a click even after a drag
@@ -156,10 +129,28 @@ export function PuppetOverlay(): JSX.Element | null {
   const [, setTick] = useState(0);
   useEffect(() => {
     const controller = getWorkspaceController();
-    return controller.onRender(() => {
+    const offRender = controller.onRender(() => {
       setTick((t) => t + 1);
     });
+    // B4: and when a frame's geometry lands (the C++ engine draws the viewport).
+    const offGeometry = subscribeOverlayGeometry(MAIN_VIEWPORT, () => setTick((t) => t + 1));
+    return () => {
+      offRender();
+      offGeometry();
+    };
   }, []);
+
+  // B4 round 5: the rig comes with the frame (the overlay geometry push): this
+  // layer's rig and box, the selected pin's motion path, the Puppet tool's
+  // authoring mesh (a pinless layer shows the mesh its first pin lands on).
+  useEffect(() => {
+    void requestOverlayLayers(MAIN_VIEWPORT, 'puppetPins', active ? [selectedNodeId!] : [], PUPPET_KINDS).then(() => setTick((t) => t + 1));
+    void setOverlayRigFocus(MAIN_VIEWPORT, active ? { pin: selectedPinId ?? '', bone: '', authoring: true } : undefined);
+    return () => {
+      void requestOverlayLayers(MAIN_VIEWPORT, 'puppetPins', [], PUPPET_KINDS);
+      void setOverlayRigFocus(MAIN_VIEWPORT, undefined);
+    };
+  }, [active, selectedNodeId, selectedPinId]);
 
   // Keyboard listener to delete selected pin
   useEffect(() => {
@@ -174,16 +165,15 @@ export function PuppetOverlay(): JSX.Element | null {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [activeTool, selectedNodeId, selectedPinId, deletePin]);
 
-  if (activeTool !== 'puppet-pin' || !selectedNodeId) return null;
+  if (!active) return null;
+  const nodeId = selectedNodeId!;
 
-  const node = defaultSceneGraph.getNode(selectedNodeId);
-  if (!node) return null;
-
-  const geom = readGeometry(node);
-  if (!geom) return null;
-
-  const puppetRig = readNodePuppet(node);
-  const pins = puppetRig?.pins ?? [];
+  const geometry = overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(time));
+  // The layer's drawn box at the frame (x, y, w, h, layer space).
+  const box = geometry?.box;
+  if (!box || box.length < 4) return null;
+  const rig = geometry?.rig;
+  const pins = rig?.pins ?? [];
 
   const controller = getWorkspaceController();
   const camera = controller.ws.camera;
@@ -195,142 +185,59 @@ export function PuppetOverlay(): JSX.Element | null {
   // parented layer the pins drew at the unparented position while the artwork
   // rendered at the parented one (F23). `layerScreenMapping` goes through
   // `layerSpaceAt`, which walks the chain and handles 3D.
-  const mapping = layerScreenMapping(node.id, time, comp, camera);
+  const mapping = layerScreenMapping(nodeId, time, comp, camera);
   const localToScreen = (lx: number, ly: number) =>
     mapping ? mapping.localToScreen(lx, ly) : { x: lx, y: ly };
   const screenToLocal = (sx: number, sy: number) =>
     mapping ? mapping.screenToLocal(sx, sy) : { x: sx, y: sy };
 
-  // Canonical keyframe axis — the same forward map buildSnapshot samples. A
-  // DISPLAY read only: every write below sends composition time.
-  const layerT = keyAxisTimeForDisplay(node.id, time);
-
-  // Same assembly BoneOverlay and the renderer use. `authoringPreview` hugs the
-  // PNG silhouette before the first pin exists, so placing a pin does not
-  // retopologize a bounding-box grid into a body mesh.
-  const restMesh = nodeRestMesh(
-    node,
-    geom,
-    (id) => useAssetStore.getState().assets.find((asset) => asset.id === id),
-    true,
-  );
   const pad = puppetRig?.meshExpansion ?? 0;
 
-  // Shared with buildSnapshot — see `livePins.ts` for why this is not written
-  // out here a second time.
-  const animatedPins = resolveLivePins(pins, node.id, layerT, defaultAnimation);
-
-  let deformedVertices = deform(
-    animatedPins, restMesh, puppetRig?.solver ?? 'arap', puppetRig?.maxRotationDeg,
-  );
-  // The puppet solve alone, BEFORE any skeleton skinning: the space a pointer
-  // lands in once `toRestSpace` has undone the skeleton, and therefore the
-  // space a new pin's click has to be inverted from (see `onClickOverlay`).
-  const puppetDeformed = deformedVertices;
-
-  // Skeleton composition preview — mirror buildSnapshot exactly: when the layer
-  // also carries a skeleton, the puppet solve stays in REST space and the
-  // skeleton skinning (FK + IK) poses the puppet-refined mesh on top. Pins are
-  // authored/stored in rest space; pointer input is mapped back via unskinPoint.
-  const skel = readNodeSkeleton(node);
-  let skelBinding: SkeletonBinding | null = null;
-  let skelPoseWorld: Map<string, Mat2D> | null = null;
-  if (skel && skel.bones.length > 0) {
-    const animatedBones: Bone[] = resolveLiveBones(skel.bones, node.id, layerT, defaultAnimation);
-    // Shared resolver. This copy had DRIFTED — it never sampled the pole, so a
-    // keyframed pole previewed here differently from how it rendered.
-    const activeIk: IkTargetResolved[] = resolveActiveIkTargets(skel, node.id, layerT);
-    // B3-legacy: not a write — `applyIk` is the pure IK solve over a bone list (the ratchet's
-    // exact-name match; belongs in the rule's NOT_WRITES).
-    const posedBones = applyIk(animatedBones, activeIk);
-    skelPoseWorld = computeWorldTransforms({ bones: posedBones });
-    // BIND to the rig's rest pose, POSE with the live one — same rule as
-    // buildSnapshot and BoneOverlay, so all three agree on where the skin sits.
-    skelBinding = getSkeletonBinding(restMesh, bindPoseBones(skel), skel.weightPaint);
-    deformedVertices = skinRigVertices(skelBinding, skelPoseWorld, deformedVertices);
-  }
-
-  /** Posed-space pointer position → rest space (identity without a skeleton). */
-  const toRestSpace = (p: { x: number; y: number }): { x: number; y: number } =>
-    skelBinding && skelPoseWorld ? unskinPoint(p, skelBinding, skelPoseWorld) : p;
-
-  /** Rest-space point → screen, through the skeleton pose like the pin dots. */
-  const restToScreen = (p: { x: number; y: number }) => {
-    const posed = skelBinding && skelPoseWorld
-      ? skinPointAt(p, p, skelBinding, skelPoseWorld)
-      : p;
-    return localToScreen(posed.x, posed.y);
-  };
-
   // ── Pin motion path (spatial tangents) ──────────────────────────────
-  // The trajectory the SELECTED pin travels, drawn from the same data track the
-  // renderer samples. Straight lines read as robotic; the tangent handles are
-  // how you arc a limb. Only the selected pin's path is drawn — every pin at
-  // once is unreadable on a dense rig.
-  const pathTrack = selectedPinId
-    ? defaultAnimation.getDataTrack(node.id, `puppet.${selectedPinId}.position`)
-    : null;
-  const pathHandles = pathTrack && pathTrack.keyframes.length > 1
-    ? dataPathTangents(pathTrack, 0)
-    : [];
-  /** Sampled polyline of the pin's trajectory, in screen space. */
+  // The trajectory the SELECTED pin travels, sampled by the engine from the
+  // same data track the renderer samples and posed like the pin dots
+  // (OverlayRig.pinPath / pinKeys). Straight lines read as robotic; the
+  // tangent handles are how you arc a limb. Only the selected pin's path is
+  // drawn — every pin at once is unreadable on a dense rig.
+  const pinPath = selectedPinId ? rig?.pinPath ?? [] : [];
+  const pinKeys = selectedPinId ? rig?.pinKeys ?? [] : [];
   const motionPathD = (() => {
-    if (!pathTrack || pathHandles.length < 2) return '';
-    const SEGMENTS = 24; // per keyframe span — smooth without flooding the DOM
-    const first = pathTrack.keyframes[0]!.t;
-    const last = pathTrack.keyframes[pathTrack.keyframes.length - 1]!.t;
+    if (pinPath.length < 4) return '';
     const pts: string[] = [];
-    const steps = SEGMENTS * (pathTrack.keyframes.length - 1);
-    for (let i = 0; i <= steps; i++) {
-      const tt = first + ((last - first) * i) / steps;
-      const v = defaultAnimation.sampleData(node.id, `puppet.${selectedPinId}.position`, tt);
-      if (!Array.isArray(v) || !v[0]) continue;
-      const p = v[0] as { x: number; y: number };
-      const s = restToScreen(p);
+    for (let i = 0; i + 1 < pinPath.length; i += 2) {
+      const s = localToScreen(pinPath[i]!, pinPath[i + 1]!);
       pts.push(`${i === 0 ? 'M' : 'L'}${s.x.toFixed(1)},${s.y.toFixed(1)}`);
     }
     return pts.join(' ');
   })();
+  /** Per key: t, the stored (rest) point, and the posed point / handles (NaN = none). */
+  const pathHandles = Array.from({ length: Math.floor(pinKeys.length / 9) }, (_, k) => {
+    const r = pinKeys.slice(k * 9, k * 9 + 9);
+    return {
+      t: r[0]!,
+      rest: { x: r[1]!, y: r[2]! },
+      at: { x: r[3]!, y: r[4]! },
+      in: Number.isNaN(r[5]!) ? null : { x: r[5]!, y: r[6]! },
+      out: Number.isNaN(r[7]!) ? null : { x: r[7]!, y: r[8]! },
+    };
+  });
 
-  // After Effects draws a gold lattice, not filled triangles. Grid mode is
-  // boxes (the two-triangle cell's diagonal is omitted); an OUTLINE mesh keeps
-  // every unique edge because it has no axis-aligned lattice to reduce to.
-  //
-  // The mesh says which it is. This used to try boxes first and fall back only
-  // when that produced NOTHING — which held while the only outline mesh was an
-  // ear-clipped vector path (no axis-aligned edges at all), and broke the moment
-  // the alpha mesher started emitting some: a handful of edges survived the
-  // filter and the overlay drew disconnected dashes instead of a wireframe.
-  const latticeBoxes = (restMesh.layout ?? 'grid') === 'grid';
-  const meshPath =
-    (latticeBoxes
-      ? puppetLatticePath(restMesh.vertices, deformedVertices, restMesh.triangles, localToScreen, true)
-      : '')
-    // Any mesh whose box filter leaves nothing (and every outline mesh) draws
-    // every unique edge, so the wireframe can never come out empty.
-    || puppetLatticePath(restMesh.vertices, deformedVertices, restMesh.triangles, localToScreen, false);
+  // After Effects draws a gold lattice, not filled triangles (the engine's edge list).
+  const meshPath = rig ? puppetLatticePath(rig.vertices, rig.edges, localToScreen) : '';
 
   /**
-   * The point a pin's rotation gesture turns about, in the same local space the
-   * pointer is mapped into.
-   *
-   * For an advanced pin that is its own live position. For a bend pin it is the
-   * DERIVED centre — read out of the solved mesh — because that is where the
-   * pin visibly is and where its rotation is actually applied. Measuring the
-   * drag angle from the rest anchor instead would put the gesture's origin
-   * somewhere the user cannot see, and the further the drivers carried the pin
-   * the more the rotation would lag the pointer.
+   * The point a pin's rotation gesture turns about, in the pin (rest) space the
+   * pointer is mapped into: its own live position — for a bend pin the solved
+   * mesh vertex it is bound to, where it visibly is (OverlayRig cx / cy).
    */
   const pinRotationCenter = (pinId: string): { x: number; y: number } => {
-    const pin = pins.find((p) => p.id === pinId);
-    const animPin = animatedPins.find((p) => p.id === pinId);
-    if (pin?.kind === 'bend') {
-      const k = restMesh.pinVertexIndices[pinId];
-      if (k !== undefined && deformedVertices.length >= k * 4 + 2) {
-        return { x: deformedVertices[k * 4 + 0]!, y: deformedVertices[k * 4 + 1]! };
-      }
-    }
-    return { x: animPin?.x ?? 0, y: animPin?.y ?? 0 };
+    const p = pins.find((q) => q.id === pinId);
+    return { x: p?.cx ?? 0, y: p?.cy ?? 0 };
+  };
+
+  /** The pointer's screen position → the pin space, then `fn` (a drag's writes stay in order). */
+  const withRestPoint = (sx: number, sy: number, fn: (p: { x: number; y: number }) => void): void => {
+    queueRef.current.push(nodeId, time, screenToLocal(sx, sy), fn);
   };
 
   // Pointer drag operations
@@ -350,17 +257,9 @@ export function PuppetOverlay(): JSX.Element | null {
     // A bend pin has no position of its own to move or record — the solve
     // derives one from the pins around it. Dragging it rotates instead, which
     // is the one spatial thing it does own, rather than doing nothing at all.
-    const isBend = pins.find((p) => p.id === pinId)?.kind === 'bend';
-    if (isBend && mode !== 'rotate') mode = 'rotate';
-    const animPin = animatedPins.find((p) => p.id === pinId);
-    let startAngleDeg = 0;
-    let startRotationDeg = 0;
-    if (mode === 'rotate') {
-      const local = toRestSpace(screenToLocal(startScreen.x, startScreen.y));
-      const { x: cx, y: cy } = pinRotationCenter(pinId);
-      startAngleDeg = (Math.atan2(local.y - cy, local.x - cx) * 180) / Math.PI;
-      startRotationDeg = animPin?.rotation ?? 0;
-    }
+    const pin = pins.find((p) => p.id === pinId);
+    if (pin?.kind === 'bend' && mode !== 'rotate') mode = 'rotate';
+    const center = pinRotationCenter(pinId);
     if (mode === 'sketch') {
       sketchRef.current = new SketchRecorder();
       setIsRecording(true);
@@ -370,7 +269,13 @@ export function PuppetOverlay(): JSX.Element | null {
     gesture.begin(
       mode === 'sketch' ? `Sketch Puppet Pin ${pinId}` : mode === 'rotate' ? `Rotate Puppet Pin ${pinId}` : `Move Puppet Pin ${pinId}`,
     );
-    dragInfoRef.current = { pinId, startScreen, mode, startAngleDeg, startRotationDeg };
+    const drag = { pinId, startScreen, mode, center, startAngleDeg: 0, startRotationDeg: pin?.rotation ?? 0 };
+    dragInfoRef.current = drag;
+    if (mode === 'rotate') {
+      withRestPoint(startScreen.x, startScreen.y, (local) => {
+        drag.startAngleDeg = (Math.atan2(local.y - center.y, local.x - center.x) * 180) / Math.PI;
+      });
+    }
     capturePointer(svg, e.pointerId);
   };
 
@@ -383,18 +288,21 @@ export function PuppetOverlay(): JSX.Element | null {
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const startScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    const animPin = animatedPins.find((p) => p.id === pinId);
-    const local = toRestSpace(screenToLocal(startScreen.x, startScreen.y));
-    const c = pinRotationCenter(pinId);
-    dragInfoRef.current = {
+    const center = pinRotationCenter(pinId);
+    const drag = {
       pinId,
       startScreen,
-      mode: 'scale',
+      mode: 'scale' as const,
+      center,
       startAngleDeg: 0,
       startRotationDeg: 0,
-      startDist: Math.max(1e-3, Math.hypot(local.x - c.x, local.y - c.y)),
-      startScale: animPin?.scale ?? 1,
+      startDist: 1,
+      startScale: pins.find((p) => p.id === pinId)?.scale ?? 1,
     };
+    dragInfoRef.current = drag;
+    withRestPoint(startScreen.x, startScreen.y, (local) => {
+      drag.startDist = Math.max(1e-3, Math.hypot(local.x - center.x, local.y - center.y));
+    });
     gesture.begin(`Scale Puppet Pin ${pinId}`);
     capturePointer(svg, e.pointerId);
   };
@@ -409,12 +317,13 @@ export function PuppetOverlay(): JSX.Element | null {
     e.stopPropagation();
     suppressClickAddRef.current = true;
     const svg = svgRef.current;
-    if (!svg) return;
-    const drag = { pinId, index, which, keyId: null as string | null };
+    const point = pathHandles[index]?.rest;
+    if (!svg || !point) return;
+    const drag = { pinId, index, which, point, keyId: null as string | null };
     tangentDragRef.current = drag;
     gesture.begin(`Curve Puppet Pin Path ${pinId}`);
     // The key's engine id (keys are addressed by id, never by time).
-    void engine().query({ type: 'getKeyframes', props: [{ layer: node.id, path: rigPaths.pinProp(pinId, 'position') }] }).then((res) => {
+    void engine().query({ type: 'getKeyframes', props: [{ layer: nodeId, path: rigPaths.pinProp(pinId, 'position') }] }).then((res) => {
       if (res.ok) drag.keyId = res.value.sets[0]?.keyframes[index]?.id ?? null;
     });
     capturePointer(svg, e.pointerId);
@@ -427,23 +336,20 @@ export function PuppetOverlay(): JSX.Element | null {
       const svg = svgRef.current;
       if (!svg) return;
       const rect = svg.getBoundingClientRect();
-      const handle = toRestSpace(
-        screenToLocal(e.clientX - rect.left, e.clientY - rect.top),
-      );
-      const track = defaultAnimation.getDataTrack(node.id, `puppet.${tan.pinId}.position`);
-      const k = track?.keyframes[tan.index];
-      const p = (k?.value as Array<{ x: number; y: number }> | undefined)?.[0];
-      if (!k || !p || !tan.keyId) return;
-      // Plain drag mirrors the opposite handle (a smooth point, the AE default);
-      // Alt breaks the point so the two sides move independently. Absolute
-      // offsets from the key, per move.
-      const d = [handle.x - p.x, handle.y - p.y];
-      const other = e.altKey ? null : [-d[0]!, -d[1]!];
-      const patch = tan.which === 'out'
-        ? { spatialOut: d, spatialIn: other ?? [] }
-        : { spatialIn: d, spatialOut: other ?? [] };
-      gesture.send({ type: 'updateKeyframes', patches: [{ id: tan.keyId, ...patch }] });
-      controller.requestRender();
+      const alt = e.altKey;
+      withRestPoint(e.clientX - rect.left, e.clientY - rect.top, (handle) => {
+        if (!tan.keyId) return;
+        // Plain drag mirrors the opposite handle (a smooth point, the AE default);
+        // Alt breaks the point so the two sides move independently. Absolute
+        // offsets from the key, per move.
+        const d = [handle.x - tan.point.x, handle.y - tan.point.y];
+        const other = alt ? null : [-d[0]!, -d[1]!];
+        const patch = tan.which === 'out'
+          ? { spatialOut: d, spatialIn: other ?? [] }
+          : { spatialIn: d, spatialOut: other ?? [] };
+        gesture.send({ type: 'updateKeyframes', patches: [{ id: tan.keyId, ...patch }] });
+        controller.requestRender();
+      });
       return;
     }
 
@@ -452,52 +358,40 @@ export function PuppetOverlay(): JSX.Element | null {
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
-    const currentScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const shift = e.shiftKey;
 
-    // Rest space, like the rotate branch below already does. Pin POSITION tracks
-    // are stored in rest space (the puppet solve runs in rest space before the
-    // skeleton skins on top), so writing a posed-space coordinate here made a pin
-    // jump the moment a layer had both a skeleton and puppet pins.
-    const localCoords = toRestSpace(screenToLocal(currentScreen.x, currentScreen.y));
-
-    if (drag.mode === 'rotate') {
-      // Live update the pin rotation (scalar keyframe track) directly.
-      const { x: cx, y: cy } = pinRotationCenter(drag.pinId);
-      const angleDeg = (Math.atan2(localCoords.y - cy, localCoords.x - cx) * 180) / Math.PI;
-      let rotation = drag.startRotationDeg + (angleDeg - drag.startAngleDeg);
-      // Shift constrains rotation to 15° increments, matching AE's gizmo.
-      if (e.shiftKey) rotation = Math.round(rotation / 15) * 15;
-      // Puppet pins always key (AE's pins are animated from the start).
-      gesture.send(rigKey(node.id, rigPaths.pinProp(drag.pinId, 'rotation'), time, rigValues.scalar(rotation)));
+    // Rest space: pin POSITION tracks are stored in rest space (the puppet
+    // solve runs in rest space before the skeleton skins on top), so the
+    // pointer goes back through the pose first (getRigPose).
+    withRestPoint(e.clientX - rect.left, e.clientY - rect.top, (localCoords) => {
+      if (drag.mode === 'rotate') {
+        // Live update the pin rotation (scalar keyframe track) directly.
+        const { x: cx, y: cy } = drag.center;
+        const angleDeg = (Math.atan2(localCoords.y - cy, localCoords.x - cx) * 180) / Math.PI;
+        let rotation = drag.startRotationDeg + (angleDeg - drag.startAngleDeg);
+        // Shift constrains rotation to 15° increments, matching AE's gizmo.
+        if (shift) rotation = Math.round(rotation / 15) * 15;
+        // Puppet pins always key (AE's pins are animated from the start).
+        gesture.send(rigKey(nodeId, rigPaths.pinProp(drag.pinId, 'rotation'), time, rigValues.scalar(rotation)));
+      } else if (drag.mode === 'scale') {
+        const c = drag.center;
+        const d = Math.hypot(localCoords.x - c.x, localCoords.y - c.y);
+        let scale = (drag.startScale ?? 1) * (d / (drag.startDist ?? 1));
+        // Shift constrains scale to 5% steps, matching AE's gizmo.
+        if (shift) scale = Math.round(scale * 20) / 20;
+        // API unit: percent.
+        gesture.send(rigKey(nodeId, rigPaths.pinProp(drag.pinId, 'scale'), time, rigValues.scalar(Math.max(0.01, scale) * 100)));
+      } else if (drag.mode === 'sketch') {
+        // Record against the LIVE playhead (composition seconds — the axis the
+        // keys are sent on) so the captured path is spread across real time
+        // rather than collapsing onto one frame.
+        sketchRef.current?.add(localCoords.x, localCoords.y, time);
+      } else {
+        // The pin's Position key at the playhead, absolute per move.
+        gesture.send(rigKey(nodeId, rigPaths.pinProp(drag.pinId, 'position'), time, rigValues.vec2(localCoords.x, localCoords.y)));
+      }
       controller.requestRender();
-      return;
-    }
-
-    if (drag.mode === 'scale') {
-      const c = pinRotationCenter(drag.pinId);
-      const d = Math.hypot(localCoords.x - c.x, localCoords.y - c.y);
-      let scale = (drag.startScale ?? 1) * (d / (drag.startDist ?? 1));
-      // Shift constrains scale to 5% steps, matching AE's gizmo.
-      if (e.shiftKey) scale = Math.round(scale * 20) / 20;
-      // API unit: percent.
-      gesture.send(rigKey(node.id, rigPaths.pinProp(drag.pinId, 'scale'), time, rigValues.scalar(Math.max(0.01, scale) * 100)));
-      controller.requestRender();
-      return;
-    }
-
-    if (drag.mode === 'sketch') {
-      // Record against the LIVE playhead (composition seconds — the axis the
-      // keys are sent on) so the captured path is spread across real time
-      // rather than collapsing onto one frame.
-      sketchRef.current?.add(localCoords.x, localCoords.y, time);
-      controller.requestRender();
-      return;
-    }
-
-    // The pin's Position key at the playhead, absolute per move.
-    gesture.send(rigKey(node.id, rigPaths.pinProp(drag.pinId, 'position'), time, rigValues.vec2(localCoords.x, localCoords.y)));
-
-    controller.requestRender();
+    });
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
@@ -508,7 +402,7 @@ export function PuppetOverlay(): JSX.Element | null {
       if (svg) {
         try { svg.releasePointerCapture(e.pointerId); } catch {}
       }
-      void gesture.end();
+      void queueRef.current.then(() => gesture.end());
       return;
     }
 
@@ -525,15 +419,17 @@ export function PuppetOverlay(): JSX.Element | null {
     // Puppet Sketch: reduce the raw stream to a few eased keyframes and write
     // them as the pin's position track. One recording = one undo step.
     if (drag.mode === 'sketch') {
-      const kfs = sketchRef.current?.finish({ tolerance: sketchTolerance }) ?? [];
-      sketchRef.current = null;
-      setIsRecording(false);
-      if (kfs.length > 0) void sendSketch(drag.pinId, kfs);
-      else void gesture.end();
+      void queueRef.current.then(async () => {
+        const kfs = sketchRef.current?.finish({ tolerance: sketchTolerance }) ?? [];
+        sketchRef.current = null;
+        setIsRecording(false);
+        if (kfs.length > 0) await sendSketch(drag.pinId, kfs);
+        else await gesture.end();
+      });
       return;
     }
 
-    void gesture.end();
+    void queueRef.current.then(() => gesture.end());
   };
 
   /**
@@ -546,14 +442,14 @@ export function PuppetOverlay(): JSX.Element | null {
     const path = rigPaths.pinProp(pinId, 'position');
     const lo = compTime(kfs[0]!.t);
     const hi = compTime(kfs[kfs.length - 1]!.t);
-    const res = await engine().query({ type: 'getKeyframes', props: [{ layer: node.id, path }], range: { start: lo, duration: hi - lo } });
+    const res = await engine().query({ type: 'getKeyframes', props: [{ layer: nodeId, path }], range: { start: lo, duration: hi - lo } });
     const inSpan = res.ok ? (res.value.sets[0]?.keyframes ?? []).filter((k) => k.time >= lo && k.time <= hi).map((k) => k.id) : [];
     gesture.send([
       ...(inSpan.length > 0 ? [{ type: 'deleteKeyframes' as const, ids: inSpan }] : []),
       {
         type: 'addKeyframes',
         keys: kfs.map((k) => ({
-          prop: { layer: node.id, path }, time: compTime(k.t), value: rigValues.vec2(k.value[0]!.x, k.value[0]!.y),
+          prop: { layer: nodeId, path }, time: compTime(k.t), value: rigValues.vec2(k.value[0]!.x, k.value[0]!.y),
           spatialIn: [], spatialOut: [], ...(k.easing ? { easing: k.easing } : {}),
         })),
       },
@@ -563,7 +459,7 @@ export function PuppetOverlay(): JSX.Element | null {
 
   const onDoubleClickPin = (e: React.MouseEvent, pinId: string) => {
     e.stopPropagation();
-    deletePin(node.id, pinId);
+    deletePin(nodeId, pinId);
   };
 
   const onClickOverlay = (e: React.MouseEvent) => {
@@ -576,42 +472,37 @@ export function PuppetOverlay(): JSX.Element | null {
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
-    const sx = e.clientX - rect.left;
-    const sy = e.clientY - rect.top;
+    const drawn = screenToLocal(e.clientX - rect.left, e.clientY - rect.top);
+    const kind = puppetPinKind;
+    const [bx, by, bw, bh] = box;
 
     // Pin positions are stored in REST space (the puppet solve runs in rest
     // space before the skeleton skins on top) — exactly like the drag path in
-    // onPointerMove. Using the raw posed-space coordinate here stored a posed
-    // point as a rest point, so on a layer with both a skeleton and pins a new
-    // pin landed somewhere other than where you clicked. Identity when the
-    // layer has no skeleton.
-    const localCoords = toRestSpace(screenToLocal(sx, sy));
-
-    // Click outside layers should not add pins, let's check local bounds
-    const halfW = geom.width / 2;
-    const halfH = geom.height / 2;
-    if (
-      localCoords.x < -halfW - pad ||
-      localCoords.x > halfW + pad ||
-      localCoords.y < -halfH - pad ||
-      localCoords.y > halfH + pad
-    ) {
-      // Clears selection
-      setSelectedPinId(null);
-      return;
-    }
-
-    // Add a new pin — ONE undo entry. The engine mints the id (the lowest free
-    // `pin_<n>`, never reused within the document).
-    // `localCoords` is where the click landed on the artwork AS DRAWN — the
-    // puppet-deformed mesh. A pin's anchor is a REST-space point, so map the
-    // click back through the current deformation; the clicked point itself
-    // becomes the pin's live position (a keyframe at the current time) so the
-    // picture does not move when the pin lands. Identity while no pin has
-    // moved: the inverse is the click and no keyframe is written.
-    const restPoint = restPointFromDeformed(localCoords, restMesh, puppetDeformed) ?? localCoords;
-    const displaced = Math.hypot(restPoint.x - localCoords.x, restPoint.y - localCoords.y) > 1e-3;
-    void addPin(restPoint, displaced && puppetPinKind !== 'bend' ? localCoords : null);
+    // onPointerMove: the click goes back through the pose (getRigPose `rest`;
+    // identity without a skeleton). A pin's anchor is then the REST point under
+    // the deformed mesh (`anchors`): the clicked point itself becomes the pin's
+    // live position (a keyframe at the current time) so the picture does not
+    // move when the pin lands. Identity while no pin has moved: the inverse is
+    // the click and no keyframe is written.
+    void rigRestPoints(nodeId, time, [drawn]).then(({ rest, anchors }) => {
+      const localCoords = rest[0] ?? drawn;
+      // Click outside the layer's box should not add pins.
+      if (
+        localCoords.x < bx! - pad ||
+        localCoords.x > bx! + bw! + pad ||
+        localCoords.y < by! - pad ||
+        localCoords.y > by! + bh! + pad
+      ) {
+        // Clears selection
+        setSelectedPinId(null);
+        return;
+      }
+      // Add a new pin — ONE undo entry. The engine mints the id (the lowest free
+      // `pin_<n>`, never reused within the document).
+      const restPoint = anchors[0] ?? localCoords;
+      const displaced = Math.hypot(restPoint.x - localCoords.x, restPoint.y - localCoords.y) > 1e-3;
+      void addPin(restPoint, displaced && kind !== 'bend' ? localCoords : null, kind);
+    });
   };
 
   /**
@@ -619,15 +510,15 @@ export function PuppetOverlay(): JSX.Element | null {
    * mesh is displaced under the click — the pin's Position key at the playhead,
    * so the picture does not move when the pin lands. One gesture = one entry.
    */
-  const addPin = async (rest: { x: number; y: number }, live: { x: number; y: number } | null) => {
+  const addPin = async (rest: { x: number; y: number }, live: { x: number; y: number } | null, kind: PinKind) => {
     const client = engine();
     const label = 'Add Puppet Pin';
     const open = await client.beginGesture(label);
     if (!open.ok) return;
     const res = await client.execute({
-      type: 'addPropertyGroup', layer: node.id, parent: rigPaths.pins, matchName: rigMatch.pin,
+      type: 'addPropertyGroup', layer: nodeId, parent: rigPaths.pins, matchName: rigMatch.pin,
       init: [
-        { path: 'kind', value: rigValues.choice(puppetPinKind) },
+        { path: 'kind', value: rigValues.choice(kind) },
         { path: 'restPosition', value: rigValues.vec2(rest.x, rest.y) },
       ],
     });
@@ -635,7 +526,7 @@ export function PuppetOverlay(): JSX.Element | null {
     if (path && live) {
       await client.execute({
         type: 'addKeyframes',
-        keys: [{ prop: { layer: node.id, path: `${path}/position` }, time: compTime(time), value: rigValues.vec2(live.x, live.y), spatialIn: [], spatialOut: [] }],
+        keys: [{ prop: { layer: nodeId, path: `${path}/position` }, time: compTime(time), value: rigValues.vec2(live.x, live.y), spatialIn: [], spatialOut: [] }],
       });
     }
     await client.endGesture(open.value.gesture, true);
@@ -686,8 +577,8 @@ export function PuppetOverlay(): JSX.Element | null {
           opacity={0.9}
         />
       )}
-      {pathHandles.map((h) => {
-        const anchor = restToScreen({ x: h.x, y: h.y });
+      {pathHandles.map((h, index) => {
+        const anchor = localToScreen(h.at.x, h.at.y);
         return (
           <g key={`tan-${selectedPinId}-${h.t}`}>
             {/* Keyframe marker on the path */}
@@ -705,12 +596,12 @@ export function PuppetOverlay(): JSX.Element | null {
             {(['out', 'in'] as const).map((which) => {
               const hp = which === 'out' ? h.out : h.in;
               if (!hp) return null;
-              const s = restToScreen(hp);
+              const s = localToScreen(hp.x, hp.y);
               return (
                 <g
                   key={which}
                   style={{ cursor: 'grab' }}
-                  onPointerDown={(e) => onPointerDownTangent(e, selectedPinId!, pathHandles.indexOf(h), which)}
+                  onPointerDown={(e) => onPointerDownTangent(e, selectedPinId!, index, which)}
                   onClick={(e) => e.stopPropagation()}
                 >
                   <line
@@ -735,32 +626,14 @@ export function PuppetOverlay(): JSX.Element | null {
 
       {/* Render pin dots */}
       {pins.map((pin) => {
-        const animPin = animatedPins.find((p) => p.id === pin.id) ?? pin;
-        const kind = pinKindOf(pin);
+        // The engine's pose: a pin is drawn where the mesh actually IS — its live
+        // position (a bend pin: the solved mesh vertex it is bound to) carried
+        // through the skeleton pose (OverlayRig.pins x / y).
+        const animPin = pin;
+        const kind = pin.kind as PinKind;
         const color = pinColor(kind);
         const isBendPin = kind === 'bend';
-        // Draw the handle where the mesh actually IS, not where it rests.
-        //
-        // Pin positions are stored in REST space (the puppet solve runs before
-        // the skeleton skins on top), so on a layer with both rigs the dot sat
-        // off the mesh it controls. `skinPointAt` exists for exactly this — its
-        // docstring says "so a puppet pin's dot lands on the composed mesh" —
-        // and it had no callers.
-        //
-        // A bend pin has no rest position worth drawing: its whole point is that
-        // it sits wherever the other pins carried it. Read that back out of the
-        // solved mesh at the vertex the pin is bound to, so the dot travels with
-        // the deformation. Drawn at its rest anchor it would sit off the artwork
-        // the moment anything moved, and the control would read as broken.
-        const bendVertex = isBendPin ? restMesh.pinVertexIndices[pin.id] : undefined;
-        const anchor =
-          bendVertex !== undefined && deformedVertices.length >= bendVertex * 4 + 2
-            ? { x: deformedVertices[bendVertex * 4 + 0]!, y: deformedVertices[bendVertex * 4 + 1]! }
-            : { x: animPin.x, y: animPin.y };
-        const posed = skelBinding && skelPoseWorld
-          ? skinPointAt(anchor, anchor, skelBinding, skelPoseWorld)
-          : anchor;
-        const screen = localToScreen(posed.x, posed.y);
+        const screen = localToScreen(pin.x, pin.y);
         const isSelected = selectedPinId === pin.id;
         const isHovered = hoveredPinId === pin.id;
 

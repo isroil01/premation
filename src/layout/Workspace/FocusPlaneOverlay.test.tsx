@@ -24,9 +24,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useFocusPlaneStore } from '@stores/focusPlaneStore';
 import { defaultAnimation } from '@motion/animation';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
-import type { SceneNode } from '@core/types';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { propRefForTrack, values } from '@core/engine/propRefs';
@@ -46,34 +44,6 @@ interface CamOpts {
   dofStrength?: number;
   focusDistance?: number;
   focalLength?: number;
-}
-
-function cameraNode(id: string, o: CamOpts = {}): SceneNode {
-  const { dofStrength = 40, focusDistance = 2000, focalLength = 1000 } = o;
-  return {
-    id,
-    name: id,
-    parent: null,
-    children: [],
-    visible: true,
-    locked: false,
-    transform: { position: { x: 960, y: 540 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      {
-        id: `${id}_t`,
-        type: 'Transform',
-        props: {
-          [SCENE_KIND_PROP]: 'camera',
-          x: 960,
-          y: 540,
-          z: -1000,
-          focalLength,
-          focusDistance,
-          dofStrength,
-        },
-      },
-    ],
-  } as unknown as SceneNode;
 }
 
 function reset(): void {
@@ -108,46 +78,77 @@ const focusProp = (id: string): unknown => {
 beforeEach(reset);
 afterEach(reset);
 
+/**
+ * B4 round 5: the overlay reads the camera's pushed geometry (the overlay
+ * push's scene3d record — its eye and depth of field), which exists once the
+ * engine has the subscription: let it land.
+ */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await engineIdle();
+  });
+}
+
+/**
+ * A camera LAYER of the composition (the push carries a composition's layers;
+ * a bare scene node outside any composition is not one), with the depth of
+ * field of `cameraNode`'s defaults.
+ */
+async function engineCamera(h: Awaited<ReturnType<typeof setupAppEngine>>, o: CamOpts = {}): Promise<string> {
+  const { dofStrength = 40, focusDistance = 2000, focalLength = 1000 } = o;
+  const id = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'camera', name: 'Cam', init: [] })).layer;
+  const tid = defaultSceneGraph.getNode(id)!.components.find((c) => c.type === 'Transform')!.id;
+  for (const [k, v] of Object.entries({ x: 960, y: 540, z: -1000, focalLength, focusDistance, dofStrength })) {
+    defaultSceneGraph.writeProp(id, tid, k, v);
+  }
+  return id;
+}
+
 describe('when the plane appears', () => {
-  it('draws nothing in a composition with no camera at all', () => {
+  // B4 round 5: cameras are composition LAYERS built through the engine (the push carries layers).
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
+  beforeEach(async () => { h = await setupAppEngine(); });
+  afterEach(async () => { await h.dispose(); });
+
+  it('draws nothing in a composition with no camera at all', async () => {
     const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     expect(planes(container)).toHaveLength(0);
   });
 
-  it('draws the plane for a camera with Depth of Field on', () => {
-    defaultSceneGraph.addNode(cameraNode('cam1'));
+  it('draws the plane for a camera with Depth of Field on', async () => {
+    await engineCamera(h);
     const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     expect(planes(container).length).toBeGreaterThan(0);
     expect(handle(container)).not.toBeNull();
   });
 
-  it('draws NOTHING when Depth of Field is off', () => {
+  it('draws NOTHING when Depth of Field is off', async () => {
     // Blur Level 0 means the property changes no pixel. Chrome for an inert
     // setting is worse than none — it invites a drag that does nothing.
-    defaultSceneGraph.addNode(cameraNode('cam1', { dofStrength: 0 }));
+    await engineCamera(h, { dofStrength: 0 });
     const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     expect(planes(container)).toHaveLength(0);
   });
 
-  it('draws nothing while looking THROUGH that camera', () => {
+  it('draws nothing while looking THROUGH that camera', async () => {
     // In Active Camera view the cross-section IS the comp frame and the view
     // axis projects to a point — a rectangle on the comp edges with a handle
     // that cannot be dragged anywhere meaningful.
-    defaultSceneGraph.addNode(cameraNode('cam1'));
+    await engineCamera(h);
     useGuidesStore.getState().setCamera3dMode('active');
     const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     expect(planes(container)).toHaveLength(0);
   });
 
-  it('honours the visibility setting', () => {
-    defaultSceneGraph.addNode(cameraNode('cam1'));
+  it('honours the visibility setting', async () => {
+    await engineCamera(h);
     useFocusPlaneStore.getState().setVisibility('off');
     const { container, rerender } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     expect(planes(container)).toHaveLength(0);
 
     // `selected` shows it only for a camera you picked up.
@@ -173,39 +174,42 @@ describe('when the plane appears', () => {
 describe('bound to a secondary pane’s view', () => {
   /** The pane's transform: a different zoom AND a different origin. */
   const PANE_VIEW = { scale: 2, offsetX: 100, offsetY: 50 };
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
+  beforeEach(async () => { h = await setupAppEngine(); });
+  afterEach(async () => { await h.dispose(); });
 
-  it('draws for the pane’s own mode while the main viewport suppresses it', () => {
-    defaultSceneGraph.addNode(cameraNode('cam1'));
+  it('draws for the pane’s own mode while the main viewport suppresses it', async () => {
+    await engineCamera(h);
     // The MAIN viewport is looking through the camera, where the plane is
     // suppressed — see the header note. A Top pane is exactly where you would
     // then want to pull focus, and it must not inherit that suppression.
     useGuidesStore.getState().setCamera3dMode('active');
 
     const main = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     expect(planes(main.container)).toHaveLength(0);
 
     const pane = render(<FocusPlaneOverlay mode="top" getView={() => PANE_VIEW} />);
-    act(() => undefined);
+    await settle();
     expect(planes(pane.container).length).toBeGreaterThan(0);
     expect(handle(pane.container)).not.toBeNull();
   });
 
-  it('suppresses itself in an Active Camera pane, whatever the main viewport shows', () => {
-    defaultSceneGraph.addNode(cameraNode('cam1'));
+  it('suppresses itself in an Active Camera pane, whatever the main viewport shows', async () => {
+    await engineCamera(h);
     useGuidesStore.getState().setCamera3dMode('top');
     const pane = render(<FocusPlaneOverlay mode="active" getView={() => PANE_VIEW} />);
-    act(() => undefined);
+    await settle();
     expect(planes(pane.container)).toHaveLength(0);
   });
 
-  it('places the handle with the pane’s transform, not the controller’s', () => {
-    defaultSceneGraph.addNode(cameraNode('cam1'));
+  it('places the handle with the pane’s transform, not the controller’s', async () => {
+    await engineCamera(h);
     // The mocked controller view is 1:1 and unpanned, so the main instance's
     // handle sits at the raw comp-space projection …
     const main = render(<FocusPlaneOverlay />);
     const pane = render(<FocusPlaneOverlay mode="top" getView={() => PANE_VIEW} />);
-    act(() => undefined);
+    await settle();
 
     const at = (c: HTMLElement): { x: number; y: number } => {
       const h = handle(c)!;
@@ -259,7 +263,7 @@ describe('through the engine API', () => {
   it('shows the plane for a SELECTED camera under the `selected` setting', async () => {
     useFocusPlaneStore.getState().setVisibility('selected');
     const { container, rerender } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     expect(planes(container)).toHaveLength(0);
 
     act(() => useSelectionStore.getState().set([cam]));
@@ -269,7 +273,7 @@ describe('through the engine API', () => {
 
   it('writes focusDistance by the inspector row’s rule', async () => {
     const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     // Top view's screen-down is world −z (`ORTHO_BASIS`), so the camera's +z
     // view axis runs UP the screen at 1:1 — dragging the handle 300px up pushes
     // focus 300 comp px further away.
@@ -286,7 +290,7 @@ describe('through the engine API', () => {
       keys: [{ prop: propRefForTrack(cam, 'focusDistance')!.ref, time: 0, value: values.scalar(2000), spatialIn: [], spatialOut: [] }],
     });
     const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     await idleDrag(container, { x: 0, y: -250 });
     expect(defaultAnimation.sample(cam, 'focusDistance', 0)).toBeCloseTo(2250, 3);
   });
@@ -295,7 +299,7 @@ describe('through the engine API', () => {
     usePreferenceStore.setState({ timelineAutoKeyframe: true });
     try {
       const { container } = render(<FocusPlaneOverlay />);
-      act(() => undefined);
+      await settle();
       await idleDrag(container, { x: 0, y: -300 });
       expect(defaultAnimation.isAnimated(cam, 'focusDistance')).toBe(true);
       expect(defaultAnimation.sample(cam, 'focusDistance', 0)).toBeCloseTo(2300, 3);
@@ -313,18 +317,19 @@ describe('through the engine API', () => {
     // `deviceHandles` was written to close.
     useFocusPlaneStore.getState().setVisibility('off');
     const { container, rerender } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     expect(handle(container)).toBeNull();
 
     act(() => useFocusPlaneStore.getState().setVisibility('always'));
     rerender(<FocusPlaneOverlay />);
+    await settle();
     await idleDrag(container, { x: 0, y: -300 });
     expect(focusProp(cam)).toBeCloseTo(2300, 3);
   });
 
   it('a drag ACROSS the axis changes nothing', async () => {
     const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     const before = h.doc();
     await idleDrag(container, { x: 400, y: 0 });
     expect(focusProp(cam)).toBeCloseTo(2000, 3);
@@ -333,7 +338,7 @@ describe('through the engine API', () => {
 
   it('a press away from the handle is not a drag', async () => {
     const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     const hit = handle(container)!;
     const entries = historyLabels().length;
     await act(async () => {
@@ -348,7 +353,7 @@ describe('through the engine API', () => {
 
   it('a drag is ONE "Focus Distance" entry; undo restores it', async () => {
     const { container } = render(<FocusPlaneOverlay />);
-    act(() => undefined);
+    await settle();
     const entries = historyLabels().length;
     await act(async () => {
       dragBy(container, { x: 0, y: -300 });

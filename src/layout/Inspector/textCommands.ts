@@ -17,14 +17,17 @@
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
+import { componentOfType } from '@core/engine/propRefs';
+import { colorValueHex } from '@core/mirror/paintFields';
+import { plainValue, storedNumber, trackRefIn } from '@core/mirror/trackIndex';
+import { hasTextLayer } from '@layout/Text/textMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getTime } from '@stores/playbackClockStore';
 import { edit } from '@core/engine/uiEdits';
 import { isLayer } from '@core/engine/doc';
 import { fieldCommands } from '@layout/Text/textEdits';
 import { componentPropsCommands } from './useComponentProp';
-import type { SceneNode } from '@core/types';
 
 export const TEXT_SWAP_FILL_STROKE_COMMAND = asCommandId('text.swapFillStroke');
 /** Layer ▸ Text ▸ Convert to Vertical/Horizontal Text. */
@@ -36,19 +39,39 @@ const DEFAULT_TEXT_FILL = '#ffffff';
 const DEFAULT_TEXT_STROKE = '#000000';
 
 interface TextTarget {
-  node: SceneNode;
+  id: string;
   compId: string;
-  props: Record<string, unknown>;
+  /** The STORED fill / stroke / width (unset = this module's defaults) and the switches. */
+  fill?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  noFill: boolean;
+  noStroke: boolean;
+  orientation: unknown;
 }
 
 function textTarget(id: string): TextTarget | null {
-  // B4-gap: the Text COMPONENT (its id and stored props: an unstored fill /
-  // stroke / width falls back to this module's defaults, which the catalog's
-  // registry defaults do not match) — `componentPropsCommands` composes the
-  // swap per component id (the B3 write layer).
-  const node = defaultSceneGraph.getNode(id);
-  const comp = node?.components.find((c) => c.type === 'Text');
-  return node && comp ? { node, compId: comp.id, props: comp.props as Record<string, unknown> } : null;
+  // B4: the values from the mirror — an UNSTORED fill / stroke / width
+  // (PropertyInfo.stored unset) falls back to this module's defaults, which the
+  // catalog's registry defaults do not match. The Text component's id is the
+  // write seam's (`componentPropsCommands` composes the swap per component, B3).
+  const m = documentMirror();
+  if (!hasTextLayer(m, id)) return null;
+  const compId = componentOfType(id, 'Text');
+  const tree = m.tree(id);
+  if (!compId || !tree) return null;
+  const stored = (path: string) => { const info = tree.nodes.get(path); return info?.stored === true ? info : undefined; };
+  const width = trackRefIn(tree, 'strokeWidth');
+  return {
+    id,
+    compId,
+    fill: colorValueHex(stored('layer/fill')?.value),
+    stroke: colorValueHex(stored('text/stroke')?.value),
+    strokeWidth: width && width.info.stored === true ? storedNumber(width, width.info.value) : undefined,
+    noFill: plainValue(tree.nodes.get('text/noFill')?.value) === true,
+    noStroke: plainValue(tree.nodes.get('text/noStroke')?.value) === true,
+    orientation: plainValue(tree.nodes.get('text/orientation')?.value),
+  };
 }
 
 /** Selected layers that are text layers. */
@@ -81,20 +104,19 @@ export function isTypingInField(
 export function swapTextFillStroke(nodeIds: ReadonlyArray<string>): boolean {
   const targets = nodeIds.filter((id) => isLayer(id)).map(textTarget).filter((t): t is TextTarget => t !== null);
   if (targets.length === 0) return false;
-  const plans = targets.map(({ node, compId, props }) => {
+  const plans = targets.map((t) => {
     const values: Record<string, unknown> = {};
-    const fill = typeof props.fill === 'string' ? props.fill : DEFAULT_TEXT_FILL;
-    const stroke = typeof props.stroke === 'string' ? props.stroke : DEFAULT_TEXT_STROKE;
-    const noFill = props.noFill === true;
-    const noStroke = props.noStroke === true;
+    const fill = t.fill ?? DEFAULT_TEXT_FILL;
+    const stroke = t.stroke ?? DEFAULT_TEXT_STROKE;
+    const { noFill, noStroke } = t;
     values.fill = stroke;
     values.stroke = fill;
     if (noFill !== noStroke) {
       values.noFill = noStroke;
       values.noStroke = noFill;
     }
-    if (!(typeof props.strokeWidth === 'number' && props.strokeWidth > 0)) values.strokeWidth = 2;
-    return componentPropsCommands(node.id, compId, values, getTime());
+    if (!(typeof t.strokeWidth === 'number' && t.strokeWidth > 0)) values.strokeWidth = 2;
+    return componentPropsCommands(t.id, t.compId, values, getTime());
   });
   // ONE batch; a text layer addresses every one of these (latentPropSpecs.ts
   // makes an unstored stroke width a property too), so nothing is left over.
@@ -110,11 +132,11 @@ export function swapTextFillStroke(nodeIds: ReadonlyArray<string>): boolean {
 export function toggleTextOrientation(nodeIds: ReadonlyArray<string>): 'vertical' | 'horizontal' | null {
   const targets = nodeIds.map(textTarget).filter((t): t is TextTarget => t !== null);
   if (targets.length === 0) return null;
-  const next = targets.some((t) => t.props.orientation !== 'vertical') ? 'vertical' : 'horizontal';
+  const next = targets.some((t) => t.orientation !== 'vertical') ? 'vertical' : 'horizontal';
   // `text/orientation` (G1), one batch over the selection.
   void edit(
     next === 'vertical' ? 'Convert to Vertical Text' : 'Convert to Horizontal Text',
-    targets.flatMap(({ node }) => fieldCommands(node.id, 'text/orientation', next)),
+    targets.flatMap(({ id }) => fieldCommands(id, 'text/orientation', next)),
   );
   return next;
 }
