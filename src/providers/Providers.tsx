@@ -24,8 +24,7 @@ import { pruneKeyframeSelectionToNodes, useKeyframeSelectionStore } from '@store
 import { prunePropertySelectionToNodes } from '@stores/propertySelectionStore';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { copyEdit, cutEdit, pasteEdit } from './clipboardEdits';
-import { convertAudioToKeyframesEdit } from '@layout/Inspector/audioEdits';
-import { DEFAULT_AUDIO_KEYFRAME_OPTIONS } from '@core/audio/audioKeyframes';
+import { audioAmplitudeNullEdit } from '@layout/Inspector/audioEdits';
 import { canExponentialScale, expressionBakeEdit, exponentialScaleEdit, hasBakeableExpression } from './menuCommandEdits';
 import { goToMarkerIndex, isTransportPlaying, pauseTransport, playTransport } from '@core/timeline/timelineView';
 import { documentMirror } from '@stores/documentMirror';
@@ -1353,13 +1352,15 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const nodeId = useSelectionStore.getState().ids[0];
         if (!nodeId) return;
-        // The engine's audioAnalysis job writes the loudness envelope onto the layer's Audio Amplitude: one entry.
-        void convertAudioToKeyframesEdit(nodeId, DEFAULT_AUDIO_KEYFRAME_OPTIONS).then((n) => {
-          if (n === 0) {
+        // AE's result: an "<layer> Amplitude" null with Both Channels / Left / Right sliders keyed —
+        // built by the engine's audioAnalysis job (amplitudeNull), one entry.
+        void audioAmplitudeNullEdit(nodeId).then((r) => {
+          if (!r) {
             notify('That layer has no decodable audio.', 'warning');
             return;
           }
-          notify(`Audio → ${n} keyframes on Audio Amplitude`, 'success');
+          const total = r.keys.both + r.keys.left + r.keys.right;
+          notify(`Audio → ${total} keyframes across 3 sliders`, 'success');
         });
       },
     },

@@ -2386,6 +2386,12 @@ from the struct's maximum + 800.
   rotations with one linear key per frame. `IkOptions {iterations, tolerance,
   maxStepRad}` default to 12 / 0.5 px / 0.6 rad. One entry each;
   `ikNative.test` compares the solved angles of both engines.
+- **`AudioAnalysisJob.amplitudeNull`** (715): After Effects' Convert Audio to
+  Keyframes — the job's result creates a "<layer> Amplitude" null in the
+  layer's composition with three Slider Controls (Both Channels / Left /
+  Right), each keyed from its channel's envelope at composition time through
+  the layer's bar; one entry. The summary's `amplitudeNull` counts the keys
+  per channel. The Animation menu command sends it (`audioAmplitudeNullEdit`).
 
 
 ## 16. Files

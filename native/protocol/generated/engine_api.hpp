@@ -2902,6 +2902,7 @@ struct AudioAnalysisJob {
   std::optional<double> amplitude_gain;
   bool beat_markers = false;
   std::optional<std::uint32_t> beat_every;
+  std::optional<bool> amplitude_null;
   bool operator==(const AudioAnalysisJob&) const = default;
 };
 

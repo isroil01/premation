@@ -155,6 +155,37 @@ maybe('engine jobs on the real engine', () => {
     expect(jobs).not.toContain('sk-test-key');
   });
 
+  it('Convert Audio to Keyframes builds the Amplitude null: three keyed sliders, one entry', async () => {
+    const wav = path.join(tmp, 'amp.wav');
+    writeFileSync(wav, toneWav(1));
+    const comp = unwrap(await client.execute({ type: 'createComposition', settings: { name: 'Amp', width: 320, height: 180 }, fromItems: [] })).item;
+    const item = unwrap(await client.execute({ type: 'importFiles', files: [{ path: wav, asSequence: false, createComposition: false }] })).items[0]!;
+    const layer = unwrap(await client.execute({ type: 'createLayer', comp, kind: 'audio', name: 'Voice', source: item, init: [] })).layer;
+    const layersBefore = unwrap(await client.query({ type: 'getComposition', comp })).comp.layers;
+    const before = unwrap(await client.query({ type: 'getHistory' })).entries.length;
+    const started = unwrap(await client.execute({
+      type: 'startJob',
+      job: { kind: 'audioAnalysis', value: { layer, beats: false, amplitudeKeyframes: false, silence: false, removeSilence: false, beatMarkers: false, amplitudeNull: true } },
+      apply: true,
+    }));
+    const done = await waitJob(client, started.job);
+    expect(done.job.status).toBe('done');
+    const summary = JSON.parse(done.job.result) as { amplitudeNull: { both: number; left: number; right: number } };
+    expect(summary.amplitudeNull.both).toBeGreaterThan(0);
+    const layers = unwrap(await client.query({ type: 'getComposition', comp })).comp.layers;
+    const made = layers.find((id) => !layersBefore.includes(id))!;
+    const info = unwrap(await client.query({ type: 'getLayers', layers: [made] })).layers[0]!;
+    expect(info.kind).toBe('null');
+    expect(info.name).toBe('Voice Amplitude');
+    const tree = unwrap(await client.query({ type: 'getPropertyTree', layer: made, path: 'effects', depth: 2 })).nodes;
+    expect(tree.filter((n) => /^effects\/ctrl_[^/]+$/.test(n.path)).map((n) => n.name)).toEqual(['Both Channels', 'Left', 'Right']);
+    const keys = unwrap(await client.query({ type: 'getKeyframes', props: [{ layer: made, path: 'effects/ctrl_Both Channels/slider' }] })).sets[0]!.keyframes;
+    expect(keys.length).toBe(summary.amplitudeNull.both);
+    const history = unwrap(await client.query({ type: 'getHistory' })).entries;
+    expect(history.length).toBe(before + 1);
+    expect(history.at(-1)!.label).toBe('Convert audio to keyframes');
+  });
+
   it('refuses a transcribe job without a key, naming the reason', async () => {
     const comp = unwrap(await client.execute({ type: 'createComposition', settings: { name: 'NoKey' }, fromItems: [] })).item;
     const res = await client.execute({

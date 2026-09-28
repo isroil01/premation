@@ -4,6 +4,7 @@
 // wrote through the engine API (src/layout/Inspector/audioEdits.ts,
 // src/core/audio/beatCommands.ts) — the same commands, in one entry.
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <set>
 #include <string>
@@ -152,6 +153,8 @@ struct AnalysisSpec {
   bool silence = false;
   bool removeSilence = false;
   std::vector<std::string> paired;
+  /// Convert Audio to Keyframes' null: its name ("<layer> Amplitude"); empty = not asked.
+  std::string nullName;
 };
 
 class AnalysisResult final : public JobResult {
@@ -159,7 +162,7 @@ class AnalysisResult final : public JobResult {
   explicit AnalysisResult(const AnalysisSpec& s)
       : layer(s.layer), comp(s.comp), compFps(s.compFps), amplitudePath(s.amplitudePath), beats(s.beats),
         beatMarkers(s.beatMarkers), beatEvery(s.beatEvery), silence(s.silence), removeSilence(s.removeSilence),
-        paired(s.paired) {}
+        paired(s.paired), nullName(s.nullName) {}
   std::string layer;
   std::string comp;
   double compFps = 30;
@@ -179,6 +182,9 @@ class AnalysisResult final : public JobResult {
   std::vector<aa::SilenceRange> ranges;
   std::vector<std::string> paired;
   std::vector<aa::CompInterval> intervals;
+  // the Amplitude null (Both Channels / Left / Right sliders)
+  std::string nullName;
+  std::array<std::vector<std::pair<double, double>>, 3> nullKeys;
 
   [[nodiscard]] std::string summary_json() const override {
     std::string s = "{";
@@ -188,6 +194,10 @@ class AnalysisResult final : public JobResult {
       first = false;
       s += json_string(k) + ":" + v;
     };
+    if (!nullName.empty()) {
+      field("amplitudeNull", "{\"both\":" + std::to_string(nullKeys[0].size()) + ",\"left\":" + std::to_string(nullKeys[1].size()) +
+                                   ",\"right\":" + std::to_string(nullKeys[2].size()) + "}");
+    }
     if (!amplitudePath.empty()) field("amplitude", "{\"keyframes\":" + std::to_string(amplitudeKeys.size()) + ",\"keys\":" + keys_json(amplitudeKeys) + "}");
     if (beats) {
       field("beats", "{\"bpm\":" + json_number(beat.bpm) + ",\"tempoConfidence\":" + json_number(beat.tempoConfidence) +
@@ -216,15 +226,46 @@ class AnalysisResult final : public JobResult {
   [[nodiscard]] std::string label() const override {
     if (removeSilence && !intervals.empty()) return "Remove Silence";
     if (!amplitudePath.empty() && !amplitudeKeys.empty()) return "Convert audio to keyframes";
+    if (has_null_keys()) return "Convert audio to keyframes";
     return "Markers on Beats";
   }
 
   [[nodiscard]] bool has_edits() const override {
-    return (!amplitudePath.empty() && !amplitudeKeys.empty()) || (beats && beatMarkers && !beatsComp.empty()) ||
+    return (!amplitudePath.empty() && !amplitudeKeys.empty()) || has_null_keys() || (beats && beatMarkers && !beatsComp.empty()) ||
            (removeSilence && !intervals.empty());
   }
 
+  [[nodiscard]] bool has_null_keys() const {
+    return !nullName.empty() && std::any_of(nullKeys.begin(), nullKeys.end(), [](const auto& k) { return !k.empty(); });
+  }
+
+  /// audioKeyframes.ts applyAudioSliderNull: the null, its three sliders, their keys.
+  void apply_null(JobApply& a) const {
+    api::CreateLayer c;
+    c.comp = comp;
+    c.kind = api::LayerKind::null;
+    c.name = nullName;
+    const std::optional<api::LayerRef> made = result_payload<api::LayerRef>(a.run(command(std::move(c))));
+    if (!made) fail(ErrorCode::internal, "the Amplitude null was not created");
+    static constexpr std::array<const char*, 3> kLabels{"Both Channels", "Left", "Right"};
+    for (std::size_t i = 0; i < kLabels.size(); ++i) {
+      if (nullKeys[i].empty()) continue;
+      api::AddPropertyGroup g;
+      g.layer = made->layer;
+      g.parent = "effects";
+      g.match_name = "ADBE Slider Control";
+      g.name = kLabels[i];
+      const std::optional<api::GroupList> groups = result_payload<api::GroupList>(a.run(command(std::move(g))));
+      if (!groups || groups->groups.empty()) fail(ErrorCode::internal, "the slider control was not added");
+      api::SetKeyframes k;
+      k.prop = api::PropRef{made->layer, groups->groups[0] + "/slider"};
+      k.keys = distinct_keys(nullKeys[i]);
+      (void)a.run(command(std::move(k)));
+    }
+  }
+
   void apply(JobApply& a) const override {
+    if (has_null_keys()) apply_null(a);
     if (!amplitudePath.empty() && !amplitudeKeys.empty()) {
       api::SetKeyframes k;
       k.prop = api::PropRef{layer, amplitudePath};
@@ -376,7 +417,8 @@ std::vector<float> read_mono(const std::string& file, int& sampleRate) {
 }  // namespace
 
 PreparedJob prepare_audio_analysis(const api::AudioAnalysisJob& spec, const JobDocContext& ctx) {
-  if (!spec.beats && !spec.amplitude_keyframes && !spec.silence && !spec.remove_silence) {
+  const bool wantNull = spec.amplitude_null.value_or(false);
+  if (!spec.beats && !spec.amplitude_keyframes && !spec.silence && !spec.remove_silence && !wantNull) {
     fail(ErrorCode::invalid_argument, "nothing to analyse: ask for beats, amplitudeKeyframes or silence");
   }
   const FootageLayer f = footage_layer(ctx, spec.layer, Need::sound);
@@ -390,6 +432,10 @@ PreparedJob prepare_audio_analysis(const api::AudioAnalysisJob& spec, const JobD
   result->beatEvery = spec.beat_every.value_or(1);
   result->silence = spec.silence || spec.remove_silence;
   result->removeSilence = spec.remove_silence;
+  if (wantNull) {
+    const doc::Node* n = ctx.doc.node(f.layer);
+    result->nullName = (n != nullptr && !n->name.empty() ? n->name : std::string("Audio")) + " Amplitude";
+  }
   if (spec.amplitude_keyframes) {
     // Convert Audio to Keyframes' track: an audio layer's `audioAmplitude` (props.cpp).
     const doc::Catalog cat = doc::catalog_for(ctx.doc, f.layer);
@@ -440,6 +486,18 @@ PreparedJob prepare_audio_analysis(const api::AudioAnalysisJob& spec, const JobD
       for (const aa::PlannedKey& k : aa::plan_audio_keyframes(env, kopts)) {
         const std::optional<double> compSec = f.comp_seconds_through_bar(static_cast<double>(k.frame) / fps);
         if (compSec) out->amplitudeKeys.emplace_back(*compSec, k.value);
+      }
+    }
+    if (!out->nullName.empty()) {
+      control.progress(0.4, "Measuring loudness per channel");
+      const double fps = f.compFps;
+      static constexpr std::array<aa::Channel, 3> kChannels{aa::Channel::both, aa::Channel::left, aa::Channel::right};
+      for (std::size_t i = 0; i < kChannels.size(); ++i) {
+        const std::vector<double> env = aa::amplitude_envelope(pcm.channels, sr, fps, kChannels[i]);
+        for (const aa::PlannedKey& k : aa::plan_audio_keyframes(env, kopts)) {
+          const std::optional<double> compSec = f.comp_seconds_through_bar(static_cast<double>(k.frame) / fps);
+          if (compSec) out->nullKeys[i].emplace_back(*compSec, k.value);
+        }
       }
     }
     if (control.cancelled()) return nullptr;
