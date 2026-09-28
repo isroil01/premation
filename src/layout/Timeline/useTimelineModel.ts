@@ -28,6 +28,7 @@ import { useDisplayClockStore } from '@stores/playbackClockStore';
 import { useProjectStore } from '@stores/projectStore';
 import { compFps, useMirrorComp, useRetainTrees } from '@hooks/useMirror';
 import { onTimelineZoomChanged, timelinePixelsPerSecond } from '@core/timeline/timelineView';
+import { subscribeTimelineRows, timelineRowsVersion } from '@stores/timelineRows';
 import { buildTimelineTracks, compMarkersOf, createTrackCache, workAreaOf, type TimelineTrackCache } from './timelineTracks';
 import type { TimelineMarker, TimelineModel, TimelineTrack } from './TimelineModel';
 
@@ -84,15 +85,18 @@ export function useTimelineTracks(compId: string | undefined, expandedIds: Reado
   }, [comp, order, expandedIds]);
   const ver = useKeysVersion(m, keys);
   useThrottledTimeWhen(expandedIds.length > 0);
+  // The expanded rows' AE projection lands asynchronously (`getTimelineRows`).
+  const rowsVer = useSyncExternalStore(subscribeTimelineRows, timelineRowsVersion, timelineRowsVersion);
 
   return useMemo(() => {
     void ver;
+    void rowsVer;
     const next = buildTimelineTracks(m, comp, expandedIds, cacheRef.current!);
     const prev = lastRef.current;
     if (prev.length === next.length && prev.every((t, i) => t === next[i])) return prev;
     lastRef.current = next;
     return next;
-  }, [m, comp, expandedIds, ver]);
+  }, [m, comp, expandedIds, ver, rowsVer]);
 }
 
 export interface TimelineRuler {

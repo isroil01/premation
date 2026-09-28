@@ -14,7 +14,9 @@ import type {
   GetSourceSize,
   LayerSourceSize,
   CheckPrecompose,
+  TimelineRowSet,
 } from '@motion/engine-api';
+import { buildStaticPropertyTree } from '@core/timeline/propertyTree';
 import { defaultAnimation } from '@motion/animation';
 import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { readCompRef } from '@core/scene/compInstance';
@@ -134,4 +136,28 @@ export function sourceSizesAnswer(q: GetSourceSize): LayerSourceSize[] {
 export function precomposeCheckAnswer(q: CheckPrecompose): string {
   requireComp(q.comp);
   return leaveAttributesUnavailableReason(q.layers, q.comp) ?? '';
+}
+
+// ── getTimelineRows ────────────────────────────────────────────────────
+
+/** The timeline's AE row projection of each layer (`buildStaticPropertyTree`); unknown ids are skipped. */
+export function timelineRowsAnswer(layers: readonly string[]): TimelineRowSet[] {
+  const out: TimelineRowSet[] = [];
+  for (const layer of layers) {
+    if (!isLayer(layer)) continue;
+    out.push({
+      layer,
+      rows: buildStaticPropertyTree(layer).map((r) => ({
+        prop: r.prop,
+        label: r.label,
+        group: r.group,
+        members: [...r.members],
+        ...(r.merged ? { merged: r.merged } : {}),
+        valueProps: [...r.valueProps],
+        ...(r.valueUnit ? { valueUnit: r.valueUnit } : {}),
+        maskTrack: r.maskTrack === true,
+      })),
+    });
+  }
+  return out;
 }

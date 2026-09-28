@@ -235,6 +235,21 @@ struct SourceSizes { sizes: LayerSourceSize[] = 1; }
 query checkPrecompose = 1934 { comp: ItemId = 1; layers: LayerId[] = 2; } -> PrecomposeCheck;
 struct PrecomposeCheck { leaveAttributesReason: string = 1; }
 
+/// B4 round 8 — the timeline's After Effects ROW projection of each layer (both engines' `buildStaticPropertyTree` / `build_static_property_tree`): the rows in AE's twirl order (Text, Contents, Masks, Effects, Transform, Camera / Light Options, Layer Styles, Geometry / Material Options, Audio, Time), each with the legacy track names behind it. `members` = the tracks its stopwatch keys (empty = no stopwatch); `merged` = the pseudo track the members collapse under once keyed (Position); `valueProps` = the tracks its value field edits; `maskTrack` = keyed as a whole-mask track. Unknown ids answer no set.
+query getTimelineRows = 1935 { layers: LayerId[] = 1; } -> TimelineRowSets;
+struct TimelineRow {
+  prop: string = 1;
+  label: string = 2;
+  group: string = 3;
+  members: string[] = 4;
+  merged?: string = 5;
+  valueProps: string[] = 6;
+  valueUnit?: string = 7;
+  maskTrack: bool = 8;
+}
+struct TimelineRowSet { layer: LayerId = 1; rows: TimelineRow[] = 2; }
+struct TimelineRowSets { sets: TimelineRowSet[] = 1; }
+
 struct RigBoneWeight { bone: string = 1; weight: f64 = 2; }
 /// B4 round 5 — a layer's rig at `time` for what the overlay push does not carry: the pose the Rigging panel shows and its IK/FK switch plans from, pointer input mapped back through the pose (`points`), and one vertex's bind weights. `authoring` picks the Puppet Pin tool's mesh (OverlayRigOptions.authoring). `notFound` for no such layer; a layer with no rig answers empty lists and the points unchanged.
 query getRigPose = 1900 { layer: LayerId = 1; time: Time = 2; points: Vec2[] = 3; vertex?: u32 = 4; authoring?: bool = 5; } -> RigPose;

@@ -3266,6 +3266,31 @@ export interface PrecomposeCheck {
   leaveAttributesReason: string;
 }
 
+/** B4 round 8 — the timeline's After Effects ROW projection of each layer (both engines' `buildStaticPropertyTree` / `build_static_property_tree`): the rows in AE's twirl order (Text, Contents, Masks, Effects, Transform, Camera / Light Options, Layer Styles, Geometry / Material Options, Audio, Time), each with the legacy track names behind it. `members` = the tracks its stopwatch keys (empty = no stopwatch); `merged` = the pseudo track the members collapse under once keyed (Position); `valueProps` = the tracks its value field edits; `maskTrack` = keyed as a whole-mask track. Unknown ids answer no set. */
+export interface GetTimelineRows {
+  layers: LayerId[];
+}
+
+export interface TimelineRow {
+  prop: string;
+  label: string;
+  group: string;
+  members: string[];
+  merged?: string;
+  valueProps: string[];
+  valueUnit?: string;
+  maskTrack: boolean;
+}
+
+export interface TimelineRowSet {
+  layer: LayerId;
+  rows: TimelineRow[];
+}
+
+export interface TimelineRowSets {
+  sets: TimelineRowSet[];
+}
+
 export interface RigBoneWeight {
   bone: string;
   weight: number;
@@ -5035,6 +5060,7 @@ export type Query =
   | ({ type: 'mapLayerTime' } & MapLayerTime)
   | ({ type: 'getSourceSize' } & GetSourceSize)
   | ({ type: 'checkPrecompose' } & CheckPrecompose)
+  | ({ type: 'getTimelineRows' } & GetTimelineRows)
   | ({ type: 'getRigPose' } & GetRigPose)
   | ({ type: 'getWaveform' } & GetWaveform)
   | ({ type: 'listFonts' } & ListFonts)
@@ -5087,6 +5113,7 @@ export type QueryResult =
   | ({ type: 'mapLayerTime' } & MappedTime)
   | ({ type: 'getSourceSize' } & SourceSizes)
   | ({ type: 'checkPrecompose' } & PrecomposeCheck)
+  | ({ type: 'getTimelineRows' } & TimelineRowSets)
   | ({ type: 'getRigPose' } & RigPose)
   | ({ type: 'getWaveform' } & WaveformPeaks)
   | ({ type: 'listFonts' } & FontList)
@@ -5490,6 +5517,7 @@ export interface QueryArgs {
   mapLayerTime: MapLayerTime;
   getSourceSize: GetSourceSize;
   checkPrecompose: CheckPrecompose;
+  getTimelineRows: GetTimelineRows;
   getRigPose: GetRigPose;
   getWaveform: GetWaveform;
   listFonts: ListFonts;
@@ -5542,6 +5570,7 @@ export interface QueryResults {
   mapLayerTime: MappedTime;
   getSourceSize: SourceSizes;
   checkPrecompose: PrecomposeCheck;
+  getTimelineRows: TimelineRowSets;
   getRigPose: RigPose;
   getWaveform: WaveformPeaks;
   listFonts: FontList;

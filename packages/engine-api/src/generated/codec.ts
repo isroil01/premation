@@ -9726,6 +9726,112 @@ function decS_PrecomposeCheck(r: Reader, end: number, o: any): T.PrecomposeCheck
   o.leaveAttributesReason = v_leaveAttributesReason;
   return o;
 }
+function encS_GetTimelineRows(w: Writer, v: T.GetTimelineRows): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+}
+function decS_GetTimelineRows(r: Reader, end: number, o: any): T.GetTimelineRows {
+  const l_layers: string[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.layers = l_layers;
+  return o;
+}
+function encS_TimelineRow(w: Writer, v: T.TimelineRow): void {
+  w.byte(10); w.str(v.prop);
+  w.byte(18); w.str(v.label);
+  w.byte(26); w.str(v.group);
+  { const a = v.members; for (let i = 0; i < a.length; i++) { w.byte(34); w.str(a[i]!); } }
+  if (v.merged !== undefined) { w.byte(42); w.str(v.merged); }
+  { const a = v.valueProps; for (let i = 0; i < a.length; i++) { w.byte(50); w.str(a[i]!); } }
+  if (v.valueUnit !== undefined) { w.byte(58); w.str(v.valueUnit); }
+  w.byte(64); w.bool(v.maskTrack);
+}
+function decS_TimelineRow(r: Reader, end: number, o: any): T.TimelineRow {
+  const l_members: string[] = [];
+  const l_valueProps: string[] = [];
+  let h_prop = false;
+  let h_label = false;
+  let h_group = false;
+  let h_maskTrack = false;
+  let v_prop: string | undefined;
+  let v_label: string | undefined;
+  let v_group: string | undefined;
+  let v_merged: string | undefined;
+  let v_valueUnit: string | undefined;
+  let v_maskTrack: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_prop = r.str(); h_prop = true; break;
+      case 18: v_label = r.str(); h_label = true; break;
+      case 26: v_group = r.str(); h_group = true; break;
+      case 34: l_members.push(r.str()); break;
+      case 42: v_merged = r.str(); break;
+      case 50: l_valueProps.push(r.str()); break;
+      case 58: v_valueUnit = r.str(); break;
+      case 64: v_maskTrack = r.bool(); h_maskTrack = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_prop) throw new DecodeError('TimelineRow.prop: missing', 'missingField');
+  if (!h_label) throw new DecodeError('TimelineRow.label: missing', 'missingField');
+  if (!h_group) throw new DecodeError('TimelineRow.group: missing', 'missingField');
+  if (!h_maskTrack) throw new DecodeError('TimelineRow.maskTrack: missing', 'missingField');
+  o.prop = v_prop;
+  o.label = v_label;
+  o.group = v_group;
+  o.members = l_members;
+  if (v_merged !== undefined) o.merged = v_merged;
+  o.valueProps = l_valueProps;
+  if (v_valueUnit !== undefined) o.valueUnit = v_valueUnit;
+  o.maskTrack = v_maskTrack;
+  return o;
+}
+function encS_TimelineRowSet(w: Writer, v: T.TimelineRowSet): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.rows; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_TimelineRow(w, a[i]!); w.endLd(s); } } }
+}
+function decS_TimelineRowSet(r: Reader, end: number, o: any): T.TimelineRowSet {
+  const l_rows: T.TimelineRow[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_rows.push(decS_TimelineRow(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('TimelineRowSet.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.rows = l_rows;
+  return o;
+}
+function encS_TimelineRowSets(w: Writer, v: T.TimelineRowSets): void {
+  { const a = v.sets; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_TimelineRowSet(w, a[i]!); w.endLd(s); } } }
+}
+function decS_TimelineRowSets(r: Reader, end: number, o: any): T.TimelineRowSets {
+  const l_sets: T.TimelineRowSet[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_sets.push(decS_TimelineRowSet(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.sets = l_sets;
+  return o;
+}
 function encS_RigBoneWeight(w: Writer, v: T.RigBoneWeight): void {
   w.byte(10); w.str(v.bone);
   w.byte(17); w.f64(v.weight);
@@ -16259,6 +16365,7 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'mapLayerTime': w.varint(15458); { const s = w.beginLd(); encS_MapLayerTime(w, v); w.endLd(s); } return;
     case 'getSourceSize': w.varint(15466); { const s = w.beginLd(); encS_GetSourceSize(w, v); w.endLd(s); } return;
     case 'checkPrecompose': w.varint(15474); { const s = w.beginLd(); encS_CheckPrecompose(w, v); w.endLd(s); } return;
+    case 'getTimelineRows': w.varint(15482); { const s = w.beginLd(); encS_GetTimelineRows(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16316,6 +16423,7 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 15458: out = decS_MapLayerTime(r, r.ldEnd(), { type: 'mapLayerTime' }) as T.Query; break;
       case 15466: out = decS_GetSourceSize(r, r.ldEnd(), { type: 'getSourceSize' }) as T.Query; break;
       case 15474: out = decS_CheckPrecompose(r, r.ldEnd(), { type: 'checkPrecompose' }) as T.Query; break;
+      case 15482: out = decS_GetTimelineRows(r, r.ldEnd(), { type: 'getTimelineRows' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -16373,6 +16481,7 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'mapLayerTime': w.varint(15458); { const s = w.beginLd(); encS_MappedTime(w, v); w.endLd(s); } return;
     case 'getSourceSize': w.varint(15466); { const s = w.beginLd(); encS_SourceSizes(w, v); w.endLd(s); } return;
     case 'checkPrecompose': w.varint(15474); { const s = w.beginLd(); encS_PrecomposeCheck(w, v); w.endLd(s); } return;
+    case 'getTimelineRows': w.varint(15482); { const s = w.beginLd(); encS_TimelineRowSets(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16430,6 +16539,7 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 15458: out = decS_MappedTime(r, r.ldEnd(), { type: 'mapLayerTime' }) as T.QueryResult; break;
       case 15466: out = decS_SourceSizes(r, r.ldEnd(), { type: 'getSourceSize' }) as T.QueryResult; break;
       case 15474: out = decS_PrecomposeCheck(r, r.ldEnd(), { type: 'checkPrecompose' }) as T.QueryResult; break;
+      case 15482: out = decS_TimelineRowSets(r, r.ldEnd(), { type: 'getTimelineRows' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -16843,6 +16953,10 @@ export const codecs = {
   SourceSizes: mk<T.SourceSizes>(encS_SourceSizes, (r, e) => decS_SourceSizes(r, e, {})),
   CheckPrecompose: mk<T.CheckPrecompose>(encS_CheckPrecompose, (r, e) => decS_CheckPrecompose(r, e, {})),
   PrecomposeCheck: mk<T.PrecomposeCheck>(encS_PrecomposeCheck, (r, e) => decS_PrecomposeCheck(r, e, {})),
+  GetTimelineRows: mk<T.GetTimelineRows>(encS_GetTimelineRows, (r, e) => decS_GetTimelineRows(r, e, {})),
+  TimelineRow: mk<T.TimelineRow>(encS_TimelineRow, (r, e) => decS_TimelineRow(r, e, {})),
+  TimelineRowSet: mk<T.TimelineRowSet>(encS_TimelineRowSet, (r, e) => decS_TimelineRowSet(r, e, {})),
+  TimelineRowSets: mk<T.TimelineRowSets>(encS_TimelineRowSets, (r, e) => decS_TimelineRowSets(r, e, {})),
   RigBoneWeight: mk<T.RigBoneWeight>(encS_RigBoneWeight, (r, e) => decS_RigBoneWeight(r, e, {})),
   GetRigPose: mk<T.GetRigPose>(encS_GetRigPose, (r, e) => decS_GetRigPose(r, e, {})),
   RigPose: mk<T.RigPose>(encS_RigPose, (r, e) => decS_RigPose(r, e, {})),

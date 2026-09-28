@@ -1085,6 +1085,7 @@ struct GetCaptionCues;
 struct MapLayerTime;
 struct GetSourceSize;
 struct CheckPrecompose;
+struct GetTimelineRows;
 struct GetRigPose;
 struct GetWaveform;
 struct ListFonts;
@@ -1181,6 +1182,9 @@ struct MappedTime;
 struct LayerSourceSize;
 struct SourceSizes;
 struct PrecomposeCheck;
+struct TimelineRow;
+struct TimelineRowSet;
+struct TimelineRowSets;
 struct RigBonePose;
 struct RigIkGoal;
 struct RigBoneWeight;
@@ -3302,6 +3306,11 @@ struct CheckPrecompose {
   bool operator==(const CheckPrecompose&) const = default;
 };
 
+struct GetTimelineRows {
+  std::vector<LayerId> layers;
+  bool operator==(const GetTimelineRows&) const = default;
+};
+
 struct GetRigPose {
   LayerId layer;
   Time time = 0;
@@ -3501,6 +3510,7 @@ struct Query {
     map_layer_time = 1932,
     get_source_size = 1933,
     check_precompose = 1934,
+    get_timeline_rows = 1935,
     get_rig_pose = 1900,
     get_waveform = 1020,
     list_fonts = 1021,
@@ -3530,7 +3540,7 @@ struct Query {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetRigPose, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
+  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetTimelineRows, GetRigPose, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Query&) const = default;
 };
@@ -4273,6 +4283,29 @@ struct PrecomposeCheck {
   bool operator==(const PrecomposeCheck&) const = default;
 };
 
+struct TimelineRow {
+  std::string prop;
+  std::string label;
+  std::string group;
+  std::vector<std::string> members;
+  std::optional<std::string> merged;
+  std::vector<std::string> value_props;
+  std::optional<std::string> value_unit;
+  bool mask_track = false;
+  bool operator==(const TimelineRow&) const = default;
+};
+
+struct TimelineRowSet {
+  LayerId layer;
+  std::vector<TimelineRow> rows;
+  bool operator==(const TimelineRowSet&) const = default;
+};
+
+struct TimelineRowSets {
+  std::vector<TimelineRowSet> sets;
+  bool operator==(const TimelineRowSets&) const = default;
+};
+
 struct RigBonePose {
   std::string id;
   double x = 0.0;
@@ -4694,6 +4727,7 @@ struct QueryResult {
     map_layer_time = 1932,
     get_source_size = 1933,
     check_precompose = 1934,
+    get_timeline_rows = 1935,
     get_rig_pose = 1900,
     get_waveform = 1020,
     list_fonts = 1021,
@@ -4723,7 +4757,7 @@ struct QueryResult {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, RigPose, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
+  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, TimelineRowSets, RigPose, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const QueryResult&) const = default;
 };
@@ -6060,6 +6094,8 @@ void encode(wire::Writer& w, const GetSourceSize& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetSourceSize& out);
 void encode(wire::Writer& w, const CheckPrecompose& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CheckPrecompose& out);
+void encode(wire::Writer& w, const GetTimelineRows& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetTimelineRows& out);
 void encode(wire::Writer& w, const GetRigPose& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetRigPose& out);
 void encode(wire::Writer& w, const GetWaveform& v);
@@ -6252,6 +6288,12 @@ void encode(wire::Writer& w, const SourceSizes& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SourceSizes& out);
 void encode(wire::Writer& w, const PrecomposeCheck& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PrecomposeCheck& out);
+void encode(wire::Writer& w, const TimelineRow& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, TimelineRow& out);
+void encode(wire::Writer& w, const TimelineRowSet& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, TimelineRowSet& out);
+void encode(wire::Writer& w, const TimelineRowSets& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, TimelineRowSets& out);
 void encode(wire::Writer& w, const RigBonePose& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RigBonePose& out);
 void encode(wire::Writer& w, const RigIkGoal& v);

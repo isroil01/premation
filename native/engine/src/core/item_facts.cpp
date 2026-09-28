@@ -11,6 +11,7 @@
 #include "handlers_common.hpp"
 #include "handlers_items.hpp"
 #include "jsmath.hpp"
+#include "ptree.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "time_conv.hpp"
@@ -226,6 +227,29 @@ std::vector<api::LayerSourceSize> source_sizes(const Document& d, const std::vec
     std::optional<std::pair<double, double>> size = source_size_of(d, *n);
     if (!size || !(size->first > 0 && size->second > 0)) size = kind_default_size(n->kind());
     if (size) out.push_back(api::LayerSourceSize{id, size->first, size->second});
+  }
+  return out;
+}
+
+std::vector<api::TimelineRowSet> timeline_rows(const Document& d, const std::vector<std::string>& layers) {
+  std::vector<api::TimelineRowSet> out;
+  for (const std::string& id : layers) {
+    if (!comp_of_layer(d, id) || d.node(id) == nullptr) continue;
+    api::TimelineRowSet set;
+    set.layer = id;
+    for (const StaticPropertyRow& r : build_static_property_tree(d, id)) {
+      api::TimelineRow row;
+      row.prop = r.prop;
+      row.label = r.label;
+      row.group = r.group;
+      row.members = r.members;
+      row.merged = r.merged;
+      row.value_props = r.valueProps ? *r.valueProps : r.members;
+      row.value_unit = r.valueUnit;
+      row.mask_track = r.maskTrack;
+      set.rows.push_back(std::move(row));
+    }
+    out.push_back(std::move(set));
   }
   return out;
 }

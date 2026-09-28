@@ -47,6 +47,7 @@ StaticPropertyRow color_row(const Node* n, const std::string& base, std::string 
   r.label = label ? *label : resolve_property_meta(base, n).label;
   r.group = std::move(group);
   r.members = {base + "_r", base + "_g", base + "_b", base + "_a"};
+  r.valueProps = std::vector<std::string>{};
   return r;
 }
 
@@ -155,6 +156,7 @@ std::vector<StaticPropertyRow> paint_rows(const Document& d, const Node& n) {
     const std::string pathProp = "paint." + id + ".path";
     const bool keyed = anim_is_data_animated(d, n.id, pathProp);
     out.push_back(row(&n, pathProp, "effects", keyed ? std::vector<std::string>{pathProp} : std::vector<std::string>{}));
+    out.back().valueProps = std::vector<std::string>{};
     auto num = [&](std::string_view key) {
       const std::string p = "paint." + id + "." + std::string(key);
       out.push_back(row(&n, p, "effects", {p}));
@@ -213,6 +215,7 @@ std::vector<StaticPropertyRow> component_prop_rows(const Document& d, const Node
       const std::string group = group_for_prop(d, key, &n);
       const bool keyable = resolve_property_meta(key, &n).keyframeable;
       out.push_back(row(&n, key, group, keyable ? std::vector<std::string>{key} : std::vector<std::string>{}));
+      if (!keyable) out.back().valueProps = std::vector<std::string>{key};
     }
   }
   return out;
@@ -309,6 +312,7 @@ std::vector<StaticPropertyRow> shape_path_rows(const Node& n) {
   r.label = "Path";
   r.group = "contents";
   r.members = {"path.points"};
+  r.valueProps = std::vector<std::string>{};
   out.push_back(std::move(r));
   return out;
 }

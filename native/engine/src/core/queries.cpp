@@ -1009,6 +1009,9 @@ struct Q {
   api::QueryResult operator()(const api::GetSourceSize& q) const {
     return query_result_for<api::GetSourceSize>(api::SourceSizes{source_sizes(d, q.layers)});
   }
+  api::QueryResult operator()(const api::GetTimelineRows& q) const {
+    return query_result_for<api::GetTimelineRows>(api::TimelineRowSets{timeline_rows(d, q.layers)});
+  }
   api::QueryResult operator()(const api::CheckPrecompose& q) const {
     require_comp(d, q.comp);
     return query_result_for<api::CheckPrecompose>(api::PrecomposeCheck{precompose_leave_reason(d, q.comp, q.layers)});

@@ -13,6 +13,7 @@ import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { sec, type Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import type { Value } from '@motion/engine-api';
+import { fetchTimelineRows } from '@stores/timelineRows';
 import { buildPropertyRows } from './buildPropertyRows';
 
 // The rows are the document MIRROR's keyframes (B4), so the fixture is a real
@@ -20,7 +21,12 @@ import { buildPropertyRows } from './buildPropertyRows';
 let h: Harness & { engine: LocalEngine };
 let A = '';
 
-const byLabel = (nodeId: string) => new Map(buildPropertyRows(nodeId).map((r) => [r.label, r]));
+/** The rows over the engine's row projection (`getTimelineRows`, fetched first) and the mirror's keys. */
+const rowsOf = async (nodeId: string) => {
+  await fetchTimelineRows([nodeId]);
+  return buildPropertyRows(nodeId);
+};
+const byLabel = async (nodeId: string) => new Map((await rowsOf(nodeId)).map((r) => [r.label, r]));
 
 /** Key one property of layer A at each of `times` (seconds), all to `value`. */
 async function key(path: string, times: number[], value: Value): Promise<void> {
@@ -49,8 +55,8 @@ afterEach(async () => {
 });
 
 describe('placeholder rows', () => {
-  it('stand in for their members, unlit, with a stopwatch that keys all of them', () => {
-    const scale = byLabel(A).get('Scale')!;
+  it('stand in for their members, unlit, with a stopwatch that keys all of them', async () => {
+    const scale = (await byLabel(A)).get('Scale')!;
     expect(scale.animated).toBe(false);
     expect(scale.keyframes).toHaveLength(0);
     expect(scale.stopwatchProps).toEqual(['scaleX', 'scaleY']);
@@ -60,7 +66,7 @@ describe('placeholder rows', () => {
     // One key on Scale is one key holding both numbers (ENGINE_API.md §3.3),
     // so both member rows appear and each draws that key.
     await key('transform/scale', [0], { kind: 'vec2', value: { x: 100, y: 100 } });
-    const rows = byLabel(A);
+    const rows = (await byLabel(A));
     expect(rows.has('Scale')).toBe(false);
     expect(rows.get('Scale X')!.keyframes).toHaveLength(1);
     expect(rows.get('Scale Y')!.keyframes).toHaveLength(1);
@@ -74,7 +80,7 @@ describe('Position stays one row', () => {
   it('draws one diamond per Position key, X and Y together', async () => {
     await key('transform/position', [0], { kind: 'vec2', value: { x: 0, y: 0 } });
     await key('transform/position', [1], { kind: 'vec2', value: { x: 100, y: 0 } });
-    const rows = byLabel(A);
+    const rows = (await byLabel(A));
     const position = rows.get('Position')!;
     expect(position.prop).toBe(POSITION_PSEUDO_PROP);
     expect(position.keyframes).toHaveLength(2); // t=0 (both axes) and t=1
@@ -87,7 +93,7 @@ describe('Position stays one row', () => {
 describe('effect parameters', () => {
   it('appear as rows before they are keyed, under the Effects group', async () => {
     const { fxId, param } = await addGlow();
-    const row = buildPropertyRows(A).find((r) => r.stopwatchProps?.[0] === effectPropPath(fxId, param));
+    const row = (await rowsOf(A)).find((r) => r.stopwatchProps?.[0] === effectPropPath(fxId, param));
     expect(row).toBeDefined();
     expect(row!.animated).toBe(false);
     expect(row!.group).toBe('effects');
@@ -98,7 +104,7 @@ describe('effect parameters', () => {
     const path = effectPropPath(fxId, param);
     await key(`${group}/${param}`, [0], { kind: 'scalar', value: 10 });
     await key(`${group}/${param}`, [1], { kind: 'scalar', value: 40 });
-    const row = buildPropertyRows(A).find((r) => r.prop === path)!;
+    const row = (await rowsOf(A)).find((r) => r.prop === path)!;
     expect(row.animated).not.toBe(false);
     expect(row.keyframes).toHaveLength(2);
     expect(row.group).toBe('effects');
@@ -106,7 +112,7 @@ describe('effect parameters', () => {
   it('Compositing ▸ Effect Opacity keeps its own row once keyed (no stray engine-named row)', async () => {
     const { group, fxId } = await addGlow();
     await key(`${group}/compositing/opacity`, [0, 1], { kind: 'scalar', value: 50 });
-    const rows = buildPropertyRows(A);
+    const rows = (await rowsOf(A));
     expect(rows.some((r) => r.label.includes('ADBE Effect Mask Opacity'))).toBe(false);
     const opacity = rows.filter((r) => r.prop === effectOpacityPath(fxId));
     expect(opacity).toHaveLength(1);
@@ -119,11 +125,11 @@ describe('tracks the tree does not describe', () => {
     // Skew is a keyframeable property of the layer that the timeline's static
     // property tree has no row for. The keyframes are real, so hiding them
     // would hide real work: the row goes after every tree row, under a heading.
-    const staticRows = buildPropertyRows(A);
+    const staticRows = (await rowsOf(A));
     expect(staticRows.some((r) => r.prop === 'skew' || r.stopwatchProps?.includes('skew'))).toBe(false);
 
     await key('layer/skew', [0], { kind: 'scalar', value: 5 });
-    const rows = buildPropertyRows(A);
+    const rows = (await rowsOf(A));
     const row = rows.find((r) => r.prop === 'skew');
     expect(row).toBeDefined();
     expect(row!.group).toBe('transform');
