@@ -33,7 +33,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Drag
 import { cn } from '@utils/cn';
 import { useProjectStore } from '@stores/projectStore';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
+import { useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow, useActiveMirrorComp, useMirrorSelect } from '@hooks/useMirror';
 import { isReplaceableSourceLayer, uiKindOf } from '@core/mirror/layerKinds';
@@ -235,7 +235,7 @@ export function WorkspaceViewport({
   // Frame-coalesced, NOT the raw rev: this component is the whole viewport
   // shell — every SVG overlay under it reconciles when it does — and the raw
   // subscription re-rendered it once per pointermove during a drag.
-  const sceneRev = useSceneRevisionFrame();
+  const sceneRev = useMirrorRevisionFrame();
   // The blank-comp moment — AE's two ways in, said out loud.
   //
   // Scoped to the ACTIVE composition, not the whole scene graph: this used to

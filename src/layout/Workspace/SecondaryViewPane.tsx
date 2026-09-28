@@ -36,9 +36,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Gizmo3D } from '@motion/workspace';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useActiveCompRootId, useActiveCompSize } from '@hooks/useMirrorFrame';
+import { useActiveCompRootId, useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { useGuidesStore, CAMERA_ORTHO_VIEWS, type Camera3dMode } from '@stores/guidesStore';
 import { CUSTOM_VIEW_IDS, CUSTOM_VIEW_LABEL } from '@core/workspace/customViews';
 import { effectiveViewMode, useCompCameraViews } from '@layout/TopNav/ViewControls';
@@ -83,7 +82,8 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
   const time = useActiveWorkspace()?.time ?? 0;
   // B4: stays on the scene revision — it is this pane's RENDER trigger, and a
   // proxy finishing bumps the revision with no document event (assetStore).
-  const sceneRev = useSceneRevisionFrame();
+  // The document's revision (frame-coalesced) — the pane repaints per engine batch.
+  const sceneRev = useMirrorRevisionFrame();
   const storeMode = useGuidesStore((s) => s.secondaryViewMode);
   const storeSetMode = useGuidesStore((s) => s.setSecondaryViewMode);
   // Explicit props win (4-up cells bound to a quadViewModes slot); otherwise

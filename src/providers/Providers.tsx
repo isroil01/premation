@@ -124,7 +124,6 @@ import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { loadBlockTower } from '@core/scene/seedBlockTower';
 import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { applyRigPresetEdit } from '@core/engine/rigPaths';
 import { REFUSAL_TEXT } from '@core/animation/exponentialScale';
@@ -1466,10 +1465,13 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       icon: 'select-all',
       shortcut: { key: 'a', meta: true },
       enabled: () => true,
+      // AE's Select All: every layer of the composition in view (the mirror's
+      // stack). It selected every scene-graph node — other compositions' layers
+      // and the composition roots too (B4 round 6, a named fix).
       execute: () => {
-        const ids: string[] = [];
-        defaultSceneGraph.traverse((n) => ids.push(n.id));
-        useSelectionStore.getState().set(ids);
+        const m = documentMirror();
+        const comp = activeCompIdNow() ?? m.compIds[0];
+        useSelectionStore.getState().set(comp ? [...(m.comp(comp)?.layers ?? [])] : []);
       },
     },
     {
@@ -3116,9 +3118,13 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         } catch (err) {
           console.error('[boot] engine API failed to start', err);
         }
-        track(getEventBus().on('SceneGraphChanged', () => {
-          const nodeIds = new Set<string>();
-          defaultSceneGraph.traverse((node) => nodeIds.add(node.id));
+        // Selection pruning follows the document MIRROR (B4 round 6): once per
+        // engine batch that changes the layer or composition set, every
+        // selected id the document no longer has (a layer or a composition)
+        // drops out — in either engine mode.
+        track(documentMirror().subscribe(['layers', 'comps'], () => {
+          const m = documentMirror();
+          const nodeIds = new Set<string>([...m.layerIds(), ...m.compIds]);
           const layerSelection = useSelectionStore.getState().ids;
           const survivingLayers = layerSelection.filter((id) => nodeIds.has(id));
           if (survivingLayers.length !== layerSelection.length) {

@@ -25,7 +25,7 @@ import { copyKeyframes } from '@core/animation/keyframeClipboard';
 import { viewportFrameCache } from '@core/rendering/frameCache';
 import { createViewportDiskCache } from '@core/rendering/frameDiskCache';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { bumpScene } from '@stores/sceneStore';
 import { useProjectStore } from '@stores/projectStore';
 import { getTime as playheadNow } from '@stores/playbackClockStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
@@ -77,7 +77,7 @@ import { useSpaceTransport } from '@hooks/useSpaceTransport';
 import { mirrorBarOf, mirrorCompBars, type MirrorBar } from '@core/mirror/clipBars';
 import { settingsFps } from '@core/mirror/compFacts';
 import { mirrorCompIdForTransition, mirrorTransitionAtCut } from '@core/mirror/transitions';
-import { activeCompIdNow } from '@hooks/useMirror';
+import { activeCompIdNow, useMirrorRevision } from '@hooks/useMirror';
 import {
   goToNextKeyframe,
   goToPrevKeyframe,
@@ -205,10 +205,10 @@ function EditorShellInner(): JSX.Element {
     else store.toggle({ nodeId: trackId, prop });
   };
   const addSelected = useSelectionStore((s) => s.add);
-  // The shell still re-renders on every scene revision (legacy plumbing, the
-  // App area's to retire). The timeline model no longer needs it: its rows
-  // subscribe to the document mirror themselves (Timeline/useTimelineModel).
-  useSceneRevision((s) => s.rev);
+  // The shell re-renders on every document revision (the mirror's); the
+  // timeline model's rows subscribe to the document mirror themselves
+  // (Timeline/useTimelineModel).
+  useMirrorRevision();
   // Scalar selectors, NOT `useActiveWorkspace`.
   //
   // `useActiveWorkspace` returns the whole tab OBJECT, which immer replaces on
