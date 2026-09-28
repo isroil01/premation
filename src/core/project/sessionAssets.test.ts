@@ -112,7 +112,7 @@ describe('rehydrateReferencedAssets', () => {
     expect([...referencedAssetIds()].sort()).toEqual(['clip', 'song']);
   });
 
-  it('brings back ONLY what the opened document references, and rebinds its layers', async () => {
+  it('brings back ONLY what the opened document references', async () => {
     useAssetStore.setState({ assets: [asset('clip'), asset('unrelated')] });
     resetSessionAssets();
     expect([...parkedAmong(['clip', 'unrelated', 'never-seen'])].sort()).toEqual(['clip', 'unrelated']);
@@ -124,8 +124,8 @@ describe('rehydrateReferencedAssets', () => {
 
     const assets = useAssetStore.getState().assets;
     expect(assets.map((a) => a.id)).toEqual(['clip']);
-    const src = defaultSceneGraph.getNode('layer')!.components[0]!.props.src;
-    expect(src).toBe(assets[0]!.src);
+    // The page's replica keeps its src: the engine resolves a layer's media from
+    // the asset record (id / path), not from a rebound blob: URL (b4-round7).
     // Back in the session, so no longer parked.
     expect(parkedAmong(['clip']).size).toBe(0);
   });
