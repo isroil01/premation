@@ -23,6 +23,7 @@ import { describeComposition, formatCaptions, runEnginePrepare } from './cliPrep
 import { getKeyForProvider } from './aiKeyVault';
 import { resolveEngineExecutable } from './engineSupervisor';
 import { resolveFfmpegBinary } from './ffmpegBinary';
+import { EncoderProbe } from './encoderProbe';
 
 /**
  * A render job with its data table already read.
@@ -260,7 +261,15 @@ export async function runCliTask(task: CliTask): Promise<number> {
     return 0;
   }
 
-  const job = task.request.job;
+  const request = task.request.job;
+  // HDR10 / HLG: HEVC when this ffmpeg has libx265, else H.264 High 10 (said once).
+  let job: typeof request & { hdrEncoder?: 'libx265' | 'libx264' } = request;
+  if (request.format === 'hdr10' || request.format === 'hlg') {
+    const probe = new EncoderProbe({ bin: () => resolveFfmpegBinary({ vars: process.env, resourcesPath: process.resourcesPath ?? '', platform: process.platform, exists: existsSync }) });
+    const hdrEncoder = (await probe.has('libx265')) ? 'libx265' as const : 'libx264' as const;
+    if (hdrEncoder === 'libx264') print.event({ event: 'warning', message: 'warning: ffmpeg has no libx265 — writing H.264 High 10 without HDR10 mastering metadata.' });
+    job = { ...request, hdrEncoder };
+  }
   const what = job.aspect ? `Reframing to ${job.aspect} and rendering` : 'Rendering';
   print.line(`${what} ${path.basename(job.projectPath)} → ${job.outPath}`);
   const t0 = Date.now();

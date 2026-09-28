@@ -11,11 +11,9 @@
  * enters: `videoInput` is the part before the audio input, nothing more.
  *
  * Pure and electron-free so the equivalence is a unit test
- * (`ffmpegEncodeArgs.test.ts`) rather than a promise in a comment. HDR is not
- * here: it bakes mastering metadata measured over every frame into the encoder
- * parameters, which a stream cannot know before its first frame, and it retries
- * x265 → x264 over the same input — both of which need the staged files. It
- * stays inline in main.ts on the staged path.
+ * (`ffmpegEncodeArgs.test.ts`) rather than a promise in a comment. HDR10 / HLG
+ * is `buildHdrEncodeArgs`: the engine delivers PQ / HLG code values in BT.2020
+ * (native/engine/src/export/hdr_convert.hpp) and this tags and encodes them.
  */
 
 export type EncodeFormat = 'mp4' | 'webm' | 'gif' | 'mov';
@@ -322,4 +320,112 @@ export function buildEncodeArgs(o: EncodeArgsOptions): string[] {
       ];
     }
   }
+}
+
+// ── HDR10 / HLG ──────────────────────────────────────────────────────────────
+
+export type HdrTransfer = 'pq' | 'hlg';
+/** HEVC 10-bit when the host ffmpeg has libx265; H.264 High 10 otherwise (no mastering SEI). */
+export type HdrVideoEncoder = 'libx265' | 'libx264';
+
+/**
+ * HDR10 static metadata (SMPTE ST 2086 + CTA-861.3), in nits.
+ *
+ * The encoder writes it into the stream headers BEFORE the first frame, so
+ * the light levels cannot be the ones the render measures (the engine reports
+ * those in the job's `stats.hdr`). The defaults are the mastering display the
+ * engine clips to — MaxCLL at its peak is a true upper bound — and the
+ * MaxFALL the previous HDR export used when it had no measurement.
+ */
+export interface HdrMastering {
+  maxCll: number;
+  maxFall: number;
+  displayMaxNits: number;
+  displayMinNits: number;
+}
+
+export const DEFAULT_HDR_MASTERING: HdrMastering = { maxCll: 1000, maxFall: 400, displayMaxNits: 1000, displayMinNits: 0.005 };
+
+/** x265 `master-display`: BT.2020 primaries, D65, luminance in 0.0001 nits. */
+export function x265MasterDisplay(m: HdrMastering): string {
+  const lmax = Math.round(m.displayMaxNits * 10000);
+  const lmin = Math.round(m.displayMinNits * 10000);
+  return `G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L(${lmax},${lmin})`;
+}
+
+/** The x265-params for an HDR stream. HLG carries no ST 2086 / CLL SEI. */
+export function x265HdrParams(transfer: HdrTransfer, m: HdrMastering): string {
+  const trc = transfer === 'pq' ? 'smpte2084' : 'arib-std-b67';
+  const base = `repeat-headers=1:colorprim=bt2020:transfer=${trc}:colormatrix=bt2020nc:range=limited`;
+  if (transfer === 'hlg') return base;
+  return `hdr10=1:hdr10-opt=1:${base}:master-display=${x265MasterDisplay(m)}:max-cll=${Math.round(m.maxCll)},${Math.round(m.maxFall)}`;
+}
+
+export interface HdrEncodeArgsOptions {
+  /** mp4 = HEVC (or H.264 High 10); mov = ProRes 422 HQ / 4444 (10-bit, tagged; no SEI). */
+  container: 'mp4' | 'mov';
+  transfer: HdrTransfer;
+  /** mp4 only. Defaults to libx265 (the caller probes; see `EncoderProbe.has`). */
+  encoder?: HdrVideoEncoder;
+  /** From `rawVideoInput(…, 'rgba64le')`: the engine's PQ / HLG code values, BT.2020. */
+  videoInput: string[];
+  quality?: EncodeQuality;
+  /** mov only: 'hq' (default) or '4444' — the 422 lower tiers are not HDR masters. */
+  proresProfile?: EncodeProresProfile;
+  audio: string | null;
+  chaptersFile: string | null;
+  mastering?: HdrMastering;
+  out: string;
+}
+
+/**
+ * The HDR encode. The raw frames carry no colour description, so the filter
+ * graph tags them (BT.2020, PQ / HLG) the way `tagSrgb` does for SDR, and the
+ * RGB → YUV conversion uses the BT.2020 non-constant-luminance matrix, limited
+ * range; the output streams and container carry the same tags.
+ */
+export function buildHdrEncodeArgs(o: HdrEncodeArgsOptions): string[] {
+  const trc = o.transfer === 'pq' ? 'smpte2084' : 'arib-std-b67';
+  const m = o.mastering ?? DEFAULT_HDR_MASTERING;
+  const hasAudio = !!o.audio;
+  const vf = `setparams=color_primaries=bt2020:color_trc=${trc},scale=trunc(iw/2)*2:trunc(ih/2)*2:out_color_matrix=bt2020:out_range=tv`;
+  const chapterInput = o.chaptersFile ? ['-i', o.chaptersFile] : [];
+  const chapterMap = o.chaptersFile ? ['-map_chapters', String(hasAudio ? 2 : 1)] : [];
+  const tags = ['-color_primaries', 'bt2020', '-color_trc', trc, '-colorspace', 'bt2020nc', '-color_range', 'tv'];
+  const base = ['-y', ...o.videoInput, ...(hasAudio ? ['-i', o.audio!] : []), ...chapterInput];
+  if (o.container === 'mov') {
+    const p4444 = o.proresProfile === '4444';
+    return [
+      ...base,
+      '-c:v', 'prores_ks', '-profile:v', p4444 ? '4' : '3', '-pix_fmt', p4444 ? 'yuv444p10le' : 'yuv422p10le',
+      '-vf', vf,
+      ...tags,
+      ...(hasAudio ? ['-c:a', 'pcm_s16le', '-shortest'] : []),
+      ...chapterMap,
+      o.out,
+    ];
+  }
+  const video = (o.encoder ?? 'libx265') === 'libx265'
+    ? [
+        '-c:v', 'libx265', '-preset', o.quality === 'draft' ? 'veryfast' : 'medium',
+        '-crf', o.quality === 'draft' ? '28' : o.quality === 'medium' ? '24' : '20',
+        '-x265-params', x265HdrParams(o.transfer, m),
+        // HEVC in MP4 needs the `hvc1` tag or QuickTime/Safari refuse the file.
+        '-tag:v', 'hvc1',
+      ]
+    : [
+        '-c:v', 'libx264', '-profile:v', 'high10', '-preset', o.quality === 'draft' ? 'veryfast' : 'medium',
+        '-crf', o.quality === 'draft' ? '28' : o.quality === 'medium' ? '23' : '18',
+      ];
+  return [
+    ...base,
+    ...video,
+    '-pix_fmt', 'yuv420p10le',
+    '-vf', vf,
+    ...tags,
+    '-movflags', '+faststart',
+    ...(hasAudio ? ['-c:a', 'aac', '-b:a', '192k', '-shortest'] : []),
+    ...chapterMap,
+    o.out,
+  ];
 }

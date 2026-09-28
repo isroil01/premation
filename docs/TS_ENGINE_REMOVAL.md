@@ -281,8 +281,15 @@ paths (371 → 367).
   engine's `getThumbnail`. Deleted: `runExport`, `videoSink`, the WebM
   muxer, the GIF encoder, the raw pipe, `framePipeline`, the encode worker,
   `renderJob`, `hdrTransfer`, `exportPreview`, main's page render IPC
-  (staging / streaming / resume: `ffmpegStream.ts`, `renderResume.ts`), and
-  the HDR10 / HLG presets (**post-launch**: the engine has no PQ/HLG output yet).
+  (staging / streaming / resume: `ffmpegStream.ts`, `renderResume.ts`). The
+  HDR10 / HLG presets are back on the engine (p4-round3): the export job's
+  `hdr` option encodes PQ / HLG in BT.2020 from the half-float surface
+  (`hdr_convert.hpp`, the viewer transform overridden to sRGB, light levels
+  measured into `stats.hdr`); main tags and encodes it (`buildHdrEncodeArgs`:
+  libx265 with the ST 2086 / CLL SEI, H.264 High 10 without libx265, or a
+  ProRes HDR master for a mov with `hdr`). The SEI is written before the
+  first frame, so it carries the mastering display's defaults (MaxCLL 1000,
+  MaxFALL 400) or the spec's `hdrMastering`, not the measured levels.
 - *CLI on the engine; no hidden window.* `premation-engine --prepare`
   (native/engine/src/cli_prepare.cpp) drives a Session in process:
   `premation comps` (listComps), `premation reframe --aspect` (the
@@ -291,9 +298,11 @@ paths (371 → 367).
   SRT/VTT written by main). `--scale` and the png still are export-job options.
   `#/render`, `RenderPage`, `headlessRender.ts` and the page reframe
   analysis (`saliency`, `reframePath`) are deleted.
-  **Post-launch** (refused with a clear line): `--captions` (caption layers
-  need a C++ builder), `--data` (template fill in C++), `--commands` (the log
-  format is the TypeScript engine's; a C++-recorded log format is needed).
+  p4-round3: `--commands` (main encodes the recorded requests with the
+  generated codec, `--prepare` replays them), `--data` (the `--prepare` fill
+  step, one render per row) and `--captions` (the `setCaptions` command) run
+  in the engine too. Gap: a `--data` Source Text fill does not keep the
+  page's per-run styles (`keepRunsCommands`).
 - *Render worker* renders only through `premation-engine --export`; its
   offscreen window, render page, preload and Vite bundle are deleted.
 

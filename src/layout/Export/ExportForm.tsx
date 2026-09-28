@@ -59,10 +59,10 @@ const QUALITY: ReadonlyArray<{ value: ExportQuality; label: string; hint: string
   { value: 'draft', label: 'Draft', hint: 'Fast and visibly compressed. For checking timing.' },
 ];
 
-const MOVING: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif']);
-const QUEUEABLE: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
-const RANGED: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif', 'wav', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
-const HAS_AUDIO: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+const MOVING: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif']);
+const QUEUEABLE: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+const RANGED: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif', 'wav', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+const HAS_AUDIO: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
 const ALPHA_FORMATS: ReadonlySet<ExportFormat> = new Set(['webm', 'mov', 'png', 'png-sequence', 'gif', 'exr-sequence']);
 const NON_RASTER: ReadonlySet<ExportFormat> = new Set(['wav', 'lottie', 'json', 'edl', 'otio', 'fcpxml', 'ale', 'mogrt']);
 
@@ -70,7 +70,7 @@ const NON_RASTER: ReadonlySet<ExportFormat> = new Set(['wav', 'lottie', 'json', 
 const PRORES_PROFILES: ReadonlyArray<ProresProfile> = ['4444', 'hq', '422', 'lt', 'proxy'];
 
 const FORMAT_GROUPS: ReadonlyArray<{ id: string; label: string; formats: ExportFormat[] }> = [
-  { id: 'video', label: 'Video', formats: ['mp4', 'webm', 'mov', 'gif'] },
+  { id: 'video', label: 'Video', formats: ['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif'] },
   { id: 'frames', label: 'Frames', formats: ['png-sequence', 'jpg-sequence', 'exr-sequence', 'png'] },
   { id: 'audio', label: 'Audio', formats: ['wav'] },
   { id: 'editorial', label: 'Editorial', formats: ['otio', 'fcpxml', 'edl', 'ale'] },

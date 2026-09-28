@@ -420,3 +420,12 @@ describe('F1: 16-bit output', () => {
     expect(() => validateSpec({ ...spec(), format: 'mov', bitDepth: 10 })).toThrow(/8 or 16/);
   });
 });
+
+describe('HDR', () => {
+  it('hdr is a mov option (pq / hlg); the mastering overrides keep only light levels', () => {
+    expect(validateSpec({ ...spec(), format: 'mov', hdr: 'hlg' }).hdr).toBe('hlg');
+    expect(() => validateSpec({ ...spec(), format: 'mov', hdr: 'hdr10' })).toThrow(/pq or hlg/);
+    expect(() => validateSpec({ ...spec(), format: 'mp4', hdr: 'pq' })).toThrow(/hdr10 and hlg formats/);
+    expect(validateSpec({ ...spec(), format: 'hdr10', hdrMastering: { maxCll: 800, maxFall: -1, displayMaxNits: 'x' } }).hdrMastering).toEqual({ maxCll: 800 });
+  });
+});

@@ -9,8 +9,12 @@
 
 import type { ExportChapter } from '@core/export/chapters';
 
-/** The moving-picture formats the engine export writes. */
-export type VideoFormat = 'mp4' | 'webm' | 'gif' | 'mov';
+/**
+ * The moving-picture formats the engine export writes. `hdr10` (PQ) and `hlg`
+ * are MP4 deliveries: HEVC 10-bit, BT.2020 (H.264 High 10 when the host
+ * ffmpeg has no libx265) — the engine encodes the transfer (hdr_convert.hpp).
+ */
+export type VideoFormat = 'mp4' | 'hdr10' | 'hlg' | 'webm' | 'gif' | 'mov';
 
 export type ExportQuality = 'high' | 'medium' | 'draft';
 
@@ -143,6 +147,10 @@ export function outputExtFor(format: OutputFormat): string {
     case 'jpg-sequence':
     case 'exr-sequence':
       return 'zip';
+    // Both HDR deliveries are MP4s; a ".hdr10" file has never existed.
+    case 'hdr10':
+    case 'hlg':
+      return 'mp4';
     default:
       return format;
   }

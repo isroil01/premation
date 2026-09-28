@@ -27,6 +27,7 @@
 #include "exr_write.hpp"
 #include "ffmetadata.hpp"
 #include "frame_convert.hpp"
+#include "hdr_convert.hpp"
 #include "jpeg_write.hpp"
 #include "log.hpp"
 #include "png_write.hpp"
@@ -184,6 +185,9 @@ struct DocCopy {
       err = std::string("the project could not be opened: ") + e.what();
       return false;
     }
+    // An HDR delivery encodes PQ / HLG itself (hdr_convert.hpp): the viewer's
+    // PQ / HLG preview or ACES SDR tone map would be applied twice or clip at white.
+    if (!job.hdr.empty()) d.color_mut().displayTransform = "srgb";
     // `thisComp` in expressions is the composition being rendered.
     view.tabComp = comp;
     env = std::make_unique<doc::DocExprEnv>(d, view, cache);
@@ -216,6 +220,8 @@ struct Plan {
   bool alpha = false;
   /// Output bits per channel: 8 (rgba, the raw pipe) or 16 (rgba64le from a half-float surface).
   int depth = 8;
+  /// An HDR delivery's encode (JobSpec::hdr); nullopt = SDR.
+  std::optional<HdrEncode> hdr;
   sc::ViewSpec view;
   sc::CompOverrides overrides;
   [[nodiscard]] std::int64_t frames() const noexcept { return end - start + 1; }
@@ -281,13 +287,18 @@ bool make_plan(const doc::Document& d, const JobSpec& job, Plan& p, std::string&
   p.end = std::min<std::int64_t>(total - 1, job.endFrame.value_or(total - 1));
   p.end = std::max(p.start, p.end);
   p.alpha = job.transparent.value_or(rec->at("transparent").b());
+  if (!job.hdr.empty()) {
+    // HDR is an opaque 16-bit delivery (hdr_convert.hpp).
+    p.hdr = HdrEncode{job.hdr == "hlg" ? HdrTransfer::hlg : HdrTransfer::pq, job.hdrPeakNits, job.hdrWhiteNits};
+    p.alpha = false;
+  }
   p.overrides.forExport = true;
   p.overrides.transparent = p.alpha;
   p.view = sc::export_view(p.width, p.height, p.compW, p.compH);
   p.view.gpuEffects = sc::engine_gpu_effects();  // E4: exports render on the device too
   // RGBA surface: the read-back rows are the raw pipe's channel order already.
   // 16-bit output draws the same display-encoded frame into a half-float surface.
-  p.depth = job.depth;
+  p.depth = p.hdr ? 16 : job.depth;
   p.view.surfaceFormat = p.depth == 16 ? api::RenderTextureFormat::rgba16float : api::RenderTextureFormat::rgba8unorm;
   return true;
 }
@@ -339,6 +350,8 @@ struct Stats {
   std::uint64_t rasterMisses = 0;
   unsigned buildThreads = 0;
   unsigned inFlight = 0;
+  /// An HDR job's delivered light levels (render thread only).
+  HdrLightLevels hdrLevels;
 };
 
 /// A frame buffer on its way to the encoder.
@@ -383,6 +396,8 @@ class Pipeline {
           const std::function<bool(const OutFrame&)>& sink, std::string& failure) {
     const std::size_t window = docs_.size() * 2 + inFlight + 2;
     const std::size_t frameBytes = static_cast<std::size_t>(plan_.width) * static_cast<std::size_t>(plan_.height) * (plan_.depth == 16 ? 8U : 4U);
+    // An HDR job's tables, built once (hdr_convert.hpp).
+    const std::unique_ptr<HdrEncoder> hdr = plan_.hdr ? std::make_unique<HdrEncoder>(*plan_.hdr) : nullptr;
 
     // Build workers: claim the next index while it is within `window` of the render cursor.
     std::vector<JoiningThread> workers;
@@ -461,7 +476,9 @@ class Pipeline {
       const bool ok = renderer.take_readback(
           pending,
           [&](std::span<const std::uint8_t> rows) {
-            if (pending.half) {
+            if (pending.half && hdr) {
+              hdr->convert(rows, pending.width, pending.height, pending.bytesPerRow, buf, stats_.hdrLevels);
+            } else if (pending.half) {
               half_surface_to_rgba64(rows, pending.width, pending.height, pending.bytesPerRow, buf);
             } else {
               surface_to_straight_rgba(rows, pending.width, pending.height, pending.bytesPerRow, pending.bgra, buf);
@@ -669,6 +686,30 @@ bool parse_job(const Json& j, JobSpec& out, std::string& error) {
     }
     out.sequence = s;
   }
+  if (!j.at("hdr").is_undefined() && !j.at("hdr").is_null()) {
+    if (!j.at("hdr").is_string() || (j.at("hdr").str() != "pq" && j.at("hdr").str() != "hlg")) {
+      error = "job: \"hdr\" must be pq or hlg";
+      return false;
+    }
+    out.hdr = j.at("hdr").str();
+    if (!out.sequence.empty()) {
+      error = "job: an HDR job writes to an encoder, not an image sequence";
+      return false;
+    }
+  }
+  for (const auto& [k, dst] : {std::pair<const char*, double*>{"hdrPeakNits", &out.hdrPeakNits}, {"hdrWhiteNits", &out.hdrWhiteNits}}) {
+    const Json& v = j.at(k);
+    if (v.is_undefined() || v.is_null()) continue;
+    if (!v.is_finite_number() || !(v.num() > 0) || v.num() > 10000) {
+      error = std::string("job: \"") + k + "\" must be a light level in nits (0 … 10000]";
+      return false;
+    }
+    *dst = v.num();
+  }
+  if (out.hdrWhiteNits > out.hdrPeakNits) {
+    error = "job: \"hdrWhiteNits\" is above \"hdrPeakNits\"";
+    return false;
+  }
   if (j.at("chapters").is_array()) {
     for (const Json& c : j.at("chapters").arr()) {
       if (!c.at("startMs").is_finite_number() || !c.at("endMs").is_finite_number() || !c.at("title").is_string()) {
@@ -854,6 +895,8 @@ int run_export(const std::string& jobPath) {
     j.set("compName", Json::string(plan.compName));
     j.set("alpha", Json::boolean(plan.alpha));
     j.set("depth", Json::number(plan.depth));
+    // Echoed so the supervisor never tags SDR frames as HDR (an engine without it omits the key).
+    j.set("hdr", plan.hdr ? Json::string(job.hdr) : Json::null());
     j.set("audio", audioPath ? Json::string(*audioPath) : Json::null());
     j.set("warnings", str_array(warnings));
     j.set("ms", Json::number(stats.preflightMs));
@@ -1027,6 +1070,15 @@ int run_export(const std::string& jobPath) {
     s.set("buildThreads", Json::number(stats.buildThreads));
     s.set("inFlight", Json::number(stats.inFlight));
     s.set("adapter", Json::string(renderer->adapter()));
+    if (plan.hdr) {
+      // What was delivered (CTA-861.3, whole nits). The encoder's SEI was
+      // written before the first frame, so it carries the supervisor's values.
+      Json h = Json::object();
+      h.set("transfer", Json::string(job.hdr));
+      h.set("maxCll", Json::number(std::round(stats.hdrLevels.maxCll)));
+      h.set("maxFall", Json::number(std::round(stats.hdrLevels.maxFall)));
+      s.set("hdr", std::move(h));
+    }
     Json j = Json::object();
     j.set("ev", Json::string("done"));
     j.set("frames", Json::number(static_cast<double>(total)));

@@ -14,6 +14,8 @@ import {
   engineEncodeArgs,
   engineIneligible,
   engineJobFile,
+  engineOutputFile,
+  hdrTransferOf,
   startEngineExport,
   type EngineExportDeps,
   type EngineExportSpec,
@@ -153,6 +155,58 @@ describe('the job file and the encoder command line', () => {
     const args = engineEncodeArgs(spec({ format: 'mov', proresProfile: '4444', bitDepth: 16 }), { ...pre, depth: 16 }, abs('w', 'out.mov'));
     expect(args.slice(0, 6)).toEqual(['-y', '-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-video_size']);
     expect(args).toContain('yuva444p10le');
+  });
+});
+
+describe('HDR10 / HLG', () => {
+  it('hdr10 / hlg are engine formats; the job asks for the transfer, 16-bit and opaque', () => {
+    const exe = abs('bin', 'premation-engine.exe');
+    expect(engineIneligible(spec({ format: 'hdr10' }), exe)).toBeNull();
+    expect(engineIneligible(spec({ format: 'hlg' }), exe)).toBeNull();
+    expect(hdrTransferOf({ format: 'hdr10' })).toBe('pq');
+    expect(hdrTransferOf({ format: 'hlg' })).toBe('hlg');
+    expect(hdrTransferOf({ format: 'mov', hdr: 'hlg' })).toBe('hlg');
+    expect(hdrTransferOf({ format: 'mp4', hdr: 'pq' })).toBeNull();
+    expect(engineJobFile(spec({ format: 'hdr10', transparent: true }), abs('w'))).toMatchObject({ hdr: 'pq', depth: 16, transparent: false, audio: true, hdrPeakNits: 1000 });
+    expect(engineJobFile(spec({ format: 'hlg', hdrMastering: { displayMaxNits: 4000 } }), abs('w'))).toMatchObject({ hdr: 'hlg', hdrPeakNits: 4000 });
+    expect(engineJobFile(spec({ format: 'mov', hdr: 'pq' }), abs('w'))).toMatchObject({ hdr: 'pq', depth: 16 });
+    expect(engineJobFile(spec(), abs('w'))).not.toHaveProperty('hdr');
+    expect(engineOutputFile(abs('w'), 'hdr10')).toBe(abs('w', 'out.mp4'));
+  });
+
+  it('the encode reads rgba64le and is the HDR command line (the probed encoder, the mastering overrides)', () => {
+    const args = engineEncodeArgs(spec({ format: 'hdr10', hdrEncoder: 'libx264' }), { ...pre, depth: 16, hdr: 'pq' }, abs('w', 'out.mp4'));
+    expect(args.slice(0, 6)).toEqual(['-y', '-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-video_size']);
+    expect(args).toEqual(expect.arrayContaining(['-c:v', 'libx264', '-profile:v', 'high10', '-color_trc', 'smpte2084']));
+    const x265 = engineEncodeArgs(spec({ format: 'hdr10', hdrMastering: { maxCll: 850, maxFall: 120 } }), { ...pre, depth: 16, hdr: 'pq' }, abs('w', 'out.mp4'));
+    expect(x265.join(' ')).toContain('max-cll=850,120');
+    const chapters = engineEncodeArgs(spec({ format: 'hlg', chapters: [{ startMs: 0, endMs: 1000, title: 'Intro' }] }), { ...pre, depth: 16, hdr: 'hlg' }, abs('w', 'out.mp4'));
+    expect(chapters).toContain('-map_chapters');
+  });
+
+  it('an engine that does not echo the transfer is never handed an HDR encode', async () => {
+    const r = rig();
+    const run = startEngineExport('j1', spec({ format: 'hdr10' }), { progress: () => undefined }, r.deps);
+    await until(() => r.engines.length === 1);
+    const e = r.engines[0]!;
+    e.say({ ev: 'preflight', ok: true, ...pre, depth: 16 });  // no "hdr": an engine that predates it
+    await until(() => e.received.length === 1);
+    expect(JSON.parse(e.received[0]!)).toEqual({ cancel: true });
+    e.exit(EXPORT_EXIT.cancelled);
+    await expect(run.done).resolves.toMatchObject({ kind: 'fallback', reason: expect.stringMatching(/does not write pq/) });
+    expect(r.moved).toEqual([]);
+
+    const ok = rig();
+    const run2 = startEngineExport('j2', spec({ format: 'hdr10' }), { progress: () => undefined }, ok.deps);
+    await until(() => ok.engines.length === 1);
+    const e2 = ok.engines[0]!;
+    e2.say({ ev: 'preflight', ok: true, ...pre, depth: 16, hdr: 'pq' });
+    await until(() => e2.received.length === 1);
+    expect(JSON.parse(e2.received[0]!).encode.args).toEqual(expect.arrayContaining(['-color_trc', 'smpte2084']));
+    e2.say({ ev: 'done', frames: 48, stats: { hdr: { transfer: 'pq', maxCll: 640, maxFall: 90 } } });
+    e2.exit(EXPORT_EXIT.ok);
+    await expect(run2.done).resolves.toMatchObject({ kind: 'completed', stats: { hdr: { maxCll: 640 } } });
+    expect(ok.moved).toEqual([[abs('jobs', 'j2', 'engine', 'out.mp4'), abs('out', 'promo.mp4')]]);
   });
 });
 

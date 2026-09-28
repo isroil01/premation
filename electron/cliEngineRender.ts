@@ -45,7 +45,7 @@ export type CliEngineOutcome =
  * The engine export spec for a CLI render (`--aspect` is applied before, by
  * `runCliEngineRender`), or why the engine cannot do it.
  */
-export function cliEngineSpec(job: CliRenderJob, enginePath: string | null): { spec: EngineExportSpec } | { reason: string } {
+export function cliEngineSpec(job: CliRenderJob & { hdrEncoder?: 'libx265' | 'libx264' }, enginePath: string | null): { spec: EngineExportSpec } | { reason: string } {
   const spec: EngineExportSpec = {
     projectPath: job.projectPath,
     outPath: job.outPath,
@@ -63,6 +63,7 @@ export function cliEngineSpec(job: CliRenderJob, enginePath: string | null): { s
     ...(job.quality !== undefined ? { quality: job.quality } : {}),
     ...(job.proresProfile !== undefined ? { proresProfile: job.proresProfile } : {}),
     ...(job.transparent !== undefined ? { transparent: job.transparent } : {}),
+    ...(job.hdrEncoder !== undefined ? { hdrEncoder: job.hdrEncoder } : {}),
   };
   const why = engineIneligible(spec, enginePath);
   return why ? { reason: why } : { spec };
@@ -75,6 +76,8 @@ export function cliEngineSpec(job: CliRenderJob, enginePath: string | null): { s
  */
 /** A CLI job with the files main already read (cliRender.ts prepareTask). */
 export type CliJobWithFiles = CliRenderJob & {
+  /** hdr10 / hlg: the encoder cliRender.ts probed. */
+  hdrEncoder?: 'libx265' | 'libx264';
   captions?: { text: string; filename: string };
   data?: { text: string; filename: string };
   commands?: { text: string; filename: string };

@@ -43,6 +43,8 @@ const PRORES_PROFILES: ReadonlyArray<ProresProfile> = ['4444', 'hq', '422', 'lt'
 /** Every queueable format, with the formats only ffmpeg can produce marked. */
 const FORMATS: ReadonlyArray<{ value: OutputFormat; label: string; desktopOnly?: boolean }> = [
   { value: 'mp4', label: 'H.264 MP4', desktopOnly: true },
+  { value: 'hdr10', label: 'HDR10 MP4 (PQ)', desktopOnly: true },
+  { value: 'hlg', label: 'HLG MP4', desktopOnly: true },
   { value: 'webm', label: 'WebM VP9' },
   { value: 'mov', label: 'ProRes MOV', desktopOnly: true },
   { value: 'gif', label: 'Animated GIF' },

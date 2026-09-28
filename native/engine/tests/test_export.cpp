@@ -2,6 +2,7 @@
 // the raw-pipe pixel conversion and the WAV writer.
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -14,6 +15,7 @@
 #include "exr_write.hpp"
 #include "ffmetadata.hpp"
 #include "frame_convert.hpp"
+#include "hdr_convert.hpp"
 #include "jpeg_write.hpp"
 #include "png_write.hpp"
 #include "project_open.hpp"
@@ -134,6 +136,75 @@ TEST_CASE("16-bit output: half-float surface → straight rgba64le", "[export]")
   CHECK(o[3] == 32768);
   CHECK(o[4] == 0);
   CHECK(o[7] == 0);
+}
+
+TEST_CASE("HDR delivery: PQ / HLG curves, BT.2020, the clip and the light levels", "[export][hdr]") {
+  // ST.2084 reference points (nits → signal).
+  CHECK(std::fabs(ex::pq_inverse_eotf(100.0 / 10000) - 0.5081) < 5e-4);
+  CHECK(std::fabs(ex::pq_inverse_eotf(1000.0 / 10000) - 0.7518) < 5e-4);
+  CHECK(std::fabs(ex::pq_inverse_eotf(1.0) - 1.0) < 1e-9);
+  // BT.2408: HLG reference white is 75 % signal.
+  CHECK(std::fabs(ex::hlg_reference_white() - 0.2647) < 5e-4);
+  CHECK(std::fabs(ex::hlg_oetf(ex::hlg_reference_white()) - 0.75) < 1e-9);
+  CHECK(ex::hlg_oetf(1.0) > 0.9999);
+  // Grey stays grey through the primaries (each row of the matrix sums to 1).
+  for (std::size_t r = 0; r < 3; ++r) {
+    const auto& m = ex::kRec709To2020;
+    CHECK(std::fabs(m[r * 3] + m[r * 3 + 1] + m[r * 3 + 2] - 1.0) < 1e-5);  // BT.2087 publishes 7 digits
+  }
+
+  // Three pixels: SDR white (1.0), a highlight (sRGB-encoded 2.0 ≈ 4.95× white → 1005 nits, clipped at the 1000-nit peak), black.
+  const std::vector<std::uint16_t> px = {0x3C00, 0x3C00, 0x3C00, 0x3C00, 0x4000, 0x4000, 0x4000, 0x3C00, 0, 0, 0, 0x3C00};
+  std::vector<std::uint8_t> src(px.size() * 2);
+  std::memcpy(src.data(), px.data(), src.size());
+  std::vector<std::uint8_t> dst(24);
+  ex::HdrLightLevels levels;
+  const ex::HdrEncoder pq(ex::HdrEncode{ex::HdrTransfer::pq, 1000, 203});
+  pq.convert(src, 3, 1, 24, dst, levels);
+  std::vector<std::uint16_t> o(12);
+  std::memcpy(o.data(), dst.data(), dst.size());
+  const auto code = [](double v) { return static_cast<int>(std::lround(v * 65535)); };
+  CHECK(std::abs(o[0] - code(ex::pq_inverse_eotf(0.0203))) <= 2);  // white at 203 nits
+  CHECK(o[0] == o[1]);
+  CHECK(o[1] == o[2]);
+  CHECK(o[3] == 65535);                                             // opaque
+  CHECK(std::abs(o[4] - code(ex::pq_inverse_eotf(0.1))) <= 2);    // the clip: 1000 nits
+  CHECK(o[8] <= 1);                                                 // black
+  CHECK(levels.frames == 1);
+  CHECK(std::fabs(levels.maxCll - 1000) < 1);
+  CHECK(std::fabs(levels.maxFall - (203.0 + 1000.0) / 3) < 1);
+
+  // HLG: reference white at 75 %.
+  ex::HdrLightLevels hl;
+  const ex::HdrEncoder hlg(ex::HdrEncode{ex::HdrTransfer::hlg, 1000, 203});
+  hlg.convert(src, 3, 1, 24, dst, hl);
+  std::memcpy(o.data(), dst.data(), dst.size());
+  CHECK(std::abs(o[0] - code(0.75)) <= 2);
+  CHECK(o[4] >= 65533);  // the clip is signal 1
+  CHECK(o[8] == 0);
+
+  // The tables against the exact curves, over every non-negative half below 4.0 (grey).
+  for (const ex::HdrTransfer t : {ex::HdrTransfer::pq, ex::HdrTransfer::hlg}) {
+    const ex::HdrEncode e{t, 1000, 203};
+    const ex::HdrEncoder enc(e);
+    double worst = 0;
+    for (std::uint32_t h = 0; h < 0x4400; ++h) {
+      const std::array<std::uint16_t, 4> g{static_cast<std::uint16_t>(h), static_cast<std::uint16_t>(h), static_cast<std::uint16_t>(h), 0x3C00};
+      std::vector<std::uint8_t> s1(8);
+      std::memcpy(s1.data(), g.data(), 8);
+      std::vector<std::uint8_t> d1(8);
+      ex::HdrLightLevels ignore;
+      enc.convert(s1, 1, 1, 8, d1, ignore);
+      std::uint16_t got = 0;
+      std::memcpy(&got, d1.data(), 2);
+      std::array<double, 3> want{};
+      double lvl = 0;
+      const double v = ex::half_to_float(static_cast<std::uint16_t>(h));
+      ex::hdr_encode_px({v, v, v}, e, want, lvl);
+      worst = std::max(worst, std::fabs(static_cast<double>(got) - want[0] * 65535));
+    }
+    CHECK(worst <= 8.0);  // 16-bit codes (float tables vs double): an eighth of one delivered 10-bit step (64 codes)
+  }
 }
 
 TEST_CASE("the WAV matches audioMixdown.ts encodeWav", "[export]") {
