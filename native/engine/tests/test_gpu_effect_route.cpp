@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "catalog_data.hpp"
 #include "contour_texture.hpp"
 #include "effects_port.hpp"
 #include "lut_port.hpp"
@@ -302,4 +303,60 @@ TEST_CASE("contour texture: empty alpha packs a header only", "[effects][e4]") {
   CHECK(t.contours == 0);
   CHECK(t.height == 1);
   CHECK(fx::contour_float(t, 0) == 0.0F);
+}
+
+TEST_CASE("gpu route: a faded / scoped effect of several entries stays on the GPU as one blend span", "[scene][e4][span]") {
+  // Every registered effect at its new-instance params, faded to 40 %: those
+  // whose GPU chain writes more than one entry carry `blendSpan` on the first.
+  std::size_t spans = 0;
+  std::size_t anyEntry = 0;
+  for (const auto& def : premation::doc::registry().effects) {
+    sc::RLayer l = shape_layer();
+    js::Json e = js::Json::object();
+    e.set("id", js::Json::string("e1"));
+    e.set("type", js::Json::string(def.type));
+    e.set("opacity", js::Json::number(40));
+    js::Json params = def.newInstanceParams ? *def.newInstanceParams : js::Json::object();
+    // Every number at its default or, when that is 0, a quarter of its range (so passes that need a nonzero amount run).
+    for (const auto& pd : def.params) {
+      if (pd.type != "number" || !params.at(pd.key).is_undefined()) continue;
+      const double d = pd.def.is_number() ? pd.def.num() : 0;
+      const double lo = pd.min.value_or(0);
+      const double hi = pd.max.value_or(100);
+      params.set(pd.key, js::Json::number(d != 0 ? d : lo + (hi - lo) / 4));
+    }
+    e.set("params", params);
+    l.effects.push_back(e);
+    l.gpuEffects = true;
+    const auto chain = sc::extract_gpu_route_effects(l);
+    if (!chain.empty()) ++anyEntry;
+    if (chain.size() < 2) continue;
+    ++spans;
+    const auto* span = param(chain[0], "blendSpan");
+    REQUIRE(span != nullptr);
+    CHECK(static_cast<std::size_t>(span->number) == chain.size());
+    const auto* op = param(chain[0], "effectOpacity");
+    REQUIRE(op != nullptr);
+    CHECK(std::abs(op->number - 0.4) < 1e-12);
+    l.gpuEffects = false;
+    const char* why = sc::gpu_effect_route_blocker(l);
+    INFO(def.type << ": " << (why != nullptr ? why : "routed"));
+    CHECK((why == nullptr || std::string_view(why) != "a faded / scoped effect with several chain entries"));
+  }
+  CHECK(anyEntry > 150);  // the registry is exercised (198 of 206 today)
+  CHECK(spans <= anyEntry);
+}
+
+TEST_CASE("gpu route: a faded effect the TS GPU chain cannot blend (a colour grade) routes and blends in the chain", "[scene][e4][span]") {
+  sc::RLayer l = shape_layer();
+  l.effects.push_back(effect(R"({"id":"a","type":"brightness","opacity":40,"params":{"amount":150}})"));
+  CHECK(sc::layer_is_baked(l));
+  CHECK(sc::gpu_effect_route_blocker(l) == nullptr);
+  l.gpuEffects = true;
+  const auto chain = sc::extract_gpu_route_effects(l);
+  REQUIRE(chain.size() == 1);
+  CHECK(chain[0].type == "color-matrix");
+  const auto* op = param(chain[0], "effectOpacity");
+  REQUIRE(op != nullptr);
+  CHECK(std::abs(op->number - 0.4) < 1e-12);
 }

@@ -9,7 +9,8 @@
 
 import type { ContextMenuItem } from '@stores/contextMenuStore';
 import { forgetSvgLayerSrc, type SvgLayerData } from '@core/svg/svgLayer';
-import type { SvgCapabilities } from '@core/svg/svgCapabilities';
+import { isAnimatedSvg, type SvgCapabilities } from '@core/svg/svgCapabilities';
+import { engineOwnsDocumentNow } from '@core/engine/engineOwnership';
 import type { Command, SvgDocument } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import {
@@ -80,6 +81,27 @@ export async function convertSvgToShapes(nodeId: string): Promise<string | null>
   if (!layer) return null;
   const data = await fetchSvgLayerData(nodeId);
   if (!data) return null;
+  // A STATIC document converts in the C++ engine (its own SVG parser and
+  // cascade, the picture kept where the layer draws it). Animation (keyed by
+  // the editor's converter), clip paths / masks (cut into the geometry here)
+  // and embedded images (image layers here) keep the editor's macro, as does
+  // an engine that answers `unsupported`.
+  const staticDoc = !isAnimatedSvg(data.capabilities) && !data.capabilities.hasRasterImage
+    && !/clip-path|<clipPath\b|<mask\b|\bmask=/.test(data.sourceMarkup);
+  if (staticDoc && engineOwnsDocumentNow()) {
+    const label = 'Convert SVG to Editable Shapes';
+    const res = await edit(label, { type: 'convertLayer', layer: nodeId, conversion: 'shapesFromVector' }, { quiet: true });
+    if (res.ok) {
+      const groupId = (res.value[0] as { layers?: string[] } | undefined)?.layers?.[0] ?? null;
+      forgetSvgLayerSrc(nodeId);
+      if (groupId) useSelectionStore.getState().set([groupId]);
+      return groupId;
+    }
+    if (res.error.code !== 'unsupported') {
+      reportEngineError(label, res.error);
+      return null;
+    }
+  }
   const comp = activeCompIdNow() ?? 'comp_root';
   let result: BuiltSvgShapes | null = null;
   let built: BuiltLayers | null;

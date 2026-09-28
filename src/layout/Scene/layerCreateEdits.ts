@@ -19,6 +19,8 @@ import { compOfLayer, graph as docGraph, isLayer, layerKindOf } from '@core/engi
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
+import { engineOwnsDocumentNow } from '@core/engine/engineOwnership';
+import { documentMirror } from '@stores/documentMirror';
 import { values } from '@core/engine/propRefs';
 import type { SceneNode } from '@core/types';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -79,6 +81,33 @@ function outlineShape(textId: string, outlines: Outlines): { parent: string; sha
  * Resolves to the new layer's id and which source produced the outlines, or
  * null when the text could not be outlined (or the engine refused, toasted).
  */
+/**
+ * `convertLayer` in the engine that owns the document (the C++ engine: the
+ * font's own Béziers on its fonts, or a trace of the painted text) — ONE
+ * entry, the made layers selected. `null` when the engine does not convert
+ * (the TypeScript engine, a --no-gpu / headless C++ engine: `unsupported`), so
+ * the caller's editor macro runs; `[]` when the engine refused for another
+ * reason (reported).
+ */
+export async function convertLayerViaEngine(
+  label: string,
+  layer: string,
+  conversion: 'shapesFromText' | 'masksFromText',
+): Promise<{ layers: string[]; source?: ShapesFromTextSource } | null> {
+  if (!engineOwnsDocumentNow()) return null;
+  const res = await edit(label, { type: 'convertLayer', layer, conversion }, { quiet: true });
+  if (!res.ok) {
+    if (res.error.code === 'unsupported') return null;
+    reportEngineError(label, res.error);
+    return { layers: [] };
+  }
+  const layers = (res.value[0] as { layers?: string[] } | undefined)?.layers ?? [];
+  if (layers.length > 0) useSelectionStore.getState().set([layers[0]!]);
+  // The engine names its outline layer "<name> Outlines (outlines|traced)".
+  const name = layers.length > 0 ? documentMirror().layer(layers[0]!)?.name ?? '' : '';
+  return { layers, source: /\(traced\)$/.test(name) ? 'traced' : 'outlines' };
+}
+
 export async function shapesFromTextEdit(
   nodeId: string,
   seconds: number,
@@ -87,6 +116,9 @@ export async function shapesFromTextEdit(
   if (!comp) return null;
   const node = docGraph.getNode(nodeId);
   if (!node || layerKindOf(node) !== 'text') return null;
+  // The engine first: it outlines with the font's own Béziers at the playhead.
+  const viaEngine = await convertLayerViaEngine('Create Shapes from Text', nodeId, 'shapesFromText');
+  if (viaEngine) return viaEngine.layers.length > 0 ? { id: viaEngine.layers[0]!, source: viaEngine.source ?? 'outlines' } : null;
   // B4-gap: the glyph outlines (the editor's fonts, or a trace of the evaluated text) — `convertLayer
   // {shapesFromText}` is `unsupported` in the TypeScript engine (moves with E3).
   const outlines = await outlineTextNode(node, seconds);

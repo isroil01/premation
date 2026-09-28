@@ -452,10 +452,53 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     curName = dest;
   };
 
+  /// Draw an entry's scope mask (its `scopeMaskKey`) into the buffer's space; empty when none.
+  auto scopeOf = [&](const Fx& fx) -> TexRef {
+    const std::string_view scopeKey = fx.text("scopeMaskKey");
+    if (scopeKey.empty()) return {};
+    const TexRef maskTex = ctx.texture(scopeKey);
+    if (!maskTex || selfR == nullptr) return {};
+    const Mat3 maskMvp = space != nullptr ? mul(mvp, model_from_rect(space->box)) : mvp_for(vp, mat3_of(selfR->model_matrix));
+    const Rect maskUv = selfR->uv_rect ? rect_of(*selfR->uv_rect) : Rect{0, 0, 1, 1};
+    Commands mc;
+    emit_textured(ctx, mc, maskMvp, Color::white(), 1, Blend::none, maskTex, ctx.linear_clamp(), maskUv, kIdentityColor,
+                  maskTex.sampleLinear);
+    ctx.draw_into(kFxScopeMask, mc, true);
+    if (ctx.effectStats != nullptr) ++ctx.effectStats->scoped;
+    return texOf(kFxScopeMask);
+  };
+
+  // A faded / scoped effect that writes several chain entries (`blendSpan` on
+  // its first): its input is kept in kFxBlendInput and blended back once, after
+  // its last entry — applyEffectChain blends the WHOLE effect's output over its
+  // input. Entries of the span land nothing in between.
+  std::size_t spanLeft = 0;
+
   for (const auto& e : effects) {
-    land();
+    if (spanLeft > 0) {
+      --spanLeft;
+    } else {
+      land();
+    }
     const Fx fx(e);
     const std::string_view type = fx.type();
+    if (const double span = fx.num("blendSpan", 1); span > 1 && type != "plugin" &&
+                                                    ((fx.has("effectOpacity") && fx.num("effectOpacity") < 1) ||
+                                                     !fx.text("scopeMaskKey").empty())) {
+      // Before any skip rule: the span blends back even if its first entry draws nothing.
+      const TexRef scope = scopeOf(fx);
+      if (!scope && fx.num("effectOpacity", 1) >= 1) {
+        // A scope whose mask did not reach the GPU: the effect applies unscoped, at full strength.
+      } else {
+        Commands keep;
+        emit_textured(ctx, keep, mvp, Color::white(), 1, Blend::none, curTex, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+        ctx.draw_into(kFxBlendInput, keep, true);
+        blendBack = BlendBack{texOf(kFxBlendInput), kFxBlendInput, std::max(0.0, fx.num("effectOpacity", 1)), scope};
+        if (ctx.effectStats != nullptr) ++ctx.effectStats->blendSpans;
+      }
+      spanLeft = static_cast<std::size_t>(span) - 1;
+    }
+    const bool inSpan = spanLeft > 0 || fx.num("blendSpan", 1) > 1;
     const double radiusPx = fx.num("radiusPx");
     if ((type == "blur" || type == "glow") && radiusPx <= 0 && (type != "glow" || fx.num("spreadPx") <= 0)) continue;
     if (type == "drop-shadow" && radiusPx <= 0 && fx.num("spreadPx") <= 0 && std::abs(fx.num("offsetX")) < 0.01 &&
@@ -502,22 +545,12 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
 
     // E4: an effect scoped to one mask path blends back through its coverage,
     // drawn now (before the effect) into the buffer's space.
-    TexRef scope;
-    if (const std::string_view scopeKey = fx.text("scopeMaskKey"); !scopeKey.empty() && type != "plugin") {
-      const TexRef maskTex = ctx.texture(scopeKey);
-      if (maskTex && selfR != nullptr) {
-        const Mat3 maskMvp = space != nullptr ? mul(mvp, model_from_rect(space->box)) : mvp_for(vp, mat3_of(selfR->model_matrix));
-        const Rect maskUv = selfR->uv_rect ? rect_of(*selfR->uv_rect) : Rect{0, 0, 1, 1};
-        Commands mc;
-        emit_textured(ctx, mc, maskMvp, Color::white(), 1, Blend::none, maskTex, ctx.linear_clamp(), maskUv, kIdentityColor,
-                      maskTex.sampleLinear);
-        ctx.draw_into(kFxScopeMask, mc, true);
-        scope = texOf(kFxScopeMask);
-        if (ctx.effectStats != nullptr) ++ctx.effectStats->scoped;
+    // (A span's blend was set up above, before its first entry.)
+    if (!inSpan && type != "plugin") {
+      const TexRef scope = scopeOf(fx);
+      if ((fx.has("effectOpacity") && fx.num("effectOpacity") < 1) || scope) {
+        blendBack = BlendBack{curTex, curName, std::max(0.0, fx.num("effectOpacity", 1)), scope};
       }
-    }
-    if (((fx.has("effectOpacity") && fx.num("effectOpacity") < 1) || scope) && type != "plugin") {
-      blendBack = BlendBack{curTex, curName, std::max(0.0, fx.num("effectOpacity", 1)), scope};
     }
 
     if (type == "stamp-field") {

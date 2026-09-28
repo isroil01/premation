@@ -171,6 +171,10 @@ class FontSet {
   /// for `font` (its cmap glyph, no GSUB): opticalKerning.ts's OUTLINE source.
   /// nullopt: not one code point, no covering face, or an empty glyph.
   [[nodiscard]] std::optional<GlyphOutlineUnits> glyph_outline(std::string_view cluster, const css::Font& font) const;
+  /// A SHAPED glyph's outline as the canvas draws it (the run's px size and
+  /// variations, synthetic bold / oblique), unhinted: closed cubic contours in
+  /// px, y DOWN, relative to the glyph's pen origin. Empty for a blank glyph.
+  [[nodiscard]] std::vector<std::vector<OutlineCubic>> glyph_path(const Glyph& g, const ShapedText& run) const;
 
   /// Opaque access for the Skia side (canvas_ffi.cpp).
   struct Impl;

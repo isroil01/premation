@@ -250,7 +250,7 @@ bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::Te
   ctx.fxCache = &fxCache_;
   ctx.fxFields = effectFields_;
   stats.effects.gpuEntries = stats.effects.sdfBuilt = stats.effects.sdfReused = 0;
-  stats.effects.silhouetteStyles = stats.effects.scoped = stats.effects.skipped = 0;
+  stats.effects.silhouetteStyles = stats.effects.scoped = stats.effects.skipped = stats.effects.blendSpans = 0;
   stats.effects.paths.clear();
   ctx.effectStats = &stats.effects;
   if (file.view.frame_clip) {

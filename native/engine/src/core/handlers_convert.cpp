@@ -36,12 +36,15 @@
 #include "anim.hpp"
 #include "convert_geometry.hpp"
 #include "fail.hpp"
+#include "fxstate.hpp"
 #include "handlers_groups.hpp"
 #include "handlers_layers.hpp"
+#include "native_effects.hpp"
 #include "props.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "time_conv.hpp"
+#include "timeline.hpp"
 #include "transform.hpp"
 #include "worldxf.hpp"
 
@@ -415,6 +418,426 @@ api::LayerList masks_from_text(const std::string& layer, HCtx& x) {
   return api::LayerList{{id}};
 }
 
+// ── SVG → shapes / editable text ────────────────────────────────────────────
+
+/// The SVG document a layer draws: an SVG layer's `svg` component (the
+/// original markup, else the sanitized copy), or an SVG footage layer's
+/// `data:` / file src. nullopt when the layer draws no SVG.
+std::optional<std::string> svg_markup_of(const Node& n, HCtx& x) {
+  if (const Component* c = n.comp("svg"); c != nullptr) {
+    for (const char* k : {"sourceMarkup", "sanitizedMarkup"}) {
+      if (c->props.at(k).is_string() && !c->props.at(k).str().empty()) return c->props.at(k).str();
+    }
+  }
+  if (n.kind() != "svg") return std::nullopt;
+  const Json& src = transform_props(n).at("src");
+  if (!src.is_string() || src.str().empty()) return std::nullopt;
+  const std::string& s = src.str();
+  if (s.starts_with("data:")) {
+    // data:image/svg+xml[;base64],… — percent-encoded or base64.
+    const std::size_t comma = s.find(',');
+    if (comma == std::string::npos) return std::nullopt;
+    const std::string_view head(s.data(), comma);
+    const std::string_view body(s.data() + comma + 1, s.size() - comma - 1);
+    if (head.find(";base64") != std::string_view::npos) {
+      std::optional<std::vector<std::uint8_t>> bytes = native_unbase64(body);
+      if (!bytes) return std::nullopt;
+      return std::string(bytes->begin(), bytes->end());
+    }
+    std::string out;
+    for (std::size_t i = 0; i < body.size(); ++i) {
+      const auto hex = [](char h) {
+        if (h >= '0' && h <= '9') return h - '0';
+        if (h >= 'a' && h <= 'f') return h - 'a' + 10;
+        if (h >= 'A' && h <= 'F') return h - 'A' + 10;
+        return -1;
+      };
+      if (body[i] == '%' && i + 2 < body.size() && hex(body[i + 1]) >= 0 && hex(body[i + 2]) >= 0) {
+        out += static_cast<char>((hex(body[i + 1]) << 4) | hex(body[i + 2]));
+        i += 2;
+      } else {
+        out += body[i];
+      }
+    }
+    return out;
+  }
+  if (!x.ports.has_file_bytes()) return std::nullopt;
+  std::string path = s;
+  if (path.starts_with("local-file://")) path = path.substr(std::string_view("local-file://").size());
+  const std::vector<std::uint8_t> bytes = x.ports.read_file_bytes(path);
+  return std::string(bytes.begin(), bytes.end());
+}
+
+/// The group that stands in for an SVG layer: its transform, span, opacity
+/// and keys, at its slot in the stack.
+std::string svg_carrier(const std::string& layer, const std::string& comp, const std::string& name, HCtx& x) {
+  Document& d = x.d;
+  const Node& n = *d.node(layer);
+  const Json tp = transform_props(n);
+  const auto num = [&tp](std::string_view k, double fb) { return tp.at(k).is_finite_number() ? tp.at(k).num() : fb; };
+  api::CreateLayer create;
+  create.comp = comp;
+  create.kind = api::LayerKind::group;
+  create.name = name;
+  create.parent = layer_parent_of(d, comp, layer);
+  create.index = stack_index_of(d, comp, layer);
+  const std::string g = handle(create, x).layer;
+  const std::string tId = g + "_t";
+  for (const char* k : {"x", "y", "rotation", "anchorX", "anchorY"}) (void)sg_write_prop(d, g, tId, k, Json::number(num(k, 0)));
+  for (const char* k : {"scaleX", "scaleY"}) (void)sg_write_prop(d, g, tId, k, Json::number(num(k, 1)));
+  (void)sg_write_prop(d, g, tId, "width", Json::number(num("width", 100)));
+  (void)sg_write_prop(d, g, tId, "height", Json::number(num("height", 100)));
+  double opacity = 100;
+  for (const Component& c : n.components) {
+    if (c.props.at("opacity").is_finite_number()) {
+      opacity = c.props.at("opacity").num();
+      break;
+    }
+  }
+  if (const Component* s = d.node(g)->comp("Style"); s != nullptr) (void)sg_write_prop(d, g, s->id, "opacity", Json::number(opacity));
+  else (void)sg_add_component(d, g, Component{g + "_s", "Style", [&] { Json o = Json::object(); o.set("opacity", Json::number(opacity)); return o; }()});
+  if (const NodeAnim* a = d.anim(layer); a != nullptr) {
+    d.set_anim(g, *a);
+    remint_key_ids(x, g);
+  }
+  if (const auto bars = geoms_of(d, layer, comp); !bars.empty()) write_geoms(d, comp, g, bars);
+  return g;
+}
+
+/// One SVG part as a layer of the group (sceneInsert.ts insertSvgShapeGroup's
+/// per-part build), placed relative to the group: the viewport mapped onto the
+/// SVG layer's box (kx, ky). Images are left out (they need a footage item).
+std::optional<std::string> svg_part_layer(const SvgPart& part, const std::string& comp, const std::string& group,
+                                          std::uint32_t index, double vw, double vh, double kx, double ky, HCtx& x) {
+  Document& d = x.d;
+  if (part.kind == SvgPart::Kind::image) return std::nullopt;
+  const double k = std::sqrt(std::abs(kx * ky));
+  const double relX = (part.centerX - vw / 2) * kx;
+  const double relY = (part.centerY - vh / 2) * ky;
+  api::CreateLayer create;
+  create.comp = comp;
+  create.kind = part.kind == SvgPart::Kind::text ? api::LayerKind::text : api::LayerKind::path;
+  create.name = part.name;
+  create.parent = group;
+  create.index = index;
+  const std::string id = handle(create, x).layer;
+  const std::string tId = id + "_t";
+  (void)sg_write_prop(d, id, tId, "x", Json::number(relX));
+  (void)sg_write_prop(d, id, tId, "y", Json::number(relY));
+  (void)sg_write_prop(d, id, tId, "width", Json::number(part.width * kx));
+  (void)sg_write_prop(d, id, tId, "height", Json::number(part.height * ky));
+  const double opacity = std::round(std::clamp(part.opacity, 0.0, 1.0) * 100);
+  if (part.kind == SvgPart::Kind::text) {
+    const Component* t = d.node(id)->comp("Text");
+    if (t == nullptr) return id;
+    const std::string cId = t->id;
+    (void)sg_write_prop(d, id, cId, "content", Json::string(part.text));
+    (void)sg_write_prop(d, id, cId, "fontSize", Json::number(part.fontSize * k));
+    (void)sg_write_prop(d, id, cId, "fill", Json::string(part.fill != "transparent" ? part.fill : "#ffffff"));
+    (void)sg_write_prop(d, id, cId, "opacity", Json::number(opacity));
+    if (!part.fontFamily.empty()) (void)sg_write_prop(d, id, cId, "fontFamily", Json::string(part.fontFamily));
+    if (!part.fontWeight.empty()) (void)sg_write_prop(d, id, cId, "fontWeight", Json::string(part.fontWeight));
+    if (!part.fontStyle.empty()) (void)sg_write_prop(d, id, cId, "fontStyle", Json::string(part.fontStyle));
+    return id;
+  }
+  (void)sg_write_prop(d, id, id + "_s", "opacity", Json::number(opacity));
+  (void)sg_write_prop(d, id, id + "_s", "fill", Json::string(part.fill));
+  Json runs = Json::array();
+  for (const GeoRun& r : part.runs) {
+    GeoRun scaled = r;
+    for (GeoPt& p : scaled.points) {
+      p = GeoPt{p.x * kx, p.y * ky, p.inX * kx, p.inY * ky, p.outX * kx, p.outY * ky};
+    }
+    runs.arr_mut().push_back(run_json(scaled));
+  }
+  Json g = Json::object();
+  g.set("subpaths", std::move(runs));
+  (void)sg_add_component(d, id, Component{id + "_g", "Geometry", std::move(g)});
+  if (!part.fillPaint.is_undefined()) {
+    Json fp = part.fillPaint;
+    if (part.fillAboveStroke && !part.stroke.is_undefined()) fp.set("composite", Json::string("above"));
+    sg_set_fx(d, id, "fill", std::move(fp));
+  } else if (part.fillAboveStroke && !part.stroke.is_undefined() && part.fill != "transparent") {
+    Json fp = Json::object();
+    fp.set("type", Json::string("solid"));
+    fp.set("color", Json::string(part.fill));
+    fp.set("composite", Json::string("above"));
+    sg_set_fx(d, id, "fill", std::move(fp));
+  }
+  if (!part.stroke.is_undefined()) {
+    Json st = part.stroke;
+    const double sk = part.nonScalingStroke ? 1 : k;
+    st.set("width", Json::number(st.at("width").num() * sk));
+    if (st.at("dash").is_array()) {
+      Json dash = Json::array();
+      for (const Json& v : st.at("dash").arr()) dash.arr_mut().push_back(Json::number(v.num() * sk));
+      st.set("dash", std::move(dash));
+    }
+    if (st.at("dashOffset").is_number()) st.set("dashOffset", Json::number(st.at("dashOffset").num() * sk));
+    sg_set_fx(d, id, "stroke", std::move(st));
+  }
+  return id;
+}
+
+struct SvgInput {
+  SvgShapes shapes;
+  std::string comp;
+  double kx = 1, ky = 1;
+};
+
+SvgInput svg_input(const std::string& layer, HCtx& x) {
+  Document& d = x.d;
+  const Node& n = *d.node(layer);
+  const std::optional<std::string> markup = svg_markup_of(n, x);
+  if (!markup) fail(ErrorCode::invalid_argument, "the layer draws no SVG document", {.layer = layer});
+  std::string why;
+  std::optional<SvgShapes> shapes = x.geometry->svg_shapes(*markup, std::nullopt, why);
+  if (!shapes) fail(ErrorCode::invalid_argument, "the SVG could not be converted: " + why, {.layer = layer});
+  SvgInput in;
+  in.comp = comp_of_layer(d, layer).value_or("");
+  const Json& tp = transform_props(n);
+  const double lw = tp.at("width").is_finite_number() ? tp.at("width").num() : shapes->width;
+  const double lh = tp.at("height").is_finite_number() ? tp.at("height").num() : shapes->height;
+  in.kx = shapes->width > 0 ? lw / shapes->width : 1;
+  in.ky = shapes->height > 0 ? lh / shapes->height : 1;
+  in.shapes = std::move(*shapes);
+  return in;
+}
+
+/// Convert to Editable Shapes in the engine (svgConvert.ts buildSvgShapeGroup
+/// + svgLayerActions' pasteLayers / deleteLayers): a group carrying the SVG
+/// layer's transform, one shape / text layer per part in paint order, the
+/// original markup retained on the group (Revert to Original SVG), the SVG
+/// layer removed.
+api::LayerList shapes_from_vector(const std::string& layer, HCtx& x) {
+  Document& d = x.d;
+  SvgInput in = svg_input(layer, x);
+  std::size_t convertible = 0;
+  for (const SvgPart& p : in.shapes.parts) convertible += p.kind == SvgPart::Kind::image ? 0 : 1;
+  if (convertible == 0) fail(ErrorCode::invalid_argument, "the SVG has no vector paths or text to convert", {.layer = layer});
+  const Node& n = *d.node(layer);
+  const std::string name = n.name;
+  std::optional<Component> retained;
+  if (const Component* c = n.comp("svg"); c != nullptr) {
+    Json props = c->props;
+    props.erase("sanitizedMarkup");
+    props.erase("__kind");
+    retained = Component{"", "svg", std::move(props)};
+  }
+  const std::string group = svg_carrier(layer, in.comp, name, x);
+  std::vector<std::string> out{group};
+  const std::uint32_t top = stack_index_of(d, in.comp, group) + 1;
+  for (const SvgPart& part : in.shapes.parts) {
+    // Paint order: each later part is created in front of the ones before.
+    if (auto id = svg_part_layer(part, in.comp, group, top, in.shapes.width, in.shapes.height, in.kx, in.ky, x)) out.push_back(*id);
+  }
+  if (retained) {
+    retained->id = group + "_svgsrc";
+    (void)sg_add_component(d, group, std::move(*retained));
+  }
+  api::DeleteLayers del;
+  del.layers = {layer};
+  (void)handle(del, x);
+  x.label = "Convert SVG to Editable Shapes";
+  return api::LayerList{out};
+}
+
+/// Convert to Editable Text (AE's, for an SVG's <text>): a group of text
+/// layers over the SVG layer, one per <text> element, in place; the SVG layer
+/// stays and stops drawing its own text (a `text { display: none }` rule on
+/// its drawn markup — its retained original is untouched).
+api::LayerList editable_text(const std::string& layer, HCtx& x) {
+  Document& d = x.d;
+  SvgInput in = svg_input(layer, x);
+  std::vector<const SvgPart*> texts;
+  for (const SvgPart& p : in.shapes.parts) {
+    if (p.kind == SvgPart::Kind::text) texts.push_back(&p);
+  }
+  if (texts.empty()) fail(ErrorCode::invalid_argument, "the SVG has no text to make editable", {.layer = layer});
+  const std::string name = d.node(layer)->name + " Text";
+  const std::string group = svg_carrier(layer, in.comp, name, x);
+  std::vector<std::string> out{group};
+  const std::uint32_t top = stack_index_of(d, in.comp, group) + 1;
+  for (const SvgPart* part : texts) {
+    if (auto id = svg_part_layer(*part, in.comp, group, top, in.shapes.width, in.shapes.height, in.kx, in.ky, x)) out.push_back(*id);
+  }
+  // The SVG layer keeps its graphics and hides its own text.
+  static constexpr std::string_view kHide = "<style>text { display: none !important; }</style>";
+  const Node& n = *d.node(layer);
+  if (const Component* c = n.comp("svg"); c != nullptr) {
+    const std::string cid = c->id;
+    const Json& san = c->props.at("sanitizedMarkup");
+    std::string drawn = san.is_string() && !san.str().empty() ? san.str() : (c->props.at("sourceMarkup").is_string() ? c->props.at("sourceMarkup").str() : std::string());
+    if (const std::size_t close = drawn.rfind("</svg>"); close != std::string::npos) drawn.insert(close, kHide);
+    (void)sg_write_prop(d, layer, cid, "sanitizedMarkup", Json::string(std::move(drawn)));
+  } else {
+    fail(ErrorCode::unsupported, "an SVG footage layer's text cannot be hidden in place: convert it to editable shapes instead",
+         {.layer = layer});
+  }
+  x.label = "Convert to Editable Text";
+  return api::LayerList{out};
+}
+
+// ── Uncompose ───────────────────────────────────────────────────────────────
+
+/// Move a layer's Position by (dx, dy): the static value and every key.
+/// (A Position expression computes its own value and is left as it is.)
+void offset_position(HCtx& x, const std::string& id, double dx, double dy) {
+  Document& d = x.d;
+  const Catalog cat = catalog_for(d, id);
+  const PropBinding& pos = require_binding(cat, "transform/position");
+  const std::array<double, 2> off{dx, dy};
+  for (std::size_t i = 0; i < 2 && i < pos.members.size(); ++i) {
+    const std::string& m = pos.members[i];
+    if (const std::vector<Key>* keys = anim_track(d, id, m); keys != nullptr && !keys->empty()) {
+      std::vector<Key> moved = *keys;
+      for (Key& k : moved) k.value += off[i];
+      anim_set_track(d, id, m, std::move(moved));
+    }
+  }
+  if (const Component* t = d.node(id)->comp("Transform"); t != nullptr) {
+    const std::string cid = t->id;
+    const double px = t->props.at("x").is_finite_number() ? t->props.at("x").num() : 0;
+    const double py = t->props.at("y").is_finite_number() ? t->props.at("y").num() : 0;
+    (void)sg_write_prop(d, id, cid, "x", Json::number(px + dx));
+    (void)sg_write_prop(d, id, cid, "y", Json::number(py + dy));
+  }
+}
+
+/// Why a precomp layer cannot be flattened without changing the picture; "" = it can.
+std::string uncompose_blocker(const Document& d, const Node& n, const api::LayerTiming& t) {
+  if (!read_node_effects(n).empty()) return "it has effects (they apply to the composed picture)";
+  if (const auto m = read_node_mask(n); m && m->at("paths").is_array() && !m->at("paths").arr().empty()) return "it has masks";
+  if (is_3d_enabled(n)) return "it is a 3D layer";
+  if (read_comp_collapse(n)) return "Collapse Transformations is on";
+  if (t.time_remap_enabled || t.retime != api::RetimeMode::normal || t.freeze) return "it is time-remapped or frozen";
+  if (std::abs(t.stretch - 1) > 1e-9 && std::abs(t.stretch - 100) > 1e-9) return "it is time-stretched";
+  for (const Component& c : n.components) {
+    if (c.props.at("opacity").is_finite_number() && c.props.at("opacity").num() != 100) return "its opacity is not 100%";
+    if (c.props.at("blendMode").is_string() && c.props.at("blendMode").str() != "normal") return "it has a blend mode";
+  }
+  if (const NodeAnim* a = d.anim(n.id); a != nullptr && (a->tracks.contains("opacity") || a->exprs.contains("opacity"))) {
+    return "its opacity is animated";
+  }
+  return "";
+}
+
+/// Precomp → layers: the composition's layers pasted into this one under a
+/// null that carries the precomp layer's transform (its keys too), retimed by
+/// the layer's start and trimmed to its span; the precomp layer removed (the
+/// composition stays in the project). A layer whose picture depends on being
+/// composed (effects, masks, 3D, collapse, retime, opacity, blend) is refused.
+api::LayerList uncompose(const std::string& layer, HCtx& x) {
+  Document& d = x.d;
+  const Node& n = *d.node(layer);
+  if (!is_precomp(n)) fail(ErrorCode::invalid_argument, "only a precomp layer can be uncomposed", {.layer = layer});
+  const std::optional<std::string> inner = read_comp_ref(n);
+  if (!inner || !is_comp_item(d, *inner)) fail(ErrorCode::not_found, "the precomp layer's composition is gone", {.layer = layer});
+  const std::string outer = comp_of_layer(d, layer).value_or("");
+  const api::LayerTiming timing = layer_timing(d, layer);
+  if (const std::string why = uncompose_blocker(d, n, timing); !why.empty()) {
+    fail(ErrorCode::unsupported, "the layer cannot be uncomposed without changing the picture: " + why, {.layer = layer});
+  }
+  const double fps = comp_fps(d, outer);
+  if (std::abs(comp_fps(d, *inner) - fps) > 1e-9) {
+    fail(ErrorCode::unsupported, "the precomp's frame rate differs from this composition's", {.layer = layer});
+  }
+  // Inner composition geometry.
+  double iw = 1920;
+  double ih = 1080;
+  if (const Json* rec = d.comp(*inner); rec != nullptr && rec->at("width").is_number() && rec->at("height").is_number()) {
+    iw = rec->at("width").num();
+    ih = rec->at("height").num();
+  }
+  std::vector<std::string> tops = sg_child_order(d, *inner);
+  std::reverse(tops.begin(), tops.end());  // front-first, the fragment order
+  std::erase_if(tops, [&d](const std::string& id) { return d.node(id) == nullptr; });
+  if (tops.empty()) fail(ErrorCode::invalid_argument, "the precomp's composition has no layers", {.layer = layer});
+  const api::DocumentFragment frag = encode_fragment(x.pc(), tops);
+  const std::string name = n.name;
+  const Json tp = transform_props(n);
+  const auto num = [&tp](std::string_view k, double fb) { return tp.at(k).is_finite_number() ? tp.at(k).num() : fb; };
+  const std::vector<Geo> bars = geoms_of(d, layer, outer);
+  const std::optional<NodeAnim> anim = d.anim(layer) != nullptr ? std::optional<NodeAnim>(*d.anim(layer)) : std::nullopt;
+
+  // The carrier: a null with the precomp layer's transform and span.
+  api::CreateLayer create;
+  create.comp = outer;
+  create.kind = api::LayerKind::null;
+  create.name = name;
+  create.parent = layer_parent_of(d, outer, layer);
+  create.index = stack_index_of(d, outer, layer);
+  const std::string carrier = handle(create, x).layer;
+  const std::string tId = carrier + "_t";
+  (void)sg_write_prop(d, carrier, tId, "x", Json::number(num("x", 0)));
+  (void)sg_write_prop(d, carrier, tId, "y", Json::number(num("y", 0)));
+  (void)sg_write_prop(d, carrier, tId, "rotation", Json::number(num("rotation", 0)));
+  (void)sg_write_prop(d, carrier, tId, "scaleX", Json::number(num("scaleX", 1)));
+  (void)sg_write_prop(d, carrier, tId, "scaleY", Json::number(num("scaleY", 1)));
+  const double ax = num("anchorX", 0);
+  const double ay = num("anchorY", 0);
+  (void)sg_write_prop(d, carrier, tId, "anchorX", Json::number(ax));
+  (void)sg_write_prop(d, carrier, tId, "anchorY", Json::number(ay));
+  (void)sg_write_prop(d, carrier, tId, "width", Json::number(iw));
+  (void)sg_write_prop(d, carrier, tId, "height", Json::number(ih));
+  if (anim) {
+    d.set_anim(carrier, anim);
+    remint_key_ids(x, carrier);
+  }
+  if (!bars.empty()) write_geoms(d, outer, carrier, bars);
+
+  // The layers, under the carrier, shifted by the layer's start and trimmed to its span.
+  api::PasteLayers paste;
+  paste.comp = outer;
+  paste.fragment = frag;
+  paste.parent = carrier;
+  const std::vector<std::string> pasted = handle(paste, x).layers;
+  // A child sits in its parent's centre-origin space; the inner layers'
+  // positions are inner-comp pixels (top-left origin) and the composed picture
+  // is drawn about the precomp layer's anchor: move each top-level layer (its
+  // keys too) by −(centre + anchor).
+  for (const std::string& id : pasted) {
+    const Node* pn = d.node(id);
+    if (pn != nullptr && pn->parent == carrier) offset_position(x, id, -(iw / 2 + ax), -(ih / 2 + ay));
+  }
+  const double shift = flicks_to_frames(timing.start_time, fps);
+  const double spanIn = flicks_to_frames(timing.in_point, fps);
+  const double spanOut = flicks_to_frames(timing.out_point, fps);
+  std::vector<std::string> outside;
+  for (const std::string& id : pasted) {
+    std::vector<Geo> g = geoms_of(d, id, outer);
+    std::vector<Geo> kept;
+    for (Geo b : g) {
+      b.start += shift;
+      const double s = std::max(b.start, spanIn);
+      const double e = std::min(b.start + b.duration, spanOut);
+      if (e <= s) continue;
+      b.sourceIn += s - b.start;
+      b.duration = e - s;
+      b.start = s;
+      kept.push_back(b);
+    }
+    if (kept.empty()) outside.push_back(id);
+    else write_geoms(d, outer, id, kept);
+  }
+  // A layer the precomp never showed is not brought out.
+  std::erase_if(outside, [&d](const std::string& id) { return d.node(id) == nullptr; });
+  if (!outside.empty()) {
+    api::DeleteLayers drop;
+    drop.layers = outside;
+    (void)handle(drop, x);
+  }
+  api::DeleteLayers del;
+  del.layers = {layer};
+  (void)handle(del, x);
+  x.label = "Uncompose";
+  std::vector<std::string> out{carrier};
+  for (const std::string& id : pasted) {
+    if (d.node(id) != nullptr) out.push_back(id);
+  }
+  return api::LayerList{out};
+}
+
 }  // namespace
 
 ResultOf<api::ConvertLayer> handle(const api::ConvertLayer& c, HCtx& x) {
@@ -424,6 +847,9 @@ ResultOf<api::ConvertLayer> handle(const api::ConvertLayer& c, HCtx& x) {
     case api::LayerConversion::bake_transform: return bake_transform(c.layer, x);
     case api::LayerConversion::shapes_from_text: return shapes_from_text(c.layer, x);
     case api::LayerConversion::masks_from_text: return masks_from_text(c.layer, x);
+    case api::LayerConversion::uncompose: return uncompose(c.layer, x);
+    case api::LayerConversion::shapes_from_vector: return shapes_from_vector(c.layer, x);
+    case api::LayerConversion::editable_text: return editable_text(c.layer, x);
     default: break;
   }
   fail(ErrorCode::unsupported, "'" + std::string(api::to_string(c.conversion)) +

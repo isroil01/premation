@@ -1050,6 +1050,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/lut_port.cpp          # D2w effects: colour LUT strips (colorLut.ts, cubeLut.ts)
     src/scene/bake_chain.cpp        # D2w effects: a baked raster's mask + stack handed to engine_effect_chain
     src/scene/effect_handoff.cpp    #   the path / paint effects' resolved geometry (buildSnapshot)
+    src/scene/text_outlines.cpp     # convertLayer: the font's own glyph outlines (fontOutlines.ts)
+    src/scene/svg_shapes.cpp        # convertLayer: SVG document → editable parts (svgParser.ts, static)
     src/scene/per_char3d.cpp        # D2w 3D: per-character 3D text (perChar3D.ts layoutPerChar3D)
     src/scene/rig_coverage.cpp      # D1: image-layer rig coverage (imageAlphaCoverage.ts decode)
   src/scene/comp_instance.cpp     # D2w time/comp: nested + collapsed composition instances
@@ -1094,8 +1096,10 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp
                                       tests/test_threed_models.cpp tests/test_time_comp_parity.cpp tests/test_particle_parity.cpp
                                       tests/test_polygon_clipping_parity.cpp tests/test_cover_crop.cpp tests/test_source_text.cpp
-                                      tests/test_rig_coverage.cpp tests/test_gpu_effect_route.cpp)
-    target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+                                      tests/test_rig_coverage.cpp tests/test_gpu_effect_route.cpp
+                                      tests/test_text_outlines.cpp tests/test_svg_shapes.cpp)
+    target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+      PREMATION_RASTER_FONTS="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/render-tests/harness/fonts/fonts.json")
     target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)
     if(MSVC)
       target_compile_options(engine_scene_tests PRIVATE /bigobj)

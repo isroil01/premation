@@ -295,12 +295,17 @@ void resolve_effect_handoffs(std::vector<Json>& effects, const doc::Node& n, con
   }
 }
 
-std::optional<TracedText> traced_text_of(const doc::Node& n, TextMeasurer& measurer, std::string& why) {
+Json text_paint_spec_json(const doc::Node& n, const MeasuredStyle& s, std::pair<double, double> size) {
+  return text_paint_spec_from_node(n, s, size);
+}
+
+std::optional<TracedText> traced_text_of(const doc::Node& n, TextMeasurer& measurer,
+                                         const std::vector<std::pair<std::string, double>>& sampled, std::string& why) {
   if (n.kind() != "text") {
     why = "the layer is not a text layer";
     return std::nullopt;
   }
-  const std::optional<MeasuredStyle> style = read_measured_text_style(n, {});
+  const std::optional<MeasuredStyle> style = read_measured_text_style(n, sampled);
   if (!style || blank(style->content)) {
     why = "the text layer has no text to outline";
     return std::nullopt;

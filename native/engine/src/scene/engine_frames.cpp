@@ -21,6 +21,8 @@
 #include "built_frame.hpp"
 #include "convert_geometry.hpp"
 #include "effect_handoff.hpp"
+#include "svg_shapes.hpp"
+#include "text_outlines.hpp"
 #include "fonts.hpp"
 #include "frame_hit.hpp"
 #include "log.hpp"
@@ -150,32 +152,59 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
 
   // convertLayer (core/handlers_convert.cpp): text outlines on the same fonts.
   doc::ConvertGeometry* convert_geometry() noexcept override { return this; }
-  std::optional<doc::TextOutlines> text_outlines(const doc::GeoCtx& c, std::string_view layer, double /*compSeconds*/,
+  std::optional<doc::TextOutlines> text_outlines(const doc::GeoCtx& c, std::string_view layer, double compSeconds,
                                                  std::string& why) override {
-    // shapesFromText.ts `outlineTextNode`: the font's own Béziers when the face
-    // can be read, else the trace. The engine has the trace (the painted
-    // text, every style it draws), so the outlines are always `traced`; the
-    // static style is what is traced (keyed font axes are not sampled).
+    // shapesFromText.ts `outlineTextNode`: the font's own Béziers unless the
+    // style asks for what only the painter lays out, else the trace of the
+    // painted text. Both read the layer's values sampled at `compSeconds`
+    // (keyed size, weight, width / slant and `text.axis.*`).
     const doc::Node* n = c.d.node(layer);
     if (n == nullptr) {
       why = "no layer '" + std::string(layer) + "'";
       return std::nullopt;
     }
+    if (n->kind() != "text") {
+      why = "the layer is not a text layer";
+      return std::nullopt;
+    }
     register_families(*n);
-    const std::optional<TracedText> traced = traced_text_of(*n, *measurer_, why);
+    const std::vector<std::pair<std::string, double>> sampled =
+        doc::anim_evaluate_node(c.d, c.expr, c.cache, layer, doc::comp_to_keyframe_time(c.d, c.view, layer, compSeconds));
+    const auto to_geo = [](const std::vector<mesh::BezRun>& runs, doc::TextOutlines& o) {
+      o.runs.reserve(runs.size());
+      for (const mesh::BezRun& r : runs) {
+        doc::GeoRun g;
+        g.closed = !r.open;
+        g.points.reserve(r.points.size());
+        for (const mesh::BezPt& p : r.points) g.points.push_back(doc::GeoPt{p.x, p.y, p.inX, p.inY, p.outX, p.outY});
+        o.runs.push_back(std::move(g));
+      }
+    };
+    if (const std::optional<MeasuredStyle> style = read_measured_text_style(*n, sampled)) {
+      const raster::CanvasOptions* canvas = measurer_->canvas_options();
+      const std::optional<std::pair<double, double>> size = measurer_->measure_text_size(*style);
+      const bool painted = style->fauxBold || style->fauxItalic || style->vertical ||
+                           (size && wants_painted_layout(text_paint_spec_json(*n, *style, *size)));
+      if (!painted && canvas != nullptr && canvas->fonts != nullptr) {
+        if (std::optional<FontOutlines> f = font_outline_runs(*canvas->fonts, *style, font_variations_of(*n, *style, sampled))) {
+          doc::TextOutlines out;
+          // The layer box: the measured one; a style the measurer leaves out
+          // (variable axes) is boxed from its shaped lines.
+          out.width = size ? size->first : f->width;
+          out.height = size ? size->second : f->height;
+          out.fromFont = true;
+          to_geo(f->runs, out);
+          return out;
+        }
+      }
+    }
+    const std::optional<TracedText> traced = traced_text_of(*n, *measurer_, sampled, why);
     if (!traced) return std::nullopt;
     doc::TextOutlines out;
     out.width = traced->width;
     out.height = traced->height;
     out.fromFont = false;
-    out.runs.reserve(traced->runs->size());
-    for (const mesh::BezRun& r : *traced->runs) {
-      doc::GeoRun g;
-      g.closed = !r.open;
-      g.points.reserve(r.points.size());
-      for (const mesh::BezPt& p : r.points) g.points.push_back(doc::GeoPt{p.x, p.y, p.inX, p.inY, p.outX, p.outY});
-      out.runs.push_back(std::move(g));
-    }
+    to_geo(*traced->runs, out);
     return out;
   }
   std::optional<std::vector<doc::TextGlyphBox>> text_glyphs(const doc::GeoCtx& /*c*/, std::string_view /*layer*/,
@@ -183,10 +212,9 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
     why = "per-character layout is not in the engine's text port yet";
     return std::nullopt;
   }
-  std::optional<doc::SvgShapes> svg_shapes(std::string_view /*markup*/, const std::optional<std::string>& /*fillOverride*/,
+  std::optional<doc::SvgShapes> svg_shapes(std::string_view markup, const std::optional<std::string>& fillOverride,
                                            std::string& why) override {
-    why = "the SVG-to-shapes converter (svgParser.ts) is not ported to the engine yet";
-    return std::nullopt;
+    return svg_document_shapes(markup, fillOverride, why);
   }
 
   std::shared_ptr<BuiltFrame> build(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,

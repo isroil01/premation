@@ -34,6 +34,7 @@ import { useMirrorTrackWatch } from '@hooks/useMirror';
 import { strokeOverFillFor } from '@core/text/textFields';
 import { planMasksFromText, buildMasksFromTextSolid, type MasksFromTextResult } from '@core/scene/masksFromText';
 import { insertBuiltLayers } from '@core/engine/offDocument';
+import { convertLayerViaEngine } from '@layout/Scene/layerCreateEdits';
 import type { SelectorKind } from '@core/text/textAnimators';
 import { remapRunFonts } from '@core/fonts/replaceFonts';
 import { familyKey } from '@core/fonts/missingFonts';
@@ -376,8 +377,16 @@ export function textPresetEdit(nodeIds: ReadonlyArray<string>, values: PresetVal
 export async function masksFromTextEdit(nodeId: string, seconds: number = getTime()): Promise<MasksFromTextResult | null> {
   const comp = isLayer(nodeId) ? compOfLayer(nodeId) : null;
   if (!comp) return null;
-  // B4-gap: the glyph outlines and the text's placement (the editor's fonts, the layer's evaluated space) and
-  // the solid's build — `convertLayer {masksFromText}` is `unsupported` in the TypeScript engine (moves with E3).
+  // The C++ engine converts itself (the font's own Béziers, the layer's evaluated space).
+  const viaEngine = await convertLayerViaEngine('Create Masks from Text', nodeId, 'masksFromText');
+  if (viaEngine) {
+    const id = viaEngine.layers[0];
+    if (!id) return null;
+    const tree = await engine().query({ type: 'getPropertyTree', layer: id, path: 'masks', depth: 1 });
+    const masks = tree.ok ? tree.value.nodes.filter((n) => /^masks\/[^/]+$/.test(n.path)).length : 0;
+    return { id, source: viaEngine.source ?? 'outlines', masks };
+  }
+  // The TypeScript engine answers `convertLayer {masksFromText}` `unsupported`: the editor builds it.
   const plan = await planMasksFromText(nodeId, seconds);
   if (!plan) return null;
   let made: MasksFromTextResult | null = null;

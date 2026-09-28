@@ -27,6 +27,7 @@
 
 #include "extrude_mesh.hpp"
 #include "readers.hpp"
+#include "text_measure.hpp"
 #include "scene_types.hpp"
 #include "write_on_trail.hpp"
 
@@ -58,6 +59,13 @@ struct TracedText {
   double width = 0;
   double height = 0;
 };
-[[nodiscard]] std::optional<TracedText> traced_text_of(const doc::Node& n, TextMeasurer& measurer, std::string& why);
+/// shapesFromText.ts `textPaintSpecFromNode`: the TextPaintSpec JSON of the
+/// node's style measured at `size` (what the trace paints).
+[[nodiscard]] Json text_paint_spec_json(const doc::Node& n, const MeasuredStyle& s, std::pair<double, double> size);
+
+/// `sampled` are the node's evaluated values at the time (fontSize, weight, …;
+/// buildSnapshot's evalMap), applied over the stored style.
+[[nodiscard]] std::optional<TracedText> traced_text_of(const doc::Node& n, TextMeasurer& measurer,
+                                                       const std::vector<std::pair<std::string, double>>& sampled, std::string& why);
 
 }  // namespace premation::scene

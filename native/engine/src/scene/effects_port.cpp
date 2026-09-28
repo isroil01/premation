@@ -785,16 +785,11 @@ const char* gpu_effect_route_blocker(const RLayer& l) {
                          (is_canvas2d_only(t) && (gpu_draws_canvas_effect(l, e) || gpu_overlay_effect(l, e))) || grade ||
                          is_gpu_identity(t);
     if (!chained) return "an effect with no GPU chain entry";
-    const std::optional<double> a = effect_opacity_of(e);
-    const bool faded = a && *a < 1;
-    if (faded && !gpu_blends_effect_opacity(t) && !is_canvas2d_only(t)) return "an effect opacity the GPU chain does not blend";
-    const bool scoped = scope_path_of(l, e) != nullptr;
-    if ((faded && *a > 0) || scoped) {
-      // Opacity and scope blend ONE entry back over its input.
-      std::vector<api::RenderEffect> probe;
-      effect_entries(e, l, probe);
-      if (probe.size() > 1) return "a faded / scoped effect with several chain entries";
-    }
+    // Effect Opacity and a mask scope blend the effect's entries back over its
+    // input — any chain entry, one in place, several as a `blendSpan`
+    // (effect_chain.cpp keeps the input): applyEffectChain's blend of the whole
+    // effect. (The TS GPU chain blends only `gpu_blends_effect_opacity` kinds,
+    // which is why it bakes the others; the route is exactly for those.)
   }
   return nullptr;
 }
@@ -858,18 +853,23 @@ std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
     } else {
       effect_entries(e, l, out);
     }
-    if (out.size() - at != 1) continue;  // gpu_effect_route: a faded / scoped effect writes one entry
+    const std::size_t written = out.size() - at;
+    if (written == 0) continue;
     const std::optional<double> a = effect_opacity_of(e);
     const Json* scope = scope_path_of(l, e);
     if (a && *a <= 0 && scope == nullptr) {  // applyEffectChain: a fully faded, unscoped effect is skipped
       out.resize(at);
       continue;
     }
+    const bool blends = (a && *a < 1) || scope != nullptr;
     if (a && *a < 1) add_param(out[at], "effectOpacity", *a);
     if (scope != nullptr) {
       add_text(out[at], "scopeMaskKey", scope_mask_key(l.id, scope->at("id").str()));
       if (!a) add_param(out[at], "effectOpacity", 1);  // the scoped blend-back runs even at full opacity
     }
+    // Several entries: the blend covers them all (the chain keeps the input
+    // until the last one) — applyEffectChain blends the whole effect back.
+    if (blends && written > 1) add_param(out[at], "blendSpan", static_cast<double>(written));
   }
   return out;
 }
