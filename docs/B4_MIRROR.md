@@ -266,6 +266,65 @@ points and masks from the mirror — a parity-checked step of its own).
   points, masks from the mirror + push) is a parity-checked step of its own and
   was not started.
 
+### b4-round5 (2026-09-28, the ratchet 371 → 146)
+
+- Engine API (both engines, ENGINE_API.md §15.14): the overlay push carries
+  the rig (OverlayRig: pins, bones, IK, deformed / rest mesh, lattice, focus
+  weights and pin path) and the 3D view (OverlayScene3D per camera / light /
+  3D layer, OverlayView per subscribed view mode), per-overlay request groups;
+  `getRigPose`; `TextLayout.glyphs`; `PropertyInfo.stored`; CSS rgb()/rgba()
+  colours; grapheme-indexed `text/styleRuns`; `getDocumentColors`,
+  `getCaptionCues`, `mapLayerTime`, `getSourceSize`, `checkPrecompose`;
+  `getMemberKeyframes {includeData}`; `ItemInfo.mediaUrl`,
+  `LayerInfo.caption` / `multicamAngle`; `model/targetNames`.
+- Converted: the Puppet / Bone overlays and Rigging controls, the 3D chrome
+  (axis widget, focus plane, reference geometry, 3D gizmo, device handles),
+  the in-place text editor, the text style capture / corner radii / Swap
+  Fill-Stroke / style presets / primitive / model sections, document colours,
+  captions, multicam, Fit, the Pre-compose dialog, the component library
+  (copyLayers fragments), template slots, media records (mediaUrl +
+  assetSession), the motion-path edits (getMemberKeyframes + a scratch
+  engine), the Layer viewer, scopes, the page renderer's inputs.
+- The page renderer (the fallback when the C++ engine does not draw a
+  surface): `core/rendering/pageFrame.ts` is the TypeScript engine's seam —
+  `pageFrameSnapshot` (plain inputs → RenderSnapshot, FrameReady's twin), its
+  cache key / clip signature / change signals, still frames and the export
+  composition input. The page never reads the scene graph for it.
+- Rules: reads lexically inside an off-document builder (insertBuiltLayers /
+  buildLayerFragment / offDocument) are write composition, as the write rule
+  already treated them.
+- Left (146), by what closes them:
+  - **Engine jobs run by the TypeScript engine (~55)**: tracking and its apply
+    plans (trackMotionActions, trackApplyEdits, TrackPointOverlay), audio
+    analysis (AudioControls, audioEdits, Ducking / Gate / Silence dialogs,
+    AudioDriver / AudioWaveform sections, MediaSection voice), roto
+    (RotoBrushOverlay, LayerPaintSurface, ToolOptionsBar), bakes (Particle,
+    Physics, Ik3D, ikEdits), auto-trace / scene-edit detection, assembly, the
+    logo rig, data-fill batch render, the headless CLI page. Each calls
+    `startEngineJob` first; the C++ engine runs most kinds, the TypeScript
+    engine answers `unsupported` and the page runs its own implementation.
+    Closes with the TypeScript engine running those kinds itself (a job runner
+    in LocalEngine with the C++ result shapes) — a step of its own (a first
+    attempt was dropped half-done).
+  - **Providers command builders and legacy fallbacks (~40)**: the
+    `build*Commands` registrations, motion sketch, the keyframe-assistant
+    legacy fallbacks, Select All over the scene graph, selection pruning and
+    dirty tracking on the bus (they run synchronously with writes the mirror
+    sees a microtask later), seeding.
+  - **Composition navigation (~12)**: compNavigation / MiniFlowchart still walk
+    the TS engine; `mapLayerTime` exists — getDocument does not list a legacy
+    precomp group's members, so the network needs them in the snapshot first.
+  - **Revision plumbing (12)**: the page renderer's and audio mix's own
+    triggers (useSceneRevision*, useClipRevision) — they go with the page
+    renderer / WebAudio mix.
+  - **Paint panel (4)**: a stroke's visibility and mode are not on the
+    `paint/<id>` group (`enabled` / name) in either engine.
+  - Singles: the AE row projection (buildPropertyRows, App), the transport
+    tick, the viewport's scene nodes for the wireframe overlay, face picking /
+    paint space in useWorkspace, layerScreen, masks / shapes from text
+    (convertLayer in C++ only), live merge planning, NodeInspector's raw
+    component list, asset store internals.
+
 ## 5. What is left (2026-09-24: 681 reads, from 765)
 
 The ratchet (`node scripts/lint/engineReadsReport.mjs`) by area: viewport/tools
