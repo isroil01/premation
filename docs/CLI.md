@@ -8,7 +8,7 @@ same deterministic frame loop, the same GPU render graph and the same ffmpeg
 encode that the Export dialog and the Render Queue use. There is no second
 renderer to keep in step, and no "close enough" path.
 
-- [Why it opens a window](#why-it-opens-a-window)
+- [How it renders](#how-it-renders)
 - [Running it](#running-it)
 - [Commands](#commands)
 - [Options](#options)
@@ -22,25 +22,24 @@ renderer to keep in step, and no "close enough" path.
 
 ---
 
-## Why it opens a window
+## How it renders
 
-The render pipeline is a DOM pipeline. Twenty-odd render-path modules touch
-`document`, the texture provider builds real `HTMLImageElement` /
-`HTMLVideoElement` objects, and page-loaded web fonts are invisible to a
-worker's `OffscreenCanvas` — so a "pure Node" renderer would produce different
-pixels from the preview for any composition containing text. That is the same
-reason parallel frame rendering was investigated and declined; see
-[`docs/AE_COMPARISON.md`](AE_COMPARISON.md) §3, Tier 1b.
+The engine renders — `premation-engine --export`, the same job the Export
+dialog and the Render Queue run (electron/engineExport.ts) — and no window is
+opened. The document half runs in the engine too: `premation-engine --prepare`
+(native/engine/src/cli_prepare.cpp) lists compositions (`comps`), makes the
+retargeted composition (`reframe --aspect`, the autoReframe job) and
+transcribes (`captions`, the transcribe job with the OpenAI key from Settings
+▸ AI). `--scale` and a `png` still are export options.
 
-So a CLI render *is* the editor: a hidden `BrowserWindow`, the real engine, the
-real scene graph, and nothing shown. `backgroundThrottling` is off, because
-Chromium otherwise throttles a hidden window's timers to about one tick per
-second and the frame loop yields between frames.
+Not in the engine yet, and refused with a clear line (post-launch):
+`--captions` (burn-in caption layers), `--data` (one file per table row) and
+`--commands` (command-log replay). The HDR10 / HLG formats are gone until the
+engine writes PQ/HLG.
 
 What the headless process does **not** boot is everything a render has no
 business holding open: no application menu, no auto-updater, no managed backend,
-no account session, no plugin network bridge, no AI provider channel. The IPC it
-registers is the disk (the project, its assets, its blobs) and ffmpeg.
+no account session, no AI provider channel.
 
 ---
 
@@ -149,7 +148,7 @@ Lower Third  (1920×1080 @ 30fps, 4.00s, id comp_7)
 |---|---|
 | `--comp <name\|id>` | Composition to render. Matched by id, then by exact name, then case-insensitively. |
 | `--out <file>` | Output path. Created directories are fine; the file is **overwritten**. |
-| `--format <fmt>` | `mp4`, `mov`, `webm`, `gif`, `hdr10`, `hlg`, `png-sequence`, `jpg-sequence`, `exr-sequence`, `png`. Inferred from `--out`'s extension when it is unambiguous, else `mp4`. |
+| `--format <fmt>` | `mp4`, `mov`, `webm`, `gif`, `png-sequence`, `jpg-sequence`, `exr-sequence`, `png`. Inferred from `--out`'s extension when it is unambiguous, else `mp4`. |
 | `--range <a-b>` | Inclusive frame range, e.g. `--range 0-119` renders 120 frames. |
 | `--start <frame>` / `--end <frame>` | The same range, given separately. `--end` is inclusive. |
 | `--fps <n>` | Override the composition's frame rate. |
@@ -325,9 +324,9 @@ render anywhere regardless.
 | File | What it owns |
 |---|---|
 | [`electron/cliArgs.ts`](../electron/cliArgs.ts) | argv → a job. Pure, and fully unit-tested. |
-| [`electron/cliRender.ts`](../electron/cliRender.ts) | The hidden window, the watchdog, stdout, the exit code. |
+| [`electron/cliRender.ts`](../electron/cliRender.ts) | stdout, the exit code, `comps` / `captions` through `--prepare`. |
+| [`electron/cliEngineRender.ts`](../electron/cliEngineRender.ts) | A render: `--aspect` through `--prepare`, then `premation-engine --export`. |
+| [`electron/cliPrepare.ts`](../electron/cliPrepare.ts) | The `--prepare` launcher, the SRT/VTT writer. |
+| [`native/engine/src/cli_prepare.cpp`](../native/engine/src/cli_prepare.cpp) | The document half in the engine (a Session in process). |
 | [`electron/main.ts`](../electron/main.ts) | Which launch this is, and what a headless one is allowed to register. |
-| [`src/pages/RenderPage.tsx`](../src/pages/RenderPage.tsx) | The `#/render` route: boots `Providers`, asks for its job, reports once. |
-| [`src/core/cli/headlessRender.ts`](../src/core/cli/headlessRender.ts) | Open the project, resolve the composition, render, write the file. |
-| [`src/core/export/renderJob.ts`](../src/core/export/renderJob.ts) | The render itself — shared verbatim with the Render Queue. |
 | [`src/core/template/batchRender.ts`](../src/core/template/batchRender.ts) | The one-render-per-row loop, the naming rules, and the restore. |

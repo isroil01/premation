@@ -71,7 +71,7 @@ describe('render worker through premation-engine --export', () => {
     expect(encode.args).toContain('pipe:0');
   });
 
-  it('falls back to the window on an unported frame, a missing engine or a crash', async () => {
+  it('reports an unported frame, a missing engine or a crash as `fallback` (the worker fails the job)', async () => {
     const unported = fakeEngine((p) => {
       p.stdout.write('{"ev":"preflight","ok":false,"reason":"frame 3: remote footage"}\n');
       p.emit('close', 3, null);

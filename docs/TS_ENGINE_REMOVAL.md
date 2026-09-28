@@ -261,16 +261,50 @@ production lines, 40k test lines and 5k doc lines deleted** (+0.9k / +0.4k
 added), 506 files. The native-side read ratchet was lowered with the page job
 paths (371 → 367).
 
-Still here, and why (next phase-4 steps): the job callers under `src/layout`
-(Inspector audio dialogs, trackMotion) and `src/core/workspace` (roto brush)
-keep their page paths, and the in-page export (`exportManager.runExport`, webm
-muxer, GIF encoder, raw pipe) stays because `src/layout/Export/ExportForm.tsx`
-still calls it — both wait for the UI read migration in those folders, which
-this branch did not touch beyond the plugin UI. The CLI's hidden window
-(comps listing, captions, the `needsEditor` renders, `autoReframe.ts`) and the
-render-worker package run on the TypeScript engine until those CLI features are
-engine commands. The `EditorTabs` strip (it only ever held plugin detail tabs)
-is left for the UI cleanup.
+**Round 2 (2026-09-28, branch `p4-round2`).**
+- *Job callers in `src/layout` / `src/core/workspace` are engine-only:*
+  one-click tracking, the Track Motion panel (point / mask / smooth tracks,
+  roto, content-aware fill, Apply / Mesh / Solve Camera / nulls), the Gate,
+  Ducking and Silence Removal dialogs, Audio to Keyframes, the Media section's
+  has-audio test, the Roto Brush tool (segment = `objectMatte` with the new
+  `maskName/maskMode/feather/replaceMasks` fields; propagate = `rotoBrush`).
+  The page trackers, the track-apply plans (`trackApplyEdits.ts`), the page
+  silence / duck / gate envelopes and the analysis-proxy tier are deleted.
+- *Exports are the engine's only.* ExportForm, Add to Queue, the Render Queue
+  panel's Render All (`renderQueueStore` is now a pending list handed to main's
+  queue), the data-row batch (`renderAndWait`) and the assistant's export all
+  queue `premation-engine --export` via the export supervisor
+  (`src/layout/Export/supervisorQueue.ts`). A still PNG is a one-frame
+  unzipped sequence and WAV the engine's audio-only job (electron/engineExport.ts).
+  The document formats (JSON, Lottie, EDL/OTIO/FCPXML/ALE, .mogrt) stay page
+  code (`runDataExport`). The export preview and project thumbnails are the
+  engine's `getThumbnail`. Deleted: `runExport`, `videoSink`, the WebM
+  muxer, the GIF encoder, the raw pipe, `framePipeline`, the encode worker,
+  `renderJob`, `hdrTransfer`, `exportPreview`, main's page render IPC
+  (staging / streaming / resume: `ffmpegStream.ts`, `renderResume.ts`), and
+  the HDR10 / HLG presets (**post-launch**: the engine has no PQ/HLG output yet).
+- *CLI on the engine; no hidden window.* `premation-engine --prepare`
+  (native/engine/src/cli_prepare.cpp) drives a Session in process:
+  `premation comps` (listComps), `premation reframe --aspect` (the
+  autoReframe job, applied, then a saved copy that `--export` renders) and
+  `premation captions` (the transcribe job, credential from main's key vault;
+  SRT/VTT written by main). `--scale` and the png still are export-job options.
+  `#/render`, `RenderPage`, `headlessRender.ts` and the page reframe
+  analysis (`saliency`, `reframePath`) are deleted.
+  **Post-launch** (refused with a clear line): `--captions` (caption layers
+  need a C++ builder), `--data` (template fill in C++), `--commands` (the log
+  format is the TypeScript engine's; a C++-recorded log format is needed).
+- *Render worker* renders only through `premation-engine --export`; its
+  offscreen window, render page, preload and Vite bundle are deleted.
+
+Still on the page (no engine job yet — **post-launch** C++ jobs): the audio
+driver bake (`computeDriverEnvelope`), the Audio Waveform generator's read,
+particle / physics bakes (`bakeDynamics`), the IK3D bake, environment SH
+(`ensureEnvironmentSh`), Rig Logo for Animation, footage assembly, live
+merge, and the page stills (`offlineRenderer.renderStillFrame`: AI filmstrip
+/ render feedback, version compare). These keep the TypeScript renderer,
+effects and evaluation referenced, so step 4 (deleting those packages) is
+post-launch too. The `EditorTabs` strip is left for the UI cleanup.
 
 **Phase 4 — delete, in dependency order:** flags + fallbacks; JS plugin system;
 renderer + effects; media/text/audio; evaluation; parity generators + TS harness
