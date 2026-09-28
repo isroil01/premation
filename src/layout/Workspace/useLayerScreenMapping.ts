@@ -12,7 +12,7 @@ import { layerScreenMapping, type LayerScreenMapping } from './layerScreen';
 import type { Camera2DLike } from './cameraTypes';
 
 /** What a mapping reads off the push. */
-export const LAYER_SCREEN_KINDS: readonly OverlayKind[] = ['transform'];
+export const LAYER_SCREEN_KINDS: readonly OverlayKind[] = ['transform', 'bounds'];
 export const LAYER_SCREEN_VIEWS: readonly string[] = ['active'];
 
 export function useLayerScreenMapping(

@@ -41,8 +41,8 @@ import { useCurrentTime } from '@stores/playbackClockStore';
 import { useRotoBrushStore, type RotoStroke } from '@stores/rotoBrushStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { segmentStrokesToMask } from '@core/workspace/rotoBrushTool';
-import { isMirrorDescendantOf } from '@core/mirror/layerTree';
-import { documentMirror } from '@stores/documentMirror';
+import { secondsToFlicks } from '@motion/engine-api';
+import { MAIN_VIEWPORT, overlayLayer } from '@stores/overlayGeometry';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
 import { useLayerScreenMapping } from './useLayerScreenMapping';
 import styles from './RotoBrushOverlay.module.css';
@@ -163,8 +163,12 @@ export function RotoBrushOverlay(): JSX.Element | null {
       return false;
     }
     const r = rootRef.current?.getBoundingClientRect();
-    const hit = r ? getWorkspaceController().ws.hitTestScreen({ x: e.clientX - r.left, y: e.clientY - r.top }) : null;
-    if (!hit || !(hit.id === nodeId || isMirrorDescendantOf(documentMirror(), hit.id, nodeId))) {
+    // On the layer: the click, taken into the layer's own space (the frame's projection), falls in its drawn box.
+    const box = overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(time))?.box;
+    const local = r && mapping ? mapping.screenToLocal(e.clientX - r.left, e.clientY - r.top) : null;
+    const onLayer = !!local && !!box && box.length >= 4
+      && local.x >= box[0]! && local.x <= box[0]! + box[2]! && local.y >= box[1]! && local.y <= box[1]! + box[3]!;
+    if (!onLayer) {
       flushPendingClick();
       return false;
     }
