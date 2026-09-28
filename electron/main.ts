@@ -15,7 +15,8 @@ import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFi
 import { writeFileAtomic } from './atomicWrite';
 import { initDialogDirs, rememberDir, rememberedDir } from './dialogDirs';
 import { localFileUrlToPath } from './localFileUrl';
-import { EngineHost, engineBackendEnabled, engineOwnsDocument, enginePreferenceFile, registerEngineIpc, type SharedTextureApi } from './engineHost';
+import { EngineHost, registerEngineIpc, type SharedTextureApi } from './engineHost';
+import { handleEngineUnavailable } from './engineUnavailable';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { buildEncodeArgs, ffmpegRate, rawVideoInput, stagedVideoInput, type EncodeFormat, type VideoEncoder } from './ffmpegEncodeArgs';
@@ -76,10 +77,10 @@ let mainWindow: BrowserWindow | null = null;
 let exportSupervisor: ExportSupervisor | null = null;
 
 /**
- * The C++ engine process (electron/engineHost.ts), created in whenReady. Its
- * supervisor only exists — and the engine only runs — when the process
- * backend is on (the default since 2026-09-28; PREMATION_ENGINE=ts or
- * <userData>/engine.json `{ "backend": "ts" }` switches it off).
+ * The C++ engine process (electron/engineHost.ts), created in whenReady: the
+ * only engine (docs/TS_ENGINE_REMOVAL.md). When it cannot run, main shows a
+ * fatal startup dialog, or blocks the editor after a crash loop and offers a
+ * recovery save (electron/engineUnavailable.ts).
  */
 let engineHost: EngineHost | null = null;
 
@@ -1951,13 +1952,10 @@ app.whenReady().then(() => {
   // which on Electron 44 is earlier than `ready-to-show` (see updater.ts).
   registerUpdaterIpc();
 
-  // The C++ engine process (NATIVE_CORE_PLAN C3), behind its flag. The
-  // channels exist before the window does (the page asks for the status at
-  // boot); `engine:status` answers `enabled: false` when the flag is off.
+  // The C++ engine process: the only engine, and it owns the document. The
+  // channels exist before the window does (the page asks for the status at boot).
+  const recoveryPath = path.join(ensureDir(path.join(app.getPath('userData'), 'recovery')), 'engine-recovery.json');
   engineHost = new EngineHost({
-    enabled: engineBackendEnabled(process.env, enginePreferenceFile(app.getPath('userData'))),
-    // F2: the document lifecycle through the engine; default on since 2026-09-28 (PREMATION_ENGINE_OWNER=ui opts out).
-    ownsDocument: engineOwnsDocument(process.env, enginePreferenceFile(app.getPath('userData'))),
     isDev,
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
@@ -1974,13 +1972,30 @@ app.whenReady().then(() => {
     nativePluginDir: ensureDir(path.join(app.getPath('userData'), 'native-plugins')),
     nativePluginJournal: path.join(app.getPath('userData'), 'native-plugin-journal.bin'),
     // F2 / D5: where the engine-owned document's autosave writes its recovery copy.
-    recoveryPath: path.join(ensureDir(path.join(app.getPath('userData'), 'recovery')), 'engine-recovery.json'),
+    recoveryPath,
     // Imported bytes and session blob: footage become files here (the same
     // folder file:sessionFootageDir hands the page).
     sessionFootageDir: ensureDir(path.join(app.getPath('userData'), 'session-footage')),
     // The transcribe job's key: main's keystore → the startJob, per job (never logged, never to a page).
     transcribeCredential: async (provider) =>
       (VAULT_PROVIDERS as readonly string[]).includes(provider) ? getKeyForProvider(provider as VaultProvider) : null,
+    // No engine, no editor: a fatal startup dialog, or a blocking crash-loop
+    // dialog with a recovery save (engineUnavailable.ts).
+    onUnavailable: (info) => {
+      const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      void handleEngineUnavailable(info, {
+        showErrorBox: (title, content) => dialog.showErrorBox(title, content),
+        showMessageBox: (o) => (parent ? dialog.showMessageBox(parent, o) : dialog.showMessageBox(o)),
+        showSaveDialog: (o) => (parent ? dialog.showSaveDialog(parent, o) : dialog.showSaveDialog(o)),
+        recoveryPath,
+        exists: (p) => existsSync(p),
+        copyFile: (from, to) => copyFile(from, to),
+        retry: () => engineHost?.retry() ?? Promise.resolve(),
+        quit: () => app.quit(),
+        defaultDir: app.getPath('documents'),
+        joinPath: (...parts) => path.join(...parts),
+      });
+    },
   });
   registerEngineIpc(engineHost);
   // Dev only: the real-app harness reads the frame-forwarding counters from
@@ -2000,12 +2015,10 @@ app.whenReady().then(() => {
 
   // After ready, beside the window: the engine asks Chromium which adapter it
   // composits on, so it can render where the page will sample (C1).
-  if (engineHost.enabled) {
-    void engineHost.start();
-    app.on('child-process-gone', (_event, details) => {
-      if (details.type === 'GPU') engineHost?.gpuProcessGone(details.reason);
-    });
-  }
+  void engineHost.start();
+  app.on('child-process-gone', (_event, details) => {
+    if (details.type === 'GPU') engineHost?.gpuProcessGone(details.reason);
+  });
 
   // Report GPU status AFTER the renderer has loaded and touched the GPU. Reading
   // in whenReady catches Chromium's GPU process before it initializes (every

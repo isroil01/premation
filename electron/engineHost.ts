@@ -1,15 +1,15 @@
 /**
  * engineHost — the C++ engine process wired into the app (NATIVE_CORE_PLAN §5 C3).
  *
- * Behind a flag, default ON since 2026-09-28: `PREMATION_ENGINE=ts` in the
- * environment, or `{ "backend": "ts" }` in `<userData>/engine.json`, turns it
- * off. When it is off the only thing registered is `engine:status` (answers
- * `enabled: false`), so the renderer can ask without a handler error and
- * nothing starts.
+ * The ONLY engine (docs/TS_ENGINE_REMOVAL.md, owner decision 2026-09-28): it
+ * always starts and always owns the document. There is no TypeScript
+ * fallback; when the engine cannot run the host reports `unavailable`
+ * (`onUnavailable`): fatal (no executable, no GPU, protocol mismatch) → main's
+ * startup dialog; a crash loop → main blocks the editor and offers a recovery
+ * save and a retry (`retry()`).
  *
- * When on:
  *  - `EngineSupervisor` (engineSupervisor.ts) starts `premation-engine` after
- *    `app` is ready, restarts it on a crash or hang, falls back after a crash
+ *    `app` is ready, restarts it on a crash or hang, gives up after a crash
  *    loop, and restarts it on purpose when Chromium's GPU process goes away
  *    (the engine must follow Chromium's adapter — docs/VIEWPORT_ROUTE.md).
  *  - IPC, all through ipcGuard (top frame of our own page only):
@@ -17,7 +17,7 @@
  *      engine:status         invoke  EngineHostStatus
  *      engine:receiverReady  send    the page's sharedTexture receiver is (not) installed
  *    and pushes to the main window: engine:events (encoded EventBatch bytes),
- *    engine:state, engine:restarted, engine:fallback.
+ *    engine:state, engine:restarted, engine:unavailable.
  *  - Frames: the engine's FrameSlots/FrameReady (frame channel, fd 3) become
  *    `sharedTexture.importSharedTexture` + `sendSharedTexture` into the main
  *    frame; the ring slot is released back to the engine on
@@ -41,7 +41,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { handle, on } from './ipcGuard';
@@ -58,7 +58,7 @@ import {
   resolveEngineExecutable,
   type EngineChild,
   type EngineRestartedInfo,
-  type FallbackInfo,
+  type UnavailableInfo,
   type SupervisorOptions,
   type SupervisorState,
 } from './engineSupervisor';
@@ -73,58 +73,10 @@ export const ENGINE_IPC_CHANNELS = [
 ] as const;
 
 /** Pushes to the renderer. */
-export const ENGINE_PUSH_CHANNELS = ['engine:events', 'engine:state', 'engine:restarted', 'engine:fallback', 'engine:pixels'] as const;
+export const ENGINE_PUSH_CHANNELS = ['engine:events', 'engine:state', 'engine:restarted', 'engine:unavailable', 'engine:pixels'] as const;
 
 /** Most route-A frames with the page at once (each holds an engine ring slot). */
 export const MAX_COPY_FRAMES_IN_PAGE = 2;
-
-// ── the flag ─────────────────────────────────────────────────────────────────
-
-/** A string field of the preference file, or undefined (no file, not JSON, not a string). */
-function prefField(prefFile: string | null, key: 'backend' | 'owner', read: (p: string) => string | null): string | undefined {
-  if (!prefFile) return undefined;
-  const text = read(prefFile);
-  if (!text) return undefined;
-  try {
-    const v = (JSON.parse(text) as Record<string, unknown>)[key];
-    return typeof v === 'string' ? v.trim().toLowerCase() : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Is the process backend on? Env wins; then the preference file; default ON
- * since 2026-09-28 (D5 / D4 / F1 exits met — NATIVE_CORE_PLAN D5). The
- * TypeScript path stays behind `PREMATION_ENGINE=ts` or `{ "backend": "ts" }`,
- * and a missing executable or a crash loop still falls back to it.
- */
-export function engineBackendEnabled(env: Record<string, string | undefined>, prefFile: string | null, read: (p: string) => string | null = readText): boolean {
-  const v = env.PREMATION_ENGINE?.trim().toLowerCase();
-  if (v === 'process') return true;
-  if (v === 'ts' || v === 'off' || v === 'typescript') return false;
-  const pref = prefField(prefFile, 'backend', read);
-  return !(pref === 'ts' || pref === 'off' || pref === 'typescript');
-}
-
-/**
- * F2 (NATIVE_CORE_PLAN §5 Phase F): does the ENGINE own the document — the
- * editor's New / Open / Save / Revert / autosave / recovery go through engine
- * requests, the page holding only the mirror, and the engine's frames are the
- * viewport (D5)? Needs the process backend on.
- * `PREMATION_ENGINE_OWNER=engine` (or `ui`) wins; then `{ "owner": … }` in the
- * preference file; default ON since 2026-09-28 (the D5 exit: engine HUD frame
- * time ≤ the TS path on every bench comp). `ui` keeps the TypeScript engine as
- * the owner (the fallback for one release).
- */
-export function engineOwnsDocument(env: Record<string, string | undefined>, prefFile: string | null, read: (p: string) => string | null = readText): boolean {
-  if (!engineBackendEnabled(env, prefFile, read)) return false;
-  const v = env.PREMATION_ENGINE_OWNER?.trim().toLowerCase();
-  if (v === 'engine') return true;
-  if (v === 'ui' || v === 'ts' || v === 'off') return false;
-  const pref = prefField(prefFile, 'owner', read);
-  return !(pref === 'ui' || pref === 'ts' || pref === 'off');
-}
 
 /**
  * The viewport frame route main offers the engine. `auto` (default): the
@@ -147,14 +99,6 @@ export function viewportRoute(env: Record<string, string | undefined>): 'auto' |
  */
 export function offeredFrameCapabilities(canImportShared: boolean): string[] {
   return canImportShared ? ['frames.sharedTexture', 'frames.copy'] : ['frames.copy'];
-}
-
-function readText(p: string): string | null {
-  try {
-    return readFileSync(p, 'utf8');
-  } catch {
-    return null;
-  }
 }
 
 // ── shared-texture frame forwarding ─────────────────────────────────────────
@@ -543,9 +487,6 @@ function slotKey(generation: number, slot: number): string {
 // ── the host ─────────────────────────────────────────────────────────────────
 
 export interface EngineHostOptions {
-  enabled: boolean;
-  /** F2: the engine owns the document (engineOwnsDocument); reported in `engine:status`. */
-  ownsDocument?: boolean;
   isDev: boolean;
   isPackaged: boolean;
   resourcesPath: string;
@@ -585,6 +526,11 @@ export interface EngineHostOptions {
    * never logged, never sent back to a page. Absent: transcribe jobs get no key.
    */
   transcribeCredential?(provider: string): Promise<string | null>;
+  /**
+   * The engine cannot run (see UnavailableInfo.fatal). Main shows the fatal
+   * startup dialog, or the blocking crash-loop dialog with a recovery save.
+   */
+  onUnavailable?(info: UnavailableInfo): void;
 }
 
 /**
@@ -599,14 +545,16 @@ export function nativePluginArgs(dir: string | undefined, journal: string | unde
 }
 
 export interface EngineHostStatusReply {
-  enabled: boolean;
-  state: SupervisorState | 'disabled';
+  /** Always true: the engine is the only one (kept on the wire for the page's EngineHostStatus). */
+  enabled: true;
+  state: SupervisorState;
   engine?: string;
   engineVersion?: string;
   revision?: number;
-  fallbackReason?: string;
-  /** F2: the engine owns the document (the page's lifecycle goes through engine requests). */
-  ownsDocument?: boolean;
+  /** Why the engine is `unavailable` (with that state). */
+  unavailableReason?: string;
+  /** Always true: the engine owns the document (the page's lifecycle goes through engine requests). */
+  ownsDocument: true;
   /** F2 / D5: where autosave writes the recovery copy (with ownsDocument). */
   recoveryPath?: string;
   /** F2: main keeps the command log and replays it after a restart (renderer clients record none). */
@@ -630,9 +578,9 @@ export interface HostRecoveryInfo {
 }
 
 export class EngineHost {
-  readonly supervisor: EngineSupervisor | null;
+  readonly supervisor: EngineSupervisor;
   readonly frames: FrameForwarder;
-  private fallbackReason: string | undefined;
+  private unavailableReason: string | undefined;
   /** F2: the engine's command log (engineCommandLog.ts), replayed by main after a restart. */
   readonly commandLog: EngineCommandLog;
   /** Main's seq space on the engine connection: every window's requests renumbered. */
@@ -660,15 +608,15 @@ export class EngineHost {
     // not offered `frames.sharedTexture`. PREMATION_VIEWPORT_ROUTE=copy forces
     // route A everywhere (viewportRoute).
     const forceCopy = viewportRoute(o.env ?? process.env) === 'copy';
-    if (o.enabled && forceCopy) log('[engine] viewport route forced to copy (PREMATION_VIEWPORT_ROUTE=copy)');
-    const handles = o.enabled && o.sharedTexture && !forceCopy
+    if (forceCopy) log('[engine] viewport route forced to copy (PREMATION_VIEWPORT_ROUTE=copy)');
+    const handles = o.sharedTexture && !forceCopy
       ? slotHandleSourceFor(
         platform,
         () => loadIoSurfaceBridge({ platform, file: hostBridgePath(resolveExe(), process.env), exists: existsSync, log: (m) => log(`[engine] warn ${m}`) }),
         (m) => log(`[engine] warn shared_texture ${m}`),
         {
           loadDmabuf: () => loadDmabufBridge({ platform, file: hostBridgePath(resolveExe(), process.env), exists: existsSync, log: (m) => log(`[engine] warn ${m}`) }),
-          enginePid: () => this.supervisor?.enginePid,
+          enginePid: () => this.supervisor.enginePid,
         },
       )
       : null;
@@ -680,7 +628,7 @@ export class EngineHost {
         return w ? w.webContents.mainFrame : null;
       },
       ownerOf: (viewport) => this.viewportOwners.get(viewport) ?? this.mainWindowKey(),
-      release: (g, s) => this.supervisor?.releaseSlot(g, s),
+      release: (g, s) => this.supervisor.releaseSlot(g, s),
       ...(handles ? { handles } : {}),
       sendPixels: (meta, pixels) => {
         const w = this.windowOfViewport(meta.viewport);
@@ -689,10 +637,6 @@ export class EngineHost {
         return true;
       },
     });
-    if (!o.enabled) {
-      this.supervisor = null;
-      return;
-    }
     const capabilities = offeredFrameCapabilities(handles !== null);
     this.supervisor = new EngineSupervisor(
       {
@@ -733,10 +677,12 @@ export class EngineHost {
     sup.on('log-record', (edit) => this.commandLog.absorbJobEdit(edit.bytes, edit.revisionAfter, edit.job));
     sup.on('state', (s) => this.push('engine:state', s));
     sup.on('engine-restarted', (info: EngineRestartedInfo) => void this.recoverRestarted(info));
-    sup.on('fallback', (info: FallbackInfo) => {
-      this.fallbackReason = info.reason;
-      this.push('engine:fallback', { reason: info.reason, logTail: info.logTail.slice(-20) });
+    sup.on('unavailable', (info: UnavailableInfo) => {
+      this.unavailableReason = info.reason;
+      this.push('engine:unavailable', { reason: info.reason, fatal: info.fatal, logTail: info.logTail.slice(-20) });
+      o.onUnavailable?.(info);
     });
+    sup.on('ready', () => { this.unavailableReason = undefined; });
     if (o.isDev) {
       // Engine warnings and errors in the terminal (its stderr is JSON lines).
       sup.on('log', (line) => {
@@ -745,9 +691,6 @@ export class EngineHost {
     }
   }
 
-  get enabled(): boolean {
-    return this.supervisor !== null;
-  }
 
   /**
    * C: which window owns each engine viewport — the sender of its last
@@ -787,17 +730,22 @@ export class EngineHost {
   }
 
   start(): Promise<void> {
-    return this.supervisor?.start() ?? Promise.resolve();
+    return this.supervisor.start();
+  }
+
+  /** After a crash loop: start the engine again (main's "Try again"); the command log is replayed into it. */
+  retry(): Promise<void> {
+    return this.supervisor.retry();
   }
 
   /** Clean shutdown (before-quit): Goodbye, then the supervisor's kill timer. */
   stop(): Promise<void> {
-    return this.supervisor?.stop() ?? Promise.resolve();
+    return this.supervisor.stop();
   }
 
   /** Chromium's GPU process went away: the engine follows it onto the (possibly new) adapter. */
   gpuProcessGone(reason: string): void {
-    this.supervisor?.restart(`chromium GPU process gone (${reason})`);
+    this.supervisor.restart(`chromium GPU process gone (${reason})`);
   }
 
   /** A page (re)loaded or went away (default: the main window's): its receivers are gone until it says otherwise. */
@@ -807,14 +755,14 @@ export class EngineHost {
 
   status(): EngineHostStatusReply {
     const sup = this.supervisor;
-    if (!sup) return { enabled: false, state: 'disabled' };
     const w = sup.welcome;
     return {
       enabled: true,
       state: sup.state,
       ...(w ? { engine: w.engine, engineVersion: w.engineVersion, revision: w.revision } : {}),
-      ...(this.fallbackReason ? { fallbackReason: this.fallbackReason } : {}),
-      ...(this.o.ownsDocument ? { ownsDocument: true, ...(this.o.recoveryPath ? { recoveryPath: this.o.recoveryPath } : {}) } : {}),
+      ...(this.unavailableReason && sup.state === 'unavailable' ? { unavailableReason: this.unavailableReason } : {}),
+      ownsDocument: true,
+      ...(this.o.recoveryPath ? { recoveryPath: this.o.recoveryPath } : {}),
       ...((this.o.recordLog ?? true) ? { hostCommandLog: true } : {}),
     };
   }
@@ -830,9 +778,8 @@ export class EngineHost {
    * from 1), the response is renumbered back, and the applied request goes on
    * the command log. Requests wait while a restarted engine is being replayed.
    */
-  async request(bytes: Uint8Array, sender?: EngineRequestSender): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; reason: 'gone' | 'disabled' | 'invalid'; message: string }> {
+  async request(bytes: Uint8Array, sender?: EngineRequestSender): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; reason: 'gone' | 'invalid'; message: string }> {
     const sup = this.supervisor;
-    if (!sup) return { ok: false, reason: 'disabled', message: 'the engine process backend is switched off' };
     if (!(bytes instanceof Uint8Array)) return { ok: false, reason: 'invalid', message: 'engine:request takes the encoded request bytes' };
     const peek = peekEnvelope(bytes);
     if (!peek || peek.kind !== 'request' || peek.seq === undefined) return { ok: false, reason: 'invalid', message: 'not an encoded EngineMessage{request}' };
@@ -902,7 +849,7 @@ export class EngineHost {
   private async recoverRestarted(info: EngineRestartedInfo): Promise<void> {
     const sup = this.supervisor;
     const notice = { attempt: info.attempt, cause: info.cause, exitCode: info.exitCode, signal: info.signal, logTail: info.logTail.slice(-20) };
-    if (!sup || (this.o.recordLog ?? true) === false) {
+    if ((this.o.recordLog ?? true) === false) {
       this.push('engine:restarted', notice);
       return;
     }
@@ -942,12 +889,11 @@ export class EngineHost {
   }
 }
 
-/** Register the engine channels. `engine:status` always; the rest only when the host is enabled. */
+/** Register the engine channels (all of them: the engine always runs). */
 export function registerEngineIpc(host: EngineHost): void {
   handle('engine:status', () => host.status());
   // C: the first engine viewport id this window may use (EngineHost.viewportBase).
   handle('engine:viewportBase', (e: IpcMainInvokeEvent) => host.viewportBase(e.sender.id));
-  if (!host.enabled) return;
   handle('engine:request', (e: IpcMainInvokeEvent, bytes: Uint8Array) => host.request(bytes, e.sender.id));
   // Receivers are per window: a pop-out's never stands in for the editor's.
   on('engine:receiverReady', (e: IpcMainEvent, ready: boolean, copyReady?: boolean) =>
@@ -955,9 +901,4 @@ export function registerEngineIpc(host: EngineHost): void {
   on('engine:pixelsRelease', (_e: IpcMainEvent, generation: number, slot: number) => {
     if (Number.isInteger(generation) && Number.isInteger(slot)) host.frames.pixelsReleased(generation, slot);
   });
-}
-
-/** `<userData>/engine.json` — the persistent switch (`{ "backend": "process" }`). */
-export function enginePreferenceFile(userData: string): string {
-  return path.join(userData, 'engine.json');
 }

@@ -1,7 +1,7 @@
 /**
  * D5 / F2 — the editor session when the C++ ENGINE OWNS THE DOCUMENT
- * (the default since 2026-09-28; `PREMATION_ENGINE_OWNER=ui` or
- * `PREMATION_ENGINE=ts` keeps the TypeScript owner).
+ * (always, in the app: the C++ engine is the only engine — the owner flag and
+ * the TypeScript owner are gone, docs/TS_ENGINE_REMOVAL.md).
  *
  * What Providers wires instead of the TypeScript owner's pieces:
  *

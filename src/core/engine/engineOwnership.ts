@@ -1,21 +1,19 @@
 /**
- * Who owns the document in this window, and who draws the viewport
- * (NATIVE_CORE_PLAN §5 D5 + F2).
+ * Does the C++ engine own the document in this window, and draw the viewport
+ * (NATIVE_CORE_PLAN §5 D5 + F2)?
  *
- *   engineOwnsDocumentNow()     the F2 owner flag, decided once at boot
- *                               (main's engineOwnsDocument: ON by default since
- *                               2026-09-28; PREMATION_ENGINE_OWNER=ui / PREMATION_ENGINE=ts
- *                               or `{ "owner": "ui" }` in <userData>/engine.json keep the
- *                               TypeScript engine as the owner, exactly as before).
- *                               False here until main's status says otherwise.
- *   engineViewportActive()      the C++ engine's frames ARE the viewport: the engine owns
- *                               the document AND the process backend has not fallen back.
- *                               The TypeScript renderer does not run while this is true.
- *   subscribeEngineOwnership(l) told when either changes (boot, a fallback to the
- *                               TypeScript engine).
+ * The C++ engine is the only engine (docs/TS_ENGINE_REMOVAL.md): wherever the
+ * page has an engine bridge it owns the document and its frames ARE the
+ * viewport. The owner flag, the preference file and the fall-back to the
+ * TypeScript engine are gone; the one place this is false is the jest harness
+ * (no bridge), where the LocalEngine answers.
+ *
+ *   engineOwnsDocumentNow()     set once at boot (Providers) from the bridge
+ *   engineViewportActive()      the engine's frames are the viewport (same answer)
+ *   subscribeEngineOwnership(l) told when it changes (boot)
  *
  * Plain module state, not a store: it is read on hot paths (the viewport's
- * render tick, the transport) and changes at most twice per session.
+ * render tick, the transport) and changes at most once per session.
  *
  * No React here (src/core). The hook over this is src/hooks/useEngineViewport.ts.
  */
@@ -24,7 +22,6 @@ type Listener = () => void;
 
 interface OwnershipState {
   ownsDocument: boolean;
-  fellBack: boolean;
   listeners: Set<Listener>;
 }
 
@@ -35,7 +32,7 @@ type W = { __premationEngineOwnership?: OwnershipState };
 let local: OwnershipState | null = null;
 
 function state(): OwnershipState {
-  const fresh = (): OwnershipState => ({ ownsDocument: false, fellBack: false, listeners: new Set() });
+  const fresh = (): OwnershipState => ({ ownsDocument: false, listeners: new Set() });
   if (typeof window === 'undefined') return (local ??= fresh());
   const w = window as unknown as W;
   return (w.__premationEngineOwnership ??= fresh());
@@ -51,34 +48,21 @@ function notify(): void {
   }
 }
 
-/** The F2 owner flag (see the file header). */
+/** The engine owns the document in this window (see the file header). */
 export function engineOwnsDocumentNow(): boolean {
   return state().ownsDocument;
 }
 
-/** The engine's frames are the viewport (owner flag on, process backend healthy). */
+/** The engine's frames are the viewport (wherever it owns the document). */
 export function engineViewportActive(): boolean {
-  const s = state();
-  return s.ownsDocument && !s.fellBack;
+  return state().ownsDocument;
 }
 
-/** Boot (Providers): record the owner flag the main process reported. */
+/** Boot (Providers): record whether this window has the engine. */
 export function setEngineOwnsDocument(owns: boolean): void {
   const s = state();
   if (s.ownsDocument === owns) return;
   s.ownsDocument = owns;
-  s.fellBack = false;
-  notify();
-}
-
-/**
- * The process backend gave up (crash loop, no GPU): the TypeScript engine
- * answers from here on, so the TypeScript renderer must draw again.
- */
-export function noteEngineFellBack(): void {
-  const s = state();
-  if (s.fellBack) return;
-  s.fellBack = true;
   notify();
 }
 
@@ -92,6 +76,5 @@ export function subscribeEngineOwnership(listener: Listener): () => void {
 export function resetEngineOwnership(): void {
   const s = state();
   s.ownsDocument = false;
-  s.fellBack = false;
   notify();
 }

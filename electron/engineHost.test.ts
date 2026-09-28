@@ -1,5 +1,5 @@
 /**
- * engineHost: the flag (default ON since 2026-09-28), and shared-texture frame forwarding —
+ * engineHost: shared-texture frame forwarding —
  * one transfer in flight, drop-not-block, release on allReferencesReleased,
  * nothing before the page's receiver is installed, and no release ever sent
  * to a successor engine for a slot of the one that died.
@@ -7,34 +7,11 @@
 
 jest.mock('electron', () => ({ ipcMain: { handle: () => undefined, on: () => undefined } }));
 
-import { FrameForwarder, engineBackendEnabled, engineOwnsDocument, nativePluginArgs, offeredFrameCapabilities, viewportRoute, type ForwardedFrameMeta, type SharedTextureApi } from './engineHost';
+import { FrameForwarder, nativePluginArgs, offeredFrameCapabilities, viewportRoute, type ForwardedFrameMeta, type SharedTextureApi } from './engineHost';
 import type { PixelFrame } from './pixelChannel';
 import type { IoSurfaceBridge } from './ioSurfaceBridge';
 import { ioSurfaceSource, type SlotTextureHandle as SharedTextureImportHandle } from './sharedTextureHandles';
 import type { FrameGeometryMessage, FrameReadyMessage, SlotsMessage } from './engineFraming';
-
-describe('engineBackendEnabled', () => {
-  const read = (text: string | null) => () => text;
-
-  it('is on by default (2026-09-28), whatever the preference file holds that is not an opt-out', () => {
-    expect(engineBackendEnabled({}, null)).toBe(true);
-    expect(engineBackendEnabled({}, 'engine.json', read(null))).toBe(true);
-    expect(engineBackendEnabled({}, 'engine.json', read('not json'))).toBe(true);
-    expect(engineBackendEnabled({ PREMATION_ENGINE: 'process' }, null)).toBe(true);
-    expect(engineBackendEnabled({}, 'engine.json', read('{"backend":"process"}'))).toBe(true);
-  });
-
-  it('turns off with PREMATION_ENGINE=ts or the preference (the TypeScript fallback)', () => {
-    expect(engineBackendEnabled({ PREMATION_ENGINE: 'ts' }, null)).toBe(false);
-    expect(engineBackendEnabled({ PREMATION_ENGINE: 'off' }, null)).toBe(false);
-    expect(engineBackendEnabled({}, 'engine.json', read('{"backend":"ts"}'))).toBe(false);
-  });
-
-  it('the environment wins over the preference', () => {
-    expect(engineBackendEnabled({ PREMATION_ENGINE: 'ts' }, 'engine.json', read('{"backend":"process"}'))).toBe(false);
-    expect(engineBackendEnabled({ PREMATION_ENGINE: 'process' }, 'engine.json', read('{"backend":"ts"}'))).toBe(true);
-  });
-});
 
 describe('viewportRoute / offeredFrameCapabilities', () => {
   it('offers the shared texture and the copy by default, only the copy when forced', () => {
@@ -44,28 +21,6 @@ describe('viewportRoute / offeredFrameCapabilities', () => {
     expect(viewportRoute({ PREMATION_VIEWPORT_ROUTE: 'a' })).toBe('copy');
     expect(offeredFrameCapabilities(true)).toEqual(['frames.sharedTexture', 'frames.copy']);
     expect(offeredFrameCapabilities(false)).toEqual(['frames.copy']);
-  });
-});
-
-describe('engineOwnsDocument (F2)', () => {
-  const read = (text: string | null) => () => text;
-
-  it('is on by default (2026-09-28), and off without the process backend', () => {
-    expect(engineOwnsDocument({}, null)).toBe(true);
-    expect(engineOwnsDocument({ PREMATION_ENGINE: 'process' }, null)).toBe(true);
-    expect(engineOwnsDocument({}, 'engine.json', read('{"backend":"process"}'))).toBe(true);
-    expect(engineOwnsDocument({ PREMATION_ENGINE: 'ts', PREMATION_ENGINE_OWNER: 'engine' }, null)).toBe(false);
-    expect(engineOwnsDocument({}, 'engine.json', read('{"backend":"ts","owner":"engine"}'))).toBe(false);
-  });
-
-  it('turns off with PREMATION_ENGINE_OWNER=ui or the preference', () => {
-    expect(engineOwnsDocument({ PREMATION_ENGINE_OWNER: 'ui' }, null)).toBe(false);
-    expect(engineOwnsDocument({}, 'engine.json', read('{"owner":"ui"}'))).toBe(false);
-  });
-
-  it('the environment wins over the preference', () => {
-    expect(engineOwnsDocument({ PREMATION_ENGINE_OWNER: 'ui' }, 'engine.json', read('{"backend":"process","owner":"engine"}'))).toBe(false);
-    expect(engineOwnsDocument({ PREMATION_ENGINE_OWNER: 'engine' }, 'engine.json', read('{"owner":"ui"}'))).toBe(true);
   });
 });
 

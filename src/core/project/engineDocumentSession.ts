@@ -13,7 +13,7 @@
  *
  * This is the lifecycle expressed only in engine API requests, so it runs
  * unchanged over the TypeScript engine (in process, with its file ports) and
- * over the C++ engine process (`PREMATION_ENGINE=process`, whose FilePorts
+ * over the C++ engine process (the app's only engine, whose FilePorts
  * write temp-file + rename):
  *
  *   New            newProject                         (history cleared, documentReset)

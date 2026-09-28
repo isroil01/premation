@@ -627,14 +627,16 @@ const bridge = {
   /**
    * The C++ engine process (NATIVE_CORE_PLAN C3; electron/engineHost.ts). Bytes
    * in, bytes out: the page's ProcessEngineClient owns the codec, main relays.
-   * `status().enabled` is false when the process backend is switched off
-   * (PREMATION_ENGINE=ts / <userData>/engine.json; on by default), and then nothing else
-   * here has a handler.
+   * The engine is the only one; `engine:unavailable` says it cannot run (main
+   * also shows the dialog — electron/engineUnavailable.ts).
    */
   engine: {
     request: (bytes: Uint8Array) => ipcRenderer.invoke('engine:request', bytes),
     status: () =>
-      ipcRenderer.invoke('engine:status').catch(() => ({ enabled: false, state: 'disabled' })),
+      ipcRenderer.invoke('engine:status').catch((e: unknown) => ({
+        enabled: true, state: 'unavailable', ownsDocument: true,
+        unavailableReason: `engine status unavailable: ${e instanceof Error ? e.message : String(e)}`,
+      })),
     /** C: this window's first engine viewport id (0 in the editor, a block of its own in a pop-out). */
     viewportBase: (): Promise<number> =>
       ipcRenderer.invoke('engine:viewportBase').then((n: unknown) => (typeof n === 'number' && Number.isInteger(n) && n >= 0 ? n : 0), () => 0),
@@ -654,10 +656,10 @@ const bridge = {
       ipcRenderer.on('engine:restarted', listener);
       return () => ipcRenderer.removeListener('engine:restarted', listener);
     },
-    onFallback: (handler: (info: unknown) => void) => {
+    onUnavailable: (handler: (info: unknown) => void) => {
       const listener = (_event: unknown, info: unknown): void => handler(info);
-      ipcRenderer.on('engine:fallback', listener);
-      return () => ipcRenderer.removeListener('engine:fallback', listener);
+      ipcRenderer.on('engine:unavailable', listener);
+      return () => ipcRenderer.removeListener('engine:unavailable', listener);
     },
     /** Engine frames (shared textures, or route-A copies as VideoFrames); null stops. The consumer must `release()` each frame. */
     onFrame: (consumer: EngineFrameConsumer | null) => {

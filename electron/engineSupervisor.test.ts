@@ -1,6 +1,6 @@
 // EngineSupervisor's state machine against a FAKE engine child: spawn args,
 // handshake, heartbeat, crash → restart with backoff, hang detection, crash
-// loop → fallback, cannot-start, version mismatch, requested restart, clean
+// loop → unavailable, cannot-start, version mismatch, requested restart, clean
 // shutdown. The real process is exercised by engineTransport.test.ts.
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -17,7 +17,7 @@ import {
   resolveEngineExecutable,
   type EngineChild,
   type EngineRestartedInfo,
-  type FallbackInfo,
+  type UnavailableInfo,
   type SupervisorState,
   type SupervisorTimers,
 } from './engineSupervisor';
@@ -181,7 +181,7 @@ function setup(behaviours: Behaviour[] = [], opts: { exe?: string | null } = {})
   const spawned: FakeEngine[] = [];
   const states: SupervisorState[] = [];
   const restarts: EngineRestartedInfo[] = [];
-  const fallbacks: FallbackInfo[] = [];
+  const fallbacks: UnavailableInfo[] = [];
   const sup = new EngineSupervisor({
     spawn: (_exe, args) => {
       const e = new FakeEngine(args, behaviours[spawned.length] ?? behaviours[behaviours.length - 1] ?? {});
@@ -196,7 +196,7 @@ function setup(behaviours: Behaviour[] = [], opts: { exe?: string | null } = {})
   });
   sup.on('state', (s) => states.push(s));
   sup.on('engine-restarted', (i) => restarts.push(i));
-  sup.on('fallback', (f) => fallbacks.push(f));
+  sup.on('unavailable', (f) => fallbacks.push(f));
   return { sup, timers, spawned, states, restarts, fallbacks };
 }
 
@@ -277,7 +277,7 @@ describe('EngineSupervisor', () => {
     expect(spawned[0]!.killed).toBe(false);
   });
 
-  it('falls back to the TS engine after a crash loop', async () => {
+  it('is unavailable (not fatal) after a crash loop, and retry() starts it again', async () => {
     const { sup, timers, spawned, fallbacks } = setup();
     await sup.start();
     spawned[0]!.exit(70, null);
@@ -287,9 +287,13 @@ describe('EngineSupervisor', () => {
     spawned[2]!.exit(70, null);
     await timers.advance(10_000);
     expect(spawned).toHaveLength(3);
-    expect(sup.state).toBe('fallback');
+    expect(sup.state).toBe('unavailable');
     expect(fallbacks).toHaveLength(1);
     expect(fallbacks[0]!.reason).toMatch(/crashed 3 times/);
+    expect(fallbacks[0]!.fatal).toBe(false);
+    await sup.retry();
+    expect(spawned).toHaveLength(4);
+    expect(sup.state).toBe('running');
   });
 
   it('crashes far apart are not a loop', async () => {
@@ -303,27 +307,28 @@ describe('EngineSupervisor', () => {
     expect(spawned).toHaveLength(5);
   });
 
-  it('exit code 2 (cannot run here) falls back at once', async () => {
+  it('exit code 2 (cannot run here) is fatal at once', async () => {
     const { sup, spawned, fallbacks } = setup([{ exitAtOnce: 2 }]);
     await sup.start();
     await flush();
     expect(spawned).toHaveLength(1);
-    expect(sup.state).toBe('fallback');
+    expect(sup.state).toBe('unavailable');
     expect(fallbacks[0]!.reason).toMatch(/cannot run/);
+    expect(fallbacks[0]!.fatal).toBe(true);
   });
 
-  it('a protocol-major mismatch falls back without retrying', async () => {
+  it('a protocol-major mismatch is fatal without retrying', async () => {
     const { sup, spawned, fallbacks } = setup([{ hello: 'mismatch' }]);
     await sup.start();
-    expect(sup.state).toBe('fallback');
+    expect(sup.state).toBe('unavailable');
     expect(fallbacks[0]!.reason).toMatch(/mismatch/);
     expect(spawned).toHaveLength(1);
   });
 
-  it('a missing executable falls back', async () => {
+  it('a missing executable is fatal', async () => {
     const { sup, spawned } = setup([], { exe: null });
     await sup.start();
-    expect(sup.state).toBe('fallback');
+    expect(sup.state).toBe('unavailable');
     expect(spawned).toHaveLength(0);
   });
 

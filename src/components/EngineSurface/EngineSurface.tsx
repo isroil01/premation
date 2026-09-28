@@ -162,7 +162,7 @@ export function EngineSurface({ mode = 'beside' }: { mode?: EngineSurfaceMode })
   const notice = useSyncExternalStore(subscribeProcessEngine, lastProcessEngineNotice, () => null);
   useEffect(() => {
     // The client is normally created at boot (engineInstance); creating it here
-    // when the flag is on is idempotent and keeps the surface self-sufficient.
+    // where there is an engine bridge is idempotent and keeps the surface self-sufficient.
     // A window.open() child never drives a viewport; pop-out WINDOWS (opened by
     // main, no opener) do — each on its own engine viewport (surfaceViewportId).
     if (processEngine() || window.opener) return;
@@ -179,7 +179,7 @@ export function EngineSurface({ mode = 'beside' }: { mode?: EngineSurfaceMode })
 }
 
 function noticeText(n: NonNullable<ReturnType<typeof lastProcessEngineNotice>>): string {
-  if (n.kind === 'fallback') return `Engine unavailable — using the TypeScript engine (${n.reason})`;
+  if (n.kind === 'unavailable') return `Engine unavailable (${n.reason})`;
   return `Engine restarted (${n.cause}) · ${n.replayed} requests replayed in ${n.ms} ms`;
 }
 

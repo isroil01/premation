@@ -1,14 +1,14 @@
 /* global WebSocket -- Node 22 global */
 /**
  * D5 / D4 in the real app (NATIVE_CORE_PLAN D4, D5): the built Electron
- * (dist-electron + the engine build) driven over CDP, the engine HUD vs the
- * TypeScript path on the fixtures/ comps; `--cache` = D4 cache-first playback.
+ * (dist-electron + the engine build) driven over CDP, the engine HUD on the
+ * fixtures/ comps; `--cache` = D4 cache-first playback. (The TypeScript path it
+ * was compared against is gone — docs/TS_ENGINE_REMOVAL.md phase 4.)
  *   node scripts/realapp/d5Viewport.cjs [--cache]
  * Real-window HUD on the same fixture projects. Flags are this process only.
  * Does not start Vite. Does not write engine.json.
  */
 const { spawn, spawnSync } = require('node:child_process');
-const { readFileSync } = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
@@ -78,13 +78,6 @@ async function launch(mode) {
   const userData = path.join(os.tmpdir(), `premation-d5-${mode}-${process.pid}`);
   const env = { ...process.env, NODE_ENV: 'production', PREMATION_ENGINE_PATH: ENGINE };
   delete env.ELECTRON_RUN_AS_NODE;
-  if (mode === 'engine') {
-    env.PREMATION_ENGINE = 'process';
-    env.PREMATION_ENGINE_OWNER = 'engine';
-  } else {
-    env.PREMATION_ENGINE = 'ts';
-    env.PREMATION_ENGINE_OWNER = 'ui';
-  }
   const child = spawn(ELECTRON, [
     `--remote-debugging-port=${PORT}`,
     `--user-data-dir=${userData}`,
@@ -206,81 +199,6 @@ async function measureEngine(cdp, file) {
   };
 }
 
-async function measureTs(cdp, file) {
-  const idSource = JSON.stringify(
-    '// @permissions document.read\nconst doc = await premation.query({ type: \'getDocument\', includeProperties: false, includeKeyframes: false });\nreturn doc.comps[0].id;',
-  );
-  const id = await cdp.eval(`(async () => {
-    const run = await window.__premationAutomation.runScript(${idSource}, { grant: ['document.read', 'document.write'] });
-    return run;
-  })()`);
-  if (!id.ok) return { file: path.basename(file), error: id.error || id.outcome };
-  let text = readFileSync(file, 'utf8');
-  if (id.value !== 'comp_root') text = text.split('comp_root').join(id.value);
-  const restoreSource = JSON.stringify(
-    `// @permissions document.read, document.write\nconst json = ${JSON.stringify(text)};\nconst bytes = new TextEncoder().encode(json);\nawait premation.execute({ type: 'restoreDocument', document: bytes, label: 'measure' });\nreturn bytes.length;`,
-  );
-  const restored = await cdp.eval(`(async () => {
-    const run = await window.__premationAutomation.runScript(${restoreSource}, { grant: ['document.read', 'document.write'] });
-    return run;
-  })()`);
-  if (!restored.ok) return { file: path.basename(file), comp: id.value, error: restored.error || restored.outcome };
-  await cdp.eval(`window.__premationViewportHud.reset()`);
-  // GPU completion, as the engine's HUD counts it: every WebGPU submit is timed
-  // to its onSubmittedWorkDone; a frame's GPU tail is the lag of the last
-  // submit that finished before the HUD sample changed.
-  await cdp.eval(`(() => {
-    if (window.__d5GpuPatched || typeof GPUQueue === 'undefined') return;
-    window.__d5GpuPatched = true;
-    window.__d5GpuLag = 0;
-    const orig = GPUQueue.prototype.submit;
-    GPUQueue.prototype.submit = function (bufs) {
-      const t0 = performance.now();
-      const r = orig.call(this, bufs);
-      this.onSubmittedWorkDone().then(() => { window.__d5GpuLag = performance.now() - t0; });
-      return r;
-    };
-  })()`);
-  await cdp.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true })); window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space', key: ' ', bubbles: true }));`);
-  await sleep(300);
-  const sample = await cdp.eval(`(async () => {
-    const hud = window.__premationViewportHud;
-    const frames = [];
-    const withGpu = [];
-    let last = hud.sample().cacheMisses;
-    const t0 = performance.now();
-    while (performance.now() - t0 < 2200) {
-      await new Promise((r) => setTimeout(r, 8));
-      const s = hud.sample();
-      if (s.cacheMisses !== last) {
-        last = s.cacheMisses;
-        frames.push(s.lastFrameMs);
-        withGpu.push(s.lastFrameMs + (window.__d5GpuLag || 0));
-      }
-    }
-    window.__d5WithGpu = withGpu;
-    const canvas = [...document.querySelectorAll('canvas')].map((c) => ({ w: c.width, h: c.height }));
-    return { frames, withGpu, canvas, dpr: window.devicePixelRatio, misses: hud.sample().cacheMisses, fps: hud.sample().fps };
-  })()`);
-  // Stop playback again (Space toggles), so the next project starts from a stop.
-  await cdp.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true })); window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space', key: ' ', bubbles: true }));`);
-  await sleep(300);
-  const steady = sample.frames.slice(8);
-  const use = steady.length >= 8 ? steady : sample.frames;
-  return {
-    file: path.basename(file),
-    comp: id.value,
-    restoredBytes: restored.value,
-    frames: sample.frames.length,
-    hudP50: p50(use),
-    canvas: sample.canvas,
-    dpr: sample.dpr,
-    misses: sample.misses,
-    fps: sample.fps,
-    hudGpuP50: p50((sample.withGpu.slice(8).length >= 8 ? sample.withGpu.slice(8) : sample.withGpu)),
-  };
-}
-
 /** D4: cache-first playback of a heavy project in the engine viewport (fill, then play from RAM/VRAM). */
 async function measureCacheFile(cdp, file) {
   const pathJson = JSON.stringify(file);
@@ -351,12 +269,12 @@ async function measureCacheFile(cdp, file) {
     }
     return;
   }
-  for (const mode of ['engine', 'ts']) {
+  for (const mode of ['engine']) {
     const launched = await launch(mode);
     try {
       const { cdp, ws } = await connect(launched.page);
       for (const file of FILES) {
-        const row = mode === 'engine' ? await measureEngine(cdp, file) : await measureTs(cdp, file);
+        const row = await measureEngine(cdp, file);
         row.mode = mode;
         console.log(JSON.stringify(row));
       }

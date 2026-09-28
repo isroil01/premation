@@ -24,10 +24,12 @@
  *    requests mint the same ids) before any new request is sent, then
  *    subscribers get one `documentReset{engineRestarted}`. Requests made
  *    meanwhile wait, in order.
- *  - **Fallback.** When the supervisor gives up (crash loop, no GPU, protocol
- *    mismatch, engine missing) every later request goes to the TypeScript
- *    backend `options.fallback()`, its events are forwarded, and the reason is
- *    surfaced ONCE through `onNotice`.
+ *  - **Unavailable.** There is no other engine (docs/TS_ENGINE_REMOVAL.md).
+ *    When the supervisor gives up (crash loop, no GPU, protocol mismatch,
+ *    engine missing) requests answer `busy` ("the engine is unavailable") and
+ *    the reason is surfaced ONCE through `onNotice`; main shows the blocking
+ *    dialog. A successful retry (main's "Try Again") arrives as a restart the
+ *    host replayed, and the client is ready again.
  *
  * Copy discipline: `encodeEngineMessage` returns bytes the bridge may retain
  * or transfer, so each request is encoded into its own buffer (`slice`).
@@ -43,22 +45,23 @@ import type {
   Revision,
 } from './generated/types';
 import { decodeEngineMessage, encodeEngineMessage } from './generated/codec';
-import { EngineClientBase, engineError, type EngineClient, type EventListener } from './client';
+import { EngineClientBase, engineError, type EventListener } from './client';
 
 // ── the bridge (what the preload exposes as `window.motionEditor.engine`) ──
 
-export type EngineHostState = 'disabled' | 'stopped' | 'starting' | 'running' | 'restarting' | 'stopping' | 'fallback';
+export type EngineHostState = 'stopped' | 'starting' | 'running' | 'restarting' | 'stopping' | 'unavailable';
 
 export interface EngineHostStatus {
-  /** The process backend is switched on (PREMATION_ENGINE=process or the preference). */
+  /** Always true from main (the engine is the only one); false only from a test bridge. */
   enabled: boolean;
   state: EngineHostState;
   engine?: string;
   engineVersion?: string;
   /** Revision the engine reported at its last handshake. */
   revision?: number;
-  fallbackReason?: string;
-  /** F2: the engine owns the document — the editor's lifecycle goes through engine requests. */
+  /** Why the engine is `unavailable` (with that state). */
+  unavailableReason?: string;
+  /** F2: the engine owns the document — the editor's lifecycle goes through engine requests (always, from main). */
   ownsDocument?: boolean;
   /** F2 / D5: where the engine-owned document's autosave writes its recovery copy (with ownsDocument). */
   recoveryPath?: string;
@@ -68,7 +71,7 @@ export interface EngineHostStatus {
 
 export type EngineWireReply =
   | { ok: true; bytes: Uint8Array }
-  | { ok: false; reason: 'gone' | 'disabled' | 'invalid'; message: string };
+  | { ok: false; reason: 'gone' | 'invalid'; message: string };
 
 export interface EngineRestartNotice {
   attempt: number;
@@ -93,8 +96,10 @@ export interface EngineEventMeta {
   foreign?: boolean;
 }
 
-export interface EngineFallbackNotice {
+export interface EngineUnavailableNotice {
   reason: string;
+  /** No executable / no GPU / protocol mismatch (main quits) rather than a crash loop (main offers a retry). */
+  fatal?: boolean;
   logTail: string[];
 }
 
@@ -140,7 +145,7 @@ export interface EngineBridge {
   onEvents(handler: (bytes: Uint8Array, meta?: EngineEventMeta) => void): () => void;
   onState(handler: (state: EngineHostState) => void): () => void;
   onRestarted(handler: (info: EngineRestartNotice) => void): () => void;
-  onFallback(handler: (info: EngineFallbackNotice) => void): () => void;
+  onUnavailable(handler: (info: EngineUnavailableNotice) => void): () => void;
   /** Frames from the shared-texture ring (null stops). Absent outside Electron. */
   onFrame?(consumer: EngineFrameConsumer | null): void;
   /**
@@ -155,12 +160,10 @@ export interface EngineBridge {
 
 export type ProcessEngineNotice =
   | { kind: 'restarted'; attempt: number; cause: EngineRestartNotice['cause']; replayed: number; mismatches: number; ms: number }
-  | { kind: 'fallback'; reason: string };
+  | { kind: 'unavailable'; reason: string };
 
 export interface ProcessEngineOptions {
-  /** The TypeScript backend to switch to when the process backend gives up. */
-  fallback?: () => EngineClient;
-  /** Restart / fallback notices for the UI (a toast). Fallback is reported once. */
+  /** Restart / unavailable notices for the UI (a toast). Unavailable is reported once per outage. */
   onNotice?: (notice: ProcessEngineNotice) => void;
   /** Keep the command log for crash recovery (default true). A host that replays its own log (F2) makes it unused. */
   recordLog?: boolean;
@@ -174,7 +177,7 @@ export interface ProcessEngineOptions {
 /** Transport commands a crash-recovery replay skips: the clock restarts stopped. */
 const REPLAY_SKIP = new Set(['play', 'pause', 'step']);
 
-type Mode = 'connecting' | 'ready' | 'recovering' | 'fallback' | 'closed';
+type Mode = 'connecting' | 'ready' | 'recovering' | 'unavailable' | 'closed';
 
 function deepCopy<T>(v: T): T {
   return structuredClone(v);
@@ -196,9 +199,7 @@ export class ProcessEngineClient extends EngineClientBase {
   private suppressEvents = false;
   private recoveryGen = 0;
   private resyncing = false;
-  private fallbackClient: EngineClient | null = null;
-  private fallbackUnsub: (() => void) | null = null;
-  private fallbackNoticeSent = false;
+  private unavailableNoticeSent = false;
   private lastRestart: { replayed: number; mismatches: number; ms: number } | null = null;
   /** Seqs for the client's own queries: far above the base class's counter, never in flight twice. */
   private internalSeq = 2 ** 50;
@@ -212,7 +213,7 @@ export class ProcessEngineClient extends EngineClientBase {
       bridge.onEvents((bytes, meta) => this.onEventBytes(bytes, meta?.foreign === true)),
       bridge.onState((s) => this.onHostState(s)),
       bridge.onRestarted((info) => void this.recover(info)),
-      bridge.onFallback((info) => this.switchToFallback(info.reason)),
+      bridge.onUnavailable((info) => this.becomeUnavailable(info.reason)),
     );
     void this.connect();
   }
@@ -223,8 +224,8 @@ export class ProcessEngineClient extends EngineClientBase {
   }
 
   /** Which backend answers now. */
-  get backend(): 'process' | 'fallback' | 'pending' | 'closed' {
-    if (this.mode === 'fallback') return 'fallback';
+  get backend(): 'process' | 'unavailable' | 'pending' | 'closed' {
+    if (this.mode === 'unavailable') return 'unavailable';
     if (this.mode === 'closed') return 'closed';
     return this.mode === 'ready' ? 'process' : 'pending';
   }
@@ -239,7 +240,7 @@ export class ProcessEngineClient extends EngineClientBase {
     return this.lastRestart;
   }
 
-  /** Resolves once the backend accepts requests (process ready, or fell back). */
+  /** Resolves once the backend answers requests (process ready, or unavailable). */
   whenReady(): Promise<void> {
     return this.gate();
   }
@@ -252,7 +253,7 @@ export class ProcessEngineClient extends EngineClientBase {
   async request(req: Request): Promise<Response> {
     if (this.mode === 'closed') return errorResponse(req.seq, this.revision, 'cancelled', 'the engine client is closed');
     await this.gate();
-    if (this.mode === 'fallback') return this.viaFallback(req);
+    if (this.mode === 'unavailable') return errorResponse(req.seq, this.revision, 'busy', 'the engine is unavailable');
     if ((this.mode as Mode) === 'closed') return errorResponse(req.seq, this.revision, 'cancelled', 'the engine client is closed');
     const res = await this.wire(req);
     this.noteRevision(res.revision);
@@ -263,7 +264,6 @@ export class ProcessEngineClient extends EngineClientBase {
   async close(): Promise<void> {
     if (this.mode === 'closed') return;
     for (const d of this.disposers.splice(0)) d();
-    this.fallbackUnsub?.();
     this.mode = 'closed';
     this.release();
     this.listeners.clear();
@@ -277,7 +277,7 @@ export class ProcessEngineClient extends EngineClientBase {
   }
 
   private gate(): Promise<void> {
-    if (this.mode === 'ready' || this.mode === 'fallback' || this.mode === 'closed') return Promise.resolve();
+    if (this.mode === 'ready' || this.mode === 'unavailable' || this.mode === 'closed') return Promise.resolve();
     return new Promise((resolve) => this.waiters.push(resolve));
   }
 
@@ -292,16 +292,16 @@ export class ProcessEngineClient extends EngineClientBase {
     try {
       st = await this.bridge.status();
     } catch (e) {
-      this.switchToFallback(`engine status unavailable: ${e instanceof Error ? e.message : String(e)}`);
+      this.becomeUnavailable(`engine status unavailable: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
     if (!st.enabled) {
-      this.switchToFallback('the engine process backend is switched off');
+      this.becomeUnavailable('the engine is not running');
       return;
     }
     this.hostLogs = st.hostCommandLog === true;
-    if (st.state === 'fallback') {
-      this.switchToFallback(st.fallbackReason ?? 'the engine process is unavailable');
+    if (st.state === 'unavailable') {
+      this.becomeUnavailable(st.unavailableReason ?? 'the engine is unavailable');
       return;
     }
     if (st.state === 'running') await this.becomeReady('connected');
@@ -309,7 +309,7 @@ export class ProcessEngineClient extends EngineClientBase {
   }
 
   private onHostState(s: EngineHostState): void {
-    if (this.mode === 'closed' || this.mode === 'fallback') return;
+    if (this.mode === 'closed' || this.mode === 'unavailable') return;
     if (s === 'restarting' && this.mode === 'ready') {
       this.mode = 'recovering';  // hold requests until the replay (onRestarted) is done
       return;
@@ -320,7 +320,7 @@ export class ProcessEngineClient extends EngineClientBase {
   /** Learn the engine's revision, give subscribers a starting point, open the gate. */
   private async becomeReady(why: 'connected' | 'engineRestarted'): Promise<void> {
     const res = await this.wire({ seq: this.nextInternalSeq(), body: { kind: 'query', value: { type: 'getHistory' } }, origin: 'engine' });
-    if (this.mode === 'fallback' || this.mode === 'closed') return;
+    if (this.mode === 'unavailable' || this.mode === 'closed') return;
     this.noteRevision(res.revision);
     const rev = res.revision;
     this.eventRevisionValue = rev;
@@ -386,7 +386,7 @@ export class ProcessEngineClient extends EngineClientBase {
 
   /** True when the batch was delivered to subscribers. */
   private onBatch(b: EventBatch): boolean {
-    if (this.mode === 'fallback' || this.mode === 'closed') return false;  // a stale engine's last words
+    if (this.mode === 'unavailable' || this.mode === 'closed') return false;  // a stale engine's last words
     this.noteRevision(b.toRevision);
     if (this.suppressEvents || this.mode !== 'ready') {
       // Connecting or replaying: the documentReset that ends it covers these.
@@ -433,7 +433,9 @@ export class ProcessEngineClient extends EngineClientBase {
 
   /** The engine came back empty: replay the log into it, then reopen the gate. */
   private async recover(info: EngineRestartNotice): Promise<void> {
-    if (this.mode === 'fallback' || this.mode === 'closed') return;
+    if (this.mode === 'closed') return;
+    // After an outage (main's "Try Again" succeeded): the next outage is reported again.
+    this.unavailableNoticeSent = false;
     if (info.replayedByHost) {
       // F2: main already replayed its command log (every window's requests,
       // once); this window only refetches. Its own log would replay twice.
@@ -495,40 +497,17 @@ export class ProcessEngineClient extends EngineClientBase {
     this.options.onNotice?.({ kind: 'restarted', attempt: info.attempt, cause: info.cause, replayed, mismatches, ms });
   }
 
-  private switchToFallback(reason: string): void {
-    if (this.mode === 'fallback' || this.mode === 'closed') return;
+  /** The engine cannot run: requests answer `busy` until a retry brings it back (recover). */
+  private becomeUnavailable(reason: string): void {
+    if (this.mode === 'unavailable' || this.mode === 'closed') return;
     this.recoveryGen += 1;  // abandon a replay in progress
     this.suppressEvents = false;
-    try {
-      this.fallbackClient = this.options.fallback?.() ?? null;
-    } catch {
-      this.fallbackClient = null;  // requests then answer `unsupported`
-    }
-    this.mode = 'fallback';
-    if (this.fallbackClient) {
-      const fb = this.fallbackClient;
-      this.fallbackUnsub = fb.subscribe((b) => {
-        if (b.toRevision > this.eventRevisionValue) this.eventRevisionValue = b.toRevision;
-        this.noteRevision(b.toRevision);
-        this.deliver(b);
-      });
-      // The mirror now follows another document: refetch. Revisions are that
-      // document's from here on (the base class keeps a max; reset it).
-      this.eventRevisionValue = fb.revision;
-      this.lastRevision = fb.revision;
-      this.deliver({ fromRevision: fb.revision, toRevision: fb.revision, events: [{ type: 'documentReset', revision: fb.revision, reason: 'resync' }], origin: 'engine' });
-    }
-    if (!this.fallbackNoticeSent) {
-      this.fallbackNoticeSent = true;
-      this.options.onNotice?.({ kind: 'fallback', reason });
+    this.mode = 'unavailable';
+    if (!this.unavailableNoticeSent) {
+      this.unavailableNoticeSent = true;
+      this.options.onNotice?.({ kind: 'unavailable', reason });
     }
     this.release();
-  }
-
-  private viaFallback(req: Request): Promise<Response> {
-    const fb = this.fallbackClient;
-    if (!fb) return Promise.resolve(errorResponse(req.seq, this.revision, 'unsupported', 'the engine process is unavailable and no fallback engine is attached'));
-    return fb.request(req);
   }
 }
 

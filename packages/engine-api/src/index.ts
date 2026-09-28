@@ -38,7 +38,7 @@ export type {
   EngineHostStatus,
   EngineWireReply,
   EngineRestartNotice,
-  EngineFallbackNotice,
+  EngineUnavailableNotice,
   EngineFrameMeta,
   EngineFrameConsumer,
   VideoFrameLike,

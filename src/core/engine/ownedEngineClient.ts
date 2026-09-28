@@ -1,6 +1,6 @@
 /**
  * The session's EngineClient when the C++ ENGINE OWNS THE DOCUMENT
- * (NATIVE_CORE_PLAN §5 D5 + F2, `PREMATION_ENGINE_OWNER=engine`).
+ * (NATIVE_CORE_PLAN §5 D5 + F2; always, in the app).
  *
  * Every request goes to the owner — the process client (`ProcessEngineClient`,
  * which falls back to the TypeScript engine on its own when the process gives
@@ -45,7 +45,7 @@ import { EngineClientBase, commandKind } from '@motion/engine-api';
 
 /** What the owner must expose beyond EngineClient (ProcessEngineClient has it). */
 export interface OwnerClient extends EngineClient {
-  readonly backend: 'process' | 'fallback' | 'pending' | 'closed';
+  readonly backend: 'process' | 'unavailable' | 'pending' | 'closed';
 }
 
 export interface ReplicaStats {
@@ -123,7 +123,7 @@ export class OwnedEngineClient extends EngineClientBase {
   }
 
   async request(req: Request): Promise<Response> {
-    const replica = this.owner.backend === 'fallback' ? null : this.replica();
+    const replica = this.owner.backend === 'unavailable' ? null : this.replica();
     const mirrored = replica && replicates(req) ? this.forward(replica, req) : null;
     const res = await this.owner.request(req);
     this.noteRevision(res.revision);

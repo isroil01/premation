@@ -32,13 +32,15 @@
  * automation clients in B5; until then the engine sees them as external
  * changes (documentReset{resync}), which is correct and cheap.
  *
- * D5 / F2 — when the C++ ENGINE OWNS THE DOCUMENT (`ownsDocument`, the owner
- * flag; engineOwnership.ts): `engine()` is an `OwnedEngineClient` over the
- * process client. Its events feed `subscribeEngine` (the mirror), undo/redo
- * route to it, and the LocalEngine is demoted to the page's REPLICA (fed the
- * same document-changing requests, ownedEngineClient.ts) and to the process
- * client's crash fallback. A project open / close no longer rebuilds it: the
- * replica received the same newProject / openProject the owner did.
+ * D5 / F2 — the C++ ENGINE OWNS THE DOCUMENT wherever there is an engine
+ * bridge (always in the app; the owner flag and the TypeScript fallback are
+ * gone — docs/TS_ENGINE_REMOVAL.md): `engine()` is an `OwnedEngineClient`
+ * over the process client. Its events feed `subscribeEngine` (the mirror),
+ * undo/redo route to it, and the LocalEngine is only the page's REPLICA (fed
+ * the same document-changing requests, ownedEngineClient.ts) until the UI
+ * reads only the mirror. A project open / close no longer rebuilds it: the
+ * replica received the same newProject / openProject the owner did. Without a
+ * bridge (the jest harness) the LocalEngine answers `engine()` itself.
  *
  * No React here (src/core). The hooks over this live in src/hooks.
  */
@@ -46,9 +48,9 @@
 import type { EngineClient, EventBatch, EventListener } from '@motion/engine-api';
 import { getEventBus } from '@core/events/EventBus';
 import { LocalEngine, type LocalEngineOptions } from './LocalEngine';
-import { createAppProcessEngine, processEngineEnabled } from './process/processEngine';
+import { createAppProcessEngine } from './process/processEngine';
 import { OwnedEngineClient } from './ownedEngineClient';
-import { noteEngineFellBack, setEngineOwnsDocument } from './engineOwnership';
+import { setEngineOwnsDocument } from './engineOwnership';
 import { useUIStore } from '@stores/uiStore';
 import { setHistoryRoute } from '@stores/historyStore';
 import { setAppMirrorSource } from '@stores/documentMirror';
@@ -148,15 +150,15 @@ function installHistoryRoute(): void {
   });
 }
 
-/** The toast for a process-engine notice. */
-function noticeToUser(n: { kind: 'fallback'; reason: string } | { kind: 'restarted'; cause: string; replayed: number }): void {
+/** The toast for a process-engine notice (main also shows the blocking dialog when it is unavailable). */
+function noticeToUser(n: { kind: 'unavailable'; reason: string } | { kind: 'restarted'; cause: string; replayed: number }): void {
   try {
     useUIStore.getState().notify({
-      level: n.kind === 'fallback' ? 'warning' : 'info',
-      message: n.kind === 'fallback'
-        ? `The C++ engine is unavailable — continuing on the built-in engine (${n.reason})`
-        : `The C++ engine restarted (${n.cause}); ${n.replayed} edits restored`,
-      durationMs: n.kind === 'fallback' ? 8000 : 4000,
+      level: n.kind === 'unavailable' ? 'error' : 'info',
+      message: n.kind === 'unavailable'
+        ? `The engine is unavailable (${n.reason})`
+        : `The engine restarted (${n.cause}); ${n.replayed} edits restored`,
+      durationMs: n.kind === 'unavailable' ? 8000 : 4000,
     });
   } catch {
     // No UI store (headless).
@@ -165,20 +167,12 @@ function noticeToUser(n: { kind: 'fallback'; reason: string } | { kind: 'restart
 
 /**
  * D5 / F2: make the C++ engine the owner. The LocalEngine (already booted)
- * becomes the replica and the process client's fallback. False when there is
- * no process bridge (browser build, tests): the TypeScript engine stays owner.
+ * becomes the page's replica (until the UI reads only the mirror). False when
+ * there is no engine bridge (the jest harness): the LocalEngine answers there.
  */
 function startOwner(): boolean {
   const pc = createAppProcessEngine({
-    // The LocalEngine itself, never `engine()` (that is the owner: a loop).
-    fallback: () => {
-      if (!current) throw new Error('no TypeScript engine to fall back to');
-      return current;
-    },
-    onNotice: (n) => {
-      if (n.kind === 'fallback') noteEngineFellBack();
-      noticeToUser(n);
-    },
+    onNotice: (n) => noticeToUser(n),
     // F2: another window (a pop-out, or the editor from a pop-out) edited the
     // engine; this window's page replica missed those requests.
     onForeignBatch: () => replicaRefresher?.schedule(),
@@ -247,28 +241,7 @@ export function bootEngine(opts: BootEngineOptions = {}): LocalEngine {
       ];
     }
   }
-  if (!owned) startProcessEngine();
   return e;
-}
-
-/**
- * The C++ engine (C3), when the process backend is enabled
- * (`PREMATION_ENGINE=process` or `<userData>/engine.json`). It runs beside this
- * LocalEngine with it as the fallback, drives the engine surface, and is
- * reachable through `processEngine()`.
- *
- * Unless the engine owns the document (owner flag, `startOwner`), this is NOT
- * what `engine()` returns: the viewport then draws the TypeScript document, and
- * routing UI edits to the C++ engine would make them vanish from the screen.
- */
-function startProcessEngine(): void {
-  void processEngineEnabled().then((on) => {
-    if (!on) return;
-    createAppProcessEngine({
-      fallback: () => engine(),
-      onNotice: (n) => noticeToUser(n),
-    });
-  }).catch(() => { /* no bridge / not desktop */ });
 }
 
 /**

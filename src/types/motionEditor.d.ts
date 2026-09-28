@@ -975,9 +975,8 @@ export interface MotionEditorApi {
   /**
    * The C++ engine process (NATIVE_CORE_PLAN C3, electron/engineHost.ts):
    * encoded EngineMessages in and out, plus the supervisor's lifecycle and the
-   * shared-texture frame receiver. `status().enabled` is false unless the
-   * process backend is switched on (PREMATION_ENGINE=process or
-   * `<userData>/engine.json`). The page's `ProcessEngineClient`
+   * shared-texture frame receiver. The engine is the only one; it always runs
+   * and owns the document (`engine:unavailable` when it cannot). The page's `ProcessEngineClient`
    * (@motion/engine-api) is the only intended caller. Absent in a browser build.
    */
   engine?: import('@motion/engine-api').EngineBridge & {

@@ -2,15 +2,15 @@
  * The process backend against the REAL premation-engine (C3): kill the engine
  * process mid-session → the supervisor restarts it → ProcessEngineClient
  * replays its command log → the document, the revision and the undo stack
- * come back exactly; three crashes inside the crash window → the TypeScript
- * engine takes over with ONE notice.
+ * come back exactly; three crashes inside the crash window → unavailable with
+ * ONE notice, and a retry brings the engine back.
  *
  * Skips (saying so) when the engine has not been built.
  */
 
 import { ProcessEngineClient, unwrap, type EngineClient, type ProcessEngineNotice } from '@motion/engine-api';
 import { nativeEngineExe, startNativeEngine, type NativeEngine } from '../../__testHelpers__/nativeEngine';
-import { setupEngine, sec, type Harness } from '../../__testHelpers__/harness';
+import { sec } from '../../__testHelpers__/harness';
 
 jest.useFakeTimers();
 
@@ -35,15 +35,12 @@ async function snapshot(c: EngineClient, comp: string) {
 describeNative('C3: the process backend recovers from engine crashes', () => {
   let native: NativeEngine | null = null;
   let client: ProcessEngineClient | null = null;
-  let fallback: Harness | null = null;
 
   afterEach(async () => {
     await client?.close();
     await native?.stop();
-    await fallback?.dispose();
     native = null;
     client = null;
-    fallback = null;
   });
 
   it('a killed engine comes back with the whole document, by log replay', async () => {
@@ -81,23 +78,24 @@ describeNative('C3: the process backend recovers from engine crashes', () => {
     console.log(`[C3] engine killed → restarted, ${notices[0]!.kind === 'restarted' ? `${notices[0]!.replayed} requests replayed in ${notices[0]!.ms} ms` : ''}`);
   }, 60_000);
 
-  it('three crashes inside the window → the TypeScript engine, one notice', async () => {
+  it('three crashes inside the window → unavailable, one notice; retry() brings the document back', async () => {
     native = await startNativeEngine({ backoffMs: [50, 50, 50] });
-    fallback = await setupEngine();
     const notices: ProcessEngineNotice[] = [];
-    const fb = fallback.engine;
-    client = new ProcessEngineClient(native.bridge, { onNotice: (n) => notices.push(n), fallback: () => fb });
+    client = new ProcessEngineClient(native.bridge, { onNotice: (n) => notices.push(n) });
     await client.whenReady();
-    unwrap(await client.execute({ type: 'createComposition', settings: { name: 'X' }, fromItems: [] }));
+    const { item: comp } = unwrap(await client.execute({ type: 'createComposition', settings: { name: 'X' }, fromItems: [] }));
     for (let i = 1; i <= 3; i++) {
       native.kill();
       await waitFor(() => notices.length >= i);
     }
-    expect(notices.map((n) => n.kind)).toEqual(['restarted', 'restarted', 'fallback']);
-    expect(client.backend).toBe('fallback');
-    // Requests now land on the TypeScript engine (its ids, its document).
-    const r = unwrap(await client.execute({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'on TS', init: [] }));
-    expect(r.layer).toMatch(/^layer_/);
-    expect(native.supervisor.state).toBe('fallback');
-  }, 60_000);
-});
+    expect(notices.map((n) => n.kind)).toEqual(['restarted', 'restarted', 'unavailable']);
+    expect(client.backend).toBe('unavailable');
+    expect(native.supervisor.state).toBe('unavailable');
+    // No other engine: requests fail until the engine is back.
+    expect((await client.execute({ type: 'createLayer', comp, kind: 'solid', name: 'lost', init: [] })).ok).toBe(false);
+    await native.supervisor.retry();
+    await waitFor(() => notices.length >= 4);
+    expect(notices[3]).toMatchObject({ kind: 'restarted' });
+    expect(client.backend).toBe('process');
+    unwrap(await client.execute({ type: 'createLayer', comp, kind: 'solid', name: 'back', init: [] }));
+  }, 60_000);});
