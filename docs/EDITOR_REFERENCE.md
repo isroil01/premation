@@ -69,7 +69,7 @@ rediscovered in git history and believed a second time.
 | Light types | 5 | `src/core/scene/light.ts` → `LightType` |
 | Canvas tools | 23 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
-| Export formats | 16 | `renderSpec.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` / `DataExportFormat` |
+| Export formats | 18 | `renderSpec.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` / `DataExportFormat` |
 | Stores | 77 | `src/stores/*.ts` |
 | Packages | 15 | `packages/*` |
 
@@ -691,11 +691,10 @@ because the dialog previously claimed all of them kept alpha:
 Lottie **import and export**, SVG import including SMIL and CSS animation,
 image sequences, video with audio. The rendered formats are `mp4`, `webm`, `gif`,
 `mov`, `png`, `png-sequence`, `jpg-sequence`, `exr-sequence`, `wav`, `json` and
-`lottie`, and the interchange writers (`edl`, `otio`, `fcpxml`, `ale`, `mogrt`)
-— **16 export formats** in §1's count, which unions `VideoFormat` with
-`ExportFormat` and `DataExportFormat`. Every rendered format is encoded by the
-engine (`premation-engine --export`, ffmpeg); the HDR10/HLG delivery presets
-are being re-ported to it.
+`lottie`, the `hdr10` / `hlg` delivery variants, and the interchange writers
+(`edl`, `otio`, `fcpxml`, `ale`, `mogrt`) — **18 export formats** in §1's count,
+which unions `VideoFormat` with `ExportFormat` and `DataExportFormat`. Every
+rendered format is encoded by the engine (`premation-engine --export`, ffmpeg).
 
 **The render queue pauses and resumes** (2026-09-02, `renderQueueStore.ts`,
 `renderQueuePauseResume.test.ts`). The desktop sink already staged every frame as
