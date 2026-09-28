@@ -205,6 +205,11 @@ export const LAYER_FIELDS: readonly LayerFieldSpec[] = [
     path: 'layer/sequenceLoop', key: 'loop', label: 'Loop Sequence', type: 'bool', default: false,
     store: { fx: 'imageSequence', key: 'loop' }, when: { fx: 'imageSequence' }, encode: [[false, null], [true, true], [false, false]],
   },
+  {
+    // AE's Paint ▸ Paint on Transparent (B4 round 6): the layer's own pixels hidden under its paint.
+    path: 'layer/paintOnTransparent', key: 'onTransparent', label: 'Paint on Transparent', type: 'bool', default: false,
+    store: { fx: 'paint', key: 'onTransparent' }, when: { fx: 'paint' }, encode: [[false, null], [true, true], [false, false]],
+  },
   // ── Audio ──
   {
     // The declared WebAudio effect chain: AudioEffect[] (audioEffects.ts).

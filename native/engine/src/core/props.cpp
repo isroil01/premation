@@ -626,6 +626,24 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
       g.enabled = !(s.at("enabled").is_bool() && !s.at("enabled").b());
       return g;
     }
+    if (seg[0] == "paint" && seg.size() == 2) {
+      // B4 round 6: a paint stroke's group names the stroke as AE's Paint does
+      // ("Brush 1", "Eraser 2", "Clone 1" — a stored name wins), its match name
+      // says the stroke's mode (`paint:<mode>`), and `enabled` is its video switch.
+      const Json& strokes = node.fx().at("paint").at("strokes");
+      g.name = seg[1];
+      g.matchName = seg[1];
+      if (strokes.is_array()) {
+        const auto names = stroke_display_names(strokes.arr());
+        if (auto it = names.find(seg[1]); it != names.end()) g.name = it->second;
+        for (const Json& s : strokes.arr()) {
+          if (!(s.at("id").is_string() && s.at("id").str() == seg[1])) continue;
+          g.matchName = "paint:" + (s.at("mode").is_string() ? s.at("mode").str() : std::string("paint"));
+          g.enabled = !(s.at("visible").is_bool() && !s.at("visible").b());
+        }
+      }
+      return g;
+    }
     if (seg[0] == "contents" && seg.size() == 2) {
       const Json* o = find_by_id(ops, seg[1]);
       g.name = o != nullptr ? o->at("type").str() : seg[1];

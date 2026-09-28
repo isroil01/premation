@@ -299,7 +299,14 @@ export class EventBuilder {
     for (const [path, g] of cat.groups) parents.set(path, [...g.children]);
     for (const [parent, children] of parents) {
       const key = `#children:${parent}`;
-      const json = JSON.stringify(children) + JSON.stringify(parent ? cat.groups.get(parent)?.enabled : true) + (parent ? cat.groups.get(parent)?.name : '');
+      // A child GROUP's own switch / name / match name is part of its parent's
+      // list: the mirror updates a group's info from its parent's event (B4 round 6
+      // — a hidden paint stroke, a disabled effect).
+      const childGroups = children.map((c) => {
+        const g = cat.groups.get(c);
+        return g ? `${g.enabled ? 1 : 0}${g.name}\u001f${g.matchName}` : '';
+      });
+      const json = JSON.stringify(children) + JSON.stringify(parent ? cat.groups.get(parent)?.enabled : true) + (parent ? cat.groups.get(parent)?.name : '') + JSON.stringify(childGroups);
       seen.add(key);
       if (cache.get(key) === json) continue;
       const hadBefore = cache.has(key);

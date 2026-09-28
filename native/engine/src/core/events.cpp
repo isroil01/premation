@@ -374,6 +374,14 @@ void EventBuilder::layer_properties(const PCtx& c, const std::string& layer, std
     const GroupBinding* g = parent.empty() ? nullptr : cat.groups.find(parent);
     sig += (g == nullptr || g->enabled) ? "|1|" : "|0|";
     sig += g != nullptr ? g->name : "";
+    // A child GROUP's own switch / name / match name is part of its parent's
+    // list: the mirror updates a group's info from its parent's event (B4 round 6
+    // — a hidden paint stroke, a disabled effect).
+    for (const auto& ch : children) {
+      const GroupBinding* cg = cat.groups.find(ch);
+      sig += "\x1e";
+      if (cg != nullptr) sig += (cg->enabled ? "1" : "0") + cg->name + "\x1f" + cg->matchName;
+    }
     seenGroups.insert(key);
     const auto it = cache.groups.find(key);
     if (it != cache.groups.end() && it->second == sig) continue;

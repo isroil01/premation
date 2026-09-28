@@ -1196,6 +1196,34 @@
       ]
     },
     {
+      "path": "layer/paintOnTransparent",
+      "key": "onTransparent",
+      "label": "Paint on Transparent",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "fx": "paint",
+        "key": "onTransparent"
+      },
+      "when": {
+        "fx": "paint"
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ],
+        [
+          false,
+          false
+        ]
+      ]
+    },
+    {
       "path": "audio/effects",
       "key": "audioEffects",
       "label": "Audio Effects",

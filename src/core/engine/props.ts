@@ -83,6 +83,8 @@ import { latentMembers } from './latentProps';
 import { addPluginBindings, pluginApiPath, pluginPanelGroupPaths } from './pluginProps';
 import { parseStrokeTrackPath } from '@core/rendering/strokeTracks';
 import { strokeEntryAt } from '@core/paint/strokeValues';
+import { readNodePaint } from '@core/paint/paintStrokes';
+import { strokeDisplayNames } from '@core/paint/paintProps';
 import { normalizeStroke, storeNodeStrokeAt } from '@core/paint/stroke';
 import {
   addRigBindings,
@@ -328,7 +330,10 @@ export function catalogFor(layerId: string): Catalog {
       continue;
     }
     const color = row.members.length === 4 && row.members.every((m, i) => m.endsWith(['_r', '_g', '_b', '_a'][i]!));
-    if (row.members.length === 0) {
+    // A paint stroke's Path is a data track whether keyed or not: the timeline's
+    // row lists the track as its member once keyed (for its key lane), which must
+    // not turn the API property into a scalar (B4 round 6).
+    if (row.members.length === 0 || /^paint\.[^.]+\.path$/.test(row.prop)) {
       // Data-track rows (paint path) and value-less rows.
       if (/^paint\.[^.]+\.path$/.test(row.prop)) {
         add({
@@ -548,6 +553,18 @@ export function catalogFor(layerId: string): Catalog {
     }
     if (seg[0] === 'styles' && seg.length === 2) {
       return { name: seg[1]!, matchName: `style:${seg[1]}`, enabled: styles[seg[1]!]?.enabled !== false, kind: 'group' };
+    }
+    if (seg[0] === 'paint' && seg.length === 2) {
+      // B4 round 6: the stroke's AE name ("Brush 1" — a stored name wins), its mode
+      // in the match name (`paint:<mode>`) and its video switch as `enabled`.
+      const strokes = readNodePaint(node)?.strokes ?? [];
+      const s = strokes.find((x) => x.id === seg[1]);
+      return {
+        name: strokeDisplayNames(strokes).get(seg[1]!) ?? seg[1]!,
+        matchName: s ? `paint:${s.mode ?? 'paint'}` : seg[1]!,
+        enabled: s ? s.visible !== false : true,
+        kind: 'group',
+      };
     }
     if (seg[0] === 'contents' && seg.length === 2) {
       const o = ops.find((x) => x.id === seg[1]);

@@ -13,19 +13,12 @@
 
 import { useMemo, useReducer } from 'react';
 import { drawToolOptions } from '@motion/workspace';
-import { defaultAnimation } from '@motion/animation';
 import { documentMirror } from '@stores/documentMirror';
-import { useActiveCompId, useMirrorKeys } from '@hooks/useMirror';
+import { useActiveCompId, useMirrorKeys, useMirrorTree } from '@hooks/useMirror';
 import { isPaintableLayer } from '@core/mirror/layerKinds';
+import { mirrorPaintOnTransparent, mirrorPaintStrokes } from '@core/mirror/paintStrokes';
 import { playheadSeconds } from '@core/timeline/timelineView';
-import { paintPathProp } from '@core/paint/paintProps';
-import {
-  getNodePaint,
-  strokeDisplayNames,
-  type EraseMode,
-  type PaintBlend,
-  type PaintChannels,
-} from '@core/paint/paintStrokes';
+import type { EraseMode, PaintBlend, PaintChannels } from '@core/paint/paintStrokes';
 import type { PaintDuration } from '@core/paint/paintCapture';
 import {
   deletePaintStroke,
@@ -35,7 +28,6 @@ import {
 } from '@core/engine/paintEdits';
 import { usePaintStore } from '@stores/paintStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
@@ -118,11 +110,6 @@ export function PaintPanel(): JSX.Element {
   const paint = usePaintStore();
   const activeTool = useUIStore((s) => s.activeTool);
   const selectedIds = useSelectionStore((s) => s.ids);
-  // B4-gap: paint strokes — the stroke list, each stroke's video switch and
-  // whether its Path is keyed are layer data the API does not carry yet (a
-  // stroke is not an API group; its Path is a data track), so the list reads
-  // the legacy paint record and re-renders on the scene revision.
-  useSceneRevision((s) => s.rev);
   const [, bump] = useReducer((n: number) => n + 1, 0);
 
   const tool = currentPaintTool();
@@ -137,10 +124,14 @@ export function PaintPanel(): JSX.Element {
     [layerId, compId],
   );
   useMirrorKeys(watch);
+  // The strokes (`paint/<id>` groups: name, mode, video switch), their Path keys
+  // and Paint on Transparent from the mirror; the tree re-renders this on change.
+  const tree = useMirrorTree(layerId);
+  useMirrorKeys(useMemo(() => (layerId ? [`keys:${layerId}`] : []), [layerId]));
   const layer = layerId ? m.layer(layerId) : undefined;
   const paintable = isPaintableLayer(layer);
-  const cfg = layerId ? getNodePaint(layerId) : null;
-  const names = cfg ? strokeDisplayNames(cfg.strokes) : new Map<string, string>();
+  const strokes = layerId && tree ? mirrorPaintStrokes(m, layerId) : [];
+  const onTransparent = mirrorPaintOnTransparent(tree);
   const compLayers = (compId ? m.comp(compId)?.layers ?? [] : [])
     .map((id) => m.layer(id))
     .filter((l): l is NonNullable<typeof l> => !!l && !l.parent && isPaintableLayer(l));
@@ -264,13 +255,13 @@ export function PaintPanel(): JSX.Element {
         <span className={styles.groupLabel}>Strokes{layer ? ` — ${layer.name}` : ''}</span>
         {!layerId && <span className={styles.hint}>Select one layer to see its paint.</span>}
         {layerId && !paintable && <span className={styles.hint}>This layer cannot be painted on.</span>}
-        {layerId && paintable && (!cfg || cfg.strokes.length === 0) && <span className={styles.hint}>No strokes yet.</span>}
-        {layerId && cfg && cfg.strokes.length > 0 && (
+        {layerId && paintable && strokes.length === 0 && <span className={styles.hint}>No strokes yet.</span>}
+        {layerId && strokes.length > 0 && (
           <>
             <div className={styles.strokeList} role="listbox" aria-label="Paint strokes">
-              {cfg.strokes.map((s) => {
+              {strokes.map((s) => {
                 const selected = paint.selectedStroke?.nodeId === layerId && paint.selectedStroke.strokeId === s.id;
-                const keyed = defaultAnimation.isDataAnimated(layerId, paintPathProp(s.id));
+                const keyed = s.pathKeyed;
                 return (
                   <div
                     key={s.id}
@@ -291,7 +282,7 @@ export function PaintPanel(): JSX.Element {
                     >
                       <Icon name={s.visible === false ? 'eye-off' : 'eye'} size="sm" />
                     </button>
-                    <span>{names.get(s.id)}</span>
+                    <span>{s.name}</span>
                     <button
                       type="button"
                       className={styles.iconButton}
@@ -326,9 +317,9 @@ export function PaintPanel(): JSX.Element {
             )}
             <Checkbox
               label="Paint on Transparent"
-              checked={cfg.onTransparent === true}
+              checked={onTransparent}
               onChange={() => {
-                void setPaintOnTransparent(layerId, cfg.onTransparent !== true);
+                void setPaintOnTransparent(layerId, !onTransparent);
               }}
             />
           </>
