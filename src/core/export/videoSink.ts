@@ -23,23 +23,13 @@
  * refuses to finish with zero.
  */
 
-import { isPluginFormat, pluginExporterFor } from './pluginExporters';
-import { openPluginExport } from './openPluginExport';
 import { createHdrMasteringAccumulator } from './hdrTransfer';
 import { FramePipeline, CanvasPool, SequentialWriter, defaultConcurrency } from './framePipeline';
 import { formatFfmetadata, formatCarriesChapters, type ExportChapter } from './chapters';
 import { streamFrameChunked, type VideoEncoderId } from './rawPipe';
 
-/**
- * A format this module can encode.
- *
- * `plugin:<pluginId>.<exporterId>` is an output a PLUGIN writes — the host
- * renders and hands over frames, the plugin returns bytes. Widened here rather
- * than kept as a parallel type so every path that already carries a format (the
- * queue, the dialogs, the output templates) carries this one too, instead of
- * each growing its own "or a plugin format" branch.
- */
-export type VideoFormat = 'mp4' | 'webm' | 'gif' | 'mov' | 'hdr10' | 'hlg' | `plugin:${string}`;
+/** A format this module can encode. */
+export type VideoFormat = 'mp4' | 'webm' | 'gif' | 'mov' | 'hdr10' | 'hlg';
 
 export type ExportQuality = 'high' | 'medium' | 'draft';
 
@@ -209,80 +199,6 @@ export interface VideoSink {
    * opened lazily.
    */
   stagingJobId?(): string | null;
-}
-
-/**
- * A sink that hands frames to a plugin and takes bytes back.
- *
- * ── Frames are read on the HOST, per frame, and transferred ─────────────────
- *
- * `getImageData` on the export canvas, then the buffer is transferred to the
- * worker rather than copied — a 4K frame is 33 MB, and copying one per frame
- * would cost more than most encoders spend encoding it. The buffer is dead on
- * this side afterwards, which is fine: nothing reads it again.
- *
- * ── Serialised on purpose ───────────────────────────────────────────────────
- *
- * One frame in flight at a time. An encoder is a stateful pipeline fed in
- * order, so overlapping frames would mean an author has to handle
- * out-of-order arrival for no gain — the export loop is already sequential.
- */
-class PluginSink implements VideoSink {
-  private session: Awaited<ReturnType<typeof openPluginExport>> | null = null;
-  private frames = 0;
-
-  constructor(private readonly params: VideoSinkParams) {}
-
-  private async ensureOpen(): Promise<NonNullable<PluginSink['session']>> {
-    if (this.session) return this.session;
-    const entry = pluginExporterFor(this.params.format);
-    if (!entry) {
-      throw new Error(
-        `No installed plugin provides the format "${this.params.format}". `
-        + 'It may have been uninstalled or disabled since this render was queued.',
-      );
-    }
-    this.session = await openPluginExport(entry, {
-      width: this.params.width,
-      height: this.params.height,
-      fps: this.params.fps,
-      durationSec: this.params.durationSec ?? 0,
-      compositionName: this.params.compositionName ?? '',
-    });
-    return this.session;
-  }
-
-  async addFrame(canvas: HTMLCanvasElement, index: number): Promise<void> {
-    const session = await this.ensureOpen();
-    // Via the 2D scratch: the export canvas is GPU-owned, and getContext('2d')
-    // on it returns null — this threw on the FIRST frame of every plugin
-    // export before anything reached the plugin at all.
-    const ctx = readableContext(canvas);
-    if (!ctx) throw new Error('The export frame could not be read (no 2D context available).');
-    const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    await session.addFrame(index, canvas.width, canvas.height, data.data.buffer as ArrayBuffer);
-    this.frames += 1;
-  }
-
-  async finish(): Promise<VideoSinkResult> {
-    if (this.frames === 0) throw new Error('No frames were rendered — nothing to encode.');
-    const session = await this.ensureOpen();
-    const bytes = await session.finish();
-    const entry = pluginExporterFor(this.params.format);
-    this.session = null;
-    return {
-      kind: 'blob',
-      ext: entry?.extension ?? 'bin',
-      frames: this.frames,
-      blob: new Blob([bytes], { type: 'application/octet-stream' }),
-    } as VideoSinkResult;
-  }
-
-  async dispose(): Promise<void> {
-    const session = this.session;
-    this.session = null;
-    if (session) await session.dispose();
-  }
 }
 
 /** True when the desktop shell can encode video locally with ffmpeg. */
@@ -487,17 +403,6 @@ class FfmpegSink implements VideoSink {
     await this.pipeline.drain();
     const r = this.bridge();
     const jobId = this.jobId;
-    /*
-      A plugin format cannot reach ffmpeg: `createVideoSink` routes it to
-      `PluginSink` before this sink is ever constructed. Asserted rather than
-      cast away, because the day that routing changes the failure would
-      otherwise be an MP4 written under a plugin's extension — a file whose
-      contents its name does not predict, which is the exact thing
-      `exporterSchema`'s reserved-extension list exists to prevent.
-    */
-    if (isPluginFormat(this.params.format)) {
-      throw new Error(`"${this.params.format}" is a plugin format and cannot be encoded by ffmpeg.`);
-    }
     // Container is always mp4 for HDR presets; codec/tags differ inside ffmpeg.
     const encodeFormat = this.params.format === 'hdr10' || this.params.format === 'hlg'
       ? 'mp4'
@@ -640,7 +545,6 @@ function encodedFileResult(
  *  - an explicit `pipeline: 'staged'`.
  */
 export function streamEligible(params: VideoSinkParams): boolean {
-  if (isPluginFormat(params.format)) return false;
   if (params.format === 'hdr10' || params.format === 'hlg') return false;
   if (params.resume) return false;
   return params.pipeline !== 'staged';
@@ -1133,10 +1037,6 @@ function canEncodeWithWebCodecs(): boolean {
  * something that writes a different format under the requested extension.
  */
 export function createVideoSink(params: VideoSinkParams): VideoSink | null {
-  // Checked FIRST, and unconditionally: a plugin format is not something the
-  // ffmpeg sink could fall back to encoding, so reaching that branch would
-  // silently produce an MP4 under the plugin's extension.
-  if (isPluginFormat(params.format)) return new PluginSink(params);
   if (canEncodeLocally()) {
     // Streaming is the default; the sink itself falls back to staging files
     // when the stream cannot start. See FfmpegStreamSink.
@@ -1163,7 +1063,7 @@ export function reopenVideoSink(
   jobId: string,
   stagedFrames: number,
 ): VideoSink | null {
-  if (isPluginFormat(params.format) || !canEncodeLocally()) return null;
+  if (!canEncodeLocally()) return null;
   const sink = new FfmpegSink(params);
   sink.reopen(jobId, stagedFrames);
   return sink;

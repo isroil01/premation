@@ -26,7 +26,6 @@ import { join } from 'path';
 const CLIENT_SOURCES = [
   'src/core/api/client.ts',
   'src/core/api/cache.ts',
-  'src/core/plugins/registry.ts',
   'src/layout/Motion/MotionPresetsPanel.tsx',
 ];
 

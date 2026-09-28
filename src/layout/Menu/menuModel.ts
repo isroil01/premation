@@ -21,7 +21,6 @@ import { isDevBuild } from '@core/config/devBuild';
 // /dashboard, where the core has not booted. `coreServices()` throws there.
 import { tryCoreServices } from '@core/services/coreServices';
 import { buildWorkspaceMenuItems } from './workspaceMenu';
-import { pluginPanelMenuItems } from './pluginPanelsMenu';
 import { buildEffectMenuItems } from './effectMenu';
 
 /** Project-lifecycle command ids (registered against ProjectManager at boot). */
@@ -102,9 +101,7 @@ export interface MenuGroupModel {
 }
 
 /**
- * Label of the Layer ▸ New submenu. `useAppMenuGroups` appends plugin layer
- * kinds inside it, so the two files agree on the name through this constant
- * rather than through a string that has to be kept in step by hand.
+ * Label of the Layer ▸ New submenu.
  */
 export const LAYER_NEW_SUBMENU_LABEL = 'New';
 
@@ -826,11 +823,6 @@ export const APP_MENU: MenuGroupModel[] = [
       {
         label: 'Panels',
         labelKey: 'menu.sub.panels',
-        // A THUNK, not a list: the app's own panels are fixed, and a plugin's
-        // are not — they appear and disappear with what the user has installed,
-        // and the renderer re-evaluates this every time the menu is drawn.
-        // `pluginPanelMenuItems` returns nothing when no plugin declares a
-        // panel, which is the overwhelmingly common case.
         children: () => [
           { commandId: 'view.align', label: 'Align' },
           { commandId: 'view.effects', label: 'Effects' },
@@ -845,7 +837,6 @@ export const APP_MENU: MenuGroupModel[] = [
           { commandId: 'view.swatches', label: 'Swatches' },
           { commandId: 'view.character', label: 'Text' },
           { commandId: 'view.tracker', label: 'Tracker' },
-          ...pluginPanelMenuItems(),
         ],
       },
       { separator: true },
@@ -853,9 +844,6 @@ export const APP_MENU: MenuGroupModel[] = [
       // workspaceMenu.ts.
       { label: 'Workspace', labelKey: 'menu.sub.workspace', children: buildWorkspaceMenuItems },
       { commandId: 'view.customize', label: 'Customize…' },
-      // No Plugins entry here: the Plugins GROUP (built dynamically in
-      // pluginMenu.ts) owns it, and a second door labelled the same thing is
-      // how a user ends up thinking there are two features.
     ],
   },
 

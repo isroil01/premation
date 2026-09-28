@@ -24,7 +24,6 @@ import { IconButton } from '@components/IconButton';
 import { Icon, type IconName } from '@components/Icon';
 import { ToolOptionsBar } from './ToolOptionsBar';
 import { ToolFlyout, type ToolFlyoutItem } from './ToolFlyout';
-import { PluginToolsFlyout } from './PluginToolsFlyout';
 import { toolShortcut, toolLabelWithShortcut } from './toolShortcuts';
 import { useElementWidth } from './useElementWidth';
 import { collapseFor } from './toolbarCollapse';
@@ -651,9 +650,6 @@ export function TopNav(): JSX.Element {
                 items={flyoutItems(SHAPE_TOOLS, setTool)}
                 data-tour="shape-tool"
               />
-              {/* Tools plugins contribute — one flyout for all of them, and
-                  nothing at all when none are installed. */}
-              <PluginToolsFlyout />
             </div>
 
             {/* Cluster 2: Mask & Puppet Tools (conditionally rendered) */}

@@ -10,7 +10,6 @@
     "model-maps#0": 0.09905,
     "video-decoded-frame#5": 0.01274,
     "video-decoded-frame#13": 0.01274,
-    "svg-embedded-raster#0": 0.19156,
-    "plugin-visible#0": 0.24177
+    "svg-embedded-raster#0": 0.19156
   }
 }

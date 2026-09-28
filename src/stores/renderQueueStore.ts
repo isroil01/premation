@@ -105,22 +105,6 @@ function notifyPlugins(info: {
   } else if (info.status === 'failed') {
     trackEvent('export_failed', { format, target: 'local', reason: failureReason(info.error ?? '') });
   }
-  void import('@core/plugins/PluginHost')
-    .then(({ pluginHost }) => {
-      pluginHost.notifyRenderFinished({
-        status: info.status,
-        compositionName: info.job.compositionName,
-        fileName: info.fileName,
-        format: info.job.format,
-        width: info.job.width,
-        height: info.job.height,
-        fps: info.job.fps,
-        durationSec: info.job.durationSec,
-        elapsedMs: info.elapsedMs,
-        ...(info.error === undefined ? {} : { error: info.error }),
-      });
-    })
-    .catch(() => { /* the host is not up; a render still succeeded */ });
 }
 
 /**

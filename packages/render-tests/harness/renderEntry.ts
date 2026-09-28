@@ -18,34 +18,12 @@ import { exportView } from '@core/export/offlineRenderer';
 import { setMediaRepaintScheduler, syncFlushScheduler } from '@core/rendering/repaintScheduler';
 import { SCENES } from './scenes/registry';
 import type { Scene } from './sceneKit';
-import { registeredEffects } from '@core/plugins/pluginEffects';
 import { BENCH_SCENES, RASTER_BENCH_SCENES } from './benchScenes';
 import { useColorManagementStore } from '@stores/colorManagementStore';
 import { useViewerLutStore } from '@stores/viewerLutStore';
 import { setRasterCapture } from '@core/rendering/raster/rasterCapture';
 import { createRasterRecorder } from './rasterRecorder';
 import { sceneToProject } from './sceneProject';
-
-/**
- * Block until no registered plugin effect is still `pending`.
- *
- * Bounded, and a timeout is NOT a failure here: it leaves the effect pending,
- * the scene renders without it, and the verifier that compares the two squares
- * then fails with a picture. Throwing instead would replace a diagnosis with a
- * stack trace from the wrong layer.
- */
-async function waitForPluginEffects(timeoutMs = 8000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (registeredEffects().some((e) => e.state === 'pending')) {
-    if (Date.now() > deadline) {
-
-      console.warn('[harness] plugin effects still pending after '
-        + `${timeoutMs}ms: ${registeredEffects().filter((e) => e.state === 'pending').map((e) => e.id).join(', ')}`);
-      return;
-    }
-    await new Promise((r) => setTimeout(r, 16));
-  }
-}
 
 interface HarnessBridge {
   config: { backends: BackendChoice[]; only?: string[]; exportScenes?: boolean; bench?: boolean; rasterBench?: boolean };
@@ -340,20 +318,6 @@ async function renderSceneFrames(
   }
   if (be.readyPromise) await be.readyPromise;
 
-  /*
-    Wait for plugin effects to finish compiling.
-
-    Compilation is asynchronous and begins when the renderer bridge attaches,
-    which happens inside the init just awaited. `snapshotToFrameScene` emits
-    only `ready` effects, so rendering before the compile lands silently drops
-    the effect — producing a frame indistinguishable from the feature being
-    broken. Without this the plugin scenes would be green on a fast machine and
-    red on a slow one, with nothing in the output to say which.
-
-    Returns immediately for the scenes with no plugin effects, which is all but
-    two of them.
-  */
-  await waitForPluginEffects();
 
   // The backend we ASKED for must be the one that rendered.
   //

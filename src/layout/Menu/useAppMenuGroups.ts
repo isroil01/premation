@@ -1,99 +1,23 @@
 /**
- * The menu groups the two menu renderers draw.
- *
- * Both `AppMenuBar` and `AppMenuButton` used to read `APP_MENU` — a module
- * constant — directly, which is fine for groups whose contents ship with the
- * app and wrong for the one group that cannot: Plugins is assembled from what
- * the user installed, and it has to change while the app is running (a plugin
- * finishes booting, crashes, is disabled). Hence a hook: it subscribes to both
- * sources of truth, so an open menu is never stale.
+ * The menu groups the two menu renderers draw: `APP_MENU` with every edition
+ * gate applied (`visibleItems`), localized. A hook so an open menu follows a
+ * change of UI language. (The Plugins group and the plugin layer kinds under
+ * Layer ▸ New are gone with the JavaScript plugin system, G2.)
  */
 
-import { useMemo, useSyncExternalStore } from 'react';
-import pluginHost from '@core/plugins/PluginHost';
-import { usePluginStore } from '@stores/pluginStore';
-import { APP_MENU, LAYER_NEW_SUBMENU_LABEL, type MenuGroupModel, type MenuItemModel } from './menuModel';
-import { buildPluginsMenuGroup } from './pluginMenu';
-import { allLayerKinds } from '@core/plugins/layerKindRegistry';
-import { pluginsEnabled } from '@core/config/edition';
+import { useMemo } from 'react';
+import { APP_MENU, type MenuGroupModel, type MenuItemModel } from './menuModel';
 import { useCatalogueRevision } from '@hooks/useLocale';
 import { localizeMenuGroups } from './menuI18n';
 
 export function useAppMenuGroups(): MenuGroupModel[] {
-  // Runtime status (running / stopped / crashed, contributed commands).
-  const revision = useSyncExternalStore(
-    (cb) => pluginHost.subscribe(cb),
-    () => pluginHost.getRevision(),
-  );
-  // What is installed at all.
-  const installed = usePluginStore((s) => s.plugins);
-  // The UI language. Translation is the LAST step below, after the plugin and
-  // layer-kind splicing — which finds Layer ▸ New by its English label.
   const i18nRevision = useCatalogueRevision();
-
-  return useMemo(() => {
-    /*
-      A build without plugins gets the app menu with no plugin group and no
-      layer-kind entries — but still filtered, because `visibleItems` is what
-      applies every OTHER edition gate in the menu. Returning `APP_MENU` raw
-      here would hide the plugins and un-hide the cloud.
-
-      Gated before anything is assembled rather than filtered afterwards. Both
-      additions are built from registries that are empty in this edition, so the
-      code below would produce the same answer today — and relying on that would
-      make the real gate "nothing happens to be installed", which stops being
-      true the moment something registers a kind for an unrelated reason.
-    */
-    if (!pluginsEnabled()) {
-      return localizeMenuGroups(APP_MENU.map((g) => ({ ...g, items: visibleItems(g.items) })));
-    }
-
-    const plugins = buildPluginsMenuGroup();
-    // Before Help, after Window — the same place After Effects puts it, and the
-    // same place a user looks for "things that were added to this app".
-    const helpAt = APP_MENU.findIndex((g) => g.id === 'help');
-    const at = helpAt === -1 ? APP_MENU.length : helpAt;
-    const groups = [...APP_MENU.slice(0, at), plugins, ...APP_MENU.slice(at)];
-
-    /*
-      Plugin layer kinds, in the LAYER menu rather than the Plugins menu.
-
-      A user looking for "how do I add one of these" looks under Layer ▸ New,
-      beside Text and Solid — not under a menu named after the mechanism that
-      happens to provide it. The Plugins menu is for managing plugins; this is
-      for making a layer.
-
-      Built per render from the live registry, so enabling or disabling a plugin
-      changes the menu without a reload — `revision` and `installed` above are
-      already the dependencies that drive it.
-    */
-    const kinds = allLayerKinds();
-    const withKinds = kinds.length === 0 ? groups : groups.map((g) => {
-      if (g.id !== 'layer') return g;
-      const entries: MenuItemModel[] = kinds.map((k) => ({
-        commandId: `layer.new.${k.pluginId}.${k.kind.id}`,
-        label: k.kind.label,
-      }));
-      // Inside Layer ▸ New, after the built-in kinds and before the rule that
-      // precedes the 3D primitives — so the submenu reads as one list of things
-      // you can create. APP_MENU is not mutated: the parent is copied with new
-      // children.
-      return {
-        ...g,
-        items: g.items.map((it) => {
-          if (it.label !== LAYER_NEW_SUBMENU_LABEL || !it.children) return it;
-          const kids = typeof it.children === 'function' ? it.children() : it.children;
-          const firstSeparator = kids.findIndex((k) => k.separator);
-          const at2 = firstSeparator === -1 ? kids.length : firstSeparator;
-          return { ...it, children: [...kids.slice(0, at2), ...entries, ...kids.slice(at2)] };
-        }),
-      };
-    });
-
-    return localizeMenuGroups(withKinds.map((g) => ({ ...g, items: visibleItems(g.items) })));
+  return useMemo(
+    () => localizeMenuGroups(APP_MENU.map((g) => ({ ...g, items: visibleItems(g.items) }))),
     // The catalogue is read by `t()` inside, not by this closure — hence the rule.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revision, installed, i18nRevision]);
+    [i18nRevision],
+  );
 }
 
 /**

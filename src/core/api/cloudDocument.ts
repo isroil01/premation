@@ -27,11 +27,6 @@ import type { TransitionRecord } from '@core/timeline/transitionModel';
 import type { ProjectFile } from '@core/types';
 import type { SerializedTimeline } from '@motion/timeline';
 import { migrateDocument } from '@core/project/migrations';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { usePluginStore } from '@stores/pluginStore';
-import { collectPluginReferences, type DocumentPluginReference } from '@core/plugins/customLayers';
-import { migratePluginBindings } from '@core/persistence/pluginBindingMigration';
-import { captureProjectStorage, restoreProjectStorage } from '@core/plugins/pluginStorage';
 import { rebindAssetSrcs } from '@core/scene/assetRebind';
 import {
   useAssetStore,
@@ -41,7 +36,6 @@ import {
   type ProjectItemsDocument,
 } from '@stores/assetStore';
 import { captureDocumentExtras, restoreDocumentExtras, type DocumentExtras } from '@core/project/documentExtras';
-import type { SceneNode } from '@core/types';
 
 export interface EditorDocument {
   version: string;
@@ -96,38 +90,12 @@ export interface EditorDocument {
    */
   transitions?: Record<string, TransitionRecord[]>;
   /**
-   * The plugins this document's custom layers depend on.
-   *
-   * New in Track B, and the reason it exists is the invariant it replaces:
-   * documents never used to reference plugins at all. Now one can, so a
-   * document has to be able to SAY which — otherwise the editor can tell a user
-   * "this layer needs a plugin" and not which plugin, and an id alone is not
-   * enough to explain a missing dependency or to fetch it.
-   *
-   * Derived from the document's CONTENTS at capture time, never from what
-   * happens to be installed. A project saved on a machine that is missing the
-   * plugin must still list it — that machine is exactly the one whose user
-   * needs to be told.
-   *
-   * Optional, so every document written before this reads back unchanged and
-   * needs no migration: absent and empty both mean "no custom layers".
+   * LEGACY plugin blocks (the JavaScript plugin system is gone — G2, not
+   * ported): the plugins a document's custom layers depended on, and
+   * plugin-owned per-document storage. Carried through a load → save
+   * unchanged, never read.
    */
-  plugins?: DocumentPluginReference[];
-  /**
-   * Plugin-owned state that belongs to this DOCUMENT.
-   *
-   * Plugin id → key → serialised value. Written by `storage.set('project', …)`,
-   * bounded at 256 KB per plugin, and carried wherever the file goes — which is
-   * the point: "which layer is this plugin's spine bone" is useless without the
-   * layers it names.
-   *
-   * Retained for a plugin that is NOT installed. Opening a project on a machine
-   * that lacks the plugin and saving it must not destroy state that machine
-   * cannot see; garbage collection is an explicit user action, never a side
-   * effect of opening a file.
-   *
-   * Optional, so every document written before this reads back byte-identical.
-   */
+  plugins?: unknown[];
   pluginStorage?: Record<string, Record<string, string>>;
   /**
    * LEGACY (read, never written since B4): open composition tabs (which
@@ -174,10 +142,9 @@ export function captureDocument(): EditorDocument {
     swatches: useSwatchStore.getState().list(),
     materials: useMaterialStore.getState().list(),
     transitions: useTransitionStore.getState().capture(),
-    ...(pluginReferences().length > 0 ? { plugins: pluginReferences() } : {}),
-    // Absent when empty, so a document with no plugin state reads back
-    // byte-identical — the same rule `plugins` follows above.
-    ...(captureProjectStorage() ? { pluginStorage: captureProjectStorage() } : {}),
+    // The legacy plugin blocks, exactly as the document that was opened had them.
+    ...(restoredPluginBlocks.plugins ? { plugins: restoredPluginBlocks.plugins } : {}),
+    ...(restoredPluginBlocks.pluginStorage ? { pluginStorage: restoredPluginBlocks.pluginStorage } : {}),
     // Always present, even empty: its ABSENCE marks a document written before
     // items existed, which restore migrates from the pre-document cache.
     projectItems: captureProjectItems(),
@@ -187,45 +154,11 @@ export function captureDocument(): EditorDocument {
 }
 
 /**
- * What the document last restored said about its plugins.
- *
- * The dependency block is DERIVED from the node tree at capture time, which is
- * what keeps it honest — but version and publisher cannot be derived, they can
- * only be looked up in the installed set or remembered. Remembering is this
- * map. Without it, opening a project on a machine that lacks the plugin and
- * saving it back erased the version the document already carried.
- *
- * Module-level because capture and restore have no other channel between them,
- * and cleared on restore so a document never inherits the previous one's.
+ * The legacy plugin blocks of the document last restored (see `plugins` /
+ * `pluginStorage` on EditorDocument): written back unchanged by capture,
+ * cleared on every restore so a document never inherits the previous one's.
  */
-let restoredPluginRefs = new Map<string, { version?: string; publisher?: string }>();
-
-/**
- * Which plugins this document depends on, read off the node tree.
- *
- * Version and publisher come from the INSTALLED copy when there is one, else
- * from what the document itself recorded, and are absent only when neither
- * knows — which still leaves the id, which is what `premation://plugin/<id>`
- * needs.
- */
-function pluginReferences(): DocumentPluginReference[] {
-  const nodes: SceneNode[] = [];
-  const walk = (id: string): void => {
-    const node = defaultSceneGraph.getNode(id);
-    if (!node) return;
-    nodes.push(node);
-    for (const child of defaultSceneGraph.getChildren(id)) walk(child.id);
-  };
-  for (const root of defaultSceneGraph.getRoots()) walk(root.id);
-
-  const installed = new Map(
-    usePluginStore.getState().plugins.map((p) => [
-      p.manifest.id,
-      { version: p.manifest.version, ...(p.manifest.author ? { author: p.manifest.author } : {}) },
-    ]),
-  );
-  return collectPluginReferences(nodes, installed, restoredPluginRefs);
-}
+let restoredPluginBlocks: Pick<EditorDocument, 'plugins' | 'pluginStorage'> = {};
 
 /** Footage ids the document's layers point at (`assetId`, audio `__assetId`). */
 function referencedAssetIdsOf(doc: EditorDocument): Set<string> {
@@ -282,41 +215,21 @@ function restoreDocumentNow(doc: EditorDocument): void {
   const migrated = migrateDocument(doc);
   doc = migrated;
 
-  // Remember what this document said before anything derives a new answer.
-  // Assigned unconditionally, so opening a document with no plugin block clears
-  // the previous one's rather than leaking its versions into an unrelated save.
-  restoredPluginRefs = new Map(
-    (doc.plugins ?? []).map((p) => [
-      p.id,
-      {
-        ...(p.version ? { version: p.version } : {}),
-        ...(p.publisher ? { publisher: p.publisher } : {}),
-      },
-    ]),
-  );
-
-  // Assigned unconditionally, including for a document that carries none: a
-  // project opened after one that had plugin state must not inherit it.
-  restoreProjectStorage(doc.pluginStorage);
+  // The legacy plugin blocks ride through unchanged (assigned unconditionally).
+  // Empty scopes are dropped, as the C++ engine's docio does (is_scope_store).
+  const storage = Object.fromEntries(Object.entries(doc.pluginStorage ?? {}).filter(
+    ([, scope]) => scope && typeof scope === 'object' && Object.keys(scope).length > 0,
+  ));
+  restoredPluginBlocks = {
+    ...(Array.isArray(doc.plugins) && doc.plugins.length > 0 ? { plugins: doc.plugins } : {}),
+    ...(Object.keys(storage).length > 0 ? { pluginStorage: storage } : {}),
+  };
 
   // Scene first: the timeline reconciles its clips against the node tree, and
   // comps must exist before the timeline reads their frame rate.
   if (doc.scene) sceneProjectIO.restore(doc.scene);
   if (doc.animation) defaultAnimation.restore(doc.animation);
 
-  /*
-    Repair plugin bindings that reference their parent by NAME.
-
-    Documents written before the id form existed carry
-    `layer('Hero depth', 'plugin.focal')`, resolved every frame — so renaming
-    that layer silently breaks every child. Rewritten once, here, after both
-    the scene and the animation are in place (the rewrite needs to resolve
-    names against the restored tree).
-
-    Runs on every load and is idempotent: after the first pass there is nothing
-    left matching, so it costs one regex over plugin-authored expressions.
-  */
-  migratePluginBindings();
 
   if (doc.comps) {
     useProjectStore.getState().actions.replaceComps(doc.comps);

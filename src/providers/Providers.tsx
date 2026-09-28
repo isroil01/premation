@@ -15,8 +15,6 @@ import {
   applyPreferencesToDocument,
   usePreferenceStore,
 } from '@stores/preferenceStore';
-import { allLayerKinds } from '@core/plugins/layerKindRegistry';
-import { createCustomLayerFromMenu } from '@core/plugins/createCustomLayerFromMenu';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { isLayer } from '@core/engine/doc';
 import { useLayoutStore } from '@stores/layoutStore';
@@ -57,11 +55,6 @@ import { openAbout } from '@layout/Help/AboutDialog';
 import { dismissStartScreen } from '@layout/Start/useStartScreenVisible';
 import { getAutosaveController } from '@core/persistence/AutosaveController';
 import { readRecovery, clearRecovery, restoreRecovery } from '@core/persistence/recovery';
-import pluginHost from '@core/plugins/PluginHost';
-import { usePluginStore } from '@stores/pluginStore';
-import { reconcileInstalledSet, installInstalledSyncSink } from '@core/plugins/installedSync';
-import { showPluginPanel, hidePluginPanel } from '@layout/Plugins/PluginPanel';
-import { activatePluginTool, installPluginToolBridge } from '@core/workspace/pluginToolBridge';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { usePresentationStore } from '@stores/presentationStore';
 import { useGuidesStore } from '@stores/guidesStore';
@@ -79,7 +72,7 @@ import { installAutomationDevApi } from '@core/automation/devApi';
 import { createAppEnginePorts } from '@core/engine/appPorts';
 import { LoadingScreen } from '@components/LoadingScreen';
 import { isLocalFirst } from '@core/config/flags';
-import { cloudProjectsEnabled, pluginRegistryEnabled, pluginsEnabled } from '@core/config/edition';
+import { cloudProjectsEnabled } from '@core/config/edition';
 import { chooseBundleDir, bundleDirPickerAvailable } from '@core/project/bundle/bundleProjectIO';
 import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
 import { useOnboardingStore } from '@stores/onboardingStore';
@@ -2598,62 +2591,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           void getCommandSystem().execute(asCommandId(id));
         });
 
-        // Plugin host + UI commands (searchable in the Command Palette).
+        // UI commands (searchable in the Command Palette).
         try {
-          // Registers the contributions of every plugin the user has enabled —
-          // installs persist across reloads, so this is what makes them come
-          // back — and starts only the ones that asked to start (`onStartup`).
-          // The rest stay inactive, with their commands live, until used.
-          // Package bytes live in IndexedDB now, so they have to be back in
-          // memory before anything tries to spawn a worker from them.
-          //
-          // Skipped entirely in a build without plugins. Of the six gates this
-          // is the one that matters: the others hide a surface, and this one is
-          // what stops third-party code from running at all — `configure()`
-          // brings up every enabled plugin and starts the ones that asked.
-          if (pluginsEnabled()) {
-            // Before hydrate, so nothing the reconcile or the user does next
-            // is announced into a no-op sink. ACCOUNT sync only — a local build
-            // has no account, so its sink stays the no-op and local-file
-            // installs never try to announce themselves anywhere.
-            const accountSync = pluginRegistryEnabled();
-            if (accountSync) installInstalledSyncSink();
-            await usePluginStore.getState().hydrate();
-            /*
-              Reconcile against the ACCOUNT's installed set.
-
-              Deliberately NOT awaited, and deliberately after `hydrate()`. Not
-              awaited because it is a network call and the editor must not wait
-              on the registry to boot — an unreachable server would otherwise
-              hold up the first frame. After hydrate because the local list is
-              its input: running it against a list that had not loaded yet
-              would report every plugin the user owns as "restorable".
-
-              Safe to leave running in the background because it cannot delete
-              anything locally — see `installedSync.ts`, where that is the
-              load-bearing rule.
-            */
-            if (accountSync) {
-              void reconcileInstalledSet(usePluginStore.getState().plugins)
-                .then((report) => usePluginStore.getState().noteSync(report))
-                .catch(() => undefined);
-            }
-            pluginHost.configure({
-              getSelection: () => useSelectionStore.getState().ids,
-              // What makes `motion.ui.openPanel()` real. The host cannot import
-              // the dock itself (it must stay React-free and testable), so the
-              // shell hands it the two calls it needs.
-              showPanel: (id, panelId) => showPluginPanel(id, panelId),
-              hidePanel: (id, panelId) => hidePluginPanel(id, panelId),
-              // A contributed tool is selected through the same bridge the
-              // toolbar uses, so the palette, the Plugins menu and the strip
-              // all end up in one state rather than three.
-              activateTool: (id, toolId) => activatePluginTool(id, toolId),
-            });
-            // Picking any built-in tool stands the plugin tool down — one tool
-            // at a time, which is what a toolbar means.
-            installPluginToolBridge();
-          }
           const registry = getCommandRegistry();
           registry.register({
             id: asCommandId('file.export'), label: 'Export…', icon: 'arrow-up',
@@ -2743,56 +2682,6 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             id: asCommandId('view.presentation'), label: 'Present (Preview)', icon: 'tv',
             enabled: () => true, execute: () => usePresentationStore.getState().enter(),
           });
-          // ONE command, because there is now one surface. `view.plugins` used
-          // to open a manager modal beside this, and two managers over one
-          // plugin drift: the modal reported what the user had GRANTED, the
-          // detail tab reported what the manifest ASKED FOR, and whichever
-          // screen the user happened to open decided what they believed. The
-          // modal is retired — its log, permission editor and folder reload
-          // live on the plugin's own page, beside everything else about it.
-          /*
-            One "New layer" command per registered plugin kind.
-
-            This closes the gap that made layer kinds unusable in practice:
-            nothing could create the FIRST layer of a custom kind. The plugin
-            has to create it, and the plugin is not running — its
-            `onLayerKind` event fires when a document CONTAINING the kind is
-            opened, which is a chicken-and-egg the author cannot break from
-            their side.
-
-            Registered off `allLayerKinds()`, which lists kinds from ENABLED
-            plugins whether or not their worker is up — so choosing one wakes
-            the plugin lazily, exactly as opening a document does. A disabled
-            plugin's kinds are absent from that list and therefore from this
-            menu, consistent with `activateForDocument` refusing to wake
-            software the user turned off.
-          */
-          for (const entry of pluginsEnabled() ? allLayerKinds() : []) {
-            const kind = `${entry.pluginId}.${entry.kind.id}`;
-            registry.register({
-              id: asCommandId(`layer.new.${kind}`),
-              label: `New ${entry.kind.label}`,
-              icon: (entry.kind.icon as never) ?? 'plugin',
-              enabled: () => true,
-              // The plugin kind's schema builder runs off-document → ONE pasteLayers entry into the
-              // active comp; the plugin wakes after, outside the entry (createCustomLayerFromMenu.ts).
-              execute: async () => {
-                await createCustomLayerFromMenu(kind, activeCompIdNow() ?? 'comp_root');
-              },
-            });
-          }
-
-          // Opens the marketplace panel, which a build without plugins does not
-          // register — a palette entry that opens nothing is worse than no
-          // entry, because the user concludes the app is broken rather than
-          // that the feature is absent.
-          if (pluginsEnabled()) {
-            registry.register({
-              id: asCommandId('view.marketplace'), label: 'Plugins', icon: 'plugin',
-              enabled: () => true,
-              execute: () => useLayoutStore.getState().openPanel('marketplace'),
-            });
-          }
           // Pre-existing gap, found by `onDemandPanelsReachable.test.ts`: the
           // History panel is registered, has a renderer, and had nothing that
           // opened it — so undo history was a panel no user could reach.

@@ -261,13 +261,11 @@ electron/          main process, IPC, native integration
 
 ## Plugins
 
-Plugins are packages — a `plugin.json` manifest plus an ES module — that run in a
-dedicated Worker sandbox. Permissions are shown and accepted *before any plugin
-code is loaded anywhere*, and packages are signed.
-
-See [`docs/PLUGINS.md`](docs/PLUGINS.md) for the architecture and the authoring
-guide. Installing from a local file works in every edition; the hosted registry
-does not exist in the local edition.
+Plugins are native SDK plugins that run inside the C++ engine process
+(`premation-engine`), modelled on the After Effects effect API. See
+[`docs/PLUGIN_SDK.md`](docs/PLUGIN_SDK.md). The earlier JavaScript/WGSL plugin
+system is gone (owner decision G2, `docs/TS_ENGINE_REMOVAL.md`): a project
+that used it still opens, without that content.
 
 ## Testing
 
@@ -336,7 +334,7 @@ Deep dives on individual subsystems:
 - [`docs/AFTER_EFFECTS_IMPORT.md`](docs/AFTER_EFFECTS_IMPORT.md) — opening `.aep`
   and `.aepx` projects: what converts, what does not, and the undocumented
   binary format behind it
-- [`docs/PLUGINS.md`](docs/PLUGINS.md) — plugin architecture and authoring
+- [`docs/PLUGIN_SDK.md`](docs/PLUGIN_SDK.md) — the native plugin SDK
 - [`docs/MOTION_FORMAT_FREEZE.md`](docs/MOTION_FORMAT_FREEZE.md) — what the
   `.motion` bundle is, the six migrations behind it, and what a 1.0
   compatibility promise would actually require

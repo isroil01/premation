@@ -53,7 +53,6 @@ import { LABEL_COLORS } from '@core/scene/labelColor';
 import { parseColorChannels, readNodeEffects } from '@core/effects/effects';
 import { readRetimeMode } from '@core/animation/retime';
 import { readNodeKind, readShapeType } from '@core/scene/sceneDerive';
-import { splitKind } from '@core/plugins/layerKindSchema';
 import { BLEND_MODES as API_BLEND_MODES } from './enums';
 import type { SceneNode } from '@core/types';
 import {
@@ -356,7 +355,20 @@ function pinnedOf(node: SceneNode): string[] {
   return [];
 }
 
-/** B4: a plugin layer kind's id (`<pluginId>.<kindId>`, layerKindSchema `splitKind`), '' for any other kind. */
+/**
+ * `<pluginId>.<kindId>` split on the LAST dot (the removed layerKindSchema's
+ * rule, kept here and in the C++ readmodel so a stored plugin layer still
+ * reads as one — the JavaScript plugin system itself is gone, G2).
+ */
+function splitKind(kind: string): { pluginId: string; kindId: string } | null {
+  const at = kind.lastIndexOf('.');
+  if (at <= 0 || at === kind.length - 1) return null;
+  const kindId = kind.slice(at + 1);
+  if (!/^[a-z][a-zA-Z0-9]{0,31}$/.test(kindId)) return null;
+  return { pluginId: kind.slice(0, at), kindId };
+}
+
+/** B4: a plugin layer kind's id (`<pluginId>.<kindId>`, `splitKind`), '' for any other kind. */
 function pluginKindOf(node: SceneNode): string {
   const k = readNodeKind(node) as string;
   return splitKind(k) !== null ? k : '';

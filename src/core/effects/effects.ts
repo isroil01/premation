@@ -8,7 +8,6 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpSceneRevision } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
-import { pluginEffectDef } from './pluginEffectDefs';
 import type { SceneNode } from '@core/types';
 import { renderComponentsOf } from '@core/scene/SceneGraph';
 
@@ -4558,9 +4557,7 @@ const BUILTIN_DEF = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
  * because that array is a module-level constant several things capture at load.
  */
 export function effectDefFor(type: EffectType | string): EffectDef | undefined {
-  return BUILTIN_DEF.get(type as EffectType)
-    // Only consulted on a miss, so the common path is one map lookup.
-    ?? (typeof type === 'string' && type.includes('.') ? pluginEffectDef(type) : undefined);
+  return BUILTIN_DEF.get(type as EffectType);
 }
 
 /**
@@ -4964,22 +4961,6 @@ export function updateEffectParam(
       e.id === effectId ? { ...e, params: { ...e.params, [key]: value } } : e,
     ),
   );
-  /*
-    Tell a PLUGIN effect that one of its own controls moved — AE's
-    `PF_Cmd_USER_CHANGED_PARAM`, and what makes a preset dropdown possible.
-
-    Here rather than in the inspector, because this is the one write every
-    route goes through: the panel, the AI, a script and a plugin all arrive at
-    the same function, and a supervision that only fired for one of them would
-    be a rule the author cannot reason about.
-
-    Costs nothing for a built-in or for an effect that supervises nothing —
-    see `noteParamCommitted`, which returns before allocating. Loaded lazily so
-    the effects module keeps no static edge into the plugin system.
-  */
-  void import('@core/plugins/paramSupervision')
-    .then((m) => m.noteParamCommitted(nodeId, effectId, key))
-    .catch(() => { /* the plugin system is absent in some builds */ });
 }
 
 /**

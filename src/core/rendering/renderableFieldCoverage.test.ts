@@ -101,6 +101,7 @@ const BOUNDARIES: ReadonlyArray<{ type: string; file: string; producers: string[
 const NO_PRODUCER: ReadonlyMap<string, string> = new Map([
   ['maskId', 'Read only by MaskPass, which is `enabled = false` with nothing to enable it. Masking ships via effectBake, which reads maskId off the effect rather than the renderable.'],
   ['clip', 'Same: the other half of MaskPass\'s filter (`r.maskId || r.clip`), inert for as long as that pass is disabled.'],
+  ['generator', 'Only JavaScript plugin generator layers produced it; that plugin system is gone (G2, TS_ENGINE_REMOVAL phase 4). The field and its pass go with the TypeScript renderer.'],
 ]);
 
 /** Field names of an interface, anchored by the opening brace. */

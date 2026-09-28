@@ -25,9 +25,9 @@ const permanent = (region: RegionId): string[] =>
   PANEL_DEFS.filter((d) => d.region === region && !d.onDemand).map((d) => d.id);
 
 describe('the permanent panel sets', () => {
-  it('are Layers, Assets, Library, AI on the left and Properties, Effects, Presets, Plugins, Audio on the right', () => {
+  it('are Layers, Assets, Library, AI on the left and Properties, Effects, Presets, Audio on the right', () => {
     expect(permanent('leftSidebar')).toEqual(['scene', 'assets', 'library', 'ai']);
-    expect(permanent('rightInspector')).toEqual(['properties', 'effects', 'presets', 'marketplace', 'audio']);
+    expect(permanent('rightInspector')).toEqual(['properties', 'effects', 'presets', 'audio']);
     expect(PANEL_DEFS.find((d) => d.id === 'assets')?.title).toBe('Assets');
   });
 

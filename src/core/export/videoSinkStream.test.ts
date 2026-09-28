@@ -276,7 +276,6 @@ describe('which exports stream', () => {
     expect(streamEligible({ ...params, format: 'hlg' })).toBe(false);
     expect(streamEligible({ ...params, resume: { spec: {}, totalFrames: 10 } })).toBe(false);
     expect(streamEligible({ ...params, pipeline: 'staged' })).toBe(false);
-    expect(streamEligible({ ...params, format: 'plugin:x.y' })).toBe(false);
   });
 
   it('createVideoSink hands the desktop a streaming sink by default', () => {

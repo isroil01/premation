@@ -29,18 +29,6 @@ import { readMatte } from '@core/effects/matte';
 import { effectNumber, effectParam, paramsOf, withAlpha, isGpuOnlyEffect, effectHasOpacity, effectOpacityOf } from '@core/effects/effects';
 import { deepGlowSettings } from '@core/effects/deepGlow';
 import { beamPathRows, beamPathSettings, beamPathSpreadPx } from '@core/effects/beamPath';
-import { effectById, beginEffectDraw, endEffectDraw } from '@core/plugins/pluginEffects';
-import {
-  layerParamNames,
-  packParameters,
-  effectSpreadFor,
-  effectExpandFor,
-  effectIsIdentity,
-  effectHasGpuKernel,
-} from '@core/plugins/effectSchema';
-import { hasCapability } from '@core/plugins/capabilities';
-import { pluginAssetTextureKey } from '@core/plugins/pluginAssetTextures';
-import { pluginHostFrame, setPluginHostFrame, seedFromId } from './pluginHostFrame';
 import { layerIsBaked, cpuBakeStats } from '@core/effects/effectBake';
 import { pushLayerError, errorMessage, type LayerError } from './layerErrors';
 import { cornerPinInverse } from '@core/effects/distort';
@@ -2322,237 +2310,6 @@ export function extractSpatialEffects(
     if (e.type === 'noise') {
       spatial.push({ type: 'noise', amount: n('amount') / 100, evolution: n('evolution'), monochrome: e.params?.monochrome !== false });
     }
-    /*
-      A plugin's effect.
-
-      Matched by the DOT in its type rather than against a list, because the set
-      is not knowable at build time — it is whatever is installed. Namespacing
-      (`<pluginId>.<effectId>`) is what makes that safe: no built-in type
-      contains a dot, so this branch cannot swallow one.
-
-      Everything the renderer needs is resolved HERE. The parameter layout comes
-      from the plugin's manifest, which only this side knows about; the pass
-      receives a shader name and packed bytes and stays ignorant of plugins.
-    */
-    if (e.type.includes('.')) {
-      const registered = effectById(e.type);
-      /*
-        Emitted only when READY.
-
-        `pending` has no compiled pipeline yet, `failed` had its shader refused,
-        and `disabled` was implicated in a device loss. Drawing any of them asks
-        the renderer for a pipeline that does not exist — and for `disabled` it
-        would silently undo the protection the user was given, which is the
-        worst of the three.
-      */
-      /*
-        Ready AND with a shader this backend can bind.
-
-        A CPU-only effect reaches `ready` — something can draw it — but it has
-        no registered shader, so emitting a pass would name one the renderer
-        never heard of, which draws into a cleared target and reads as the
-        effect having erased the layer. Its layer is CPU-baked instead
-        (`effectsNeedCpuBake`), which is where its kernel runs.
-      */
-      if (registered?.state === 'ready'
-        && effectHasGpuKernel(registered.contribution, hasCapability('webgpu') ? 'webgpu' : 'webgl2')) {
-        /*
-          The second texture, when this effect declared one.
-
-          Same shape and the same unset rule as `displacement-map` above — node
-          id === renderable id, empty or non-string means unset — and the same
-          fallback: unset self-samples rather than being skipped. An effect
-          whose map is missing should draw the layer against itself, which is
-          visibly wrong and debuggable, rather than disappear.
-
-          Read from whatever the manifest named its layer parameter, not a fixed
-          key, so the scene follows the author's own vocabulary.
-        */
-        const layerParams = layerParamNames(registered.contribution.params);
-        const [layerParam] = layerParams;
-        const layerIdOf = (name: string): string => {
-          const raw = paramsOf(e)[name];
-          return typeof raw === 'string' ? raw : '';
-        };
-        const mapRaw = layerParam ? paramsOf(e)[layerParam] : undefined;
-        const mapLayerId = typeof mapRaw === 'string' && mapRaw !== '' ? mapRaw : undefined;
-        /*
-          Inputs two through four, positionally.
-
-          Emitted as a list whose LENGTH is what the manifest declared, not what
-          the user has filled in: the material declares one binding per declared
-          parameter, and a shorter list would leave a declared binding empty —
-          an invalid pipeline, which is a dead viewport rather than a missing
-          input. An unchosen input is an empty string, which the pass
-          self-samples exactly as it does an unset `mapLayerId`.
-        */
-        const extraLayerIds = layerParams.slice(1).map(layerIdOf);
-
-        /*
-          An effect that would change nothing draws nothing.
-
-          AE's pre-render phase asks the same question (`PF_Cmd_SMART_PRE_RENDER`
-          can answer "I am the identity") and for the same payoff: an effect
-          stack is full of effects sitting at zero, each otherwise costing a
-          full-screen pass, a target and a pipeline bind every frame. Skipped
-          BEFORE the loop, so the whole chain goes — half a skipped chain would
-          leave the layer holding an intermediate step.
-        */
-        if (effectIsIdentity(registered.contribution, paramsOf(e))) continue;
-
-        // Packed ONCE and shared by every pass. They all read the same
-        // parameter block from the same offsets; only the host's own fields
-        // differ per pass, and the renderer writes those.
-        // `packParameters` hands back an ArrayBuffer; the scene carries a typed
-        // view so the renderer never has to know the element size.
-        const params = new Float32Array(packParameters(
-          registered.layout.layout,
-          registered.layout.size,
-          paramsOf(e),
-        ));
-
-        /*
-          ★ One spatial entry PER PASS. This is what executes a chain.
-
-          The renderer's spatial-effects list already ping-pongs between
-          offscreen targets — that is how a layer with a blur and then a glow
-          works — so a chain needs no new mechanism, only its passes emitted in
-          order. The host sequences and allocates; the plugin never sees a
-          target, which is the promise multi-pass had to keep.
-
-          `passIndex` travels as a field rather than being baked into `params`
-          because the value beside it in the shader, `texelSize`, depends on the
-          size of the target being drawn into. Only the renderer knows that, so
-          the whole host block is written there and this side stays out of it.
-        */
-        /*
-          Does anything in this chain want the original back?
-
-          Decided HERE, once per chain, because this is the only side that
-          knows how the flat list of scene entries below groups into chains.
-          The renderer sees N independent entries and could not work it out.
-
-          Per chain rather than always, because capturing costs a full-screen
-          blit every frame and the overwhelming majority of chains — every
-          separable blur — never look at it.
-        */
-        const chainReadsOrigin = registered.passes.some((p) => p.readsOrigin);
-
-        /*
-          How far this effect reaches outside the layer, at THIS frame's
-          parameter values.
-
-          Evaluated here because this is the side that holds them. A number
-          fixed at install would have to be the animated worst case — a blur
-          going 0 → 40 would reserve 40px of margin on the frame where its
-          radius is 0, on every 3D layer carrying it.
-
-          Emitted on pass 0 only. The margin is a property of the EFFECT, and
-          `effectSpreadPx` takes the max over the list, so repeating it on
-          every pass would be the same number counted several times — harmless
-          today and exactly the sort of thing that stops being harmless when
-          someone later sums instead of maxing.
-        */
-        const expand = registered.contribution.expand
-          ? effectExpandFor(registered.contribution, paramsOf(e))
-          : undefined;
-        /*
-          ★ The single number the margin budget reads is the MAX of the sides.
-
-          `effectSpreadPx` (in the composition pass) and `bakedEffectSpread` both
-          take one number per effect and reserve it on all four sides. An effect
-          that declared only `expand` has no `spread`, so reading `spread` alone
-          would budget it ZERO — and the effect would be clipped flat at the
-          layer's edge, which is precisely the failure `spread` was added to fix,
-          reintroduced for the newer field.
-
-          The per-side numbers travel as well (`expandPx`), for a consumer that
-          can use them; nothing loses margin while none does.
-        */
-        const spreadPx = expand
-          ? Math.max(expand.left, expand.top, expand.right, expand.bottom)
-          : effectSpreadFor(registered.contribution, paramsOf(e));
-        /*
-          The per-side answer, carried beside the single number above.
-
-          A drop shadow offset down-right reaches on two sides, and budgeting
-          its offset on all four enlarges every 3D layer's effect buffer for
-          margin nothing draws into. Until a consumer reads all four, the max
-          above is what is reserved — larger than necessary, never smaller,
-          which is the safe direction to be wrong in.
-        */
-        const expandPx = expand;
-        /*
-          What the host fills in (GAP 3), computed once per effect.
-
-          The layer's own time rather than the playhead: a retimed layer runs
-          its own clock, and an effect animating with its layer has to follow
-          that one or it drifts against the picture it is drawn on.
-
-          The seed is derived from the effect INSTANCE's id, not from the clock
-          and not from a counter. Stable is the whole requirement — a noise
-          field reseeded per frame boils, and one seeded from the wall clock is
-          a different picture in preview and in export.
-        */
-        const frame = pluginHostFrame();
-        const hostInputs = {
-          compWidth: frame.compWidth,
-          compHeight: frame.compHeight,
-          layerWidth: layer.width,
-          layerHeight: layer.height,
-          time: layer.sourceTime ?? frame.compTime,
-          compTime: frame.compTime,
-          frame: frame.fps > 0 ? Math.round(frame.compTime * frame.fps) : 0,
-          fps: frame.fps,
-          pixelScale: frame.pixelScale,
-          downsample: frame.downsample,
-          seed: seedFromId(e.id ?? registered.id),
-        };
-
-        for (const pass of registered.passes) {
-          spatial.push({
-            type: 'plugin',
-            shader: pass.shaderId,
-            passIndex: pass.index,
-            hostInputs,
-            // Only when it is not 1, so a single-pass effect's scene entry is
-            // byte-identical to what it was before chains existed.
-            ...(pass.scale !== 1 ? { passScale: pass.scale } : {}),
-            // Pass 0 takes the snapshot; the passes that asked read it.
-            ...(chainReadsOrigin && pass.index === 0 ? { capturesOrigin: true } : {}),
-            ...(pass.readsOrigin ? { readsOrigin: true } : {}),
-            ...(spreadPx > 0 && pass.index === 0 ? { spreadPx } : {}),
-            // Per-side reach, on pass 0 only and for the same reason `spreadPx`
-            // is: it is a property of the EFFECT, and repeating it per pass is
-            // one number counted several times by whatever later sums instead
-            // of maxing.
-            ...(expandPx && pass.index === 0 ? { expandPx } : {}),
-            // What the SHADER asks for, not what the user chose — see the field's
-            // own note. Set from the declaration so an effect with no map picked
-            // yet still gets a material whose layout matches its bindings.
-            ...(layerParam ? { readsMap: true } : {}),
-            ...(mapLayerId ? { mapLayerId } : {}),
-            // Absent, not empty, for the overwhelming majority of effects: a
-            // single-input effect's scene entry stays byte-identical to what it
-            // was before four inputs existed.
-            ...(extraLayerIds.length > 0 ? { extraLayerIds } : {}),
-            params,
-            /*
-              Attribution names the EFFECT, not the pass.
-
-              A device loss inside the vertical half of a blur is the blur's
-              fault as far as a user is concerned, and `disableEffect` keys off
-              the effect id — reporting `acme.blur#vertical` would name
-              something they cannot find in any list.
-            */
-            onDraw: {
-              begin: () => beginEffectDraw(registered.id),
-              end: () => endEffectDraw(),
-            },
-          });
-        }
-      }
-    }
   }
   stampOpacity();
   return spatial.length > 0 ? spatial : undefined;
@@ -3166,79 +2923,6 @@ function particlesToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpa
 }
 
 /**
- * A plugin GENERATOR layer → a textured renderable whose texture the
- * composition pass fills by drawing the plugin's instances, instanced, into an
- * offscreen layer-sized target (`generator:<id>`).
- *
- * Shaped exactly like `particlesToRenderable` above, and for the same reason
- * that one is shaped this way: once the output is a TEXTURE on an ordinary
- * quad, blend modes, masks, track mattes, effects, motion blur and the whole of
- * `processRenderable` compose over it with no special cases at all. The only
- * difference is where the texture comes from — a CPU-rasterised field there,
- * fifty thousand GPU instances here — and that difference is entirely below
- * this line.
- *
- * The instance data rides along on the renderable rather than being looked up
- * by id, because the pass needs it to decide whether to re-upload the buffer at
- * all (`revision`), and a side table keyed by layer id would be a second place
- * for a frame to go stale.
- *
- * `blend: 'add'` on the FRAME is the classic glow look and composites the
- * instances additively AGAINST EACH OTHER inside the field; the layer's own
- * blend mode still applies to the finished field. The two are independent —
- * additive particles on a Multiply layer is a thing people want — which is why
- * this is not folded into `layerBlendToGpu` the way the particle field's is.
- */
-function generatorToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpacity: number): Renderable {
-  const local = centerModel(layer);
-  const model = Mat3.multiply(parentMatrix, local);
-  const advBlend = advancedBlendId(layer.blend);
-  const gen = layer.generator!;
-  return {
-    id: layer.id,
-    kind: 'image',
-    modelMatrix: model,
-    bounds: boundsOf(model),
-    opacity: parentOpacity * layer.opacity,
-    blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
-    ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
-    ...(layer.preserveTransparency ? { preserveTransparency: true } : {}),
-    ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
-    ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
-    color: Color.white(),
-    textureKey: `generator:${layer.id}`,
-    generator: {
-      instances: gen.instances,
-      count: gen.count,
-      stride: gen.stride,
-      primitive: gen.primitive,
-      ...(gen.mesh ? { mesh: gen.mesh } : {}),
-      // The plugin's own sprite atlas. Keyed by PLUGIN and path, never by path
-      // alone: two plugins shipping `sprites/atlas.png` are two images, and one
-      // key for both would paint one plugin's art into the other's layer. A
-      // frame that names a texture with no owner (a hand-built frame in a test,
-      // a plugin that went away mid-flight) simply draws untextured.
-      ...(gen.textureAssetKey !== undefined && gen.pluginId !== undefined
-        ? { textureKey: pluginAssetTextureKey(gen.pluginId, gen.textureAssetKey) }
-        : {}),
-      cellSize: gen.cellSize,
-      blend: gen.blend,
-      revision: gen.revision,
-      // The field's own coordinate frame: instance positions are layer px
-      // around the centre, so the pass needs the box to build its projection.
-      width: layer.width,
-      height: layer.height,
-      ...(layer.generatorPerspective ? { perspective: layer.generatorPerspective } : {}),
-    },
-    ...(layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
-    ...(matteOf(layer) ? { matte: matteOf(layer)! } : {}),
-    ...(layer.isMatteSource ? { matteSource: true } : {}),
-    colorMatrix: texturedColorMatrix(layer),
-    effects: extractSpatialEffects(layer),
-  };
-}
-
-/**
  * Parse a layer's track matte into the renderable's matte descriptor, or null
  * when it has no matte (or its source wasn't resolved).
  *
@@ -3356,9 +3040,7 @@ function flattenLayers(
   // A layer's leaf renderable, honouring the special content sources (particle
   // fields, isolated precomps) so matte sources and plain draws share one path.
   const toRenderable = (layer: RenderLayer): Renderable =>
-    layer.generator
-      ? generatorToRenderable(layer, parentMatrix, parentOpacity)
-      : layer.particles
+    layer.particles
         ? particlesToRenderable(layer, parentMatrix, parentOpacity)
         : layer.precompLayers && layer.precompLayers.length > 0 && precompNeedsIsolation(layer)
           ? precompToRenderable(layer, parentMatrix, parentOpacity, placement3d)
@@ -3395,16 +3077,6 @@ function flattenLayers(
       // shape) would rasterize as an opaque black rectangle over the frame.
       if (layer.light) {
         result.push(lightToRenderable(layer, parentMatrix, parentOpacity));
-        continue;
-      }
-
-      // Plugin generator: a textured renderable whose texture the composition
-      // pass fills with the plugin's instances. BEFORE the particle check and
-      // for the same reason it exists — the carrier layer is a comp-sized
-      // solid, and a generator that fell through to the ordinary path would
-      // paint the whole frame opaque black.
-      if (layer.generator) {
-        result.push(generatorToRenderable(layer, parentMatrix, parentOpacity));
         continue;
       }
 
@@ -3597,26 +3269,6 @@ function dropMeshesEverywhere(renderables: Renderable[]): void {
 export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   // Closes the previous frame's CPU-bake tally; the layer walk below fills the next.
   cpuBakeStats.beginFrame();
-  /*
-    The frame's own facts, for any plugin effect the walk below finds.
-
-    Module-level and set HERE rather than threaded through `layerToRenderable`
-    and `extractSpatialEffects`, which sit ten frames deep in a recursive walk
-    that already takes a matrix, a scale and two flags. The alternative was a
-    parameter every intermediate function forwards and none of them reads — and
-    the same shape the style silhouette in `canvas2dEffects` uses, for the same
-    reason.
-
-    Cleared at the end of the walk, not left set: a stale comp size on the next
-    caller's frame would be a plugin effect that scales itself to a composition
-    the user closed.
-  */
-  setPluginHostFrame({
-    compWidth: snapshot.width,
-    compHeight: snapshot.height,
-    compTime: snapshot.time ?? 0,
-    fps: snapshot.fps ?? 0,
-  });
   sceneLayerErrors = null;
   const renderables = flattenLayers(snapshot.layers, Mat3.identity(), 1);
   enforceExtrusionPathAgreement(renderables);
@@ -3653,9 +3305,6 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   const has3d = !!snapshot.camera3d && checkThreeD(renderables);
   if (!has3d) dropMeshesEverywhere(renderables);
   const hasEffects = checkEffects(snapshot.layers) || hasAdvancedBlend || hasBackdropBlur || has3d;
-  // The walk is over; the frame's facts stop being true. Left set, they would
-  // be a plugin effect sizing itself to a composition the user has closed.
-  setPluginHostFrame(null);
   return {
     composition: {
       id: 'composition',

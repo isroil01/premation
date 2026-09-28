@@ -5,13 +5,11 @@
 
 import { setCatalogue } from '@core/i18n';
 import { APP_MENU, type MenuGroupModel, type MenuItemModel } from './menuModel';
-import { buildPluginsMenuGroup } from './pluginMenu';
 import { collectMenuKeys, localizeMenuGroups, menuItemKey } from './menuI18n';
 
-/** The groups as the app assembles them: Plugins before Help (see useAppMenuGroups). */
+/** The groups as the app assembles them (see useAppMenuGroups). */
 function allGroups(): MenuGroupModel[] {
-  const help = APP_MENU.findIndex((g) => g.id === 'help');
-  return [...APP_MENU.slice(0, help), buildPluginsMenuGroup(), ...APP_MENU.slice(help)];
+  return [...APP_MENU];
 }
 
 afterEach(() => setCatalogue({}));

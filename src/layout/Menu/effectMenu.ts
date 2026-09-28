@@ -29,7 +29,6 @@ import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { EFFECT_DEFS, type EffectDef, type EffectType } from '@core/effects/effects';
-import { pluginEffectDefs, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
 import { EFFECT_CATEGORY, EFFECT_CATEGORY_ORDER } from '@layout/Effects/effectCategory';
 import { revealEffectsInProperties } from '@layout/Effects/revealEffectControls';
 import { addEffectEdit } from '@layout/Effects/effectEdits';
@@ -86,7 +85,7 @@ export function buildEffectMenuCommands(): Command[] {
   }));
 }
 
-/** The Effect group's items: a submenu per folder, then installed plugins' effects. */
+/** The Effect group's items: a submenu per folder. */
 export function buildEffectMenuItems(): MenuItemModel[] {
   const byCategory = new Map<string, EffectDef[]>();
   for (const d of EFFECT_DEFS) {
@@ -105,21 +104,6 @@ export function buildEffectMenuItems(): MenuItemModel[] {
       children: [...defs].sort(byLabel).map((d) => ({ commandId: effectCommandId(d.type), label: d.label })),
     });
   }
-  items.push(
-    { separator: true, visible: () => pluginEffectDefs().length > 0 },
-    {
-      label: PLUGIN_EFFECT_CATEGORY,
-      labelKey: 'menu.sub.effect.plugins',
-      // Hidden until something is installed — an empty folder is a dead end.
-      visible: () => pluginEffectDefs().length > 0,
-      // A thunk: plugins start, stop and crash while the app runs.
-      children: () =>
-        [...pluginEffectDefs()].sort(byLabel).map((d) => ({
-          label: d.label,
-          onSelect: () => applyEffectToSelection(d.type as EffectType, d.label),
-        })),
-    },
-  );
   return items;
 }
 

@@ -16,10 +16,8 @@ import { FrameDiskCache, type DecodedFrame } from './frameDiskCache';
 import type { FrameBlobStore, StoredFrame } from './frameBlobStore';
 import {
   rendererIdentity,
-  pluginEffectFingerprint,
   setDevRendererBuild,
 } from './rendererIdentity';
-import { registeredEffects } from '@core/plugins/pluginEffects';
 
 class ManifestStore implements FrameBlobStore {
   map = new Map<string, StoredFrame>();
@@ -136,11 +134,7 @@ describe('rendererIdentity', () => {
     expect(rendererIdentity()).toBe(dev);
   });
 
-  it('reports no plugin effects as a stable marker, not as an empty hash', () => {
-    // Nothing registered in this environment. The value has to be SOMETHING
-    // stable, or every session would look different from every other.
-    expect(registeredEffects()).toHaveLength(0);
-    expect(pluginEffectFingerprint()).toBe('-');
-    expect(pluginEffectFingerprint()).toBe(pluginEffectFingerprint());
+  it('keeps the plugin-fingerprint marker, so caches written before G2 stay warm', () => {
+    expect(rendererIdentity()).toMatch(/\.-(\.|$)/);
   });
 });

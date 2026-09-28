@@ -10,7 +10,6 @@
 import type { SceneNode } from '@core/types';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { SIZE } from '@core/rendering/buildSnapshot';
-import { latestGeneratorBounds } from '@core/plugins/generator';
 import { measureTextNodeLayout, measureTextNodeParagraphBox, measureTextNodeSize, measureTextNodeSelectionBox } from '@core/text/measureText';
 import { hasTextPath, readParagraphBox } from '@core/text/textExtras';
 import { applyTextPath, pathGlyphBounds, readTextPathConfig, textPathGeometry } from '@core/text/textPath';
@@ -376,33 +375,6 @@ export function readGeometry(
       finalH = comp.height;
       finalX = comp.width / 2;
       finalY = comp.height / 2;
-    }
-  }
-
-  /*
-    A plugin GENERATOR wraps its instances, not its emitter box.
-
-    The authored width/height of a generator layer is the emitter's extent — a
-    property-panel number — while what the user sees is wherever the particles
-    went, which is usually much larger and rarely concentric. Selecting one by
-    its emitter box means clicking a rectangle with nothing in it and missing
-    every particle outside it.
-
-    UNION rather than replacement: the emitter box stays grabbable even when the
-    simulation has thrown everything off-screen, so a generator whose particles
-    have all died is still a layer you can click.
-  */
-  if (kind.includes('.')) {
-    const gb = latestGeneratorBounds(node.id);
-    if (gb && gb.width > 0 && gb.height > 0) {
-      const minX = Math.min(offsetX - finalW / 2, gb.x);
-      const minY = Math.min(offsetY - finalH / 2, gb.y);
-      const maxX = Math.max(offsetX + finalW / 2, gb.x + gb.width);
-      const maxY = Math.max(offsetY + finalH / 2, gb.y + gb.height);
-      finalW = Math.max(1, maxX - minX);
-      finalH = Math.max(1, maxY - minY);
-      offsetX = (minX + maxX) / 2;
-      offsetY = (minY + maxY) / 2;
     }
   }
 

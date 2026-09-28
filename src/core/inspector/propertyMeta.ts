@@ -31,9 +31,6 @@
 import {
   EFFECT_DEFS, EFFECT_OPACITY_KEY, effectDefFor, getNodeEffects, type EffectParamDef,
 } from '@core/effects/effects';
-import { pluginEffectDefs } from '@core/effects/pluginEffectDefs';
-import { humaniseParamName } from '@core/plugins/uiParams';
-import { findPluginParamByPath, readPluginParam } from '@core/plugins/uiParamValues';
 import {
   LAYER_STYLE_EFFECT_TYPE,
   LAYER_STYLE_LABEL,
@@ -750,68 +747,6 @@ function fromEffectParam(path: string, effectLabel: string, p: EffectParamDef): 
  * right often enough to beat showing the raw path — and is why the timeline no
  * longer prints `effect.fx_3.radius`.
  */
-/**
- * `pluginUi.<plugin>.<panel>.<param>[.x|y|z]` — one parameter a plugin
- * contributes to the inspector of a layer it does not own.
- *
- * The plugin declares the label, the unit and the range; this is where they
- * reach every surface that describes a property, so the timeline, the graph
- * editor and the multi-selection rows all name it the way its author did
- * without any of them knowing plugins exist.
- *
- * ── `logarithmic`, implemented as a value-proportional step ──────────────────
- *
- * A log slider means "a pixel of drag is a constant RATIO, not a constant
- * amount" — which is what you want for a blur radius that is useful at both 0.5
- * and 500. `ValueField` scrubs linearly by `step`, so rather than teach it a
- * second gesture, the step is recomputed here from the parameter's CURRENT
- * value: 2% of it, floored at the parameter's own minimum. The result is the
- * behaviour a log axis is asked for (fine near the bottom, coarse near the top)
- * with no new mode in a control every panel in the editor shares.
- */
-function resolvePluginParam(path: string, node?: MetaNode): PropertyMeta | null {
-  const nodeId = factsOf(node)?.nodeId;
-  const ref = findPluginParamByPath(path);
-  if (!ref) return null;
-  const { schema, axis } = ref;
-
-  const label = schema.label ?? humaniseParamName(schema.name);
-  const base = {
-    path,
-    // The plugin's name is NOT in the label: the section header already says
-    // whose parameters these are, and "Acme Lab: Amount" in a pair row's
-    // 90-pixel name cell is a truncated string that names nothing.
-    label: axis ? `${label} ${axis.toUpperCase()}` : label,
-    group: 'other' as const,
-    type: 'number' as const,
-    unit: schema.type === 'angle' ? '°' : (schema.unit ?? ''),
-    precision: 2,
-    resettable: true,
-    order: ORDER.other,
-  };
-
-  const min = schema.min;
-  const max = schema.max;
-  let step = schema.step ?? 1;
-  if (schema.logarithmic && nodeId) {
-    const current = readPluginParam(nodeId, ref.pluginId, ref.panel.id, schema, axis);
-    const magnitude = typeof current === 'number' ? Math.abs(current) : (min ?? 1);
-    step = Math.max(magnitude * 0.02, (min ?? 0.01) || 0.01);
-  }
-
-  const fallback = axis
-    ? (schema.default as Record<string, number> | undefined)?.[axis] ?? 0
-    : schema.default;
-
-  return {
-    ...base,
-    ...(min !== undefined ? { min } : {}),
-    ...(max !== undefined ? { max } : {}),
-    step,
-    defaultValue: typeof fallback === 'number' ? fallback : null,
-  };
-}
-
 function resolveEffectParam(path: string, node?: MetaNode): PropertyMeta | null {
   const m = /^effect\.([^.]+)(?:\.(.+))?$/.exec(path);
   if (!m) return null;
@@ -896,7 +831,7 @@ function resolveEffectParam(path: string, node?: MetaNode): PropertyMeta | null 
   // labelled by declaring a param that collides with one — but plugin defs are
   // searched, because without them a plugin effect's keyframe track in the
   // timeline is labelled by `titleCase(key)` with no unit, range or precision.
-  for (const d of [...EFFECT_DEFS, ...pluginEffectDefs()]) {
+  for (const d of EFFECT_DEFS) {
     const p = d.params.find((q) => q.key === key);
     if (p) return fromEffectParam(path, d.label, p);
   }
@@ -1416,12 +1351,6 @@ const RESOLVERS: ReadonlyArray<(path: string, node?: MetaNode) => PropertyMeta |
   resolveTextAnimator,
   resolveTextOptionPath,
   resolveEffectParam,
-  // Before the fallback, like every other resolver here, and for the sharp
-  // version of the reason `resolveEffectParam` gives: a contributed parameter
-  // otherwise falls through to `titleCase(path)` and is labelled with the
-  // track key — `PluginUi.Studio-acme.Lift.Amount` — in the timeline, the graph
-  // editor and every row that names a property.
-  resolvePluginParam,
   resolvePathOpParam,
   resolvePolystarParam,
 ];

@@ -16,8 +16,6 @@ import { Icon, type IconName } from '@components/Icon';
 import type { TreeNode } from '@components/TreeView';
 import type { LayerInfo, LayerSearchFacts } from '@motion/engine-api';
 import { KIND_GLYPH_COLOR, KIND_ICON } from '@core/scene/sceneDerive';
-import { findLayerKind } from '@core/plugins/layerKindRegistry';
-import { splitKind } from '@core/plugins/layerKindSchema';
 import { effectDisplayNames, type Effect } from '@core/effects/effects';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { mirrorIconName } from '@core/mirror/layerGlyph';
@@ -60,9 +58,9 @@ function thumbnailFor(m: DocumentMirror, layer: LayerInfo): string | undefined {
   return asset ? asset.thumbSrc ?? asset.src : undefined;
 }
 
-/** A plugin layer kind's icon, when the plugin that provides it is installed. */
-function pluginIconOf(generator: string): string | undefined {
-  return (findLayerKind(generator)?.kind.icon as string | undefined) ?? 'plugin';
+/** A plugin layer kind's icon (the JavaScript plugin system is gone, G2: always the generic one). */
+function pluginIconOf(): string | undefined {
+  return 'plugin';
 }
 
 /** The row of a composition (a tree ROOT): labelled from its settings, its top layers under it. */
@@ -111,7 +109,8 @@ function layerToTreeNode(m: DocumentMirror, id: string, opts: RowOptions): TreeN
     its own properties.
   */
   const owner = layer.managedBy;
-  const inert = layer.generator ? !findLayerKind(layer.generator) : false;
+  // A stored plugin-provided layer: its plugin system is gone (G2).
+  const inert = layer.generator !== '';
   // The plain text behind whatever `label` becomes below. The rename field is
   // seeded from THIS, never from the node: a label wrapped in a <span> used to
   // seed an empty box, and an empty box commits as a cancel.
@@ -127,7 +126,7 @@ function layerToTreeNode(m: DocumentMirror, id: string, opts: RowOptions): TreeN
     );
   } else if (inert) {
     label = (
-      <span className={styles.pluginInertRow} title={`Needs the plugin "${splitKind(layer.generator)?.pluginId ?? layer.generator}".`}>
+      <span className={styles.pluginInertRow} title={`"${layer.generator}" came from a JavaScript plugin, which this version no longer runs.`}>
         {label}
         <Icon name="warning" size="sm" />
       </span>

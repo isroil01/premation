@@ -70,8 +70,8 @@ rediscovered in git history and believed a second time.
 | Canvas tools | 23 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 18 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
-| Stores | 77 | `src/stores/*.ts` |
-| Packages | 16 | `packages/*` |
+| Stores | 76 | `src/stores/*.ts` |
+| Packages | 15 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
 
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        77 Zustand stores
+                          ├── src/stores/*        76 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          16 workspace packages
                                 ├── scene       scene graph + components
@@ -776,11 +776,12 @@ renderers, settings tab and Electron IPC registration are each gated
 independently (pinned by `editionAiSurface.test.ts`).
 
 ### Plugins
-Worker sandbox with `fetch`/`localStorage`/DOM removed, permissions shown before
-any code is downloaded, signed packages, heartbeat termination, declared-host
-network access proxied through the main process, and API 4 shader effects that
-can draw pixels. Every plugin mutation is one undo entry. This is the most
-actively developed area of the repo — 211 of the last 211 commits touch it.
+Native SDK plugins (`docs/PLUGIN_SDK.md`), loaded and sandboxed by the C++
+engine process: C ABI modelled on the AE effect API, CPU and GPU render, a
+crash journal that quarantines a plugin that took the engine down. The earlier
+JavaScript/WGSL plugin system (Worker sandbox, marketplace, plugin panels,
+generator and custom layer kinds) was removed (G2, `TS_ENGINE_REMOVAL.md`
+phase 4); a project that used it opens without that content, with one notice.
 
 ---
 
@@ -2478,16 +2479,16 @@ precomps, where a body coming apart is exactly where nobody would look.
 | Export, offline render loop | `src/core/export/` |
 | Canvas tools | `packages/workspace/src/tools/builtin.ts` |
 | AI tool registry | `packages/ai-tools/src/` |
-| Plugins | `docs/PLUGINS.md` + `src/core/plugins/` |
+| Plugins (native SDK) | `docs/PLUGIN_SDK.md` + `native/sdk/`, `native/engine/src/plugins/` |
 
 **The commit bodies are this repo's delta ledger. When a `.md` and the code
 disagree, the code wins — and then the `.md` gets fixed.**
 
 ### Other docs
 
-`PLUGINS.md` (reasoning), `PLUGIN_SYSTEM_REFERENCE.md` (current state) and
-`PLUGIN_SYSTEM_FOR_AI.md` (condensed agent map) are a deliberate three-tier split
-of the actively-developed plugin system and are current. `3d-layer-model.md`,
+`PLUGIN_SDK.md` is the native plugin SDK (plugins run in the C++ engine; the
+JavaScript/WGSL plugin system and its three docs were removed in phase 4 of
+`TS_ENGINE_REMOVAL.md`, owner decision G2). `3d-layer-model.md`,
 `AI_ARCHITECTURE_FULL.md`, `ANIMATED_SVG_PIPELINE.md` and
 `BONE_AND_PUPPET_RIGGING.md` are subsystem deep-dives. `COMPOSITING_PLAN.md` is
 a **historical delivery ledger**, retained only because four source files cite

@@ -14,7 +14,6 @@
  */
 
 import { EFFECT_DEFS, effectDefFor, type EffectType } from '@core/effects/effects';
-import { pluginEffectDefs, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
 import { EFFECT_CATEGORY } from '@layout/Effects/effectCategory';
 import { revealEffectsInProperties } from '@layout/Effects/revealEffectControls';
 import { addEffectEdit } from '@layout/Effects/effectEdits';
@@ -49,14 +48,14 @@ function targets(): string[] {
  *
  * Matches on the category too ("blur" finds everything in Blur & Sharpen),
  * weighted below a label hit so the folder is a tiebreaker and not the
- * ranking. Plugin effects are included — a plugin's effect is an effect.
+ * ranking.
  */
 export function effectHits(term: string, limit: number): QuickApplyHit[] {
   const sel = targets();
-  const defs = [...EFFECT_DEFS, ...pluginEffectDefs()];
+  const defs = EFFECT_DEFS;
   const out: QuickApplyHit[] = [];
   for (const d of defs) {
-    const category = EFFECT_CATEGORY[d.type as EffectType] ?? PLUGIN_EFFECT_CATEGORY;
+    const category = EFFECT_CATEGORY[d.type as EffectType] ?? '';
     const byLabel = fuzzyScore(term, d.label);
     const byCat = term ? fuzzyScore(term, category) : -1;
     const score = byLabel >= 0 ? byLabel + 10 : byCat >= 0 ? byCat : -1;

@@ -29,7 +29,6 @@ import { paintCompositeOperation, type PaintOpOptions } from './paintBlend';
 import type { Pt } from '@core/scene/trimPath';
 import { layerSubpaths, hasPathGeometry } from './subpaths';
 import { paintReach } from '@core/paint/paintRaster';
-import { pluginEffectSpreadPx } from '@core/effects/pluginCpuEffect';
 import { flattenOutline, ADAPTIVE } from '@core/scene/mergePaths';
 import { shapeOutline } from '@core/scene/pathOps';
 import { offsetAlongNormals, closedRibbon, type OffsetSides } from '@motion/scene';
@@ -192,20 +191,9 @@ function bakedEffectSpread(layer: RenderLayer): number {
       // them unpadded keeps the (correct) appearance and costs only the tail of
       // a displacement that reaches past the layer box.
       default:
-        /*
-          A PLUGIN effect answers for itself, from its own declaration.
-
-          Its reach is a manifest formula over live parameter values — the same
-          number `extractSpatialEffects` computes for the GPU path — so this
-          branch asks the plugin registry rather than guessing. Without it a
-          plugin glow on a BAKED layer was clipped flat at the layer box while
-          the identical effect on an unbaked one bled correctly, which reads as
-          the bake being broken rather than as a missing budget.
-
-          Everything else (colour grades, LUTs, generators, sharpen, noise,
-          keylight) is a per-pixel pass — it cannot paint outside the box.
-        */
-        s = e.type.includes('.') ? pluginEffectSpreadPx(e) : 0;
+        // Everything else (colour grades, LUTs, generators, sharpen, noise,
+        // keylight) is a per-pixel pass — it cannot paint outside the box.
+        s = 0;
     }
     if (s > spread) spread = s;
   }

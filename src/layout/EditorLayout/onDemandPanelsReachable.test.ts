@@ -27,7 +27,6 @@ const SRC = join(__dirname, '..', '..');
 const OPENER_FILES = [
   'providers/Providers.tsx',
   'layout/Menu/menuModel.ts',
-  'layout/Menu/pluginMenu.ts',
   'App.tsx',
 ];
 
@@ -62,10 +61,4 @@ describe('on-demand panels are reachable', () => {
     },
   );
 
-  it('the Plugins panel is reachable from the Plugins menu specifically', () => {
-    // The regression that prompted this file. The palette alone is not
-    // discovery: searching for a feature requires already knowing it exists.
-    const menu = readFileSync(join(SRC, 'layout/Menu/pluginMenu.ts'), 'utf8');
-    expect(menu).toContain('view.marketplace');
-  });
 });

@@ -15,7 +15,6 @@
 import type { IconName } from '@components/Icon';
 import type { RegionId } from '@stores/layoutStore';
 import { isPanelAvailable } from '@core/config/panelAvailability';
-import { pluginPanelDef } from '@layout/Plugins/pluginPanelDefs';
 
 export interface PanelDef {
   id: string;
@@ -124,7 +123,6 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   { id: 'effects',     title: 'Effects',   icon: 'magic-wand',  region: 'rightInspector', weight: 4.8,  closable: true },
   { id: 'presets',     title: 'Presets',   icon: 'zap',         region: 'rightInspector', weight: 4.7,  closable: true },
   // The marketplace: find, install and manage plugins.
-  { id: 'marketplace', title: 'Plugins',   icon: 'plugin',      region: 'rightInspector', weight: 4.6,  closable: false },
   /**
    * AE's Audio panel (Ctrl+4): the master meter, the selected layer's level and
    * pan faders, and — since 2026-09-15 — the pointer / composition readout that
@@ -181,25 +179,6 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   // the toolbar button is the discoverable route and a permanent tab would
   // duplicate it in the rail.
   { id: 'export',      title: 'Export',    icon: 'export',      region: 'rightInspector', weight: 0.65, closable: true, onDemand: true },
-  // Third-party plugin UI — the SHARED host, for panels that did not ask for a
-  // tab of their own (`placement: "shared"`, the default) or asked and found the
-  // rail full. Panels that did get their own tab are registered dynamically from
-  // `layout/Plugins/pluginPanelDefs.ts` and are not in this list.
-  //
-  // On demand because it is empty until a plugin with a panel is installed — it
-  // opens itself when one calls `motion.ui.openPanel()`, when the user picks it
-  // from the Plugins menu, or from the manager's Open button. Docked (not a
-  // modal) because a plugin panel is for use WHILE dragging on the canvas, which
-  // is the one thing a modal forbids.
-  //
-  // `closable: false`, like every plugin surface. It used to draw an ✕, which
-  // offered to dismiss a container the user never opened and could only get back
-  // from a menu — while the control that actually means "I do not want this",
-  // the one that also stops the worker, is the toggle on the plugin's row in the
-  // Plugins panel. The host still removes this panel on its own when the last
-  // plugin panel goes away; what is gone is the button that pretended the user
-  // was managing plugins by tidying their dock.
-  { id: 'plugins',     title: 'Plugin Panels', icon: 'layout',  region: 'rightInspector', weight: 0.6, closable: false, onDemand: true },
   // NOTE: there is deliberately no 'comments' panel. Review comments, the
   // approval flow and shareable review links were removed outright — not gated,
   // not hidden behind a plan. Collaboration is not what this app is for, and a
@@ -229,13 +208,5 @@ export function availablePanelDefs(): readonly PanelDef[] {
  * naming something already on screen.
  */
 export function panelDef(id: string): PanelDef | undefined {
-  // Plugin panels that own a tab are not in the static list — they come and go
-  // with what is installed. Resolving them here is what gives them a title, a
-  // glyph and `closable: false` in the dock tab strip and in a pop-out window,
-  // both of which look a panel up by id and neither of which knows about
-  // plugins. `pluginPanelDefs` is imported for its VALUE, so this module must
-  // only ever be imported by it as a TYPE — otherwise the cycle is real.
-  const fromPlugin = pluginPanelDef(id);
-  if (fromPlugin) return fromPlugin;
   return PANEL_DEFS.find((p) => p.id === id);
 }

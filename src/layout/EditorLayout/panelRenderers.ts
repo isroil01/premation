@@ -23,8 +23,6 @@ import { EffectsPanel } from '@layout/Effects/EffectsPanel';
 import { EffectControlsPanel } from '@layout/Effects/EffectControlsPanel';
 import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
 import { ExportPanel } from '@layout/Export/ExportPanel';
-import { PluginsDockPanel, pluginPanelRenderers } from '@layout/Plugins/PluginPanel';
-import { PluginsMarketplacePanel } from '@layout/Plugins/PluginsMarketplacePanel';
 import { SwatchesPanel } from '@layout/Swatches';
 import { ScopesPanel } from '@layout/Scopes';
 // Imported from the barrel deliberately: it also registers the transcript's
@@ -88,8 +86,6 @@ export const PANEL_COMPONENTS: Readonly<Record<string, ComponentType>> = {
   history: HistoryPanel,
   renderQueue: RenderQueuePanel,
   export: ExportPanel,
-  plugins: PluginsDockPanel,
-  marketplace: PluginsMarketplacePanel,
   // ── Asset Library (one tab, sections inside) ─────────────────────────
   library: LibraryPanel,
 };
@@ -97,16 +93,10 @@ export const PANEL_COMPONENTS: Readonly<Record<string, ComponentType>> = {
 /**
  * Every panel this build can draw, as thunks.
  *
- * Two entries are resolved at CALL time rather than listed above, because
- * neither is known statically:
- *
- *  • the assistant is spread conditionally so a future `aiEnabled()` flip still
- *    keeps PopoutRoute honest — it resolves renderers by id straight from this
- *    map, so a pop-out at /popout/ai must not remount the panel around a gate
- *    that says the surface is absent;
- *  • plugin panels that earned a rail tab of their own depend on what the user
- *    installed. Both sidebars and `PopoutRoute` read this map, so a plugin panel
- *    detached into its own window resolves here exactly like Scene does.
+ * The assistant is spread conditionally at CALL time so a future `aiEnabled()`
+ * flip still keeps PopoutRoute honest — it resolves renderers by id straight
+ * from this map, so a pop-out at /popout/ai must not remount the panel around a
+ * gate that says the surface is absent.
  */
 export function getAllPanelRenderers(): Record<string, () => ReactNode> {
   const out: Record<string, () => ReactNode> = {};
@@ -114,5 +104,5 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
   for (const [id, Component] of Object.entries(PANEL_COMPONENTS)) {
     out[id] = () => createElement(Component);
   }
-  return { ...out, ...pluginPanelRenderers() };
+  return out;
 }

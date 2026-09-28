@@ -21,7 +21,7 @@
  * There is no main process in a browser, so there is nowhere else for a token
  * to live: the refresh token goes to `localStorage` and the access token to
  * memory. The browser build is therefore NOT the protected surface, and
- * `docs/PLUGINS.md` §3 says so in as many words. Everything below that is
+ * the (removed) plugin design said so in as many words. Everything below that is
  * `WEB ONLY` exists solely for that build; the desktop paths never touch it.
  */
 
