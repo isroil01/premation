@@ -19,6 +19,8 @@
 /** Formats `render` accepts, and what each one writes. */
 export const CLI_FORMATS = [
   'mp4',
+  'hdr10',
+  'hlg',
   'mov',
   'webm',
   'gif',
@@ -273,6 +275,10 @@ export function extensionFor(format: CliFormat): string {
     case 'jpg-sequence':
     case 'exr-sequence':
       return 'zip';
+    // Both HDR deliveries are MP4s (an .mp4 --out still means plain mp4).
+    case 'hdr10':
+    case 'hlg':
+      return 'mp4';
     default:
       return format;
   }

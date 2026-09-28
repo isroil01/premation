@@ -79,6 +79,8 @@ struct QCtx {
       hitTest{};
   /// D2w: draw a still (getThumbnail). Unset = no renderer: `unsupported`.
   std::function<StillImage(const StillRequest& request)> still{};
+  /// renderDocumentStill: another document's composition frame (the Session restores it into a scratch Document).
+  std::function<StillImage(const Json& document, const std::string& comp, api::Time time, std::uint32_t maxSize)> documentStill{};
   /// D2w: a viewport's slot size in physical pixels; nullopt = no such viewport open.
   std::function<std::optional<std::pair<std::uint32_t, std::uint32_t>>(std::uint32_t viewport)> viewportSlot{};
   /// D2w: a region of the frame the viewport shows, in working space

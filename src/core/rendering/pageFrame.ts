@@ -23,8 +23,7 @@ import { clipGeometrySignature } from '@core/timeline/TimelineController';
 import { memoizedSceneContentHash } from './sceneContentHash';
 import { isMediaDecodeRepaint } from './mediaRepaint';
 import { getEventBus } from '@core/events/EventBus';
-import { renderStillFrame } from '@core/export/offlineRenderer';
-import { useCompositionStore } from '@stores/compositionStore';
+import { engineCompStill, ENGINE_STILL_MAX } from './engineStill';
 import { buildSnapshot, type SnapshotFocus, type SnapshotComp } from './buildSnapshot';
 import type { RenderOverlays, RenderSnapshot, RenderView } from './RenderBackend';
 
@@ -104,27 +103,12 @@ export function pageRenderComp(comp: CompositionSettings, transparent: boolean):
 }
 
 /**
- * One frame of `comp` at composition frame `frame`, rendered through the
- * deterministic offline path as a PNG (Save Frame As / Copy Frame).
+ * One frame of `comp` at composition frame `frame` as a PNG (Save Frame As /
+ * Copy Frame): the ENGINE's still (`getThumbnail`), full size up to 4096.
  */
 export function pageStillFrame(comp: CompositionSettings, frame: number): Promise<Blob | null> {
-  return renderStillFrame(
-    { width: comp.width, height: comp.height, fps: comp.fps, durationSec: comp.durationSeconds, comp: { ...comp, rootId: comp.id, compSizeOf } },
-    frame,
-  );
-}
-
-/**
- * The active composition's frame at `seconds` (clamped into it) from the
- * TypeScript engine's OWN composition record — for a render made while a
- * document is swapped into this engine (version compare), where the mirror
- * still describes the live document. Null when the renderer produced nothing.
- */
-export async function pageActiveStillFrameAt(seconds: number): Promise<Blob | null> {
-  const c = useCompositionStore.getState().comp();
-  const last = Math.max(0, Math.round(c.durationSeconds * c.fps) - 1);
-  const frame = Math.max(0, Math.min(Math.round(seconds * c.fps), last));
-  return pageStillFrame(c, frame);
+  const fps = comp.fps > 0 ? comp.fps : 30;
+  return engineCompStill(comp.id, frame / fps, Math.min(ENGINE_STILL_MAX, Math.max(comp.width, comp.height)));
 }
 
 /** The TypeScript engine's snapshot of `input.comp` at `input.time` for the page renderer. */

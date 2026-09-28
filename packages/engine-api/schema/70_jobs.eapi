@@ -138,6 +138,9 @@ struct AudioAnalysisJob {
   /// With `beats`: composition markers "Beat N" on every `beatEvery`-th beat (default 1; at most 512) — Markers on Beats. Without it the grid is the summary only (Animate on Beats reads it).
   beatMarkers: bool = 713;
   beatEvery?: u32 = 714;
+  /// P4 — an Audio driver's envelope (audioDriver.ts computeDriverEnvelope): `driver` is the AudioDriver JSON (band — 'full' | 'low' | 'mid' | 'high' | {lo, hi} Hz — attackMs, releaseMs, gate, normalize, min, max, curve, smoothFrames). The source is `layer`'s sound, or with `layer` '' the composition `driverComp`'s mix (a child engine's offline mix, as transcribe). Over the work area (else the whole composition) at its frame rate. Summary `driver: {raw: [0..1 per frame], mapped: [the property's units], start, end, fps}`. Nothing is written — the page splices the keys (one entry with the driver record).
+  driver?: string = 715;
+  driverComp?: ItemId = 716;
 }
 /// Ducking (ducking.ts planDucking): lower `music`'s level under the voice (`voices[0]`; the page's dialog ducks under one layer) over the composition's work area, as Audio Levels keyframes, and remember the parameters (`audio/ducking`). `params` is the DuckingParams JSON (duckDb, thresholdDb, attackMs, releaseMs, holdMs); absent keys take the defaults.
 struct AudioDuckJob { music: LayerId = 1; voices: LayerId[] = 2; params: string = 3; }
@@ -171,6 +174,8 @@ struct RotoBrushJob { layer: LayerId = 1; range: TimeRange = 2; seed: Vec2 = 3; 
 struct ContentAwareFillJob { layer: LayerId = 1; range: TimeRange = 2; outputFolder: string = 3; }
 /// Auto-reframe (autoReframe.ts autoReframeComposition): `comp` rendered small (160 px wide, 12 frames/s) by a child engine, saliency + shot cuts per frame (saliency.ts, sceneEditDetect.ts), a dead-zone / lag camera path (reframePath.ts); a NEW composition `width`×`height` holding `comp` as a precomp layer scaled to cover, with the pan keyed on its separated position. The source is untouched.
 struct AutoReframeJob { comp: ItemId = 1; width: u32 = 2; height: u32 = 3; name?: string = 4; deadZone?: f64 = 5; lagSeconds?: f64 = 6; }
+/// Rig Logo for Animation (rigLogo.ts): the selection as ONE riggable layer with a starter puppet — an "Anchor" pin at the bottom centre and a "Wave" pin at the top centre (layer space). One image or shape layer holding nothing is rigged in place; anything else (a group, a precomp, text, several layers) is drawn alone on a transparent comp at `time` (absent = the playhead) by a child engine, cropped to its pixels (+4 px), imported as a PNG (importBytes, source `derived`) and placed as an image layer "<name> (Rigged)" where it drew, above the topmost selected layer — and that is rigged. The layers must share a composition. Result: {mode: 'self' | 'rasterize', layer} (layer = the rigged one, once applied).
+struct RigLogoJob { layers: LayerId[] = 1; time?: Time = 2; }
 
 union JobSpec {
   trackMotion: TrackMotionJob = 1;
@@ -189,6 +194,7 @@ union JobSpec {
   rotoBrush: RotoBrushJob = 1712;
   contentAwareFill: ContentAwareFillJob = 1713;
   autoReframe: AutoReframeJob = 1714;
+  rigLogo: RigLogoJob = 1715;
 }
 
 command startJob = 850 [control] { job: JobSpec = 1; apply: bool = 2; } -> JobRef;
@@ -202,6 +208,11 @@ struct JobRef { job: JobId = 1; }
 struct ContentAwareFillFrame { time: Time = 1; src: string = 2; }
 /// The layer's content-aware fill (the content-aware fill job's result; the page stored the same record as `fx.contentAwareFill`): the frame nearest the layer's time stands in for its footage. Empty `frames` clears it. Inverse: the previous record.
 command setContentAwareFill = 1852 { layer: LayerId = 1; frames: ContentAwareFillFrame[] = 2; }
+
+/// One caption to create: its cue window (composition time) and the text it shows (already wrapped, `\n` between lines).
+struct CaptionInput { start: Time = 1; end: Time = 2; text: string = 3; }
+/// P4 — REPLACE `comp`'s captions (captionLayers.ts captionEditCommands): its caption layers (LayerInfo.caption) are deleted, then one text layer per cue is created, its bar the cue window, centred at the bottom (`style` JSON: fontSizeRatio 0.05, fontWeight 700, fill '#ffffff', bottomMarginRatio 0.1 — sizes as fractions of the composition), marked as a caption. ONE history entry. Returns the new layers in cue order.
+command setCaptions = 1853 { comp: ItemId = 1; cues: CaptionInput[] = 2; style?: string = 3; } -> LayerList;
 
 family "Plugins";
 

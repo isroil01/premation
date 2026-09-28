@@ -10,6 +10,7 @@
 import {
   buildEncodeArgs, h264MaxRate, ffmpegRate, rawVideoInput, stagedVideoInput,
   parseFfmpegEncoders, videoEncoderArgs, HW_VIDEO_ENCODERS, isHwVideoEncoder, SRGB_FRAME_PARAMS,
+  buildHdrEncodeArgs, x265HdrParams, x265MasterDisplay, DEFAULT_HDR_MASTERING,
 } from './ffmpegEncodeArgs';
 
 const even = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
@@ -192,6 +193,48 @@ describe('hardware encoders', () => {
     expect(isHwVideoEncoder('h264_nvenc')).toBe(true);
     expect(isHwVideoEncoder('libx264')).toBe(false);
     expect(isHwVideoEncoder('h264_amf')).toBe(false);
+  });
+});
+
+describe('HDR10 / HLG', () => {
+  const input = rawVideoInput(64, 36, 30, 'rgba64le');
+  // The last occurrence: the raw input has its own -pix_fmt.
+  const argAfter = (args: string[], flag: string): string | undefined => args[args.lastIndexOf(flag) + 1];
+
+  it('HDR10: HEVC 10-bit with the ST 2086 + CLL SEI, tagged BT.2020 / PQ, BT.2020 matrix', () => {
+    const args = buildHdrEncodeArgs({ container: 'mp4', transfer: 'pq', videoInput: input, audio: '/a.wav', chaptersFile: null, out: OUT });
+    expect(args.slice(0, input.length + 1)).toEqual(['-y', ...input]);
+    expect(argAfter(args, '-c:v')).toBe('libx265');
+    expect(argAfter(args, '-pix_fmt')).toBe('yuv420p10le');
+    expect(argAfter(args, '-crf')).toBe('20');
+    expect(argAfter(args, '-tag:v')).toBe('hvc1');
+    expect(argAfter(args, '-color_trc')).toBe('smpte2084');
+    expect(argAfter(args, '-color_primaries')).toBe('bt2020');
+    expect(argAfter(args, '-colorspace')).toBe('bt2020nc');
+    expect(argAfter(args, '-vf')).toBe(`setparams=color_primaries=bt2020:color_trc=smpte2084,${even}:out_color_matrix=bt2020:out_range=tv`);
+    expect(argAfter(args, '-x265-params')).toBe(x265HdrParams('pq', DEFAULT_HDR_MASTERING));
+    expect(x265HdrParams('pq', DEFAULT_HDR_MASTERING)).toContain('max-cll=1000,400');
+    expect(x265MasterDisplay(DEFAULT_HDR_MASTERING)).toBe('G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L(10000000,50)');
+    expect(args).toEqual(expect.arrayContaining(['-c:a', 'aac']));
+    expect(args[args.length - 1]).toBe(OUT);
+  });
+
+  it('HLG carries no HDR10 SEI; without libx265 it is H.264 High 10; ProRes is 422 HQ unless 4444', () => {
+    const hlg = buildHdrEncodeArgs({ container: 'mp4', transfer: 'hlg', videoInput: input, audio: null, chaptersFile: null, out: OUT });
+    expect(argAfter(hlg, '-x265-params')).toBe('repeat-headers=1:colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=limited');
+    expect(argAfter(hlg, '-color_trc')).toBe('arib-std-b67');
+    const x264 = buildHdrEncodeArgs({ container: 'mp4', transfer: 'pq', encoder: 'libx264', quality: 'draft', videoInput: input, audio: null, chaptersFile: null, out: OUT });
+    expect(argAfter(x264, '-c:v')).toBe('libx264');
+    expect(argAfter(x264, '-profile:v')).toBe('high10');
+    expect(argAfter(x264, '-crf')).toBe('28');
+    expect(x264).not.toContain('-x265-params');
+    const mov = buildHdrEncodeArgs({ container: 'mov', transfer: 'pq', videoInput: input, audio: '/a.wav', chaptersFile: '/c.ffmeta', out: '/o.mov' });
+    expect(argAfter(mov, '-c:v')).toBe('prores_ks');
+    expect(argAfter(mov, '-profile:v')).toBe('3');
+    expect(argAfter(mov, '-pix_fmt')).toBe('yuv422p10le');
+    expect(argAfter(mov, '-map_chapters')).toBe('2');
+    const mov4444 = buildHdrEncodeArgs({ container: 'mov', transfer: 'hlg', proresProfile: '4444', videoInput: input, audio: null, chaptersFile: null, out: '/o.mov' });
+    expect(argAfter(mov4444, '-pix_fmt')).toBe('yuv444p10le');
   });
 });
 

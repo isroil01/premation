@@ -12,17 +12,11 @@
 
 import { ValueField } from '@components/ValueField';
 import type { LayerInfo } from '@motion/engine-api';
-import type { SceneNode } from '@core/types';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys } from '@hooks/useMirror';
 import { useMirrorJson } from '@hooks/useMirrorFields';
 import { compLayersDeep } from '@core/mirror/layerFields';
-import {
-  AUDIO_WAVEFORM_FX_KEY,
-  readNodeAudioWaveform,
-  defaultAudioWaveform,
-  type AudioWaveformConfig,
-} from '@core/audio/audioWaveformGen';
+import { normalizeAudioWaveform, defaultAudioWaveform, type AudioWaveformConfig } from '@core/mirror/audioWaveform';
 import { edit } from '@core/engine/uiEdits';
 import { useEngineEdit } from './useEngineEdit';
 import { audioWaveformCommands } from './audioEdits';
@@ -46,11 +40,8 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
   // Honest source list: only real audio-kind layers.
   const audioLayers = useAudioLayers();
   const eng = useEngineEdit();
-  // Normalised exactly as the generator normalises it — a pure use of
-  // `readNodeAudioWaveform` over the mirror's value (it reads only `components`).
-  const cfg = raw === undefined
-    ? null
-    : readNodeAudioWaveform({ components: [{ type: 'fx', props: { [AUDIO_WAVEFORM_FX_KEY]: raw } }] } as unknown as SceneNode);
+  // Normalised exactly as the engine's generator reads it.
+  const cfg = raw === undefined ? null : normalizeAudioWaveform(raw);
   if (!cfg) return null;
 
   // The whole config with one key changed (absolute: a scrub's every message

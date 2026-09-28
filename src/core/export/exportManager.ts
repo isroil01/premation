@@ -694,6 +694,8 @@ export interface ExportPreset {
  */
 export const EXPORT_PRESETS: ExportPreset[] = [
   { format: 'mp4', label: 'MP4 · H.264', ext: 'mp4', hint: 'Plays everywhere. Best default for sharing.', desktopOnly: true },
+  { format: 'hdr10', label: 'MP4 · HDR10 (PQ)', ext: 'mp4', hint: 'ST 2084 PQ, BT.2020, 10-bit HEVC with HDR10 mastering metadata (1000-nit display). Working-space white is 203 nits; brighter values become highlights. H.264 High 10 when ffmpeg has no libx265.', desktopOnly: true },
+  { format: 'hlg', label: 'MP4 · HLG', ext: 'mp4', hint: 'Hybrid Log-Gamma, BT.2020, 10-bit HEVC — broadcast HDR that also plays on SDR screens. White sits at 75% signal.', desktopOnly: true },
   { format: 'webm', label: 'WebM · VP9', ext: 'webm', hint: 'Smaller than MP4, keeps transparency, ideal for the web.', desktopOnly: true },
   { format: 'mov', label: 'MOV · ProRes', ext: 'mov', hint: 'For editing in another app. 4444 keeps alpha; the 422 profiles halve the file for opaque delivery.', desktopOnly: true },
   { format: 'gif', label: 'Animated GIF', ext: 'gif', hint: 'No audio, 256 colours. Keep it short and small.', desktopOnly: true },

@@ -2,7 +2,7 @@
  * F2 — the live document, read from and handed to its OWNER
  * (docs/NATIVE_CORE_PLAN.md §5 Phase F2, inventory rows "CloudAutosave,
  * ApiFileAdapter.createProject, VersionHistoryPanel, publishTemplate,
- * exportMogrt, exportManager" and "compositeEdit, documentSwap, headlessRender").
+ * exportMogrt, exportManager" and "compositeEdit, headlessRender").
  *
  * Those callers used to `captureDocument()` the TypeScript stores in the page.
  * With the engine as owner (`engineOwnsDocumentNow()`, the F2 flag) the page

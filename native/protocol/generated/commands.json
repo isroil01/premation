@@ -755,6 +755,11 @@
     "type": "setContentAwareFill"
   },
   {
+    "id": 1853,
+    "kind": "edit",
+    "type": "setCaptions"
+  },
+  {
     "id": 870,
     "kind": "control",
     "type": "setPluginEnabled"

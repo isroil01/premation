@@ -84,8 +84,8 @@ export function isPaintableLayer(layer: Pick<LayerInfo, 'kind' | 'source' | 'gen
 const RIGGABLE: ReadonlySet<SceneKind> = new Set(['shape', 'image']);
 
 /**
- * Whether a layer can be rigged directly — the twin of `rigLogo.isRiggableLeafNode`
- * (its `RIGGABLE_KINDS`: shape and image; text and groups go through Rig Logo).
+ * Whether a layer can be rigged directly — the twin of `rigLogo.RIGGABLE_KINDS`
+ * (shape and image; text and groups go through Rig Logo, the engine's rigLogo job).
  */
 export function isRiggableLayer(layer: Pick<LayerInfo, 'kind' | 'source'> | undefined): boolean {
   const k = uiKindOf(layer);

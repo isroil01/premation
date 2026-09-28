@@ -281,8 +281,15 @@ paths (371 → 367).
   engine's `getThumbnail`. Deleted: `runExport`, `videoSink`, the WebM
   muxer, the GIF encoder, the raw pipe, `framePipeline`, the encode worker,
   `renderJob`, `hdrTransfer`, `exportPreview`, main's page render IPC
-  (staging / streaming / resume: `ffmpegStream.ts`, `renderResume.ts`), and
-  the HDR10 / HLG presets (**post-launch**: the engine has no PQ/HLG output yet).
+  (staging / streaming / resume: `ffmpegStream.ts`, `renderResume.ts`). The
+  HDR10 / HLG presets are back on the engine (p4-round3): the export job's
+  `hdr` option encodes PQ / HLG in BT.2020 from the half-float surface
+  (`hdr_convert.hpp`, the viewer transform overridden to sRGB, light levels
+  measured into `stats.hdr`); main tags and encodes it (`buildHdrEncodeArgs`:
+  libx265 with the ST 2086 / CLL SEI, H.264 High 10 without libx265, or a
+  ProRes HDR master for a mov with `hdr`). The SEI is written before the
+  first frame, so it carries the mastering display's defaults (MaxCLL 1000,
+  MaxFALL 400) or the spec's `hdrMastering`, not the measured levels.
 - *CLI on the engine; no hidden window.* `premation-engine --prepare`
   (native/engine/src/cli_prepare.cpp) drives a Session in process:
   `premation comps` (listComps), `premation reframe --aspect` (the
@@ -291,18 +298,28 @@ paths (371 → 367).
   SRT/VTT written by main). `--scale` and the png still are export-job options.
   `#/render`, `RenderPage`, `headlessRender.ts` and the page reframe
   analysis (`saliency`, `reframePath`) are deleted.
-  **Post-launch** (refused with a clear line): `--captions` (caption layers
-  need a C++ builder), `--data` (template fill in C++), `--commands` (the log
-  format is the TypeScript engine's; a C++-recorded log format is needed).
+  p4-round3: `--commands` (main encodes the recorded requests with the
+  generated codec, `--prepare` replays them), `--data` (the `--prepare` fill
+  step, one render per row) and `--captions` (the `setCaptions` command) run
+  in the engine too. Gap: a `--data` Source Text fill does not keep the
+  page's per-run styles (`keepRunsCommands`).
 - *Render worker* renders only through `premation-engine --export`; its
   offscreen window, render page, preload and Vite bundle are deleted.
 
-Still on the page (no engine job yet — **post-launch** C++ jobs): the audio
-driver bake (`computeDriverEnvelope`), the Audio Waveform generator's read,
-particle / physics bakes (`bakeDynamics`), the IK3D bake, environment SH
-(`ensureEnvironmentSh`), Rig Logo for Animation, footage assembly, live
-merge, and the page stills (`offlineRenderer.renderStillFrame`: AI filmstrip
-/ render feedback, version compare). These keep the TypeScript renderer,
+Moved to the engine in p4-round3: the page stills (the AI filmstrip / render
+feedback use `getThumbnail`, version compare the new `renderDocumentStill`
+query — `offlineRenderer.renderStillFrame` and `documentSwap.ts` are
+deleted); the audio driver bake (the `audioAnalysis` job's `driver`; the
+Audio Waveform config is read from the mirror); Assemble from Footage (the
+`sceneDetect` job; the page scene-edit detector is deleted); Rig Logo for
+Animation (the `rigLogo` job: one image / shape layer rigged in place,
+anything else rendered alone — several layers together, `isolateLayers` —
+cropped, imported with `importBytes` and rigged; the page rasterize is
+deleted); HDR10 / HLG exports; CLI `--captions` / `--data` / `--commands`.
+
+Still on the page (no engine job yet — **post-launch** C++ jobs): particle /
+physics bakes (`bakeDynamics`), the IK3D bake, environment SH
+(`ensureEnvironmentSh`) and live merge. These keep the TypeScript renderer,
 effects and evaluation referenced, so step 4 (deleting those packages) is
 post-launch too. The `EditorTabs` strip is left for the UI cleanup.
 

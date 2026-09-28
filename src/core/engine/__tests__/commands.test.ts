@@ -362,6 +362,7 @@ export const CASES: Partial<Record<CommandType, Case>> = {
   setColorManagement: { cmd: () => ({ type: 'setColorManagement', patch: { workingSpace: 'acesCg', displayTransform: 'pq', bitDepth: 32 } }) },
   applyJobResult: { cmd: () => ({ type: 'applyJobResult', job: 'job1' }), fails: 'notFound' },
   setPluginData: { cmd: (s) => ({ type: 'setPluginData', layer: s.A, group: `effects/${s.fx}`, key: 'state', data: new Uint8Array([1, 2, 3, 250]) }) },
+  setCaptions: { cmd: (s) => ({ type: 'setCaptions', comp: s.comp, cues: [{ start: 0, end: sec(1), text: 'Hello' }] }), fails: 'unsupported' },
   setContentAwareFill: { cmd: (s) => ({ type: 'setContentAwareFill', layer: s.A, frames: [{ time: 0, src: 'file:///fill/frame_00000.png' }, { time: 705_600_000, src: 'file:///fill/frame_00001.png' }] }) },
 };
 
@@ -373,7 +374,7 @@ const edits = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t]
 
 test('every edit command in the schema has a case', () => {
   expect(edits.filter((t) => !CASES[t])).toEqual([]);
-  expect(edits.length).toBe(121);
+  expect(edits.length).toBe(122);
 });
 
 describe.each(edits)('%s', (type) => {

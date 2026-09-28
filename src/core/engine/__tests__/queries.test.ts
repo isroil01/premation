@@ -16,7 +16,7 @@ beforeEach(async () => {
 afterEach(async () => { await h.dispose(); });
 
 /** Queries the TypeScript engine cannot answer from document data (they need the renderer). */
-const UNSUPPORTED: QueryType[] = ['getWaveform', 'getThumbnail', 'hitTest', 'readPixels'];
+const UNSUPPORTED: QueryType[] = ['getWaveform', 'getThumbnail', 'renderDocumentStill', 'hitTest', 'readPixels'];
 /** Measured with the page's canvas: answered where the test canvas has metrics, `unsupported` where it has none. */
 const NEEDS_METRICS: QueryType[] = ['getTextLayout'];
 
@@ -47,6 +47,7 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
   getSvgDocument: (x) => ({ type: 'getSvgDocument', layer: x.A }),
   getCryptomatte: (x) => ({ type: 'getCryptomatte', item: x.footage }),
   getThumbnail: (x) => ({ type: 'getThumbnail', item: x.footage, time: 0, maxSize: 64 }),
+  renderDocumentStill: () => ({ type: 'renderDocumentStill', document: '{}', time: 0, maxSize: 64 }),
   listEffects: () => ({ type: 'listEffects', category: '' }),
   listGroupTypes: (x) => ({ type: 'listGroupTypes', layer: x.T, parent: 'text/animators' }),
   listPresets: () => ({ type: 'listPresets', category: '' }),
@@ -73,8 +74,9 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
 
 test('every query in the schema has a case', () => {
   expect(Object.keys(QUERIES).sort()).toEqual(Object.keys(CASES).sort());
-  // 42 + the five B4 round 5 item-fact queries (getDocumentColors … checkPrecompose) + getRigPose (B4 round 5, the rig).
-  expect(Object.keys(QUERIES)).toHaveLength(48);
+  // 42 + the five B4 round 5 item-fact queries (getDocumentColors … checkPrecompose) + getRigPose (B4 round 5, the rig)
+  // + renderDocumentStill (P4, version compare).
+  expect(Object.keys(QUERIES)).toHaveLength(49);
 });
 
 test('capturePreset: keys rebased to 0 and out of pixels against the layer\'s comp; effects renumbered; empty layers say so', async () => {

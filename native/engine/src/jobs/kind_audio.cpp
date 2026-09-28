@@ -5,12 +5,19 @@
 // src/core/audio/beatCommands.ts) — the same commands, in one entry.
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "audio_analysis.hpp"
+#include "child_export.hpp"
 #include "fail.hpp"
 #include "job_apply_util.hpp"
 #include "job_inputs.hpp"
@@ -23,6 +30,7 @@
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "time_conv.hpp"
+#include "transcribe.hpp"
 
 namespace premation::jobs {
 
@@ -373,9 +381,137 @@ std::vector<float> read_mono(const std::string& file, int& sampleRate) {
   return mono_of(pcm);
 }
 
+// ── the audio driver (audioDriver.ts computeDriverEnvelope) ──
+
+/// The driver's envelope: analysis only, the page splices the keys.
+class DriverResult final : public JobResult {
+ public:
+  DriverResult(Range range, std::vector<float> raw, std::vector<float> mapped)
+      : range_(range), raw_(std::move(raw)), mapped_(std::move(mapped)) {}
+  [[nodiscard]] std::string summary_json() const override {
+    const auto nums = [](const std::vector<float>& v) {
+      std::vector<double> d(v.begin(), v.end());
+      return numbers_json(d);
+    };
+    return "{\"driver\":{\"raw\":" + nums(raw_) + ",\"mapped\":" + nums(mapped_) + ",\"start\":" + json_number(range_.start) +
+           ",\"end\":" + json_number(range_.end) + ",\"fps\":" + json_number(range_.fps) + "}}";
+  }
+  [[nodiscard]] std::string label() const override { return "Audio driver"; }
+  [[nodiscard]] bool has_edits() const override { return false; }
+  void apply(JobApply& /*a*/) const override {}
+
+ private:
+  Range range_;
+  std::vector<float> raw_;
+  std::vector<float> mapped_;
+};
+
+struct DriverParams {
+  aa::EnvelopeOptions env;
+  double min = 0;
+  double max = 1;
+  std::string curve = "linear";
+  int smoothFrames = 1;
+};
+
+DriverParams driver_params(const std::string& text) {
+  const js::Json p = parse_params(text);
+  DriverParams d;
+  // bandRange: a named band, or {lo, hi} Hz with hi ≥ lo + 1.
+  const js::Json& band = p.at("band");
+  if (band.is_string()) {
+    const std::string& b = band.str();
+    if (b == "low") { d.env.lo = 20; d.env.hi = 250; }
+    else if (b == "mid") { d.env.lo = 250; d.env.hi = 2000; }
+    else if (b == "high") { d.env.lo = 2000; d.env.hi = 16000; }
+  } else if (band.is_object()) {
+    const double lo = std::max(0.0, param(band, "lo", 0));
+    d.env.lo = lo;
+    d.env.hi = std::max(lo + 1, param(band, "hi", lo + 1));
+  }
+  d.env.attackMs = param(p, "attackMs", 0);
+  d.env.releaseMs = param(p, "releaseMs", 0);
+  d.env.gate = param(p, "gate", 0);
+  d.env.normalize = !p.at("normalize").is_bool() || p.at("normalize").b();
+  d.min = param(p, "min", 0);
+  d.max = param(p, "max", 1);
+  if (p.at("curve").is_string()) d.curve = p.at("curve").str();
+  d.smoothFrames = static_cast<int>(std::max(1.0, std::floor(param(p, "smoothFrames", 1))));
+  return d;
+}
+
+std::unique_ptr<JobResult> driver_result(const std::vector<float>& samples, double sampleRate, const Range& range, const DriverParams& p) {
+  std::vector<float> raw = aa::detector_envelope(samples, sampleRate, range.fps, p.env);
+  std::vector<float> mapped = aa::map_envelope(raw, p.min, p.max, p.curve, p.smoothFrames);
+  return std::make_unique<DriverResult>(range, std::move(raw), std::move(mapped));
+}
+
+PreparedJob prepare_driver(const api::AudioAnalysisJob& spec, const JobDocContext& ctx) {
+  const DriverParams params = driver_params(*spec.driver);
+  if (!spec.layer.empty()) {
+    const FootageLayer f = footage_layer(ctx, spec.layer, Need::sound);
+    const Range range = driver_range(ctx.doc, f.comp);
+    const std::vector<aa::ClipTiming> timings = timings_of(f);
+    return PreparedJob{"audioAnalysis", [f, range, timings, params](JobControl& control) -> std::unique_ptr<JobResult> {
+      control.progress(0.1, "Decoding audio");
+      int sr = 0;
+      const std::vector<float> mono = read_mono(f.file, sr);
+      if (control.cancelled()) return nullptr;
+      control.progress(0.6, "Following the audio");
+      const std::vector<float> aligned = aa::align_samples_to_range(mono, sr, timings, range.start, range.end);
+      auto out = driver_result(aligned, sr, range, params);
+      control.progress(1, "Done");
+      return out;
+    }};
+  }
+  // The composition's mix (MIX_SOURCE): a child engine's offline mix over the range.
+  const std::string comp = spec.driver_comp.value_or(std::string());
+  if (comp.empty() || ctx.doc.comp(comp) == nullptr) fail(ErrorCode::not_found, "no composition '" + comp + "' to follow", {.item = comp});
+  const Range range = driver_range(ctx.doc, comp);
+  std::string projectJson = snapshot_project_json(ctx.doc, ctx.bundleRoot);
+  return PreparedJob{"audioAnalysis", [comp, range, params, projectJson = std::move(projectJson)](JobControl& control) -> std::unique_ptr<JobResult> {
+    TempTree tree("premation-driver");
+    const std::filesystem::path project = tree.path / "project.motion";
+    {
+      std::ofstream f(project, std::ios::binary | std::ios::trunc);
+      f << projectJson;
+      if (!f) fail(ErrorCode::io, "cannot write the mixdown snapshot");
+    }
+    const auto startFrame = static_cast<std::int64_t>(std::floor(range.start * range.fps + 1e-6));
+    const auto endFrame = std::max(startFrame, static_cast<std::int64_t>(std::ceil(range.end * range.fps - 1e-6)) - 1);
+    js::Json job = js::Json::object();
+    job.set("projectPath", js::Json::string(project.string()));
+    job.set("workDir", js::Json::string(tree.path.string()));
+    job.set("comp", js::Json::string(comp));
+    job.set("startFrame", js::Json::number(static_cast<double>(startFrame)));
+    job.set("endFrame", js::Json::number(static_cast<double>(endFrame)));
+    job.set("audioOnly", js::Json::boolean(true));
+    job.set("buildThreads", js::Json::number(1));
+    const std::optional<js::Json> pre = run_child_export(job, tree.path, control, "Mixing", 0.02, 0.6);
+    if (!pre) return nullptr;
+    const auto silent = [] {
+      fail(ErrorCode::invalid_argument, "No audible audio in this range — import audio, or check the layer is not muted.");
+    };
+    if (!pre->at("audio").is_string()) silent();
+    std::vector<std::uint8_t> wav;
+    {
+      std::ifstream f(std::filesystem::path(pre->at("audio").str()), std::ios::binary);
+      wav.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    const std::optional<speech::Pcm> pcm = speech::read_wav16(wav);
+    if (!pcm || pcm->channels.empty() || pcm->channels.front().empty()) silent();
+    if (control.cancelled()) return nullptr;
+    control.progress(0.7, "Following the mix");
+    auto out = driver_result(speech::to_mono(pcm->channels), static_cast<double>(pcm->sampleRate), range, params);
+    control.progress(1, "Done");
+    return out;
+  }};
+}
+
 }  // namespace
 
 PreparedJob prepare_audio_analysis(const api::AudioAnalysisJob& spec, const JobDocContext& ctx) {
+  if (spec.driver) return prepare_driver(spec, ctx);
   if (!spec.beats && !spec.amplitude_keyframes && !spec.silence && !spec.remove_silence) {
     fail(ErrorCode::invalid_argument, "nothing to analyse: ask for beats, amplitudeKeyframes or silence");
   }

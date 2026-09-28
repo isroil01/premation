@@ -56,6 +56,13 @@ struct TempTree {
                                                                        JobControl& control, const std::string& label, double from,
                                                                        double to);
 
+/// render_layer_alone for several layers drawn alone TOGETHER (in their stack
+/// order, with their blend modes between them): Rig Logo's selection.
+[[nodiscard]] std::optional<std::vector<RgbaImage>> render_layers_alone(const std::string& projectJson, const std::string& comp,
+                                                                        const std::vector<std::string>& layers, std::int64_t first,
+                                                                        std::int64_t last, JobControl& control, const std::string& label,
+                                                                        double from, double to);
+
 /// The PNG frames a sequence export wrote into `<workDir>/frames`, in order.
 /// nullopt when cancelled while reading.
 [[nodiscard]] std::optional<std::vector<RgbaImage>> read_png_frames(const std::filesystem::path& workDir, JobControl& control,

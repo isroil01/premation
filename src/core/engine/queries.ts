@@ -292,6 +292,7 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
       return { type: q.type, layers: (set?.layers ?? []).map((l) => ({ name: l.name, objects: l.objects.map((o) => o.name) })) };
     }
     case 'getThumbnail':
+    case 'renderDocumentStill':
       return fail('unsupported', 'thumbnails are rendered by the editor until the engine owns rendering (D2)');
     case 'listEffects': {
       const effects = EFFECT_DEFS.map((d) => effectInfo(d.type)).filter((e) => q.category === '' || e.category === q.category);

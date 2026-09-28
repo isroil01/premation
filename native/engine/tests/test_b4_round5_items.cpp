@@ -129,6 +129,47 @@ TEST_CASE("LayerInfo.caption, getCaptionCues: tagged top-level text layers as cu
   CHECK(is_error(bad, api::ErrorCode::not_found));
 }
 
+TEST_CASE("setCaptions: one timed caption layer per cue, replacing the old ones, one undo entry", "[p4][captions]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h, "Caps", 640, 360);
+  const auto plain = make_layer(h, comp, api::LayerKind::text);
+  api::SetCaptions sc;
+  sc.comp = comp;
+  sc.cues = {api::CaptionInput{1 * kSec, 2 * kSec, "Hello"}, api::CaptionInput{3 * kSec, 4 * kSec, "Two\nlines"}};
+  const auto made = h.run(cmd(sc));
+  REQUIRE(is_ok(made));
+  CHECK(result_as<api::LayerList>(made).layers.size() == 2);
+  auto cues = ask_ok<api::CaptionCues>(h, api::GetCaptionCues{comp}).cues;
+  REQUIRE(cues.size() == 2);
+  CHECK(cues[0].text == "Hello");
+  CHECK(cues[0].start == 1 * kSec);
+  CHECK(cues[0].end == 2 * kSec);
+  CHECK(cues[1].text == "Two\nlines");
+  CHECK(cues[1].start == 3 * kSec);
+  CHECK(layer_info(h, cues[0].layer).kind == api::LayerKind::text);
+
+  // Again: the captions are replaced, the plain text layer is kept.
+  api::SetCaptions again;
+  again.comp = comp;
+  again.cues = {api::CaptionInput{5 * kSec, 6 * kSec, "Only"}};
+  REQUIRE(is_ok(h.run(cmd(again))));
+  cues = ask_ok<api::CaptionCues>(h, api::GetCaptionCues{comp}).cues;
+  REQUIRE(cues.size() == 1);
+  CHECK(cues[0].text == "Only");
+  CHECK(layer_info(h, plain).kind == api::LayerKind::text);
+
+  // One entry: undo brings the first two back.
+  REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  cues = ask_ok<api::CaptionCues>(h, api::GetCaptionCues{comp}).cues;
+  CHECK(cues.size() == 2);
+
+  api::SetCaptions bad;
+  bad.comp = comp;
+  bad.cues = {api::CaptionInput{2 * kSec, 1 * kSec, "Backwards"}};
+  CHECK(is_error(h.run(cmd(bad)), api::ErrorCode::invalid_argument));
+}
+
 TEST_CASE("LayerInfo.multicamAngle: the Transform tag of a video layer", "[b4r5][items]") {
   Harness h;
   (void)h.hello();

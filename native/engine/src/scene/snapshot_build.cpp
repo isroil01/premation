@@ -1766,12 +1766,18 @@ Snapshot Walk::run() {
   nodes_ = wn_.nodes;
   for (const doc::Node* n : nodes_) byId_.emplace(n->id, n);
   anySolo_ = std::ranges::any_of(nodes_, [](const doc::Node* n) { return n->solo; });
-  if (!c_.isolateLayer.empty() && byId_.contains(c_.isolateLayer)) {
+  std::set<std::string, std::less<>> roots;
+  if (!c_.isolateLayer.empty() && byId_.contains(c_.isolateLayer)) roots.insert(c_.isolateLayer);
+  for (const std::string& id : c_.isolateAlso) {
+    if (byId_.contains(id)) roots.insert(id);
+  }
+  if (!roots.empty()) {
     // getThumbnail of a layer: it alone draws (with what it holds), as if the
-    // only soloed layer. A nested comp's walk does not hold it: unaffected.
+    // only soloed layer (Rig Logo: several together). A nested comp's walk
+    // does not hold them: unaffected.
     for (const doc::Node* n : nodes_) {
       for (const doc::Node* up = n; up != nullptr;) {
-        if (up->id == c_.isolateLayer) {
+        if (roots.contains(up->id)) {
           isolated_.insert(n->id);
           break;
         }
@@ -1779,14 +1785,16 @@ Snapshot Walk::run() {
         up = it != byId_.end() ? it->second : nullptr;
       }
     }
-    // The groups above it: a group draws nothing of its own, but its
+    // The groups above them: a group draws nothing of its own, but its
     // visibility carries to what it holds.
-    const doc::Node* n = byId_.at(c_.isolateLayer);
-    while (n->parent) {
-      const auto it = byId_.find(*n->parent);
-      if (it == byId_.end()) break;
-      n = it->second;
-      if (n->kind() == "group") isolated_.insert(n->id);
+    for (const std::string& root : roots) {
+      const doc::Node* n = byId_.at(root);
+      while (n->parent) {
+        const auto it = byId_.find(*n->parent);
+        if (it == byId_.end()) break;
+        n = it->second;
+        if (n->kind() == "group") isolated_.insert(n->id);
+      }
     }
     anySolo_ = true;
   }

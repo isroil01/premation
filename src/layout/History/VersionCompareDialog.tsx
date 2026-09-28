@@ -2,18 +2,11 @@
  * Version compare — a saved version against the live composition, at the
  * playhead, under a wipe.
  *
- * Both frames come from the still-render path exports use (`renderStillFrame`:
- * same backend, same 1:1 comp→frame view), so what the wipe shows is what a
- * render of each would contain. The live frame renders from the engines as
- * they are. The VERSION's frame renders by swapping its document in, rendering,
- * and swapping the live document back — the offline renderer reads the
- * default scene graph and animation, so there is no second engine to hand it.
- * A restore records no history entry, so nothing lands in the undo
- * stack and the live document is byte-identical afterwards (it is the same
- * captured document, restored).
+ * Both frames are the ENGINE's (the renderer exports use): the live one is
+ * `getThumbnail` of the active composition, the version's is
+ * `renderDocumentStill` — the engine draws the saved document without opening
+ * it, so the live document is never touched.
  *
- * The compare is a blocking dialog on purpose: for the second or so the
- * version is swapped in, an edit would land on the wrong document.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -26,8 +19,8 @@ import { useVersionHistoryStore } from '@stores/versionHistoryStore';
 import { getCloudProjectId } from '@stores/cloudProjectStore';
 import { api, type ProjectVersionSummary } from '@core/api/client';
 import type { EditorDocument } from '@core/api/cloudDocument';
-import { withDocumentSwapped } from '@core/project/documentSwap';
-import { pageActiveStillFrameAt } from '@core/rendering/pageFrame';
+import { engineCompStill, engineDocumentStill } from '@core/rendering/engineStill';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { restoreVersionAsOneEdit } from './versionRestore';
 import styles from './VersionCompareDialog.module.css';
 
@@ -43,23 +36,27 @@ export function frameAt(sec: number, fps: number, durationSec: number): number {
   return Math.max(0, Math.min(Math.round(sec * fps), last));
 }
 
-/** Render the LIVE engines at the playhead to an object URL. */
+/** The long side of both frames. */
+const COMPARE_SIZE = 1920;
+
+/** The LIVE composition at the playhead, as an object URL. */
 async function renderLiveFrame(): Promise<string> {
-  // The TypeScript engine's own composition record (a swapped-in version's while
-  // one is swapped in — the mirror still describes the live document).
-  const blob = await pageActiveStillFrameAt(playheadSeconds());
+  const comp = activeCompIdNow();
+  const blob = comp ? await engineCompStill(comp, playheadSeconds(), COMPARE_SIZE) : null;
   if (!blob) throw new Error('The renderer could not produce a frame.');
   return URL.createObjectURL(blob);
 }
 
 /**
- * Render a VERSION's document at the playhead by swapping it in and back.
- * The swap is invisible to undo (see the module comment) and the live
- * document is restored in `finally`, so a render failure cannot leave the
- * editor showing the version.
+ * A VERSION's document at the playhead, as an object URL: the same composition
+ * when the version has it, else the version's own active one.
  */
 export async function renderVersionFrame(doc: EditorDocument): Promise<string> {
-  return withDocumentSwapped(doc, renderLiveFrame);
+  const comp = activeCompIdNow();
+  const comps = (doc as { comps?: Record<string, unknown> }).comps;
+  const blob = await engineDocumentStill(doc, playheadSeconds(), COMPARE_SIZE, comp && comps && comp in comps ? comp : undefined);
+  if (!blob) throw new Error('The renderer could not produce a frame of this version.');
+  return URL.createObjectURL(blob);
 }
 
 interface CompareProps {

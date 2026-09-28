@@ -267,27 +267,3 @@ export async function renderOffline(
   }
 }
 
-/**
- * Render a SINGLE frame to a PNG blob (AE's "Save Frame As"). Reuses the exact
- * deterministic offline path — same backend, same 1:1 comp→frame view — so a
- * saved still matches a video export frame-for-frame. Returns null if the
- * canvas can't encode. `mime` may be 'image/png' (lossless, default) or
- * 'image/jpeg'.
- */
-export async function renderStillFrame(
-  params: OfflineRenderParams,
-  frameIndex: number,
-  mime: 'image/png' | 'image/jpeg' = 'image/png',
-  quality = 0.92,
-): Promise<Blob | null> {
-  let blob: Blob | null = null;
-  await renderOffline(
-    { ...params, startFrame: frameIndex, endFrame: frameIndex },
-    async (canvas) => {
-      blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob((b) => resolve(b), mime, quality),
-      );
-    },
-  );
-  return blob;
-}

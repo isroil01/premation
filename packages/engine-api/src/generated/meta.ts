@@ -166,6 +166,7 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   cancelJob: { id: 851, kind: 'control', coalesce: false, family: "Jobs", result: "Empty", doc: "" },
   applyJobResult: { id: 852, kind: 'edit', coalesce: false, family: "Jobs", result: "ItemList", doc: "Apply a finished job's result (when started with apply=false). One history entry." },
   setContentAwareFill: { id: 1852, kind: 'edit', coalesce: false, family: "Jobs", result: "Empty", doc: "The layer's content-aware fill (the content-aware fill job's result; the page stored the same record as `fx.contentAwareFill`): the frame nearest the layer's time stands in for its footage. Empty `frames` clears it. Inverse: the previous record." },
+  setCaptions: { id: 1853, kind: 'edit', coalesce: false, family: "Jobs", result: "LayerList", doc: "P4 — REPLACE `comp`'s captions (captionLayers.ts captionEditCommands): its caption layers (LayerInfo.caption) are deleted, then one text layer per cue is created, its bar the cue window, centred at the bottom (`style` JSON: fontSizeRatio 0.05, fontWeight 700, fill '#ffffff', bottomMarginRatio 0.1 — sizes as fractions of the composition), marked as a caption. ONE history entry. Returns the new layers in cue order." },
   setPluginEnabled: { id: 870, kind: 'control', coalesce: false, family: "Plugins", result: "Empty", doc: "Enable/disable an installed plugin for this session (install/uninstall stays in the editor's plugin manager)." },
   setPluginData: { id: 871, kind: 'edit', coalesce: false, family: "Plugins", result: "Empty", doc: "Store plugin data in the DOCUMENT (AE sequence data / arbitrary-data params). Undoable, saved with the project." },
 };
@@ -198,6 +199,7 @@ export const QUERIES: Readonly<Record<QueryType, QueryInfo>> = {
   getSvgDocument: { id: 1891, family: "Media", result: "SvgDocument", doc: "B4 — the SVG document a layer stores (LayerInfo.svg): an SVG layer's file name, intrinsic size, view box, capability scan, playback mode and markup, or a converted group's retained source. `role` none (every other field empty) for any other layer." },
   getCryptomatte: { id: 1892, family: "Media", result: "CryptomatteInfo", doc: "B4 — the Cryptomatte ID set a footage item's EXR carries (layer names and their objects, from the file's manifest): what Layer ▸ ID Matte lists. Empty when the file has none or was not decoded yet. `unsupported` where the engine does not decode EXR (the C++ engine, until its media decode reads EXR)." },
   getThumbnail: { id: 1023, family: "Media", result: "Thumbnail", doc: "A frame thumbnail of an item or layer (project panel, timeline filmstrip). Encoded image bytes." },
+  renderDocumentStill: { id: 1935, family: "Media", result: "Thumbnail", doc: "P4 — a frame of ANOTHER document, drawn by the engine's renderer without opening it (Versions ▸ Compare: a saved version at the playhead). `document` is an EditorDocument as JSON (exportDocument's shape); `comp` absent = the document's active tab, else its first composition; `time` is composition time; the long side ≤ maxSize (0 = 256, at most 4096). The open document is untouched." },
   listEffects: { id: 1040, family: "Catalog", result: "EffectCatalog", doc: "" },
   listGroupTypes: { id: 1041, family: "Catalog", result: "GroupTypeList", doc: "Which group match names can be added under a parent path (the Add ▸ menus)." },
   listPresets: { id: 1042, family: "Catalog", result: "PresetList", doc: "" },
@@ -258,4 +260,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":80,"structs":467,"unions":11,"commands":153,"queries":48,"events":33} as const;
+export const SCHEMA_COUNTS = {"enums":80,"structs":471,"unions":11,"commands":154,"queries":49,"events":33} as const;

@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { CliRenderJob } from './cliArgs';
-import { cliEngineSpec, runCliEngineRender } from './cliEngineRender';
+import { cliEngineSpec, runCliEngineBatch, runCliEngineRender } from './cliEngineRender';
 import type { EngineExportDeps } from './engineExport';
 
 const abs = (...parts: string[]): string => path.join(process.platform === 'win32' ? 'C:\\' : '/', ...parts);
@@ -64,9 +64,9 @@ describe('premation render through premation-engine --export', () => {
     const plain = cliEngineSpec(job({ startFrame: 0, endFrame: 29, quality: 'draft', transparent: false }), ENGINE);
     expect(plain).toEqual({ spec: expect.objectContaining({ projectPath: job().projectPath, format: 'mp4', startFrame: 0, endFrame: 29, quality: 'draft' }) });
     expect(cliEngineSpec(job({ aspect: '9:16' }), ENGINE)).toHaveProperty('spec');
-    expect(cliEngineSpec(job({ captionsPath: 'c.srt' }), ENGINE)).toHaveProperty('reason');
-    expect(cliEngineSpec(job({ commandsPath: 'c.jsonl' }), ENGINE)).toHaveProperty('reason');
-    expect(cliEngineSpec(job({ dataPath: 'rows.csv' }), ENGINE)).toHaveProperty('reason');
+    expect(cliEngineSpec(job({ captionsPath: 'c.srt' }), ENGINE)).toHaveProperty('spec');
+    expect(cliEngineSpec(job({ commandsPath: 'c.jsonl' }), ENGINE)).toHaveProperty('spec');
+    expect(cliEngineSpec(job({ dataPath: 'rows.csv' }), ENGINE)).toHaveProperty('spec');
     expect(cliEngineSpec(job({ scale: 0.5 }), ENGINE)).toEqual({ spec: expect.objectContaining({ scale: 0.5 }) });
     expect(cliEngineSpec(job({ scale: 0.5, width: 960, height: 540 }), ENGINE)).toHaveProperty('spec');
     expect(cliEngineSpec(job({ format: 'png', startFrame: 12, endFrame: 40 }), ENGINE)).toEqual({ spec: expect.objectContaining({ format: 'png', startFrame: 12, endFrame: 12 }) });
@@ -93,6 +93,62 @@ describe('premation render through premation-engine --export', () => {
     expect(sent.projectPath).toMatch(/project\.motion$/);
   });
 
+  it('--captions: the parsed cues go to --prepare (before a reframe); a bad file fails without the engine', async () => {
+    const prepare = jest.fn(async () => ({ ok: true as const, result: { comp: 'comp_9x16' } }));
+    const r = deps((e) => {
+      e.say({ ev: 'preflight', ok: true, frames: 1, width: 1080, height: 1920, fps: 30, alpha: false, depth: 8, audio: null, comp: 'comp_9x16', compName: 'P' });
+      e.say({ ev: 'done', frames: 1 });
+      e.exit(0);
+    });
+    const srt = '1\n00:00:00,000 --> 00:00:02,000\nHello\n\n2\n00:00:01,000 --> 00:00:01,010\nGone\n';
+    const out = await runCliEngineRender({ ...job({ aspect: '9:16' }), captions: { text: srt, filename: 'subs.srt' } }, r.deps, () => undefined, prepare);
+    expect(out).toMatchObject({ kind: 'done' });
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ captions: { cues: [{ start: 0, end: 1, text: 'Hello' }, { start: 1, end: 1 + 1 / 30, text: 'Gone' }] }, reframe: { ratio: 9 / 16 } }),
+      expect.anything(),
+    );
+    const never = deps(() => { throw new Error('spawned'); });
+    const bad = await runCliEngineRender({ ...job(), captions: { text: 'nothing', filename: 'subs.srt' } }, never.deps, () => undefined, prepare);
+    expect(bad).toMatchObject({ kind: 'failed', message: expect.stringMatching(/^"subs\.srt": No captions found/) });
+  });
+
+  it('--data: one prepare (the row) and one export per row, named by the pattern; a failed row is reported', async () => {
+    const prepare = jest.fn(async (req: { fill?: Record<string, string> }) => (req.fill?.name === 'Bad'
+      ? { ok: false as const, message: 'The row could not be filled: locked' }
+      : { ok: true as const, result: { comp: 'c1', fill: { filled: ['name'], skipped: [], failed: [] } } }));
+    const r = deps((e) => {
+      e.say({ ev: 'preflight', ok: true, frames: 1, width: 2, height: 2, fps: 30, alpha: false, depth: 8, audio: null, comp: 'c1', compName: 'C' });
+      e.say({ ev: 'done', frames: 1 });
+      e.exit(0);
+    });
+    const csv = 'name\nAda\nBad\nGrace\n';
+    const out = await runCliEngineBatch({ ...job({ outPath: abs('out', '{index}-{name}.mp4') }), data: { text: csv, filename: 'p.csv' } }, r.deps, () => undefined, prepare as never);
+    expect(out).toMatchObject({ kind: 'batch', rendered: 2, failed: 1 });
+    if (out.kind !== 'batch') return;
+    expect(out.rows.map((x) => x.outputPath)).toEqual([abs('out', '1-Ada.mp4'), abs('out', '2-Bad.mp4'), abs('out', '3-Grace.mp4')]);
+    expect(out.rows[1]!.error).toMatch(/could not be filled/);
+    expect(prepare).toHaveBeenCalledTimes(3);
+    expect(r.moved.map(([, to]) => to)).toEqual([abs('out', '1-Ada.mp4'), abs('out', '3-Grace.mp4')]);
+    const bad = await runCliEngineBatch({ ...job({ outPath: abs('out', '{nope}.mp4') }), data: { text: csv, filename: 'p.csv' } }, r.deps, () => undefined, prepare as never);
+    expect(bad).toMatchObject({ kind: 'failed', message: expect.stringMatching(/not a column/) });
+  });
+
+  it('--commands: the log becomes --prepare requests; a bad log fails without the engine', async () => {
+    const prepare = jest.fn(async () => ({ ok: true as const, result: { comp: 'c1', replayed: { applied: 2, refused: 1, firstError: '#2 locked' } } }));
+    const r = deps((e) => {
+      e.say({ ev: 'preflight', ok: true, frames: 1, width: 2, height: 2, fps: 30, alpha: false, depth: 8, audio: null, comp: 'c1', compName: 'C' });
+      e.say({ ev: 'done', frames: 1 });
+      e.exit(0);
+    });
+    const log = '{"header":{"document":{"v":1}}}\n{"request":{"seq":1,"body":{"kind":"command","value":{"type":"undo"}},"origin":"ui"},"revisionAfter":1,"documentHash":0}\n';
+    const out = await runCliEngineRender({ ...job(), commands: { text: log, filename: 's.jsonl' } }, r.deps, () => undefined, prepare);
+    expect(out).toMatchObject({ kind: 'done', warnings: [expect.stringMatching(/1 of 2 recorded request/)] });
+    expect((prepare.mock.calls[0] as unknown[])[0]).toMatchObject({ requests: [expect.any(String), expect.any(String)] });
+    const never = deps(() => { throw new Error('spawned'); });
+    expect(await runCliEngineRender({ ...job(), commands: { text: 'garbage', filename: 's.jsonl' } }, never.deps, () => undefined, prepare))
+      .toMatchObject({ kind: 'failed', message: expect.stringMatching(/"s\.jsonl" is not a command log/) });
+  });
+
   it('--aspect: a failed prepare fails the render, and nothing is exported', async () => {
     const prepare = jest.fn(async () => ({ ok: false as const, message: 'Auto-reframe failed: no footage' }));
     const r = deps(() => { throw new Error('must not spawn'); });
@@ -108,7 +164,7 @@ describe('premation render through premation-engine --export', () => {
     });
     const progress: number[] = [];
     const out = await runCliEngineRender(job(), r.deps, (f) => progress.push(f));
-    expect(out).toEqual({ kind: 'done', frames: 30, width: 1920, height: 1080, fps: 30, compositionName: 'Promo' });
+    expect(out).toEqual({ kind: 'done', frames: 30, width: 1920, height: 1080, fps: 30, compositionName: 'Promo', warnings: [] });
     expect(progress).toContain(1);
     expect(r.moved).toHaveLength(1);
     expect(r.moved[0]![0]).toMatch(/out\.mp4$/);
@@ -127,8 +183,5 @@ describe('premation render through premation-engine --export', () => {
       e.exit(1);
     });
     expect(await runCliEngineRender(job(), encoder.deps, () => undefined)).toEqual({ kind: 'failed', message: 'ffmpeg exited 1' });
-    // What the engine does not do yet never starts it.
-    const never = deps(() => { throw new Error('spawned'); });
-    expect(await runCliEngineRender(job({ dataPath: 'rows.csv' }), never.deps, () => undefined)).toMatchObject({ kind: 'needsEditor' });
   });
 });
