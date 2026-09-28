@@ -19,13 +19,11 @@ import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { bumpScene } from '@stores/sceneStore';
 import { animateLayers } from '@core/animation/choreography';
 import { hash32 } from '@core/animation/entranceArchetypes';
 import { currentFeel } from '@core/animation/choreographyCommands';
-import { analyseLayerBeats, beatsForLayers, everyNthBeat, findAudioLayer, LOW_CONFIDENCE } from './beatGrid';
-import { previewEngineJob, runEngineJob } from '@core/engine/engineJobs';
+import { beatsForLayers, everyNthBeat, findAudioLayer, LOW_CONFIDENCE, type BeatGrid } from './beatGrid';
+import { previewEngineJob, requireEngineJob, runEngineJob } from '@core/engine/engineJobs';
 
 /** How many markers one press may add — a 5-minute track at 174 BPM is 870. */
 const MAX_MARKERS = 512;
@@ -48,35 +46,28 @@ interface EngineBeats {
   beats?: { bpm: number; tempoConfidence: number; beatsCompSec: number[] };
 }
 
-/** A grid, or a sentence explaining why there isn't one. */
-async function grid(): Promise<Awaited<ReturnType<typeof analyseLayerBeats>>> {
-  // The engine's analysis when it runs jobs (analysis only: nothing written).
+/** A grid, or a sentence explaining why there isn't one (the engine's analysis; nothing written). */
+async function grid(): Promise<BeatGrid | null> {
   const layer = findAudioLayer(targets()[0]);
-  if (layer) {
-    const viaEngine = await previewEngineJob<EngineBeats & { beats?: { onsetsCompSec?: number[] } }>({
-      kind: 'audioAnalysis',
-      value: { layer, beats: true, beatMarkers: false, amplitudeKeyframes: false, silence: false, removeSilence: false },
-    });
-    if (viaEngine) {
-      const b = viaEngine.result?.beats;
-      if (viaEngine.status === 'done' && b && b.beatsCompSec.length > 0) {
-        return { nodeId: layer, bpm: b.bpm, tempoConfidence: b.tempoConfidence, beatsCompSec: b.beatsCompSec, onsetsCompSec: b.onsetsCompSec ?? [] };
-      }
-      notify('Could not find a pulse in that audio — it may be speech, ambience, or unreadable.', 'warning');
-      return null;
-    }
-  }
-  const found = await analyseLayerBeats(targets()[0]);
-  if (!found) {
-    notify(
-      findAudioLayer()
-        ? 'Could not find a pulse in that audio — it may be speech, ambience, or unreadable.'
-        : 'No audio layer in this composition to take a beat from.',
-      'warning',
-    );
+  if (!layer) {
+    notify('No audio layer in this composition to take a beat from.', 'warning');
     return null;
   }
-  return found;
+  try {
+    const out = requireEngineJob(await previewEngineJob<EngineBeats & { beats?: { onsetsCompSec?: number[] } }>({
+      kind: 'audioAnalysis',
+      value: { layer, beats: true, beatMarkers: false, amplitudeKeyframes: false, silence: false, removeSilence: false },
+    }), 'Beat analysis');
+    const b = out.result?.beats;
+    if (out.status === 'done' && b && b.beatsCompSec.length > 0) {
+      return { nodeId: layer, bpm: b.bpm, tempoConfidence: b.tempoConfidence, beatsCompSec: b.beatsCompSec, onsetsCompSec: b.onsetsCompSec ?? [] };
+    }
+  } catch (e) {
+    notify(e instanceof Error ? e.message : String(e), 'error');
+    return null;
+  }
+  notify('Could not find a pulse in that audio — it may be speech, ambience, or unreadable.', 'warning');
+  return null;
 }
 
 /** How reliable the tempo is, in words, appended to whatever we just did. */
@@ -88,60 +79,32 @@ function confidenceNote(tempoConfidence: number): string {
 
 async function markBeats(every: number): Promise<void> {
   // The engine analyses the audio layer and writes the markers itself (the
-  // audioAnalysis job) when it runs jobs; the page path below is the
-  // TypeScript engine's.
+  // audioAnalysis job), one undoable entry.
   const layer = findAudioLayer(targets()[0]);
-  if (layer) {
-    const viaEngine = await runEngineJob<EngineBeats>({
+  if (!layer) {
+    notify('No audio layer in this composition to take a beat from.', 'warning');
+    return;
+  }
+  try {
+    const out = requireEngineJob(await runEngineJob<EngineBeats>({
       kind: 'audioAnalysis',
       value: { layer, beats: true, beatMarkers: true, beatEvery: every, amplitudeKeyframes: false, silence: false, removeSilence: false },
-    });
-    if (viaEngine) {
-      const b = viaEngine.result?.beats;
-      if (viaEngine.status !== 'done' || !b || b.beatsCompSec.length === 0) {
-        notify(viaEngine.error?.message ?? 'Could not find a pulse in that audio — it may be speech, ambience, or unreadable.', 'warning');
-        return;
-      }
-      const n = Math.min(MAX_MARKERS, Math.ceil(b.beatsCompSec.length / Math.max(1, every)));
-      notify(
-        `${n} beat marker${n === 1 ? '' : 's'} at ${Math.round(b.bpm)} BPM`
-        + (every > 1 ? ` (every ${every}${every === 2 ? 'nd' : 'th'} beat)` : '')
-        + '.' + confidenceNote(b.tempoConfidence),
-        'success',
-      );
+    }), 'Beat analysis');
+    const b = out.result?.beats;
+    if (out.status !== 'done' || !b || b.beatsCompSec.length === 0) {
+      notify(out.error?.message ?? 'Could not find a pulse in that audio — it may be speech, ambience, or unreadable.', 'warning');
       return;
     }
+    const n = Math.min(MAX_MARKERS, Math.ceil(b.beatsCompSec.length / Math.max(1, every)));
+    notify(
+      `${n} beat marker${n === 1 ? '' : 's'} at ${Math.round(b.bpm)} BPM`
+      + (every > 1 ? ` (every ${every}${every === 2 ? 'nd' : 'th'} beat)` : '')
+      + '.' + confidenceNote(b.tempoConfidence),
+      'success',
+    );
+  } catch (e) {
+    notify(e instanceof Error ? e.message : String(e), 'error');
   }
-  const found = await grid();
-  if (!found) return;
-
-  const beats = everyNthBeat(found.beatsCompSec, every);
-  const controller = getTimelineController();
-  const fps = controller.timeline.getFrameRate().fps;
-  const placed = beats.slice(0, MAX_MARKERS);
-
-  let n = 0;
-  for (const sec of placed) {
-    controller.timeline.addMarker({
-      frame: Math.round(sec * fps),
-      name: `Beat ${++n}`,
-      color: '#7c8cff',
-      scope: 'timeline',
-    });
-  }
-  bumpScene();
-
-  const dropped = beats.length - placed.length;
-  notify(
-    `${n} beat marker${n === 1 ? '' : 's'} at ${Math.round(found.bpm)} BPM`
-    + (every > 1 ? ` (every ${every}${every === 2 ? 'nd' : 'th'} beat)` : '')
-    + '.'
-    // Never truncate silently: "512 markers" on a five-minute track looks
-    // complete unless it says otherwise.
-    + (dropped > 0 ? ` ${dropped} more were past the ${MAX_MARKERS}-marker limit.` : '')
-    + confidenceNote(found.tempoConfidence),
-    'success',
-  );
 }
 
 async function animateOnBeats(phase: 'in' | 'out', every: number): Promise<void> {

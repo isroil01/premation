@@ -159,8 +159,7 @@ import { compHas3DContent } from '@core/mirror/compLayers';
 import { componentPropValue } from '@core/mirror/componentProps';
 import { nullsFromPathEdit, shapesFromTextEdit } from '@layout/Scene/layerCreateEdits';
 import { buildPathCommands } from '@core/workspace/pathCommands';
-import { autoTraceLayer } from '@core/effects/autoTrace';
-import { runEngineJob } from '@core/engine/engineJobs';
+import { requireEngineJob, runEngineJob } from '@core/engine/engineJobs';
 import { secondsToFlicks } from '@motion/engine-api';
 import { centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
 import { uiKindOf } from '@core/mirror/layerKinds';
@@ -1966,11 +1965,11 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         const endSec = range && wa ? wa.end - 1 / Math.max(1, fps) : undefined;
         const noteId = useUIStore.getState().notify({ level: 'info', message: 'Auto-trace: rendering…', durationMs: 0 });
         try {
-          // The engine traces the layer itself when it runs jobs (the autoTrace job):
-          // `rendered` = what the layer DRAWS, rendered alone by a child engine
-          // (effects and masks included, any layer kind) — as the page path below.
+          // The engine traces the layer (the autoTrace job): `rendered` = what
+          // the layer DRAWS, rendered alone by a child engine (effects and
+          // masks included, any layer kind).
           const endS = endSec ?? startSec;
-          const viaEngine = await runEngineJob<{ pathsAdded: number; keyframes: number }>(
+          const viaEngine = requireEngineJob(await runEngineJob<{ pathsAdded: number; keyframes: number }>(
             {
               kind: 'autoTrace',
               value: {
@@ -1984,33 +1983,17 @@ function buildProjectCommands(): ReadonlyArray<Command> {
               },
             },
             { onProgress: (f) => { useUIStore.getState().notify({ level: 'info', message: `Auto-trace: ${Math.round(f * 100)}%`, durationMs: 600 }); } },
-          );
-          if (viaEngine) {
-            useUIStore.getState().dismissNotification(noteId);
-            const n = viaEngine.result?.pathsAdded ?? 0;
-            if (viaEngine.status === 'failed') notify(`Auto-trace failed: ${viaEngine.error?.message ?? 'unknown error'}`, 'error');
-            else if (viaEngine.status === 'done') {
-              notify(
-                n === 0 ? 'Auto-trace found nothing above the threshold'
-                  : `Auto-trace: ${n} mask path${n === 1 ? '' : 's'}${viaEngine.result?.keyframes ? `, ${viaEngine.result.keyframes} keyframes` : ''}`,
-                n === 0 ? 'warning' : 'success',
-              );
-            }
-            return;
-          }
-          const r = await autoTraceLayer({
-            nodeId: id, startSec, endSec, threshold,
-            onProgress: (f) => {
-              useUIStore.getState().notify({ level: 'info', message: `Auto-trace: ${Math.round(f * 100)}%`, durationMs: 600 });
-            },
-          });
+          ), 'Auto-trace');
           useUIStore.getState().dismissNotification(noteId);
-          notify(
-            r.pathsAdded === 0
-              ? 'Auto-trace found nothing above the threshold'
-              : `Auto-trace: ${r.pathsAdded} mask path${r.pathsAdded === 1 ? '' : 's'}${r.keyframes ? `, ${r.keyframes} keyframes` : ''}`,
-            r.pathsAdded === 0 ? 'warning' : 'success',
-          );
+          const n = viaEngine.result?.pathsAdded ?? 0;
+          if (viaEngine.status === 'failed') notify(`Auto-trace failed: ${viaEngine.error?.message ?? 'unknown error'}`, 'error');
+          else if (viaEngine.status === 'done') {
+            notify(
+              n === 0 ? 'Auto-trace found nothing above the threshold'
+                : `Auto-trace: ${n} mask path${n === 1 ? '' : 's'}${viaEngine.result?.keyframes ? `, ${viaEngine.result.keyframes} keyframes` : ''}`,
+              n === 0 ? 'warning' : 'success',
+            );
+          }
         } catch (err) {
           useUIStore.getState().dismissNotification(noteId);
           notify(`Auto-trace failed: ${err instanceof Error ? err.message : String(err)}`, 'error');

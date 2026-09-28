@@ -524,8 +524,6 @@ const bridge = {
     },
     /** One image as base64 bytes. Counterpart to motion-back `POST /ai/image`. */
     image: (request: unknown) => ipcRenderer.invoke('ai:image', request),
-    /** Speech → timed segments. OpenAI only; see aiProxy's TRANSCRIBE_ENDPOINT. */
-    transcribe: (request: unknown) => ipcRenderer.invoke('ai:transcribe', request),
     video: (request: unknown) => ipcRenderer.invoke('ai:video', request),
     speech: (request: unknown) => ipcRenderer.invoke('ai:speech', request),
     model3d: (request: unknown) => ipcRenderer.invoke('ai:3d', request),

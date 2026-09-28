@@ -12,11 +12,11 @@
  * invariant.
  */
 
-import { startEngineJob } from '@core/engine/engineJobs';
+import { startEngineJob, type EngineJobHandle } from '@core/engine/engineJobs';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import {
-  proxyResolution, proxyCodec, proxyEncodeArgs,
+  proxyResolution,
   analysisResolution, analysisEncodeArgs,
   type ProxyRecord,
 } from './proxy';
@@ -35,7 +35,8 @@ export type ProxyRefusal =
   | 'too-small'
   | 'unknown-size'
   | 'already-running'
-  | 'source-unreadable';
+  | 'source-unreadable'
+  | 'no-engine';
 
 /** True when this build can generate proxies at all.
  *
@@ -70,7 +71,11 @@ export const REFUSAL_TEXT: Record<ProxyRefusal, string> = {
   'unknown-size': 'This file’s dimensions are unknown, so no proxy size can be chosen.',
   'already-running': 'A proxy is already being generated for this file.',
   'source-unreadable': 'The original file could not be read.',
+  'no-engine': 'Proxies are made by the engine, which is not running here.',
 };
+
+/** Running viewport-proxy engine jobs, by asset (cancelProxy stops them). */
+const proxyJobs = new Map<string, EngineJobHandle<{ path: string }>>();
 
 const write = (assetId: string, proxy: ProxyRecord | null): void =>
   useAssetStore.getState().setProxy(assetId, proxy);
@@ -92,76 +97,31 @@ const current = (assetId: string): ImportedAsset | undefined =>
  * leave the editor working).
  */
 export async function startProxy(assetId: string): Promise<ProxyRefusal | null> {
-  // The engine transcodes the proxy itself when it runs jobs (the proxy job:
-  // the same rule and arguments, written beside the project and attached with
-  // setProxy — the item's proxy then arrives through the mirror).
-  const engineAsset = current(assetId);
-  if (engineAsset && engineAsset.type === 'video' && engineAsset.proxy?.status !== 'generating') {
-    const handle = await startEngineJob<{ path: string }>({ kind: 'proxy', value: { item: assetId, outputFolder: '' } }).catch(() => null);
-    if (handle) {
-      write(assetId, { status: 'generating' });
-      const out = await handle.done;
-      if (current(assetId)?.proxy?.status === 'generating') {
-        if (out.status === 'done' && out.result?.path) write(assetId, { status: 'ready', src: out.result.path });
-        else if (out.status === 'failed') write(assetId, { status: 'failed', error: out.error?.message ?? 'The proxy could not be made.' });
-        else write(assetId, null);
-      }
-      return null;
-    }
-  }
   const asset = current(assetId);
   const refusal = proxyRefusal(asset);
   if (refusal || !asset) return refusal ?? 'source-unreadable';
-
-  const size = proxyResolution(asset.metadata!.width!, asset.metadata!.height!)!;
-  const hasAlpha = asset.metadata?.hasAlpha === true;
-  const { ext, mime } = proxyCodec(hasAlpha);
-
+  // The engine transcodes the proxy (the proxy job: the same rule and
+  // arguments, written beside the project and attached with setProxy — the
+  // item's proxy then arrives through the mirror). The page transcode that ran
+  // on the TypeScript engine is gone (docs/TS_ENGINE_REMOVAL.md phase 4).
+  let handle: EngineJobHandle<{ path: string }> | null;
+  try {
+    handle = await startEngineJob<{ path: string }>({ kind: 'proxy', value: { item: assetId, outputFolder: '' } });
+  } catch (e) {
+    write(assetId, { status: 'failed', error: e instanceof Error ? e.message : 'The proxy could not be made.' });
+    return null;
+  }
+  if (!handle) return 'no-engine';
   write(assetId, { status: 'generating' });
-
-  let bytes: Uint8Array;
-  try {
-    // The original's bytes. `src` is an object/blob URL for local imports and a
-    // backend URL in cloud mode; fetch handles both.
-    const res = await fetchAssetSrc(asset.src);
-    bytes = new Uint8Array(await res.arrayBuffer());
-  } catch {
-    // Only write the failure if this asset is still the one we started on.
-    if (current(assetId)?.proxy?.status === 'generating') {
-      write(assetId, { status: 'failed', error: 'The original file could not be read.' });
-    }
-    return null;
+  proxyJobs.set(assetId, handle);
+  const out = await handle.done;
+  if (proxyJobs.get(assetId) === handle) proxyJobs.delete(assetId);
+  // Gone, cancelled, or a newer job replaced this record: do not resurrect it.
+  if (current(assetId)?.proxy?.status === 'generating') {
+    if (out.status === 'done' && out.result?.path) write(assetId, { status: 'ready', src: out.result.path });
+    else if (out.status === 'failed') write(assetId, { status: 'failed', error: out.error?.message ?? 'The proxy could not be made.' });
+    else write(assetId, null);
   }
-
-  // Deleted or superseded while we were reading it.
-  if (!current(assetId)) return null;
-
-  const srcExt = /\.([a-z0-9]{1,5})$/i.exec(asset.name)?.[1] ?? 'mp4';
-  let out: Uint8Array | null = null;
-  try {
-    out = (await window.motionEditor!.media!.generateProxy!(assetId, bytes, srcExt, proxyEncodeArgs(IN, OUT, size, hasAlpha), ext)) ?? null;
-  } catch {
-    out = null;
-  }
-
-  const after = current(assetId);
-  // Gone, or a newer job replaced this record: do not resurrect either.
-  if (!after || after.proxy?.status !== 'generating') return null;
-
-  if (!out || out.byteLength === 0) {
-    // Cancellation and encode failure arrive identically (a killed child exits
-    // non-zero). `cancelProxy` clears the record itself, so reaching here with
-    // the record still 'generating' means it really did fail.
-    write(assetId, { status: 'failed', error: 'The proxy could not be encoded.' });
-    return null;
-  }
-
-  write(assetId, {
-    status: 'ready',
-    src: URL.createObjectURL(new Blob([out as BlobPart], { type: mime })),
-    width: size.width,
-    height: size.height,
-  });
   return null;
 }
 
@@ -315,6 +275,8 @@ export async function backfillMissingProxies(): Promise<void> {
  * stop, so the honest state is "no proxy", with Create Proxy available again.
  */
 export async function cancelProxy(assetId: string): Promise<void> {
+  proxyJobs.get(assetId)?.cancel();
+  proxyJobs.delete(assetId);
   try {
     await window.motionEditor?.media?.cancelProxy?.(assetId);
   } catch {

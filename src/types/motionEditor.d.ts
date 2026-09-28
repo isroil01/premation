@@ -208,29 +208,6 @@ export interface AiImageRequest {
   height?: number;
 }
 
-/**
- * Timed speech, as the shell returns it.
- *
- * Cues are relative to the START of the audio that was sent, not to the
- * composition — the caller supplied the window, so the caller re-bases them.
- * See `@core/captions/transcribe`.
- */
-export type AiTranscribeResult =
-  | {
-      ok: true;
-      cues: Array<{ start: number; end: number; text: string }>;
-      /**
-       * Per-WORD timings, when the model returned them.
-       *
-       * Same time base as `cues`. Absent when the model gave none, which the
-       * caller treats as "estimate word times inside each segment" — the
-       * behaviour that shipped before word granularity was requested.
-       */
-      words?: Array<{ start: number; end: number; text: string }>;
-      language?: string;
-    }
-  | { ok: false; code: string; message: string };
-
 export type AiImageResult =
   | { ok: true; base64: string; mime: string }
   | { ok: false; code: string; message: string };
@@ -518,21 +495,6 @@ export interface MotionEditorApi {
      * Generate one image. Resolves with base64 bytes — never a provider URL.
      * Same custody as `stream`: the shell holds the key; the renderer never sees it.
      */
-    /**
-     * Speech → timed segments, for captions.
-     *
-     * OpenAI only: Anthropic has no audio API, and Gemini returns prose
-     * without timings, which cannot become captions. A request naming either
-     * resolves `ok: false` explaining that rather than failing obscurely.
-     */
-    transcribe?(request: {
-      provider: AiVaultProvider;
-      /** Audio file bytes. 16 kHz mono WAV is what the app sends; 25 MB cap. */
-      bytes: Uint8Array;
-      filename?: string;
-      /** BCP-47-ish hint. Absent: the model detects the language. */
-      language?: string;
-    }): Promise<AiTranscribeResult>;
     image?(request: AiImageRequest): Promise<AiImageResult>;
     /** Text-to-video via fal.ai. Returns base64 mp4 bytes. */
     video?(request: { prompt: string; durationSec?: number }): Promise<AiMediaResult>;

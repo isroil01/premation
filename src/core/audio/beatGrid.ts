@@ -1,7 +1,7 @@
 /**
  * The beat grid — where the music's pulse lands on the composition's timeline.
  *
- * `@motion/audio`'s `analyseAudio` already does the DSP (spectral-flux onset
+ * The C++ engine's audioAnalysis job does the DSP (spectral-flux onset
  * envelope, autocorrelation tempo, phase) and has done since the AI caster
  * shipped. What has never existed is a way for a PERSON to use it: the beats
  * were computed, handed to a language model, and thrown away. This module is
@@ -23,16 +23,8 @@
  * command says what it thinks, rather than silently refusing.
  */
 
-import { analyseAudio } from '@motion/audio';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { assetIdOf } from '@core/source/sourceInfo';
-import { keyframeToCompTime } from '@core/timeline/TimelineController';
-import { useAssetStore } from '@stores/assetStore';
-import { fetchAssetSrc } from '@core/rendering/localBlobSource';
-
-/** Matches `audioForCaster` — a long file would stall the UI on decode. */
-const MAX_AUDIO_BYTES = 24 * 1024 * 1024;
 
 /** Below this the grid is shown but described as unreliable. */
 export const LOW_CONFIDENCE = 0.25;
@@ -47,13 +39,6 @@ export interface BeatGrid {
   beatsCompSec: number[];
   /** Detected onsets (transients) in composition seconds — not all are beats. */
   onsetsCompSec: number[];
-}
-
-let cache: { key: string; grid: BeatGrid | null } | null = null;
-
-/** Test seam — drop the decode cache. */
-export function resetBeatGridCache(): void {
-  cache = null;
 }
 
 /**
@@ -95,7 +80,7 @@ export function beatsForLayers(
   count: number,
 ): number[] {
   if (count <= 0) return [];
-  // Sorted defensively. `analyseLayerBeats` already sorts, but this is exported
+  // Sorted defensively. The engine's grid is already sorted, but this is exported
   // and pure, and an unordered grid here would hand back start times that go
   // backwards — layers animating in the wrong order, with nothing to point at.
   const upcoming = beatsCompSec.filter((t) => t >= fromTime - 1e-6).sort((a, b) => a - b);
@@ -122,73 +107,3 @@ export function everyNthBeat(beatsCompSec: readonly number[], n: number): number
   return beatsCompSec.filter((_, i) => i % step === 0);
 }
 
-/**
- * Decode the audio layer and return its beat grid in composition time.
- *
- * Returns null when there is no audio layer, the media is unreadable or too
- * long to decode, or the clip holds no detectable pulse at all. Every one of
- * those is a sentence the command shows the user, not an exception.
- */
-export async function analyseLayerBeats(preferredId?: string): Promise<BeatGrid | null> {
-  const nodeId = findAudioLayer(preferredId);
-  if (!nodeId) return null;
-
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const assetId = assetIdOf(node);
-  const src = useAssetStore.getState().assets.find((a) => a.id === assetId)?.src;
-  if (!src) return null;
-
-  // Keyed on the LAYER as well as the asset: the same file trimmed differently
-  // on two layers has two different grids in comp time.
-  const key = `${nodeId}:${assetId}:${src}`;
-  if (cache?.key === key) return cache.grid;
-
-  try {
-    const res = await fetchAssetSrc(src);
-    if (!res.ok) {
-      cache = { key, grid: null };
-      return null;
-    }
-    const buf = await res.arrayBuffer();
-    if (buf.byteLength > MAX_AUDIO_BYTES) {
-      cache = { key, grid: null };
-      return null;
-    }
-
-    const AudioCtor =
-      (globalThis as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
-        .AudioContext
-      ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtor) return null;
-
-    const actx = new AudioCtor();
-    void actx.suspend?.();
-    const decoded = await actx.decodeAudioData(buf);
-    const channels: Float32Array[] = [];
-    for (let c = 0; c < decoded.numberOfChannels; c++) channels.push(decoded.getChannelData(c));
-    const analysis = analyseAudio(channels, decoded.sampleRate);
-    void actx.close();
-
-    if (analysis.beats.length === 0) {
-      cache = { key, grid: null };
-      return null;
-    }
-
-    const toComp = (mediaSec: number): number => keyframeToCompTime(nodeId, mediaSec);
-    const grid: BeatGrid = {
-      nodeId,
-      bpm: analysis.bpm,
-      tempoConfidence: analysis.tempoConfidence,
-      // Sorted after mapping: a reversed or retimed layer can invert the order,
-      // and every consumer here assumes ascending.
-      beatsCompSec: analysis.beats.map(toComp).sort((a, b) => a - b),
-      onsetsCompSec: analysis.onsets.map(toComp).sort((a, b) => a - b),
-    };
-    cache = { key, grid };
-    return grid;
-  } catch {
-    cache = { key, grid: null };
-    return null;
-  }
-}
