@@ -902,7 +902,12 @@ document owner (hence the engine viewport) and engine export are ON by default
 behind `PREMATION_ENGINE=ts`, `PREMATION_ENGINE_OWNER=ui`,
 `PREMATION_EXPORT_ENGINE=0` (or `{ "backend": "ts" }` / `{ "owner": "ui" }` in
 `<userData>/engine.json`), and a missing executable, a crash loop or an
-unported export frame still falls back to it. Checked in the real app with no
+unported export frame still falls back to it. **Superseded 2026-09-28 (phase 4,
+`docs/TS_ENGINE_REMOVAL.md`):** those flags, the preference file and every
+fallback are deleted — the engine always runs and owns the document; a missing
+executable / no GPU is a fatal startup dialog, a crash loop a blocking
+"engine unavailable" dialog with a recovery save (`electron/engineUnavailable.ts`),
+and an export the engine cannot render fails with its reason. Checked in the real app with no
 flags set (`scripts/realapp/defaultFlags.cjs`): `engine:status` enabled +
 ownsDocument, the viewport on the shared-texture route, and a Render Queue job
 rendered by the engine (`f1RenderQueue.cjs --default`; this fixed the export launcher's
