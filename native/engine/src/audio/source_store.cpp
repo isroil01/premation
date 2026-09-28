@@ -67,7 +67,7 @@ void PeakPyramid::fold_up(std::size_t from) {
     const std::size_t count = levels_[l][0].size();
     if (count == 0 || count % kFold != 0) return;
     if (l + 1 >= levels_.size()) levels_.emplace_back(static_cast<std::size_t>(channels_) + 1);
-    for (std::size_t c = 0; c <= static_cast<std::size_t>(channels_); ++c) {
+    for (std::size_t c = 0; std::cmp_less_equal(c, channels_); ++c) {
       Bucket m;
       for (std::size_t k = count - kFold; k < count; ++k) m = merge(m, levels_[l][c][k]);
       levels_[l + 1][c].push_back(m);

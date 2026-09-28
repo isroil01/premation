@@ -106,20 +106,21 @@ class AudioSystem {
   void worker();
   [[nodiscard]] Program resolve(Program p) const;
 
-  AudioSystemOptions opt_;
+  // Ordered to pack (widest-aligned first); the destructor stops the device and
+  // joins the workers before any member goes, so the order carries no lifetime.
   RealtimeEngine engine_;
-  mutable std::mutex mu_;
+  std::uint64_t nextId_ = 1;
+  std::unique_ptr<AudioDevice> device_;
   std::map<std::uint64_t, Entry> sources_;
   std::map<std::string, std::uint64_t> byPath_;
-  std::uint64_t nextId_ = 1;
   ProgramPtr program_;
-  // Conform jobs.
+  // Conform workers and their jobs.
+  std::vector<std::thread> workers_;
   std::deque<std::uint64_t> jobs_;
   std::condition_variable jobCv_;
+  mutable std::mutex mu_;
+  AudioSystemOptions opt_;
   std::atomic<bool> stopping_{false};
-  std::vector<std::thread> workers_;
-  // Device.
-  std::unique_ptr<AudioDevice> device_;
 };
 
 }  // namespace premation::audio
