@@ -5,8 +5,9 @@
  * The C++ engine is the only engine (docs/TS_ENGINE_REMOVAL.md): wherever the
  * page has an engine bridge it owns the document and its frames ARE the
  * viewport. The owner flag, the preference file and the fall-back to the
- * TypeScript engine are gone; the one place this is false is the jest harness
- * (no bridge), where the LocalEngine answers.
+ * TypeScript engine are gone. It is false only where there is no engine host:
+ * the jest harness (no bridge) and the headless CLI's hidden window (no
+ * `engine:status` handler in that process), where the LocalEngine answers.
  *
  *   engineOwnsDocumentNow()     set once at boot (Providers) from the bridge
  *   engineViewportActive()      the engine's frames are the viewport (same answer)

@@ -632,11 +632,10 @@ const bridge = {
    */
   engine: {
     request: (bytes: Uint8Array) => ipcRenderer.invoke('engine:request', bytes),
+    // No handler = no engine host in this process (the headless CLI's hidden
+    // window, which still renders on the TypeScript engine — TS_ENGINE_REMOVAL.md).
     status: () =>
-      ipcRenderer.invoke('engine:status').catch((e: unknown) => ({
-        enabled: true, state: 'unavailable', ownsDocument: true,
-        unavailableReason: `engine status unavailable: ${e instanceof Error ? e.message : String(e)}`,
-      })),
+      ipcRenderer.invoke('engine:status').catch(() => ({ enabled: false, state: 'stopped' })),
     /** C: this window's first engine viewport id (0 in the editor, a block of its own in a pop-out). */
     viewportBase: (): Promise<number> =>
       ipcRenderer.invoke('engine:viewportBase').then((n: unknown) => (typeof n === 'number' && Number.isInteger(n) && n >= 0 ? n : 0), () => 0),

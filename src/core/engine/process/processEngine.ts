@@ -79,11 +79,20 @@ export function processEngineBridge(): EngineBridge | null {
 
 /**
  * Is there an engine in this window? The C++ engine is the only engine and
- * always owns the document (docs/TS_ENGINE_REMOVAL.md): true wherever the
- * preload bridge exists; false only in a test harness without one.
+ * always owns the document (docs/TS_ENGINE_REMOVAL.md): main's
+ * `engine:status` always answers `enabled: true, ownsDocument: true`. False
+ * only where there is no engine host — the jest harness (no bridge) and the
+ * headless CLI's hidden window (no handler in that process), which still run
+ * on the TypeScript engine until phase 4 deletes them.
  */
-export function processEngineEnabled(): Promise<boolean> {
-  return Promise.resolve(processEngineBridge() !== null);
+export async function processEngineEnabled(): Promise<boolean> {
+  const bridge = processEngineBridge();
+  if (!bridge) return false;
+  try {
+    return (await bridge.status()).enabled === true;
+  } catch {
+    return false;
+  }
 }
 
 /** The engine owns the document wherever there is one (the owner flag is gone). */
