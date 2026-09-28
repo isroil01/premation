@@ -23,7 +23,7 @@ import { useMirrorKeys, useRetainTrees } from '@hooks/useMirror';
 import { flicksToSeconds } from '@motion/engine-api';
 import { readTrack } from '@core/mirror/selection';
 import { trackRefIn } from '@core/mirror/trackIndex';
-import { planMulticamAudioSync } from '@core/composition/multicam';
+import { planMulticamAudioSync } from './multicamAudioSync';
 import { activeMulticamAngles, switchMulticamAngleEdit } from './multicamEdits';
 import { Button } from '@components/Button';
 import { EmptyState } from '@components/EmptyState';
@@ -149,10 +149,8 @@ export function MulticamViewerBody(): JSX.Element {
   const onSync = async (): Promise<void> => {
     setSyncing(true);
     try {
-      // The analysis (core, no write), then the bar shifts as ONE engine entry
-      // (`setLayerTiming` through moveBars, B3z). B4-gap: an engine job — it
-      // decodes every angle's audio (not a registered engine job yet, G-phase)
-      // over the multicam angle tags (see collectAngleViews).
+      // The analysis over the mirror's angles (decoded in the page, no write), then the bar shifts as ONE
+      // engine entry (`setLayerTiming` through moveBars).
       const { moves, report } = await planMulticamAudioSync();
       if (moves.length > 0) await moveBars(moves, 'Sync Multicam by Audio');
       setSyncNote(report.note);
