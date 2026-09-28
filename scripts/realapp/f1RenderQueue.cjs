@@ -14,7 +14,9 @@ const path = require('node:path');
 
 const REPO = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(REPO, 'dist-electron', 'main.js');
-const ELECTRON = require(path.join(REPO, 'node_modules', 'electron'));
+// PREMATION_APP_EXE: drive a packaged build (e.g. release/0.9.0/win-unpacked/Premation.exe) instead of dev.
+const APP_EXE = process.env.PREMATION_APP_EXE || null;
+const ELECTRON = APP_EXE || require(path.join(REPO, 'node_modules', 'electron'));
 const ENGINE = path.join(REPO, 'native', 'build', 'windows-clang-cl-engine', 'engine', 'premation-engine.exe');
 const FILE = path.resolve(process.argv.find((a) => a.endsWith('.json')) ?? path.join(__dirname, 'fixtures', 'bench.json'));
 const OM16 = process.argv.includes('--om16');
@@ -62,7 +64,7 @@ async function ws(url) {
   delete env.ELECTRON_RUN_AS_NODE;
   // --default: no flags at all (the defaults flipped 2026-09-28 must pick the engine).
   if (process.argv.includes('--default')) for (const k of Object.keys(env)) if (k.startsWith('PREMATION_')) delete env[k];
-  const child = spawn(ELECTRON, [`--inspect=${INSPECT}`, `--remote-debugging-port=${PORT}`, `--user-data-dir=${userData}`, MAIN], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(ELECTRON, [`--inspect=${INSPECT}`, `--remote-debugging-port=${PORT}`, `--user-data-dir=${userData}`, ...(APP_EXE ? [] : [MAIN])], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   const log = [];
   const take = (d) => { for (const l of String(d).split(/\r?\n/)) if (l.trim()) log.push(l); };
   child.stdout.on('data', take); child.stderr.on('data', take);
