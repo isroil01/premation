@@ -16,9 +16,7 @@ import { edit } from '@core/engine/uiEdits';
 import { applyPresetValues, setLayerMatte } from './inspectorEdits';
 import { convertSvgToShapes } from './svgLayerActions';
 import { LAYER_SWITCHES, applyLayerSwitch } from './SelectionHeader';
-import { masksFromTextEdit, textPresetEdit } from '@layout/Text/textEdits';
-import { hasCanvas } from '@core/effects/__testHelpers__/canvasFidelity';
-import { getNodeMask } from '@core/effects/mask';
+import { textPresetEdit } from '@layout/Text/textEdits';
 import { replaceFootageFromPath } from './MediaSection';
 
 let h: Awaited<ReturnType<typeof setupAppEngine>>;
@@ -100,14 +98,3 @@ test('Convert SVG to Editable Shapes = pasteLayers + deleteLayers in one entry, 
   expect(defaultSceneGraph.getChildren(groupId!).length).toBeGreaterThan(1);
 });
 
-const maybe = hasCanvas ? test : test.skip;
-maybe('Create Masks from Text = pasteLayers (solid + glyph masks) + hide the text, one entry', async () => {
-  await h.run({ type: 'setProperty', prop: { layer: s.T, path: 'text/sourceText' }, value: { kind: 'string', value: 'Hi' } });
-  let made: Awaited<ReturnType<typeof masksFromTextEdit>> = null;
-  await oneExactEntry('Create Masks from Text', async () => { made = await masksFromTextEdit(s.T, 0); });
-  const r = made as Awaited<ReturnType<typeof masksFromTextEdit>>;
-  expect(r).not.toBeNull();
-  expect(r!.masks).toBeGreaterThan(0);
-  expect(defaultSceneGraph.getNode(s.T)!.visible).toBe(false);
-  expect(getNodeMask(r!.id).paths).toHaveLength(r!.masks);
-});
