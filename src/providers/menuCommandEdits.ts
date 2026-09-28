@@ -5,14 +5,11 @@
  *
  *   exponentialScaleEdit   Exponential Scale — `setKeyframes` on Scale
  *   expressionBakeEdit     Convert Expression to Keyframes — the API command
- *   audioSliderNullEdit    Convert Audio to Keyframes — the AE "Audio
- *                          Amplitude" null, built off-document, one pasteLayers
  */
 
 import type { Command, Keyframe as ApiKeyframe, PropRef } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { edit } from '@core/engine/uiEdits';
-import { insertBuiltLayers } from '@core/engine/offDocument';
 import { compOfLayer, isLayer } from '@core/engine/doc';
 import { compFps } from '@core/engine/time';
 import { catalogFor, keyTimeToFlicks, numbersOf, readKeys, vectorValue } from '@core/engine/props';
@@ -23,8 +20,6 @@ import {
   type ExpScaleResult,
 } from '@core/animation/exponentialScale';
 import type { BakeResult } from '@core/animation/convertExpressionToKeyframes';
-import { applyAudioSliderNull, ensureAudioBuffer, type AudioSliderNullResult } from '@core/audio/audioKeyframes';
-import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
 import { documentMirror } from '@stores/documentMirror';
 import { trackRef } from '@core/mirror/selection';
 import { membersOf, numbersOfValue } from '@core/mirror/trackIndex';
@@ -173,29 +168,4 @@ export async function expressionBakeEdit(nodeId: string): Promise<BakeResult> {
     if (n > 0) written.set(tracks[i]!, n);
   });
   return { written, refusal: written.size === 0 ? 'empty-range' : null };
-}
-
-// ── Convert Audio to Keyframes ────────────────────────────────────────
-
-/**
- * AE's Convert Audio to Keyframes: an "Audio Amplitude" null carrying Both
- * Channels / Left / Right slider controls keyed from the audio's envelope
- * (`applyAudioSliderNull`), BUILT off-document into the active composition and
- * sent as ONE `pasteLayers` — the null, its controls and their keys are all
- * part of the new layer. The null is selected.
- */
-export async function audioSliderNullEdit(audioId: string): Promise<AudioSliderNullResult> {
-  const buffer = await ensureAudioBuffer(audioId);
-  if (!buffer) return { nodeId: null, written: new Map() };
-  // The null goes where the legacy helper put it: the active composition (a
-  // group open in its own tab is a layer of its composition).
-  const comp = activeInsertTarget()?.comp;
-  if (!comp) return { nodeId: null, written: new Map() };
-  let made: AudioSliderNullResult | null = null;
-  const ids = await insertBuiltLayers('Convert audio to keyframes', comp, () => {
-    made = applyAudioSliderNull(audioId, buffer);
-  });
-  const r = made as AudioSliderNullResult | null;
-  if (!ids || ids.length === 0 || !r) return { nodeId: null, written: new Map() };
-  return { nodeId: ids[0]!, written: r.written };
 }

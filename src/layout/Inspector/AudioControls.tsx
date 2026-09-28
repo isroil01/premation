@@ -36,7 +36,6 @@ import { audioEngine } from '@core/audio/AudioEngine';
 import { AudioEffectsSection } from './AudioEffectsSection';
 import { previewEngineJob } from '@core/engine/engineJobs';
 import {
-  ensureAudioBuffer,
   AUDIO_AMPLITUDE_PROP,
   DEFAULT_AUDIO_KEYFRAME_OPTIONS,
   type AudioKeyframeOptions,
@@ -104,11 +103,11 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
   const assetId = isAudio ? layer?.source ?? '' : '';
 
   // Kick off decoding for this asset (idempotent) so the waveform appears.
-  // Engine-side until E2: the decode is the editor's audio engine's (it
-  // resolves the playable media URL, which the API does not carry).
   useEffect(() => {
-    if (assetId) void ensureAudioBuffer(nodeId);
-  }, [assetId, nodeId]);
+    // The item's playable media (`ItemInfo.mediaUrl`), decoded for the waveform display only.
+    const url = assetId ? documentMirror().item(assetId)?.mediaUrl : undefined;
+    if (assetId && url) void audioEngine.load(assetId, url);
+  }, [assetId]);
 
   const wave = assetId ? audioEngine.getWaveform(assetId) : undefined;
   const path = useMemo(() => (wave ? waveformPath(wave.peaks, WAVE_W, WAVE_H) : ''), [wave]);
