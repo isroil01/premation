@@ -3,6 +3,37 @@
 Newest first. Each entry is what a person opening the app after an update
 would want to know; the engine-level detail is in `ROADMAP.md`.
 
+## 0.9.0 — 2026-09-30
+
+A new engine. Everything you see, play and export is now drawn by a native
+C++ engine running in its own process, with the editor as its interface.
+
+- **Much faster where it used to hurt.** The viewport renders every benchmark
+  composition faster than before and holds full frame rate on all of them —
+  the layer-styles composition went from 19 fps to a steady 30. Layer styles
+  themselves moved to the GPU: an Inner Shadow on a 1080p layer went from about
+  a second per frame to 3 ms, Stroke from 0.8 s to about 1 ms. All 393 effect
+  benchmarks now run above 24 fps, and faded or mask-scoped effects stay on the
+  GPU instead of falling back to the CPU.
+- **Cached playback holds full rate** on heavy compositions once the frames
+  are cached.
+- **Export runs in the engine.** The Render Queue, Export and the command line
+  all render through the same engine, including 16-bit ProRes 4444 with alpha.
+- **Crash-safe by design.** If the engine stops, the editor keeps running: it
+  restarts the engine and replays your work; if it keeps failing, you are
+  offered a recovery copy of your project instead of losing it.
+- **More of After Effects' Layer menu.** Create Shapes / Masks from Text use the
+  font's own outlines, Convert to Editable Shapes and Editable Text for SVG,
+  Separate layers, and Uncompose a precomp.
+- **Pop-out viewports** each render live from the engine, alongside the main
+  viewport.
+- **Removed:** the JavaScript/WGSL plugin system. Projects that used such
+  plugins still open; their plugin effects and layers are removed as one
+  undoable step, with a notice. Native (C++ SDK) plugins are unaffected. The
+  HDR10/HLG export presets are gone for now, and the command line's
+  `--captions`, `--data` and `--commands` options say so rather than running;
+  all three return in a later update.
+
 ## 0.8.5 — 2026-09-20
 
 Open an After Effects project, and a plugin publishing screen that is no
