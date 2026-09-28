@@ -570,7 +570,7 @@ std::optional<AlphaMeshGeometry> build_alpha_outline_geometry(double width, doub
     for (const std::int32_t i : tris) {
       if (remap[static_cast<std::size_t>(i)] < 0) remap[static_cast<std::size_t>(i)] = next++;
     }
-    if (static_cast<std::size_t>(next) > kMaxVertices) continue;
+    if (std::cmp_greater(next, kMaxVertices)) continue;
     AlphaMeshGeometry g;
     g.numVertices = static_cast<std::size_t>(next);
     g.vertices.assign(g.numVertices * 4, 0.0F);

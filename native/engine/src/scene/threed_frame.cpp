@@ -39,7 +39,7 @@ std::vector<double> model3d_for(const std::array<double, 16>& world3d, const RLa
   const double oy = -0.5 - (H > 0 ? l.anchorY / H : 0);
   const motion::xf::Mat4 bridge = {W, 0, 0, 0, 0, H, 0, 0, 0, 0, 1, 0, ox * W, oy * H, 0, 1};
   motion::xf::Mat4 w{};
-  std::copy(world3d.begin(), world3d.end(), w.begin());
+  std::ranges::copy(world3d, w.begin());
   const motion::xf::Mat4 m = motion::xf::multiply(w, bridge);
   return {m.begin(), m.end()};
 }
@@ -221,8 +221,7 @@ void apply_three_d(const RLayer& l, const Mat3& parent, api::Renderable& r, cons
   }
 }
 
-api::Renderable light_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity) {
-  const LightWash& lw = *l.light;
+api::Renderable light_to_renderable(const RLayer& l, const LightWash& lw, const Mat3& parent, double parentOpacity) {
   const double size = std::max(1.0, lw.screenRadius) * 2;
   const double aim = (l.rotation * std::numbers::pi) / 180;
   const double c = motion::js::cos(aim);

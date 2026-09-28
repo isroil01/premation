@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <map>
+#include <numbers>
 #include <string>
 
 #include "eval.hpp"
@@ -144,7 +145,7 @@ Json flatten_mask_path(const Json& path, int perSegment) {
 Json resolve_layer_text_path(const doc::Node& n, const Values& a) {
   // resolveTextPath(node, a).
   const auto base = doc::read_text_path_config(n);
-  if (!base) return Json();
+  if (!base) return {};
   const auto flag = [&a](const char* param, bool fb) {
     const auto v = a.get(std::string("textPath.") + param);
     return v ? *v >= 0.5 : fb;
@@ -163,9 +164,9 @@ Json resolve_layer_text_path(const doc::Node& n, const Values& a) {
       break;
     }
   }
-  if (fx == nullptr) return Json();
+  if (fx == nullptr) return {};
   const Json& paths = fx->at("mask").at("paths");
-  if (!paths.is_array() || paths.arr().empty()) return Json();
+  if (!paths.is_array() || paths.arr().empty()) return {};
   const std::string& pid = base->at("pathId").str();
   const Json* mask = nullptr;
   if (pid.empty()) {
@@ -178,9 +179,9 @@ Json resolve_layer_text_path(const doc::Node& n, const Values& a) {
       }
     }
   }
-  if (mask == nullptr) return Json();
+  if (mask == nullptr) return {};
   Json flat = flatten_mask_path(*mask);
-  if (flat.at("pts").arr().size() < 2) return Json();
+  if (flat.at("pts").arr().size() < 2) return {};
   Json tp = Json::object();
   tp.set("points", flat.at("pts"));
   tp.set("closed", flat.at("closed"));
@@ -322,7 +323,7 @@ Json text_stroke_paint(const doc::Node& n, const Values& a) {
     const Json& p = c.props.at("strokePaint");
     const std::string type = p.at("type").is_string() ? p.at("type").str() : "";
     if (!p.is_object() || (type != "linear" && type != "radial") || !p.at("stops").is_array() || p.at("stops").arr().empty()) {
-      return Json();
+      return {};
     }
     Json out = p;
     if (type == "linear") {
@@ -337,7 +338,7 @@ Json text_stroke_paint(const doc::Node& n, const Values& a) {
     if (r) out.set("radius", Json::number(*r));
     return out;
   }
-  return Json();
+  return {};
 }
 
 namespace {
@@ -449,14 +450,14 @@ double text_raster_padding(const RLayer& l, double bakedSpread) {
                                                        !l.textExtras.at("anchorGrouping").str().empty()) ||
                                                       l.textExtras.at("groupingAlign").b());
     const double groupReach = std::max(l.width, l.height) / 2;
-    constexpr double kDeg = 3.14159265358979323846 / 180;
+    constexpr double kDeg = std::numbers::pi / 180;
     for (const Json& g : l.glyphs.arr()) {
       const auto n = [&g](const char* k) { return g.at(k).is_number() ? g.at(k).num() : 0.0; };
       double d = std::max(std::fabs(n("dx")), std::fabs(n("dy")) + std::fabs(n("lineSpacing")));
       const double grow = std::max(n("scale"), n("scaleY")) - 1;
       if (grow > 0) d += (grow * em) / 2;
       d += std::max(n("blur"), n("blurY")) * 2 + n("strokeWidth") / 2;
-      if (n("skew") != 0) d += std::fabs(std::tan((n("skew") * 3.14159265358979323846) / 180)) * em * 0.5;
+      if (n("skew") != 0) d += std::fabs(std::tan((n("skew") * std::numbers::pi) / 180)) * em * 0.5;
       if (n("anchorX") != 0 || n("anchorY") != 0) d += std::max(std::fabs(n("anchorX")), std::fabs(n("anchorY")));
       if (grouped && n("rotation") != 0) d += std::fabs(std::sin(n("rotation") * kDeg)) * groupReach;
       glyph = std::max(glyph, d);
@@ -620,9 +621,12 @@ UnitMap unit_positions(const std::vector<std::string>& chars, std::string_view b
 double hash01(double a, double b) {
   double n = (static_cast<double>(motion::js::to_int32(a)) + 1) * 374761393.0 +
              (static_cast<double>(motion::js::to_int32(b)) + 1) * 668265263.0;
-  n = static_cast<double>(motion::js::to_int32(n) ^ static_cast<std::int32_t>(motion::js::to_uint32(n) >> 13U)) * 1274126177.0;
-  const std::int32_t x = motion::js::to_int32(n) ^ static_cast<std::int32_t>(motion::js::to_uint32(n) >> 16U);
-  return static_cast<double>(static_cast<std::uint32_t>(x)) / 4294967296.0;
+  // `^` works on the 32-bit patterns, where ToInt32 and ToUint32 agree: XOR the
+  // unsigned patterns and reinterpret (modular since C++20) where the JS reads a signed result.
+  std::uint32_t u = motion::js::to_uint32(n);
+  n = static_cast<double>(static_cast<std::int32_t>(u ^ (u >> 13U))) * 1274126177.0;
+  u = motion::js::to_uint32(n);
+  return static_cast<double>(u ^ (u >> 16U)) / 4294967296.0;
 }
 
 /// orderPermutation(count, seed): Fisher-Yates on hash01.

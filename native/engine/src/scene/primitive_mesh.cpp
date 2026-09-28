@@ -1,10 +1,13 @@
 #include "primitive_mesh.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <memory>
+#include <numbers>
 
 #include "jsmath.hpp"
 
@@ -13,8 +16,8 @@ namespace {
 
 namespace mjs = motion::js;
 
-constexpr double kTau = 3.141592653589793 * 2;  // Math.PI * 2
-constexpr double kPi = 3.141592653589793;
+constexpr double kTau = std::numbers::pi * 2;  // Math.PI * 2
+constexpr double kPi = std::numbers::pi;
 
 /// segs(n, min, max = 512).
 double segs(double n, double minV, double maxV = 512) {
@@ -211,9 +214,9 @@ PrimitiveGeometry box_mesh(double width, double height, double depth) {
   }};
   constexpr std::array<std::array<double, 2>, 4> kCornerUv{{{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
   PrimitiveGeometry g;
-  g.positions.resize(24 * 3);
-  g.normals.resize(24 * 3);
-  g.uvs.resize(24 * 2);
+  g.positions.resize(std::size_t{24} * 3);
+  g.normals.resize(std::size_t{24} * 3);
+  g.uvs.resize(std::size_t{24} * 2);
   g.indices.resize(36);
   for (std::uint32_t fi = 0; fi < 6; ++fi) {
     const Face& f = faces.at(fi);
@@ -230,7 +233,7 @@ PrimitiveGeometry box_mesh(double width, double height, double depth) {
       g.uvs[i * 2 + 1] = f32(kCornerUv.at(c)[1]);
     }
     const std::array<std::uint32_t, 6> tri{base, base + 1, base + 2, base, base + 2, base + 3};
-    std::copy(tri.begin(), tri.end(), g.indices.begin() + static_cast<std::ptrdiff_t>(fi * 6));
+    std::ranges::copy(tri, g.indices.begin() + (static_cast<std::ptrdiff_t>(fi) * 6));
   }
   return g;
 }
@@ -292,7 +295,7 @@ std::optional<std::vector<double>> fields(std::string_view rest) {
     if (part.empty()) return std::nullopt;
     char* end = nullptr;
     const double v = std::strtod(part.c_str(), &end);
-    if (end != part.c_str() + part.size()) return std::nullopt;
+    if (end != std::to_address(part.cend())) return std::nullopt;
     out.push_back(v);
     if (cut == std::string_view::npos) break;
     rest.remove_prefix(cut + 1);
@@ -362,7 +365,7 @@ void primitive_mesh_to_api(const PrimitiveMesh& m, api::RenderExtrudedMesh& out)
     out.indices.resize(m.indices.size() * sizeof(std::uint16_t));
     for (std::size_t i = 0; i < m.indices.size(); ++i) {
       const auto v = static_cast<std::uint16_t>(m.indices[i]);
-      std::memcpy(out.indices.data() + (i * 2), &v, 2);
+      std::memcpy(&out.indices[i * 2], &v, 2);
     }
   } else {
     out.index_format = api::RenderIndexFormat::uint32;

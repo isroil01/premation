@@ -144,7 +144,7 @@ V3 rotate_y(V3 d, double deg) {
 }
 
 std::string to_hex_color(const std::array<double, 3>& rgb, double max) {
-  static constexpr char kHex[] = "0123456789abcdef";
+  constexpr std::string_view kHex = "0123456789abcdef";
   std::string out = "#";
   for (const double v : rgb) {
     const double q = motion::js::round(std::max(0.0, std::min(1.0, max > 1e-6 ? v / max : 0)) * 255);
@@ -452,10 +452,11 @@ std::string hash_env_pixels(const EnvPixels& px) {
   h = (h ^ static_cast<std::uint32_t>(px.height)) * 0x01000193U;
   constexpr std::string_view kDigits = "0123456789abcdefghijklmnopqrstuvwxyz";
   std::string s;
-  do {
+  while (true) {  // at least one digit (h may be 0)
     s.insert(s.begin(), kDigits[h % 36U]);
     h /= 36U;
-  } while (h != 0);
+    if (h == 0) break;
+  }
   return s;
 }
 

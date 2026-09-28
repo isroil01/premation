@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 namespace premation::scene::exr {
 namespace {
@@ -108,8 +109,8 @@ float read_f32(std::span<const std::uint8_t> b, std::size_t off) noexcept {
 float half_to_float(std::uint16_t h) noexcept {
   // exr.ts halfToFloat, in float64 then stored (a Float32Array element).
   const double sign = (h & 0x8000U) != 0 ? -1.0 : 1.0;
-  const int exp = (h >> 10U) & 0x1F;
-  const int frac = h & 0x3FF;
+  const auto exp = static_cast<int>((unsigned{h} >> 10U) & 0x1FU);
+  const auto frac = static_cast<int>(unsigned{h} & 0x3FFU);
   if (exp == 0) return static_cast<float>(sign * frac * std::ldexp(1.0, -24));
   if (exp == 31) return frac != 0 ? std::numeric_limits<float>::quiet_NaN() : static_cast<float>(sign * std::numeric_limits<double>::infinity());
   return static_cast<float>(sign * (1 + frac / 1024.0) * std::ldexp(1.0, exp - 15));
@@ -118,7 +119,7 @@ float half_to_float(std::uint16_t h) noexcept {
 std::vector<std::uint8_t> predictor_decode(std::span<const std::uint8_t> data) {
   const std::size_t n = data.size();
   std::vector<std::uint8_t> tmp(data.begin(), data.end());
-  for (std::size_t i = 1; i < n; ++i) tmp[i] = static_cast<std::uint8_t>((tmp[i - 1] + tmp[i] - 128 + 256) & 0xFF);
+  for (std::size_t i = 1; i < n; ++i) tmp[i] = static_cast<std::uint8_t>(static_cast<unsigned>(tmp[i - 1] + tmp[i] - 128 + 256) & 0xFFU);
   std::vector<std::uint8_t> out(n, 0);
   const std::size_t half = (n + 1) / 2;
   for (std::size_t i = 0, j = 0; i < half && j < n; ++i, j += 2) out[j] = tmp[i];
@@ -132,16 +133,16 @@ std::optional<Image> decode(std::span<const std::uint8_t> file, const Inflate& i
     error = "Not an OpenEXR file.";
     return std::nullopt;
   }
-  const std::int32_t version = r.i32();
-  if ((version & 0x200) != 0) {
+  const auto version = static_cast<std::uint32_t>(r.i32());  // a flags word
+  if ((version & 0x200U) != 0) {
     error = "Tiled EXR is not supported — re-export as scanline.";
     return std::nullopt;
   }
-  if ((version & 0x800) != 0) {
+  if ((version & 0x800U) != 0) {
     error = "Deep EXR is not supported.";
     return std::nullopt;
   }
-  if ((version & 0x1000) != 0) {
+  if ((version & 0x1000U) != 0) {
     error = "Multi-part EXR is not supported — export a single part.";
     return std::nullopt;
   }
@@ -250,7 +251,7 @@ std::optional<Image> decode(std::span<const std::uint8_t> file, const Inflate& i
       return std::nullopt;
     }
     std::span<const std::uint8_t> raw;
-    if (compression == 0 || static_cast<std::size_t>(packedSize) == expected) {
+    if (compression == 0 || std::cmp_equal(packedSize, expected)) {
       // NONE, or a block the writer stored raw because compression did not help.
       if (packed.size() < expected) {
         error = "EXR chunk is truncated.";
@@ -278,7 +279,7 @@ std::optional<Image> decode(std::span<const std::uint8_t> file, const Inflate& i
         const int pt = channels[ci].pixelType;
         for (std::size_t x = 0; x < w; ++x) {
           if (pt == 1) {
-            const auto hv = static_cast<std::uint16_t>(raw[off] | (raw[off + 1] << 8U));
+            const auto hv = static_cast<std::uint16_t>(unsigned{raw[off]} | (unsigned{raw[off + 1]} << 8U));
             plane[base + x] = half_to_float(hv);
             off += 2;
           } else if (pt == 2) {
@@ -312,7 +313,7 @@ std::optional<FloatRgba> to_float_rgba(const Image& img, double exposure) {
     const std::string suffix = "." + name;
     for (const Channel& c : img.channels) {
       const std::string l = lower(c.name);
-      if (l.size() >= suffix.size() && l.compare(l.size() - suffix.size(), suffix.size(), suffix) == 0) return &c.data;
+      if (l.ends_with(suffix)) return &c.data;
     }
     return nullptr;
   };

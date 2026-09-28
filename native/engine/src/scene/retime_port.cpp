@@ -41,7 +41,7 @@ std::optional<SpeedTable> table_for(const RetimeReader& r, std::string_view node
   const std::vector<doc::Key>* track = doc::anim_track(r.d, node, kSpeedProp);
   if (track == nullptr || track->empty()) return std::nullopt;
   std::vector<doc::Key> sorted = *track;
-  std::stable_sort(sorted.begin(), sorted.end(), [](const doc::Key& a, const doc::Key& b) { return a.t < b.t; });
+  std::ranges::stable_sort(sorted, [](const doc::Key& a, const doc::Key& b) { return a.t < b.t; });
   SpeedTable table;
   double cum = 0;
   for (std::size_t i = 0; i + 1 < sorted.size(); ++i) {

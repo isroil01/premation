@@ -508,7 +508,9 @@ class CanvasMeasurer final : public TextMeasurer {
       bool first = true;
       for (std::size_t w = 1; w < words.size(); ++w) {
         const std::string& word = words[w];
-        const std::string candidate = line + " " + word;
+        std::string candidate = line;
+        candidate += ' ';
+        candidate += word;
         const double limit = inner - (first ? s.firstLineIndent.value_or(0) : 0);
         if (!raster::is_js_blank(line) && !word.empty() && advance(candidate) > limit) {
           out.push_back(line);

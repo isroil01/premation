@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 
@@ -22,13 +23,16 @@ constexpr double kCcwErrBoundA = (3 + 16 * kEpsilonRp) * kEpsilonRp;
 constexpr double kCcwErrBoundB = (2 + 12 * kEpsilonRp) * kEpsilonRp;
 constexpr double kCcwErrBoundC = (9 + 64 * kEpsilonRp) * kEpsilonRp * kEpsilonRp;
 
-/// fast_expansion_sum_zeroelim.
-int rp_sum(int elen, const double* e, int flen, const double* f, double* h) {
+/// fast_expansion_sum_zeroelim: e + f into h (h.size() >= e.size() + f.size());
+/// returns h's used length.
+std::size_t rp_sum(std::span<const double> e, std::span<const double> f, std::span<double> h) {
+  const std::size_t elen = e.size();
+  const std::size_t flen = f.size();
   double q = 0, qnew = 0, hh = 0, bvirt = 0;
   double enow = e[0];
   double fnow = f[0];
-  int eindex = 0;
-  int findex = 0;
+  std::size_t eindex = 0;
+  std::size_t findex = 0;
   if ((fnow > enow) == (fnow > -enow)) {
     q = enow;
     enow = ++eindex < elen ? e[eindex] : 0;
@@ -36,7 +40,7 @@ int rp_sum(int elen, const double* e, int flen, const double* f, double* h) {
     q = fnow;
     fnow = ++findex < flen ? f[findex] : 0;
   }
-  int hindex = 0;
+  std::size_t hindex = 0;
   if (eindex < elen && findex < flen) {
     if ((fnow > enow) == (fnow > -enow)) {
       qnew = enow + q;
@@ -85,9 +89,9 @@ int rp_sum(int elen, const double* e, int flen, const double* f, double* h) {
   return hindex;
 }
 
-double rp_estimate(int elen, const double* e) {
+double rp_estimate(std::span<const double> e) {
   double q = e[0];
-  for (int i = 1; i < elen; ++i) q += e[i];
+  for (std::size_t i = 1; i < e.size(); ++i) q += e[i];
   return q;
 }
 
@@ -132,7 +136,7 @@ double orient2dadapt(double ax, double ay, double bx, double by, double cx, doub
   const double bcy = by - cy;
   std::array<double, 4> b{};
   two_two_diff(acx, bcy, acy, bcx, b);
-  double det = rp_estimate(4, b.data());
+  double det = rp_estimate(b);
   double errbound = kCcwErrBoundB * detsum;
   if (det >= errbound || -det >= errbound) return det;
   double bvirt = ax - acx;
@@ -152,12 +156,12 @@ double orient2dadapt(double ax, double ay, double bx, double by, double cx, doub
   std::array<double, 12> c2{};
   std::array<double, 16> d{};
   two_two_diff(acxtail, bcy, acytail, bcx, u);
-  const int c1len = rp_sum(4, b.data(), 4, u.data(), c1.data());
+  const std::size_t c1len = rp_sum(b, u, c1);
   two_two_diff(acx, bcytail, acy, bcxtail, u);
-  const int c2len = rp_sum(c1len, c1.data(), 4, u.data(), c2.data());
+  const std::size_t c2len = rp_sum(std::span(c1).first(c1len), u, c2);
   two_two_diff(acxtail, bcytail, acytail, bcxtail, u);
-  const int dlen = rp_sum(c2len, c2.data(), 4, u.data(), d.data());
-  return d[static_cast<std::size_t>(dlen - 1)];
+  const std::size_t dlen = rp_sum(std::span(c2).first(c2len), u, d);
+  return d[dlen - 1];
 }
 
 }  // namespace
@@ -549,7 +553,7 @@ int compare_points(const Pt& a, const Pt& b) {
 /// V8's Array.prototype.sort for the short arrays the ring walk sorts: the run
 /// count (a descending run reversed) then binary insertion — TimSort below 64.
 template <typename T, typename C>
-void v8_sort(std::vector<T>& work, C&& cmp) {
+void v8_sort(std::vector<T>& work, const C& cmp) {
   const std::size_t n = work.size();
   if (n < 2) return;
   if (n >= 64) {

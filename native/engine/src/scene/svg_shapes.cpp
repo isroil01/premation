@@ -161,9 +161,12 @@ class Walker {
     shape(i, m, op, vp);
   }
 
-  std::set<std::string> notes_;
+  /// What the walk could not carry (Convert to Editable Shapes' notes).
+  void note(std::string what) { notes_.insert(std::move(what)); }
+  [[nodiscard]] const std::set<std::string>& notes() const noexcept { return notes_; }
 
  private:
+  std::set<std::string> notes_;
   [[nodiscard]] double len(int i, std::string_view attr, double def, double ref) const {
     const std::string* v = doc_.nodes[static_cast<std::size_t>(i)].attr(attr);
     if (v == nullptr) return def;
@@ -179,7 +182,7 @@ class Walker {
   }
 
   /// A shape element's segments in user units.
-  std::vector<sv::PathSeg> segments(int i, const Viewport& vp) const {
+  [[nodiscard]] std::vector<sv::PathSeg> segments(int i, const Viewport& vp) const {
     const sv::Node& n = doc_.nodes[static_cast<std::size_t>(i)];
     std::vector<sv::PathSeg> out;
     const auto f = [](double v) { return static_cast<float>(v); };
@@ -604,9 +607,9 @@ std::optional<doc::SvgShapes> svg_document_shapes(std::string_view markup, const
   const double rootOpacity = styles[static_cast<std::size_t>(d.root)].opacity;
   for (const int c : root.children) walker.walk(c, m, rootOpacity, vp);
   if (markup.find("@keyframes") != std::string_view::npos || markup.find("animation") != std::string_view::npos) {
-    walker.notes_.insert("CSS animation — the editor's Convert to Editable Shapes keys it");
+    walker.note("CSS animation — the editor's Convert to Editable Shapes keys it");
   }
-  out.notCarried.assign(walker.notes_.begin(), walker.notes_.end());
+  out.notCarried.assign(walker.notes().begin(), walker.notes().end());
   return out;
 }
 

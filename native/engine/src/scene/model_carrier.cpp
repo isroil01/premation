@@ -15,7 +15,7 @@ void model_entry_to_api(const gltf::Entry& e, api::RenderExtrudedMesh& out) {
     out.indices.resize(e.indices.size() * sizeof(std::uint16_t));
     for (std::size_t i = 0; i < e.indices.size(); ++i) {
       const auto v = static_cast<std::uint16_t>(e.indices[i]);
-      std::memcpy(out.indices.data() + (i * 2), &v, 2);
+      std::memcpy(&out.indices[i * 2], &v, 2);
     }
   } else {
     out.index_format = api::RenderIndexFormat::uint32;

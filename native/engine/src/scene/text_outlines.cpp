@@ -72,7 +72,7 @@ std::string font_variations_of(const doc::Node& n, const MeasuredStyle& s,
   std::string out;
   const auto part = [&out](std::string_view tag, double v) {
     if (!out.empty()) out += ", ";
-    out += "'";
+    out += '\'';
     out += tag;
     out += "' ";
     out += css_number(v);

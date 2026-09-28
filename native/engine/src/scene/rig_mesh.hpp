@@ -107,18 +107,25 @@ struct RigIkOut {
 class RigModel {
  public:
   struct Impl;
-  explicit RigModel(std::unique_ptr<Impl> impl);
+  /// The resolved pose the overlays and getRigPose read.
+  struct Pose {
+    std::vector<RigPinOut> pins;
+    std::vector<RigBoneOut> bones;
+    std::vector<RigIkOut> ik;
+    /// What renders: the puppet solve through the skeleton (x, y, u, v per vertex).
+    std::vector<float> vertices;
+  };
+  RigModel(std::unique_ptr<Impl> impl, Pose pose);
   RigModel(RigModel&&) noexcept;
   RigModel& operator=(RigModel&&) noexcept;
   RigModel(const RigModel&) = delete;
   RigModel& operator=(const RigModel&) = delete;
   ~RigModel();
 
-  std::vector<RigPinOut> pins;
-  std::vector<RigBoneOut> bones;
-  std::vector<RigIkOut> ik;
-  /// What renders: the puppet solve through the skeleton (x, y, u, v per vertex).
-  std::vector<float> vertices;
+  [[nodiscard]] const std::vector<RigPinOut>& pins() const noexcept { return pose_.pins; }
+  [[nodiscard]] const std::vector<RigBoneOut>& bones() const noexcept { return pose_.bones; }
+  [[nodiscard]] const std::vector<RigIkOut>& ik() const noexcept { return pose_.ik; }
+  [[nodiscard]] const std::vector<float>& vertices() const noexcept { return pose_.vertices; }
 
   /// The rest mesh (x, y, u, v) and its triangles.
   [[nodiscard]] const std::vector<float>& rest() const noexcept;
@@ -138,6 +145,7 @@ class RigModel {
 
  private:
   std::unique_ptr<Impl> impl_;
+  Pose pose_;
 };
 
 /// The model for `in` (fx, the layer's box, pad, path, coverage; `rigT` the keyframe-axis time).
