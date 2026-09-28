@@ -106,7 +106,7 @@ describe('D5 engine viewport frame time', () => {
     const native = await startNativeEngine({
       extraArgs: ['--frame-cache-mb', '2048', '--log-level', 'warn'],
     });
-    const client = new ProcessEngineClient(native.bridge, { fallback: () => { throw new Error('engine fell back'); } });
+    const client = new ProcessEngineClient(native.bridge);
     const rows = [];
     try {
       for (const spec of [
@@ -135,7 +135,7 @@ describe('D5 engine viewport frame time', () => {
     const native = await startNativeEngine({
       extraArgs: ['--frame-cache-mb', '2048', '--log-level', 'warn'],
     });
-    const client = new ProcessEngineClient(native.bridge, { fallback: () => { throw new Error('engine fell back'); } });
+    const client = new ProcessEngineClient(native.bridge);
     const files = ['bench.json', 'shapes8.json', 'shapes32.json'].map((name) =>
       resolve('native/build/cmp', name));
     try {

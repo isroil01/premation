@@ -292,10 +292,11 @@ export async function runCliTask(task: CliTask): Promise<number> {
     print.line(`Transcribing ${path.basename(task.request.projectPath)} → ${task.request.outPath}`);
   }
 
-  // The engine first (PREMATION_EXPORT_ENGINE=1): `premation-engine --export`
-  // renders the job with no window; anything it cannot take falls through to
-  // the hidden editor window below (cliEngineRender.ts).
-  if (task.request.kind === 'render' && process.env.PREMATION_EXPORT_ENGINE === '1') {
+  // The engine renders it: `premation-engine --export`, no window. Only the
+  // CLI features the engine path does not have yet (`needsEditor`: --aspect,
+  // --captions, --commands, --data, a png still, HDR) go to the hidden editor
+  // window below (cliEngineRender.ts).
+  if (task.request.kind === 'render') {
     const job = task.request.job;
     const t0 = Date.now();
     const viaEngine = await runCliEngineRender(job, {
@@ -336,7 +337,7 @@ export async function runCliTask(task: CliTask): Promise<number> {
       print.event({ event: 'error', message: viaEngine.message });
       return 1;
     }
-    print.event({ event: 'engine-fallback', message: `Rendering in the editor: ${viaEngine.reason}` });
+    print.event({ event: 'editor-render', message: `Rendering in the editor: ${viaEngine.reason}` });
   }
 
   const started = Date.now();

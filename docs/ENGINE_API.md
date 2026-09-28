@@ -1167,12 +1167,14 @@ before/after code: **docs/B3_PATTERNS.md**.
 
 `ProcessEngineClient` (`packages/engine-api/src/process.ts`) is the
 `EngineClient` over the preload's `motionEditor.engine` bridge → Electron main
-(`electron/engineHost.ts`, `EngineSupervisor`) → `premation-engine`. It is
-selected by `PREMATION_ENGINE=process` (or `{ "backend": "process" }` in
-`<userData>/engine.json`); default OFF. It applies the §8.2 revision rule,
-records the §12 command log, replays it into a restarted engine before any new
-request (ids are deterministic, so the same requests mint the same ids), and on
-the supervisor's `fallback` switches to the TypeScript engine with one notice.
+(`electron/engineHost.ts`, `EngineSupervisor`) → `premation-engine`. Since
+phase 4 of `docs/TS_ENGINE_REMOVAL.md` it is the app's only backend (the
+`PREMATION_ENGINE` / `engine.json` selection and the TypeScript fallback are
+gone). It applies the §8.2 revision rule, records the §12 command log (unless
+main keeps it, `hostCommandLog`), replays it into a restarted engine before any
+new request (ids are deterministic, so the same requests mint the same ids),
+and on the supervisor's `unavailable` answers `busy` with one notice until a
+retry (main's "Try Again") restarts the engine.
 
 **The cross-engine replay** (`src/core/engine/__tests__/crossEngine.test.ts`)
 records every corpus session on the TS engine and replays the log in lockstep

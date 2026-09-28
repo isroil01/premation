@@ -5,11 +5,12 @@
  *
  * The C++ engine runs the analysis jobs itself (tracking, stabilize, scene
  * detection, auto-trace, object matte, audio analysis / ducking / gate,
- * proxies, renders); the TypeScript engine answers `startJob` with
- * `unsupported`. So every caller asks here first and falls back to its page
- * implementation when this resolves `null` — with the engine as owner the job
- * runs in the engine, with the TypeScript engine as owner nothing changes.
- * The fallback goes when the TypeScript engine does (docs/TS_ENGINE_REMOVAL.md).
+ * proxies, renders, transcription, auto-reframe). It is the only engine
+ * (docs/TS_ENGINE_REMOVAL.md): a `null` here (`unsupported`) now only comes
+ * from the jest harness's LocalEngine, and callers report it with
+ * {@link requireEngineJob} — there is no page implementation to fall back to.
+ * (Phase 4 progress: the callers under src/layout and src/core/workspace still
+ * carry their page paths until the UI read migration there lands.)
  *
  * A job with `apply: true` writes its result as ONE undoable history entry
  * (origin engine) when it finishes; with `apply: false` the result is held
@@ -108,6 +109,15 @@ export async function startEngineJob<R = unknown>(spec: JobSpec, opts: StartEngi
     cancel: () => { void client.execute({ type: 'cancelJob', job: jobId }); },
     done,
   };
+}
+
+/**
+ * A job's handle / outcome, or the user-facing error when the engine does not
+ * run `what` (the jest harness; the app's engine runs every job kind).
+ */
+export function requireEngineJob<T>(value: T | null, what: string): T {
+  if (value === null) throw new Error(`${what} runs in the engine, and this engine does not run it.`);
+  return value;
 }
 
 /** Apply a finished job's held result (`apply: false`) as one undoable entry. */

@@ -22,7 +22,6 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import type { EffectDef } from '@core/effects/effects';
-import { pluginEffectsCanRender, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
 import { addEffectAndReveal, revealEffectsInProperties } from './revealEffectControls';
 import { useAllEffectDefs, useEffectFavorites } from './effectCatalog';
 import {
@@ -133,18 +132,6 @@ const EFFECT_CATEGORY_ORDER: readonly string[] = [
   'Blur & Sharpen', 'Color Correction', 'Stylize', 'Generate',
   'Shape',
   'Distort', 'Perspective', 'Channel', 'Keying', 'Time', 'Transition',
-  /*
-    Last, and its OWN folder rather than sorted into the others by guesswork.
-
-    Someone looking for what a plugin added knows it came from a plugin.
-    Scattering them through folders organised by what an effect DOES would make
-    them findable only by remembering the name — and two plugins may both ship
-    a "Glow", which is why the label carries the plugin's name too.
-
-    Empty for almost everyone; `browserFolders` drops empty groups, so the
-    folder simply does not appear until something is installed.
-  */
-  PLUGIN_EFFECT_CATEGORY,
 ];
 
 /**
@@ -159,7 +146,6 @@ const EFFECT_CATEGORY_ICON: Record<string, IconName> = {
   'Blur & Sharpen': 'blur',
   'Color Correction': 'palette',
   Stylize: 'brush',
-  [PLUGIN_EFFECT_CATEGORY]: 'plugin',
   Generate: 'gradient',
   Shape: 'shape',
   Distort: 'waves',
@@ -277,12 +263,8 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
     const groups: Record<string, typeof browserDefs> = {};
     for (const cat of EFFECT_CATEGORY_ORDER) groups[cat] = [];
     browserDefs.forEach((d) => {
-      // A plugin effect's type is namespaced and so is absent from the
-      // built-in `Record`, which would otherwise file it under `undefined` —
-      // a group `EFFECT_CATEGORY_ORDER` never renders, so the effect would be
-      // installed, listed by `pluginEffectDefs`, and invisible.
-      const cat = EFFECT_CATEGORY[d.type] ?? PLUGIN_EFFECT_CATEGORY;
-      (groups[cat] ??= []).push(d);
+      const cat = EFFECT_CATEGORY[d.type];
+      if (cat) (groups[cat] ??= []).push(d);
     });
     return groups;
   }, [browserDefs]);
@@ -317,7 +299,6 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
     });
   }
   browserFolders.forEach(([cat, items], index) => {
-    const pluginNoGpu = cat === PLUGIN_EFFECT_CATEGORY && !pluginEffectsCanRender();
     groups.push({
       id: cat,
       label: cat,
@@ -327,7 +308,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
         kind: 'effect' as const,
         id: d.type,
         def: d,
-        gpuTag: pluginNoGpu ? ('no-webgpu' as const) : d.gpuOnly ? ('gpu' as const) : null,
+        gpuTag: d.gpuOnly ? ('gpu' as const) : null,
       })),
     });
   });

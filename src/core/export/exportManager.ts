@@ -52,7 +52,6 @@ import {
   type VideoFormat,
   type VideoSinkResult,
 } from './videoSink';
-import { isPluginFormat, pluginExporters } from './pluginExporters';
 import type { ExportChapter } from './chapters';
 import type { VideoEncoderId } from './rawPipe';
 
@@ -1502,14 +1501,6 @@ async function runExportFormat(opts: ExportOptions): Promise<ExportResult> {
     case 'hlg':
       return exportVideoFormat(opts, opts.format);
     default:
-      /*
-        A plugin format takes the SAME video path — render every frame, feed a
-        sink, take a result. Only the sink differs, and `createVideoSink` picks
-        it. Routing it here rather than giving plugin exports their own pipeline
-        is what keeps them honest: they get the identical frames, the identical
-        colour handling and the identical save flow as a built-in format.
-      */
-      if (isPluginFormat(opts.format)) return exportVideoFormat(opts, opts.format);
       throw new Error(`Unsupported export format "${String(opts.format)}".`);
   }
 }
@@ -1554,29 +1545,7 @@ export const EXPORT_PRESETS: ExportPreset[] = [
 /** Presets this build can actually produce. */
 export function availableExportPresets(): ExportPreset[] {
   const local = canEncodeLocally();
-  const builtin = EXPORT_PRESETS.filter((p) => local || !p.desktopOnly);
-
-  /*
-    Plugin formats, appended AFTER the built-ins and never interleaved.
-
-    Order is the whole point: a user scanning the list should reach everything
-    the editor guarantees before anything a third party added, and a plugin
-    should not be able to place its format above MP4 by naming it "AAA". The
-    hint carries the plugin's own name, so a format that behaves oddly is
-    attributable without opening the plugin manager.
-
-    Never marked `desktopOnly` — a plugin encoder is JavaScript in a worker and
-    runs wherever the editor does.
-  */
-  return [
-    ...builtin,
-    ...pluginExporters().map((e) => ({
-      format: e.format as ExportFormat,
-      label: e.label,
-      ext: e.extension,
-      hint: `Provided by ${e.pluginName}`,
-    })),
-  ];
+  return EXPORT_PRESETS.filter((p) => local || !p.desktopOnly);
 }
 
 export const DEFAULT_COMP = { width: COMP_WIDTH, height: COMP_HEIGHT };

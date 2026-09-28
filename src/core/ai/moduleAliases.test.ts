@@ -74,13 +74,7 @@ describe('@motion/* alias lists', () => {
     // The other direction: a package nobody can import is either a mistake or a
     // test-only harness. `render-tests` is the latter — it is a suite, not a
     // library, and nothing imports it by name.
-    //
-    // `plugin-native-sdk` is a third thing: it ships OUTWARD, to plugin authors
-    // building a native addon against our ABI. App code must not import it —
-    // the app owns the ABI numbers and the SDK restates them, so the pin test
-    // reads its files as TEXT. An alias would let a drift between the two be
-    // resolved away instead of caught.
-    const NOT_A_LIBRARY = new Set(['render-tests', 'plugin-native-sdk']);
+    const NOT_A_LIBRARY = new Set(['render-tests']);
     const dirs = readdirSync(join(ROOT, 'packages')).filter((d) =>
       statSync(join(ROOT, 'packages', d), { throwIfNoEntry: false })?.isDirectory(),
     );

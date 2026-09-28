@@ -62,18 +62,14 @@ import type { IconName } from '@components/Icon';
 import { documentMirror } from '@stores/documentMirror';
 import { trackRefIn } from '@core/mirror/trackIndex';
 import { inspectorKindOf, isAbstractLayer, layerExists } from './inspectorMirror';
-import { findLayerKind } from '@core/plugins/layerKindRegistry';
-import { splitKind } from '@core/plugins/layerKindSchema';
 
 import { AppearanceSection, AppearancePresetAction } from './AppearanceSection';
 import { TextSection, TextPresetAction, hasTextSection } from './TextSection';
 import { EffectsSection, EffectsSectionActions, hasEffectsSection } from './EffectsSection';
 import { AudioControls } from './AudioControls';
 import { PinnedSection, hasPinnedSection } from './PinnedSection';
-import { PluginParamsSection, hasPluginParamsSection, pluginParamsTitle } from './PluginParamsSection';
 import { CameraSection } from './CameraSection';
 import { CompositingSection } from './CompositingSection';
-import { CustomLayerSection } from './CustomLayerSection';
 import { Ik3DSection, isIk3DTip } from './Ik3DSection';
 import { LightSection } from './LightSection';
 import { MaterialSection, MaterialPresetAction, hasMaterialSection } from './MaterialSection';
@@ -218,23 +214,6 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
   // At most one or two of these apply to any layer, and each is that layer's
   // reason for existing, so they open by default and sit directly under
   // Transform.
-  //
-  // A plugin-provided layer kind. Its title and glyph come from the REGISTRY
-  // entry when the plugin is installed, and from the stored kind id when it is
-  // not — an inert layer still has to name itself.
-  {
-    id: 'custom',
-    title: (id) => {
-      const kind = kindOf(id) ?? '';
-      return findLayerKind(kind)?.kind.label ?? splitKind(kind)?.kindId ?? 'Layer';
-    },
-    icon: (id) => (findLayerKind(kindOf(id) ?? '')?.kind.icon as IconName) ?? 'plugin',
-    category: 'layer',
-    defaultOpen: true,
-    keywords: 'settings camera light particle audio volume',
-    appliesTo: (id) => splitKind(kindOf(id) ?? '') !== null,
-    Component: CustomLayerSection,
-  },
   {
     id: 'custom',
     title: 'Camera settings',
@@ -424,35 +403,6 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     appliesTo: hasEffectsSection,
     Component: EffectsSection,
     actions: EffectsSectionActions,
-  },
-  /*
-   * Parameters a PLUGIN contributes to this layer.
-   *
-   * Directly under Effects, because that is what it is next to in the user's
-   * head: the row of controls a third party added to this layer. Above
-   * Pathfinder, because it is about how the layer LOOKS (which is what a plugin
-   * parameter almost always drives) rather than about its geometry.
-   *
-   * Present only while an enabled plugin actually contributes to this layer's
-   * kind, so an editor with no plugins — and a layer no plugin targets — is
-   * exactly as it was. Open by default for the same reason the per-kind
-   * sections are: if it is on screen at all, it is because something declared
-   * that it belongs on this layer, and a collapsed section the user has to
-   * discover is how a plugin's controls go unfound.
-   */
-  {
-    id: 'pluginParams',
-    title: pluginParamsTitle,
-    icon: 'plugin',
-    category: 'style',
-    defaultOpen: true,
-    keywords: 'plugin parameters controls extension third party addon',
-    appliesTo: hasPluginParamsSection,
-    // Every selected layer must be covered, not just the primary: the
-    // non-numeric rows write to the whole selection in one entry, and a colour
-    // that reached three of five layers is a quiet half-edit.
-    appliesToSelection: (ids) => ids.every((id) => hasPluginParamsSection(id)),
-    Component: PluginParamsSection,
   },
 
   // ── 4. What can be done to its geometry ────────────────────────

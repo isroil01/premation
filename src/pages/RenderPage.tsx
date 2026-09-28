@@ -39,7 +39,7 @@ import type { CliDoneReport, CliTaskRequest } from '@app-types/motionEditor';
  */
 const PROGRESS_STEP = 0.01;
 
-/** Who this window is rendering for: the CLI, or the export supervisor. */
+/** Who this window is rendering for: the CLI (the export queue renders in the engine). */
 interface TaskSource {
   task: CliTaskRequest;
   progress(fraction: number): void;
@@ -47,12 +47,11 @@ interface TaskSource {
 }
 
 /**
- * Ask main which launch this window is.
+ * Ask main whether this window is a CLI launch.
  *
- * `cli.job()` answers in a `premation render` process; `exportWorker.job()`
- * answers in a hidden window the export supervisor opened. Both reject in a
- * normal editor session, and that is the whole gate: a stray `#/render` tab
- * has nobody to render for. Null when neither answered.
+ * `cli.job()` answers in a `premation render` process and rejects in a normal
+ * editor session, and that is the whole gate: a stray `#/render` tab has
+ * nobody to render for. Null when it did not answer.
  */
 async function pickTaskSource(): Promise<TaskSource | null> {
   const me = window.motionEditor;
@@ -63,15 +62,6 @@ async function pickTaskSource(): Promise<TaskSource | null> {
       return { task, progress: (f) => cli.progress?.(f), done: (r) => cli.done!(r) };
     } catch {
       /* not a CLI launch */
-    }
-  }
-  const worker = me?.exportWorker;
-  if (worker?.job && worker.done) {
-    try {
-      const task = await worker.job();
-      return { task, progress: (f) => worker.progress?.(f), done: (r) => worker.done!(r) };
-    } catch {
-      /* not an export window either */
     }
   }
   return null;
@@ -94,7 +84,7 @@ function HeadlessRunner(): JSX.Element {
     if (started.current) return;
     started.current = true;
 
-    if (!window.motionEditor?.cli?.job && !window.motionEditor?.exportWorker?.job) {
+    if (!window.motionEditor?.cli?.job) {
       setStatus('This build has no render bridge.');
       return;
     }

@@ -31,7 +31,6 @@ import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { documentMirror } from '@stores/documentMirror';
 import { KIND_ICON } from '@core/scene/sceneDerive';
 import { renameLayerEdit } from '@layout/Scene/sceneEdits';
-import { findLayerKind } from '@core/plugins/layerKindRegistry';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { edit } from '@core/engine/uiEdits';
 import { useMirrorLayers } from '@hooks/useMirror';
@@ -250,7 +249,7 @@ const KIND_COUNT: Readonly<Record<string, readonly [string, string]>> = {
 };
 
 function kindNoun(kind: string): string {
-  return KIND_NOUN[kind] ?? findLayerKind(kind)?.kind.label ?? 'Layer';
+  return KIND_NOUN[kind] ?? 'Layer';
 }
 
 function kindIcon(kind: string): IconName {

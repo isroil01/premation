@@ -15,7 +15,8 @@ import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFi
 import { writeFileAtomic } from './atomicWrite';
 import { initDialogDirs, rememberDir, rememberedDir } from './dialogDirs';
 import { localFileUrlToPath } from './localFileUrl';
-import { EngineHost, engineBackendEnabled, engineOwnsDocument, enginePreferenceFile, registerEngineIpc, type SharedTextureApi } from './engineHost';
+import { EngineHost, registerEngineIpc, type SharedTextureApi } from './engineHost';
+import { handleEngineUnavailable } from './engineUnavailable';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { buildEncodeArgs, ffmpegRate, rawVideoInput, stagedVideoInput, type EncodeFormat, type VideoEncoder } from './ffmpegEncodeArgs';
@@ -32,11 +33,7 @@ import { registerModelDownloadIpc, abortAllModelDownloads } from './modelDownloa
 import { registerMediaKeyIpc } from './mediaKeyVault';
 import { registerAiMediaProxyIpc } from './aiMediaProxy';
 import { registerApiProxyIpc, abortAllApiStreams } from './apiProxy';
-import { installPluginPublishIpc } from './pluginPublish';
-import { registerPluginNetIpc } from './pluginNet';
-import { registerPluginLoaderIpc } from './pluginLoader';
-import { disposeNativePlugins, registerPluginNativeIpc } from './pluginNativeIpc';
-import { aiEnabled, pluginsEnabled, pluginPublishEnabled, assertRendererEditionMatches } from './edition';
+import { aiEnabled, assertRendererEditionMatches } from './edition';
 import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
 import { checkForUpdatesInteractive, initAutoUpdate, registerUpdaterIpc } from './updater';
 import { nativeTemplateFromGroups, sanitizeMenuGroups, type NativeMenuGroupSpec, type NativeMenuOptions } from './nativeMenu';
@@ -76,10 +73,10 @@ let mainWindow: BrowserWindow | null = null;
 let exportSupervisor: ExportSupervisor | null = null;
 
 /**
- * The C++ engine process (electron/engineHost.ts), created in whenReady. Its
- * supervisor only exists — and the engine only runs — when the process
- * backend is on (the default since 2026-09-28; PREMATION_ENGINE=ts or
- * <userData>/engine.json `{ "backend": "ts" }` switches it off).
+ * The C++ engine process (electron/engineHost.ts), created in whenReady: the
+ * only engine (docs/TS_ENGINE_REMOVAL.md). When it cannot run, main shows a
+ * fatal startup dialog, or blocks the editor after a crash loop and offers a
+ * recovery save (electron/engineUnavailable.ts).
  */
 let engineHost: EngineHost | null = null;
 
@@ -109,20 +106,6 @@ function findDeepLink(argv: string[]): string | undefined {
   return argv.find((a) => a.startsWith(`${OAUTH_SCHEME}://`));
 }
 
-/**
- * A plugin id that may be routed on.
- *
- * A deep link is the least trusted input this process handles: anyone can put
- * one in a web page, a chat message or an email, and the OS hands it straight
- * to us. The id is therefore validated HERE, before it is forwarded anywhere —
- * the renderer validates it again, because IPC is its own boundary, but a
- * malformed id has no business travelling that far.
- *
- * Same shape the registry issues: reverse-DNS and lowercase, which leaves no
- * room for traversal characters, a scheme, or a path.
- */
-const PLUGIN_ID_RE = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
-
 /** Parse a premation:// deep link and route it to the renderer. */
 function handleDeepLink(url: string | undefined): void {
   if (!url || !url.startsWith(`${OAUTH_SCHEME}://`)) return;
@@ -146,16 +129,6 @@ function handleDeepLink(url: string | undefined): void {
     return;
   }
 
-  // premation://plugin/<id> — open that plugin's page in the editor.
-  if (parsed.host === 'plugin') {
-    const id = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
-    // Refused silently rather than forwarded or reported. A link with a
-    // malformed id is a typo or a probe, and neither earns a dialog.
-    if (id.length > 200 || !PLUGIN_ID_RE.test(id)) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
-    win.webContents.send('deeplink:plugin', { id });
-  }
 }
 
 // ── What kind of launch is this? ─────────────────────────────────────────
@@ -1860,13 +1833,13 @@ app.whenReady().then(() => {
   registerIndexIpc(app);
   registerThumbIpc(app);
   registerRevealIpc();
-  const renderIpc = registerRenderIpc();
-  // Desktop export as a main-owned queue, each job in a hidden window of its
-  // own (electron/exportProcess.ts). The queue file is read now, so jobs left
-  // from a previous session are listed the moment the editor asks; they start
-  // once the editor window is up, so a queued render never begins on a
-  // machine whose editor has not even painted.
-  exportSupervisor = createExportSupervisor({ abortRenderJobsOwnedBy: renderIpc.abortJobsOwnedBy });
+  registerRenderIpc();
+  // Desktop export as a main-owned queue, each job in its own
+  // `premation-engine --export` process (electron/exportProcess.ts). The queue
+  // file is read now, so jobs left from a previous session are listed the
+  // moment the editor asks; they start once the editor window is up, so a
+  // queued render never begins on a machine whose editor has not even painted.
+  exportSupervisor = createExportSupervisor();
   registerExportSupervisorIpc(exportSupervisor);
   installExportQuitGuard(exportSupervisor);
   const supervisorLoaded = exportSupervisor.load();
@@ -1879,30 +1852,6 @@ app.whenReady().then(() => {
   // because the page CSP names no model host — see electron/modelDownload.ts.
   // Ungated: it attaches no credential and runs only on an explicit press.
   registerModelDownloadIpc();
-  // A plugin's outbound requests. Here rather than in the renderer because the
-  // app shell's `connect-src` does not name a plugin's hosts, and widening it
-  // to cover them would widen the whole renderer rather than the plugin.
-  //
-  // GATED on `pluginsEnabled()`, which is on in both editions now that the
-  // local edition installs plugins from local files. "The renderer never calls
-  // it" is not a gate on the privileged side of this boundary, so the predicate
-  // stays the one switch. A request still leaves only for a plugin granted
-  // `net:fetch`, to a host its manifest declared — see edition.ts.
-  if (pluginsEnabled()) registerPluginNetIpc();
-  // Plugins that live in a folder on this machine — the user's own, a
-  // machine-wide one an installer wrote, and anything MOTION_PLUGIN_PATH names.
-  // Gated with the rest: it reads directories and hands the bytes to the
-  // renderer, which is a filesystem capability and belongs behind the same
-  // switch. The paths it will read are fixed in pluginLoader.ts, never named by
-  // the renderer.
-  if (pluginsEnabled()) registerPluginLoaderIpc();
-  // A plugin's COMPILED module, in a utility process of its own.
-  //
-  // Behind the same switch, and it starts nothing on its own: no process exists
-  // until the renderer asks for one, which it does only after a signature check
-  // and a consent step naming the binary. What this registration adds to a
-  // machine with no native plugins is four idle IPC handlers.
-  if (pluginsEnabled()) registerPluginNativeIpc();
   // The account session, and every authenticated call that uses it.
   //
   // Both tokens live in this process. There is no `credentials:get` any more:
@@ -1911,18 +1860,6 @@ app.whenReady().then(() => {
   // cannot take it somewhere else. See apiSession.ts for the full argument, and
   // apiBase.ts for why this is `api.request(path)` and not `fetch(url)`.
   registerApiProxyIpc();
-
-  // Publishing a plugin. Both secrets involved — the session above and the
-  // publisher's private signing key — stay in this process; the renderer sends
-  // bytes and a visibility choice and gets a result back. See pluginPublish.ts
-  // for why the key is picked per publish rather than remembered.
-  //
-  // Gated with the rest. Publishing needs an account and a registry, neither of
-  // which the local edition has, and the channel opens a file picker — a UI
-  // affordance appearing in a build with no way to use what it produces.
-  // (`pluginPublishEnabled`, not `pluginsEnabled`: the local edition runs
-  // plugins installed from local files but has no registry to publish to.)
-  if (pluginPublishEnabled()) installPluginPublishIpc();
 
   // The assistant. Provider keys live here rather than in the renderer —
   // encrypted with the OS keystore, with NO read-back verb (aiKeyVault.ts) — and
@@ -1951,13 +1888,10 @@ app.whenReady().then(() => {
   // which on Electron 44 is earlier than `ready-to-show` (see updater.ts).
   registerUpdaterIpc();
 
-  // The C++ engine process (NATIVE_CORE_PLAN C3), behind its flag. The
-  // channels exist before the window does (the page asks for the status at
-  // boot); `engine:status` answers `enabled: false` when the flag is off.
+  // The C++ engine process: the only engine, and it owns the document. The
+  // channels exist before the window does (the page asks for the status at boot).
+  const recoveryPath = path.join(ensureDir(path.join(app.getPath('userData'), 'recovery')), 'engine-recovery.json');
   engineHost = new EngineHost({
-    enabled: engineBackendEnabled(process.env, enginePreferenceFile(app.getPath('userData'))),
-    // F2: the document lifecycle through the engine; default on since 2026-09-28 (PREMATION_ENGINE_OWNER=ui opts out).
-    ownsDocument: engineOwnsDocument(process.env, enginePreferenceFile(app.getPath('userData'))),
     isDev,
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
@@ -1974,13 +1908,30 @@ app.whenReady().then(() => {
     nativePluginDir: ensureDir(path.join(app.getPath('userData'), 'native-plugins')),
     nativePluginJournal: path.join(app.getPath('userData'), 'native-plugin-journal.bin'),
     // F2 / D5: where the engine-owned document's autosave writes its recovery copy.
-    recoveryPath: path.join(ensureDir(path.join(app.getPath('userData'), 'recovery')), 'engine-recovery.json'),
+    recoveryPath,
     // Imported bytes and session blob: footage become files here (the same
     // folder file:sessionFootageDir hands the page).
     sessionFootageDir: ensureDir(path.join(app.getPath('userData'), 'session-footage')),
     // The transcribe job's key: main's keystore → the startJob, per job (never logged, never to a page).
     transcribeCredential: async (provider) =>
       (VAULT_PROVIDERS as readonly string[]).includes(provider) ? getKeyForProvider(provider as VaultProvider) : null,
+    // No engine, no editor: a fatal startup dialog, or a blocking crash-loop
+    // dialog with a recovery save (engineUnavailable.ts).
+    onUnavailable: (info) => {
+      const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      void handleEngineUnavailable(info, {
+        showErrorBox: (title, content) => dialog.showErrorBox(title, content),
+        showMessageBox: (o) => (parent ? dialog.showMessageBox(parent, o) : dialog.showMessageBox(o)),
+        showSaveDialog: (o) => (parent ? dialog.showSaveDialog(parent, o) : dialog.showSaveDialog(o)),
+        recoveryPath,
+        exists: (p) => existsSync(p),
+        copyFile: (from, to) => copyFile(from, to),
+        retry: () => engineHost?.retry() ?? Promise.resolve(),
+        quit: () => app.quit(),
+        defaultDir: app.getPath('documents'),
+        joinPath: (...parts) => path.join(...parts),
+      });
+    },
   });
   registerEngineIpc(engineHost);
   // Dev only: the real-app harness reads the frame-forwarding counters from
@@ -2000,12 +1951,10 @@ app.whenReady().then(() => {
 
   // After ready, beside the window: the engine asks Chromium which adapter it
   // composits on, so it can render where the page will sample (C1).
-  if (engineHost.enabled) {
-    void engineHost.start();
-    app.on('child-process-gone', (_event, details) => {
-      if (details.type === 'GPU') engineHost?.gpuProcessGone(details.reason);
-    });
-  }
+  void engineHost.start();
+  app.on('child-process-gone', (_event, details) => {
+    if (details.type === 'GPU') engineHost?.gpuProcessGone(details.reason);
+  });
 
   // Report GPU status AFTER the renderer has loaded and touched the GPU. Reading
   // in whenReady catches Chromium's GPU process before it initializes (every
@@ -2050,10 +1999,6 @@ app.on('before-quit', () => {
   abortAllStreams();
   abortAllApiStreams();
   abortAllModelDownloads();
-  // A plugin's utility process is a child of this one and would otherwise keep
-  // running after the last window closed — a stranger's compiled code with no
-  // editor left to serve.
-  disposeNativePlugins();
   // The engine gets a Goodbye and exits on its own; the supervisor kills it
   // after 2 s if it does not (a closing stdin ends it either way).
   void engineHost?.stop();

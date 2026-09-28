@@ -89,12 +89,12 @@ describe('premation render through premation-engine --export', () => {
     expect(r.moved[0]![1]).toBe(job().outPath);
   });
 
-  it('falls back on an unported frame and fails on an encoder failure', async () => {
+  it('fails on an unported frame and on an encoder failure (no window fallback)', async () => {
     const unported = deps((e) => {
       e.say({ ev: 'preflight', ok: false, reason: 'frame 3: a plugin effect' });
       e.exit(3);
     });
-    expect(await runCliEngineRender(job(), unported.deps, () => undefined)).toEqual({ kind: 'fallback', reason: 'preflight: frame 3: a plugin effect' });
+    expect(await runCliEngineRender(job(), unported.deps, () => undefined)).toEqual({ kind: 'failed', message: 'The engine could not render this job: preflight: frame 3: a plugin effect' });
     const encoder = deps((e) => {
       e.say({ ev: 'preflight', ok: true, frames: 1, width: 2, height: 2, fps: 30, alpha: false, depth: 8, audio: null, comp: 'c', compName: 'C' });
       e.say({ ev: 'error', fallback: false, message: 'ffmpeg exited 1' });
@@ -103,6 +103,6 @@ describe('premation render through premation-engine --export', () => {
     expect(await runCliEngineRender(job(), encoder.deps, () => undefined)).toEqual({ kind: 'failed', message: 'ffmpeg exited 1' });
     // Editor-only jobs never start the engine.
     const never = deps(() => { throw new Error('spawned'); });
-    expect(await runCliEngineRender(job({ aspect: '1:1' }), never.deps, () => undefined)).toMatchObject({ kind: 'fallback' });
+    expect(await runCliEngineRender(job({ aspect: '1:1' }), never.deps, () => undefined)).toMatchObject({ kind: 'needsEditor' });
   });
 });

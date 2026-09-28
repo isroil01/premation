@@ -25,7 +25,6 @@ export const PANEL_HELP: Readonly<Record<string, HelpLink>> = {
   transcript: { doc: 'CAPTIONS' },
   library: { doc: 'EDITOR_REFERENCE', heading: 'Library' },
   ai: { doc: 'AI_ARCHITECTURE_FULL' },
-  marketplace: { doc: 'PLUGINS' },
   properties: { doc: 'EDITOR_REFERENCE', heading: 'Inspector' },
   character: { doc: 'EDITOR_REFERENCE', heading: 'Text' },
   paragraph: { doc: 'EDITOR_REFERENCE', heading: 'Text' },
@@ -43,7 +42,6 @@ export const PANEL_HELP: Readonly<Record<string, HelpLink>> = {
   history: { doc: 'EDITOR_REFERENCE', heading: 'History' },
   renderQueue: { doc: 'EDITOR_REFERENCE', heading: 'Render' },
   export: { doc: 'EDITOR_REFERENCE', heading: 'Export' },
-  plugins: { doc: 'PLUGIN_SYSTEM_REFERENCE' },
   // Non-panel surfaces that also link here.
   errorBoundary: { doc: 'EDITOR_REFERENCE', heading: 'Troubleshooting' },
   exportFailed: { doc: 'EDITOR_REFERENCE', heading: 'Export' },

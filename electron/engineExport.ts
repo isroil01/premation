@@ -1,38 +1,35 @@
 /**
  * F1 — an export job rendered by the ENGINE (docs/NATIVE_CORE_PLAN.md Phase F).
  *
- * The export supervisor (exportProcess.ts) runs a job either in a hidden
- * Chromium window (the TypeScript renderer, today's path) or here: one
+ * The export supervisor (exportProcess.ts) and `premation render`
+ * (cliEngineRender.ts) run every job here: one
  * `premation-engine --export JOB.json` process per job, which opens the
  * project snapshot itself, renders the range with several frames in flight and
  * pipes raw RGBA straight into its own ffmpeg child. Nothing crosses Electron
  * but a few JSON lines, so main never touches a pixel.
  *
- * ── One encode, two renderers ─────────────────────────────────────────────
+ * ── One encode ─────────────────────────────────────────────────────────────
  *
  * The ffmpeg command line is built HERE, by the same `buildEncodeArgs` +
- * `rawVideoInput` + `tagSrgb` the Chromium path's `render:openStream` uses, and
- * handed to the engine after its preflight — the engine never builds one. So
- * "which renderer ran" can only show in the file if the pixels differ.
+ * `rawVideoInput` + `tagSrgb` main's `render:openStream` uses, and handed to
+ * the engine after its preflight — the engine never builds one.
  *
  * ── When the engine does not run a job ───────────────────────────────────
  *
- *  - Off with `PREMATION_EXPORT_ENGINE=0` (on by default since 2026-09-28;
- *    CLAUDE.md: every native replacement keeps the TypeScript path intact).
- *  - Ineligible specs (`engineIneligible`): JPEG sequences, chapters that are
- *    not already resolved `{startMs,endMs,title}` records, or no engine
- *    executable — the window path, unchanged. PNG and EXR sequences, resolved
- *    chapters, and a probed hardware encoder run in the engine. A hardware
- *    encoder that will not initialise falls back to libx264 before the job starts.
+ * There is no other renderer (docs/TS_ENGINE_REMOVAL.md phase 4; the flag and
+ * the hidden-window path are gone):
+ *  - Ineligible specs (`engineIneligible`): a format the engine does not
+ *    write, chapters that are not already resolved `{startMs,endMs,title}`
+ *    records, or no engine executable — the job fails with that reason. A
+ *    hardware encoder that will not initialise falls back to libx264 before the
+ *    job starts.
  *  - The engine's PREFLIGHT builds every frame of the range with the C++ scene
  *    builder first; one frame that uses a feature the builder has not ported
- *    (or audio it does not mix) reports `fallback`, and the supervisor renders
- *    the job in the window instead. So do a GPU that will not start, a pass
- *    that cannot be honoured mid-render, and an engine that CRASHES: its
- *    ffmpeg child dies with it (a Windows job object), nothing was delivered,
- *    and the same attempt continues on the Chromium path.
- *  - A failure of the export itself (the encoder, the disk) fails the job, as
- *    it would on the window path.
+ *    reports `fallback` (the outcome keeps its historical name), and so do a
+ *    GPU that will not start and an engine that CRASHES (its ffmpeg child dies
+ *    with it — a Windows job object — and nothing was delivered). The caller
+ *    fails the job with the reason.
+ *  - A failure of the export itself (the encoder, the disk) fails the job.
  *
  * Electron-free: spawn and the file system are injected, so the protocol is
  * tested against a fake engine (engineExport.test.ts).
@@ -137,7 +134,7 @@ function resolvedChapters(raw: unknown): Array<{ startMs: number; endMs: number;
 export const EXPORT_EXIT = { ok: 0, failed: 1, fallback: 3, cancelled: 4, usage: 64 } as const;
 
 /**
- * Why `spec` must render in the window, or null when the engine may take it.
+ * Why the engine cannot render `spec`, or null when it can.
  * Pure — the supervisor asks before it starts anything.
  */
 export function engineIneligible(spec: EngineExportSpec, enginePath: string | null): string | null {
@@ -221,7 +218,7 @@ async function deliver(fs: NonNullable<EngineExportDeps['fs']>, from: string, to
 
 /**
  * Start one engine job. The returned `done` never rejects: every ending is an
- * outcome, and `fallback` is the one that sends the job to the window path.
+ * outcome; `fallback` = the engine could not render it (the caller fails the job).
  */
 export function startEngineExport(
   jobId: string,
@@ -356,8 +353,7 @@ export function startEngineExport(
       return;
     }
     // No terminal line: the engine crashed (or was killed from outside). Its
-    // encoder died with it and nothing was delivered — the window path renders
-    // the job instead.
+    // encoder died with it and nothing was delivered.
     const why = exit.signal ? `signal ${exit.signal}` : `exit code ${exit.code}`;
     log(`job ${jobId}: the engine stopped unexpectedly (${why})${stderrTail ? `: ${stderrTail.slice(-400)}` : ''}`);
     finish({ kind: 'fallback', reason: `premation-engine stopped unexpectedly (${why})` });

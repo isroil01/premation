@@ -18,7 +18,6 @@
  */
 
 import { defaultAnimation, type AnimationEngine, type Keyframe, type PropPath } from '@motion/animation';
-import { pluginPresets } from './pluginPresets';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { getSettingsManager } from '@core/services/coreServices';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -633,7 +632,7 @@ export const USER_PRESET_FOLDER = 'User Presets';
 export function listPresets(): AnimationPreset[] {
   return [
     ...BUILTIN_PRESETS, ...TEXT_PRESETS, ...BEHAVIOR_PRESETS, ...SCENERY_PRESETS,
-    ...FILM_LOOK_PRESETS, ...CAMERA_PRESETS, ...readUserPresets(), ...pluginPresets(),
+    ...FILM_LOOK_PRESETS, ...CAMERA_PRESETS, ...readUserPresets(),
   ];
 }
 

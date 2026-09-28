@@ -39,7 +39,6 @@ import {
   resolveEffectParams,
   type Effect,
 } from './effects';
-import { pluginEffectDefs } from './pluginEffectDefs';
 import { effectsNeedCpuBake, layerIsBaked } from './effectBake';
 import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 
@@ -52,7 +51,6 @@ describe('the reserved key', () => {
     // means "how much of this effect's result survives". Sharing a key would
     // put two different quantities on one keyframe track.
     expect(effectOpacityKeyIsReserved(EFFECT_DEFS)).toBe(true);
-    expect(effectOpacityKeyIsReserved(pluginEffectDefs())).toBe(true);
     // The dot is what makes the collision impossible rather than merely absent:
     // every declared key in the registry is a plain identifier.
     expect(EFFECT_OPACITY_KEY).toContain('.');

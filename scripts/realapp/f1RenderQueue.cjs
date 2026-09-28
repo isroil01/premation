@@ -1,7 +1,7 @@
 /* global WebSocket -- Node 22 global */
 /**
- * F1 real-app Render Queue run with PREMATION_EXPORT_ENGINE=1 (engine owner +
- * engine viewport on). Main's folder dialog is stubbed through its inspector;
+ * F1 real-app Render Queue run (the engine owns the document, draws the
+ * viewport and renders the export — the only path since phase 4). Main's folder dialog is stubbed through its inspector;
  * the queue job is added by the AI export_video tool (the same store action as
  * Composition ▸ Add to Render Queue) and started with the panel's Render button.
  *   node scripts/realapp/f1RenderQueue.cjs [project.json] [--om16] [--default]
@@ -58,7 +58,7 @@ async function ws(url) {
 
 (async () => {
   const userData = path.join(os.tmpdir(), `premation-rq-ud-${process.pid}`);
-  const env = { ...process.env, NODE_ENV: 'production', PREMATION_ENGINE_PATH: ENGINE, PREMATION_ENGINE: 'process', PREMATION_ENGINE_OWNER: 'engine', PREMATION_EXPORT_ENGINE: '1', MOTION_EDITION: 'local' };
+  const env = { ...process.env, NODE_ENV: 'production', PREMATION_ENGINE_PATH: ENGINE, MOTION_EDITION: 'local' };
   delete env.ELECTRON_RUN_AS_NODE;
   // --default: no flags at all (the defaults flipped 2026-09-28 must pick the engine).
   if (process.argv.includes('--default')) for (const k of Object.keys(env)) if (k.startsWith('PREMATION_')) delete env[k];

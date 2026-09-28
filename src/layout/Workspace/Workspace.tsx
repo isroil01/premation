@@ -85,7 +85,6 @@ import { useGizmo3d } from './useGizmo3d';
 import { useDeviceHandles } from './useDeviceHandles';
 import { useFocusContext } from '@layout/focus/useFocusContext';
 import { useWorkspace } from './useWorkspace';
-import { pluginKeyDown } from './pluginDrawOverlay';
 import { TransportBar } from './TransportBar';
 import { ViewportHud } from './ViewportHud';
 import { EngineSurface } from '@components/EngineSurface/EngineSurface';
@@ -373,22 +372,6 @@ export function WorkspaceViewport({
       return;
     }
     if (!VIEWPORT_KEYS.has(e.code)) return;
-    /*
-      A plugin's TOOL gets first refusal, ahead of the engine's own.
-
-      Only a tool: a plugin that has merely drawn a gizmo has no claim on the
-      keyboard, and swallowing keys it never asked for would break every
-      shortcut the user expects to work while looking at the composition. The
-      plugin is asynchronous, so the key is consumed rather than answered — the
-      same contract its pointer events have.
-    */
-    if (pluginKeyDown(e.key, {
-      alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey,
-    })) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
     const controller = getWorkspaceController();
     /*
       The ACTIVE TOOL gets first refusal.

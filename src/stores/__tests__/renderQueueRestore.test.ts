@@ -60,10 +60,6 @@ jest.mock('@core/export/videoSink', () => ({
   canEncodeLocally: () => true,
 }));
 
-jest.mock('@core/plugins/PluginHost', () => ({
-  pluginHost: { notifyRenderFinished: jest.fn() },
-}));
-
 // The runner asks the document mirror (B4) which compositions the open project
 // holds: a ready mirror whose comps are the ones `openProject` names.
 const mockOpenComps = new Set<string>();

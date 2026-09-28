@@ -16,7 +16,6 @@
 import fs from 'fs';
 import path from 'path';
 import { APP_MENU, type MenuGroupModel } from '@layout/Menu/menuModel';
-import { buildPluginsMenuGroup } from '@layout/Menu/pluginMenu';
 import { collectMenuKeys } from '@layout/Menu/menuI18n';
 import { extractTCalls } from './extractT';
 
@@ -25,10 +24,9 @@ const EN_JSON = path.resolve(__dirname, 'locales/en.json');
 /** This module's own docs are full of example calls; tests use made-up keys. */
 const SKIP_DIR = path.resolve(__dirname);
 
-/** The groups as the app assembles them: Plugins before Help (see useAppMenuGroups). */
+/** The groups as the app assembles them (see useAppMenuGroups). */
 function menuGroups(): MenuGroupModel[] {
-  const help = APP_MENU.findIndex((g) => g.id === 'help');
-  return [...APP_MENU.slice(0, help), buildPluginsMenuGroup(), ...APP_MENU.slice(help)];
+  return [...APP_MENU];
 }
 
 function sourceFiles(dir: string, out: string[] = []): string[] {

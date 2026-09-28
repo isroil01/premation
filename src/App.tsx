@@ -105,9 +105,6 @@ import { BottomTimeline } from '@layout/BottomTimeline';
 import { TopNav } from '@layout/TopNav';
 import { AiChatProvider } from '@layout/AiChat/AiChatContext';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
-import { PluginConsentHost } from '@layout/Plugins/PluginConsentHost';
-import { PluginDeepLink } from '@layout/Plugins/PluginDeepLink';
-import { usePluginPanelRegistration } from '@layout/Plugins/usePluginPanels';
 import { availablePanelDefs } from '@layout/EditorLayout/panelDefs';
 import type { TimelineModel, TimelineTrack } from '@layout/Timeline';
 import {
@@ -288,11 +285,6 @@ function EditorShellInner(): JSX.Element {
     if (consumeLayoutMigration()) reconcileActiveWorkspace();
   }, [registerPanel]);
 
-  // The panels that are NOT known at build time: one per plugin panel that asked
-  // for a tab of its own and got one. Registered by their own hook because the
-  // set changes while the app is running — install, uninstall, enable, disable —
-  // and the effect above deliberately runs once.
-  usePluginPanelRegistration();
 
 
   const [expandedIds, setExpandedIds] = useState<ReadonlyArray<string>>([]);
@@ -1570,12 +1562,6 @@ function EditorShellInner(): JSX.Element {
           sidebarRenderers={getAllPanelRenderers()}
           inspectorRenderers={getAllPanelRenderers()}
         />
-        {/* Consent, raised from anywhere: the sidebar, a detail tab or a
-            premation:// link. Mounted once, at app level, so no install path
-            can exist without it. */}
-        <PluginConsentHost />
-        {/* premation://plugin/<id> — focuses the Plugins panel and its tab. */}
-        <PluginDeepLink />
       </div>
     </div>
   );

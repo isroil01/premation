@@ -21,18 +21,6 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 // Shared with the tracking walks — see that module for why an `await` alone
 // does not hand the thread back.
 import { yieldToUi } from '@core/loading/yieldToUi';
-import {
-  hasGeneratorLayers,
-  setGeneratorExactMode,
-  settleGenerators,
-  takeGeneratorErrors,
-} from '@core/plugins/generator';
-import {
-  setNativeExactMode,
-  settleNative,
-  takeNativeErrors,
-} from '@core/plugins/native';
-import { warmPluginKernels } from '@core/effects/pluginCpuEffect';
 import { defaultAnimation } from '@motion/animation';
 
 export interface OfflineRenderParams {
@@ -140,28 +128,6 @@ export function resolveRange(params: OfflineRenderParams): { start: number; end:
  */
 export const EXPORT_YIELD_BUDGET_MS = 48;
 
-/**
- * How long one frame waits for its plugin generators.
- *
- * Between the per-generate budget (20 s in export) and the media convergence
- * cap (15 s), because a single frame may legitimately need SEVERAL generate
- * calls: a simulation resuming from a checkpoint replays in chunks, and an
- * export that starts at frame 400 begins with one of those. Shorter than the
- * sum of what it is waiting for would turn a slow first frame into a refused
- * export.
- */
-export const GENERATOR_SETTLE_MS = 30_000;
-
-/**
- * How long one frame waits for a plugin's COMPILED addon.
- *
- * The same 30 s, for the same reason and deliberately not a second number: a
- * frame may hold several native calls (an effect per layer, plus whatever the
- * bake queued), each with its own per-call timeout in the plugin's process, and
- * this is the ceiling on all of them together rather than on any one.
- */
-export const NATIVE_SETTLE_MS = 30_000;
-
 export type FrameSink = (
   canvas: HTMLCanvasElement,
   frame: number,
@@ -210,13 +176,7 @@ export async function renderOffline(
     const total = end - start + 1;
     const yieldBudget = params.yieldBudgetMs ?? 0;
     let lastYield = performance.now();
-    /*
-      One frame's snapshot. A closure rather than an inline call because a
-      generator layer needs it TWICE: the first build states which frames its
-      plugin must produce, and the second picks up the geometry that arrived.
-      One call site keeps the two identical — including `exportComp`, which
-      `exportPathsMarkForExport.test.ts` reads this source to check.
-    */
+    // One frame's snapshot (`exportPathsMarkForExport.test.ts` reads this call site).
     const buildFrame = (t: number) => buildSnapshot(
       defaultSceneGraph,
       defaultAnimation,
@@ -228,124 +188,10 @@ export async function renderOffline(
       exportComp(params.comp),
     );
 
-    /*
-      Plugin generators produce geometry off this thread, and an export must
-      have the EXACT frame rather than the most recent one.
-
-      `setGeneratorExactMode` switches the scheduler out of its preview
-      behaviour for the whole export: no look-ahead competing with the frame
-      being waited on, the longer per-frame budget, and every request tracked so
-      `settleGenerators` knows what is outstanding. Restored in the `finally`
-      below, so a cancelled or failed export does not leave the viewport in
-      export mode.
-
-      `setNativeExactMode` is the same switch for the compiled tier, in the same
-      words on purpose: nothing coalesced, nothing dropped, and the preview
-      budget that benches a slow addon lifted for the duration — an export that
-      quietly took an effect's JavaScript fallback would produce a different
-      picture from the one the user approved in the viewport.
-    */
-    setGeneratorExactMode(true);
-    setNativeExactMode(true);
     for (let i = start; i <= end; i++) {
       if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
       const t = frameTimeAt(i, params.fps);
-      let snap = buildFrame(t);
-      /*
-        Await the generator frames this snapshot asked for.
-
-        Only when something asked — `hasGeneratorLayers` is false for every
-        project without one, so this is a map-size check and a branch, and the
-        second build never happens.
-
-        A layer that does not land in time becomes a DIAGNOSTIC, through the
-        same `layerErrors` channel a layer that threw during the build uses, and
-        the gate below refuses the frame. It must not fall through: the
-        scheduler would serve the previous frame's particles, the export would
-        succeed, and the file would contain a simulation that stutters at
-        exactly the frames the plugin was slow on — which nobody would ever
-        attribute to this.
-      */
-      if (hasGeneratorLayers()) {
-        const unmet = await settleGenerators(GENERATOR_SETTLE_MS);
-        if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
-        snap = buildFrame(t);
-        const failed = takeGeneratorErrors();
-        if (unmet.length > 0 || (failed && failed.length > 0)) {
-          snap.layerErrors = [
-            ...(snap.layerErrors ?? []),
-            ...unmet.map((layerId) => ({
-              layerId,
-              stage: 'snapshot' as const,
-              message:
-                `its plugin did not produce frame ${i} within ${GENERATOR_SETTLE_MS} ms`,
-            })),
-            ...(failed ?? []).map((e) => ({
-              layerId: e.layerId,
-              stage: 'snapshot' as const,
-              message: `${e.pluginId}.${e.kindId}: ${e.message}`,
-            })),
-          ];
-        }
-      }
-      /*
-        And the compiled tier, reported the same way.
-
-        A separate gate rather than a branch of the one above, because the two
-        wait for different things. A native GENERATOR's call is awaited inside
-        the generator pump and is already covered by `settleGenerators`; a
-        native EFFECT's is outstanding against a layer's bake, with no generator
-        layer waiting on it, so nothing above would ever notice it.
-
-        Unconditional, unlike the generator block: `settleNative` resolves an
-        empty list without allocating a scheduler when nothing has ever called
-        one, and gating on "is there native work RIGHT NOW" would drop the
-        errors of a call that failed quickly — which is precisely the frame that
-        must not ship. No second `buildFrame`: what a native effect produces
-        reaches the bake, not the snapshot.
-
-        The rule is the generator block's, for the reason stated there: a frame
-        that is missing native work is REFUSED, never written with whatever the
-        fallback path happened to leave behind.
-      */
-      const unmetNative = await settleNative(NATIVE_SETTLE_MS);
-      if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
-      const nativeFailed = takeNativeErrors();
-      if (unmetNative.length > 0 || nativeFailed.length > 0) {
-        snap.layerErrors = [
-          ...(snap.layerErrors ?? []),
-          ...unmetNative.map((instanceId) => ({
-            layerId: instanceId,
-            stage: 'snapshot' as const,
-            message:
-              `its plugin's native module did not answer for frame ${i} within ${NATIVE_SETTLE_MS} ms`,
-          })),
-          ...nativeFailed.map((e) => ({
-            layerId: e.instanceId,
-            stage: 'snapshot' as const,
-            message: `${e.pluginId} (native): ${e.message}`,
-          })),
-        ];
-      }
-      /*
-        Warm this frame's plugin CPU kernels BEFORE anything draws.
-
-        A kernel module instantiates asynchronously. A preview accepts that and
-        takes the one-frame warm-up — the layer redraws when the module lands.
-        An export cannot: the bake runs inside `renderFrame`, so a frame drawn
-        while the module is still loading is written with that effect simply
-        ABSENT, and the export then reports success. The user gets a file that
-        is missing an effect at exactly the frames the module was still loading,
-        with nothing anywhere saying so.
-
-        Cheap after the first frame: `warmPluginKernels` skips every module that
-        is loaded or already known to be missing, so this is a walk of the
-        frame's effects and nothing else. A module that cannot load is recorded
-        as missing rather than retried, so a broken package costs one attempt
-        for the whole export, not one per frame.
-      */
-      await warmPluginKernels(snap.layers.flatMap((l) => l.effects ?? []));
-      if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
+      const snap = buildFrame(t);
       backend.renderFrame(snap);
       // Converge media: while a render started async media work (video seeks,
       // first decode, blend-cache fills), await it and re-render. The element
@@ -417,8 +263,6 @@ export async function renderOffline(
     }
     return total;
   } finally {
-    setGeneratorExactMode(false);
-    setNativeExactMode(false);
     backend.dispose();
   }
 }

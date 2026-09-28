@@ -9,16 +9,13 @@
  */
 
 import { useUIStore } from '@stores/uiStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { customConfirm } from '@components/Modal';
-import { detectSceneEdits, applySceneEditsAsMarkers, applySceneEditsAsSplits } from './sceneEditDetectLayer';
-import { applyEngineJob, startEngineJob } from '@core/engine/engineJobs';
+import { applyEngineJob, requireEngineJob, startEngineJob } from '@core/engine/engineJobs';
 
 export type SceneEditMode = 'markers' | 'split';
 
 export async function runSceneEditDetection(nodeId: string, mode: SceneEditMode): Promise<void> {
   const ui = useUIStore.getState();
-  const fps = useCompositionStore.getState().fps || 30;
   const noteId = ui.notify({ level: 'info', message: 'Scene Edit Detection: reading frames… 0%', durationMs: 0 });
   let last = -1;
   const update = (message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info', durationMs = 0) => {
@@ -27,9 +24,9 @@ export async function runSceneEditDetection(nodeId: string, mode: SceneEditMode)
   };
   let liveId = noteId;
   try {
-    // The engine walks the footage itself when it runs jobs (the sceneDetect
-    // job): its result is held until the confirm, then applied as one entry.
-    const handle = await startEngineJob<{ cutsCompSec: number[]; dissolvesCompSec: number[] }>(
+    // The engine walks the footage (the sceneDetect job): its result is held
+    // until the confirm, then applied as one entry.
+    const started = await startEngineJob<{ cutsCompSec: number[]; dissolvesCompSec: number[] }>(
       { kind: 'sceneDetect', value: { layer: nodeId, createMarkers: mode === 'markers', splitLayers: mode === 'split' } },
       {
         apply: false,
@@ -43,77 +40,36 @@ export async function runSceneEditDetection(nodeId: string, mode: SceneEditMode)
         },
       },
     );
-    if (handle) {
-      const out = await handle.done;
-      useUIStore.getState().dismissNotification(liveId);
-      if (out.status !== 'done') {
-        if (out.status === 'failed') update(`Scene Edit Detection failed: ${out.error?.message ?? 'unknown error'}`, 'error', 6000);
-        return;
-      }
-      const cuts = out.result?.cutsCompSec ?? [];
-      const fades = out.result?.dissolvesCompSec.length ?? 0;
-      if (cuts.length === 0) {
-        useUIStore.getState().notify({ level: 'info', message: 'Scene Edit Detection: no cuts found in this clip.', durationMs: 3200 });
-        return;
-      }
-      const n = cuts.length;
-      const found = fades
-        ? `Found ${n - fades} cut${n - fades === 1 ? '' : 's'} and ${fades} dissolve${fades === 1 ? '' : 's'}.`
-        : `Found ${n} cut${n === 1 ? '' : 's'}.`;
-      const what = mode === 'split' ? `split the clip into ${n + 1} shots` : `add ${n} marker${n === 1 ? '' : 's'}`;
-      const ok = await customConfirm('Scene Edit Detection', `${found} ${what[0]!.toUpperCase()}${what.slice(1)}?`, {
-        confirmLabel: mode === 'split' ? 'Split' : 'Add markers',
-      });
-      if (!ok) {
-        handle.cancel();  // drops the held result
-        return;
-      }
-      const applied = await applyEngineJob(handle.id);
-      useUIStore.getState().notify({
-        level: applied ? 'success' : 'error',
-        message: !applied ? 'Scene Edit Detection: the result could not be applied.'
-          : mode === 'split' ? `Split at ${n} cut${n === 1 ? '' : 's'}.` : `Added ${n} marker${n === 1 ? '' : 's'}.`,
-        durationMs: 3200,
-      });
+    const handle = requireEngineJob(started, 'Scene Edit Detection');
+    const out = await handle.done;
+    useUIStore.getState().dismissNotification(liveId);
+    if (out.status !== 'done') {
+      if (out.status === 'failed') update(`Scene Edit Detection failed: ${out.error?.message ?? 'unknown error'}`, 'error', 6000);
       return;
     }
-    const result = await detectSceneEdits({
-      nodeId,
-      fps,
-      onProgress: (f) => {
-        const pct = Math.round(f * 100);
-        if (pct !== last && pct % 5 === 0) {
-          last = pct;
-          useUIStore.getState().dismissNotification(liveId);
-          liveId = useUIStore.getState().notify({
-            level: 'info', message: `Scene Edit Detection: reading frames… ${pct}%`, durationMs: 0,
-          });
-        }
-      },
-    });
-    useUIStore.getState().dismissNotification(liveId);
-    const n = result.cutsCompSec.length;
-    const fades = result.dissolvesCompSec.length;
-    if (n === 0) {
+    const cuts = out.result?.cutsCompSec ?? [];
+    const fades = out.result?.dissolvesCompSec.length ?? 0;
+    if (cuts.length === 0) {
       useUIStore.getState().notify({ level: 'info', message: 'Scene Edit Detection: no cuts found in this clip.', durationMs: 3200 });
       return;
     }
+    const n = cuts.length;
     const found = fades
       ? `Found ${n - fades} cut${n - fades === 1 ? '' : 's'} and ${fades} dissolve${fades === 1 ? '' : 's'}.`
       : `Found ${n} cut${n === 1 ? '' : 's'}.`;
     const what = mode === 'split' ? `split the clip into ${n + 1} shots` : `add ${n} marker${n === 1 ? '' : 's'}`;
-    const ok = await customConfirm(
-      'Scene Edit Detection',
-      `${found} ${what[0]!.toUpperCase()}${what.slice(1)}?`,
-      { confirmLabel: mode === 'split' ? 'Split' : 'Add markers' },
-    );
-    if (!ok) return;
-    const applied = mode === 'split'
-      ? applySceneEditsAsSplits(nodeId, result.cutsCompSec)
-      : applySceneEditsAsMarkers(result.cutsCompSec, result.dissolvesCompSec);
+    const ok = await customConfirm('Scene Edit Detection', `${found} ${what[0]!.toUpperCase()}${what.slice(1)}?`, {
+      confirmLabel: mode === 'split' ? 'Split' : 'Add markers',
+    });
+    if (!ok) {
+      handle.cancel();  // drops the held result
+      return;
+    }
+    const applied = await applyEngineJob(handle.id);
     useUIStore.getState().notify({
-      level: 'success',
-      message: mode === 'split' ? `Split at ${applied} cut${applied === 1 ? '' : 's'}.` : `Added ${applied} marker${applied === 1 ? '' : 's'}.`,
+      level: applied ? 'success' : 'error',
+      message: !applied ? 'Scene Edit Detection: the result could not be applied.'
+        : mode === 'split' ? `Split at ${n} cut${n === 1 ? '' : 's'}.` : `Added ${n} marker${n === 1 ? '' : 's'}.`,
       durationMs: 3200,
     });
   } catch (err) {

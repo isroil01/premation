@@ -1,7 +1,7 @@
 /**
  * D5 / F2 — the editor session when the C++ ENGINE OWNS THE DOCUMENT
- * (the default since 2026-09-28; `PREMATION_ENGINE_OWNER=ui` or
- * `PREMATION_ENGINE=ts` keeps the TypeScript owner).
+ * (always, in the app: the C++ engine is the only engine — the owner flag and
+ * the TypeScript owner are gone, docs/TS_ENGINE_REMOVAL.md).
  *
  * What Providers wires instead of the TypeScript owner's pieces:
  *
@@ -149,6 +149,8 @@ export async function installEngineOwnedSession(track: (dispose: () => void) => 
     now: () => Date.now(),
     // F2 bundles: where the page would write a `.motion` directory bundle, the engine does.
     formatFor: (p) => (isLocalFirst() && isBundlePath(p) ? 'bundle' : 'auto'),
+    // G2: a project that used JavaScript plugins opens without their content, said once.
+    notify: (message) => useUIStore.getState().notify({ level: 'warning', message, durationMs: 9000 }),
   });
   const pm = getProjectManager();
   pm.setEngineDocument(session);

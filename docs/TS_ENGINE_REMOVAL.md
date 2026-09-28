@@ -213,6 +213,65 @@ other, viewport/tools) to 0; document stores become mirror views; export /
 mogrt / cloud / versions / templates via `exportDocument`/`restoreDocument`;
 importers as command batches.
 
+**Phase 4 progress (2026-09-28, branch `p4-remove-fallbacks`).** Done, each its
+own commit (builds and passes):
+- *Flags + engine selection.* `PREMATION_ENGINE`, `PREMATION_ENGINE_OWNER`,
+  `<userData>/engine.json` `backend`/`owner`, `PREMATION_EXPORT_ENGINE` are
+  gone (`VITE_UNIFIED_HISTORY` / `LEGACY_DEBOUNCE_RECORDER` were already gone
+  from code). The supervisor always starts; its `fallback` state is now
+  `unavailable` — fatal (no executable, no usable GPU, protocol mismatch,
+  spawn failure → a startup dialog, then quit) or a crash loop (a blocking
+  dialog: Save Recovery Copy of the last autosave / Try Again = `retry()`, main
+  replays its command log / Quit — `electron/engineUnavailable.ts`).
+  `ProcessEngineClient` has no `fallback` option: unavailable = requests answer
+  `busy`, one notice, ready again after the retry's restart. `engine()` is the
+  `OwnedEngineClient` over the process client wherever main answers
+  `engine:status`; the LocalEngine stays only as the page replica (until the UI
+  reads only the mirror) and as the harness where there is no engine host
+  (jest; the headless CLI's hidden window).
+- *Page fallbacks for engine jobs* outside the UI-migration areas: scene edit
+  detection, object mask, beat markers / beat grid, auto-reframe command,
+  auto-trace, the viewport proxy transcode, transcription (the page mixdown,
+  `speechAudio.ts` and main's `ai:transcribe` whisper proxy deleted). A
+  harness `unsupported` becomes a user-facing error (`requireEngineJob`).
+  File ▸ Open After Effects Project is engine-only.
+- *Export.* `electron/exportProcess.ts` launches only `premation-engine
+  --export` (the hidden-window worker path and its IPC are gone); what the
+  engine cannot render fails with its reason. `premation render` renders in the
+  engine by default; only `--aspect/--captions/--commands/--data`, a png still
+  and HDR still open the hidden editor window (`needsEditor`).
+- *JS/WGSL plugin system (G2).* `src/core/plugins` (host, sandbox worker,
+  manifests, effects, kernels, generators, custom layer kinds, native addon
+  tier, storage, registry/marketplace/revocation), `src/layout/Plugins`
+  (manager, marketplace, publisher portal, panels, consent, detail tabs), the
+  plugin menu / tools flyout / draw overlay / inspector sections, the
+  dashboard Plugins tab, `pluginStore`, Electron's `pluginLoader`, `pluginNet`,
+  `pluginPublish`, `pluginNative*`, `packages/plugin-native-sdk`,
+  `examples/plugins`, the plugin render-test scenes (15, with references),
+  `docs/PLUGINS.md`, `PLUGIN_SYSTEM_REFERENCE.md`, `PLUGIN_SYSTEM_FOR_AI.md`.
+  The native SDK (`native/sdk`, `docs/PLUGIN_SDK.md`) stays. A project that
+  used JS plugins still opens: its JS-plugin effects and plugin-kind layers are
+  dropped after open as ONE undoable entry with one notice
+  (`src/core/project/removedPluginContent.ts`; native SDK effects, loaded or
+  not, are kept). The legacy `plugins` / `pluginStorage` document blocks ride
+  through a save unchanged.
+
+Measured over the branch (1f904db4 → the plugin commits): about **51k
+production lines, 40k test lines and 5k doc lines deleted** (+0.9k / +0.4k
+added), 506 files. The native-side read ratchet was lowered with the page job
+paths (371 → 367).
+
+Still here, and why (next phase-4 steps): the job callers under `src/layout`
+(Inspector audio dialogs, trackMotion) and `src/core/workspace` (roto brush)
+keep their page paths, and the in-page export (`exportManager.runExport`, webm
+muxer, GIF encoder, raw pipe) stays because `src/layout/Export/ExportForm.tsx`
+still calls it — both wait for the UI read migration in those folders, which
+this branch did not touch beyond the plugin UI. The CLI's hidden window
+(comps listing, captions, the `needsEditor` renders, `autoReframe.ts`) and the
+render-worker package run on the TypeScript engine until those CLI features are
+engine commands. The `EditorTabs` strip (it only ever held plugin detail tabs)
+is left for the UI cleanup.
+
 **Phase 4 — delete, in dependency order:** flags + fallbacks; JS plugin system;
 renderer + effects; media/text/audio; evaluation; parity generators + TS harness
 + native-bridge + napi; config/docs sweep (CLAUDE.md layering, eslint layering

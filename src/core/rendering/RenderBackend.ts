@@ -209,31 +209,6 @@ export interface RenderLayer {
   /** Particle emitter config. When present, the layer draws a particle system
    *  (simulated deterministically at the current time) instead of its content. */
   particles?: import('@core/particles/particleSim').ParticleConfig;
-  /**
-   * A plugin GENERATOR's instances for this frame — what a `render: "generator"`
-   * layer kind produced (see `core/plugins/generator/`).
-   *
-   * The validated buffer, not a config: the simulation already ran, off the
-   * render path, and what arrives here is geometry. That is the difference from
-   * `particles` above, which is a description the backend simulates itself.
-   *
-   * Absent when the plugin is stopped, uninstalled, or has not produced
-   * anything yet — and the layer still emits, because an empty generator layer
-   * is an empty layer rather than a missing one.
-   */
-  generator?: import('@core/plugins/generator').GeneratorFrame;
-  /**
-   * Focal length (comp px) for the perspective divide INSIDE a generator's
-   * field, or absent for an orthographic one.
-   *
-   * A sibling of `generator` rather than a field on it, because it is the
-   * host's number, not the plugin's: the plugin says where its instances are in
-   * layer space, and the comp's camera says how a depth of 300 px reads. Folding
-   * it into the plugin's frame would mean rewriting the plugin's own data on the
-   * way through, and a cached frame would then be wrong the moment the camera's
-   * zoom was keyframed.
-   */
-  generatorPerspective?: number;
   /** Paint strokes (AE Paint effect) drawn over the layer content in local
    *  space — paint composites colour, erase cuts holes. */
   paint?: import('@core/paint/paintStrokes').PaintConfig;

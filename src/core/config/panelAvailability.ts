@@ -25,7 +25,7 @@
  * capture the default edition ('server') and no gate would ever fire.
  */
 
-import { aiEnabled, pluginsEnabled } from './edition';
+import { aiEnabled } from './edition';
 
 /**
  * Panel id → whether this build has it. Ids absent from this map are available
@@ -38,18 +38,6 @@ export const PANEL_AVAILABILITY: Readonly<Record<string, () => boolean>> = {
    */
   ai: aiEnabled,
 
-  /**
-   * The marketplace — find, install and manage plugins. Server edition only.
-   */
-  marketplace: pluginsEnabled,
-
-  /**
-   * The dock that HOSTS plugin-provided panels. Distinct from `marketplace`,
-   * and gated for a different reason: with no plugins there is nothing for it
-   * to contain, so leaving it registered would offer an empty panel whose
-   * emptiness the user cannot fix.
-   */
-  plugins: pluginsEnabled,
 };
 
 /** Whether a panel id exists in this build. Unknown ids are available. */

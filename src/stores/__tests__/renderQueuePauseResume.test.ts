@@ -93,10 +93,6 @@ jest.mock('@core/export/videoSink', () => ({
 // The store tells plugins a render finished through a DYNAMIC import of the
 // whole plugin runtime. Nothing here is about plugins, and compiling that graph
 // inside a 5s test is how this suite times out on a cold cache — stub it.
-jest.mock('@core/plugins/PluginHost', () => ({
-  pluginHost: { notifyRenderFinished: jest.fn() },
-}));
-
 import { useRenderQueueStore, type RenderJob } from '../renderQueueStore';
 
 const baseJob: Omit<RenderJob, 'id' | 'status' | 'progress'> = {

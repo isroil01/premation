@@ -2,19 +2,18 @@
  * The app's handle on the C++ engine process backend (NATIVE_CORE_PLAN §5 C3).
  *
  *   processEngineBridge()        the preload's `motionEditor.engine`, or null (browser build)
- *   processEngineEnabled()       is the process backend switched on (PREMATION_ENGINE=process
- *                                / <userData>/engine.json)? Asks main; false when unknown.
+ *   processEngineEnabled()       is there an engine in this window (a preload bridge)?
+ *                                The C++ engine is the only one: true in the app, false only
+ *                                in a test harness without a bridge.
  *   createAppProcessEngine(o)    the ONE ProcessEngineClient of this window (idempotent: a
  *                                second call returns the same client and updates its
- *                                fallback / notice hooks)
+ *                                notice hooks)
  *   processEngine()              that client, or null when none was created
  *   subscribeProcessEngine(l)    told when the client appears or a notice arrives
- *   lastProcessEngineNotice()    the last restart / fallback notice (the surface shows it)
+ *   lastProcessEngineNotice()    the last restart / unavailable notice (the surface shows it)
  *
  * The client itself (@motion/engine-api `ProcessEngineClient`) needs nothing
- * from src/: this module only binds it to the window's bridge and keeps the
- * fallback — the TypeScript engine — pluggable, because engineInstance.ts
- * owns (and rebuilds) that one.
+ * from src/: this module only binds it to the window's bridge.
  *
  * ONE client per window, even when this module is evaluated twice (Vite HMR,
  * or a second import URL): two clients over one engine would BOTH replay their
@@ -28,16 +27,13 @@
 import {
   createProcessEngineClient,
   type EngineBridge,
-  type EngineClient,
   type ProcessEngineClient,
   type ProcessEngineNotice,
 } from '@motion/engine-api';
 import { isDevBuild } from '@core/config/devBuild';
 
 export interface AppProcessEngineOptions {
-  /** The TypeScript engine to fall back to (engineInstance's current engine). */
-  fallback?: () => EngineClient;
-  /** Restart / fallback notices (a toast). The fallback notice comes once. */
+  /** Restart / unavailable notices (a toast). The unavailable notice comes once per outage. */
   onNotice?: (notice: ProcessEngineNotice) => void;
   /** F2: a batch ANOTHER window caused arrived (this window's page replica refreshes). */
   onForeignBatch?: () => void;
@@ -45,7 +41,6 @@ export interface AppProcessEngineOptions {
 
 interface State {
   instance: ProcessEngineClient | null;
-  fallbackProvider: (() => EngineClient) | null;
   noticeHook: ((n: ProcessEngineNotice) => void) | null;
   foreignHook: (() => void) | null;
   lastNotice: ProcessEngineNotice | null;
@@ -58,7 +53,7 @@ type WindowWithEngine = {
   __premationProcessEngine?: ProcessEngineClient;
 };
 
-const fresh = (): State => ({ instance: null, fallbackProvider: null, noticeHook: null, foreignHook: null, lastNotice: null, listeners: new Set() });
+const fresh = (): State => ({ instance: null, noticeHook: null, foreignHook: null, lastNotice: null, listeners: new Set() });
 let local: State | null = null;
 
 function state(): State {
@@ -82,6 +77,14 @@ export function processEngineBridge(): EngineBridge | null {
   return (window as unknown as WindowWithEngine).motionEditor?.engine ?? null;
 }
 
+/**
+ * Is there an engine in this window? The C++ engine is the only engine and
+ * always owns the document (docs/TS_ENGINE_REMOVAL.md): main's
+ * `engine:status` always answers `enabled: true, ownsDocument: true`. False
+ * only where there is no engine host — the jest harness (no bridge) and the
+ * headless CLI's hidden window (no handler in that process), which still run
+ * on the TypeScript engine until phase 4 deletes them.
+ */
 export async function processEngineEnabled(): Promise<boolean> {
   const bridge = processEngineBridge();
   if (!bridge) return false;
@@ -92,32 +95,17 @@ export async function processEngineEnabled(): Promise<boolean> {
   }
 }
 
-/**
- * F2: does the ENGINE own the document (`PREMATION_ENGINE=process` +
- * `PREMATION_ENGINE_OWNER=engine`, or `{ "backend": "process", "owner":
- * "engine" }`)? Then New / Open / Save / Revert / autosave / recovery go
- * through engine requests (core/project/engineDocumentSession.ts). False when
- * unknown — the TypeScript engine stays the owner.
- */
-export async function processEngineOwnsDocument(): Promise<boolean> {
-  const bridge = processEngineBridge();
-  if (!bridge) return false;
-  try {
-    const s = await bridge.status();
-    return s.enabled === true && s.ownsDocument === true;
-  } catch {
-    return false;
-  }
+/** The engine owns the document wherever there is one (the owner flag is gone). */
+export function processEngineOwnsDocument(): Promise<boolean> {
+  return processEngineEnabled();
 }
 
 /**
- * Create (once) the window's process-backend client. Call only when
- * `processEngineEnabled()` said yes — the client falls back at once otherwise.
+ * Create (once) the window's engine client.
  * Returns null without a bridge (browser build, tests).
  */
 export function createAppProcessEngine(options: AppProcessEngineOptions = {}): ProcessEngineClient | null {
   const s = state();
-  if (options.fallback) s.fallbackProvider = options.fallback;
   if (options.onNotice) s.noticeHook = options.onNotice;
   if (options.onForeignBatch) s.foreignHook = options.onForeignBatch;
   if (s.instance) return s.instance;
@@ -125,15 +113,10 @@ export function createAppProcessEngine(options: AppProcessEngineOptions = {}): P
   if (!bridge) return null;
   s.instance = createProcessEngineClient(bridge, {
     onForeignBatch: () => state().foreignHook?.(),
-    fallback: () => {
-      const f = state().fallbackProvider?.();
-      if (!f) throw new Error('no fallback engine attached');
-      return f;
-    },
     onNotice: (n) => {
       const st = state();
       st.lastNotice = n;
-      if (n.kind === 'fallback') console.warn(`[engine] the C++ engine is unavailable — using the TypeScript engine: ${n.reason}`);
+      if (n.kind === 'unavailable') console.error(`[engine] the engine is unavailable: ${n.reason}`);
       else console.info(`[engine] premation-engine restarted (${n.cause}); ${n.replayed} requests replayed in ${n.ms} ms, ${n.mismatches} mismatches`);
       st.noticeHook?.(n);
       notify();

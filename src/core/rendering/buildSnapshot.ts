@@ -65,7 +65,6 @@ import { readNodeLight, lightAttenuationAt, lightReach } from '@core/scene/light
 import { readNodeParticle, resolveParticleConfig } from '@core/particles/particleSim';
 // Deliberately the leaf module, not the plugin barrel: `buildSnapshot` runs in
 // the render-tests harness and in export, neither of which has a plugin host.
-import { generatorFrameFor, generatorKindOf, shaderKindOf, shaderLayerEffect } from '@core/plugins/generator/generatorLayers';
 import { measureParagraphBox, measureTextNodeSize, readMeasuredTextStyle } from '@core/text/measureText';
 import { hasTextPath, readTextStrokePaint, textExtrasForNode } from '@core/text/textExtras';
 import { applyGradientTracks, TEXT_STROKE_GRADIENT_TRACKS } from './gradientPaintTracks';
@@ -2919,102 +2918,6 @@ export function buildSnapshot(
         }, node);
       }
       return;
-    }
-
-    /*
-      Plugin GENERATOR layer: the plugin produced this layer's geometry.
-
-      The one-character gate first — a native kind has no dot in it, a
-      namespaced plugin kind always does — so a project with no plugin layers
-      pays a single `indexOf` per layer and nothing else. Everything past it is
-      in `core/plugins/generator/`, including the decision not to wait: the
-      plugin's code cannot run on this thread, so this takes whatever the
-      scheduler has and states the demand for the frame it actually wants.
-
-      A generator layer with no geometry still EMITS. It is an empty layer, not
-      a missing one: it holds its place in the stack, keeps its transform and
-      its keyframes, and starts drawing the moment its plugin answers.
-    */
-    if (kind.indexOf('.') >= 0) {
-      const genKind = generatorKindOf(kind);
-      if (genKind) {
-        const w = worldTransformOf(node.id, localOf, parentOf, worldCache);
-        const gv = valuesOf(node.id);
-        const gOpacity = gv?.has('opacity') ? (gv.get('opacity') as number) / 100 : 1;
-        const gEval: Record<string, unknown> = {};
-        if (gv) for (const [k, val] of gv.entries()) gEval[k] = val;
-        const gGeom = readGeometry(node, gEval);
-        const gW = gGeom?.width ?? comp.width;
-        const gH = gGeom?.height ?? comp.height;
-        const frame = generatorFrameFor(node, kind, {
-          compTime: t,
-          // The layer's own clock, through the same helper every other layer's
-          // source time goes through — a generator on a 50% time-stretched
-          // layer must step at half speed, and reading raw comp time here is
-          // how it would not.
-          layerTime: retimedSourceAt(node.id, t),
-          fps,
-          compSize: { width: comp.width, height: comp.height },
-          layerSize: { width: gW, height: gH },
-          sampled: gv,
-        });
-        // The comp lens, for the field's own perspective divide — the same
-        // rule the particle field follows: a 3D generator parallaxes through
-        // the composition's camera rather than through a private lens, and a
-        // 2D one is orthographic.
-        const genPerspective = is3DEnabled(node) && camera ? camera.focalLength : undefined;
-        emitLayer({
-          id: node.id, kind: 'shape',
-          x: w.x, y: w.y, rotation: w.rotation, scaleX: w.scaleX, scaleY: w.scaleY, depth: 0,
-          opacity: gOpacity, width: gW, height: gH,
-          fill: '#000', visible: node.visible !== false,
-          blend: readNodeBlend(node),
-          ...(readNodePreserveTransparency(node) ? { preserveTransparency: true } : {}),
-          ...(frame ? { generator: frame } : {}),
-          ...(genPerspective ? { generatorPerspective: genPerspective } : {}),
-        }, node);
-        return;
-      }
-
-      /*
-        Plugin SHADER layer kind — GAP 2, closed.
-
-        The kind names one of its plugin's effects and the effect draws it: the
-        layer is emitted as a transparent surface of its own size carrying that
-        one effect, which the plugin-effect path then compiles, binds and runs
-        on both backends with the host's time / comp-size / frame inputs. No
-        second render path, and nothing here knows what WGSL is.
-
-        A `shader` kind that names NO shader is not handled here and falls
-        through to the ordinary path, exactly as it did before the field
-        existed — which is to say it draws nothing.
-      */
-      const shaderKind = shaderKindOf(kind);
-      if (shaderKind) {
-        const w = worldTransformOf(node.id, localOf, parentOf, worldCache);
-        const sv = valuesOf(node.id);
-        const sOpacity = sv?.has('opacity') ? (sv.get('opacity') as number) / 100 : 1;
-        const sEval: Record<string, unknown> = {};
-        if (sv) for (const [k, val] of sv.entries()) sEval[k] = val;
-        const sGeom = readGeometry(node, sEval);
-        const effect = shaderLayerEffect(node, shaderKind, sv);
-        emitLayer({
-          id: node.id, kind: 'shape',
-          x: w.x, y: w.y, rotation: w.rotation, scaleX: w.scaleX, scaleY: w.scaleY, depth: 0,
-          opacity: sOpacity,
-          width: sGeom?.width ?? comp.width,
-          height: sGeom?.height ?? comp.height,
-          // Transparent, because the KERNEL is the content: an opaque carrier
-          // would be what the effect sampled, and every such kind would be a
-          // shader applied to a black rectangle.
-          fill: 'rgba(0,0,0,0)',
-          visible: node.visible !== false,
-          blend: readNodeBlend(node),
-          ...(readNodePreserveTransparency(node) ? { preserveTransparency: true } : {}),
-          ...(effect ? { effects: [effect as unknown as Effect] } : {}),
-        }, node);
-        return;
-      }
     }
 
     const base = readBase(node);

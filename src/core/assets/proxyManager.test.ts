@@ -3,13 +3,28 @@
  *
  * Every one of these must end with the asset renderable at FULL resolution.
  * A proxy that fails to generate is a missed optimisation; a proxy that leaves
- * an asset in a broken state is a lost shot.
+ * an asset in a broken state is a lost shot. The viewport proxy is the
+ * engine's `proxy` job (mocked here); the page transcode is gone.
  */
+
+jest.mock('@core/engine/engineJobs', () => ({ startEngineJob: jest.fn() }));
 
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { startEngineJob, type EngineJobOutcome } from '@core/engine/engineJobs';
 import { startProxy, cancelProxy, attachProxy, detachProxy, proxyRefusal, canGenerateProxy, maybeAutoGenerateProxy } from './proxyManager';
 import { resolveMediaSrc } from './proxy';
+
+const startJob = startEngineJob as jest.MockedFunction<typeof startEngineJob>;
+
+/** An engine job whose outcome the test decides (`finish`), with its cancel spy. */
+function engineJob(): { finish(o: Partial<EngineJobOutcome<{ path: string }>>): void; cancel: jest.Mock } {
+  let resolve!: (o: EngineJobOutcome<{ path: string }>) => void;
+  const done = new Promise<EngineJobOutcome<{ path: string }>>((r) => { resolve = r; });
+  const cancel = jest.fn(() => resolve({ status: 'cancelled', job: {} as never, result: null }));
+  startJob.mockResolvedValueOnce({ id: 'job_1', cancel, done } as never);
+  return { finish: (o) => resolve({ status: 'done', job: {} as never, result: null, ...o }), cancel };
+}
 
 const ORIGINAL = 'blob:original';
 
@@ -32,6 +47,7 @@ let generate: jest.Mock;
 let cancel: jest.Mock;
 
 beforeEach(() => {
+  startJob.mockReset();
   generate = jest.fn();
   cancel = jest.fn().mockResolvedValue(true);
   (window as unknown as { motionEditor?: unknown }).motionEditor = {
@@ -78,100 +94,72 @@ describe('refusals are explained rather than attempted', () => {
 });
 
 describe('a successful generation', () => {
-  it('marks generating, then ready — and full-res renders throughout', async () => {
-    let midFlight: string | undefined;
-    generate.mockImplementation(async () => {
-      // While the encode runs the asset must still resolve to the original.
-      const a = useAssetStore.getState().assets[0]!;
-      midFlight = resolveMediaSrc(a, 'viewport');
-      return new Uint8Array([1, 2, 3]);
-    });
-
-    await startProxy('a1');
-
-    expect(midFlight).toBe(ORIGINAL);
-    expect(proxyOf()).toMatchObject({ status: 'ready', src: 'blob:proxy', width: 1920, height: 1080 });
-  });
-
-  it('passes the encode args with placeholders, not real paths', async () => {
-    generate.mockResolvedValue(new Uint8Array([1]));
-    await startProxy('a1');
-    const args = generate.mock.calls[0]![3] as string[];
-    expect(args).toContain('__IN__');
-    expect(args).toContain('__OUT__');
-    expect(args).toContain('scale=1920:1080');
-  });
-
-  it('routes alpha footage to WebM', async () => {
-    seed(asset({ metadata: { width: 3840, height: 2160, hasAlpha: true } }));
-    generate.mockResolvedValue(new Uint8Array([1]));
-    await startProxy('a1');
-    expect(generate.mock.calls[0]![4]).toBe('webm');
+  it('marks generating, then ready with the engine file — and full-res renders throughout', async () => {
+    const job = engineJob();
+    const p = startProxy('a1');
+    for (let i = 0; i < 10 && proxyOf()?.status !== 'generating'; i += 1) await Promise.resolve();
+    expect(proxyOf()?.status).toBe('generating');
+    expect(resolveMediaSrc(useAssetStore.getState().assets[0]!, 'viewport')).toBe(ORIGINAL);
+    job.finish({ result: { path: 'C:/proj/proxies/shot.mp4' } });
+    await p;
+    expect(proxyOf()).toMatchObject({ status: 'ready', src: 'C:/proj/proxies/shot.mp4' });
+    expect(startJob.mock.calls[0]![0]).toEqual({ kind: 'proxy', value: { item: 'a1', outputFolder: '' } });
   });
 });
 
 describe('failure paths all land at full resolution', () => {
-  it('a null result (no ffmpeg, or a failed encode) marks failed and keeps the original', async () => {
-    generate.mockResolvedValue(null);
-    await startProxy('a1');
-    expect(proxyOf()?.status).toBe('failed');
+  it('a failed job marks failed with the engine message and keeps the original', async () => {
+    const job = engineJob();
+    const p = startProxy('a1');
+    await Promise.resolve();
+    job.finish({ status: 'failed', error: { code: 'io', message: 'ffmpeg exited 1' } as never });
+    await p;
+    expect(proxyOf()).toMatchObject({ status: 'failed', error: 'ffmpeg exited 1' });
     expect(resolveMediaSrc(useAssetStore.getState().assets[0]!, 'viewport')).toBe(ORIGINAL);
   });
 
-  it('an empty result is treated as failure, not as a valid zero-byte proxy', async () => {
-    generate.mockResolvedValue(new Uint8Array(0));
-    await startProxy('a1');
-    expect(proxyOf()?.status).toBe('failed');
-  });
-
-  it('a throwing bridge is a failure, not an unhandled rejection', async () => {
-    generate.mockRejectedValue(new Error('ipc died'));
+  it('a refused job is a failure, not an unhandled rejection', async () => {
+    startJob.mockRejectedValueOnce(new Error('the item has no footage'));
     await expect(startProxy('a1')).resolves.toBeNull();
-    expect(proxyOf()?.status).toBe('failed');
+    expect(proxyOf()).toMatchObject({ status: 'failed', error: 'the item has no footage' });
   });
 
-  it('an unreadable original fails without calling ffmpeg at all', async () => {
-    global.fetch = jest.fn().mockRejectedValue(new Error('gone')) as never;
-    await startProxy('a1');
-    expect(generate).not.toHaveBeenCalled();
-    expect(proxyOf()?.status).toBe('failed');
+  it('an engine that does not run proxy jobs writes nothing and says so', async () => {
+    startJob.mockResolvedValueOnce(null);
+    expect(await startProxy('a1')).toBe('no-engine');
+    expect(proxyOf()).toBeUndefined();
   });
 
   it('an asset deleted mid-encode leaves nothing behind', async () => {
-    generate.mockImplementation(async () => {
-      useAssetStore.setState({ assets: [] } as never);
-      return new Uint8Array([1]);
-    });
-    await startProxy('a1');
+    const job = engineJob();
+    const p = startProxy('a1');
+    await Promise.resolve();
+    useAssetStore.setState({ assets: [] } as never);
+    job.finish({ result: { path: 'x.mp4' } });
+    await p;
     expect(useAssetStore.getState().assets).toHaveLength(0);
   });
 
   it('a re-import mid-encode does not have the stale job overwrite it', async () => {
-    generate.mockImplementation(async () => {
-      // The asset was re-imported: fresh record, no proxy.
-      useAssetStore.setState({ assets: [asset()] } as never);
-      return new Uint8Array([1]);
-    });
-    await startProxy('a1');
-    // The finished job saw the record was no longer 'generating' and stood down.
+    const job = engineJob();
+    const p = startProxy('a1');
+    await Promise.resolve();
+    useAssetStore.setState({ assets: [asset()] } as never);
+    job.finish({ result: { path: 'x.mp4' } });
+    await p;
     expect(proxyOf()).toBeUndefined();
   });
 });
 
 describe('cancellation', () => {
-  it('kills the child and CLEARS the record, so Create Proxy is offered again', async () => {
-    seed(asset({ proxy: { status: 'generating' } }));
+  it('stops the engine job and CLEARS the record, so Create Proxy is offered again', async () => {
+    const job = engineJob();
+    const p = startProxy('a1');
+    for (let i = 0; i < 10 && proxyOf()?.status !== 'generating'; i += 1) await Promise.resolve();
     await cancelProxy('a1');
+    await p;
+    expect(job.cancel).toHaveBeenCalledTimes(1);
     expect(cancel).toHaveBeenCalledWith('a1');
-    expect(proxyOf()).toBeUndefined();
-  });
-
-  it('a cancelled job does not later mark itself failed', async () => {
-    generate.mockImplementation(async () => {
-      await cancelProxy('a1'); // user cancels mid-encode
-      return null; // killed child exits non-zero
-    });
-    await startProxy('a1');
     expect(proxyOf()).toBeUndefined();
   });
 
@@ -188,20 +176,17 @@ describe('auto-generate at import (gated on the Use Proxies preference)', () => 
 
   it('does nothing when Use Proxies is off — the default costs no CPU on import', async () => {
     usePreferenceStore.setState({ useProxies: false } as never);
-    generate.mockResolvedValue(new Uint8Array([1]));
     maybeAutoGenerateProxy('a1');
     await Promise.resolve();
     await Promise.resolve();
-    expect(generate).not.toHaveBeenCalled();
+    expect(startJob).not.toHaveBeenCalled();
     expect(proxyOf()).toBeUndefined();
   });
 
   it('starts a job for worth-it footage when Use Proxies is on', async () => {
     usePreferenceStore.setState({ useProxies: true } as never);
-    generate.mockResolvedValue(new Uint8Array([1]));
+    engineJob();
     maybeAutoGenerateProxy('a1');
-    // startProxy asks the engine first (the proxy job); with no engine job it
-    // marks 'generating' on its page path before the transcode's first await.
     for (let i = 0; i < 20 && proxyOf()?.status !== 'generating'; i += 1) await Promise.resolve();
     expect(proxyOf()?.status).toBe('generating');
   });
@@ -211,7 +196,7 @@ describe('auto-generate at import (gated on the Use Proxies preference)', () => 
     seed(asset({ metadata: { width: 640, height: 360 } })); // too-small
     maybeAutoGenerateProxy('a1');
     await Promise.resolve();
-    expect(generate).not.toHaveBeenCalled();
+    expect(startJob).not.toHaveBeenCalled();
     expect(proxyOf()).toBeUndefined();
   });
 
@@ -219,7 +204,7 @@ describe('auto-generate at import (gated on the Use Proxies preference)', () => 
     usePreferenceStore.setState({ useProxies: true } as never);
     seed(asset({ proxy: { status: 'generating' } }));
     maybeAutoGenerateProxy('a1');
-    expect(generate).not.toHaveBeenCalled(); // already-running refusal
+    expect(startJob).not.toHaveBeenCalled(); // already-running refusal
   });
 });
 
@@ -239,9 +224,8 @@ describe('attach and detach a user-supplied proxy', () => {
     expect(resolveMediaSrc(useAssetStore.getState().assets[0]!, 'viewport')).toBe(ORIGINAL);
   });
 
-  it('detaching a GENERATED proxy revokes the URL we created', async () => {
-    generate.mockResolvedValue(new Uint8Array([1]));
-    await startProxy('a1');
+  it('detaching a GENERATED proxy releases what we made', () => {
+    seed(asset({ proxy: { status: 'ready', src: 'blob:proxy' } }));
     detachProxy('a1');
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:proxy');
   });

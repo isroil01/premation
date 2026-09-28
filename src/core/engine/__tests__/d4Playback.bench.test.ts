@@ -28,7 +28,7 @@ describe('D4 cached playback', () => {
     const native = await startNativeEngine({
       extraArgs: ['--frame-cache-mb', '2048', '--log-level', 'warn'],
     });
-    const client = new ProcessEngineClient(native.bridge, { fallback: () => { throw new Error('engine fell back'); } });
+    const client = new ProcessEngineClient(native.bridge);
     let phase = 'idle';
     const samples: { frame: number; ms: number; dropped: number; phase: string }[] = [];
     native.supervisor.on('frame', (m: EngineFrameMessage) => {

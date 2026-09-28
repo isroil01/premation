@@ -102,9 +102,9 @@ describe('OwnedEngineClient', () => {
     expect(client.replicaStats.mismatches).toBe(0);
   });
 
-  it('stops replaying once the owner has fallen back (it then answers from the replica itself)', async () => {
+  it('does not replay into the replica while the engine is unavailable (the request fails there)', async () => {
     const { owner, replica, client } = setup();
-    owner.backend = 'fallback';
+    owner.backend = 'unavailable';
     await client.execute({ type: 'renameLayer', layer: 'l1', name: 'A' });
     await flush();
     expect(owner.seen).toHaveLength(1);

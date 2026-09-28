@@ -49,7 +49,7 @@ const rel = (p: string): string => p.slice(SRC.length + 1).replace(/\\/g, '/');
  *
  * It is the browser build's session, which has nowhere else to live — there is
  * no main process in a browser. Everything about that is stated in the file and
- * in `docs/PLUGINS.md` §3; what this test enforces is that it stays ONE file.
+ * in the removed plugin design doc; what this test enforces is that it stays ONE file.
  */
 const WEB_SESSION_FILE = 'core/api/session.ts';
 

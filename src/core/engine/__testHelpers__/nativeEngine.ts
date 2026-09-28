@@ -96,7 +96,7 @@ export async function startNativeEngine(options: Partial<SupervisorOptions> = {}
     onState: (h) => supervisor.on('state', (s) => h(s as EngineHostState)),
     onRestarted: (h) =>
       supervisor.on('engine-restarted', (i) => h({ attempt: i.attempt, cause: i.cause, exitCode: i.exitCode, signal: i.signal, logTail: i.logTail } satisfies EngineRestartNotice)),
-    onFallback: (h) => supervisor.on('fallback', (i) => h({ reason: i.reason, logTail: i.logTail })),
+    onUnavailable: (h) => supervisor.on('unavailable', (i) => h({ reason: i.reason, fatal: i.fatal, logTail: i.logTail })),
   };
   await supervisor.start();
   return {

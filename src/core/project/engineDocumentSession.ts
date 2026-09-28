@@ -13,7 +13,7 @@
  *
  * This is the lifecycle expressed only in engine API requests, so it runs
  * unchanged over the TypeScript engine (in process, with its file ports) and
- * over the C++ engine process (`PREMATION_ENGINE=process`, whose FilePorts
+ * over the C++ engine process (the app's only engine, whose FilePorts
  * write temp-file + rename):
  *
  *   New            newProject                         (history cleared, documentReset)
@@ -47,6 +47,7 @@
  */
 
 import type { EngineClient, EngineResult, OpenProjectResult, ProjectFormat, SaveProjectResult } from '@motion/engine-api';
+import { dropRemovedPluginContent } from './removedPluginContent';
 
 /** What the session reads from the document mirror (DocumentMirror satisfies it). */
 export interface MirrorView {
@@ -97,6 +98,11 @@ export interface EngineDocumentSessionOptions {
    * `bundle` for a `.motion` path under LOCAL_FIRST (RoutedProjectStorage's rule).
    */
   formatFor?: (path: string) => ProjectFormat;
+  /**
+   * The one notice after an open that dropped JavaScript-plugin content
+   * (removedPluginContent.ts; G2). Absent: dropped silently.
+   */
+  notify?: (message: string) => void;
 }
 
 /** A lifecycle request the engine refused (the message is the engine's). */
@@ -134,6 +140,7 @@ export class EngineDocumentSession {
   async open(path: string): Promise<OpenProjectResult> {
     const r = await this.run('openProject', this.o.engine().execute({ type: 'openProject', path }));
     await this.dropRecovery();
+    await this.dropPluginContent();
     return r;
   }
 
@@ -228,6 +235,7 @@ export class EngineDocumentSession {
     }
     if (!opened) await this.run('newProject', engine.execute({ type: 'newProject' }));
     await this.run('restoreDocument', engine.execute({ type: 'restoreDocument', document: new TextEncoder().encode(text), label: RECOVER_LABEL }));
+    await this.dropPluginContent();
     await this.o.mirror.whenIdle();
     return true;
   }
@@ -235,6 +243,12 @@ export class EngineDocumentSession {
   /** "Discard" in the recovery prompt. */
   async discardRecovery(): Promise<void> {
     await this.dropRecovery();
+  }
+
+  /** A project that still carries JavaScript-plugin content: dropped as one entry, said once. */
+  private async dropPluginContent(): Promise<void> {
+    const dropped = await dropRemovedPluginContent(this.o.engine());
+    if (dropped) this.o.notify?.(dropped.message);
   }
 
   private async dropRecovery(): Promise<void> {

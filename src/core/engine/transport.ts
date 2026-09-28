@@ -15,7 +15,6 @@ import { setOverlayRigOptions } from './rigOverlay';
 import type { Command, Event, TimeRange, LoopMode, TransportState } from '@motion/engine-api';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore } from '@stores/projectStore';
-import { usePluginStore } from '@stores/pluginStore';
 import { fail } from './errors';
 import { compFps, flicksToSeconds, framesToFlicks, flicksToFrames } from './time';
 import { isCompItem, compItemIds } from './doc';
@@ -69,7 +68,8 @@ export class Transport {
   }
 
   setPluginEnabled(plugin: string, enabled: boolean): Record<string, unknown> {
-    const known = usePluginStore.getState().plugins.some((p) => p.manifest.id === plugin);
+    // JavaScript plugins are gone (G2); this engine hosts no native ones either.
+    const known = false;
     if (!known) fail('notFound', `no installed plugin '${plugin}'`);
     if (enabled) this.disabledPlugins.delete(plugin);
     else this.disabledPlugins.add(plugin);

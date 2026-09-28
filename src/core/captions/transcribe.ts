@@ -1,30 +1,19 @@
 /**
- * Captions from the composition's own audio.
- *
- * Same split as `aiImage.ts`, for the same reason: the renderer is keyless, so
- * the process that holds the key is the process that makes the call. In the
- * local edition that is Electron main (`ai:transcribe` → `aiProxy.ts` → the OS
- * keystore). There is no backend route for this yet, so the server edition
- * reports that rather than pretending — a caption feature that silently does
- * nothing is worse than one that says where it runs.
- *
- * What gets transcribed is the COMPOSITION, mixed down — not a footage file.
- * See `speechAudio.ts` for why that distinction decides whether the cues line
- * up with the picture.
- *
- * With the C++ engine (2026-09-28) the whole thing is its `transcribe` JOB:
- * the engine mixes the composition, calls the provider, and answers the cues.
- * The page never holds the key there either — Electron main writes it into
- * the job request on its way to the engine. The page path below runs only
- * when the engine does not run the job (the TypeScript engine).
+ * Captions from the composition's own audio: the engine's `transcribe` JOB
+ * (2026-09-28). The engine mixes the composition down (the COMPOSITION, not a
+ * footage file, so the cues line up with the picture), calls the user's
+ * speech provider and answers composition-second cues. The page never holds
+ * the key — Electron main writes it into the job request on its way to the
+ * engine. The page mixdown + ``ai:transcribe`` path that ran on the TypeScript
+ * engine is gone (docs/TS_ENGINE_REMOVAL.md phase 4). There is no backend
+ * route for this, so the server edition reports that rather than pretending.
  */
 
 import { aiRunsThroughBackend } from '@core/config/edition';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 import type { AiVaultProvider } from '@app-types/motionEditor';
-import { deoverlap, type Cue } from './captionFormat';
+import type { Cue } from './captionFormat';
 import type { SpokenWord } from './transcriptEdit';
-import { speechWav } from './speechAudio';
 import { secondsToFlicks } from '@motion/engine-api';
 import { runEngineJob } from '@core/engine/engineJobs';
 import { activeCompRootId } from '@core/scene/activeComp';
@@ -46,9 +35,9 @@ export class TranscribeError extends Error {
   }
 }
 
-/** True when this build can transcribe at all. */
+/** True when this build can transcribe at all (it has the engine). */
 export function transcriptionAvailable(): boolean {
-  return typeof globalThis.window?.motionEditor?.ai?.transcribe === 'function';
+  return typeof globalThis.window?.motionEditor?.engine?.request === 'function';
 }
 
 /** What the engine's transcribe job answers (JobInfo.result). */
@@ -71,7 +60,7 @@ function engineErrorCode(detail: string | undefined, fallback: string): string {
 
 /**
  * The engine's transcribe job. Null when this engine does not run it (the
- * page path runs instead); throws TranscribeError when it ran and failed.
+ * jest harness); throws TranscribeError when it ran and failed.
  */
 async function transcribeInEngine(opts: TranscribeOptions): Promise<Transcription | null> {
   const outcome = await runEngineJob<EngineTranscript>({
@@ -136,7 +125,6 @@ export async function transcribeComposition(opts: TranscribeOptions): Promise<Cu
 export async function transcribeCompositionDetailed(
   opts: TranscribeOptions,
 ): Promise<Transcription> {
-  const transcribe = globalThis.window?.motionEditor?.ai?.transcribe;
   if (aiRunsThroughBackend()) {
     throw new TranscribeError(
       'unsupported',
@@ -148,40 +136,8 @@ export async function transcribeCompositionDetailed(
     throw new TranscribeError('bad_request', 'That time range is empty, so there is no audio in it.');
   }
   const viaEngine = await transcribeInEngine(opts);
-  if (viaEngine) return viaEngine;
-  if (!transcribe) {
-    throw new TranscribeError('unsupported', 'This build cannot transcribe audio.');
+  if (!viaEngine) {
+    throw new TranscribeError('unsupported', 'Transcription runs in the engine, and this engine does not run it.');
   }
-
-  const wav = await speechWav(opts.startSec, opts.endSec, opts.rootId);
-  if (!wav) {
-    throw new TranscribeError(
-      'silent',
-      'This composition has no audible sound in that range — check the layers are unmuted and inside the work area.',
-    );
-  }
-
-  const result = await transcribe({
-    provider: useAiProviderStore.getState().provider as AiVaultProvider,
-    bytes: wav,
-    filename: 'composition.wav',
-    ...(opts.language ? { language: opts.language } : {}),
-  });
-
-  if (!result.ok) throw new TranscribeError(result.code, result.message);
-
-  // Cues come back relative to the AUDIO, which started at `startSec` — so a
-  // work area over the second half of a comp would otherwise caption it from
-  // zero, with every caption sitting under the wrong picture. Words share that
-  // time base, so they are re-based by the same amount.
-  return {
-    cues: deoverlap(
-      result.cues.map((c) => ({ ...c, start: c.start + opts.startSec, end: c.end + opts.startSec })),
-    ),
-    words: (result.words ?? []).map((w) => ({
-      text: w.text,
-      start: w.start + opts.startSec,
-      end: w.end + opts.startSec,
-    })),
-  };
+  return viaEngine;
 }

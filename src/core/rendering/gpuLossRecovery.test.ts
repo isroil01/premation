@@ -35,12 +35,6 @@ jest.mock('./engineDiagnostics', () => ({
   reportFrameDiagnostics: (...a: unknown[]) => mockReport(...a),
 }));
 
-const mockNoteDeviceLoss = jest.fn();
-jest.mock('@core/plugins/pluginEffects', () => ({
-  ...jest.requireActual('@core/plugins/pluginEffects'),
-  noteDeviceLoss: (...a: unknown[]) => mockNoteDeviceLoss(...a),
-}));
-
 jest.mock('@motion/renderer', () => {
   const actual = jest.requireActual('@motion/renderer');
   class FakeWebGpu extends actual.NullBackend {
@@ -143,7 +137,6 @@ beforeEach(() => {
   mockRecovered.mockReset();
   mockRecoveryFailed.mockReset();
   mockReport.mockReset();
-  mockNoteDeviceLoss.mockReset();
   statics.webgpuDisabledByLossLoop = false;
   MotionRendererBackend.gpuLossPolicy = { maxRecoveriesPerMinute: 3, baseDelayMs: 0, maxDelayMs: 0, restoreTimeoutMs: 10_000 };
 });
@@ -185,8 +178,6 @@ describe('WebGPU device loss', () => {
     expect(gpuInstances()[1]!.stats().frames).toBeGreaterThan(0);
     expect(mockRecovered).toHaveBeenCalledTimes(1);
     expect(mockRecovered).toHaveBeenCalledWith('viewport', 'motion-webgpu', expect.stringContaining('GPU process crashed'));
-    // Attribution still runs for the loss.
-    expect(mockNoteDeviceLoss).toHaveBeenCalledWith('unknown: GPU process crashed');
   });
 
   it('keeps rendering normally after recovery', async () => {

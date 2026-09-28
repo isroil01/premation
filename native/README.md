@@ -698,8 +698,8 @@ text) is Skia's and is reported per layer as a count of draw calls (`draws`).
 
 `premation-engine --export JOB.json` renders one export job and exits; the
 export supervisor (`electron/exportProcess.ts` → `electron/engineExport.ts`)
-starts one per job when `PREMATION_EXPORT_ENGINE=1`, instead of a hidden
-Chromium window. The protocol (JSON lines on stdin/stdout), the exit codes and
+starts one per job (the only export renderer since phase 4 — the hidden
+Chromium window path is gone; `premation render` uses it too). The protocol (JSON lines on stdin/stdout), the exit codes and
 the thread structure are in `export_job.hpp`.
 
 - `project_open` — a `.motion` bundle (chunks + `assets/registry.json`, every

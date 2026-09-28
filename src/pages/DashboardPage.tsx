@@ -40,7 +40,6 @@ import { usePagedList } from '@hooks/usePagedList';
 import { clearRecovery } from '@core/persistence/recovery';
 import { emptySceneProject } from '@core/scene/sceneProjectIO';
 import type { EditorDocument } from '@core/api/cloudDocument';
-import { DashboardPluginsTab } from './DashboardPluginsTab';
 import { DashboardCustomizeTab } from './DashboardCustomizeTab';
 import { ReviewPrompt } from '@layout/Reviews/ReviewPrompt';
 import { useReviewPromptStore } from '@stores/reviewPromptStore';
@@ -94,7 +93,6 @@ type TabType =
   | 'home'
   | 'projects'
   | 'assets'
-  | 'plugins'
   | 'renders'
   | 'trash'
   | 'customize'
@@ -103,7 +101,7 @@ type TabType =
   | 'settings';
 
 const TABS: readonly TabType[] = [
-  'home', 'projects', 'assets', 'plugins', 'renders', 'trash', 'customize', 'billing', 'developer', 'settings',
+  'home', 'projects', 'assets', 'renders', 'trash', 'customize', 'billing', 'developer', 'settings',
 ];
 
 /**
@@ -720,8 +718,6 @@ export function DashboardPage(): JSX.Element {
   // Render Page Content based on selected sidebar Tab
   const renderTabContent = () => {
     switch (activeTab) {
-      case 'plugins':
-        return <DashboardPluginsTab />;
       case 'home':
         return (
           <>
@@ -1714,11 +1710,6 @@ export function DashboardPage(): JSX.Element {
           title: 'Assets',
           desc: 'Import and organize media you’ll use across projects.',
         };
-      case 'plugins':
-        return {
-          title: 'Plugins',
-          desc: 'Install and manage sandboxed plugins. Network access is allowlisted by name.',
-        };
       case 'renders':
         return {
           title: 'Render queue',
@@ -1783,15 +1774,6 @@ export function DashboardPage(): JSX.Element {
           >
             <Icon name="image" size="md" className={styles.navIcon} />
             <span>Assets</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'plugins' ? styles.navLinkActive : ''}`}
-            aria-current={activeTab === 'plugins' ? 'page' : undefined}
-            onClick={() => openTab('plugins')}
-          >
-            <Icon name="plugin" size="md" className={styles.navIcon} />
-            <span>Plugins</span>
           </button>
           <button
             type="button"

@@ -59,11 +59,12 @@ const MAX_BODY_BYTES = positiveInt(process.env.RENDER_WORKER_MAX_BODY_BYTES, 64 
 const RENDER_HTML = path.join(__dirname, '..', 'dist-render', 'render', 'index.html');
 /**
  * Render through `premation-engine --export` first (engineRender.cjs), the
- * offscreen window only when the engine cannot take the job. Opt-in, as the
- * desktop's PREMATION_EXPORT_ENGINE, until the engine path flips on golden
- * parity (CLAUDE.md).
+ * offscreen window only when the engine cannot take the job. Opt-in with
+ * RENDER_WORKER_ENGINE=1. (The desktop's PREMATION_EXPORT_ENGINE alias is gone:
+ * the desktop always renders in the engine. This whole worker is deleted in
+ * phase 4 with the TypeScript renderer — docs/TS_ENGINE_REMOVAL.md.)
  */
-const ENGINE_RENDER = process.env.RENDER_WORKER_ENGINE === '1' || process.env.PREMATION_EXPORT_ENGINE === '1';
+const ENGINE_RENDER = process.env.RENDER_WORKER_ENGINE === '1';
 
 function positiveInt(raw, fallback) {
   const n = Number(raw);

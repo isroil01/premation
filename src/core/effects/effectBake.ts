@@ -29,7 +29,6 @@ import {
   withStyleSilhouette,
 } from './canvas2dEffects';
 import { isColorEffect, effectColorMatrix, applyColorMatrixImage } from './effectColorMatrix';
-import { applyPluginCpuEffect, isPluginEffectType, pluginEffectNeedsCpuBake } from './pluginCpuEffect';
 
 /** True when an effect has NO GPU shader form and must be CPU-baked into the
  *  layer texture for the GPU backend (interior styles, warps, keylight, beam,
@@ -80,19 +79,7 @@ export function effectsNeedCpuBake(effects: ReadonlyArray<Effect> | undefined): 
   return !!effects?.some(
     (e) => e.enabled !== false
       && (isGpuUnbakeableEffect(e.type) || !!e.maskId
-        || (effectHasOpacity(e) && !gpuBlendsEffectOpacity(e.type)) || effectFollowsPath(e)
-        /*
-          A plugin effect the live backend cannot draw, but whose author shipped
-          a CPU kernel.
-
-          Only then. A plugin effect with a GPU kernel for this backend stays on
-          the GPU, where it belongs — routing every plugin effect through a bake
-          because one of them might need it would put a colour grade on the CPU
-          and cost 100 ms a frame. And an effect with NO runnable kernel is not
-          baked either: there is nothing to bake, and it reports itself
-          unsupported instead.
-        */
-        || pluginEffectNeedsCpuBake(e.type)),
+        || (effectHasOpacity(e) && !gpuBlendsEffectOpacity(e.type)) || effectFollowsPath(e)),
   );
 }
 
@@ -587,22 +574,6 @@ export function applyEffectChain(
         flushCss();
         flushBatch(); // generators draw/replace on the real canvas
         applyProceduralEffect(oc, w, h, e);
-      } else if (isPluginEffectType(e.type)) {
-        /*
-          A plugin effect with a CPU kernel, run IN ORDER with the rest.
-
-          Before this, a plugin effect on a baked layer simply vanished — the
-          bake drops the layer's GPU effect list wholesale, and there was
-          nothing here to draw it. Not degraded: gone, from that one layer, for
-          a reason nothing on screen explained.
-
-          `applyPluginCpuEffect` returns false when the kernel is not warmed yet
-          (the first frame) or has no CPU kernel at all, and leaves the canvas
-          untouched — the same degradation a failed shader compile gets.
-        */
-        flushCss();
-        flushBatch();
-        applyPluginCpuEffect(oc, w, h, e);
       } else if (hasCanvas2dImplementation(e.type)) {
         // NOT `isCanvas2dOnlyEffect`: Fill / Stroke / Sharpen / Noise have GPU
         // materials and so do not force a bake, but once a layer is baked for

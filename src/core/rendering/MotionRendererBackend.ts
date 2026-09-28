@@ -44,16 +44,7 @@ import { useTextEditStore } from '@stores/textEditStore';
 import { AppTextureProvider, type ImageBakeSpec } from './AppTextureProvider';
 import { getFloatExrForAsset } from '@core/media/floatExr';
 import { getEventBus } from '@core/events/EventBus';
-import { noteDeviceLoss } from '@core/plugins/pluginEffects';
-import {
-  pluginAssetFailure,
-  pluginAssetTextureKey,
-  pluginAssetWaits,
-  requestPluginAssetTexture,
-} from '@core/plugins/pluginAssetTextures';
-import { setWebgpuAvailable } from '@core/plugins/capabilities';
 import { markGpuOwned } from './canvasOwnership';
-import { attachPluginEffects } from './pluginEffectBridge';
 import { useColorManagementStore } from '@stores/colorManagementStore';
 import { useViewerLutStore, VIEWER_LUT_TEXTURE_KEY } from '@stores/viewerLutStore';
 import { createRasterScaleSettle } from './rasterScaleSettle';
@@ -200,8 +191,6 @@ export class MotionRendererBackend implements RenderBackend {
 
   private canvas: HTMLCanvasElement | null = null;
   private renderer: Renderer | null = null;
-  /** Stops the plugin-effect subscription. Null until a renderer comes up. */
-  private detachPluginEffects: (() => void) | null = null;
   private viewport: Viewport | null = null;
   private textures: AppTextureProvider | null = null;
   /**
@@ -230,18 +219,6 @@ export class MotionRendererBackend implements RenderBackend {
   /** True when the last renderFrame reached the draw call — see
    *  {@link lastFrameDidRender}. */
   private frameDidRender = false;
-  /**
-   * The repaint an async decode asks for when it lands, as ONE bound function.
-   *
-   * The same channel `AppTextureProvider.onChange` uses. Held as a field rather
-   * than written inline at the call site because the texture feed runs per
-   * layer per frame, and a fresh closure there would be an allocation per
-   * generator layer per frame for a callback that never varies.
-   */
-  private readonly onMediaSettled = (): void => {
-    requestMediaRepaint('__texture__');
-  };
-
   /** Whether the last renderFrame's media was settled — see frameMediaExact. */
   lastFrameMediaExact(): boolean {
     return this.frameMediaExact;
@@ -437,27 +414,10 @@ export class MotionRendererBackend implements RenderBackend {
     if (kind === 'null') return new NullBackend();
     if (kind === 'webgpu') {
       const backend = new WebGPUBackend();
-      /*
-        Attached BEFORE `initialize`, which is where the device is acquired — a
-        handler registered afterwards would miss a device lost during startup,
-        which is a real case on a machine already in trouble.
-
-        This is the production caller for plugin-effect attribution. A GPU
-        cannot be preempted, so a plugin's fragment shader that hangs it causes
-        a device reset that destroys every GPU context in the process. Without
-        this the app learns the viewport died and nothing about why; with it,
-        the effect that was mid-draw is named and disabled.
-
-        `noteDeviceLoss` decides whether a plugin is implicated at all — a loss
-        with nothing plugin-owned drawing blames nobody, which is the common
-        case: driver updates, other applications, waking from sleep.
-      */
-      //
-      // The same signal drives RECOVERY (handleGpuLoss): before, a device reset
-      // only invalidated plugin pipelines and the viewport stayed dead until
-      // the project was reopened.
+      // Attached BEFORE `initialize`, which is where the device is acquired: a
+      // handler registered afterwards would miss a device lost during startup.
+      // The signal drives RECOVERY (handleGpuLoss).
       backend.onDeviceLost((reason) => {
-        noteDeviceLoss(reason);
         this.handleGpuLoss(backend, reason);
       });
       // GPU frame time for the HUD's `gpu time` row. Viewport only: an export
@@ -651,44 +611,11 @@ export class MotionRendererBackend implements RenderBackend {
       // would spend its rungs on getContext calls that can only return null.
       MotionRendererBackend.noteBinding(canvas, attempt.kind);
 
-      /*
-        Tell the plugin system which tier actually won.
-
-        Here, on the successful attempt, rather than from `preferred` at the top
-        of the ladder — `preferred` is a request and this is the answer. Asking
-        for WebGPU on a machine with no adapter steps down to WebGL2, and that
-        exact confusion is what made `kind` unreliable (see its comment above).
-
-        A plugin effect is WGSL; on WebGL2 it renders its input unchanged. So
-        this is not a performance hint — it is the difference between an effect
-        plugin working and being inert, and `capabilities.ts` turns it into an
-        install refusal rather than a silent no-op.
-      */
-      setWebgpuAvailable(attempt.kind === 'webgpu');
-
       if (this.disposed) {
         renderer.dispose();
         break;
       }
       this.renderer = renderer;
-
-      /*
-        Plugin effects, now that there is a device to compile them against.
-
-        Here rather than at plugin-enable time because the two events have no
-        fixed order: a plugin enabled during startup has no renderer yet, and a
-        renderer that comes up on a project with plugins already enabled has a
-        backlog. Attaching syncs the backlog and then follows every later
-        change, so neither order is the special case.
-
-        Not gated on the tier, and now doing real work on both. An effect
-        shipping a GLSL ES 3.0 kernel compiles and draws HERE, on WebGL2; one
-        shipping only WGSL reaches `unsupported` rather than `ready`, which
-        emits no pass at all — so the layer draws as if the effect were not
-        there instead of through a passthrough that pretended to work.
-      */
-      this.detachPluginEffects?.();
-      this.detachPluginEffects = attachPluginEffects(renderer, gpuBackend);
 
       /*
         WebGL2 context loss → recovery. `onContextChange` existed on the backend
@@ -884,56 +811,6 @@ export class MotionRendererBackend implements RenderBackend {
               feedMap('m', modelMaps.metallicRoughnessSrc);
               feedMap('o', modelMaps.occlusionSrc);
               feedMap('e', modelMaps.emissiveSrc);
-            }
-            /*
-              0c. A plugin GENERATOR's sprite atlas — a file inside the plugin's
-              own package, named by the frame it produced.
-
-              Decoded once per (plugin, path) and shared by every layer and
-              every frame that names it, so a field of fifty thousand sprites
-              costs one decode and one upload for its whole life. The upload
-              rides `setFrame`, the same seam an externally decoded video frame
-              takes: one pooled texture per key, rewritten in place, freed by
-              `retain` the moment nothing names it. A decode still in flight
-              leaves the key registered but unfed, which resolves to the
-              provider's placeholder — and the generator pass reads its
-              `ready: false` and draws its untextured fallback rather than a
-              layer of transparent sprites.
-
-              The whole branch is behind an `undefined` check on a field only a
-              textured generator carries, so a project with no plugin layers
-              never reaches it.
-            */
-            const genFrame = layer.generator;
-            if (genFrame?.textureAssetKey !== undefined && genFrame.pluginId !== undefined) {
-              const key = pluginAssetTextureKey(genFrame.pluginId, genFrame.textureAssetKey);
-              activeKeys.add(key);
-              const asset = requestPluginAssetTexture(
-                genFrame.pluginId,
-                genFrame.textureAssetKey,
-                this.onMediaSettled,
-              );
-              if (asset) {
-                // The REVISION, not the path: a developer-mode folder reload
-                // re-reads the package and decodes again, and a signature that
-                // did not move would keep the pre-edit atlas on the GPU.
-                this.textures!.setFrame(key, asset.bitmap, `pluginasset:${asset.revision}`);
-              } else if (pluginAssetFailure(genFrame.pluginId, genFrame.textureAssetKey) === null) {
-                /*
-                  Still decoding: not the pixels the plugin asked for, so keep
-                  this frame out of the RAM preview and out of a deliverable
-                  until it lands.
-
-                  A PERMANENT failure is deliberately not marked. It will never
-                  settle, and the export's exactness gate refuses a frame that
-                  did not converge — so a plugin shipping a missing or corrupt
-                  atlas would block every export for ever, with a message about
-                  video decoding. The documented answer to a texture that cannot
-                  load is a named log line and an untextured field, and that is
-                  a frame worth encoding.
-                */
-                this.frameMediaExact = false;
-              }
             }
             // 1. Base layer rasterization
             if (layer.particles) {
@@ -1458,8 +1335,6 @@ export class MotionRendererBackend implements RenderBackend {
     this.ready = false;
     this.detachContextLoss?.();
     this.detachContextLoss = null;
-    this.detachPluginEffects?.();
-    this.detachPluginEffects = null;
     const renderer = this.renderer;
     this.renderer = null;
     this.viewport = null;
@@ -1580,14 +1455,8 @@ export class MotionRendererBackend implements RenderBackend {
     // repaint would have corrected a tick later.
     const legacy = this.textures?.takeMediaWaits ? this.textures.takeMediaWaits() : [];
     const exact = this.exactFrames.waits();
-    // And the plugin package textures still decoding. Same argument one tier
-    // up: an export that shipped untextured sprites because a packaged PNG had
-    // not finished decoding would be wrong in a file, silently. Empty for every
-    // project without a textured generator, so this costs a map walk over
-    // nothing.
-    const assets = pluginAssetWaits();
-    if (exact.length === 0 && assets.length === 0) return legacy;
-    return [...legacy, ...exact, ...assets];
+    if (exact.length === 0) return legacy;
+    return [...legacy, ...exact];
   }
 
   /**
@@ -1831,12 +1700,6 @@ export class MotionRendererBackend implements RenderBackend {
       viewportVideoFrames.clear();
     }
     this.exactFrames.clear();
-    // Before the renderer goes. The subscription outlives this object
-    // otherwise — the effect registry is module state, so a stale listener
-    // would keep compiling shaders into a registry attached to a disposed
-    // device every time a plugin is enabled, for the rest of the session.
-    this.detachPluginEffects?.();
-    this.detachPluginEffects = null;
     this.renderer?.dispose();
     this.renderer = null;
     this.viewport = null;

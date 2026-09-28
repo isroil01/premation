@@ -259,19 +259,6 @@ const bridge = {
     },
   },
 
-  /**
-   * The same queue's WORKER side — what a hidden export window uses.
-   *
-   * Mirrors `cli` exactly, and the /render route tries `cli.job()` first, then
-   * this: main answers whichever launch this window is. Both reject in a
-   * normal editor session, which is what keeps the route inert there.
-   */
-  exportWorker: {
-    job: () => ipcRenderer.invoke('export:workerJob'),
-    progress: (fraction: number) => ipcRenderer.send('export:workerProgress', fraction),
-    done: (report: unknown) => ipcRenderer.send('export:workerDone', report),
-  },
-
   diag: {
     /** One-off GPU/WebGPU report from the renderer, appended to
      *  <userData>/gpu-diagnostics.log so a packaged build with DevTools disabled
@@ -356,116 +343,6 @@ const bridge = {
   },
 
   /**
-   * A plugin's outbound requests.
-   *
-   * Deliberately NOT the general `fetch(url, init)` bridge the comment above
-   * refuses, and the distinction is what rides along. `api.request` is
-   * dangerous because main attaches the user's bearer to it, so an open relay
-   * would spend that credential on any URL. These verbs attach nothing — no
-   * token, no cookie, no key. They exist because the app shell's CSP does not
-   * name a plugin's hosts, and the alternative was widening `connect-src` for
-   * the whole renderer.
-   *
-   * What still needs defending is the user's own network, and main defends it
-   * at the socket: https only, the RESOLVED address refused if it is private,
-   * one hop per call, a byte cap and a timeout. `ipcGuard` keeps both verbs out
-   * of reach of a plugin panel, which is a subframe.
-   */
-  pluginNet: {
-    /** One hop. A 3xx comes back as a 3xx — main never follows a redirect. */
-    request: (req: unknown) => ipcRenderer.invoke('plugin:net-request', req),
-    /**
-     * Every address a name resolves to.
-     *
-     * The renderer cannot resolve DNS, and without this the rebinding check
-     * cannot run there at all — a declared host pointing at `127.0.0.1` would
-     * pass every check that reads the name as text.
-     */
-    resolve: (hostname: string) => ipcRenderer.invoke('plugin:net-resolve', hostname),
-  },
-
-  /**
-   * Plugins that live in a FOLDER on this machine — the desktop half of the
-   * install story (electron/pluginLoader.ts).
-   *
-   * Its own namespace rather than more keys on `pluginNet`, because it is a
-   * different capability with a different risk: that one opens sockets, this
-   * one reads directories. Everything here is read-only, and the set of
-   * directories is decided in main — `read` takes a path but refuses one that
-   * is not inside a configured plugins folder, so the renderer can name a
-   * package and cannot name a file.
-   *
-   * `openFolder` takes no argument for the same reason: it opens the user's own
-   * plugins directory (creating it, which is what makes the instruction
-   * actionable) and nothing else.
-   */
-  plugins: {
-    /** The directories a scan looks in, with where each came from. */
-    paths: () => ipcRenderer.invoke('plugins:paths'),
-    /** Candidates, with `plugin.json` text for folders. No package is read. */
-    scan: () => ipcRenderer.invoke('plugins:scan'),
-    /** One package: `{ files, binaries }` for a folder, raw bytes for an archive. */
-    read: (path: string) => ipcRenderer.invoke('plugins:read', path),
-    openFolder: () => ipcRenderer.invoke('plugins:openFolder'),
-    /** Watch the folders and push `onChanged`. Developer mode turns this on. */
-    watch: (enabled: boolean) => ipcRenderer.invoke('plugins:watch', enabled),
-    /** "Something in a plugins folder changed" — no path, because the renderer
-     *  re-scans anyway and a half-written directory is not worth acting on. */
-    onChanged: (handler: () => void) => {
-      const listener = (): void => handler();
-      ipcRenderer.on('plugins:changed', listener);
-      return () => ipcRenderer.removeListener('plugins:changed', listener);
-    },
-  },
-
-  /**
-   * A plugin's COMPILED module, in a process of its own.
-   *
-   * `platform` and `arch` are constants rather than calls, and they are this
-   * process's own: the binary is picked by `process.platform`-`process.arch`,
-   * and a renderer deriving them from a user-agent string would report an
-   * arm64 Mac as x64 — which is a binary that loads and then crashes, instead
-   * of one that is refused with a sentence.
-   *
-   * Everything else is a verb main validates. There is no "read this binary"
-   * and no way to name a directory outside a plugins folder; see
-   * electron/pluginNativeIpc.ts for the three checks on the other side.
-   */
-  pluginNative: {
-    platform: process.platform,
-    arch: process.arch,
-    load: (request: unknown) => ipcRenderer.invoke('pluginNative:load', request),
-    call: (request: unknown) => ipcRenderer.invoke('pluginNative:call', request),
-    unload: (pluginId: string, reason?: string) =>
-      ipcRenderer.invoke('pluginNative:unload', pluginId, reason),
-    status: () => ipcRenderer.invoke('pluginNative:status'),
-    stage: (request: unknown) => ipcRenderer.invoke('pluginNative:stage', request),
-    unstage: (pluginId: string) => ipcRenderer.invoke('pluginNative:unstage', pluginId),
-    /** Plugin ids with a staging directory — names only. Input to the boot sweep. */
-    staged: () => ipcRenderer.invoke('pluginNative:staged'),
-    /** Crash, restart and session-disable — they happen to idle processes too. */
-    onEvent: (handler: (event: unknown) => void) => {
-      const listener = (_e: unknown, event: unknown): void => handler(event);
-      ipcRenderer.on('pluginNative:event', listener);
-      return () => ipcRenderer.removeListener('pluginNative:event', listener);
-    },
-  },
-
-  /**
-   * Publish a package the user chose, signed with a key the app never keeps.
-   *
-   * The renderer hands over BYTES and a visibility choice and receives a
-   * result. Main picks the key file, signs, attaches the session and uploads, so
-   * the two secrets involved — the private signing key and the access token —
-   * are never in the renderer beside the payload.
-   *
-   * Note what is absent and stays absent: there is no verb for "give me the
-   * key" and none for "remember the key". Both would move the one secret whose
-   * theft cannot be undone by blocking a version.
-   */
-  pluginPublish: (req: unknown) => ipcRenderer.invoke('plugin:publish', req),
-
-  /**
    * Session state and the two operations that change it.
    *
    * `status` returns claims — signed in, who, when the access token expires,
@@ -524,8 +401,6 @@ const bridge = {
     },
     /** One image as base64 bytes. Counterpart to motion-back `POST /ai/image`. */
     image: (request: unknown) => ipcRenderer.invoke('ai:image', request),
-    /** Speech → timed segments. OpenAI only; see aiProxy's TRANSCRIBE_ENDPOINT. */
-    transcribe: (request: unknown) => ipcRenderer.invoke('ai:transcribe', request),
     video: (request: unknown) => ipcRenderer.invoke('ai:video', request),
     speech: (request: unknown) => ipcRenderer.invoke('ai:speech', request),
     model3d: (request: unknown) => ipcRenderer.invoke('ai:3d', request),
@@ -553,20 +428,6 @@ const bridge = {
       ipcRenderer.on('oauth:result', listener);
       return () => ipcRenderer.removeListener('oauth:result', listener);
     },
-  },
-
-  /**
-   * `premation://plugin/<id>` — open a plugin's page.
-   *
-   * The id was validated in the main process before it was sent, and the
-   * renderer validates it AGAIN before using it. That is not belt-and-braces
-   * for its own sake: IPC is its own boundary, and the receiving side is about
-   * to put the value into a fetch and a store lookup.
-   */
-  onPluginDeepLink: (handler: (payload: { id: string }) => void) => {
-    const listener = (_event: unknown, payload: { id: string }): void => handler(payload);
-    ipcRenderer.on('deeplink:plugin', listener);
-    return () => ipcRenderer.removeListener('deeplink:plugin', listener);
   },
 
   onMenuCommand: (handler: (commandId: string) => void) => {
@@ -627,14 +488,15 @@ const bridge = {
   /**
    * The C++ engine process (NATIVE_CORE_PLAN C3; electron/engineHost.ts). Bytes
    * in, bytes out: the page's ProcessEngineClient owns the codec, main relays.
-   * `status().enabled` is false when the process backend is switched off
-   * (PREMATION_ENGINE=ts / <userData>/engine.json; on by default), and then nothing else
-   * here has a handler.
+   * The engine is the only one; `engine:unavailable` says it cannot run (main
+   * also shows the dialog — electron/engineUnavailable.ts).
    */
   engine: {
     request: (bytes: Uint8Array) => ipcRenderer.invoke('engine:request', bytes),
+    // No handler = no engine host in this process (the headless CLI's hidden
+    // window, which still renders on the TypeScript engine — TS_ENGINE_REMOVAL.md).
     status: () =>
-      ipcRenderer.invoke('engine:status').catch(() => ({ enabled: false, state: 'disabled' })),
+      ipcRenderer.invoke('engine:status').catch(() => ({ enabled: false, state: 'stopped' })),
     /** C: this window's first engine viewport id (0 in the editor, a block of its own in a pop-out). */
     viewportBase: (): Promise<number> =>
       ipcRenderer.invoke('engine:viewportBase').then((n: unknown) => (typeof n === 'number' && Number.isInteger(n) && n >= 0 ? n : 0), () => 0),
@@ -654,10 +516,10 @@ const bridge = {
       ipcRenderer.on('engine:restarted', listener);
       return () => ipcRenderer.removeListener('engine:restarted', listener);
     },
-    onFallback: (handler: (info: unknown) => void) => {
+    onUnavailable: (handler: (info: unknown) => void) => {
       const listener = (_event: unknown, info: unknown): void => handler(info);
-      ipcRenderer.on('engine:fallback', listener);
-      return () => ipcRenderer.removeListener('engine:fallback', listener);
+      ipcRenderer.on('engine:unavailable', listener);
+      return () => ipcRenderer.removeListener('engine:unavailable', listener);
     },
     /** Engine frames (shared textures, or route-A copies as VideoFrames); null stops. The consumer must `release()` each frame. */
     onFrame: (consumer: EngineFrameConsumer | null) => {

@@ -28,9 +28,6 @@ import { glassScenes } from './glass';
 import { rigScenes } from './rig';
 import { alphaInterpScenes } from './alphaInterp';
 import { keyframeFamilyScenes } from './keyframeFamilies';
-import { pluginEffectScenes } from './pluginEffects';
-import { pluginKernelScenes } from './pluginKernels';
-import { generatorLayerScenes } from './generatorLayers';
 import { extrusionScenes } from './extrusion';
 import { primitiveScenes } from './primitives';
 import { modelMapScenes } from './modelMaps';
@@ -87,20 +84,6 @@ export const SCENES: Scene[] = [
   ...glassScenes,
   ...alphaInterpScenes,
   ...keyframeFamilyScenes,
-  // Plugin effects. The only scenes that render a shader the host did not
-  // write, and the only place the plugin path is exercised end to end.
-  ...pluginEffectScenes,
-  // Round C2's render-time capabilities: a GLSL+WGSL kernel reading the host
-  // block, a CPU kernel on the raster path, two layer inputs, and an effect
-  // that draws outside its own box. UNBLESSED — each carries a control
-  // rendered in the same run, because a golden blessed while a feature was
-  // inert records "the effect changes nothing" as the reference.
-  ...pluginKernelScenes,
-  // Plugin layer kinds: a generator's instanced draw, and a `shader` kind drawn
-  // by the effect it names. Beside the plugin effects for the same reason those
-  // exist — they are the only scenes that render content the host did not
-  // write, and unit tests cannot tell "drew nothing" from "drew correctly".
-  ...generatorLayerScenes,
   // D2/D3 native parity: 32 bpc, viewport overlays, the viewer LUT. No
   // references (fidelityOnly) — the gate is C++ vs TS WebGPU on the same FrameScene.
   ...nativeParityScenes,

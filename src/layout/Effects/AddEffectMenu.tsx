@@ -15,7 +15,6 @@ import { Popover } from '@components/Popover';
 import { SearchField } from '@components/SearchField';
 import { Icon } from '@components/Icon';
 import type { EffectDef, EffectType } from '@core/effects/effects';
-import { PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
 import { addEffectEdit } from './effectEdits';
 import { EFFECT_CATEGORY } from './effectCategory';
 import { useAllEffectDefs, useEffectFavorites } from './effectCatalog';
@@ -46,8 +45,8 @@ export function addEffectMenuGroups(
   if (favs.length > 0) groups.push({ label: 'Favourites', defs: favs });
   const byCategory = new Map<string, EffectDef[]>();
   for (const d of defs) {
-    // A plugin effect's namespaced type is absent from the built-in map.
-    const cat = EFFECT_CATEGORY[d.type] ?? PLUGIN_EFFECT_CATEGORY;
+    const cat = EFFECT_CATEGORY[d.type];
+    if (!cat) continue;
     const list = byCategory.get(cat);
     if (list) list.push(d);
     else byCategory.set(cat, [d]);

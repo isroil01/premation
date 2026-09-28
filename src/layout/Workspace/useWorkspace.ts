@@ -112,15 +112,6 @@ import { facesOfNode, pickFace, faceHighlightGroups } from '@core/scene/facePick
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
 import { RULER_CSS_PX, inStrip, rulerStrips } from './rulerGeometry';
-import {
-  paintPluginDrawLists,
-  pluginPointerDown,
-  pluginPointerMove,
-  pluginPointerUp,
-  cancelPluginGesture,
-  type PluginModifiers,
-} from './pluginDrawOverlay';
-import { onPluginDrawChanged } from '@core/plugins/uiCanvas';
 import { useEngineViewportActive } from '@hooks/useEngineViewport';
 
 
@@ -531,9 +522,6 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       paintMotionPath(overlay, controller, timeRef.current, dprRef.current);
       paintRoi(overlay, controller, dprRef.current);
       paintFaceSelection(overlay, controller, dprRef.current);
-      // Third-party gizmos, last so they sit above the app's own chrome — a
-      // plugin's handles are what the user is about to grab.
-      paintPluginDrawLists(overlay, controller, timeRef.current, dprRef.current);
     };
 
     /**
@@ -1803,25 +1791,6 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           return;
         }
       }
-      /*
-        Plugin on-canvas UI, before any host gesture that could swallow it.
-
-        Two claims, both in `pluginDrawOverlay`: a contributed TOOL owns the
-        whole viewport while it is active, and a press on a plugin's HANDLE
-        owns that one drag. Anything else falls straight through, which is what
-        lets a plugin's gizmo sit on screen while the user keeps using Select.
-      */
-      if (pluginPointerDown(controller, local(e), modifiersOf(e), timeRef.current)) {
-        e.preventDefault();
-        try {
-          overlay.setPointerCapture(e.pointerId);
-        } catch {
-          /* best-effort */
-        }
-        useUIStore.getState().setDragging(true);
-        controller.requestRender();
-        return;
-      }
       // Region of Interest: grabbing a grip resizes the region. Only the EDGES
       // are interactive (roiHandleAt ignores the interior), so clicking inside
       // the region still selects the layer under it, as in AE.
@@ -2114,13 +2083,6 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         moveCameraNav(e);
         return;
       }
-      // A plugin gesture in flight claims the move; with none in flight this
-      // still delivers HOVER to a plugin whose handle is under the pointer and
-      // returns false, because hover is information rather than a claim.
-      if (pluginPointerMove(controller, local(e), modifiersOf(e), timeRef.current)) {
-        controller.requestRender();
-        return;
-      }
       // Region-of-Interest resize in progress.
       {
         const rd = roiDragRef.current;
@@ -2278,14 +2240,6 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         if (overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId);
       } catch {
         /* ignore */
-      }
-      // Closes the plugin gesture's single undo bracket — see
-      // `beginPluginGesture`. Before every early return below, because a claim
-      // left open suppresses history for the rest of the session.
-      if (pluginPointerUp(controller, local(e), modifiersOf(e), timeRef.current)) {
-        useUIStore.getState().setDragging(false);
-        controller.requestRender();
-        return;
       }
       if (typeEditRef.current) {
         const id = typeEditRef.current;
@@ -2551,10 +2505,6 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     window.addEventListener('keydown', onAltDown);
     window.addEventListener('keydown', onEscCancel, true);
     window.addEventListener('keyup', onAltUp);
-    // A plugin changing what it wants drawn has to repaint the chrome. It has
-    // no frame of its own to wait for: the viewport is otherwise idle between
-    // the user's gestures, which is exactly when a plugin answers one.
-    const pluginDrawSub = onPluginDrawChanged(() => { controller.requestRender(); });
 
     return () => {
       overlay.removeEventListener('pointerdown', onDown);
@@ -2570,12 +2520,9 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       window.removeEventListener('keyup', onAltUp);
       guidesSub();
       toolSub();
-      pluginDrawSub();
       cancelSmoothDolly();
       controller.ws.cancelTransientInput();
-      // Unmounting mid-drag must not leak an open gesture transaction — the
-      // plugin bracket included, which suppresses history while it is open.
-      cancelPluginGesture();
+      // Unmounting mid-drag must not leak an open gesture transaction.
       endViewportGesture();
       // …nor an open engine gesture (an open one refuses undo): commit it.
       const mp = mpDragRef.current;
@@ -3453,11 +3400,6 @@ function themeGuides(): Omit<NonNullable<typeof guideCache>, 'key'> {
  * Drawn from the SAME projected quads the picker hit-tests, so the highlight can
  * never disagree with what a click would select.
  */
-/** The modifier flags of a pointer event, in the shape the plugin protocol carries. */
-function modifiersOf(e: PointerEvent): PluginModifiers {
-  return { alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey };
-}
-
 function paintFaceSelection(canvas: HTMLCanvasElement, controller: WorkspaceController, dpr: number): void {
   const fs = useFaceSelectionStore.getState();
   if (!fs.enabled) return;

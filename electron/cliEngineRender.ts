@@ -8,17 +8,17 @@
  * Render Queue item and an editor export are one encode. Nothing is drawn in a
  * window.
  *
- * What still needs the editor (the hidden window in cliRender.ts):
+ * The engine renders every CLI render (the flag is gone — docs/TS_ENGINE_REMOVAL.md
+ * phase 4). What still needs the editor (`needsEditor`: the hidden window in
+ * cliRender.ts, on the TypeScript engine until those CLI features are ported):
  *   - `--aspect` (reframe builds a new composition first), `--captions`,
  *     `--commands`, `--data` (they edit the document before rendering),
  *   - `--scale` without an explicit size (the comp size is read in the page),
- *   - formats the engine does not write (a single `png` still, HDR),
- *   - whatever the engine's preflight reports as not ported, or an engine that
- *     will not start / crashes: `fallback`, and the window renders the job.
+ *   - formats the engine does not write (a single `png` still, HDR).
+ * A frame the engine's preflight refuses, or an engine that will not start or
+ * crashes, FAILS the render — there is no window fallback for it.
  *
- * Opt-in with the export's own flag (PREMATION_EXPORT_ENGINE=1) until the
- * engine path flips on golden parity (CLAUDE.md). Electron-free: the engine
- * launch is injected (tested in cliEngineRender.test.ts).
+ * Electron-free: the engine launch is injected (tested in cliEngineRender.test.ts).
  */
 
 import type { CliRenderJob } from './cliArgs';
@@ -32,7 +32,8 @@ import {
 
 export type CliEngineOutcome =
   | { kind: 'done'; frames: number; width: number; height: number; fps: number; compositionName: string }
-  | { kind: 'fallback'; reason: string }
+  /** A CLI feature the engine path does not have yet: the hidden editor window renders it. */
+  | { kind: 'needsEditor'; reason: string }
   | { kind: 'failed'; message: string };
 
 /** The engine export spec for a CLI render, or why the render needs the editor. */
@@ -63,16 +64,18 @@ export function cliEngineSpec(job: CliRenderJob, enginePath: string | null): { s
 }
 
 /**
- * Render `job` in the engine. `fallback` means "render it in the window
- * instead" (nothing was written); `failed` is a failure of the export itself.
+ * Render `job` in the engine. `needsEditor` means the job uses a CLI feature
+ * only the editor window has (nothing was written); `failed` is any other
+ * ending that did not write the file.
  */
 export async function runCliEngineRender(
   job: CliRenderJob,
   deps: EngineExportDeps,
   onProgress: (fraction: number) => void,
 ): Promise<CliEngineOutcome> {
+  if (!deps.enginePath) return { kind: 'failed', message: 'premation-engine is not available (reinstall Premation).' };
   const planned = cliEngineSpec(job, deps.enginePath);
-  if ('reason' in planned) return { kind: 'fallback', reason: planned.reason };
+  if ('reason' in planned) return { kind: 'needsEditor', reason: planned.reason };
   let pre: EnginePreflight | null = null;
   const run = startEngineExport(`cli-${Date.now().toString(36)}`, planned.spec, {
     progress: onProgress,
@@ -92,7 +95,7 @@ export async function runCliEngineRender(
       };
     }
     case 'fallback':
-      return { kind: 'fallback', reason: outcome.reason };
+      return { kind: 'failed', message: `The engine could not render this job: ${outcome.reason}` };
     case 'failed':
       return { kind: 'failed', message: outcome.message };
     default:

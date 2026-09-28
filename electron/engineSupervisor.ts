@@ -4,7 +4,7 @@
  * supervisor's pattern, exportProcess.ts).
  *
  * Lifecycle:
- *   stopped → starting → running ⇄ restarting → … → fallback | stopped
+ *   stopped → starting → running ⇄ restarting → … → unavailable | stopped
  *
  *  - **start**: resolve the executable (env override, packaged
  *    extraResources, dev build), ask Chromium which GPU it composits on and
@@ -22,10 +22,12 @@
  *    emits `engine-restarted`: the engine came back EMPTY, so the UI must
  *    resync — replay its command log / reopen the document (C3) — and every
  *    request that was in flight was rejected with EngineGoneError.
- *  - **crash loop**: `crashLoop.count` crashes inside `crashLoop.windowMs`,
- *    exit code 2 (cannot start on this machine: no GPU, no stdio), a missing
- *    executable or a protocol-major mismatch → `fallback`: the app keeps
- *    running on the TypeScript engine and the reason is surfaced once.
+ *  - **unavailable**: there is no other engine (docs/TS_ENGINE_REMOVAL.md).
+ *    Exit code 2 (cannot start on this machine: no GPU, no stdio), a missing
+ *    executable, a spawn failure or a protocol-major mismatch is FATAL
+ *    (`fatal: true` — main shows a startup dialog and quits); `crashLoop.count`
+ *    crashes inside `crashLoop.windowMs` is a crash loop (`fatal: false` —
+ *    main blocks the editor, offers a recovery save, and may `retry()`).
  *  - **stop** (app quit): Goodbye, wait up to `shutdownMs` for a clean exit,
  *    then kill.
  *
@@ -104,7 +106,7 @@ export const DEFAULT_SUPERVISOR_OPTIONS: SupervisorOptions = {
 /** Exit codes premation-engine documents (native/engine/src/engine_process.hpp). */
 export const ENGINE_EXIT = { ok: 0, cannotStart: 2, deviceLost: 3, framing: 4, exception: 70 } as const;
 
-export type SupervisorState = 'stopped' | 'starting' | 'running' | 'restarting' | 'stopping' | 'fallback';
+export type SupervisorState = 'stopped' | 'starting' | 'running' | 'restarting' | 'stopping' | 'unavailable';
 
 export interface EngineRestartedInfo {
   /** 1 for the first restart after a crash, counting within the crash window. */
@@ -117,8 +119,14 @@ export interface EngineRestartedInfo {
   logTail: string[];
 }
 
-export interface FallbackInfo {
+export interface UnavailableInfo {
   reason: string;
+  /**
+   * True when the engine cannot run here at all (missing executable, no GPU,
+   * protocol mismatch, spawn failure): a startup dialog, then quit. False for
+   * a crash loop: the editor blocks, offers a recovery save, and may retry.
+   */
+  fatal: boolean;
   logTail: string[];
 }
 
@@ -126,7 +134,7 @@ export interface SupervisorEvents {
   state: [SupervisorState];
   ready: [WelcomeInfo];
   'engine-restarted': [EngineRestartedInfo];
-  fallback: [FallbackInfo];
+  unavailable: [UnavailableInfo];
   events: [EventBatchBytes];
   'log-record': [AppliedJobEdit];
   frame: [EngineFrameMessage];
@@ -192,11 +200,23 @@ export class EngineSupervisor {
     return this.child?.pid ?? undefined;
   }
 
-  /** Start the engine. Resolves when it is running, or when it fell back (see `state`). */
+  /** Start the engine. Resolves when it is running, or when it is unavailable (see `state`). */
   start(): Promise<void> {
     if (this.state_ !== 'stopped') return Promise.resolve();
     this.crashes = [];
     return this.launch(null);
+  }
+
+  /**
+   * After a crash loop (`unavailable`, not fatal): try once more with a fresh
+   * crash window. A success is reported as a requested restart
+   * (`engine-restarted`), so the host replays its command log into it.
+   */
+  retry(): Promise<void> {
+    if (this.state_ !== 'unavailable') return Promise.resolve();
+    this.crashes = [];
+    this.log('info', 'engine_retry');
+    return this.launch({ cause: 'requested', attempt: 0 });
   }
 
   /** Relay an encoded EngineMessage{request}; resolves with the encoded response. */
@@ -228,8 +248,8 @@ export class EngineSupervisor {
       this.timers.clearTimeout(this.restartTimer);
       this.restartTimer = null;
     }
-    if (!this.child || this.state_ === 'stopped' || this.state_ === 'fallback') {
-      if (this.state_ !== 'fallback') this.setState('stopped');
+    if (!this.child || this.state_ === 'stopped' || this.state_ === 'unavailable') {
+      if (this.state_ !== 'unavailable') this.setState('stopped');
       return Promise.resolve();
     }
     this.setState('stopping');
@@ -261,7 +281,7 @@ export class EngineSupervisor {
     this.setState(restartOf ? 'restarting' : 'starting');
     const exe = this.deps.resolveExe();
     if (!exe) {
-      this.fallback('premation-engine executable not found');
+      this.unavailable('premation-engine executable not found', true);
       return;
     }
     let vendor: number | undefined;
@@ -281,7 +301,7 @@ export class EngineSupervisor {
     try {
       child = this.deps.spawn(exe, args);
     } catch (e) {
-      this.fallback(`could not start premation-engine: ${(e as Error).message}`);
+      this.unavailable(`could not start premation-engine: ${(e as Error).message}`, true);
       return;
     }
     this.child = child;
@@ -328,11 +348,11 @@ export class EngineSupervisor {
       this.timers.clearTimeout(handshakeTimer);
       if (gen !== this.generation) return;
       if (e instanceof EngineGoodbyeError && e.reason === 'versionMismatch') {
-        this.fallback(`engine protocol mismatch: ${e.message}`);
+        this.unavailable(`engine protocol mismatch: ${e.message}`, true);
         return;
       }
       this.log('error', 'engine_handshake_failed', { message: (e as Error).message });
-      child.kill();  // → onExit → restart or fallback
+      child.kill();  // → onExit → restart, or unavailable after a crash loop
       return;
     }
     // `state_` may have moved while the handshake was awaited (stop() during start).
@@ -446,13 +466,13 @@ export class EngineSupervisor {
       for (const w of this.stopWaiters.splice(0)) w();
       return;
     }
-    if (this.state_ === 'fallback' || this.state_ === 'stopped') return;
+    if (this.state_ === 'unavailable' || this.state_ === 'stopped') return;
 
     const cause = this.pendingCause ?? 'crash';
     this.pendingCause = null;
     this.log(cause === 'requested' ? 'info' : 'error', 'engine_exited', { code, signal, cause });
     if (code === ENGINE_EXIT.cannotStart) {
-      this.fallback('premation-engine cannot run on this machine (no usable GPU or stdio)');
+      this.unavailable('premation-engine cannot run on this machine (no usable GPU or stdio)', true);
       return;
     }
     let attempt = 0;
@@ -462,7 +482,7 @@ export class EngineSupervisor {
       this.crashes.push(now);
       attempt = this.crashes.length;
       if (attempt >= this.opts.crashLoop.count) {
-        this.fallback(`premation-engine crashed ${attempt} times within ${this.opts.crashLoop.windowMs / 1000} s`);
+        this.unavailable(`premation-engine crashed ${attempt} times within ${this.opts.crashLoop.windowMs / 1000} s`, false);
         return;
       }
     }
@@ -474,8 +494,8 @@ export class EngineSupervisor {
     }, delay);
   }
 
-  private fallback(reason: string): void {
-    this.log('error', 'engine_fallback', { reason });
+  private unavailable(reason: string, fatal: boolean): void {
+    this.log('error', 'engine_unavailable', { reason, fatal });
     this.stopHeartbeat();
     const child = this.child;
     this.child = null;
@@ -483,8 +503,8 @@ export class EngineSupervisor {
     this.transport?.close(reason);
     this.transport = null;
     child?.kill();
-    this.setState('fallback');
-    this.emitter.emit('fallback', { reason, logTail: [...this.logTail] });
+    this.setState('unavailable');
+    this.emitter.emit('unavailable', { reason, fatal, logTail: [...this.logTail] });
   }
 }
 

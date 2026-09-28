@@ -72,10 +72,6 @@ describe('Effect menu', () => {
     for (const f of folders()) for (const item of kids(f)) expect(ids.has(item.commandId!)).toBe(true);
   });
 
-  it('hides the Plugins folder until a plugin ships an effect', () => {
-    const plugins = buildEffectMenuItems().find((it) => it.labelKey === 'menu.sub.effect.plugins');
-    expect(plugins?.visible?.()).toBe(false);
-  });
 });
 
 function node(id: string): SceneNode {

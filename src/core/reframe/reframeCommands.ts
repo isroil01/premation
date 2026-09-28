@@ -16,14 +16,13 @@
 
 import { asCommandId } from '@app-types/common';
 import type { Command } from '@core/commands/Command';
-import { runEngineJob } from '@core/engine/engineJobs';
+import { requireEngineJob, runEngineJob } from '@core/engine/engineJobs';
 import { engine } from '@core/engine/engineInstance';
 import { useUIStore } from '@stores/uiStore';
 import { useProjectStore } from '@stores/projectStore';
 import {
   ASPECT_PRESETS,
   AutoReframeError,
-  autoReframeComposition,
   targetSizeFor,
   type AspectPreset,
 } from './autoReframe';
@@ -65,38 +64,27 @@ async function reframeTo(preset: AspectPreset): Promise<void> {
   });
 
   try {
-    const viaEngine = await runEngineJob<{ samples: number; cuts: number; keyframes: number; comp?: string }>({
+    const out = requireEngineJob(await runEngineJob<{ samples: number; cuts: number; keyframes: number; comp?: string }>({
       kind: 'autoReframe',
       value: { comp: comp.id, width: target.width, height: target.height },
-    });
-    if (viaEngine) {
-      if (viaEngine.status === 'cancelled') return;
-      if (viaEngine.status !== 'done') {
-        throw new AutoReframeError(viaEngine.error?.message || 'Auto-reframe failed.');
-      }
-      const made = viaEngine.result?.comp;
-      if (made) await engine().execute({ type: 'setActiveComposition', comp: made });
-      ui.notify({
-        level: 'success',
-        message:
-          `Reframed to ${target.width}×${target.height} — ${viaEngine.result?.cuts ?? 0} shot change(s), `
-          + `${viaEngine.result?.keyframes ?? 0} keyframe(s). The original is untouched.`,
-        durationMs: 6000,
-      });
-      return;
+    }), 'Auto-reframe');
+    if (out.status === 'cancelled') return;
+    if (out.status !== 'done') {
+      throw new AutoReframeError(out.error?.message || 'Auto-reframe failed.');
     }
-    const result = await autoReframeComposition({ sourceCompId: comp.id, target });
+    const made = out.result?.comp;
+    if (made) await engine().execute({ type: 'setActiveComposition', comp: made });
     ui.notify({
       level: 'success',
       message:
-        `Reframed to ${target.width}×${target.height} — ${result.cuts} shot change(s), `
-        + `${result.keyframes} keyframe(s). The original is untouched.`,
+        `Reframed to ${target.width}×${target.height} — ${out.result?.cuts ?? 0} shot change(s), `
+        + `${out.result?.keyframes ?? 0} keyframe(s). The original is untouched.`,
       durationMs: 6000,
     });
   } catch (err) {
     useUIStore.getState().notify({
       level: 'error',
-      message: err instanceof AutoReframeError ? err.message : `Auto-reframe failed: ${String(err)}`,
+      message: err instanceof AutoReframeError ? err.message : `Auto-reframe failed: ${err instanceof Error ? err.message : String(err)}`,
       durationMs: 8000,
     });
   }
