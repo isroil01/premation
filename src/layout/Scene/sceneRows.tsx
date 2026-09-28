@@ -23,7 +23,7 @@ import { uiKindOf } from '@core/mirror/layerKinds';
 import { mirrorIconName } from '@core/mirror/layerGlyph';
 import { mirrorLabelColor } from '@core/mirror/layerLabels';
 import { childOrderOf } from '@core/mirror/layerTree';
-import { useAssetStore } from '@stores/assetStore';
+import { assetRecordNow } from '@stores/assetSession';
 import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import type { SceneScope, SearchField } from '@stores/sceneViewStore';
@@ -56,7 +56,7 @@ function thumbnailFor(m: DocumentMirror, layer: LayerInfo): string | undefined {
   if (!item || item.kind !== 'footage' || item.mediaType === 'audio') return undefined;
   // B4-gap: the preview URL is a page-side object URL the import minted (`thumbSrc`, else `src`), not a document
   // fact — the API's `getThumbnail` answers it once the engine owns decode (D); until then the asset record holds it.
-  const asset = useAssetStore.getState().assets.find((a) => a.id === item.id);
+  const asset = assetRecordNow(item.id);
   return asset ? asset.thumbSrc ?? asset.src : undefined;
 }
 

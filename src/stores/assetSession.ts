@@ -22,6 +22,7 @@ import type { ItemInfo } from '@motion/engine-api';
 import type { ProxyRecord } from '@core/assets/proxy';
 import { itemAsset } from '@core/mirror/itemAssets';
 import type { AssetSource, ImportedAsset } from './assetStore';
+import { documentMirror } from './documentMirror';
 
 /** One item's session half. Absent fields: nothing known this session. */
 export interface AssetSession {
@@ -114,4 +115,15 @@ export function cachedAssetRecord(info: ItemInfo, session: AssetSession | undefi
   const record = mirrorAssetRecord(info, session);
   recordCache.set(info, { session, record });
   return record;
+}
+
+/**
+ * A footage item's page record NOW (a callback's read): the mirror's ItemInfo
+ * with its session half merged; undefined for an unknown or non-footage item.
+ */
+export function assetRecordNow(itemId: string | undefined): ImportedAsset | undefined {
+  if (!itemId) return undefined;
+  const info = documentMirror().item(itemId);
+  if (!info || info.kind !== 'footage') return undefined;
+  return cachedAssetRecord(info, useAssetSessionStore.getState().byItem[itemId]) ?? undefined;
 }

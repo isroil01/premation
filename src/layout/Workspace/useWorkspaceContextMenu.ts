@@ -43,7 +43,7 @@ import type { FrameBlend } from '@core/scene/layerTime';
 import { unfreezeEdit } from '@layout/Timeline/timelineEdits';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
 import { useTrackerStore } from '@stores/trackerStore';
-import { useAssetStore } from '@stores/assetStore';
+import { assetRecordNow } from '@stores/assetSession';
 import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { LABEL_COLORS } from '@core/scene/labelColor';
@@ -226,7 +226,7 @@ export function videoContextMenuItems(id: string): ContextMenuItem {
           const assetId = documentMirror().layer(id)?.source;
           // B4-gap: the Interpret Footage dialog (layout/Assets) edits the legacy asset record, so it
           // still takes one; it goes when the dialog takes an item id (the mirror's ItemInfo).
-          const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : undefined;
+          const asset = assetRecordNow(assetId);
           if (asset) openInterpretFootage(asset);
           else useUIStore.getState().notify({ level: 'info', message: 'This layer has no importable source to interpret.', durationMs: 2600 });
         },
