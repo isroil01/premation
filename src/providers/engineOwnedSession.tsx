@@ -149,6 +149,8 @@ export async function installEngineOwnedSession(track: (dispose: () => void) => 
     now: () => Date.now(),
     // F2 bundles: where the page would write a `.motion` directory bundle, the engine does.
     formatFor: (p) => (isLocalFirst() && isBundlePath(p) ? 'bundle' : 'auto'),
+    // G2: a project that used JavaScript plugins opens without their content, said once.
+    notify: (message) => useUIStore.getState().notify({ level: 'warning', message, durationMs: 9000 }),
   });
   const pm = getProjectManager();
   pm.setEngineDocument(session);
