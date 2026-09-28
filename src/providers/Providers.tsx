@@ -69,7 +69,6 @@ import { cloudProjectsEnabled } from '@core/config/edition';
 import { chooseBundleDir, bundleDirPickerAvailable } from '@core/project/bundle/bundleProjectIO';
 import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
 import { useOnboardingStore } from '@stores/onboardingStore';
-import { projectDocumentIO } from '@core/project/projectDocumentIO';
 import { incrementName } from '@core/project/incrementName';
 import { confirmDiscardChanges } from '@core/project/confirmDiscard';
 import {
@@ -2548,12 +2547,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         track(theme.subscribe((t) => usePreferenceStore.getState().set('theme', asThemeId(t))));
         theme.apply();
 
-        // Project: bridge to the scene document and refresh scene UI on load.
-        const project = getProjectManager();
-        // The FULL document (scene + animation + comps + timelines + render
-        // settings). This was `sceneProjectIO` — scene-only — so every local
-        // save silently dropped the entire animation.
-        project.setDocumentIO(projectDocumentIO);
+        // Project: refresh scene UI on load.
+        // The document lifecycle is the engine's (engineOwnedSession: ProjectManager delegates to it).
         track(getEventBus().on('ProjectLoaded', () => bumpScene()));
         track(getEventBus().on('ProjectUnloaded', () => bumpScene()));
         // The expression engine's providers (change sink, audio level, ctrl(),
