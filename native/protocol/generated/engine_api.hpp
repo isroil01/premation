@@ -540,6 +540,7 @@ enum class OverlayKind : std::uint32_t {
   motion_path = 2,
   rig = 3,
   text_box = 4,
+  scene3d = 8,
 };
 [[nodiscard]] std::string_view to_string(OverlayKind v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, OverlayKind& out) noexcept;
@@ -661,6 +662,14 @@ enum class PixelFormat : std::uint32_t {
 };
 [[nodiscard]] std::string_view to_string(PixelFormat v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, PixelFormat& out) noexcept;
+
+enum class Scene3DRole : std::uint32_t {
+  camera = 0,
+  light = 1,
+  layer = 2,
+};
+[[nodiscard]] std::string_view to_string(Scene3DRole v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, Scene3DRole& out) noexcept;
 
 enum class RenderableKind : std::uint32_t {
   rect = 0,
@@ -1025,6 +1034,8 @@ struct CloseViewport;
 struct SetCacheBudget;
 struct PurgeCache;
 struct SetInteracting;
+struct OverlayRequest;
+struct OverlayRigOptions;
 struct SetOverlayGeometry;
 struct TrackPointSpec;
 struct TrackMotionJob;
@@ -1069,6 +1080,12 @@ struct CopyKeyframes;
 struct GetMemberKeyframes;
 struct CopyEffects;
 struct GetSearchFacts;
+struct GetDocumentColors;
+struct GetCaptionCues;
+struct MapLayerTime;
+struct GetSourceSize;
+struct CheckPrecompose;
+struct GetRigPose;
 struct GetWaveform;
 struct ListFonts;
 struct GetItems;
@@ -1157,6 +1174,17 @@ struct MemberTracks;
 struct CopiedEffects;
 struct LayerSearchFacts;
 struct SearchFactsList;
+struct DocumentColors;
+struct CaptionCue;
+struct CaptionCues;
+struct MappedTime;
+struct LayerSourceSize;
+struct SourceSizes;
+struct PrecomposeCheck;
+struct RigBonePose;
+struct RigIkGoal;
+struct RigBoneWeight;
+struct RigPose;
 struct WaveformPeaks;
 struct FontAxisInfo;
 struct FontInfo;
@@ -1245,7 +1273,11 @@ struct Goodbye;
 struct EngineMessage;
 struct FrameSlots;
 struct FrameReady;
+struct OverlayScene3D;
+struct RigPinPose;
+struct OverlayRig;
 struct OverlayLayerGeometry;
+struct OverlayView;
 struct FrameGeometry;
 struct FramePong;
 struct FrameRelease;
@@ -2716,10 +2748,26 @@ struct SetInteracting {
   bool operator==(const SetInteracting&) const = default;
 };
 
+struct OverlayRequest {
+  std::vector<LayerId> layers;
+  std::vector<OverlayKind> kinds;
+  bool operator==(const OverlayRequest&) const = default;
+};
+
+struct OverlayRigOptions {
+  std::string pin;
+  std::string bone;
+  bool authoring = false;
+  bool operator==(const OverlayRigOptions&) const = default;
+};
+
 struct SetOverlayGeometry {
   std::uint32_t viewport = 0;
   std::vector<LayerId> layers;
   std::vector<OverlayKind> kinds;
+  std::vector<OverlayRequest> groups;
+  std::vector<std::string> views;
+  std::optional<OverlayRigOptions> rig;
   bool operator==(const SetOverlayGeometry&) const = default;
 };
 
@@ -3207,6 +3255,7 @@ struct CopyKeyframes {
 struct GetMemberKeyframes {
   LayerId layer;
   std::vector<std::string> members;
+  std::optional<bool> include_data;
   bool operator==(const GetMemberKeyframes&) const = default;
 };
 
@@ -3219,6 +3268,43 @@ struct CopyEffects {
 struct GetSearchFacts {
   std::vector<LayerId> layers;
   bool operator==(const GetSearchFacts&) const = default;
+};
+
+struct GetDocumentColors {
+  std::uint32_t limit = 0;
+  bool operator==(const GetDocumentColors&) const = default;
+};
+
+struct GetCaptionCues {
+  ItemId comp;
+  bool operator==(const GetCaptionCues&) const = default;
+};
+
+struct MapLayerTime {
+  LayerId layer;
+  Time time = 0;
+  bool outward = false;
+  bool operator==(const MapLayerTime&) const = default;
+};
+
+struct GetSourceSize {
+  std::vector<LayerId> layers;
+  bool operator==(const GetSourceSize&) const = default;
+};
+
+struct CheckPrecompose {
+  ItemId comp;
+  std::vector<LayerId> layers;
+  bool operator==(const CheckPrecompose&) const = default;
+};
+
+struct GetRigPose {
+  LayerId layer;
+  Time time = 0;
+  std::vector<Vec2> points;
+  std::optional<std::uint32_t> vertex;
+  std::optional<bool> authoring;
+  bool operator==(const GetRigPose&) const = default;
 };
 
 struct GetWaveform {
@@ -3406,6 +3492,12 @@ struct Query {
     get_member_keyframes = 1893,
     copy_effects = 1890,
     get_search_facts = 1894,
+    get_document_colors = 1930,
+    get_caption_cues = 1931,
+    map_layer_time = 1932,
+    get_source_size = 1933,
+    check_precompose = 1934,
+    get_rig_pose = 1900,
     get_waveform = 1020,
     list_fonts = 1021,
     get_items = 1022,
@@ -3434,7 +3526,7 @@ struct Query {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
+  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetRigPose, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Query&) const = default;
 };
@@ -3822,6 +3914,7 @@ struct ItemInfo {
   MediaType media_type = MediaType::none;
   bool alpha_probed = false;
   bool audio_probed = false;
+  std::optional<std::string> media_url;
   bool operator==(const ItemInfo&) const = default;
 };
 
@@ -3947,6 +4040,8 @@ struct LayerInfo {
   std::string mograph_id;
   SvgRole svg = SvgRole::none;
   std::optional<std::uint32_t> plugin_schema_version;
+  std::optional<bool> caption;
+  std::optional<std::uint32_t> multicam_angle;
   bool operator==(const LayerInfo&) const = default;
 };
 
@@ -3984,6 +4079,7 @@ struct PropertyInfo {
   std::vector<PropPath> children;
   bool hidden = false;
   std::vector<MemberExpression> member_expressions;
+  std::optional<bool> stored;
   bool operator==(const PropertyInfo&) const = default;
 };
 
@@ -4106,6 +4202,7 @@ struct MemberTrack {
   std::string keyframes;
   std::uint32_t count = 0;
   bool has_expression = false;
+  std::optional<bool> data;
   bool operator==(const MemberTrack&) const = default;
 };
 
@@ -4130,6 +4227,87 @@ struct LayerSearchFacts {
 struct SearchFactsList {
   std::vector<LayerSearchFacts> layers;
   bool operator==(const SearchFactsList&) const = default;
+};
+
+struct DocumentColors {
+  std::vector<std::string> colors;
+  bool operator==(const DocumentColors&) const = default;
+};
+
+struct CaptionCue {
+  LayerId layer;
+  Time start = 0;
+  Time end = 0;
+  std::string text;
+  bool operator==(const CaptionCue&) const = default;
+};
+
+struct CaptionCues {
+  std::vector<CaptionCue> cues;
+  bool operator==(const CaptionCues&) const = default;
+};
+
+struct MappedTime {
+  std::optional<Time> time;
+  bool operator==(const MappedTime&) const = default;
+};
+
+struct LayerSourceSize {
+  LayerId layer;
+  double width = 0.0;
+  double height = 0.0;
+  bool operator==(const LayerSourceSize&) const = default;
+};
+
+struct SourceSizes {
+  std::vector<LayerSourceSize> sizes;
+  bool operator==(const SourceSizes&) const = default;
+};
+
+struct PrecomposeCheck {
+  std::string leave_attributes_reason;
+  bool operator==(const PrecomposeCheck&) const = default;
+};
+
+struct RigBonePose {
+  std::string id;
+  double x = 0.0;
+  double y = 0.0;
+  double rotation = 0.0;
+  double scale_x = 0.0;
+  double scale_y = 0.0;
+  double posed_x = 0.0;
+  double posed_y = 0.0;
+  double posed_rotation = 0.0;
+  std::vector<double> world;
+  bool operator==(const RigBonePose&) const = default;
+};
+
+struct RigIkGoal {
+  std::string bone;
+  bool enabled = false;
+  double x = 0.0;
+  double y = 0.0;
+  std::vector<double> pole;
+  std::optional<double> chain_length;
+  std::string mode;
+  bool operator==(const RigIkGoal&) const = default;
+};
+
+struct RigBoneWeight {
+  std::string bone;
+  double weight = 0.0;
+  bool operator==(const RigBoneWeight&) const = default;
+};
+
+struct RigPose {
+  std::vector<RigBonePose> bones;
+  std::vector<RigIkGoal> ik;
+  std::vector<Vec2> rest;
+  std::vector<Vec2> anchors;
+  std::vector<RigBoneWeight> weights;
+  std::uint32_t vertex_count = 0;
+  bool operator==(const RigPose&) const = default;
 };
 
 struct WaveformPeaks {
@@ -4507,6 +4685,12 @@ struct QueryResult {
     get_member_keyframes = 1893,
     copy_effects = 1890,
     get_search_facts = 1894,
+    get_document_colors = 1930,
+    get_caption_cues = 1931,
+    map_layer_time = 1932,
+    get_source_size = 1933,
+    check_precompose = 1934,
+    get_rig_pose = 1900,
     get_waveform = 1020,
     list_fonts = 1021,
     get_items = 1022,
@@ -4535,7 +4719,7 @@ struct QueryResult {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
+  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, RigPose, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const QueryResult&) const = default;
 };
@@ -4865,6 +5049,47 @@ struct FrameReady {
   bool operator==(const FrameReady&) const = default;
 };
 
+struct OverlayScene3D {
+  Scene3DRole role = Scene3DRole::camera;
+  std::vector<double> lens;
+  std::vector<double> poi;
+  double focus_distance = 0.0;
+  std::vector<double> dof;
+  std::string light_type;
+  std::vector<double> position;
+  std::vector<double> light;
+  std::vector<double> local;
+  double extrusion = 0.0;
+  std::vector<double> parent;
+  bool operator==(const OverlayScene3D&) const = default;
+};
+
+struct RigPinPose {
+  std::string id;
+  std::string kind;
+  double x = 0.0;
+  double y = 0.0;
+  double cx = 0.0;
+  double cy = 0.0;
+  double rotation = 0.0;
+  double scale = 0.0;
+  bool operator==(const RigPinPose&) const = default;
+};
+
+struct OverlayRig {
+  std::vector<RigPinPose> pins;
+  std::vector<RigBonePose> bones;
+  std::vector<RigIkGoal> ik;
+  std::vector<double> vertices;
+  std::vector<double> rest;
+  std::vector<std::uint32_t> triangles;
+  std::vector<std::uint32_t> edges;
+  std::vector<double> weights;
+  std::vector<double> pin_path;
+  std::vector<double> pin_keys;
+  bool operator==(const OverlayRig&) const = default;
+};
+
 struct OverlayLayerGeometry {
   LayerId layer;
   std::vector<double> matrix;
@@ -4877,7 +5102,19 @@ struct OverlayLayerGeometry {
   std::vector<double> text_box;
   std::vector<double> path_frames;
   std::vector<double> path_now;
+  std::optional<OverlayScene3D> scene;
+  std::optional<OverlayRig> rig;
   bool operator==(const OverlayLayerGeometry&) const = default;
+};
+
+struct OverlayView {
+  std::string mode;
+  LayerId camera;
+  LayerId live_camera;
+  std::vector<double> lens;
+  double comp_width = 0.0;
+  double comp_height = 0.0;
+  bool operator==(const OverlayView&) const = default;
 };
 
 struct FrameGeometry {
@@ -4888,6 +5125,7 @@ struct FrameGeometry {
   Revision revision = 0;
   std::vector<OverlayLayerGeometry> layers;
   bool last = false;
+  std::vector<OverlayView> views;
   bool operator==(const FrameGeometry&) const = default;
 };
 
@@ -5712,6 +5950,10 @@ void encode(wire::Writer& w, const PurgeCache& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PurgeCache& out);
 void encode(wire::Writer& w, const SetInteracting& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetInteracting& out);
+void encode(wire::Writer& w, const OverlayRequest& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, OverlayRequest& out);
+void encode(wire::Writer& w, const OverlayRigOptions& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, OverlayRigOptions& out);
 void encode(wire::Writer& w, const SetOverlayGeometry& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetOverlayGeometry& out);
 void encode(wire::Writer& w, const TrackPointSpec& v);
@@ -5800,6 +6042,18 @@ void encode(wire::Writer& w, const CopyEffects& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CopyEffects& out);
 void encode(wire::Writer& w, const GetSearchFacts& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetSearchFacts& out);
+void encode(wire::Writer& w, const GetDocumentColors& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetDocumentColors& out);
+void encode(wire::Writer& w, const GetCaptionCues& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetCaptionCues& out);
+void encode(wire::Writer& w, const MapLayerTime& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, MapLayerTime& out);
+void encode(wire::Writer& w, const GetSourceSize& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetSourceSize& out);
+void encode(wire::Writer& w, const CheckPrecompose& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CheckPrecompose& out);
+void encode(wire::Writer& w, const GetRigPose& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetRigPose& out);
 void encode(wire::Writer& w, const GetWaveform& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetWaveform& out);
 void encode(wire::Writer& w, const ListFonts& v);
@@ -5976,6 +6230,28 @@ void encode(wire::Writer& w, const LayerSearchFacts& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, LayerSearchFacts& out);
 void encode(wire::Writer& w, const SearchFactsList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SearchFactsList& out);
+void encode(wire::Writer& w, const DocumentColors& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, DocumentColors& out);
+void encode(wire::Writer& w, const CaptionCue& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CaptionCue& out);
+void encode(wire::Writer& w, const CaptionCues& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CaptionCues& out);
+void encode(wire::Writer& w, const MappedTime& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, MappedTime& out);
+void encode(wire::Writer& w, const LayerSourceSize& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, LayerSourceSize& out);
+void encode(wire::Writer& w, const SourceSizes& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SourceSizes& out);
+void encode(wire::Writer& w, const PrecomposeCheck& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PrecomposeCheck& out);
+void encode(wire::Writer& w, const RigBonePose& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RigBonePose& out);
+void encode(wire::Writer& w, const RigIkGoal& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RigIkGoal& out);
+void encode(wire::Writer& w, const RigBoneWeight& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RigBoneWeight& out);
+void encode(wire::Writer& w, const RigPose& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RigPose& out);
 void encode(wire::Writer& w, const WaveformPeaks& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, WaveformPeaks& out);
 void encode(wire::Writer& w, const FontAxisInfo& v);
@@ -6152,8 +6428,16 @@ void encode(wire::Writer& w, const FrameSlots& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FrameSlots& out);
 void encode(wire::Writer& w, const FrameReady& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FrameReady& out);
+void encode(wire::Writer& w, const OverlayScene3D& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, OverlayScene3D& out);
+void encode(wire::Writer& w, const RigPinPose& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RigPinPose& out);
+void encode(wire::Writer& w, const OverlayRig& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, OverlayRig& out);
 void encode(wire::Writer& w, const OverlayLayerGeometry& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, OverlayLayerGeometry& out);
+void encode(wire::Writer& w, const OverlayView& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, OverlayView& out);
 void encode(wire::Writer& w, const FrameGeometry& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FrameGeometry& out);
 void encode(wire::Writer& w, const FramePong& v);

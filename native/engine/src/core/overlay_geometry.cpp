@@ -3,15 +3,23 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
+#include <iterator>
 #include <limits>
+#include <map>
+#include <numbers>
 #include <optional>
 #include <set>
+#include <string_view>
 #include <utility>
+
+#include "jsmath.hpp"
 
 #include "anim.hpp"
 #include "readmodel.hpp"
 #include "fail.hpp"
 #include "layer_geometry.hpp"
+#include "overlay_rig_pack.hpp"
 #include "scene.hpp"
 #include "scene/session_hooks.hpp"
 #include "time_conv.hpp"
@@ -195,13 +203,191 @@ void motion_path_of(const PCtx& pc, const std::string& layer, double seconds, ap
   g.path_now = {nx, ny, now[2]};
 }
 
+// ── B4 round 5: the view cameras and the scene3d records (overlayScene3d.ts) ──
+
+/// A resolved camera as the push carries it: position, focalLength, principal, yaw, pitch, roll.
+std::vector<double> lens_of(const motion::xf::Camera& cam) {
+  const double yaw = cam.orientation ? cam.orientation->yaw : 0;
+  const double pitch = cam.orientation ? cam.orientation->pitch : 0;
+  const double roll = cam.orientation ? cam.orientation->roll.value_or(0) : 0;
+  return {cam.position.x, cam.position.y, cam.position.z, cam.focal_length, cam.principal.x, cam.principal.y, yaw, pitch, roll};
+}
+
+/// The composition's width / height (1920 × 1080 when it has no record).
+std::pair<double, double> comp_size(const Document& d, const std::optional<std::string>& comp) {
+  double cw = 1920;
+  double ch = 1080;
+  if (comp) {
+    if (const Json* rec = d.comp(*comp); rec != nullptr && rec->at("width").is_number() && rec->at("height").is_number()) {
+      cw = rec->at("width").num();
+      ch = rec->at("height").num();
+    }
+  }
+  return {cw, ch};
+}
+
+using Values = std::map<std::string, double, std::less<>>;
+
+/// `defaultAnimation.evaluateNode(id, getRemappedTime(id, seconds))`.
+Values values_at(const PCtx& pc, const std::string& id, double seconds) {
+  Values av;
+  for (auto& [prop, v] : anim_evaluate_node(pc.d, pc.expr, pc.cache, id, comp_to_keyframe_time(pc.d, pc.view, id, seconds))) {
+    av.insert_or_assign(prop, v);
+  }
+  return av;
+}
+
+std::optional<double> value(const Values& av, std::string_view k) {
+  const auto it = av.find(k);
+  return it == av.end() ? std::nullopt : std::optional<double>(it->second);
+}
+
+/// The last component's number `k` carries (the camera readers' static props).
+std::optional<double> static_num(const Node& n, std::string_view k) {
+  std::optional<double> out;
+  for (const Component& c : n.components) {
+    if (const Json& v = c.props.at(k); v.is_number()) out = v.num();
+  }
+  return out;
+}
+
+/// threeD.ts `readNode3D(node)` field: the Transform's number, else 0.
+double transform_prop(const Node& n, std::string_view k) {
+  const Component* t = n.comp("Transform");
+  if (t == nullptr) return 0;
+  const Json& v = t->props.at(k);
+  return v.is_number() ? v.num() : 0;
+}
+
+/// camera3d.ts `readCameraPoi(node, w, h, sample)` (nullopt: a one-node camera).
+std::optional<motion::xf::Vec3> camera_poi(const Node& n, const Values& av, double w, double h) {
+  std::optional<double> px = value(av, "poiX");
+  std::optional<double> py = value(av, "poiY");
+  std::optional<double> pz = value(av, "poiZ");
+  if (!px) px = static_num(n, "poiX");
+  if (!py) py = static_num(n, "poiY");
+  if (!pz) pz = static_num(n, "poiZ");
+  if (!px && !py && !pz) return std::nullopt;
+  return motion::xf::Vec3{px.value_or(w / 2), py.value_or(h / 2), pz.value_or(0)};
+}
+
+/// camera3d.ts `readNodeDof(node, w, h, sample)` — the fields the focus plane reads: strength, focus, aperture,
+/// focalLength, fStop (NaN = absent); empty when the camera has no blur level. (scene/camera3d_port.cpp is the
+/// renderer's full port; engine_core cannot link the scene library.)
+std::vector<double> camera_dof(const Node& n, const Values& av, double w, double h) {
+  const auto pick = [&](std::string_view k) {
+    const auto v = value(av, k);
+    return v ? v : static_num(n, k);
+  };
+  const std::optional<double> strength = pick("dofStrength");
+  if (!strength || std::isnan(*strength) || *strength <= 0) return {};
+  const double lens = pick("focalLength").value_or(motion::xf::default_camera(w, h).focal_length);
+  const std::optional<double> fStop = pick("fStop");
+  return {*strength, pick("focusDistance").value_or(lens), pick("dofAperture").value_or(*strength), lens,
+          fStop && *fStop > 0 ? *fStop : kNaN};
+}
+
+/// light.ts `lightType`.
+std::string light_type_of(const Node& n) {
+  std::string type = "point";
+  for (const Component& c : n.components) {
+    if (const Json& v = c.props.at("lightType"); v.is_string()) {
+      const std::string& s = v.str();
+      type = s == "ambient" || s == "spot" || s == "parallel" || s == "environment" ? s : "point";
+    }
+  }
+  return type;
+}
+
+/// light.ts `readNodeLight`'s number `k` (the last component carrying it), else `fallback`.
+double light_num(const Node& n, std::string_view k, double fallback) {
+  return static_num(n, k).value_or(fallback);
+}
+
+/// A layer is inside its in/out bar at comp `seconds` (the renderer's `isLiveAt`: the governing bars — its own,
+/// else the nearest plain group's — end-exclusive, the frame clamped to the composition's last).
+bool live_at(const PCtx& pc, const Node& n, const std::string& comp, double seconds) {
+  std::vector<const Bar*> clips = tl_bars_for_node(pc.d, pc.view, n.id);
+  if (clips.empty()) {
+    const Node* cur = &n;
+    for (int depth = 0; depth < 32 && cur != nullptr && cur->parent; ++depth) {
+      const Node* parent = pc.d.node(*cur->parent);
+      if (parent == nullptr || is_precomp(*parent) || parent->kind() != "group") break;
+      clips = tl_bars_for_node(pc.d, pc.view, parent->id);
+      if (!clips.empty()) break;
+      cur = parent;
+    }
+  }
+  if (clips.empty()) return true;
+  const double fps = comp_fps(pc.d, comp);
+  const double raw = motion::js::round(seconds * fps);
+  double frame = raw;
+  if (const Json* rec = pc.d.comp(comp); rec != nullptr && rec->at("durationSeconds").is_number()) {
+    frame = std::min(raw, std::max(0.0, motion::js::round(rec->at("durationSeconds").num() * fps) - 1));
+  }
+  return std::ranges::any_of(clips, [frame](const Bar* b) { return b->active_at(frame); });
+}
+
+/// camera3d.ts `flattenComposition(graph, root)`: the root then its subtree depth-first in child order; no root
+/// (or a missing one) = every root's (flattenScene).
+std::vector<const Node*> flatten_comp(const Document& d, const std::optional<std::string>& root) {
+  std::vector<const Node*> out;
+  std::set<std::string> seen;
+  std::function<void(const Node&)> walk = [&](const Node& n) {
+    if (!seen.insert(n.id).second) return;
+    out.push_back(&n);
+    for (const auto& ch : n.children) {
+      if (const Node* child = d.node(ch)) walk(*child);
+    }
+  };
+  if (root) {
+    if (const Node* r = d.node(*root)) {
+      walk(*r);
+      return out;
+    }
+  }
+  for (const auto& [id, n] : d.nodes()) {
+    if (!n->parent) walk(*n);
+  }
+  return out;
+}
+
+/// camera3d.ts `viewCameraNode(graph, mode, root, filter)`: a live `camera:<id>` view's camera, else the topmost
+/// visible camera (that `live` accepts, when given).
+const Node* view_camera_node(const std::vector<const Node*>& nodes, const std::string& mode,
+                             const std::function<bool(const Node&)>& live) {
+  constexpr std::string_view kPrefix = "camera:";
+  if (mode.size() > kPrefix.size() && mode.starts_with(kPrefix)) {
+    const std::string_view id = std::string_view(mode).substr(kPrefix.size());
+    for (const Node* n : nodes) {
+      if (n->id != id) continue;
+      if (n->kind() == "camera" && n->visible) return n;
+      break;
+    }
+  }
+  for (std::size_t i = nodes.size(); i-- > 0;) {
+    const Node* n = nodes[i];
+    if (n->kind() != "camera" || !n->visible) continue;
+    if (live && !live(*n)) continue;
+    return n;
+  }
+  return nullptr;
+}
+
 // ── packing ───────────────────────────────────────────────────────────────
 
 /// A conservative payload estimate for one record (field tags, lengths, the id, 8 bytes per f64).
 std::size_t estimate(const api::OverlayLayerGeometry& g) {
   std::size_t doubles = g.matrix.size() + g.box.size() + g.corners.size() + g.path.size() + g.path_keys.size() + g.pins.size() +
                         g.bones.size() + g.text_box.size() + g.path_frames.size() + g.path_now.size();
-  return 48 + g.layer.size() + 8 * doubles;
+  std::size_t extra = 0;
+  if (g.scene) {
+    const api::OverlayScene3D& s = *g.scene;
+    doubles += s.lens.size() + s.poi.size() + s.dof.size() + s.position.size() + s.light.size() + s.local.size() + s.parent.size() + 2;
+    extra += 48 + s.light_type.size();
+  }
+  if (g.rig) extra += estimate_overlay_rig(*g.rig);  // B4 round 5 (overlay_rig_pack.cpp)
+  return 48 + g.layer.size() + 8 * doubles + extra;
 }
 
 /// Per-message budget for records: the payload cap less the FrameGeometry header and slack.
@@ -219,6 +405,7 @@ std::vector<api::OverlayLayerGeometry> split(api::OverlayLayerGeometry g) {
   head.path_now = std::move(g.path_now);
   head.pins = std::move(g.pins);
   head.bones = std::move(g.bones);
+  head.scene = std::move(g.scene);  // B4 round 5: rides the head record
   out.push_back(std::move(head));
   const std::size_t perPiece = (kRecordBudget - 48 - g.layer.size()) / 8;
   const auto chunk = [&](std::vector<double> api::OverlayLayerGeometry::*field, std::vector<double>& src, std::size_t group) {
@@ -234,27 +421,156 @@ std::vector<api::OverlayLayerGeometry> split(api::OverlayLayerGeometry g) {
   chunk(&api::OverlayLayerGeometry::path, g.path, 4);
   chunk(&api::OverlayLayerGeometry::path_keys, g.path_keys, 8);
   chunk(&api::OverlayLayerGeometry::path_frames, g.path_frames, 4);
+  // B4 round 5: the rig travels in rig-only records, its arrays cut in whole groups (overlay_rig_pack.cpp).
+  if (g.rig) split_overlay_rig(g.layer, std::move(*g.rig), kRecordBudget, out);
   return out;
 }
 
 }  // namespace
+
+std::vector<std::pair<std::string, std::vector<api::OverlayKind>>> subscribed_layer_kinds(const OverlaySubscription& sub) {
+  std::vector<std::pair<std::string, std::vector<api::OverlayKind>>> out;
+  const auto add = [&out](const std::string& id, const std::vector<api::OverlayKind>& kinds) {
+    auto it = std::find_if(out.begin(), out.end(), [&id](const auto& e) { return e.first == id; });
+    if (it == out.end()) {
+      out.emplace_back(id, std::vector<api::OverlayKind>{});
+      it = std::prev(out.end());
+    }
+    for (const api::OverlayKind k : kinds) {
+      if (std::find(it->second.begin(), it->second.end(), k) == it->second.end()) it->second.push_back(k);
+    }
+  };
+  if (!sub.kinds.empty()) {
+    for (const std::string& id : sub.layers) add(id, sub.kinds);
+  }
+  for (const api::OverlayRequest& g : sub.groups) {
+    if (g.kinds.empty()) continue;
+    for (const std::string& id : g.layers) add(id, g.kinds);
+  }
+  return out;
+}
+
+std::optional<api::OverlayScene3D> scene3d_of(const PCtx& pc, const std::string& layer, double seconds) {
+  const Node* n = pc.d.node(layer);
+  if (n == nullptr) return std::nullopt;
+  const std::string kind = n->kind();
+  const auto [w, h] = comp_size(pc.d, comp_of_layer(pc.d, layer));
+  const SpaceCtx sc{pc.d, pc.view, pc.expr, pc.cache};
+  api::OverlayScene3D rec;
+  rec.role = api::Scene3DRole::layer;
+  if (const auto parent = parent_world_at(sc, layer, seconds)) rec.parent.assign(parent->begin(), parent->end());
+  if (kind == "camera") {
+    const Values av = values_at(pc, layer, seconds);
+    rec.role = api::Scene3DRole::camera;
+    rec.lens = lens_of(camera_at(sc, *n, w, h, seconds));
+    if (const auto localPoi = camera_poi(*n, av, w, h)) {
+      const auto p = world_point_at(sc, layer, seconds, *localPoi);
+      rec.poi = {p.x, p.y, p.z};
+    }
+    // camera3d.ts `readCameraFocusDistance`: focus ?? focal ?? defaultFocalLength(width).
+    std::optional<double> focus = value(av, "focusDistance");
+    if (!focus) focus = static_num(*n, "focusDistance");
+    std::optional<double> focal = value(av, "focalLength");
+    if (!focal) focal = static_num(*n, "focalLength");
+    rec.focus_distance = focus ? *focus : focal ? *focal : motion::xf::default_camera(w, 1).focal_length;
+    rec.dof = camera_dof(*n, av, w, h);
+    return rec;
+  }
+  const auto geo = read_geometry_local(*n);
+  if (kind == "light") {
+    const Values av = values_at(pc, layer, seconds);
+    rec.role = api::Scene3DRole::light;
+    rec.light_type = light_type_of(*n);
+    // liveWorld3d.ts `deviceWorldPosition`.
+    const auto pos = world_point_at(sc, layer, seconds,
+                                    {value(av, "x").value_or(geo ? geo->x : 0), value(av, "y").value_or(geo ? geo->y : 0),
+                                     value(av, "z").value_or(transform_prop(*n, "z"))});
+    rec.position = {pos.x, pos.y, pos.z};
+    // light.ts: any ONE POI prop present aims the light (the others default to 0).
+    const auto px = static_num(*n, "poiX");
+    const auto py = static_num(*n, "poiY");
+    const auto pz = static_num(*n, "poiZ");
+    if (px || py || pz) {
+      const auto p = world_point_at(sc, layer, seconds,
+                                    {value(av, "poiX").value_or(px.value_or(0)), value(av, "poiY").value_or(py.value_or(0)),
+                                     value(av, "poiZ").value_or(pz.value_or(0))});
+      rec.poi = {p.x, p.y, p.z};
+    }
+    // liveWorld3d.ts `deviceWorldRotationDeg`: the Z spin of the world matrix.
+    double worldRot = 0;
+    if (const auto m = node_world_3d_at(sc, *n, seconds)) worldRot = std::atan2((*m)[1], (*m)[0]) * 180 / std::numbers::pi;
+    rec.light = {value(av, "radius").value_or(light_num(*n, "radius", 500)),
+                 value(av, "lightCone").value_or(light_num(*n, "lightCone", 45)),
+                 value(av, "lightConeFeather").value_or(light_num(*n, "lightConeFeather", 50)),
+                 value(av, "lightAngle").value_or(light_num(*n, "lightAngle", 0)) + worldRot};
+    return rec;
+  }
+  if (!can_be_3d(*n) || !is_3d_enabled(*n)) return std::nullopt;
+  // ports.ts `sampleTransform3DAtPlayhead` at the frame's time.
+  const Values av = values_at(pc, layer, seconds);
+  const auto sc2 = value(av, "scale");
+  std::optional<double> scaleZ = value(av, "scaleZ");
+  if (!scaleZ) {
+    const Component* t = n->comp("Transform");
+    const Json* v = t != nullptr ? &t->props.at("scaleZ") : nullptr;
+    scaleZ = v != nullptr && v->is_number() && std::isfinite(v->num()) ? v->num() : 1.0;
+  }
+  rec.local = {value(av, "x").value_or(geo ? geo->x : 0),
+               value(av, "y").value_or(geo ? geo->y : 0),
+               value(av, "z").value_or(transform_prop(*n, "z")),
+               value(av, "rotationX").value_or(transform_prop(*n, "rotationX")),
+               value(av, "rotationY").value_or(transform_prop(*n, "rotationY")),
+               value(av, "rotation").value_or(geo ? geo->rotation : 0),
+               value(av, "scaleX") ? *value(av, "scaleX") : sc2 ? *sc2 : geo ? geo->scale_x : 1,
+               value(av, "scaleY") ? *value(av, "scaleY") : sc2 ? *sc2 : geo ? geo->scale_y : 1,
+               *scaleZ};
+  rec.extrusion = std::max(0.0, value(av, "extrusionDepth").value_or(std::max(0.0, transform_prop(*n, "extrusionDepth"))));
+  return rec;
+}
+
+std::vector<api::OverlayView> overlay_views(const PCtx& pc, const OverlaySubscription& sub,
+                                            const std::optional<std::string>& comp, api::Time time) {
+  std::vector<api::OverlayView> out;
+  if (sub.views.empty()) return out;
+  const double seconds = flicks_to_seconds(time);
+  const auto [w, h] = comp_size(pc.d, comp);
+  const std::vector<const Node*> nodes = flatten_comp(pc.d, comp);
+  const SpaceCtx sc{pc.d, pc.view, pc.expr, pc.cache};
+  for (const std::string& mode : sub.views) {
+    api::OverlayView v;
+    v.mode = mode;
+    v.comp_width = w;
+    v.comp_height = h;
+    const Node* chrome = view_camera_node(nodes, mode, {});
+    const Node* live = comp ? view_camera_node(nodes, mode, [&](const Node& n) { return live_at(pc, n, *comp, seconds); })
+                            : chrome;
+    if (chrome != nullptr) v.camera = chrome->id;
+    if (live != nullptr) v.live_camera = live->id;
+    v.lens = lens_of(chrome != nullptr ? camera_at(sc, *chrome, w, h, seconds) : motion::xf::default_camera(w, h));
+    out.push_back(std::move(v));
+  }
+  return out;
+}
 
 std::vector<api::OverlayLayerGeometry> overlay_geometry(const PCtx& pc, TextQueries* text, const OverlaySubscription& sub,
                                                        api::Time time) {
   std::vector<api::OverlayLayerGeometry> out;
   if (!sub.active()) return out;
   const double seconds = flicks_to_seconds(time);
-  for (const std::string& layer : sub.layers) {
+  // B4 round 5: each layer with ITS kinds (the `layers` × `kinds` list, then the groups).
+  for (const auto& [layer, kinds] : subscribed_layer_kinds(sub)) {
     // A layer is a node with a parent (require_layer's test); a composition root or a gone id is skipped.
     const Node* n = pc.d.node(layer);
     if (n == nullptr || !n->parent) continue;
+    const auto wants = [&kinds](api::OverlayKind k) { return std::find(kinds.begin(), kinds.end(), k) != kinds.end(); };
     api::OverlayLayerGeometry g;
     g.layer = layer;
-    if (sub.wants(api::OverlayKind::transform)) g.matrix = matrix_of(pc, layer, seconds);
-    if (sub.wants(api::OverlayKind::bounds)) (void)bounds_of(pc, text, layer, seconds, g);
-    if (sub.wants(api::OverlayKind::motion_path)) motion_path_of(pc, layer, seconds, g);
-    if (sub.wants(api::OverlayKind::text_box)) text_box_of(pc, text, layer, seconds, g);
+    if (wants(api::OverlayKind::transform)) g.matrix = matrix_of(pc, layer, seconds);
+    if (wants(api::OverlayKind::bounds)) (void)bounds_of(pc, text, layer, seconds, g);
+    if (wants(api::OverlayKind::motion_path)) motion_path_of(pc, layer, seconds, g);
+    if (wants(api::OverlayKind::text_box)) text_box_of(pc, text, layer, seconds, g);
     // rig (pins / bones): not produced yet — the rig sampler is scene-side (ENGINE_API.md §15.12).
+    if (wants(api::OverlayKind::scene3d)) g.scene = scene3d_of(pc, layer, seconds);
     out.push_back(std::move(g));
   }
   return out;
@@ -262,7 +578,8 @@ std::vector<api::OverlayLayerGeometry> overlay_geometry(const PCtx& pc, TextQuer
 
 std::vector<api::FrameGeometry> pack_frame_geometry(std::uint32_t viewport, std::uint32_t generation, std::int64_t frame,
                                                    api::Time time, api::Revision revision,
-                                                   std::vector<api::OverlayLayerGeometry> layers) {
+                                                   std::vector<api::OverlayLayerGeometry> layers,
+                                                   std::vector<api::OverlayView> views) {
   std::vector<api::FrameGeometry> out;
   const auto fresh = [&] {
     api::FrameGeometry m;
@@ -275,6 +592,9 @@ std::vector<api::FrameGeometry> pack_frame_geometry(std::uint32_t viewport, std:
   };
   api::FrameGeometry cur = fresh();
   std::size_t used = 0;
+  // B4 round 5: the views ride the first message (a handful of small records).
+  for (const api::OverlayView& v : views) used += 48 + v.mode.size() + v.camera.size() + v.live_camera.size() + 8 * v.lens.size();
+  cur.views = std::move(views);
   for (api::OverlayLayerGeometry& g : layers) {
     for (api::OverlayLayerGeometry& piece : split(std::move(g))) {
       const std::size_t size = estimate(piece);

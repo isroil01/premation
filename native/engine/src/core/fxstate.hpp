@@ -44,6 +44,9 @@ namespace premation::doc {
 [[nodiscard]] std::string channels_to_color(double r, double g, double b, double a);
 /// `/^#?[0-9a-fA-F]{3,8}$/.test(s.trim())`.
 [[nodiscard]] bool is_hex_color(std::string_view s);
+/// B4 round 5 (fields.ts `cssRgbChannels`): a CSS `rgb()` / `rgba()` string as
+/// 0..1 channels (each rounded to a whole 8-bit step), nullopt when `s` is not one.
+[[nodiscard]] std::optional<std::array<double, 4>> css_rgb_channels(std::string_view s);
 
 // ── effects ──────────────────────────────────────────────────────────────
 [[nodiscard]] Json default_params(const EffectDef& def);

@@ -12,6 +12,13 @@ export type PixelFormat =
   | 'rgba8unorm';
 export const PixelFormatValues = ['rgba8unorm'] as const;
 
+/** B4 round 5 — which of the viewport's 3D reference objects a scene3d record describes. */
+export type Scene3DRole =
+  | 'camera'
+  | 'light'
+  | 'layer';
+export const Scene3DRoleValues = ['camera', 'light', 'layer'] as const;
+
 /** A layer (scene node) id. Stable for the layer's lifetime, survives save/load and undo. */
 export type LayerId = string;
 
@@ -66,7 +73,7 @@ export interface OverlayLayerGeometry {
   path: number[];
   /** motionPath: one entry per Position key time: t, x, y, z, inX, inY, outX, outY — the key's point and its spatial tangent handles at their effective positions (comp space; NaN where a handle does not exist: the path's ends, a linear vertex). */
   pathKeys: number[];
-  /** rig: puppet pins as x, y pairs and bones as x0, y0, x1, y1 in comp space — not produced yet (both engines send them empty until the rig sampler moves engine-side). */
+  /** rig: unused — superseded by `rig` (B4 round 5, layer-space pins, bones, mesh); both engines send them empty. */
   pins: number[];
   bones: number[];
   /** textBox: a text layer's measured box, LOCAL x, y, width, height (the fixed paragraph box, else the font-metric selection box). */
@@ -75,6 +82,122 @@ export interface OverlayLayerGeometry {
   pathFrames: number[];
   /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`). */
   pathNow: number[];
+  /** scene3d (B4 round 5): a camera's, light's or 3D layer's reference-geometry inputs at the frame; absent for any other layer. Rides the layer's first record. */
+  scene?: OverlayScene3D;
+  /** rig (B4 round 5): the layer's puppet pins / skeleton at the frame (OverlayRig); absent without a rig to show. A long rig spans several records: the `rig` arrays of a layer's records concatenate in arrival order. */
+  rig?: OverlayRig;
+}
+
+/** B4 round 5 — one puppet pin as the rig resolves it at a time (OverlayRig, getRigPose). Layer space: the layer's local px, the space readGeometry's box is in. */
+export interface RigPinPose {
+  id: string;
+  /** pinKindOf: advanced (the default), position, bend, starch, overlap. */
+  kind: string;
+  /** Where the pin is DRAWN: its live position — a bend pin's solved mesh vertex — carried through the skeleton pose (identity without one). */
+  x: number;
+  y: number;
+  /** The same point before the skeleton (the puppet's rest space): the pivot a rotate / scale gesture measures from. */
+  cx: number;
+  cy: number;
+  /** Live rotation (degrees) and scale (1 = 100%) at the time. */
+  rotation: number;
+  scale: number;
+}
+
+/** B4 round 5 — one bone of a skeleton at a time (OverlayRig, getRigPose). */
+export interface RigBonePose {
+  id: string;
+  /** The LIVE pose before IK: the bone's tracks at the time over its stored values (parent space; rotation in radians, the rig's unit). */
+  x: number;
+  y: number;
+  rotation: number;
+  scaleX: number;
+  scaleY: number;
+  /** The SOLVED pose (FK + the IK goals in IK mode), same space. */
+  posedX: number;
+  posedY: number;
+  posedRotation: number;
+  /** The solved world matrix a, b, c, d, e, f (layer space): the root is (e, f), the tip the matrix at (length, 0). */
+  world: number[];
+}
+
+/** B4 round 5 — one stored IK goal at a time (OverlayRig, getRigPose), in the rig's stored order, disabled ones included. */
+export interface RigIkGoal {
+  bone: string;
+  enabled: boolean;
+  /** The goal and its pole live at the time (their tracks over the stored values; layer space). */
+  x: number;
+  y: number;
+  /** x, y; empty = none. */
+  pole: number[];
+  /** As stored (absent = the solver's default of 2). */
+  chainLength?: number;
+  /** The chain's mode at the time: the ikMode track (≥ 0.5 = ik) over the stored mode, `ik` by default. Only an enabled goal in `ik` mode solves. */
+  mode: string;
+}
+
+/** B4 round 5 — what the Puppet Pin and Bone overlays draw for one layer at the frame, resolved as buildSnapshot resolves the rig (the puppet solve in rest space, then the skeleton pose on top). Every point is LAYER space (the layer's local px — the space `box` is in). */
+export interface OverlayRig {
+  /** The puppet pins, stored order. */
+  pins: RigPinPose[];
+  /** The skeleton's bones, stored order: live and solved pose, solved world matrix. */
+  bones: RigBonePose[];
+  /** Every stored IK goal, live at the frame. */
+  ik: RigIkGoal[];
+  /** The deformed mesh as it renders — puppet, then skeleton: x, y per vertex … */
+  vertices: number[];
+  /** … the REST mesh, index-aligned: x, y per vertex (weights and paint address these indices) … */
+  rest: number[];
+  /** … its triangles, vertex index triples in the authored order … */
+  triangles: number[];
+  /** … and the puppet lattice: its unique edges as index pairs (a grid mesh keeps the rest-axis edges only — boxes, not triangles; an outline mesh keeps every edge). */
+  edges: number[];
+  /** The focus bone's (OverlayRigOptions.bone) bind weight per vertex; empty without one. */
+  weights: number[];
+  /** The focus pin's (OverlayRigOptions.pin) Position trajectory through the pose: x, y pairs, 24 per key span; empty under two keys. */
+  pinPath: number[];
+  /** The focus pin's Position keys (two or more): per key t (keyframe-axis s), restX, restY (the stored point), x, y (posed), inX, inY, outX, outY (the posed tangent handles; NaN where none). */
+  pinKeys: number[];
+}
+
+/** B4 round 5 — what the viewport's 3D chrome (frustums, light cones, layer cages, device handles, the focus plane, the 3D gizmo) reads for one layer at the frame, resolved as the renderer resolves it (sceneGizmoData.ts / deviceHandles.ts). World = composition space, y down; animated values win over stored ones, parents lifted. */
+export interface OverlayScene3D {
+  role: Scene3DRole;
+  /** camera: the resolved Camera3D (cameraFromNode, parent-lifted): position x, y, z, focalLength, principal x, y, yaw, pitch, roll (degrees; zero = no orientation). */
+  lens: number[];
+  /** camera: the Point of Interest, parent-lifted (readCameraPoi; empty = a one-node camera). light: its POI, parent-lifted (empty = none). */
+  poi: number[];
+  /** camera: readCameraFocusDistance (px). */
+  focusDistance: number;
+  /** camera: readNodeDof — strength, focus, aperture, focalLength, fStop (NaN = the legacy ramp); empty = depth of field off. */
+  dof: number[];
+  /** light: readNodeLight's type (parallel, spot, point, ambient, environment). */
+  lightType: string;
+  /** light: the world position (deviceWorldPosition). */
+  position: number[];
+  /** light: radius, cone, coneFeather, and the aim in degrees (lightAngle + the layer's world Z rotation) — what buildLightGizmo takes. */
+  light: number[];
+  /** layer: the local transform sampled at the frame (sampleTransform3DAtPlayhead): x, y, z, rotationX, rotationY, rotation, scaleX, scaleY, scaleZ (stored units). */
+  local: number[];
+  /** layer: the extrusion depth (animated winning, ≥ 0). */
+  extrusion: number;
+  /** every role: the parent chain's world 4×4, column-major (parentWorldMatrixAt; empty = no parent) — what a device drag inverts to write parent-space values. */
+  parent: number[];
+}
+
+/** B4 round 5 — a subscribed view mode's resolved view camera at the frame (setOverlayGeometry `views`). */
+export interface OverlayView {
+  /** The mode as subscribed. */
+  mode: string;
+  /** The camera layer the view's chrome resolves (viewCameraNode: a live `camera:<id>` view's camera, else the composition's topmost enabled camera — no in/out test); empty = none (the default camera). Reported for the axis and custom views too. */
+  camera: LayerId;
+  /** The camera the renderer's rule picks for this view (the same, plus the layer being inside its in/out bar at the frame) — what the camera tools drive; empty = none. */
+  liveCamera: LayerId;
+  /** The chrome camera resolved at the frame (cameraFromNode, parent-lifted; the default camera when none): position x, y, z, focalLength, principal x, y, yaw, pitch, roll. The axis views project without it; a custom view replaces it with its stored camera (editor state). */
+  lens: number[];
+  /** The composition size the view was resolved at. */
+  compWidth: number;
+  compHeight: number;
 }
 
 /** Engine → host. The overlay geometry of the NEXT FrameReady of `viewport` with this generation and frame (B4, setOverlayGeometry). One frame's records may span several messages (the 4096-byte payload cap; a layer's kinds can arrive in separate records, and they merge): the host collects them until `last`, then delivers them with that FrameReady. Sent only while the viewport has a subscription. */
@@ -86,6 +209,8 @@ export interface FrameGeometry {
   revision: Revision;
   layers: OverlayLayerGeometry[];
   last: boolean;
+  /** B4 round 5: the subscribed views' cameras (setOverlayGeometry `views`), in subscription order; they ride the frame's first message. */
+  views: OverlayView[];
 }
 
 /** Engine → host. Heartbeat answer, sent by the document core thread. */
@@ -122,6 +247,10 @@ const PixelFormat_TO_NUM: Record<string, number> = { 'rgba8unorm': 0 };
 const PixelFormat_FROM_NUM: readonly (PixelFormat | undefined)[] = ['rgba8unorm'];
 function enc_PixelFormat(v: PixelFormat): number { const n = PixelFormat_TO_NUM[v]; if (n === undefined) throw new RangeError('PixelFormat: invalid value ' + String(v)); return n; }
 function dec_PixelFormat(n: number): PixelFormat { const v = PixelFormat_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PixelFormat: unknown value ' + n, 'badEnum'); return v; }
+const Scene3DRole_TO_NUM: Record<string, number> = { 'camera': 0, 'light': 1, 'layer': 2 };
+const Scene3DRole_FROM_NUM: readonly (Scene3DRole | undefined)[] = ['camera', 'light', 'layer'];
+function enc_Scene3DRole(v: Scene3DRole): number { const n = Scene3DRole_TO_NUM[v]; if (n === undefined) throw new RangeError('Scene3DRole: invalid value ' + String(v)); return n; }
+function dec_Scene3DRole(n: number): Scene3DRole { const v = Scene3DRole_FROM_NUM[n]; if (v === undefined) throw new DecodeError('Scene3DRole: unknown value ' + n, 'badEnum'); return v; }
 
 function encS_FrameSlots(w: Writer, v: FrameSlots): void {
   w.byte(8); w.u32(v.generation);
@@ -265,6 +394,8 @@ function encS_OverlayLayerGeometry(w: Writer, v: OverlayLayerGeometry): void {
   { const a = v.textBox; if (a.length) { w.byte(74); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   { const a = v.pathFrames; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   { const a = v.pathNow; if (a.length) { w.byte(90); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  if (v.scene !== undefined) { w.varint(322); { const s = w.beginLd(); encS_OverlayScene3D(w, v.scene); w.endLd(s); } }
+  if (v.rig !== undefined) { w.varint(402); { const s = w.beginLd(); encS_OverlayRig(w, v.rig); w.endLd(s); } }
 }
 function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayerGeometry {
   const l_matrix: number[] = [];
@@ -279,6 +410,8 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayer
   const l_pathNow: number[] = [];
   let h_layer = false;
   let v_layer: string | undefined;
+  let v_scene: OverlayScene3D | undefined;
+  let v_rig: OverlayRig | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -293,6 +426,8 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayer
       case 74: { const e = r.ldEnd(); while (r.pos < e) l_textBox.push(r.f64()); r.expectAt(e); break; }
       case 82: { const e = r.ldEnd(); while (r.pos < e) l_pathFrames.push(r.f64()); r.expectAt(e); break; }
       case 90: { const e = r.ldEnd(); while (r.pos < e) l_pathNow.push(r.f64()); r.expectAt(e); break; }
+      case 322: v_scene = decS_OverlayScene3D(r, r.ldEnd(), {}); break;
+      case 402: v_rig = decS_OverlayRig(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -309,6 +444,350 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayer
   o.textBox = l_textBox;
   o.pathFrames = l_pathFrames;
   o.pathNow = l_pathNow;
+  if (v_scene !== undefined) o.scene = v_scene;
+  if (v_rig !== undefined) o.rig = v_rig;
+  return o;
+}
+function encS_RigPinPose(w: Writer, v: RigPinPose): void {
+  w.byte(10); w.str(v.id);
+  w.byte(18); w.str(v.kind);
+  w.byte(25); w.f64(v.x);
+  w.byte(33); w.f64(v.y);
+  w.byte(41); w.f64(v.cx);
+  w.byte(49); w.f64(v.cy);
+  w.byte(57); w.f64(v.rotation);
+  w.byte(65); w.f64(v.scale);
+}
+function decS_RigPinPose(r: Reader, end: number, o: any): RigPinPose {
+  let h_id = false;
+  let h_kind = false;
+  let h_x = false;
+  let h_y = false;
+  let h_cx = false;
+  let h_cy = false;
+  let h_rotation = false;
+  let h_scale = false;
+  let v_id: string | undefined;
+  let v_kind: string | undefined;
+  let v_x: number | undefined;
+  let v_y: number | undefined;
+  let v_cx: number | undefined;
+  let v_cy: number | undefined;
+  let v_rotation: number | undefined;
+  let v_scale: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_id = r.str(); h_id = true; break;
+      case 18: v_kind = r.str(); h_kind = true; break;
+      case 25: v_x = r.f64(); h_x = true; break;
+      case 33: v_y = r.f64(); h_y = true; break;
+      case 41: v_cx = r.f64(); h_cx = true; break;
+      case 49: v_cy = r.f64(); h_cy = true; break;
+      case 57: v_rotation = r.f64(); h_rotation = true; break;
+      case 65: v_scale = r.f64(); h_scale = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_id) throw new DecodeError('RigPinPose.id: missing', 'missingField');
+  if (!h_kind) throw new DecodeError('RigPinPose.kind: missing', 'missingField');
+  if (!h_x) throw new DecodeError('RigPinPose.x: missing', 'missingField');
+  if (!h_y) throw new DecodeError('RigPinPose.y: missing', 'missingField');
+  if (!h_cx) throw new DecodeError('RigPinPose.cx: missing', 'missingField');
+  if (!h_cy) throw new DecodeError('RigPinPose.cy: missing', 'missingField');
+  if (!h_rotation) throw new DecodeError('RigPinPose.rotation: missing', 'missingField');
+  if (!h_scale) throw new DecodeError('RigPinPose.scale: missing', 'missingField');
+  o.id = v_id;
+  o.kind = v_kind;
+  o.x = v_x;
+  o.y = v_y;
+  o.cx = v_cx;
+  o.cy = v_cy;
+  o.rotation = v_rotation;
+  o.scale = v_scale;
+  return o;
+}
+function encS_RigBonePose(w: Writer, v: RigBonePose): void {
+  w.byte(10); w.str(v.id);
+  w.byte(17); w.f64(v.x);
+  w.byte(25); w.f64(v.y);
+  w.byte(33); w.f64(v.rotation);
+  w.byte(41); w.f64(v.scaleX);
+  w.byte(49); w.f64(v.scaleY);
+  w.byte(57); w.f64(v.posedX);
+  w.byte(65); w.f64(v.posedY);
+  w.byte(73); w.f64(v.posedRotation);
+  { const a = v.world; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+}
+function decS_RigBonePose(r: Reader, end: number, o: any): RigBonePose {
+  const l_world: number[] = [];
+  let h_id = false;
+  let h_x = false;
+  let h_y = false;
+  let h_rotation = false;
+  let h_scaleX = false;
+  let h_scaleY = false;
+  let h_posedX = false;
+  let h_posedY = false;
+  let h_posedRotation = false;
+  let v_id: string | undefined;
+  let v_x: number | undefined;
+  let v_y: number | undefined;
+  let v_rotation: number | undefined;
+  let v_scaleX: number | undefined;
+  let v_scaleY: number | undefined;
+  let v_posedX: number | undefined;
+  let v_posedY: number | undefined;
+  let v_posedRotation: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_id = r.str(); h_id = true; break;
+      case 17: v_x = r.f64(); h_x = true; break;
+      case 25: v_y = r.f64(); h_y = true; break;
+      case 33: v_rotation = r.f64(); h_rotation = true; break;
+      case 41: v_scaleX = r.f64(); h_scaleX = true; break;
+      case 49: v_scaleY = r.f64(); h_scaleY = true; break;
+      case 57: v_posedX = r.f64(); h_posedX = true; break;
+      case 65: v_posedY = r.f64(); h_posedY = true; break;
+      case 73: v_posedRotation = r.f64(); h_posedRotation = true; break;
+      case 82: { const e = r.ldEnd(); while (r.pos < e) l_world.push(r.f64()); r.expectAt(e); break; }
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_id) throw new DecodeError('RigBonePose.id: missing', 'missingField');
+  if (!h_x) throw new DecodeError('RigBonePose.x: missing', 'missingField');
+  if (!h_y) throw new DecodeError('RigBonePose.y: missing', 'missingField');
+  if (!h_rotation) throw new DecodeError('RigBonePose.rotation: missing', 'missingField');
+  if (!h_scaleX) throw new DecodeError('RigBonePose.scaleX: missing', 'missingField');
+  if (!h_scaleY) throw new DecodeError('RigBonePose.scaleY: missing', 'missingField');
+  if (!h_posedX) throw new DecodeError('RigBonePose.posedX: missing', 'missingField');
+  if (!h_posedY) throw new DecodeError('RigBonePose.posedY: missing', 'missingField');
+  if (!h_posedRotation) throw new DecodeError('RigBonePose.posedRotation: missing', 'missingField');
+  o.id = v_id;
+  o.x = v_x;
+  o.y = v_y;
+  o.rotation = v_rotation;
+  o.scaleX = v_scaleX;
+  o.scaleY = v_scaleY;
+  o.posedX = v_posedX;
+  o.posedY = v_posedY;
+  o.posedRotation = v_posedRotation;
+  o.world = l_world;
+  return o;
+}
+function encS_RigIkGoal(w: Writer, v: RigIkGoal): void {
+  w.byte(10); w.str(v.bone);
+  w.byte(16); w.bool(v.enabled);
+  w.byte(25); w.f64(v.x);
+  w.byte(33); w.f64(v.y);
+  { const a = v.pole; if (a.length) { w.byte(42); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  if (v.chainLength !== undefined) { w.byte(49); w.f64(v.chainLength); }
+  w.byte(58); w.str(v.mode);
+}
+function decS_RigIkGoal(r: Reader, end: number, o: any): RigIkGoal {
+  const l_pole: number[] = [];
+  let h_bone = false;
+  let h_enabled = false;
+  let h_x = false;
+  let h_y = false;
+  let h_mode = false;
+  let v_bone: string | undefined;
+  let v_enabled: boolean | undefined;
+  let v_x: number | undefined;
+  let v_y: number | undefined;
+  let v_chainLength: number | undefined;
+  let v_mode: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_bone = r.str(); h_bone = true; break;
+      case 16: v_enabled = r.bool(); h_enabled = true; break;
+      case 25: v_x = r.f64(); h_x = true; break;
+      case 33: v_y = r.f64(); h_y = true; break;
+      case 42: { const e = r.ldEnd(); while (r.pos < e) l_pole.push(r.f64()); r.expectAt(e); break; }
+      case 49: v_chainLength = r.f64(); break;
+      case 58: v_mode = r.str(); h_mode = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_bone) throw new DecodeError('RigIkGoal.bone: missing', 'missingField');
+  if (!h_enabled) throw new DecodeError('RigIkGoal.enabled: missing', 'missingField');
+  if (!h_x) throw new DecodeError('RigIkGoal.x: missing', 'missingField');
+  if (!h_y) throw new DecodeError('RigIkGoal.y: missing', 'missingField');
+  if (!h_mode) throw new DecodeError('RigIkGoal.mode: missing', 'missingField');
+  o.bone = v_bone;
+  o.enabled = v_enabled;
+  o.x = v_x;
+  o.y = v_y;
+  o.pole = l_pole;
+  if (v_chainLength !== undefined) o.chainLength = v_chainLength;
+  o.mode = v_mode;
+  return o;
+}
+function encS_OverlayRig(w: Writer, v: OverlayRig): void {
+  { const a = v.pins; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_RigPinPose(w, a[i]!); w.endLd(s); } } }
+  { const a = v.bones; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_RigBonePose(w, a[i]!); w.endLd(s); } } }
+  { const a = v.ik; for (let i = 0; i < a.length; i++) { w.byte(26); { const s = w.beginLd(); encS_RigIkGoal(w, a[i]!); w.endLd(s); } } }
+  { const a = v.vertices; if (a.length) { w.byte(34); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.rest; if (a.length) { w.byte(42); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.triangles; if (a.length) { w.byte(50); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u32(a[i]!); w.endLd(s); } }
+  { const a = v.edges; if (a.length) { w.byte(58); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u32(a[i]!); w.endLd(s); } }
+  { const a = v.weights; if (a.length) { w.byte(66); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.pinPath; if (a.length) { w.byte(74); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.pinKeys; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+}
+function decS_OverlayRig(r: Reader, end: number, o: any): OverlayRig {
+  const l_pins: RigPinPose[] = [];
+  const l_bones: RigBonePose[] = [];
+  const l_ik: RigIkGoal[] = [];
+  const l_vertices: number[] = [];
+  const l_rest: number[] = [];
+  const l_triangles: number[] = [];
+  const l_edges: number[] = [];
+  const l_weights: number[] = [];
+  const l_pinPath: number[] = [];
+  const l_pinKeys: number[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_pins.push(decS_RigPinPose(r, r.ldEnd(), {})); break;
+      case 18: l_bones.push(decS_RigBonePose(r, r.ldEnd(), {})); break;
+      case 26: l_ik.push(decS_RigIkGoal(r, r.ldEnd(), {})); break;
+      case 34: { const e = r.ldEnd(); while (r.pos < e) l_vertices.push(r.f64()); r.expectAt(e); break; }
+      case 42: { const e = r.ldEnd(); while (r.pos < e) l_rest.push(r.f64()); r.expectAt(e); break; }
+      case 50: { const e = r.ldEnd(); while (r.pos < e) l_triangles.push(r.u32()); r.expectAt(e); break; }
+      case 58: { const e = r.ldEnd(); while (r.pos < e) l_edges.push(r.u32()); r.expectAt(e); break; }
+      case 66: { const e = r.ldEnd(); while (r.pos < e) l_weights.push(r.f64()); r.expectAt(e); break; }
+      case 74: { const e = r.ldEnd(); while (r.pos < e) l_pinPath.push(r.f64()); r.expectAt(e); break; }
+      case 82: { const e = r.ldEnd(); while (r.pos < e) l_pinKeys.push(r.f64()); r.expectAt(e); break; }
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.pins = l_pins;
+  o.bones = l_bones;
+  o.ik = l_ik;
+  o.vertices = l_vertices;
+  o.rest = l_rest;
+  o.triangles = l_triangles;
+  o.edges = l_edges;
+  o.weights = l_weights;
+  o.pinPath = l_pinPath;
+  o.pinKeys = l_pinKeys;
+  return o;
+}
+function encS_OverlayScene3D(w: Writer, v: OverlayScene3D): void {
+  w.byte(8); w.varint(enc_Scene3DRole(v.role));
+  { const a = v.lens; if (a.length) { w.byte(18); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.poi; if (a.length) { w.byte(26); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(33); w.f64(v.focusDistance);
+  { const a = v.dof; if (a.length) { w.byte(42); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(50); w.str(v.lightType);
+  { const a = v.position; if (a.length) { w.byte(58); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.light; if (a.length) { w.byte(66); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.local; if (a.length) { w.byte(74); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(81); w.f64(v.extrusion);
+  { const a = v.parent; if (a.length) { w.byte(90); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+}
+function decS_OverlayScene3D(r: Reader, end: number, o: any): OverlayScene3D {
+  const l_lens: number[] = [];
+  const l_poi: number[] = [];
+  const l_dof: number[] = [];
+  const l_position: number[] = [];
+  const l_light: number[] = [];
+  const l_local: number[] = [];
+  const l_parent: number[] = [];
+  let h_role = false;
+  let h_focusDistance = false;
+  let h_lightType = false;
+  let h_extrusion = false;
+  let v_role: Scene3DRole | undefined;
+  let v_focusDistance: number | undefined;
+  let v_lightType: string | undefined;
+  let v_extrusion: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_role = dec_Scene3DRole(r.varint()); h_role = true; break;
+      case 18: { const e = r.ldEnd(); while (r.pos < e) l_lens.push(r.f64()); r.expectAt(e); break; }
+      case 26: { const e = r.ldEnd(); while (r.pos < e) l_poi.push(r.f64()); r.expectAt(e); break; }
+      case 33: v_focusDistance = r.f64(); h_focusDistance = true; break;
+      case 42: { const e = r.ldEnd(); while (r.pos < e) l_dof.push(r.f64()); r.expectAt(e); break; }
+      case 50: v_lightType = r.str(); h_lightType = true; break;
+      case 58: { const e = r.ldEnd(); while (r.pos < e) l_position.push(r.f64()); r.expectAt(e); break; }
+      case 66: { const e = r.ldEnd(); while (r.pos < e) l_light.push(r.f64()); r.expectAt(e); break; }
+      case 74: { const e = r.ldEnd(); while (r.pos < e) l_local.push(r.f64()); r.expectAt(e); break; }
+      case 81: v_extrusion = r.f64(); h_extrusion = true; break;
+      case 90: { const e = r.ldEnd(); while (r.pos < e) l_parent.push(r.f64()); r.expectAt(e); break; }
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_role) throw new DecodeError('OverlayScene3D.role: missing', 'missingField');
+  if (!h_focusDistance) throw new DecodeError('OverlayScene3D.focusDistance: missing', 'missingField');
+  if (!h_lightType) throw new DecodeError('OverlayScene3D.lightType: missing', 'missingField');
+  if (!h_extrusion) throw new DecodeError('OverlayScene3D.extrusion: missing', 'missingField');
+  o.role = v_role;
+  o.lens = l_lens;
+  o.poi = l_poi;
+  o.focusDistance = v_focusDistance;
+  o.dof = l_dof;
+  o.lightType = v_lightType;
+  o.position = l_position;
+  o.light = l_light;
+  o.local = l_local;
+  o.extrusion = v_extrusion;
+  o.parent = l_parent;
+  return o;
+}
+function encS_OverlayView(w: Writer, v: OverlayView): void {
+  w.byte(10); w.str(v.mode);
+  w.byte(18); w.str(v.camera);
+  w.byte(26); w.str(v.liveCamera);
+  { const a = v.lens; if (a.length) { w.byte(34); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(41); w.f64(v.compWidth);
+  w.byte(49); w.f64(v.compHeight);
+}
+function decS_OverlayView(r: Reader, end: number, o: any): OverlayView {
+  const l_lens: number[] = [];
+  let h_mode = false;
+  let h_camera = false;
+  let h_liveCamera = false;
+  let h_compWidth = false;
+  let h_compHeight = false;
+  let v_mode: string | undefined;
+  let v_camera: string | undefined;
+  let v_liveCamera: string | undefined;
+  let v_compWidth: number | undefined;
+  let v_compHeight: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_mode = r.str(); h_mode = true; break;
+      case 18: v_camera = r.str(); h_camera = true; break;
+      case 26: v_liveCamera = r.str(); h_liveCamera = true; break;
+      case 34: { const e = r.ldEnd(); while (r.pos < e) l_lens.push(r.f64()); r.expectAt(e); break; }
+      case 41: v_compWidth = r.f64(); h_compWidth = true; break;
+      case 49: v_compHeight = r.f64(); h_compHeight = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_mode) throw new DecodeError('OverlayView.mode: missing', 'missingField');
+  if (!h_camera) throw new DecodeError('OverlayView.camera: missing', 'missingField');
+  if (!h_liveCamera) throw new DecodeError('OverlayView.liveCamera: missing', 'missingField');
+  if (!h_compWidth) throw new DecodeError('OverlayView.compWidth: missing', 'missingField');
+  if (!h_compHeight) throw new DecodeError('OverlayView.compHeight: missing', 'missingField');
+  o.mode = v_mode;
+  o.camera = v_camera;
+  o.liveCamera = v_liveCamera;
+  o.lens = l_lens;
+  o.compWidth = v_compWidth;
+  o.compHeight = v_compHeight;
   return o;
 }
 function encS_FrameGeometry(w: Writer, v: FrameGeometry): void {
@@ -319,9 +798,11 @@ function encS_FrameGeometry(w: Writer, v: FrameGeometry): void {
   w.byte(40); w.u64(v.revision);
   { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_OverlayLayerGeometry(w, a[i]!); w.endLd(s); } } }
   w.byte(56); w.bool(v.last);
+  { const a = v.views; for (let i = 0; i < a.length; i++) { w.byte(82); { const s = w.beginLd(); encS_OverlayView(w, a[i]!); w.endLd(s); } } }
 }
 function decS_FrameGeometry(r: Reader, end: number, o: any): FrameGeometry {
   const l_layers: OverlayLayerGeometry[] = [];
+  const l_views: OverlayView[] = [];
   let h_viewport = false;
   let h_generation = false;
   let h_frame = false;
@@ -344,6 +825,7 @@ function decS_FrameGeometry(r: Reader, end: number, o: any): FrameGeometry {
       case 40: v_revision = r.u64(); h_revision = true; break;
       case 50: l_layers.push(decS_OverlayLayerGeometry(r, r.ldEnd(), {})); break;
       case 56: v_last = r.bool(); h_last = true; break;
+      case 82: l_views.push(decS_OverlayView(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -361,6 +843,7 @@ function decS_FrameGeometry(r: Reader, end: number, o: any): FrameGeometry {
   o.revision = v_revision;
   o.layers = l_layers;
   o.last = v_last;
+  o.views = l_views;
   return o;
 }
 function encS_FramePong(w: Writer, v: FramePong): void {
@@ -487,6 +970,12 @@ export const codecs = {
   FrameSlots: mk<FrameSlots>(encS_FrameSlots, (r, e) => decS_FrameSlots(r, e, {})),
   FrameReady: mk<FrameReady>(encS_FrameReady, (r, e) => decS_FrameReady(r, e, {})),
   OverlayLayerGeometry: mk<OverlayLayerGeometry>(encS_OverlayLayerGeometry, (r, e) => decS_OverlayLayerGeometry(r, e, {})),
+  RigPinPose: mk<RigPinPose>(encS_RigPinPose, (r, e) => decS_RigPinPose(r, e, {})),
+  RigBonePose: mk<RigBonePose>(encS_RigBonePose, (r, e) => decS_RigBonePose(r, e, {})),
+  RigIkGoal: mk<RigIkGoal>(encS_RigIkGoal, (r, e) => decS_RigIkGoal(r, e, {})),
+  OverlayRig: mk<OverlayRig>(encS_OverlayRig, (r, e) => decS_OverlayRig(r, e, {})),
+  OverlayScene3D: mk<OverlayScene3D>(encS_OverlayScene3D, (r, e) => decS_OverlayScene3D(r, e, {})),
+  OverlayView: mk<OverlayView>(encS_OverlayView, (r, e) => decS_OverlayView(r, e, {})),
   FrameGeometry: mk<FrameGeometry>(encS_FrameGeometry, (r, e) => decS_FrameGeometry(r, e, {})),
   FramePong: mk<FramePong>(encS_FramePong, (r, e) => decS_FramePong(r, e, {})),
   FrameRelease: mk<FrameRelease>(encS_FrameRelease, (r, e) => decS_FrameRelease(r, e, {})),

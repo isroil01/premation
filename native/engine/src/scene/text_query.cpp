@@ -172,6 +172,60 @@ double line_block_anchor_x(const std::string& align, double renderWidth, std::op
   return (l - r) / 2;
 }
 
+/// measureText.ts `measureGlyphBoxes` over the laid-out (wrapped) style `s`: one
+/// box per grapheme, logical order, a line break counted in the index but boxed
+/// not. Empty when the measurer cannot measure the lines.
+std::vector<api::GlyphBox> glyph_boxes(TextMeasurer& m, const MeasuredStyle& s, const std::string& align, bool rtl) {
+  std::vector<api::GlyphBox> out;
+  const auto lines = m.measure_glyph_lines(s);
+  if (!lines || lines->empty()) return out;
+  const std::size_t n = lines->size();
+  const double lineHeightPx = s.fontSize * (s.lineHeight != 0 ? s.lineHeight : kDefaultLineHeight);
+  const double gap = lineHeightPx + s.paragraphSpacing;
+  const double paraGap = s.spaceBefore.value_or(0) + s.spaceAfter.value_or(0);
+  std::vector<double> offsets;
+  double total = 0;
+  if (paraGap != 0) {
+    auto [off, tot] = raster::line_offsets(raster::hard_ends_of(n, s.softBreakLines), gap, s.spaceBefore.value_or(0), s.spaceAfter.value_or(0));
+    offsets = std::move(off);
+    total = tot;
+  }
+  const auto lineDy = [&](std::size_t i) {
+    return paraGap != 0 ? -total / 2 + offsets[i] : (static_cast<double>(i) - (static_cast<double>(n) - 1) / 2) * gap;
+  };
+  double widest = 0;
+  for (const GlyphLine& l : *lines) widest = std::max(widest, l.width);
+  double left = -widest / 2;
+  double right = widest / 2;
+  if (s.boxWidth) {
+    const double k = s.fitScale && *s.fitScale > 0 ? *s.fitScale : 1;
+    const double half = *s.boxWidth / k / 2;
+    left = -half + (rtl ? s.rightIndent : s.leftIndent).value_or(0);
+    right = half - (rtl ? s.leftIndent : s.rightIndent).value_or(0);
+  }
+  raster::ResolvedAlign a = raster::resolve_align(align);
+  if (rtl && a.line != raster::LineAlign::center) a.line = a.line == raster::LineAlign::left ? raster::LineAlign::right : raster::LineAlign::left;
+  std::uint32_t index = 0;
+  for (std::size_t i = 0; i < n; ++i) {
+    const GlyphLine& l = (*lines)[i];
+    const double dy = lineDy(i);
+    const double start = a.line == raster::LineAlign::left ? left : a.line == raster::LineAlign::right ? right - l.width : (left + right) / 2 - l.width / 2;
+    double pen = 0;
+    for (std::size_t j = 0; j < l.pens.size(); ++j) {
+      api::GlyphBox g;
+      g.index = index + static_cast<std::uint32_t>(j);
+      g.line = static_cast<std::uint32_t>(i);
+      g.box = api::Rect{start + pen, dy - l.ascent, l.pens[j] - pen, l.ascent + l.descent};
+      g.baseline = dy;
+      g.advance = l.pens[j] - pen;
+      out.push_back(g);
+      pen = l.pens[j];
+    }
+    index += static_cast<std::uint32_t>(l.pens.size()) + 1;  // the line break
+  }
+  return out;
+}
+
 [[noreturn]] void outside_port(const std::string& why) {
   doc::fail(ErrorCode::unsupported, "this text style is outside the engine's text port" + (why.empty() ? std::string() : ": " + why));
 }
@@ -251,6 +305,8 @@ api::TextLayout text_layout_of(TextMeasurer& m, const doc::Node& original, const
   out.line_block.y = para ? (para->fixedHeight ? tr.sy * para->lineOffsetY : para->lineOffsetY) : 0;
   out.style_scale = api::Vec2{tr.sx, tr.sy};
   out.on_path = has_text_path(n);
+  // B4 round 5: per-grapheme boxes (none for text on a path: its glyphs ride the curve).
+  if (!out.on_path) out.glyphs = glyph_boxes(m, s, align_of(n), first_paragraph_rtl(n));
   out.font_size = s.fontSize;  // the stored size: a Fit Text to Box bake multiplies it by paragraph.fitScale
   out.letter_spacing = s.letterSpacing;
   out.paragraph_spacing = s.paragraphSpacing;

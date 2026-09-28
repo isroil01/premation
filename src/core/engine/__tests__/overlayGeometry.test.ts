@@ -19,13 +19,13 @@ beforeEach(async () => {
   s = await buildScene(h);
 });
 afterEach(async () => {
-  await h.run({ type: 'setOverlayGeometry', viewport: 7, layers: [], kinds: [] });
+  await h.run({ type: 'setOverlayGeometry', viewport: 7, layers: [], kinds: [], groups: [], views: [] });
   await h.dispose();
 });
 
 test('a subscribed layer carries its matrix, box and motion path at the asked time; unknown layers are skipped', async () => {
   // B's Position is keyed 100,100 → 300,200 over the first second.
-  await h.run({ type: 'setOverlayGeometry', viewport: 7, layers: [s.B, 'nope'], kinds: ['transform', 'bounds', 'motionPath'] });
+  await h.run({ type: 'setOverlayGeometry', viewport: 7, layers: [s.B, 'nope'], kinds: ['transform', 'bounds', 'motionPath'], groups: [], views: [] });
   expect(overlaySubscription(7)?.layers).toEqual([s.B, 'nope']);
   const [g, ...rest] = overlayGeometryAt(7, 0.5);
   expect(rest).toEqual([]);
@@ -49,9 +49,9 @@ test('a subscribed layer carries its matrix, box and motion path at the asked ti
 });
 
 test('no layers or no kinds unsubscribes', async () => {
-  await h.run({ type: 'setOverlayGeometry', viewport: 7, layers: [s.B], kinds: ['transform'] });
+  await h.run({ type: 'setOverlayGeometry', viewport: 7, layers: [s.B], kinds: ['transform'], groups: [], views: [] });
   expect(overlayGeometryAt(7, 0)).toHaveLength(1);
-  await h.run({ type: 'setOverlayGeometry', viewport: 7, layers: [s.B], kinds: [] });
+  await h.run({ type: 'setOverlayGeometry', viewport: 7, layers: [s.B], kinds: [], groups: [], views: [] });
   expect(overlaySubscription(7)).toBeUndefined();
   expect(overlayGeometryAt(7, 0)).toEqual([]);
 });

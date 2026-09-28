@@ -162,6 +162,8 @@ export interface ForwardedFrameMeta {
   route: 'shared' | 'copy';
   /** B4 round 2: the frame's overlay geometry (setOverlayGeometry), the FrameGeometry parts merged. */
   geometry?: FrameGeometryMessage['layers'];
+  /** B4 round 5: the frame's view cameras (setOverlayGeometry `views`). */
+  geometryViews?: FrameGeometryMessage['views'];
 }
 
 export interface FrameForwarderStats {
@@ -226,6 +228,7 @@ export class FrameForwarder {
     this.copyInPage.clear();
     this.geometry = null;
     this.frameGeometry.clear();
+    this.frameViews.clear();
   }
 
   /**
@@ -280,6 +283,7 @@ export class FrameForwarder {
       else this.handles.retire(m.generation);
       this.geometry = null;
       this.frameGeometry.clear();
+      this.frameViews.clear();
       return;
     }
     if (m.type === 'geometry') {
@@ -294,23 +298,30 @@ export class FrameForwarder {
    * collected over its parts, then handed to the page WITH that frame (its meta),
    * so the overlays draw the geometry of the very frame they are drawn over.
    */
-  private geometry: { viewport: number; generation: number; frame: number; layers: FrameGeometryMessage['layers']; complete: boolean } | null = null;
+  private geometry: { viewport: number; generation: number; frame: number; layers: FrameGeometryMessage['layers']; views: FrameGeometryMessage['views']; complete: boolean } | null = null;
   /** A ready frame's geometry until its meta is built (route A may wait for its pixels), by slot key. */
   private readonly frameGeometry = new Map<string, FrameGeometryMessage['layers']>();
+  /** B4 round 5: a ready frame's view cameras (FrameGeometry.views), by slot key, like `frameGeometry`. */
+  private readonly frameViews = new Map<string, FrameGeometryMessage['views']>();
 
   private onGeometry(g: FrameGeometryMessage): void {
     const cur = this.geometry;
     const same = cur !== null && !cur.complete && cur.viewport === g.viewport && cur.generation === g.generation && cur.frame === g.frame;
+    const views = g.views ?? [];
     this.geometry = same
-      ? { ...cur, layers: [...cur.layers, ...g.layers], complete: g.last }
-      : { viewport: g.viewport, generation: g.generation, frame: g.frame, layers: [...g.layers], complete: g.last };
+      ? { ...cur, layers: [...cur.layers, ...g.layers], views: [...cur.views, ...views], complete: g.last }
+      : { viewport: g.viewport, generation: g.generation, frame: g.frame, layers: [...g.layers], views: [...views], complete: g.last };
   }
 
   /** The collected geometry for `f` (and forget it): only a complete set for this very frame. */
   private takeGeometry(f: FrameReadyMessage): FrameGeometryMessage['layers'] | undefined {
     const g = this.geometry;
     this.geometry = null;
-    return g && g.complete && g.viewport === f.viewport && g.generation === f.generation && g.frame === f.frame ? g.layers : undefined;
+    const mine = g && g.complete && g.viewport === f.viewport && g.generation === f.generation && g.frame === f.frame;
+    const key = slotKey(f.generation, f.slot);
+    if (mine && g.views.length > 0) this.frameViews.set(key, g.views);
+    else this.frameViews.delete(key);
+    return mine ? g.layers : undefined;
   }
 
   private onFrameReady(f: FrameReadyMessage): void {
@@ -433,12 +444,15 @@ export class FrameForwarder {
     const key = slotKey(f.generation, f.slot);
     const geometry = this.frameGeometry.get(key);
     this.frameGeometry.delete(key);
+    const geometryViews = this.frameViews.get(key);
+    this.frameViews.delete(key);
     return {
       viewport: f.viewport, generation: f.generation, slot: f.slot, frame: f.frame, time: f.time, revision: f.revision,
       width: f.width, height: f.height, dropped: f.dropped, renderStartUs: f.renderStartUs, renderDoneUs: f.renderDoneUs,
       sentUs: (this.deps.now?.() ?? Date.now()) * 1000,
       route,
       ...(geometry ? { geometry } : {}),
+      ...(geometryViews ? { geometryViews } : {}),
     };
   }
 

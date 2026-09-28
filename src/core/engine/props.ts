@@ -75,7 +75,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { SceneNode } from '@core/types';
 import { fail } from './errors';
 import { secondsToFlicks, flicksToSeconds } from './time';
-import { addFieldBindings, readField, writeField, effectFieldBinding, styleFieldBinding, setPrimaryFill, type FieldRef } from './fields';
+import { addFieldBindings, fieldStored, readField, writeField, effectFieldBinding, styleFieldBinding, setPrimaryFill, type FieldRef } from './fields';
 import { fillStopsBinding, readFillStopsStatic, writeFillStopsStatic, fillStopsKeyToApi, apiToFillStopsKey } from './fillStops';
 import { EFFECT_FIELDS, STYLE_FIELDS, GLASS_PROPERTIES } from './effectFieldSpecs';
 import { parseTextPathPropPath } from '@core/text/textPath';
@@ -184,7 +184,7 @@ const ROOT_NAMES: Record<string, string> = {
   text: 'Text', contents: 'Contents', masks: 'Masks', effects: 'Effects', transform: 'Transform',
   styles: 'Layer Styles', camera: 'Camera Options', light: 'Light Options', geometry: 'Geometry Options',
   material: 'Material Options', audio: 'Audio', paint: 'Paint', layer: 'Layer', timeRemap: 'Time Remap',
-  plugin: 'Plugin',
+  plugin: 'Plugin', model: 'Model',
 };
 
 const INDEXED_ROOTS = new Set(['masks', 'effects', 'contents', 'styles', 'paint']);
@@ -1006,6 +1006,48 @@ export function readStatic(layerId: string, b: PropBinding): Value {
     return d ?? 0;
   });
   return vectorValue(b.valueType, nums);
+}
+
+/**
+ * B4 round 5 — `PropertyInfo.stored`: whether the document holds an explicit
+ * STATIC value for `b` (true) or the default applies (false). Undefined where
+ * the property does not report it (rig properties, a data track's value). The
+ * C++ twin is props.cpp `is_stored_static`.
+ */
+export function isStoredStatic(layerId: string, b: PropBinding): boolean | undefined {
+  const node = nodeOf(layerId);
+  const maskPath = (): Record<string, unknown> | undefined =>
+    readNodeMask(node)?.paths.find((x) => x.id === b.maskId) as unknown as Record<string, unknown> | undefined;
+  switch (b.special) {
+    case 'sourceText': {
+      const text = node.components.find((c) => c.type === 'Text');
+      return typeof (text?.props as Record<string, unknown> | undefined)?.content === 'string';
+    }
+    case 'maskPath': return maskPath() !== undefined;
+    case 'maskMode': {
+      const mode = maskPath()?.mode;
+      return mode !== undefined && mode !== null;
+    }
+    case 'maskInverted': return typeof maskPath()?.inverted === 'boolean';
+    case 'maskRotoBezier': return typeof maskPath()?.rotoBezier === 'boolean';
+    case 'shapePath': return asPoints(node.components.find((c) => c.type === 'Geometry')?.props.points) !== null;
+    case 'effectParam': {
+      const e = getNodeEffects(layerId).find((x) => x.id === b.effectId);
+      return !!e && paramsOf(e)[b.paramKey!] !== undefined;
+    }
+    case 'field':
+    case 'layerFill':
+      return fieldStored(node, b);
+    case 'rig': return undefined;
+    case 'fillStops': {
+      const fill = (node.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined)?.fill as { type?: unknown } | undefined;
+      return !!fill && typeof fill === 'object' && (fill.type === 'linear' || fill.type === 'radial');
+    }
+    default: break;
+  }
+  if (b.colorBase && readColorBase(node, b.colorBase)) return true;
+  if (b.members.length === 0) return undefined;
+  return b.members.some((m) => readStaticPropertyValue(layerId, m) !== undefined);
 }
 
 function numbersOfDefault(v: Value): number[] {

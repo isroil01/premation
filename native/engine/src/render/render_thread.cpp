@@ -566,7 +566,7 @@ void RenderThread::render(RenderJob& job, std::uint32_t slot, const ViewportConf
   // B4 round 2: the overlays' geometry for this frame first (the host pairs it with the FrameReady that follows).
   if (job.geometrySubscribed && send_) {
     for (api::FrameGeometry& g : doc::pack_frame_geometry(job.viewport, set.generation, job.frame, job.time, job.revision,
-                                                          std::move(job.geometry))) {
+                                                          std::move(job.geometry), std::move(job.views))) {
       send_(frames::Message{.v = std::move(g)});
     }
   }

@@ -36,6 +36,8 @@ struct ItemInfo {
   alphaProbed: bool = 125;
   /// B4 — the import probe looked for an audio stream: `hasAudio` false on video with this false means "never probed".
   audioProbed: bool = 126;
+  /// B4 round 5 — a URL the page can play or show for a FOOTAGE item: its stored source reference as the page's media loaders take it (an object / blob URL the page minted, a `local-file://` URL the Electron host serves, `motion-blob:<hash>` for a bytes import collected into the project bundle, http(s)). Absent when the item has none (a missing file, a folder, a composition). Not a file path — `path` is the import path.
+  mediaUrl?: string = 127;
 }
 
 struct CompInfo {
@@ -86,6 +88,10 @@ struct LayerInfo {
   svg: SvgRole = 920;
   /// B4 — a custom plugin layer's stored schema version (`__schemaVersion` on its `pluginLayer:<kind>` component; 1 when the record has none): what decides the Inspector's needs-migration / downgrade state. Absent for a layer that is not a custom plugin layer.
   pluginSchemaVersion?: u32 = 921;
+  /// B4 round 5 — true for a CAPTION layer (a text layer the captions import / transcript made, tagged `__caption` on its Text component): what a transcript rebuilds from and what a caption re-import replaces. Absent otherwise.
+  caption?: bool = 922;
+  /// B4 round 5 — a multicam ANGLE layer's number (1-based, `__multicamAngle` on its Transform): what the Multicam viewer lists and cuts between. Absent for any other layer.
+  multicamAngle?: u32 = 923;
 }
 
 /// B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`).
@@ -130,6 +136,8 @@ struct PropertyInfo {
   hidden: bool = 24;
   /// B4 — per-dimension expressions: when the dimensions of a multi-dimensional property do NOT all carry the same expression (source and enabled), every dimension that has one, in member order; `expression` / `expressionEnabled` / `expressionError` then describe dimension 0 only. Empty when the property has one expression for every dimension, or none.
   memberExpressions: MemberExpression[] = 25;
+  /// B4 round 5 — true when the document STORES an explicit static value for this property (a component prop, a field's key, an effect param, a mask / path / rig record…); unset = the default applies (`value` then reports `defaultValue` or the reader's fallback). What a capture of "what the layer sets" (a text style preset, a per-corner radius, a primitive's authored params) needs: the API otherwise reports every property with its default filled in. Static only — a keyed property's keys are `keyframeCount`.
+  stored?: bool = 26;
 }
 
 struct KeyframeSet {
@@ -197,13 +205,51 @@ query copyLayers = 1009 { layers: LayerId[] = 1; } -> DocumentFragment;
 /// B4 — Edit ▸ Copy of KEYFRAMES in API form: the whole keys `keys` names (every dimension of each — After Effects copies a key, not a member), grouped per property in the order the ids first name them, each set's keys in time order at their composition times. `pasteKeyframes` puts a set onto any layer's property of the same path (the editor lands the earliest copied key at the playhead, spacing kept). Unknown ids are skipped: none found answers an empty clipboard.
 query copyKeyframes = 1889 { keys: KeyframeId[] = 1; } -> KeyframeSets;
 /// B4 — a layer's stored MEMBER keyframe lists: every animated member track (a keyed track — `x` keyed apart from `y` on an unseparated Position, a colour channel, an effect param, a track outside the catalog — then the expression-only ones), in the engine's order, with its keyframe records in the stored form the keyframe assistants (The Smoother, The Wiggler, the motion editor) transform. The API's own key lists are per PROPERTY (§3.3); these are the assistants' input, written back as `setKeyframes` per property. `members` narrows to those tracks (empty = all).
-query getMemberKeyframes = 1893 { layer: LayerId = 1; members: string[] = 2; } -> MemberTracks;
+query getMemberKeyframes = 1893 { layer: LayerId = 1; members: string[] = 2; includeData?: bool = 3; } -> MemberTracks;
 /// B4 — Edit ▸ Copy of EFFECTS in API form: the layer's effects `effects` names (`effects/<id>`; empty = the whole stack), in stack order, captured as `pasteEffects` takes them — a JSON array of `{effect: <the stored effect: type, params, enabled, opacity, maskId, labelColor, …>, tracks: {<param suffix>: Keyframe[]}}` (stored keyframe records on the layer's keyframe axis; suffix '' = the legacy single-scalar track). Two captures of the same effect compare equal as strings until it changes (the editor's "still as copied" test). Unknown effect paths are skipped.
 query copyEffects = 1890 { layer: LayerId = 1; effects: PropPath[] = 2; } -> CopiedEffects;
 /// B4 — what a document-wide text search over layers matches besides their headers (the Layers panel's Effects / Expressions filters): per layer, its effects' match names in stack order and the source of every expression it carries (enabled or not, in the engine's order). `layers` narrows (empty = every layer of every composition, in `findLayers` order); unknown ids are skipped. The mirror loads property trees on demand, never wholesale — this answers the whole document in one round trip.
 query getSearchFacts = 1894 { layers: LayerId[] = 1; } -> SearchFactsList;
 struct LayerSearchFacts { layer: LayerId = 1; effects: string[] = 2; expressions: string[] = 3; }
 struct SearchFactsList { layers: LayerSearchFacts[] = 1; }
+
+/// B4 round 5 — every distinct colour the document PAINTS with (the colour pickers' "document colours" strip): per layer of every composition (`findLayers` order), its fill stack (a solid's colour, each gradient stop; a legacy plain `fill` string — a light's colour), then its stroke stack (each stroke's colour — white when a stored stroke names none — then its gradient paint's). Canonical lowercase `#rrggbb` / `#rrggbbaa` (short forms expanded, an opaque `ff` alpha dropped); anything that is not a hex colour is skipped; first-seen order, no repeats. Layer LABEL colours are not paint and are not listed. `limit` stops the walk once that many are found (0 = no limit).
+query getDocumentColors = 1930 { limit: u32 = 1; } -> DocumentColors;
+struct DocumentColors { colors: string[] = 1; }
+
+/// B4 round 5 — a composition's CAPTIONS as cues (LayerInfo.caption: its top-level caption layers): each one's first bar as the cue's time (composition flicks) and the text it shows (the Text content, trimmed). A caption with no bar or no text is skipped. Sorted by start (stable). `notFound` for no such composition.
+query getCaptionCues = 1931 { comp: ItemId = 1; } -> CaptionCues;
+struct CaptionCue { layer: LayerId = 1; start: Time = 2; end: Time = 3; text: string = 4; }
+struct CaptionCues { cues: CaptionCue[] = 1; }
+
+/// B4 round 5 — a time through a layer's own time: composition time → the time inside what the layer SHOWS (a placed composition's own axis: its time remap — `timeRemap`, else `precompTime` — sampled at the time, then the layer's start / stretch / retime), or back with `outward` (absent when that has no single answer: a time-remapped composition layer). A layer that shows no composition maps one to one. What opening a precomp at the playhead (and the Composition Navigator) carries the playhead through. `notFound` for no such layer.
+query mapLayerTime = 1932 { layer: LayerId = 1; time: Time = 2; outward: bool = 3; } -> MappedTime;
+struct MappedTime { time?: Time = 1; }
+
+/// B4 round 5 — the INTRINSIC size of what each layer shows (Fit / Fill / Native Size compute against it): a placed composition's frame, footage's probed size (width × its pixel aspect, rounded), else the per-kind default box a new shape / text / image / video layer gets. Layers with none (null, audio, a missing source with no default) are left out; unknown ids skipped.
+query getSourceSize = 1933 { layers: LayerId[] = 1; } -> SourceSizes;
+struct LayerSourceSize { layer: LayerId = 1; width: f64 = 2; height: f64 = 3; }
+struct SourceSizes { sizes: LayerSourceSize[] = 1; }
+
+/// B4 round 5 — a precompose DRY RUN: why `precompose` would refuse `leaveAttributes` for these layers of `comp` ('' = it would not) — exactly the refusal the command gives (one footage / image / vector / solid layer with a size, no children, not 3D, no deformers, no stretched / reversed / frozen time). Nothing is changed.
+query checkPrecompose = 1934 { comp: ItemId = 1; layers: LayerId[] = 2; } -> PrecomposeCheck;
+struct PrecomposeCheck { leaveAttributesReason: string = 1; }
+
+struct RigBoneWeight { bone: string = 1; weight: f64 = 2; }
+/// B4 round 5 — a layer's rig at `time` for what the overlay push does not carry: the pose the Rigging panel shows and its IK/FK switch plans from, pointer input mapped back through the pose (`points`), and one vertex's bind weights. `authoring` picks the Puppet Pin tool's mesh (OverlayRigOptions.authoring). `notFound` for no such layer; a layer with no rig answers empty lists and the points unchanged.
+query getRigPose = 1900 { layer: LayerId = 1; time: Time = 2; points: Vec2[] = 3; vertex?: u32 = 4; authoring?: bool = 5; } -> RigPose;
+struct RigPose {
+  bones: RigBonePose[] = 1;
+  ik: RigIkGoal[] = 2;
+  /// Per `points` (layer space, as drawn): the point before the skeleton pose — unskinPoint, the fixed-point inverse of how a pin dot is posed (the point itself without a skeleton) …
+  rest: Vec2[] = 3;
+  /// … and the puppet's REST anchor under it: restPointFromDeformed over the puppet solve (the `rest` point where it lies off the mesh, or without pins).
+  anchors: Vec2[] = 4;
+  /// `vertex`'s bone weights in the bind pose (paint applied), strongest first; empty without a skeleton or past the mesh.
+  weights: RigBoneWeight[] = 5;
+  /// The rest mesh's vertex count (0 = no mesh).
+  vertexCount: u32 = 6;
+}
 
 /// B4 — one member track (getMemberKeyframes).
 struct MemberTrack {
@@ -217,6 +263,8 @@ struct MemberTrack {
   count: u32 = 5;
   /// The member carries an expression (enabled or not).
   hasExpression: bool = 6;
+  /// B4 round 5 — a DATA track (`includeData`): a keyed track of structured values rather than numbers — a text source, a path's points, a gradient's stops, a puppet pin, a Lottie-imported path. `keyframes` then holds its data keys as stored (`[{t, value, easing?, bezier?, id?, label?, si?, so?}]`). Data tracks follow the scalar ones, in the engine's order, and only keyed ones are listed.
+  data?: bool = 7;
 }
 struct MemberTracks { tracks: MemberTrack[] = 1; }
 
@@ -438,7 +486,7 @@ struct HitResult { layers: LayerId[] = 1; }
 struct LayerBoundsList { bounds: LayerBounds[] = 1; }
 struct LayerTransformList { transforms: LayerTransform[] = 1; }
 struct TextLayout {
-  /// Per-glyph boxes for in-viewport editing — not filled yet (both engines answer empty; the text-edit overlay still measures in the page).
+  /// B4 round 5 — per-glyph boxes for in-viewport editing (caret / selection placement): one per GRAPHEME of the laid-out content (`wrapped`; a line break has none), in logical order. Layer space as `box` (the layer origin, before the Character panel's scale and a Fit Text to Box scale): `index` the grapheme index in `wrapped` (= in the content: a soft wrap replaces one space), `line` the laid-out line, `box` x from the line's pen start (the widest line's box for point text, the paragraph box less its indents for paragraph text, placed by the alignment — justified lines as their last-line alignment, a right-to-left first paragraph mirrored) by canvas prefix widths plus tracking; y / height the line's font band; `baseline` the line's middle baseline y (the painter's `textBaseline: 'middle'` y); `advance` = the box width. Empty for vertical type and text on a path.
   glyphs: GlyphBox[] = 1;
   /// Lines as laid out (after the paragraph wrap).
   lines: u32 = 2;

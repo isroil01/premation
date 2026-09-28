@@ -34,5 +34,22 @@ export function memberTracksAnswer(q: GetMemberKeyframes): MemberTrack[] {
       hasExpression: defaultAnimation.getExpressionSrc(q.layer, member) !== undefined,
     });
   }
+  // B4 round 5: the keyed DATA tracks (text source, path points, gradient stops, puppet pins…), after the scalar ones.
+  if (q.includeData === true) {
+    for (const member of defaultAnimation.getDataAnimatedPropPaths(q.layer)) {
+      if (wanted && !wanted.has(member)) continue;
+      const keys = defaultAnimation.getDataTrack(q.layer, member)?.keyframes ?? [];
+      const owner = byMember.get(member);
+      out.push({
+        member,
+        path: owner?.path ?? '',
+        index: owner ? Math.max(0, owner.members.indexOf(member)) : 0,
+        keyframes: JSON.stringify(keys),
+        count: keys.length,
+        hasExpression: defaultAnimation.getExpressionSrc(q.layer, member) !== undefined,
+        data: true,
+      });
+    }
+  }
   return out;
 }

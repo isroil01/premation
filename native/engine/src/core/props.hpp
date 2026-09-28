@@ -143,6 +143,10 @@ void write_shape_closed(Document& d, std::string_view layer, bool closed);
 
 /// The static (un-animated) value of a property.
 [[nodiscard]] api::Value read_static(const Document& d, std::string_view layer, const PropBinding& b);
+/// B4 round 5 (props.ts `isStoredStatic`): `PropertyInfo.stored` — the document
+/// holds an explicit static value (true) or the default applies (false);
+/// nullopt where the property does not report it (rig, a data track's value).
+[[nodiscard]] std::optional<bool> is_stored_static(const Document& d, std::string_view layer, const PropBinding& b);
 /// Write a property's static value.
 void write_static(Document& d, std::string_view layer, const PropBinding& b, const api::Value& value);
 

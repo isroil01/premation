@@ -428,8 +428,9 @@ export type OverlayKind =
   | 'bounds'
   | 'motionPath'
   | 'rig'
-  | 'textBox';
-export const OverlayKindValues = ['transform', 'bounds', 'motionPath', 'rig', 'textBox'] as const;
+  | 'textBox'
+  | 'scene3d';
+export const OverlayKindValues = ['transform', 'bounds', 'motionPath', 'rig', 'textBox', 'scene3d'] as const;
 
 export type TrackKind =
   | 'position'
@@ -524,6 +525,13 @@ export const AssetStatusValues = ['ready', 'missing', 'decoding', 'offline', 'fa
 export type PixelFormat =
   | 'rgba8unorm';
 export const PixelFormatValues = ['rgba8unorm'] as const;
+
+/** B4 round 5 — which of the viewport's 3D reference objects a scene3d record describes. */
+export type Scene3DRole =
+  | 'camera'
+  | 'light'
+  | 'layer';
+export const Scene3DRoleValues = ['camera', 'light', 'layer'] as const;
 
 export type RenderableKind =
   | 'rect'
@@ -2616,11 +2624,34 @@ export interface SetInteracting {
   interacting: boolean;
 }
 
-/** B4 — subscribe a viewport's overlays to FRAME-SYNCHRONOUS geometry (docs/TS_ENGINE_REMOVAL.md "Gaps"): from its next frame on, every FrameReady of `viewport` is preceded on the frame channel by FrameGeometry messages for `layers`, evaluated at that frame's own time and revision — the world matrices, drawn boxes, motion paths and text boxes the selection outline, gizmos and motion path draw, instead of a query per played frame. Replaces the viewport's previous subscription; no layers or no kinds = unsubscribe. Layers that do not exist are skipped. A control: no history, no revision. */
+/** B4 round 5 — one overlay's share of a subscription (setOverlayGeometry `groups`): its layers get ITS kinds, not every kind another overlay asked for. */
+export interface OverlayRequest {
+  layers: LayerId[];
+  kinds: OverlayKind[];
+}
+
+/**
+ * B4 — subscribe a viewport's overlays to FRAME-SYNCHRONOUS geometry (docs/TS_ENGINE_REMOVAL.md "Gaps"): from its next frame on, every FrameReady of `viewport` is preceded on the frame channel by FrameGeometry messages for `layers`, evaluated at that frame's own time and revision — the world matrices, drawn boxes, motion paths and text boxes the selection outline, gizmos and motion path draw, instead of a query per played frame. Replaces the viewport's previous subscription; no layers or no kinds = unsubscribe. Layers that do not exist are skipped. A control: no history, no revision.
+ * B4 round 5: `groups` — per-overlay layer × kind requests; a layer gets the union of the kinds of every group naming it (and `kinds` when `layers` names it). `views` — the view modes (`active`, `camera:<id>`, an ortho view, a custom view id) whose resolved VIEW CAMERA each frame carries (FrameGeometry.views). The subscription is empty only when layers × kinds, every group and `views` are.
+ * B4 round 5: `rig` — what the `rig` kind resolves beyond the pose (OverlayRig): the focus pin's motion path, the focus bone's weights, and the puppet tool's pinless authoring mesh.
+ */
 export interface SetOverlayGeometry {
   viewport: number;
   layers: LayerId[];
   kinds: OverlayKind[];
+  groups: OverlayRequest[];
+  views: string[];
+  rig?: OverlayRigOptions;
+}
+
+/** B4 round 5 — the rig overlay's editor-side focus (setOverlayGeometry `rig`). */
+export interface OverlayRigOptions {
+  /** The selected puppet pin: its Position trajectory and keys ride OverlayRig.pinPath / pinKeys ('' = none). */
+  pin: string;
+  /** The selected bone: its bind weight per vertex rides OverlayRig.weights ('' = none). */
+  bone: string;
+  /** The Puppet Pin tool's mesh (nodeRestMesh `authoringPreview`): before the first pin exists the layer shows the mesh the first pin will be placed on (an image / SVG layer's alpha outline), and a layer with no rig still gets one. False = the rig's own mesh (what renders), none without a rig. */
+  authoring: boolean;
 }
 
 export interface TrackPointSpec {
@@ -2928,6 +2959,8 @@ export interface ItemInfo {
   alphaProbed: boolean;
   /** B4 — the import probe looked for an audio stream: `hasAudio` false on video with this false means "never probed". */
   audioProbed: boolean;
+  /** B4 round 5 — a URL the page can play or show for a FOOTAGE item: its stored source reference as the page's media loaders take it (an object / blob URL the page minted, a `local-file://` URL the Electron host serves, `motion-blob:<hash>` for a bytes import collected into the project bundle, http(s)). Absent when the item has none (a missing file, a folder, a composition). Not a file path — `path` is the import path. */
+  mediaUrl?: string;
 }
 
 export interface CompInfo {
@@ -2975,6 +3008,10 @@ export interface LayerInfo {
   svg: SvgRole;
   /** B4 — a custom plugin layer's stored schema version (`__schemaVersion` on its `pluginLayer:<kind>` component; 1 when the record has none): what decides the Inspector's needs-migration / downgrade state. Absent for a layer that is not a custom plugin layer. */
   pluginSchemaVersion?: number;
+  /** B4 round 5 — true for a CAPTION layer (a text layer the captions import / transcript made, tagged `__caption` on its Text component): what a transcript rebuilds from and what a caption re-import replaces. Absent otherwise. */
+  caption?: boolean;
+  /** B4 round 5 — a multicam ANGLE layer's number (1-based, `__multicamAngle` on its Transform): what the Multicam viewer lists and cuts between. Absent for any other layer. */
+  multicamAngle?: number;
 }
 
 /** B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`). */
@@ -3017,6 +3054,8 @@ export interface PropertyInfo {
   hidden: boolean;
   /** B4 — per-dimension expressions: when the dimensions of a multi-dimensional property do NOT all carry the same expression (source and enabled), every dimension that has one, in member order; `expression` / `expressionEnabled` / `expressionError` then describe dimension 0 only. Empty when the property has one expression for every dimension, or none. */
   memberExpressions: MemberExpression[];
+  /** B4 round 5 — true when the document STORES an explicit static value for this property (a component prop, a field's key, an effect param, a mask / path / rig record…); unset = the default applies (`value` then reports `defaultValue` or the reader's fallback). What a capture of "what the layer sets" (a text style preset, a per-corner radius, a primitive's authored params) needs: the API otherwise reports every property with its default filled in. Static only — a keyed property's keys are `keyframeCount`. */
+  stored?: boolean;
 }
 
 export interface KeyframeSet {
@@ -3136,6 +3175,7 @@ export interface CopyKeyframes {
 export interface GetMemberKeyframes {
   layer: LayerId;
   members: string[];
+  includeData?: boolean;
 }
 
 /** B4 — Edit ▸ Copy of EFFECTS in API form: the layer's effects `effects` names (`effects/<id>`; empty = the whole stack), in stack order, captured as `pasteEffects` takes them — a JSON array of `{effect: <the stored effect: type, params, enabled, opacity, maskId, labelColor, …>, tracks: {<param suffix>: Keyframe[]}}` (stored keyframe records on the layer's keyframe axis; suffix '' = the legacy single-scalar track). Two captures of the same effect compare equal as strings until it changes (the editor's "still as copied" test). Unknown effect paths are skipped. */
@@ -3159,6 +3199,94 @@ export interface SearchFactsList {
   layers: LayerSearchFacts[];
 }
 
+/** B4 round 5 — every distinct colour the document PAINTS with (the colour pickers' "document colours" strip): per layer of every composition (`findLayers` order), its fill stack (a solid's colour, each gradient stop; a legacy plain `fill` string — a light's colour), then its stroke stack (each stroke's colour — white when a stored stroke names none — then its gradient paint's). Canonical lowercase `#rrggbb` / `#rrggbbaa` (short forms expanded, an opaque `ff` alpha dropped); anything that is not a hex colour is skipped; first-seen order, no repeats. Layer LABEL colours are not paint and are not listed. `limit` stops the walk once that many are found (0 = no limit). */
+export interface GetDocumentColors {
+  limit: number;
+}
+
+export interface DocumentColors {
+  colors: string[];
+}
+
+/** B4 round 5 — a composition's CAPTIONS as cues (LayerInfo.caption: its top-level caption layers): each one's first bar as the cue's time (composition flicks) and the text it shows (the Text content, trimmed). A caption with no bar or no text is skipped. Sorted by start (stable). `notFound` for no such composition. */
+export interface GetCaptionCues {
+  comp: ItemId;
+}
+
+export interface CaptionCue {
+  layer: LayerId;
+  start: Time;
+  end: Time;
+  text: string;
+}
+
+export interface CaptionCues {
+  cues: CaptionCue[];
+}
+
+/** B4 round 5 — a time through a layer's own time: composition time → the time inside what the layer SHOWS (a placed composition's own axis: its time remap — `timeRemap`, else `precompTime` — sampled at the time, then the layer's start / stretch / retime), or back with `outward` (absent when that has no single answer: a time-remapped composition layer). A layer that shows no composition maps one to one. What opening a precomp at the playhead (and the Composition Navigator) carries the playhead through. `notFound` for no such layer. */
+export interface MapLayerTime {
+  layer: LayerId;
+  time: Time;
+  outward: boolean;
+}
+
+export interface MappedTime {
+  time?: Time;
+}
+
+/** B4 round 5 — the INTRINSIC size of what each layer shows (Fit / Fill / Native Size compute against it): a placed composition's frame, footage's probed size (width × its pixel aspect, rounded), else the per-kind default box a new shape / text / image / video layer gets. Layers with none (null, audio, a missing source with no default) are left out; unknown ids skipped. */
+export interface GetSourceSize {
+  layers: LayerId[];
+}
+
+export interface LayerSourceSize {
+  layer: LayerId;
+  width: number;
+  height: number;
+}
+
+export interface SourceSizes {
+  sizes: LayerSourceSize[];
+}
+
+/** B4 round 5 — a precompose DRY RUN: why `precompose` would refuse `leaveAttributes` for these layers of `comp` ('' = it would not) — exactly the refusal the command gives (one footage / image / vector / solid layer with a size, no children, not 3D, no deformers, no stretched / reversed / frozen time). Nothing is changed. */
+export interface CheckPrecompose {
+  comp: ItemId;
+  layers: LayerId[];
+}
+
+export interface PrecomposeCheck {
+  leaveAttributesReason: string;
+}
+
+export interface RigBoneWeight {
+  bone: string;
+  weight: number;
+}
+
+/** B4 round 5 — a layer's rig at `time` for what the overlay push does not carry: the pose the Rigging panel shows and its IK/FK switch plans from, pointer input mapped back through the pose (`points`), and one vertex's bind weights. `authoring` picks the Puppet Pin tool's mesh (OverlayRigOptions.authoring). `notFound` for no such layer; a layer with no rig answers empty lists and the points unchanged. */
+export interface GetRigPose {
+  layer: LayerId;
+  time: Time;
+  points: Vec2[];
+  vertex?: number;
+  authoring?: boolean;
+}
+
+export interface RigPose {
+  bones: RigBonePose[];
+  ik: RigIkGoal[];
+  /** Per `points` (layer space, as drawn): the point before the skeleton pose — unskinPoint, the fixed-point inverse of how a pin dot is posed (the point itself without a skeleton) … */
+  rest: Vec2[];
+  /** … and the puppet's REST anchor under it: restPointFromDeformed over the puppet solve (the `rest` point where it lies off the mesh, or without pins). */
+  anchors: Vec2[];
+  /** `vertex`'s bone weights in the bind pose (paint applied), strongest first; empty without a skeleton or past the mesh. */
+  weights: RigBoneWeight[];
+  /** The rest mesh's vertex count (0 = no mesh). */
+  vertexCount: number;
+}
+
 /** B4 — one member track (getMemberKeyframes). */
 export interface MemberTrack {
   /** The stored track name (`x`, `scaleX`, `opacity`, `effect.<id>.<param>`, …). */
@@ -3171,6 +3299,8 @@ export interface MemberTrack {
   count: number;
   /** The member carries an expression (enabled or not). */
   hasExpression: boolean;
+  /** B4 round 5 — a DATA track (`includeData`): a keyed track of structured values rather than numbers — a text source, a path's points, a gradient's stops, a puppet pin, a Lottie-imported path. `keyframes` then holds its data keys as stored (`[{t, value, easing?, bezier?, id?, label?, si?, so?}]`). Data tracks follow the scalar ones, in the engine's order, and only keyed ones are listed. */
+  data?: boolean;
 }
 
 export interface MemberTracks {
@@ -3553,7 +3683,7 @@ export interface LayerTransformList {
 }
 
 export interface TextLayout {
-  /** Per-glyph boxes for in-viewport editing — not filled yet (both engines answer empty; the text-edit overlay still measures in the page). */
+  /** B4 round 5 — per-glyph boxes for in-viewport editing (caret / selection placement): one per GRAPHEME of the laid-out content (`wrapped`; a line break has none), in logical order. Layer space as `box` (the layer origin, before the Character panel's scale and a Fit Text to Box scale): `index` the grapheme index in `wrapped` (= in the content: a soft wrap replaces one space), `line` the laid-out line, `box` x from the line's pen start (the widest line's box for point text, the paragraph box less its indents for paragraph text, placed by the alignment — justified lines as their last-line alignment, a right-to-left first paragraph mirrored) by canvas prefix widths plus tracking; y / height the line's font band; `baseline` the line's middle baseline y (the painter's `textBaseline: 'middle'` y); `advance` = the box width. Empty for vertical type and text on a path. */
   glyphs: GlyphBox[];
   /** Lines as laid out (after the paragraph wrap). */
   lines: number;
@@ -3945,7 +4075,7 @@ export interface OverlayLayerGeometry {
   path: number[];
   /** motionPath: one entry per Position key time: t, x, y, z, inX, inY, outX, outY — the key's point and its spatial tangent handles at their effective positions (comp space; NaN where a handle does not exist: the path's ends, a linear vertex). */
   pathKeys: number[];
-  /** rig: puppet pins as x, y pairs and bones as x0, y0, x1, y1 in comp space — not produced yet (both engines send them empty until the rig sampler moves engine-side). */
+  /** rig: unused — superseded by `rig` (B4 round 5, layer-space pins, bones, mesh); both engines send them empty. */
   pins: number[];
   bones: number[];
   /** textBox: a text layer's measured box, LOCAL x, y, width, height (the fixed paragraph box, else the font-metric selection box). */
@@ -3954,6 +4084,122 @@ export interface OverlayLayerGeometry {
   pathFrames: number[];
   /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`). */
   pathNow: number[];
+  /** scene3d (B4 round 5): a camera's, light's or 3D layer's reference-geometry inputs at the frame; absent for any other layer. Rides the layer's first record. */
+  scene?: OverlayScene3D;
+  /** rig (B4 round 5): the layer's puppet pins / skeleton at the frame (OverlayRig); absent without a rig to show. A long rig spans several records: the `rig` arrays of a layer's records concatenate in arrival order. */
+  rig?: OverlayRig;
+}
+
+/** B4 round 5 — one puppet pin as the rig resolves it at a time (OverlayRig, getRigPose). Layer space: the layer's local px, the space readGeometry's box is in. */
+export interface RigPinPose {
+  id: string;
+  /** pinKindOf: advanced (the default), position, bend, starch, overlap. */
+  kind: string;
+  /** Where the pin is DRAWN: its live position — a bend pin's solved mesh vertex — carried through the skeleton pose (identity without one). */
+  x: number;
+  y: number;
+  /** The same point before the skeleton (the puppet's rest space): the pivot a rotate / scale gesture measures from. */
+  cx: number;
+  cy: number;
+  /** Live rotation (degrees) and scale (1 = 100%) at the time. */
+  rotation: number;
+  scale: number;
+}
+
+/** B4 round 5 — one bone of a skeleton at a time (OverlayRig, getRigPose). */
+export interface RigBonePose {
+  id: string;
+  /** The LIVE pose before IK: the bone's tracks at the time over its stored values (parent space; rotation in radians, the rig's unit). */
+  x: number;
+  y: number;
+  rotation: number;
+  scaleX: number;
+  scaleY: number;
+  /** The SOLVED pose (FK + the IK goals in IK mode), same space. */
+  posedX: number;
+  posedY: number;
+  posedRotation: number;
+  /** The solved world matrix a, b, c, d, e, f (layer space): the root is (e, f), the tip the matrix at (length, 0). */
+  world: number[];
+}
+
+/** B4 round 5 — one stored IK goal at a time (OverlayRig, getRigPose), in the rig's stored order, disabled ones included. */
+export interface RigIkGoal {
+  bone: string;
+  enabled: boolean;
+  /** The goal and its pole live at the time (their tracks over the stored values; layer space). */
+  x: number;
+  y: number;
+  /** x, y; empty = none. */
+  pole: number[];
+  /** As stored (absent = the solver's default of 2). */
+  chainLength?: number;
+  /** The chain's mode at the time: the ikMode track (≥ 0.5 = ik) over the stored mode, `ik` by default. Only an enabled goal in `ik` mode solves. */
+  mode: string;
+}
+
+/** B4 round 5 — what the Puppet Pin and Bone overlays draw for one layer at the frame, resolved as buildSnapshot resolves the rig (the puppet solve in rest space, then the skeleton pose on top). Every point is LAYER space (the layer's local px — the space `box` is in). */
+export interface OverlayRig {
+  /** The puppet pins, stored order. */
+  pins: RigPinPose[];
+  /** The skeleton's bones, stored order: live and solved pose, solved world matrix. */
+  bones: RigBonePose[];
+  /** Every stored IK goal, live at the frame. */
+  ik: RigIkGoal[];
+  /** The deformed mesh as it renders — puppet, then skeleton: x, y per vertex … */
+  vertices: number[];
+  /** … the REST mesh, index-aligned: x, y per vertex (weights and paint address these indices) … */
+  rest: number[];
+  /** … its triangles, vertex index triples in the authored order … */
+  triangles: number[];
+  /** … and the puppet lattice: its unique edges as index pairs (a grid mesh keeps the rest-axis edges only — boxes, not triangles; an outline mesh keeps every edge). */
+  edges: number[];
+  /** The focus bone's (OverlayRigOptions.bone) bind weight per vertex; empty without one. */
+  weights: number[];
+  /** The focus pin's (OverlayRigOptions.pin) Position trajectory through the pose: x, y pairs, 24 per key span; empty under two keys. */
+  pinPath: number[];
+  /** The focus pin's Position keys (two or more): per key t (keyframe-axis s), restX, restY (the stored point), x, y (posed), inX, inY, outX, outY (the posed tangent handles; NaN where none). */
+  pinKeys: number[];
+}
+
+/** B4 round 5 — what the viewport's 3D chrome (frustums, light cones, layer cages, device handles, the focus plane, the 3D gizmo) reads for one layer at the frame, resolved as the renderer resolves it (sceneGizmoData.ts / deviceHandles.ts). World = composition space, y down; animated values win over stored ones, parents lifted. */
+export interface OverlayScene3D {
+  role: Scene3DRole;
+  /** camera: the resolved Camera3D (cameraFromNode, parent-lifted): position x, y, z, focalLength, principal x, y, yaw, pitch, roll (degrees; zero = no orientation). */
+  lens: number[];
+  /** camera: the Point of Interest, parent-lifted (readCameraPoi; empty = a one-node camera). light: its POI, parent-lifted (empty = none). */
+  poi: number[];
+  /** camera: readCameraFocusDistance (px). */
+  focusDistance: number;
+  /** camera: readNodeDof — strength, focus, aperture, focalLength, fStop (NaN = the legacy ramp); empty = depth of field off. */
+  dof: number[];
+  /** light: readNodeLight's type (parallel, spot, point, ambient, environment). */
+  lightType: string;
+  /** light: the world position (deviceWorldPosition). */
+  position: number[];
+  /** light: radius, cone, coneFeather, and the aim in degrees (lightAngle + the layer's world Z rotation) — what buildLightGizmo takes. */
+  light: number[];
+  /** layer: the local transform sampled at the frame (sampleTransform3DAtPlayhead): x, y, z, rotationX, rotationY, rotation, scaleX, scaleY, scaleZ (stored units). */
+  local: number[];
+  /** layer: the extrusion depth (animated winning, ≥ 0). */
+  extrusion: number;
+  /** every role: the parent chain's world 4×4, column-major (parentWorldMatrixAt; empty = no parent) — what a device drag inverts to write parent-space values. */
+  parent: number[];
+}
+
+/** B4 round 5 — a subscribed view mode's resolved view camera at the frame (setOverlayGeometry `views`). */
+export interface OverlayView {
+  /** The mode as subscribed. */
+  mode: string;
+  /** The camera layer the view's chrome resolves (viewCameraNode: a live `camera:<id>` view's camera, else the composition's topmost enabled camera — no in/out test); empty = none (the default camera). Reported for the axis and custom views too. */
+  camera: LayerId;
+  /** The camera the renderer's rule picks for this view (the same, plus the layer being inside its in/out bar at the frame) — what the camera tools drive; empty = none. */
+  liveCamera: LayerId;
+  /** The chrome camera resolved at the frame (cameraFromNode, parent-lifted; the default camera when none): position x, y, z, focalLength, principal x, y, yaw, pitch, roll. The axis views project without it; a custom view replaces it with its stored camera (editor state). */
+  lens: number[];
+  /** The composition size the view was resolved at. */
+  compWidth: number;
+  compHeight: number;
 }
 
 /** Engine → host. The overlay geometry of the NEXT FrameReady of `viewport` with this generation and frame (B4, setOverlayGeometry). One frame's records may span several messages (the 4096-byte payload cap; a layer's kinds can arrive in separate records, and they merge): the host collects them until `last`, then delivers them with that FrameReady. Sent only while the viewport has a subscription. */
@@ -3965,6 +4211,8 @@ export interface FrameGeometry {
   revision: Revision;
   layers: OverlayLayerGeometry[];
   last: boolean;
+  /** B4 round 5: the subscribed views' cameras (setOverlayGeometry `views`), in subscription order; they ride the frame's first message. */
+  views: OverlayView[];
 }
 
 /** Engine → host. Heartbeat answer, sent by the document core thread. */
@@ -4770,6 +5018,12 @@ export type Query =
   | ({ type: 'getMemberKeyframes' } & GetMemberKeyframes)
   | ({ type: 'copyEffects' } & CopyEffects)
   | ({ type: 'getSearchFacts' } & GetSearchFacts)
+  | ({ type: 'getDocumentColors' } & GetDocumentColors)
+  | ({ type: 'getCaptionCues' } & GetCaptionCues)
+  | ({ type: 'mapLayerTime' } & MapLayerTime)
+  | ({ type: 'getSourceSize' } & GetSourceSize)
+  | ({ type: 'checkPrecompose' } & CheckPrecompose)
+  | ({ type: 'getRigPose' } & GetRigPose)
   | ({ type: 'getWaveform' } & GetWaveform)
   | ({ type: 'listFonts' } & ListFonts)
   | ({ type: 'getItems' } & GetItems)
@@ -4816,6 +5070,12 @@ export type QueryResult =
   | ({ type: 'getMemberKeyframes' } & MemberTracks)
   | ({ type: 'copyEffects' } & CopiedEffects)
   | ({ type: 'getSearchFacts' } & SearchFactsList)
+  | ({ type: 'getDocumentColors' } & DocumentColors)
+  | ({ type: 'getCaptionCues' } & CaptionCues)
+  | ({ type: 'mapLayerTime' } & MappedTime)
+  | ({ type: 'getSourceSize' } & SourceSizes)
+  | ({ type: 'checkPrecompose' } & PrecomposeCheck)
+  | ({ type: 'getRigPose' } & RigPose)
   | ({ type: 'getWaveform' } & WaveformPeaks)
   | ({ type: 'listFonts' } & FontList)
   | ({ type: 'getItems' } & ItemDetails)
@@ -5213,6 +5473,12 @@ export interface QueryArgs {
   getMemberKeyframes: GetMemberKeyframes;
   copyEffects: CopyEffects;
   getSearchFacts: GetSearchFacts;
+  getDocumentColors: GetDocumentColors;
+  getCaptionCues: GetCaptionCues;
+  mapLayerTime: MapLayerTime;
+  getSourceSize: GetSourceSize;
+  checkPrecompose: CheckPrecompose;
+  getRigPose: GetRigPose;
   getWaveform: GetWaveform;
   listFonts: ListFonts;
   getItems: GetItems;
@@ -5259,6 +5525,12 @@ export interface QueryResults {
   getMemberKeyframes: MemberTracks;
   copyEffects: CopiedEffects;
   getSearchFacts: SearchFactsList;
+  getDocumentColors: DocumentColors;
+  getCaptionCues: CaptionCues;
+  mapLayerTime: MappedTime;
+  getSourceSize: SourceSizes;
+  checkPrecompose: PrecomposeCheck;
+  getRigPose: RigPose;
   getWaveform: WaveformPeaks;
   listFonts: FontList;
   getItems: ItemDetails;

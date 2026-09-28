@@ -12,6 +12,7 @@
 import type { GetTextLayout, TextLayout, Vec2 } from '@motion/engine-api';
 import type { SceneNode } from '@core/types';
 import {
+  measureGlyphBoxes,
   measureParagraphBox,
   measureTextBoxes,
   measureTextSize,
@@ -100,8 +101,10 @@ export function textLayoutAnswer(q: GetTextLayout): TextLayout {
   const tr = textStyleTransform(style);
   const pbox = readParagraphBox(node, override);
   const para = style.boxWidth ? measureParagraphBox(style) : null;
+  // B4 round 5: per-grapheme boxes (none for text on a path: its glyphs ride the curve).
+  const glyphs = hasTextPath(node) ? [] : measureGlyphBoxes(style, alignOf(node), directionOf(node)) ?? [];
   return {
-    glyphs: [],
+    glyphs: glyphs.map((g) => ({ index: g.index, line: g.line, box: { x: g.x, y: g.y, width: g.width, height: g.height }, baseline: g.baseline, advance: g.width })),
     lines: style.content.split('\n').length,
     box: { x: boxes.font.left, y: boxes.font.top, width: boxes.font.width, height: boxes.font.height },
     size: { x: size.w, y: size.h },

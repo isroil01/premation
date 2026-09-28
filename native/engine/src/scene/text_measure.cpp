@@ -341,6 +341,38 @@ class CanvasMeasurer final : public TextMeasurer {
     return FontBox{fontTop, fontBottom, advance / 2};
   }
 
+  std::optional<std::vector<GlyphLine>> measure_glyph_lines(const MeasuredStyle& s) override {
+    if (s.hasFontAxes || s.fontWidth || s.fontSlant || s.vertical) return std::nullopt;
+    const std::scoped_lock lock(m_);
+    if (!ctx_) ctx_ = raster::Canvas2D::make(1, 1, opts_);
+    raster::Canvas2D& g = *ctx_;
+    const std::string style = s.fontStyle == "italic" ? "italic " : "";
+    if (!set_measure_font(g, s)) return std::nullopt;
+    g.setTextBaseline(raster::TextBaseline::middle);
+    std::vector<GlyphLine> out;
+    for (std::size_t start = 0;;) {
+      const std::size_t nl = s.content.find('\n', start);
+      const std::string line = s.content.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+      const raster::TextMetrics m = g.measureText(line);
+      const std::vector<std::string> gs = raster::split_graphemes(line);
+      const auto chars = static_cast<double>(gs.size());
+      GlyphLine l;
+      l.width = m.width + (chars > 0 ? (chars - 1) * s.letterSpacing : 0) + optical_line_delta(s, style, line);
+      l.ascent = m.fontBoundingBoxAscent;
+      l.descent = m.fontBoundingBoxDescent;
+      std::string prefix;
+      l.pens.reserve(gs.size());
+      for (std::size_t j = 0; j < gs.size(); ++j) {
+        prefix += gs[j];
+        l.pens.push_back(j + 1 == gs.size() ? l.width : g.measureText(prefix).width + static_cast<double>(j + 1) * s.letterSpacing);
+      }
+      out.push_back(std::move(l));
+      if (nl == std::string::npos) break;
+      start = nl + 1;
+    }
+    return out;
+  }
+
   /// Font + variations + kerning of `s` on the measuring canvas (cssFont +
   /// applyFontVariations); false when the font does not parse.
   bool set_measure_font(raster::Canvas2D& g, const MeasuredStyle& s) {

@@ -1038,6 +1038,9 @@ struct ControlVisitor {
     sub.viewport = c.viewport;
     sub.layers = c.layers;
     sub.kinds = c.kinds;
+    sub.groups = c.groups;  // B4 round 5
+    sub.views = c.views;
+    sub.rig = c.rig;  // B4 round 5: the rig overlay's focus
     if (sub.active()) subs.push_back(std::move(sub));
     s.request_render();
     return result_for<api::SetOverlayGeometry>();
@@ -1056,6 +1059,7 @@ api::QueryResult Session::run_query(const api::Query& q) {
   doc::QCtx c{pctx(), keys_, 0, "", false, {}, {}, {}, {}, &catalogCache_, {}, {}};
   if (!options_.testPorts) c.fonts = options_.systemFonts;
   c.text = frameBuilder_ != nullptr ? frameBuilder_->text_queries() : nullptr;
+  c.rig = rig_queries();
   c.revision = revision_;
   c.projectPath = projectPath_;
   c.dirty = revision_ != savedRevision_;
@@ -1531,8 +1535,32 @@ void Session::submit_frame(std::uint32_t clockDropped) {
     if (o.viewport != job.viewport) continue;
     job.geometrySubscribed = true;
     job.geometry = doc::overlay_geometry(pctx(), frameBuilder_ != nullptr ? frameBuilder_->text_queries() : nullptr, o, time_);
+    job.views = doc::overlay_views(pctx(), o, active_comp(), time_);  // B4 round 5: the view cameras
+    attach_overlay_rig(o, job.geometry);                                // B4 round 5: the rig records
   }
   sink_.submit(std::move(job));
+}
+
+void Session::attach_overlay_rig(const doc::OverlaySubscription& o, std::vector<api::OverlayLayerGeometry>& geometry) {
+  RigQueries* rq = rig_queries();
+  if (rq == nullptr) return;
+  const auto kinds = doc::subscribed_layer_kinds(o);
+  const api::OverlayRigOptions opts = o.rig.value_or(api::OverlayRigOptions{});
+  const double seconds = doc::flicks_to_seconds(time_);
+  TextQueries* text = frameBuilder_ != nullptr ? frameBuilder_->text_queries() : nullptr;
+  if (frameBuilder_ != nullptr) frameBuilder_->set_media_base(media_base());
+  for (api::OverlayLayerGeometry& g : geometry) {
+    const auto it = std::find_if(kinds.begin(), kinds.end(), [&g](const auto& e) { return e.first == g.layer; });
+    if (it == kinds.end() || std::find(it->second.begin(), it->second.end(), api::OverlayKind::rig) == it->second.end()) continue;
+    // A rig this frame cannot resolve is left out; the frame and the other records still go (CLAUDE.md).
+    try {
+      g.rig = rq->rig_overlay(doc_, view_, exprEnv_, exprCache_, text, g.layer, seconds, opts);
+    } catch (const doc::EngineFail&) {
+      g.rig.reset();
+    } catch (const std::exception&) {
+      g.rig.reset();
+    }
+  }
 }
 
 void Session::announce_layer_errors(const std::string& comp, std::vector<api::LayerError> errors) {

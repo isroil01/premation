@@ -71,6 +71,33 @@ class TextQueries {
       const doc::Node& n, const std::vector<std::pair<std::string, double>>& overrides) = 0;
 };
 
+/// The puppet / skeleton rig as the overlays see it (B4 round 5, ENGINE_API.md
+/// §15.14): the overlay push's `rig` record and `getRigPose`. The rig block is
+/// scene code (rig_mesh.cpp, engine_scene_core), which engine_core does not
+/// link: implemented by scene/rig_overlay.cpp's DocRigQueries and injected
+/// (Session::set_rig_queries, or the frame builder's); a Session without it
+/// sends no rig and answers getRigPose `unsupported`.
+class RigQueries {
+ public:
+  RigQueries() = default;
+  virtual ~RigQueries() = default;
+  RigQueries(const RigQueries&) = delete;
+  RigQueries& operator=(const RigQueries&) = delete;
+  RigQueries(RigQueries&&) = delete;
+  RigQueries& operator=(RigQueries&&) = delete;
+
+  /// The `rig` record of `layer` at comp `seconds`; nullopt = no rig to show (or one this port cannot build).
+  [[nodiscard]] virtual std::optional<api::OverlayRig> rig_overlay(const doc::Document& d, const doc::EditorView& view,
+                                                                   const doc::ExprEnv& expr, doc::ExprCache& cache,
+                                                                   TextQueries* text, std::string_view layer, double seconds,
+                                                                   const api::OverlayRigOptions& opts) = 0;
+  /// `getRigPose` for an existing `layer` at comp `seconds`.
+  [[nodiscard]] virtual api::RigPose rig_pose(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
+                                              doc::ExprCache& cache, TextQueries* text, std::string_view layer, double seconds,
+                                              const std::vector<api::Vec2>& points, std::optional<std::uint32_t> vertex,
+                                              bool authoring) = 0;
+};
+
 /// The composition at a time → the frame the render thread draws (D2w).
 class FrameBuilder {
  public:
@@ -95,6 +122,8 @@ class FrameBuilder {
   virtual void bind_audio(MediaClock* /*clock*/) {}
   /// The text measurer's queries on this builder's fonts (B4 round 2); null = none.
   [[nodiscard]] virtual TextQueries* text_queries() noexcept { return nullptr; }
+  /// The rig as the overlays see it, over this builder's media (B4 round 5); null = none.
+  [[nodiscard]] virtual RigQueries* rig_queries() noexcept { return nullptr; }
   /// The layer conversions' geometry (convertLayer: text outlines) on this
   /// builder's fonts; null = none (the conversions answer `unsupported`).
   [[nodiscard]] virtual doc::ConvertGeometry* convert_geometry() noexcept { return nullptr; }

@@ -38,6 +38,7 @@ import type {
   EventBatch,
   LogRecord,
   OverlayLayerGeometry,
+  OverlayView,
   Request,
   Response,
   Revision,
@@ -120,6 +121,8 @@ export interface EngineFrameMeta {
    * layer's records merge, arrays concatenating). Absent without a subscription.
    */
   geometry?: OverlayLayerGeometry[];
+  /** B4 round 5: the subscribed views' cameras of THIS frame (setOverlayGeometry `views`). Absent without views. */
+  geometryViews?: OverlayView[];
   /** How the frame travelled: a shared GPU texture (route C) or a pixel copy (route A). Absent = shared. */
   route?: 'shared' | 'copy';
 }

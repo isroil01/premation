@@ -105,6 +105,17 @@ struct FontBox {
   double halfWidth = 0;
 };
 
+/// One laid-out line's glyph metrics (TextMeasurer::measure_glyph_lines): the
+/// pen after each grapheme (canvas prefix width + tracking; the last = `width`),
+/// the line's width as measureTextBoxes counts it (tracking and optical pairs
+/// included) and its font band about the middle baseline.
+struct GlyphLine {
+  std::vector<double> pens;
+  double width = 0;
+  double ascent = 0;
+  double descent = 0;
+};
+
 class TextMeasurer {
  public:
   TextMeasurer() = default;
@@ -128,6 +139,13 @@ class TextMeasurer {
   /// text measures its wrapped content. nullopt outside the port (vertical
   /// type, variable axes, a wrap outside it).
   [[nodiscard]] virtual std::optional<FontBox> measure_font_box(const MeasuredStyle& s) {
+    (void)s;
+    return std::nullopt;
+  }
+  /// B4 round 5 (getTextLayout.glyphs): each '\n'-separated line of the
+  /// ALREADY-WRAPPED horizontal `s` measured as measureText.ts
+  /// `measureGlyphBoxes` does. nullopt outside the port (as measure_font_box).
+  [[nodiscard]] virtual std::optional<std::vector<GlyphLine>> measure_glyph_lines(const MeasuredStyle& s) {
     (void)s;
     return std::nullopt;
   }

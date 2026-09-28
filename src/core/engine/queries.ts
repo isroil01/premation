@@ -6,7 +6,7 @@
  * process with the renderer (phase D/E).
  */
 
-import type { Query, QueryResult, HistoryState, LogRecord, PropertyValue, EffectInfo, LayerKind, Keyframe } from '@motion/engine-api';
+import type { Query, QueryResult, HistoryState, JobInfo, LogRecord, PropertyValue, EffectInfo, LayerKind, Keyframe } from '@motion/engine-api';
 import { defaultAnimation } from '@motion/animation';
 import { EFFECT_DEFS, effectDefFor, getNodeEffects } from '@core/effects/effects';
 import { captureEffect } from '@core/effects/effectClipboard';
@@ -37,7 +37,9 @@ import { textLayoutAnswer } from './textLayoutQuery';
 import { sourceTextPreview } from './sourceTextPreview';
 import { installSourceTextProvider } from '@core/textExpr/sourceTextProvider';
 import { layerBoundsAnswer } from './layerBoundsQuery';
+import { rigPoseAnswer } from './rigOverlay';
 import { memberTracksAnswer } from './memberKeysQuery';
+import { documentColorsAnswer, captionCuesAnswer, mapLayerTimeAnswer, sourceSizesAnswer, precomposeCheckAnswer } from './itemFactsQueries';
 import { encodeFragment } from './handlers/layers';
 import { GROUP_TYPES } from './handlers/groups';
 import { checkTime, flicksToSeconds } from './time';
@@ -52,6 +54,8 @@ export interface QueryCtx {
   log(fromRevision: number): LogRecord[];
   transport: Transport;
   keyIndex: KeyIndex;
+  /** Engine jobs, the last 64 (jobs/runner.ts). */
+  jobs?: () => JobInfo[];
 }
 
 function numbersOf(v: PropertyValue['value']): number[] {
@@ -343,6 +347,9 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
     case 'getLayerBounds':
       // B4: readGeometry's box at the time (layerBoundsQuery.ts).
       return { type: q.type, bounds: layerBoundsAnswer(q) };
+    case 'getRigPose':
+      // B4 round 5: the rig at the time, pointer points through the pose (rigOverlay.ts).
+      return { type: q.type, ...rigPoseAnswer(q) };
     case 'hitTest':
     case 'readPixels':
       return fail('unsupported', `'${q.type}' needs the renderer's geometry/pixels; the TypeScript engine answers it in the editor until D2`);
@@ -403,6 +410,17 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
         })),
       };
     }
+    // B4 round 5 (itemFactsQueries.ts).
+    case 'getDocumentColors':
+      return { type: q.type, colors: documentColorsAnswer(q) };
+    case 'getCaptionCues':
+      return { type: q.type, cues: captionCuesAnswer(q) };
+    case 'mapLayerTime':
+      return { type: q.type, ...mapLayerTimeAnswer(q) };
+    case 'getSourceSize':
+      return { type: q.type, sizes: sourceSizesAnswer(q) };
+    case 'checkPrecompose':
+      return { type: q.type, leaveAttributesReason: precomposeCheckAnswer(q) };
     case 'findLayers': {
       const comps = q.comp ? [q.comp] : compItemIds();
       if (q.comp) requireComp(q.comp);
@@ -452,7 +470,7 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
       // Render errors are recorded on each frame's snapshot by the editor's renderer (§10).
       return { type: q.type, errors: [] };
     case 'getJobs':
-      return { type: q.type, jobs: [] };
+      return { type: q.type, jobs: ctx.jobs?.() ?? [] };
     case 'getRenderQueue':
       return { type: q.type, items: documentSnapshot(ctx.revision, '', false, false, false).renderQueue };
     case 'getCommandLog':

@@ -17,6 +17,10 @@ void apply_comp_fields(Document& d, const std::string& comp, const Json& fields,
 /// comps.ts `setWorkArea(comp, start, duration)` (flicks).
 void set_work_area(Document& d, const std::string& comp, api::Time start, api::Time duration);
 
+/// B4 round 5 `checkPrecompose`: why `precompose` would refuse Leave All Attributes for `layers` of `host`
+/// (precompose.ts leaveAttributesUnavailableReason, message for message); '' when it would not.
+[[nodiscard]] std::string precompose_leave_reason(const Document& d, const std::string& host, const std::vector<std::string>& layers);
+
 ResultOf<api::CreateComposition> handle(const api::CreateComposition& c, HCtx& x);
 ResultOf<api::DuplicateComposition> handle(const api::DuplicateComposition& c, HCtx& x);
 ResultOf<api::SetCompositionSettings> handle(const api::SetCompositionSettings& c, HCtx& x);

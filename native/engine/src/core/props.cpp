@@ -571,7 +571,8 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
           {"effects", "Effects"},     {"transform", "Transform"},        {"styles", "Layer Styles"},
           {"camera", "Camera Options"}, {"light", "Light Options"},      {"geometry", "Geometry Options"},
           {"material", "Material Options"}, {"audio", "Audio"},          {"paint", "Paint"},
-          {"layer", "Layer"},         {"timeRemap", "Time Remap"},       {"plugin", "Plugin"}};
+          {"layer", "Layer"},         {"timeRemap", "Time Remap"},       {"plugin", "Plugin"},
+          {"model", "Model"}};
       g.name = seg[0];
       for (const auto& [k, v] : kRootNames) {
         if (k == seg[0]) g.name = std::string(v);
@@ -1680,6 +1681,57 @@ api::Value read_static(const Document& d, std::string_view layer, const PropBind
     }
   }
   return vector_value(b.valueType, nums);
+}
+
+std::optional<bool> is_stored_static(const Document& d, std::string_view layer, const PropBinding& b) {
+  const Node& n = node_of(d, layer);
+  const auto maskPath = [&]() -> std::optional<Json> {
+    const auto mask = read_node_mask(n);
+    const Json* p = mask ? mask_path_by_id(*mask, *b.maskId) : nullptr;
+    return p != nullptr ? std::optional<Json>(*p) : std::nullopt;
+  };
+  switch (b.special) {
+    case Special::sourceText: {
+      const Component* t = text_component(n);
+      return t != nullptr && t->props.at("content").is_string();
+    }
+    case Special::maskPath: return maskPath().has_value();
+    case Special::maskMode: {
+      const auto p = maskPath();
+      return p && !p->at("mode").is_undefined() && !p->at("mode").is_null();
+    }
+    case Special::maskInverted: {
+      const auto p = maskPath();
+      return p && p->at("inverted").is_bool();
+    }
+    case Special::maskRotoBezier: {
+      const auto p = maskPath();
+      return p && p->at("rotoBezier").is_bool();
+    }
+    case Special::shapePath: {
+      const Component* g = n.comp("Geometry");
+      return g != nullptr && as_points(g->props.at("points")) != nullptr;
+    }
+    case Special::effectParam: {
+      const std::vector<Json> effects = read_node_effects(n);
+      const Json* e = find_by_id(effects, *b.effectId);
+      return e != nullptr && !params_of(*e).at(*b.paramKey).is_undefined();
+    }
+    case Special::field:
+    case Special::layerFill:
+      return field_stored(n, b);
+    case Special::rig: return std::nullopt;
+    case Special::fillStops: {
+      const Json& fill = n.fx().at("fill");
+      const Json& type = fill.is_object() ? fill.at("type") : Json::null();
+      return type.is_string() && (type.str() == "linear" || type.str() == "radial");
+    }
+    case Special::none: break;
+  }
+  if (b.colorBase && read_color_base(n, *b.colorBase)) return true;
+  if (b.members.empty()) return std::nullopt;
+  return std::any_of(b.members.begin(), b.members.end(),
+                     [&](const std::string& m) { return read_static_property_value(d, layer, m).has_value(); });
 }
 
 void write_static(Document& d, std::string_view layer, const PropBinding& b, const api::Value& value) {

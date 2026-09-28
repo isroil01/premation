@@ -36,6 +36,11 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
   getMemberKeyframes: (x) => ({ type: 'getMemberKeyframes', layer: x.B, members: [] }),
   copyEffects: (x) => ({ type: 'copyEffects', layer: x.A, effects: [] }),
   getSearchFacts: (x) => ({ type: 'getSearchFacts', layers: [x.A] }),
+  getDocumentColors: () => ({ type: 'getDocumentColors', limit: 0 }),
+  getCaptionCues: (x) => ({ type: 'getCaptionCues', comp: x.comp }),
+  mapLayerTime: (x) => ({ type: 'mapLayerTime', layer: x.A, time: sec(1), outward: false }),
+  getSourceSize: (x) => ({ type: 'getSourceSize', layers: [x.A, x.V] }),
+  checkPrecompose: (x) => ({ type: 'checkPrecompose', comp: x.comp, layers: [x.A] }),
   getWaveform: (x) => ({ type: 'getWaveform', layer: x.V, range: { start: 0, duration: sec(1) }, buckets: 10 }),
   listFonts: () => ({ type: 'listFonts', query: '' }),
   getItems: (x) => ({ type: 'getItems', items: [x.footage, x.comp2, x.folder] }),
@@ -51,6 +56,7 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
   getLayerBounds: (x) => ({ type: 'getLayerBounds', layers: [x.A], time: 0, space: 'comp', includeEffects: false }),
   getLayerTransforms: (x) => ({ type: 'getLayerTransforms', layers: [x.B], time: sec(1) }),
   getTextLayout: (x) => ({ type: 'getTextLayout', layer: x.T, time: 0 }),
+  getRigPose: (x) => ({ type: 'getRigPose', layer: x.B, time: 0, points: [{ x: 1, y: 2 }] }),
   evaluateExpression: (x) => ({ type: 'evaluateExpression', prop: { layer: x.A, path: 'transform/rotation' }, time: sec(2), source: 'time * 10' }),
   readPixels: () => ({ type: 'readPixels', viewport: 1, region: { x: 0, y: 0, width: 1, height: 1 } }),
   findLayers: (x) => ({ type: 'findLayers', comp: x.comp, name: '', kinds: ['solid'], effect: 'glow' }),
@@ -67,7 +73,8 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
 
 test('every query in the schema has a case', () => {
   expect(Object.keys(QUERIES).sort()).toEqual(Object.keys(CASES).sort());
-  expect(Object.keys(QUERIES)).toHaveLength(42);
+  // 42 + the five B4 round 5 item-fact queries (getDocumentColors … checkPrecompose) + getRigPose (B4 round 5, the rig).
+  expect(Object.keys(QUERIES)).toHaveLength(48);
 });
 
 test('capturePreset: keys rebased to 0 and out of pixels against the layer\'s comp; effects renumbered; empty layers say so', async () => {

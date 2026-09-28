@@ -9,7 +9,10 @@
  * the C++ engine draws it, they arrive with the frame instead.
  */
 
-import type { OverlayKind, OverlayLayerGeometry } from '@motion/engine-api';
+import type { OverlayKind, OverlayLayerGeometry, OverlayRequest, OverlayView } from '@motion/engine-api';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { scene3dOf, viewOf } from './overlayScene3d';
+import { overlayRigOptions, rigOverlayOf } from './rigOverlay';
 import { defaultAnimation, effectiveSpatialTangents } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { compSizeOf } from '@core/composition/compSizes';
@@ -37,6 +40,47 @@ export function setOverlaySubscription(viewport: number, layers: ReadonlyArray<s
 /** The viewport's subscription, or undefined. */
 export function overlaySubscription(viewport: number): { layers: readonly string[]; kinds: ReadonlySet<OverlayKind> } | undefined {
   return subscriptions.get(viewport);
+}
+
+// ── B4 round 5: per-overlay groups and the view cameras (setOverlayGeometry `groups` / `views`) ──
+
+interface GroupsAndViews {
+  groups: Array<{ layers: string[]; kinds: ReadonlySet<OverlayKind> }>;
+  views: string[];
+}
+const groupsAndViews = new Map<number, GroupsAndViews>();
+
+/** `setOverlayGeometry`'s `groups` and `views` (replaced with the rest of the subscription; none = cleared). */
+export function setOverlayGroupsAndViews(viewport: number, groups: ReadonlyArray<OverlayRequest>, views: ReadonlyArray<string>): void {
+  const gs = groups.filter((g) => g.layers.length > 0 && g.kinds.length > 0).map((g) => ({ layers: [...g.layers], kinds: new Set(g.kinds) }));
+  if (gs.length === 0 && views.length === 0) groupsAndViews.delete(viewport);
+  else groupsAndViews.set(viewport, { groups: gs, views: [...views] });
+}
+
+/**
+ * Each subscribed layer with the kinds it gets, in order: `layers` (× `kinds`)
+ * first, then each group's layers not listed yet — a layer named by several
+ * gets the union of their kinds.
+ */
+export function subscribedLayerKinds(viewport: number): Array<[string, Set<OverlayKind>]> {
+  const out = new Map<string, Set<OverlayKind>>();
+  const add = (id: string, kinds: ReadonlySet<OverlayKind>): void => {
+    let cur = out.get(id);
+    if (!cur) out.set(id, (cur = new Set()));
+    for (const k of kinds) cur.add(k);
+  };
+  const sub = subscriptions.get(viewport);
+  if (sub) for (const id of sub.layers) add(id, sub.kinds);
+  for (const g of groupsAndViews.get(viewport)?.groups ?? []) for (const id of g.layers) add(id, g.kinds);
+  return [...out];
+}
+
+/** The viewport's subscribed views' cameras at comp `seconds`, in subscription order (resolved in the active tab's composition). */
+export function overlayViewsAt(viewport: number, seconds: number): OverlayView[] {
+  const views = groupsAndViews.get(viewport)?.views ?? [];
+  if (views.length === 0) return [];
+  const comp = activeCompRootId();
+  return views.map((mode) => viewOf(mode, comp, seconds));
 }
 
 /** At most this many points on a motion path (the frame channel's cap; overlay_geometry.hpp kOverlayPathPoints). */
@@ -151,17 +195,24 @@ function emptyRecord(layer: string): OverlayLayerGeometry {
 
 /** The viewport's subscribed geometry at comp time `seconds`, in subscription order (the C++ producer's twin). */
 export function overlayGeometryAt(viewport: number, seconds: number): OverlayLayerGeometry[] {
-  const sub = subscriptions.get(viewport);
-  if (!sub) return [];
   const out: OverlayLayerGeometry[] = [];
-  for (const id of sub.layers) {
+  // B4 round 5: each layer with ITS kinds (the `layers` × `kinds` list, then the groups).
+  for (const [id, kinds] of subscribedLayerKinds(viewport)) {
     if (!isLayer(id)) continue;
     const g = emptyRecord(id);
-    if (sub.kinds.has('transform')) g.matrix = matrixOf(id, seconds);
-    if (sub.kinds.has('bounds')) boundsOf(id, seconds, g);
-    if (sub.kinds.has('motionPath')) motionPathOf(id, seconds, g);
-    if (sub.kinds.has('textBox')) textBoxOf(id, seconds, g);
-    // rig (pins / bones): not produced yet in either engine.
+    if (kinds.has('transform')) g.matrix = matrixOf(id, seconds);
+    if (kinds.has('bounds')) boundsOf(id, seconds, g);
+    if (kinds.has('motionPath')) motionPathOf(id, seconds, g);
+    if (kinds.has('textBox')) textBoxOf(id, seconds, g);
+    // B4 round 5: the puppet pins / skeleton (rigOverlay.ts; the C++ twin is scene/rig_overlay.cpp).
+    if (kinds.has('rig')) {
+      const rig = rigOverlayOf(id, seconds, overlayRigOptions(viewport));
+      if (rig) g.rig = rig;
+    }
+    if (kinds.has('scene3d')) {
+      const scene = scene3dOf(id, seconds);
+      if (scene) g.scene = scene;
+    }
     out.push(g);
   }
   return out;

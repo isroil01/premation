@@ -119,6 +119,8 @@ struct RestMesh {
   std::unordered_map<std::string, std::vector<float>> weights;
   std::vector<std::string> keys;
   std::unordered_map<std::string, std::size_t> pinVertex;
+  /// DeformedMesh.layout: true = 'outline' (a traced silhouette / alpha outline), false = 'grid'.
+  bool outline = false;
 
   [[nodiscard]] std::size_t n() const noexcept { return v.size() / 4; }
   [[nodiscard]] const std::vector<float>* col(const std::string& id) const {
@@ -407,11 +409,16 @@ std::optional<RestMesh> build_rest_mesh(double width, double height, double pad,
   const bool haveCoverage = coverage != nullptr && coverage->cols > 0 && coverage->rows > 0 && !coverage->cells.empty();
   if (rig.silhouette) {
     if (silhouette && silhouette->size() >= 3) {
-      if (auto built = build_silhouette_mesh(width, height, pad, rig, *silhouette)) return built;
+      if (auto built = build_silhouette_mesh(width, height, pad, rig, *silhouette)) {
+        built->outline = true;
+        return built;
+      }
     } else if (haveCoverage) {
       // An image layer: its alpha traced, simplified, expanded and Delaunay-filled.
       if (auto geom = rig::build_alpha_outline_geometry(width, height, pad, density, expansion, *coverage)) {
-        return finish_rest_mesh(std::move(geom->vertices), std::move(geom->triangles), geom->numVertices, rig.pins);
+        RestMesh m = finish_rest_mesh(std::move(geom->vertices), std::move(geom->triangles), geom->numVertices, rig.pins);
+        m.outline = true;
+        return m;
       }
     }
   }
@@ -2103,6 +2110,421 @@ RigResult build_rig_mesh(const RigInputs& in, const RigSampler& anim) {
   out.depth = std::move(overlapDepth);
   res.mesh = std::move(out);
   return res;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// B4 round 5 — the rig as the overlays see it (src/core/engine/rigOverlay.ts)
+// ═══════════════════════════════════════════════════════════════════════════
+
+namespace {
+
+/// clampWeights (skinning.ts): drop ≤ epsilon, strongest first (ties by id), at most 4, scaled down only above 1.
+std::vector<VertexWeight> clamp_weights(std::vector<VertexWeight> weights, std::size_t maxInfluences = 4, double epsilon = 1e-4) {
+  std::vector<VertexWeight> kept;
+  for (VertexWeight& w : weights) {
+    if (w.weight > epsilon) kept.push_back(std::move(w));
+  }
+  std::ranges::stable_sort(kept, [](const VertexWeight& a, const VertexWeight& b) {
+    if (a.weight != b.weight) return b.weight - a.weight < 0;
+    return a.boneId < b.boneId;
+  });
+  if (kept.size() > maxInfluences) kept.resize(maxInfluences);
+  double sum = 0;
+  for (const VertexWeight& w : kept) sum = sum + w.weight;
+  if (sum == 0) return {};
+  if (sum <= 1) return kept;
+  for (VertexWeight& w : kept) w.weight = w.weight / sum;
+  return kept;
+}
+
+/// weightsAtPoint (geodesicWeights.ts): on the mesh the containing triangle's vertex weights
+/// interpolated barycentrically; off it the Euclidean partition with the binding's seam band.
+std::vector<VertexWeight> weights_at_point(const RestMesh& mesh, const std::vector<std::vector<VertexWeight>>& weights, V2 p,
+                                           const std::vector<Segment>& segments, double band) {
+  const std::vector<float>& verts = mesh.v;
+  const std::vector<std::uint16_t>& tris = mesh.tris;
+  static const std::vector<VertexWeight> kNone;
+  const auto at = [&](std::size_t i) -> const std::vector<VertexWeight>& { return i < weights.size() ? weights[i] : kNone; };
+  for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+    const std::size_t a = tris[t];
+    const std::size_t b = tris[t + 1];
+    const std::size_t c = tris[t + 2];
+    const double ax = verts[a * 4 + 0];
+    const double ay = verts[a * 4 + 1];
+    const double bx = verts[b * 4 + 0];
+    const double by = verts[b * 4 + 1];
+    const double cx = verts[c * 4 + 0];
+    const double cy = verts[c * 4 + 1];
+    const double det = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+    if (std::abs(det) < 1e-12) continue;
+    const double wa = ((bx - p.x) * (cy - p.y) - (cx - p.x) * (by - p.y)) / det;
+    const double wb = ((cx - p.x) * (ay - p.y) - (ax - p.x) * (cy - p.y)) / det;
+    const double wc = 1 - wa - wb;
+    constexpr double kEps = -1e-6;
+    if (wa >= kEps && wb >= kEps && wc >= kEps) {
+      // The Map accumulation (insertion order), then sorted by id.
+      std::vector<VertexWeight> acc;
+      const auto add = [&acc](const std::vector<VertexWeight>& list, double f) {
+        if (f <= 0) return;
+        for (const VertexWeight& w : list) {
+          const auto it = std::ranges::find_if(acc, [&](const VertexWeight& x) { return x.boneId == w.boneId; });
+          if (it != acc.end()) it->weight = it->weight + w.weight * f;
+          else acc.push_back({w.boneId, w.weight * f});
+        }
+      };
+      add(at(a), jmax(0, wa));
+      add(at(b), jmax(0, wb));
+      add(at(c), jmax(0, wc));
+      std::ranges::stable_sort(acc, [](const VertexWeight& x, const VertexWeight& y) { return x.boneId < y.boneId; });
+      return clamp_weights(std::move(acc));
+    }
+  }
+  std::vector<double> dist;
+  dist.reserve(segments.size());
+  for (const Segment& s : segments) dist.push_back(distance_to_segment(p, s.a, s.b));
+  return partition_weights(dist, segments, band);
+}
+
+/// restPointFromDeformed (puppet.ts): the rest point under `p` through the deformed mesh.
+std::optional<V2> rest_point_from_deformed(V2 p, const RestMesh& rest, const std::vector<float>& deformed) {
+  const std::vector<std::uint16_t>& tris = rest.tris;
+  constexpr double kEps = -1e-4;
+  for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+    const std::size_t a = tris[t];
+    const std::size_t b = tris[t + 1];
+    const std::size_t c = tris[t + 2];
+    const double ax = deformed[a * 4];
+    const double ay = deformed[a * 4 + 1];
+    const double bx = deformed[b * 4];
+    const double by = deformed[b * 4 + 1];
+    const double cx = deformed[c * 4];
+    const double cy = deformed[c * 4 + 1];
+    const double det = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+    if (std::abs(det) < 1e-12) continue;
+    const double u = ((bx - p.x) * (cy - p.y) - (cx - p.x) * (by - p.y)) / det;
+    const double v = ((cx - p.x) * (ay - p.y) - (ax - p.x) * (cy - p.y)) / det;
+    const double w = 1 - u - v;
+    if (u < kEps || v < kEps || w < kEps) continue;
+    const std::vector<float>& r = rest.v;
+    return V2{u * r[a * 4] + v * r[b * 4] + w * r[c * 4], u * r[a * 4 + 1] + v * r[b * 4 + 1] + w * r[c * 4 + 1]};
+  }
+  return std::nullopt;
+}
+
+/// Every stored IK goal with resolveIkTargets' sampling and chainModeOf's mode (enabled or not).
+std::vector<RigIkOut> resolve_ik_goals(const Json& skel, double t, const RigSampler& anim) {
+  std::vector<RigIkOut> out;
+  const Json& list = skel.at("ikTargets");
+  if (!list.is_array()) return out;
+  const auto num = [](const std::optional<double>& v) { return v && std::isfinite(*v); };
+  for (const Json& tg : list.arr()) {
+    const std::string boneId = jkey(tg.at("boneId"));
+    const auto liveX = anim.sample("ikTarget." + boneId + ".x", t);
+    const auto liveY = anim.sample("ikTarget." + boneId + ".y", t);
+    const auto poleX = anim.sample("ikPole." + boneId + ".x", t);
+    const auto poleY = anim.sample("ikPole." + boneId + ".y", t);
+    RigIkOut r;
+    r.bone = boneId;
+    r.enabled = !(tg.at("enabled").is_bool() && !tg.at("enabled").b());
+    r.x = num(liveX) ? *liveX : jn(tg.at("x"));
+    r.y = num(liveY) ? *liveY : jn(tg.at("y"));
+    r.chainLength = jopt(tg.at("chainLength"));
+    const Json& storedPole = tg.at("pole");
+    if (num(poleX) || num(poleY)) {
+      r.pole = std::array<double, 2>{num(poleX) ? *poleX : (storedPole.at("x").is_number() ? storedPole.at("x").num() : 0),
+                                     num(poleY) ? *poleY : (storedPole.at("y").is_number() ? storedPole.at("y").num() : 0)};
+    } else if (storedPole.is_object()) {
+      r.pole = std::array<double, 2>{jn(storedPole.at("x")), jn(storedPole.at("y"))};
+    }
+    const auto sampled = anim.sample("ikMode." + boneId, t);
+    if (sampled && std::isfinite(*sampled)) r.mode = *sampled >= 0.5 ? "ik" : "fk";
+    else if (tg.at("ikMode").is_string()) r.mode = tg.at("ikMode").str();
+    else r.mode = "ik";
+    out.push_back(std::move(r));
+  }
+  return out;
+}
+
+}  // namespace
+
+struct RigModel::Impl {
+  RestMesh rest;
+  std::vector<float> puppetDeformed;
+  bool skinned = false;
+  WorldMap poseWorld;
+  WorldMap bindInverse;
+  std::vector<std::vector<VertexWeight>> weights;
+  std::vector<Segment> segments;
+  double band = 1e-6;
+
+  /// blendedMatrix (rigDeform.ts): Σ wᵢ·(poseᵢ·bindInvᵢ); a partial total spends the rest on the identity.
+  [[nodiscard]] std::optional<Mat2D> blended(const std::vector<VertexWeight>& ws) const {
+    double a = 0, b = 0, c = 0, d = 0, e = 0, f = 0, total = 0;
+    for (const VertexWeight& w : ws) {
+      if (w.weight == 0) continue;
+      const auto pose = poseWorld.find(w.boneId);
+      const auto bind = bindInverse.find(w.boneId);
+      if (pose == poseWorld.end() || bind == bindInverse.end()) continue;
+      const Mat2D m = mul(pose->second, bind->second);
+      a += m[0] * w.weight;
+      b += m[1] * w.weight;
+      c += m[2] * w.weight;
+      d += m[3] * w.weight;
+      e += m[4] * w.weight;
+      f += m[5] * w.weight;
+      total += w.weight;
+    }
+    if (total == 0) return std::nullopt;
+    if (total >= 1 - 1e-6) return Mat2D{a / total, b / total, c / total, d / total, e / total, f / total};
+    const double spare = 1 - total;
+    return Mat2D{a + spare, b, c, d + spare, e, f};
+  }
+  [[nodiscard]] V2 skin(V2 p) const {
+    if (!skinned) return p;
+    const auto m = blended(weights_at_point(rest, weights, p, segments, band));
+    return m ? apply(*m, p.x, p.y) : p;
+  }
+};
+
+RigModel::RigModel(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+RigModel::RigModel(RigModel&&) noexcept = default;
+RigModel& RigModel::operator=(RigModel&&) noexcept = default;
+RigModel::~RigModel() = default;
+
+const std::vector<float>& RigModel::rest() const noexcept { return impl_->rest.v; }
+const std::vector<std::uint16_t>& RigModel::triangles() const noexcept { return impl_->rest.tris; }
+
+std::vector<std::uint32_t> RigModel::lattice_edges() const {
+  const std::vector<float>& r = impl_->rest.v;
+  const std::vector<std::uint16_t>& tris = impl_->rest.tris;
+  const auto edges = [&](bool boxesOnly) {
+    std::set<std::uint32_t> seen;
+    std::vector<std::uint32_t> out;
+    for (std::size_t i = 0; i + 2 < tris.size(); i += 3) {
+      const std::array<std::uint32_t, 3> tri{tris[i], tris[i + 1], tris[i + 2]};
+      for (std::size_t e = 0; e < 3; ++e) {
+        std::uint32_t a = tri[e];
+        std::uint32_t b = tri[(e + 1) % 3];
+        if (a > b) std::swap(a, b);
+        if (!seen.insert(a * 65536U + b).second) continue;
+        if (boxesOnly) {
+          const double ax = r[a * 4];
+          const double ay = r[a * 4 + 1];
+          const double bx = r[b * 4];
+          const double by = r[b * 4 + 1];
+          if (std::abs(ax - bx) > 1e-3 && std::abs(ay - by) > 1e-3) continue;
+        }
+        out.push_back(a);
+        out.push_back(b);
+      }
+    }
+    return out;
+  };
+  // A grid mesh draws boxes; an outline mesh (or a grid the box filter empties) every unique edge.
+  std::vector<std::uint32_t> boxes = impl_->rest.outline ? std::vector<std::uint32_t>{} : edges(true);
+  return boxes.empty() ? edges(false) : boxes;
+}
+
+std::vector<double> RigModel::bone_weights(std::string_view bone) const {
+  std::vector<double> out;
+  if (!impl_->skinned) return out;
+  const std::size_t n = impl_->rest.n();
+  out.reserve(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    double w = 0;
+    if (i < impl_->weights.size()) {
+      for (const VertexWeight& vw : impl_->weights[i]) {
+        if (vw.boneId == bone) {
+          w = vw.weight;
+          break;
+        }
+      }
+    }
+    out.push_back(w);
+  }
+  return out;
+}
+
+std::vector<std::pair<std::string, double>> RigModel::vertex_weights(std::size_t v) const {
+  std::vector<std::pair<std::string, double>> out;
+  if (!impl_->skinned || v >= impl_->rest.n() || v >= impl_->weights.size()) return out;
+  for (const VertexWeight& w : impl_->weights[v]) out.emplace_back(w.boneId, w.weight);
+  std::ranges::stable_sort(out, [](const auto& a, const auto& b) { return b.second - a.second < 0; });
+  return out;
+}
+
+std::array<double, 2> RigModel::skin(double x, double y) const {
+  const V2 p = impl_->skin(V2{x, y});
+  return {p.x, p.y};
+}
+
+std::array<double, 2> RigModel::unskin(double x, double y) const {
+  if (!impl_->skinned) return {x, y};
+  // unskinPoint: a fixed-count fixed point (UNSKIN_ITERATIONS = 12) — weight at the guess, invert, re-map.
+  V2 guess{x, y};
+  for (int i = 0; i < 12; ++i) {
+    const auto m = impl_->blended(weights_at_point(impl_->rest, impl_->weights, guess, impl_->segments, impl_->band));
+    if (!m) return {guess.x, guess.y};
+    guess = apply(invert(*m), x, y);
+  }
+  return {guess.x, guess.y};
+}
+
+std::optional<std::array<double, 2>> RigModel::rest_from_deformed(double x, double y) const {
+  const auto r = rest_point_from_deformed(V2{x, y}, impl_->rest, impl_->puppetDeformed);
+  if (!r) return std::nullopt;
+  return std::array<double, 2>{r->x, r->y};
+}
+
+std::optional<RigModel> build_rig_model(const RigInputs& in, const RigSampler& anim, bool authoring, bool previewSilhouette,
+                                        std::vector<std::string>& unported) {
+  const Json& fx = *in.fx;
+  const Json& puppet = fx.at("puppet");
+  const Json& skel = fx.at("skeleton");
+  const bool hasPuppetRig = puppet.is_object();
+  const bool hasPins = hasPuppetRig && puppet.at("pins").is_array() && !puppet.at("pins").arr().empty();
+  const bool hasSkel = skel.is_object() && skel.at("bones").is_array() && !skel.at("bones").arr().empty();
+  if (!authoring && !hasPins && !hasSkel) return std::nullopt;
+
+  // nodeRestMesh's mesh rig: the puppet's with pins; the authoring preview (or a pinless puppet
+  // record) with the puppet's settings over the skeleton's density; else the skeleton's own.
+  MeshRig rig;
+  if (hasPins) {
+    for (const Json& p : puppet.at("pins").arr()) rig.pins.push_back(read_pin(p));
+    rig.density = puppet.at("meshDensity");
+    rig.expansion = puppet.at("meshExpansion");
+    rig.silhouette = puppet.at("meshMode").is_string() && puppet.at("meshMode").str() == "silhouette";
+  } else if (authoring || hasPuppetRig) {
+    const Json& pd = hasPuppetRig ? puppet.at("meshDensity") : Json();
+    rig.density = !pd.is_undefined() && !pd.is_null() ? pd : (skel.is_object() ? skel.at("meshDensity") : Json());
+    const Json& pe = hasPuppetRig ? puppet.at("meshExpansion") : Json();
+    rig.expansion = !pe.is_undefined() && !pe.is_null() ? pe : Json::number(0);
+    const Json& pm = hasPuppetRig ? puppet.at("meshMode") : Json();
+    rig.silhouette = pm.is_string() ? pm.str() == "silhouette" : previewSilhouette;
+  } else {
+    rig.density = skel.at("meshDensity");
+    rig.expansion = skel.at("meshExpansion");
+    rig.silhouette = skel.at("meshMode").is_string() && skel.at("meshMode").str() == "silhouette";
+  }
+  double density = 22;
+  if (rig.density.is_number()) density = rig.density.num();
+  else if (!rig.density.is_undefined() && !rig.density.is_null()) unported.emplace_back("non-numeric rig mesh density");
+  double expansion = 0;
+  if (rig.expansion.is_number()) expansion = rig.expansion.num();
+  else if (!rig.expansion.is_undefined() && !rig.expansion.is_null()) unported.emplace_back("non-numeric rig mesh expansion");
+  if (!unported.empty()) return std::nullopt;
+  const double gridD = jmax(2, jmin(50, density));
+  const std::optional<int> cells = std::floor(gridD) == gridD ? std::optional<int>(static_cast<int>(gridD)) : std::nullopt;
+  std::optional<std::vector<V2>> silhouette;
+  if (!in.pathOpen && in.pathPoints != nullptr && in.pathPoints->is_array() && in.pathPoints->arr().size() >= 3) {
+    std::vector<V2> pts;
+    for (const Json& p : in.pathPoints->arr()) pts.push_back({jn(p.at("x")), jn(p.at("y"))});
+    silhouette = std::move(pts);
+  }
+  std::optional<RestMesh> built = build_rest_mesh(in.width, in.height, in.pad, rig, silhouette, cells, expansion, density, in.coverage);
+  if (!built) {
+    unported.emplace_back("fractional rig mesh density (grid mesh)");
+    return std::nullopt;
+  }
+
+  auto impl = std::make_unique<RigModel::Impl>();
+  impl->rest = std::move(*built);
+  const RestMesh& rest = impl->rest;
+  std::vector<DeformPin> live;
+  if (hasPins) {
+    live = resolve_live_pins(rig.pins, in.rigT, anim);
+    const bool lbs = puppet.at("solver").is_string() && puppet.at("solver").str() == "lbs";
+    impl->puppetDeformed = deform(live, rest, lbs, jopt(puppet.at("maxRotationDeg")));
+  } else {
+    impl->puppetDeformed = rest.v;
+  }
+
+  std::vector<RigBoneOut> bonesOut;
+  std::vector<RigIkOut> ikOut;
+  std::vector<float> vertices = impl->puppetDeformed;
+  if (hasSkel) {
+    const Skeleton sk = read_skeleton(skel);
+    const std::vector<Bone> animated = resolve_live_bones(sk.bones, in.rigT, anim);
+    ikOut = resolve_ik_goals(skel, in.rigT, anim);
+    std::vector<IkTarget> active;
+    for (const RigIkOut& g : ikOut) {
+      if (!g.enabled || g.mode != "ik") continue;
+      IkTarget t;
+      t.boneId = g.bone;
+      t.x = g.x;
+      t.y = g.y;
+      t.chainLength = g.chainLength;
+      if (g.pole) t.pole = V2{(*g.pole)[0], (*g.pole)[1]};
+      active.push_back(std::move(t));
+    }
+    const std::vector<Bone> posed = apply_ik(animated, active);
+    impl->poseWorld = compute_world(posed);
+    const WorldMap bindWorld = compute_world(sk.bind);
+    for (const auto& [id, m] : bindWorld) impl->bindInverse[id] = invert(m);
+    for (const Bone& b : sk.bind) {
+      const auto it = bindWorld.find(b.id);
+      if (it == bindWorld.end()) continue;
+      impl->segments.push_back({b.id, bone_root(it->second), bone_tip(it->second, b.length), b.influenceRadius});
+    }
+    impl->weights = geodesic_auto_weights(rest, impl->segments);
+    impl->band = seam_band(build_edge_graph(rest).meanEdge, impl->segments);
+    if (sk.weightPaint != nullptr) {
+      const Json& vc = sk.weightPaint->at("vertexCount");
+      const bool matches = vc.is_number() && vc.num() == static_cast<double>(rest.n());
+      if (matches && sk.weightPaint->at("bones").is_object()) {
+        for (std::size_t i = 0; i < impl->weights.size(); ++i) impl->weights[i] = apply_weight_paint(impl->weights[i], i, sk.weightPaint->at("bones"));
+      } else if (matches) {
+        unported.emplace_back("skeleton weight paint without a bones map");
+        return std::nullopt;
+      }
+    }
+    impl->skinned = true;
+    vertices = skin_rig_vertices(impl->weights, impl->poseWorld, impl->bindInverse, impl->puppetDeformed);
+    for (std::size_t i = 0; i < sk.bones.size(); ++i) {
+      RigBoneOut o;
+      o.id = sk.bones[i].id;
+      o.x = animated[i].x;
+      o.y = animated[i].y;
+      o.rotation = animated[i].rotation;
+      o.scaleX = animated[i].scaleX.value_or(1);
+      o.scaleY = animated[i].scaleY.value_or(1);
+      o.posedX = posed[i].x;
+      o.posedY = posed[i].y;
+      o.posedRotation = posed[i].rotation;
+      if (const auto it = impl->poseWorld.find(o.id); it != impl->poseWorld.end()) o.world = it->second;
+      bonesOut.push_back(std::move(o));
+    }
+  }
+
+  std::vector<RigPinOut> pinsOut;
+  for (std::size_t i = 0; i < rig.pins.size() && i < live.size(); ++i) {
+    const StoredPin& pin = rig.pins[i];
+    RigPinOut o;
+    o.id = pin.id;
+    o.kind = pin.kind.empty() ? "advanced" : pin.kind;
+    V2 c{live[i].x, live[i].y};
+    if (o.kind == "bend") {
+      // A bend pin sits wherever the other pins carried it: its solved mesh vertex.
+      if (const auto it = rest.pinVertex.find(pin.id); it != rest.pinVertex.end() && impl->puppetDeformed.size() >= it->second * 4 + 2) {
+        c = V2{impl->puppetDeformed[it->second * 4], impl->puppetDeformed[it->second * 4 + 1]};
+      }
+    }
+    const V2 drawn = impl->skin(c);
+    o.x = drawn.x;
+    o.y = drawn.y;
+    o.cx = c.x;
+    o.cy = c.y;
+    o.rotation = live[i].rotation.value_or(0);
+    o.scale = live[i].scale.value_or(1);
+    pinsOut.push_back(std::move(o));
+  }
+
+  RigModel model(std::move(impl));
+  model.pins = std::move(pinsOut);
+  model.bones = std::move(bonesOut);
+  model.ik = std::move(ikOut);
+  model.vertices = std::move(vertices);
+  return model;
 }
 
 }  // namespace premation::scene

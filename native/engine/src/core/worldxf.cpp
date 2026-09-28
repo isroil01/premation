@@ -258,6 +258,22 @@ motion::xf::Camera read_scene_camera(const SpaceCtx& c, double w, double h, doub
 
 }  // namespace
 
+std::optional<motion::xf::Mat4> parent_world_at(const SpaceCtx& c, std::string_view node, double seconds) {
+  return parent_world_matrix_at(c, node, seconds);
+}
+
+motion::xf::Vec3 world_point_at(const SpaceCtx& c, std::string_view node, double seconds, motion::xf::Vec3 p) {
+  return to_world_point_at(c, node, seconds, p);
+}
+
+std::optional<motion::xf::Mat4> node_world_3d_at(const SpaceCtx& c, const Node& n, double seconds) {
+  return node_world_with_parents_3d(c, n, seconds);
+}
+
+motion::xf::Camera camera_at(const SpaceCtx& c, const Node& n, double w, double h, double seconds) {
+  return camera_from_node(c, n, w, h, seconds);
+}
+
 std::optional<motion::xf::Mat4> world_3d_at(const SpaceCtx& c, std::string_view node, double seconds, double compWidth,
                                             double compHeight) {
   const Node* n = c.d.node(node);

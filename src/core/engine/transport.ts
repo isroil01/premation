@@ -10,7 +10,8 @@
  * then — §6 last paragraph).
  */
 
-import { setOverlaySubscription } from './overlayGeometry';
+import { setOverlayGroupsAndViews, setOverlaySubscription } from './overlayGeometry';
+import { setOverlayRigOptions } from './rigOverlay';
 import type { Command, Event, TimeRange, LoopMode, TransportState } from '@motion/engine-api';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore } from '@stores/projectStore';
@@ -148,6 +149,8 @@ export class Transport {
       case 'setOverlayGeometry':
         // B4 round 2: the page's renderer asks for the records per painted frame (overlayGeometry.ts).
         setOverlaySubscription(cmd.viewport, cmd.layers, cmd.kinds);
+        setOverlayGroupsAndViews(cmd.viewport, cmd.groups ?? [], cmd.views ?? []);
+        setOverlayRigOptions(cmd.viewport, cmd.rig);
         return {};
       default:
         return fail('unsupported', `control '${cmd.type}' is not implemented`);

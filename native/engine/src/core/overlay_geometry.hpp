@@ -10,7 +10,9 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "engine_api.hpp"
@@ -27,9 +29,36 @@ struct OverlaySubscription {
   std::uint32_t viewport = 0;
   std::vector<std::string> layers;
   std::vector<api::OverlayKind> kinds;
-  [[nodiscard]] bool active() const noexcept { return !layers.empty() && !kinds.empty(); }
+  /// B4 round 5: per-overlay layer × kind requests (a layer gets the union of the kinds naming it).
+  std::vector<api::OverlayRequest> groups;
+  /// B4 round 5: the view modes whose cameras each frame carries (FrameGeometry.views).
+  std::vector<std::string> views;
+  /// B4 round 5: the rig overlay's focus (setOverlayGeometry `rig`; the records are filled by Session through RigQueries).
+  std::optional<api::OverlayRigOptions> rig;
+  [[nodiscard]] bool active() const noexcept {
+    if (!layers.empty() && !kinds.empty()) return true;
+    if (!views.empty()) return true;
+    for (const api::OverlayRequest& g : groups) {
+      if (!g.layers.empty() && !g.kinds.empty()) return true;
+    }
+    return false;
+  }
   [[nodiscard]] bool wants(api::OverlayKind k) const;
 };
+
+/// B4 round 5: each subscribed layer with the kinds it gets, in order — `layers` (× `kinds`) first, then each
+/// group's layers not listed yet (overlayGeometry.ts `subscribedLayerKinds`).
+[[nodiscard]] std::vector<std::pair<std::string, std::vector<api::OverlayKind>>> subscribed_layer_kinds(
+    const OverlaySubscription& sub);
+
+/// B4 round 5: the subscribed views' cameras at comp time `time` in composition `comp` (the viewport's), in
+/// subscription order (overlayScene3d.ts `viewOf`). No composition = none.
+[[nodiscard]] std::vector<api::OverlayView> overlay_views(const PCtx& pc, const OverlaySubscription& sub,
+                                                        const std::optional<std::string>& comp, api::Time time);
+
+/// B4 round 5: one layer's scene3d record at comp `seconds` (overlayScene3d.ts `scene3dOf`); nullopt when it is not a
+/// camera, a light or a 3D-enabled layer that can be 3D.
+[[nodiscard]] std::optional<api::OverlayScene3D> scene3d_of(const PCtx& pc, const std::string& layer, double seconds);
 
 /// At most this many points on a motion path (the frame channel's 4 KiB payload cap).
 inline constexpr std::uint32_t kOverlayPathPoints = 128;
@@ -46,8 +75,10 @@ inline constexpr std::uint32_t kOverlayPathPoints = 128;
 /// alone (a long motion path is thinned). `last` is set on the final message;
 /// an empty `layers` still yields one (empty, last) message so the host knows
 /// the frame had none.
+/// B4 round 5: `views` ride the first message.
 [[nodiscard]] std::vector<api::FrameGeometry> pack_frame_geometry(std::uint32_t viewport, std::uint32_t generation,
                                                                  std::int64_t frame, api::Time time, api::Revision revision,
-                                                                 std::vector<api::OverlayLayerGeometry> layers);
+                                                                 std::vector<api::OverlayLayerGeometry> layers,
+                                                                 std::vector<api::OverlayView> views = {});
 
 }  // namespace premation::doc

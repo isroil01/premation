@@ -73,6 +73,7 @@ import {
   lineOffsets,
   placeLinesInBox,
   readParagraphBox,
+  resolveAlignForDirection,
   softBreakLines as softBreakLinesOf,
 } from './textExtras';
 
@@ -985,6 +986,85 @@ export function measureTextBoxes(input: MeasuredTextStyle, strokeWidth = 0): Mea
 
   if (boxCache.size >= MAX_CACHE) boxCache.clear();
   boxCache.set(key, out);
+  return out;
+}
+
+/** One laid-out grapheme's box (getTextLayout.glyphs, B4 round 5): `measureTextBoxes`' space. */
+export interface MeasuredGlyph {
+  /** Grapheme index in the laid-out (wrapped) content. */
+  index: number;
+  line: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** The line's middle baseline y (`textBaseline: 'middle'`). */
+  baseline: number;
+}
+
+/**
+ * Per-grapheme boxes of a HORIZONTAL style, in `measureTextBoxes`' space (the
+ * layer origin; before the Character panel's scale and a Fit Text to Box
+ * scale): each line's graphemes in logical order, x by canvas prefix widths
+ * plus tracking from the line's pen start — the widest line's box (point text)
+ * or the paragraph box less its indents (paragraph text), placed by the
+ * resolved alignment (a justified line as its last-line alignment; a
+ * right-to-left `direction` mirrors it and the indents) — y / height the line's
+ * font band, baseline its middle baseline. The C++ twin is
+ * native/engine/src/scene/text_query.cpp `glyph_boxes`. Empty for vertical
+ * type; null without a canvas (jsdom).
+ */
+export function measureGlyphBoxes(input: MeasuredTextStyle, align: string | undefined, direction: 'ltr' | 'rtl'): MeasuredGlyph[] | null {
+  if (input.orientation === 'vertical') return [];
+  const g = measureCtx();
+  if (!g) return null;
+  const s = wrappedStyle(input);
+  g.font = cssFont(s);
+  applyFontVariations(g, s);
+  g.textBaseline = 'middle';
+  const lines = s.content.split('\n');
+  const n = lines.length;
+  const lineHeightPx = s.fontSize * (s.lineHeight || DEFAULT_LINE_HEIGHT);
+  const gap = lineHeightPx + s.paragraphSpacing;
+  const paraGap = (s.spaceBefore ?? 0) + (s.spaceAfter ?? 0);
+  const vert = paraGap !== 0 ? lineOffsets(hardEndsOf(n, s.softBreakLines), gap, s.spaceBefore, s.spaceAfter) : null;
+  const lineDy = (i: number): number => (vert ? -vert.total / 2 + vert.offsets[i]! : (i - (n - 1) / 2) * gap);
+  const measured = lines.map((line) => {
+    const m = g.measureText(line);
+    const chars = graphemeCount(line);
+    return { m, width: m.width + (chars > 0 ? (chars - 1) * s.letterSpacing : 0) + opticalLineDelta(s, line) };
+  });
+  const widest = measured.reduce((w, l) => Math.max(w, l.width), 0);
+  const rtl = direction === 'rtl';
+  let left = -widest / 2;
+  let right = widest / 2;
+  if (s.boxWidth) {
+    const k = s.fitScale && s.fitScale > 0 ? s.fitScale : 1;
+    const half = s.boxWidth / k / 2;
+    left = -half + ((rtl ? s.rightIndent : s.leftIndent) ?? 0);
+    right = half - ((rtl ? s.leftIndent : s.rightIndent) ?? 0);
+  }
+  const lineAlign = resolveAlignForDirection(align, direction).line;
+  const out: MeasuredGlyph[] = [];
+  let index = 0;
+  for (let i = 0; i < n; i++) {
+    const line = lines[i]!;
+    const { m, width } = measured[i]!;
+    const gs = splitGraphemes(line);
+    const dy = lineDy(i);
+    const asc = typeof m.fontBoundingBoxAscent === 'number' && Number.isFinite(m.fontBoundingBoxAscent) ? m.fontBoundingBoxAscent : lineHeightPx / 2;
+    const desc = typeof m.fontBoundingBoxDescent === 'number' && Number.isFinite(m.fontBoundingBoxDescent) ? m.fontBoundingBoxDescent : lineHeightPx / 2;
+    const start = lineAlign === 'left' ? left : lineAlign === 'right' ? right - width : (left + right) / 2 - width / 2;
+    let prefix = '';
+    let pen = 0;
+    for (let j = 0; j < gs.length; j++) {
+      prefix += gs[j]!;
+      const next = j === gs.length - 1 ? width : g.measureText(prefix).width + (j + 1) * s.letterSpacing;
+      out.push({ index: index + j, line: i, x: start + pen, y: dy - asc, width: next - pen, height: asc + desc, baseline: dy });
+      pen = next;
+    }
+    index += gs.length + 1;  // the line break
+  }
   return out;
 }
 

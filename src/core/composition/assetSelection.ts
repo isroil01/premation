@@ -18,7 +18,9 @@
  * user is looking at.
  */
 
-import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import type { ImportedAsset } from '@stores/assetStore';
+import { documentMirror } from '@stores/documentMirror';
+import { itemAssetsOf } from '@core/mirror/itemAssets';
 
 let selectedIds: readonly string[] = [];
 
@@ -35,19 +37,14 @@ export function panelAssetSelectionIds(): readonly string[] {
 /**
  * The selected assets that still exist, in panel row order.
  *
- * Filtered against the live library on every read rather than pruned on
+ * Filtered against the document's items on every read rather than pruned on
  * delete: the panel can unmount (a workspace switch, a pop-out window) while
  * its last published selection lingers, and a command acting on a deleted
  * asset is a crash, not a no-op.
  */
 export function selectedPanelAssets(): ImportedAsset[] {
-  const assets = useAssetStore.getState().assets;
-  const out: ImportedAsset[] = [];
-  for (const id of selectedIds) {
-    const a = assets.find((x) => x.id === id);
-    if (a) out.push(a);
-  }
-  return out;
+  // B4: the records built from the document mirror's items (ItemInfo: media URL, probe facts, interpretation).
+  return itemAssetsOf(documentMirror(), selectedIds);
 }
 
 /** Selected FOOTAGE — video and image. Audio has no frame to size a comp from. */

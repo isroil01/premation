@@ -31,8 +31,12 @@
 #include "host.hpp"
 #include "render_glue.hpp"
 #include "scene_finish.hpp"
+#include "paint_port.hpp"
 #include "readmodel.hpp"
+#include "rig_coverage.hpp"
+#include "rig_overlay.hpp"
 #include "scene.hpp"
+#include "svg_layer.hpp"
 #include "scene_renderer.hpp"
 #include "scene_textures.hpp"
 #include "text_measure.hpp"
@@ -138,6 +142,8 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
 
   // B4 round 2: text measured on the same fonts the frames are built with (core thread, like build()).
   TextQueries* text_queries() noexcept override { return this; }
+  // B4 round 5: the overlay push's rig records and getRigPose (scene/rig_overlay.cpp).
+  RigQueries* rig_queries() noexcept override { return &rig_; }
   api::TextLayout text_layout(const doc::Node& n, const api::TextLayoutOverrides* overrides) override {
     register_families(n);
     return text_layout_of(*measurer_, n, overrides);
@@ -373,12 +379,41 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
     return ctx;
   }
 
+  /// B4 round 5: an image / SVG layer's alpha coverage for the overlay rig mesh — the source the layer
+  /// draws (resolveRigImageSrc: the components' src / assetId, the asset's src, an SVG's document), keyed
+  /// assetId ?? src as snapshot_build keys the render's.
+  std::shared_ptr<const rig::CoverageMask> rig_coverage(const doc::Document& d, const doc::Node& n, std::string& unreachable) const {
+    std::optional<std::string> src;
+    std::optional<std::string> assetId;
+    for (const doc::Component& c : n.components) {
+      if (c.props.at("src").is_string()) src = c.props.at("src").str();
+      if (c.props.at("assetId").is_string()) assetId = c.props.at("assetId").str();
+    }
+    if (assetId) {
+      if (const Json* asset = doc::find_asset(d, *assetId); asset != nullptr && asset->at("src").is_string() && !asset->at("src").str().empty()) {
+        src = asset->at("src").str();
+      }
+    }
+    if (n.kind() == "svg") {
+      SvgLayerSource svg = svg_layer_source(n);
+      if (svg.src) src = std::move(svg.src);
+    }
+    if (!src || src->empty()) return nullptr;
+    CoverageLookup c = image_coverage_mask(assetId.value_or(*src), *src, utf8_path(mediaBase_));
+    unreachable = std::move(c.unreachable);
+    return c.mask;
+  }
+
   static constexpr std::uint64_t kIdleInstanceFrames = 600;
   Fonts fonts_;
   std::unique_ptr<TextMeasurer> measurer_;
   MediaClock* audio_ = nullptr;
   std::uint64_t builtFrames_ = 0;
   std::string mediaBase_;
+  /// B4 round 5: the rig as the overlays see it, over this builder's media.
+  DocRigQueries rig_{RigMediaHooks{
+      [this](const doc::Document& d, const doc::Node& n, std::string& unreachable) { return rig_coverage(d, n, unreachable); },
+      [](const Json& paint) { return paint_pad(paint); }}};
 };
 
 // ── the render-thread drawer ──────────────────────────────────────────────

@@ -274,7 +274,7 @@ TEST_CASE("getMemberKeyframes: the stored member tracks with their owning proper
     a.keys.push_back(std::move(k));
   }
   REQUIRE(is_ok(h.run(cmd(a))));
-  const auto all = query<api::MemberTracks>(h, qry(api::GetMemberKeyframes{layer, {}}));
+  const auto all = query<api::MemberTracks>(h, qry(api::GetMemberKeyframes{layer, {}, std::nullopt}));
   const auto x = std::find_if(all.tracks.begin(), all.tracks.end(), [](const api::MemberTrack& t) { return t.member == "x"; });
   REQUIRE(x != all.tracks.end());
   CHECK(x->path == "transform/position");
@@ -284,7 +284,7 @@ TEST_CASE("getMemberKeyframes: the stored member tracks with their owning proper
   REQUIRE(keys.arr().size() == 2);
   CHECK(keys.arr()[1].at("t").num() == Approx(1));
   CHECK(keys.arr()[1].at("value").num() == Approx(300));
-  const auto only = query<api::MemberTracks>(h, qry(api::GetMemberKeyframes{layer, {"y"}}));
+  const auto only = query<api::MemberTracks>(h, qry(api::GetMemberKeyframes{layer, {"y"}, std::nullopt}));
   REQUIRE(only.tracks.size() == 1);
   CHECK(only.tracks[0].index == 1);
 }

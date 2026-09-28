@@ -33,6 +33,8 @@ void add_field_bindings(const Node& node, std::string_view layerId, const std::v
 
 /// The static value of a `field` / `layerFill` binding.
 [[nodiscard]] api::Value read_field(const Node& node, const PropBinding& b);
+/// B4 round 5 (fields.ts `fieldStored`): the document holds the field's own raw value.
+[[nodiscard]] bool field_stored(const Node& node, const PropBinding& b);
 /// Write a `field` / `layerFill` binding (type-checked; typeMismatch / outOfRange / notFound).
 void write_field(Document& d, std::string_view layer, const PropBinding& b, const api::Value& value);
 
