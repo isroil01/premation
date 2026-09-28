@@ -7,18 +7,16 @@
  * own work like a designer looking at the screen, and fix what's off before it
  * answers.
  *
- * It reuses the exact deterministic offline path that "Save Frame As" and video
- * export use (`renderStillFrame`), so the frames the model sees match what the
- * user will see. Everything here is best-effort: a render failure (headless, a
+ * The frames are the ENGINE's (`getThumbnail`, the renderer "Save Frame As"
+ * and video export use), so what the model sees matches what the user will see. Everything here is best-effort: a render failure (headless, a
  * hidden tab, a backend hiccup) must never break the run — it just means no
  * visual feedback this pass.
  */
 
 import type { AiImage } from '@motion/ai-tools';
 import { useCompositionStore } from '@stores/compositionStore';
-import { renderStillFrame } from '@core/export/offlineRenderer';
+import { engineCompStill } from '@core/rendering/engineStill';
 import { processImageFile } from './imageAttachment';
-import { compSizeOf } from '@core/composition/compSizes';
 
 /** A frame render can hang in a backgrounded tab — never let it stall the run. */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
@@ -44,17 +42,10 @@ export async function renderSceneFrames(timesSec: number[]): Promise<AiImage[]> 
   const out: AiImage[] = [];
   try {
     const c = useCompositionStore.getState().comp();
-    const params = {
-      width: c.width,
-      height: c.height,
-      fps: c.fps,
-      durationSec: c.durationSeconds,
-      comp: { ...c, rootId: c.id, compSizeOf },
-    };
     const lastFrame = Math.max(0, Math.round(c.durationSeconds * c.fps) - 1);
     for (const t of timesSec) {
       const frame = Math.max(0, Math.min(Math.round(t * c.fps), lastFrame));
-      const blob = await withTimeout(renderStillFrame(params, frame, 'image/jpeg', 0.85), 8000);
+      const blob = await withTimeout(engineCompStill(c.id, frame / c.fps, 1280), 8000);
       if (!blob) continue;
       // processImageFile downscales to 1280px JPEG — the same treatment user
       // reference images get, so the frame is well within provider limits.

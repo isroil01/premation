@@ -18,8 +18,9 @@ jest.mock('@core/api/client', () => {
     },
   };
 });
-jest.mock('@core/export/offlineRenderer', () => ({
-  renderStillFrame: jest.fn(async () => new Blob(['frame'])),
+jest.mock('@core/rendering/engineStill', () => ({
+  engineCompStill: jest.fn(async () => new Blob(['frame'])),
+  engineDocumentStill: jest.fn(async () => new Blob(['frame'])),
 }));
 
 import { api } from '@core/api/client';

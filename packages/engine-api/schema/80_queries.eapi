@@ -326,6 +326,8 @@ query getSvgDocument = 1891 { layer: LayerId = 1; } -> SvgDocument;
 query getCryptomatte = 1892 { item: ItemId = 1; } -> CryptomatteInfo;
 /// A frame thumbnail of an item or layer (project panel, timeline filmstrip). Encoded image bytes.
 query getThumbnail = 1023 { item?: ItemId = 1; layer?: LayerId = 2; time: Time = 3; maxSize: u32 = 4; } -> Thumbnail;
+/// P4 — a frame of ANOTHER document, drawn by the engine's renderer without opening it (Versions ▸ Compare: a saved version at the playhead). `document` is an EditorDocument as JSON (exportDocument's shape); `comp` absent = the document's active tab, else its first composition; `time` is composition time; the long side ≤ maxSize (0 = 256, at most 4096). The open document is untouched.
+query renderDocumentStill = 1935 { document: string = 1; comp?: ItemId = 2; time: Time = 3; maxSize: u32 = 4; } -> Thumbnail;
 
 struct FontList { fonts: FontInfo[] = 1; }
 struct ItemDetails { items: ItemInfo[] = 1; }

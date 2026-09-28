@@ -188,6 +188,8 @@ class Session {
   [[nodiscard]] std::string media_base() const;
   /// getThumbnail: build (frame builder) and draw (render thread) a still.
   StillImage render_still(const doc::StillRequest& r);
+  /// renderDocumentStill: `file` restored into a scratch Document (the open one untouched), its `comp` at `time`.
+  StillImage render_document_still(const doc::Json& file, const std::string& comp, api::Time time, std::uint32_t maxSize);
   /// A render-thread answer, waited for at most kRenderQueryTimeout.
   template <class T>
   T await_render(std::future<T> result, std::string_view what);

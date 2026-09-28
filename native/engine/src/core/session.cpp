@@ -1109,6 +1109,9 @@ api::QueryResult Session::run_query(const api::Query& q) {
     };
   }
   c.still = [this](const doc::StillRequest& r) { return render_still(r); };
+  c.documentStill = [this](const doc::Json& file, const std::string& comp, api::Time time, std::uint32_t maxSize) {
+    return render_document_still(file, comp, time, maxSize);
+  };
   c.viewportSlot = [this](std::uint32_t viewport) -> std::optional<std::pair<std::uint32_t, std::uint32_t>> {
     const auto it = surfaces_.find(viewport);
     if (it == surfaces_.end() || it->second.width == 0 || it->second.height == 0) return std::nullopt;
@@ -1182,6 +1185,46 @@ StillImage Session::render_still(const doc::StillRequest& r) {
     return out;
   }
   return await_render<StillImage>(sink_.render_still(std::move(frame), r.width, r.height), "getThumbnail");
+}
+
+StillImage Session::render_document_still(const doc::Json& file, const std::string& compSel, api::Time time, std::uint32_t maxSize) {
+  StillImage out;
+  if (frameBuilder_ == nullptr) {
+    out.error = "renderDocumentStill needs the engine's scene builder (D2w)";
+    return out;
+  }
+  // A scratch document: the open one, its history and its caches are untouched.
+  doc::Document d;
+  doc::EditorView v;
+  try {
+    (void)doc::restore_document(d, v, file, doc_.items().assets);
+  } catch (const std::exception& e) {
+    out.error = std::string("the document could not be read: ") + e.what();
+    return out;
+  }
+  std::string comp = compSel;
+  if (comp.empty()) comp = v.tabComp;
+  if (comp.empty() && !d.comps().empty()) comp = d.comps().keys().front();
+  if (comp.empty() || d.comp(comp) == nullptr) {
+    out.error = "the document has no composition" + (comp.empty() ? std::string() : " '" + comp + "'");
+    return out;
+  }
+  v.tabComp = comp;
+  const api::CompSettings cs = doc::comp_settings(d, comp);
+  const double w = std::max(1.0, static_cast<double>(cs.width));
+  const double h = std::max(1.0, static_cast<double>(cs.height));
+  const double scale = std::min(1.0, static_cast<double>(maxSize) / std::max(w, h));
+  const auto width = static_cast<std::uint32_t>(std::max(1.0, std::round(w * scale)));
+  const auto height = static_cast<std::uint32_t>(std::max(1.0, std::round(h * scale)));
+  doc::ExprCache cache;
+  const doc::DocExprEnv env(d, v, cache);
+  frameBuilder_->set_media_base(media_base());
+  std::shared_ptr<BuiltFrame> frame = frameBuilder_->build_still(d, v, env, cache, comp, time, width, height, "");
+  if (!frame) {
+    out.error = "the scene builder cannot build this still";
+    return out;
+  }
+  return await_render<StillImage>(sink_.render_still(std::move(frame), width, height), "renderDocumentStill");
 }
 
 // ── transport ───────────────────────────────────────────────────────────────

@@ -1092,6 +1092,7 @@ struct GetItems;
 struct GetSvgDocument;
 struct GetCryptomatte;
 struct GetThumbnail;
+struct RenderDocumentStill;
 struct ListEffects;
 struct ListGroupTypes;
 struct ListPresets;
@@ -3347,6 +3348,14 @@ struct GetThumbnail {
   bool operator==(const GetThumbnail&) const = default;
 };
 
+struct RenderDocumentStill {
+  std::string document;
+  std::optional<ItemId> comp;
+  Time time = 0;
+  std::uint32_t max_size = 0;
+  bool operator==(const RenderDocumentStill&) const = default;
+};
+
 struct ListEffects {
   std::string category;
   bool operator==(const ListEffects&) const = default;
@@ -3508,6 +3517,7 @@ struct Query {
     get_svg_document = 1891,
     get_cryptomatte = 1892,
     get_thumbnail = 1023,
+    render_document_still = 1935,
     list_effects = 1040,
     list_group_types = 1041,
     list_presets = 1042,
@@ -3530,7 +3540,7 @@ struct Query {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetRigPose, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
+  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetRigPose, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, RenderDocumentStill, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Query&) const = default;
 };
@@ -4701,6 +4711,7 @@ struct QueryResult {
     get_svg_document = 1891,
     get_cryptomatte = 1892,
     get_thumbnail = 1023,
+    render_document_still = 1935,
     list_effects = 1040,
     list_group_types = 1041,
     list_presets = 1042,
@@ -4723,7 +4734,7 @@ struct QueryResult {
     get_render_queue = 1084,
     get_command_log = 1085,
   };
-  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, RigPose, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
+  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, RigPose, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const QueryResult&) const = default;
 };
@@ -6074,6 +6085,8 @@ void encode(wire::Writer& w, const GetCryptomatte& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetCryptomatte& out);
 void encode(wire::Writer& w, const GetThumbnail& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetThumbnail& out);
+void encode(wire::Writer& w, const RenderDocumentStill& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderDocumentStill& out);
 void encode(wire::Writer& w, const ListEffects& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ListEffects& out);
 void encode(wire::Writer& w, const ListGroupTypes& v);

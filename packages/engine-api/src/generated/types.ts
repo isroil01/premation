@@ -3418,6 +3418,14 @@ export interface GetThumbnail {
   maxSize: number;
 }
 
+/** P4 — a frame of ANOTHER document, drawn by the engine's renderer without opening it (Versions ▸ Compare: a saved version at the playhead). `document` is an EditorDocument as JSON (exportDocument's shape); `comp` absent = the document's active tab, else its first composition; `time` is composition time; the long side ≤ maxSize (0 = 256, at most 4096). The open document is untouched. */
+export interface RenderDocumentStill {
+  document: string;
+  comp?: ItemId;
+  time: Time;
+  maxSize: number;
+}
+
 export interface FontList {
   fonts: FontInfo[];
 }
@@ -5042,6 +5050,7 @@ export type Query =
   | ({ type: 'getSvgDocument' } & GetSvgDocument)
   | ({ type: 'getCryptomatte' } & GetCryptomatte)
   | ({ type: 'getThumbnail' } & GetThumbnail)
+  | ({ type: 'renderDocumentStill' } & RenderDocumentStill)
   | ({ type: 'listEffects' } & ListEffects)
   | ({ type: 'listGroupTypes' } & ListGroupTypes)
   | ({ type: 'listPresets' } & ListPresets)
@@ -5094,6 +5103,7 @@ export type QueryResult =
   | ({ type: 'getSvgDocument' } & SvgDocument)
   | ({ type: 'getCryptomatte' } & CryptomatteInfo)
   | ({ type: 'getThumbnail' } & Thumbnail)
+  | ({ type: 'renderDocumentStill' } & Thumbnail)
   | ({ type: 'listEffects' } & EffectCatalog)
   | ({ type: 'listGroupTypes' } & GroupTypeList)
   | ({ type: 'listPresets' } & PresetList)
@@ -5497,6 +5507,7 @@ export interface QueryArgs {
   getSvgDocument: GetSvgDocument;
   getCryptomatte: GetCryptomatte;
   getThumbnail: GetThumbnail;
+  renderDocumentStill: RenderDocumentStill;
   listEffects: ListEffects;
   listGroupTypes: ListGroupTypes;
   listPresets: ListPresets;
@@ -5549,6 +5560,7 @@ export interface QueryResults {
   getSvgDocument: SvgDocument;
   getCryptomatte: CryptomatteInfo;
   getThumbnail: Thumbnail;
+  renderDocumentStill: Thumbnail;
   listEffects: EffectCatalog;
   listGroupTypes: GroupTypeList;
   listPresets: PresetList;
