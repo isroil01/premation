@@ -9,7 +9,7 @@ import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import { overlayGeometryAt } from '@core/engine/overlayGeometry';
-import { overlayScreenPlacement, requestOverlayLayers } from './overlayGeometry';
+import { overlayScreenPlacement, overlayView, requestOverlayLayers } from './overlayGeometry';
 
 let h: Harness & { engine: LocalEngine };
 beforeEach(async () => { h = await setupAppEngine(); });
@@ -19,7 +19,7 @@ afterEach(async () => {
   await h.dispose();
 });
 
-test('the subscription is the union of the owners’ requests', async () => {
+test('each owner’s layers get that owner’s kinds (B4 round 5: one group per owner)', async () => {
   const A = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'A', init: [] })).layer;
   const B = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'B', init: [] })).layer;
   requestOverlayLayers(7, 'a', [A], ['transform']);
@@ -27,15 +27,28 @@ test('the subscription is the union of the owners’ requests', async () => {
   await engineIdle();
   const both = overlayGeometryAt(7, 0);
   expect(both.map((g) => g.layer)).toEqual([A, B]);
-  for (const g of both) {
-    expect(g.matrix).toHaveLength(16);
-    expect(g.box).toHaveLength(4);
-  }
+  // A is named by both owners: both kinds. B only by 'b': its box, no matrix (before round 5 every
+  // requested layer got every requested kind).
+  expect(both[0]!.matrix).toHaveLength(16);
+  expect(both[0]!.box).toHaveLength(4);
+  expect(both[1]!.matrix).toEqual([]);
+  expect(both[1]!.box).toHaveLength(4);
   requestOverlayLayers(7, 'b', [], []);
   await engineIdle();
   const one = overlayGeometryAt(7, 0);
   expect(one.map((g) => g.layer)).toEqual([A]);
   expect(one[0]!.box).toEqual([]);
+});
+
+test('an owner may ask for view cameras alone; the frame set answers them by mode', async () => {
+  await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'camera', name: 'Cam', init: [] });
+  requestOverlayLayers(7, 'a', [], [], ['active', 'front']);
+  await engineIdle();
+  const v = overlayView(7, 'active', 0);
+  expect(v?.lens).toHaveLength(9);
+  expect(v?.camera).not.toBe('');
+  expect(overlayView(7, 'front', 0)?.camera).toBe(v?.camera);
+  expect(overlayView(7, 'left', 0)).toBeUndefined();
 });
 
 test('overlayScreenPlacement reads origin, angle and axis scales off the pushed matrix', () => {

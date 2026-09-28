@@ -33,7 +33,7 @@ import { buildLayerFragment, type BuiltLayers } from '@core/engine/offDocument';
 import { layerIdsOfComp } from '@core/engine/doc';
 import { compTime } from '@core/engine/propRefs';
 import { insertMedia, insertSvgDocument, setNodeWorldPosition } from '@core/scene/sceneInsert';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { activeCompIdNow } from '@hooks/useMirror';
 import { mirrorPristineCompToAdopt } from '@core/mirror/compFacts';
 import { documentMirror } from '@stores/documentMirror';
 import { rateOf } from '@layout/Composition/compositionEdits';
@@ -183,7 +183,8 @@ export async function insertMediaEdit(
   const prepared = await prepareMedia(assets);
   if (prepared.length === 0) return [];
   const label = opts.label ?? (prepared.length === 1 ? `Insert ${prepared[0]!.asset.name}` : `Insert ${prepared.length} Layers`);
-  const comp = activeCompRootId();
+  // The composition in view (the mirror's), else the document's first.
+  const comp = activeCompIdNow() ?? documentMirror().compIds[0] ?? 'comp_root';
   let media: BuiltMedia | null;
   try {
     media = buildMedia(comp, prepared, opts.at);

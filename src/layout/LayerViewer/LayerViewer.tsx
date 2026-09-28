@@ -29,14 +29,17 @@ import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import { Segmented } from '@components/Segmented';
 import { cn } from '@utils/cn';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { readCompRef } from '@core/scene/compInstance';
-import { readNodeMask, readNodeMaskAt, type MaskMode } from '@core/effects/mask';
-import { compSizeOf } from '@core/composition/compSizes';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
-import { defaultAnimation } from '@motion/animation';
+import type { MaskMode } from '@core/effects/mask';
+import { secondsToFlicks, type LayerInfo } from '@motion/engine-api';
+import { seekPlayhead } from '@core/timeline/timelineView';
+import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
+import { useRetainTree } from '@hooks/useMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { mirrorMasksAt } from '@core/mirror/masks';
+import { mirrorHasBar } from '@core/mirror/clipBars';
+import { timingBarFrames } from '@core/mirror/compFacts';
+import { readTrack } from '@core/mirror/selection';
+import { storedNumber, trackRefIn } from '@core/mirror/trackIndex';
 import { trimBar } from '@layout/Timeline/timelineEdits';
 import { deleteMaskEdit, setMaskFlagsEdit } from '@layout/Workspace/viewportEdits';
 import { useLayerViewerStore, type LayerMaskTool } from '@stores/layerViewerStore';
@@ -53,7 +56,6 @@ import { useLayerViewerRenderer } from './useLayerViewerRenderer';
 import { LayerMaskEditor } from './LayerMaskEditor';
 import { LayerPaintSurface } from './LayerPaintSurface';
 import styles from './LayerViewer.module.css';
-import type { SceneNode } from '@core/types';
 
 /** HH:MM:SS:FF for a time in seconds. */
 function timecode(seconds: number, fps: number): string {
@@ -65,13 +67,16 @@ function timecode(seconds: number, fps: number): string {
   return `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}:${pad(ff)}`;
 }
 
-/** The layer's own frame — a placed comp's size, else its Transform size. */
-function layerFrame(node: SceneNode): { width: number; height: number } {
-  const ref = readCompRef(node);
-  const size = ref ? compSizeOf(ref) : undefined;
-  if (size) return size;
-  const t = node.components.find((c) => c.type === 'Transform')?.props as Record<string, unknown> | undefined;
-  return { width: Math.max(1, Number(t?.width) || 1), height: Math.max(1, Number(t?.height) || 1) };
+/** The layer's own frame — a placed comp's size, else its stored layer size (B4: the mirror). */
+function layerFrame(m: DocumentMirror, id: string, layer: LayerInfo): { width: number; height: number } {
+  const comp = layer.kind === 'precomp' && layer.source ? m.comp(layer.source) : undefined;
+  if (comp) return { width: comp.settings.width, height: comp.settings.height };
+  const tree = m.tree(id);
+  const stored = (track: string): number => {
+    const r = trackRefIn(tree, track);
+    return r ? Number(storedNumber(r, r.info.value)) || 0 : 0;
+  };
+  return { width: Math.max(1, stored('width') || 1), height: Math.max(1, stored('height') || 1) };
 }
 
 const MASK_TOOLS: ReadonlyArray<{ id: LayerMaskTool; label: string; title: string }> = [
@@ -113,10 +118,12 @@ export function LayerViewer(): JSX.Element | null {
   const close = useLayerViewerStore((s) => s.close);
   const activeTool = useUIStore((s) => s.activeTool) as string;
   const paintToolOn = activeTool === 'paint' || activeTool === 'eraser' || activeTool === 'roto';
-  // Re-render on any document change: the node, its masks and anchor below
-  // are still read from the scene (per-frame values the mirror does not evaluate).
+  // Re-render on any document change: the layer, its bar, masks and anchor
+  // below come from the document mirror (B4).
   useMirrorRevision();
-  const node = nodeId ? defaultSceneGraph.getNode(nodeId) : undefined;
+  const m = documentMirror();
+  const node = nodeId ? m.layer(nodeId) : undefined;
+  useRetainTree(node ? nodeId : null);
 
   // The panel names a layer of the comp in view: leaving the comp, or the
   // layer going away (deleted, undone), closes it.
@@ -132,40 +139,27 @@ export function LayerViewer(): JSX.Element | null {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId]);
 
-  // Trims arrive as timeline events, not scene changes.
-  const [clipRev, setClipRev] = useState(0);
-  useEffect(() => {
-    const events = getTimelineController().timeline.events;
-    const bump = (): void => setClipRev((v) => v + 1);
-    const subs = [
-      events.on('LayerTrimmed', bump),
-      events.on('LayerUpdated', bump),
-      events.on('LayerSplit', bump),
-    ];
-    return () => { for (const s of subs) s.dispose(); };
-  }, [activeTabId]);
-
   const compTime = useCurrentTime();
   const compSettings = useActiveTabCompSettings();
   const compDuration = settingsDurationSeconds(compSettings, DEFAULT_COMPOSITION.durationSeconds);
   const compFps = settingsFps(compSettings, DEFAULT_COMPOSITION.fps);
 
+  // The layer's bar from its LayerTiming (a trim is a document change: the
+  // mirror's revision re-renders this).
   const clip = useMemo(() => {
-    void clipRev;
-    if (!nodeId || !node) return null;
-    const controller = getTimelineController();
-    const bar = controller.getLayersForNode(nodeId)[0];
-    if (!bar) return null;
-    const fps = controller.fpsForNode(nodeId) || compFps || 30;
+    if (!nodeId || !node || !mirrorHasBar(m, nodeId)) return null;
+    const layerComp = m.comp(node.comp);
+    const fps = settingsFps(layerComp?.settings, compFps || 30);
+    const bar = timingBarFrames(node.timing, fps);
     return {
-      id: bar.id,
+      id: `clip:${nodeId}`,
       fps,
-      start: bar.clip.start / fps,
-      inT: bar.clip.sourceIn / fps,
-      dur: bar.clip.duration / fps,
-      sourceDur: typeof bar.clip.sourceDuration === 'number' ? bar.clip.sourceDuration / fps : null,
+      start: bar.start / fps,
+      inT: bar.sourceIn / fps,
+      dur: bar.duration / fps,
+      sourceDur: bar.sourceDuration !== null ? bar.sourceDuration / fps : null,
     };
-  }, [nodeId, node, clipRev, compFps]);
+  }, [m, nodeId, node, compFps]);
 
   const fps = clip?.fps ?? compFps ?? 30;
   const outT = clip ? clip.inT + clip.dur : 0;
@@ -185,11 +179,10 @@ export function LayerViewer(): JSX.Element | null {
   /** Where the renderer reads the layer's mask (its keyframe axis) — drawing only. */
   // Display only: the keyframe-axis time the mask is SAMPLED at (B4's mirror
   // replaces it); mask writes go through the engine in comp time (`maskCompTime`).
-  const maskTime = heldLayerTime ?? (nodeId && node ? keyAxisTimeForDisplay(nodeId, compTime) : 0);
-  /** The same moment in comp seconds — where mask edits land (the engine maps it to the key axis). */
+  /** The moment in comp seconds — where masks are read (the mirror evaluates at comp time) and edits land. */
   const maskCompTime = heldLayerTime !== null ? compTimeAt(heldLayerTime) : compTime;
 
-  const frame = node ? layerFrame(node) : { width: 1, height: 1 };
+  const frame = node && nodeId ? layerFrame(m, nodeId, node) : { width: 1, height: 1 };
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stage, setStage] = useState({ width: 0, height: 0 });
@@ -230,7 +223,7 @@ export function LayerViewer(): JSX.Element | null {
     const tabId = useProjectStore.getState().activeTabId;
     if (ct >= 0 && ct <= compDuration && tabId) {
       setHeldLayerTime(null);
-      try { getTimelineController().seekSeconds(ct); } catch { /* headless */ }
+      try { seekPlayhead(ct); } catch { /* headless */ }
       setTime(tabId, ct);
     } else {
       setHeldLayerTime(lt);
@@ -269,7 +262,7 @@ export function LayerViewer(): JSX.Element | null {
 
   if (!nodeId || !node) return null;
 
-  const kind = readCompRef(node) ? 'composition' : readNodeKind(node);
+  const kind = node.kind === 'precomp' ? 'composition' : uiKindOf(node);
   const shownIn = drag?.kind === 'in' ? drag.value : clip?.inT ?? 0;
   const shownOut = drag?.kind === 'out' ? drag.value : outT;
   const pct = (v: number): string => `${(Math.min(Math.max(v / span, 0), 1) * 100).toFixed(3)}%`;
@@ -279,13 +272,13 @@ export function LayerViewer(): JSX.Element | null {
   const map = (x: number, y: number): [number, number] => (view
     ? [view.offsetX + view.scale * (x + frame.width / 2), view.offsetY + view.scale * (y + frame.height / 2)]
     : [0, 0]);
-  const t = node.components.find((c) => c.type === 'Transform')?.props as Record<string, unknown> | undefined;
-  const anchorX = defaultAnimation.sample(nodeId, 'anchorX', layerT) ?? (Number(t?.anchorX) || 0);
-  const anchorY = defaultAnimation.sample(nodeId, 'anchorY', layerT) ?? (Number(t?.anchorY) || 0);
+  // The anchor and the masks at this moment, from the mirror (evaluated at comp time).
+  const anchorX = readTrack(m, nodeId, 'anchorX', maskCompTime) ?? 0;
+  const anchorY = readTrack(m, nodeId, 'anchorY', maskCompTime) ?? 0;
   const [ax, ay] = map(Number(anchorX) || 0, Number(anchorY) || 0);
 
   // The picked mask, as the renderer reads it now.
-  const masks = (readNodeMaskAt(node, maskTime) ?? readNodeMask(node))?.paths ?? [];
+  const masks = mirrorMasksAt(m, nodeId, secondsToFlicks(maskCompTime));
   const pickedMask = maskSelection ? masks.find((p) => p.id === maskSelection.pathId) : undefined;
   // Mode / Invert hold across every shape keyframe (the engine writes them on
   // the static mask and each key), as AE's mask switches do.
@@ -355,7 +348,7 @@ export function LayerViewer(): JSX.Element | null {
               className={styles.modeSelect}
               aria-label="Mask mode"
               value={pickedMask.mode}
-              disabled={node.locked === true}
+              disabled={node.switches.locked}
               onChange={(e) => editMask('Mask Mode', { mode: e.target.value as MaskMode })}
             >
               {MASK_MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
@@ -364,7 +357,7 @@ export function LayerViewer(): JSX.Element | null {
               <input
                 type="checkbox"
                 checked={pickedMask.inverted}
-                disabled={node.locked === true}
+                disabled={node.switches.locked}
                 onChange={(e) => editMask('Invert Mask', { inverted: e.target.checked })}
               />
               Inverted
@@ -375,7 +368,7 @@ export function LayerViewer(): JSX.Element | null {
               iconOnly
               icon={<Icon name="trash" size="sm" />}
               onClick={deleteMask}
-              disabled={node.locked === true}
+              disabled={node.switches.locked}
               title="Delete this mask (Delete)"
             >
               Delete mask
@@ -426,7 +419,6 @@ export function LayerViewer(): JSX.Element | null {
             view={view}
             stageWidth={stage.width}
             stageHeight={stage.height}
-            maskTime={maskTime}
             maskCompTime={maskCompTime}
           />
         ) : null}

@@ -15,6 +15,7 @@
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { ProxyRow } from './ProxyRow';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import { documentMirror } from '@stores/documentMirror';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { resolveMediaSrc, type ProxyRecord } from '@core/assets/proxy';
 
@@ -31,8 +32,14 @@ const asset = (over: Partial<ImportedAsset> = {}): ImportedAsset => ({
   ...over,
 });
 
+/**
+ * B4 round 5: the row reads the item from the document mirror (ItemInfo) and its proxy job record from the
+ * session store the items store publishes — so a fixture written straight into the items store is followed
+ * by a mirror refetch (`reload`: synchronous on the in-process engine).
+ */
 const seed = (a: ImportedAsset = asset()): void => {
   useAssetStore.setState({ assets: [a] } as never);
+  documentMirror().reload();
 };
 
 beforeEach(() => {
@@ -187,6 +194,7 @@ describe('scope', () => {
 
   it('renders nothing for an asset that no longer exists', () => {
     useAssetStore.setState({ assets: [] } as never);
+    documentMirror().reload();
     const { container } = render(<ProxyRow assetId={ID} />);
     expect(container).toBeEmptyDOMElement();
   });

@@ -31,7 +31,7 @@ import { useMemo } from 'react';
 import { Icon } from '@components/Icon';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { smoothMotionPath, straightenMotionPath } from '@core/motion/motionPath';
+import { smoothPositionPath, straightenPositionPath } from '@core/mirror/positionTracks';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow, useMirrorKeys } from '@hooks/useMirror';
 import { canBe3DLayer } from '@core/mirror/layerKinds';
@@ -173,7 +173,7 @@ export function ViewportTools(): JSX.Element | null {
           </button>
           <button
             className={styles.headerBtn}
-            onClick={() => { if (singleId) void editPositionKeys(singleId, 'Smooth motion path', (scratch) => smoothMotionPath(singleId, scratch)); }}
+            onClick={() => { if (singleId) void editPositionKeys(singleId, 'Smooth motion path', (scratch) => smoothPositionPath(singleId, scratch)); }}
             aria-label="Auto-Bezier — smooth the path through all keyframes"
             title="Auto-Bezier: smooth path through all keyframes (Ctrl+Alt+S)"
           >
@@ -182,7 +182,7 @@ export function ViewportTools(): JSX.Element | null {
           {hasTangents && (
             <button
               className={styles.headerBtn}
-              onClick={() => { if (singleId) void editPositionKeys(singleId, 'Straighten motion path', (scratch) => straightenMotionPath(singleId, scratch)); }}
+              onClick={() => { if (singleId) void editPositionKeys(singleId, 'Straighten motion path', (scratch) => straightenPositionPath(singleId, scratch)); }}
               aria-label="Straighten — remove the spatial tangents"
               title="Straighten: remove spatial tangents"
             >

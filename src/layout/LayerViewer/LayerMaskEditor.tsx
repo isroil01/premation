@@ -23,13 +23,10 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import {
-  readNodeMask,
-  readNodeMaskAt,
-  type MaskPath,
-  type MaskPoint,
-} from '@core/effects/mask';
+import type { MaskPath, MaskPoint } from '@core/effects/mask';
+import { secondsToFlicks } from '@motion/engine-api';
+import { documentMirror } from '@stores/documentMirror';
+import { mirrorMasksAt } from '@core/mirror/masks';
 import { edit } from '@core/engine/uiEdits';
 import { addMaskEdit, deleteMaskEdit, maskPathCommand } from '@layout/Workspace/viewportEdits';
 import { useLayerViewerStore } from '@stores/layerViewerStore';
@@ -55,9 +52,7 @@ export interface LayerMaskEditorProps {
   view: ViewFit;
   stageWidth: number;
   stageHeight: number;
-  /** The mask's time on the layer's keyframe axis — where the renderer reads it (drawing). */
-  maskTime: number;
-  /** The same moment in comp seconds — where edits land (the engine maps it to the key axis). */
+  /** The moment in comp seconds — where the masks are read and edits land (the engine maps it to the key axis). */
   maskCompTime: number;
 }
 
@@ -90,7 +85,7 @@ function pathD(points: ReadonlyArray<MaskPoint>, closed: boolean, map: (x: numbe
 }
 
 export function LayerMaskEditor({
-  nodeId, frameWidth: w, frameHeight: h, view, stageWidth, stageHeight, maskTime, maskCompTime,
+  nodeId, frameWidth: w, frameHeight: h, view, stageWidth, stageHeight, maskCompTime,
 }: LayerMaskEditorProps): JSX.Element | null {
   const tool = useLayerViewerStore((s) => s.maskTool);
   const selection = useLayerViewerStore((s) => s.maskSelection);
@@ -99,10 +94,11 @@ export function LayerMaskEditor({
   const [drag, setDrag] = useState<Drag | null>(null);
   const [pen, setPen] = useState<MaskPoint[]>([]);
 
-  const node = defaultSceneGraph.getNode(nodeId);
-  const locked = node?.locked === true;
-  const mask = node ? readNodeMaskAt(node, maskTime) ?? readNodeMask(node) : undefined;
-  const paths: MaskPath[] = mask?.paths ?? [];
+  // B4: the layer's lock and its masks at this moment from the document mirror
+  // (evaluated at comp time; the parent re-renders on every document change).
+  const m = documentMirror();
+  const locked = m.layer(nodeId)?.switches.locked === true;
+  const paths: MaskPath[] = mirrorMasksAt(m, nodeId, secondsToFlicks(maskCompTime));
 
   // A tool change abandons a half-drawn pen path.
   useEffect(() => { setPen([]); }, [tool, nodeId]);
@@ -245,7 +241,7 @@ export function LayerMaskEditor({
     e.stopPropagation();
   };
 
-  if (!node) return null;
+  if (!m.layer(nodeId)) return null;
 
   const shown = (p: MaskPath): MaskPoint[] => (draftPoints?.pathId === p.id ? draftPoints.points : p.points);
   const sel = selection && paths.find((p) => p.id === selection.pathId) ? selection : null;

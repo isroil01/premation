@@ -59,7 +59,9 @@ import { readNodeKind } from '@core/scene/sceneDerive';
 import { is3DEnabled } from '@core/scene/threeD';
 import { fail } from './errors';
 import { hasStrokeHost, readStrokeStack, writeStrokeStack } from './strokeStack';
-import { POI_PATH, readPointOfInterest, writePointOfInterest } from './pointOfInterest';
+import { POI_PATH, hasPointOfInterest, readPointOfInterest, writePointOfInterest } from './pointOfInterest';
+import { readNodeStrokes } from '@core/paint/stroke';
+import { readRuns } from '@core/text/richText';
 import type { PropBinding } from './props';
 import { LAYER_FIELDS, type LayerFieldSpec, type LayerFieldStore } from './layerFieldSpecs';
 import { EFFECT_FIELDS, STYLE_FIELDS, type EffectFieldSpec, type StyleFieldSpec } from './effectFieldSpecs';
@@ -89,6 +91,32 @@ export interface FieldRef {
 }
 
 const HEX = /^#?[0-9a-fA-F]{3,8}$/;
+const RGB_FN = /^rgba?\(\s*([^)]*)\)$/i;
+const CSS_NUMBER = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?%?$/;
+
+/**
+ * B4 round 5 — a stored CSS `rgb()` / `rgba()` colour (the mograph catalog
+ * paints with them) as 0..1 channels, or null when `s` is not one: three
+ * channels (numbers 0..255 or percentages, rounded to whole 8-bit steps as the
+ * canvas does) and an optional alpha (0..1 or a percentage), separated by
+ * commas, spaces or a slash. The C++ twin is fxstate.cpp `css_rgb_channels`.
+ */
+export function cssRgbChannels(s: string): [number, number, number, number] | null {
+  const m = RGB_FN.exec(s.trim());
+  if (!m) return null;
+  const parts = m[1]!.split(/[\s,/]+/).filter(Boolean);
+  if (parts.length < 3 || parts.length > 4 || !parts.every((p) => CSS_NUMBER.test(p))) return null;
+  const pct = (p: string): boolean => p.endsWith('%');
+  const n = (p: string): number => Number(pct(p) ? p.slice(0, -1) : p);
+  const channel = (p: string): number => Math.round(Math.max(0, Math.min(255, pct(p) ? (n(p) / 100) * 255 : n(p)))) / 255;
+  const alpha = parts[3] === undefined ? 1 : Math.max(0, Math.min(1, pct(parts[3]) ? n(parts[3]) / 100 : n(parts[3])));
+  return [channel(parts[0]!), channel(parts[1]!), channel(parts[2]!), alpha];
+}
+
+/** A stored colour string a colour field reads: hex, or CSS `rgb()` / `rgba()`. */
+function isColorString(v: string): boolean {
+  return HEX.test(v.trim()) || cssRgbChannels(v) !== null;
+}
 
 // ── Specs ────────────────────────────────────────────────────────────
 
@@ -124,7 +152,7 @@ function valueTypeOf(spec: TextFieldSpec): ValueType {
 }
 
 function colorValue(hex: string): Value {
-  const [r, g, b, a] = parseColorChannels(hex);
+  const [r, g, b, a] = cssRgbChannels(hex) ?? parseColorChannels(hex);
   return { kind: 'color', value: { r, g, b, a } };
 }
 
@@ -136,7 +164,7 @@ function specValue(spec: TextFieldSpec, raw: unknown): Value {
     case 'choice': return { kind: 'choice', value: typeof v === 'string' ? v : String(spec.default) };
     case 'bool': return { kind: 'bool', value: typeof v === 'boolean' ? v : spec.default === true };
     case 'scalar': return { kind: 'scalar', value: typeof v === 'number' && Number.isFinite(v) ? v : (spec.default as number) };
-    case 'color': return colorValue(typeof v === 'string' && HEX.test(v.trim()) ? v : String(spec.default));
+    case 'color': return colorValue(typeof v === 'string' && isColorString(v) ? v : String(spec.default));
     case 'scalars': return { kind: 'scalars', value: { values: Array.isArray(v) ? (v as unknown[]).filter((x): x is number => typeof x === 'number') : [] } };
     case 'json': return { kind: 'json', value: JSON.stringify(v ?? null) };
     default: return { kind: 'none' };
@@ -455,7 +483,7 @@ function readLayerFill(node: SceneNode): Value {
   if (s) return colorValue(s.hex);
   const text = node.components.find((c) => c.type === 'Text');
   const legacy = (text?.props as Record<string, unknown> | undefined)?.color;
-  return colorValue(typeof legacy === 'string' && HEX.test(legacy.trim()) ? legacy : '#ffffff');
+  return colorValue(typeof legacy === 'string' && isColorString(legacy) ? legacy : '#ffffff');
 }
 
 function writeLayerFill(layerId: string, node: SceneNode, hex: string): void {
@@ -496,7 +524,9 @@ export function readField(node: SceneNode, b: PropBinding): Value {
   const tp = (text?.props ?? {}) as Record<string, unknown>;
   switch (f.owner) {
     case 'styleRuns':
-      return { kind: 'json', value: JSON.stringify(Array.isArray(tp.__runs) ? tp.__runs : []) };
+      // B4 round 5: GRAPHEME-indexed, as the painter reads them (readRuns: malformed runs dropped, a legacy
+      // code-point-indexed array migrated) — what a write sends back (it stamps grapheme indexing).
+      return { kind: 'json', value: JSON.stringify(readRuns(node)) };
     case 'fillPaint': {
       const paint = fxOf(node)?.fill;
       return { kind: 'json', value: JSON.stringify(paintType(paint) ? paint : null) };
@@ -517,7 +547,7 @@ export function readField(node: SceneNode, b: PropBinding): Value {
       return { kind: 'string', value: cfg.pathId || (readNodeMask(node)?.paths[0]?.id ?? '') };
     }
     case 'text':
-      return specValue(fieldSpec(f)!, tp[f.key]);
+      return specValue(fieldSpec(f)!, textRaw(tp, f.key));
     case 'animator': {
       const { data, index } = locateAnimator(node, f);
       return specValue(fieldSpec(f)!, (data[index] as unknown as Record<string, unknown> | undefined)?.[f.key]);
@@ -554,6 +584,66 @@ export function readField(node: SceneNode, b: PropBinding): Value {
     }
     default:
       return { kind: 'none' };
+  }
+}
+
+/**
+ * A Text field's stored raw value. `strokeOrder` of a legacy layer that stores
+ * only the `strokeOverFill` switch is that switch's order (textExtras.ts
+ * `strokeOrderOf`, what the painter draws) — B4 round 5: the API used to report
+ * such a layer as fill-over-stroke. C++ twin: fields.cpp `text_raw`.
+ */
+function textRaw(tp: Record<string, unknown>, key: string): unknown {
+  if (key === 'strokeOrder' && tp.strokeOrder === undefined && typeof tp.strokeOverFill === 'boolean') {
+    return tp.strokeOverFill ? 'stroke-over-fill' : 'fill-over-stroke';
+  }
+  return tp[key];
+}
+
+/**
+ * B4 round 5 — `PropertyInfo.stored` for a field / the layer fill: the document
+ * holds the field's own raw value (not the spec default `readField` fills in).
+ * The C++ twin is fields.cpp `field_stored`.
+ */
+export function fieldStored(node: SceneNode, b: PropBinding): boolean {
+  if (b.special === 'layerFill') {
+    if (paintType(fxOf(node)?.fill) === 'solid') return true;
+    if (stringFill(node)) return true;
+    const text = node.components.find((c) => c.type === 'Text');
+    return typeof (text?.props as Record<string, unknown> | undefined)?.color === 'string';
+  }
+  const f = b.field!;
+  const text = node.components.find((c) => c.type === 'Text');
+  const tp = (text?.props ?? {}) as Record<string, unknown>;
+  const has = (o: Record<string, unknown> | undefined | null, k: string): boolean => !!o && o[k] !== undefined;
+  switch (f.owner) {
+    case 'styleRuns': return Array.isArray(tp.__runs);
+    case 'fillPaint': return paintType(fxOf(node)?.fill) !== undefined;
+    case 'fills': return Array.isArray(fxOf(node)?.fills);
+    case 'strokes': return readNodeStrokes(node).length > 0;
+    case 'poi': return hasPointOfInterest(node);
+    case 'plugin': return has(node.components.find((c) => c.type === f.groupId)?.props as Record<string, unknown> | undefined, f.key);
+    case 'textPath': return !!readTextPathConfig(node);
+    case 'text': return textRaw(tp, f.key) !== undefined;
+    case 'animator': {
+      const { data, index } = locateAnimator(node, f);
+      return has(data[index] as unknown as Record<string, unknown> | undefined, f.key);
+    }
+    case 'selector': {
+      const { data, index, sel } = locateAnimator(node, f);
+      return index >= 0 && sel >= 0 && has(data[index]!.selectors![sel] as unknown as Record<string, unknown>, f.key);
+    }
+    case 'layer': {
+      const spec = layerFieldSpec(f.key);
+      if (!spec) return false;
+      const raw = readStored(node, spec.store);
+      return raw !== undefined && raw !== null;
+    }
+    case 'effect': return has(getNodeEffects(node.id).find((x) => x.id === f.groupId) as unknown as Record<string, unknown> | undefined, f.key);
+    case 'style': return has((getNodeLayerStyles(node.id) as Record<string, Record<string, unknown> | undefined>)[f.groupId!], f.key);
+    case 'pathOp': return has(readPathOps(node).find((o) => o.id === f.groupId) as unknown as Record<string, unknown> | undefined, f.key);
+    case 'polystar': return has(readNodePolystar(node) as unknown as Record<string, unknown> | null, f.key);
+    default: return false;
   }
 }
 

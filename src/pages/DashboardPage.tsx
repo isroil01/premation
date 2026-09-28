@@ -22,7 +22,8 @@ import {
   clampDimension, clampFps, clampDuration, describeSize, describeDuration,
   aspectRatioLabel,
 } from '@core/composition/presets';
-import { useAssetStore, purgeStoredAssets, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
+import { purgeStoredAssets, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
+import { useMirrorAssetRecords, useMirrorFolders } from '@hooks/useAssetRecords';
 import { edit } from '@core/engine/uiEdits';
 import { engine } from '@core/engine/engineInstance';
 import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
@@ -229,12 +230,12 @@ export function DashboardPage(): JSX.Element {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedTrashIds, setSelectedTrashIds] = useState<Set<string>>(new Set());
 
-  // Shared AssetStore (synchronized with Editor Assets tab)
-  // B4-gap: the cards draw the asset's playable `src` (object / blob URL) and Delete Permanently takes the
-  // RECORDS (their library blobs) — ItemInfo carries neither; closes with `getThumbnail` for the cards and an
-  // engine-side permanent delete.
-  const storeAssets = useAssetStore((s) => s.assets);
-  const folders = useAssetStore((s) => s.folders);
+  // The project's items (synchronized with the editor's Assets tab). B4: the document mirror's items as the
+  // page's records — ItemInfo (the playable `mediaUrl`, probe facts, folders) with this session's half on top
+  // (thumbnail URL, import time: src/stores/assetSession.ts); Delete Permanently releases those records' stored
+  // bytes (`purgeStoredAssets`).
+  const storeAssets = useMirrorAssetRecords();
+  const folders = useMirrorFolders();
   // The asset store IS the document's item list (captureProjectItems saves every folder and item
   // in it), and a project opened in the editor stays loaded behind the dashboard — so these are
   // document writes. Folders go through the engine (createFolder / renameItem; off the editor

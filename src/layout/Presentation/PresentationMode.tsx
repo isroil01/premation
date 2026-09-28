@@ -19,8 +19,8 @@ import { Icon } from '@components/Icon';
 import { usePresentationStore } from '@stores/presentationStore';
 import { useWorkspaceStore, useActiveWorkspace } from '@stores/projectStore';
 import { useCurrentTime } from '@stores/playbackClockStore';
-import { useSceneRevision } from '@stores/sceneStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useMirrorRevision } from '@hooks/useMirror';
+import { activeCompRecordNow } from '@hooks/useActiveCompRecord';
 import { useRenderQualityStore, RESOLUTION_LABELS, type PreviewResolution } from '@stores/renderQualityStore';
 import { useViewportRenderer } from '@layout/Workspace/useViewportRenderer';
 import {
@@ -36,9 +36,8 @@ import { useActiveMirrorComp } from '@hooks/useMirror';
 import { settingsDurationSeconds, settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
 import { framesToTimecode } from '@core/time/timecode';
 import { openExportDialog } from '@layout/Export/ExportDialog';
-import { renderStillFrame } from '@core/export/offlineRenderer';
+import { pageStillFrame } from '@core/rendering/pageFrame';
 import styles from './PresentationMode.module.css';
-import { compSizeOf } from '@core/composition/compSizes';
 
 const QUALITY_ORDER: PreviewResolution[] = [1, 2, 3, 4];
 /** Hide the chrome after this long with no pointer movement while playing. */
@@ -49,7 +48,8 @@ export function PresentationMode(): JSX.Element | null {
   const exit = usePresentationStore((s) => s.exit);
   const ws = useActiveWorkspace();
   const setPlaying = useWorkspaceStore((s) => s.actions.setPlaying);
-  const sceneRev = useSceneRevision((s) => s.rev);
+  // Any document revision repaints (the renderer also listens to the engine's frame signals).
+  const sceneRev = useMirrorRevision();
 
   // The active composition's settings, from the document mirror.
   const settings = useActiveMirrorComp()?.settings;
@@ -175,18 +175,8 @@ export function PresentationMode(): JSX.Element | null {
   // Canvas2D. The offline renderer produces a correct frame on any backend.
   const downloadFrame = useCallback(() => {
     void (async () => {
-      // Engine-side until D5: the offline renderer takes the legacy comp record.
-      const comp = useCompositionStore.getState().comp();
-      const blob = await renderStillFrame(
-        {
-          width,
-          height,
-          fps,
-          durationSec: duration,
-          comp: { ...comp, rootId: comp.id, compSizeOf },
-        },
-        currentFrame,
-      );
+      // The composition record from the mirror; the frame from the engine's page-render seam.
+      const blob = await pageStillFrame(activeCompRecordNow(), currentFrame);
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -197,7 +187,7 @@ export function PresentationMode(): JSX.Element | null {
       a.remove();
       URL.revokeObjectURL(url);
     })();
-  }, [name, currentFrame, width, height, fps, duration]);
+  }, [name, currentFrame]);
 
   // ── Seekable scrub bar ─────────────────────────────────────────────
   const seekToClientX = useCallback((clientX: number) => {

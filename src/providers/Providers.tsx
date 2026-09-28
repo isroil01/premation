@@ -24,14 +24,13 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { isPickArmed } from '@stores/trackerStore';
 import { pruneKeyframeSelectionToNodes, useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { prunePropertySelectionToNodes } from '@stores/propertySelectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { copyEdit, cutEdit, pasteEdit } from './clipboardEdits';
 import { audioSliderNullEdit, canExponentialScale, expressionBakeEdit, exponentialScaleEdit, hasBakeableExpression } from './menuCommandEdits';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { goToMarkerIndex, isTransportPlaying, pauseTransport, playTransport, seekPlayhead } from '@core/timeline/timelineView';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
-import { useProjectStore } from '@stores/projectStore';
+import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
 import { getTime } from '@stores/playbackClockStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
@@ -94,7 +93,7 @@ import {
 } from '@core/project/projectSession';
 import type { SaveOutcome } from '@core/project/ProjectManager';
 import { canSyncCurrentProject, syncCurrentProject } from '@core/sync/syncCurrentProject';
-import { renderStillFrame } from '@core/export/offlineRenderer';
+import { pageStillFrame } from '@core/rendering/pageFrame';
 import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
 import { buildCaptionCommands } from '@core/captions/captionCommands';
 import { buildChoreographyCommands } from '@core/animation/choreographyCommands';
@@ -164,7 +163,8 @@ import { runEngineJob } from '@core/engine/engineJobs';
 import { secondsToFlicks } from '@motion/engine-api';
 import { centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { settingsDurationSeconds, settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
+import { itemAssetsOf } from '@core/mirror/itemAssets';
+import { compRecordFromSettings, settingsDurationSeconds, settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffectEdit } from '@layout/Effects/effectEdits';
 import { easePresetOnKeys } from '@layout/Timeline/keyframeEdits';
@@ -210,6 +210,17 @@ function activeTabCompSize(): { width: number; height: number } {
   const id = st.tabs[st.activeTabId ?? '']?.compositionId;
   const s = id ? documentMirror().comp(id)?.settings : undefined;
   return s ? { width: s.width, height: s.height } : { width: 1920, height: 1080 };
+}
+
+/**
+ * Save Frame As / Copy Frame's target: the active composition's record from
+ * the mirror (the default record when none) and the playhead frame on its grid.
+ */
+function stillFrameTarget(): { comp: CompositionSettings; frame: number } {
+  const id = activeCompIdNow();
+  const s = id ? documentMirror().comp(id)?.settings : undefined;
+  const comp = s && id ? compRecordFromSettings(id, s) : DEFAULT_COMPOSITION;
+  return { comp, frame: Math.round(getTime() * (comp.fps || 30)) };
 }
 
 /**
@@ -728,7 +739,6 @@ function buildMarkerCommands(): ReadonlyArray<Command> {
  * menuModel), so they're discoverable rather than shortcut-only.
  */
 import { type MergeOp } from '@core/scene/mergePaths';
-import { compSizeOf } from '@core/composition/compSizes';
 import { installProductAnalytics, noteNextProjectSource } from '@core/analytics/productEvents';
 
 /** The four boolean operators, in the order every other surface lists them. */
@@ -1671,7 +1681,9 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       // B4: two or more video / still items in the project (`ItemInfo.mediaType`, the document mirror).
       enabled: () => [...documentMirror().items.values()].filter((i) => i.kind === 'footage' && (i.mediaType === 'video' || i.mediaType === 'image')).length >= 2,
       execute: async () => {
-        const vids = useAssetStore.getState().assets.filter((a) => a.type === 'video' || a.type === 'image');
+        // B4: the project's video / still footage as records built from the mirror's items (ItemInfo).
+        const m = documentMirror();
+        const vids = itemAssetsOf(m, m.items.keys()).filter((a) => a.type === 'video' || a.type === 'image');
         if (vids.length < 2) return;
         const { createMulticamComposition } = await import('@core/composition/multicam');
         try {
@@ -1732,8 +1744,9 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: String(n), alt: true },
       enabled: () => true,
       execute: async () => {
-        const { switchMulticamAngle } = await import('@core/composition/multicam');
-        switchMulticamAngle(n);
+        // B4: the active composition's angles from the mirror; the cut is one `addKeyframes`.
+        const { switchMulticamAngleEdit } = await import('@layout/Multicam/multicamEdits');
+        await switchMulticamAngleEdit(n);
       },
     })),
     {
@@ -2732,14 +2745,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             // at comp resolution through the deterministic offline path.
             enabled: () => true,
             execute: async () => {
-              // B4-kept: the in-page TS renderer's inputs (the comp record + compSizeOf over the live
-              // document, the controller's frame) — leaves with the renderer (D5), like buildSnapshot's.
-              const c = useCompositionStore.getState().comp();
-              const frame = Math.round(getTimelineController().timeline.currentFrame);
-              const blob = await renderStillFrame(
-                { width: c.width, height: c.height, fps: c.fps, durationSec: c.durationSeconds, comp: { ...c, rootId: c.id, compSizeOf } },
-                frame,
-              );
+              // B4: the composition record from the mirror, the playhead frame from the transport
+              // seam; the frame from the TypeScript engine's page renderer seam.
+              const { comp: c, frame } = stillFrameTarget();
+              const blob = await pageStillFrame(c, frame);
               if (!blob) { notify('Could not render the frame', 'warning'); return; }
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
@@ -2757,14 +2766,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             // deterministic path as Save Frame As; only the destination differs.
             enabled: () => typeof navigator !== 'undefined' && !!navigator.clipboard?.write,
             execute: async () => {
-              // B4-kept: the in-page TS renderer's inputs (the comp record + compSizeOf over the live
-              // document, the controller's frame) — leaves with the renderer (D5), like buildSnapshot's.
-              const c = useCompositionStore.getState().comp();
-              const frame = Math.round(getTimelineController().timeline.currentFrame);
-              const blob = await renderStillFrame(
-                { width: c.width, height: c.height, fps: c.fps, durationSec: c.durationSeconds, comp: { ...c, rootId: c.id, compSizeOf } },
-                frame,
-              );
+              const { frame, comp: c } = stillFrameTarget();
+              const blob = await pageStillFrame(c, frame);
               if (!blob) { notify('Could not render the frame', 'warning'); return; }
               try {
                 await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);

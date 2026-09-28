@@ -10,11 +10,10 @@
  */
 
 import { memo, useCallback } from 'react';
-import { captureTextPreset } from '@core/inspector/sectionPresets';
 import type { PresetValues } from '@stores/sectionPresetStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
-import { hasTextLayer } from '@layout/Text/textMirror';
+import { hasTextLayer, mirrorTextPresetCapture } from '@layout/Text/textMirror';
 import { TextSettingsBody } from './CharacterPanel';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import { useInspectorSelection } from './inspectorSelection';
@@ -62,10 +61,9 @@ export function TextPresetAction({
 }): JSX.Element {
   const selection = useInspectorSelection(nodeId);
   const targets = nodeIds && nodeIds.length > 0 ? nodeIds : selection;
-  // B4-gap: a text style preset captures the props the layer STORES, in their stored forms (an unset
-  // Leading stays Auto, `fill` / `stroke` hex strings, `strokeOverFill`); the API reports every field
-  // with its default filled in and colours as channels, so a mirror capture would change what a preset holds.
-  const capture = useCallback(() => captureTextPreset(nodeId), [nodeId]);
+  // B4: a text style preset captures the props the layer STORES (PropertyInfo.stored: an unset Leading
+  // stays Auto), colours as hex, the Fill and Stroke order as `strokeOverFill` — the mirror at call time.
+  const capture = useCallback(() => mirrorTextPresetCapture(documentMirror(), nodeId), [nodeId]);
   const apply = useCallback((values: PresetValues) => { textPresetEdit(targets, values); }, [targets]);
   return <SectionPresetMenu sectionId="text" label="Text style presets" capture={capture} apply={apply} />;
 }

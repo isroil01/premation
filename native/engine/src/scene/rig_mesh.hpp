@@ -20,11 +20,14 @@
 // bytes (CLAUDE.md determinism).
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "alpha_mesh.hpp"
@@ -70,5 +73,76 @@ struct RestMeshView {
 
 /// The rig block: rest mesh → puppet deform → skeleton skinning → overlap order.
 [[nodiscard]] RigResult build_rig_mesh(const RigInputs& in, const RigSampler& anim);
+
+// ── B4 round 5: the rig as the overlays see it (rig_overlay.cpp; src/core/engine/rigOverlay.ts) ──
+
+/// One puppet pin at the time (layer space): drawn point (through the skeleton), its pre-skeleton
+/// point (a bend pin's solved vertex), live rotation (degrees) and scale.
+struct RigPinOut {
+  std::string id;
+  std::string kind;  ///< pinKindOf: 'advanced' when absent
+  double x = 0, y = 0, cx = 0, cy = 0, rotation = 0, scale = 1;
+};
+/// One bone: live pose (before IK), solved pose, solved world matrix (a, b, c, d, e, f).
+struct RigBoneOut {
+  std::string id;
+  double x = 0, y = 0, rotation = 0, scaleX = 1, scaleY = 1;
+  double posedX = 0, posedY = 0, posedRotation = 0;
+  std::optional<std::array<double, 6>> world;
+};
+/// One stored IK goal, live at the time.
+struct RigIkOut {
+  std::string bone;
+  bool enabled = true;
+  double x = 0, y = 0;
+  std::optional<std::array<double, 2>> pole;
+  std::optional<double> chainLength;
+  std::string mode;  ///< 'ik' | 'fk'
+};
+
+/// The rig of one layer resolved at a time, for the overlays and getRigPose:
+/// nodeRestMesh's mesh (rigMeshInputs.ts — `authoring` = the Puppet Pin tool's
+/// pinless preview), the puppet solve, the skeleton pose on top, and the point
+/// helpers of rigDeform.ts / puppet.ts over them.
+class RigModel {
+ public:
+  struct Impl;
+  explicit RigModel(std::unique_ptr<Impl> impl);
+  RigModel(RigModel&&) noexcept;
+  RigModel& operator=(RigModel&&) noexcept;
+  RigModel(const RigModel&) = delete;
+  RigModel& operator=(const RigModel&) = delete;
+  ~RigModel();
+
+  std::vector<RigPinOut> pins;
+  std::vector<RigBoneOut> bones;
+  std::vector<RigIkOut> ik;
+  /// What renders: the puppet solve through the skeleton (x, y, u, v per vertex).
+  std::vector<float> vertices;
+
+  /// The rest mesh (x, y, u, v) and its triangles.
+  [[nodiscard]] const std::vector<float>& rest() const noexcept;
+  [[nodiscard]] const std::vector<std::uint16_t>& triangles() const noexcept;
+  /// The puppet lattice (PuppetOverlay puppetLatticePath) as index pairs.
+  [[nodiscard]] std::vector<std::uint32_t> lattice_edges() const;
+  /// `bone`'s bind weight per rest vertex (empty without a skeleton).
+  [[nodiscard]] std::vector<double> bone_weights(std::string_view bone) const;
+  /// Vertex `v`'s bind weights, strongest first (empty without a skeleton / past the mesh).
+  [[nodiscard]] std::vector<std::pair<std::string, double>> vertex_weights(std::size_t v) const;
+  /// skinPointAt(p, p) — identity without a skeleton.
+  [[nodiscard]] std::array<double, 2> skin(double x, double y) const;
+  /// unskinPoint — identity without a skeleton.
+  [[nodiscard]] std::array<double, 2> unskin(double x, double y) const;
+  /// restPointFromDeformed over the puppet solve (nullopt off the mesh).
+  [[nodiscard]] std::optional<std::array<double, 2>> rest_from_deformed(double x, double y) const;
+
+ private:
+  std::unique_ptr<Impl> impl_;
+};
+
+/// The model for `in` (fx, the layer's box, pad, path, coverage; `rigT` the keyframe-axis time).
+/// nullopt: no pins and no bones and not `authoring`, or a mesh this port cannot build (`unported` says why).
+[[nodiscard]] std::optional<RigModel> build_rig_model(const RigInputs& in, const RigSampler& anim, bool authoring,
+                                                      bool previewSilhouette, std::vector<std::string>& unported);
 
 }  // namespace premation::scene

@@ -22,27 +22,31 @@
  * the layer as you pan/zoom.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { secondsToFlicks, type OverlayKind } from '@motion/engine-api';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { readGeometry } from '@core/workspace/geometry';
 import { useTextEditStore, TEXT_EDIT_KEEP_ATTR } from '@stores/textEditStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readRuns, reindexRuns } from '@core/text/richText';
+import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
+import { MAIN_VIEWPORT, overlayLayer, overlayScreenPlacement, requestOverlayLayers } from '@stores/overlayGeometry';
+import { useMirrorKeys, useRetainTree } from '@hooks/useMirror';
+import { useTextLayout } from '@hooks/useTextLayout';
+import { componentPropPath, componentPropValue } from '@core/mirror/componentProps';
+import { engine } from '@core/engine/engineInstance';
+import { playheadSeconds } from '@core/timeline/timelineView';
+import { currentRuns, isSourceTextAnimated, mirrorParagraphBox, SOURCE_TEXT_PATH, sourceTextOf } from '@layout/Text/textMirror';
+import { reindexRuns } from '@core/text/richText';
 import { utf16ToGraphemeIndex } from '@core/text/graphemes';
-import { readParagraphBox, readParagraphDirection, resolveAlignForDirection } from '@core/text/textExtras';
+import { readParagraphDirection, resolveAlignForDirection } from '@core/text/textExtras';
 import { isAutoTextLayerName, textLayerNameFor } from '@core/text/textLayerName';
-import { defaultAnimation } from '@motion/animation';
 import { isLayer } from '@core/engine/doc';
 import { commitSourceTextEdit } from './viewportEdits';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
-import { getRemappedTime } from '@core/timeline/TimelineController';
 import { installTextCommands } from '@layout/Inspector/textCommands';
 import {
   installParagraphTextCommands,
   TEXT_CONVERT_TO_PARAGRAPH_COMMAND,
   TEXT_CONVERT_TO_POINT_COMMAND,
 } from '@layout/Inspector/paragraphTextCommands';
-import { measureTextNodeParagraphBox } from '@core/text/measureText';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { TextBoxHandles } from './TextBoxHandles';
 
@@ -112,14 +116,28 @@ function charOffsetOf(root: Node, node: Node, offset: number): number {
   return count;
 }
 
-/** Merge every component's props, the way buildSnapshot reads a text layer. */
-function mergedProps(nodeId: string): Record<string, unknown> {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return {};
+/** The Text props the editor styles itself with (B4: the mirror's static values, stored units). */
+const STYLE_KEYS = [
+  'content', 'fontSize', 'fontFamily', 'fontWeight', 'fontStyle', 'fauxItalic', 'orientation', 'direction',
+  'align', 'fill', 'letterSpacing', 'boxWidth', 'verticalRomanAlignment',
+] as const;
+
+/**
+ * The layer's text style from the document MIRROR, as the props bag the editor
+ * reads: each prop's static value — Leading only when the layer STORES one
+ * (`PropertyInfo.stored`; unset = Auto) — and the fill as hex.
+ */
+function mirrorTextProps(m: DocumentMirror, nodeId: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const c of node.components) Object.assign(out, c.props);
+  for (const k of STYLE_KEYS) out[k] = componentPropValue(m, nodeId, k);
+  const tree = m.tree(nodeId);
+  const leading = componentPropPath(tree, 'lineHeight');
+  if (leading && tree?.nodes.get(leading)?.stored === true) out.lineHeight = componentPropValue(m, nodeId, 'lineHeight');
   return out;
 }
+
+/** What the in-place editor asks of the overlay geometry push: the layer's matrix and its measured box. */
+const TEXT_EDIT_KINDS: ReadonlyArray<OverlayKind> = ['transform', 'textBox'];
 
 export function TextEditOverlay(): JSX.Element | null {
   const nodeId = useTextEditStore((s) => s.nodeId);
@@ -132,6 +150,18 @@ export function TextEditOverlay(): JSX.Element | null {
    *  alignment and overflow follow it, not the last committed content. */
   const [draft, setDraft] = useState<string | null>(null);
 
+  // B4: the layer's style and header from the document mirror (its tree kept
+  // loaded while it is edited); its measured paragraph box from the engine
+  // (`getTextLayout`, the typed draft as the content override — one query per
+  // keystroke, never per frame).
+  useRetainTree(nodeId);
+  useMirrorKeys(nodeId ? [`layer:${nodeId}`, `tree:${nodeId}`] : []);
+  const overrides = useMemo(() => (draft !== null ? { content: draft } : undefined), [draft]);
+  const layout = useTextLayout(nodeId, overrides);
+  /** Paragraph text has a box to pin the editor to (read by the placement loop). */
+  const hasBoxRef = useRef(false);
+  hasBoxRef.current = !!nodeId && mirrorParagraphBox(documentMirror(), nodeId) !== null;
+
   // The text commands (Swap Fill and Stroke, Shift+X) live with the text
   // feature; this component is always mounted with the workspace.
   useEffect(() => {
@@ -139,34 +169,44 @@ export function TextEditOverlay(): JSX.Element | null {
     installParagraphTextCommands();
   }, []);
 
+  // The layer's matrix and measured box come with each frame (the overlay geometry push, B4).
+  useEffect(() => {
+    if (!nodeId) return undefined;
+    void requestOverlayLayers(MAIN_VIEWPORT, 'textEdit', [nodeId], TEXT_EDIT_KINDS);
+    return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'textEdit', [], TEXT_EDIT_KINDS); };
+  }, [nodeId]);
+
   // Keep the overlay glued to the layer while the camera moves.
   useEffect(() => {
     if (!nodeId) return;
     let raf = 0;
     const place = (): void => {
       const box = boxRef.current;
-      const p = getWorkspaceController().getNodeScreenPlacement(nodeId);
-      const node = defaultSceneGraph.getNode(nodeId);
-      const geom = node ? readGeometry(node) : null;
+      const ws = getWorkspaceController().ws;
+      const g = overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(playheadSeconds()));
+      const p = overlayScreenPlacement(g, (q) => ws.worldToScreen(q));
+      // The push's box: LOCAL x, y, width, height (the fixed paragraph box, else the selection box).
+      const tb = g?.textBox && g.textBox.length >= 4 ? g.textBox : null;
       if (box && p) {
-        const zoom = p.zoom;
-        const sx = p.scaleX ?? 1;
-        const sy = p.scaleY ?? 1;
-        const ox = (geom?.offsetX ?? 0) * zoom * sx;
-        const oy = (geom?.offsetY ?? 0) * zoom * sy;
+        const zoom = ws.camera.zoom;
+        const sx = p.scaleX;
+        const sy = p.scaleY;
+        // The box's own centre (x is centred on the origin for the page's boxes).
+        const ox = tb ? (tb[0]! + tb[2]! / 2) * zoom * sx : 0;
+        const oy = tb ? (tb[1]! + tb[3]! / 2) * zoom * sy : 0;
         box.style.left = `${p.x}px`;
         box.style.top = `${p.y}px`;
-        // Only PARAGRAPH text has a box to pin the editor to. `geom` measures
+        // Only PARAGRAPH text has a box to pin the editor to. The box measures
         // the COMMITTED content, so pinning point text to it froze the editor
         // at the width of the old text ("Text", for a layer made a moment ago)
         // while a whole sentence was typed into it — a fixed box that point
         // text, by definition, does not have. Point text sizes to its own
         // content (`max-content`) and so grows as you type,
         // centred on the layer origin exactly as the renderer centres it.
-        const hasBox = !!node && readParagraphBox(node) !== null;
-        if (hasBox && geom && geom.width > 0 && geom.height > 0) {
-          box.style.width = `${geom.width}px`;
-          box.style.height = `${geom.height}px`;
+        const hasBox = hasBoxRef.current;
+        if (hasBox && tb && tb[2]! > 0 && tb[3]! > 0) {
+          box.style.width = `${tb[2]}px`;
+          box.style.height = `${tb[3]}px`;
         } else if (!hasBox) {
           box.style.width = 'max-content';
           box.style.height = 'auto';
@@ -191,7 +231,7 @@ export function TextEditOverlay(): JSX.Element | null {
     setDraft(null);
     const box = boxRef.current;
     if (!nodeId || !box) return;
-    box.textContent = strp(mergedProps(nodeId).content) ?? '';
+    box.textContent = strp(componentPropValue(documentMirror(), nodeId, 'content')) ?? '';
     box.focus();
     const range = document.createRange();
     range.selectNodeContents(box);
@@ -240,9 +280,9 @@ export function TextEditOverlay(): JSX.Element | null {
   // Type tool on a selected paragraph layer, so it renders without an edit.
   if (!nodeId) return <TextBoxHandles />;
 
-  const p = mergedProps(nodeId);
-  const editedNode = defaultSceneGraph.getNode(nodeId);
-  const box = editedNode ? measureTextNodeParagraphBox(editedNode, draft !== null ? { content: draft } : undefined) : null;
+  const p = mirrorTextProps(documentMirror(), nodeId);
+  // The paragraph box as measured for the TYPED text (null for point text, and until the engine answers).
+  const box = layout?.paragraph ?? null;
   // Fit Text to Box previews at the scale the canvas draws at.
   const fit = box?.fitScale ?? 1;
   const size = num(p.fontSize, 48) * fit;
@@ -263,7 +303,7 @@ export function TextEditOverlay(): JSX.Element | null {
   const aligned = resolveAlignForDirection(strp(p.align), rtl ? 'rtl' : 'ltr');
   const cssAlign = (l: 'left' | 'center' | 'right'): 'left' | 'center' | 'right' | 'start' | 'end' =>
     auto && l !== 'center' ? (l === 'left' ? 'start' : 'end') : l;
-  const color = strp(p.color) ?? strp(p.fill) ?? '#ffffff';
+  const color = strp(p.fill) ?? '#ffffff';
   const lineHeight = num(p.lineHeight, 1.2);
   const letterSpacing = num(p.letterSpacing, 0) * fit;
   const boxWidth = num(p.boxWidth, 0);
@@ -285,10 +325,11 @@ export function TextEditOverlay(): JSX.Element | null {
   const commit = (): void => {
     if (committedRef.current) return;
     committedRef.current = true;
-    const node = defaultSceneGraph.getNode(nodeId);
-    const textComp = node?.components.find((c) => c.type === 'Text');
+    const m = documentMirror();
+    const layer = m.layer(nodeId);
+    const source = m.property(nodeId, SOURCE_TEXT_PATH);
     const next = boxRef.current?.innerText ?? '';
-    const prev = textComp ? strp(textComp.props.content) ?? '' : '';
+    const prev = sourceTextOf(source?.value) ?? '';
     // Source Text keyframed (AE): an edit becomes a keyframe at the playhead —
     // the renderer reads the data track, so writing the static prop would be
     // an edit that changes nothing on screen.
@@ -298,18 +339,22 @@ export function TextEditOverlay(): JSX.Element | null {
     // only ever created as a layer) has no address, so its edit is not kept.
     // The overlay stays up until the edit has landed, so the layer's glyphs
     // never show the old text for a frame.
-    if (!node || !textComp || !isLayer(node.id)) {
+    if (!layer || !source || !isLayer(nodeId)) {
       end();
       return;
     }
-    if (defaultAnimation.isDataAnimated(node.id, 'text.source')) {
+    if (isSourceTextAnimated(m, nodeId)) {
       // Source Text is animated: `setProperty` at the playhead keys it (AE).
-      // Compared with what the playhead shows, so an unchanged commit adds no key.
-      if (next !== defaultAnimation.sampleData(node.id, 'text.source', getRemappedTime(node.id, t))) {
-        void commitSourceTextEdit(node.id, next, { seconds: t, label: 'Edit Source Text keyframe' }).finally(end);
-        return;
-      }
-      end();
+      // Compared with what the playhead shows (its keyed value there, asked of
+      // the engine — the write needs it), so an unchanged commit adds no key.
+      void engine()
+        .query({ type: 'getPropertyValues', props: [{ layer: nodeId, path: SOURCE_TEXT_PATH }], time: secondsToFlicks(t), evaluated: false })
+        .then((res) => {
+          const shown = res.ok ? sourceTextOf(res.value.values[0]?.value) : undefined;
+          if (next === shown) return undefined;
+          return commitSourceTextEdit(nodeId, next, { seconds: t, label: 'Edit Source Text keyframe' });
+        })
+        .finally(end);
       return;
     }
     if (next !== prev) {
@@ -321,10 +366,10 @@ export function TextEditOverlay(): JSX.Element | null {
       // Runs address characters by index, so an edit that shifts characters
       // must shift the runs with them — otherwise typing a word at the front
       // slides the layer's whole styling one word to the right.
-      const auto = isAutoTextLayerName(node.name, prev) ? textLayerNameFor(next) : null;
-      const rename = auto && auto !== node.name ? auto : undefined;
-      const runs = readRuns(node);
-      void commitSourceTextEdit(node.id, next, {
+      const auto = isAutoTextLayerName(layer.name, prev) ? textLayerNameFor(next) : null;
+      const rename = auto && auto !== layer.name ? auto : undefined;
+      const runs = currentRuns(nodeId, m);
+      void commitSourceTextEdit(nodeId, next, {
         seconds: t, label: 'Edit Text', ...(rename ? { rename } : {}), ...(runs.length > 0 ? { runs: reindexRuns(runs, prev, next) } : {}),
       }).finally(end);
       return;

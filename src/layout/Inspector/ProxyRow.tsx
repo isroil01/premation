@@ -16,10 +16,12 @@
  * how you end up wondering why nothing got faster.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { InspectorRow } from '@components/Inspector';
 import { Switch } from '@components/Switch';
-import { useAssetStore } from '@stores/assetStore';
+import { mirrorAssetRecord } from '@stores/assetSession';
+import { useProxyRecord } from '@hooks/useAssetRecords';
+import { useMirrorItems } from '@hooks/useMirror';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { isProxyInUse, proxyResolution } from '@core/assets/proxy';
 import {
@@ -35,13 +37,13 @@ import shared from './TransformSection.module.css';
 import styles from './ProxyRow.module.css';
 
 export function ProxyRow({ assetId }: { assetId: string }): JSX.Element | null {
-  // Subscribe to the LIST so a status transition written by a background job
-  // repaints this row. Reading through the selector rather than getState is what
-  // makes 'generating' → 'ready' visible without a second interaction.
-  // B4-gap: the footage's media type (video?) and its proxy RECORD (status generating / failed + error, proxy size,
-  // userSupplied) — `ItemInfo` carries only `proxyPath` / `proxyEnabled` and no media type; closes with
-  // `ItemInfo.mediaType` + an `ItemInfo.proxy` record (or proxy jobs reported as engine jobs, C-phase).
-  const asset = useAssetStore((s) => s.assets.find((a) => a.id === assetId));
+  // B4: the item from the document mirror (media type, probed size) and its proxy JOB record — session state
+  // (generating / ready / failed, the stand-in's size, a failure's reason, attached by the user), not document:
+  // src/stores/assetSession.ts. Subscribing to the record is what makes 'generating' → 'ready' visible
+  // without a second interaction.
+  const info = useMirrorItems().get(assetId);
+  const proxyRecord = useProxyRecord(assetId);
+  const asset = useMemo(() => (info ? mirrorAssetRecord(info, proxyRecord ? { proxy: proxyRecord } : undefined) ?? undefined : undefined), [info, proxyRecord]);
   const useProxies = usePreferenceStore((s) => s.useProxies);
   const setPref = usePreferenceStore((s) => s.set);
   const [busy, setBusy] = useState(false);

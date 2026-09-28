@@ -71,7 +71,7 @@ struct OverlayLayerGeometry {
   path: f64[] = 5;
   /// motionPath: one entry per Position key time: t, x, y, z, inX, inY, outX, outY — the key's point and its spatial tangent handles at their effective positions (comp space; NaN where a handle does not exist: the path's ends, a linear vertex).
   pathKeys: f64[] = 6;
-  /// rig: puppet pins as x, y pairs and bones as x0, y0, x1, y1 in comp space — not produced yet (both engines send them empty until the rig sampler moves engine-side).
+  /// rig: unused — superseded by `rig` (B4 round 5, layer-space pins, bones, mesh); both engines send them empty.
   pins: f64[] = 7;
   bones: f64[] = 8;
   /// textBox: a text layer's measured box, LOCAL x, y, width, height (the fixed paragraph box, else the font-metric selection box).
@@ -80,6 +80,122 @@ struct OverlayLayerGeometry {
   pathFrames: f64[] = 10;
   /// motionPath: the position at the frame's own time: x, y, z (comp space as `path`).
   pathNow: f64[] = 11;
+  /// scene3d (B4 round 5): a camera's, light's or 3D layer's reference-geometry inputs at the frame; absent for any other layer. Rides the layer's first record.
+  scene?: OverlayScene3D = 40;
+  /// rig (B4 round 5): the layer's puppet pins / skeleton at the frame (OverlayRig); absent without a rig to show. A long rig spans several records: the `rig` arrays of a layer's records concatenate in arrival order.
+  rig?: OverlayRig = 50;
+}
+
+/// B4 round 5 — one puppet pin as the rig resolves it at a time (OverlayRig, getRigPose). Layer space: the layer's local px, the space readGeometry's box is in.
+struct RigPinPose {
+  id: string = 1;
+  /// pinKindOf: advanced (the default), position, bend, starch, overlap.
+  kind: string = 2;
+  /// Where the pin is DRAWN: its live position — a bend pin's solved mesh vertex — carried through the skeleton pose (identity without one).
+  x: f64 = 3;
+  y: f64 = 4;
+  /// The same point before the skeleton (the puppet's rest space): the pivot a rotate / scale gesture measures from.
+  cx: f64 = 5;
+  cy: f64 = 6;
+  /// Live rotation (degrees) and scale (1 = 100%) at the time.
+  rotation: f64 = 7;
+  scale: f64 = 8;
+}
+/// B4 round 5 — one bone of a skeleton at a time (OverlayRig, getRigPose).
+struct RigBonePose {
+  id: string = 1;
+  /// The LIVE pose before IK: the bone's tracks at the time over its stored values (parent space; rotation in radians, the rig's unit).
+  x: f64 = 2;
+  y: f64 = 3;
+  rotation: f64 = 4;
+  scaleX: f64 = 5;
+  scaleY: f64 = 6;
+  /// The SOLVED pose (FK + the IK goals in IK mode), same space.
+  posedX: f64 = 7;
+  posedY: f64 = 8;
+  posedRotation: f64 = 9;
+  /// The solved world matrix a, b, c, d, e, f (layer space): the root is (e, f), the tip the matrix at (length, 0).
+  world: f64[] = 10;
+}
+/// B4 round 5 — one stored IK goal at a time (OverlayRig, getRigPose), in the rig's stored order, disabled ones included.
+struct RigIkGoal {
+  bone: string = 1;
+  enabled: bool = 2;
+  /// The goal and its pole live at the time (their tracks over the stored values; layer space).
+  x: f64 = 3;
+  y: f64 = 4;
+  /// x, y; empty = none.
+  pole: f64[] = 5;
+  /// As stored (absent = the solver's default of 2).
+  chainLength?: f64 = 6;
+  /// The chain's mode at the time: the ikMode track (≥ 0.5 = ik) over the stored mode, `ik` by default. Only an enabled goal in `ik` mode solves.
+  mode: string = 7;
+}
+/// B4 round 5 — what the Puppet Pin and Bone overlays draw for one layer at the frame, resolved as buildSnapshot resolves the rig (the puppet solve in rest space, then the skeleton pose on top). Every point is LAYER space (the layer's local px — the space `box` is in).
+struct OverlayRig {
+  /// The puppet pins, stored order.
+  pins: RigPinPose[] = 1;
+  /// The skeleton's bones, stored order: live and solved pose, solved world matrix.
+  bones: RigBonePose[] = 2;
+  /// Every stored IK goal, live at the frame.
+  ik: RigIkGoal[] = 3;
+  /// The deformed mesh as it renders — puppet, then skeleton: x, y per vertex …
+  vertices: f64[] = 4;
+  /// … the REST mesh, index-aligned: x, y per vertex (weights and paint address these indices) …
+  rest: f64[] = 5;
+  /// … its triangles, vertex index triples in the authored order …
+  triangles: u32[] = 6;
+  /// … and the puppet lattice: its unique edges as index pairs (a grid mesh keeps the rest-axis edges only — boxes, not triangles; an outline mesh keeps every edge).
+  edges: u32[] = 7;
+  /// The focus bone's (OverlayRigOptions.bone) bind weight per vertex; empty without one.
+  weights: f64[] = 8;
+  /// The focus pin's (OverlayRigOptions.pin) Position trajectory through the pose: x, y pairs, 24 per key span; empty under two keys.
+  pinPath: f64[] = 9;
+  /// The focus pin's Position keys (two or more): per key t (keyframe-axis s), restX, restY (the stored point), x, y (posed), inX, inY, outX, outY (the posed tangent handles; NaN where none).
+  pinKeys: f64[] = 10;
+}
+
+/// B4 round 5 — which of the viewport's 3D reference objects a scene3d record describes.
+enum Scene3DRole { camera = 0; light = 1; layer = 2; }
+
+/// B4 round 5 — what the viewport's 3D chrome (frustums, light cones, layer cages, device handles, the focus plane, the 3D gizmo) reads for one layer at the frame, resolved as the renderer resolves it (sceneGizmoData.ts / deviceHandles.ts). World = composition space, y down; animated values win over stored ones, parents lifted.
+struct OverlayScene3D {
+  role: Scene3DRole = 1;
+  /// camera: the resolved Camera3D (cameraFromNode, parent-lifted): position x, y, z, focalLength, principal x, y, yaw, pitch, roll (degrees; zero = no orientation).
+  lens: f64[] = 2;
+  /// camera: the Point of Interest, parent-lifted (readCameraPoi; empty = a one-node camera). light: its POI, parent-lifted (empty = none).
+  poi: f64[] = 3;
+  /// camera: readCameraFocusDistance (px).
+  focusDistance: f64 = 4;
+  /// camera: readNodeDof — strength, focus, aperture, focalLength, fStop (NaN = the legacy ramp); empty = depth of field off.
+  dof: f64[] = 5;
+  /// light: readNodeLight's type (parallel, spot, point, ambient, environment).
+  lightType: string = 6;
+  /// light: the world position (deviceWorldPosition).
+  position: f64[] = 7;
+  /// light: radius, cone, coneFeather, and the aim in degrees (lightAngle + the layer's world Z rotation) — what buildLightGizmo takes.
+  light: f64[] = 8;
+  /// layer: the local transform sampled at the frame (sampleTransform3DAtPlayhead): x, y, z, rotationX, rotationY, rotation, scaleX, scaleY, scaleZ (stored units).
+  local: f64[] = 9;
+  /// layer: the extrusion depth (animated winning, ≥ 0).
+  extrusion: f64 = 10;
+  /// every role: the parent chain's world 4×4, column-major (parentWorldMatrixAt; empty = no parent) — what a device drag inverts to write parent-space values.
+  parent: f64[] = 11;
+}
+
+/// B4 round 5 — a subscribed view mode's resolved view camera at the frame (setOverlayGeometry `views`).
+struct OverlayView {
+  /// The mode as subscribed.
+  mode: string = 1;
+  /// The camera layer the view's chrome resolves (viewCameraNode: a live `camera:<id>` view's camera, else the composition's topmost enabled camera — no in/out test); empty = none (the default camera). Reported for the axis and custom views too.
+  camera: LayerId = 2;
+  /// The camera the renderer's rule picks for this view (the same, plus the layer being inside its in/out bar at the frame) — what the camera tools drive; empty = none.
+  liveCamera: LayerId = 3;
+  /// The chrome camera resolved at the frame (cameraFromNode, parent-lifted; the default camera when none): position x, y, z, focalLength, principal x, y, yaw, pitch, roll. The axis views project without it; a custom view replaces it with its stored camera (editor state).
+  lens: f64[] = 4;
+  /// The composition size the view was resolved at.
+  compWidth: f64 = 5;
+  compHeight: f64 = 6;
 }
 
 /// Engine → host. The overlay geometry of the NEXT FrameReady of `viewport` with this generation and frame (B4, setOverlayGeometry). One frame's records may span several messages (the 4096-byte payload cap; a layer's kinds can arrive in separate records, and they merge): the host collects them until `last`, then delivers them with that FrameReady. Sent only while the viewport has a subscription.
@@ -91,6 +207,8 @@ struct FrameGeometry {
   revision: Revision = 5;
   layers: OverlayLayerGeometry[] = 6;
   last: bool = 7;
+  /// B4 round 5: the subscribed views' cameras (setOverlayGeometry `views`), in subscription order; they ride the frame's first message.
+  views: OverlayView[] = 10;
 }
 
 /// Engine → host. Heartbeat answer, sent by the document core thread.

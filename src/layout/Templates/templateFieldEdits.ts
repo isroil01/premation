@@ -16,7 +16,8 @@
  * set to the slot's fitted box (`replaceLayerSource` + `layer/width|height`)
  * in one entry — `fillMediaFieldEdit`.
  *
- * Display reads stay direct until B4's mirror.
+ * The values a field shows (`templateFieldValues`) and a slot's rect / fit (`slotBoxOf`) are asked of
+ * the engine (B4).
  */
 
 import type { Command } from '@motion/engine-api';
@@ -29,7 +30,14 @@ import type { TemplateField } from '@core/template/templateTypes';
 import { sourceTextCommand } from '@layout/Text/textEdits';
 import { scalarValueCommands, trackRef } from '@layout/Inspector/inspectorEdits';
 import { importBrowserFilesEdit } from '@layout/Assets/assetEdits';
-import { slotBoxFor } from '@core/template/mediaSlots';
+import { fittedBoxFor } from '@core/template/mediaSlots';
+import type { SlotFit } from '@core/template/templateTypes';
+import type { PropRef, Value } from '@motion/engine-api';
+import { engine } from '@core/engine/engineInstance';
+import { apiUnitFactor } from '@core/engine/props';
+import { numbersOfValue } from '@core/mirror/trackIndex';
+import { channelsToHex } from '@core/mirror/paintFields';
+import { documentMirror } from '@stores/documentMirror';
 import type { ImportedAsset } from '@stores/assetStore';
 
 const HEX = /^#?([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -123,9 +131,8 @@ export async function fillMediaFieldEdit(field: TemplateField, file: File, secon
   const cmds: Command[] = [{ type: 'replaceLayerSource', layer: nodeId, source: asset.id, keepSize: true }];
   const w = asset.metadata?.width;
   const h = asset.metadata?.height;
-  // B4-gap: the slot rect and fit (`__slotW/__slotH/__slotFit` on the Transform — no catalog path); closes with
-  // those as layer properties.
-  const box = slotBoxFor(nodeId, w && h ? { width: Math.round(w * (asset.interpret?.par ?? 1)), height: h } : null);
+  // B4: the slot rect and fit are layer properties (`layer/slotFit|slotWidth|slotHeight`), asked of the engine.
+  const box = await slotBoxOf(nodeId, w && h ? { width: Math.round(w * (asset.interpret?.par ?? 1)), height: h } : null, seconds);
   if (box) {
     cmds.push(
       ...scalarValueCommands('width', [{ nodeId, value: box.width }], { seconds }),
@@ -134,4 +141,80 @@ export async function fillMediaFieldEdit(field: TemplateField, file: File, secon
   }
   const res = await edit(`Edit ${field.label}`, cmds);
   return res.ok ? asset : null;
+}
+
+// ── Reads (B4 round 5) ─────────────────────────────────────────────────
+
+/** Static values at `seconds` (pre-expression), keyed by path; a query that fails answers nothing. */
+export async function propertyValuesAt(layer: string, paths: readonly string[], seconds: number): Promise<Map<string, Value>> {
+  const out = new Map<string, Value>();
+  if (paths.length === 0) return out;
+  const res = await engine().query({ type: 'getPropertyValues', props: paths.map((path) => ({ layer, path })), time: compTime(seconds), evaluated: false });
+  if (res.ok) for (const v of res.value.values) out.set(v.prop.path, v.value);
+  return out;
+}
+
+/**
+ * The box a slot layer takes for a source of `source` size (mediaSlots.ts `slotBoxFor` over the engine): the
+ * AUTHORED slot rect (`layer/slotWidth|slotHeight`, else the layer's own width / height — a slot declared
+ * before the rect was captured) and its fit (`layer/slotFit`, `contain` when unset). Null when the source size
+ * is unknown or the layer has no box.
+ */
+export async function slotBoxOf(nodeId: string, source: { width: number; height: number } | null, seconds: number): Promise<{ width: number; height: number } | null> {
+  if (!source || !(source.width > 0) || !(source.height > 0)) return null;
+  const slot = await propertyValuesAt(nodeId, ['layer/slotFit', 'layer/slotWidth', 'layer/slotHeight'], seconds);
+  const wRef = trackRef(nodeId, 'width');
+  const hRef = trackRef(nodeId, 'height');
+  const box = await propertyValuesAt(nodeId, [wRef?.ref.path, hRef?.ref.path].filter((x): x is string => !!x), seconds);
+  const positive = (v: Value | undefined, factor = 1): number | undefined => {
+    const n = numbersOfValue(v)[0];
+    return n !== undefined && n > 0 ? n / factor : undefined;
+  };
+  const width = positive(slot.get('layer/slotWidth')) ?? (wRef ? positive(box.get(wRef.ref.path), apiUnitFactor('width')) : undefined);
+  const height = positive(slot.get('layer/slotHeight')) ?? (hRef ? positive(box.get(hRef.ref.path), apiUnitFactor('height')) : undefined);
+  if (width === undefined || height === undefined) return null;
+  const fitValue = slot.get('layer/slotFit');
+  const stored = fitValue?.kind === 'choice' ? fitValue.value : 'none';
+  // Unset: mediaSlots.ts DEFAULT_SLOT_FIT.
+  const fit: SlotFit = stored === 'contain' || stored === 'cover' || stored === 'native' ? stored : 'contain';
+  return fittedBoxFor(source, { width, height }, fit);
+}
+
+/**
+ * The value each field shows now (the fill-in panel's controls): Source Text's text, the Fill Color as hex, a
+ * number in its stored units (static values at `seconds`, pre-expression), a media slot's playable media (its
+ * source item's `mediaUrl`). Fields the engine does not address are left out.
+ */
+export async function templateFieldValues(fields: readonly TemplateField[], seconds: number): Promise<Record<string, string | number>> {
+  const out: Record<string, string | number> = {};
+  const m = documentMirror();
+  const asks: Array<{ field: TemplateField; ref: PropRef; read: (v: Value) => string | number | undefined }> = [];
+  for (const field of fields) {
+    const { nodeId, componentType, prop } = field.target;
+    if (isMediaField(field)) {
+      const src = m.layer(nodeId)?.source;
+      const url = src ? m.item(src)?.mediaUrl : undefined;
+      if (url !== undefined) out[field.id] = url;
+      continue;
+    }
+    if (componentType === 'Text' && prop === 'content') {
+      asks.push({ field, ref: { layer: nodeId, path: 'text/sourceText' }, read: (v) => (v.kind === 'textDocument' ? v.value.text : undefined) });
+      continue;
+    }
+    if (prop === 'fill') {
+      const r = trackRef(nodeId, 'layer/fill');
+      if (r) asks.push({ field, ref: r.ref, read: (v) => (v.kind === 'color' ? channelsToHex(v.value) : undefined) });
+      continue;
+    }
+    const r = trackRef(nodeId, prop);
+    if (r && r.members.length === 1 && r.valueType !== 'color') {
+      asks.push({ field, ref: r.ref, read: (v) => { const n = numbersOfValue(v)[0]; return n === undefined ? undefined : n / apiUnitFactor(prop); } });
+    }
+  }
+  for (const a of asks) {
+    const v = (await propertyValuesAt(a.ref.layer, [a.ref.path], seconds)).get(a.ref.path);
+    const shown = v ? a.read(v) : undefined;
+    if (shown !== undefined) out[a.field.id] = shown;
+  }
+  return out;
 }

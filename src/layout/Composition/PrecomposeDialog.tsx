@@ -8,7 +8,7 @@
  * is how AE presents it. Choices are remembered for the session, as AE does.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@components/Button';
 import { Input } from '@components/Input';
 import { Checkbox } from '@components/Checkbox';
@@ -17,10 +17,10 @@ import { openModal } from '@stores/modalStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useActiveMirrorComp } from '@hooks/useMirror';
+import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
 import { defaultPrecompNameIn } from '@core/mirror/compNames';
+import { engine } from '@core/engine/engineInstance';
 import {
-  leaveAttributesUnavailableReason,
   precomposeTargets,
   type PrecomposeMode,
 } from '@core/composition/precompose';
@@ -38,14 +38,21 @@ const remembered: { mode: PrecomposeMode; adjustDuration: boolean; openNew: bool
 function PrecomposeDialog({ ids, close }: { ids: string[]; close: () => void }): JSX.Element {
   // B4: names from the document mirror.
   const hostName = useActiveMirrorComp()?.settings.name ?? 'this composition';
-  // B4-gap: "Leave all attributes" availability reads the layer's deformers (puppet pins, bones, corner pin on
-  // its `fx`, no catalog path) and a baked layer time; closes with those in LayerInfo, or a precompose
-  // dry-run query that returns the engine's refusal.
-  const leaveBlocked = useMemo(() => leaveAttributesUnavailableReason(ids), [ids]);
+  // B4: "Leave all attributes" availability is the engine's own refusal, asked as a dry run
+  // (`checkPrecompose`); `undefined` while it is being asked (the option stays off until then).
+  const [leaveBlocked, setLeaveBlocked] = useState<string | null | undefined>(undefined);
   const [name, setName] = useState(() => defaultPrecompNameIn(documentMirror()));
-  const [mode, setMode] = useState<PrecomposeMode>(
-    remembered.mode === 'leave' && !leaveBlocked ? 'leave' : 'move',
-  );
+  const [mode, setMode] = useState<PrecomposeMode>('move');
+  useEffect(() => {
+    let live = true;
+    void engine().query({ type: 'checkPrecompose', comp: activeCompIdNow() ?? '', layers: [...ids] }).then((r) => {
+      if (!live) return;
+      const reason = r.ok ? r.value.leaveAttributesReason || null : 'Only available when a single layer is selected.';
+      setLeaveBlocked(reason);
+      if (remembered.mode === 'leave' && !reason) setMode('leave');
+    });
+    return () => { live = false; };
+  }, [ids]);
   const [adjustDuration, setAdjustDuration] = useState(remembered.adjustDuration);
   const [openNew, setOpenNew] = useState(remembered.openNew);
   const [busy, setBusy] = useState(false);
@@ -91,13 +98,13 @@ function PrecomposeDialog({ ids, close }: { ids: string[]; close: () => void }):
 
       <fieldset className={styles.modes}>
         <legend className={styles.srOnly}>Attributes</legend>
-        <label className={cn(styles.option, leaveBlocked && styles.optionDisabled)}>
+        <label className={cn(styles.option, leaveBlocked !== null && styles.optionDisabled)}>
           <input
             type="radio"
             name="precompose-mode"
             className={styles.radio}
             checked={mode === 'leave'}
-            disabled={!!leaveBlocked}
+            disabled={leaveBlocked !== null}
             onChange={() => setMode('leave')}
           />
           <span className={styles.optionText}>

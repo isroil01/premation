@@ -652,6 +652,7 @@ Queries answer at the revision in their `Response` and never change anything.
 | `listPlugins`, `getEffectUi` | G1: the native SDK plugins the engine found (loaded / disabled / failed with why / quarantined after ending the engine); a plugin effect's parameter UI at a time (UPDATE_PARAMS_UI: enabled, hidden, renamed). The TypeScript engine hosts no native plugins (empty list; builtin effects answer every param enabled). |
 | `hitTest` | Layers under a comp point at a time (topmost or all). C++: the frame's drawn quads (the model matrix, projective for corner pins / 3D cards), topmost first — a layer's box, not its alpha; meshes, extrusions, models and generators by their bounds; adjustment layers, track-matte sources and edge-on planes are never hit; a collapsed precomp's or a cloner's draws are that layer; locked layers only with `includeLocked`. The TS engine answers `unsupported` (the editor's HitTester answers in the page). |
 | `getLayerBounds`, `getLayerTransforms` | Bounds/corners in comp/layer space (viewport: the overlay push, §15.12); 4×4 layer→comp matrices — what gizmos draw from. |
+| `getRigPose` | B4: a layer's rig at a time — live / solved bones, IK goals with their mode, pointer points back through the pose, a vertex's bind weights (§15.14). |
 | `getTextLayout` | The measured layout of a text layer: render / selection box, wrap, paragraph box, line-block placement, with hypothetical overrides (§15.12). |
 | `evaluateExpression` | Preview an expression without storing it. |
 | `readPixels` | Working-space pixel values of a viewport region (Info panel, eyedropper). C++: `region` in the viewport's slot pixels (physical px, top-left origin; the pixels it touches, an empty one = the pixel under its corner, clamped to the slot, ≤ 256² pixels); the float scene colour before the display transform / viewer LUT, straight alpha, top-down; the frame the viewport last showed is drawn again offscreen to read it. No such viewport: `notFound`; nothing shown yet: `busy`; C2 quads / `--no-gpu`: `unsupported`. The TS engine answers `unsupported`. |
@@ -2149,6 +2150,197 @@ from the struct's maximum + 800.
   handles (TextBoxHandles) draw from the pushed `transform` + `textBox`; their
   write side (textBoxReflow) reads the pose from the mirror and asks
   `getTextLayout` / `getLayerTransforms` (the parent) at press.
+
+### 15.14 B4 round 5
+
+- **Text + stored values (slice C; both engines; C++ tests
+  `tests/test_b4_round5_text.cpp` + `test_b4_round5_text_glyphs.cpp`
+  `[b4r5][text]`, TS `src/core/engine/__tests__/b4Round5Text.test.ts`).**
+  - `TextLayout.glyphs` is filled: one `GlyphBox` per grapheme of `wrapped`
+    (a line break counted in `index`, not boxed), logical order, in `box`'s
+    space (layer origin, before the Character panel's and a Fit Text to Box
+    scale): x from the line's pen start (the widest line's box for point text,
+    the paragraph box less its indents for paragraph text, placed by the
+    alignment — justified lines as their last-line alignment, a right-to-left
+    first paragraph mirrored) by canvas prefix widths plus tracking; y / height
+    the line's font band; `baseline` the line's middle baseline; `advance` =
+    the box width. Empty for text on a path (TS: and vertical type; C++ answers
+    vertical type `unsupported` as before). TS `measureText.ts
+    measureGlyphBoxes`; C++ `TextMeasurer::measure_glyph_lines` +
+    `text_query.cpp glyph_boxes`.
+  - `PropertyInfo.stored?: bool` (26): true when the document stores an
+    explicit STATIC value (a component prop / field key, an effect param, the
+    layer fill, a mask / shape path, source text, a gradient paint); unset =
+    the default applies. Rig properties and a data track's value never report
+    it; groups never do. TS `props.ts isStoredStatic` / `fields.ts
+    fieldStored`; C++ `props.cpp is_stored_static` / `fields.cpp field_stored`.
+    Consumers: the text-style preset capture (`textMirror.ts
+    mirrorTextPresetCapture`), per-corner radii and the link switch
+    (CornerRows), Swap Fill and Stroke (textCommands), the Style preset's
+    backdrop blur, a primitive type switch (`layerFacts.ts
+    mirrorPrimitiveAfter`), the in-place editor's Leading.
+  - `text/styleRuns` reads GRAPHEME-indexed in both engines: a legacy
+    code-point-indexed array (no `__runsIndex: 'grapheme'`) is migrated over
+    the content and malformed runs dropped — richText.ts `readRuns` (C++
+    `fields.cpp grapheme_runs`; engine_core now links engine_raster_core for
+    `split_graphemes`). The write already stamped grapheme indexing.
+  - Colour fields and `layer/fill` read CSS `rgb()` / `rgba()` strings (three
+    channels 0..255 or %, rounded to 8-bit steps; optional alpha 0..1 or %;
+    comma / space / slash separated) into the colour value — before, the TS
+    engine read them as white and the C++ as the spec default. TS `fields.ts
+    cssRgbChannels`; C++ `fxstate.cpp css_rgb_channels`.
+  - `text/strokeOrder` of a legacy layer that stores only `strokeOverFill`
+    reads as that switch's order (what the painter draws — before, both
+    engines reported fill-over-stroke), and counts as stored.
+  - `model/targetNames` (json array, layer field on the Model component's
+    `morphNames`; root group "Model"): a glTF model's blend-shape names. The
+    weights stay `morph<i>`.
+  - UI: TextEditOverlay reads the mirror (style, Source Text, runs), glues to
+    the overlay push (`transform` + `textBox`, owner `textEdit`) and asks
+    `getTextLayout` with the typed draft as the content override
+    (`useTextLayout(layer, overrides)`); a keyed Source Text commit compares
+    with `getPropertyValues` at the playhead. MographParamsSection's colour
+    parts read `layer/fill`; ModelSection's labels read `model/targetNames`.
+
+- **The view camera and per-view 3D projection in the overlay push (slice B;
+  both engines; C++ `tests/test_b4_round5_view.cpp` `[b4r5][view]`, TS
+  `src/core/engine/__tests__/overlayScene3d.test.ts`,
+  `src/stores/overlayGeometry.test.ts`).**
+  - **`setOverlayGeometry {groups, views}`** (fields 10, 11; `OverlayRequest
+    {layers, kinds}`): `groups` are per-overlay requests — a layer gets the
+    union of the kinds of the groups naming it (and `kinds` when `layers`
+    names it). Before, the page sent one union, so every requested layer got
+    every kind any overlay asked for (the 3D chrome's cameras and lights would
+    have carried the selection's motion paths). `views` are view modes
+    (`active`, `camera:<id>`, an axis view, a custom view id) whose camera each
+    frame carries. The subscription is empty only when layers × kinds, every
+    group and `views` are. `requestOverlayLayers(viewport, owner, layers, kinds,
+    views?)` sends one group per owner.
+  - **`FrameGeometry.views: OverlayView[]`** (10; riding the frame's first
+    message): `{mode, camera, liveCamera, lens, compWidth, compHeight}` — the
+    camera layer the view's chrome resolves (`viewCameraNode` with no in/out
+    test, as the chrome always did; empty = the default camera), the one the
+    renderer's rule picks (plus the layer being live at the frame: what the
+    camera tools drive), and the chrome camera resolved at the frame
+    (`cameraFromNode`, parent-lifted): position, focal length, principal point,
+    yaw / pitch / roll. The views resolve in the viewport's composition (TS:
+    the active tab's; C++: `Session::active_comp`). Electron main collects them
+    with the layers and hands them to the page as `EngineFrameMeta.geometryViews`;
+    `overlayView(viewport, mode, time)` reads them (src/stores/overlayGeometry.ts).
+  - **`OverlayKind.scene3d`** (8) → **`OverlayLayerGeometry.scene?:
+    OverlayScene3D`** (40; `Scene3DRole {camera, light, layer}`): a camera's
+    lens, parent-lifted POI (empty: one-node), focus distance and depth of
+    field (strength, focus, aperture, focal length, fStop — NaN = the legacy
+    ramp; empty = off); a light's type, world position, POI and radius / cone /
+    feather / aim (lightAngle + the world Z rotation); a 3D layer's local
+    transform sampled at the frame (`sampleTransform3DAtPlayhead`'s nine
+    values) and extrusion depth; every role's parent-chain world matrix (what a
+    device drag inverts). A layer that is none of those gets no record. TS
+    `core/engine/overlayScene3d.ts` (`scene3dOf`, `viewOf`); C++
+    `core/overlay_geometry.cpp` (`scene3d_of`, `overlay_views`, over
+    `worldxf.hpp`'s newly exported `camera_at` / `world_point_at` /
+    `parent_world_at` / `node_world_3d_at`; the DOF and light readers are
+    ported locally — engine_core does not link the scene library).
+  - UI: `core/mirror/viewGeometry.ts` (pure) builds the chrome from the push +
+    the mirror: `viewCameraOf` / `projectorOf`, `sceneLayersOf` (what to
+    subscribe), `sceneGizmosFrom` (frustums, light cones, layer cages),
+    `deviceHandlesFrom` / `hitTestDeviceHandle` / `dragDeltaThrough`,
+    `transform3DOf` (the 3D gizmo), `dofOfPush` (the focus plane),
+    `navTargetOf` / `navUnavailableMessage` / `orbitPivotFrom` (camera
+    navigation). `useOverlayRequest` (src/hooks) is one overlay's per-instance
+    request + push tick. Converted: useSceneRefGeometry, AxisWidgetOverlay,
+    FocusPlaneOverlay, useGizmo3d, useDeviceHandles (writes through
+    `core/workspace/deviceHandleDrag.ts`), useWorkspace's camera navigation,
+    motion-path 3D projection and looked-through test (`viewNav.ts`).
+  - Behaviour changes (named): a 3D layer's cage is the drawn box at the frame
+    (`bounds`: animated size, a group's union) — it was the stored size; the
+    cursor orbit pivot casts through the camera the tools drive as resolved at
+    the frame (animated, parent-lifted) and onto the layers' drawn boxes — it
+    used the camera's stored, unparented values; its POI-distance fallback uses
+    the parent-lifted POI.
+
+- **The rig in the overlay push, and `getRigPose` (slice A; both engines;
+  C++ `tests/test_b4_round5_rig.cpp` `[b4r5][rig]`, TS
+  `src/core/engine/__tests__/rigOverlay.test.ts` — the same document, the same
+  numbers).** The rig sampler is engine-side now: TS
+  `core/engine/rigOverlay.ts` (nodeRestMesh + the rig modules, as buildSnapshot
+  composes them); C++ `scene/rig_overlay.cpp` (`DocRigQueries`) over
+  `rig_mesh.cpp`'s new `RigModel` (the rig block, plus the overlay point
+  helpers ported: `weightsAtPoint`, `clampWeights`, `blendedMatrix`,
+  `skinPointAt`, `unskinPoint`, `restPointFromDeformed`, the puppet lattice,
+  every IK goal with its chain mode; `RestMesh.outline` = `DeformedMesh.layout`).
+  engine_core does not link scene code: the hook is **`RigQueries`**
+  (`scene/session_hooks.hpp`), injected by `Session::set_rig_queries` or the
+  frame builder's `rig_queries()` (EngineFrameBuilder supplies an image's alpha
+  coverage and a paint stroke's reach); without it no rig record is sent and
+  `getRigPose` answers `unsupported`. engine_tests links engine_scene_core.
+  - **`OverlayKind.rig`** → **`OverlayLayerGeometry.rig?: OverlayRig`** (50):
+    `pins: RigPinPose[]` (`{id, kind, x, y` drawn — a bend pin's solved vertex,
+    through the skeleton —, `cx, cy` the same before the skeleton — the
+    rotate / scale pivot —, `rotation` degrees, `scale}`), `bones:
+    RigBonePose[]` (`{id`, the live pose before IK `x, y, rotation` (radians),
+    `scaleX, scaleY`, the solved `posedX, posedY, posedRotation`, `world` the
+    solved a..f`}`), `ik: RigIkGoal[]` (every stored goal: `{bone, enabled, x,
+    y, pole` (x, y; empty = none), `chainLength?, mode}` — the ikMode track over
+    the stored mode), `vertices` / `rest` (x, y per vertex: what renders —
+    puppet then skeleton — and the rest mesh), `triangles`, `edges` (the lattice
+    as index pairs: a grid mesh's rest-axis edges, an outline mesh's every
+    edge), `weights` (the focus bone's bind weight per vertex), `pinPath` /
+    `pinKeys` (the focus pin's trajectory, 24 per span, and per key t, the
+    stored point, the posed point and handles, NaN = none). All layer space.
+    The old `pins` / `bones` f64 arrays (7, 8) are superseded and stay empty.
+    A rig spans rig-only records under the payload cap (`core/overlay_rig_pack.cpp`,
+    whole groups); the page concatenates a layer's `rig` arrays.
+  - **`setOverlayGeometry {rig?: OverlayRigOptions {pin, bone, authoring}}`**
+    (20): the focus pin / bone, and the Puppet Pin tool's mesh
+    (`authoringPreview`: a pinless layer shows the mesh its first pin lands on;
+    a layer with no rig gets one). Page: `setOverlayRigFocus(viewport, focus)`
+    (src/stores/overlayGeometry.ts).
+  - **`getRigPose {layer, time, points, vertex?, authoring?}`** (1900 →
+    `RigPose {bones, ik, rest, anchors, weights, vertexCount}`): pointer points
+    (as drawn) back through the pose (`rest` = unskinPoint; `anchors` = the
+    puppet's rest point under it, restPointFromDeformed), the bones and goals,
+    one vertex's bind weights strongest first, the mesh size. `notFound` for no
+    layer; a layer with no rig answers empty lists and the points unchanged.
+  - UI: PuppetOverlay and BoneOverlay draw from the push (owners `puppetPins`,
+    `boneRig`, kinds `rig` + `bounds`) and map pointer input through
+    `getRigPose` (`layout/Workspace/rigPointer.ts`: a drag's writes are chained
+    in pointer order, the gesture ends after them); BoneControls reads
+    `useRigPose` (src/hooks) for the live pose, the IK/FK switch's inputs, the
+    chain mode and the picked vertex's weights; the rest rig is the mirror's
+    `layer/skeleton` / `layer/puppet`.
+  - Behaviour changes (named): the rig mesh is sized by the layer's box AT THE
+    TIME (the overlays read the static box, so a keyed size drew a lattice the
+    render did not use); the bone overlay's mesh is the composed one (puppet
+    under the skeleton — it skinned the bare rest mesh, not what renders); a
+    bend pin on a layer with a skeleton is posed once (it was drawn from the
+    already-skinned vertex and skinned again, and pivoted from that posed
+    point while the pointer was in rest space); the puppet click-add bounds are
+    the drawn box at the time.
+- **Items, media and layer facts (slice E; both engines; C++ tests
+  `tests/test_b4_round5_items.cpp`, TS `itemFactsQueries.test.ts`)**:
+  - **`getDocumentColors {limit}`** (1930 → `DocumentColors`): every distinct
+    colour the document paints with — each layer's fill stack (solid colours,
+    gradient stops, a legacy `fill` string) then its stroke stack, canonical
+    lowercase hex, first-seen order; layer label colours are not paint. The
+    swatch strip asks it when a picker opens (it was a scene-graph walk).
+  - **`getCaptionCues {comp}`** (1931 → `CaptionCues`): a composition's caption
+    layers (`LayerInfo.caption`) as cues — first bar's time and text, sorted.
+  - **`mapLayerTime {layer, time, outward}`** (1932 → `MappedTime`): comp time →
+    the time inside what the layer shows (time remap, then start / stretch /
+    retime), or back (`outward`; absent when there is no single answer). The
+    Composition Navigator's move onto it is still open (compNavigation reads
+    the TS engine; B4-gap).
+  - **`getSourceSize {layers}`** (1933 → `SourceSizes`): the intrinsic size
+    Fit / Fill / Native Size compute against.
+  - **`checkPrecompose {comp, layers}`** (1934 → `PrecomposeCheck`): the
+    precompose dry run — why `leaveAttributes` would be refused ('' = it would
+    not); the Pre-compose dialog's option state.
+  - `getMemberKeyframes {includeData?}` lists data tracks too (`data`);
+    `ItemInfo.mediaUrl?` (127) is the page's playable media reference;
+    `LayerInfo.caption?` (922) and `LayerInfo.multicamAngle?` (923). The proxy
+    record stays page session state (the proxy job's), not document state.
+
 
 ## 16. Files
 

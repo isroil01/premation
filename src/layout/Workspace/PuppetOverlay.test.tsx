@@ -42,7 +42,9 @@ let h: Awaited<ReturnType<typeof setupAppEngine>>;
 /** The rig layer (engine-created). */
 let L = '';
 /** Let the engine apply what the overlay sent (and React re-render). */
-const idle = (): Promise<void> => act(async () => { await engineIdle(); });
+/** Let the engine apply what the overlay sent (and React re-render) — several rounds: the rig push's
+ * subscription lands, and pointer input goes through getRigPose before it writes (B4 round 5). */
+const idle = (): Promise<void> => act(async () => { for (let i = 0; i < 6; i++) await engineIdle(); });
 const pinsOf = (id: string) => readNodePuppet(defaultSceneGraph.getNode(id)!)?.pins ?? [];
 
 /** jsdom gives every element a zero rect, so offsets are all we control. */
@@ -64,17 +66,23 @@ describe('gating', () => {
   it('renders nothing unless the puppet tool is active', async () => {
     act(() => useUIStore.getState().setActiveTool('select'));
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     expect(container.querySelector('svg')).toBeNull();
   });
 
   it('renders nothing without a selected layer', async () => {
     act(() => useSelectionStore.getState().set([]));
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     expect(container.querySelector('svg')).toBeNull();
   });
 
   it('draws the mesh wireframe for the selected layer', async () => {
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     expect(container.querySelector('[data-puppet-mesh]')?.getAttribute('d')).toMatch(/^M/);
   });
 });
@@ -82,6 +90,8 @@ describe('gating', () => {
 describe('click-add', () => {
   it('adds a pin inside the layer bounds', async () => {
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 30, clientY: 20 });
     await idle();
@@ -97,6 +107,8 @@ describe('click-add', () => {
   it('places a starch pin when that tool is armed', async () => {
     useUIStore.getState().setPuppetPinKind('starch');
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 12, clientY: -8 });
     await idle();
@@ -108,6 +120,8 @@ describe('click-add', () => {
 
   it('ignores clicks outside the layer bounds', async () => {
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 5000, clientY: 5000 });
     await idle();
@@ -116,6 +130,8 @@ describe('click-add', () => {
 
   it('gives successive pins DISTINCT ids (§12.7 — Date.now() collided)', async () => {
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 10, clientY: 10 });
     await idle();
@@ -128,6 +144,8 @@ describe('click-add', () => {
 
   it('a pointerdown on an existing pin does NOT spawn a stray pin', async () => {
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 10, clientY: 10 });
     await idle();
@@ -160,6 +178,8 @@ describe('pointer capture is not a precondition', () => {
     try {
       useUIStore.getState().setPuppetPinKind('advanced');
       const { container } = render(<PuppetOverlay />);
+
+      await idle();
       const svg = container.querySelector('svg')!;
       fireEvent.click(svg, { clientX: 20, clientY: 0 });
       await idle();
@@ -183,6 +203,8 @@ describe('pointer capture is not a precondition', () => {
       });
     try {
       const { container } = render(<PuppetOverlay />);
+
+      await idle();
       const svg = container.querySelector('svg')!;
       fireEvent.click(svg, { clientX: 0, clientY: 0 });
       await idle();
@@ -206,6 +228,8 @@ describe('pointer capture is not a precondition', () => {
 describe('drag writes animation, not static props', () => {
   it('moving a pin writes its position data track', async () => {
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
     await idle();
@@ -229,6 +253,8 @@ describe('drag writes animation, not static props', () => {
 
   it('Alt-drag writes rotation instead of position', async () => {
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
     await idle();
@@ -247,6 +273,8 @@ describe('drag writes animation, not static props', () => {
   it('the gizmo scale handle writes the scale track', async () => {
     useUIStore.getState().setPuppetPinKind('advanced');
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
     await idle();
@@ -268,6 +296,8 @@ describe('drag writes animation, not static props', () => {
 describe('deletion', () => {
   it('double-clicking a pin removes it AND its tracks', async () => {
     const { container } = render(<PuppetOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
     await idle();

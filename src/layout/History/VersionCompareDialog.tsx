@@ -21,15 +21,13 @@ import { Button } from '@components/Button';
 import { DialogFooter } from '@components/Modal';
 import { Progress } from '@components/Progress';
 import { openModal } from '@stores/modalStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useVersionHistoryStore } from '@stores/versionHistoryStore';
 import { getCloudProjectId } from '@stores/cloudProjectStore';
 import { api, type ProjectVersionSummary } from '@core/api/client';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import { withDocumentSwapped } from '@core/project/documentSwap';
-import { renderStillFrame } from '@core/export/offlineRenderer';
-import { compSizeOf } from '@core/composition/compSizes';
+import { pageActiveStillFrameAt } from '@core/rendering/pageFrame';
 import { restoreVersionAsOneEdit } from './versionRestore';
 import styles from './VersionCompareDialog.module.css';
 
@@ -47,15 +45,9 @@ export function frameAt(sec: number, fps: number, durationSec: number): number {
 
 /** Render the LIVE engines at the playhead to an object URL. */
 async function renderLiveFrame(): Promise<string> {
-  const c = useCompositionStore.getState().comp();
-  const params = {
-    width: c.width,
-    height: c.height,
-    fps: c.fps,
-    durationSec: c.durationSeconds,
-    comp: { ...c, rootId: c.id, compSizeOf },
-  };
-  const blob = await renderStillFrame(params, frameAt(playheadSeconds(), c.fps, c.durationSeconds));
+  // The TypeScript engine's own composition record (a swapped-in version's while
+  // one is swapped in — the mirror still describes the live document).
+  const blob = await pageActiveStillFrameAt(playheadSeconds());
   if (!blob) throw new Error('The renderer could not produce a frame.');
   return URL.createObjectURL(blob);
 }

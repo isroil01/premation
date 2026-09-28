@@ -129,6 +129,9 @@ class Session {
   /// E2: the audio master clock + the document's sound (audio/transport_clock.hpp's
   /// seam). Null = the wall clock paces playback, no sound.
   void set_media_clock(MediaClock* clock) noexcept { mediaClock_ = clock; }
+  /// B4 round 5: the rig as the overlays see it (the overlay push's `rig`, getRigPose;
+  /// scene/rig_overlay.cpp). Null = the frame builder's (FrameBuilder::rig_queries), else none.
+  void set_rig_queries(RigQueries* rig) noexcept { rigQueries_ = rig; }
   /// Engine jobs (jobs/job_api.hpp): the kinds this build runs. Null (the
   /// headless engine, most tests) = startJob answers `unsupported`.
   void set_job_kinds(jobs::JobKinds* kinds) noexcept { jobKinds_ = kinds; }
@@ -304,6 +307,13 @@ class Session {
   // D2w / E2 hooks (session_hooks.hpp) and their bookkeeping.
   FrameBuilder* frameBuilder_ = nullptr;
   MediaClock* mediaClock_ = nullptr;
+  RigQueries* rigQueries_ = nullptr;
+  /// The rig hook in effect: set_rig_queries', else the frame builder's.
+  [[nodiscard]] RigQueries* rig_queries() const noexcept {
+    return rigQueries_ != nullptr ? rigQueries_ : frameBuilder_ != nullptr ? frameBuilder_->rig_queries() : nullptr;
+  }
+  /// B4 round 5: fill the `rig` records of a frame's geometry for the layers `o` subscribes with the rig kind.
+  void attach_overlay_rig(const doc::OverlaySubscription& o, std::vector<api::OverlayLayerGeometry>& geometry);
   std::vector<api::LayerError> layerErrors_;   // the set last announced (layerErrors event)
   std::string layerErrorsComp_;
   /// D5: the frame builder's CPU time per frame (ms, moving average) — the

@@ -203,6 +203,24 @@ export function mirrorPrimitive(tree: MirrorTreeLike | undefined): PrimitiveSpec
   return readNodePrimitive(asNode('Primitive', groupValues(tree, 'primitive')));
 }
 
+/**
+ * The primitive as the renderer reads it AFTER `patch` is written (B4 round 5):
+ * `readNodePrimitive` over the params the layer STORES (`PropertyInfo.stored`)
+ * with the patch on top — so a type switch fills the unstored params from the
+ * NEW type's defaults, exactly as the renderer will. Null without a primitive.
+ */
+export function mirrorPrimitiveAfter(tree: MirrorTreeLike | undefined, patch: Readonly<Record<string, unknown>>): PrimitiveSpec | null {
+  const g = tree?.nodes.get('primitive');
+  if (!g) return null;
+  const stored: Record<string, unknown> = {};
+  for (const p of g.children) {
+    const info = tree!.nodes.get(p);
+    if (!info || info.kind !== 'property' || info.stored !== true) continue;
+    stored[p.slice('primitive/'.length)] = plainValue(info.value);
+  }
+  return readNodePrimitive(asNode('Primitive', { ...stored, ...patch }));
+}
+
 // ── Shape contents ───────────────────────────────────────────────────
 
 /** The layer's polystar (the twin of `readNodePolystar`), null when it has none. */

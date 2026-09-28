@@ -17,7 +17,9 @@
 #include "fail.hpp"
 #include "fxstate.hpp"
 #include "handlers_common.hpp"
+#include "handlers_comps.hpp"
 #include "handlers_layers.hpp"
+#include "item_facts.hpp"
 #include "handlers_native.hpp"
 #include "layer_geometry.hpp"
 #include "native_effects.hpp"
@@ -501,6 +503,27 @@ struct Q {
       t.has_expression = anim->exprs.contains(member);
       out.tracks.push_back(std::move(t));
     }
+    // B4 round 5: the keyed DATA tracks after the scalar ones (memberKeysQuery.ts, getDataAnimatedPropPaths order).
+    if (q.include_data.value_or(false)) {
+      for (const auto& [prop, track] : anim->data) {
+        if (track.keys.empty()) continue;
+        if (!wanted.empty() && !wanted.contains(prop)) continue;
+        api::MemberTrack t;
+        t.member = prop;
+        if (const PropBinding* b = cat.by_member(prop)) {
+          t.path = b->path;
+          const auto at = std::find(b->members.begin(), b->members.end(), prop);
+          t.index = static_cast<std::uint32_t>(at == b->members.end() ? 0 : at - b->members.begin());
+        }
+        Json list = Json::array();
+        for (const DataKey& k : track.keys) list.arr_mut().push_back(data_key_to_json(k));
+        t.keyframes = stringify(list);
+        t.count = static_cast<std::uint32_t>(track.keys.size());
+        t.has_expression = anim->exprs.contains(prop);
+        t.data = true;
+        out.tracks.push_back(std::move(t));
+      }
+    }
     return query_result_for<api::GetMemberKeyframes>(std::move(out));
   }
   api::QueryResult operator()(const api::CopyEffects& q) const {
@@ -832,6 +855,14 @@ struct Q {
     }
     return query_result_for<api::GetLayerBounds>(std::move(out));
   }
+  api::QueryResult operator()(const api::GetRigPose& q) const {
+    // B4 round 5: the rig at the time and pointer points through its pose (scene/rig_overlay.cpp; rigOverlay.ts).
+    (void)require_layer(d, q.layer);
+    if (c.rig == nullptr) fail(ErrorCode::unsupported, "the rig is resolved by the scene port, which this engine has none of");
+    return query_result_for<api::GetRigPose>(c.rig->rig_pose(d, pc.view, pc.expr, pc.cache, c.text, q.layer,
+                                                             flicks_to_seconds(q.time), q.points, q.vertex,
+                                                             q.authoring.value_or(false)));
+  }
   api::QueryResult operator()(const api::GetTextLayout& q) const {
     // B4 round 2: measured by the text port on the frame builder's fonts (scene/text_query.cpp).
     const Node& n = require_layer(d, q.layer);
@@ -962,6 +993,25 @@ struct Q {
       out.layers.push_back(std::move(f));
     }
     return query_result_for<api::GetSearchFacts>(std::move(out));
+  }
+  // ── B4 round 5 (item_facts.cpp; TS itemFactsQueries.ts) ──
+  api::QueryResult operator()(const api::GetDocumentColors& q) const {
+    return query_result_for<api::GetDocumentColors>(api::DocumentColors{document_colors(d, q.limit)});
+  }
+  api::QueryResult operator()(const api::GetCaptionCues& q) const {
+    return query_result_for<api::GetCaptionCues>(api::CaptionCues{caption_cues(d, q.comp)});
+  }
+  api::QueryResult operator()(const api::MapLayerTime& q) const {
+    api::MappedTime out;
+    out.time = map_layer_time(pc, q.layer, q.time, q.outward);
+    return query_result_for<api::MapLayerTime>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetSourceSize& q) const {
+    return query_result_for<api::GetSourceSize>(api::SourceSizes{source_sizes(d, q.layers)});
+  }
+  api::QueryResult operator()(const api::CheckPrecompose& q) const {
+    require_comp(d, q.comp);
+    return query_result_for<api::CheckPrecompose>(api::PrecomposeCheck{precompose_leave_reason(d, q.comp, q.layers)});
   }
   api::QueryResult operator()(const api::FindLayers& q) const {
     std::vector<std::string> comps;

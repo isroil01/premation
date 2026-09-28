@@ -150,7 +150,7 @@ class SimulatedSink final : public FrameSink {
     // B4 round 2: the overlays' geometry first, as the render thread sends it.
     if (p.pending->geometrySubscribed && send_) {
       for (api::FrameGeometry& g : doc::pack_frame_geometry(f.viewport, f.generation, f.frame, f.time, f.revision,
-                                                            std::move(p.pending->geometry))) {
+                                                            std::move(p.pending->geometry), std::move(p.pending->views))) {
         send_(frames::Message{.v = std::move(g)});
       }
     }

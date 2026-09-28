@@ -12,9 +12,9 @@
  *    project opened.
  *
  *  • **Document colours** are DERIVED — every distinct fill, gradient stop,
- *    stroke and light colour presently in the scene graph. Nothing authors
- *    them, so nothing persists them; they are recomputed from the graph on
- *    demand. Deliberately NOT a subscription: this walks every node and every
+ *    stroke and light colour presently in the document. Nothing authors
+ *    them, so nothing persists them; the engine recomputes them
+ *    (`getDocumentColors`) on demand. Deliberately NOT a subscription: this walks every node and every
  *    paint, which is fine when a picker opens and unaffordable per frame. Call
  *    `refreshDocumentColors()` at the moment a surface becomes visible.
  *
@@ -25,10 +25,8 @@
 
 import { create } from 'zustand';
 import { getEventBus } from '@core/events/EventBus';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeFills } from '@core/paint/fill';
-import { readNodeStrokes } from '@core/paint/stroke';
-import type { FillPaint } from '@core/paint/fill';
+import { engine } from '@core/engine/engineInstance';
+import { canonicalHex, collectDocumentColors as collectPaintColors } from '@core/paint/documentColors';
 import type { SceneNode } from '@core/types';
 
 /** One named colour in the project palette. */
@@ -61,98 +59,13 @@ function swatchId(): string {
   return `sw_${Date.now().toString(36)}_${seq.toString(36)}`;
 }
 
-/**
- * Normalise a colour into the canonical hex this store compares by, or null if
- * it is not a hex colour at all.
- *
- * Canonicalising is what makes deduplication honest: `#FFF`, `#ffffff` and
- * `#FFFFFFFF` are one colour, and a strip that showed them as three would be
- * reporting its own storage format rather than the document's palette. The
- * fully-opaque alpha byte is dropped for the same reason.
- *
- * Non-hex paints (the `rgba(...)` strings `sampleGradientColor` produces) are
- * rejected rather than parsed: nothing STORES that form, so accepting it would
- * be widening the contract for a case that cannot occur.
- */
-export function canonicalHex(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  const body = (trimmed.startsWith('#') ? trimmed.slice(1) : trimmed).toLowerCase();
-  if (!/^[0-9a-f]+$/.test(body)) return null;
-  let full: string;
-  if (body.length === 3) full = body.split('').map((c) => c + c).join('');
-  else if (body.length === 4) full = body.split('').map((c) => c + c).join('');
-  else if (body.length === 6 || body.length === 8) full = body;
-  else return null;
-  // A trailing `ff` is "opaque", which is what a 6-digit hex already means.
-  if (full.length === 8 && full.endsWith('ff')) full = full.slice(0, 6);
-  return `#${full}`;
-}
+// The canonical form and the pure colour walk live with the engine's `getDocumentColors` answer
+// (src/core/paint/documentColors.ts); re-exported for the palette's callers and tests.
+export { canonicalHex };
 
-/** Push every colour a paint carries (solid colour, or every gradient stop). */
-function pushPaint(paint: FillPaint | undefined, out: string[], seen: Set<string>): void {
-  if (!paint) return;
-  if (paint.type === 'solid') {
-    pushColor(paint.color, out, seen);
-    return;
-  }
-  for (const stop of paint.stops) pushColor(stop.color, out, seen);
-}
-
-function pushColor(raw: unknown, out: string[], seen: Set<string>): void {
-  if (out.length >= DOCUMENT_COLOR_LIMIT) return;
-  const hex = canonicalHex(raw);
-  if (!hex || seen.has(hex)) return;
-  seen.add(hex);
-  out.push(hex);
-}
-
-/**
- * Every distinct colour the given nodes paint with, in first-seen order.
- *
- * PURE: it reads the nodes handed to it and touches no graph, no store and no
- * clock, which is what makes it testable against a fixture instead of against
- * a live editor.
- *
- * Covers fills (including each gradient stop), the fill STACK, strokes and
- * gradient strokes. Light colours arrive for free: a light stores its colour as
- * a plain `fill` string on its style component, and `readNodeFills` resolves
- * exactly that through its legacy single-colour path — so lights need no case
- * of their own here, and adding one would double-count them.
- *
- * Layer LABEL colours (`node.color`) are deliberately excluded. They tint the
- * timeline row, not the picture; offering them beside the real paint would put
- * chrome into a palette of content.
- */
+/** Every distinct colour the given nodes paint with, first seen, at most the strip's limit (pure). */
 export function collectDocumentColors(nodes: readonly SceneNode[]): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const node of nodes) {
-    if (out.length >= DOCUMENT_COLOR_LIMIT) break;
-    for (const fill of readNodeFills(node)) pushPaint(fill, out, seen);
-    for (const stroke of readNodeStrokes(node)) {
-      // The gradient paint OVERRIDES `color` when present, but `color` remains
-      // the fallback every non-gradient renderer draws — both are in the file,
-      // so both are colours the document uses.
-      pushColor(stroke.color, out, seen);
-      pushPaint(stroke.paint, out, seen);
-    }
-  }
-  return out;
-}
-
-/**
- * Read the live scene graph and collect its colours.
- *
- * B4-gap: every paint colour of every layer (fill stacks, gradient stops, stroke
- * stacks and their gradient paints) — the mirror holds property trees on demand
- * only, and the catalog does not expose every stored paint; a document-colours
- * query (`getDocumentColors`) would close it.
- */
-export function collectSceneColors(): string[] {
-  const nodes: SceneNode[] = [];
-  defaultSceneGraph.traverse((n) => nodes.push(n));
-  return collectDocumentColors(nodes);
+  return collectPaintColors(nodes, DOCUMENT_COLOR_LIMIT);
 }
 
 /**
@@ -198,7 +111,7 @@ interface SwatchStore {
   list: () => ProjectSwatch[];
   /** Restore from a document. Replaces the palette wholesale. */
   restore: (raw: unknown) => void;
-  /** Recompute `documentColors` from the live scene graph. */
+  /** Recompute `documentColors` (the engine's `getDocumentColors`; lands asynchronously). */
   refreshDocumentColors: () => void;
 }
 
@@ -258,6 +171,9 @@ export const useSwatchStore = create<SwatchStore>((set, get) => ({
   },
 
   refreshDocumentColors: () => {
-    set({ documentColors: collectSceneColors() });
+    // B4: the engine walks every layer's paint (`getDocumentColors`); the strip updates when the answer lands.
+    void engine().query({ type: 'getDocumentColors', limit: DOCUMENT_COLOR_LIMIT }).then((r) => {
+      if (r.ok) set({ documentColors: r.value.colors });
+    }, () => { /* no engine (headless): the strip stays as it was */ });
   },
 }));

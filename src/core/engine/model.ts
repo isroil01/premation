@@ -66,7 +66,7 @@ import {
   apiParentOf,
 } from './doc';
 import { compFps, framesToFlicks, fpsToRational, secondsToFlicks } from './time';
-import { catalogFor, readStatic, readKeys, keyAtToApi, isAnimated, type Catalog, type PropBinding } from './props';
+import { catalogFor, isStoredStatic, readStatic, readKeys, keyAtToApi, isAnimated, type Catalog, type PropBinding } from './props';
 import { getProjectSettings, getRenderQueue } from '@core/project/documentExtras';
 
 // ── Colours and labels ───────────────────────────────────────────────
@@ -305,7 +305,26 @@ export function layerInfo(layerId: string): LayerInfo {
     mographId: firstStringProp(node, '__mographId'),
     svg: svgRoleOf(node),
     ...pluginSchemaVersionOf(node),
+    ...captionOf(node),
+    ...multicamAngleOf(node),
   };
+}
+
+/** B4 round 5: a caption layer — `__caption: true` on any component (captionLayers.ts `isCaptionNode`). */
+function captionOf(node: SceneNode): { caption?: boolean } {
+  return node.components.some((c) => (c.props as Record<string, unknown>).__caption === true) ? { caption: true } : {};
+}
+
+/**
+ * B4 round 5: a multicam angle's number — `__multicamAngle` (a number) on the Transform of a video / image layer
+ * (multicam.ts `multicamLayersInActiveComp`'s rule). Floored, ≥ 0.
+ */
+function multicamAngleOf(node: SceneNode): { multicamAngle?: number } {
+  const kind = readNodeKind(node);
+  if (kind !== 'video' && kind !== 'image') return {};
+  const v = (node.components.find((c) => c.type === 'Transform')?.props as Record<string, unknown> | undefined)?.__multicamAngle;
+  if (typeof v !== 'number' || !Number.isFinite(v)) return {};
+  return { multicamAngle: Math.min(0xffffffff, Math.max(0, Math.floor(v))) };
 }
 
 /**
@@ -514,6 +533,8 @@ export function footageInfo(a: ImportedAsset): ItemInfo {
     mediaType: a.type === 'image' || a.type === 'video' || a.type === 'audio' ? a.type : 'none',
     alphaProbed: typeof md.hasAlpha === 'boolean',
     audioProbed: typeof md.hasAudioTrack === 'boolean',
+    // B4 round 5: the stored source reference the page's media loaders take (object URL, local-file:, motion-blob:).
+    ...(typeof a.src === 'string' && a.src !== '' ? { mediaUrl: a.src } : {}),
   };
 }
 
@@ -591,6 +612,8 @@ export function propertyInfo(layerId: string, cat: Catalog, b: PropBinding): Pro
     children: b.separated ? [...cat.byPath.keys()].filter((p) => p.startsWith(`${b.path}/`)) : [],
     hidden: b.hidden === true,
     memberExpressions: memberExpressionsOf(layerId, b),
+    // B4 round 5: reported only when true (unset = the default applies).
+    ...(isStoredStatic(layerId, b) === true ? { stored: true } : {}),
   };
 }
 

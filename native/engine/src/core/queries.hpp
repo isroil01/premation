@@ -23,6 +23,7 @@
 
 namespace premation {
 class TextQueries;  // scene/session_hooks.hpp
+class RigQueries;   // scene/session_hooks.hpp
 }
 
 namespace premation::doc {
@@ -86,6 +87,8 @@ struct QCtx {
   /// B4 round 2: text measurement on the frame builder's fonts (getTextLayout,
   /// getLayerBounds' text boxes). Null = no fonts in this engine: `unsupported`.
   TextQueries* text = nullptr;  // after the positional members (Session builds QCtx{…} positionally)
+  /// B4 round 5: the rig as the overlays see it (getRigPose; scene/rig_overlay.cpp). Null = `unsupported`.
+  RigQueries* rig = nullptr;
 };
 
 /// `catalogFor(layer)` through the query's cache (require_layer first).

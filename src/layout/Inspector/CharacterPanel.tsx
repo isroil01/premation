@@ -4,7 +4,7 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys, useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { currentRuns, isSourceTextAnimated, maskIdsOf, mirrorParagraphBox, SOURCE_TEXT_PATH, sourceTextAt, STYLE_RUNS_PATH, textPathOf } from '@layout/Text/textMirror';
+import { currentRuns, isSourceTextAnimated, maskIdsOf, mirrorParagraphBox, mirrorTextPresetCapture, SOURCE_TEXT_PATH, sourceTextAt, STYLE_RUNS_PATH, textPathOf } from '@layout/Text/textMirror';
 import { useComponentProp, type ComponentPropHandle } from './useComponentProp';
 import { useGesture } from '@hooks/useGesture';
 import { edit } from '@core/engine/uiEdits';
@@ -15,7 +15,6 @@ import { applyStyleToRange, styleOverRange, type RunStyleKey, type RichRun } fro
 import type { TextStyle } from '@core/text/textLayout';
 import { graphemeCount } from '@core/text/graphemes';
 import { AUTO_LEADING, STROKE_ORDERS, strokeOrderOf, type StrokeOrder, type StrokeLineJoin } from '@core/text/textExtras';
-import { captureTextPreset } from '@core/inspector/sectionPresets';
 import { FontPicker } from './FontPicker';
 import { SectionPresetMenu } from './SectionPresetMenu';
 import { installTextCommands, swapTextFillStroke } from './textCommands';
@@ -630,8 +629,8 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
           <SectionPresetMenu
             sectionId="text"
             label="Text style presets"
-            // B4-gap: a preset holds the props the layer STORES in their stored forms (TextSection's TextPresetAction).
-            capture={() => (primary ? captureTextPreset(primary) : {})}
+            // B4: the props the layer STORES (PropertyInfo.stored), from the mirror at call time.
+            capture={() => (primary ? mirrorTextPresetCapture(documentMirror(), primary) : {})}
             apply={(values) => textPresetEdit(selected.length > 0 ? selected : [], values)}
           />
         )}

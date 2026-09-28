@@ -147,12 +147,9 @@ describe('Move all attributes', () => {
     expect(controller.getLayersForNode(instanceId)[0]!.start).toBe(start);
   });
 
-  it('opens the new composition when asked, with a navigator trail back', () => {
-    const { compId } = precomposeNow(['b'], { ...MOVE, openNew: true })!;
-    expect(active().compositionId).toBe(compId);
-    expect(active().breadcrumbPath).toEqual(['comp_root', compId]);
-    expect(useSelectionStore.getState().ids).toEqual([]);
-  });
+  // "Opens the new composition when asked, with a navigator trail back" is the engine route's now
+  // (compositionEdits.test.ts: precomposeEdit + openNew) — navigation reads the document mirror, which a
+  // bare scene-graph fixture does not feed (B4 round 5).
 
   it('does nothing for a selection with no layers of this comp', () => {
     expect(precomposeNow(['comp_root', 'ghost'], MOVE)).toBeNull();

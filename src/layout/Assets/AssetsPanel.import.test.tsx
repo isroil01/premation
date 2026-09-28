@@ -29,7 +29,9 @@ import { resetAssetsViewForTest, useAssetsViewStore } from '@stores/assetsViewSt
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { engineIdle } from '@core/engine/engineInstance';
+import { engine, engineIdle } from '@core/engine/engineInstance';
+import { importBrowserFilesEdit } from './assetEdits';
+import { documentMirror } from '@stores/documentMirror';
 import { historyLabels, setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 
 jest.mock('@core/services/AssetDatabase', () => ({
@@ -116,12 +118,30 @@ const renderPanel = (): ReturnType<typeof render> =>
  *  queries are scoped here. */
 const tree = () => within(screen.getByRole('tree', { name: 'Assets' }));
 
+withAppEngine();
+
 const png = (name = 'a.png'): File => new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
 
+/**
+ * An import made elsewhere, straight into the items store (it stamps `importedAt`, which the fake engine
+ * ports do not): the mirror refetches, as the engine's resync of a write around it would.
+ */
 const importViaStore = (name = 'a.png'): Promise<void> =>
   act(async () => {
     await useAssetStore.getState().addAssetsBatch([{ file: png(name) }]);
+    documentMirror().reload();
   });
+
+/** A folder made through the engine (`createFolder`), as the document has it. */
+async function engineFolder(name: string, parent: string | null): Promise<{ id: string }> {
+  let id = '';
+  await act(async () => {
+    const r = await engine().execute({ type: 'createFolder', name, ...(parent ? { parent } : {}) });
+    if (!r.ok) throw new Error(r.error.message);
+    id = (r.value as { item: string }).item;
+  });
+  return { id };
+}
 
 /** The panel's own import: the hidden file input, as the picker fires it. */
 const importViaPicker = (files: File[]): Promise<void> =>
@@ -133,7 +153,10 @@ const importViaPicker = (files: File[]): Promise<void> =>
     await new Promise((r) => setTimeout(r, 20));
   });
 
-/** The panel imports through the engine (`importBytes`): boot the app's one. */
+/**
+ * The panel imports through the engine (`importBytes`) and draws the document mirror's items (B4 round 5):
+ * every test boots the app's engine; a legacy store write reaches the mirror as the engine's resync.
+ */
 function withAppEngine(): void {
   let h: Awaited<ReturnType<typeof setupAppEngine>> | null = null;
   beforeEach(async () => {
@@ -144,7 +167,6 @@ function withAppEngine(): void {
 }
 
 describe('import never inserts', () => {
-  withAppEngine();
   it('the panel import adds to the project only — the composition is untouched', async () => {
     renderPanel();
     const before = contentLayerCount();
@@ -235,10 +257,11 @@ describe('a fresh import is visible at once', () => {
   });
 
   it('filed into a collapsed folder, the folder is opened so the row shows', async () => {
-    const folder = useAssetStore.getState().createFolder('Footage', null);
+    const folder = await engineFolder('Footage', null);
     renderPanel();
     await act(async () => {
       await useAssetStore.getState().addAssetsBatch([{ file: png('deep.png'), folderId: folder.id }]);
+      documentMirror().reload();
     });
     expect(await tree().findByText('deep.png')).toBeInTheDocument();
   });
@@ -278,7 +301,6 @@ describe('the tabs explain themselves', () => {
 });
 
 describe('OS drop on the panel', () => {
-  withAppEngine();
   it('imports to the project without inserting', async () => {
     renderPanel();
     const before = contentLayerCount();
@@ -322,7 +344,7 @@ describe('Folder creation and single affordance', () => {
   });
 
   it('clicking New Folder when a parent folder is selected expands the parent and nests the subfolder', async () => {
-    const parent = useAssetStore.getState().createFolder('ParentFolder', null);
+    const parent = await engineFolder('ParentFolder', null);
     renderPanel();
 
     const parentRow = await tree().findByText('ParentFolder');
@@ -340,7 +362,7 @@ describe('Folder creation and single affordance', () => {
 describe('Grid view folder layout and empty drop target', () => {
   it('renders grid folder with Empty badge and shows empty drop target when expanded', async () => {
     useAssetsViewStore.getState().setView('grid');
-    useAssetStore.getState().createFolder('B-Roll', null);
+    await engineFolder('B-Roll', null);
     renderPanel();
 
     expect(await tree().findByText('B-Roll')).toBeInTheDocument();
@@ -356,11 +378,13 @@ describe('Grid view folder layout and empty drop target', () => {
 
   it('renders item count badge and cards inside folder when folder has assets', async () => {
     useAssetsViewStore.getState().setView('grid');
-    const folder = useAssetStore.getState().createFolder('Footage', null);
-    await useAssetStore.getState().addAssetsBatch([
-      { file: png('nested.png'), folderId: folder.id },
-      { file: png('root_file.png'), folderId: null },
-    ]);
+    const folder = await engineFolder('Footage', null);
+    await act(async () => {
+      await importBrowserFilesEdit([
+        { file: png('nested.png'), folderId: folder.id },
+        { file: png('root_file.png'), folderId: null },
+      ]);
+    });
     renderPanel();
 
     expect(await tree().findByText('Footage')).toBeInTheDocument();

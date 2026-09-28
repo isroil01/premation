@@ -79,8 +79,11 @@ describe('engine items view (F2)', () => {
   });
 
   it('an item the page has no record for gets one naming the engine file', () => {
-    const out = itemsFromMirror(new Map([['a2', footage('a2', { duration: 0 })]]), { assets: [], folders: [] });
+    // B4 round 5: the type is the item's probed `mediaType`; the media, its `mediaUrl` when it has one.
+    const out = itemsFromMirror(new Map([['a2', footage('a2', { duration: 0, mediaType: 'image' })]]), { assets: [], folders: [] });
     expect(out.assets[0]).toMatchObject({ id: 'a2', type: 'image', src: '/media/a2.mp4', path: '/media/a2.mp4' });
+    const played = itemsFromMirror(new Map([['a3', footage('a3', { mediaUrl: 'local-file:///media/a3.mp4' })]]), { assets: [], folders: [] });
+    expect(played.assets[0]).toMatchObject({ id: 'a3', type: 'video', src: 'local-file:///media/a3.mp4' });
   });
 
   it('binds: the store follows every items change', () => {

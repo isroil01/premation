@@ -42,7 +42,8 @@ import { framesToFlicks } from '@core/engine/time';
 import { compOfLayer } from '@core/engine/doc';
 import { downloadBlob } from '@core/export/exportManager';
 import { toSrt, toVtt, type Cue } from '@core/captions/captionFormat';
-import { captionEditCommands, DEFAULT_CAPTION_STYLE, readCaptionCues } from '@core/captions/captionLayers';
+import { captionReplaceCommands } from '@core/engine/captionEdit';
+import { engine } from '@core/engine/engineInstance';
 import { edit } from '@core/engine/uiEdits';
 import {
   TranscribeError,
@@ -196,10 +197,13 @@ export async function runTranscription(scope: TranscribeScope = transcribeScope(
  * is why it is a fallback for a comp with no cache rather than something that
  * overwrites a live transcript.
  */
-export function transcriptFromCaptions(rootId: string = activeCompId()): CompTranscript | null {
-  // B4-gap: which layers are captions (the `__caption` tag on the Text component) — no LayerInfo field; closes
-  // with a `LayerInfo.caption` role (the text itself is `text/sourceText`, the timing `LayerTiming`).
-  const cues = readCaptionCues(rootId);
+export async function transcriptFromCaptions(rootId: string = activeCompId()): Promise<CompTranscript | null> {
+  // B4: the composition's captions as cues from the engine (`getCaptionCues`: its `LayerInfo.caption` layers,
+  // each one's first bar and the text it shows).
+  const res = await engine().query({ type: 'getCaptionCues', comp: rootId });
+  const cues: Cue[] = res.ok
+    ? res.value.cues.map((c) => ({ start: flicksToSeconds(c.start), end: flicksToSeconds(c.end), text: c.text }))
+    : [];
   if (cues.length === 0) return null;
   const words = wordsFromCues(cues);
   if (words.length === 0) return null;
@@ -363,9 +367,12 @@ export async function addTranscriptAsCaptions(rootId: string = activeCompId()): 
   // which reads as a renderer bug rather than as the user's own second click.
   // ONE entry: `deleteLayers` of the old captions + one `pasteLayers` of the
   // styled caption layers built off-document.
-  const c = documentMirror().comp(rootId)?.settings;
-  // B4-gap: the builder finds the captions to replace by their `__caption` tag (see transcriptFromCaptions).
-  const e = captionEditCommands(cues, DEFAULT_CAPTION_STYLE, c ? { rootId, width: c.width, height: c.height } : undefined);
+  const m = documentMirror();
+  const c = m.comp(rootId);
+  // B4: the captions to replace are the composition's top-level `LayerInfo.caption` layers (the mirror); the
+  // styled caption layers are built engine-side, off-document (captionEdit.ts).
+  const replace = (c?.layers ?? []).filter((id) => m.layer(id)?.caption === true);
+  const e = captionReplaceCommands(cues, { rootId, width: c?.settings.width ?? 1920, height: c?.settings.height ?? 1080 }, replace);
   if (e.commands.length === 0) return 0;
   const res = await edit(`Add ${e.added} caption${e.added === 1 ? '' : 's'}`, e.commands);
   if (!res.ok) return 0;

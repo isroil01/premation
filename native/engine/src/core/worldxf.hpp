@@ -43,4 +43,14 @@ using LayerSpace = std::variant<motion::xf::LayerSpace2D, motion::xf::LayerSpace
 [[nodiscard]] std::optional<LayerSpace> layer_space_at(const SpaceCtx& c, std::string_view node, double seconds,
                                                        double compWidth, double compHeight);
 
+// B4 round 5 — the view half of the overlay push (overlay_geometry.cpp) reads the same resolvers.
+/// liveWorld3d.ts `parentWorldMatrixAt(node, seconds)`: nullopt without a parent.
+[[nodiscard]] std::optional<motion::xf::Mat4> parent_world_at(const SpaceCtx& c, std::string_view node, double seconds);
+/// liveWorld3d.ts `toWorldPointAt(node, seconds, p)`: a point in the node's parent space → world.
+[[nodiscard]] motion::xf::Vec3 world_point_at(const SpaceCtx& c, std::string_view node, double seconds, motion::xf::Vec3 p);
+/// liveWorld3d.ts `nodeWorldWithParents3d(node, seconds)`.
+[[nodiscard]] std::optional<motion::xf::Mat4> node_world_3d_at(const SpaceCtx& c, const Node& n, double seconds);
+/// camera3d.ts `cameraFromNode(node, w, h, sample, toWorldPointAt)` at comp `seconds` (animated values winning).
+[[nodiscard]] motion::xf::Camera camera_at(const SpaceCtx& c, const Node& n, double w, double h, double seconds);
+
 }  // namespace premation::doc

@@ -16,7 +16,7 @@
  * stage until something forces a resize. This editor has had that bug before.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useDismissOnOutside } from '@hooks/useDismissOnOutside';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
@@ -24,14 +24,14 @@ import { SCENE_TAB_ID, useEditorTabStore, type EditorTab } from '@stores/editorT
 import { useActiveCompName } from '@layout/Composition/activeCompName';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useAssetStore } from '@stores/assetStore';
 import { useLayerViewerStore } from '@stores/layerViewerStore';
 import { canOpenInLayerPanel, openLayerPanel } from '@layout/LayerViewer/openLayer';
 import { LayerViewer } from '@layout/LayerViewer/LayerViewer';
 import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useActiveCompId, useActiveMirrorComp, useMirrorComp, useMirrorLayer } from '@hooks/useMirror';
+import { useActiveCompId, useActiveMirrorComp, useMirrorComp, useMirrorItems, useMirrorLayer } from '@hooks/useMirror';
+import { itemAsset } from '@core/mirror/itemAssets';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { openFootagePreview, useLastFootagePreview, clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
@@ -95,30 +95,24 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
   // can appear here; they just must not block the live selection.
   const lastPreviewed = useLastFootagePreview((s) => s.asset);
   const selectionIds = useSelectionStore((s) => s.ids);
-  // B4-gap: the Footage viewer opens the page's asset RECORD (its object URL, type) — `ItemInfo`
-  // carries no playable media URL (a media-URL field or `getThumbnail` would close it).
-  const assets = useAssetStore((s) => s.assets);
+  // B4: the Footage viewer opens the item as the page's asset record, built from the mirror's ItemInfo
+  // (`mediaUrl` is what it plays; the probe's media type labels it).
+  const items = useMirrorItems();
   const singleSelectedLayer = selectionIds.length === 1 ? selectionIds[0]! : null;
   const selectedLayerInfo = useMirrorLayer(singleSelectedLayer);
-  const selectedAsset = (() => {
-    const assetId = selectedLayerInfo?.source;
-    return assetId ? assets.find((a) => a.id === assetId) ?? null : null;
-  })();
-  const selectedMedia =
-    selectedAsset
-    && (selectedAsset.type === 'video' || selectedAsset.type === 'image' || selectedAsset.type === 'audio')
-      ? selectedAsset
-      : null;
+  const sourceInfo = selectedLayerInfo?.source ? items.get(selectedLayerInfo.source) : undefined;
+  const selectedMedia = useMemo(() => (sourceInfo ? itemAsset(sourceInfo) : null), [sourceInfo]);
   const stickyValid =
-    lastPreviewed && assets.some((a) => a.id === lastPreviewed.id) ? lastPreviewed : null;
+    lastPreviewed && items.get(lastPreviewed.id)?.kind === 'footage' ? lastPreviewed : null;
   const footageAsset = selectedMedia ?? stickyValid;
 
   // Drop a sticky label whose asset was deleted from the library.
   useEffect(() => {
-    if (lastPreviewed && !assets.some((a) => a.id === lastPreviewed.id)) {
+    // (Only once the mirror has the document: before that every item reads as gone.)
+    if (lastPreviewed && documentMirror().status === 'ready' && items.get(lastPreviewed.id)?.kind !== 'footage') {
       clearLastFootagePreview();
     }
-  }, [assets, lastPreviewed]);
+  }, [items, lastPreviewed]);
   // AE's Layer panel (LayerViewer): open while its layer still exists.
   const layerViewerId = useLayerViewerStore((s) => s.nodeId);
   const layerViewerInfo = useMirrorLayer(layerViewerId);

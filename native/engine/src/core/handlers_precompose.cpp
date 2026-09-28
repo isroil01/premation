@@ -139,9 +139,8 @@ bool has_ancestor_in(const Document& d, const std::string& id, const std::set<st
   return false;
 }
 
-/// `precomposeTargets(ids)` — hosted in the ACTIVE tab's composition.
-std::vector<std::string> precompose_targets(const Document& d, const EditorView& v, const std::vector<std::string>& ids) {
-  const std::string host = v.tabComp;
+/// `precomposeTargets(ids, host)` — hosted in `host` (the command's composition; comps.ts passes `hostId: cmd.comp`).
+std::vector<std::string> precompose_targets_in(const Document& d, const std::string& host, const std::vector<std::string>& ids) {
   if (d.node(host) == nullptr) return {};
   std::set<std::string> wanted;
   for (const auto& id : ids) {
@@ -347,23 +346,30 @@ std::pair<std::string, std::string> move_all_attributes(HCtx& x, const std::vect
   return {compId, mint.instanceId};
 }
 
+/// precompose.ts `leaveAttributesUnavailableReason`, message for message (the dialog shows it; B4 round 5
+/// `checkPrecompose` answers it).
 std::optional<std::string> leave_unavailable(const Document& d, const std::vector<std::string>& targets) {
   if (targets.size() != 1) return "Only available when a single layer is selected.";
   const Node* node = d.node(targets[0]);
   if (node == nullptr) return "Only available when a single layer is selected.";
   const std::string kind = node->kind();
   const bool splittable = kind == "image" || kind == "video" || kind == "svg" || (kind == "shape" && is_solid_node(*node));
-  if (!splittable) return "not splittable";
+  if (!splittable) {
+    if (kind == "text" || kind == "shape") return "Not available for " + kind + " layers — their content is not a separate source.";
+    return "Only available for footage, image, vector and solid layers.";
+  }
   const Json& t = transform_props(*node);
   const double w = t.at("width").is_number() ? t.at("width").num() : std::nan("");
   const double h = t.at("height").is_number() ? t.at("height").num() : std::nan("");
-  if (!(w > 0 && h > 0)) return "no size";
-  if (!node->children.empty()) return "children";
-  if (is_3d_enabled(*node)) return "3D";
-  for (const char* k : {"puppet", "skeleton", "cornerPin"}) {
-    if (!node->fx().at(k).is_undefined()) return "deformer";
+  if (!(w > 0 && h > 0)) return "The layer has no size to build a composition from.";
+  if (!node->children.empty()) return "Other layers are parented to this one — unparent them first, or use Move all attributes.";
+  if (is_3d_enabled(*node)) {
+    return "Not available for 3D layers yet — a 3D composition layer is a flat card: lit per card, never extruded, and outside the shadow pass.";
   }
-  if (read_node_layer_time(*node)) return "time";
+  for (const char* k : {"puppet", "skeleton", "cornerPin"}) {
+    if (!node->fx().at(k).is_undefined()) return "Not available with puppet pins, bones or corner pin — they deform the content, which is moving.";
+  }
+  if (read_node_layer_time(*node)) return "Not available for a time-stretched, reversed or frozen layer.";
   return std::nullopt;
 }
 
@@ -472,6 +478,10 @@ std::pair<std::string, std::string> leave_all_attributes(HCtx& x, const std::str
 
 }  // namespace
 
+std::string precompose_leave_reason(const Document& d, const std::string& host, const std::vector<std::string>& layers) {
+  return leave_unavailable(d, precompose_targets_in(d, host, layers)).value_or("");
+}
+
 ResultOf<api::Precompose> handle(const api::Precompose& c, HCtx& x) {
   Document& d = x.d;
   require_comp(d, c.comp);
@@ -485,7 +495,9 @@ ResultOf<api::Precompose> handle(const api::Precompose& c, HCtx& x) {
   mint.contentId = x.mint_id("layer_");
   ensure_timeline(d, c.comp);
   x.label = "Pre-compose";
-  const std::vector<std::string> targets = precompose_targets(d, x.view, c.layers);
+  // The targets in the ACTIVE tab's composition, as the frozen parity corpus answers (the dry-run query asks
+  // the command's composition; moving the command too is a behaviour change for its own parity-checked step).
+  const std::vector<std::string> targets = precompose_targets_in(d, x.view.tabComp, c.layers);
   auto refuse = [&]() {
     fail(ErrorCode::invalid_argument, leave ? "this layer cannot be pre-composed leaving its attributes" : "nothing to pre-compose");
   };

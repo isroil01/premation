@@ -11,7 +11,9 @@
 
 import type { ContextMenuItem } from '@stores/contextMenuStore';
 import type { SpatialInterp } from '@motion/animation';
-import { setSpatialInterpolation, spatialInterpAt, toggleVertexInterpolation } from '@core/motion/motionPath';
+import { setSpatialInterpolation, toggleVertexInterpolation } from '@core/motion/motionPath';
+import { positionSpatialInterpAt, positionTracksFrom } from '@core/mirror/positionTracks';
+import { memberTracksNow } from '@stores/memberTracks';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { openGuideEditor } from './GuideEditorDialog';
 import { editPositionKeys } from './viewportEdits';
@@ -46,7 +48,10 @@ export function convertMotionPathVertex(nodeId: string, t: number): Promise<void
 }
 
 export function motionPathKeyframeMenuItems(nodeId: string, t: number): ContextMenuItem[] {
-  const current = spatialInterpAt(nodeId, t);
+  // The vertex's mode from the engine's stored Position tracks (this revision's
+  // getMemberKeyframes answer; no check mark until it has landed).
+  const tracks = memberTracksNow(nodeId);
+  const current = tracks ? positionSpatialInterpAt(nodeId, t, positionTracksFrom(tracks)) : undefined;
   return [
     {
       id: 'mp-spatial',

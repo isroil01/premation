@@ -45,7 +45,9 @@ let h: Awaited<ReturnType<typeof setupAppEngine>>;
 let L = '';
 const skelOf = () => readNodeSkeleton(defaultSceneGraph.getNode(L)!);
 /** Let the engine apply what the overlay sent (and React re-render). */
-const idle = (): Promise<void> => act(async () => { await engineIdle(); });
+/** Let the engine apply what the overlay sent (and React re-render) — several rounds: the rig push's
+ * subscription lands, and pointer input goes through getRigPose before it writes (B4 round 5). */
+const idle = (): Promise<void> => act(async () => { for (let i = 0; i < 6; i++) await engineIdle(); });
 const bonePolys = (c: HTMLElement) => c.querySelectorAll('polygon[stroke="var(--color-overlay-rig-bone)"]');
 
 /** Select the first bone by pressing on its group. */
@@ -74,17 +76,23 @@ describe('gating and drawing', () => {
   it('renders nothing unless the bone tool is active', async () => {
     act(() => useUIStore.getState().setActiveTool('select'));
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     expect(container.querySelector('svg')).toBeNull();
   });
 
   it('draws one tapered polygon per bone', async () => {
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     expect(bonePolys(container)).toHaveLength(2);
   });
 
   it('draws the skinning MESH preview (§12.9 — the bone tool never showed it)', async () => {
     act(() => useUIStore.getState().setBoneRigMode('weights'));
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     // density 6 ⇒ 72 mesh triangles, drawn with the mesh stroke.
     expect(container.querySelectorAll('polygon[stroke="var(--color-overlay-rig-mesh-edge)"]')).toHaveLength(72);
   });
@@ -92,6 +100,8 @@ describe('gating and drawing', () => {
   it('shows the weight heatmap only once a bone is selected', async () => {
     act(() => useUIStore.getState().setBoneRigMode('weights'));
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     const heat = () =>
       [...container.querySelectorAll('polygon')].filter((p) =>
         /^rgba\(\d+, \d+, \d+, 0\.45\)$/.test(p.getAttribute('fill') ?? ''),
@@ -105,6 +115,8 @@ describe('gating and drawing', () => {
 describe('bone authoring', () => {
   it('a plain click creates no fixed-length bone', async () => {
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.pointerDown(svg, { clientX: 70, clientY: 40, pointerId: 1 });
     fireEvent.pointerUp(svg, { clientX: 70, clientY: 40, pointerId: 1 });
@@ -117,6 +129,8 @@ describe('bone authoring', () => {
 
   it('dragging empty canvas creates a measured root bone', async () => {
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.pointerDown(svg, { clientX: 100, clientY: 100, pointerId: 1 });
     fireEvent.pointerMove(svg, { clientX: 160, clientY: 160, pointerId: 1 });
@@ -133,6 +147,8 @@ describe('bone authoring', () => {
 
   it('dragging from an existing tip creates a connected child', async () => {
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     const foreG = bonePolys(container)[1]!.parentElement!;
     fireEvent.pointerDown(foreG, { clientX: 40, clientY: 0, pointerId: 1 });
@@ -144,6 +160,8 @@ describe('bone authoring', () => {
 
   it('Escape cancels the live bone preview', async () => {
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.pointerDown(svg, { clientX: 10, clientY: 10, pointerId: 1 });
     fireEvent.pointerMove(svg, { clientX: 60, clientY: 10, pointerId: 1 });
@@ -159,6 +177,8 @@ describe('bone authoring', () => {
       usePreferenceStore.setState({ timelineAutoKeyframe: true });
     });
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     const foreG = bonePolys(container)[1]!.parentElement!;
     fireEvent.pointerDown(foreG, { clientX: -10, clientY: 0, pointerId: 1 });
@@ -183,6 +203,8 @@ describe('IK', () => {
 
   it('renders the IK target crosshair and the pole handle', async () => {
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     expect(container.querySelector('circle[stroke="var(--color-overlay-rig-ik)"]')).not.toBeNull();
     expect(container.querySelector('polygon[fill="var(--color-overlay-rig-pole)"]')).not.toBeNull();
   });
@@ -190,6 +212,8 @@ describe('IK', () => {
   it('dragging the pole writes the keyframeable ikPole tracks', async () => {
     act(() => usePreferenceStore.setState({ timelineAutoKeyframe: true }));
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     const poleG = container.querySelector('polygon[fill="var(--color-overlay-rig-pole)"]')!.parentElement!;
     fireEvent.pointerDown(poleG, { clientX: 0, clientY: -80, pointerId: 1 });
@@ -204,6 +228,8 @@ describe('IK', () => {
 
   it('bones in an active IK chain are tinted differently', async () => {
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     expect(container.querySelector('polygon[stroke="var(--color-overlay-rig-ik)"]')).not.toBeNull();
   });
 });
@@ -216,6 +242,8 @@ describe('weight painting', () => {
 
   it('shows the mesh only in Weights mode', async () => {
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     expect(container.querySelectorAll('polygon[stroke="var(--color-overlay-rig-mesh-edge)"]').length).toBeGreaterThan(0);
     act(() => useUIStore.getState().setBoneRigMode('pose'));
     expect(container.querySelectorAll('polygon[stroke="var(--color-overlay-rig-mesh-edge)"]')).toHaveLength(0);
@@ -223,6 +251,8 @@ describe('weight painting', () => {
 
   it('a stroke writes a paint map, and only for the selected bone', async () => {
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     selectFirstBone(container);
 
     const svg = container.querySelector('svg')!;
@@ -241,6 +271,8 @@ describe('weight painting', () => {
 
   it('painting is a no-op with no bone selected', async () => {
     const { container } = render(<BoneOverlay />);
+
+    await idle();
     const svg = container.querySelector('svg')!;
     fireEvent.pointerDown(svg, { clientX: -40, clientY: 0, pointerId: 2 });
     fireEvent.pointerUp(svg, { clientX: -40, clientY: 0, pointerId: 2 });

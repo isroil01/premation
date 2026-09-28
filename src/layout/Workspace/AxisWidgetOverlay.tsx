@@ -14,13 +14,12 @@ import { useGuidesStore } from '@stores/guidesStore';
 import { useActiveCompRootId, useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { documentMirror } from '@stores/documentMirror';
 import { compHas3DContent } from '@core/mirror/compLayers';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readSceneCamera, viewCameraNode } from '@core/scene/camera3d';
+import { viewCameraOf } from '@core/mirror/viewGeometry';
 import { orthoViewOf } from '@core/scene/cameraViewMode';
-import { toWorldPointAt } from '@core/scene/liveWorld3d';
-import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
-import { getRemappedTime } from '@core/timeline/TimelineController';
-import { defaultAnimation } from '@motion/animation';
+import { isCustomViewId } from '@core/workspace/customViews';
+import { useOverlayRequest } from '@hooks/useOverlayRequest';
+import { MAIN_VIEWPORT, overlayView } from '@stores/overlayGeometry';
+import { secondsToFlicks } from '@motion/engine-api';
 import { Project3D, type Camera3D, type OrthoView, type Vec3 } from '@motion/scene';
 
 /**
@@ -64,30 +63,14 @@ export const AxisWidgetOverlay: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneRev is the walk's dependency
     [compRootId, sceneRev],
   );
-  // One resolver for every camera read in the app. A local first-match search
-  // here would draw the widget for a different camera than the frame was
-  // rendered through — same scope and same tie-break, or neither is trustworthy.
-  // The view's camera, so a `camera:<id>` view orients the widget by the
-  // camera on screen rather than the topmost one.
-  const cameraNode = viewCameraNode(defaultSceneGraph, camera3dMode, compRootId);
-  if (!has3D) return null;
-
-  // Resolve the view camera at the playhead — same resolver chain the gizmo
-  // (useGizmo3d) and renderer use, so the widget always matches the view.
+  // The view camera — resolved engine-side at the frame on screen, exactly as the
+  // renderer resolves it (the overlay geometry push, B4 round 5): a `camera:<id>`
+  // view orients the widget by the camera on screen rather than the topmost one.
   // Custom views build their camera FROM STORED PARAMS (scene camera ignored).
-  let camera: Camera3D;
-  if (isCustomViewId(camera3dMode)) {
-    camera = customViewCamera(customViews[camera3dMode], compWidth, compHeight);
-  } else if (cameraNode) {
-    const camNode = cameraNode;
-    const camValues = defaultAnimation.evaluateNode(camNode.id, getRemappedTime(camNode.id, time));
-    // Comp-scoped and parent-LIFTED, like the renderer: see `currentViewCamera`.
-    camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight, (id, p) =>
-      id === camNode.id ? camValues.get(p) : undefined,
-    compRootId, (id, p) => toWorldPointAt(id, time, p), { view: camera3dMode });
-  } else {
-    camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight, undefined, compRootId);
-  }
+  useOverlayRequest('axisWidget', [], [], has3D && !isCustomViewId(camera3dMode) ? [camera3dMode] : []);
+  if (!has3D) return null;
+  const view = isCustomViewId(camera3dMode) ? undefined : overlayView(MAIN_VIEWPORT, camera3dMode, secondsToFlicks(time));
+  const camera: Camera3D = viewCameraOf(camera3dMode, view, customViews, compWidth, compHeight);
   const orthoView: OrthoView | null = orthoViewOf(camera3dMode);
 
   const project = (p: Vec3): { x: number; y: number } =>

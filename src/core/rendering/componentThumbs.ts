@@ -49,6 +49,36 @@ interface SerializedNodeLike {
   children: SerializedNodeLike[];
 }
 
+/**
+ * The component's tree for the thumbnail: the legacy saved tree (`root`), or
+ * the rows of its `copyLayers` fragment (B4 round 5: `{layers: [{row}]}`, each
+ * row a stored node with its child ids) nested by parent — several top-level
+ * layers under one unnamed wrapper. Null when there is nothing to draw.
+ */
+function componentTree(def: ComponentDef): SerializedNodeLike | null {
+  if (def.root) return def.root as unknown as SerializedNodeLike;
+  if (!def.fragment) return null;
+  type Row = { id: string; name?: string; parent?: string | null; children?: string[]; transform: SceneNode['transform']; components: SceneNode['components'] };
+  let rows: Row[];
+  try {
+    const doc = JSON.parse(def.fragment.data) as { layers?: Array<{ row?: Row }> };
+    rows = (doc.layers ?? []).map((l) => l.row).filter((r): r is Row => !!r && typeof r.id === 'string' && !!r.transform);
+  } catch {
+    return null;
+  }
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const nest = (r: Row): SerializedNodeLike => ({
+    name: r.name ?? r.id,
+    transform: r.transform,
+    components: r.components ?? [],
+    children: (r.children ?? []).map((c) => byId.get(c)).filter((c): c is Row => !!c).map(nest),
+  });
+  const tops = rows.filter((r) => !r.parent || !byId.has(r.parent)).map(nest);
+  if (tops.length === 0) return null;
+  if (tops.length === 1) return tops[0]!;
+  return { name: def.name, transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } } as SceneNode['transform'], components: [], children: tops };
+}
+
 let seq = 0;
 
 /** Materialize the serialized tree into `graph` (fresh throwaway ids),
@@ -183,7 +213,9 @@ async function acquireSharedBackend(): Promise<ReturnType<typeof createRenderBac
 
 async function renderThumbAsync(def: ComponentDef, key: string): Promise<void> {
   try {
-    const b = treeBounds(def.root as unknown as SerializedNodeLike);
+    const tree = componentTree(def);
+    if (!tree) return;
+    const b = treeBounds(tree);
     const pad = 12;
     const w = Math.max(1, b.maxX - b.minX + pad * 2);
     const h = Math.max(1, b.maxY - b.minY + pad * 2);
@@ -191,7 +223,7 @@ async function renderThumbAsync(def: ComponentDef, key: string): Promise<void> {
     // the comp coordinate space is 0-based, and content in negative space
     // renders outside it.
     const graph = new SceneGraph();
-    addTree(graph, def.root as unknown as SerializedNodeLike, null, pad - b.minX, pad - b.minY);
+    addTree(graph, tree, null, pad - b.minX, pad - b.minY);
     const scale = Math.min(THUMB_W / w, THUMB_H / h);
     const backend = await acquireSharedBackend();
     const canvas = sharedCanvas!;

@@ -49,8 +49,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Project3D, type Vec3 } from '@motion/scene';
 import { Gizmo3D, SceneGizmos } from '@motion/workspace';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { secondsToFlicks } from '@motion/engine-api';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
+import { MAIN_VIEWPORT, overlayView } from '@stores/overlayGeometry';
+import { useOverlayRequest } from '@hooks/useOverlayRequest';
+import { cameraOfLens, dofOfPush } from '@core/mirror/viewGeometry';
 import { useCurrentTime } from '@stores/playbackClockStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useFocusPlaneStore } from '@stores/focusPlaneStore';
@@ -60,15 +63,7 @@ import { flattenCompLayers } from '@core/mirror/compLayers';
 import { isMirrorDescendantOf } from '@core/mirror/layerTree';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { getRemappedTime } from '@core/timeline/TimelineController';
-import { defaultAnimation } from '@motion/animation';
-import { toWorldPointAt } from '@core/scene/liveWorld3d';
-import {
-  activeCameraNode,
-  cameraFromNode,
-  focusRangeAt,
-  readNodeDof,
-} from '@core/scene/camera3d';
+import { focusRangeAt } from '@core/scene/camera3d';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
 import type { RenderView } from '@core/rendering/RenderBackend';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
@@ -192,12 +187,15 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
   // Camera, ortho axis, the 3D-scene gate and the id of the camera this view
   // looks through — all from the resolver the wireframes and the inspection
   // panes share, so this overlay cannot disagree with them about the view.
-  const { camera, orthoView, activeCameraId, scene3d } = useSceneRefGeometry(camera3dMode);
+  const { camera, orthoView, activeCameraId, scene3d, recordOf } = useSceneRefGeometry(camera3dMode);
   const selectedIds = useSelectionStore((s) => s.ids);
   const time = useCurrentTime();
   // Frame-coalesced: a focus drag bumps the revision per pointer event and this
   // overlay only has to track it visually.
   const sceneTick = useMirrorRevisionFrame();
+  // 'always' with no camera selected shows the ACTIVE camera's plane (whatever
+  // this view looks through): its id is the pushed Active Camera view's.
+  const activeViewTick = useOverlayRequest('focusPlane', [], [], visibility === 'always' && scene3d ? ['active'] : []);
   const viewTransform = useViewTransform(getView, viewRev);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [hovered, setHovered] = useState(false);
@@ -231,30 +229,28 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
       order ??= flattenCompLayers(m, compRootId);
       if (order.indexOf(id) > order.indexOf(pickedId)) pickedId = id;
     }
-    // The camera's own record for the DOF / eye evaluation below (per-frame, not in the mirror).
-    let node = pickedId ? defaultSceneGraph.getNode(pickedId) ?? null : null;
-    if (!node && visibility === 'always') node = activeCameraNode(defaultSceneGraph, compRootId);
-    if (!node) return null;
+    // The camera's pushed record (the overlay geometry push, B4 round 5): its
+    // resolved eye and depth of field at the frame on screen.
+    let cameraId = pickedId;
+    if (!cameraId && visibility === 'always') cameraId = overlayView(MAIN_VIEWPORT, 'active', secondsToFlicks(time))?.camera || null;
+    if (!cameraId) return null;
     // Never for the camera this view looks THROUGH — see the header note.
-    if (isSceneCameraView(camera3dMode) && node.id === activeCameraId) return null;
+    if (isSceneCameraView(camera3dMode) && cameraId === activeCameraId) return null;
 
-    const cameraNode = node;
-    const values = defaultAnimation.evaluateNode(cameraNode.id, getRemappedTime(cameraNode.id, time));
-    const sample = (id: string, prop: string): number | undefined =>
-      id === cameraNode.id ? values.get(prop) : undefined;
+    const scene = recordOf(cameraId)?.scene;
+    if (scene?.role !== 'camera') return null;
     // Depth of field OFF (no blur level) means there is no focus plane to draw:
     // the property exists but changes no pixel, and chrome for an inert setting
     // is worse than none.
-    const dof = readNodeDof(cameraNode, compWidth, compHeight, sample);
+    const dof = dofOfPush(scene.dof);
     if (!dof) return null;
 
-    // The resolved eye — the parent lift `cameraFromNode` gets from the
-    // renderer, so a camera on a null rig draws its plane where the rig put it.
-    const cam = cameraFromNode(cameraNode, compWidth, compHeight, sample, (id, p) =>
-      toWorldPointAt(id, time, p),
-    );
+    // The resolved eye — parent-lifted like the renderer's, so a camera on a
+    // null rig draws its plane where the rig put it.
+    const cam = cameraOfLens(scene.lens);
+    if (!cam) return null;
     const gizmo = buildFocusPlaneGizmo({
-      nodeId: cameraNode.id,
+      nodeId: cameraId,
       eye: cam.position,
       frame: SceneGizmos.cameraBasis(
         cam.orientation?.yaw ?? 0,
@@ -270,8 +266,8 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
       compHeight,
     });
     return gizmo;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneTick drives scene reads
-  }, [visibility, scene3d, selectedIds, compRootId, compWidth, compHeight, time, camera3dMode, activeCameraId, sceneTick]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneTick drives the mirror reads; recordOf changes with each pushed frame
+  }, [visibility, scene3d, selectedIds, compRootId, compWidth, compHeight, time, camera3dMode, activeCameraId, sceneTick, recordOf, activeViewTick]);
 
   /** World → canvas CSS px, exactly as the scene wireframes are drawn. */
   const toScreen = useMemo(() => {

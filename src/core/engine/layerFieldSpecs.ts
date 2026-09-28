@@ -77,6 +77,8 @@ const CAMERA = ['camera'] as const;
 const NO_GEOMETRY = ['camera', 'light', 'null', 'group', 'audio'] as const;
 /** Layers that draw pixels a rig / cloner / physics body can act on. */
 const VISUAL: LayerFieldWhen = { notKinds: ['camera', 'light', 'audio'] };
+/** Layers that show a source — a template media slot's placeholder (templateAuthoring.ts `inferFieldForNode`). */
+const SLOTTABLE = ['image', 'video', 'svg', 'comp'] as const;
 /** Layers that carry sound (the mixer's targets). */
 const AUDIBLE: LayerFieldWhen = { kinds: ['audio', 'video', 'precomp'] };
 
@@ -262,5 +264,28 @@ export const LAYER_FIELDS: readonly LayerFieldSpec[] = [
     // `index` is rebuilt from layer `nullId` every frame (buildSnapshot).
     path: 'layer/pointBindings', key: 'pointBindings', label: 'Point Bindings', type: 'json', default: null, json: 'array',
     store: { component: 'Geometry', key: 'pointBindings' }, when: { component: 'Geometry' },
+  },
+  // ── B4 round 5: a template MEDIA SLOT (templates/mediaSlots.ts) — the fit policy
+  //    (absent = not a slot) and the AUTHORED slot rect every fill resolves against,
+  //    on the Transform of a layer that shows a source (templateAuthoring's rule). ──
+  {
+    path: 'layer/slotFit', key: 'slotFit', label: 'Slot Fit', type: 'choice', default: 'none',
+    choices: ['none', 'contain', 'cover', 'native'], store: { component: T, key: 'slotFit' }, when: { kinds: SLOTTABLE },
+    encode: [['none', null], ['contain', 'contain'], ['cover', 'cover'], ['native', 'native']],
+  },
+  {
+    path: 'layer/slotWidth', key: 'slotW', label: 'Slot Width', type: 'scalar', default: 0, min: 0,
+    clearAtDefault: true, store: { component: T, key: 'slotW' }, when: { kinds: SLOTTABLE },
+  },
+  {
+    path: 'layer/slotHeight', key: 'slotH', label: 'Slot Height', type: 'scalar', default: 0, min: 0,
+    clearAtDefault: true, store: { component: T, key: 'slotH' }, when: { kinds: SLOTTABLE },
+  },
+  // ── B4 round 5: a glTF model's blend-shape NAMES (the file's `extras.targetNames`,
+  //    persisted on the leaf's Model component at import — modelMorph.ts MORPH_NAMES_PROP).
+  //    The weights are the `transform/morph<i>` properties (latentPropSpecs.ts). ──
+  {
+    path: 'model/targetNames', key: 'morphNames', label: 'Morph Target Names', type: 'json', default: null, json: 'array',
+    store: { component: 'Model', key: 'morphNames' }, when: { component: 'Model' },
   },
 ];

@@ -17,6 +17,8 @@ import {
   DOCUMENT_COLOR_LIMIT,
 } from './swatchStore';
 import { captureDocument, restoreDocument } from '@core/api/cloudDocument';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
@@ -173,13 +175,26 @@ describe('collectDocumentColors', () => {
 });
 
 describe('refreshDocumentColors', () => {
-  it('is lazy — nothing is derived until it is asked for', () => {
-    defaultSceneGraph.addNode(paintedNode('comp_root', {}, null));
-    defaultSceneGraph.addNode(paintedNode('shape', solid('#c0ffee')));
+  // B4 round 5: the engine answers it (`getDocumentColors`), so the fixture is built through the app's engine.
+  it('is lazy — nothing is derived until it is asked for', async () => {
+    const h = await setupAppEngine();
+    try {
+      const { item: comp } = await h.run({
+        type: 'createComposition',
+        settings: { name: 'Main', width: 640, height: 360, frameRate: { num: 30, den: 1 }, duration: 705_600_000 },
+        fromItems: [],
+      });
+      const { layer } = await h.run({ type: 'createLayer', comp, kind: 'solid', init: [] });
+      await h.run({ type: 'setProperty', prop: { layer, path: 'layer/fill' }, value: { kind: 'color', value: { r: 0xc0 / 255, g: 1, b: 0xee / 255, a: 1 } } });
 
-    expect(useSwatchStore.getState().documentColors).toEqual([]);
-    useSwatchStore.getState().refreshDocumentColors();
-    expect(useSwatchStore.getState().documentColors).toContain('#c0ffee');
+      expect(useSwatchStore.getState().documentColors).toEqual([]);
+      useSwatchStore.getState().refreshDocumentColors();
+      await engineIdle();
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      expect(useSwatchStore.getState().documentColors).toContain('#c0ffee');
+    } finally {
+      await h.dispose();
+    }
   });
 });
 

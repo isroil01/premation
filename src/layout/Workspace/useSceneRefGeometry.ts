@@ -13,25 +13,26 @@
  */
 
 import { useMemo } from 'react';
+import { secondsToFlicks, type OverlayKind, type OverlayView } from '@motion/engine-api';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useCurrentTime } from '@stores/playbackClockStore';
 import { useActiveCompRootId, useActiveTabCompSettings, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
+import { useOverlayRequest } from '@hooks/useOverlayRequest';
 import { documentMirror } from '@stores/documentMirror';
+import { MAIN_VIEWPORT, overlayLayer, overlayView, type OverlayLayer } from '@stores/overlayGeometry';
 import { compHas3DContent } from '@core/mirror/compLayers';
 import { settingsWorld } from '@core/mirror/compFacts';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readSceneCamera, viewCameraNode } from '@core/scene/camera3d';
+import { sceneGizmosFrom, sceneLayersOf, viewCameraOf } from '@core/mirror/viewGeometry';
 import { isSceneCameraView, orthoViewOf } from '@core/scene/cameraViewMode';
-import { toWorldPointAt } from '@core/scene/liveWorld3d';
-import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
-import { collectSceneGizmos } from '@core/workspace/sceneGizmoData';
-import { getRemappedTime } from '@core/timeline/TimelineController';
-import { defaultAnimation } from '@motion/animation';
+import { isCustomViewId } from '@core/workspace/customViews';
 import type { Camera3dMode } from '@stores/guidesStore';
 import type { Camera3D, OrthoView } from '@motion/scene';
 import type { SceneGizmo } from '@motion/workspace';
 import { usePreferenceStore } from '@stores/preferenceStore';
+
+/** What the 3D reference geometry subscribes for each camera / light / 3D layer: the world matrix, the drawn box, the scene3d record. */
+export const SCENE_REF_KINDS: readonly OverlayKind[] = ['transform', 'bounds', 'scene3d'];
 
 export interface SceneRefGeometry {
   /** The projection camera for this view (a view camera, or the scene's). */
@@ -58,6 +59,14 @@ export interface SceneRefGeometry {
   sceneGizmos: readonly SceneGizmo[];
   compWidth: number;
   compHeight: number;
+  /** B4 round 5: the pushed view camera record of this mode (undefined before the subscription's first frame). */
+  view: OverlayView | undefined;
+  /** The composition's cameras, lights and 3D layers (back to front) — subscribed with SCENE_REF_KINDS. */
+  sceneLayers: readonly string[];
+  /** A subscribed layer's pushed record for the frame on screen. */
+  recordOf: (id: string) => OverlayLayer | undefined;
+  /** Changes when the pushed geometry does (a memo dependency). */
+  geometryTick: number;
 }
 
 export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
@@ -89,29 +98,6 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
   // which is byte-for-byte the plane this drew before.
   const groundLevel = Number.isFinite(groundLevelSetting) ? (groundLevelSetting as number) : 0;
 
-  // Resolve the projection camera at the CURRENT playhead — the same chain the
-  // renderer (buildSnapshot) and the selection chrome (ports.ts) use.
-  let camera: Camera3D;
-  let activeCameraId: string | null = null;
-  if (isCustomViewId(mode)) {
-    camera = customViewCamera(customViews[mode], compWidth, compHeight);
-  } else {
-    // The shared resolver — same scope, same tie-break and the same camera-view
-    // fallback as the renderer.
-    const cameraNode = viewCameraNode(defaultSceneGraph, mode, compRootId);
-    activeCameraId = cameraNode?.id ?? null;
-    if (cameraNode) {
-      const camNode = cameraNode;
-      const camValues = defaultAnimation.evaluateNode(camNode.id, getRemappedTime(camNode.id, time));
-      // Comp-scoped and parent-LIFTED, like the renderer: see `currentViewCamera`.
-      camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight, (id, p) =>
-        id === camNode.id ? camValues.get(p) : undefined,
-      compRootId, (id, p) => toWorldPointAt(id, time, p), { view: mode });
-    } else {
-      camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight, undefined, compRootId);
-    }
-  }
-
   const orthoView: OrthoView | null = orthoViewOf(mode);
 
   /**
@@ -131,11 +117,33 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneRev is the walk's dependency
   }, [mode, draft3d, compRootId, sceneRev]);
 
+  // B4 round 5: the view camera and the scene's cameras / lights / 3D layers come
+  // from the overlay geometry push — resolved engine-side at the frame's own time,
+  // exactly as the renderer resolves them (core/engine/overlayScene3d.ts, the C++
+  // overlay_geometry.cpp). The layer LIST is the mirror's (kinds and switches).
+  // Not gated on `scene3d`: the device handles (useDeviceHandles) read the
+  // cameras and lights in any view, as they always did.
+  const sceneLayers = useMemo(
+    () => sceneLayersOf(documentMirror(), compRootId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneRev is the walk's dependency
+    [compRootId, sceneRev],
+  );
+  const geometryTick = useOverlayRequest('sceneRef', sceneLayers, SCENE_REF_KINDS, isCustomViewId(mode) ? [] : [mode]);
+  const at = secondsToFlicks(time);
+  const view = isCustomViewId(mode) ? undefined : overlayView(MAIN_VIEWPORT, mode, at);
+  // Custom views build their camera from their STORED params (the scene camera ignored).
+  const camera: Camera3D = viewCameraOf(mode, view, customViews, compWidth, compHeight);
+  const activeCameraId: string | null = isCustomViewId(mode) ? null : view?.camera || null;
+  const recordOf = useMemo(
+    () => (id: string): OverlayLayer | undefined => overlayLayer(MAIN_VIEWPORT, id, at),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- geometryTick: a new frame's records
+    [at, geometryTick],
+  );
+
   const sceneGizmos = useMemo(
     () =>
       scene3d
-        ? collectSceneGizmos({
-            time,
+        ? sceneGizmosFrom(documentMirror(), sceneLayers, recordOf, {
             compWidth,
             compHeight,
             selectedIds: new Set(selectedIds),
@@ -150,14 +158,13 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
             devicesSelectedOnly: !deviceWireframesAll,
           })
         : [],
-    // `sceneRev` is not read inside the callback — it is the dependency that
-    // matters most. The collector walks the MUTABLE scene graph, so nothing
-    // else here changes when a layer moves; the revision counter is the only
-    // signal that the graph is different and the gizmos must be rebuilt.
-    [scene3d, time, compWidth, compHeight, selectedIds, mode, activeCameraId, sceneRev, layerBoxesVisible, deviceWireframesAll],
+    [scene3d, sceneLayers, recordOf, compWidth, compHeight, selectedIds, mode, activeCameraId, layerBoxesVisible, deviceWireframesAll],
   );
 
-  return { camera, orthoView, activeCameraId, scene3d, groundGridVisible, groundLevel, sceneGizmos, compWidth, compHeight };
+  return {
+    camera, orthoView, activeCameraId, scene3d, groundGridVisible, groundLevel, sceneGizmos, compWidth, compHeight,
+    view, sceneLayers, recordOf, geometryTick,
+  };
 }
 
 /**

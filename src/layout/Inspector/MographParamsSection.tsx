@@ -25,7 +25,6 @@ import {
 } from '@core/mirror/mographFields';
 import { useMirrorKeys, useRetainTrees } from '@hooks/useMirror';
 import { getTime } from '@stores/playbackClockStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useGesture } from '@hooks/useGesture';
 import { templateFieldCommands as fieldCommandsAt } from '@layout/Templates/templateFieldEdits';
 import { useEngineEdit } from './useEngineEdit';
@@ -135,18 +134,8 @@ function templateFieldCommands(field: TemplateField, value: string): Command[] {
  * mirror (a field exists only for un-keyed text, so no playhead is involved).
  */
 function currentValue(field: TemplateField): string {
-  if (field.kind === 'color') {
-    // B4-gap: the STORED CSS colour — the catalog paints with `rgba(r,g,b,a)` strings, and the TS engine's
-    // `layer/fill` reads anything but hex as white (parseColorChannels in fields.ts colorValue), so the mirror would
-    // show every translucent part as #ffffff. Closes when both engines parse CSS rgb()/rgba() fills into the color
-    // Value; then `mirrorMographFieldValue` answers it.
-    const node = defaultSceneGraph.getNode(field.target.nodeId);
-    const fill = node?.components
-      .filter((c) => c.type === 'Style' || c.type === 'Text')
-      .map((c) => (c.props as Record<string, unknown>).fill)
-      .find((f): f is string => typeof f === 'string');
-    if (fill !== undefined) return fill;
-  }
+  // B4 round 5: a colour part's Fill Color (`layer/fill`) — both engines parse the catalog's CSS
+  // `rgba(r,g,b,a)` fills into the colour value (it shows as `#rrggbbaa`).
   return mirrorMographFieldValue(documentMirror(), field, secondsToFlicks(getTime()));
 }
 

@@ -440,6 +440,21 @@ api::LayerInfo layer_info(const Document& d, std::string_view layer) {
   info.mograph_id = first_string_prop(n, "__mographId");
   info.svg = svg_role_of(n);
   info.plugin_schema_version = plugin_schema_version_of(n);
+  // B4 round 5: a caption layer (`__caption: true` on any component) and a multicam angle's number
+  // (`__multicamAngle` on the Transform of a video / image layer) — model.ts captionOf / multicamAngleOf.
+  for (const Component& c : n.components) {
+    const Json& v = c.props.at("__caption");
+    if (v.is_bool() && v.b()) {
+      info.caption = true;
+      break;
+    }
+  }
+  if (const std::string nk = n.kind(); nk == "video" || nk == "image") {
+    const Json& a = transform_props(n).at("__multicamAngle");
+    if (a.is_number() && std::isfinite(a.num())) {
+      info.multicam_angle = static_cast<std::uint32_t>(std::floor(std::clamp(a.num(), 0.0, 4294967295.0)));
+    }
+  }
   return info;
 }
 
@@ -662,6 +677,8 @@ api::ItemInfo footage_info(const Json& a) {
                                     : api::MediaType::none;
   info.alpha_probed = md.at("hasAlpha").is_bool();
   info.audio_probed = md.at("hasAudioTrack").is_bool();
+  // B4 round 5: the stored source reference the page's media loaders take (model.ts footageInfo).
+  if (a.at("src").is_string() && !a.at("src").str().empty()) info.media_url = a.at("src").str();
   return info;
 }
 
@@ -761,6 +778,8 @@ api::PropertyInfo property_info(const PCtx& c, std::string_view layer, const Cat
       }
     }
   }
+  // B4 round 5: reported only when true (unset = the default applies) — model.ts propertyInfo.
+  if (is_stored_static(d, layer, b) == std::optional<bool>(true)) info.stored = true;
   info.keyframe_count = animated ? static_cast<std::uint32_t>(read_keys(d, layer, b).size()) : 0U;
   if (b.separated) {
     const std::string prefix = b.path + "/";

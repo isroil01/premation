@@ -1409,6 +1409,106 @@
       "when": {
         "component": "Geometry"
       }
+    },
+    {
+      "path": "layer/slotFit",
+      "key": "slotFit",
+      "label": "Slot Fit",
+      "type": "choice",
+      "default": "none",
+      "choices": [
+        "none",
+        "contain",
+        "cover",
+        "native"
+      ],
+      "store": {
+        "component": "Transform",
+        "key": "slotFit"
+      },
+      "when": {
+        "kinds": [
+          "image",
+          "video",
+          "svg",
+          "comp"
+        ]
+      },
+      "encode": [
+        [
+          "none",
+          null
+        ],
+        [
+          "contain",
+          "contain"
+        ],
+        [
+          "cover",
+          "cover"
+        ],
+        [
+          "native",
+          "native"
+        ]
+      ]
+    },
+    {
+      "path": "layer/slotWidth",
+      "key": "slotW",
+      "label": "Slot Width",
+      "type": "scalar",
+      "default": 0,
+      "min": 0,
+      "clearAtDefault": true,
+      "store": {
+        "component": "Transform",
+        "key": "slotW"
+      },
+      "when": {
+        "kinds": [
+          "image",
+          "video",
+          "svg",
+          "comp"
+        ]
+      }
+    },
+    {
+      "path": "layer/slotHeight",
+      "key": "slotH",
+      "label": "Slot Height",
+      "type": "scalar",
+      "default": 0,
+      "min": 0,
+      "clearAtDefault": true,
+      "store": {
+        "component": "Transform",
+        "key": "slotH"
+      },
+      "when": {
+        "kinds": [
+          "image",
+          "video",
+          "svg",
+          "comp"
+        ]
+      }
+    },
+    {
+      "path": "model/targetNames",
+      "key": "morphNames",
+      "label": "Morph Target Names",
+      "type": "json",
+      "default": null,
+      "json": "array",
+      "store": {
+        "component": "Model",
+        "key": "morphNames"
+      },
+      "when": {
+        "component": "Model"
+      }
     }
   ],
   "rig": [

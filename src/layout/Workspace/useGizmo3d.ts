@@ -24,14 +24,11 @@ import { useState, useEffect, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { useCurrentTime } from '@stores/playbackClockStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { documentMirror } from '@stores/documentMirror';
 import { canBe3DLayer } from '@core/mirror/layerKinds';
-import {
-  sampleTransform3DAtPlayhead,
-  type Gizmo3DNodeUpdate,
-} from '@core/workspace/ports';
+import { transform3DOf } from '@core/mirror/viewGeometry';
+import type { Gizmo3DNodeUpdate, Transform3DValues } from '@core/workspace/ports';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
 import { GestureSession } from '@core/engine/uiEdits';
@@ -43,7 +40,6 @@ import type { RenderView } from '@core/rendering/RenderBackend';
 import { Project3D, type Vec3 } from '@motion/scene';
 import { Gizmo3D, pointLines, type GizmoHandleType, type RenderedGizmo3D, type SnapLine, type SnapPointTarget } from '@motion/workspace';
 import { snapActive, snapGizmoTranslate } from './gizmo3dSnap';
-import type { SceneNode } from '@core/types';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
 
 export interface DragState3D {
@@ -160,16 +156,20 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   // camera x/y/z; lights had the same problem. Cameras and lights are positioned
   // with the camera-navigation tools and their own inspector, not this gizmo.
   // The gate reads the mirror's layer header (`canBe3DLayer` is `canBe3D`'s
-  // twin, the 3D switch is `is3DEnabled`); the node itself is still fetched for
-  // the per-frame transform sample below, which the mirror does not evaluate.
+  // twin, the 3D switch is `is3DEnabled`); the per-frame transform sample below
+  // is the layer's pushed scene3d record (B4 round 5) — the local transform the
+  // engine sampled for the frame on screen.
   const mirror = documentMirror();
+  const { recordOf } = refGeometry;
+  const recordOfRef = useRef(recordOf);
+  recordOfRef.current = recordOf;
   const selected3DNodes = selectedIds
     .filter((id) => {
       const layer = mirror.layer(id);
       return canBe3DLayer(layer) && layer?.switches.threeD === true;
     })
-    .map((id) => defaultSceneGraph.getNode(id))
-    .filter((node): node is SceneNode => node != null);
+    .map((id) => ({ id, tv: transform3DOf(recordOf(id)) }))
+    .filter((n): n is { id: string; tv: Transform3DValues } => n.tv !== null);
 
   const is3D = selected3DNodes.length > 0;
   const singleId = selectedIds.length === 1 ? selectedIds[0] : (selected3DNodes[0]?.id ?? null);
@@ -179,11 +179,10 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   let firstRot = { rotX: 0, rotY: 0, rotZ: 0 };
   let firstScale = { scaleX: 1, scaleY: 1, scaleZ: 1 };
 
-  selected3DNodes.forEach((node, idx) => {
-    // SAMPLED at the current remapped playhead (animated tracks win) — the
-    // renderer draws the sampled value, so anchoring the gizmo on static base
-    // props desynced it off any keyframed layer (Bug: gizmo/object desync).
-    const tv = sampleTransform3DAtPlayhead(node);
+  selected3DNodes.forEach(({ tv }, idx) => {
+    // SAMPLED at the frame (animated tracks win) — the renderer draws the
+    // sampled value, so anchoring the gizmo on static base props desynced it
+    // off any keyframed layer (Bug: gizmo/object desync).
 
     sumX += tv.x;
     sumY += tv.y;
@@ -566,12 +565,11 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         // Nodes are re-fetched at event time so the anchor is never a stale
         // render-closure value.
         const initialNodeStates = selected3DNodes
-          .map((n) => defaultSceneGraph.getNode(n.id))
-          .filter((n): n is SceneNode => n != null)
-          .map((node) => {
-            const tv = sampleTransform3DAtPlayhead(node);
+          .map((n) => ({ id: n.id, tv: transform3DOf(recordOfRef.current(n.id)) }))
+          .filter((n): n is { id: string; tv: Transform3DValues } => n.tv !== null)
+          .map(({ id, tv }) => {
             return {
-              id: node.id,
+              id,
               pos: { x: tv.x, y: tv.y, z: tv.z },
               rot: { rotX: tv.rotationX, rotY: tv.rotationY, rotZ: tv.rotation },
               scale: { scaleX: tv.scaleX, scaleY: tv.scaleY, scaleZ: tv.scaleZ },

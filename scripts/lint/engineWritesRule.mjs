@@ -418,4 +418,4 @@ export function areaOf(relPath) {
 
 // Shared with the B4 read ratchet (scripts/lint/engineReadsRule.mjs): a call
 // this rule counts as a WRITE is not counted there as a read too.
-export { SCENE_MUTATORS, ANIM_MUTATORS, TIMELINE_MUTATORS, WRITE_VERB, STORE_WRITES };
+export { SCENE_MUTATORS, ANIM_MUTATORS, TIMELINE_MUTATORS, WRITE_VERB, STORE_WRITES, insideOffDocumentBuilder };

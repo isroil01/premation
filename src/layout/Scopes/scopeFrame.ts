@@ -39,8 +39,9 @@
 import { viewportFrameCache } from '@core/rendering/frameCache';
 import { latestTappedFrame } from '@core/rendering/frameTap';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { useCompositionStore } from '@stores/compositionStore';
+import { playheadSeconds } from '@core/timeline/timelineView';
+import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
+import { settingsFps } from '@core/mirror/compFacts';
 import { SCOPE_SAMPLE_WIDTH } from '@core/video/scopes';
 
 export interface ScopeFrame {
@@ -118,7 +119,9 @@ export function compRectInCanvas(
 export function liveCompRegion(canvasWidth: number, canvasHeight: number): CompRect | null {
   try {
     const controller = getWorkspaceController();
-    const comp = useCompositionStore.getState();
+    // B4: the active composition's size from the document mirror.
+    const comp = activeCompSettingsNow();
+    if (!comp) return null;
     return compRectInCanvas(
       canvasWidth,
       canvasHeight,
@@ -134,7 +137,8 @@ export function liveCompRegion(canvasWidth: number, canvasHeight: number): CompR
 /** The composition frame the playhead is on. */
 export function currentScopeFrame(): number {
   try {
-    return Math.round(getTimelineController().timeline.currentFrame);
+    // The playhead (transport seam) on the active composition's frame grid.
+    return Math.round(playheadSeconds() * settingsFps(activeCompSettingsNow()));
   } catch {
     return 0;
   }

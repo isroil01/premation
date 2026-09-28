@@ -74,7 +74,8 @@ import { Segmented } from '@components/Segmented';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { VirtualList } from '@components/VirtualList';
 import { customConfirm, customPrompt } from '@components/Modal';
-import { isLibraryAsset, useAssetStore, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
+import { isLibraryAsset, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
+import { useMirrorAssetRecords, useMirrorFolders } from '@hooks/useAssetRecords';
 import { useAssetsViewStore, type AssetSortKey } from '@stores/assetsViewStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorRevision } from '@hooks/useMirror';
@@ -173,11 +174,11 @@ function useHostSize(): [React.RefObject<HTMLDivElement>, { width: number; heigh
 export function AssetsPanel(): JSX.Element {
   useEffect(() => installAssetCommands(), []);
 
-  // B4-gap: the rows and cards draw the asset RECORDS — the playable `src` / object URLs (thumbnails, hover
-  // scrub, drag payloads), the proxy job record, the probe's metadata — which ItemInfo does not carry;
-  // closes with `getThumbnail` for the pictures, the item's media URL and the proxy record in the API.
-  const assets = useAssetStore((s) => s.assets);
-  const folders = useAssetStore((s) => s.folders);
+  // B4: the rows and cards draw the items as records — the document facts from the mirror (ItemInfo: name,
+  // folder, probe, interpretation, labels, the playable `mediaUrl`) with this session's half on top (thumbnail
+  // object URL, origin, import time, the proxy jobs: src/stores/assetSession.ts).
+  const assets = useMirrorAssetRecords();
+  const folders = useMirrorFolders();
   // The label menu through the engine (B3z): setItemLabel stores the palette id this panel reads.
   const setLabel = (ids: string[], labelId: string | null): void => {
     const m = documentMirror();

@@ -63,7 +63,9 @@ let L = '';
 
 /** Let the engine apply what the overlay sent, then tick the viewport (the overlays redraw). */
 async function idle(): Promise<void> {
-  await act(async () => { await engineIdle(); });
+  // Several rounds: the rig push's subscription lands, and pointer input goes
+  // through getRigPose before it writes (B4 round 5).
+  await act(async () => { for (let i = 0; i < 6; i++) await engineIdle(); });
   act(() => { for (const fn of [...mockRenderListeners]) fn(); });
 }
 const undo = async (): Promise<void> => { await act(async () => { await performUndo(); }); await idle(); };
@@ -123,6 +125,7 @@ describe('weight-paint stroke undo', () => {
     useUIStore.getState().setBoneWeightMode('add');
     useRigSelectionStore.getState().clear();
     const utils = render(<BoneOverlay />);
+    await idle();
     const { container } = utils;
     // Select a bone, then engage the brush.
     const boneG = container.querySelector('polygon[stroke="var(--color-overlay-rig-bone)"]')!.parentElement!;
@@ -184,7 +187,9 @@ describe('Puppet Sketch undo', () => {
       pins: [{ id: 'pin_1', name: 'Pin 1', x: 0, y: 0 }],
     });
     useUIStore.getState().setActiveTool('puppet-pin');
-    return render(<PuppetOverlay />);
+    const utils = render(<PuppetOverlay />);
+    await idle();
+    return utils;
   }
 
   /** Ctrl-drag = record. Many samples, one gesture. */
@@ -242,6 +247,7 @@ describe('spatial tangent drag undo', () => {
     getCommandSystem().getHistory().clear();
     useUIStore.getState().setActiveTool('puppet-pin');
     const utils = render(<PuppetOverlay />);
+    await idle();
     // Select the pin so its motion path is drawn.
     const dot = utils.container.querySelector('circle[r="5"]')!;
     fireEvent.pointerDown(dot.parentElement!, { clientX: -60, clientY: 0, pointerId: 4 });

@@ -91,12 +91,15 @@ export function ComponentsPanel(): JSX.Element {
 
   const handleSave = () => {
     if (!componentName.trim()) return;
-    const id = saveComponent(componentName);
-    useUIStore.getState().notify(
-      id
-        ? { level: 'success', message: `Saved “${componentName}”`, durationMs: 1800 }
-        : { level: 'warning', message: 'Select layer(s) to save first', durationMs: 2000 },
-    );
+    const name = componentName;
+    // B4: the component is the engine's copyLayers fragment of the selection (asked, so it lands a moment later).
+    void saveComponent(name).then((id) => {
+      useUIStore.getState().notify(
+        id
+          ? { level: 'success', message: `Saved “${name}”`, durationMs: 1800 }
+          : { level: 'warning', message: 'Select layer(s) to save first', durationMs: 2000 },
+      );
+    });
     setShowSaveInput(false);
     setComponentName('My Component');
   };

@@ -14,6 +14,7 @@ import { useUIStore } from '@stores/uiStore';
 import { bumpScene, bumpSceneRevision } from '@stores/sceneStore';
 import { rebindAssetSrcs } from '@core/scene/assetRebind';
 import { failureReason, mediaKindOf, track as trackEvent } from '@core/analytics/productEvents';
+import { publishAssetSessions } from './assetSession';
 
 export interface ImportedAsset {
   id: string;
@@ -1733,3 +1734,12 @@ export function replaceProjectItems(items: { assets: ImportedAsset[]; folders: A
   if (documentItems) documentItems = captureProjectItems();
   bumpScene();
 }
+
+// B4 round 5: the SESSION half of every record — the thumbnail URL, where the import came from, the probe's
+// container, and the proxy JOBS (generating / ready / failed, size, attach) — published for the UI, which reads
+// it beside the document mirror's ItemInfo (src/stores/assetSession.ts). This store is the TypeScript engine's
+// items store: the projection is its own upkeep, run on every change of its records.
+publishAssetSessions(useAssetStore.getState().assets);
+useAssetStore.subscribe((s, prev) => {
+  if (s.assets !== prev.assets) publishAssetSessions(s.assets);
+});

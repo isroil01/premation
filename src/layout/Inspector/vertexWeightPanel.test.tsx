@@ -47,7 +47,8 @@ let h: Awaited<ReturnType<typeof setupAppEngine>>;
 /** The rig layer (engine-created, 240 × 160 at the comp origin). */
 let ID = '';
 
-const idle = (): Promise<void> => act(async () => { await engineIdle(); });
+/** Let the engine settle — several rounds: the panel asks getRigPose for the pose it shows (B4 round 5). */
+const idle = (): Promise<void> => act(async () => { for (let i = 0; i < 6; i++) await engineIdle(); });
 
 /** The starting rig, written through the engine (setup: the history is cleared after). */
 async function setBones(bones: typeof TWO_BONES): Promise<void> {
@@ -110,7 +111,7 @@ afterEach(async () => {
 });
 
 describe('the fixture is a real rig', () => {
-  it('POSITIVE CONTROL: some vertex has more than one influence', () => {
+  it('POSITIVE CONTROL: some vertex has more than one influence', async () => {
     // Without this, every "editable field appears" assertion below could be
     // passing on a mesh where the panel correctly renders the read-only
     // single-influence message instead.
@@ -119,17 +120,21 @@ describe('the fixture is a real rig', () => {
 });
 
 describe('with no vertex picked', () => {
-  it('shows no weight fields at all', () => {
+  it('shows no weight fields at all', async () => {
     const { container } = render(<BoneControls nodeId={ID} />);
+
+    await idle();
     expect(weightFields(container)).toHaveLength(0);
   });
 });
 
 describe('with a multi-influence vertex picked', () => {
-  it('renders one editable field per influencing bone, named for the bone', () => {
+  it('renders one editable field per influencing bone, named for the bone', async () => {
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
+
+    await idle();
     const fields = weightFields(container);
     expect(fields).toHaveLength(influencesAt(v).length);
     // Labelled by BONE NAME, not by id — the id is unreadable on a real rig.
@@ -138,10 +143,12 @@ describe('with a multi-influence vertex picked', () => {
     expect(labels.some((l) => l?.startsWith('Fore '))).toBe(true);
   });
 
-  it('shows each weight as a PERCENTAGE matching the binding', () => {
+  it('shows each weight as a PERCENTAGE matching the binding', async () => {
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
+
+    await idle();
     const infl = influencesAt(v);
     for (const field of weightFields(container)) {
       const label = field.getAttribute('aria-label')!;
@@ -156,6 +163,8 @@ describe('with a multi-influence vertex picked', () => {
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
+
+    await idle();
     const field = weightFields(container)[0]!;
     const boneName = field.getAttribute('aria-label')!.split(' weight at')[0]!;
     const boneId = boneName === 'Upper' ? 'upper' : 'fore';
@@ -171,6 +180,8 @@ describe('with a multi-influence vertex picked', () => {
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
+
+    await idle();
     await nudgeUp(weightFields(container)[0]!);
     expect(readNodeSkeleton(defaultSceneGraph.getNode(ID)!)!.weightPaint).toBeDefined();
   });
@@ -181,6 +192,8 @@ describe('with a multi-influence vertex picked', () => {
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
+
+    await idle();
     await nudgeUp(weightFields(container)[0]!);
     const total = influencesAt(v).reduce((a, w) => a + w.weight, 0);
     expect(total).toBeCloseTo(1, 5);
@@ -190,6 +203,8 @@ describe('with a multi-influence vertex picked', () => {
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
+
+    await idle();
     const before = entryCount();
     await nudgeUp(weightFields(container)[0]!);
     expect(entryCount() - before).toBe(1);
@@ -200,6 +215,8 @@ describe('with a multi-influence vertex picked', () => {
     const v = findMultiInfluenceVertex();
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
+
+    await idle();
     const before = influencesAt(v).map((w) => w.weight);
     await nudgeUp(weightFields(container)[0]!);
     expect(influencesAt(v).map((w) => w.weight)).not.toEqual(before);
@@ -219,6 +236,8 @@ describe('the single-influence boundary, through the UI', () => {
     expect(influencesAt(v)).toHaveLength(1);
     selectRigVertex(ID, v);
     const { container } = render(<BoneControls nodeId={ID} />);
+
+    await idle();
     expect(weightFields(container)).toHaveLength(0);
     // And it says why, rather than rendering an empty card.
     expect(container.textContent).toMatch(/only influence/i);
@@ -226,18 +245,22 @@ describe('the single-influence boundary, through the UI', () => {
 });
 
 describe('a selection from a different mesh resolution', () => {
-  it('reports the mismatch instead of editing whatever holds that index', () => {
+  it('reports the mismatch instead of editing whatever holds that index', async () => {
     selectRigVertex(ID, 99999);
     const { container } = render(<BoneControls nodeId={ID} />);
+
+    await idle();
     expect(weightFields(container)).toHaveLength(0);
     expect(container.textContent).toMatch(/different mesh resolution/i);
   });
 
-  it('and a selection belonging to ANOTHER layer is not shown here', () => {
+  it('and a selection belonging to ANOTHER layer is not shown here', async () => {
     // The pairing `rigVertexStore` keeps: an index alone addresses a different
     // part of the artwork on every layer.
     selectRigVertex('some_other_layer', findMultiInfluenceVertex());
     const { container } = render(<BoneControls nodeId={ID} />);
+
+    await idle();
     expect(weightFields(container)).toHaveLength(0);
   });
 });

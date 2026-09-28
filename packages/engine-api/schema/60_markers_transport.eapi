@@ -126,6 +126,19 @@ command purgeCache = 811 [control] { kind: PurgeKind = 1; }
 command setInteracting = 812 [control] { interacting: bool = 1; }
 
 /// B4 — what the overlay geometry push carries for each subscribed layer (FrameGeometry, 95_frames).
-enum OverlayKind { transform = 0; bounds = 1; motionPath = 2; rig = 3; textBox = 4; }
+enum OverlayKind { transform = 0; bounds = 1; motionPath = 2; rig = 3; textBox = 4; scene3d = 8; }
+/// B4 round 5 — one overlay's share of a subscription (setOverlayGeometry `groups`): its layers get ITS kinds, not every kind another overlay asked for.
+struct OverlayRequest { layers: LayerId[] = 1; kinds: OverlayKind[] = 2; }
 /// B4 — subscribe a viewport's overlays to FRAME-SYNCHRONOUS geometry (docs/TS_ENGINE_REMOVAL.md "Gaps"): from its next frame on, every FrameReady of `viewport` is preceded on the frame channel by FrameGeometry messages for `layers`, evaluated at that frame's own time and revision — the world matrices, drawn boxes, motion paths and text boxes the selection outline, gizmos and motion path draw, instead of a query per played frame. Replaces the viewport's previous subscription; no layers or no kinds = unsubscribe. Layers that do not exist are skipped. A control: no history, no revision.
-command setOverlayGeometry = 1771 [control] { viewport: u32 = 1; layers: LayerId[] = 2; kinds: OverlayKind[] = 3; }
+/// B4 round 5: `groups` — per-overlay layer × kind requests; a layer gets the union of the kinds of every group naming it (and `kinds` when `layers` names it). `views` — the view modes (`active`, `camera:<id>`, an ortho view, a custom view id) whose resolved VIEW CAMERA each frame carries (FrameGeometry.views). The subscription is empty only when layers × kinds, every group and `views` are.
+/// B4 round 5: `rig` — what the `rig` kind resolves beyond the pose (OverlayRig): the focus pin's motion path, the focus bone's weights, and the puppet tool's pinless authoring mesh.
+command setOverlayGeometry = 1771 [control] { viewport: u32 = 1; layers: LayerId[] = 2; kinds: OverlayKind[] = 3; groups: OverlayRequest[] = 10; views: string[] = 11; rig?: OverlayRigOptions = 20; }
+/// B4 round 5 — the rig overlay's editor-side focus (setOverlayGeometry `rig`).
+struct OverlayRigOptions {
+  /// The selected puppet pin: its Position trajectory and keys ride OverlayRig.pinPath / pinKeys ('' = none).
+  pin: string = 1;
+  /// The selected bone: its bind weight per vertex rides OverlayRig.weights ('' = none).
+  bone: string = 2;
+  /// The Puppet Pin tool's mesh (nodeRestMesh `authoringPreview`): before the first pin exists the layer shows the mesh the first pin will be placed on (an image / SVG layer's alpha outline), and a layer with no rig still gets one. False = the rig's own mesh (what renders), none without a rig.
+  authoring: bool = 3;
+}

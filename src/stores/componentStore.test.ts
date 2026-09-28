@@ -1,58 +1,63 @@
 /**
  * Component library — save a selection as a reusable component, then insert
- * independent copies. Verifies the round-trip: serialize a live subtree →
- * store → instantiate fresh nodes.
+ * independent copies. B4 round 5: a component is the engine's `copyLayers`
+ * fragment of the saved layers (built through the app's engine here); a
+ * library saved in the legacy tree form is migrated on its first insert.
  */
 
-import { useComponentStore } from './componentStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
+import { useComponentStore, type ComponentDef } from './componentStore';
 import { useSelectionStore } from './selectionStore';
-import type { SceneNode } from '@core/types';
 
-function n(id: string, parent: string | null, kind: string, extra: Partial<SceneNode> = {}): SceneNode {
-  return {
-    id, name: id, parent, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [{ id: `${id}_t`, type: 'Transform', props: { __kind: kind, x: 0, y: 0, rotation: 0 } }],
-    ...extra,
-  } as unknown as SceneNode;
-}
+let h: Harness & { engine: LocalEngine };
+let s: Scene;
 
-function seedCard(): void {
-  defaultSceneGraph.clear();
-  defaultSceneGraph.addNode(n('comp_root', null, 'group'));
-  defaultSceneGraph.addChild('comp_root', n('card', 'comp_root', 'group'));
-  defaultSceneGraph.addChild('card', n('panel', 'card', 'shape'));
-  defaultSceneGraph.addChild('card', n('title', 'card', 'text'));
+beforeEach(async () => {
+  h = await setupAppEngine();
+  s = await buildScene(h);
   useComponentStore.setState({ components: [] });
+});
+afterEach(async () => { await h.dispose(); });
+
+function fragmentRows(def: ComponentDef): Array<{ id: string; parent?: string | null }> {
+  return (JSON.parse(def.fragment!.data) as { layers: Array<{ row: { id: string; parent?: string | null } }> }).layers.map((l) => l.row);
 }
 
 describe('component library', () => {
-  beforeEach(seedCard);
-
-  it('saves a selected subtree as a component definition', () => {
-    useSelectionStore.getState().set(['card']);
-    const id = useComponentStore.getState().saveFromSelection('Card');
+  it('saves a selected subtree as the engine fragment of it', async () => {
+    const { layer: G } = await h.run({ type: 'groupLayers', layers: [s.A, s.B], name: 'Card' });
+    useSelectionStore.getState().set([G]);
+    const id = await useComponentStore.getState().saveFromSelection('Card');
     expect(id).toBeTruthy();
     const defs = useComponentStore.getState().components;
     expect(defs).toHaveLength(1);
     expect(defs[0]!.name).toBe('Card');
-    // the two children (panel + title) were captured
-    expect(defs[0]!.root.children).toHaveLength(2);
+    expect(defs[0]!.root).toBeUndefined();
+    // The group and its two children were captured.
+    expect(fragmentRows(defs[0]!).map((r) => r.id).sort()).toEqual([G, s.A, s.B].sort());
   });
 
   // Insert (an engine pasteLayers) is covered by componentStoreInsert.test.ts.
 
-  it('saves a multi-selection wrapped in one group', () => {
-    useSelectionStore.getState().set(['panel', 'title']);
-    const id = useComponentStore.getState().saveFromSelection('Pair')!;
+  it('saves a multi-selection as one component (grouped under its name on insert)', async () => {
+    useSelectionStore.getState().set([s.A, s.B]);
+    const id = (await useComponentStore.getState().saveFromSelection('Pair'))!;
     const def = useComponentStore.getState().components.find((c) => c.id === id)!;
-    expect(def.root.children).toHaveLength(2); // both wrapped under a synthetic group
+    expect(fragmentRows(def).map((r) => r.id).sort()).toEqual([s.A, s.B].sort());
   });
 
-  it('removes a component', () => {
-    useSelectionStore.getState().set(['card']);
-    const id = useComponentStore.getState().saveFromSelection('Card')!;
+  it('saves nothing without a selected layer', async () => {
+    useSelectionStore.getState().set([]);
+    expect(await useComponentStore.getState().saveFromSelection('None')).toBeNull();
+    expect(useComponentStore.getState().components).toHaveLength(0);
+  });
+
+  it('removes a component', async () => {
+    useSelectionStore.getState().set([s.A]);
+    const id = (await useComponentStore.getState().saveFromSelection('Card'))!;
     useComponentStore.getState().remove(id);
     expect(useComponentStore.getState().components).toHaveLength(0);
   });

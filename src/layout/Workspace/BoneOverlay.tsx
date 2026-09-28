@@ -1,37 +1,34 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { secondsToFlicks, type OverlayKind } from '@motion/engine-api';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize } from '@hooks/useMirrorFrame';
+import { useMirrorJson } from '@hooks/useMirrorFields';
+import { documentMirror } from '@stores/documentMirror';
 import { layerScreenMapping } from './layerScreen';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { readGeometry } from '@core/workspace/geometry';
 import { bumpScene } from '@stores/sceneStore';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { edit } from '@core/engine/uiEdits';
 import { rigPaths, rigMatch, rigValues, rigKey, rigSet, rigRemove } from '@core/engine/rigPaths';
 import { useGesture } from '@hooks/useGesture';
+import {
+  MAIN_VIEWPORT, overlayLayer, requestOverlayLayers, setOverlayRigFocus, subscribeOverlayGeometry,
+} from '@stores/overlayGeometry';
 
 import { computeWorldTransforms, boneRoot, boneTip, type Bone } from '@core/rig/skeleton';
-import { resolveLiveBones } from '@core/rig/liveBones';
-import { angleOf } from '@core/rig/mat2d';
-import { applyIk, ikChainIds, type IkTargetResolved } from '@core/rig/rigDeform';
-import { readNodeSkeleton, bindPoseBones } from '@core/rig/skeletonCommands';
+import { angleOf, type Mat2D } from '@core/rig/mat2d';
+import { ikChainIds, type IkTargetResolved } from '@core/rig/rigDeform';
+import type { SkeletonRig } from '@core/rig/skeletonCommands';
 import {
   controllerPosition, controllerDragKind,
   CONTROLLER_HIT_SLOP, type RigController,
 } from '@core/rig/controllers';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { resolveActiveIkTargets, resolveIkTargets, chainModeOf } from '@core/rig/liveIkTargets';
-import { nodeRestMesh } from '@core/rig/rigMeshInputs';
-import { getSkeletonBinding, skinRigVertices } from '@core/rig/rigDeform';
 import {
   paintWeights, emptyWeightPaint, weightPaintMatches, isWeightPaintEmpty,
   type PaintMode, type WeightPaintMap,
 } from '@core/rig/weightPaint';
-import { useAssetStore } from '@stores/assetStore';
 import { useRigVertexSelection, selectRigVertex } from '@stores/rigVertexStore';
 import { useRigSelectionStore } from '@stores/rigSelectionStore';
 
@@ -49,6 +46,9 @@ function capturePointer(svg: SVGSVGElement, pointerId: number): void {
     /* capture unavailable — the drag still works, it just won't track outside */
   }
 }
+
+/** The overlay geometry the bones draw from: the rig (pose, goals, skinned mesh) and the layer's box. */
+const BONE_KINDS: ReadonlyArray<OverlayKind> = ['rig', 'bounds'];
 
 /** Pointer travel (screen px) below which a down→up pair still counts as a click. */
 const CLICK_SLOP_PX = 3;
@@ -224,8 +224,29 @@ export function BoneOverlay(): JSX.Element | null {
   const [, setTick] = useState(0);
   useEffect(() => {
     const controller = getWorkspaceController();
-    return controller.onRender(() => setTick((t) => t + 1));
+    const offRender = controller.onRender(() => setTick((t) => t + 1));
+    // B4: and when a frame's geometry lands (the C++ engine draws the viewport).
+    const offGeometry = subscribeOverlayGeometry(MAIN_VIEWPORT, () => setTick((t) => t + 1));
+    return () => {
+      offRender();
+      offGeometry();
+    };
   }, []);
+
+  // B4 round 5: the stored rig from the mirror (`layer/skeleton` — bones, goals,
+  // controllers, the paint map); the pose comes with the frame (the overlay
+  // geometry push): solved bones, live goals, the skinned mesh and the selected
+  // bone's weights.
+  const active = activeTool === 'bone' && !!selectedNodeId;
+  const skel = useMirrorJson<SkeletonRig>(active ? selectedNodeId : null, 'layer/skeleton');
+  useEffect(() => {
+    void requestOverlayLayers(MAIN_VIEWPORT, 'boneRig', active ? [selectedNodeId!] : [], BONE_KINDS).then(() => setTick((t) => t + 1));
+    void setOverlayRigFocus(MAIN_VIEWPORT, active ? { pin: '', bone: selectedBoneId ?? '', authoring: false } : undefined);
+    return () => {
+      void requestOverlayLayers(MAIN_VIEWPORT, 'boneRig', [], BONE_KINDS);
+      void setOverlayRigFocus(MAIN_VIEWPORT, undefined);
+    };
+  }, [active, selectedNodeId, selectedBoneId]);
 
   // Keyboard listener to delete selected bone
   useEffect(() => {
@@ -257,27 +278,35 @@ export function BoneOverlay(): JSX.Element | null {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [activeTool, selectedNodeId, selectedBoneId, boneRigMode, brushRadius, drawDraft]);
 
-  if (activeTool !== 'bone' || !selectedNodeId) return null;
+  if (!active) return null;
+  const nodeId = selectedNodeId!;
 
-  const node = defaultSceneGraph.getNode(selectedNodeId);
-  if (!node) return null;
+  // The frame's geometry: the layer's box (the overlay needs a drawn layer) and its rig.
+  const geometry = overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(time));
+  const box = geometry?.box;
+  if (!box || box.length < 4) return null;
+  const rig = geometry?.rig;
 
-  const geom = readGeometry(node);
-  if (!geom) return null;
-
-  const skel = readNodeSkeleton(node);
   const bones = skel?.bones ?? [];
 
   // ── Skinning mesh preview (Phase 4.1) ───────────────────────────────
   // The bone overlay drew bones and IK handles but never the mesh, so you could
   // not see the deformation or the weight falloff while rigging a skeleton —
-  // the puppet overlay has always shown both. Same rest mesh buildSnapshot uses.
-  // Assembled by `nodeRestMesh`, not here. The Rigging panel's weight editor
-  // needs the SAME mesh — a weight override is stored against a vertex INDEX, so
-  // two derivations at different densities would not be slightly inconsistent,
-  // they would be addressing different vertices.
-  const restMesh = nodeRestMesh(node, geom, (id) =>
-    useAssetStore.getState().assets.find((a) => a.id === id));
+  // the puppet overlay has always shown both. The engine sends the mesh the
+  // renderer skins (OverlayRig: rest + deformed vertices, triangles — the puppet
+  // solve under the skeleton when both rigs compose) and the selected bone's bind
+  // weights. The Rigging panel's weight editor addresses the SAME mesh: a
+  // weight override is stored against a vertex INDEX.
+  const restPairs = rig?.rest ?? [];
+  const numVerts = restPairs.length / 2;
+  /** The rest mesh as paintWeights takes it (x, y, u, v). */
+  const restVertices = new Float32Array(numVerts * 4);
+  for (let i = 0; i < numVerts; i++) {
+    restVertices[i * 4] = restPairs[i * 2]!;
+    restVertices[i * 4 + 1] = restPairs[i * 2 + 1]!;
+  }
+  const posedPairs = rig?.vertices ?? [];
+  const triangles = rig?.triangles ?? [];
 
   const controller = getWorkspaceController();
   const camera = controller.ws.camera;
@@ -286,48 +315,50 @@ export function BoneOverlay(): JSX.Element | null {
   // This pair was byte-identical to Puppet's and built on `worldMatrix(geom)`,
   // which composes only THIS node's transform — so bones and IK handles drew at
   // the unparented position on any parented layer (F23).
-  const mapping = layerScreenMapping(node.id, time, comp, camera);
+  const mapping = layerScreenMapping(nodeId, time, comp, camera);
   const localToScreen = (lx: number, ly: number) =>
     mapping ? mapping.localToScreen(lx, ly) : { x: lx, y: ly };
   const screenToLocal = (sx: number, sy: number) =>
     mapping ? mapping.screenToLocal(sx, sy) : { x: sx, y: sy };
 
-  // Canonical keyframe axis — the same forward map buildSnapshot samples. A
-  // DISPLAY read only: every write below sends composition time.
-  const layerT = keyAxisTimeForDisplay(node.id, time);
-
-  // Evaluate live animated bone poses (rotation in RADIANS — the engine unit).
-  const animatedBones: Bone[] = resolveLiveBones(bones, node.id, layerT, defaultAnimation);
-
-  // Live IK targets (keyframeable) and the SOLVED pose — the overlay previews
-  // exactly what buildSnapshot renders.
-  // Shared with buildSnapshot and PuppetOverlay — one reader, so the canvas and
-  // the render cannot disagree about which chains are solving.
-  const activeIkTargets: IkTargetResolved[] = resolveActiveIkTargets(skel, node.id, layerT);
-  // B3-legacy: not a write — `applyIk` is the pure IK solve over a bone list (the ratchet's
-  // exact-name match; belongs in the rule's NOT_WRITES).
-  const posedBones = applyIk(animatedBones, activeIkTargets);
-  const worldTransforms = computeWorldTransforms({ bones: posedBones });
+  // The live pose (the bone tracks at the frame, before IK) and the SOLVED one
+  // (FK + the goals in IK mode) — resolved engine-side, as buildSnapshot renders
+  // them (OverlayRig.bones; rotation in RADIANS, the rig's unit).
+  const poseById = new Map((rig?.bones ?? []).map((b) => [b.id, b]));
+  const animatedBones: Bone[] = bones.map((b) => {
+    const p = poseById.get(b.id);
+    return p ? { ...b, x: p.x, y: p.y, rotation: p.rotation, scaleX: p.scaleX, scaleY: p.scaleY } : b;
+  });
+  const posedBones: Bone[] = bones.map((b) => {
+    const p = poseById.get(b.id);
+    return p ? { ...b, x: p.posedX, y: p.posedY, rotation: p.posedRotation, scaleX: p.scaleX, scaleY: p.scaleY } : b;
+  });
+  const worldTransforms = new Map<string, Mat2D>();
+  for (const b of rig?.bones ?? []) {
+    const w = b.world;
+    if (w.length === 6) worldTransforms.set(b.id, [w[0]!, w[1]!, w[2]!, w[3]!, w[4]!, w[5]!]);
+  }
   const restWorldTransforms = computeWorldTransforms({ bones });
 
-  // Posed mesh + binding: what the renderer will actually draw, and the weight
-  // field the heatmap and the paint brush both read.
-  // BIND to the rig's rest pose, POSE with the live one. On a rig that has
-  // never been posed statically these are the same array.
-  //
-  // It also stops the binding cache thrashing: a static pose drag rewrites
-  // `bones` on every pointermove, so keying the binding off them re-solved the
-  // geodesic field per frame. The bind pose does not move during a drag, so the
-  // key is stable and the cache hits.
-  const bindBones = bindPoseBones(skel);
-  const binding = getSkeletonBinding(restMesh, bindBones, skel?.weightPaint);
-  const posedVertices = bones.length > 0
-    ? skinRigVertices(binding, worldTransforms, restMesh.vertices)
-    : restMesh.vertices;
+  // Every stored IK goal, live at the frame, with its chain's mode (OverlayRig.ik).
+  const goals = rig?.ik ?? [];
+  /** The goals that solve (enabled, IK mode) — resolveActiveIkTargets. */
+  const activeIkTargets: IkTargetResolved[] = goals
+    .filter((g) => g.enabled && g.mode === 'ik')
+    .map((g) => ({
+      boneId: g.bone, x: g.x, y: g.y,
+      ...(g.chainLength !== undefined ? { chainLength: g.chainLength } : {}),
+      ...(g.pole.length === 2 ? { pole: { x: g.pole[0]!, y: g.pole[1]! } } : {}),
+    }));
 
-  /** Effective weight of `boneId` at a vertex — drives the heatmap. */
+  // The skinned mesh (what the renderer draws) and the weight field the heatmap
+  // and the paint brush both read (the SELECTED bone's, the push's focus).
+  const posedVertex = (i: number): { x: number; y: number } => ({ x: posedPairs[i * 2]!, y: posedPairs[i * 2 + 1]! });
+  const focusWeights = rig?.weights ?? [];
+
+  /** Effective weight of the selected bone at a vertex — drives the heatmap. */
   const weightAt = (boneId: string, vertexIndex: number): number =>
-    binding.weights[vertexIndex]?.find((w) => w.boneId === boneId)?.weight ?? 0;
+    boneId === selectedBoneId ? focusWeights[vertexIndex] ?? 0 : 0;
 
   type JointAnchor = { point: { x: number; y: number }; parentId: string | null };
 
@@ -393,7 +424,6 @@ export function BoneOverlay(): JSX.Element | null {
       bone = { parentId: null, length, x: draft.start.x, y: draft.start.y, rotation: Math.atan2(dy, dx) };
     }
     // One entry; the engine mints the id (and creates the skeleton with the first bone).
-    const nodeId = node.id;
     void edit('Add Bone', {
       type: 'addPropertyGroup', layer: nodeId, parent: rigPaths.bones, matchName: rigMatch.bone,
       init: [
@@ -417,7 +447,7 @@ export function BoneOverlay(): JSX.Element | null {
     );
 
   const writeIkTargetKeyframes = (boneId: string, local: { x: number; y: number }) => {
-    gesture.send(rigKey(node.id, rigPaths.ikProp(boneId, 'target'), time, rigValues.vec2(local.x, local.y)));
+    gesture.send(rigKey(nodeId, rigPaths.ikProp(boneId, 'target'), time, rigValues.vec2(local.x, local.y)));
   };
 
   // ── Controllers ───────────────────────────────────────────────────────
@@ -430,7 +460,7 @@ export function BoneOverlay(): JSX.Element | null {
   // it from the mode-filtered list made it VANISH instead, which runtime
   // verification caught and jsdom could not.
   const ikTargetPositions = new Map<string, { x: number; y: number }>(
-    resolveIkTargets(skel, node.id, layerT).map((tg) => [tg.boneId, { x: tg.x, y: tg.y }]),
+    goals.filter((g) => g.enabled).map((g) => [g.bone, { x: g.x, y: g.y }]),
   );
   /**
    * Is this controller live in the chain's CURRENT mode?
@@ -452,7 +482,8 @@ export function BoneOverlay(): JSX.Element | null {
       ikChainIds(animatedBones, t.boneId, t.chainLength).includes(c.link.boneId),
     );
     if (!tg) return c.link.kind === 'bone';   // no chain here: FK only
-    const mode = chainModeOf(tg, node.id, layerT);
+    // The chain's mode at the frame (its ikMode track over the stored mode — OverlayRig.ik).
+    const mode = goals.find((g) => g.bone === tg.boneId)?.mode ?? tg.ikMode ?? 'ik';
     return c.link.kind === 'ikTarget' ? mode === 'ik' : mode === 'fk';
   };
 
@@ -476,12 +507,14 @@ export function BoneOverlay(): JSX.Element | null {
    */
   const gestureKeyframes = (kind: 'fk' | 'ik' | 'pole', boneId: string): boolean => {
     if (usePreferenceStore.getState().timelineAutoKeyframe) return true;
+    // The rig properties' keys, read from the mirror at call time.
     const paths = kind === 'ik'
-      ? [`ikTarget.${boneId}.x`, `ikTarget.${boneId}.y`]
+      ? [rigPaths.ikProp(boneId, 'target')]
       : kind === 'pole'
-        ? [`ikPole.${boneId}.x`, `ikPole.${boneId}.y`]
-        : [`bone.${boneId}.rotation`, `bone.${boneId}.x`, `bone.${boneId}.y`];
-    return paths.some((p) => defaultAnimation.isAnimated(node.id, p));
+        ? [rigPaths.ikProp(boneId, 'pole')]
+        : [rigPaths.boneProp(boneId, 'rotation'), rigPaths.boneProp(boneId, 'position')];
+    const m = documentMirror();
+    return paths.some((p) => m.keyframes(nodeId, p).length > 0);
   };
 
   /**
@@ -495,13 +528,13 @@ export function BoneOverlay(): JSX.Element | null {
     local: { x: number; y: number },
     rotation: number,
   ) => {
-    if (kind === 'ik') gesture.send(rigSet(node.id, rigPaths.ikProp(boneId, 'target'), rigValues.vec2(local.x, local.y)));
-    else if (kind === 'pole') gesture.send(rigSet(node.id, rigPaths.ikProp(boneId, 'pole'), rigValues.vec2(local.x, local.y)));
+    if (kind === 'ik') gesture.send(rigSet(nodeId, rigPaths.ikProp(boneId, 'target'), rigValues.vec2(local.x, local.y)));
+    else if (kind === 'pole') gesture.send(rigSet(nodeId, rigPaths.ikProp(boneId, 'pole'), rigValues.vec2(local.x, local.y)));
     else {
       const root = bones.find((b) => b.id === boneId)?.parentId === null;
       gesture.send([
-        rigSet(node.id, rigPaths.boneProp(boneId, 'rotation'), rigValues.radians(rotation)),
-        ...(root ? [rigSet(node.id, rigPaths.boneProp(boneId, 'position'), rigValues.vec2(local.x, local.y))] : []),
+        rigSet(nodeId, rigPaths.boneProp(boneId, 'rotation'), rigValues.radians(rotation)),
+        ...(root ? [rigSet(nodeId, rigPaths.boneProp(boneId, 'position'), rigValues.vec2(local.x, local.y))] : []),
       ]);
     }
   };
@@ -644,7 +677,6 @@ export function BoneOverlay(): JSX.Element | null {
     // paint tool; the scratch map is committed as one undo step on release.
     if (paintMode && selectedBoneId) {
       suppressClickAddRef.current = true;
-      const numVerts = restMesh.vertices.length / 4;
       paintScratchRef.current = weightPaintMatches(skel?.weightPaint, numVerts)
         ? skel!.weightPaint!
         : emptyWeightPaint(numVerts);
@@ -660,7 +692,6 @@ export function BoneOverlay(): JSX.Element | null {
   /** Apply one brush dab at a screen position (paint mode only). */
   const paintAt = (sx: number, sy: number, mode: PaintMode) => {
     if (!selectedBoneId) return;
-    const numVerts = restMesh.vertices.length / 4;
     const local = screenToLocal(sx, sy);
     const base = paintScratchRef.current
       ?? (weightPaintMatches(skel?.weightPaint, numVerts)
@@ -672,7 +703,7 @@ export function BoneOverlay(): JSX.Element | null {
     paintScratchRef.current = paintWeights(
       base,
       selectedBoneId,
-      restMesh.vertices,
+      restVertices,
       local,
       worldRadius,
       { mode, strength: 0.35, falloff: 0.6, baseWeightAt: (i) => weightAt(selectedBoneId, i) },
@@ -719,7 +750,7 @@ export function BoneOverlay(): JSX.Element | null {
         controller.requestRender();
         return;
       }
-      gesture.send(rigKey(node.id, rigPaths.ikProp(drag.boneId, 'pole'), time, rigValues.vec2(local.x, local.y)));
+      gesture.send(rigKey(nodeId, rigPaths.ikProp(drag.boneId, 'pole'), time, rigValues.vec2(local.x, local.y)));
       controller.requestRender();
       return;
     }
@@ -754,7 +785,7 @@ export function BoneOverlay(): JSX.Element | null {
         controller.requestRender();
         return;
       }
-      gesture.send(rigKey(node.id, rigPaths.boneProp(drag.boneId, 'rotation'), time, rigValues.radians(newRot)));
+      gesture.send(rigKey(nodeId, rigPaths.boneProp(drag.boneId, 'rotation'), time, rigValues.radians(newRot)));
     } else {
       const x = (drag.startBoneX ?? bone.x) + (local.x - drag.startLocal.x);
       const y = (drag.startBoneY ?? bone.y) + (local.y - drag.startLocal.y);
@@ -763,7 +794,7 @@ export function BoneOverlay(): JSX.Element | null {
         controller.requestRender();
         return;
       }
-      gesture.send(rigKey(node.id, rigPaths.boneProp(drag.boneId, 'position'), time, rigValues.vec2(x, y)));
+      gesture.send(rigKey(nodeId, rigPaths.boneProp(drag.boneId, 'position'), time, rigValues.vec2(x, y)));
     }
 
     controller.requestRender();
@@ -790,7 +821,7 @@ export function BoneOverlay(): JSX.Element | null {
         try { svg.releasePointerCapture(e.pointerId); } catch {}
       }
       // ONE setProperty for the whole stroke (null = no painted overrides).
-      void edit('Paint Bone Weights', rigSet(node.id, rigPaths.weightPaint, rigValues.json(isWeightPaintEmpty(painted) ? null : painted)));
+      void edit('Paint Bone Weights', rigSet(nodeId, rigPaths.weightPaint, rigValues.json(isWeightPaintEmpty(painted) ? null : painted)));
       downScreenRef.current = null;
       suppressClickAddRef.current = true;
       return;
@@ -839,14 +870,14 @@ export function BoneOverlay(): JSX.Element | null {
     // which is what weights are stored against — the two are index-aligned by
     // construction, since skinning transforms vertices without reordering them.
     if (vertexPick && bones.length > 0) {
-      const n = posedVertices.length / 4;
+      const n = posedPairs.length / 2;
       let best = -1;
       let bestD = Infinity;
       for (let i = 0; i < n; i++) {
-        const d = Math.hypot(posedVertices[i * 4]! - local.x, posedVertices[i * 4 + 1]! - local.y);
+        const d = Math.hypot(posedPairs[i * 2]! - local.x, posedPairs[i * 2 + 1]! - local.y);
         if (d < bestD) { bestD = d; best = i; }
       }
-      if (best >= 0) selectRigVertex(node.id, best);
+      if (best >= 0) selectRigVertex(nodeId, best);
       return;
     }
 
@@ -880,12 +911,12 @@ export function BoneOverlay(): JSX.Element | null {
           weight field, which is what makes painting legible. */}
       {boneRigMode === 'weights' && bones.length > 0 && (() => {
         const tris: JSX.Element[] = [];
-        const tri = restMesh.triangles;
+        const tri = triangles;
         for (let i = 0; i < tri.length; i += 3) {
           const i0 = tri[i]!, i1 = tri[i + 1]!, i2 = tri[i + 2]!;
-          const s0 = localToScreen(posedVertices[i0 * 4]!, posedVertices[i0 * 4 + 1]!);
-          const s1 = localToScreen(posedVertices[i1 * 4]!, posedVertices[i1 * 4 + 1]!);
-          const s2 = localToScreen(posedVertices[i2 * 4]!, posedVertices[i2 * 4 + 1]!);
+          const s0 = localToScreen(posedVertex(i0).x, posedVertex(i0).y);
+          const s1 = localToScreen(posedVertex(i1).x, posedVertex(i1).y);
+          const s2 = localToScreen(posedVertex(i2).x, posedVertex(i2).y);
           // `string`, not the const-narrowed token type: with a bone selected
           // this becomes a computed heat colour (see below).
           let fill: string = RIG.meshFill;
@@ -926,8 +957,8 @@ export function BoneOverlay(): JSX.Element | null {
       {/* The picked vertex. Drawn from the POSED position so the ring sits on
           the point the user clicked even on a deformed rig, and labelled with
           its index so the panel's `#N` badge is checkable against the canvas. */}
-      {boneRigMode === 'weights' && bones.length > 0 && pickedVertex !== null && pickedVertex * 4 < posedVertices.length && (() => {
-        const p = localToScreen(posedVertices[pickedVertex * 4]!, posedVertices[pickedVertex * 4 + 1]!);
+      {boneRigMode === 'weights' && bones.length > 0 && pickedVertex !== null && pickedVertex * 2 < posedPairs.length && (() => {
+        const p = localToScreen(posedVertex(pickedVertex).x, posedVertex(pickedVertex).y);
         return (
           <g pointerEvents="none">
             <circle cx={p.x} cy={p.y} r={6} fill="none" stroke={RIG.vertex} strokeWidth={2} />
@@ -1071,7 +1102,7 @@ export function BoneOverlay(): JSX.Element | null {
             onDoubleClick={(e) => {
               e.stopPropagation();
               // Remove the chain's IK goal (with its target / pole / mode keys).
-              void edit('Remove IK Target', rigRemove(node.id, [rigPaths.ik(tg.boneId)]));
+              void edit('Remove IK Target', rigRemove(nodeId, [rigPaths.ik(tg.boneId)]));
             }}
           >
             {/* Invisible fat hit area so the crosshair is grabbable */}

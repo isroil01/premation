@@ -21,15 +21,13 @@ import { applyRigPresetEdit, rigPaths } from '@core/engine/rigPaths';
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
 import { fetchLayerBox } from '@stores/layerBoxes';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bindPoseBones, type IKTarget, type SkeletonRig } from '@core/rig/skeletonCommands';
-import { chainModeOf, resolveActiveIkTargets } from '@core/rig/liveIkTargets';
+import type { IKTarget, SkeletonRig } from '@core/rig/skeletonCommands';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
-import { readGeometry } from '@core/workspace/geometry';
 import { MESH_DENSITY_DEFAULT, MESH_EXPANSION_DEFAULT } from '@core/rig/rigMeshInputs';
 import type { ChainMode } from '@core/rig/ikfk';
-import { defaultAnimation } from '@motion/animation';
+import type { Bone } from '@core/rig/skeleton';
+import type { IkTargetResolved } from '@core/rig/rigDeform';
+import { useRigPose } from '@hooks/useRigPose';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import {
@@ -37,10 +35,7 @@ import {
   type ControllerShape, type ControllerSide,
 } from '@core/rig/controllers';
 import type { PuppetRig } from '@core/rig/puppet';
-import { nodeRestMesh } from '@core/rig/rigMeshInputs';
-import { getSkeletonBinding } from '@core/rig/rigDeform';
-import { applyIk, ikChainIds } from '@core/rig/rigDeform';
-import { resolveLiveBones } from '@core/rig/liveBones';
+import { ikChainIds } from '@core/rig/rigDeform';
 import { boneRoot, boneTip, computeWorldTransforms } from '@core/rig/skeleton';
 import {
   setVertexWeight, emptyWeightPaint, weightPaintMatches, isWeightPaintEmpty,
@@ -54,7 +49,6 @@ import {
 } from './rigEdits';
 import { useRigVertexSelection, clearRigVertex } from '@stores/rigVertexStore';
 import { useRigSelectionStore } from '@stores/rigSelectionStore';
-import { useAssetStore } from '@stores/assetStore';
 import styles from './BoneControls.module.css';
 
 /** Shared <select> chrome — matches PuppetControls so the two rig panels agree. */
@@ -91,9 +85,10 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   // Enter (Escape abandons it) — not a document write per keystroke.
   const [nameDraft, setNameDraft] = useState<{ boneId: string; value: string } | null>(null);
   const cancelRename = useRef(false);
-  // B4-gap: the scene node for readGeometry / nodeRestMesh (the skinning mesh and the auto-rig size are computed over the scene graph's drawn geometry) — no mirror twin.
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!layer || !node) return null;
+  // B4 round 5: the rig at the playhead as the engine resolves it (getRigPose) — the live and
+  // solved pose, the goals' chain modes, the picked vertex's bind weights.
+  const pose = useRigPose(layer ? nodeId : null, workspaceTime, selectedVertex);
+  if (!layer) return null;
 
   const bones = skel?.bones ?? [];
   const ikTargets = skel?.ikTargets ?? [];
@@ -104,15 +99,29 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
       : bones[0] ?? null;
   const selectBone = (boneId: string | null): void =>
     useRigSelectionStore.getState().selectBone(nodeId, boneId);
-  // The layer's keyframe axis at the playhead, for SAMPLING the live pose the
-  // panel draws (the renderer's forward map). Never sent: commands take comp time.
-  const layerT = keyAxisTimeForDisplay(nodeId, workspaceTime);
-  // B4-gap: the live bone pose — bone.<id>.* tracks sampled on the layer's keyframe axis by the animation engine (resolveLiveBones' sampler); the mirror has no rig-track sampler.
-  const liveBones = resolveLiveBones(bones, nodeId, layerT, defaultAnimation);
-  // B4-gap: active IK goals (ikTarget/ikPole/ikMode tracks sampled by the animation engine) — same sampler gap.
-  const liveTargets = resolveActiveIkTargets(skel, nodeId, layerT);
-  const posedBones = applyIk(liveBones, liveTargets);
+  // The live pose (the bone tracks at the playhead) and the solved one (FK + the goals in IK
+  // mode), resolved by the engine (getRigPose); the stored rig until the answer lands.
+  const poseById = new Map((pose?.bones ?? []).map((b) => [b.id, b]));
+  const liveBones: Bone[] = bones.map((b) => {
+    const p = poseById.get(b.id);
+    return p ? { ...b, x: p.x, y: p.y, rotation: p.rotation, scaleX: p.scaleX, scaleY: p.scaleY } : b;
+  });
+  const posedBones: Bone[] = bones.map((b) => {
+    const p = poseById.get(b.id);
+    return p ? { ...b, x: p.posedX, y: p.posedY, rotation: p.posedRotation, scaleX: p.scaleX, scaleY: p.scaleY } : b;
+  });
+  /** The goals that solve (enabled, IK mode at the playhead) — the switch plans from them. */
+  const liveTargets: IkTargetResolved[] = (pose?.ik ?? [])
+    .filter((g) => g.enabled && g.mode === 'ik')
+    .map((g) => ({
+      boneId: g.bone, x: g.x, y: g.y,
+      ...(g.chainLength !== undefined ? { chainLength: g.chainLength } : {}),
+      ...(g.pole.length === 2 ? { pole: { x: g.pole[0]!, y: g.pole[1]! } } : {}),
+    }));
   const posedWorld = computeWorldTransforms({ bones: posedBones });
+  /** A goal's chain mode at the playhead (its ikMode track over the stored mode). */
+  const chainModeAt = (ik: Pick<IKTarget, 'boneId' | 'ikMode'>): ChainMode =>
+    (pose?.ik.find((g) => g.bone === ik.boneId)?.mode as ChainMode | undefined) ?? ik.ikMode ?? 'ik';
   const hasPuppet = (puppet?.pins ?? []).length > 0;
 
   const effectorFor = (boneId: string): { x: number; y: number } => {
@@ -197,14 +206,10 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
    */
   const renderVertexWeights = (): JSX.Element | null => {
     if (selectedVertex === null || bones.length === 0) return null;
-    // B4-gap: the layer's drawn geometry (readGeometry over the scene node) — the rest mesh is built from it.
-    const geom = readGeometry(node);
-    if (!geom) return null;
-    // B4-gap: the rest (skinning) mesh — nodeRestMesh triangulates the scene node, and reads the source
-    // asset's decoded alpha (useAssetStore record) for the outline; neither is in the API.
-    const restMesh = nodeRestMesh(node, geom, (id) =>
-      useAssetStore.getState().assets.find((a) => a.id === id));
-    const numVerts = restMesh.vertices.length / 4;
+    // The skinning mesh's size and this vertex's bind weights come from the engine (getRigPose),
+    // over the same mesh the overlay paints and the renderer skins.
+    if (!pose) return null;
+    const numVerts = pose.vertexCount;
     // A selection made against a denser mesh addresses nothing now. Say so
     // rather than editing whatever vertex happens to hold that index.
     if (selectedVertex >= numVerts) {
@@ -219,12 +224,10 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
     }
 
     // Weights are read off the BIND pose, not the posed one — the numeric
-    // editor must show the same influences the renderer skinned with.
-    const binding = getSkeletonBinding(restMesh, bindPoseBones(skel), skel?.weightPaint);
-    // Strongest first: the order an animator reads them in, and it makes the
-    // dominant bone obvious without comparing four numbers.
-    const influences = [...(binding.weights[selectedVertex] ?? [])]
-      .sort((a, b) => b.weight - a.weight);
+    // editor must show the same influences the renderer skinned with. Strongest
+    // first (the engine's order): the order an animator reads them in, and it
+    // makes the dominant bone obvious without comparing four numbers.
+    const influences = pose.weights.map((w) => ({ boneId: w.bone, weight: w.weight }));
     const nameOf = (id: string): string => bones.find((b) => b.id === id)?.name ?? id;
     const total = influences.reduce((a, w) => a + w.weight, 0);
 
@@ -659,8 +662,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   Chain Mode
                 </span>
                 <select
-                  // B4-gap: the chain mode at the playhead samples the ikMode.<bone> track through the animation engine (rig-track sampler gap).
-                  value={chainModeOf({ boneId: bone.id, ikMode: ik?.ikMode }, nodeId, layerT)}
+                  value={chainModeAt({ boneId: bone.id, ikMode: ik?.ikMode })}
                   aria-label={`${bone.name || bone.id} chain mode`}
                   onChange={(e) => {
                     const to = e.target.value as ChainMode;

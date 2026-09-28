@@ -48,7 +48,7 @@
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SCENE_MUTATORS, ANIM_MUTATORS, TIMELINE_MUTATORS, WRITE_VERB } from './engineWritesRule.mjs';
+import { SCENE_MUTATORS, ANIM_MUTATORS, TIMELINE_MUTATORS, WRITE_VERB, insideOffDocumentBuilder } from './engineWritesRule.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -78,6 +78,10 @@ const SEAM_MODULES = [
   '@core/workspace/WorkspaceController',
   '@core/export/', // export jobs and file downloads, not the document
   '@core/mirror/', // the B4 read layer over the document mirror (pure)
+  // The TypeScript engine's frame for the page's own renderer (the fallback when the C++ engine does not draw a
+  // surface): one call per painted frame with plain inputs, a RenderSnapshot back — the twin of FrameReady. The
+  // snapshot IS the engine's evaluation; the page never reads the scene graph through it (B4 round 5).
+  '@core/rendering/pageFrame',
 ];
 
 /** Names imported from engine-reading modules that are nevertheless pure. Reason each. */
@@ -197,6 +201,8 @@ const PURE_READS = new Set([
   'readOsClipboardSvg', // core/commands/clipboard: SVG markup from the OS clipboard (navigator.clipboard) — not the document
   'prepareLottieFile', // core/library/lottieLibrary: reads the File and plans it against the comp frame its `activeComp` argument answers (the caller: the mirror)
   'previewLottieItem', 'previewMographItem', // core/library/{lottie,mograph}Library: a static catalog item's choreography window + previewChoreography (transport only; the mograph one starts at the tab's playhead)
+  // B4 round 5 items (checked: arguments only).
+  'fittedBoxFor', // core/template/mediaSlots: the box a slot's layer takes for the source size, slot rect and fit policy given (computeFit)
 ]);
 
 /**
@@ -382,6 +388,10 @@ const rule = {
         if (parent.type === 'TSQualifiedName' || parent.type === 'TSTypeReference' || parent.type === 'TSTypeQuery') return;
         const imp = imports.get(node.name);
         if (!imp) return;
+        // Inside an off-document builder (insertBuiltLayers / buildLayerFragment / …): the
+        // builder runs against the engine's scratch state and its only effect is the
+        // pasteLayers the caller sends — write composition, the write ratchet's territory.
+        if (insideOffDocumentBuilder(context, node)) return;
 
         // A. singletons
         if (isImportedSingleton(node.name)) {

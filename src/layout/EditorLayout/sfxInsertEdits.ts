@@ -14,7 +14,9 @@
 import { getSfxItem, renderSfxSamples, encodeWavPcm16 } from '@core/library/sfxLibrary';
 import { insertMediaEdit } from '@layout/Workspace/footageEdits';
 import { importBrowserFilesEdit } from '@layout/Assets/assetEdits';
-import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import type { ImportedAsset } from '@stores/assetStore';
+import { documentMirror } from '@stores/documentMirror';
+import { itemAsset } from '@core/mirror/itemAssets';
 
 /** The project's audio item for `sfxId`, importing it on first use. Null for an unknown id. */
 async function sfxAsset(sfxId: string): Promise<ImportedAsset | null> {
@@ -22,10 +24,10 @@ async function sfxAsset(sfxId: string): Promise<ImportedAsset | null> {
   if (!item) return null;
   const fileName = `${item.name}.wav`;
   // Re-use the item a previous insert imported — same bytes anyway.
-  // B4-gap: `insertMediaEdit` takes the page's ImportedAsset record (object URL, metadata), which
-  // `ItemInfo` does not carry — the item could be FOUND in the mirror, not handed on.
-  const existing = useAssetStore.getState().assets.find((a) => a.type === 'audio' && a.name === fileName);
-  let asset = existing;
+  // B4: found in the document mirror (an audio item of that name) and handed on as the record
+  // `insertMediaEdit` takes, built from its ItemInfo (`mediaUrl` is the media).
+  const found = [...documentMirror().items.values()].find((i) => i.kind === 'footage' && i.mediaType === 'audio' && i.name === fileName);
+  let asset = found ? itemAsset(found) ?? undefined : undefined;
   if (!asset) {
     const samples = renderSfxSamples(sfxId);
     if (!samples) return null;

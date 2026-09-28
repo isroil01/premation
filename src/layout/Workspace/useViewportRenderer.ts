@@ -13,18 +13,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRenderBackend } from '@core/rendering/createRenderBackend';
 import type { RenderBackend, RenderView } from '@core/rendering/RenderBackend';
-import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { getEventBus } from '@core/events/EventBus';
+import type { SnapshotFocus } from '@core/rendering/buildSnapshot';
+import { pageFrameSnapshot } from '@core/rendering/pageFrame';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { resolveViewCameraInput } from '@core/workspace/cameraNav';
 import { useActiveMotionBlur } from '@hooks/useMirrorFrame';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveMirrorComp } from '@hooks/useMirror';
+import { documentMirror } from '@stores/documentMirror';
+import { compRecordFromSettings } from '@core/mirror/compFacts';
+import { DEFAULT_COMPOSITION, compKeyFor } from '@stores/compositionStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useProjectStore } from '@stores/projectStore';
-import { compSizeOf } from '@core/composition/compSizes';
 import { paneViewTransform } from './useSceneRefGeometry';
 import {
   paintWireframeQualityLayers,
@@ -168,9 +167,12 @@ export function useViewportRenderer(
   const channelRef = useRef(channel);
   channelRef.current = channel;
 
-  const compKey = useCompositionStore((s) => s.key());
-  const compRef = useRef(useCompositionStore.getState().comp());
-  compRef.current = useCompositionStore.getState().comp();
+  // The composition drawn, as its record, from the document mirror (B4).
+  const mirrorComp = useActiveMirrorComp();
+  const compRecord = mirrorComp ? compRecordFromSettings(mirrorComp.id, mirrorComp.settings) : DEFAULT_COMPOSITION;
+  const compKey = compKeyFor(compRecord);
+  const compRef = useRef(compRecord);
+  compRef.current = compRecord;
 
   // Preview resolution: the content canvas renders at dpr/N (fewer pixels,
   // browser-upscaled) so heavy comps preview faster. Threaded via ref so the
@@ -240,24 +242,24 @@ export function useViewportRenderer(
     try {
       b.setPlaybackMode?.(playingRef.current);
       b.renderFrame({
-        ...buildSnapshot(
-          defaultSceneGraph, defaultAnimation, timeRef.current, focusRef.current,
-          overlaysRef.current, getRenderViewRef.current?.(), motionBlurRef.current,
-          // rootId scopes the render to THIS composition's subtree. Custom views
-          // resolve to a pre-built override camera (scene camera ignored).
-          {
-            ...compRef.current,
-            rootId: compRef.current.id,
-            compSizeOf,
-            draft3d: draft3dRef.current,
-            useProxies: useProxiesRef.current,
-            // Viewport-only: Quality = Wireframe layers hide their pixels.
-            wireframeLayers: true,
-            ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
-            // Alpha view needs the comp's real alpha, not the background plate's.
-            ...(channelRef.current === 'alpha' ? { transparent: true, backgroundPaint: undefined } : {}),
-          },
-        ),
+        // The TypeScript engine's frame for this composition (B4: pageFrame is
+        // the engine's seam — the page never reads the scene graph itself).
+        // Custom views resolve to a pre-built override camera (scene camera ignored).
+        ...pageFrameSnapshot({
+          time: timeRef.current,
+          focus: focusRef.current,
+          overlays: overlaysRef.current,
+          view: getRenderViewRef.current?.(),
+          motionBlur: motionBlurRef.current,
+          comp: compRef.current,
+          viewMode: camera3dModeRef.current,
+          draft3d: draft3dRef.current,
+          useProxies: useProxiesRef.current,
+          // Viewport-only: Quality = Wireframe layers hide their pixels.
+          wireframeLayers: true,
+          // Alpha view needs the comp's real alpha, not the background plate's.
+          alpha: channelRef.current === 'alpha',
+        }),
         // View-only: the channel never reaches export, which always writes colour.
         channel: channelRef.current,
       });
@@ -415,9 +417,9 @@ export function useViewportRenderer(
       doResize();
     });
 
-    // Re-render when animation changes (e.g. keyframe edits) or node props change.
-    const subAnim = getEventBus().on('AnimationChanged', () => render());
-    const subNode = getEventBus().on('NodeUpdated', () => render());
+    // Re-render when the document changes (a keyframe edit, a prop change):
+    // the mirror's `doc` key, once per engine batch — writes around the engine included.
+    const offDoc = documentMirror().subscribe(['doc'], () => render());
 
     teardownRef.current = () => {
       cancelled = true;
@@ -426,8 +428,7 @@ export function useViewportRenderer(
         rafIdRef.current = null;
       }
       ro.disconnect();
-      subAnim.dispose();
-      subNode.dispose();
+      offDoc();
       backend.dispose();
       backendRef.current = null;
       attachedRef.current = null;

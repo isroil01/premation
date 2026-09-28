@@ -234,6 +234,10 @@ if(MOTION_BUILD_TESTS)
     tests/test_session.cpp
     tests/test_b4_round2.cpp
     tests/test_b4_round3.cpp
+    tests/test_b4_round5_text.cpp
+    tests/test_b4_round5_rig.cpp
+    tests/test_b4_round5_view.cpp
+    tests/test_b4_round5_items.cpp
     tests/test_jobs.cpp
     tests/test_paint_strokes.cpp
     tests/test_paths.cpp
@@ -243,7 +247,8 @@ if(MOTION_BUILD_TESTS)
     tests/test_stress.cpp
     tests/test_render_graph.cpp
   )
-  target_link_libraries(engine_tests PRIVATE engine_core engine_rg_core motion::options Catch2::Catch2WithMain)
+  # engine_scene_core: the rig overlay (B4 round 5, tests/test_b4_round5_rig.cpp) — the tests link it, engine_core does not.
+  target_link_libraries(engine_tests PRIVATE engine_core engine_rg_core engine_scene_core motion::options Catch2::Catch2WithMain)
   if(MSVC)
     target_compile_options(engine_tests PRIVATE /bigobj)
     target_compile_definitions(engine_tests PRIVATE _CRT_SECURE_NO_WARNINGS)  # getenv in test setup
@@ -424,6 +429,7 @@ set(ENGINE_DOC_SOURCES
   src/core/model.cpp
   src/core/native_effects.cpp
   src/core/overlay_geometry.cpp
+  src/core/overlay_rig_pack.cpp
   src/core/parenting.cpp
   src/core/particle_props.cpp
   src/core/plugin_props.cpp
@@ -431,6 +437,7 @@ set(ENGINE_DOC_SOURCES
   src/core/props.cpp
   src/core/ptree.cpp
   src/core/queries.cpp
+  src/core/item_facts.cpp
   src/core/readmodel.cpp
   src/core/scene.cpp
   src/core/scene_build.cpp
@@ -448,6 +455,9 @@ target_link_libraries(engine_json PUBLIC motion::jsmath PRIVATE motion::options)
 target_sources(engine_core PRIVATE ${ENGINE_DOC_SOURCES})
 target_link_libraries(engine_core PUBLIC engine_json)
 target_link_libraries(engine_core PUBLIC motion::expr motion::transform motion::jsmath)
+# B4 round 5: grapheme clusters (raster/text_unicode.cpp) — `text/styleRuns` reads
+# migrate legacy code-point runs as richText.ts readRuns does (fields.cpp).
+target_link_libraries(engine_core PRIVATE engine_raster_core)
 # zlib: CRC-32 + DEFLATE for portable zips (core/deflate_ffi.cpp) and the export
 # writers' PNG / zip entries — the one zlib binding, shared.
 find_package(ZLIB REQUIRED)
@@ -537,6 +547,7 @@ target_link_libraries(engine_contours PUBLIC motion::jsmath PRIVATE motion::opti
 add_library(engine_scene_core STATIC
   src/scene/rig_mesh.cpp
   src/scene/rig_bridge.cpp
+  src/scene/rig_overlay.cpp  # B4 round 5: the rig in the overlay push + getRigPose (rigOverlay.ts)
   src/scene/extrude_mesh.cpp
   src/scene/trace_bitmap.cpp
   src/scene/primitive_mesh.cpp
@@ -653,7 +664,7 @@ if(TARGET engine_fuzz)
   # engine_fuzz compiles everything in (one static CRT, see above).
   set(_libs_dir ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
   file(GLOB _doc_fuzz_expr ${_libs_dir}/motion_expr/*.cpp)
-  target_sources(engine_fuzz PRIVATE ${ENGINE_DOC_SOURCES} src/core/json.cpp ${_doc_fuzz_expr}
+  target_sources(engine_fuzz PRIVATE ${ENGINE_DOC_SOURCES} src/core/json.cpp src/raster/text_unicode.cpp ${_doc_fuzz_expr}
                  ${_libs_dir}/motion_jsmath/fdlibm.cpp ${_libs_dir}/motion_jsmath/numconv.cpp
                  ${_libs_dir}/motion_transform/transform.cpp ${_libs_dir}/motion_transform/motion_transform.cpp)
   target_include_directories(engine_fuzz PRIVATE ${_libs_dir}/motion_expr ${_libs_dir}/motion_jsmath
@@ -1097,7 +1108,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
                                       tests/test_threed_models.cpp tests/test_time_comp_parity.cpp tests/test_particle_parity.cpp
                                       tests/test_polygon_clipping_parity.cpp tests/test_cover_crop.cpp tests/test_source_text.cpp
                                       tests/test_rig_coverage.cpp tests/test_gpu_effect_route.cpp
-                                      tests/test_text_outlines.cpp tests/test_svg_shapes.cpp)
+                                      tests/test_text_outlines.cpp tests/test_svg_shapes.cpp
+                                      tests/test_b4_round5_text_glyphs.cpp)  # B4 round 5: getTextLayout.glyphs over the harness fonts
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
       PREMATION_RASTER_FONTS="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/render-tests/harness/fonts/fonts.json")
     target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)

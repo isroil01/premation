@@ -207,8 +207,11 @@ export function TranscriptPanel(): JSX.Element {
    */
   useEffect(() => {
     if (transcript) return;
-    const seeded = transcriptFromCaptions(rootId);
-    if (seeded) setTranscript(rootId, seeded);
+    let live = true;
+    void transcriptFromCaptions(rootId).then((seeded) => {
+      if (live && seeded) setTranscript(rootId, seeded);
+    });
+    return () => { live = false; };
   }, [rootId, transcript, setTranscript]);
 
   /**

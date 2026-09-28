@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 #include "jsmath.hpp"
+#include "numconv.hpp"
 #include "scene.hpp"
 #include "strutil.hpp"
 
@@ -85,6 +87,68 @@ bool is_hex_color(std::string_view s) {
   if (!t.empty() && t.front() == '#') t.remove_prefix(1);
   if (t.size() < 3 || t.size() > 8) return false;
   return std::all_of(t.begin(), t.end(), is_hex_digit);
+}
+
+namespace {
+
+/// fields.ts CSS_NUMBER: /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?%?$/.
+bool is_css_number(std::string_view p) {
+  std::size_t i = 0;
+  const auto digits = [&] {
+    const std::size_t from = i;
+    while (i < p.size() && is_ascii_digit(p[i])) ++i;
+    return i - from;
+  };
+  if (i < p.size() && (p[i] == '+' || p[i] == '-')) ++i;
+  const std::size_t intDigits = digits();
+  if (i < p.size() && p[i] == '.') {
+    ++i;
+    if (digits() == 0 && intDigits == 0) return false;
+  } else if (intDigits == 0) {
+    return false;
+  }
+  if (i < p.size() && (p[i] == 'e' || p[i] == 'E')) {
+    ++i;
+    if (i < p.size() && (p[i] == '+' || p[i] == '-')) ++i;
+    if (digits() == 0) return false;
+  }
+  if (i < p.size() && p[i] == '%') ++i;
+  return i == p.size();
+}
+
+}  // namespace
+
+std::optional<std::array<double, 4>> css_rgb_channels(std::string_view s) {
+  const std::string_view t = trim(s);
+  // /^rgba?\(\s*([^)]*)\)$/i
+  const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+  if (t.size() < 4 || lower(t[0]) != 'r' || lower(t[1]) != 'g' || lower(t[2]) != 'b') return std::nullopt;
+  std::size_t i = 3;
+  if (lower(t[i]) == 'a') ++i;
+  if (i >= t.size() || t[i] != '(' || t.back() != ')') return std::nullopt;
+  const std::string_view body = t.substr(i + 1, t.size() - i - 2);
+  if (body.find(')') != std::string_view::npos) return std::nullopt;
+  // split(/[\s,/]+/).filter(Boolean)
+  std::vector<std::string_view> parts;
+  const auto sep = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v' || c == ',' || c == '/'; };
+  for (std::size_t k = 0; k < body.size();) {
+    while (k < body.size() && sep(body[k])) ++k;
+    const std::size_t from = k;
+    while (k < body.size() && !sep(body[k])) ++k;
+    if (k > from) parts.push_back(body.substr(from, k - from));
+  }
+  if (parts.size() < 3 || parts.size() > 4) return std::nullopt;
+  for (const auto p : parts) {
+    if (!is_css_number(p)) return std::nullopt;
+  }
+  const auto pct = [](std::string_view p) { return p.back() == '%'; };
+  const auto n = [&](std::string_view p) { return motion::js::string_to_number(pct(p) ? p.substr(0, p.size() - 1) : p); };
+  const auto channel = [&](std::string_view p) {
+    const double v = pct(p) ? (n(p) / 100) * 255 : n(p);
+    return motion::js::round(std::max(0.0, std::min(255.0, v))) / 255;
+  };
+  const double alpha = parts.size() < 4 ? 1.0 : std::max(0.0, std::min(1.0, pct(parts[3]) ? n(parts[3]) / 100 : n(parts[3])));
+  return std::array<double, 4>{channel(parts[0]), channel(parts[1]), channel(parts[2]), alpha};
 }
 
 // ── effects ──────────────────────────────────────────────────────────────

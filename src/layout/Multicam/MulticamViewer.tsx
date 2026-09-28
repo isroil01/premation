@@ -4,7 +4,7 @@
  * Premiere's multicam monitor, sized to this engine: each cell is a muted
  * `<video>` element seeked to the playhead through its layer's clip mapping
  * (bar start + sourceIn), so what a cell shows is what a cut to that angle
- * would show. Cutting goes through `switchMulticamAngle`, the same hold-
+ * would show. Cutting goes through `switchMulticamAngleEdit`, the same hold-
  * keyframe write the Alt+digit shortcuts use — the viewer adds no second
  * cutting mechanism, only eyes.
  *
@@ -17,18 +17,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@utils/cn';
 import { openModal } from '@stores/modalStore';
 import { useCurrentTime, useThrottledTime } from '@stores/playbackClockStore';
-import { useAssetStore } from '@stores/assetStore';
 import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys, useRetainTrees } from '@hooks/useMirror';
 import { flicksToSeconds } from '@motion/engine-api';
 import { readTrack } from '@core/mirror/selection';
 import { trackRefIn } from '@core/mirror/trackIndex';
-import {
-  planMulticamAudioSync,
-  multicamLayersInActiveComp,
-  switchMulticamAngle,
-} from '@core/composition/multicam';
+import { planMulticamAudioSync } from '@core/composition/multicam';
+import { activeMulticamAngles, switchMulticamAngleEdit } from './multicamEdits';
 import { Button } from '@components/Button';
 import { EmptyState } from '@components/EmptyState';
 import { moveBars } from '@layout/Timeline/timelineEdits';
@@ -50,17 +46,10 @@ const DOC_KEYS: readonly string[] = ['doc', 'layers', 'items'];
 
 function collectAngleViews(): AngleView[] {
   const m = documentMirror();
-  // B4-gap: the playable media URL of the footage (`asset.src`: the blob: /
-  // file URL the decoder opens) — ItemInfo carries the on-disk `path` only
-  // ('' for a browser import); an ItemInfo media URL field would close it.
-  const assets = useAssetStore.getState().assets;
-  // B4-gap: which layers are multicam angles, and their numbers — the
-  // `__multicamAngle` tag on the Transform component has no catalog path (a
-  // `layer/multicamAngle` int field would close it).
-  return multicamLayersInActiveComp().map((l) => {
+  // B4: the active composition's angle layers (`LayerInfo.multicamAngle`) and the media each plays
+  // (`ItemInfo.mediaUrl`) — before, every tagged layer of every composition.
+  return activeMulticamAngles().map((l) => {
     const layer = m.layer(l.id);
-    const assetId = layer?.source;
-    const asset = assetId ? assets.find((a) => a.id === assetId) : null;
     // One bar per layer (`timing`, comp flicks): its head plays source time
     // `inPoint − startTime` (what the bar's `sourceIn` was).
     const timing = layer?.timing;
@@ -68,7 +57,7 @@ function collectAngleViews(): AngleView[] {
       id: l.id,
       angle: l.angle,
       name: layer?.name || l.name,
-      src: asset?.src ?? null,
+      src: l.src,
       barStartSec: timing ? flicksToSeconds(timing.inPoint) : 0,
       sourceInSec: timing ? flicksToSeconds(timing.inPoint - timing.startTime) : 0,
     };
@@ -96,9 +85,9 @@ function liveAngleAt(views: ReadonlyArray<AngleView>, t: number): number | null 
 
 /** Exported so the empty state can be asserted without opening a modal. */
 export function MulticamViewerBody(): JSX.Element {
-  // Which layers are angles is a legacy read over the whole document (the
-  // B4-gap in collectAngleViews), so this wakes on any document revision —
-  // bars moving on sync / undo, a relink, a cut — like the scene revision did.
+  // The angles are layer headers and items from the mirror (a tag, a bar, a
+  // name, a relink); any document revision re-collects them — bars moving on
+  // sync / undo, a relink, a cut — like the scene revision did.
   const docRev = useMirrorKeys(DOC_KEYS);
   const time = useCurrentTime();
   const displayTime = useThrottledTime();
@@ -198,7 +187,7 @@ export function MulticamViewerBody(): JSX.Element {
             type="button"
             className={cn(styles.cell, live === v.angle && styles.cellLive)}
             title={`Cut to angle ${v.angle} (Alt+${v.angle})`}
-            onClick={() => switchMulticamAngle(v.angle)}
+            onClick={() => { void switchMulticamAngleEdit(v.angle, views); }}
           >
             {v.src ? (
               <video

@@ -57,7 +57,7 @@ import { applyTransitionEdit } from '@layout/EditorLayout/transitionInsertEdits'
 import { insertSfxEdit } from '@layout/EditorLayout/sfxInsertEdits';
 import { insertLottieItemEdit } from '@layout/EditorLayout/lottieInsertEdits';
 import { insertBuiltLayers } from '@core/engine/offDocument';
-import { useAssetStore } from '@stores/assetStore';
+import { assetRecordNow } from '@stores/assetSession';
 import { useComponentStore } from '@stores/componentStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
@@ -253,7 +253,8 @@ export function WorkspaceViewport({
   // Only the auto-minted pristine comp keeps them up. Without this gate,
   // clicking "New Composition" and creating one left the cards covering the
   // brand-new comp — the create looked like it did nothing.
-  const allCompsPristine = useProjectStore((s) => Object.values(s.comps).every((c) => c.pristine === true));
+  // `CompSettings.pristine` from the document mirror.
+  const allCompsPristine = useMirrorSelect(['comps'], (m) => m.compIds.every((id) => m.comp(id)?.settings.pristine === true));
   // Read from the document mirror: re-evaluated when a composition's stack or
   // the layer set changes ('comps' fires on every stack order change).
   const sceneIsEmpty = useMirrorSelect(['comps', 'layers'], (m) => {
@@ -563,7 +564,7 @@ export function WorkspaceViewport({
           void replaceSourceWithAsset(target, payload.assetId);
           break;
         }
-        const asset = useAssetStore.getState().assets.find((a) => a.id === payload.assetId);
+        const asset = assetRecordNow(payload.assetId);
         if (asset) await insertMediaEdit([asset], { at: world });
         break;
       }

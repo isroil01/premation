@@ -22,7 +22,7 @@ import { uiKindOf } from '@core/mirror/layerKinds';
 import { useLayerViewerStore } from '@stores/layerViewerStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useUIStore } from '@stores/uiStore';
-import { useAssetStore } from '@stores/assetStore';
+import { assetRecordNow } from '@stores/assetSession';
 import { openFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import type { SceneNode } from '@core/types';
 
@@ -80,7 +80,7 @@ export function openLayerOnDoubleClick(nodeId: string, opts: { alt?: boolean } =
     const assetId = node.source;
     // B4-gap: the Footage viewer (layout/Assets) plays the legacy asset record (its runtime
     // `src`); it goes when the viewer takes an item id.
-    const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : undefined;
+    const asset = assetRecordNow(assetId);
     if (asset) {
       openFootagePreview(asset);
       return true;

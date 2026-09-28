@@ -22,7 +22,8 @@ import { Switch } from '@components/Switch';
 import { cn } from '@utils/cn';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { usePlaybackClockStore } from '@stores/playbackClockStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import { useActiveCompRecord } from '@hooks/useActiveCompRecord';
+import { pageRenderComp } from '@core/rendering/pageFrame';
 import { useUIStore } from '@stores/uiStore';
 import { outputExtFor, type OutputFormat } from '@stores/renderQueueStore';
 import { useLayoutStore } from '@stores/layoutStore';
@@ -36,7 +37,6 @@ import { runExport, isAbortError, availableExportPresets, type ExportFormat, typ
 import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/videoSink';
 import { chaptersFromMarkers, formatCarriesChapters, type ExportChapter } from '@core/export/chapters';
 import { formatHdrCapabilityNote, formatHdrExportDoneNote } from '@core/export/hdrTransfer';
-import { compSizeOf } from '@core/composition/compSizes';
 import { openHelp } from '@layout/Help/openHelp';
 import { getProjectManager } from '@core/services/coreServices';
 import { buildSupervisorSpec, exportSupervisorClient } from '@core/export/exportSupervisorClient';
@@ -194,9 +194,8 @@ export function useExportModel(duration: number, fps: number): ExportModel {
   const chapters = useExportFormStore((s) => s.chapters);
   const rangeMode = useExportFormStore((s) => s.rangeMode);
   const progress = useExportFormStore((s) => s.progress);
-  // B4-kept: the TS renderer's input (runExport / the preview render the store's
-  // CompositionSettings record, gradient paint included) — leaves with the renderer (D5).
-  const baseComp = useCompositionStore((s) => s.comp());
+  // The composition record (gradient paint included) from the document mirror (B4).
+  const baseComp = useActiveCompRecord();
   const compName = useActiveTabCompSettings()?.name;
 
   // Playhead time is only needed for the single-frame PNG export. Gated on
@@ -229,7 +228,7 @@ export function useExportModel(duration: number, fps: number): ExportModel {
   }, [chapters, supportsChapters, captureRange, fps]);
 
   const comp = useMemo(
-    () => ({ ...baseComp, rootId: baseComp.id, transparent: alpha, compSizeOf }),
+    () => pageRenderComp(baseComp, alpha),
     [baseComp, alpha],
   );
 
@@ -445,8 +444,8 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
   const patch = useExportFormStore((s) => s.patch);
   const { busy, progress, activePreset, cancel } = useExportModel(duration, fps);
 
-  // B4-kept: the preview renderer's input (see useExportModel).
-  const baseComp = useCompositionStore((s) => s.comp());
+  // The composition record from the document mirror (see useExportModel).
+  const baseComp = useActiveCompRecord();
   const activeTabId = useWorkspaceStore((s) => s.activeTabId);
   const time = usePlaybackClockStore((s) =>
     format === 'png' ? (activeTabId ? s.clocks[activeTabId]?.time ?? 0 : 0) : 0,
@@ -484,7 +483,7 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
   const writeChapters = chapters && supportsChapters && chapterCount > 0;
 
   const comp = useMemo(
-    () => ({ ...baseComp, rootId: baseComp.id, transparent: alpha, compSizeOf }),
+    () => pageRenderComp(baseComp, alpha),
     [baseComp, alpha],
   );
 

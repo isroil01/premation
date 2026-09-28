@@ -140,11 +140,14 @@ describe('FrameForwarder', () => {
     fw.setReceiverReady(true);
     fw.onFrame(slots(1));
     const rec = (layer: string, matrix: number[]) => ({ layer, matrix, box: [], corners: [], path: [], pathKeys: [], pins: [], bones: [], textBox: [], pathFrames: [], pathNow: [] });
-    const part = (layers: ReturnType<typeof rec>[], last: boolean): FrameGeometryMessage => ({ type: 'geometry', viewport: 1, generation: 1, frame: 1, time: 0, revision: 3, layers, last });
-    fw.onFrame(part([rec('a', [1])], false));
+    const part = (layers: ReturnType<typeof rec>[], last: boolean, views: FrameGeometryMessage['views'] = []): FrameGeometryMessage => ({ type: 'geometry', viewport: 1, generation: 1, frame: 1, time: 0, revision: 3, layers, last, views });
+    // B4 round 5: the view cameras ride the first part and travel with the frame too.
+    const view = { mode: 'active', camera: 'cam', liveCamera: 'cam', lens: [960, 540, -2666, 2666, 960, 540, 0, 0, 0], compWidth: 1920, compHeight: 1080 };
+    fw.onFrame(part([rec('a', [1])], false, [view]));
     fw.onFrame(part([rec('b', [2])], true));
     fw.onFrame(ready(1, 0));
     expect((sends[0]!.meta as { geometry?: Array<{ layer: string }> }).geometry?.map((g) => g.layer)).toEqual(['a', 'b']);
+    expect((sends[0]!.meta as { geometryViews?: Array<{ mode: string }> }).geometryViews?.map((v) => v.mode)).toEqual(['active']);
   });
 
   it('an incomplete geometry set, or one for another frame, is not attached', async () => {

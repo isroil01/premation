@@ -34,7 +34,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { EmptyState } from '@components/EmptyState';
 import { cn } from '@utils/cn';
-import { useAssetStore } from '@stores/assetStore';
+import { useMirrorAssetRecords } from '@hooks/useAssetRecords';
 import { useSourceMonitorStore, sourceRange } from '@stores/sourceMonitorStore';
 import { webCodecsAvailable } from '@core/video/exactVideoSource';
 import { framesToTimecode } from '@core/time/timecode';
@@ -78,10 +78,9 @@ export function SourceMonitorPanel(): JSX.Element {
   const duration = useSourceMonitorStore((s) => s.duration);
   const inPoint = useSourceMonitorStore((s) => s.inPoint);
   const outPoint = useSourceMonitorStore((s) => s.outPoint);
-  // B4-gap: the monitor PLAYS the file — its runtime `src` (a blob/file URL), the
-  // exact-frame stepper and the insert router all take the legacy asset record;
-  // `ItemInfo` carries the path, not a playable URL.
-  const assets = useAssetStore((s) => s.assets);
+  // The monitor PLAYS the file: the item's page record (the mirror's ItemInfo —
+  // `mediaUrl` — with the session half), re-rendered when either changes.
+  const assets = useMirrorAssetRecords();
   const asset = assetId ? assets.find((a) => a.id === assetId) ?? null : null;
 
   if (!asset) {

@@ -9,7 +9,6 @@
 import { create } from 'zustand';
 import type { TemplateDefinition } from '@core/template/templateTypes';
 import { getTemplate } from '@core/template/registry';
-import { readTemplateFieldValue } from '@core/template/templateFields';
 import { mirrorAuthoredFields } from '@layout/Templates/templateAuthoringEdits';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
@@ -20,7 +19,7 @@ import { buildTemplateFragment } from '@/engine-client/templateFragment';
 import { layerIdsOfComp } from '@core/engine/doc';
 import { compTime } from '@core/engine/propRefs';
 import { hexToColor } from '@core/engine/model';
-import { fillMediaFieldEdit, isMediaField, templateFieldCommands } from '@layout/Templates/templateFieldEdits';
+import { fillMediaFieldEdit, isMediaField, templateFieldCommands, templateFieldValues } from '@layout/Templates/templateFieldEdits';
 import { getTime } from './playbackClockStore';
 import { useSelectionStore } from './selectionStore';
 
@@ -124,17 +123,17 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
     for (const f of fields) values[f.id] = f.default;
     set({ active: { ...t, fields }, values });
   },
-  previewAuthored: () => {
+  previewAuthored: async () => {
     // B4: the authored manifest is the active composition's `templateFields` (the mirror).
-    const fields = mirrorAuthoredFields(activeCompIdNow() ?? '');
+    const compId = activeCompIdNow() ?? '';
+    const fields = mirrorAuthoredFields(compId);
     if (fields.length === 0) return;
+    // B4: each field's current value from the engine (`templateFieldValues`: Source Text, the Fill Color, a
+    // number, a media slot's `mediaUrl`); the field's default where the engine has none.
+    const current = await templateFieldValues(fields, getTime());
+    if ((activeCompIdNow() ?? '') !== compId) return;
     const values: Record<string, string | number> = {};
-    for (const f of fields) {
-      // B4-gap: a field's STORED component prop (a media slot's object URL, the static text / colour / number) —
-      // the API addresses text / fill / numbers as properties (valueAt a time), but not a slot's `src` URL.
-      const current = readTemplateFieldValue(f);
-      values[f.id] = (typeof current === 'string' || typeof current === 'number') ? current : f.default;
-    }
+    for (const f of fields) values[f.id] = current[f.id] ?? f.default;
     const settings = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
     const comp = { width: settings?.width ?? 1920, height: settings?.height ?? 1080 };
     set({

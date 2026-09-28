@@ -48,7 +48,8 @@ let h: Awaited<ReturnType<typeof setupAppEngine>>;
 let ID = '';
 
 const rigOf = () => readNodeSkeleton(defaultSceneGraph.getNode(ID)!)!;
-const idle = (): Promise<void> => act(async () => { await engineIdle(); });
+/** Let the engine settle — several rounds: the panel asks getRigPose for the pose it shows (B4 round 5). */
+const idle = (): Promise<void> => act(async () => { for (let i = 0; i < 6; i++) await engineIdle(); });
 
 /** The hand position as the renderer computes it — the thing that must not move. */
 function handNow(): { x: number; y: number } {
@@ -90,18 +91,24 @@ afterEach(async () => {
 });
 
 describe('the Chain Mode control', () => {
-  it('appears on a bone that has an IK target, defaulting to IK', () => {
+  it('appears on a bone that has an IK target, defaulting to IK', async () => {
     render(<BoneControls nodeId={ID} />);
+
+    await idle();
     expect((screen.getByLabelText('Fore chain mode') as HTMLSelectElement).value).toBe('ik');
   });
 
-  it('is ABSENT on a bone with no chain — there is no mode to choose', () => {
+  it('is ABSENT on a bone with no chain — there is no mode to choose', async () => {
     render(<BoneControls nodeId={ID} />);
+
+    await idle();
     expect(screen.queryByLabelText('Upper chain mode')).toBeNull();
   });
 
   it('switching to FK writes the mode — ONE undo entry, and undo restores the rig', async () => {
     render(<BoneControls nodeId={ID} />);
+
+    await idle();
     const before = h.doc();
     await switchTo('fk');
     expect(rigOf().ikTargets![0]!.ikMode).toBe('fk');
@@ -115,13 +122,15 @@ describe('the Chain Mode control', () => {
     // The reason this control exists. Measured the same way the runtime check
     // measures it: the hand must not move.
     render(<BoneControls nodeId={ID} />);
+
+    await idle();
     const before = handNow();
     await switchTo('fk');
     const after = handNow();
     expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeCloseTo(0, 6);
   });
 
-  it('and the fixture could have shown a move — the chain is not at rest', () => {
+  it('and the fixture could have shown a move — the chain is not at rest', async () => {
     // Positive control: if the FK pose already reached the goal, "did not move"
     // would be free.
     const rig = rigOf();
@@ -133,6 +142,8 @@ describe('the Chain Mode control', () => {
 
   it('switching back to IK also preserves it', async () => {
     render(<BoneControls nodeId={ID} />);
+
+    await idle();
     await switchTo('fk');
     const before = handNow();
     await switchTo('ik');
@@ -144,6 +155,8 @@ describe('the Chain Mode control', () => {
   it('with auto-keyframe on, the switch keys the mode and the pose at the playhead', async () => {
     usePreferenceStore.setState({ timelineAutoKeyframe: true });
     render(<BoneControls nodeId={ID} />);
+
+    await idle();
     const before = handNow();
     await switchTo('fk');
     expect(defaultAnimation.isAnimated(ID, chainModePropPath('fore'))).toBe(true);

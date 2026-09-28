@@ -11,11 +11,12 @@
  */
 
 import { secondsToFlicks, type PropertyInfo, type Value } from '@motion/engine-api';
-import type { DocumentMirror, MirrorTree } from '@stores/documentMirror';
+import { documentMirror, type DocumentMirror, type MirrorTree } from '@stores/documentMirror';
 import { useProjectStore } from '@stores/projectStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readRuns, type RichRun } from '@core/text/richText';
+import type { RichRun } from '@core/text/richText';
 import { plainValue } from '@core/mirror/trackIndex';
+import { componentPropPath, componentPropValue } from '@core/mirror/componentProps';
+import { strokeOverFillFor } from '@core/text/textFields';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { jsonField } from '@core/mirror/layerFields';
 import type { FillPaint, LinearFill, RadialFill } from '@core/paint/fill';
@@ -391,11 +392,43 @@ export function hasMirrorStyleRuns(m: DocumentMirror, id: string): boolean {
  * A text layer's per-character style runs, grapheme-indexed — the runs a
  * write composer recomputes and sends back whole (`text/styleRuns`).
  */
-export function currentRuns(id: string): RichRun[] {
-  // B4-gap: legacy style runs indexed by code point (`__runsIndex` unset) are migrated to grapheme
-  // indices by `readRuns`; the API's `text/styleRuns` returns the stored array raw and its write stamps
-  // grapheme indexing, so recomputing from it would shift an older document's styling on emoji / combining marks.
-  const node = defaultSceneGraph.getNode(id);
-  // B4-gap: as above.
-  return node ? readRuns(node) : [];
+export function currentRuns(id: string, m: DocumentMirror = documentMirror()): RichRun[] {
+  // B4 round 5: both engines answer `text/styleRuns` GRAPHEME-indexed (a legacy code-point-indexed
+  // array migrated engine-side, as richText.ts readRuns does; malformed runs dropped).
+  const v = plainValue(m.property(id, STYLE_RUNS_PATH)?.value);
+  return Array.isArray(v) ? (v as RichRun[]) : [];
+}
+
+/** The Text component props a text-style preset carries (sectionPresets.ts TEXT_PRESET_PROPS). */
+const TEXT_PRESET_KEYS: ReadonlyArray<string> = [
+  'fontFamily', 'fontSize', 'fontWeight', 'fontStyle',
+  'letterSpacing', 'lineHeight', 'textTransform', 'fontVariant',
+  'verticalScale', 'horizontalScale', 'baselineShift',
+  'fill', 'stroke', 'strokeWidth', 'strokeOverFill',
+];
+
+/**
+ * A text style preset captured from the MIRROR (`captureTextPreset`'s twin):
+ * the props the layer STORES (`PropertyInfo.stored` — an unset Leading stays
+ * Auto, an unstored colour stays the painter's default), numbers in stored
+ * units, colours as hex, the Fill and Stroke order as the legacy
+ * `strokeOverFill` switch the preset bag has always held.
+ */
+export function mirrorTextPresetCapture(m: DocumentMirror, id: string): Record<string, number | string | boolean> {
+  const out: Record<string, number | string | boolean> = {};
+  const tree = m.tree(id);
+  if (!tree || !hasTextLayer(m, id)) return out;
+  for (const key of TEXT_PRESET_KEYS) {
+    if (key === 'strokeOverFill') {
+      const order = tree.nodes.get('text/strokeOrder');
+      const v = plainValue(order?.value);
+      if (order?.stored === true && typeof v === 'string') out.strokeOverFill = strokeOverFillFor(v);
+      continue;
+    }
+    const path = componentPropPath(tree, key);
+    if (!path || tree.nodes.get(path)?.stored !== true) continue;
+    const v = componentPropValue(m, id, key);
+    if (typeof v === 'number' ? Number.isFinite(v) : typeof v === 'string' || typeof v === 'boolean') out[key] = v as number | string | boolean;
+  }
+  return out;
 }

@@ -12,6 +12,7 @@
 #include "scene.hpp"
 #include "strokes.hpp"
 #include "strutil.hpp"
+#include "raster/text_unicode.hpp"
 
 namespace premation::doc {
 namespace {
@@ -43,8 +44,60 @@ ValueType type_of_spec(const Json& spec) {
 }
 
 api::Value color_value(std::string_view hex) {
-  const auto c = parse_color_channels(hex);
+  const auto c = css_rgb_channels(hex).value_or(parse_color_channels(hex));
   return v_color(c[0], c[1], c[2], c[3]);
+}
+
+/// fields.ts `textRaw`: a Text field's stored raw value; a legacy layer storing only
+/// `strokeOverFill` reports that switch's `strokeOrder` (textExtras.ts strokeOrderOf).
+Json text_raw(const Json& tp, std::string_view key) {
+  if (key == "strokeOrder" && tp.at("strokeOrder").is_undefined() && tp.at("strokeOverFill").is_bool()) {
+    return Json::string(tp.at("strokeOverFill").b() ? "stroke-over-fill" : "fill-over-stroke");
+  }
+  return tp.at(key);
+}
+
+/// A stored colour string a colour field reads: hex, or CSS `rgb()` / `rgba()` (fields.ts `isColorString`).
+bool is_color_string(std::string_view s) { return is_hex_color(s) || css_rgb_channels(s).has_value(); }
+
+/// graphemes.ts `codePointToGraphemeIndex(text, cp, roundUp)` over the text's clusters.
+double code_point_to_grapheme(const std::vector<std::string>& gs, double cp, bool roundUp) {
+  if (cp <= 0) return 0;
+  double acc = 0;
+  for (std::size_t i = 0; i < gs.size(); ++i) {
+    const auto len = static_cast<double>(raster::code_points(gs[i]).size());
+    if (cp == acc) return static_cast<double>(i);
+    if (cp < acc + len) return roundUp ? static_cast<double>(i + 1) : static_cast<double>(i);
+    acc += len;
+  }
+  return static_cast<double>(gs.size());
+}
+
+/// richText.ts `readRuns`: the Text props' stored runs, malformed ones dropped,
+/// a legacy code-point-indexed array (no `__runsIndex: 'grapheme'`) migrated to
+/// grapheme indices over the content (`migrateCodePointRuns`).
+Json grapheme_runs(const Json& tp) {
+  const Json& raw = tp.at("__runs");
+  Json out = Json::array();
+  if (!raw.is_array()) return out;
+  for (const Json& r : raw.arr()) {
+    if (!r.is_object() || !r.at("start").is_finite_number() || !r.at("end").is_finite_number()) continue;
+    if (!r.at("style").is_object() && !r.at("style").is_array()) continue;  // JS typeof 'object'
+    out.arr_mut().push_back(r);
+  }
+  if (tp.at("__runsIndex").is_string() && tp.at("__runsIndex").str() == "grapheme") return out;
+  const std::string content = tp.at("content").is_string() ? tp.at("content").str() : std::string();
+  const std::vector<std::string> gs = raster::split_graphemes(content);
+  if (gs.size() == raster::code_points(content).size()) return out;
+  Json migrated = Json::array();
+  for (const Json& r : out.arr()) {
+    Json m = Json::object();
+    m.set("start", Json::number(code_point_to_grapheme(gs, r.at("start").num(), false)));
+    m.set("end", Json::number(code_point_to_grapheme(gs, r.at("end").num(), true)));
+    m.set("style", r.at("style"));
+    migrated.arr_mut().push_back(std::move(m));
+  }
+  return migrated;
 }
 
 std::string js_string(const Json& v) {
@@ -63,7 +116,7 @@ api::Value spec_value(const Json& spec, const Json& raw) {
     case ValueType::choice: return v_choice(v.is_string() ? v.str() : js_string(def));
     case ValueType::bool_: return v_bool(v.is_bool() ? v.b() : (def.is_bool() && def.b()));
     case ValueType::scalar: return v_scalar(v.is_finite_number() ? v.num() : def.num());
-    case ValueType::color: return color_value(v.is_string() && is_hex_color(v.str()) ? v.str() : js_string(def));
+    case ValueType::color: return color_value(v.is_string() && is_color_string(v.str()) ? v.str() : js_string(def));
     case ValueType::scalars: {
       api::F64List out;
       if (v.is_array()) {
@@ -164,7 +217,7 @@ api::Value read_layer_fill(const Node& n) {
   if (auto s = string_fill(n)) return color_value(s->hex);
   const Component* text = n.comp("Text");
   const Json& legacy = text != nullptr ? text->props.at("color") : Json::null();
-  return color_value(legacy.is_string() && is_hex_color(legacy.str()) ? legacy.str() : "#ffffff");
+  return color_value(legacy.is_string() && is_color_string(legacy.str()) ? legacy.str() : "#ffffff");
 }
 
 void write_layer_fill(Document& d, std::string_view layer, const std::string& hex) {
@@ -714,10 +767,7 @@ api::Value read_field(const Node& node, const PropBinding& b) {
   const FieldRef& f = *b.field;
   const Component* text = node.comp("Text");
   const Json& tp = text != nullptr ? text->props : Json::null();
-  if (f.owner == "styleRuns") {
-    const Json& runs = tp.at("__runs");
-    return v_json(runs.is_array() ? stringify(runs) : std::string("[]"));
-  }
+  if (f.owner == "styleRuns") return v_json(stringify(grapheme_runs(tp)));
   if (f.owner == "fillPaint") {
     const Json& paint = node.fx().at("fill");
     return v_json(paint_type(paint) ? stringify(paint) : std::string("null"));
@@ -760,7 +810,7 @@ api::Value read_field(const Node& node, const PropBinding& b) {
     return spec_value(*spec, raw);
   }
   if (f.owner == "style") return spec_value(*spec, get_node_layer_styles(node).at(f.animatorId.value_or("")).at(f.key));
-  if (f.owner == "text") return spec_value(*spec, tp.at(f.key));
+  if (f.owner == "text") return spec_value(*spec, text_raw(tp, f.key));
   const AnimLoc loc = locate_animator(node, f);
   if (f.owner == "animator") {
     return spec_value(*spec, loc.index >= 0 ? loc.data[static_cast<std::size_t>(loc.index)].at(f.key) : Json());
@@ -771,6 +821,62 @@ api::Value read_field(const Node& node, const PropBinding& b) {
     return spec_value(*spec, s.at(f.key));
   }
   return v_none();
+}
+
+bool field_stored(const Node& node, const PropBinding& b) {
+  if (b.special == Special::layerFill) {
+    if (paint_type(node.fx().at("fill")) == std::optional<std::string>("solid")) return true;
+    if (string_fill(node)) return true;
+    const Component* text = node.comp("Text");
+    return text != nullptr && text->props.at("color").is_string();
+  }
+  const FieldRef& f = *b.field;
+  const Component* text = node.comp("Text");
+  const Json& tp = text != nullptr ? text->props : Json::null();
+  const auto has = [](const Json& o, std::string_view k) { return o.is_object() && !o.at(k).is_undefined(); };
+  if (f.owner == "styleRuns") return tp.at("__runs").is_array();
+  if (f.owner == "fillPaint") return paint_type(node.fx().at("fill")).has_value();
+  if (f.owner == "fills") return node.fx().at("fills").is_array();
+  if (f.owner == "strokes") return !node_strokes(node).empty();
+  if (f.owner == "poi") {
+    const api::Value v = read_point_of_interest(node);
+    return v.kind() == VK::bool_ && get<VK::bool_>(v);
+  }
+  if (f.owner == "plugin") {
+    const Component* comp = node.comp(f.animatorId.value_or(""));
+    return comp != nullptr && has(comp->props, f.key);
+  }
+  if (f.owner == "textPath") return read_text_path_config(node).has_value();
+  if (f.owner == "text") return !text_raw(tp, f.key).is_undefined();
+  if (f.owner == "animator" || f.owner == "selector") {
+    const AnimLoc loc = locate_animator(node, f);
+    if (loc.index < 0) return false;
+    const Json& a = loc.data[static_cast<std::size_t>(loc.index)];
+    if (f.owner == "animator") return has(a, f.key);
+    return loc.sel >= 0 && has(a.at("selectors").arr()[static_cast<std::size_t>(loc.sel)], f.key);
+  }
+  const Json* spec = field_spec(f);
+  if (spec == nullptr) return false;
+  if (f.owner == "layer") {
+    const Json raw = read_stored(node, spec->at("store"));
+    return !raw.is_undefined() && !raw.is_null();
+  }
+  if (f.owner == "effect") {
+    const std::vector<Json> effects = read_node_effects(node);
+    const Json* e = find_by_id(effects, f.animatorId.value_or(""));
+    return e != nullptr && has(*e, f.key);
+  }
+  if (f.owner == "style") return has(get_node_layer_styles(node).at(f.animatorId.value_or("")), f.key);
+  if (f.owner == "pathOp") {
+    const std::vector<Json> ops = read_path_ops(node);
+    const Json* op = find_by_id(ops, f.animatorId.value_or(""));
+    return op != nullptr && has(*op, f.key);
+  }
+  if (f.owner == "polystar") {
+    const auto ps = read_node_polystar(node);
+    return ps && has(*ps, f.key);
+  }
+  return false;
 }
 
 void set_primary_fill_paint(Document& d, std::string_view layer, const Json& paint) { set_primary_fill(d, layer, paint); }

@@ -54,6 +54,8 @@ struct RenderJob {
   /// FrameGeometry messages right before this frame's FrameReady (even when empty).
   bool geometrySubscribed = false;
   std::vector<api::OverlayLayerGeometry> geometry;
+  /// B4 round 5: the subscribed views' cameras at this frame (FrameGeometry.views).
+  std::vector<api::OverlayView> views;
 };
 
 /// A viewport's output: slot textures of width × height physical pixels.
