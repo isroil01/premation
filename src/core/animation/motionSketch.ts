@@ -30,8 +30,7 @@
  * way: right for an unparented layer, silently wrong under a moving parent.
  */
 
-import { defaultAnimation, type Keyframe } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
+import type { Keyframe } from '@motion/animation';
 import {
   sketchToKeyframes,
   SketchRecorder,
@@ -203,29 +202,16 @@ export function cancelMotionSketch(): void {
 }
 
 /**
- * End the recording and write it as ONE undo step.
- *
- * Returns the number of keyframes written per axis, or 0 when nothing was
- * recorded. `runAnimEdit` wraps the whole write exactly as `PuppetEditCommand`
- * does, so a gesture undoes in one go rather than one keyframe at a time —
- * which is the difference between an undoable feature and an unusable one.
+ * End the recording: the armed layer and its take as x / y tracks (times are
+ * COMPOSITION seconds, as recorded), or null when nothing was armed. The
+ * session is cleared. Writing it is the caller's (one engine batch:
+ * providers/commands/motionSketchEdits.ts).
  */
-export function finishMotionSketch(): number {
-  if (!session) return 0;
+export function takeMotionSketch(): { nodeId: string; tracks: MotionSketchTracks } | null {
+  if (!session) return null;
   const { nodeId, recorder, opts } = session;
   session = null;
   const tracks = motionSketchTracks(recorder.raw(), opts);
   recorder.reset();
-  if (tracks.x.length === 0) return 0;
-
-  const existingOf = (prop: string): readonly Keyframe[] =>
-    defaultAnimation.tracksFor(nodeId).find((t) => t.prop === prop)?.keyframes ?? [];
-
-  runAnimEdit('Motion Sketch', () => {
-    defaultAnimation.batch(() => {
-      defaultAnimation.setKeyframes(nodeId, 'x', spliceRecordedRange(existingOf('x'), tracks.x));
-      defaultAnimation.setKeyframes(nodeId, 'y', spliceRecordedRange(existingOf('y'), tracks.y));
-    });
-  });
-  return tracks.x.length;
+  return { nodeId, tracks };
 }

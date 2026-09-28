@@ -429,24 +429,22 @@ async function layerKeys(nodeId: string): Promise<Array<{ ref: PropRef; keys: Ar
 }
 
 /**
- * Time-Reverse Keyframes on a layer. The legacy assistant mirrors every key
- * within the layer's OVERALL span; `reverseKeyframes` mirrors each property
- * within its own. Through the engine when the two agree (every animated
- * property spans the same time — the common case); otherwise false → legacy.
- * Resolves to 'none' when the layer has no keys.
+ * Time-Reverse Keyframes on a layer: every key mirrored within the layer's
+ * OVERALL span, as one `reverseKeyframes` (it mirrors the whole selection as
+ * one block in both engines). One entry. Resolves to 'none' when the layer has
+ * no keys, false when its tracks are not addressable or the engine refused.
  */
 export async function timeReverseKeyframesEdit(nodeId: string): Promise<boolean | 'none'> {
-  const sets = await layerKeys(nodeId);
-  if (!sets) return false;
+  const raw = await layerKeys(nodeId);
+  if (!raw) return false;
+  // Member tracks of one property (X / Y of Position) answer the same key set: one set per property.
+  const sets = [...new Map(raw.map((s) => [s.ref.path, s])).values()];
   const all = sets.flatMap((s) => s.keys);
   if (all.length === 0) return 'none';
-  const spans = sets.filter((s) => s.keys.length > 0).map((s) => {
-    const t = s.keys.map((k) => k.time);
-    return `${Math.min(...t)}:${Math.max(...t)}`;
-  });
-  if (new Set(spans).size > 1) return false;
-  await edit('Time-reverse keyframes', { type: 'reverseKeyframes', ids: all.map((k) => k.id) });
-  return true;
+  // `reverseKeyframes` mirrors the keys as ONE block within the span of the whole selection (both engines, as
+  // After Effects), so the layer's keys go in one command.
+  const res = await edit('Time-reverse keyframes', { type: 'reverseKeyframes', ids: [...new Set(all.map((k) => k.id))] });
+  return res.ok;
 }
 
 /** Easy Ease every key of a layer's animated numeric properties. One entry. */

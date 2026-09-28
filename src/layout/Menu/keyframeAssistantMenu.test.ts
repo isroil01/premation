@@ -36,7 +36,7 @@ describe('Animation menu keyframe assistants', () => {
     const block = providers.slice(at, next < 0 ? providers.length : next);
     expect(block).not.toMatch(/shortcut:/);
 
-    const time = readSource('core/animation/layerTimeCommands.ts');
+    const time = readSource('providers/commands/layerTimeCommands.ts');
     const layerAt = time.indexOf(`asCommandId('time.reverseLayer')`);
     expect(layerAt).toBeGreaterThan(0);
     const layerBlock = time.slice(layerAt, time.indexOf('asCommandId(', layerAt + 1));

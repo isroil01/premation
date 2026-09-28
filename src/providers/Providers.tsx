@@ -85,7 +85,7 @@ import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
 import { buildCaptionCommands } from './commands/captionCommands';
 import { buildChoreographyCommands } from '@core/animation/choreographyCommands';
 import { buildBeatCommands } from '@core/audio/beatCommands';
-import { buildSpeedRampCommands } from '@core/animation/speedRampCommands';
+import { buildSpeedRampCommands } from './commands/speedRampCommands';
 import { buildLayerTimeCommands } from './commands/layerTimeCommands';
 import { buildExpressionCommands } from './commands/expressionCommands';
 import { buildLayerTransformCommands } from '@core/scene/layerTransformCommands';
@@ -108,22 +108,18 @@ import { openCustomizeDialog } from '@layout/Settings/openCustomizeDialog';
 import { openVersionHistory } from '@layout/History/VersionHistoryPanel';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
-import { loadBlockTower } from '@core/scene/seedBlockTower';
 import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { applyRigPresetEdit } from '@core/engine/rigPaths';
 import { REFUSAL_TEXT } from '@core/animation/exponentialScale';
 import { BAKE_REFUSAL_TEXT } from '@core/animation/convertExpressionToKeyframes';
-import {
-  timeReverseKeyframes,
-  easyEaseAll,
-} from '@core/animation/keyframeAssistants';
 import { openSmootherDialog, smootherTracks, smootherTracksOf } from '@layout/Motion/SmootherDialog';
 import { openWigglerDialog, wigglerTracks, wigglerTracksOf } from '@layout/Motion/WigglerDialog';
 import { fetchMemberTracks, memberTracksNow } from '@stores/memberTracks';
 import { fetchLayerBox } from '@stores/layerBoxes';
 import { compTime } from '@core/engine/propRefs';
-import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
+import { armMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
+import { finishMotionSketchEdit } from './commands/motionSketchEdits';
 import { installExpressionProviders } from '@core/engine/expressionProviders';
 import { installSceneRevisionUpkeep } from '@core/engine/sceneRevisionUpkeep';
 import { ProjectCommands } from '@layout/Menu';
@@ -144,7 +140,6 @@ import { nullsFromPathEdit, shapesFromTextEdit } from '@layout/Scene/layerCreate
 import { buildPathCommands } from '@core/workspace/pathCommands';
 import { requireEngineJob, runEngineJob } from '@core/engine/engineJobs';
 import { secondsToFlicks } from '@motion/engine-api';
-import { centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { itemAssetsOf } from '@core/mirror/itemAssets';
 import { compRecordFromSettings, settingsDurationSeconds, settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
@@ -1113,12 +1108,11 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         };
         const onUp = (): void => {
           cleanup();
-          const n = finishMotionSketch();
           if (isTransportPlaying()) pauseTransport();
-          notify(
+          void finishMotionSketchEdit().then((n) => notify(
             n > 0 ? `Motion Sketch — ${n} keyframes recorded` : 'Motion Sketch — nothing recorded',
             n > 0 ? 'success' : 'warning',
-          );
+          ));
         };
         const onKey = (ev: KeyboardEvent): void => {
           if (ev.key !== 'Escape') return;
@@ -1178,8 +1172,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         if (!id) return;
         void timeReverseKeyframesEdit(id).then((done) => {
           if (done === 'none') { notify('Layer has no keyframes yet', 'warning'); return; }
-          // B3-legacy: engine gap — `reverseKeyframes` mirrors each property within its OWN span; the assistant mirrors the layer's overall span (they differ when properties span different times).
-          if (!done && !timeReverseKeyframes(id)) { notify('Layer has no keyframes yet', 'warning'); return; }
+          // A refused edit has already reported its error.
+          if (!done) return;
           notify('Keyframes reversed', 'success');
         });
       },
@@ -1199,8 +1193,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         if (!id) return;
         void easyEaseAllEdit(id).then((done) => {
           if (done === 'none') { notify('Layer has no keyframes yet', 'warning'); return; }
-          // B3-legacy: engine gap — an animated property outside the API catalog.
-          if (!done && !easyEaseAll(id)) { notify('Layer has no keyframes yet', 'warning'); return; }
+          // A refused edit has already reported its error.
+          if (!done) return;
           notify('Eased all keyframes', 'success');
         });
       },
@@ -1804,16 +1798,6 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       },
     },
     {
-      id: asCommandId('scene.loadBlockTower'),
-      label: 'Load: Block Tower',
-      description: 'Shapes hop, stack into a tower, then burst into pieces.',
-      icon: 'component',
-      enabled: () => true,
-      execute: async () => {
-        if (await loadBlockTower()) notify('Loaded Block Tower', 'success');
-      },
-    },
-    {
       id: asCommandId('layer.newText'),
       label: 'Text',
       shortcut: { key: 't', meta: true, alt: true, shift: true },
@@ -2030,10 +2014,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: () => {
         const ids = useSelectionStore.getState().ids;
         // Through the engine (B3): anchor + compensating Position, one entry for the selection.
-        void centreAnchorEdit(ids, playheadSeconds()).then((done) => {
-          // B3-legacy: engine gap — a node that is not a layer of a composition.
-          if (!done) for (const nodeId of ids) centreAnchorInContent(nodeId);
-        });
+        void centreAnchorEdit(ids, playheadSeconds());
       },
     },
     {
@@ -2062,10 +2043,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: () => {
         const frame = activeTabCompSize();
         const ids = useSelectionStore.getState().ids;
-        void centreInCompEdit(ids, frame, playheadSeconds()).then((done) => {
-          // B3-legacy: engine gap — a node that is not a layer of a composition.
-          if (!done) for (const nodeId of ids) centreInFrame(nodeId, frame);
-        });
+        void centreInCompEdit(ids, frame, playheadSeconds());
       },
     },
     {
