@@ -15,7 +15,6 @@
 
 import { BuiltinCommands } from '@core/commands/Command';
 import { cloudProjectsEnabled } from '@core/config/edition';
-import { isDevBuild } from '@core/config/devBuild';
 // `tryCoreServices`, not `getFileManager`: this model's `visible` predicates are
 // evaluated wherever the menu renders, and TitleBar renders on /login and
 // /dashboard, where the core has not booted. `coreServices()` throws there.
@@ -306,13 +305,6 @@ export const APP_MENU: MenuGroupModel[] = [
       { separator: true },
       { commandId: 'comp.saveFrame', label: 'Save Frame As PNG' },
       { commandId: 'comp.copyFrame', label: 'Copy Frame to Clipboard' },
-      { separator: true, visible: isDevBuild },
-      // A demo-scene loader, not a composition verb — last, below a rule, so
-      // it does not read as part of the working set above it. DEVELOPMENT
-      // BUILDS ONLY: it replaces the open scene with a physics test rig, and a
-      // shipped Composition menu ending in "Load: Block Tower" reads as a
-      // debug build. The command stays registered (the palette, tests).
-      { commandId: 'scene.loadBlockTower', label: 'Load: Block Tower', visible: isDevBuild },
     ],
   },
   {

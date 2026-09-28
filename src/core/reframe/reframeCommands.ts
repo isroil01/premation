@@ -20,6 +20,7 @@ import { requireEngineJob, runEngineJob } from '@core/engine/engineJobs';
 import { engine } from '@core/engine/engineInstance';
 import { useUIStore } from '@stores/uiStore';
 import { useProjectStore } from '@stores/projectStore';
+import { documentMirror } from '@stores/documentMirror';
 import {
   ASPECT_PRESETS,
   AutoReframeError,
@@ -31,8 +32,9 @@ import {
 function activeComp(): { id: string; width: number; height: number } | undefined {
   const project = useProjectStore.getState();
   const id = project.activeTabId ? project.tabs[project.activeTabId]?.compositionId : undefined;
-  const comp = id ? project.comps[id] : undefined;
-  return comp ? { id: comp.id, width: comp.width, height: comp.height } : undefined;
+  // B4: the composition's frame from the document mirror.
+  const settings = id ? documentMirror().comp(id)?.settings : undefined;
+  return id && settings ? { id, width: settings.width, height: settings.height } : undefined;
 }
 
 /**

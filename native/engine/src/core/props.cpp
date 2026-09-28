@@ -286,8 +286,12 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
     }
     const bool color = row.members.size() == 4 && row.members[0].ends_with("_r") && row.members[1].ends_with("_g") &&
                        row.members[2].ends_with("_b") && row.members[3].ends_with("_a");
-    if (row.members.empty()) {
-      if (auto p = parse_prefixed_id_rest(row.prop, "paint."); p && p->rest == "path") {
+    // A paint stroke's Path is a data track whether keyed or not: the timeline's row lists the track as its
+    // member once keyed (for its key lane), which must not turn the API property into a scalar (props.ts).
+    const auto paintPath = parse_prefixed_id_rest(row.prop, "paint.");
+    const bool isPaintPath = paintPath && paintPath->rest == "path";
+    if (row.members.empty() || isPaintPath) {
+      if (isPaintPath) {
         PropBinding b;
         b.path = api_path_for(row.prop, &row, animIds, selIds);
         b.name = row.label;

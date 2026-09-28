@@ -228,12 +228,14 @@ describe('registry commands', () => {
     expect(await easyEaseAllEdit(s.A)).toBe('none');
   });
 
-  it('Time-Reverse falls back when properties span different times', async () => {
+  it('Time-Reverse mirrors every key within the layer OVERALL span when properties span different times', async () => {
     await h.run({ type: 'addKeyframes', keys: [
       { prop: { layer: s.B, path: 'transform/opacity' }, time: 0, value: { kind: 'scalar', value: 0 }, spatialIn: [], spatialOut: [] },
       { prop: { layer: s.B, path: 'transform/opacity' }, time: 5 * 705600000, value: { kind: 'scalar', value: 100 }, spatialIn: [], spatialOut: [] },
     ] });
-    expect(await timeReverseKeyframesEdit(s.B)).toBe(false);
+    expect(await timeReverseKeyframesEdit(s.B)).toBe(true);
+    // Position's keys (0 s, 1 s) mirror across the overall 0 - 5 s span: 4 s and 5 s.
+    expect(defaultAnimation.getTrackKeyframes(s.B, 'x')!.map((k) => Math.round(k.t * 1000) / 1000)).toEqual([4, 5]);
   });
 
   it('Stagger Animations shifts the second animated layer by the interval, one entry', async () => {

@@ -223,8 +223,19 @@ const WORKSPACE_READS = new Set(['getNodeScreenPlacement', 'sceneNodes', 'hitTes
  */
 const TOOL_DISPATCH = new Set(['orbitNavBy', 'trackNavBy', 'dollyNavBy', 'smoothDollyNavBy', 'cancelSmoothDolly']);
 
-/** Document stores. `useProjectStore` only counts where the read mentions `comps`. */
-const DOC_STORES = new Set(['useCompositionStore', 'useAssetStore', 'useSceneStore', 'useMotionBlurStore']);
+/**
+ * Document stores (any read).
+ *
+ * B4 round 7: `useAssetStore`, `useCompositionStore` and `useProjectStore(comps)` are no
+ * longer counted. The engine always owns the document now, and those stores are
+ * PROJECTIONS of the mirror: the assets' items half follows ItemInfo
+ * (`bindEngineItems`), the project store's compositions follow CompInfo
+ * (`bindEngineComps`, which `useCompositionStore` reads); the rest is page session
+ * state (media urls, proxies). The TypeScript document they used to be went with
+ * the non-owner session. Engine-reading MODULES are still classified by `comps`.
+ */
+const DOC_STORES = new Set(['useSceneStore', 'useMotionBlurStore']);
+const MIRROR_BOUND_STORES = new Set(['useCompositionStore', 'useAssetStore', 'useProjectStore']);
 
 const REVISION_HOOKS = new Set([
   'useNodeRevision', 'useNodesRevision', 'useSceneRevision', 'useSceneRevisionFrame', 'useAnimationRevision',
@@ -322,10 +333,6 @@ function calledMember(memberNode) {
   return null;
 }
 
-function mentionsComps(node, sourceCode) {
-  return /\bcomps\b/.test(sourceCode.getText(node));
-}
-
 const rule = {
   meta: {
     type: 'suggestion',
@@ -338,7 +345,6 @@ const rule = {
   create(context) {
     const imports = new Map(); // local → { source, imported }
     const report = (node, kind, what) => context.report({ node, messageId: 'read', data: { kind, what } });
-    const sourceCode = context.sourceCode;
 
     const isImportedSingleton = (name) => {
       const imp = imports.get(name);
@@ -354,7 +360,7 @@ const rule = {
       if (SINGLETONS.has(name)) return null; // counted as a singleton use
       if (name === 'getTimelineController') return null; // counted as a timeline use
       if (REVISION_HOOKS.has(name)) return null; // counted as revision plumbing
-      if (DOC_STORES.has(name) || name === 'useProjectStore') return null; // counted as store reads
+      if (DOC_STORES.has(name) || MIRROR_BOUND_STORES.has(name)) return null; // store reads / mirror projections
       if (!isEngineReaderModule(imp.source)) return null;
       if (PURE_READS.has(name)) return null;
       if (TOOL_DISPATCH.has(name) && imp.source.startsWith('@core/workspace/')) return null; // tool dispatch, not a read
@@ -448,13 +454,8 @@ const rule = {
           report(node, 'store', storeName);
           return;
         }
-        if (storeName === 'useProjectStore') {
-          // Only the reads that reach the composition records.
-          let top = node;
-          while (top.parent && (top.parent.type === 'MemberExpression' || (top.parent.type === 'CallExpression' && top.parent.callee === top) || top.parent.type === 'ChainExpression' || top.parent.type === 'TSNonNullExpression')) top = top.parent;
-          if (mentionsComps(top, sourceCode)) report(node, 'store', 'useProjectStore(comps)');
-          return;
-        }
+        // Projections of the mirror (see DOC_STORES): not engine reads.
+        if (MIRROR_BOUND_STORES.has(storeName)) return;
 
         // C. helpers imported from engine-reading modules (and namespace members)
         if (imp.imported === '*') {

@@ -72,7 +72,6 @@
   "menu.transport.audioScrub": "Audio Scrubbing",
   "menu.comp.saveFrame": "Save Frame As PNG",
   "menu.comp.copyFrame": "Copy Frame to Clipboard",
-  "menu.scene.loadBlockTower": "Load: Block Tower",
   "menu.layer": "Layer",
   "menu.sub.new": "New",
   "menu.layer.newText": "Text",

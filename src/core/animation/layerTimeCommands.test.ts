@@ -4,9 +4,6 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { getNodeLayerTime } from '@core/scene/layerTime';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import {
-  buildLayerTimeCommands,
-  timeTargets,
-  stretchTargets,
   toggleReverse,
   toggleFreeze,
   applyStretch,
@@ -135,18 +132,6 @@ beforeEach(() => {
 });
 
 describe('Layer ▸ Time commands', () => {
-  it('footage-only verbs target footage; Time Stretch targets every layer (AE)', () => {
-    expect(timeTargets()).toEqual([VIDEO]);
-    expect(stretchTargets()).toEqual([VIDEO, SHAPE]);
-    const cmds = buildLayerTimeCommands();
-    expect(cmds.map((c) => String(c.id))).toEqual(expect.arrayContaining([
-      'time.reverseLayer', 'time.freezeFrame', 'time.timeStretch', 'time.enableTimeRemap', 'time.frameBlend.mix',
-    ]));
-    for (const c of cmds) expect(c.enabled?.()).toBe(true);
-    useSelectionStore.setState({ ids: [SHAPE] });
-    for (const c of cmds) expect(c.enabled?.()).toBe(String(c.id) === 'time.timeStretch');
-  });
-
   it('reverse and freeze toggle, freeze holding the playhead time', () => {
     toggleReverse([VIDEO]);
     expect(getNodeLayerTime(VIDEO).reverse).toBe(true);
@@ -168,13 +153,6 @@ describe('Layer ▸ Time commands', () => {
     expect(getNodeLayerTime(VIDEO).stretch).toBe(1000);
     setFrameBlend([VIDEO], 'pixelMotion');
     expect(getNodeLayerTime(VIDEO).frameBlend).toBe('pixelMotion');
-  });
-
-  it('Freeze On Last Frame is a command, and Ctrl/Cmd+Alt+R is Time-Reverse Layer', () => {
-    const cmds = buildLayerTimeCommands();
-    const byId = new Map(cmds.map((c) => [String(c.id), c]));
-    expect(byId.has('time.freezeOnLastFrame')).toBe(true);
-    expect(byId.get('time.reverseLayer')?.shortcut).toEqual({ key: 'r', meta: true, alt: true });
   });
 
   it('time remap enables with one identity keyframe at the playhead and removes cleanly', () => {

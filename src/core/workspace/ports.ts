@@ -1180,7 +1180,8 @@ function sendMove(label: string, st: MoveAction, ids: readonly NodeId[], view: C
     for (const s of st.starts) {
       if (!s.sketch) continue;
       const v = movedValues(s, st.total);
-      recordMotionSketchSample(s.id, v.x!, v.y!, getRemappedTime(s.id, rawTime));
+      // Composition time: the engine maps it onto the layer's keyframe axis when the take is written.
+      recordMotionSketchSample(s.id, v.x!, v.y!, rawTime);
     }
   }
   sendLayerValues(label, () => {

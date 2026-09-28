@@ -25,14 +25,13 @@ import { prunePropertySelectionToNodes } from '@stores/propertySelectionStore';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { copyEdit, cutEdit, pasteEdit } from './clipboardEdits';
 import { audioSliderNullEdit, canExponentialScale, expressionBakeEdit, exponentialScaleEdit, hasBakeableExpression } from './menuCommandEdits';
-import { goToMarkerIndex, isTransportPlaying, pauseTransport, playTransport, seekPlayhead } from '@core/timeline/timelineView';
+import { goToMarkerIndex, isTransportPlaying, pauseTransport, playTransport } from '@core/timeline/timelineView';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
 import { getTime } from '@stores/playbackClockStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { openProjectPath } from '@core/project/openProjectPath';
 import { openLocalMotionFile, saveToComputer } from '@core/project/localProjectIO';
 import { offerRelink } from '@layout/Project/RelinkAssetsDialog';
@@ -44,16 +43,11 @@ import {
   type AssembleTarget,
 } from '@layout/Assets/footageAssembly';
 import { panelAssetSelectionIds, selectedPanelAssets, selectedPanelFootage } from '@core/composition/assetSelection';
-import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { baselineHistoryEdit } from '@core/engine/historyBaseline';
 import { performUndo, performRedo } from '@stores/historyStore';
 import { attachRenderBackendEvents } from '@stores/renderBackendStore';
-import { Button } from '@components/Button';
 import { openAbout } from '@layout/Help/AboutDialog';
-import { dismissStartScreen } from '@layout/Start/useStartScreenVisible';
-import { getAutosaveController } from '@core/persistence/AutosaveController';
-import { readRecovery, clearRecovery, restoreRecovery } from '@core/persistence/recovery';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { usePresentationStore } from '@stores/presentationStore';
 import { useGuidesStore } from '@stores/guidesStore';
@@ -88,21 +82,18 @@ import type { SaveOutcome } from '@core/project/ProjectManager';
 import { canSyncCurrentProject, syncCurrentProject } from '@core/sync/syncCurrentProject';
 import { pageStillFrame } from '@core/rendering/pageFrame';
 import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
-import { buildCaptionCommands } from '@core/captions/captionCommands';
+import { buildCaptionCommands } from './commands/captionCommands';
 import { buildChoreographyCommands } from '@core/animation/choreographyCommands';
 import { buildBeatCommands } from '@core/audio/beatCommands';
-import { buildSpeedRampCommands } from '@core/animation/speedRampCommands';
-import { buildLayerTimeCommands } from '@core/animation/layerTimeCommands';
-import { buildExpressionCommands } from '@core/animation/expressionCommands';
+import { buildSpeedRampCommands } from './commands/speedRampCommands';
+import { buildLayerTimeCommands } from './commands/layerTimeCommands';
+import { buildExpressionCommands } from './commands/expressionCommands';
 import { buildLayerTransformCommands } from '@core/scene/layerTransformCommands';
 import { resetTransformEdit } from '@layout/Timeline/resetEdits';
 import { openTimeStretchDialog } from '@layout/Composition/TimeStretchDialog';
 import { openAutoOrientDialog } from '@layout/Composition/AutoOrientDialog';
 import { buildCameraCommands } from '@core/scene/cameraCommands';
-import {
-  buildSmartAnimateCommands,
-  installSmartAnimateCommandSync,
-} from '@core/animation/smartAnimateCommands';
+import { buildSmartAnimateCommands, installSmartAnimateCommandSync } from './commands/smartAnimateCommands';
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
 import { buildIk3DCommands } from '@core/scene/ikCommands';
 import { buildBakeCommands } from '@core/simulation/bakeCommands';
@@ -114,24 +105,18 @@ import { openCustomizeDialog } from '@layout/Settings/openCustomizeDialog';
 import { openVersionHistory } from '@layout/History/VersionHistoryPanel';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
-import { seedDefaultScene } from '@core/scene/seedDefaultScene';
-import { loadBlockTower } from '@core/scene/seedBlockTower';
 import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { applyRigPresetEdit } from '@core/engine/rigPaths';
 import { REFUSAL_TEXT } from '@core/animation/exponentialScale';
 import { BAKE_REFUSAL_TEXT } from '@core/animation/convertExpressionToKeyframes';
-import {
-  timeReverseKeyframes,
-  easyEaseAll,
-} from '@core/animation/keyframeAssistants';
 import { openSmootherDialog, smootherTracks, smootherTracksOf } from '@layout/Motion/SmootherDialog';
 import { openWigglerDialog, wigglerTracks, wigglerTracksOf } from '@layout/Motion/WigglerDialog';
 import { fetchMemberTracks, memberTracksNow } from '@stores/memberTracks';
 import { fetchLayerBox } from '@stores/layerBoxes';
 import { compTime } from '@core/engine/propRefs';
-import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
-import { AudioPlaybackBridge } from '@hooks/useAudioPlayback';
+import { armMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
+import { finishMotionSketchEdit } from './commands/motionSketchEdits';
 import { installExpressionProviders } from '@core/engine/expressionProviders';
 import { installSceneRevisionUpkeep } from '@core/engine/sceneRevisionUpkeep';
 import { ProjectCommands } from '@layout/Menu';
@@ -152,7 +137,6 @@ import { nullsFromPathEdit, shapesFromTextEdit } from '@layout/Scene/layerCreate
 import { buildPathCommands } from '@core/workspace/pathCommands';
 import { requireEngineJob, runEngineJob } from '@core/engine/engineJobs';
 import { secondsToFlicks } from '@motion/engine-api';
-import { centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { itemAssetsOf } from '@core/mirror/itemAssets';
 import { compRecordFromSettings, settingsDurationSeconds, settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
@@ -1121,12 +1105,11 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         };
         const onUp = (): void => {
           cleanup();
-          const n = finishMotionSketch();
           if (isTransportPlaying()) pauseTransport();
-          notify(
+          void finishMotionSketchEdit().then((n) => notify(
             n > 0 ? `Motion Sketch — ${n} keyframes recorded` : 'Motion Sketch — nothing recorded',
             n > 0 ? 'success' : 'warning',
-          );
+          ));
         };
         const onKey = (ev: KeyboardEvent): void => {
           if (ev.key !== 'Escape') return;
@@ -1186,8 +1169,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         if (!id) return;
         void timeReverseKeyframesEdit(id).then((done) => {
           if (done === 'none') { notify('Layer has no keyframes yet', 'warning'); return; }
-          // B3-legacy: engine gap — `reverseKeyframes` mirrors each property within its OWN span; the assistant mirrors the layer's overall span (they differ when properties span different times).
-          if (!done && !timeReverseKeyframes(id)) { notify('Layer has no keyframes yet', 'warning'); return; }
+          // A refused edit has already reported its error.
+          if (!done) return;
           notify('Keyframes reversed', 'success');
         });
       },
@@ -1207,8 +1190,8 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         if (!id) return;
         void easyEaseAllEdit(id).then((done) => {
           if (done === 'none') { notify('Layer has no keyframes yet', 'warning'); return; }
-          // B3-legacy: engine gap — an animated property outside the API catalog.
-          if (!done && !easyEaseAll(id)) { notify('Layer has no keyframes yet', 'warning'); return; }
+          // A refused edit has already reported its error.
+          if (!done) return;
           notify('Eased all keyframes', 'success');
         });
       },
@@ -1812,16 +1795,6 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       },
     },
     {
-      id: asCommandId('scene.loadBlockTower'),
-      label: 'Load: Block Tower',
-      description: 'Shapes hop, stack into a tower, then burst into pieces.',
-      icon: 'component',
-      enabled: () => true,
-      execute: async () => {
-        if (await loadBlockTower()) notify('Loaded Block Tower', 'success');
-      },
-    },
-    {
       id: asCommandId('layer.newText'),
       label: 'Text',
       shortcut: { key: 't', meta: true, alt: true, shift: true },
@@ -2038,10 +2011,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: () => {
         const ids = useSelectionStore.getState().ids;
         // Through the engine (B3): anchor + compensating Position, one entry for the selection.
-        void centreAnchorEdit(ids, playheadSeconds()).then((done) => {
-          // B3-legacy: engine gap — a node that is not a layer of a composition.
-          if (!done) for (const nodeId of ids) centreAnchorInContent(nodeId);
-        });
+        void centreAnchorEdit(ids, playheadSeconds());
       },
     },
     {
@@ -2070,10 +2040,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: () => {
         const frame = activeTabCompSize();
         const ids = useSelectionStore.getState().ids;
-        void centreInCompEdit(ids, frame, playheadSeconds()).then((done) => {
-          // B3-legacy: engine gap — a node that is not a layer of a composition.
-          if (!done) for (const nodeId of ids) centreInFrame(nodeId, frame);
-        });
+        void centreInCompEdit(ids, frame, playheadSeconds());
       },
     },
     {
@@ -2933,15 +2900,9 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
 
         // Default property editors + starter scene content.
         try { registerDefaultEditors(); } catch { /* ignore */ }
-        // A pop-out window must NOT seed its own scene. It renders a detached
-        // view of the composition you already have open, and windowSync fills it
-        // in from the editor shell. Seeding here is what made a popped-out Scene
-        // panel list a completely different (demo) composition.
-        // Owner mode seeds nothing: the first document is the engine's own
-        // newProject, which the page's replica receives too (engineOwnedSession).
-        if (!isPopoutWindow() && !ownsDocument) {
-          try { seedDefaultScene(); } catch { /* ignore */ }
-        }
+        // Nothing is seeded: the first document is the engine's own
+        // newProject, which the page's replica receives too
+        // (engineOwnedSession); a pop-out window is filled by windowSync.
         try { void useAssetStore.getState().initialize(); } catch { /* ignore */ }
 
         // History: the "Open" baseline (a load boundary). Every edit after it
@@ -2986,88 +2947,16 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           pruneKeyframeSelectionToNodes(nodeIds);
         }));
 
-        // Dirty tracking + autosave (crash recovery). Edits mark the active
-        // document dirty (amber dot); autosave persists a recovery snapshot
-        // every 60s while dirty, never clearing the unsaved indicator.
-        // Owner mode (D5 / F2): the engine's session does all three, from the
-        // mirror (engineOwnedSession.tsx) — the TypeScript bus is the replica's.
+        // Dirty tracking, autosave and crash recovery: the engine's session
+        // does all three, from the mirror (engineOwnedSession.tsx). Without an
+        // engine host (the headless CLI window) there is nothing to track.
         if (engineOwnsDocumentNow()) {
           try {
             await installEngineOwnedSession(track);
           } catch (err) {
             console.error('[boot] the engine-owned session failed to start', err);
           }
-        } else try {
-          const markDirty = (): void => {
-            const s = useProjectStore.getState();
-            if (s.activeTabId && !s.tabs[s.activeTabId]?.dirty) s.actions.markDirty(s.activeTabId, true);
-          };
-          // A landed video decode is not an unsaved edit — before this the
-          // amber dot appeared just from playing footage back.
-          track(getEventBus().on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) markDirty(); }));
-          track(getEventBus().on('NodeUpdated', markDirty));
-          track(getEventBus().on('SceneGraphChanged', markDirty));
-          getAutosaveController().start({
-            intervalMs: 60_000,
-            now: () => Date.now(),
-            getTime: () => {
-              const s = useProjectStore.getState();
-              return (s.activeTabId ? s.tabs[s.activeTabId]?.time : 0) ?? 0;
-            },
-            isDirty: () => {
-              const s = useProjectStore.getState();
-              return !!(s.activeTabId && s.tabs[s.activeTabId]?.dirty);
-            },
-          });
-        } catch { /* ignore */ }
-
-        // Crash recovery: offer to restore the previous unsaved session.
-        // (Owner mode: the engine's recovery record, offered above.)
-        if (!engineOwnsDocumentNow()) try {
-          const rec = readRecovery();
-          if (rec) {
-            const mins = Math.max(1, Math.round((Date.now() - rec.savedAt) / 60_000));
-            openModal({
-              // Fixed id so StrictMode's double-invoke can't stack duplicates.
-              id: 'recovery-modal',
-              title: 'Recover unsaved work?',
-              size: 'sm',
-              render: () => (
-                <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-md)', lineHeight: 1.6 }}>
-                  Premation found unsaved changes from your last session
-                  (about {mins} min ago). Restore them, or discard and start fresh.
-                </div>
-              ),
-              footer: (close) => (
-                <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'flex-end' }}>
-                  <Button variant="ghost" size="sm" onClick={() => { clearRecovery(); close(); }}>Discard</Button>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => {
-                      const t = restoreRecovery(rec);
-                      // Was `Math.round(t * 60)` — a hardcoded 60 fps that put
-                      // the frame number on a different clock from the comp for
-                      // every project not shot at 60.
-                      seekPlayhead(t);
-                      bumpScene();
-                      // The history baseline after crash recovery (a load boundary).
-                      void baselineHistoryEdit('Recovered');
-                      const s = useProjectStore.getState();
-                      if (s.activeTabId) s.actions.markDirty(s.activeTabId, true);
-                      // The scene is back; get the project browser out of its way.
-                      dismissStartScreen();
-                      notify('Session recovered', 'success');
-                      close();
-                    }}
-                  >
-                    Restore
-                  </Button>
-                </div>
-              ),
-            });
-          }
-        } catch { /* ignore */ }
+        }
       } finally {
         bootTask.end();
       }
@@ -3103,7 +2992,6 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
   return (
     <>
       {children}
-      <AudioPlaybackBridge />
       <CommandPalette />
       <PresentationMode />
       <OnboardingOverlay onDone={() => getSettingsManager().set('onboarding.seen', true)} />
