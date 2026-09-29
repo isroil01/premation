@@ -51,6 +51,12 @@ const listeners = new Map<number, Set<() => void>>();
 const subscribed = new Map<number, string>();
 /** The last subscription sent per viewport, settled once the engine has it. */
 const pendingSubscription = new Map<number, Promise<void>>();
+// The real-app harness (scripts/realapp) reads the live maps: what each
+// viewport subscribed and the geometry its last drawn frame carried. By
+// reference, installed once — nothing per frame.
+if (typeof window !== 'undefined') {
+  (window as unknown as { __premationOverlayGeometry?: unknown }).__premationOverlayGeometry = { pushed, engineDriven, subscribed };
+}
 
 function merge(records: ReadonlyArray<OverlayLayerGeometry>): Map<string, OverlayLayer> {
   const out = new Map<string, OverlayLayer>();
