@@ -96,7 +96,7 @@ const CASES: AuditCase[] = [
   // ── scene-graph writers NOT recorded as animation edits (core helpers; the UI sends the engine
   //    commands for these — setLayerSwitches / setParent / setLayerTiming — so they are not reached
   //    from a menu, but anything that still calls them writes the replica only) ──
-  { name: 'Animate In (choreography — P4 is porting it to engine edits)', expect: 'replica-only', run: ({ a, b }) => runChoreography({ kind: 'in', nodeIds: [a, b], params: commandStaggerParams('in', [a, b], 30) }) },
+  { name: 'Animate In (choreography, engine edits since bcb9b64a)', expect: 'owner', run: ({ a, b }) => runChoreography({ kind: 'in', nodeIds: [a, b], params: commandStaggerParams('in', [a, b], 30) }) },
   { name: 'threeD.set3DEnabled called directly (helper)', expect: 'replica-only', run: ({ b }) => set3DEnabled(b, true) },
   { name: 'parenting.reparentNode called directly (helper)', expect: 'replica-only', run: ({ a, b }) => reparentNode(b, a) },
   { name: 'layerTimeCommands.applyStretch (helper)', expect: 'replica-only', run: ({ a }) => applyStretch([a], 200) },
