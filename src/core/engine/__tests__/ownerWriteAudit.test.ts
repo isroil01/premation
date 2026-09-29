@@ -152,6 +152,16 @@ const CASES: AuditCase[] = [
     expect(plan.cmds.length).toBeGreaterThan(0);
     expect((await edit('Apply Style', plan.cmds)).ok).toBe(true);
   } },
+  { name: 'Animation preset (Presets panel / viewport drop: applyPreset at the playhead)', expect: 'owner', run: async ({ b }) => {
+    // What MotionPresetsPanel.apply sends: "Pop In" (scale 0→full over 0.5 s, opacity 0→100 over 0.3 s) at 1 s.
+    expect((await edit('Apply animation preset', { type: 'applyPreset', layers: [b], preset: 'Pop In', time: sec(1) })).ok).toBe(true);
+    const doc = unwrap(await ownedEngine()!.query({ type: 'getDocument', includeProperties: false, includeKeyframes: true }));
+    const times = (path: string): number[] =>
+      (doc.keyframes.find((k) => k.prop.layer === b && k.prop.path === path)?.keyframes ?? []).map((k) => k.time);
+    // In the ENGINE's document, on the comp-time axis the playhead is on (the layer starts at 0).
+    expect(times('layer/scale')).toEqual([sec(1), sec(1.5)]);
+    expect(times('transform/opacity')).toEqual([sec(1), sec(1.3)]);
+  } },
   { name: 'Add to Essential Properties (property row menu)', expect: 'owner', run: async ({ a }) => {
     const item = essentialPropMenuItems(a, 'opacity').find((i) => i.id === 'essential-toggle');
     expect(item).toBeDefined();

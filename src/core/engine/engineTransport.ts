@@ -49,11 +49,24 @@ function activeTab(): { id: string; comp: string; playing: boolean } | null {
   return { id, comp: tab.compositionId ?? '', playing: tab.playing === true };
 }
 
+/** The installed transport's teardown: there is exactly one per page. */
+let installedTeardown: (() => void) | null = null;
+
 /**
  * Wire the page's transport to `client` (the owner). Returns the teardown.
  * `stats` (optional) is filled for the harness / HUD.
+ *
+ * ONE transport per page: installing a second one tears the first down. Two
+ * wirings each guard only their own echo (`applying`), so each takes the
+ * other's engine-driven play flag and playhead for a user action: an engine
+ * `transportChanged: stopped` applied by one is sent back as `pause` by the
+ * other, the next `playing` as `play`, and every playhead as a `seek` — a
+ * play/pause/seek storm that pins the playhead near the start, draws frames
+ * out of order and ignores Pause (seen in `electron:dev`, where StrictMode ran
+ * the editor boot twice).
  */
 export function installEngineTransport(client: () => EngineClient, stats?: EngineTransportStats): () => void {
+  installedTeardown?.();
   const st: EngineTransportStats = stats ?? { seeksSent: 0, seeksCoalesced: 0, playheadEvents: 0, plays: 0, pauses: 0, activeComp: '' };
   /** Set while the ENGINE is moving the page's playhead / play flag (no echo back). */
   let applying = false;
@@ -65,7 +78,7 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
   const syncComp = (force = false): void => {
     const tab = activeTab();
     const comp = tab?.comp ?? '';
-    if (!comp || (!force && comp === sentComp)) return;
+    if (disposed || !comp || (!force && comp === sentComp)) return;
     if (!documentMirror().comp(comp)) return;  // not in the engine's document (yet)
     sentComp = comp;
     st.activeComp = comp;
@@ -224,13 +237,17 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
   const unsubMirror = documentMirror().subscribe(['comps', 'doc'], () => syncComp());
   syncComp();
 
-  return () => {
+  const teardown = (): void => {
+    if (disposed) return;
     disposed = true;
+    if (installedTeardown === teardown) installedTeardown = null;
     unsubEngine();
     unsubProject();
     unsubClock();
     unsubMirror();
   };
+  installedTeardown = teardown;
+  return teardown;
 }
 
 function safe<T>(fn: () => T, fallback: T): T {

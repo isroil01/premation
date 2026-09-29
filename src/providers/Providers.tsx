@@ -2476,11 +2476,21 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
      */
     let stopSync: (() => void) | null = null;
     const subs: Array<() => void> = [];
+    // A boot the cleanup already ran for (StrictMode's mount → unmount → mount
+    // in `electron:dev`, a route change mid-boot) must not finish: past its
+    // first await it would install a SECOND set of everything — two engine
+    // transports fighting over play/pause, two onboarding tours, doubled bus
+    // listeners — none of which the drained `subs` would ever release. So the
+    // boot stops at its awaits once cancelled, and anything registered late
+    // (installEngineOwnedSession's own awaits) is released on the spot.
     const track = (d: { dispose(): void } | (() => void)): void => {
-      subs.push(typeof d === 'function' ? d : () => d.dispose());
+      const dispose = typeof d === 'function' ? d : () => d.dispose();
+      if (cancelled) dispose();
+      else subs.push(dispose);
     };
     (async () => {
       await applyPreferencesToDocument();
+      if (cancelled) return;
       // D5 / F2: does the C++ engine own the document in this window? Main
       // decides (engine:status.ownsDocument); default off. A pop-out never
       // owns the lifecycle, but with the engine as owner it is a SECOND MIRROR
@@ -2488,6 +2498,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
       // requests; the page replica refreshes from exportDocument) instead of a
       // copy of the editor window's page document.
       const engineIsOwner = await processEngineOwnsDocument();
+      if (cancelled) return;
       const ownsDocument = !isPopoutWindow() && engineIsOwner;
       const mirrorsEngine = isPopoutWindow() && engineIsOwner;
       setEngineOwnsDocument(ownsDocument);
@@ -2959,7 +2970,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // Dirty tracking, autosave and crash recovery: the engine's session
         // does all three, from the mirror (engineOwnedSession.tsx). Without an
         // engine host (the headless CLI window) there is nothing to track.
-        if (engineOwnsDocumentNow()) {
+        if (!cancelled && engineOwnsDocumentNow()) {
           try {
             await installEngineOwnedSession(track);
           } catch (err) {
