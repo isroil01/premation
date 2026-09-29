@@ -64,6 +64,7 @@
  * the Layers, Assets and Inspector panels all draw from.
  */
 
+import { importModelEdit } from './modelImportEdits';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Panel } from '@components/Panel';
 import { Button } from '@components/Button';
@@ -396,7 +397,8 @@ export function AssetsPanel(): JSX.Element {
           path: f.webkitRelativePath || undefined,
           bytes: await f.arrayBuffer(),
         })));
-        const result = importModelFiles(sources);
+        const result = await importModelEdit(`Import ${all.find((f) => /\.gltf$/i.test(f.name))?.name ?? 'model'}`, () => importModelFiles(sources));
+        if (!result) throw new Error('the engine did not take the model');
         const modelName = all.find((f) => /\.gltf$/i.test(f.name))?.name ?? 'model';
         useUIStore.getState().notify({
           level: result.warning ? 'warning' : 'success',
@@ -421,7 +423,9 @@ export function AssetsPanel(): JSX.Element {
       if (/\.(glb|gltf)$/i.test(file.name)) {
         try {
           const { importGltfModel } = await import('@core/scene/modelImport');
-          const result = importGltfModel(await file.arrayBuffer(), file.name);
+          const bytes = await file.arrayBuffer();
+          const result = await importModelEdit(`Import ${file.name}`, () => importGltfModel(bytes, file.name));
+          if (!result) throw new Error('the engine did not take the model');
           const clipNote = result.clip
             ? ` · clip “${result.clip.name}” baked as keyframes (${result.clip.duration.toFixed(1)}s${result.clip.extraClips > 0 ? `, ${result.clip.extraClips} more clip${result.clip.extraClips === 1 ? '' : 's'} in file` : ''})`
             : '';

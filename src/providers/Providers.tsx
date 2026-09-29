@@ -97,6 +97,7 @@ import { buildSmartAnimateCommands, installSmartAnimateCommandSync } from './com
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
 import { buildIk3DCommands } from './commands/ikCommands';
 import { buildBakeCommands } from './commands/bakeCommands';
+import { importModelEdit } from '@layout/Assets/modelImportEdits';
 import { buildAudioCommands } from '@layout/Inspector/audioCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { easingTargetKeyframes } from '@core/animation/easingSelection';
@@ -345,7 +346,14 @@ async function pickAndOpenAfterEffectsProject(): Promise<void> {
     input.click();
   });
   if (!file) return;
+  await openAfterEffectsProjectFile(file);
+}
 
+/**
+ * Open a picked or DROPPED `.aep` through the engine that owns the document
+ * (importProject{path}: one entry) — the File menu and a viewport drop alike.
+ */
+export async function openAfterEffectsProjectFile(file: File): Promise<void> {
   const { confirmDiscardChanges } = await import('@core/project/confirmDiscard');
   if (!await confirmDiscardChanges('Open an After Effects project')) return;
 
@@ -413,8 +421,7 @@ async function pickAndImport3DModel(): Promise<void> {
     return;
   }
   try {
-    const result = importModelFiles(
-      await Promise.all(files.map(async (f) => ({
+    const sources = await Promise.all(files.map(async (f) => ({
         name: f.name,
         // Present when the selection came from a folder drop; it is what lets
         // `textures/albedo.png` resolve as the path it actually is.
@@ -422,8 +429,9 @@ async function pickAndImport3DModel(): Promise<void> {
           ? { path: (f as File & { webkitRelativePath?: string }).webkitRelativePath }
           : {}),
         bytes: await f.arrayBuffer(),
-      }))),
-    );
+      })));
+    const result = await importModelEdit('Import 3D Model', () => importModelFiles(sources));
+    if (!result) throw new Error('the engine did not take the model');
     const clip = result.clip
       ? ` · clip “${result.clip.name}” baked as keyframes (${result.clip.duration.toFixed(1)}s)`
       : '';

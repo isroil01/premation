@@ -42,6 +42,9 @@ import { reparentNode } from '@core/scene/parenting';
 import { applyStretch } from '@core/animation/layerTimeCommands';
 import { rebaseTransformProps } from '@core/scene/transformWrite';
 import { createOrbitNullEdit } from '@core/scene/cameraCommands';
+import { importGltfModel } from '@core/scene/modelImport';
+import { importModelEdit } from '@layout/Assets/modelImportEdits';
+import { buildQuadGlb } from '@/__testHelpers__/buildTestGlb';
 import { bootEngine, engine, localEngine, ownedEngine, refreshReplicaFromEngine, shutdownEngine } from '../engineInstance';
 import { resetEngineOwnership, setEngineOwnsDocument } from '../engineOwnership';
 import { resetProcessEngine } from '../process/processEngine';
@@ -92,6 +95,15 @@ const CASES: AuditCase[] = [
     await localEngine()!.whenIdle();
     const id = await createOrbitNullEdit(cam, 0);
     expect(id).not.toBeNull();
+  } },
+  // ── layer builders: off-document, one pasteLayers ──
+  { name: 'Import 3D Model (glTF — AssetsPanel / File ▸ Import 3D Model)', expect: 'owner', run: async () => {
+    const bytes = buildQuadGlb();
+    const r = await importModelEdit('Import quad.glb', () => importGltfModel(bytes, 'quad.glb'));
+    expect(r?.layerCount).toBeGreaterThan(0);
+  } },
+  { name: 'Import 3D Model called directly (the old path)', expect: 'replica-only', run: () => {
+    importGltfModel(buildQuadGlb(), 'quad.glb');
   } },
   // ── scene-graph writers NOT recorded as animation edits (core helpers; the UI sends the engine
   //    commands for these — setLayerSwitches / setParent / setLayerTiming — so they are not reached
