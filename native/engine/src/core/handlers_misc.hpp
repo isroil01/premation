@@ -21,5 +21,6 @@ ResultOf<api::ImportProject> handle(const api::ImportProject& c, HCtx& x);
 ResultOf<api::ApplyJobResult> handle(const api::ApplyJobResult& c, HCtx& x);
 ResultOf<api::SetPluginData> handle(const api::SetPluginData& c, HCtx& x);
 ResultOf<api::SetContentAwareFill> handle(const api::SetContentAwareFill& c, HCtx& x);
+ResultOf<api::SetCaptions> handle(const api::SetCaptions& c, HCtx& x);
 
 }  // namespace premation::doc

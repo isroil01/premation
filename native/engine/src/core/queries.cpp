@@ -717,6 +717,16 @@ struct Q {
     if (img.answer != HookAnswer::ready) fail_hook(img.answer, img.error, "getThumbnail");
     return query_result_for<api::GetThumbnail>(api::Thumbnail{img.width, img.height, std::move(img.format), std::move(img.data)});
   }
+  api::QueryResult operator()(const api::RenderDocumentStill& q) const {
+    if (q.max_size > kMaxThumbnail) fail(ErrorCode::out_of_range, "maxSize must be at most " + std::to_string(kMaxThumbnail));
+    if (q.time < 0) fail(ErrorCode::out_of_range, "the time must not be negative");
+    const std::optional<Json> document = js::parse(q.document);
+    if (!document || !document->is_object()) fail(ErrorCode::invalid_argument, "document must be an EditorDocument as JSON");
+    if (!c.documentStill) fail(ErrorCode::unsupported, "renderDocumentStill needs the engine's renderer; this engine has none");
+    StillImage img = c.documentStill(*document, q.comp.value_or(std::string()), q.time, q.max_size == 0 ? kDefaultThumbnail : q.max_size);
+    if (img.answer != HookAnswer::ready) fail_hook(img.answer, img.error, "renderDocumentStill");
+    return query_result_for<api::RenderDocumentStill>(api::Thumbnail{img.width, img.height, std::move(img.format), std::move(img.data)});
+  }
   api::QueryResult operator()(const api::ListEffects& q) const {
     api::EffectCatalog out;
     for (const EffectDef& def : registry().effects) {

@@ -7,6 +7,7 @@
 #include <limits>
 #include <numbers>
 #include <string>
+#include <string_view>
 
 #include "jsmath.hpp"
 #include "numconv.hpp"
@@ -459,12 +460,8 @@ std::vector<float> align_samples_to_range(std::span<const float> channel, double
   return out;
 }
 
-std::vector<float> raw_detector_envelope(std::span<const float> samples, double sampleRate, double fps) {
-  return detector_envelope(samples, sampleRate, fps, DetectorOptions{});
-}
-
 namespace {
-/// audioDriver.ts poleCoeff: `1 - exp(-1/(τ·fps))`, 1 for a zero time constant.
+/// poleCoeff: 1 − exp(−1/(τ·fps)); a zero time constant follows the detector exactly.
 double pole_coeff(double ms, double fps) {
   if (!std::isfinite(ms) || ms <= 0 || fps <= 0) return 1;
   const double frames = (ms / 1000) * fps;
@@ -473,7 +470,7 @@ double pole_coeff(double ms, double fps) {
 }
 }  // namespace
 
-std::vector<float> detector_envelope(std::span<const float> samples, double sampleRate, double fps, const DetectorOptions& o) {
+std::vector<float> detector_envelope(std::span<const float> samples, double sampleRate, double fps, const EnvelopeOptions& o) {
   if (fps <= 0 || sampleRate <= 0 || samples.empty()) return {};
   constexpr std::size_t n = 1024;  // DRIVER_FFT_SIZE
   const double spf = std::max(1.0, sampleRate / fps);
@@ -485,13 +482,11 @@ std::vector<float> detector_envelope(std::span<const float> samples, double samp
   std::vector<float> re(n);
   std::vector<float> im(n);
   std::vector<float> out(frames, 0.0F);
-  // bandRange + windowBandAmplitude's bins (DC never included).
-  const double lo = std::max(0.0, std::isfinite(o.lo) ? o.lo : 0.0);
-  const double hi = std::max(lo + 1, std::isfinite(o.hi) ? o.hi : lo + 1);
+  // windowBandAmplitude's bins for the band; bin 0 (DC) never.
   const double nyquist = sampleRate / 2;
   const double bins = static_cast<double>(n / 2);
-  const double f0 = std::max(0.0, std::min(nyquist, lo));
-  const double f1 = std::max(f0, std::min(nyquist, hi));
+  const double f0 = std::max(0.0, std::min(nyquist, o.lo));
+  const double f1 = std::max(f0, std::min(nyquist, o.hi));
   const auto i0 = static_cast<std::size_t>(std::max(1.0, std::min(bins - 1, std::floor((f0 / nyquist) * bins))));
   const auto i1 = static_cast<std::size_t>(std::max(static_cast<double>(i0 + 1), std::min(bins, std::ceil((f1 / nyquist) * bins))));
   const double gate = clamp01(std::isfinite(o.gate) ? o.gate : 0);
@@ -528,6 +523,50 @@ std::vector<float> detector_envelope(std::span<const float> samples, double samp
     }
   }
   return out;
+}
+
+std::vector<float> map_envelope(std::span<const float> env, double minIn, double maxIn, std::string_view curve, int smoothFrames) {
+  std::vector<float> out(env.size(), 0.0F);
+  if (env.empty()) return out;
+  const double mn = std::isfinite(minIn) ? minIn : 0;
+  const double mx = std::isfinite(maxIn) ? maxIn : 1;
+  const double lo = std::min(mn, mx);
+  const double hi = std::max(mn, mx);
+  // Running-sum centred box smooth (O(n)).
+  const std::size_t w = static_cast<std::size_t>(std::max(1, smoothFrames));
+  std::vector<float> smoothed(env.begin(), env.end());
+  if (w > 1) {
+    const std::size_t half = w / 2;
+    double sum = 0;
+    std::size_t a0 = 0;
+    std::int64_t b0 = -1;
+    for (std::size_t i = 0; i < env.size(); ++i) {
+      const std::size_t wantLo = i >= half ? i - half : 0;
+      const auto wantHi = static_cast<std::int64_t>(std::min(env.size() - 1, i + half));
+      while (b0 < wantHi) sum += static_cast<double>(env[static_cast<std::size_t>(++b0)]);
+      while (a0 < wantLo) sum -= static_cast<double>(env[a0++]);
+      smoothed[i] = static_cast<float>(sum / static_cast<double>(static_cast<std::size_t>(b0) - a0 + 1));
+    }
+  }
+  const auto shape = [curve](double t) {
+    const double u = clamp01(t);
+    if (curve == "easeIn") return u * u;
+    if (curve == "easeOut") return 1 - (1 - u) * (1 - u);
+    if (curve == "sCurve") return u * u * (3 - 2 * u);
+    if (curve == "invert") return 1 - u;
+    return u;
+  };
+  for (std::size_t i = 0; i < smoothed.size(); ++i) {
+    const auto v = static_cast<double>(static_cast<float>(mn + (mx - mn) * shape(static_cast<double>(smoothed[i]))));
+    out[i] = static_cast<float>(v < lo ? lo : v > hi ? hi : v);
+  }
+  return out;
+}
+
+std::vector<float> raw_detector_envelope(std::span<const float> samples, double sampleRate, double fps) {
+  EnvelopeOptions o;
+  o.normalize = false;
+  return detector_envelope(samples, sampleRate, fps, o);
 }
 
 // ── ducking / gate ─────────────────────────────────────────────────────────

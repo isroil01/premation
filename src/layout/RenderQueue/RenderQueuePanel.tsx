@@ -42,6 +42,8 @@ import styles from './RenderQueuePanel.module.css';
 
 const FORMAT_LABEL: Record<OutputFormat, string> = {
   mp4: 'H.264 MP4',
+  hdr10: 'HDR10 MP4 (PQ)',
+  hlg: 'HLG MP4',
   webm: 'WebM VP9',
   mov: 'ProRes MOV',
   gif: 'Animated GIF',

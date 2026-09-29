@@ -16,11 +16,7 @@ import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys } from '@hooks/useMirror';
 import { useMirrorJson } from '@hooks/useMirrorFields';
 import { compLayersDeep } from '@core/mirror/layerFields';
-import {
-  audioWaveformConfigOf,
-  defaultAudioWaveform,
-  type AudioWaveformConfig,
-} from '@core/audio/audioWaveformGen';
+import { normalizeAudioWaveform, defaultAudioWaveform, type AudioWaveformConfig } from '@core/mirror/audioWaveform';
 import { edit } from '@core/engine/uiEdits';
 import { useEngineEdit } from './useEngineEdit';
 import { audioWaveformCommands } from './audioEdits';
@@ -44,8 +40,8 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
   // Honest source list: only real audio-kind layers.
   const audioLayers = useAudioLayers();
   const eng = useEngineEdit();
-  // Normalised exactly as the generator normalises it (pure, over the mirror's value).
-  const cfg = raw === undefined ? null : audioWaveformConfigOf(raw);
+  // Normalised exactly as the engine's generator reads it.
+  const cfg = raw === undefined ? null : normalizeAudioWaveform(raw);
   if (!cfg) return null;
 
   // The whole config with one key changed (absolute: a scrub's every message

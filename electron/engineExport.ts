@@ -38,7 +38,17 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { copyFile, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { buildEncodeArgs, rawVideoInput, type EncodeFormat, type VideoEncoder } from './ffmpegEncodeArgs';
+import {
+  buildEncodeArgs,
+  buildHdrEncodeArgs,
+  DEFAULT_HDR_MASTERING,
+  rawVideoInput,
+  type EncodeFormat,
+  type HdrMastering,
+  type HdrTransfer,
+  type HdrVideoEncoder,
+  type VideoEncoder,
+} from './ffmpegEncodeArgs';
 
 /** The spec fields an engine job reads (a subset of exportProcess.ts `ExportJobSpec`). */
 export interface EngineExportSpec {
@@ -60,6 +70,15 @@ export interface EngineExportSpec {
   chapters?: unknown;
   /** 16 = rgba64le from the engine's half-float surface (mov only). */
   bitDepth?: 8 | 16;
+  /**
+   * mov only — an HDR ProRes master (PQ or HLG, BT.2020, 10-bit). The
+   * `hdr10` / `hlg` formats are the MP4 (HEVC) deliveries and imply it.
+   */
+  hdr?: HdrTransfer;
+  /** hdr10 / hlg: the encoder the supervisor probed (libx265, else H.264 High 10). */
+  hdrEncoder?: HdrVideoEncoder;
+  /** HDR10 static metadata; absent fields are DEFAULT_HDR_MASTERING's. */
+  hdrMastering?: Partial<HdrMastering>;
 }
 
 export type EngineExportOutcome =
@@ -90,6 +109,8 @@ export interface EnginePreflight {
   alpha: boolean;
   /** Bits per channel of the raw frames (8 = rgba, 16 = rgba64le). */
   depth: 8 | 16;
+  /** The transfer the frames are encoded with (an HDR job), or null. */
+  hdr?: HdrTransfer | null;
   audio: string | null;
   comp: string;
   compName: string;
@@ -118,7 +139,24 @@ export interface EngineExportDeps {
  * sequences, a still PNG (a one-frame sequence) and the WAV mixdown (the
  * engine's audio-only job).
  */
-const ENGINE_FORMATS: ReadonlySet<string> = new Set<string>(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence', 'png', 'wav']);
+const ENGINE_FORMATS: ReadonlySet<string> = new Set<string>(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence', 'png', 'wav']);
+
+/** The HDR transfer a spec delivers, or null for SDR: `hdr10` = PQ and `hlg` in MP4, or a mov's `hdr`. */
+export function hdrTransferOf(spec: Pick<EngineExportSpec, 'format' | 'hdr'>): HdrTransfer | null {
+  if (spec.format === 'hdr10') return 'pq';
+  if (spec.format === 'hlg') return 'hlg';
+  if (spec.format === 'mov' && (spec.hdr === 'pq' || spec.hdr === 'hlg')) return spec.hdr;
+  return null;
+}
+
+function masteringOf(spec: EngineExportSpec): HdrMastering {
+  const m = { ...DEFAULT_HDR_MASTERING };
+  for (const k of ['maxCll', 'maxFall', 'displayMaxNits', 'displayMinNits'] as const) {
+    const v = spec.hdrMastering?.[k];
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) m[k] = v;
+  }
+  return m;
+}
 
 function isSequence(format: string): boolean {
   return format === 'png-sequence' || format === 'jpg-sequence' || format === 'exr-sequence';
@@ -185,11 +223,37 @@ export function engineJobFile(spec: EngineExportSpec, workDir: string): Record<s
   if (spec.format === 'exr-sequence') job.sequence = 'exr-zip';
   const chapters = resolvedChapters(spec.chapters);
   if (chapters) job.chapters = chapters;
+  // HDR: the engine encodes PQ / HLG in BT.2020 (hdr_convert.hpp), opaque, 16-bit.
+  const hdr = hdrTransferOf(spec);
+  if (hdr) {
+    job.hdr = hdr;
+    job.depth = 16;
+    job.transparent = false;
+    job.hdrPeakNits = masteringOf(spec).displayMaxNits;
+  }
   return job;
 }
 
 /** The encoder command line for a preflighted job — `render:openStream`'s, exactly. */
 export function engineEncodeArgs(spec: EngineExportSpec, pre: EnginePreflight, out: string): string[] {
+  const hdr = hdrTransferOf(spec);
+  const chaptersFile = resolvedChapters(spec.chapters) && (spec.format === 'mp4' || spec.format === 'mov' || hdr)
+    ? path.join(path.dirname(out), 'chapters.ffmeta')
+    : null;
+  if (hdr) {
+    return buildHdrEncodeArgs({
+      container: spec.format === 'mov' ? 'mov' : 'mp4',
+      transfer: hdr,
+      encoder: spec.hdrEncoder ?? 'libx265',
+      videoInput: rawVideoInput(pre.width, pre.height, pre.fps, 'rgba64le'),
+      quality: spec.quality,
+      proresProfile: spec.proresProfile,
+      audio: pre.audio,
+      chaptersFile,
+      mastering: masteringOf(spec),
+      out,
+    });
+  }
   return buildEncodeArgs({
     format: spec.format as EncodeFormat,
     videoInput: rawVideoInput(pre.width, pre.height, pre.fps, pre.depth === 16 ? 'rgba64le' : 'rgba'),
@@ -197,9 +261,7 @@ export function engineEncodeArgs(spec: EngineExportSpec, pre: EnginePreflight, o
     quality: spec.quality,
     proresProfile: spec.proresProfile,
     audio: pre.audio,
-    chaptersFile: resolvedChapters(spec.chapters) && (spec.format === 'mp4' || spec.format === 'mov')
-      ? path.join(path.dirname(out), 'chapters.ffmeta')
-      : null,
+    chaptersFile,
     alpha: pre.alpha,
     videoEncoder: videoEncoderOf(spec),
     tagSrgb: true,
@@ -214,6 +276,8 @@ export function engineOutputFile(workDir: string, format: string): string {
   if (format === 'png-sequence') return path.join(workDir, 'frames.png.zip');
   if (format === 'jpg-sequence') return path.join(workDir, 'frames.jpg.zip');
   if (format === 'exr-sequence') return path.join(workDir, 'frames.exr.zip');
+  // The HDR deliveries are MP4s; a ".hdr10" file has never existed.
+  if (format === 'hdr10' || format === 'hlg') return path.join(workDir, 'out.mp4');
   return path.join(workDir, `out.${format}`);
 }
 
@@ -304,10 +368,18 @@ export function startEngineExport(
             fps: Number(msg.fps),
             alpha: msg.alpha === true,
             depth: msg.depth === 16 ? 16 : 8,
+            hdr: msg.hdr === 'pq' || msg.hdr === 'hlg' ? msg.hdr : null,
             audio: typeof msg.audio === 'string' ? msg.audio : null,
             comp: String(msg.comp ?? ''),
             compName: String(msg.compName ?? ''),
           };
+          // Never tag SDR frames as HDR: an engine that did not encode the
+          // transfer (one without it echoes no `hdr`) fails the job instead.
+          if ((preflight.hdr ?? null) !== hdrTransferOf(spec)) {
+            terminal = { kind: 'fallback', reason: `this engine does not write ${hdrTransferOf(spec) ?? 'SDR'} frames for "${spec.format}"` };
+            proc.stdin?.write(`${JSON.stringify({ cancel: true })}\n`);
+            return;
+          }
           cb.started?.(preflight);
           if (spec.format === 'wav' && preflight.audio === null) {
             terminal = { kind: 'failed', message: 'This composition has no audible audio in the export range — nothing to write. Check layer mute states and the work area.' };

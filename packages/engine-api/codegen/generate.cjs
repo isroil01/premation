@@ -17,6 +17,8 @@
  *   native/protocol/generated/commands.json        command id / kind / name, for the C++ catalog
  *   electron/generated/frameChannel.ts             the FrameChannel family, standalone (Electron main)
  *   electron/generated/engineWire.ts               a copy of src/wire.ts for it
+ *   electron/generated/engineTypes.ts, engineCodec.ts   the whole API for Electron main (the CLI's
+ *                                                  command-log replay encodes requests itself)
  *
  *   node packages/engine-api/codegen/generate.cjs          write the files
  *   node packages/engine-api/codegen/generate.cjs --check  exit 1 if any is stale
@@ -1563,6 +1565,9 @@ function generateAll(model = loadSchema()) {
     // Electron main speaks the frame channel (schema 95_frames.eapi) itself.
     [join(ELECTRON_OUT, 'engineWire.ts')]: genTsWireCopy(),
     [join(ELECTRON_OUT, 'frameChannel.ts')]: genTsFamilyModule(model, 'FrameChannel', './engineWire'),
+    // `premation render --commands`: main encodes the recorded requests (P4).
+    [join(ELECTRON_OUT, 'engineTypes.ts')]: genTsTypes(model),
+    [join(ELECTRON_OUT, 'engineCodec.ts')]: genTsCodec(model, { wireImport: './engineWire', typesImport: './engineTypes' }),
   };
 }
 

@@ -29,8 +29,7 @@
 import type { AiImage } from '@motion/ai-tools';
 import type { ToolContext } from '@motion/ai-tools';
 import { useCompositionStore } from '@stores/compositionStore';
-import { renderStillFrame } from '@core/export/offlineRenderer';
-import { compSizeOf } from '@core/composition/compSizes';
+import { engineCompStill } from '@core/rendering/engineStill';
 
 /** Target frames in a strip. Enough to show a curve; few enough to stay legible. */
 export const STRIP_MIN = 16;
@@ -135,13 +134,6 @@ export async function renderFilmstrip(timesSec: number[]): Promise<AiImage | nul
   if (!timesSec.length) return null;
   try {
     const c = useCompositionStore.getState().comp();
-    const params = {
-      width: c.width,
-      height: c.height,
-      fps: c.fps,
-      durationSec: c.durationSeconds,
-      comp: { ...c, rootId: c.id, compSizeOf },
-    };
     const lastFrame = Math.max(0, Math.round(c.durationSeconds * c.fps) - 1);
 
     const cols = timesSec.length <= 8 ? 4 : timesSec.length <= 15 ? 5 : 6;
@@ -165,7 +157,7 @@ export async function renderFilmstrip(timesSec: number[]): Promise<AiImage | nul
     let drawn = 0;
     for (const [i, t] of timesSec.entries()) {
       const frame = Math.max(0, Math.min(Math.round(t * c.fps), lastFrame));
-      const blob = await withTimeout(renderStillFrame(params, frame, 'image/jpeg', 0.8), 8000);
+      const blob = await withTimeout(engineCompStill(c.id, frame / c.fps, 800), 8000);
       if (!blob) continue;
 
       const bitmap = await withTimeout(createImageBitmap(blob), 4000);

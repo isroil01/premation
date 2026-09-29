@@ -11,7 +11,7 @@ import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { useMirrorLayer } from '@hooks/useMirror';
 import { useMirrorJson } from '@hooks/useMirrorFields';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { defaultAudioWaveform } from '@core/audio/audioWaveformGen';
+import { defaultAudioWaveform } from '@core/mirror/audioWaveform';
 import { edit } from '@core/engine/uiEdits';
 import { audioWaveformCommands } from './audioEdits';
 import { AudioWaveformSection } from './AudioWaveformSection';

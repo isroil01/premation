@@ -15,10 +15,10 @@
 //
 //   stdout (engine → supervisor)
 //     {"ev":"preflight","ok":true,"frames":N,"width":W,"height":H,"fps":F,
-//      "comp":ID,"compName":S,"alpha":B,"depth":8|16,"audio":PATH|null,"warnings":[…],"ms":T}
+//      "comp":ID,"compName":S,"alpha":B,"depth":8|16,"hdr":"pq"|"hlg"|null,"audio":PATH|null,"warnings":[…],"ms":T}
 //     {"ev":"preflight","ok":false,"reason":S,"unported":[{"frame":i,"reason":S}…]}
 //     {"ev":"progress","frame":k,"total":N}              (k frames are in the encoder)
-//     {"ev":"done","frames":N,"stats":{…}}
+//     {"ev":"done","frames":N,"stats":{…}}              (an HDR job: stats.hdr = {transfer,maxCll,maxFall})
 //     {"ev":"error","fallback":B,"message":S}
 //   stdin (supervisor → engine), after a successful preflight
 //     {"encode":{"bin":PATH,"args":[…]}}                 start rendering into this encoder
@@ -103,6 +103,17 @@ struct JobSpec {
   /// Render only this layer (and what it holds), as if it were the one soloed
   /// layer — a job's solo render of a layer (jobs/child_export.hpp). '' = all.
   std::string isolateLayer;
+  /// More layers drawn alone together with `isolateLayer` (a job's solo render of a selection).
+  std::vector<std::string> isolateLayers;
+  /// HDR delivery (hdr_convert.hpp): "pq" (HDR10) or "hlg"; '' = SDR. Implies
+  /// depth 16 and an opaque frame, and overrides the project's viewer
+  /// transform with sRGB; the raw frames are PQ / HLG code values in BT.2020
+  /// (rgba64le). The encoder's colour tags come from the supervisor.
+  std::string hdr;
+  /// The mastering display's peak (the clip level, and the SEI's L max), nits.
+  double hdrPeakNits = 1000;
+  /// Working-space 1.0 (SDR reference white), nits — ITU-R BT.2408's 203.
+  double hdrWhiteNits = 203;
 };
 
 /// Parse a job file's JSON. False with `error` on a missing / mistyped field.

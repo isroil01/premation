@@ -102,6 +102,12 @@ export interface ExportJobSpec {
    * says so in its warnings.
    */
   bitDepth?: 8 | 16;
+  /** mov only — an HDR ProRes master (the hdr10 / hlg formats are the MP4 deliveries). */
+  hdr?: 'pq' | 'hlg';
+  /** HEVC (libx265) or H.264 High 10 for hdr10 / hlg — resolved by the supervisor's probe. */
+  hdrEncoder?: 'libx265' | 'libx264';
+  /** HDR10 static metadata overrides (nits). */
+  hdrMastering?: { maxCll?: number; maxFall?: number; displayMaxNits?: number; displayMinNits?: number };
   /** What the UI calls this job — "Promo → promo.mp4". */
   label: string;
   /** Frames in the range, for progress. */
@@ -254,6 +260,21 @@ export function validateSpec(raw: unknown): ExportJobSpec {
     if (depth !== 8 && depth !== 16) throw new Error('Export job: "bitDepth" must be 8 or 16.');
     if (depth === 16 && out.format !== 'mov') throw new Error('Export job: 16-bit output is written as mov (ProRes) only.');
     out.bitDepth = depth;
+  }
+  const hdr = optStr('hdr');
+  if (hdr !== undefined) {
+    if (hdr !== 'pq' && hdr !== 'hlg') throw new Error('Export job: "hdr" must be pq or hlg.');
+    if (out.format !== 'mov') throw new Error('Export job: "hdr" is a mov (ProRes) option; the MP4 deliveries are the hdr10 and hlg formats.');
+    out.hdr = hdr;
+  }
+  const m = s['hdrMastering'];
+  if (m && typeof m === 'object') {
+    const mm: NonNullable<ExportJobSpec['hdrMastering']> = {};
+    for (const k of ['maxCll', 'maxFall', 'displayMaxNits', 'displayMinNits'] as const) {
+      const v = (m as Record<string, unknown>)[k];
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 10000) mm[k] = v;
+    }
+    out.hdrMastering = mm;
   }
   return out;
 }
@@ -818,6 +839,12 @@ function createEngineLauncher(root: string): EngineLauncher {
           const resolved = await probe.resolveVideoEncoder(spec.videoEncoder);
           if (resolved.fallbackReason) deps.log(`job ${jobId}: ${resolved.fallbackReason}`);
           next = { ...spec, videoEncoder: resolved.encoder };
+        }
+        if (spec.format === 'hdr10' || spec.format === 'hlg') {
+          // HEVC carries the HDR10 metadata; without libx265 the stream is H.264 High 10, tagged.
+          const hdrEncoder = (await probe.has('libx265')) ? 'libx265' as const : 'libx264' as const;
+          if (hdrEncoder === 'libx264') deps.log(`job ${jobId}: ffmpeg has no libx265 — H.264 High 10, no HDR10 mastering SEI`);
+          next = { ...next, hdrEncoder };
         }
         if (abandon) return { kind: 'cancelled' as const };
         handle = startEngineExport(jobId, next, cb, deps);

@@ -144,9 +144,10 @@ function featureCounts() {
   });
   if (aiTools.length === 0) throw new Error('featureCounts: no AI tools found');
 
-  const videoFormats = unionMembers('src/core/export/videoSink.ts', 'VideoFormat');
+  const videoFormats = unionMembers('src/core/export/renderSpec.ts', 'VideoFormat');
   const stillFormats = unionMembers('src/core/export/exportManager.ts', 'ExportFormat');
-  const exportFormats = [...new Set([...videoFormats, ...stillFormats])];
+  const dataFormats = unionMembers('src/core/export/exportManager.ts', 'DataExportFormat');
+  const exportFormats = [...new Set([...videoFormats, ...stillFormats, ...dataFormats])];
 
   const stores = readdirSync(join(ROOT, 'src/stores'))
     .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts') && f !== 'index.ts')

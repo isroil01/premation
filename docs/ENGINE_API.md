@@ -469,6 +469,7 @@ on an effect or mask path — one command, one inverse implementation.
 | `cancelJob` | control | Nothing is applied. |
 | `applyJobResult` | edit | Apply a finished `apply:false` job. Inverse: that entry. |
 | `setContentAwareFill` | edit | The layer's content-aware fill frames (the Content-Aware Fill job's result): the filled frame nearest the layer's time stands in for its footage; empty `frames` clears it. Inverse: the previous record. |
+| `setCaptions` | edit | Burn-in captions (`premation render --captions`, p4-round3): the comp's top-level caption layers (`__caption` on Text) are replaced by one centred text layer per cue, in/out = the cue; `style` JSON (`fontSizeRatio` 0.05, `fontWeight` 700, `fill` #ffffff, `bottomMarginRatio` 0.1). A cue that does not end after it starts is `invalidArgument`. One journal. The TS engine answers `unsupported`. |
 | `setPluginEnabled` | control | Session enable/disable (installation stays in the editor's plugin manager). |
 | `setPluginData` | edit | Plugin data **in the document** (AE sequence data / arbitrary-data params) — today it is an in-memory LRU. Inverse: previous bytes. |
 
@@ -511,8 +512,8 @@ The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 | `contentAwareFill` | contentAwareFillVideo.ts | PNGs under `Content-Aware Fill/` + `setContentAwareFill` | `{frames, filledPixels}` |
 | `physicsBake` | bakeDynamics.ts (samplePhysicsTracks) over rigid_body.cpp | every enabled body of the composition seeds the renderer's solver (flatten order, authored pose; world gravity 0 / 1800, comp walls, 4 passes); each requested DYNAMIC body's position (and rotation for a spinning body) keyed per sampled frame, linear with the last key held, Douglas-Peucker thinned by `simplifyTolerance`; `layer/physics` set `enabled:false` ("Bake physics to keyframes") | `{layers, frames, tracks, keyframes}` |
 | `particleBake` | bakeDynamics.ts (sampleParticleLayers) over particle_port.cpp (`particles_at_frame`, birth index) | a "<emitter> Baked" null parented to the emitter; one ellipse / rectangle per particle (earliest born, `maxParticles` default 200) at its first-seen size in the start colour, keyed x / y / scale / opacity (a zero hold one frame outside its life); the emitter hidden ("Bake particles to layers"). The config is resolved per frame on the core thread (`JobDocContext.layerValues`: the emitter's `particle.<key>` tracks) | `{containerId, layerIds, seen, capped, particles, keyframes}` |
-| `audioEnvelope` | audioDriver.ts analyseAudioEnvelope (detector_envelope) | nothing (analysis only): a source layer's decode laid out on composition time through its bar, or the comp's own mix by a child `--export` audio-only; band / gate / attack / release / normalise as the driver asks. The Audio Driver section's preview and bake read it (`driverEnvelopeOf`, the curve and range mapped in the page) | `{raw, fps, start, end}` |
 | `autoReframe` | autoReframe.ts (saliency, reframePath) | a NEW composition holding the source as a precomp, the pan keyed on separated position ("Auto-reframe"); the source comp is rendered small by a child `--export` (PNG frames read through the OS still codec) | `{samples, cuts, keyframes, comp, layer}` |
+| `rigLogo` | scene/rigLogo.ts | one image / shape layer holding nothing: two puppet pins, "Anchor" (bottom centre) and "Wave" (top centre); anything else: the selection drawn alone together (`isolateLayers`) on a transparent comp by a child `--export`, cropped to its pixels + 4 px, `importBytes` (`derived`), an image layer "<name> (Rigged)" where it drew above the topmost selected layer, then the pins ("Rig Logo for Animation") | `{mode: 'self' \| 'rasterize', layer, item?, width?, height?}` |
 | `transcribe` | captions/transcribe.ts + electron/aiProxy.ts transcribeAudio | nothing (the caption commands build layers from the cues; `createCaptions` must be false). 2026-09-28: `comp`'s sound over `range` mixed by a child `--export` (`audioOnly`: the export's offline mix, no picture preflight), 16 kHz mono WAV, POSTed to OpenAI whisper-1 (`verbose_json`, segment + word timings) over the OS HTTP stack (WinHTTP / libcurl, no redirects). The key: `credential`, written into the request by Electron MAIN from its keystore as it passes (engineHost `transcribeCredential`); the page never has it, main logs the request without it, the engine drops it from its log and never persists or returns it. Errors carry aiProxy's code in `detail` (`{"code":"no_key" / "auth" / "rate_limit" / "network" / "silent" / "empty" …}`) | `{cues:[{start,end,text}], words:[…], language}` (composition seconds, cues de-overlapped) |
 
 The `autoTrace` COMMAND (§4.4) is this job run synchronously: the same
@@ -648,6 +649,7 @@ Queries answer at the revision in their `Response` and never change anything.
 | `getWaveform` | Min/max (+ RMS) peaks per bucket per channel for a layer or item range. `range` is SOURCE time (the window a clip bar shows; duration 0 = to the end); an audio layer sounds from its Audio component's asset, a footage layer / item from its asset; `buckets` 1–65536. The part of the window past the end of the source is zero buckets (bucket b always covers `start + b·duration/buckets`). No sound (a still, `hasAudioTrack: false`, an unopenable file) = `channels: 0`; still decoding = `busy`; no audio engine = `unsupported`. C++: the E2 peak pyramid (MediaClock::peaks); the TS engine answers `unsupported`. |
 | `listFonts` | Families, styles, PostScript names, weight, italic, variable axes, scripts, file path — the installed faces (C++: CoreText on macOS, DirectWrite on Windows, fontconfig on Linux; `query` filters family / style / PostScript name; OS-internal faces such as macOS's `.AppleSystemUIFont` are not listed). Empty under the test ports. |
 | `getSvgDocument`, `getCryptomatte` | B4: an SVG layer's stored document (or a converted group's retained source); an EXR item's Cryptomatte ID set (§15.12). |
+| `renderDocumentStill` | p4-round3 (C++): `getThumbnail`'s PNG of a composition's frame from ANOTHER document (`document`: a saved document's JSON — version compare), restored into a scratch document; `comp` absent = its first composition. The TS engine answers `unsupported`. |
 | `getItems`, `getThumbnail` | Item metadata (size, duration, rate, codec, alpha, audio, colour profile, missing, proxy); encoded thumbnail. `getThumbnail` (C++): a PNG (straight 8-bit RGBA) of a comp item's frame, a layer alone in its comp's frame (as if the one soloed layer), or a footage item's media (`time` = source time; a still ignores it); the source's aspect with the long side ≤ `maxSize` (0 = 256, ≤ 4096, never enlarged); transparent where nothing draws. Audio items and folders: `invalidArgument`; an unprobed size: `decode`; a renderer still busy after 10 s: `busy`; `--no-gpu`: `unsupported`. The TS engine answers `unsupported`. |
 | `listEffects`, `listGroupTypes`, `listPresets` | The effect catalog with full param schemas (drives the Effects & Presets panel and generic effect UIs); addable group types under a path; presets. |
 | `capturePreset` | B4: a layer's animation as a preset body (Save as Preset) — keys in the preset's own units, text animators, effects, expressions (§15.12). |
@@ -2370,7 +2372,7 @@ from the struct's maximum + 800.
 
 ### 15.16 B4 round 8 — the row projection and 3D IK in the engine (both engines, 2026-09-29)
 
-- **`getTimelineRows {layers}`** (1935 → `TimelineRowSets`): the timeline's
+- **`getTimelineRows {layers}`** (1937 → `TimelineRowSets`): the timeline's
   After Effects row projection of each layer — both engines' static property
   tree (TS `propertyTree.ts buildStaticPropertyTree`, C++ `ptree.cpp
   build_static_property_tree`, which now carries `valueProps`): the rows in
@@ -2389,13 +2391,13 @@ from the struct's maximum + 800.
   rotations with one linear key per frame. `IkOptions {iterations, tolerance,
   maxStepRad}` default to 12 / 0.5 px / 0.6 rad. One entry each;
   `ikNative.test` compares the solved angles of both engines.
-- **`AudioAnalysisJob.amplitudeNull`** (715): After Effects' Convert Audio to
+- **`AudioAnalysisJob.amplitudeNull`** (717): After Effects' Convert Audio to
   Keyframes — the job's result creates a "<layer> Amplitude" null in the
   layer's composition with three Slider Controls (Both Channels / Left /
   Right), each keyed from its channel's envelope at composition time through
   the layer's bar; one entry. The summary's `amplitudeNull` counts the keys
   per channel. The Animation menu command sends it (`audioAmplitudeNullEdit`).
-- **`physicsBake`** (1715) / **`particleBake`** (1716) job kinds (§4.9 table):
+- **`physicsBake`** (1716) / **`particleBake`** (1717) job kinds (§4.9 table):
   Bake Physics to Keyframes and Bake Particles to Layers run in the engine
   (`kind_dynamics_bake.cpp`), sampling the renderer's own solvers; the
   Inspector's bake dialogs and the palette commands send them

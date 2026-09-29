@@ -132,6 +132,68 @@ TEST_CASE("detector, ducking and the gate: linear ramps that reach their depth e
   CHECK(aligned[50000] == 0.5F);
 }
 
+TEST_CASE("audio driver: band, release, gate and normalise (audioDriver.ts analyseAudioEnvelope)", "[jobs][audio]") {
+  constexpr double rate = 48000;
+  // A low tone reads in the low band and barely in the high band; the reverse for a high tone.
+  aa::EnvelopeOptions lowBand;
+  lowBand.lo = 20;
+  lowBand.hi = 250;
+  lowBand.normalize = false;
+  aa::EnvelopeOptions highBand = lowBand;
+  highBand.lo = 2000;
+  highBand.hi = 16000;
+  const auto low = tone(1, rate, 0.5, 100);
+  const auto high = tone(1, rate, 0.5, 5000);
+  const auto mid = [](const std::vector<float>& v) { return static_cast<double>(v[v.size() / 2]); };
+  CHECK(mid(aa::detector_envelope(low, rate, 30, lowBand)) > mid(aa::detector_envelope(low, rate, 30, highBand)) + 0.3);
+  CHECK(mid(aa::detector_envelope(high, rate, 30, highBand)) > mid(aa::detector_envelope(high, rate, 30, lowBand)) + 0.3);
+
+  // A hit then silence: a slow release is still up where a fast one has fallen.
+  const auto hit = concat({tone(0.3, rate, 0.8), std::vector<float>(static_cast<std::size_t>(rate * 0.7), 0.0F)});
+  aa::EnvelopeOptions fast;
+  fast.releaseMs = 50;
+  fast.normalize = false;
+  aa::EnvelopeOptions slow = fast;
+  slow.releaseMs = 400;
+  const auto ef = aa::detector_envelope(hit, rate, 30, fast);
+  const auto es = aa::detector_envelope(hit, rate, 30, slow);
+  CHECK(es[14] > ef[14]);
+
+  // A gate above the level reads silence; normalise lifts the peak to 1.
+  const auto quiet = tone(1, rate, 0.01);
+  aa::EnvelopeOptions open;
+  open.normalize = false;
+  aa::EnvelopeOptions gated = open;
+  gated.gate = 0.8;
+  CHECK(mid(aa::detector_envelope(quiet, rate, 30, open)) > 0.1);
+  CHECK(mid(aa::detector_envelope(quiet, rate, 30, gated)) == 0.0);
+  const auto norm = aa::detector_envelope(quiet, rate, 30, aa::EnvelopeOptions{});
+  CHECK(*std::max_element(norm.begin(), norm.end()) == Catch::Approx(1.0));
+  CHECK(aa::detector_envelope({}, rate, 30, open).empty());
+}
+
+TEST_CASE("audio driver: the mapping (audioDriver.ts mapEnvelope)", "[jobs][audio]") {
+  const std::vector<float> ramp{0.0F, 0.25F, 0.5F, 0.75F, 1.0F};
+  const auto lin = aa::map_envelope(ramp, 100, 160, "linear", 1);
+  CHECK(lin.front() == Catch::Approx(100));
+  CHECK(lin.back() == Catch::Approx(160));
+  CHECK(lin[2] == Catch::Approx(130));
+  // min > max: louder means smaller.
+  const auto inv = aa::map_envelope(ramp, 200, 50, "linear", 1);
+  CHECK(inv.front() == Catch::Approx(200));
+  CHECK(inv.back() == Catch::Approx(50));
+  CHECK(aa::map_envelope(ramp, 0, 100, "invert", 1).front() == Catch::Approx(100));
+  CHECK(aa::map_envelope(ramp, 0, 1, "easeIn", 1)[2] == Catch::Approx(0.25));
+  CHECK(aa::map_envelope(ramp, 0, 1, "sCurve", 1)[2] == Catch::Approx(0.5));
+  // A 3-frame box smooth spreads a spike over its neighbours.
+  const std::vector<float> spike{0.0F, 0.0F, 1.0F, 0.0F, 0.0F};
+  const auto sm = aa::map_envelope(spike, 0, 10, "linear", 3);
+  CHECK(sm[1] == Catch::Approx(10.0 / 3).epsilon(1e-4));
+  CHECK(sm[2] == Catch::Approx(10.0 / 3).epsilon(1e-4));
+  CHECK(sm[0] == Catch::Approx(0));
+  CHECK(aa::map_envelope({}, 0, 1, "linear", 1).empty());
+}
+
 TEST_CASE("scene detection: a hard cut is the first frame of the new shot", "[jobs][scene]") {
   auto plane = [](float v) {
     LumaImage p;

@@ -18,11 +18,12 @@ import { app } from 'electron';
 import path from 'node:path';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import type { CliOutputOptions, CliRenderJob } from './cliArgs';
-import { runCliEngineRender } from './cliEngineRender';
+import { runCliEngineBatch, runCliEngineRender } from './cliEngineRender';
 import { describeComposition, formatCaptions, runEnginePrepare } from './cliPrepare';
 import { getKeyForProvider } from './aiKeyVault';
 import { resolveEngineExecutable } from './engineSupervisor';
 import { resolveFfmpegBinary } from './ffmpegBinary';
+import { EncoderProbe } from './encoderProbe';
 
 /**
  * A render job with its data table already read.
@@ -260,21 +261,57 @@ export async function runCliTask(task: CliTask): Promise<number> {
     return 0;
   }
 
-  const job = task.request.job;
+  const request = task.request.job;
+  // HDR10 / HLG: HEVC when this ffmpeg has libx265, else H.264 High 10 (said once).
+  let job: typeof request & { hdrEncoder?: 'libx265' | 'libx264' } = request;
+  if (request.format === 'hdr10' || request.format === 'hlg') {
+    const probe = new EncoderProbe({ bin: () => resolveFfmpegBinary({ vars: process.env, resourcesPath: process.resourcesPath ?? '', platform: process.platform, exists: existsSync }) });
+    const hdrEncoder = (await probe.has('libx265')) ? 'libx265' as const : 'libx264' as const;
+    if (hdrEncoder === 'libx264') print.event({ event: 'warning', message: 'warning: ffmpeg has no libx265 — writing H.264 High 10 without HDR10 mastering metadata.' });
+    job = { ...request, hdrEncoder };
+  }
   const what = job.aspect ? `Reframing to ${job.aspect} and rendering` : 'Rendering';
   print.line(`${what} ${path.basename(job.projectPath)} → ${job.outPath}`);
   const t0 = Date.now();
-  const outcome = await runCliEngineRender(job, {
+  const deps = {
     enginePath,
     ffmpegPath: () => resolveFfmpegBinary({ vars: process.env, resourcesPath: process.resourcesPath ?? '', platform: process.platform, exists: existsSync }),
     workDirFor,
-    log: (m) => print.event({ event: 'engine', message: `engine: ${m}` }),
-  }, (f) => {
+    log: (m: string) => print.event({ event: 'engine', message: `engine: ${m}` }),
+  };
+  const progress = (f: number): void => {
     const pct = Math.round(Math.max(0, Math.min(1, f)) * 100);
     print.progress(`  ${String(pct).padStart(3)}%`, { fraction: f, percent: pct });
-  });
+  };
+  if (job.data) {
+    const batch = await runCliEngineBatch({ ...job, data: job.data }, deps, progress);
+    if (batch.kind === 'failed') {
+      print.event({ event: 'error', message: batch.message });
+      return 1;
+    }
+    for (const w of batch.warnings) print.event({ event: 'warning', message: `warning: ${w}` });
+    for (const row of batch.rows) {
+      // Every row named, failures included.
+      if (row.error) print.event({ event: 'row', message: `  failed  ${row.outputPath}: ${row.error}`, outputPath: row.outputPath, error: row.error });
+      else print.line(`  wrote   ${row.outputPath}`);
+    }
+    const elapsedMs = Date.now() - t0;
+    print.event({
+      event: 'done',
+      message: `Rendered ${batch.rendered} of ${batch.rendered + batch.failed} row(s) in ${(elapsedMs / 1000).toFixed(1)}s`,
+      rendered: batch.rendered,
+      failed: batch.failed,
+      rows: batch.rows,
+      elapsedMs,
+      warnings: batch.warnings,
+    });
+    // A batch with any failed row fails the build.
+    return batch.failed > 0 ? 1 : 0;
+  }
+  const outcome = await runCliEngineRender(job, deps, progress);
   if (outcome.kind === 'done') {
     const elapsedMs = Date.now() - t0;
+    for (const w of outcome.warnings) print.event({ event: 'warning', message: `warning: ${w}` });
     print.event({
       event: 'done',
       message: `Wrote ${job.outPath} — ${outcome.frames} frame(s), `
@@ -286,7 +323,7 @@ export async function runCliTask(task: CliTask): Promise<number> {
       height: outcome.height,
       fps: outcome.fps,
       elapsedMs,
-      warnings: [],
+      warnings: outcome.warnings,
       renderer: 'engine',
     });
     return 0;

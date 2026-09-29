@@ -29,10 +29,10 @@ C++ engine running in its own process, with the editor as its interface.
   viewport.
 - **Removed:** the JavaScript/WGSL plugin system. Projects that used such
   plugins still open; their plugin effects and layers are removed as one
-  undoable step, with a notice. Native (C++ SDK) plugins are unaffected. The
-  HDR10/HLG export presets are gone for now, and the command line's
-  `--captions`, `--data` and `--commands` options say so rather than running;
-  all three return in a later update.
+  undoable step, with a notice. Native (C++ SDK) plugins are unaffected.
+- **HDR10 and HLG exports** are encoded by the engine (10-bit HEVC with HDR10
+  metadata, BT.2020), and the command line's `--captions`, `--data` and
+  `--commands` run in the engine too.
 
 ## 0.8.5 — 2026-09-20
 

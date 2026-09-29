@@ -7908,7 +7908,9 @@ function encS_AudioAnalysisJob(w: Writer, v: T.AudioAnalysisJob): void {
   if (v.amplitudeGain !== undefined) { w.varint(5697); w.f64(v.amplitudeGain); }
   w.varint(5704); w.bool(v.beatMarkers);
   if (v.beatEvery !== undefined) { w.varint(5712); w.u32(v.beatEvery); }
-  if (v.amplitudeNull !== undefined) { w.varint(5720); w.bool(v.amplitudeNull); }
+  if (v.driver !== undefined) { w.varint(5722); w.str(v.driver); }
+  if (v.driverComp !== undefined) { w.varint(5730); w.str(v.driverComp); }
+  if (v.amplitudeNull !== undefined) { w.varint(5736); w.bool(v.amplitudeNull); }
 }
 function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJob {
   let h_layer = false;
@@ -7932,6 +7934,8 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
   let v_amplitudeGain: number | undefined;
   let v_beatMarkers: boolean | undefined;
   let v_beatEvery: number | undefined;
+  let v_driver: string | undefined;
+  let v_driverComp: string | undefined;
   let v_amplitudeNull: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
@@ -7951,7 +7955,9 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
       case 5697: v_amplitudeGain = r.f64(); break;
       case 5704: v_beatMarkers = r.bool(); h_beatMarkers = true; break;
       case 5712: v_beatEvery = r.u32(); break;
-      case 5720: v_amplitudeNull = r.bool(); break;
+      case 5722: v_driver = r.str(); break;
+      case 5730: v_driverComp = r.str(); break;
+      case 5736: v_amplitudeNull = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -7977,6 +7983,8 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
   if (v_amplitudeGain !== undefined) o.amplitudeGain = v_amplitudeGain;
   o.beatMarkers = v_beatMarkers;
   if (v_beatEvery !== undefined) o.beatEvery = v_beatEvery;
+  if (v_driver !== undefined) o.driver = v_driver;
+  if (v_driverComp !== undefined) o.driverComp = v_driverComp;
   if (v_amplitudeNull !== undefined) o.amplitudeNull = v_amplitudeNull;
   return o;
 }
@@ -8386,60 +8394,24 @@ function decS_ParticleBakeJob(r: Reader, end: number, o: any): T.ParticleBakeJob
   if (v_maxParticles !== undefined) o.maxParticles = v_maxParticles;
   return o;
 }
-function encS_AudioEnvelopeJob(w: Writer, v: T.AudioEnvelopeJob): void {
-  w.byte(10); w.str(v.comp);
-  if (v.source !== undefined) { w.byte(18); w.str(v.source); }
-  w.byte(26); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
-  w.byte(33); w.f64(v.bandLo);
-  w.byte(41); w.f64(v.bandHi);
-  if (v.attackMs !== undefined) { w.byte(49); w.f64(v.attackMs); }
-  if (v.releaseMs !== undefined) { w.byte(57); w.f64(v.releaseMs); }
-  if (v.gate !== undefined) { w.byte(65); w.f64(v.gate); }
-  if (v.normalize !== undefined) { w.byte(72); w.bool(v.normalize); }
+function encS_RigLogoJob(w: Writer, v: T.RigLogoJob): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  if (v.time !== undefined) { w.byte(16); w.i64(v.time); }
 }
-function decS_AudioEnvelopeJob(r: Reader, end: number, o: any): T.AudioEnvelopeJob {
-  let h_comp = false;
-  let h_range = false;
-  let h_bandLo = false;
-  let h_bandHi = false;
-  let v_comp: string | undefined;
-  let v_source: string | undefined;
-  let v_range: T.TimeRange | undefined;
-  let v_bandLo: number | undefined;
-  let v_bandHi: number | undefined;
-  let v_attackMs: number | undefined;
-  let v_releaseMs: number | undefined;
-  let v_gate: number | undefined;
-  let v_normalize: boolean | undefined;
+function decS_RigLogoJob(r: Reader, end: number, o: any): T.RigLogoJob {
+  const l_layers: string[] = [];
+  let v_time: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
-      case 10: v_comp = r.str(); h_comp = true; break;
-      case 18: v_source = r.str(); break;
-      case 26: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
-      case 33: v_bandLo = r.f64(); h_bandLo = true; break;
-      case 41: v_bandHi = r.f64(); h_bandHi = true; break;
-      case 49: v_attackMs = r.f64(); break;
-      case 57: v_releaseMs = r.f64(); break;
-      case 65: v_gate = r.f64(); break;
-      case 72: v_normalize = r.bool(); break;
+      case 10: l_layers.push(r.str()); break;
+      case 16: v_time = r.i64(); break;
       default: r.skip(key);
     }
   }
   r.expectAt(end);
-  if (!h_comp) throw new DecodeError('AudioEnvelopeJob.comp: missing', 'missingField');
-  if (!h_range) throw new DecodeError('AudioEnvelopeJob.range: missing', 'missingField');
-  if (!h_bandLo) throw new DecodeError('AudioEnvelopeJob.bandLo: missing', 'missingField');
-  if (!h_bandHi) throw new DecodeError('AudioEnvelopeJob.bandHi: missing', 'missingField');
-  o.comp = v_comp;
-  if (v_source !== undefined) o.source = v_source;
-  o.range = v_range;
-  o.bandLo = v_bandLo;
-  o.bandHi = v_bandHi;
-  if (v_attackMs !== undefined) o.attackMs = v_attackMs;
-  if (v_releaseMs !== undefined) o.releaseMs = v_releaseMs;
-  if (v_gate !== undefined) o.gate = v_gate;
-  if (v_normalize !== undefined) o.normalize = v_normalize;
+  o.layers = l_layers;
+  if (v_time !== undefined) o.time = v_time;
   return o;
 }
 function encS_StartJob(w: Writer, v: T.StartJob): void {
@@ -8564,6 +8536,62 @@ function decS_SetContentAwareFill(r: Reader, end: number, o: any): T.SetContentA
   if (!h_layer) throw new DecodeError('SetContentAwareFill.layer: missing', 'missingField');
   o.layer = v_layer;
   o.frames = l_frames;
+  return o;
+}
+function encS_CaptionInput(w: Writer, v: T.CaptionInput): void {
+  w.byte(8); w.i64(v.start);
+  w.byte(16); w.i64(v.end);
+  w.byte(26); w.str(v.text);
+}
+function decS_CaptionInput(r: Reader, end: number, o: any): T.CaptionInput {
+  let h_start = false;
+  let h_end = false;
+  let h_text = false;
+  let v_start: number | undefined;
+  let v_end: number | undefined;
+  let v_text: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_start = r.i64(); h_start = true; break;
+      case 16: v_end = r.i64(); h_end = true; break;
+      case 26: v_text = r.str(); h_text = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_start) throw new DecodeError('CaptionInput.start: missing', 'missingField');
+  if (!h_end) throw new DecodeError('CaptionInput.end: missing', 'missingField');
+  if (!h_text) throw new DecodeError('CaptionInput.text: missing', 'missingField');
+  o.start = v_start;
+  o.end = v_end;
+  o.text = v_text;
+  return o;
+}
+function encS_SetCaptions(w: Writer, v: T.SetCaptions): void {
+  w.byte(10); w.str(v.comp);
+  { const a = v.cues; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_CaptionInput(w, a[i]!); w.endLd(s); } } }
+  if (v.style !== undefined) { w.byte(26); w.str(v.style); }
+}
+function decS_SetCaptions(r: Reader, end: number, o: any): T.SetCaptions {
+  const l_cues: T.CaptionInput[] = [];
+  let h_comp = false;
+  let v_comp: string | undefined;
+  let v_style: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_comp = r.str(); h_comp = true; break;
+      case 18: l_cues.push(decS_CaptionInput(r, r.ldEnd(), {})); break;
+      case 26: v_style = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_comp) throw new DecodeError('SetCaptions.comp: missing', 'missingField');
+  o.comp = v_comp;
+  o.cues = l_cues;
+  if (v_style !== undefined) o.style = v_style;
   return o;
 }
 function encS_SetPluginEnabled(w: Writer, v: T.SetPluginEnabled): void {
@@ -10689,6 +10717,40 @@ function decS_GetThumbnail(r: Reader, end: number, o: any): T.GetThumbnail {
   if (!h_maxSize) throw new DecodeError('GetThumbnail.maxSize: missing', 'missingField');
   if (v_item !== undefined) o.item = v_item;
   if (v_layer !== undefined) o.layer = v_layer;
+  o.time = v_time;
+  o.maxSize = v_maxSize;
+  return o;
+}
+function encS_RenderDocumentStill(w: Writer, v: T.RenderDocumentStill): void {
+  w.byte(10); w.str(v.document);
+  if (v.comp !== undefined) { w.byte(18); w.str(v.comp); }
+  w.byte(24); w.i64(v.time);
+  w.byte(32); w.u32(v.maxSize);
+}
+function decS_RenderDocumentStill(r: Reader, end: number, o: any): T.RenderDocumentStill {
+  let h_document = false;
+  let h_time = false;
+  let h_maxSize = false;
+  let v_document: string | undefined;
+  let v_comp: string | undefined;
+  let v_time: number | undefined;
+  let v_maxSize: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_document = r.str(); h_document = true; break;
+      case 18: v_comp = r.str(); break;
+      case 24: v_time = r.i64(); h_time = true; break;
+      case 32: v_maxSize = r.u32(); h_maxSize = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_document) throw new DecodeError('RenderDocumentStill.document: missing', 'missingField');
+  if (!h_time) throw new DecodeError('RenderDocumentStill.time: missing', 'missingField');
+  if (!h_maxSize) throw new DecodeError('RenderDocumentStill.maxSize: missing', 'missingField');
+  o.document = v_document;
+  if (v_comp !== undefined) o.comp = v_comp;
   o.time = v_time;
   o.maxSize = v_maxSize;
   return o;
@@ -15948,9 +16010,9 @@ function encU_JobSpec(w: Writer, v: T.JobSpec): void {
     case 'rotoBrush': w.varint(13698); { const s = w.beginLd(); encS_RotoBrushJob(w, v.value); w.endLd(s); } return;
     case 'contentAwareFill': w.varint(13706); { const s = w.beginLd(); encS_ContentAwareFillJob(w, v.value); w.endLd(s); } return;
     case 'autoReframe': w.varint(13714); { const s = w.beginLd(); encS_AutoReframeJob(w, v.value); w.endLd(s); } return;
-    case 'physicsBake': w.varint(13722); { const s = w.beginLd(); encS_PhysicsBakeJob(w, v.value); w.endLd(s); } return;
-    case 'particleBake': w.varint(13730); { const s = w.beginLd(); encS_ParticleBakeJob(w, v.value); w.endLd(s); } return;
-    case 'audioEnvelope': w.varint(13738); { const s = w.beginLd(); encS_AudioEnvelopeJob(w, v.value); w.endLd(s); } return;
+    case 'rigLogo': w.varint(13722); { const s = w.beginLd(); encS_RigLogoJob(w, v.value); w.endLd(s); } return;
+    case 'physicsBake': w.varint(13730); { const s = w.beginLd(); encS_PhysicsBakeJob(w, v.value); w.endLd(s); } return;
+    case 'particleBake': w.varint(13738); { const s = w.beginLd(); encS_ParticleBakeJob(w, v.value); w.endLd(s); } return;
     default: throw new RangeError('JobSpec: unknown kind ' + String((v as { kind?: unknown }).kind));
   }
 }
@@ -15976,9 +16038,9 @@ function decU_JobSpec(r: Reader, end: number): T.JobSpec {
       case 13698: out = { kind: 'rotoBrush', value: decS_RotoBrushJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13706: out = { kind: 'contentAwareFill', value: decS_ContentAwareFillJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13714: out = { kind: 'autoReframe', value: decS_AutoReframeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
-      case 13722: out = { kind: 'physicsBake', value: decS_PhysicsBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
-      case 13730: out = { kind: 'particleBake', value: decS_ParticleBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
-      case 13738: out = { kind: 'audioEnvelope', value: decS_AudioEnvelopeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13722: out = { kind: 'rigLogo', value: decS_RigLogoJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13730: out = { kind: 'physicsBake', value: decS_PhysicsBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13738: out = { kind: 'particleBake', value: decS_ParticleBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       default: r.skip(key);
     }
   }
@@ -16171,6 +16233,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_LiftRange(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_SetOverlayGeometry(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_SetContentAwareFill(w, v); w.endLd(s); } return;
+    case 'setCaptions': w.varint(14826); { const s = w.beginLd(); encS_SetCaptions(w, v); w.endLd(s); } return;
     case 'poseIk3D': w.varint(15522); { const s = w.beginLd(); encS_PoseIk3D(w, v); w.endLd(s); } return;
     case 'bakeIk3D': w.varint(15530); { const s = w.beginLd(); encS_BakeIk3D(w, v); w.endLd(s); } return;
     case 'createLiveMerge': w.varint(15538); { const s = w.beginLd(); encS_CreateLiveMerge(w, v); w.endLd(s); } return;
@@ -16337,6 +16400,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 7770: out = decS_LiftRange(r, r.ldEnd(), { type: 'liftRange' }) as T.Command; break;
       case 14170: out = decS_SetOverlayGeometry(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.Command; break;
       case 14818: out = decS_SetContentAwareFill(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.Command; break;
+      case 14826: out = decS_SetCaptions(r, r.ldEnd(), { type: 'setCaptions' }) as T.Command; break;
       case 15522: out = decS_PoseIk3D(r, r.ldEnd(), { type: 'poseIk3D' }) as T.Command; break;
       case 15530: out = decS_BakeIk3D(r, r.ldEnd(), { type: 'bakeIk3D' }) as T.Command; break;
       case 15538: out = decS_CreateLiveMerge(r, r.ldEnd(), { type: 'createLiveMerge' }) as T.Command; break;
@@ -16503,6 +16567,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_TimeRangeEdit(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setCaptions': w.varint(14826); { const s = w.beginLd(); encS_LayerList(w, v); w.endLd(s); } return;
     case 'poseIk3D': w.varint(15522); { const s = w.beginLd(); encS_IkResult(w, v); w.endLd(s); } return;
     case 'bakeIk3D': w.varint(15530); { const s = w.beginLd(); encS_IkResult(w, v); w.endLd(s); } return;
     case 'createLiveMerge': w.varint(15538); { const s = w.beginLd(); encS_LayerRef(w, v); w.endLd(s); } return;
@@ -16669,6 +16734,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 7770: out = decS_TimeRangeEdit(r, r.ldEnd(), { type: 'liftRange' }) as T.CommandResult; break;
       case 14170: out = decS_Empty(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.CommandResult; break;
       case 14818: out = decS_Empty(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.CommandResult; break;
+      case 14826: out = decS_LayerList(r, r.ldEnd(), { type: 'setCaptions' }) as T.CommandResult; break;
       case 15522: out = decS_IkResult(r, r.ldEnd(), { type: 'poseIk3D' }) as T.CommandResult; break;
       case 15530: out = decS_IkResult(r, r.ldEnd(), { type: 'bakeIk3D' }) as T.CommandResult; break;
       case 15538: out = decS_LayerRef(r, r.ldEnd(), { type: 'createLiveMerge' }) as T.CommandResult; break;
@@ -16730,8 +16796,9 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'mapLayerTime': w.varint(15458); { const s = w.beginLd(); encS_MapLayerTime(w, v); w.endLd(s); } return;
     case 'getSourceSize': w.varint(15466); { const s = w.beginLd(); encS_GetSourceSize(w, v); w.endLd(s); } return;
     case 'checkPrecompose': w.varint(15474); { const s = w.beginLd(); encS_CheckPrecompose(w, v); w.endLd(s); } return;
-    case 'getTimelineRows': w.varint(15482); { const s = w.beginLd(); encS_GetTimelineRows(w, v); w.endLd(s); } return;
+    case 'renderDocumentStill': w.varint(15482); { const s = w.beginLd(); encS_RenderDocumentStill(w, v); w.endLd(s); } return;
     case 'getLayerFaces': w.varint(15490); { const s = w.beginLd(); encS_GetLayerFaces(w, v); w.endLd(s); } return;
+    case 'getTimelineRows': w.varint(15498); { const s = w.beginLd(); encS_GetTimelineRows(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16789,8 +16856,9 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 15458: out = decS_MapLayerTime(r, r.ldEnd(), { type: 'mapLayerTime' }) as T.Query; break;
       case 15466: out = decS_GetSourceSize(r, r.ldEnd(), { type: 'getSourceSize' }) as T.Query; break;
       case 15474: out = decS_CheckPrecompose(r, r.ldEnd(), { type: 'checkPrecompose' }) as T.Query; break;
-      case 15482: out = decS_GetTimelineRows(r, r.ldEnd(), { type: 'getTimelineRows' }) as T.Query; break;
+      case 15482: out = decS_RenderDocumentStill(r, r.ldEnd(), { type: 'renderDocumentStill' }) as T.Query; break;
       case 15490: out = decS_GetLayerFaces(r, r.ldEnd(), { type: 'getLayerFaces' }) as T.Query; break;
+      case 15498: out = decS_GetTimelineRows(r, r.ldEnd(), { type: 'getTimelineRows' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -16848,8 +16916,9 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'mapLayerTime': w.varint(15458); { const s = w.beginLd(); encS_MappedTime(w, v); w.endLd(s); } return;
     case 'getSourceSize': w.varint(15466); { const s = w.beginLd(); encS_SourceSizes(w, v); w.endLd(s); } return;
     case 'checkPrecompose': w.varint(15474); { const s = w.beginLd(); encS_PrecomposeCheck(w, v); w.endLd(s); } return;
-    case 'getTimelineRows': w.varint(15482); { const s = w.beginLd(); encS_TimelineRowSets(w, v); w.endLd(s); } return;
+    case 'renderDocumentStill': w.varint(15482); { const s = w.beginLd(); encS_Thumbnail(w, v); w.endLd(s); } return;
     case 'getLayerFaces': w.varint(15490); { const s = w.beginLd(); encS_LayerFaces(w, v); w.endLd(s); } return;
+    case 'getTimelineRows': w.varint(15498); { const s = w.beginLd(); encS_TimelineRowSets(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16907,8 +16976,9 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 15458: out = decS_MappedTime(r, r.ldEnd(), { type: 'mapLayerTime' }) as T.QueryResult; break;
       case 15466: out = decS_SourceSizes(r, r.ldEnd(), { type: 'getSourceSize' }) as T.QueryResult; break;
       case 15474: out = decS_PrecomposeCheck(r, r.ldEnd(), { type: 'checkPrecompose' }) as T.QueryResult; break;
-      case 15482: out = decS_TimelineRowSets(r, r.ldEnd(), { type: 'getTimelineRows' }) as T.QueryResult; break;
+      case 15482: out = decS_Thumbnail(r, r.ldEnd(), { type: 'renderDocumentStill' }) as T.QueryResult; break;
       case 15490: out = decS_LayerFaces(r, r.ldEnd(), { type: 'getLayerFaces' }) as T.QueryResult; break;
+      case 15498: out = decS_TimelineRowSets(r, r.ldEnd(), { type: 'getTimelineRows' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -17282,7 +17352,7 @@ export const codecs = {
   AutoReframeJob: mk<T.AutoReframeJob>(encS_AutoReframeJob, (r, e) => decS_AutoReframeJob(r, e, {})),
   PhysicsBakeJob: mk<T.PhysicsBakeJob>(encS_PhysicsBakeJob, (r, e) => decS_PhysicsBakeJob(r, e, {})),
   ParticleBakeJob: mk<T.ParticleBakeJob>(encS_ParticleBakeJob, (r, e) => decS_ParticleBakeJob(r, e, {})),
-  AudioEnvelopeJob: mk<T.AudioEnvelopeJob>(encS_AudioEnvelopeJob, (r, e) => decS_AudioEnvelopeJob(r, e, {})),
+  RigLogoJob: mk<T.RigLogoJob>(encS_RigLogoJob, (r, e) => decS_RigLogoJob(r, e, {})),
   JobSpec: mk<T.JobSpec>(encU_JobSpec, decU_JobSpec),
   StartJob: mk<T.StartJob>(encS_StartJob, (r, e) => decS_StartJob(r, e, {})),
   CancelJob: mk<T.CancelJob>(encS_CancelJob, (r, e) => decS_CancelJob(r, e, {})),
@@ -17290,6 +17360,8 @@ export const codecs = {
   JobRef: mk<T.JobRef>(encS_JobRef, (r, e) => decS_JobRef(r, e, {})),
   ContentAwareFillFrame: mk<T.ContentAwareFillFrame>(encS_ContentAwareFillFrame, (r, e) => decS_ContentAwareFillFrame(r, e, {})),
   SetContentAwareFill: mk<T.SetContentAwareFill>(encS_SetContentAwareFill, (r, e) => decS_SetContentAwareFill(r, e, {})),
+  CaptionInput: mk<T.CaptionInput>(encS_CaptionInput, (r, e) => decS_CaptionInput(r, e, {})),
+  SetCaptions: mk<T.SetCaptions>(encS_SetCaptions, (r, e) => decS_SetCaptions(r, e, {})),
   SetPluginEnabled: mk<T.SetPluginEnabled>(encS_SetPluginEnabled, (r, e) => decS_SetPluginEnabled(r, e, {})),
   SetPluginData: mk<T.SetPluginData>(encS_SetPluginData, (r, e) => decS_SetPluginData(r, e, {})),
   ItemInfo: mk<T.ItemInfo>(encS_ItemInfo, (r, e) => decS_ItemInfo(r, e, {})),
@@ -17357,6 +17429,7 @@ export const codecs = {
   GetSvgDocument: mk<T.GetSvgDocument>(encS_GetSvgDocument, (r, e) => decS_GetSvgDocument(r, e, {})),
   GetCryptomatte: mk<T.GetCryptomatte>(encS_GetCryptomatte, (r, e) => decS_GetCryptomatte(r, e, {})),
   GetThumbnail: mk<T.GetThumbnail>(encS_GetThumbnail, (r, e) => decS_GetThumbnail(r, e, {})),
+  RenderDocumentStill: mk<T.RenderDocumentStill>(encS_RenderDocumentStill, (r, e) => decS_RenderDocumentStill(r, e, {})),
   FontList: mk<T.FontList>(encS_FontList, (r, e) => decS_FontList(r, e, {})),
   ItemDetails: mk<T.ItemDetails>(encS_ItemDetails, (r, e) => decS_ItemDetails(r, e, {})),
   Thumbnail: mk<T.Thumbnail>(encS_Thumbnail, (r, e) => decS_Thumbnail(r, e, {})),

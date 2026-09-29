@@ -188,6 +188,8 @@ class Session {
   [[nodiscard]] std::string media_base() const;
   /// getThumbnail: build (frame builder) and draw (render thread) a still.
   StillImage render_still(const doc::StillRequest& r);
+  /// renderDocumentStill: `file` restored into a scratch Document (the open one untouched), its `comp` at `time`.
+  StillImage render_document_still(const doc::Json& file, const std::string& comp, api::Time time, std::uint32_t maxSize);
   /// A render-thread answer, waited for at most kRenderQueryTimeout.
   template <class T>
   T await_render(std::future<T> result, std::string_view what);
@@ -347,6 +349,8 @@ class Session {
   /// JobDocContext.layerToComp over this document (world2DAt; nullopt for 3D).
   std::function<std::optional<std::array<double, 6>>(std::string_view, double)> layer_to_comp();
   std::function<std::vector<std::pair<std::string, double>>(std::string_view, double)> layer_values();
+  /// JobDocContext.layerSize over this document (layer_geometry_at's base box).
+  std::function<std::optional<std::array<double, 2>>(std::string_view, double)> layer_size();
   /// Drain the runner: progress events, results applied (core thread, from tick()).
   void poll_jobs(Clock::time_point now);
   /// Apply a held result as ONE history entry (origin engine). False with the error recorded on the job.

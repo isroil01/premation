@@ -26,59 +26,19 @@ import { audioComponent, readAudioClipTimings } from './audioScene';
 import type { SceneNode } from '@core/types';
 import { bumpScene } from '@stores/sceneStore';
 
-/** Which slice of the envelope is drawn. */
-export type AudioWaveformMode = 'full' | 'playhead-window';
+import { defaultAudioWaveform, normalizeAudioWaveform, type AudioWaveformConfig, type AudioWaveformMode } from '@core/mirror/audioWaveform';
 
-export interface AudioWaveformConfig {
-  /** Scene id of the audio layer whose envelope drives this waveform. */
-  sourceLayerId: string;
-  /** Columns sampled across the layer width (outline resolution). */
-  samples: number;
-  /** Amplitude multiplier — 1 fills the layer half-height at peak. */
-  heightScale: number;
-  /** Baseline thickness in px (min visible height, even during silence). */
-  thickness: number;
-  /** `full` = whole clip across the width; `playhead-window` = a moving slice. */
-  mode: AudioWaveformMode;
-  /** Window width (seconds) for `playhead-window` mode. */
-  windowSec: number;
-}
-
-export const AUDIO_WAVEFORM_FX_KEY = 'audioWaveform';
-
-export function defaultAudioWaveform(sourceLayerId = ''): AudioWaveformConfig {
-  return {
-    sourceLayerId,
-    samples: 128,
-    heightScale: 1,
-    thickness: 2,
-    mode: 'full',
-    windowSec: 1,
-  };
-}
+export { defaultAudioWaveform };
+export type { AudioWaveformConfig, AudioWaveformMode };
 
 const num = (v: unknown, fb: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : fb);
+
+export const AUDIO_WAVEFORM_FX_KEY = 'audioWaveform';
 
 /** Read the audioWaveform block off a node's `fx` component, or null when absent. */
 export function readNodeAudioWaveform(node: SceneNode): AudioWaveformConfig | null {
   const fx = node.components.find((c) => c.type === 'fx');
-  return audioWaveformConfigOf(fx?.props[AUDIO_WAVEFORM_FX_KEY]);
-}
-
-/** The stored `audioWaveform` value (the `layer/audioWaveform` field) normalised over the defaults; null when absent. Pure. */
-export function audioWaveformConfigOf(raw: unknown): AudioWaveformConfig | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Partial<AudioWaveformConfig>;
-  const d = defaultAudioWaveform();
-  const mode: AudioWaveformMode = r.mode === 'playhead-window' ? 'playhead-window' : 'full';
-  return {
-    sourceLayerId: typeof r.sourceLayerId === 'string' ? r.sourceLayerId : '',
-    samples: Math.max(2, Math.floor(num(r.samples, d.samples))),
-    heightScale: num(r.heightScale, d.heightScale),
-    thickness: Math.max(0, num(r.thickness, d.thickness)),
-    mode,
-    windowSec: Math.max(0, num(r.windowSec, d.windowSec)),
-  };
+  return normalizeAudioWaveform(fx?.props[AUDIO_WAVEFORM_FX_KEY]);
 }
 
 /** True when the node carries an audioWaveform block (gates its inspector). */

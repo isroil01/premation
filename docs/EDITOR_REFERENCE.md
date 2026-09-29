@@ -69,8 +69,8 @@ rediscovered in git history and believed a second time.
 | Light types | 5 | `src/core/scene/light.ts` → `LightType` |
 | Canvas tools | 23 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
-| Export formats | 18 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
-| Stores | 77 | `src/stores/*.ts` |
+| Export formats | 18 | `renderSpec.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` / `DataExportFormat` |
+| Stores | 78 | `src/stores/*.ts` |
 | Packages | 15 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        77 Zustand stores
+                          ├── src/stores/*        78 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          16 workspace packages
                                 ├── scene       scene graph + components
@@ -691,10 +691,10 @@ because the dialog previously claimed all of them kept alpha:
 Lottie **import and export**, SVG import including SMIL and CSS animation,
 image sequences, video with audio. The rendered formats are `mp4`, `webm`, `gif`,
 `mov`, `png`, `png-sequence`, `jpg-sequence`, `exr-sequence`, `wav`, `json` and
-`lottie`, plus the `hdr10` / `hlg` delivery variants and the interchange writers
+`lottie`, the `hdr10` / `hlg` delivery variants, and the interchange writers
 (`edl`, `otio`, `fcpxml`, `ale`, `mogrt`) — **18 export formats** in §1's count,
-which unions `VideoFormat` with `ExportFormat`. mp4/mov need the desktop app
-(ffmpeg); the browser gets WebM or a PNG sequence.
+which unions `VideoFormat` with `ExportFormat` and `DataExportFormat`. Every
+rendered format is encoded by the engine (`premation-engine --export`, ffmpeg).
 
 **The render queue pauses and resumes** (2026-09-02, `renderQueueStore.ts`,
 `renderQueuePauseResume.test.ts`). The desktop sink already staged every frame as

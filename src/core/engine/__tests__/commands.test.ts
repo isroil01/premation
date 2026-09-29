@@ -386,6 +386,7 @@ export const CASES: Partial<Record<CommandType, Case>> = {
   // B4 round 8 — engine-only (the conversion geometry's polygon booleans; the TS engine has no handler).
   createLiveMerge: { cmd: (s) => ({ type: 'createLiveMerge', layers: [s.A, s.B], op: 'union' }), fails: 'unsupported' },
   migrateLegacyPrecomps: { cmd: () => ({ type: 'migrateLegacyPrecomps' }), fails: 'unsupported' },
+  setCaptions: { cmd: (s) => ({ type: 'setCaptions', comp: s.comp, cues: [{ start: 0, end: sec(1), text: 'Hello' }] }), fails: 'unsupported' },
   setContentAwareFill: { cmd: (s) => ({ type: 'setContentAwareFill', layer: s.A, frames: [{ time: 0, src: 'file:///fill/frame_00000.png' }, { time: 705_600_000, src: 'file:///fill/frame_00001.png' }] }) },
 };
 
@@ -397,7 +398,7 @@ const edits = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t]
 
 test('every edit command in the schema has a case', () => {
   expect(edits.filter((t) => !CASES[t])).toEqual([]);
-  expect(edits.length).toBe(125);
+  expect(edits.length).toBe(126);
 });
 
 describe.each(edits)('%s', (type) => {

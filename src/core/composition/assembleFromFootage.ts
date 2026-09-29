@@ -41,6 +41,8 @@
  * the previous right half.
  */
 
+import { useUIStore } from '@stores/uiStore';
+import { requireEngineJob, startEngineJob } from '@core/engine/engineJobs';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -153,4 +155,56 @@ export function applyAssembly(
   useSelectionStore.getState().set(shots);
   bumpScene();
   return { shots, dropped, sequenced };
+}
+
+/**
+ * Detect the cuts in `nodeId`'s clip, reporting progress the way Scene Edit
+ * Detection does — one dismissible notification updated in place, because the
+ * walk is decode-bound and takes a minute on an hour of 4K.
+ *
+ * Separate from `applyAssembly` because it is async and cancellable, and
+ * because everything it does is a pure read: nothing has changed if it throws.
+ */
+export async function detectForAssembly(
+  nodeId: string,
+  opts: AssembleOptions,
+): Promise<{ cutsCompSec: number[]; status: 'completed' | 'cancelled' }> {
+  let liveId = useUIStore.getState().notify({
+    level: 'info',
+    message: 'Assemble from Footage: reading frames… 0%',
+    durationMs: 0,
+  });
+  let last = -1;
+  try {
+    // The engine walks the footage (the sceneDetect job, analysis only — the
+    // assembly edit is the caller's one entry).
+    const handle = requireEngineJob(await startEngineJob<{ cutsCompSec: number[] }>(
+      {
+        kind: 'sceneDetect',
+        value: { layer: nodeId, createMarkers: false, splitLayers: false, ...(opts.sensitivity !== undefined ? { sensitivity: opts.sensitivity } : {}) },
+      },
+      {
+        apply: false,
+        onProgress: (f) => {
+          const pct = Math.round(f * 100);
+          if (pct !== last && pct % 5 === 0) {
+            last = pct;
+            useUIStore.getState().dismissNotification(liveId);
+            liveId = useUIStore.getState().notify({
+              level: 'info',
+              message: `Assemble from Footage: reading frames… ${pct}%`,
+              durationMs: 0,
+            });
+          }
+        },
+      },
+    ), 'Assemble from Footage');
+    const out = await handle.done;
+    handle.cancel();  // the result is read, never applied
+    if (out.status === 'cancelled') return { cutsCompSec: [], status: 'cancelled' };
+    if (out.status !== 'done') throw new Error(out.error?.message ?? 'the cuts could not be read');
+    return { cutsCompSec: out.result?.cutsCompSec ?? [], status: 'completed' };
+  } finally {
+    useUIStore.getState().dismissNotification(liveId);
+  }
 }

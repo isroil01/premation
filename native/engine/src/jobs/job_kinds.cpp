@@ -34,7 +34,7 @@ class EngineJobKinds final : public JobKinds {
           else if constexpr (std::is_same_v<T, api::AutoReframeJob>) return prepare_auto_reframe(s, ctx);
           else if constexpr (std::is_same_v<T, api::PhysicsBakeJob>) return prepare_physics_bake(s, ctx);
           else if constexpr (std::is_same_v<T, api::ParticleBakeJob>) return prepare_particle_bake(s, ctx);
-          else if constexpr (std::is_same_v<T, api::AudioEnvelopeJob>) return prepare_audio_envelope(s, ctx);
+          else if constexpr (std::is_same_v<T, api::RigLogoJob>) return prepare_rig_logo(s, ctx);
           else if constexpr (std::is_same_v<T, api::TranscribeJob>) return prepare_transcribe(s, ctx);
           else doc::fail(api::ErrorCode::unsupported, "this engine does not run that job kind");
         },

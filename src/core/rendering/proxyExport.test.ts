@@ -180,14 +180,12 @@ describe('structural guards', () => {
   });
 
   it('the walks that should use a stand-in go through that door', () => {
-    // Scene-edit detection is deliberately absent: it argues in its own source
-    // that a re-encode can move a hard cut and land the detector a frame late.
-    // Roto is absent because its output IS the silhouette, so resolution there
+    // (Scene-edit detection is the engine's sceneDetect job now.) Roto is absent because its output IS the silhouette, so resolution there
     // is the deliverable rather than the cost.
     for (const w of ['src/core/tracking/trackVideoLayer.ts', 'src/core/tracking/smoothStabilize.ts']) {
       expect(read(w)).toContain('planAnalysisDecode');
     }
-    for (const w of ['src/core/tracking/sceneEditDetectLayer.ts', 'src/core/tracking/rotoBrush.ts']) {
+    for (const w of ['src/core/tracking/rotoBrush.ts']) {
       expect(read(w)).not.toContain('planAnalysisDecode');
     }
   });

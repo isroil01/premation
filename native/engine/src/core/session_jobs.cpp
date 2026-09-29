@@ -15,6 +15,7 @@
 
 #include "anim.hpp"
 #include "fail.hpp"
+#include "layer_geometry.hpp"
 #include "jobs/job_apply_util.hpp"
 #include "log.hpp"
 #include "session.hpp"
@@ -82,6 +83,20 @@ std::function<std::vector<std::pair<std::string, double>>(std::string_view, doub
   };
 }
 
+std::function<std::optional<std::array<double, 2>>(std::string_view, double)> Session::layer_size() {
+  return [this](std::string_view layer, double seconds) -> std::optional<std::array<double, 2>> {
+    const doc::PCtx pc = pctx();
+    try {
+      // No text port here: a job asks this of image / shape layers.
+      const auto g = doc::layer_geometry_at(doc::SpaceCtx{doc_, pc.view, pc.expr, pc.cache}, nullptr, layer, seconds);
+      if (!g) return std::nullopt;
+      return std::array<double, 2>{g->width, g->height};
+    } catch (const doc::EngineFail&) {
+      return std::nullopt;
+    }
+  };
+}
+
 Session::JobRecord* Session::find_job(const std::string& id) {
   const auto it = std::find_if(jobs_.begin(), jobs_.end(), [&id](const JobRecord& r) { return r.info.id == id; });
   return it != jobs_.end() ? &*it : nullptr;
@@ -93,7 +108,7 @@ api::CommandResult Session::start_job(const api::StartJob& c) {
   }
   catalogCache_.clear();
   ensure_timelines();
-  const jobs::JobDocContext ctx{doc_, bundleRoot_, projectPath_, apiTime_, layer_to_comp(), layer_values()};
+  const jobs::JobDocContext ctx{doc_, bundleRoot_, projectPath_, apiTime_, layer_to_comp(), layer_values(), layer_size()};
   // prepare validates against the document and snapshots the inputs; a refusal
   // is the command's answer and nothing is queued.
   jobs::PreparedJob prepared = jobKinds_->prepare(c.job, ctx);
@@ -364,7 +379,7 @@ api::CommandResult Session::auto_trace_in_journal(const api::AutoTrace& c, api::
   spec.invert = false;
   api::JobSpec job;
   job.v = std::move(spec);
-  const jobs::JobDocContext ctx{doc_, bundleRoot_, projectPath_, apiTime_, layer_to_comp(), layer_values()};
+  const jobs::JobDocContext ctx{doc_, bundleRoot_, projectPath_, apiTime_, layer_to_comp(), layer_values(), layer_size()};
   // prepare: notFound / invalidArgument (not footage, retimed, no file) / outOfRange.
   jobs::PreparedJob prepared = jobKinds_->prepare(job, ctx);
   if (!prepared.work) fail(ErrorCode::internal, "the autoTrace job prepared no work");

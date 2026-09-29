@@ -120,6 +120,9 @@ struct JobDocContext {
   /// prop of the layer at composition second `s`, sampled (the particle bake's
   /// `particle.<key>` tracks). Empty when the caller has no evaluator.
   std::function<std::vector<std::pair<std::string, double>>(std::string_view layer, double seconds)> layerValues;
+  /// A layer's base (unscaled) box at composition second `s`, px: {width,
+  /// height} (layer_geometry_at). nullopt for a kind with no box. Empty = none.
+  std::function<std::optional<std::array<double, 2>>(std::string_view layer, double seconds)> layerSize;
 };
 
 /// The job kinds this engine build can run (engine_jobs: make_job_kinds).

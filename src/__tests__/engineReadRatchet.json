@@ -3,14 +3,14 @@
   "total": 11,
   "areas": {
     "text": 0,
-    "inspector": 0,
+    "inspector": 2,
     "timeline": 3,
-    "viewport/tools": 1,
+    "viewport/tools": 0,
     "effects": 0,
-    "layers": 1,
-    "comps/assets/dialogs": 0,
+    "layers": 0,
+    "comps/assets/dialogs": 1,
     "AI/plugins/commands": 0,
     "tools/core": 0,
-    "other": 6
+    "other": 5
   }
 }

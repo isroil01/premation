@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string_view>
 #include <vector>
 
 namespace premation::jobs::audio_analysis {
@@ -85,17 +86,26 @@ void fft_in_place(std::span<float> re, std::span<float> im);
 [[nodiscard]] std::vector<float> align_samples_to_range(std::span<const float> channel, double sampleRate,
                                                         std::span<const ClipTiming> timings, double startSec,
                                                         double endSec);
+/// audioDriver.ts EnvelopeOptions, the band as Hz edges (bandRange).
+struct EnvelopeOptions {
+  double lo = 20;
+  double hi = 20000;
+  double attackMs = 0;
+  double releaseMs = 0;
+  double gate = 0;
+  bool normalize = true;
+};
+/// `analyseAudioEnvelope`: per frame of `fps`, 0..1 on a −60…0 dB scale of the
+/// band's amplitude (a Hann-windowed 1024-point FFT); detector → gate →
+/// attack/release (one-pole) → normalise to its own peak.
+[[nodiscard]] std::vector<float> detector_envelope(std::span<const float> samples, double sampleRate, double fps,
+                                                   const EnvelopeOptions& options);
+/// `mapEnvelope`: a centred box smooth over `smoothFrames`, the curve
+/// ('linear' | 'easeIn' | 'easeOut' | 'sCurve' | 'invert'), then min…max (clamped).
+[[nodiscard]] std::vector<float> map_envelope(std::span<const float> env, double min, double max, std::string_view curve,
+                                              int smoothFrames);
 /// `analyseAudioEnvelope` with band 'full', no attack/release/gate, normalize false: 0..1 on a −60…0 dB scale per frame.
 [[nodiscard]] std::vector<float> raw_detector_envelope(std::span<const float> samples, double sampleRate, double fps);
-/// audioDriver.ts EnvelopeOptions: the band in Hz, one-pole attack / release (ms), the gate floor (0..1), normalise to the peak.
-struct DetectorOptions {
-  double lo = 20, hi = 20000;
-  double attackMs = 0, releaseMs = 0;
-  double gate = 0;
-  bool normalize = false;
-};
-/// `analyseAudioEnvelope`: detector → gate → attack/release → normalise, 0..1 per frame.
-[[nodiscard]] std::vector<float> detector_envelope(std::span<const float> samples, double sampleRate, double fps, const DetectorOptions& o);
 
 // ── ducking / gate ──
 struct DuckingParams {

@@ -22,8 +22,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { documentMirror } from '@stores/documentMirror';
 import { settingsFps } from '@core/mirror/compFacts';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
-import type { AssembleOptions } from '@core/composition/assembleFromFootage';
-import { requireEngineJob, startEngineJob } from '@core/engine/engineJobs';
+import { detectForAssembly } from '@core/composition/assembleFromFootage';
 import { assembleShotsEdit, newCompFromClipsEdit, newCompFromFootageEdit } from '@layout/Workspace/footageEdits';
 import { openAssembleDialog } from './AssembleDialog';
 
@@ -156,8 +155,9 @@ export async function runAssembleFromFootage(target: AssembleTarget): Promise<vo
       nodeId = made.layer;
     }
 
-    // The engine walks the clip (the sceneDetect job, analysis only — nothing is written).
-    const { cutsCompSec, status } = await detectCuts(nodeId, opts);
+    // B4-kept: scene-edit detection is an engine job run from the UI (decodes the clip's frames) — not
+    // registered as an engine job yet (G).
+    const { cutsCompSec, status } = await detectForAssembly(nodeId, opts);
     if (status === 'cancelled') {
       notify('Assemble from Footage: cancelled.', 'info');
       return;
@@ -181,37 +181,5 @@ export async function runAssembleFromFootage(target: AssembleTarget): Promise<vo
       'error',
       6000,
     );
-  }
-}
-
-/**
- * The cuts in `nodeId`'s clip — the engine's `sceneDetect` job run for its
- * summary (no markers, no splits), progress in one notification updated in
- * place (the walk is decode-bound: a minute on an hour of 4K).
- */
-async function detectCuts(nodeId: string, opts: AssembleOptions): Promise<{ cutsCompSec: number[]; status: 'completed' | 'cancelled' }> {
-  let liveId = useUIStore.getState().notify({ level: 'info', message: 'Assemble from Footage: reading frames… 0%', durationMs: 0 });
-  let last = -1;
-  try {
-    const handle = requireEngineJob(await startEngineJob<{ cutsCompSec: number[] }>(
-      { kind: 'sceneDetect', value: { layer: nodeId, createMarkers: false, splitLayers: false, ...(opts.sensitivity !== undefined ? { sensitivity: opts.sensitivity } : {}) } },
-      {
-        apply: false,
-        onProgress: (f) => {
-          const pct = Math.round(f * 100);
-          if (pct !== last && pct % 5 === 0) {
-            last = pct;
-            useUIStore.getState().dismissNotification(liveId);
-            liveId = useUIStore.getState().notify({ level: 'info', message: `Assemble from Footage: reading frames… ${pct}%`, durationMs: 0 });
-          }
-        },
-      },
-    ), 'Assemble from Footage');
-    const out = await handle.done;
-    if (out.status === 'cancelled') return { cutsCompSec: [], status: 'cancelled' };
-    if (out.status === 'failed') throw new Error(out.error?.message ?? 'the clip could not be read');
-    return { cutsCompSec: out.result?.cutsCompSec ?? [], status: 'completed' };
-  } finally {
-    useUIStore.getState().dismissNotification(liveId);
   }
 }

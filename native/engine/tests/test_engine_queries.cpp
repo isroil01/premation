@@ -104,7 +104,8 @@ class StillBuilder final : public FrameBuilder {
 template <class T>
 T answer_of(const api::Response& r) {
   REQUIRE(r.outcome.kind() == api::Outcome::Kind::query);
-  return std::get<T>(std::get<api::QueryResult>(r.outcome.v).v);
+  // result_as visits: a result type shared by two queries (Thumbnail) is ill-formed for std::get.
+  return result_as<T>(std::get<api::QueryResult>(r.outcome.v));
 }
 
 api::ItemId make_comp(Harness& h) {

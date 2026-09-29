@@ -11,7 +11,9 @@ const path = require('node:path');
 
 const REPO = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(REPO, 'dist-electron', 'main.js');
-const ELECTRON = require(path.join(REPO, 'node_modules', 'electron'));
+// PREMATION_APP_EXE: drive a packaged build (e.g. release/0.9.0/win-unpacked/Premation.exe) instead of dev.
+const APP_EXE = process.env.PREMATION_APP_EXE || null;
+const ELECTRON = APP_EXE || require(path.join(REPO, 'node_modules', 'electron'));
 const PORT = 9336;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const get = (url) => new Promise((res, rej) => { http.get(url, (r) => { let d = ''; r.on('data', (c) => { d += c; }); r.on('end', () => res(d)); }).on('error', rej); });
@@ -21,7 +23,7 @@ const get = (url) => new Promise((res, rej) => { http.get(url, (r) => { let d = 
   for (const k of Object.keys(env)) if (k.startsWith('PREMATION_')) delete env[k];
   delete env.ELECTRON_RUN_AS_NODE;
   const userData = path.join(os.tmpdir(), `premation-default-${process.pid}`);
-  const child = spawn(ELECTRON, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${userData}`, MAIN], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(ELECTRON, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${userData}`, ...(APP_EXE ? [] : [MAIN])], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   const log = [];
   child.stdout.on('data', (d) => log.push(String(d))); child.stderr.on('data', (d) => log.push(String(d)));
   try {

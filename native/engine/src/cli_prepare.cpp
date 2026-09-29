@@ -1,7 +1,9 @@
 #include "cli_prepare.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstdlib>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -18,6 +20,10 @@
 #include <vector>
 
 #include "core/json.hpp"
+#include "core/native_effects.hpp"
+#include "core/props.hpp"
+#include "core/readmodel.hpp"
+#include "core/values.hpp"
 #include "core/session.hpp"
 #include "core/simulated_sink.hpp"
 #include "os_ffi.hpp"
@@ -162,6 +168,101 @@ double num_or(const Json& o, std::string_view key, double fallback) {
   return v.is_number() && std::isfinite(v.num()) ? v.num() : fallback;
 }
 
+/// "#rgb" / "#rrggbb" / "#rrggbbaa" (the # optional) → 0..1 channels (dataFill.ts coerceCell + hexToColor).
+std::optional<std::array<double, 4>> hex_color(std::string s) {
+  if (!s.empty() && s.front() == '#') s.erase(0, 1);
+  for (const char ch : s) {
+    if (std::isxdigit(static_cast<unsigned char>(ch)) == 0) return std::nullopt;
+  }
+  if (s.size() == 3) s = {s[0], s[0], s[1], s[1], s[2], s[2]};
+  if (s.size() != 6 && s.size() != 8) return std::nullopt;
+  const auto byte = [&s](std::size_t i) { return static_cast<double>(std::stoi(s.substr(i, 2), nullptr, 16)) / 255.0; };
+  return std::array<double, 4>{byte(0), byte(2), byte(4), s.size() == 8 ? byte(6) : 1.0};
+}
+
+struct FillOutcome {
+  std::vector<std::string> filled;
+  std::vector<std::string> skippedKind;
+  std::vector<std::string> failed;
+};
+
+/**
+ * One data row into the composition's template fields (templateFieldEdits.ts
+ * fillDataRowEdit): text → Source Text, a hex colour → Fill Color, a number →
+ * the field's catalog property in API units; media and other kinds are
+ * reported. ONE batch.
+ */
+std::variant<FillOutcome, std::string> fill_row(Client& c, const std::string& comp, const Json& values) {
+  const doc::Document& d = c.session().document();
+  const std::optional<std::string> fieldsText = doc::comp_settings(d, comp).template_fields;
+  const std::optional<Json> fields = fieldsText ? js::parse(*fieldsText) : std::nullopt;
+  if (!fields || !fields->is_array() || fields->arr().empty()) {
+    return std::string("This composition exposes no template fields, so there is nothing for the data to fill. Expose the layers you want driven by data first (Templates ▸ expose a layer as a field).");
+  }
+  FillOutcome out;
+  api::CommandBatch batch;
+  batch.label = "Fill from data row";
+  for (const Json& f : fields->arr()) {
+    const std::string id = f.at("id").is_string() ? f.at("id").str() : std::string();
+    const Json& cell = values.at(id);
+    if (id.empty() || !cell.is_string()) continue;
+    const std::string kind = f.at("kind").is_string() ? f.at("kind").str() : std::string();
+    const Json& target = f.at("target");
+    const std::string layer = target.at("nodeId").is_string() ? target.at("nodeId").str() : std::string();
+    const std::string component = target.at("componentType").is_string() ? target.at("componentType").str() : std::string();
+    const std::string prop = target.at("prop").is_string() ? target.at("prop").str() : std::string();
+    if (kind != "text" && kind != "color" && kind != "number") {
+      out.skippedKind.push_back(id);
+      continue;
+    }
+    if (d.node(layer) == nullptr) {
+      out.failed.push_back(id);
+      continue;
+    }
+    api::SetProperty sp;
+    sp.time = 0;
+    if (kind == "text" && component == "Text" && prop == "content") {
+      sp.prop = api::PropRef{layer, "text/sourceText"};
+      sp.value = doc::v_string(cell.str());
+    } else if (prop == "fill" && kind == "color") {
+      const auto rgba = hex_color(cell.str());
+      if (!rgba) {
+        out.failed.push_back(id);
+        continue;
+      }
+      sp.prop = api::PropRef{layer, "layer/fill"};
+      sp.value = doc::v_color((*rgba)[0], (*rgba)[1], (*rgba)[2], (*rgba)[3]);
+    } else if (kind == "number") {
+      std::string raw = cell.str();
+      const auto a = raw.find_first_not_of(" \t");
+      const auto b = raw.find_last_not_of(" \t");
+      raw = a == std::string::npos ? std::string() : raw.substr(a, b - a + 1);
+      char* end = nullptr;
+      const double n = raw.empty() ? 0 : std::strtod(raw.c_str(), &end);
+      const doc::Catalog cat = doc::catalog_for(d, layer);
+      const doc::PropBinding* bind = cat.by_member(prop);
+      if (raw.empty() || end == nullptr || *end != '\0' || !std::isfinite(n) || bind == nullptr || bind->members.size() != 1 ||
+          bind->valueType == api::ValueType::color) {
+        out.failed.push_back(id);
+        continue;
+      }
+      sp.prop = api::PropRef{layer, bind->path};
+      sp.value = doc::v_scalar(n * doc::api_unit_factor(prop));
+    } else {
+      out.failed.push_back(id);
+      continue;
+    }
+    batch.commands.push_back(command(std::move(sp)));
+    out.filled.push_back(id);
+  }
+  if (batch.commands.empty()) return out;
+  api::RequestBody body;
+  body.v = std::move(batch);
+  const api::Response res = c.submit(std::move(body));
+  if (auto e = error_of(res)) return "The row could not be filled: " + *e;
+  return out;
+}
+
 /// Run a job to its end (applied when `apply`); its JobInfo, or an error message.
 std::variant<api::JobInfo, std::string> run_job(Client& c, api::StartJob start) {
   const api::Response started = c.run(command(std::move(start)));
@@ -225,6 +326,37 @@ int run_prepare(const std::string& jobPath) {
   c.hello();
 
   if (auto e = error_of(c.run(command(api::OpenProject{projectPath})))) return fail_with("Could not open the project: " + *e);
+  // A recorded command log first (`premation render --commands`): each entry is
+  // an EngineMessage{request} on the wire, base64 — main encoded the log's
+  // JSON with the generated codec. A refusal is reported, not fatal: the rest
+  // of the log still applies, and the report names the first.
+  if (job->at("requests").is_array()) {
+    std::size_t applied = 0;
+    std::size_t refused = 0;
+    std::string firstError;
+    for (const Json& entry : job->at("requests").arr()) {
+      const std::optional<std::vector<std::uint8_t>> bytes = entry.is_string() ? doc::native_unbase64(entry.str()) : std::nullopt;
+      api::EngineMessage m;
+      bool ok = bytes.has_value();
+      if (ok) {
+        wire::Reader rd(*bytes);
+        ok = api::decode(rd, m) == wire::Status::ok && m.kind() == api::EngineMessage::Kind::request;
+      }
+      if (!ok) return fail_with("The command log holds an entry that is not an engine request (entry " + std::to_string(applied + refused + 1) + ").");
+      const api::Response res = c.submit(std::get<api::Request>(m.v).body);
+      ++applied;
+      if (auto e = error_of(res)) {
+        ++refused;
+        if (firstError.empty()) firstError = "#" + std::to_string(applied) + " " + *e;
+      }
+    }
+    Json j = Json::object();
+    j.set("ev", Json::string("replayed"));
+    j.set("applied", Json::number(static_cast<double>(applied)));
+    j.set("refused", Json::number(static_cast<double>(refused)));
+    if (!firstError.empty()) j.set("firstError", Json::string(firstError));
+    emit(j);
+  }
   const doc::Document& d = c.session().document();
 
   if (job->at("listComps").b()) {
@@ -250,7 +382,8 @@ int run_prepare(const std::string& jobPath) {
 
   const std::string selector = job->at("comp").is_string() ? job->at("comp").str() : std::string();
   std::string compId = resolve_comp(d, selector);
-  const bool needsComp = job->at("reframe").is_object() || job->at("transcribe").is_object();
+  const bool needsComp = job->at("reframe").is_object() || job->at("transcribe").is_object() || job->at("captions").is_object() ||
+                         job->at("fill").is_object();
   if (needsComp && compId.empty()) {
     return fail_with(selector.empty() ? "This project has no compositions." : "Composition \"" + selector + "\" not found.");
   }
@@ -273,6 +406,54 @@ int run_prepare(const std::string& jobPath) {
     j.set("cues", summary && summary->at("cues").is_array() ? summary->at("cues") : Json::array());
     const Json* rec = d.comp(compId);
     j.set("compName", Json::string(rec != nullptr && rec->at("name").is_string() ? rec->at("name").str() : compId));
+    emit(j);
+  }
+
+  // A data row first: the template's own fields, before anything retargets it.
+  if (job->at("fill").is_object()) {
+    auto filled = fill_row(c, compId, job->at("fill"));
+    if (auto* e = std::get_if<std::string>(&filled)) return fail_with(*e);
+    const FillOutcome& f = std::get<FillOutcome>(filled);
+    const auto list = [](const std::vector<std::string>& v) {
+      Json a = Json::array();
+      for (const std::string& s : v) a.arr_mut().push_back(Json::string(s));
+      return a;
+    };
+    Json j = Json::object();
+    j.set("ev", Json::string("filled"));
+    j.set("filled", list(f.filled));
+    j.set("skipped", list(f.skippedKind));
+    j.set("failed", list(f.failed));
+    emit(j);
+  }
+
+  // Captions BEFORE a reframe: the retargeted composition holds the source as
+  // a layer, so captions added after it would float over the crop.
+  if (job->at("captions").is_object()) {
+    const Json& cj = job->at("captions");
+    api::SetCaptions sc;
+    sc.comp = compId;
+    if (cj.at("style").is_string()) sc.style = cj.at("style").str();
+    constexpr double kFlicksPerSecond = 705600000.0;
+    for (const Json& cue : cj.at("cues").arr()) {
+      if (!cue.is_object() || !cue.at("text").is_string()) continue;
+      api::CaptionInput in;
+      in.start = static_cast<api::Time>(std::llround(num_or(cue, "start", 0) * kFlicksPerSecond));
+      in.end = static_cast<api::Time>(std::llround(num_or(cue, "end", 0) * kFlicksPerSecond));
+      in.text = cue.at("text").str();
+      sc.cues.push_back(std::move(in));
+    }
+    const api::Response res = c.run(command(std::move(sc)));
+    if (auto e = error_of(res)) return fail_with("Could not add the captions: " + *e);
+    std::size_t made = 0;
+    if (const auto* cr = std::get_if<api::CommandResult>(&res.outcome.v)) {
+      std::visit([&](const auto& x) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(x)>, api::LayerList>) made = x.layers.size();
+      }, cr->v);
+    }
+    Json j = Json::object();
+    j.set("ev", Json::string("captions"));
+    j.set("layers", Json::number(static_cast<double>(made)));
     emit(j);
   }
 

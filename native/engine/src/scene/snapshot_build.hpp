@@ -41,6 +41,9 @@ struct BuildContext {
   /// getThumbnail of a layer: only this layer (and what it holds) draws in the
   /// walk that holds it, as if it were the one soloed layer. '' = the comp.
   std::string isolateLayer{};
+  /// More layers drawn alone together with `isolateLayer` (Rig Logo renders a
+  /// multi-layer selection as one picture); each with what it holds.
+  std::vector<std::string> isolateAlso{};
   /// The project folder relative media paths resolve against (the texture
   /// feed's mediaBase); empty = none (a relative path is reported).
   std::filesystem::path mediaBase{};
