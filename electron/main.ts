@@ -25,6 +25,7 @@ import { shouldStartBackend, startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
 import { registerThumbIpc } from './thumbCache';
 import { registerRevealIpc } from './ipc/reveal';
+import { registerNativePluginIpc } from './ipc/nativePlugins';
 import { getKeyForProvider, registerAiKeyIpc, VAULT_PROVIDERS, type VaultProvider } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
 import { registerModelDownloadIpc, abortAllModelDownloads } from './modelDownload';
@@ -452,6 +453,11 @@ function registerBlobIpc(): void {
 }
 
 /** Create `dir` when missing (best effort — the engine skips a folder that is not there) and return it. */
+/** Where native SDK plugins are installed (by copying) and loaded from. */
+function nativePluginDirPath(): string {
+  return path.join(app.getPath('userData'), 'native-plugins');
+}
+
 function ensureDir(dir: string): string {
   try {
     mkdirSync(dir, { recursive: true });
@@ -1161,6 +1167,9 @@ app.whenReady().then(() => {
   registerIndexIpc(app);
   registerThumbIpc(app);
   registerRevealIpc();
+  // The Plugins page / panel's "Open plugins folder" — the same folder the
+  // engine loads native SDK plugins from (nativePluginDir below).
+  registerNativePluginIpc({ dir: nativePluginDirPath });
   registerRenderIpc();
   // Desktop export as a main-owned queue, each job in its own
   // `premation-engine --export` process (electron/exportProcess.ts). The queue
@@ -1233,7 +1242,7 @@ app.whenReady().then(() => {
     getWindows: () => [mainWindow, ...popoutWindows].filter((w): w is BrowserWindow => w !== null && !w.isDestroyed()),
     sharedTexture: sharedTexture as unknown as SharedTextureApi,
     // G1: native SDK plugins load in the engine process from this folder.
-    nativePluginDir: ensureDir(path.join(app.getPath('userData'), 'native-plugins')),
+    nativePluginDir: ensureDir(nativePluginDirPath()),
     nativePluginJournal: path.join(app.getPath('userData'), 'native-plugin-journal.bin'),
     // F2 / D5: where the engine-owned document's autosave writes its recovery copy.
     recoveryPath,

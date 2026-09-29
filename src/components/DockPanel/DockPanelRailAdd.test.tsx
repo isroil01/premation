@@ -70,6 +70,7 @@ describe('the rail', () => {
       'Properties',
       'Effects',
       'Presets',
+      'Plugins',
       'Audio',
     ]);
 
@@ -79,7 +80,7 @@ describe('the rail', () => {
 
     act(() => { fireEvent.click(screen.getByText('Scopes')); });
     const s = useLayoutStore.getState();
-    expect(s.panelOrder.rightInspector).toEqual(['properties', 'effects', 'presets', 'audio', 'scopes']);
+    expect(s.panelOrder.rightInspector).toEqual(['properties', 'effects', 'presets', 'plugins', 'audio', 'scopes']);
     expect(s.activePanelByRegion.rightInspector).toBe('scopes');
   });
 });

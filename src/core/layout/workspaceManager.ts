@@ -94,7 +94,7 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
     // Default is what a fresh session looks like, so the two must agree.
     panelOrder: {
       leftSidebar: ['scene', 'assets', 'library', 'ai'],
-      rightInspector: ['properties', 'effects', 'presets', 'audio'],
+      rightInspector: ['properties', 'effects', 'presets', 'plugins', 'audio'],
       centerWorkspace: [],
       bottomTimeline: [],
     },

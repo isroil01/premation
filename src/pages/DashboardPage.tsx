@@ -12,6 +12,8 @@ import { useUIStore } from '@stores/uiStore';
 import { setPendingFootage } from '@core/project/pendingFootage';
 import { AiSettingsSection } from '@layout/Settings/AiSettingsSection';
 import { ApiKeysSection } from '@layout/Settings/ApiKeysSection';
+import { NativePluginsPage } from '@layout/Plugins/NativePluginsPage';
+import { RegistryPluginsNotice } from '@layout/Plugins/RegistryPluginsNotice';
 import { BillingSection } from '@layout/Settings/BillingSection';
 import { billingEnabled } from '@core/config/edition';
 import { ColorPicker } from '@components/ColorPicker';
@@ -99,10 +101,11 @@ type TabType =
   | 'customize'
   | 'billing'
   | 'developer'
+  | 'plugins'
   | 'settings';
 
 const TABS: readonly TabType[] = [
-  'home', 'projects', 'assets', 'renders', 'trash', 'customize', 'billing', 'developer', 'settings',
+  'home', 'projects', 'assets', 'renders', 'trash', 'customize', 'billing', 'developer', 'plugins', 'settings',
 ];
 
 /**
@@ -111,7 +114,8 @@ const TABS: readonly TabType[] = [
  * Derived from TABS rather than restated. The initial-state reader and the
  * effect below used to carry two hand-written lists that had already drifted —
  * `plugins` was in one and not the other, so `?tab=plugins` opened Home and
- * then jumped to Plugins one render later.
+ * then jumped to Plugins one render later. (`plugins` is back since 0.9 as the
+ * native-plugins page — layout/Plugins/NativePluginsPage.)
  */
 function isTab(value: string | null): value is TabType {
   return value != null && (TABS as readonly string[]).includes(value);
@@ -1398,6 +1402,9 @@ export function DashboardPage(): JSX.Element {
           </div>
         );
 
+      case 'plugins':
+        return <NativePluginsPage />;
+
       case 'customize':
         return (
           <div className={styles.customizePanel}>
@@ -1728,6 +1735,11 @@ export function DashboardPage(): JSX.Element {
           title: 'Developer',
           desc: 'API keys and usage for rendering templates from scripts, n8n, or CI.',
         };
+      case 'plugins':
+        return {
+          title: 'Plugins',
+          desc: 'Native plugins installed on this machine, and how to add more.',
+        };
       case 'customize':
         return {
           title: 'Customize Editor',
@@ -1818,6 +1830,15 @@ export function DashboardPage(): JSX.Element {
           >
             <Icon name="code" size="md" className={styles.navIcon} />
             <span>Developer</span>
+          </button>
+          <button
+            type="button"
+            className={`${styles.navLink} ${activeTab === 'plugins' ? styles.navLinkActive : ''}`}
+            aria-current={activeTab === 'plugins' ? 'page' : undefined}
+            onClick={() => openTab('plugins')}
+          >
+            <Icon name="plugin" size="md" className={styles.navIcon} />
+            <span>Plugins</span>
           </button>
           <button
             type="button"
@@ -1962,6 +1983,9 @@ export function DashboardPage(): JSX.Element {
               </div>
             </div>
           )}
+
+          {/* Once per user: registry plugins are gone in 0.9, native ones still work. */}
+          {activeTab !== 'plugins' && <RegistryPluginsNotice onLearnMore={() => openTab('plugins')} />}
 
           {renderTabContent()}
         </main>

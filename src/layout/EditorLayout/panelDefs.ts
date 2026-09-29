@@ -122,7 +122,15 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   { id: 'properties',  title: 'Properties', icon: 'sliders-h',  region: 'rightInspector', weight: 5,    closable: false },
   { id: 'effects',     title: 'Effects',   icon: 'magic-wand',  region: 'rightInspector', weight: 4.8,  closable: true },
   { id: 'presets',     title: 'Presets',   icon: 'zap',         region: 'rightInspector', weight: 4.7,  closable: true },
-  // The marketplace: find, install and manage plugins.
+  /**
+   * Native SDK plugins: what the engine found in the plugins folder (loaded,
+   * or failed with why) and the button that opens that folder. Where the old
+   * Plugins (marketplace) tab lived; the JS plugin system and its registry
+   * were removed in 0.9 and native plugins are installed by copying them in.
+   * `plugins` was once the id of the JS plugin-panel host; a persisted layout
+   * that still lists it now shows this panel, which is the right successor.
+   */
+  { id: 'plugins',     title: 'Plugins',   icon: 'plugin',      region: 'rightInspector', weight: 4.6,  closable: true },
   /**
    * AE's Audio panel (Ctrl+4): the master meter, the selected layer's level and
    * pan faders, and — since 2026-09-15 — the pointer / composition readout that

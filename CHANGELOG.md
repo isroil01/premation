@@ -30,6 +30,11 @@ C++ engine running in its own process, with the editor as its interface.
 - **Removed:** the JavaScript/WGSL plugin system. Projects that used such
   plugins still open; their plugin effects and layers are removed as one
   undoable step, with a notice. Native (C++ SDK) plugins are unaffected.
+- **Plugins from the plugin registry aren't supported in 0.9 yet.** Native
+  plugins still work: install one by copying it into your plugins folder
+  (Dashboard ▸ Plugins ▸ Open plugins folder) and restarting. The new Plugins
+  page and the editor's Plugins panel list every native plugin Premation found,
+  and say why one failed to load.
 - **HDR10 and HLG exports** are encoded by the engine (10-bit HEVC with HDR10
   metadata, BT.2020), and the command line's `--captions`, `--data` and
   `--commands` run in the engine too.
