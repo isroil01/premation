@@ -130,9 +130,21 @@ export default defineConfig(({ mode }) => ({
   worker: {
     format: 'es',
   },
+  // The dependency scan starts from the app's one page. Left to its default it
+  // crawls every *.html under the repo — including agent worktrees
+  // (.claude/worktrees, full repo copies) and the C++ build output — and the dev
+  // server serves no module until that scan ends.
+  optimizeDeps: {
+    entries: ['index.html'],
+  },
   server: {
     port: 5173,
     strictPort: true,
+    // Not the app's sources: worktrees, the native build (GBs), packaged
+    // releases and build outputs. Watching them made the dev server hang.
+    watch: {
+      ignored: ['**/.claude/**', '**/native/build/**', '**/release/**', '**/dist/**', '**/dist-electron/**', '**/build/engine/**'],
+    },
     // Proxy API calls to the motion-back backend so the browser talks same-origin
     // (avoids CORS in dev and works inside sandboxed preview browsers). The client
     // uses VITE_MOTION_API_URL="/api" (see .env.local) to hit this path.
