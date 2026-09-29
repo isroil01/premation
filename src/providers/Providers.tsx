@@ -1651,9 +1651,10 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         const m = documentMirror();
         const vids = itemAssetsOf(m, m.items.keys()).filter((a) => a.type === 'video' || a.type === 'image');
         if (vids.length < 2) return;
-        const { createMulticamComposition } = await import('@core/composition/multicam');
+        // The engine's composition and layers (one entry) — the page builder wrote the replica only.
+        const { createMulticamEdit } = await import('@layout/Multicam/multicamEdits');
         try {
-          await createMulticamComposition(vids.slice(0, Math.min(8, vids.length)));
+          await createMulticamEdit(vids.slice(0, Math.min(8, vids.length)));
         } catch (e) {
           console.error(e);
         }
@@ -1731,8 +1732,11 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       icon: 'audio',
       enabled: () => true,
       execute: async () => {
-        const { alignMulticamByAudio } = await import('@core/composition/multicam');
-        const report = await alignMulticamByAudio();
+        // The engine's bars (the document mirror), moved as ONE engine entry — the Multicam viewer's own route.
+        const { planMulticamAudioSync } = await import('@layout/Multicam/multicamAudioSync');
+        const { moveBars } = await import('@layout/Timeline/timelineEdits');
+        const { moves, report } = await planMulticamAudioSync();
+        if (moves.length > 0) await moveBars(moves, 'Sync Multicam by Audio');
         useUIStore.getState().notify({
           level: report.shifted > 0 ? 'success' : 'info',
           message: report.note,
