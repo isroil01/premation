@@ -18,7 +18,7 @@ import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
 import { useMirrorLayers, useMirrorSelect } from '@hooks/useMirror';
 import { pairedSoundLayersIn } from '@core/mirror/audio';
-import { setAudioToolOpener } from '@core/audio/audioCommands';
+import { setAudioToolOpener } from './audioCommands';
 import { totalSilenceSec, DEFAULT_SILENCE_OPTIONS, type SilenceRange } from '@core/audio/silenceRemoval';
 import { previewEngineJob, runEngineJob } from '@core/engine/engineJobs';
 import styles from './AudioToolDialog.module.css';

@@ -41,8 +41,6 @@
  * the previous right half.
  */
 
-import { useUIStore } from '@stores/uiStore';
-import { detectSceneEdits } from '@core/tracking/sceneEditDetectLayer';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -155,47 +153,4 @@ export function applyAssembly(
   useSelectionStore.getState().set(shots);
   bumpScene();
   return { shots, dropped, sequenced };
-}
-
-/**
- * Detect the cuts in `nodeId`'s clip, reporting progress the way Scene Edit
- * Detection does — one dismissible notification updated in place, because the
- * walk is decode-bound and takes a minute on an hour of 4K.
- *
- * Separate from `applyAssembly` because it is async and cancellable, and
- * because everything it does is a pure read: nothing has changed if it throws.
- */
-export async function detectForAssembly(
-  nodeId: string,
-  opts: AssembleOptions,
-): Promise<{ cutsCompSec: number[]; status: 'completed' | 'cancelled' }> {
-  const fps = getTimelineController().fpsForNode(nodeId) || 30;
-  let liveId = useUIStore.getState().notify({
-    level: 'info',
-    message: 'Assemble from Footage: reading frames… 0%',
-    durationMs: 0,
-  });
-  let last = -1;
-  try {
-    const result = await detectSceneEdits({
-      nodeId,
-      fps,
-      ...(opts.sensitivity !== undefined ? { sensitivity: opts.sensitivity } : {}),
-      onProgress: (f) => {
-        const pct = Math.round(f * 100);
-        if (pct !== last && pct % 5 === 0) {
-          last = pct;
-          useUIStore.getState().dismissNotification(liveId);
-          liveId = useUIStore.getState().notify({
-            level: 'info',
-            message: `Assemble from Footage: reading frames… ${pct}%`,
-            durationMs: 0,
-          });
-        }
-      },
-    });
-    return { cutsCompSec: result.cutsCompSec, status: result.status };
-  } finally {
-    useUIStore.getState().dismissNotification(liveId);
-  }
 }

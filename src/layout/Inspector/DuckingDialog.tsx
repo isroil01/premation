@@ -22,7 +22,7 @@ import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayers, useMirrorProperty, useMirrorSelect } from '@hooks/useMirror';
 import { duckingOf, soundLayersIn } from '@core/mirror/audio';
-import { setAudioToolOpener } from '@core/audio/audioCommands';
+import { setAudioToolOpener } from './audioCommands';
 import { DEFAULT_DUCKING, type ApplyDuckingResult, type DuckingParams } from '@core/audio/ducking';
 import { duckEdit, reduckEdit, removeDuckingEdit } from './audioEdits';
 import { previewEngineJob } from '@core/engine/engineJobs';

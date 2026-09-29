@@ -52,11 +52,6 @@ import { DEFAULT_FADE_SEC, type FadeSide } from '@core/audio/audioFades';
 import { useEngineEdit } from './useEngineEdit';
 import { scalarValueCommands } from './inspectorEdits';
 import { barTimingCommand, convertAudioToKeyframesEdit, fadeEdit, muteEdit, unbarredTimingCommand } from './audioEdits';
-// Importing the command module registers "Remove Silence…" and "Duck Under
-// Voice…"; importing the dialogs is what tells those commands how to open. The
-// three are pulled in together here so the menu entries cannot exist without a
-// dialog behind them.
-import '@core/audio/audioCommands';
 import { openSilenceRemovalDialog } from './SilenceRemovalDialog';
 import { openDuckingDialog } from './DuckingDialog';
 import { openGateDialog } from './GateDialog';

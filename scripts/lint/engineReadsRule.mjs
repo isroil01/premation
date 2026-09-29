@@ -111,7 +111,8 @@ const PURE_READS = new Set([
   'bindPoseBones', // core/rig/skeletonCommands: maps the SkeletonRig it is given
   'isPrimitiveMeshType', 'defaultPrimitiveSpec', // core/scene/primitiveLayer: type guard, default spec table
   'motionPathTimeWindow', // core/motion/motionPath: window arithmetic
-  'pickFace', 'faceHighlightGroups', // core/scene/facePicking: geometry over the faces it is given
+  'audioWaveformConfigOf', // core/audio/audioWaveformGen: a stored field value normalised
+  'pickFace', 'faceHighlightGroups', 'projectWorldFaces', // core/scene/facePicking: geometry over the faces it is given
   'thinSamples', // core/paint/paintSpace: point thinning
   'unifiedNavModeFor', // core/workspace/cameraNav: mouse button → navigation mode
   'focusRangeAt', // core/scene/camera3d: depth-of-field maths over the DofConfig it is given

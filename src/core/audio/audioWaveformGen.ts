@@ -62,7 +62,11 @@ const num = (v: unknown, fb: number): number => (typeof v === 'number' && Number
 /** Read the audioWaveform block off a node's `fx` component, or null when absent. */
 export function readNodeAudioWaveform(node: SceneNode): AudioWaveformConfig | null {
   const fx = node.components.find((c) => c.type === 'fx');
-  const raw = fx?.props[AUDIO_WAVEFORM_FX_KEY];
+  return audioWaveformConfigOf(fx?.props[AUDIO_WAVEFORM_FX_KEY]);
+}
+
+/** The stored `audioWaveform` value (the `layer/audioWaveform` field) normalised over the defaults; null when absent. Pure. */
+export function audioWaveformConfigOf(raw: unknown): AudioWaveformConfig | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Partial<AudioWaveformConfig>;
   const d = defaultAudioWaveform();

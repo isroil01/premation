@@ -97,7 +97,7 @@ import { buildSmartAnimateCommands, installSmartAnimateCommandSync } from './com
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
 import { buildIk3DCommands } from './commands/ikCommands';
 import { buildBakeCommands } from './commands/bakeCommands';
-import { buildAudioCommands } from '@core/audio/audioCommands';
+import { buildAudioCommands } from '@layout/Inspector/audioCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { easingTargetKeyframes } from '@core/animation/easingSelection';
 import { useAssetStore } from '@stores/assetStore';
@@ -727,7 +727,7 @@ function buildMergePathCommands(): ReadonlyArray<Command> {
     icon: 'layers' as const,
     enabled,
     execute: () => {
-      // The result is pasted and the operands flagged in ONE batch (liveMergeCommands.ts).
+      // The engine's createLiveMerge: the result made and the operands flagged in ONE entry.
       void liveMergePathsEdit(op).then((id) => {
         if (id) notify(`Live boolean (${op}) — operands stay editable`, 'success');
         else notify('Select at least two shape layers with closed paths', 'warning');

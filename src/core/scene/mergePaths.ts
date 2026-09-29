@@ -6,7 +6,7 @@
  *  1. **Bake** (`mergeSelectedPaths`) — destructive: sources are removed and
  *     the result is a static polygonal Geometry. Kept for one-shot cleanup and
  *     tests that pin the bake contract.
- *  2. **Live** (`planLiveMerge`, sent by `liveMergeCommands.ts`) — AE Shape-Group style: sources stay
+ *  2. **Live** (`planLiveMerge`; the engine's `createLiveMerge` is the live path) — AE Shape-Group style: sources stay
  *     in the scene (hidden as operands), a result layer stores `booleanOp` +
  *     `booleanSources`, and buildSnapshot re-evaluates the boolean every frame
  *     so animated transforms / path.points on the sources drive the merge.
@@ -435,7 +435,7 @@ export interface LiveMergePlan {
  * LIVE merge — sources stay editable/animatable. Plans a result layer that
  * re-evaluates the boolean each frame; the operands are marked as such and
  * hidden from paint. Pure: it reads the selection and the document and writes
- * nothing — `liveMergeCommands.ts` sends the plan as engine commands (the
+ * nothing — the TypeScript reference of the engine's `createLiveMerge` (the
  * result pasted, the operands flagged through the `layer/booleanOperand`
  * property and `setLayerSwitches`). Null when fewer than two closed paths are
  * selected or the boolean is empty.
