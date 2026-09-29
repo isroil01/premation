@@ -42,6 +42,24 @@ import { reparentNode } from '@core/scene/parenting';
 import { applyStretch } from '@core/animation/layerTimeCommands';
 import { rebaseTransformProps } from '@core/scene/transformWrite';
 import { createOrbitNullEdit } from '@core/scene/cameraCommands';
+import { importGltfModel } from '@core/scene/modelImport';
+import { importModelEdit } from '@layout/Assets/modelImportEdits';
+import { buildQuadGlb } from '@/__testHelpers__/buildTestGlb';
+import { createMulticamEdit } from '@layout/Multicam/multicamEdits';
+import { itemAssetsOf } from '@core/mirror/itemAssets';
+import { stylePresetCommands } from '@layout/Inspector/StylePresetsSection';
+import { STYLE_PRESETS } from '@core/style/stylePresets';
+import { essentialPropMenuItems } from '@core/inspector/propertyMenu';
+import { insertBuiltLayers } from '@core/engine/offDocument';
+import { insertPrimitive } from '@core/scene/sceneInsert';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { edit } from '@core/engine/uiEdits';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+/** A 1×1 PNG. */
+const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 import { bootEngine, engine, localEngine, ownedEngine, refreshReplicaFromEngine, shutdownEngine } from '../engineInstance';
 import { resetEngineOwnership, setEngineOwnsDocument } from '../engineOwnership';
 import { resetProcessEngine } from '../process/processEngine';
@@ -56,10 +74,12 @@ U.createObjectURL ??= () => 'blob:test';
 
 type Content = Omit<DocumentSnapshot, 'revision' | 'dirty' | 'projectPath'>;
 
-async function contentOf(c: EngineClient): Promise<string> {
+async function contentOf(c: EngineClient, ignoreItems = false): Promise<string> {
   const d = unwrap(await c.query({ type: 'getDocument', includeProperties: true, includeKeyframes: true }));
   const { revision: _r, dirty: _d, projectPath: _p, ...rest } = d;
-  return JSON.stringify(rest as Content);
+  // Footage metadata the page cannot probe (a still's size) differs by design; the layers must not.
+  const items = ignoreItems ? { items: rest.items.filter((i) => i.kind !== 'footage') } : {};
+  return JSON.stringify({ ...rest, ...items } as Content);
 }
 
 const sec = (s: number): number => Math.round(s * 705_600_000);
@@ -72,7 +92,11 @@ type Expect = 'owner' | 'replica-only';
 interface AuditCase {
   name: string;
   expect: Expect;
-  run: (l: Layers) => void | Promise<unknown>;
+  run: (l: Layers, prepared?: unknown) => void | Promise<unknown>;
+  /** Compare without footage items (their probed metadata is the owner's alone). */
+  ignoreItems?: boolean;
+  /** Engine-side setup before the comparison starts (the replica is then refreshed from the owner). */
+  setup?: (l: Layers) => Promise<unknown>;
 }
 
 const CASES: AuditCase[] = [
@@ -93,9 +117,58 @@ const CASES: AuditCase[] = [
     const id = await createOrbitNullEdit(cam, 0);
     expect(id).not.toBeNull();
   } },
-  // ── scene-graph writers NOT recorded as animation edits (core helpers; the UI sends the engine
-  //    commands for these — setLayerSwitches / setParent / setLayerTiming — so they are not reached
-  //    from a menu, but anything that still calls them writes the replica only) ──
+  // ── layer builders: off-document, one pasteLayers ──
+  { name: 'Import 3D Model (glTF — AssetsPanel / File ▸ Import 3D Model)', expect: 'owner', run: async () => {
+    const bytes = buildQuadGlb();
+    const r = await importModelEdit('Import quad.glb', () => importGltfModel(bytes, 'quad.glb'));
+    expect(r?.layerCount).toBeGreaterThan(0);
+  } },
+  { name: 'Import 3D Model called directly (the old path)', expect: 'replica-only', run: () => {
+    importGltfModel(buildQuadGlb(), 'quad.glb');
+  } },
+  { name: 'New Multicam from Library (palette command)', expect: 'owner', ignoreItems: true,
+    // Importing footage is its own feature (the replica cannot probe a still's size): done first, then compared from.
+    setup: async () => {
+      const dir = mkdtempSync(path.join(os.tmpdir(), 'premation-audit-'));
+      const files = [0, 1].map((i) => {
+        const f = path.join(dir, `angle${i}.png`);
+        writeFileSync(f, Buffer.from(PNG_1PX, 'base64'));
+        return { path: f, asSequence: false, createComposition: false };
+      });
+      return unwrap(await engine().execute({ type: 'importFiles', files })).items;
+    },
+    run: async (_l, prepared) => {
+      await documentMirror().whenIdle();
+      const assets = itemAssetsOf(documentMirror(), prepared as string[]);
+      const comp = await createMulticamEdit(assets);
+      expect(comp).not.toBeNull();
+      const layers = unwrap(await ownedEngine()!.query({ type: 'getComposition', comp: comp! })).comp.layers;
+      const infos = unwrap(await ownedEngine()!.query({ type: 'getLayers', layers })).layers;
+      expect(infos.map((l) => l.multicamAngle).sort()).toEqual([1, 2]);
+    } },
+  // ── inspector / menu edits built as engine commands ──
+  { name: 'Style preset (Inspector ▸ Style Presets)', expect: 'owner', run: async ({ a }) => {
+    const plan = stylePresetCommands(a, undefined, STYLE_PRESETS[0]!, '#3366ff', 0);
+    expect(plan.cmds.length).toBeGreaterThan(0);
+    expect((await edit('Apply Style', plan.cmds)).ok).toBe(true);
+  } },
+  { name: 'Add to Essential Properties (property row menu)', expect: 'owner', run: async ({ a }) => {
+    const item = essentialPropMenuItems(a, 'opacity').find((i) => i.id === 'essential-toggle');
+    expect(item).toBeDefined();
+    (item as { onSelect: () => void }).onSelect();
+  } },
+  { name: 'Insert shape layer (Library / Layer ▸ New, off-document)', expect: 'owner', run: async () => {
+    // Into the ACTIVE composition, as the menu does (insertPrimitive places in it).
+    const ids = await insertBuiltLayers('New Shape Layer', activeCompRootId(), () => insertPrimitive('shape', 'Shape'));
+    expect(ids?.length).toBe(1);
+  } },
+  // ── The three page scene-graph writers, called DIRECTLY (still replica-only by nature). Every user-facing
+  //    caller is on an engine path (audited 2026-09-29): set3DEnabled — the Timeline / Layers 3D switch sends
+  //    setLayerSwitches (toggleLayerFlagEdit), presets send applyPreset, the AI's model null is built
+  //    off-document, the page engine's own handlers are the replica applying a forwarded request;
+  //    reparentNode — the parent pick-whip / Layers drag send setParent, Lottie builds a fragment, the page
+  //    Create Orbit Null is the TS-owner path only; applyStretch — Time Stretch sends setLayerTiming /
+  //    timeStretchLayers (layerTimeCommands in providers). Inside runAnimEdit they reach the engine (above).)
   { name: 'Animate In (choreography, engine edits since bcb9b64a)', expect: 'owner', run: ({ a, b }) => runChoreography({ kind: 'in', nodeIds: [a, b], params: commandStaggerParams('in', [a, b], 30) }) },
   { name: 'threeD.set3DEnabled called directly (helper)', expect: 'replica-only', run: ({ b }) => set3DEnabled(b, true) },
   { name: 'parenting.reparentNode called directly (helper)', expect: 'replica-only', run: ({ a, b }) => reparentNode(b, a) },
@@ -162,13 +235,27 @@ maybe('owner-write audit: features reach the engine that owns the document', () 
 
   it.each(CASES.map((c) => [c.name, c] as const))('%s', async (_name, c) => {
     const owner = ownedEngine()!;
-    const before = await contentOf(owner);
-    await c.run(layers);
+    let prepared: unknown;
+    if (c.setup) {
+      prepared = await c.setup(layers);
+      await settle();
+      await refreshReplicaFromEngine();
+      await settle();
+    }
+    const before = await contentOf(owner, c.ignoreItems);
+    await c.run(layers, prepared);
     await settle();
-    const ownerAfter = await contentOf(owner);
-    const replicaAfter = await contentOf(localEngine()!);
+    const ownerAfter = await contentOf(owner, c.ignoreItems);
+    const replicaAfter = await contentOf(localEngine()!, c.ignoreItems);
     const reached = ownerAfter !== before && ownerAfter === replicaAfter;
     findings.push(`${reached ? 'REACHES the engine ' : 'replica only       '} ${c.name}`);
+    if (!reached && c.expect === 'owner') {
+      let i = 0;
+      while (i < ownerAfter.length && ownerAfter[i] === replicaAfter[i]) i++;
+      console.log(`[owner-write audit] ${c.name}: first difference at ${i}
+ owner   …${ownerAfter.slice(Math.max(0, i - 200), i + 200)}
+ replica …${replicaAfter.slice(Math.max(0, i - 200), i + 200)}`);
+    }
     if (!reached) await refreshReplicaFromEngine();
     expect(reached ? 'owner' : 'replica-only').toBe(c.expect);
   });

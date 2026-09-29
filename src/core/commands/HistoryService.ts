@@ -165,6 +165,11 @@ export class HistoryService {
     if (this.suspended > 0) this.suspended--;
   }
 
+  /** Whether pushes are suppressed now (an engine applying a request, an off-document run, a macro). */
+  get isSuspended(): boolean {
+    return this.suspended > 0;
+  }
+
   private ctxFor(command: IUndoableCommand): CommandContext {
     // CommandSystem injects a context builder at construction so undo/redo
     // can re-run commands with the same services execute saw. Commands whose

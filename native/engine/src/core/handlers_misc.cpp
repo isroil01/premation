@@ -1,6 +1,10 @@
 #include "handlers_misc.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <string_view>
+#include <vector>
 #include <utility>
 
 #include "anim_json.hpp"
@@ -438,6 +442,40 @@ ResultOf<api::SetPluginData> handle(const api::SetPluginData& c, HCtx& x) {
 /// The content-aware fill record (contentAwareFillVideo.ts `fx.contentAwareFill`):
 /// `{frames: [{t, dataUrl}]}`, `t` on the layer's keyframe axis (the renderer
 /// shows the frame nearest the layer's time), `dataUrl` the picture's src.
+ResultOf<api::SetEssentialProp> handle(const api::SetEssentialProp& c, HCtx& x) {
+  Document& d = x.d;
+  require_comp(d, c.comp);
+  (void)require_layer(d, c.layer);
+  if (c.layer == c.comp || comp_of_layer(d, c.layer) != std::optional<std::string>(c.comp)) {
+    fail(ErrorCode::invalid_argument, "'" + c.layer + "' is not a layer of '" + c.comp + "'", {.layer = c.layer});
+  }
+  // compInstanceOverrides.ts OVERRIDE_PROP_KINDS.
+  static constexpr std::array<std::string_view, 9> kOverridable = {"x", "y", "rotation", "scaleX", "scaleY", "opacity", "text", "fill", "color"};
+  if (std::find(kOverridable.begin(), kOverridable.end(), c.prop) == kOverridable.end()) {
+    fail(ErrorCode::invalid_argument, "'" + c.prop + "' cannot be an Essential Property");
+  }
+  x.label = c.promoted ? "Add to Essential Properties" : "Remove from Essential Properties";
+  const Node* root = d.node(c.comp);
+  if (root == nullptr || root->components.empty()) return {};
+  // setEssentialProp: the root's first component's `__essentialProps`, a sorted set of `<layer>/<prop>` keys.
+  std::vector<std::string> keys;
+  const Json& cur = root->components.front().props.at("__essentialProps");
+  if (cur.is_array()) {
+    for (const Json& k : cur.arr()) {
+      if (k.is_string()) keys.push_back(k.str());
+    }
+  }
+  const std::string key = c.layer + "/" + c.prop;
+  std::erase(keys, key);
+  if (c.promoted) keys.push_back(key);
+  std::sort(keys.begin(), keys.end());
+  keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+  Json next = Json::array();
+  for (const std::string& k : keys) next.arr_mut().push_back(Json::string(k));
+  d.node_mut(c.comp).components.front().props.set("__essentialProps", std::move(next));
+  return {};
+}
+
 ResultOf<api::SetContentAwareFill> handle(const api::SetContentAwareFill& c, HCtx& x) {
   Document& d = x.d;
   (void)require_layer(d, c.layer);

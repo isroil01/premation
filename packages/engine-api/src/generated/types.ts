@@ -1576,6 +1576,14 @@ export interface AssembleComposition {
 /** B4 round 8 — a legacy in-place precomp GROUP (a precomp-flagged group carrying its own layers, placing no composition) that never got a settings record becomes a composition: the record opening it in a tab would have made (its name; the enclosing composition's size, rate and duration) and a timeline, so getDocument lists it and its layers. The UI sends it once after an open; nothing to migrate = no history entry. Returns the migrated ids. */
 export interface MigrateLegacyPrecomps {}
 
+/** B4 round 8 — Add to / Remove from Essential Properties (AE Master Properties; the property row's context menu): `layer`'s `prop` (x | y | rotation | scaleX | scaleY | opacity | text | fill | color) published by `comp` (`<layer>/<prop>` in the root's `__essentialProps`, kept sorted) or withdrawn. `layer` must be a layer of `comp`, not its root. One entry; `invalidArgument` for a property that cannot be overridden. */
+export interface SetEssentialProp {
+  comp: ItemId;
+  layer: LayerId;
+  prop: string;
+  promoted: boolean;
+}
+
 export interface PrecomposeResult {
   comp: ItemId;
   layer: LayerId;
@@ -4891,6 +4899,7 @@ export type Command =
   | ({ type: 'cropComposition' } & CropComposition)
   | ({ type: 'assembleComposition' } & AssembleComposition)
   | ({ type: 'migrateLegacyPrecomps' } & MigrateLegacyPrecomps)
+  | ({ type: 'setEssentialProp' } & SetEssentialProp)
   | ({ type: 'addRenderItems' } & AddRenderItems)
   | ({ type: 'setRenderItem' } & SetRenderItem)
   | ({ type: 'removeRenderItems' } & RemoveRenderItems)
@@ -5053,6 +5062,7 @@ export type CommandResult =
   | ({ type: 'cropComposition' } & Empty)
   | ({ type: 'assembleComposition' } & ItemRef)
   | ({ type: 'migrateLegacyPrecomps' } & ItemList)
+  | ({ type: 'setEssentialProp' } & Empty)
   | ({ type: 'addRenderItems' } & RenderItemList)
   | ({ type: 'setRenderItem' } & Empty)
   | ({ type: 'removeRenderItems' } & Empty)
@@ -5362,6 +5372,7 @@ export interface CommandArgs {
   cropComposition: CropComposition;
   assembleComposition: AssembleComposition;
   migrateLegacyPrecomps: MigrateLegacyPrecomps;
+  setEssentialProp: SetEssentialProp;
   addRenderItems: AddRenderItems;
   setRenderItem: SetRenderItem;
   removeRenderItems: RemoveRenderItems;
@@ -5524,6 +5535,7 @@ export interface CommandResults {
   cropComposition: Empty;
   assembleComposition: ItemRef;
   migrateLegacyPrecomps: ItemList;
+  setEssentialProp: Empty;
   addRenderItems: RenderItemList;
   setRenderItem: Empty;
   removeRenderItems: Empty;

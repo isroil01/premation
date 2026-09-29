@@ -230,6 +230,11 @@
     "type": "migrateLegacyPrecomps"
   },
   {
+    "id": 1944,
+    "kind": "edit",
+    "type": "setEssentialProp"
+  },
+  {
     "id": 150,
     "kind": "edit",
     "type": "addRenderItems"

@@ -32,6 +32,22 @@ import { isLayer } from './doc';
 import { engineOwnsDocumentNow } from './engineOwnership';
 import { propRefForTrack } from './propRefs';
 import { edit, reportEngineError } from './uiEdits';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+
+/**
+ * Only a USER edit is bridged: while history is suspended the writer runs
+ * inside the page engine applying a request (the engine already has it) or
+ * inside an off-document run (its caller sends the result) — bridging it too
+ * would apply it twice.
+ */
+function userEdit(): boolean {
+  if (!engineOwnsDocumentNow()) return false;
+  try {
+    return !getCommandSystem().getHistory().isSuspended;
+  } catch {
+    return true;
+  }
+}
 
 /** The expression changes of an edit as `setExpression` commands (after the keyframes). */
 function expressionCommands(command: AnimEditCommand): Command[] {
@@ -56,7 +72,7 @@ function expressionCommands(command: AnimEditCommand): Command[] {
 
 /** Take a recorded page edit to the engine. True when the edit is handled here (not pushed on the page history). */
 export function bridgeAnimEdit(command: AnimEditCommand): boolean {
-  if (!engineOwnsDocumentNow()) return false;
+  if (!userEdit()) return false;
   const layers = [...new Set(command.trackChanges.map((c) => c.nodeId))].filter((id) => isLayer(id));
   if (layers.length === 0) return false;
   // Back to the state the engine has; the engine's commands bring the replica forward again.
@@ -84,7 +100,7 @@ export function bridgeAnimEdit(command: AnimEditCommand): boolean {
  * is reported; nothing of it is left on the replica alone.
  */
 export function bridgeAnimRun(label: string, mutate: () => void): boolean {
-  if (!engineOwnsDocumentNow()) return false;
+  if (!userEdit()) return false;
   let plan;
   try {
     plan = layerDiffCommands(mutate);

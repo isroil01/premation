@@ -3402,6 +3402,42 @@ function decS_MigrateLegacyPrecomps(r: Reader, end: number, o: any): T.MigrateLe
   r.expectAt(end);
   return o;
 }
+function encS_SetEssentialProp(w: Writer, v: T.SetEssentialProp): void {
+  w.byte(10); w.str(v.comp);
+  w.byte(18); w.str(v.layer);
+  w.byte(26); w.str(v.prop);
+  w.byte(32); w.bool(v.promoted);
+}
+function decS_SetEssentialProp(r: Reader, end: number, o: any): T.SetEssentialProp {
+  let h_comp = false;
+  let h_layer = false;
+  let h_prop = false;
+  let h_promoted = false;
+  let v_comp: string | undefined;
+  let v_layer: string | undefined;
+  let v_prop: string | undefined;
+  let v_promoted: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_comp = r.str(); h_comp = true; break;
+      case 18: v_layer = r.str(); h_layer = true; break;
+      case 26: v_prop = r.str(); h_prop = true; break;
+      case 32: v_promoted = r.bool(); h_promoted = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_comp) throw new DecodeError('SetEssentialProp.comp: missing', 'missingField');
+  if (!h_layer) throw new DecodeError('SetEssentialProp.layer: missing', 'missingField');
+  if (!h_prop) throw new DecodeError('SetEssentialProp.prop: missing', 'missingField');
+  if (!h_promoted) throw new DecodeError('SetEssentialProp.promoted: missing', 'missingField');
+  o.comp = v_comp;
+  o.layer = v_layer;
+  o.prop = v_prop;
+  o.promoted = v_promoted;
+  return o;
+}
 function encS_PrecomposeResult(w: Writer, v: T.PrecomposeResult): void {
   w.byte(10); w.str(v.comp);
   w.byte(18); w.str(v.layer);
@@ -16238,6 +16274,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'bakeIk3D': w.varint(15530); { const s = w.beginLd(); encS_BakeIk3D(w, v); w.endLd(s); } return;
     case 'createLiveMerge': w.varint(15538); { const s = w.beginLd(); encS_CreateLiveMerge(w, v); w.endLd(s); } return;
     case 'migrateLegacyPrecomps': w.varint(15546); { const s = w.beginLd(); encS_MigrateLegacyPrecomps(w, v); w.endLd(s); } return;
+    case 'setEssentialProp': w.varint(15554); { const s = w.beginLd(); encS_SetEssentialProp(w, v); w.endLd(s); } return;
     default: throw new RangeError('Command: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16405,6 +16442,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 15530: out = decS_BakeIk3D(r, r.ldEnd(), { type: 'bakeIk3D' }) as T.Command; break;
       case 15538: out = decS_CreateLiveMerge(r, r.ldEnd(), { type: 'createLiveMerge' }) as T.Command; break;
       case 15546: out = decS_MigrateLegacyPrecomps(r, r.ldEnd(), { type: 'migrateLegacyPrecomps' }) as T.Command; break;
+      case 15554: out = decS_SetEssentialProp(r, r.ldEnd(), { type: 'setEssentialProp' }) as T.Command; break;
       default: r.skip(key);
     }
   }
@@ -16572,6 +16610,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'bakeIk3D': w.varint(15530); { const s = w.beginLd(); encS_IkResult(w, v); w.endLd(s); } return;
     case 'createLiveMerge': w.varint(15538); { const s = w.beginLd(); encS_LayerRef(w, v); w.endLd(s); } return;
     case 'migrateLegacyPrecomps': w.varint(15546); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
+    case 'setEssentialProp': w.varint(15554); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     default: throw new RangeError('CommandResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16739,6 +16778,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 15530: out = decS_IkResult(r, r.ldEnd(), { type: 'bakeIk3D' }) as T.CommandResult; break;
       case 15538: out = decS_LayerRef(r, r.ldEnd(), { type: 'createLiveMerge' }) as T.CommandResult; break;
       case 15546: out = decS_ItemList(r, r.ldEnd(), { type: 'migrateLegacyPrecomps' }) as T.CommandResult; break;
+      case 15554: out = decS_Empty(r, r.ldEnd(), { type: 'setEssentialProp' }) as T.CommandResult; break;
       default: r.skip(key);
     }
   }
@@ -17188,6 +17228,7 @@ export const codecs = {
   CropComposition: mk<T.CropComposition>(encS_CropComposition, (r, e) => decS_CropComposition(r, e, {})),
   AssembleComposition: mk<T.AssembleComposition>(encS_AssembleComposition, (r, e) => decS_AssembleComposition(r, e, {})),
   MigrateLegacyPrecomps: mk<T.MigrateLegacyPrecomps>(encS_MigrateLegacyPrecomps, (r, e) => decS_MigrateLegacyPrecomps(r, e, {})),
+  SetEssentialProp: mk<T.SetEssentialProp>(encS_SetEssentialProp, (r, e) => decS_SetEssentialProp(r, e, {})),
   PrecomposeResult: mk<T.PrecomposeResult>(encS_PrecomposeResult, (r, e) => decS_PrecomposeResult(r, e, {})),
   RenderSettings: mk<T.RenderSettings>(encS_RenderSettings, (r, e) => decS_RenderSettings(r, e, {})),
   RenderSettingsPatch: mk<T.RenderSettingsPatch>(encS_RenderSettingsPatch, (r, e) => decS_RenderSettingsPatch(r, e, {})),

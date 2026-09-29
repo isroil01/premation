@@ -471,13 +471,9 @@ export function WorkspaceViewport({
       // never falls through to "drop video, image or audio files".
       const aep = Array.from(files).find((f) => /\.(aep|aepx)$/i.test(f.name));
       if (aep) {
-        const [{ importAepFile }, { reportAepImport, reportAepImportFailure }] = await Promise.all([
-          import('@core/aep/aepImport'),
-          import('@core/aep/aepImportReport'),
-        ]);
-        const result = await importAepFile(aep);
-        if (result.ok) reportAepImport(aep.name, result);
-        else reportAepImportFailure(aep.name, result.message);
+        // The engine converts it (importProject{path}) — the File menu's own route.
+        const { openAfterEffectsProjectFile } = await import('@providers/Providers');
+        await openAfterEffectsProjectFile(aep);
         return;
       }
       const media = Array.from(files).filter((f) =>
