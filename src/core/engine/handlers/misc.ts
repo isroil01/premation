@@ -1,5 +1,6 @@
 /** Project settings, motion blur, colour management, project import, jobs, plugin data, content-aware fill (ENGINE_API.md §4.1, §4.9). */
 
+import { isOverridableProp, setEssentialProp } from '@core/scene/compInstanceOverrides';
 import { defaultAnimation } from '@motion/animation';
 import type { ProjectSettings } from '@motion/engine-api';
 import { useColorManagementStore } from '@stores/colorManagementStore';
@@ -16,7 +17,7 @@ import { COMP_REF_PROP } from '@core/scene/compInstance';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import type { SceneNode } from '@core/types';
 import { fail } from '../errors';
-import { graph, requireLayer } from '../doc';
+import { compOfLayer, graph, requireComp, requireLayer } from '../doc';
 import { K, documentScope, newScope, scopeLayer } from '../state';
 import type { HandlerTable } from '../handler';
 import { remintKeyIds } from './common';
@@ -280,6 +281,21 @@ export const miscHandlers: HandlerTable = {
    * layer's keyframe axis); the C++ engine's content-aware fill job writes it
    * through this command. Empty frames clear it.
    */
+  setEssentialProp: (cmd) => {
+    requireComp(cmd.comp);
+    requireLayer(cmd.layer);
+    if (cmd.layer === cmd.comp || compOfLayer(cmd.layer) !== cmd.comp) fail('invalidArgument', `'${cmd.layer}' is not a layer of '${cmd.comp}'`, { layer: cmd.layer });
+    if (!isOverridableProp(cmd.prop)) fail('invalidArgument', `'${cmd.prop}' cannot be an Essential Property`);
+    return {
+      scope: scopeLayer(newScope(), cmd.comp),
+      label: cmd.promoted ? 'Add to Essential Properties' : 'Remove from Essential Properties',
+      apply: () => {
+        setEssentialProp(cmd.comp, cmd.layer, cmd.prop, cmd.promoted);
+        return {};
+      },
+    };
+  },
+
   setContentAwareFill: (cmd) => {
     requireLayer(cmd.layer);
     cmd.frames.forEach((f, i) => {

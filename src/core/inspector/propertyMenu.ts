@@ -32,7 +32,8 @@ import { resolvePropertyMeta } from './propertyMeta';
 import { documentMirror } from '@stores/documentMirror';
 import { mirrorCompositionRootOf, mirrorIsEssentialProp } from '@core/mirror/compOverrides';
 import { isPinnedProp, setPinnedProp } from './pinnedProps';
-import { isOverridableProp, setEssentialProp } from '@core/scene/compInstanceOverrides';
+import { isOverridableProp } from '@core/scene/compInstanceOverrides';
+import { edit } from '@core/engine/uiEdits';
 
 /** How close (seconds) the playhead must be to count as "on" a keyframe. */
 const EPS = 1e-4;
@@ -299,8 +300,11 @@ export function essentialPropMenuItems(nodeId: string, prop: string): ContextMen
     {
       id: 'essential-toggle',
       label: promoted ? 'Remove from Essential Properties' : 'Add to Essential Properties',
+      // The engine's command (one entry) — the scene-graph write reached the page's replica only.
       onSelect: () => {
-        setEssentialProp(root, nodeId, prop, !promoted);
+        void edit(promoted ? 'Remove from Essential Properties' : 'Add to Essential Properties', [
+          { type: 'setEssentialProp', comp: root, layer: nodeId, prop, promoted: !promoted },
+        ]);
       },
     },
   ];

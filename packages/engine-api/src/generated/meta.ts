@@ -61,6 +61,7 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   cropComposition: { id: 106, kind: 'edit', coalesce: false, family: "Compositions", result: "Empty", doc: "Crop the composition to a region (Composition ▸ Crop Comp to Region of Interest)." },
   assembleComposition: { id: 107, kind: 'edit', coalesce: false, family: "Compositions", result: "ItemRef", doc: "Build a composition from clips laid end to end (Assemble / New Comp from Selection ▸ sequence)." },
   migrateLegacyPrecomps: { id: 1943, kind: 'edit', coalesce: false, family: "Compositions", result: "ItemList", doc: "B4 round 8 — a legacy in-place precomp GROUP (a precomp-flagged group carrying its own layers, placing no composition) that never got a settings record becomes a composition: the record opening it in a tab would have made (its name; the enclosing composition's size, rate and duration) and a timeline, so getDocument lists it and its layers. The UI sends it once after an open; nothing to migrate = no history entry. Returns the migrated ids." },
+  setEssentialProp: { id: 1944, kind: 'edit', coalesce: false, family: "Compositions", result: "Empty", doc: "B4 round 8 — Add to / Remove from Essential Properties (AE Master Properties; the property row's context menu): `layer`'s `prop` (x | y | rotation | scaleX | scaleY | opacity | text | fill | color) published by `comp` (`<layer>/<prop>` in the root's `__essentialProps`, kept sorted) or withdrawn. `layer` must be a layer of `comp`, not its root. One entry; `invalidArgument` for a property that cannot be overridden." },
   addRenderItems: { id: 150, kind: 'edit', coalesce: false, family: "RenderQueue", result: "RenderItemList", doc: "" },
   setRenderItem: { id: 151, kind: 'edit', coalesce: false, family: "RenderQueue", result: "Empty", doc: "" },
   removeRenderItems: { id: 152, kind: 'edit', coalesce: false, family: "RenderQueue", result: "Empty", doc: "" },
@@ -266,4 +267,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":81,"structs":486,"unions":11,"commands":158,"queries":51,"events":33} as const;
+export const SCHEMA_COUNTS = {"enums":81,"structs":487,"unions":11,"commands":159,"queries":51,"events":33} as const;

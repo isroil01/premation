@@ -47,6 +47,13 @@ import { importModelEdit } from '@layout/Assets/modelImportEdits';
 import { buildQuadGlb } from '@/__testHelpers__/buildTestGlb';
 import { createMulticamEdit } from '@layout/Multicam/multicamEdits';
 import { itemAssetsOf } from '@core/mirror/itemAssets';
+import { stylePresetCommands } from '@layout/Inspector/StylePresetsSection';
+import { STYLE_PRESETS } from '@core/style/stylePresets';
+import { essentialPropMenuItems } from '@core/inspector/propertyMenu';
+import { insertBuiltLayers } from '@core/engine/offDocument';
+import { insertPrimitive } from '@core/scene/sceneInsert';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { edit } from '@core/engine/uiEdits';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -139,9 +146,29 @@ const CASES: AuditCase[] = [
       const infos = unwrap(await ownedEngine()!.query({ type: 'getLayers', layers })).layers;
       expect(infos.map((l) => l.multicamAngle).sort()).toEqual([1, 2]);
     } },
-  // ── scene-graph writers NOT recorded as animation edits (core helpers; the UI sends the engine
-  //    commands for these — setLayerSwitches / setParent / setLayerTiming — so they are not reached
-  //    from a menu, but anything that still calls them writes the replica only) ──
+  // ── inspector / menu edits built as engine commands ──
+  { name: 'Style preset (Inspector ▸ Style Presets)', expect: 'owner', run: async ({ a }) => {
+    const plan = stylePresetCommands(a, undefined, STYLE_PRESETS[0]!, '#3366ff', 0);
+    expect(plan.cmds.length).toBeGreaterThan(0);
+    expect((await edit('Apply Style', plan.cmds)).ok).toBe(true);
+  } },
+  { name: 'Add to Essential Properties (property row menu)', expect: 'owner', run: async ({ a }) => {
+    const item = essentialPropMenuItems(a, 'opacity').find((i) => i.id === 'essential-toggle');
+    expect(item).toBeDefined();
+    (item as { onSelect: () => void }).onSelect();
+  } },
+  { name: 'Insert shape layer (Library / Layer ▸ New, off-document)', expect: 'owner', run: async () => {
+    // Into the ACTIVE composition, as the menu does (insertPrimitive places in it).
+    const ids = await insertBuiltLayers('New Shape Layer', activeCompRootId(), () => insertPrimitive('shape', 'Shape'));
+    expect(ids?.length).toBe(1);
+  } },
+  // ── The three page scene-graph writers, called DIRECTLY (still replica-only by nature). Every user-facing
+  //    caller is on an engine path (audited 2026-09-29): set3DEnabled — the Timeline / Layers 3D switch sends
+  //    setLayerSwitches (toggleLayerFlagEdit), presets send applyPreset, the AI's model null is built
+  //    off-document, the page engine's own handlers are the replica applying a forwarded request;
+  //    reparentNode — the parent pick-whip / Layers drag send setParent, Lottie builds a fragment, the page
+  //    Create Orbit Null is the TS-owner path only; applyStretch — Time Stretch sends setLayerTiming /
+  //    timeStretchLayers (layerTimeCommands in providers). Inside runAnimEdit they reach the engine (above).)
   { name: 'Animate In (choreography, engine edits since bcb9b64a)', expect: 'owner', run: ({ a, b }) => runChoreography({ kind: 'in', nodeIds: [a, b], params: commandStaggerParams('in', [a, b], 30) }) },
   { name: 'threeD.set3DEnabled called directly (helper)', expect: 'replica-only', run: ({ b }) => set3DEnabled(b, true) },
   { name: 'parenting.reparentNode called directly (helper)', expect: 'replica-only', run: ({ a, b }) => reparentNode(b, a) },

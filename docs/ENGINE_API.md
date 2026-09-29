@@ -2419,6 +2419,7 @@ from the struct's maximum + 800.
   `layer/booleanOperand` and hidden, a "Boolean (<op>)" result above the first
   operand. `invalidArgument` for fewer than two closed paths / an empty
   boolean; `unsupported` in the TypeScript engine.
+- **`setEssentialProp {comp, layer, prop, promoted}`** (1944): Add to / Remove from Essential Properties (the property row's menu) — the key `<layer>/<prop>` in the comp root's `__essentialProps`, kept sorted; both engines. It was a page scene-graph write (owner-write audit).
 - **`migrateLegacyPrecomps {}`** (1943 → `ItemList`): legacy in-place precomp
   groups without a settings record get one (their name; the enclosing comp's
   size, rate, duration) and a timeline, so getDocument lists them and their

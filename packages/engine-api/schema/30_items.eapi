@@ -205,6 +205,8 @@ command cropComposition = 106 { comp: ItemId = 1; region: Rect = 2; }
 command assembleComposition = 107 { items: ItemId[] = 1; name: string = 2; overlap: Time = 3; } -> ItemRef;
 /// B4 round 8 — a legacy in-place precomp GROUP (a precomp-flagged group carrying its own layers, placing no composition) that never got a settings record becomes a composition: the record opening it in a tab would have made (its name; the enclosing composition's size, rate and duration) and a timeline, so getDocument lists it and its layers. The UI sends it once after an open; nothing to migrate = no history entry. Returns the migrated ids.
 command migrateLegacyPrecomps = 1943 {} -> ItemList;
+/// B4 round 8 — Add to / Remove from Essential Properties (AE Master Properties; the property row's context menu): `layer`'s `prop` (x | y | rotation | scaleX | scaleY | opacity | text | fill | color) published by `comp` (`<layer>/<prop>` in the root's `__essentialProps`, kept sorted) or withdrawn. `layer` must be a layer of `comp`, not its root. One entry; `invalidArgument` for a property that cannot be overridden.
+command setEssentialProp = 1944 { comp: ItemId = 1; layer: LayerId = 2; prop: string = 3; promoted: bool = 4; }
 
 struct PrecomposeResult { comp: ItemId = 1; layer: LayerId = 2; }
 
