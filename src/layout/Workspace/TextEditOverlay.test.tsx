@@ -95,6 +95,34 @@ describe('TextEditOverlay', () => {
     promptSpy.mockRestore();
   });
 
+  it('an editor that opened before the layer reached the mirror fills in, selected, once its text arrives', async () => {
+    // The real-app Type tool: the layer is created and the edit begins before
+    // its tree is in the mirror, so the box opened EMPTY over the engine's glyphs.
+    const { getByRole } = render(<TextEditOverlay />);
+    act(() => useTextEditStore.getState().begin(T));
+    const box = getByRole('textbox');
+    box.textContent = '';  // what the open found
+    await act(async () => {
+      await h.run({ type: 'setProperty', prop: { layer: T, path: 'text/sourceText' }, value: { kind: 'string', value: 'Arrived' } });
+      await engineIdle();
+    });
+    expect(box.textContent).toBe('Arrived');
+    expect(window.getSelection()?.toString()).toBe('Arrived');
+  });
+
+  it('never overwrites what the user already typed', async () => {
+    const { getByRole } = render(<TextEditOverlay />);
+    act(() => useTextEditStore.getState().begin(T));
+    const box = getByRole('textbox');
+    box.textContent = '';
+    fireEvent.input(box);  // a keystroke: the draft is now the user's
+    await act(async () => {
+      await h.run({ type: 'setProperty', prop: { layer: T, path: 'text/sourceText' }, value: { kind: 'string', value: 'Arrived' } });
+      await engineIdle();
+    });
+    expect(box.textContent).toBe('');
+  });
+
   it('matches the layer style (colour, alignment)', () => {
     const { getByRole } = render(<TextEditOverlay />);
     act(() => useTextEditStore.getState().begin(T));

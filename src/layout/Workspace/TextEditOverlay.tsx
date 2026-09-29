@@ -240,6 +240,23 @@ export function TextEditOverlay(): JSX.Element | null {
     sel?.addRange(range);
   }, [nodeId]);
 
+  // A layer the Type tool has just made opens before its tree reaches the
+  // mirror (useRetainTree loads it asynchronously), so the editor above opened
+  // EMPTY over the engine's "Text" glyphs. Once the content arrives — and only
+  // while nothing has been typed — it fills in, selected, as AE opens it.
+  const mirrorContent = nodeId ? strp(componentPropValue(documentMirror(), nodeId, 'content')) : undefined;
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box || draft !== null || !mirrorContent || box.textContent !== '') return;
+    box.textContent = mirrorContent;
+    if (document.activeElement !== box) box.focus();
+    const range = document.createRange();
+    range.selectNodeContents(box);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, [nodeId, mirrorContent, draft]);
+
   // Publish the selection so the inspector can style a character range.
   // `selectionchange` is a document-level event — there is no element-level
   // equivalent — so the handler filters to selections inside our box.
