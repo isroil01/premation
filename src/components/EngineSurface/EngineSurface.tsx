@@ -47,6 +47,8 @@ import { useGuidesStore } from '@stores/guidesStore';
 import { useRenderQualityStore, type PreviewResolution } from '@stores/renderQualityStore';
 import { viewportHudStats } from '@stores/viewportDisplayStore';
 import { publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
+import { useActiveMirrorComp } from '@hooks/useMirror';
+import { compUvRect, parseCssRgb } from './pasteboard';
 import styles from './EngineSurface.module.css';
 
 /**
@@ -94,6 +96,7 @@ interface SurfDevice {
   createShaderModule(d: { code: string }): unknown;
   createRenderPipeline(d: Record<string, unknown>): { getBindGroupLayout(i: number): unknown };
   createSampler(d: Record<string, unknown>): unknown;
+  createBuffer(d: { size: number; usage: number }): unknown;
   importExternalTexture(d: { source: VideoFrame }): unknown;
   createBindGroup(d: Record<string, unknown>): unknown;
   createCommandEncoder(): {
@@ -105,7 +108,7 @@ interface SurfDevice {
     };
     finish(): unknown;
   };
-  queue: { submit(b: unknown[]): void; onSubmittedWorkDone(): Promise<void> };
+  queue: { submit(b: unknown[]): void; onSubmittedWorkDone(): Promise<void>; writeBuffer(b: unknown, offset: number, data: Float32Array): void };
   destroy(): void;
 }
 interface SurfContext {
@@ -113,9 +116,13 @@ interface SurfContext {
   getCurrentTexture(): { createView(): unknown };
 }
 
+// `board`: the comp rect in UV (x0, y0, x1, y1) and the pasteboard colour
+// (rgb; a = 1 paints it outside the rect, 0 shows the frame as it is) — pasteboard.ts.
 const WGSL = /* wgsl */ `
+struct Board { rect: vec4f, color: vec4f };
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var tex: texture_external;
+@group(0) @binding(2) var<uniform> board: Board;
 struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {
   var p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
@@ -125,8 +132,14 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
   return o;
 }
 @fragment fn fs(v: VOut) -> @location(0) vec4f {
-  return textureSampleBaseClampToEdge(tex, samp, v.uv);
+  let c = textureSampleBaseClampToEdge(tex, samp, v.uv);
+  let inside = v.uv.x >= board.rect.x && v.uv.x <= board.rect.z && v.uv.y >= board.rect.y && v.uv.y <= board.rect.w;
+  if (board.color.a > 0.5 && !inside) { return vec4f(board.color.rgb, 1.0); }
+  return c;
 }`;
+
+/** GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST (lib.dom has no WebGPU constants). */
+const UNIFORM_COPY_DST = 0x0040 | 0x0008;
 
 /** What the real-app harness reads: `window.__premationEngineSurface`. */
 export interface EngineSurfaceStats {
@@ -191,6 +204,11 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
   // stage with no explanation). One React render when it changes.
   const [firstFrame, setFirstFrame] = useState(false);
   const [waitingLong, setWaitingLong] = useState(false);
+  // The active comp's size, for the pasteboard around it (read by the draw, never a render per frame).
+  const compSettings = useActiveMirrorComp()?.settings;
+  const compSizeRef = useRef({ width: 0, height: 0 });
+  compSizeRef.current.width = compSettings?.width ?? 0;
+  compSizeRef.current.height = compSettings?.height ?? 0;
 
   useEffect(() => {
     const box = frameBoxRef.current;
@@ -217,6 +235,14 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     let vp: number | null = null;
     let pipeline: { getBindGroupLayout(i: number): unknown } | null = null;
     let sampler: unknown = null;
+    // The pasteboard (pasteboard.ts): the uniform, its CPU copy (reused every
+    // draw — no per-frame allocation), the camera the engine last applied, and
+    // the theme colour (re-read at most once a second: theme / Settings changes).
+    let boardBuf: unknown = null;
+    const boardData = new Float32Array(8);
+    let applied: NonNullable<EngineSurfaceStats['lastViewport']> | null = null;
+    let boardRgb: [number, number, number] | null = null;
+    let boardColorAt = Number.NEGATIVE_INFINITY;
     let pending: Pending | null = null;
     let raf = 0;
     let fpsCount = 0;
@@ -249,6 +275,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
           primitive: { topology: 'triangle-list' },
         });
         sampler = dev.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+        boardBuf = dev.createBuffer({ size: boardData.byteLength, usage: UNIFORM_COPY_DST });
         device = dev;
         ctx = c;
         if (pending) schedule();
@@ -256,6 +283,35 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         fail(e);
       }
     })();
+
+    /**
+     * The pasteboard uniform for a w×h frame: the comp rect under the camera the
+     * engine last applied, when that camera is the one this frame was drawn with
+     * (same aspect — a frame from before a resize shows as it is), the view is
+     * the 2D Active Camera (a custom 3D view is not a rectangle) and the theme
+     * colour parsed. Otherwise off: the frame shows unchanged.
+     */
+    const writeBoard = (w: number, h: number): void => {
+      const now = performance.now();
+      if (isViewport && now - boardColorAt > 1000) {
+        boardColorAt = now;
+        boardRgb = parseCssRgb(getComputedStyle(canvas).color);
+      }
+      const cam = applied;
+      const size = compSizeRef.current;
+      const rect = isViewport && cam && boardRgb && useGuidesStore.getState().camera3dMode === 'active'
+        && Math.abs(w / Math.max(1, h) - cam.width / Math.max(1, cam.height)) < 0.02
+        ? compUvRect(cam, size.width, size.height)
+        : null;
+      boardData[0] = rect ? rect.x0 : 0;
+      boardData[1] = rect ? rect.y0 : 0;
+      boardData[2] = rect ? rect.x1 : 1;
+      boardData[3] = rect ? rect.y1 : 1;
+      boardData[4] = boardRgb ? boardRgb[0] : 0;
+      boardData[5] = boardRgb ? boardRgb[1] : 0;
+      boardData[6] = boardRgb ? boardRgb[2] : 0;
+      boardData[7] = rect ? 1 : 0;
+    };
 
     const draw = (): void => {
       raf = 0;
@@ -273,10 +329,12 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
           canvas.width = w;
           canvas.height = h;
         }
+        writeBoard(w, h);
+        device.queue.writeBuffer(boardBuf, 0, boardData);
         const ext = device.importExternalTexture({ source: p.frame });
         const bind = device.createBindGroup({
           layout: pipeline.getBindGroupLayout(0),
-          entries: [{ binding: 0, resource: sampler }, { binding: 1, resource: ext }],
+          entries: [{ binding: 0, resource: sampler }, { binding: 1, resource: ext }, { binding: 2, resource: { buffer: boardBuf } }],
         });
         const enc = device.createCommandEncoder();
         const pass = enc.beginRenderPass({
@@ -405,6 +463,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         layerRenderEffects: true,
       }).then((res) => {
         if (!res.ok) fail(`setViewport: ${res.error.code} ${res.error.message}`);
+        else applied = d;  // frames from here on are drawn with this camera (the pasteboard rect)
       }).finally(() => {
         inFlight = false;
         if (again) {
