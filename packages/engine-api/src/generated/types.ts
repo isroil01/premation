@@ -2936,6 +2936,19 @@ export interface ParticleBakeJob {
   maxParticles?: number;
 }
 
+/** The audio driver's envelope (audioDriver.ts computeDriverEnvelope's analysis half): `source`'s sound laid out on composition time over `range` (a layer, through its bar), or, `source` absent, the composition's own mix (a child `--export` audio-only, as the transcribe job mixes it) of `comp`; the spectral detector over [`bandLo`, `bandHi`] Hz, gated, attack / release smoothed, normalised unless `normalize` is false: 0..1 per composition frame. Analysis only (nothing is written): the summary is `{raw, fps, start, end}`. */
+export interface AudioEnvelopeJob {
+  comp: ItemId;
+  source?: LayerId;
+  range: TimeRange;
+  bandLo: number;
+  bandHi: number;
+  attackMs?: number;
+  releaseMs?: number;
+  gate?: number;
+  normalize?: boolean;
+}
+
 export type JobSpec =
   | { kind: 'trackMotion'; value: TrackMotionJob }
   | { kind: 'stabilize'; value: StabilizeJob }
@@ -2954,7 +2967,8 @@ export type JobSpec =
   | { kind: 'contentAwareFill'; value: ContentAwareFillJob }
   | { kind: 'autoReframe'; value: AutoReframeJob }
   | { kind: 'physicsBake'; value: PhysicsBakeJob }
-  | { kind: 'particleBake'; value: ParticleBakeJob };
+  | { kind: 'particleBake'; value: ParticleBakeJob }
+  | { kind: 'audioEnvelope'; value: AudioEnvelopeJob };
 export type JobSpecKind = JobSpec['kind'];
 
 export interface StartJob {

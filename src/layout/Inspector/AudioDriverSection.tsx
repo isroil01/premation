@@ -9,7 +9,7 @@
  * has no other answer until the bake lands, and re-baking to find out is the
  * loop this section exists to remove.
  *
- * The strip is drawn from `computeDriverEnvelope`, the same function the bake
+ * The strip is drawn from `driverEnvelopeOf`, the same analysis the bake
  * calls. A cheaper "good enough for preview" path was the obvious shortcut and
  * would have been the usual lie: the two would agree on the easy cases and
  * disagree exactly where the parameters are doing something interesting.
@@ -32,7 +32,6 @@ import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { membersOf } from '@core/mirror/trackIndex';
 import { audioDriversOf, driverRangeOf } from '@core/mirror/audio';
 import {
-  computeDriverEnvelope,
   defaultAudioDriver,
   expressionBlocker,
   BAND_LABELS,
@@ -44,7 +43,7 @@ import {
   type DriverEnvelope,
   type EnvelopeCurve,
 } from '@core/audio/audioDriver';
-import { driverEdit, removeDriverEdit } from './audioEdits';
+import { driverEdit, driverEnvelopeOf, removeDriverEdit } from './audioEdits';
 import styles from './AudioDriverSection.module.css';
 
 /** Property value types a 0..1 envelope can sensibly drive. */
@@ -173,7 +172,7 @@ export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element 
 
   // Preview. Debounced, because every slider drag would otherwise start an FFT
   // pass over the whole work area on each pointer move.
-  const key = `${JSON.stringify(draft)}|${range.start}|${range.end}|${range.fps}`;
+  const key = `${JSON.stringify(draft)}|${range.start}|${range.end}|${range.fps}|${comp?.id ?? ''}`;
   useEffect(() => {
     if (!activePath) {
       setEnv(null);
@@ -181,8 +180,8 @@ export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element 
     }
     let alive = true;
     const timer = setTimeout(() => {
-      // Engine-side until E2: the source decode (or the comp mixdown) and its envelope.
-      void computeDriverEnvelope(draft, range)
+      // The engine's audioEnvelope job: the source decode (or the comp mixdown) and its envelope.
+      void driverEnvelopeOf(comp?.id ?? '', draft, range)
         .then((e) => { if (alive) setEnv(e); })
         .catch(() => { if (alive) setEnv(null); });
     }, 180);

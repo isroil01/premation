@@ -87,6 +87,15 @@ void fft_in_place(std::span<float> re, std::span<float> im);
                                                         double endSec);
 /// `analyseAudioEnvelope` with band 'full', no attack/release/gate, normalize false: 0..1 on a −60…0 dB scale per frame.
 [[nodiscard]] std::vector<float> raw_detector_envelope(std::span<const float> samples, double sampleRate, double fps);
+/// audioDriver.ts EnvelopeOptions: the band in Hz, one-pole attack / release (ms), the gate floor (0..1), normalise to the peak.
+struct DetectorOptions {
+  double lo = 20, hi = 20000;
+  double attackMs = 0, releaseMs = 0;
+  double gate = 0;
+  bool normalize = false;
+};
+/// `analyseAudioEnvelope`: detector → gate → attack/release → normalise, 0..1 per frame.
+[[nodiscard]] std::vector<float> detector_envelope(std::span<const float> samples, double sampleRate, double fps, const DetectorOptions& o);
 
 // ── ducking / gate ──
 struct DuckingParams {

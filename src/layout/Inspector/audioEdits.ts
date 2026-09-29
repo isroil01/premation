@@ -31,7 +31,7 @@
  * until audio moves into the engine (E2) — they are engine work, not reads.
  */
 
-import type { Command, PropRef } from '@motion/engine-api';
+import { secondsToFlicks, type Command, type PropRef } from '@motion/engine-api';
 import { edit } from '@core/engine/uiEdits';
 import { engine } from '@core/engine/engineInstance';
 import { compTime, propRefForTrack, values } from '@core/engine/propRefs';
@@ -42,11 +42,13 @@ import { DEFAULT_FADE_SEC, type FadeSide } from '@core/audio/audioFades';
 import type { ApplyDuckingResult, DuckingParams } from '@core/audio/ducking';
 import {
   audioDriverExpression,
-  computeDriverEnvelope,
+  bandRange,
   expressionBlocker,
+  mapEnvelope,
   MIX_SOURCE,
   type ApplyDriverResult,
   type AudioDriver,
+  type DriverEnvelope,
 } from '@core/audio/audioDriver';
 import { DEFAULT_AUDIO_KEYFRAME_OPTIONS, type AudioKeyframeOptions } from '@core/audio/audioKeyframes';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -203,8 +205,8 @@ export async function driverEdit(nodeId: string, d: AudioDriver): Promise<ApplyD
 
   // The bake range of the active composition (its work area, else all of it).
   const range = driverRangeOf(documentMirror().comp(activeCompIdNow() ?? '')?.settings);
-  // Engine-side until E2: the source's decode (or the comp mixdown) and its envelope.
-  const env = await computeDriverEnvelope(d, range);
+  // The engine's audioEnvelope job: the source's decode (or the comp mixdown) and its envelope.
+  const env = await driverEnvelopeOf(activeCompIdNow() ?? '', d, range);
   if (!env || env.mapped.length === 0) {
     return {
       mode: 'baked',
@@ -354,4 +356,38 @@ export function unbarredTimingCommand(nodeId: string, field: 'start' | 'in' | 'o
  */
 export function audioWaveformCommands(nodeId: string, cfg: AudioWaveformConfig | null): Command[] {
   return jsonFieldCommands(nodeId, 'layer/audioWaveform', cfg);
+}
+
+/**
+ * An audio driver's envelope over `range` (composition seconds) — the engine's
+ * `audioEnvelope` job (B4 round 8: the source layer's decode through its bar,
+ * or the comp's own mix, through the spectral detector), mapped by the
+ * driver's curve and range here (pure). Null when the engine found no sound.
+ */
+export async function driverEnvelopeOf(
+  comp: string,
+  d: AudioDriver,
+  range: { start: number; end: number; fps: number },
+): Promise<DriverEnvelope | null> {
+  if (!comp || !(range.end > range.start)) return null;
+  const { lo, hi } = bandRange(d.band);
+  const out = await runEngineJob<{ raw: number[] }>({
+    kind: 'audioEnvelope',
+    value: {
+      comp,
+      ...(d.sourceLayerId && d.sourceLayerId !== MIX_SOURCE ? { source: d.sourceLayerId } : {}),
+      range: { start: secondsToFlicks(range.start), duration: secondsToFlicks(range.end - range.start) },
+      bandLo: lo,
+      bandHi: hi,
+      attackMs: d.attackMs,
+      releaseMs: d.releaseMs,
+      gate: d.gate,
+      normalize: d.normalize,
+    },
+  });
+  const raw = out?.status === 'done' ? out.result?.raw ?? [] : [];
+  if (raw.length === 0) return null;
+  const rawArr = Float32Array.from(raw);
+  const mapped = mapEnvelope(rawArr, { min: d.min, max: d.max, curve: d.curve, smoothFrames: d.smoothFrames });
+  return { raw: rawArr, mapped, start: range.start, end: range.end, fps: range.fps };
 }

@@ -11122,8 +11122,91 @@ Status decode(wire::Reader& r, ParticleBakeJob& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const AudioEnvelopeJob& v) {
+  w.varint(10U); w.str(v.comp);
+  if (v.source.has_value()) { w.varint(18U); w.str(*v.source); }
+  w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, v.range); w.end_ld(s); }
+  w.varint(33U); w.f64(v.band_lo);
+  w.varint(41U); w.f64(v.band_hi);
+  if (v.attack_ms.has_value()) { w.varint(49U); w.f64(*v.attack_ms); }
+  if (v.release_ms.has_value()) { w.varint(57U); w.f64(*v.release_ms); }
+  if (v.gate.has_value()) { w.varint(65U); w.f64(*v.gate); }
+  if (v.normalize.has_value()) { w.varint(72U); w.boolean(*v.normalize); }
+}
+
+Status decode(wire::Reader& r, AudioEnvelopeJob& out) {
+  bool has_comp = false;
+  bool has_range = false;
+  bool has_band_lo = false;
+  bool has_band_hi = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.comp)) return Status::truncated;
+        has_comp = true;
+        break;
+      }
+      case 18U: {
+        LayerId e;
+        if (!r.str(e)) return Status::truncated;
+        out.source = std::move(e);
+        break;
+      }
+      case 26U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.range); st != Status::ok) return st; }
+        has_range = true;
+        break;
+      }
+      case 33U: {
+        if (!r.f64(out.band_lo)) return Status::truncated;
+        has_band_lo = true;
+        break;
+      }
+      case 41U: {
+        if (!r.f64(out.band_hi)) return Status::truncated;
+        has_band_hi = true;
+        break;
+      }
+      case 49U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.attack_ms = std::move(e);
+        break;
+      }
+      case 57U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.release_ms = std::move(e);
+        break;
+      }
+      case 65U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.gate = std::move(e);
+        break;
+      }
+      case 72U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.normalize = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_comp) return Status::missing_field;
+  if (!has_range) return Status::missing_field;
+  if (!has_band_lo) return Status::missing_field;
+  if (!has_band_hi) return Status::missing_field;
+  return Status::ok;
+}
+
 JobSpec::Kind JobSpec::kind() const noexcept {
-  static constexpr std::array<Kind, 18> kKinds = {Kind::track_motion, Kind::stabilize, Kind::auto_trace, Kind::scene_detect, Kind::object_matte, Kind::transcribe, Kind::audio_analysis, Kind::render, Kind::prerender, Kind::proxy, Kind::audio_duck, Kind::audio_gate, Kind::track_apply, Kind::roto_brush, Kind::content_aware_fill, Kind::auto_reframe, Kind::physics_bake, Kind::particle_bake};
+  static constexpr std::array<Kind, 19> kKinds = {Kind::track_motion, Kind::stabilize, Kind::auto_trace, Kind::scene_detect, Kind::object_matte, Kind::transcribe, Kind::audio_analysis, Kind::render, Kind::prerender, Kind::proxy, Kind::audio_duck, Kind::audio_gate, Kind::track_apply, Kind::roto_brush, Kind::content_aware_fill, Kind::auto_reframe, Kind::physics_bake, Kind::particle_bake, Kind::audio_envelope};
   return kKinds[v.index()];
 }
 
@@ -11147,6 +11230,7 @@ void encode(wire::Writer& w, const JobSpec& v) {
     case 15: w.varint(13714U); { const std::size_t s = w.begin_ld(); encode(w, std::get<15>(v.v)); w.end_ld(s); } return;
     case 16: w.varint(13722U); { const std::size_t s = w.begin_ld(); encode(w, std::get<16>(v.v)); w.end_ld(s); } return;
     case 17: w.varint(13730U); { const std::size_t s = w.begin_ld(); encode(w, std::get<17>(v.v)); w.end_ld(s); } return;
+    case 18: w.varint(13738U); { const std::size_t s = w.begin_ld(); encode(w, std::get<18>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -11298,6 +11382,14 @@ Status decode(wire::Reader& r, JobSpec& out) {
         ParticleBakeJob e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.v.emplace<17>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 13738U: {
+        if (seen) return Status::multiple_variants;
+        AudioEnvelopeJob e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<18>(std::move(e));
         seen = true;
         break;
       }
@@ -28001,7 +28093,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 493> kNames = {
+constexpr std::array<std::string_view, 494> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -28271,6 +28363,7 @@ constexpr std::array<std::string_view, 493> kNames = {
     "AutoReframeJob",
     "PhysicsBakeJob",
     "ParticleBakeJob",
+    "AudioEnvelopeJob",
     "JobSpec",
     "StartJob",
     "CancelJob",
@@ -28770,6 +28863,7 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "AutoReframeJob") return roundtrip<AutoReframeJob>(bytes, out);
   if (type == "PhysicsBakeJob") return roundtrip<PhysicsBakeJob>(bytes, out);
   if (type == "ParticleBakeJob") return roundtrip<ParticleBakeJob>(bytes, out);
+  if (type == "AudioEnvelopeJob") return roundtrip<AudioEnvelopeJob>(bytes, out);
   if (type == "JobSpec") return roundtrip<JobSpec>(bytes, out);
   if (type == "StartJob") return roundtrip<StartJob>(bytes, out);
   if (type == "CancelJob") return roundtrip<CancelJob>(bytes, out);

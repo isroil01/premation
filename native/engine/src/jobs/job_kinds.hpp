@@ -27,6 +27,8 @@ void set_ffmpeg_executable(std::string path);
 [[nodiscard]] PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_audio_analysis(const api::AudioAnalysisJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_audio_duck(const api::AudioDuckJob& spec, const JobDocContext& ctx);
+/// The audio driver's envelope (kind_audio.cpp): a layer's sound or the comp's mix, analysis only.
+[[nodiscard]] PreparedJob prepare_audio_envelope(const api::AudioEnvelopeJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_audio_gate(const api::AudioGateJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_proxy(const api::ProxyJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_render(const api::RenderJob& spec, const JobDocContext& ctx);

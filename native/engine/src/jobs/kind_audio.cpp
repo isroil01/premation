@@ -5,6 +5,9 @@
 // src/core/audio/beatCommands.ts) — the same commands, in one entry.
 #include <algorithm>
 #include <array>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <cmath>
 #include <set>
 #include <string>
@@ -12,6 +15,8 @@
 #include <vector>
 
 #include "audio_analysis.hpp"
+#include "child_export.hpp"
+#include "transcribe.hpp"
 #include "fail.hpp"
 #include "job_apply_util.hpp"
 #include "job_inputs.hpp"
@@ -651,6 +656,92 @@ PreparedJob prepare_audio_gate(const api::AudioGateJob& spec, const JobDocContex
     }
     control.progress(1, "Done");
     return out;
+  }};
+}
+
+namespace {
+
+class EnvelopeResult final : public JobResult {
+ public:
+  EnvelopeResult(std::vector<float> raw, double fps, double start, double end)
+      : raw_(std::move(raw)), fps_(fps), start_(start), end_(end) {}
+  [[nodiscard]] std::string summary_json() const override {
+    std::string s = "{\"raw\":[";
+    for (std::size_t i = 0; i < raw_.size(); ++i) s += (i > 0 ? "," : "") + json_number(static_cast<double>(raw_[i]));
+    return s + "],\"fps\":" + json_number(fps_) + ",\"start\":" + json_number(start_) + ",\"end\":" + json_number(end_) + "}";
+  }
+  [[nodiscard]] std::string label() const override { return "Audio driver"; }
+  [[nodiscard]] bool has_edits() const override { return false; }
+  void apply(JobApply& /*a*/) const override {}
+
+ private:
+  std::vector<float> raw_;
+  double fps_, start_, end_;
+};
+
+}  // namespace
+
+PreparedJob prepare_audio_envelope(const api::AudioEnvelopeJob& spec, const JobDocContext& ctx) {
+  if (ctx.doc.comp(spec.comp) == nullptr) fail(ErrorCode::not_found, "no composition '" + spec.comp + "'", {.item = spec.comp});
+  Range range = driver_range(ctx.doc, spec.comp);
+  range.start = seconds_of(spec.range.start);
+  range.end = seconds_of(spec.range.start + spec.range.duration);
+  if (!(range.end > range.start)) fail(ErrorCode::invalid_argument, "the range is empty");
+  aa::DetectorOptions o;
+  o.lo = spec.band_lo;
+  o.hi = spec.band_hi;
+  o.attackMs = spec.attack_ms.value_or(0);
+  o.releaseMs = spec.release_ms.value_or(0);
+  o.gate = spec.gate.value_or(0);
+  o.normalize = spec.normalize.value_or(true);
+  if (spec.source && !spec.source->empty()) {
+    const FootageLayer f = footage_layer(ctx, *spec.source, Need::sound);
+    const std::vector<aa::ClipTiming> timings = timings_of(f);
+    return PreparedJob{"audioEnvelope", [f, timings, range, o](JobControl& control) -> std::unique_ptr<JobResult> {
+      control.progress(0.1, "Decoding audio");
+      int sr = 0;
+      const std::vector<float> mono = read_mono(f.file, sr);
+      if (control.cancelled()) return nullptr;
+      control.progress(0.6, "Following the audio");
+      const std::vector<float> aligned = aa::align_samples_to_range(mono, sr, timings, range.start, range.end);
+      return std::make_unique<EnvelopeResult>(aa::detector_envelope(aligned, sr, range.fps, o), range.fps, range.start, range.end);
+    }};
+  }
+  // The comp's mix: a child engine's audio-only export of the range (kind_transcribe.cpp's mixdown).
+  std::string projectJson = snapshot_project_json(ctx.doc, ctx.bundleRoot);
+  const std::string comp = spec.comp;
+  return PreparedJob{"audioEnvelope", [projectJson = std::move(projectJson), comp, range, o](JobControl& control) -> std::unique_ptr<JobResult> {
+    TempTree tree("premation-driver");
+    const std::filesystem::path project = tree.path / "project.motion";
+    {
+      std::ofstream file(project, std::ios::binary | std::ios::trunc);
+      file << projectJson;
+      if (!file) fail(ErrorCode::io, "cannot write the mixdown snapshot");
+    }
+    const auto startFrame = static_cast<std::int64_t>(std::floor(range.start * range.fps + 1e-6));
+    const auto endFrame = std::max(startFrame, static_cast<std::int64_t>(std::ceil(range.end * range.fps - 1e-6)) - 1);
+    js::Json job = js::Json::object();
+    job.set("projectPath", js::Json::string(project.string()));
+    job.set("workDir", js::Json::string(tree.path.string()));
+    job.set("comp", js::Json::string(comp));
+    job.set("startFrame", js::Json::number(static_cast<double>(startFrame)));
+    job.set("endFrame", js::Json::number(static_cast<double>(endFrame)));
+    job.set("audioOnly", js::Json::boolean(true));
+    job.set("buildThreads", js::Json::number(1));
+    const std::optional<js::Json> pre = run_child_export(job, tree.path, control, "Mixing", 0.02, 0.6);
+    if (!pre) return nullptr;
+    const auto none = [&] { return std::make_unique<EnvelopeResult>(std::vector<float>{}, range.fps, range.start, range.end); };
+    if (!pre->at("audio").is_string()) return none();
+    std::vector<std::uint8_t> wav;
+    {
+      std::ifstream file(std::filesystem::path(pre->at("audio").str()), std::ios::binary);
+      wav.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    }
+    const std::optional<speech::Pcm> pcm = speech::read_wav16(wav);
+    if (!pcm || pcm->channels.empty()) return none();
+    const std::vector<float> mono = speech::to_mono(pcm->channels);
+    control.progress(0.8, "Following the mix");
+    return std::make_unique<EnvelopeResult>(aa::detector_envelope(mono, pcm->sampleRate, range.fps, o), range.fps, range.start, range.end);
   }};
 }
 

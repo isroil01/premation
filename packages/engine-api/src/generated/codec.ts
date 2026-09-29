@@ -8386,6 +8386,62 @@ function decS_ParticleBakeJob(r: Reader, end: number, o: any): T.ParticleBakeJob
   if (v_maxParticles !== undefined) o.maxParticles = v_maxParticles;
   return o;
 }
+function encS_AudioEnvelopeJob(w: Writer, v: T.AudioEnvelopeJob): void {
+  w.byte(10); w.str(v.comp);
+  if (v.source !== undefined) { w.byte(18); w.str(v.source); }
+  w.byte(26); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  w.byte(33); w.f64(v.bandLo);
+  w.byte(41); w.f64(v.bandHi);
+  if (v.attackMs !== undefined) { w.byte(49); w.f64(v.attackMs); }
+  if (v.releaseMs !== undefined) { w.byte(57); w.f64(v.releaseMs); }
+  if (v.gate !== undefined) { w.byte(65); w.f64(v.gate); }
+  if (v.normalize !== undefined) { w.byte(72); w.bool(v.normalize); }
+}
+function decS_AudioEnvelopeJob(r: Reader, end: number, o: any): T.AudioEnvelopeJob {
+  let h_comp = false;
+  let h_range = false;
+  let h_bandLo = false;
+  let h_bandHi = false;
+  let v_comp: string | undefined;
+  let v_source: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  let v_bandLo: number | undefined;
+  let v_bandHi: number | undefined;
+  let v_attackMs: number | undefined;
+  let v_releaseMs: number | undefined;
+  let v_gate: number | undefined;
+  let v_normalize: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_comp = r.str(); h_comp = true; break;
+      case 18: v_source = r.str(); break;
+      case 26: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 33: v_bandLo = r.f64(); h_bandLo = true; break;
+      case 41: v_bandHi = r.f64(); h_bandHi = true; break;
+      case 49: v_attackMs = r.f64(); break;
+      case 57: v_releaseMs = r.f64(); break;
+      case 65: v_gate = r.f64(); break;
+      case 72: v_normalize = r.bool(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_comp) throw new DecodeError('AudioEnvelopeJob.comp: missing', 'missingField');
+  if (!h_range) throw new DecodeError('AudioEnvelopeJob.range: missing', 'missingField');
+  if (!h_bandLo) throw new DecodeError('AudioEnvelopeJob.bandLo: missing', 'missingField');
+  if (!h_bandHi) throw new DecodeError('AudioEnvelopeJob.bandHi: missing', 'missingField');
+  o.comp = v_comp;
+  if (v_source !== undefined) o.source = v_source;
+  o.range = v_range;
+  o.bandLo = v_bandLo;
+  o.bandHi = v_bandHi;
+  if (v_attackMs !== undefined) o.attackMs = v_attackMs;
+  if (v_releaseMs !== undefined) o.releaseMs = v_releaseMs;
+  if (v_gate !== undefined) o.gate = v_gate;
+  if (v_normalize !== undefined) o.normalize = v_normalize;
+  return o;
+}
 function encS_StartJob(w: Writer, v: T.StartJob): void {
   w.byte(10); { const s = w.beginLd(); encU_JobSpec(w, v.job); w.endLd(s); }
   w.byte(16); w.bool(v.apply);
@@ -15894,6 +15950,7 @@ function encU_JobSpec(w: Writer, v: T.JobSpec): void {
     case 'autoReframe': w.varint(13714); { const s = w.beginLd(); encS_AutoReframeJob(w, v.value); w.endLd(s); } return;
     case 'physicsBake': w.varint(13722); { const s = w.beginLd(); encS_PhysicsBakeJob(w, v.value); w.endLd(s); } return;
     case 'particleBake': w.varint(13730); { const s = w.beginLd(); encS_ParticleBakeJob(w, v.value); w.endLd(s); } return;
+    case 'audioEnvelope': w.varint(13738); { const s = w.beginLd(); encS_AudioEnvelopeJob(w, v.value); w.endLd(s); } return;
     default: throw new RangeError('JobSpec: unknown kind ' + String((v as { kind?: unknown }).kind));
   }
 }
@@ -15921,6 +15978,7 @@ function decU_JobSpec(r: Reader, end: number): T.JobSpec {
       case 13714: out = { kind: 'autoReframe', value: decS_AutoReframeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13722: out = { kind: 'physicsBake', value: decS_PhysicsBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13730: out = { kind: 'particleBake', value: decS_ParticleBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13738: out = { kind: 'audioEnvelope', value: decS_AudioEnvelopeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       default: r.skip(key);
     }
   }
@@ -17224,6 +17282,7 @@ export const codecs = {
   AutoReframeJob: mk<T.AutoReframeJob>(encS_AutoReframeJob, (r, e) => decS_AutoReframeJob(r, e, {})),
   PhysicsBakeJob: mk<T.PhysicsBakeJob>(encS_PhysicsBakeJob, (r, e) => decS_PhysicsBakeJob(r, e, {})),
   ParticleBakeJob: mk<T.ParticleBakeJob>(encS_ParticleBakeJob, (r, e) => decS_ParticleBakeJob(r, e, {})),
+  AudioEnvelopeJob: mk<T.AudioEnvelopeJob>(encS_AudioEnvelopeJob, (r, e) => decS_AudioEnvelopeJob(r, e, {})),
   JobSpec: mk<T.JobSpec>(encU_JobSpec, decU_JobSpec),
   StartJob: mk<T.StartJob>(encS_StartJob, (r, e) => decS_StartJob(r, e, {})),
   CancelJob: mk<T.CancelJob>(encS_CancelJob, (r, e) => decS_CancelJob(r, e, {})),

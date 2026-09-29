@@ -177,6 +177,8 @@ struct AutoReframeJob { comp: ItemId = 1; width: u32 = 2; height: u32 = 3; name?
 struct PhysicsBakeJob { layers: LayerId[] = 1; range: TimeRange = 2; everyNFrames?: u32 = 3; simplifyTolerance?: f64 = 4; }
 /// Bake Particles to Layers (bakeDynamics.ts bakeParticlesToLayers): the emitter's particles (the renderer's sim, its `particle.<key>` tracks sampled per frame) at each frame of `range`, one keyed ellipse (a square emitter: rectangle) per particle — x / y / scale / opacity, invisible outside its life — under a new "<emitter> Baked" null parented to the emitter; the emitter is hidden. At most `maxParticles` (default 200) layers, the earliest born; the summary reports `seen` and `capped`.
 struct ParticleBakeJob { layer: LayerId = 1; range: TimeRange = 2; everyNFrames?: u32 = 3; simplifyTolerance?: f64 = 4; maxParticles?: u32 = 5; }
+/// The audio driver's envelope (audioDriver.ts computeDriverEnvelope's analysis half): `source`'s sound laid out on composition time over `range` (a layer, through its bar), or, `source` absent, the composition's own mix (a child `--export` audio-only, as the transcribe job mixes it) of `comp`; the spectral detector over [`bandLo`, `bandHi`] Hz, gated, attack / release smoothed, normalised unless `normalize` is false: 0..1 per composition frame. Analysis only (nothing is written): the summary is `{raw, fps, start, end}`.
+struct AudioEnvelopeJob { comp: ItemId = 1; source?: LayerId = 2; range: TimeRange = 3; bandLo: f64 = 4; bandHi: f64 = 5; attackMs?: f64 = 6; releaseMs?: f64 = 7; gate?: f64 = 8; normalize?: bool = 9; }
 
 union JobSpec {
   trackMotion: TrackMotionJob = 1;
@@ -197,6 +199,7 @@ union JobSpec {
   autoReframe: AutoReframeJob = 1714;
   physicsBake: PhysicsBakeJob = 1715;
   particleBake: ParticleBakeJob = 1716;
+  audioEnvelope: AudioEnvelopeJob = 1717;
 }
 
 command startJob = 850 [control] { job: JobSpec = 1; apply: bool = 2; } -> JobRef;
