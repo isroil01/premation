@@ -469,6 +469,36 @@ export interface CapturedTrack {
   readonly nodeId: string;
   readonly prop: PropPath;
   readonly keyframes: Keyframe[] | null;
+  /**
+   * The property's STATIC value when it had no track. The engine keys a
+   * property as a whole and un-animating it keeps the value at the time it
+   * stopped, so a revert must put this back explicitly.
+   */
+  readonly staticValue?: number;
+}
+
+/** A member's static value to put back (see `CapturedTrack.staticValue`). */
+export interface StaticRestore {
+  readonly nodeId: string;
+  readonly prop: PropPath;
+  readonly value: number;
+}
+
+/**
+ * The captured statics of the tracks that are, after a write, still absent —
+ * what a revert (or a re-apply that no longer animates them) must put back.
+ */
+export function staticsToRestore(
+  captured: readonly CapturedTrack[],
+  engine: AnimationEngine = defaultAnimation,
+): StaticRestore[] {
+  const out: StaticRestore[] = [];
+  for (const c of captured) {
+    if (c.keyframes !== null || c.staticValue === undefined) continue;
+    if ((engine.getTrackKeyframes(c.nodeId, c.prop) ?? []).length > 0) continue;
+    out.push({ nodeId: c.nodeId, prop: c.prop, value: c.staticValue });
+  }
+  return out;
 }
 
 /**
@@ -488,10 +518,13 @@ export function captureTracks(
     if (seen.has(key)) continue;
     seen.add(key);
     const kfs = engine.getTrackKeyframes(ref.nodeId, ref.prop);
+    const animated = !!kfs && kfs.length > 0;
+    const staticValue = animated ? undefined : nodeBaseValue(ref.nodeId, ref.prop, 0, engine);
     out.push({
       nodeId: ref.nodeId,
       prop: ref.prop,
-      keyframes: kfs && kfs.length ? kfs.map((k) => ({ ...k })) : null,
+      keyframes: animated ? kfs.map((k) => ({ ...k })) : null,
+      ...(staticValue !== undefined ? { staticValue } : {}),
     });
   }
   return out;
@@ -595,9 +628,11 @@ function installFor(
       effectId = getNodeEffects(nodeId).find((e) => !before.has(e.id))?.id;
     }
     if (!effectId) return { plans: [], install: {} };
-    // No param key: `effect.<id>` is the effect's own amount (effectPropPath).
+    // The effect's own amount by its param key (`effect.<id>.amount`, the
+    // document property `effects/<id>/amount`): the keyless legacy track is
+    // not an addressable property, so the engine would never receive it.
     return {
-      plans: [{ prop: effectPropPath(effectId), points: blurResolvePoints(start, dur) }],
+      plans: [{ prop: effectPropPath(effectId, 'amount'), points: blurResolvePoints(start, dur) }],
       install: { effectId },
     };
   }
@@ -729,7 +764,17 @@ export function planChoreography(req: ChoreographyRequest): ChoreographyPlan {
     if (installed.install.effectId !== undefined || installed.install.animatorIndex !== undefined) {
       installs[nodeId] = installed.install;
     }
-    const withInstalls = [...plans, ...installed.plans];
+    // A uniform `scale` track is not a property of the document (Transform ▸
+    // Scale is scaleX / scaleY): written as both, over the layer's own scale.
+    const bx = nodeBaseValue(nodeId, 'scaleX', start, engine) ?? 1;
+    const by = nodeBaseValue(nodeId, 'scaleY', start, engine) ?? 1;
+    const perAxis = plans.flatMap((p): EntranceTrackPlan[] => (p.prop !== 'scale'
+      ? [p]
+      : [
+          { ...p, prop: 'scaleX', points: p.points.map((pt) => ({ ...pt, value: pt.value * bx })) },
+          { ...p, prop: 'scaleY', points: p.points.map((pt) => ({ ...pt, value: pt.value * by })) },
+        ]));
+    const withInstalls = [...perAxis, ...installed.plans];
     perLayer.push({ nodeId, plans: req.phase === 'out' ? reverseValues(withInstalls) : withInstalls });
   }
 

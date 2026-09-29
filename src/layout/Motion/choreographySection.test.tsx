@@ -15,28 +15,31 @@
 
 import { render, screen, fireEvent, cleanup, within, act } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
-import { getEventBus } from '@core/events/EventBus';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
 import { resetDocumentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useChoreographyStore } from '@stores/choreographyStore';
 import { activeCompId } from '@core/animation/choreographyCommands';
 import { ChoreographySection } from './ChoreographySection';
 
-const LAYERS = ['panel_a', 'panel_b', 'panel_c'];
+let h: Harness & { engine: LocalEngine };
+let LAYERS: string[] = [];
 
-function addLayer(id: string, x: number): void {
-  defaultSceneGraph.addChild('comp_root', {
-    id,
-    name: `Layer ${id.slice(-1).toUpperCase()}`,
-    parent: 'comp_root',
-    children: [],
-    transform: { position: { x, y: 100 }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true,
-    locked: false,
-    components: [{ id: `${id}_t`, type: 'Transform', props: { __kind: 'solid', x, y: 100, width: 50, height: 50 } }],
-  } as never);
+/** A small solid made through the app's engine (the gestures are engine edits). */
+async function addLayer(name: string, x: number): Promise<string> {
+  const { layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name, init: [] });
+  await h.run({ type: 'setProperty', prop: { layer, path: 'transform/position' }, value: { kind: 'vec2', value: { x, y: 100 } } });
+  return layer;
+}
+
+async function keyOpacity(layer: string, keys: Array<[number, number]>): Promise<void> {
+  await h.run({
+    type: 'addKeyframes',
+    keys: keys.map(([s, v]) => ({ prop: { layer, path: 'transform/opacity' }, time: Math.round(s * 705_600_000), value: { kind: 'scalar', value: v }, spatialIn: [], spatialOut: [] })),
+  });
 }
 
 /** The first keyframe time on each layer, in the order the layers were added. */
@@ -47,40 +50,41 @@ function starts(): number[] {
   });
 }
 
+/**
+ * Let an apply finish: the gestures are engine edits (choreographyEdits.ts),
+ * which resolve over a few ticks.
+ */
+async function settle(): Promise<void> {
+  await act(async () => {
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+  });
+}
+
 /** Every editable offset box in the per-layer list, in render order. */
 function offsetInputs(): HTMLInputElement[] {
   return screen.getAllByLabelText(/^Offset for /) as HTMLInputElement[];
 }
 
-beforeAll(() => {
-  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) as never }));
-  // Providers binds this at boot: an animation write reaches the document
-  // mirror (B4) the panel renders from.
-  defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
-});
-
-beforeEach(() => {
-  for (const id of LAYERS) {
-    if (defaultSceneGraph.getNode(id)) defaultSceneGraph.removeNode?.(id);
-  }
+beforeEach(async () => {
+  h = await setupAppEngine();
   // Positions descend, so "Left to right" disagrees with selection order and a
   // test that confuses the two cannot pass by accident.
-  LAYERS.forEach((id, i) => addLayer(id, 500 - i * 150));
-  defaultAnimation.clear();
-  // The fixture was rebuilt around the engine (no change events): the panel's
-  // document mirror starts over, as it would on a document reset.
+  LAYERS = [];
+  for (const [i, n] of ['A', 'B', 'C'].entries()) LAYERS.push(await addLayer(`Layer ${n}`, 500 - i * 150));
+  await engineIdle();
+  // The panel's document mirror starts over, as it would on a document reset.
   resetDocumentMirror();
   useChoreographyStore.setState({ byComp: {}, lastParams: null });
   useSelectionStore.setState({ ids: [...LAYERS] } as never);
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
-  defaultAnimation.clear();
+  await h.dispose();
 });
 
 describe('ChoreographySection controls', () => {
-  it('lists a row per selected layer, by name, before anything is applied', () => {
+  it('lists a row per selected layer, by name, before anything is applied', async () => {
     render(<ChoreographySection />);
     expect(screen.getByText('Planned offsets')).toBeInTheDocument();
     const rows = offsetInputs();
@@ -88,11 +92,12 @@ describe('ChoreographySection controls', () => {
     expect(screen.getByLabelText('Offset for Layer A')).toBeInTheDocument();
   });
 
-  it('applies the base offset that is in the box, not the default', () => {
+  it('applies the base offset that is in the box, not the default', async () => {
     render(<ChoreographySection />);
     fireEvent.change(screen.getByTitle(/Frames between arrivals/), { target: { value: '10' } });
     fireEvent.change(screen.getByTitle(/How much each gap varies/), { target: { value: '0' } });
     fireEvent.click(screen.getByRole('button', { name: 'Animate In' }));
+    await settle();
 
     const [a, b, c] = starts();
     // 10 frames at the fixture's 30fps.
@@ -100,12 +105,13 @@ describe('ChoreographySection controls', () => {
     expect(c! - b!).toBeCloseTo(10 / 30, 5);
   });
 
-  it('applies the chosen order', () => {
+  it('applies the chosen order', async () => {
     render(<ChoreographySection />);
     fireEvent.change(screen.getByDisplayValue('Selection order'), { target: { value: 'byPositionX' } });
     fireEvent.change(screen.getByTitle(/Frames between arrivals/), { target: { value: '6' } });
     fireEvent.change(screen.getByTitle(/How much each gap varies/), { target: { value: '0' } });
     fireEvent.click(screen.getByRole('button', { name: 'Animate In' }));
+    await settle();
 
     // Layer C sits furthest left, so it must lead and A must trail.
     const [a, b, c] = starts();
@@ -113,14 +119,15 @@ describe('ChoreographySection controls', () => {
     expect(b).toBeLessThan(a!);
   });
 
-  it('applies the panel feel rather than the global preference', () => {
+  it('applies the panel feel rather than the global preference', async () => {
     render(<ChoreographySection />);
     fireEvent.click(screen.getByRole('button', { name: 'Snappy' }));
     fireEvent.click(screen.getByRole('button', { name: 'Animate In' }));
+    await settle();
     expect(useChoreographyStore.getState().byComp[activeCompId()]?.params.feel).toBe('snappy');
   });
 
-  it('rerolling the seed changes the seed that gets applied', () => {
+  it('rerolling the seed changes the seed that gets applied', async () => {
     render(<ChoreographySection />);
     const seedBox = screen.getByTitle(/Same seed/) as HTMLInputElement;
     const before = seedBox.value;
@@ -128,19 +135,20 @@ describe('ChoreographySection controls', () => {
     expect(seedBox.value).not.toBe(before);
 
     fireEvent.click(screen.getByRole('button', { name: 'Animate In' }));
+    await settle();
     expect(useChoreographyStore.getState().byComp[activeCompId()]?.params.seed).toBe(Number(seedBox.value));
   });
 });
 
 describe('per-layer offsets', () => {
-  it('shows the computed plan until a row is overridden', () => {
+  it('shows the computed plan until a row is overridden', async () => {
     render(<ChoreographySection />);
     fireEvent.change(screen.getByTitle(/Frames between arrivals/), { target: { value: '4' } });
     fireEvent.change(screen.getByTitle(/How much each gap varies/), { target: { value: '0' } });
     expect(offsetInputs().map((i) => i.value)).toEqual(['0', '4', '8']);
   });
 
-  it('an edited row wins, and the others keep the plan', () => {
+  it('an edited row wins, and the others keep the plan', async () => {
     render(<ChoreographySection />);
     fireEvent.change(screen.getByTitle(/Frames between arrivals/), { target: { value: '4' } });
     fireEvent.change(screen.getByTitle(/How much each gap varies/), { target: { value: '0' } });
@@ -151,18 +159,19 @@ describe('per-layer offsets', () => {
     expect(screen.getByLabelText('Offset for Layer A')).toHaveAttribute('data-overridden', 'false');
   });
 
-  it('the override reaches the keyframes', () => {
+  it('the override reaches the keyframes', async () => {
     render(<ChoreographySection />);
     fireEvent.change(screen.getByTitle(/Frames between arrivals/), { target: { value: '4' } });
     fireEvent.change(screen.getByTitle(/How much each gap varies/), { target: { value: '0' } });
     fireEvent.change(screen.getByLabelText('Offset for Layer C'), { target: { value: '30' } });
     fireEvent.click(screen.getByRole('button', { name: 'Animate In' }));
+    await settle();
 
     const [a, , c] = starts();
     expect(c! - a!).toBeCloseTo(30 / 30, 5);
   });
 
-  it('clearing a box goes back to the plan instead of pinning it to zero', () => {
+  it('clearing a box goes back to the plan instead of pinning it to zero', async () => {
     // Typing over a value means clearing it first; if empty meant 0 the layer
     // would jump to the front of the queue mid-keystroke.
     render(<ChoreographySection />);
@@ -177,27 +186,29 @@ describe('per-layer offsets', () => {
 });
 
 describe('the last choreography', () => {
-  const applyOnce = (): void => {
+  const applyOnce = async (): Promise<void> => {
     render(<ChoreographySection />);
     fireEvent.change(screen.getByTitle(/Frames between arrivals/), { target: { value: '3' } });
     fireEvent.change(screen.getByTitle(/How much each gap varies/), { target: { value: '0' } });
     fireEvent.click(screen.getByRole('button', { name: 'Animate In' }));
+    await settle();
   };
 
-  it('appears only after something has been applied', () => {
+  it('appears only after something has been applied', async () => {
     render(<ChoreographySection />);
     expect(screen.queryByText('Last choreography')).not.toBeInTheDocument();
     cleanup();
 
-    applyOnce();
+    await applyOnce();
     expect(screen.getByText('Last choreography')).toBeInTheDocument();
     expect(screen.getByText(/Animate in · 3 layers/)).toBeInTheDocument();
   });
 
-  it('re-applies with the edited params, replacing rather than layering', () => {
-    applyOnce();
+  it('re-applies with the edited params, replacing rather than layering', async () => {
+    await applyOnce();
     fireEvent.change(screen.getByTitle(/Frames between arrivals/), { target: { value: '9' } });
     fireEvent.click(screen.getByRole('button', { name: 'Re-apply' }));
+    await settle();
 
     const [a, b] = starts();
     expect(b! - a!).toBeCloseTo(9 / 30, 5);
@@ -206,8 +217,8 @@ describe('the last choreography', () => {
     expect(useChoreographyStore.getState().byComp[activeCompId()]?.params.baseOffsetFrames).toBe(9);
   });
 
-  it('Reset to plan drops every override and is dead until there is one', () => {
-    applyOnce();
+  it('Reset to plan drops every override and is dead until there is one', async () => {
+    await applyOnce();
     const reset = screen.getByRole('button', { name: 'Reset to plan' });
     expect(reset).toBeDisabled();
 
@@ -218,20 +229,21 @@ describe('the last choreography', () => {
     expect(offsetInputs().map((i) => i.value)).toEqual(['0', '3', '6']);
   });
 
-  it('Remove restores the composition and takes the block away', () => {
-    applyOnce();
+  it('Remove restores the composition and takes the block away', async () => {
+    await applyOnce();
     expect(defaultAnimation.tracksFor(LAYERS[0]!).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await settle();
 
     for (const id of LAYERS) expect(defaultAnimation.tracksFor(id)).toHaveLength(0);
     expect(screen.queryByText('Last choreography')).not.toBeInTheDocument();
   });
 
-  it('keeps listing the recorded layers when the selection moves on', () => {
+  it('keeps listing the recorded layers when the selection moves on', async () => {
     // The case that matters: you click another layer to look at it, and the
     // numbers you are about to re-apply must not become that layer's.
-    applyOnce();
+    await applyOnce();
     act(() => useSelectionStore.setState({ ids: [] } as never));
     fireEvent.click(screen.getByRole('button', { name: 'Reroll the seed' }));
 
@@ -240,7 +252,7 @@ describe('the last choreography', () => {
     expect(screen.getByLabelText('Offset for Layer A')).toBeInTheDocument();
   });
 
-  it('adopts the params of a run started elsewhere', () => {
+  it('adopts the params of a run started elsewhere', async () => {
     // The palette and the Animation menu apply too; the panel has to show what
     // actually happened rather than whatever it last had in its own boxes.
     render(<ChoreographySection />);
@@ -271,25 +283,23 @@ describe('the last choreography', () => {
 });
 
 describe('the Stagger button', () => {
-  it('is disabled until two layers are actually animated', () => {
+  it('is disabled until two layers are actually animated', async () => {
     render(<ChoreographySection />);
     expect(screen.getByRole('button', { name: 'Stagger' })).toBeDisabled();
     cleanup();
 
-    for (const id of LAYERS) defaultAnimation.setKeyframe(id, 'opacity', 0, 100);
+    for (const id of LAYERS) await keyOpacity(id, [[0, 100]]);
     render(<ChoreographySection />);
     expect(screen.getByRole('button', { name: 'Stagger' })).toBeEnabled();
   });
 
-  it('shifts the keyframes the layers already have', () => {
-    for (const id of LAYERS) {
-      defaultAnimation.setKeyframe(id, 'opacity', 0, 0);
-      defaultAnimation.setKeyframe(id, 'opacity', 0.5, 100);
-    }
+  it('shifts the keyframes the layers already have', async () => {
+    for (const id of LAYERS) await keyOpacity(id, [[0, 0], [0.5, 100]]);
     render(<ChoreographySection />);
     fireEvent.change(screen.getByTitle(/Frames between arrivals/), { target: { value: '6' } });
     fireEvent.change(screen.getByTitle(/How much each gap varies/), { target: { value: '0' } });
     fireEvent.click(screen.getByRole('button', { name: 'Stagger' }));
+    await settle();
 
     const [a, b, c] = starts();
     expect(a).toBeCloseTo(0, 5);

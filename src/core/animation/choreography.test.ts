@@ -384,8 +384,8 @@ describe('the two structural archetypes', () => {
 
     const blur = getNodeEffects('l1').find((e) => e.type === 'blur');
     expect(blur).toBeDefined();
-    // `effect.<id>` with no param key is the effect's own amount.
-    const track = written.filter((w) => w.prop === `effect.${blur!.id}`).sort((a, b) => a.t - b.t);
+    // `effect.<id>.amount` is the effect's own amount.
+    const track = written.filter((w) => w.prop === `effect.${blur!.id}.amount`).sort((a, b) => a.t - b.t);
     expect(track.length).toBeGreaterThan(1);
     expect(track[0]!.value).toBeGreaterThan(track[track.length - 1]!.value);
     expect(track[track.length - 1]!.value).toBe(0);
@@ -426,7 +426,7 @@ describe('the two structural archetypes', () => {
     const { engine, written } = recorder();
     animateLayers({ nodeIds: ['l1'], atCompTime: 0, phase: 'out', engine, archetype: 'blur_resolve' });
     const blur = getNodeEffects('l1').find((e) => e.type === 'blur')!;
-    const track = written.filter((w) => w.prop === `effect.${blur.id}`).sort((a, b) => a.t - b.t);
+    const track = written.filter((w) => w.prop === `effect.${blur.id}.amount`).sort((a, b) => a.t - b.t);
     expect(track[0]!.value).toBe(0);
     expect(track[track.length - 1]!.value).toBeGreaterThan(0);
   });

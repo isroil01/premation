@@ -19,7 +19,8 @@ import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { animateLayers } from '@core/animation/choreography';
+import { planChoreography, writeChoreography, type ChoreographyRequest } from '@core/animation/choreography';
+import { choreographyEngineEdit } from '@core/animation/choreographyEdits';
 import { hash32 } from '@core/animation/entranceArchetypes';
 import { currentFeel } from '@core/animation/choreographyCommands';
 import { beatsForLayers, everyNthBeat, findAudioLayer, LOW_CONFIDENCE, type BeatGrid } from './beatGrid';
@@ -117,7 +118,7 @@ async function animateOnBeats(phase: 'in' | 'out', every: number): Promise<void>
   if (!found) return;
 
   const startTimes = beatsForLayers(everyNthBeat(found.beatsCompSec, every), playhead(), nodeIds.length);
-  const result = animateLayers({
+  const req: ChoreographyRequest = {
     nodeIds,
     // The first beat is the anchor, so a selection started mid-bar still lands
     // on the music rather than on the playhead.
@@ -129,8 +130,15 @@ async function animateOnBeats(phase: 'in' | 'out', every: number): Promise<void>
     feel: currentFeel(),
     fps: useCompositionStore.getState().fps || 30,
     seed: hash32(phase, ...nodeIds) || 1,
+  };
+  // The engine's document (choreographyEdits.ts): planned off-document, sent
+  // as one gesture — the installs (a blur, a text animator, the 3D switch) and
+  // the keyframes.
+  const result = await choreographyEngineEdit(phase === 'in' ? 'Animate in' : 'Animate out', nodeIds, (installs) => {
+    const plan = planChoreography({ ...req, ...(installs ? { installs } : {}) });
+    return { installs: plan.installs, layers: plan.perLayer.length, keyframes: writeChoreography(plan) };
   });
-  if (result.layers === 0) return;
+  if (!result || result.layers === 0) return;
 
   notify(
     `Animated ${result.layers} layer${result.layers === 1 ? '' : 's'} ${phase} on the beat `

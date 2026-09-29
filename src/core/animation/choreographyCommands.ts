@@ -15,7 +15,7 @@
  */
 
 import { asCommandId } from '@app-types/common';
-import { defaultAnimation } from '@motion/animation';
+import { defaultAnimation, type PropPath } from '@motion/animation';
 import type { Command } from '@core/commands/Command';
 import { useUIStore } from '@stores/uiStore';
 import { useProjectStore } from '@stores/projectStore';
@@ -30,7 +30,8 @@ import {
   type ChoreographyRecord,
 } from '@stores/choreographyStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { runAnimEdit } from './animationCommands';
+import { choreographyEngineEdit } from './choreographyEdits';
+import { catalogFor } from '@core/engine/props';
 import { easePresetById } from './easePresets';
 import {
   captureTracks,
@@ -43,9 +44,11 @@ import {
   planStagger,
   restoreTracks,
   shiftLayerTracks,
+  staticsToRestore,
   staggerLayersFor,
   writeChoreography,
   type CapturedTrack,
+  type StaticRestore,
   type ChoreoInstall,
   type ChoreographyFeel,
   type StaggerParams,
@@ -125,6 +128,37 @@ export interface ChoreographyRunRequest {
   readonly previous?: ChoreographyRecord;
 }
 
+/**
+ * The refs plus every other member track of the same document property
+ * (`y` brings `x`, `scaleX` brings `scaleY`). The engine keys a property as
+ * a whole, so a write to one member creates its siblings' tracks too; the
+ * capture must cover them or a revert leaves them behind.
+ */
+function withSiblingMembers(refs: readonly TrackRef[]): TrackRef[] {
+  const out: TrackRef[] = [...refs];
+  for (const ref of refs) {
+    let props;
+    try {
+      props = catalogFor(ref.nodeId).props;
+    } catch {
+      continue;
+    }
+    const b = props.find((p) => p.animatable && p.members.includes(ref.prop));
+    for (const m of b?.members ?? []) if (m !== ref.prop) out.push({ nodeId: ref.nodeId, prop: m as PropPath });
+  }
+  return out;
+}
+
+/**
+ * The statics to put back, minus any whose document property is still
+ * animated through another member (a static write there would key it).
+ */
+function unanimatedStatics(captured: readonly CapturedTrack[]): StaticRestore[] {
+  return staticsToRestore(captured, defaultAnimation).filter((s) =>
+    withSiblingMembers([{ nodeId: s.nodeId, prop: s.prop }])
+      .every((m) => (defaultAnimation.getTrackKeyframes(m.nodeId, m.prop) ?? []).length === 0));
+}
+
 /** Min/max keyframe time across a set of tracks, after the write. */
 function writtenRange(
   refs: readonly TrackRef[],
@@ -149,9 +183,14 @@ function writtenRange(
  * the intermediate state (the composition with no choreography on it) is not a
  * state anybody asked to visit.
  *
- * Returns the record, or null when there was nothing to act on.
+ * The document is the ENGINE's: the build runs off-document and is sent as
+ * one gesture (choreographyEdits.ts), so it is saved, rendered and undone like
+ * any edit.
+ *
+ * Resolves to the record, or null when there was nothing to act on (or the
+ * engine refused — toasted).
  */
-export function runChoreography(req: ChoreographyRunRequest): ChoreographyRecord | null {
+export async function runChoreography(req: ChoreographyRunRequest): Promise<ChoreographyRecord | null> {
   const engine = defaultAnimation;
   const fps = useCompositionStore.getState().fps || 30;
   const atCompTime = req.atCompTime ?? req.previous?.atCompTime ?? playhead();
@@ -164,15 +203,19 @@ export function runChoreography(req: ChoreographyRunRequest): ChoreographyRecord
   const offsetFrames = plan.map((p) => p.offsetFrames);
   const curve = params.easeCurve ? easePresetById(params.easeCurve)?.bezier : undefined;
 
-  let captured: CapturedTrack[] = [];
-  let refs: TrackRef[] = [];
-  let installs: Record<string, ChoreoInstall> = {};
-  let archetypes: EntranceArchetype[] = [];
-  let keyframes = 0;
+  const label = req.previous ? `Re-apply ${RUN_LABEL[req.kind].toLowerCase()}` : RUN_LABEL[req.kind];
+  // Every layer the gesture may write: the planned ones and the ones the
+  // restored capture covers.
+  const touched = [...new Set([...layers.map((l) => l.nodeId), ...(req.previous?.captured ?? []).map((c) => c.nodeId)])];
 
-  runAnimEdit(req.previous ? `Re-apply ${RUN_LABEL[req.kind].toLowerCase()}` : RUN_LABEL[req.kind], () => {
-    // One batch, so the viewport and the render cache see a single change for
-    // what is, to the user, a single gesture.
+  // Off-document (see choreographyEdits.ts): writes only scratch state; the
+  // translated keyframes and installs are what reach the engine.
+  const build = (planned: Readonly<Record<string, ChoreoInstall>> | undefined) => {
+    let captured: CapturedTrack[] = [];
+    let refs: TrackRef[] = [];
+    let installs: Record<string, ChoreoInstall> = {};
+    let archetypes: EntranceArchetype[] = [];
+    let keyframes = 0;
     engine.batch(() => {
       if (req.previous) restoreTracks(req.previous.captured, engine);
 
@@ -195,7 +238,7 @@ export function runChoreography(req: ChoreographyRunRequest): ChoreographyRecord
           fps,
           seed: params.seed,
           staggerFrames: offsetFrames,
-          installs: req.previous?.installs ?? {},
+          installs: { ...req.previous?.installs, ...planned },
           ...(curve ? { curve } : {}),
           ...(req.archetype ? { archetype: req.archetype } : {}),
           engine,
@@ -204,13 +247,20 @@ export function runChoreography(req: ChoreographyRunRequest): ChoreographyRecord
         // Captured from the RESTORED state, so for a track the previous run
         // already covered this reproduces that same original — which is why
         // merging the two below is consistent rather than a guess.
-        captured = captureTracks(refs, engine);
+        captured = captureTracks(withSiblingMembers(refs), engine);
         keyframes = writeChoreography(choreo, engine);
         archetypes = choreo.archetypes;
         installs = choreo.installs;
       }
     });
-  });
+    // The original capture's statics: what the properties left un-animated return to.
+    const statics = unanimatedStatics(req.previous ? mergeCaptures(req.previous.captured, captured) : captured);
+    return { captured, refs, installs, archetypes, keyframes, range: writtenRange(refs), statics };
+  };
+
+  const done = await choreographyEngineEdit(label, touched, build);
+  if (!done) return null;
+  const { captured, installs, archetypes, keyframes } = done;
 
   const record: ChoreographyRecord = {
     kind: req.kind,
@@ -222,7 +272,7 @@ export function runChoreography(req: ChoreographyRunRequest): ChoreographyRecord
     // re-apply must be able to return there however many times it has run.
     captured: req.previous ? mergeCaptures(req.previous.captured, captured) : captured,
     installs: { ...req.previous?.installs, ...installs },
-    range: writtenRange(refs),
+    range: done.range,
     offsetFrames,
     archetypes,
     keyframes,
@@ -238,7 +288,7 @@ export function runChoreography(req: ChoreographyRunRequest): ChoreographyRecord
  * "re-apply" means the same gesture again, not a new one on whatever is
  * selected now.
  */
-export function reapplyChoreography(params?: StaggerParams): ChoreographyRecord | null {
+export async function reapplyChoreography(params?: StaggerParams): Promise<ChoreographyRecord | null> {
   const previous = lastChoreography(activeCompId());
   if (!previous) return null;
   return runChoreography({
@@ -254,13 +304,16 @@ export function reapplyChoreography(params?: StaggerParams): ChoreographyRecord 
  * Put the composition back to before its last choreography and forget it —
  * the panel's escape hatch when the answer is "none of these".
  */
-export function revertChoreography(): boolean {
+export async function revertChoreography(): Promise<boolean> {
   const compId = activeCompId();
   const previous = lastChoreography(compId);
   if (!previous) return false;
-  runAnimEdit('Remove choreography', () => {
+  const layers = [...new Set(previous.captured.map((c) => c.nodeId))];
+  const done = await choreographyEngineEdit('Remove choreography', layers, () => {
     defaultAnimation.batch(() => restoreTracks(previous.captured, defaultAnimation));
+    return { installs: {}, statics: unanimatedStatics(previous.captured) };
   });
+  if (!done) return false;
   useChoreographyStore.getState().clear(compId);
   return true;
 }
@@ -293,13 +346,13 @@ export function commandStaggerParams(
   };
 }
 
-function run(phase: 'in' | 'out', archetype?: EntranceArchetype): void {
+async function run(phase: 'in' | 'out', archetype?: EntranceArchetype): Promise<void> {
   const nodeIds = targets();
   if (nodeIds.length === 0) return;
 
   // The stagger rhythm is composed in frames, so it needs the real rate.
   const fps = useCompositionStore.getState().fps || 30;
-  const record = runChoreography({
+  const record = await runChoreography({
     kind: phase,
     nodeIds,
     params: commandStaggerParams(phase, nodeIds, fps),
@@ -357,7 +410,7 @@ export function currentStaggerParams(fps: number): StaggerParams {
   };
 }
 
-function runStagger(): void {
+async function runStagger(): Promise<void> {
   const nodeIds = staggerTargets();
   if (nodeIds.length < 2) {
     useUIStore.getState().notify({
@@ -368,7 +421,7 @@ function runStagger(): void {
     return;
   }
   const fps = useCompositionStore.getState().fps || 30;
-  const record = runChoreography({ kind: 'stagger', nodeIds, params: currentStaggerParams(fps) });
+  const record = await runChoreography({ kind: 'stagger', nodeIds, params: currentStaggerParams(fps) });
   if (!record) return;
   const spread = Math.max(0, ...record.offsetFrames);
   useUIStore.getState().notify({
@@ -397,7 +450,7 @@ export function buildChoreographyCommands(): ReadonlyArray<Command> {
         + 'different entrance per layer. Writes ordinary keyframes.',
       icon: 'sparkles',
       enabled: () => targets().length > 0,
-      execute: () => run(phase),
+      execute: () => { void run(phase); },
     });
     for (const archetype of CHOREOGRAPHY_ARCHETYPES) {
       commands.push({
@@ -406,7 +459,7 @@ export function buildChoreographyCommands(): ReadonlyArray<Command> {
         description: `Stagger the selected layers ${hint} using ${ARCHETYPE_LABELS[archetype]} for every one.`,
         icon: 'sparkles',
         enabled: () => targets().length > 0,
-        execute: () => run(phase, archetype),
+        execute: () => { void run(phase, archetype); },
       });
     }
   }
@@ -429,7 +482,7 @@ export function buildChoreographyCommands(): ReadonlyArray<Command> {
       + 'last stagger settings. Order, spacing and swing live in Animate selection.',
     icon: 'layers',
     enabled: () => staggerTargets().length >= 2,
-    execute: () => runStagger(),
+    execute: () => { void runStagger(); },
   });
 
   // Setting the feel is itself a command: it is one enum, which is exactly the

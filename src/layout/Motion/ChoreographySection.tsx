@@ -204,7 +204,7 @@ export function ChoreographySection(): JSX.Element {
     // B4-gap: the choreography runners (run / re-apply / revert) capture and
     // shift EVERY stored track of the layers, catalog or not, inside one legacy
     // animation edit — the keyframe-assistants gap (B4_MIRROR.md §5).
-    runChoreography({ kind, nodeIds: ids, params: draft });
+    void runChoreography({ kind, nodeIds: ids, params: draft });
   };
 
   return (
@@ -413,7 +413,7 @@ export function ChoreographySection(): JSX.Element {
               type="button"
               className={styles.action}
               title="Put the previous keyframes back and write the plan above — one undo step"
-              onClick={() => reapplyChoreography(draft)}
+              onClick={() => { void reapplyChoreography(draft); }}
             >
               Re-apply
             </button>
@@ -430,7 +430,7 @@ export function ChoreographySection(): JSX.Element {
               type="button"
               className={styles.action}
               title="Restore the keyframes as they were before this choreography"
-              onClick={() => revertChoreography()}
+              onClick={() => { void revertChoreography(); }}
             >
               Remove
             </button>
