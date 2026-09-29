@@ -75,19 +75,59 @@ describe('FrameForwarder', () => {
     fw.onFrame(ready(1, 1));
     expect(imports).toHaveLength(1);
     expect(imports[0]!.handle).toBe(0x104n);
-    // A second frame while the first is in flight goes straight back.
+    // A second frame while the first is in flight waits; a third supersedes it (back to the ring).
     fw.onFrame(ready(1, 2));
+    expect(released).toEqual([]);
+    fw.onFrame(ready(1, 0));
     expect(released).toEqual([[1, 2]]);
     sends[0]!.resolve();
     await new Promise((r) => setTimeout(r, 0));
     expect(imports[0]!.released).toBe(true);   // main's reference, right after the send
     expect(released).toEqual([[1, 2]]);        // the page still holds slot 1
+    // The newest waiting frame went as soon as the transfer ended.
+    expect(imports.map((i) => i.handle)).toEqual([0x104n, 0x100n]);
     imports[0]!.allReleased!();
     expect(released).toEqual([[1, 2], [1, 1]]);
     imports[0]!.allReleased!();                 // idempotent
     expect(released).toHaveLength(2);
-    expect(fw.stats.forwarded).toBe(1);
+    sends[1]!.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fw.stats.forwarded).toBe(2);
+    expect(fw.stats.dropped).toBe(1);
     expect(sends[0]!.meta).toMatchObject({ viewport: 1, generation: 1, slot: 1, revision: 3, width: 64, height: 32 });
+  });
+
+  it('the engine\'s last frame is never lost to a transfer in flight: it goes, with its geometry, when the transfer ends', async () => {
+    // The real-app bug: the Type tool subscribed the new layer's geometry, the
+    // engine rendered ONE more frame (then idled), and that frame arrived while
+    // the previous transfer was in flight — it was dropped, so the page kept the
+    // frame before the subscription and the text editor had no geometry.
+    const { fw, sends, released } = setup();
+    fw.setReceiverReady(true);
+    fw.onFrame(slots(1));
+    fw.onFrame(ready(1, 0));
+    const rec = { layer: 'text', matrix: [1], box: [], corners: [], path: [], pathKeys: [], pins: [], bones: [], textBox: [], pathFrames: [], pathNow: [] };
+    fw.onFrame({ type: 'geometry', viewport: 1, generation: 1, frame: 1, time: 0, revision: 3, layers: [rec], last: true });
+    fw.onFrame(ready(1, 1));
+    expect(sends).toHaveLength(1);
+    sends[0]!.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sends).toHaveLength(2);
+    expect((sends[1]!.meta as { slot: number; geometry?: Array<{ layer: string }> })).toMatchObject({ slot: 1, geometry: [{ layer: 'text' }] });
+    expect(released).toEqual([]);
+  });
+
+  it('a frame waiting on a ring that was replaced is released, not shown', async () => {
+    const { fw, sends, released } = setup();
+    fw.setReceiverReady(true);
+    fw.onFrame(slots(1));
+    fw.onFrame(ready(1, 0));
+    fw.onFrame(ready(1, 1));   // waits
+    fw.onFrame(slots(2));      // resize: ring 1 retires
+    expect(released).toEqual([[1, 1]]);
+    sends[0]!.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sends).toHaveLength(1);
   });
 
   it('hands a frame its overlay geometry (the parts before it, merged) and nothing else', () => {
@@ -294,7 +334,9 @@ describe('FrameForwarder', () => {
       fw.onFrame(vready(2, 1, 2817));       // not blocked by viewport 1's transfer
       expect(imports.map((i) => i.handle)).toEqual([0x100n, 0x204n]);
       expect(sends.map((s) => [s.frame, s.meta.viewport])).toEqual([['window-10', 1], ['window-11', 2817]]);
-      fw.onFrame(vready(1, 1, 1));          // viewport 1 is still in flight: back to the ring
+      fw.onFrame(vready(1, 1, 1));          // viewport 1 is still in flight: it waits for that transfer
+      expect(released).toEqual([]);
+      fw.onFrame(vready(1, 0, 1));          // a newer one supersedes it: back to the ring
       expect(released).toEqual([[1, 1]]);
     });
 

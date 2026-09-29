@@ -267,7 +267,7 @@ export class FrameForwarder {
   private view(viewport: number): ViewState {
     let v = this.views.get(viewport);
     if (!v) {
-      v = { rings: new Map(), held: new Set(), inFlight: false, retirePending: false, geometry: null };
+      v = { rings: new Map(), held: new Set(), inFlight: false, retirePending: false, waiting: null, geometry: null };
       this.views.set(viewport, v);
     }
     return v;
@@ -288,6 +288,11 @@ export class FrameForwarder {
       if (v.inFlight) v.held.add(g);
       for (const k of [...this.copyWaiting.keys()]) if (k.startsWith(`${g}:`)) this.copyWaiting.delete(k);
       for (const k of [...this.copyPixels.keys()]) if (k.startsWith(`${g}:`)) this.copyPixels.delete(k);
+    }
+    // A frame waiting on the old ring is a retired slot now: nothing to show.
+    if (v.waiting) {
+      this.dropFrame(v.waiting);
+      v.waiting = null;
     }
     v.rings.clear();
     v.rings.set(m.generation, m);
@@ -357,13 +362,38 @@ export class FrameForwarder {
       }
       return;
     }
+    if (ring?.shared && v.inFlight) {
+      // A transfer is in flight: this frame WAITS for it (newest wins), it is
+      // not dropped. Dropping it lost the engine's LAST frame whenever it
+      // landed during a transfer — an idle engine renders nothing more, so the
+      // page kept an older picture and that frame's overlay geometry: the Type
+      // tool's editor with no geometry sat at the stage corner, a new layer's
+      // handles described the frame before it.
+      if (v.waiting) this.dropFrame(v.waiting);
+      v.waiting = f;
+      return;
+    }
+    this.forwardShared(v, f);
+  }
+
+  /** Release a ready frame that will not be shown (and forget its geometry). */
+  private dropFrame(f: FrameReadyMessage): void {
+    const key = slotKey(f.generation, f.slot);
+    this.frameGeometry.delete(key);
+    this.frameViews.delete(key);
+    this.stats.dropped += 1;
+    this.deps.release(f.generation, f.slot);
+  }
+
+  /** Route C: hand one frame's shared texture to its page (one transfer in flight per viewport). */
+  private forwardShared(v: ViewState, f: FrameReadyMessage): void {
+    const ring = v.rings.get(f.generation);
     const target = this.deps.target(f.viewport);
     const st = this.deps.sharedTexture;
     const receiver = this.receivers.get(this.owner(f.viewport));
     const handle = ring?.shared && !v.inFlight ? this.handles.handle(f.generation, f.slot) : null;
     if (!ring || !ring.shared || !handle || !st || !target || !receiver?.ready || v.inFlight) {
-      this.stats.dropped += 1;
-      this.deps.release(f.generation, f.slot);
+      this.dropFrame(f);
       return;
     }
     const epoch = this.epoch;
@@ -385,6 +415,8 @@ export class FrameForwarder {
     } catch (e) {
       v.inFlight = false;
       this.fail(e);
+      this.frameGeometry.delete(slotKey(f.generation, f.slot));
+      this.frameViews.delete(slotKey(f.generation, f.slot));
       releaseOnce();
       return;
     }
@@ -411,6 +443,10 @@ export class FrameForwarder {
             v.held.clear();
             this.handles.retire(this.liveGenerations());
           }
+          // The newest frame that arrived meanwhile goes now.
+          const next = v.waiting;
+          v.waiting = null;
+          if (next) this.forwardShared(v, next);
         }
       });
   }
@@ -490,6 +526,8 @@ interface ViewState {
   inFlight: boolean;
   /** A newer ring arrived while a transfer was in flight: retire the older ones when it ends. */
   retirePending: boolean;
+  /** Route C: the newest frame that arrived during the transfer in flight; forwarded when it ends. */
+  waiting: FrameReadyMessage | null;
   geometry: { generation: number; frame: number; layers: FrameGeometryMessage['layers']; views: FrameGeometryMessage['views']; complete: boolean } | null;
 }
 

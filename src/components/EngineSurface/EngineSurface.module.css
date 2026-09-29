@@ -71,7 +71,7 @@
   inset: 0;
   pointer-events: none;
   user-select: none;
-  background: var(--color-panel);
+  background: var(--color-pasteboard);
 }
 
 .viewportCanvas {
@@ -79,6 +79,9 @@
   inset: 0;
   width: 100%;
   height: 100%;
+  /* Not text: the pasteboard colour the draw paints around the comp, read
+     from here as a computed rgb() (EngineSurface writeBoard, pasteboard.ts). */
+  color: var(--color-pasteboard);
   /* The same pixel-aspect preview stretch the page's canvases carry
      (Workspace.module.css .overlay), so picture and overlays stay registered. */
   transform: scaleX(var(--viewport-par, 1));

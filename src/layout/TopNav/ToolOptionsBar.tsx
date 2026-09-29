@@ -326,7 +326,13 @@ export function ToolOptionsBar(): JSX.Element | null {
   // The bar shows even with no per-tool content when snap-to-pixel is on: the
   // badge is a MODE indicator, and a mode that silently rounds every drag has
   // to be visible from the canvas, not only from a menu.
-  if (!content && !snapToPixel) return null;
+  // With nothing to show the row STAYS, empty: it used to unmount, so picking a
+  // tool with options (the shape tools) and going back to Selection moved the
+  // viewport 30 px each time, and the viewport's auto-fit re-zoomed the comp by
+  // ~6 % (0.477 ↔ 0.505 at 1920×1080 in a 998 px stage). A shape drawn at one
+  // zoom then showed at the other — larger or smaller than the drag that made
+  // it. AE's tool options never move the Composition panel either.
+  if (!content && !snapToPixel) return <div className={styles.bar} aria-hidden="true" data-tool-options-empty="" />;
   return (
     <div className={styles.bar} role="toolbar" aria-label="Tool options">
       {content}
