@@ -13,6 +13,8 @@
  */
 
 import { startEngineJob, type EngineJobHandle } from '@core/engine/engineJobs';
+import { engineOwnsDocumentNow } from '@core/engine/engineOwnership';
+import { edit } from '@core/engine/uiEdits';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { proxyResolution, type ProxyRecord } from './proxy';
@@ -195,6 +197,14 @@ export async function cancelProxy(assetId: string): Promise<void> {
  * story. Marked `userSupplied` so detaching never deletes their file.
  */
 export function attachProxy(assetId: string, file: File): void {
+  // The engine owns the document (the app): the proxy is ITS record — attach
+  // the file by its path (setProxy, one entry), which the engine saves and
+  // renders from. A file with no disk path (the browser build) stays a page URL.
+  const path = typeof window !== 'undefined' ? window.motionEditor?.file?.pathOf?.(file) ?? '' : '';
+  if (engineOwnsDocumentNow() && path) {
+    void edit('Attach Proxy', [{ type: 'setProxy', item: assetId, path, enabled: true }]);
+    return;
+  }
   write(assetId, {
     status: 'ready',
     src: URL.createObjectURL(file),
@@ -211,7 +221,9 @@ export function attachProxy(assetId: string, file: File): void {
  */
 export function detachProxy(assetId: string): void {
   const p = current(assetId)?.proxy;
-  if (p?.src && !p.userSupplied) URL.revokeObjectURL(p.src);
+  if (p?.src && !p.userSupplied && p.src.startsWith('blob:')) URL.revokeObjectURL(p.src);
   write(assetId, null);
+  // The engine's record too (the app): otherwise it keeps rendering and saving the proxy.
+  if (engineOwnsDocumentNow()) void edit('Detach Proxy', [{ type: 'setProxy', item: assetId, enabled: false }]);
 }
 
