@@ -25,6 +25,7 @@ import {
   type CreatedApiKey,
 } from '@core/api/client';
 import { apiBaseUrl } from '@core/api/transport';
+import { useProSalesOpen } from '@hooks/useProSalesOpen';
 import styles from '../../pages/DashboardPage.module.css';
 import keyStyles from './ApiKeysSection.module.css';
 
@@ -101,6 +102,9 @@ export function ApiKeysSection({ onViewPlans }: ApiKeysSectionProps = {}): JSX.E
   const [activeCodeTab, setActiveCodeTab] = useState<CodeTab>('curl');
   const [scopes, setScopes] = useState<string[]>(DEFAULT_SCOPES);
   const [expiry, setExpiry] = useState<ExpiryId>('never');
+  // With Pro sales closed there is no plan to upgrade to — the locked hero
+  // explains instead of pitching, and "View plans" is not offered.
+  const salesOpen = useProSalesOpen();
 
   const load = useCallback(async (force = false) => {
     setLoading(true);
@@ -128,7 +132,11 @@ export function ApiKeysSection({ onViewPlans }: ApiKeysSectionProps = {}): JSX.E
   const create = async (e?: FormEvent): Promise<void> => {
     e?.preventDefault();
     if (!usage?.limits?.apiEnabled) {
-      setError('API access is not included in your current plan. Upgrade your plan to create and use API keys.');
+      setError(
+        salesOpen
+          ? 'API access is not included in your current plan. Upgrade your plan to create and use API keys.'
+          : 'API access is not included in your current plan, and Pro subscriptions are paused right now.',
+      );
       return;
     }
     const trimmed = name.trim();
@@ -278,22 +286,26 @@ export function ApiKeysSection({ onViewPlans }: ApiKeysSectionProps = {}): JSX.E
             <div className={keyStyles.upgradeHeroText}>
               <h3 className={keyStyles.upgradeHeroTitle}>Automation API access is not included in this plan</h3>
               <p className={keyStyles.upgradeHeroDesc}>
-                Upgrade your subscription to get secret API keys, trigger automated video renders via REST endpoints, and connect n8n, Zapier, or your backend pipeline.
+                {salesOpen
+                  ? 'Upgrade your subscription to get secret API keys, trigger automated video renders via REST endpoints, and connect n8n, Zapier, or your backend pipeline.'
+                  : 'The Automation API comes with Pro, and Pro subscriptions are paused right now. Your projects stay available, and export keeps working.'}
               </p>
-              <div className={keyStyles.featureList}>
-                <span className={keyStyles.featureItem}>
-                  <Icon name="check" size="sm" className={keyStyles.featureTick} /> REST endpoints for template rendering
-                </span>
-                <span className={keyStyles.featureItem}>
-                  <Icon name="check" size="sm" className={keyStyles.featureTick} /> Dynamic text, image &amp; color variables
-                </span>
-                <span className={keyStyles.featureItem}>
-                  <Icon name="check" size="sm" className={keyStyles.featureTick} /> High-throughput cloud render queue
-                </span>
-              </div>
+              {salesOpen && (
+                <div className={keyStyles.featureList}>
+                  <span className={keyStyles.featureItem}>
+                    <Icon name="check" size="sm" className={keyStyles.featureTick} /> REST endpoints for template rendering
+                  </span>
+                  <span className={keyStyles.featureItem}>
+                    <Icon name="check" size="sm" className={keyStyles.featureTick} /> Dynamic text, image &amp; color variables
+                  </span>
+                  <span className={keyStyles.featureItem}>
+                    <Icon name="check" size="sm" className={keyStyles.featureTick} /> High-throughput cloud render queue
+                  </span>
+                </div>
+              )}
             </div>
           </div>
-          {onViewPlans && (
+          {onViewPlans && salesOpen && (
             <div className={keyStyles.upgradeHeroAction}>
               <Button size="md" variant="primary" onClick={onViewPlans} leftIcon={<Icon name="sparkles" size="sm" />}>
                 View plans

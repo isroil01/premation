@@ -650,6 +650,17 @@ export interface MotionEditorApi {
     /** Hidden entries removed; null if the directory cannot be read. */
     listDir?(dir: string): Promise<Array<{ name: string; path: string; kind: 'dir' | 'file'; size?: number; mtimeMs?: number }> | null>;
   };
+  /**
+   * The native SDK plugins folder (electron/ipc/nativePlugins.ts). Plugins are
+   * installed in 0.9 by copying a bundle into it; the engine loads them at
+   * start. Absent in the browser build.
+   */
+  plugins?: {
+    /** Open the folder in Explorer / Finder (created if missing). */
+    openNativeFolder?(): Promise<{ ok: boolean; path: string; error?: string }>;
+    /** The folder's path, for the install steps. */
+    nativeFolderPath?(): Promise<string>;
+  };
   window?: {
     minimize?(): Promise<void>;
     maximize?(): Promise<void>;

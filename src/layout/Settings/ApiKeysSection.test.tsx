@@ -2,6 +2,9 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ApiKeysSection } from './ApiKeysSection';
 import { api } from '@core/api/client';
+import { useProSalesOpen } from '@hooks/useProSalesOpen';
+
+jest.mock('@hooks/useProSalesOpen', () => ({ useProSalesOpen: jest.fn(() => true) }));
 
 jest.mock('@components/Modal', () => ({
   customConfirm: jest.fn(async () => true),
@@ -122,5 +125,24 @@ describe('ApiKeysSection', () => {
       await screen.findByText(/Automation API access is not included in this plan/),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'View plans' })).not.toBeInTheDocument();
+  });
+
+  it('explains instead of pitching an upgrade while Pro sales are closed', async () => {
+    jest.mocked(useProSalesOpen).mockReturnValue(false);
+    jest.mocked(api.getApiUsage).mockResolvedValueOnce({
+      period: '2026-08',
+      renderJobs: 0,
+      renderDurationMs: 0,
+      renderedMinutes: 0,
+      apiRequests: 0,
+      assetProcessingBytes: 0,
+      limits: { apiEnabled: false, monthlyRenderMinutes: 0, monthlyApiRequests: 0 },
+    });
+    render(<MemoryRouter><ApiKeysSection onViewPlans={jest.fn()} /></MemoryRouter>);
+
+    expect(await screen.findByText(/Pro subscriptions are paused right now/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View plans' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Upgrade your subscription/)).not.toBeInTheDocument();
+    jest.mocked(useProSalesOpen).mockReturnValue(true);
   });
 });

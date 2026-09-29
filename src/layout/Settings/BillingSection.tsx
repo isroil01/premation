@@ -10,6 +10,12 @@
  * This replaces a version built around AI credits, which no longer exist: the
  * assistant is bring-your-own-key in both editions, so there is nothing metered
  * to display. What matters to a user now is whether they can save, and until when.
+ *
+ * Sales can be closed server-side (`purchasable: false` on a plan — the
+ * PRO_SALES_OPEN switch). Then nothing here offers to start a subscription:
+ * an account without one sees a calm "paused" note instead of the plan cards,
+ * and an existing subscriber sees their plan, Manage billing, cancel and resume
+ * exactly as before.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -17,7 +23,13 @@ import { useSearchParams } from 'react-router-dom';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { customConfirm } from '@components/Modal';
-import { api, isAuthenticated, type BillingSummary, type PlanDto } from '@core/api/client';
+import {
+  api,
+  isAuthenticated,
+  paidSalesOpen,
+  type BillingSummary,
+  type PlanDto,
+} from '@core/api/client';
 import { billingEnabled } from '@core/config/edition';
 import { useEntitlementStore } from '@stores/entitlementStore';
 import { confirmPlanChange, planIntent } from './planIntent';
@@ -59,6 +71,7 @@ export function BillingSection(): JSX.Element | null {
       useEntitlementStore.setState({
         access: me.access,
         message: me.access.write ? '' : me.statusMessage,
+        salesOpen: paidSalesOpen(catalog),
       });
       setError('');
     } catch (err) {
@@ -216,6 +229,12 @@ export function BillingSection(): JSX.Element | null {
   const paymentNeedsAttention =
     summary?.subscriptionStatus === 'past_due' || access?.reason === 'grace';
   const cancellationPending = Boolean(summary?.subscriptionCancelled);
+  const salesOpen = paidSalesOpen(plans);
+  // With sales closed, the plan cards are only for someone who already has a
+  // subscription (their plan, cancel/resume). Anyone else would be looking at a
+  // price they cannot pay.
+  const showCatalog =
+    salesOpen || Boolean(summary?.hasSubscription) || (summary?.plan.priceCents ?? 0) > 0;
 
   return (
     <div className={styles.section}>
@@ -367,13 +386,41 @@ export function BillingSection(): JSX.Element | null {
         </div>
       ) : null}
 
-      {summary ? (
+      {summary && !showCatalog ? (
+        <div className={styles.callout} role="status">
+          <Icon name="info" size="sm" className={styles.calloutIcon} />
+          <div className={styles.calloutBody}>
+            <strong>Pro subscriptions are paused</strong>
+            <span>
+              {access?.write
+                ? 'New subscriptions are not open right now. Your trial continues as normal, and when it ends your projects stay available read-only and export keeps working.'
+                : 'Your projects stay available read-only, and export keeps working.'}
+            </span>
+          </div>
+        </div>
+      ) : null}
+
+      {summary && !showCatalog ? (
+        <div className={styles.footerManagement}>
+          <div className={styles.actions}>
+            <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void resync()}>
+              {busy === 'resync' ? 'Checking…' : 'Already paid? Refresh status'}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {summary && showCatalog ? (
         <>
           {/* 3. Tiered Plan Cards */}
           <div className={styles.plansSectionHeader}>
-            <h3 className={styles.sectionTitle}>Available Subscription Plans</h3>
+            <h3 className={styles.sectionTitle}>
+              {salesOpen ? 'Available Subscription Plans' : 'Your Plan'}
+            </h3>
             <p className={styles.sectionDesc}>
-              Choose the plan that fits your production workflow. Upgrade or downgrade anytime.
+              {salesOpen
+                ? 'Choose the plan that fits your production workflow. Upgrade or downgrade anytime.'
+                : 'New subscriptions are paused for now. Your subscription, billing portal, cancel and resume work as usual.'}
             </p>
           </div>
 
@@ -429,6 +476,8 @@ export function BillingSection(): JSX.Element | null {
                       <Button variant="secondary" size="sm" fullWidth disabled>
                         {intent.label}
                       </Button>
+                    ) : intent.kind === 'unavailable' ? (
+                      <p className={styles.intro}>{intent.label}</p>
                     ) : (
                       <Button
                         variant={intent.kind === 'cancel' ? 'ghost' : 'primary'}

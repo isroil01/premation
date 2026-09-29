@@ -30,6 +30,32 @@ describe('planIntent', () => {
       label: 'Keep Pro',
     });
   });
+
+  describe('with sales closed (purchasable: false)', () => {
+    const closedPro = { ...pro, purchasable: false };
+
+    it('offers no subscribe to a new account', () => {
+      expect(planIntent(free, closedPro, { cancelled: false, hasSubscription: false }).kind).toBe(
+        'unavailable',
+      );
+    });
+
+    it('offers no upgrade onto a closed plan', () => {
+      expect(
+        planIntent(pro, { ...automation, purchasable: false }, { cancelled: false, hasSubscription: true }).kind,
+      ).toBe('unavailable');
+    });
+
+    it('leaves an existing subscriber their current plan, resume and cancel', () => {
+      expect(planIntent(pro, closedPro, { cancelled: false, hasSubscription: true }).kind).toBe('current');
+      expect(planIntent(pro, closedPro, { cancelled: true, hasSubscription: true }).kind).toBe('resume');
+      expect(planIntent(pro, free, { cancelled: false, hasSubscription: true }).kind).toBe('cancel');
+    });
+
+    it('treats a missing flag (older server) as purchasable', () => {
+      expect(planIntent(free, pro, { cancelled: false, hasSubscription: false }).kind).toBe('subscribe');
+    });
+  });
 });
 
 describe('confirmPlanChange', () => {

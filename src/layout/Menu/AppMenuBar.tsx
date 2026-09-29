@@ -1,8 +1,7 @@
 /**
  * AppMenuBar — the classic desktop menu bar (File / Edit / Composition / Layer /
- * Effect / Animation / View / Window / Plugins / Help — the static groups come
- * from APP_MENU in menuModel, Plugins is built per render from what is
- * installed; see useAppMenuGroups).
+ * Effect / Animation / View / Window / Help — the groups come from APP_MENU in
+ * menuModel, edition-gated and localized by useAppMenuGroups).
  *
  * There is no Examples group. Demo scenes used to replace the open document
  * from the command palette; that path is gone.
@@ -24,7 +23,7 @@
  * gives it less room than its groups need, the trailing groups fold into a
  * "…" group whose menu lists each of them as a submenu (`menuBarOverflow.ts`).
  * The title bar's project chip used to sit on top of Help — and, with a long
- * project name, on View, Window and Plugins too — because nothing here could
+ * project name, on View and Window too — because nothing here could
  * get narrower. The folded group is an ordinary group to everything below:
  * roving focus, arrows and hover-switching all run over the folded list.
  *
@@ -52,8 +51,8 @@ function isRtl(el: HTMLElement | null): boolean {
 }
 
 export function AppMenuBar(): JSX.Element {
-  // Not the static APP_MENU: the Plugins group is assembled from what the user
-  // installed and rebuilds as plugins start, stop and crash.
+  // APP_MENU with every edition gate applied, localized (rebuilds on a
+  // change of UI language).
   const allGroups = useAppMenuGroups();
   // How many leading groups the bar has room for. Everything, until measured.
   const [fitCount, setFitCount] = useState<number>(Number.POSITIVE_INFINITY);

@@ -4,6 +4,8 @@ export interface PlanIntentPlan {
   priceCents: number;
   priceLabel: string;
   interval?: string;
+  /** False when the server has closed new subscriptions to this plan. Missing = purchasable. */
+  purchasable?: boolean;
 }
 
 export type PlanIntent =
@@ -12,7 +14,9 @@ export type PlanIntent =
   | { kind: 'subscribe'; label: string }
   | { kind: 'upgrade'; label: string }
   | { kind: 'downgrade'; label: string }
-  | { kind: 'cancel'; label: string };
+  | { kind: 'cancel'; label: string }
+  /** A new subscription to this plan would be needed and the server is not selling it. */
+  | { kind: 'unavailable'; label: string };
 
 export function planIntent(
   current: Pick<PlanIntentPlan, 'id' | 'priceCents'>,
@@ -31,6 +35,13 @@ export function planIntent(
       return { kind: 'cancel', label: 'Switch to Free' };
     }
     return { kind: 'current', label: 'Current plan' };
+  }
+  // Everything below starts or changes a paid subscription. When the server
+  // has sales closed (PRO_SALES_OPEN), there is nothing to press: checkout
+  // would refuse. Resume and cancel above are untouched — an existing
+  // subscriber keeps both.
+  if (target.purchasable === false) {
+    return { kind: 'unavailable', label: 'Paused for new subscriptions' };
   }
   if (!opts.hasSubscription) {
     return { kind: 'subscribe', label: `Subscribe — ${target.priceLabel}/${period}` };

@@ -141,10 +141,7 @@ export function EditorLayout({
           // background rather than rendered beside it. `EditorTabs` keeps it
           // mounted at all times and hides it with CSS — see the note there,
           // because rendering it conditionally destroys the GPU context.
-          <EditorTabs
-            scene={<WorkspaceViewport {...(workspaceExtras ?? {})} />}
-            renderTab={() => null}
-          />
+          <EditorTabs scene={<WorkspaceViewport {...(workspaceExtras ?? {})} />} />
         )}
     </div>
   );

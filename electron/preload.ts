@@ -249,6 +249,12 @@ const bridge = {
     listDir: (dir: string) => ipcRenderer.invoke('fs:listDir', dir),
   },
 
+  /** The native plugins folder — see electron/ipc/nativePlugins.ts. */
+  plugins: {
+    openNativeFolder: () => ipcRenderer.invoke('plugins:openNativeFolder'),
+    nativeFolderPath: () => ipcRenderer.invoke('plugins:nativeFolderPath'),
+  },
+
   popout: {
     spawnWindow: (panelId: string) => ipcRenderer.invoke('popout:spawnWindow', panelId),
   },

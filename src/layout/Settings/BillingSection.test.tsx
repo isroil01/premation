@@ -71,6 +71,48 @@ describe('BillingSection', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Payment needs attention');
     await waitFor(() => expect(screen.getByText(/Current period ends/)).toBeInTheDocument());
   });
+
+  describe('with Pro sales closed (purchasable: false)', () => {
+    const closed: PlanDto[] = [plans[0]!, { ...plans[1]!, purchasable: false }];
+
+    beforeEach(() => {
+      jest.mocked(api.listPlans).mockResolvedValue(closed);
+    });
+
+    it('offers a trial user no Subscribe button, only a calm paused note', async () => {
+      render(<MemoryRouter><BillingSection /></MemoryRouter>);
+      expect(await screen.findByText('Pro subscriptions are paused')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Subscribe/ })).not.toBeInTheDocument();
+      expect(screen.queryByText('Compare plans')).not.toBeInTheDocument();
+    });
+
+    it('tells a trial-ended user their work stays available and export works', async () => {
+      jest.mocked(api.getBilling).mockResolvedValue(
+        summary({
+          access: { read: true, write: false, reason: 'trial_expired', daysRemaining: 0, writeEndsAt: null },
+        }),
+      );
+      render(<MemoryRouter><BillingSection /></MemoryRouter>);
+      expect(await screen.findByText(/stay available read-only, and export keeps working/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Subscribe|Upgrade/ })).not.toBeInTheDocument();
+    });
+
+    it('shows an existing Pro subscriber their plan and Manage billing as before', async () => {
+      jest.mocked(api.getBilling).mockResolvedValue(
+        summary({
+          plan: closed[1]!,
+          access: { read: true, write: true, reason: 'active', daysRemaining: 20, writeEndsAt: null },
+          subscriptionStatus: 'active',
+          hasSubscription: true,
+        }),
+      );
+      render(<MemoryRouter><BillingSection /></MemoryRouter>);
+      expect(await screen.findByText('Compare plans')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Manage payment method' })).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: 'Current plan' }).length).toBeGreaterThan(0);
+      expect(screen.queryByText('Pro subscriptions are paused')).not.toBeInTheDocument();
+    });
+  });
 });
 
 describe('checkoutReturnState', () => {

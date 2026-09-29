@@ -6,6 +6,11 @@
  * ended subscription. It reads the entitlement decision from the store; it never
  * computes one, so it can only ever agree with the server's write guards.
  *
+ * While the server has paid subscriptions closed (`purchasable: false` in the
+ * plan catalog — the PRO_SALES_OPEN switch) there is only one way forward, and
+ * the bar says so calmly instead of offering a Subscribe button that checkout
+ * would refuse.
+ *
  * Two ways forward, and it offers both without preferring one, because they are
  * genuinely equal offers: subscribe and keep working in the cloud, or export the
  * project and run the free self-hosted build. The export button is the honest
@@ -20,6 +25,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '@components/Icon';
 import { useEntitlementStore, canWriteCloud } from '@stores/entitlementStore';
+import { useProSalesOpen } from '@hooks/useProSalesOpen';
 import { exportCurrentProjectAsBundle } from '@core/project/exportBundle';
 import styles from './ReadOnlyBanner.module.css';
 
@@ -29,25 +35,33 @@ const PAYABLE = new Set(['trial_expired', 'lapsed', 'trial_not_started']);
 export function ReadOnlyBanner(): JSX.Element | null {
   const access = useEntitlementStore((s) => s.access);
   const serverMessage = useEntitlementStore((s) => s.message);
+  const salesOpen = useProSalesOpen();
   const navigate = useNavigate();
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
 
   if (canWriteCloud(access) || !access) return null;
 
-  const canPay = PAYABLE.has(access.reason);
+  const payable = PAYABLE.has(access.reason);
+  const canPay = payable && salesOpen;
   const unverified = access.reason === 'unverified';
 
   // A sentence, in priority order: the server's if we have it (it knows the
   // dates), then a reason-specific fallback so the bar is never wordless during
   // the moment between a 403 and the refresh that fetches the real message.
+  // With sales closed, an older server's sentence may still say "subscribe";
+  // the paused sentence replaces it so the bar never points at a closed door.
+  const pausedMessage =
+    'Pro subscriptions are paused — your projects stay available read-only, and export keeps working.';
   const message =
-    serverMessage ||
-    (unverified
-      ? 'Confirm your email to start your trial. Your projects are read-only until then.'
-      : canPay
-        ? 'Your access has ended. Your projects are read-only — subscribe to keep working in the cloud, or export them and self-host.'
-        : 'Your projects are read-only. Export them to keep working, or manage your plan.');
+    payable && !salesOpen && (!serverMessage || /subscribe/i.test(serverMessage))
+      ? pausedMessage
+      : serverMessage ||
+        (unverified
+          ? 'Confirm your email to start your trial. Your projects are read-only until then.'
+          : canPay
+            ? 'Your access has ended. Your projects are read-only — subscribe to keep working in the cloud, or export them and self-host.'
+            : 'Your projects are read-only. Export them to keep working, or manage your plan.');
 
   const onExport = async (): Promise<void> => {
     setExporting(true);
@@ -85,7 +99,7 @@ export function ReadOnlyBanner(): JSX.Element | null {
           className={styles.primary}
           onClick={() => navigate('/dashboard?tab=settings')}
         >
-          {unverified ? 'Confirm email' : canPay ? 'Subscribe' : 'Manage plan'}
+          {unverified ? 'Confirm email' : canPay ? 'Subscribe' : payable ? 'View plan' : 'Manage plan'}
         </button>
       </div>
     </div>

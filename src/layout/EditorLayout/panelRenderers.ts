@@ -23,6 +23,7 @@ import { EffectsPanel } from '@layout/Effects/EffectsPanel';
 import { EffectControlsPanel } from '@layout/Effects/EffectControlsPanel';
 import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
 import { ExportPanel } from '@layout/Export/ExportPanel';
+import { NativePluginsPanel } from '@layout/Plugins/NativePluginsPanel';
 import { SwatchesPanel } from '@layout/Swatches';
 import { ScopesPanel } from '@layout/Scopes';
 // Imported from the barrel deliberately: it also registers the transcript's
@@ -86,6 +87,7 @@ export const PANEL_COMPONENTS: Readonly<Record<string, ComponentType>> = {
   history: HistoryPanel,
   renderQueue: RenderQueuePanel,
   export: ExportPanel,
+  plugins: NativePluginsPanel,
   // ── Asset Library (one tab, sections inside) ─────────────────────────
   library: LibraryPanel,
 };

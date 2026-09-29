@@ -33,7 +33,6 @@ import { EditorTabs } from './Tabs/EditorTabs';
 import { TransportBar } from './Workspace/TransportBar';
 import { BottomTimeline } from './BottomTimeline/BottomTimeline';
 import type { TimelineModel } from './Timeline/TimelineModel';
-import { SCENE_TAB_ID, useEditorTabStore } from '@stores/editorTabStore';
 
 class NoopResizeObserver {
   observe(): void { /* no layout in jsdom */ }
@@ -46,7 +45,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   localStorage.clear();
-  useEditorTabStore.setState({ tabs: [], activeId: SCENE_TAB_ID });
 });
 
 const MODEL: TimelineModel = {
@@ -69,7 +67,7 @@ const ROW_SELECTORS = [
 function renderRows(): void {
   render(
     <>
-      <EditorTabs scene={<canvas />} renderTab={() => null} />
+      <EditorTabs scene={<canvas />} />
       <TransportBar />
       <BottomTimeline model={MODEL} />
     </>,
