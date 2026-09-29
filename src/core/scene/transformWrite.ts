@@ -246,7 +246,23 @@ export function rebaseTransformProps(
   if (!transComp) return false;
 
   let changed = false;
-  runAnimEdit(label, () => defaultAnimation.batch(() => {
+  runAnimEdit(label, () => {
+    changed = rebaseTransformPropsRaw(nodeId, rebases);
+  });
+  if (changed) bumpScene();
+  return changed;
+}
+
+/**
+ * `rebaseTransformProps`' writes without recording them (the caller owns the
+ * entry — an off-document run for the engine, createOrbitNullEdit).
+ */
+export function rebaseTransformPropsRaw(nodeId: string, rebases: readonly TransformRebase[]): boolean {
+  const node = defaultSceneGraph.getNode(nodeId as ID);
+  const transComp = node?.components.find((c) => c.type === 'Transform');
+  if (!transComp) return false;
+  let changed = false;
+  defaultAnimation.batch(() => {
     for (const { prop, value, delta } of rebases) {
       if (!Number.isFinite(value) || !Number.isFinite(delta)) continue;
       defaultSceneGraph.writeProp(nodeId as ID, transComp.id, prop, value);
@@ -256,7 +272,6 @@ export function rebaseTransformProps(
       if (!kfs || kfs.length === 0) continue;
       defaultAnimation.setTrackKeyframes(nodeId, prop, kfs.map((k) => ({ ...k, value: k.value + delta })));
     }
-  }));
-  if (changed) bumpScene();
+  });
   return changed;
 }

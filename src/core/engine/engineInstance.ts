@@ -50,6 +50,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { LocalEngine, type LocalEngineOptions } from './LocalEngine';
 import { createAppProcessEngine } from './process/processEngine';
 import { OwnedEngineClient } from './ownedEngineClient';
+import { installAnimEditBridge } from './animEditBridge';
 import { setEngineOwnsDocument } from './engineOwnership';
 import { useUIStore } from '@stores/uiStore';
 import { setHistoryRoute } from '@stores/historyStore';
@@ -179,6 +180,8 @@ function startOwner(): boolean {
   });
   if (!pc) return false;
   owned = new OwnedEngineClient(pc, () => current);
+  // Page-history animation edits reach the owner (animEditBridge.ts), not the replica alone.
+  installAnimEditBridge();
   replicaRefresher?.dispose();
   replicaRefresher = createReplicaRefresher({ owner: () => owned ?? engine() });
   // The replica's own events stop reaching the session; the owner's start.

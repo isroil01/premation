@@ -60,14 +60,17 @@ import { enclosingCompRootOf, reparentNode } from '@core/scene/parenting';
 import { readGeometry } from '@core/workspace/geometry';
 import type { Command as EngineCommand } from '@motion/engine-api';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
-import { engine } from '@core/engine/engineInstance';
+import { engine, localEngine } from '@core/engine/engineInstance';
+import { engineOwnsDocumentNow } from '@core/engine/engineOwnership';
+import { layerDiffCommands } from '@core/engine/layerDiffCommands';
+import { compOfLayer } from '@core/engine/doc';
 import { propRefForTrack } from '@core/engine/propRefs';
 import { trackValueCommands } from '@core/workspace/toolEdits';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import { isCustomViewId, resolveCustomView, type CustomViewId } from '@core/workspace/customViews';
 import { runAnimEdit } from '@core/animation/animationCommands';
-import { rebaseTransformProps } from '@core/scene/transformWrite';
+import { rebaseTransformProps, rebaseTransformPropsRaw, type TransformRebase } from '@core/scene/transformWrite';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
@@ -257,19 +260,15 @@ export function orbitPivotFor(cam: SceneNode, time: number): Vec3 {
   };
 }
 
-/**
- * Create a 3D null at the camera's pivot, parent the camera to it and re-base
- * the camera's position and POI so nothing moves on screen.
- *
- * The compensation is done here and not by `reparentNode`'s preserve-world
- * path because that path is 2D: it re-bases x/y and leaves `z` where it was,
- * which for a camera pulled back by its focal length is the whole picture.
- * Base props AND keyframe tracks are shifted by the same delta, so an
- * animated camera keeps its move — exact when the camera was unparented or
- * under an unrotated, unscaled parent, which is every rig this verb is
- * reached for. Returns the null's id.
- */
-export function createOrbitNull(camId: string, time: number): string | null {
+interface OrbitPlan {
+  rootId: string;
+  name: string;
+  pivot: { x: number; y: number; z: number };
+  rebases: TransformRebase[];
+}
+
+/** Where the orbit null goes and how the camera re-bases under it (the replica's document, equal to the engine's). */
+function orbitPlan(camId: string, time: number): OrbitPlan | null {
   const cam = defaultSceneGraph.getNode(camId);
   if (!cam || readNodeKind(cam) !== 'camera') return null;
   const trans = cam.components.find((c) => c.type === 'Transform');
@@ -287,11 +286,44 @@ export function createOrbitNull(camId: string, time: number): string | null {
   const worldEye = toWorldPointAt(camId, time, localEye);
   const localPoi = readCameraPoi(cam, width, height);
   const worldPoi = localPoi ? toWorldPointAt(camId, time, localPoi) : null;
+  const newEye = { x: worldEye.x - pivot.x, y: worldEye.y - pivot.y, z: worldEye.z - pivot.z };
+  const rebases: TransformRebase[] = [
+    { prop: 'x', value: newEye.x, delta: newEye.x - localEye.x },
+    { prop: 'y', value: newEye.y, delta: newEye.y - localEye.y },
+    { prop: 'z', value: newEye.z, delta: newEye.z - localEye.z },
+  ];
+  if (localPoi && worldPoi) {
+    const newPoi = { x: worldPoi.x - pivot.x, y: worldPoi.y - pivot.y, z: worldPoi.z - pivot.z };
+    rebases.push(
+      { prop: 'poiX', value: newPoi.x, delta: newPoi.x - localPoi.x },
+      { prop: 'poiY', value: newPoi.y, delta: newPoi.y - localPoi.y },
+      { prop: 'poiZ', value: newPoi.z, delta: newPoi.z - localPoi.z },
+    );
+  }
+  return { rootId, name: `${cam.name ?? 'Camera'} Orbit Null`, pivot, rebases };
+}
 
+/**
+ * Create a 3D null at the camera's pivot, parent the camera to it and re-base
+ * the camera's position and POI so nothing moves on screen.
+ *
+ * The compensation is done here and not by `reparentNode`'s preserve-world
+ * path because that path is 2D: it re-bases x/y and leaves `z` where it was,
+ * which for a camera pulled back by its focal length is the whole picture.
+ * Base props AND keyframe tracks are shifted by the same delta, so an
+ * animated camera keeps its move. Returns the null's id.
+ *
+ * The page engine as the document's owner only (tests, the CLI); the app
+ * (the engine owns the document) uses {@link createOrbitNullEdit}.
+ */
+export function createOrbitNull(camId: string, time: number): string | null {
+  const plan = orbitPlan(camId, time);
+  if (!plan) return null;
+  const { rootId, pivot } = plan;
   const nullId = `null_orbit_${(orbitSeq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
   const node: SceneNode = {
     id: nullId,
-    name: `${cam.name ?? 'Camera'} Orbit Null`,
+    name: plan.name,
     parent: rootId,
     children: [],
     transform: { position: { x: pivot.x, y: pivot.y }, rotation: 0, scale: { x: 1, y: 1 } },
@@ -312,25 +344,55 @@ export function createOrbitNull(camId: string, time: number): string | null {
     defaultSceneGraph.removeNode(nullId);
     return null;
   }
-  const newEye = { x: worldEye.x - pivot.x, y: worldEye.y - pivot.y, z: worldEye.z - pivot.z };
-  const rebases = [
-    { prop: 'x', value: newEye.x, delta: newEye.x - localEye.x },
-    { prop: 'y', value: newEye.y, delta: newEye.y - localEye.y },
-    { prop: 'z', value: newEye.z, delta: newEye.z - localEye.z },
-  ];
-  if (localPoi && worldPoi) {
-    const newPoi = { x: worldPoi.x - pivot.x, y: worldPoi.y - pivot.y, z: worldPoi.z - pivot.z };
-    rebases.push(
-      { prop: 'poiX', value: newPoi.x, delta: newPoi.x - localPoi.x },
-      { prop: 'poiY', value: newPoi.y, delta: newPoi.y - localPoi.y },
-      { prop: 'poiZ', value: newPoi.z, delta: newPoi.z - localPoi.z },
-    );
-  }
   // Rigid re-base: base props AND every keyframe move into the null's space.
-  rebaseTransformProps(camId, rebases, 'Create orbit null');
+  rebaseTransformProps(camId, plan.rebases, 'Create orbit null');
   useSelectionStore.getState().set([nullId]);
   bumpScene();
   return nullId;
+}
+
+/**
+ * Create Orbit Null through the ENGINE (the app: the engine owns the
+ * document) as ONE history entry (an engine gesture): the 3D null made at the
+ * pivot, the camera parented to it without compensation, and the camera's
+ * position / POI re-based (base values and every key) into the null's space.
+ * Resolves to the null's id, or null when refused.
+ */
+export async function createOrbitNullEdit(camId: string, time: number): Promise<string | null> {
+  const plan = orbitPlan(camId, time);
+  const comp = compOfLayer(camId);
+  if (!plan || !comp) return null;
+  const e = engine();
+  const began = await e.execute({ type: 'beginGesture', label: 'Create Orbit Null' });
+  if (!began.ok) return null;
+  let ok = false;
+  let nullId: string | null = null;
+  try {
+    const made = await e.execute({
+      type: 'createLayer', comp, kind: 'null', name: plan.name,
+      init: [{ path: 'transform/position', value: { kind: 'vec2', value: { x: plan.pivot.x, y: plan.pivot.y } } }],
+    });
+    if (!made.ok) return null;
+    nullId = made.value.layer;
+    const three = await e.execute({ type: 'setLayerSwitches', layers: [nullId], patch: { threeD: true } });
+    if (!three.ok) return null;
+    const placed = await e.execute({ type: 'setProperty', prop: { layer: nullId, path: 'transform/position' }, value: { kind: 'vec3', value: plan.pivot } });
+    if (!placed.ok) return null;
+    const parented = await e.execute({ type: 'setParent', layers: [camId], parent: nullId, keepWorldTransform: false });
+    if (!parented.ok) return null;
+    // The replica has the relink now (the owner forwards in order); re-base on it off-document.
+    await localEngine()?.whenIdle();
+    const rebase = layerDiffCommands(() => rebaseTransformPropsRaw(camId, plan.rebases));
+    if (rebase.cmds.length > 0) {
+      const res = await e.batch('Create Orbit Null', rebase.cmds);
+      if (!res.ok) return null;
+    }
+    ok = true;
+  } finally {
+    await e.execute({ type: 'endGesture', gesture: began.value.gesture, commit: ok });
+  }
+  if (nullId) useSelectionStore.getState().set([nullId]);
+  return ok ? nullId : null;
 }
 
 // ── Look at ─────────────────────────────────────────────────────────────────
@@ -496,8 +558,11 @@ export function buildCameraCommands(): ReadonlyArray<Command> {
       execute: () => {
         const cam = commandCamera();
         if (!cam) return;
-        const id = createOrbitNull(cam.id, playhead());
-        notify(id ? `Created orbit null for ${cam.name} — rotate it to orbit the camera` : 'Could not create the orbit null', id ? 'success' : 'warning');
+        const done = (id: string | null): void => {
+          notify(id ? `Created orbit null for ${cam.name} — rotate it to orbit the camera` : 'Could not create the orbit null', id ? 'success' : 'warning');
+        };
+        if (engineOwnsDocumentNow()) void createOrbitNullEdit(cam.id, playhead()).then(done);
+        else done(createOrbitNull(cam.id, playhead()));
       },
     },
     {
