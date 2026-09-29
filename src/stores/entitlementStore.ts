@@ -26,7 +26,7 @@
  */
 
 import { create } from 'zustand';
-import { api, isAuthenticated, type CloudAccess } from '@core/api/client';
+import { api, isAuthenticated, paidSalesOpen, type CloudAccess } from '@core/api/client';
 import { onWriteDenied } from '@core/api/transport';
 import { billingEnabled } from '@core/config/edition';
 
@@ -36,6 +36,13 @@ interface EntitlementState {
   /** The server-authored sentence, e.g. "Free trial — 6 days left." */
   message: string;
   loading: boolean;
+  /**
+   * Whether NEW paid subscriptions are on sale (`purchasable` in /billing/plans;
+   * the server's PRO_SALES_OPEN switch). Null until the catalog is loaded, which
+   * consumers read as open — the behaviour of a server that predates the flag.
+   * When false, nothing may offer "Subscribe"/"Upgrade": checkout would refuse.
+   */
+  salesOpen: boolean | null;
 }
 
 interface EntitlementActions {
@@ -48,6 +55,8 @@ interface EntitlementActions {
    * ("trial ended" vs "card failed") catches up without waiting for it.
    */
   noteWriteDenied: (reason?: CloudAccess['reason'], message?: string) => void;
+  /** Load the plan catalog (cached for an hour) and record whether paid plans are on sale. */
+  refreshSales: () => Promise<void>;
   reset: () => void;
 }
 
@@ -72,7 +81,7 @@ export const useEntitlementStore = create<EntitlementState & EntitlementActions>
   access: null,
   message: '',
   loading: false,
-
+  salesOpen: null,
   refresh: async (opts) => {
     // No backend, no entitlement to fetch. Leaving `access` null is correct: the
     // local edition is unrestricted.
@@ -116,7 +125,16 @@ export const useEntitlementStore = create<EntitlementState & EntitlementActions>
     void get().refresh({ force: true });
   },
 
-  reset: () => set({ access: null, message: '', loading: false }),
+  refreshSales: async () => {
+    try {
+      if (!billingEnabled() || !isAuthenticated()) return;
+      set({ salesOpen: paidSalesOpen(await api.listPlans()) });
+    } catch {
+      // Keep the last answer: a failed catalog fetch proves nothing about sales.
+    }
+  },
+
+  reset: () => set({ access: null, message: '', loading: false, salesOpen: null }),
 }));
 
 /**

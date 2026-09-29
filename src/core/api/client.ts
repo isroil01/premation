@@ -472,6 +472,28 @@ export interface PlanDto {
   maxUploadBytes?: number;
   maxActiveApiKeys?: number;
   cloudWrite?: boolean;
+  /**
+   * Whether a NEW subscription to this plan can be started right now. The
+   * server closes Pro sales with `PRO_SALES_OPEN` (plan still listed, so an
+   * existing subscriber's panel describes it; just not for sale). Optional:
+   * an older server does not send it, and a missing field reads as purchasable.
+   */
+  purchasable?: boolean;
+}
+
+/** A plan can be bought unless the server says it cannot (missing = old server = yes). */
+export function planPurchasable(plan: Pick<PlanDto, 'purchasable'>): boolean {
+  return plan.purchasable !== false;
+}
+
+/**
+ * Whether new paid subscriptions are on sale at all — false only when the
+ * catalog lists paid plans and marks every one of them unpurchasable. An empty
+ * or unloaded catalog says nothing, so it reads as open (the old behaviour).
+ */
+export function paidSalesOpen(plans: readonly Pick<PlanDto, 'priceCents' | 'purchasable'>[]): boolean {
+  const paid = plans.filter((p) => p.priceCents > 0);
+  return paid.length === 0 || paid.some(planPurchasable);
 }
 
 /** Why the server says this account may or may not write. See backend entitlement.ts. */
@@ -530,6 +552,11 @@ export interface BillingSummary {
   memberSince: string;
   /** False until an operator turns payments on. Checkout then talks to Lemon. */
   paymentsEnabled: boolean;
+  /**
+   * New Pro subscriptions can be started (server `PRO_SALES_OPEN`). Optional —
+   * older servers do not send it. Existing subscriptions are unaffected either way.
+   */
+  proSalesOpen?: boolean;
 }
 
 export interface BillingChangeResult {
@@ -894,7 +921,10 @@ export const api = {
   // no "start my trial" call and no "mark me verified" call: each would be a free
   // Pro button. Entitlement is decided server-side, by the payment webhook, the
   // verification link, or an operator.
-  /** The catalog changes only on a deploy — an hour of staleness is nothing. */
+  /**
+   * The catalog changes only on a deploy or when Pro sales are opened/closed
+   * (`purchasable`) — an hour of staleness is nothing.
+   */
   listPlans: () => cachedGet<PlanDto[]>('/billing/plans', { tags: ['billing'], ttlMs: 3_600_000 }),
   getBilling: (opts?: { force?: boolean }) =>
     cachedGet<BillingSummary>('/billing/me', {

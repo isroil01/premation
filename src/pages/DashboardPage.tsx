@@ -37,6 +37,7 @@ import {
   type TrashedProject,
 } from '@core/api/client';
 import { usePagedList } from '@hooks/usePagedList';
+import { useProSalesOpen } from '@hooks/useProSalesOpen';
 import { clearRecovery } from '@core/persistence/recovery';
 import { emptySceneProject } from '@core/scene/sceneProjectIO';
 import type { EditorDocument } from '@core/api/cloudDocument';
@@ -251,6 +252,8 @@ export function DashboardPage(): JSX.Element {
   const [dataError, setDataError] = useState('');
   /** Plan + credits, from /auth/me. The UI must not guess these. */
   const [account, setAccount] = useState<AccountRecord | null>(null);
+  // Pro sales can be closed server-side; the sidebar then stops saying "View plans".
+  const salesOpen = useProSalesOpen();
 
   /**
    * The render queue and the trash, a page at a time.
@@ -1857,7 +1860,13 @@ export function DashboardPage(): JSX.Element {
               onClick={() => openTab('billing')}
             >
               <Icon name="sparkles" size="sm" />
-              <span>{account?.plan && account.plan !== 'free' ? 'Manage plan' : 'View plans'}</span>
+              <span>
+                {account?.plan && account.plan !== 'free'
+                  ? 'Manage plan'
+                  : salesOpen
+                    ? 'View plans'
+                    : 'Your plan'}
+              </span>
             </button>
           )}
 
