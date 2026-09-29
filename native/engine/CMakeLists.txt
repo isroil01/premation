@@ -1256,6 +1256,7 @@ if(FFMPEG_FOUND AND TARGET engine_audio)
     src/jobs/kind_roto_brush.cpp
     src/jobs/kind_content_aware.cpp
     src/jobs/kind_auto_reframe.cpp
+    src/jobs/kind_dynamics_bake.cpp
     src/jobs/kind_transcribe.cpp
     src/jobs/child_export.cpp
     src/jobs/kind_object_matte.cpp
@@ -1268,6 +1269,7 @@ if(FFMPEG_FOUND AND TARGET engine_audio)
   # renderer uses (scene/image_decode_ffi.cpp) — the vcpkg ffmpeg has no still decoders.
   if(TARGET engine_scene)
     target_link_libraries(engine_jobs PRIVATE engine_scene)
+    target_compile_definitions(engine_jobs PRIVATE PREMATION_JOBS_HAVE_SCENE=1)  # the particle bake (particle_port.hpp)
   endif()
   find_package(onnxruntime CONFIG QUIET)
   if(onnxruntime_FOUND)

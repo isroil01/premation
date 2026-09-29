@@ -348,6 +348,9 @@ V2 curl_force(double x, double y, double timeSec, const Cfg& c) {
 
 struct Particle {
   double x = 0, y = 0, z = 0, size = 0, opacity = 0, rotation = 0, age01 = 0;
+  /// Particle.index — the birth index (ballistic `i`; a child `-(parent·977 + k + 1)`;
+  /// stateful: the slot's id, children negated). The bake groups samples by it.
+  double index = 0;
   std::string color;
   std::vector<V2> trail;
   std::optional<double> vx, vy, spriteFrame;
@@ -390,6 +393,7 @@ void emit_death_burst(std::vector<Particle>& out, const Cfg& c, double parent, d
     const double cspeed = c.subSpeed * (0.5 + hash01(j, 31, seed));
     const Flight cf = flight_at(deathX, deathY, mjs::cos(cdir) * cspeed, mjs::sin(cdir) * cspeed, ax, ay, childAge, drag);
     Particle p;
+    p.index = -(j + 1);
     p.x = cf.x;
     p.y = cf.y;
     p.z = deathZ;
@@ -434,6 +438,7 @@ void emit_continuous_children(std::vector<Particle>& out, const Cfg& c, double p
     const Flight cf = flight_at(at.x + w.x, at.y + w.y, mjs::cos(cdir) * cspeed, mjs::sin(cdir) * cspeed, ax, ay, childAge, drag);
     const double a01 = childAge / subLife;
     Particle p;
+    p.index = -(j + 1);
     p.x = cf.x;
     p.y = cf.y;
     p.z = origin.z + vz * tb;
@@ -494,6 +499,7 @@ std::vector<Particle> simulate_particles(const Cfg& c, double time) {
     const V2 wander = wander_offset(i, age, c);
     const Flight fl = flight_at(origin.x, origin.y, v0x, v0y, ax, ay, age, drag);
     Particle p;
+    p.index = i;
     p.x = fl.x + wander.x;
     p.y = fl.y + wander.y;
     p.size = std::max(0.0, ramp_at(c.sizeStart, c.sizeEnd, age01, c.sizeMid, c.midAge));
@@ -783,6 +789,7 @@ std::vector<Particle> particles_from_soa(const SoA& s, const Cfg& c, double fram
     p.opacity = ramp_at(c.opacityStart, c.opacityEnd, age01, c.opacityMid, c.midAge);
     const double streak = std::max(0.0, c.motionBlur) * std::max(0.0, c.shutterSec);
     const double genScale = s.generation[i] >= 0.5 ? std::max(0.0, c.subSizeScale) : 1;
+    p.index = s.generation[i] >= 0.5 ? -(s.id[i] + 1) : s.id[i];
     p.z = s.z[i];
     p.x = s.x[i];
     p.y = s.y[i];
@@ -1108,6 +1115,23 @@ raster::RasterOutput draw_particle_field(const Json& spec, const raster::CanvasO
 }
 
 void paint_particle_field(raster::Canvas2D& canvas, const Json& spec) { paint_field(canvas, spec, nullptr); }
+
+std::vector<ParticleSample> particles_at_frame(const Json& cfgJson, double frame, double fps, const std::string& key) {
+  const Cfg c = typed(cfgJson);
+  const double rate = fps > 0 ? fps : 30;
+  std::vector<Particle> particles;
+  if (c.simMode == "stateful") {
+    const double f = std::max(0.0, frame);
+    const SoA st = stateful_state_at(key, js::stringify(cfgJson) + "|" + js::number_to_string(rate), c, rate, f);
+    particles = particles_from_soa(st, c, f, rate);
+  } else {
+    particles = simulate_particles(c, frame / rate);
+  }
+  std::vector<ParticleSample> out;
+  out.reserve(particles.size());
+  for (const Particle& p : particles) out.push_back(ParticleSample{p.index, p.x, p.y, p.size, p.opacity});
+  return out;
+}
 
 namespace {
 

@@ -509,6 +509,8 @@ The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 | `prerender` | — | `importFiles` of the rendered files ("Pre-render") | `{outputs}` |
 | `rotoBrush` | rotoBrush.ts | one "Roto Brush" mask, a path key per frame ("Roto Brush") | `{frames, keyframes}` |
 | `contentAwareFill` | contentAwareFillVideo.ts | PNGs under `Content-Aware Fill/` + `setContentAwareFill` | `{frames, filledPixels}` |
+| `physicsBake` | bakeDynamics.ts (samplePhysicsTracks) over rigid_body.cpp | every enabled body of the composition seeds the renderer's solver (flatten order, authored pose; world gravity 0 / 1800, comp walls, 4 passes); each requested DYNAMIC body's position (and rotation for a spinning body) keyed per sampled frame, linear with the last key held, Douglas-Peucker thinned by `simplifyTolerance`; `layer/physics` set `enabled:false` ("Bake physics to keyframes") | `{layers, frames, tracks, keyframes}` |
+| `particleBake` | bakeDynamics.ts (sampleParticleLayers) over particle_port.cpp (`particles_at_frame`, birth index) | a "<emitter> Baked" null parented to the emitter; one ellipse / rectangle per particle (earliest born, `maxParticles` default 200) at its first-seen size in the start colour, keyed x / y / scale / opacity (a zero hold one frame outside its life); the emitter hidden ("Bake particles to layers"). The config is resolved per frame on the core thread (`JobDocContext.layerValues`: the emitter's `particle.<key>` tracks) | `{containerId, layerIds, seen, capped, particles, keyframes}` |
 | `autoReframe` | autoReframe.ts (saliency, reframePath) | a NEW composition holding the source as a precomp, the pan keyed on separated position ("Auto-reframe"); the source comp is rendered small by a child `--export` (PNG frames read through the OS still codec) | `{samples, cuts, keyframes, comp, layer}` |
 | `transcribe` | captions/transcribe.ts + electron/aiProxy.ts transcribeAudio | nothing (the caption commands build layers from the cues; `createCaptions` must be false). 2026-09-28: `comp`'s sound over `range` mixed by a child `--export` (`audioOnly`: the export's offline mix, no picture preflight), 16 kHz mono WAV, POSTed to OpenAI whisper-1 (`verbose_json`, segment + word timings) over the OS HTTP stack (WinHTTP / libcurl, no redirects). The key: `credential`, written into the request by Electron MAIN from its keystore as it passes (engineHost `transcribeCredential`); the page never has it, main logs the request without it, the engine drops it from its log and never persists or returns it. Errors carry aiProxy's code in `detail` (`{"code":"no_key" / "auth" / "rate_limit" / "network" / "silent" / "empty" …}`) | `{cues:[{start,end,text}], words:[…], language}` (composition seconds, cues de-overlapped) |
 
@@ -2392,6 +2394,13 @@ from the struct's maximum + 800.
   Right), each keyed from its channel's envelope at composition time through
   the layer's bar; one entry. The summary's `amplitudeNull` counts the keys
   per channel. The Animation menu command sends it (`audioAmplitudeNullEdit`).
+- **`physicsBake`** (1715) / **`particleBake`** (1716) job kinds (§4.9 table):
+  Bake Physics to Keyframes and Bake Particles to Layers run in the engine
+  (`kind_dynamics_bake.cpp`), sampling the renderer's own solvers; the
+  Inspector's bake dialogs and the palette commands send them
+  (`layout/Inspector/bakeEdits.ts`). `dynamicsBakeNative.test` holds them to
+  the TypeScript reference samplers on seeded cases. The C++ particle carries
+  its birth index (`Particle.index`) for the bake's grouping.
 
 
 ## 16. Files

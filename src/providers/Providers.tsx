@@ -96,7 +96,7 @@ import { buildCameraCommands } from '@core/scene/cameraCommands';
 import { buildSmartAnimateCommands, installSmartAnimateCommandSync } from './commands/smartAnimateCommands';
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
 import { buildIk3DCommands } from './commands/ikCommands';
-import { buildBakeCommands } from '@core/simulation/bakeCommands';
+import { buildBakeCommands } from './commands/bakeCommands';
 import { buildAudioCommands } from '@core/audio/audioCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { easingTargetKeyframes } from '@core/animation/easingSelection';

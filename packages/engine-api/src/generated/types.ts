@@ -2902,6 +2902,23 @@ export interface AutoReframeJob {
   lagSeconds?: number;
 }
 
+/** Bake Physics to Keyframes (bakeDynamics.ts bakePhysicsToKeyframes): the composition's rigid bodies stepped by the renderer's own solver (every body, so collisions match the viewport; the world is the engine's: gravity 0 / 1800, the comp rectangle as walls, 4 passes), sampled at each frame of `range` (every `everyNFrames`th, the last frame always) and written onto the `layers` that carry an enabled DYNAMIC body — position, and rotation for a body that spins — as linear keys with the last one held, Douglas-Peucker thinned by `simplifyTolerance` (value units; 0 = every sample). Their physics is switched off in the same entry. Refused (invalidArgument) when none of `layers` has an enabled dynamic body. */
+export interface PhysicsBakeJob {
+  layers: LayerId[];
+  range: TimeRange;
+  everyNFrames?: number;
+  simplifyTolerance?: number;
+}
+
+/** Bake Particles to Layers (bakeDynamics.ts bakeParticlesToLayers): the emitter's particles (the renderer's sim, its `particle.<key>` tracks sampled per frame) at each frame of `range`, one keyed ellipse (a square emitter: rectangle) per particle — x / y / scale / opacity, invisible outside its life — under a new "<emitter> Baked" null parented to the emitter; the emitter is hidden. At most `maxParticles` (default 200) layers, the earliest born; the summary reports `seen` and `capped`. */
+export interface ParticleBakeJob {
+  layer: LayerId;
+  range: TimeRange;
+  everyNFrames?: number;
+  simplifyTolerance?: number;
+  maxParticles?: number;
+}
+
 export type JobSpec =
   | { kind: 'trackMotion'; value: TrackMotionJob }
   | { kind: 'stabilize'; value: StabilizeJob }
@@ -2918,7 +2935,9 @@ export type JobSpec =
   | { kind: 'trackApply'; value: TrackApplyJob }
   | { kind: 'rotoBrush'; value: RotoBrushJob }
   | { kind: 'contentAwareFill'; value: ContentAwareFillJob }
-  | { kind: 'autoReframe'; value: AutoReframeJob };
+  | { kind: 'autoReframe'; value: AutoReframeJob }
+  | { kind: 'physicsBake'; value: PhysicsBakeJob }
+  | { kind: 'particleBake'; value: ParticleBakeJob };
 export type JobSpecKind = JobSpec['kind'];
 
 export interface StartJob {

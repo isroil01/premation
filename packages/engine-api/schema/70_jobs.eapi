@@ -173,6 +173,10 @@ struct RotoBrushJob { layer: LayerId = 1; range: TimeRange = 2; seed: Vec2 = 3; 
 struct ContentAwareFillJob { layer: LayerId = 1; range: TimeRange = 2; outputFolder: string = 3; }
 /// Auto-reframe (autoReframe.ts autoReframeComposition): `comp` rendered small (160 px wide, 12 frames/s) by a child engine, saliency + shot cuts per frame (saliency.ts, sceneEditDetect.ts), a dead-zone / lag camera path (reframePath.ts); a NEW composition `width`×`height` holding `comp` as a precomp layer scaled to cover, with the pan keyed on its separated position. The source is untouched.
 struct AutoReframeJob { comp: ItemId = 1; width: u32 = 2; height: u32 = 3; name?: string = 4; deadZone?: f64 = 5; lagSeconds?: f64 = 6; }
+/// Bake Physics to Keyframes (bakeDynamics.ts bakePhysicsToKeyframes): the composition's rigid bodies stepped by the renderer's own solver (every body, so collisions match the viewport; the world is the engine's: gravity 0 / 1800, the comp rectangle as walls, 4 passes), sampled at each frame of `range` (every `everyNFrames`th, the last frame always) and written onto the `layers` that carry an enabled DYNAMIC body — position, and rotation for a body that spins — as linear keys with the last one held, Douglas-Peucker thinned by `simplifyTolerance` (value units; 0 = every sample). Their physics is switched off in the same entry. Refused (invalidArgument) when none of `layers` has an enabled dynamic body.
+struct PhysicsBakeJob { layers: LayerId[] = 1; range: TimeRange = 2; everyNFrames?: u32 = 3; simplifyTolerance?: f64 = 4; }
+/// Bake Particles to Layers (bakeDynamics.ts bakeParticlesToLayers): the emitter's particles (the renderer's sim, its `particle.<key>` tracks sampled per frame) at each frame of `range`, one keyed ellipse (a square emitter: rectangle) per particle — x / y / scale / opacity, invisible outside its life — under a new "<emitter> Baked" null parented to the emitter; the emitter is hidden. At most `maxParticles` (default 200) layers, the earliest born; the summary reports `seen` and `capped`.
+struct ParticleBakeJob { layer: LayerId = 1; range: TimeRange = 2; everyNFrames?: u32 = 3; simplifyTolerance?: f64 = 4; maxParticles?: u32 = 5; }
 
 union JobSpec {
   trackMotion: TrackMotionJob = 1;
@@ -191,6 +195,8 @@ union JobSpec {
   rotoBrush: RotoBrushJob = 1712;
   contentAwareFill: ContentAwareFillJob = 1713;
   autoReframe: AutoReframeJob = 1714;
+  physicsBake: PhysicsBakeJob = 1715;
+  particleBake: ParticleBakeJob = 1716;
 }
 
 command startJob = 850 [control] { job: JobSpec = 1; apply: bool = 2; } -> JobRef;

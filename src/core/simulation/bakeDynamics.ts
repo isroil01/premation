@@ -1,82 +1,31 @@
 /**
- * Bake dynamics to keyframes — turning a simulation into ordinary animation.
+ * Bake dynamics to keyframes — the TypeScript REFERENCE samplers.
  *
- * ── Why this exists ─────────────────────────────────────────────────────────
+ * The bakes themselves are the engine's `physicsBake` / `particleBake` jobs
+ * (native/engine/src/jobs/kind_dynamics_bake.cpp, B4 round 8): the renderer's
+ * own solvers sampled over the range and written as ONE history entry. What
+ * stays here is the sampling those jobs port, operation for operation, over the
+ * TypeScript solvers — `physicsPosesAt` for rigid bodies, `simulateParticles` /
+ * `statefulParticleCache` for particles — so the cross-engine tests
+ * (dynamicsBakeNative.test.ts) can hold the engine to it on seeded cases.
  *
- * Rigid bodies and particles are LIVE SOLVE: `buildSnapshot` asks the solver
- * for a pose every frame and the answer is never written down. That is the
- * right default (it stays editable), and it is also the reason a simulation is
- * the one thing in this editor you cannot art-direct. You can change the
- * gravity; you cannot say "this box lands one frame later and half a pixel
- * left" — there is no keyframe to grab.
+ * The rules the engine keeps:
  *
- * Baking is the escape hatch every motion tool ships for exactly that: run the
- * sim once, write what it did as keyframes, switch the solver off. The
- * simulation becomes a starting point instead of a verdict.
- *
- * ── The one rule that makes a bake trustworthy ──────────────────────────────
- *
- * **The bake must play back identically to the viewport it replaced.** So this
- * file does NOT re-implement stepping. It calls `physicsPosesAt` — the same
- * function `buildSnapshot` calls, against the same `SimulationCache`, with the
- * same seeds, world and fps — once per sampled frame. If the bake and the
- * preview ever disagree, they disagree because the SEEDS differ, which is a
- * bug with one place to look, rather than because a second solver drifted.
- *
- * The particle bake follows the same discipline: `simulateParticles` for the
- * ballistic mode and `statefulParticleCache` for the stateful one, i.e. the
- * two entry points `particleSprites` itself uses.
- *
- * ── Linear, and hold at the end ─────────────────────────────────────────────
- *
- * Baked keys are frame-aligned samples of an already-curved motion, so they
- * interpolate LINEARLY — easing them again would ease the easing, exactly the
- * argument `set_spring`'s bake makes. The LAST key holds: a baked range that
- * ends before the composition does must not let the engine extrapolate the
- * final segment onward into motion the solver never produced.
- *
- * ── Undo ────────────────────────────────────────────────────────────────────
- *
- * A bake writes keyframes AND changes the scene (it disables the component
- * that was driving the layer, or adds layers). Both go to the engine as ONE
- * batch — one undo entry, replayable: the keyframes are computed off-document
- * and sent as `setKeyframes` (assistantKeys.ts), the physics switch-off as the
- * `layer/physics` field, the baked particle layers as one `pasteLayers` under
- * the emitter and the emitter hidden with `setLayerSwitches`.
+ *   * The bake plays back identically to the viewport it replaced — it calls the
+ *     solver the renderer calls, never a second stepper.
+ *   * Baked keys interpolate LINEARLY (they are samples of an already-curved
+ *     motion) and the LAST key holds (no extrapolated motion past the range).
+ *   * `simplifyTolerance` thins by Douglas-Peucker on VALUE deviation (The
+ *     Smoother's test) before the easing is stamped.
  */
 
-import { defaultAnimation, type Keyframe } from '@motion/animation';
+import type { Keyframe } from '@motion/animation';
 import { smoothTrackKeyframes } from '@core/animation/keyframeAssistants';
-import type { Command } from '@motion/engine-api';
-import { assistantKeyframeCommands } from '@core/engine/assistantKeys';
-import { buildLayerFragment } from '@core/engine/offDocument';
-import { compOfLayer } from '@core/engine/doc';
-import { edit } from '@core/engine/uiEdits';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenComposition } from '@core/scene/sceneDerive';
-import { enclosingCompRootOf } from '@core/scene/parenting';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { useProjectStore } from '@stores/projectStore';
-import { usePhysicsStore } from '@stores/physicsStore';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import { makeNode } from '@core/scene/sceneInsert';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import {
-  physicsPosesAt,
-  readNodePhysics,
-  readNodePhysicsRaw,
-} from './physicsBodies';
+import { physicsPosesAt } from './physicsBodies';
 import type { BodySeed, PhysicsWorld } from './rigidBody';
-import {
-  readNodeParticle,
-  resolveParticleConfig,
-  simulateParticles,
-  type Particle,
-  type ParticleConfig,
-} from '@core/particles/particleSim';
+import { simulateParticles, type Particle, type ParticleConfig } from '@core/particles/particleSim';
 import { particlesFromSoA } from '@core/particles/statefulParticleSim';
 import { statefulParticleCache } from '@core/particles/statefulParticleCache';
-import type { SceneNode } from '@core/types';
 
 // ── Shared range / track plumbing ─────────────────────────────────────
 
@@ -148,59 +97,6 @@ export function finishBakedTrack(
   }));
 }
 
-// ── Reading a layer's seed pose ───────────────────────────────────────
-
-/** The Transform component's raw props (the AUTHORED pose the solver seeds from). */
-function transformProps(node: SceneNode): Record<string, unknown> {
-  for (const c of node.components) {
-    if (c.type === 'Transform') return c.props as Record<string, unknown>;
-  }
-  return {};
-}
-
-const num = (v: unknown, fallback: number): number =>
-  typeof v === 'number' && Number.isFinite(v) ? v : fallback;
-
-/**
- * Every body that shares the target's simulation, as the renderer seeds them.
- *
- * ALL of them, not just the ones being baked: bodies collide, so a seed list
- * missing the floor is a different history, and the bake would record a box
- * falling through a wall the viewport shows it landing on.
- */
-export function collectPhysicsSeeds(rootId: string): BodySeed[] {
-  const seeds: BodySeed[] = [];
-  for (const node of flattenComposition(defaultSceneGraph, rootId)) {
-    const cfg = readNodePhysics(node);
-    if (!cfg) continue;
-    const p = transformProps(node);
-    seeds.push({
-      id: node.id,
-      x: num(p.x, node.transform.position.x),
-      y: num(p.y, node.transform.position.y),
-      rotation: num(p.rotation, node.transform.rotation),
-      width: num(p.width, 100),
-      height: num(p.height, 100),
-      cfg,
-    });
-  }
-  return seeds;
-}
-
-/** The world the renderer would simulate this composition in. */
-export function physicsWorldFor(rootId: string): PhysicsWorld {
-  const w = usePhysicsStore.getState();
-  const comp = useProjectStore.getState().comps[rootId];
-  return {
-    gravityX: w.gravityX,
-    gravityY: w.gravityY,
-    bounds: w.useCompBounds
-      ? { left: 0, top: 0, right: comp?.width ?? 1920, bottom: comp?.height ?? 1080 }
-      : null,
-    iterations: w.iterations,
-  };
-}
-
 // ── Physics: sampling (pure, given seeds) ─────────────────────────────
 
 /**
@@ -255,88 +151,6 @@ export function samplePhysicsTracks(
     }
   }
   return out;
-}
-
-// ── Physics: the scene-level action ───────────────────────────────────
-
-export interface PhysicsBakeResult {
-  /** Layers whose physics was baked and switched off. */
-  nodeIds: string[];
-  /** Frames sampled (before value simplification). */
-  frames: number;
-  /** Tracks written. */
-  tracks: number;
-  /** Keyframes written across all tracks. */
-  keyframes: number;
-}
-
-/**
- * Bake the rigid-body simulation on `nodeIds` into keyframes and switch their
- * physics off, as ONE engine entry. Null when there is nothing to bake or the
- * engine refused the batch.
- *
- * Returns null when none of the ids carries an ENABLED dynamic body — a static
- * body has no simulated pose to bake (the renderer never overrides it), and
- * baking a disabled one would write the keyframes of a sim that is not running.
- */
-export async function bakePhysicsToKeyframes(
-  nodeIds: ReadonlyArray<string>,
-  opts: BakeRangeOptions,
-): Promise<PhysicsBakeResult | null> {
-  const first = nodeIds[0];
-  if (!first) return null;
-  const rootId = enclosingCompRootOf(first) ?? activeCompRootId();
-
-  const seeds = collectPhysicsSeeds(rootId);
-  // Only DYNAMIC bodies get a simulated pose; `physicsPosesAt` deliberately
-  // omits static ones, so asking for their tracks would silently produce none.
-  const targets = nodeIds.filter((id) =>
-    seeds.some((s) => s.id === id && s.cfg.kind === 'dynamic'),
-  );
-  if (targets.length === 0) return null;
-
-  const world = physicsWorldFor(rootId);
-  const tracks = samplePhysicsTracks(seeds, world, targets, opts, rootId);
-  if (tracks.length === 0) return null;
-
-  // Map composition time onto each node's keyframe axis BEFORE mutating: the
-  // axis depends on clip geometry and layer time, and reading it after the
-  // scene changed would be reading a different document than the one sampled.
-  const placed = tracks.map((tr) => ({
-    ...tr,
-    keyframes: tr.keyframes.map((k) => ({ ...k, t: compToKeyframeTime(tr.nodeId, k.t, tr.prop) })),
-  }));
-
-  // The keyframes, computed off-document and sent through the API model.
-  const plan = assistantKeyframeCommands(targets, () => {
-    defaultAnimation.batch(() => {
-      for (const tr of placed) defaultAnimation.setKeyframes(tr.nodeId, tr.prop, tr.keyframes);
-    });
-  });
-  if (plan.unaddressed.length > 0) {
-    throw new Error(`the bake writes a track the engine does not address on ${plan.unaddressed.join(', ')}`);
-  }
-  // Switch the solver off in the SAME entry. `readNodePhysics` returns null
-  // for a disabled body, so from here the keyframes are the only thing moving
-  // the layer — which is the whole point of a bake.
-  const off = targets.flatMap((id) => {
-    const node = defaultSceneGraph.getNode(id);
-    return node
-      ? [{ prop: { layer: id, path: 'layer/physics' }, value: { kind: 'json', value: JSON.stringify({ ...readNodePhysicsRaw(node), enabled: false }) } }]
-      : [];
-  });
-  const res = await edit('Bake physics to keyframes', [
-    ...plan.cmds,
-    ...(off.length > 0 ? [{ type: 'setProperties', writes: off } as Command] : []),
-  ]);
-  if (!res.ok) return null;
-
-  return {
-    nodeIds: [...targets],
-    frames: bakeFrames(opts).length,
-    tracks: placed.length,
-    keyframes: placed.reduce((a, t) => a + t.keyframes.length, 0),
-  };
 }
 
 // ── Particles ─────────────────────────────────────────────────────────
@@ -431,171 +245,4 @@ function particlesAtFrame(
     return particlesFromSoA(state, cfg, { frame, fps });
   }
   return simulateParticles(cfg, frame / fps);
-}
-
-export interface ParticleBakeResult {
-  /** The null every baked particle is parented under. */
-  containerId: string;
-  /** Layers created, one per particle. */
-  layerIds: string[];
-  seen: number;
-  capped: boolean;
-  keyframes: number;
-}
-
-/**
- * Bake an emitter's particles into one layer each, parented under a new null,
- * and hide the emitter.
- *
- * ── Where the layers live ───────────────────────────────────────────────────
- *
- * The container null is parented to the EMITTER, at local (0, 0). Particle
- * positions are emitter-local px with the emitter at the field's centre (see
- * `particleSprites`), so a child of the emitter at (px, py) lands exactly where
- * the sprite was — including when the emitter layer is itself animated, which
- * a container copied into comp space would not follow.
- *
- * The emitter keeps its config and its transform; only `visible` goes false, so
- * the rig stays intact, the bake stays re-runnable, and un-hiding one layer is
- * the whole undo of "disable the emitter's rendering".
- *
- * Returns null when the layer is not an emitter or the range contains no
- * particles at all.
- */
-export async function bakeParticlesToLayers(
-  emitterNodeId: string,
-  opts: ParticleBakeOptions,
-): Promise<ParticleBakeResult | null> {
-  const emitter = defaultSceneGraph.getNode(emitterNodeId);
-  if (!emitter) return null;
-  const stored = readNodeParticle(emitter);
-  if (!stored) return null;
-
-  const p = transformProps(emitter);
-  const emitterW = num(p.width, stored.emitterWidth);
-  const emitterH = num(p.height, stored.emitterHeight);
-
-  // The config the RENDERER would use at each frame: emitter box synced to the
-  // layer's geometry, then every `particle.<key>` track sampled — the same two
-  // steps `buildSnapshot` performs before handing the config to the sim.
-  const configAt = (frame: number): ParticleConfig => {
-    const t = compToKeyframeTime(emitterNodeId, frame / (opts.fps > 0 ? opts.fps : 30));
-    return resolveParticleConfig(
-      { ...stored, emitterWidth: emitterW, emitterHeight: emitterH },
-      (path) => defaultAnimation.sample(emitterNodeId, path, t),
-    );
-  };
-
-  const sampled = sampleParticleLayers(configAt, opts, emitterNodeId);
-  if (sampled.particles.length === 0) return null;
-
-  const comp = compOfLayer(emitterNodeId);
-  if (!comp) return null;
-  const tol = opts.simplifyTolerance ?? 0;
-  const scratchLayers: string[] = [];
-  let scratchContainer = '';
-  let keyframes = 0;
-
-  // The layers are built OFF-document (scratch ids, keys in place) and pasted
-  // under the emitter as ONE pasteLayers; the emitter is hidden in the same batch.
-  const built = buildLayerFragment(comp, () => {
-    const container = makeNode('null', `${emitter.name ?? 'Emitter'} Baked`);
-    const ct = transformProps(container);
-    ct.x = 0;
-    ct.y = 0;
-    container.transform.position = { x: 0, y: 0 };
-    defaultSceneGraph.addChild(emitterNodeId, container);
-    scratchContainer = container.id;
-
-    defaultAnimation.batch(() => {
-      for (const part of sampled.particles) {
-        const node = makeNode('shape', `Particle ${part.index}`);
-        const props = transformProps(node);
-        props.x = 0;
-        props.y = 0;
-        props.width = part.baseSize;
-        props.height = part.baseSize;
-        props[SCENE_KIND_PROP] = 'shape';
-        // A round particle is the only shape the emitter can draw that a
-        // rectangle would misread at a glance; the rest are close enough that
-        // guessing per-shape geometry would be inventing detail the bake does
-        // not have.
-        props.shapeType = stored.shape === 'square' ? 'rect' : 'ellipse';
-        node.transform.position = { x: 0, y: 0 };
-        // Fill from the config's START colour, written onto the Style component
-        // BEFORE the node joins the graph — `readBase` reads `fill` there, and
-        // that is the property the shape actually paints with.
-        //
-        // The start colour and not the ramp: the per-frame colour ramp is a
-        // property of the emitter's renderer, and animating a fill per particle
-        // would be a colour track per baked layer for a gradient nobody asked
-        // to keyframe.
-        for (const c of node.components) {
-          if (c.type === 'Style') (c.props as Record<string, unknown>).fill = stored.colorStart;
-        }
-        defaultSceneGraph.addChild(container.id, node);
-
-        const write = (prop: string, list: BakedParticle['x'], holdBefore: number | null): void => {
-          const kfs = finishBakedTrack(list, tol);
-          if (kfs.length === 0) return;
-          // A particle exists for part of the range only. Without a zero-
-          // opacity hold on either side the layer would sit frozen at its
-          // birth pose for every frame before it was born.
-          const framed = holdBefore === null
-            ? kfs
-            : padLife(kfs, holdBefore, opts);
-          defaultAnimation.setKeyframes(
-            node.id,
-            prop,
-            framed.map((k) => ({ ...k, t: compToKeyframeTime(node.id, k.t, prop) })),
-          );
-          keyframes += framed.length;
-        };
-        write('x', part.x, null);
-        write('y', part.y, null);
-        write('scaleX', part.scale, null);
-        write('scaleY', part.scale, null);
-        write('opacity', part.opacity, 0);
-
-        scratchLayers.push(node.id);
-      }
-    });
-  });
-  if (!built) return null;
-
-  // The emitter stops drawing; it stays as the rig the container hangs from.
-  const res = await edit('Bake particles to layers', [
-    { type: 'pasteLayers', comp, fragment: built.fragment, index: built.index, ...(built.parent ? { parent: built.parent } : {}) } as Command,
-    { type: 'setLayerSwitches', layers: [emitterNodeId], patch: { visible: false } } as Command,
-  ]);
-  if (!res.ok) return null;
-  const pasted = (res.value[0] as { layers?: string[] } | undefined)?.layers ?? [];
-  const idOf = (scratch: string): string => pasted[built.scratchIds.indexOf(scratch)] ?? '';
-
-  return {
-    containerId: idOf(scratchContainer),
-    layerIds: scratchLayers.map(idOf).filter((id) => id !== ''),
-    seen: sampled.seen,
-    capped: sampled.capped,
-    keyframes,
-  };
-}
-
-/**
- * Bracket a track with `value` one frame outside its own span, held.
- *
- * Only meaningful for opacity, which is why it is applied there alone: a
- * particle that is born at frame 40 must be INVISIBLE at 39, not merely
- * un-animated, and the engine clamps a track to its first key before it.
- */
-function padLife(kfs: Keyframe[], value: number, opts: BakeRangeOptions): Keyframe[] {
-  const fps = opts.fps > 0 ? opts.fps : 30;
-  const dt = 1 / fps;
-  const first = kfs[0]!;
-  const last = kfs[kfs.length - 1]!;
-  const out: Keyframe[] = [];
-  if (first.t - dt >= 0) out.push({ t: first.t - dt, value, easing: 'hold' });
-  out.push(...kfs);
-  out.push({ t: last.t + dt, value, easing: 'hold' });
-  return out;
 }

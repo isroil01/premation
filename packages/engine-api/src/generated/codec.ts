@@ -8281,6 +8281,72 @@ function decS_AutoReframeJob(r: Reader, end: number, o: any): T.AutoReframeJob {
   if (v_lagSeconds !== undefined) o.lagSeconds = v_lagSeconds;
   return o;
 }
+function encS_PhysicsBakeJob(w: Writer, v: T.PhysicsBakeJob): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  if (v.everyNFrames !== undefined) { w.byte(24); w.u32(v.everyNFrames); }
+  if (v.simplifyTolerance !== undefined) { w.byte(33); w.f64(v.simplifyTolerance); }
+}
+function decS_PhysicsBakeJob(r: Reader, end: number, o: any): T.PhysicsBakeJob {
+  const l_layers: string[] = [];
+  let h_range = false;
+  let v_range: T.TimeRange | undefined;
+  let v_everyNFrames: number | undefined;
+  let v_simplifyTolerance: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 24: v_everyNFrames = r.u32(); break;
+      case 33: v_simplifyTolerance = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_range) throw new DecodeError('PhysicsBakeJob.range: missing', 'missingField');
+  o.layers = l_layers;
+  o.range = v_range;
+  if (v_everyNFrames !== undefined) o.everyNFrames = v_everyNFrames;
+  if (v_simplifyTolerance !== undefined) o.simplifyTolerance = v_simplifyTolerance;
+  return o;
+}
+function encS_ParticleBakeJob(w: Writer, v: T.ParticleBakeJob): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  if (v.everyNFrames !== undefined) { w.byte(24); w.u32(v.everyNFrames); }
+  if (v.simplifyTolerance !== undefined) { w.byte(33); w.f64(v.simplifyTolerance); }
+  if (v.maxParticles !== undefined) { w.byte(40); w.u32(v.maxParticles); }
+}
+function decS_ParticleBakeJob(r: Reader, end: number, o: any): T.ParticleBakeJob {
+  let h_layer = false;
+  let h_range = false;
+  let v_layer: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  let v_everyNFrames: number | undefined;
+  let v_simplifyTolerance: number | undefined;
+  let v_maxParticles: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 24: v_everyNFrames = r.u32(); break;
+      case 33: v_simplifyTolerance = r.f64(); break;
+      case 40: v_maxParticles = r.u32(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('ParticleBakeJob.layer: missing', 'missingField');
+  if (!h_range) throw new DecodeError('ParticleBakeJob.range: missing', 'missingField');
+  o.layer = v_layer;
+  o.range = v_range;
+  if (v_everyNFrames !== undefined) o.everyNFrames = v_everyNFrames;
+  if (v_simplifyTolerance !== undefined) o.simplifyTolerance = v_simplifyTolerance;
+  if (v_maxParticles !== undefined) o.maxParticles = v_maxParticles;
+  return o;
+}
 function encS_StartJob(w: Writer, v: T.StartJob): void {
   w.byte(10); { const s = w.beginLd(); encU_JobSpec(w, v.job); w.endLd(s); }
   w.byte(16); w.bool(v.apply);
@@ -15715,6 +15781,8 @@ function encU_JobSpec(w: Writer, v: T.JobSpec): void {
     case 'rotoBrush': w.varint(13698); { const s = w.beginLd(); encS_RotoBrushJob(w, v.value); w.endLd(s); } return;
     case 'contentAwareFill': w.varint(13706); { const s = w.beginLd(); encS_ContentAwareFillJob(w, v.value); w.endLd(s); } return;
     case 'autoReframe': w.varint(13714); { const s = w.beginLd(); encS_AutoReframeJob(w, v.value); w.endLd(s); } return;
+    case 'physicsBake': w.varint(13722); { const s = w.beginLd(); encS_PhysicsBakeJob(w, v.value); w.endLd(s); } return;
+    case 'particleBake': w.varint(13730); { const s = w.beginLd(); encS_ParticleBakeJob(w, v.value); w.endLd(s); } return;
     default: throw new RangeError('JobSpec: unknown kind ' + String((v as { kind?: unknown }).kind));
   }
 }
@@ -15740,6 +15808,8 @@ function decU_JobSpec(r: Reader, end: number): T.JobSpec {
       case 13698: out = { kind: 'rotoBrush', value: decS_RotoBrushJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13706: out = { kind: 'contentAwareFill', value: decS_ContentAwareFillJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13714: out = { kind: 'autoReframe', value: decS_AutoReframeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13722: out = { kind: 'physicsBake', value: decS_PhysicsBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13730: out = { kind: 'particleBake', value: decS_ParticleBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       default: r.skip(key);
     }
   }
@@ -17027,6 +17097,8 @@ export const codecs = {
   RotoBrushJob: mk<T.RotoBrushJob>(encS_RotoBrushJob, (r, e) => decS_RotoBrushJob(r, e, {})),
   ContentAwareFillJob: mk<T.ContentAwareFillJob>(encS_ContentAwareFillJob, (r, e) => decS_ContentAwareFillJob(r, e, {})),
   AutoReframeJob: mk<T.AutoReframeJob>(encS_AutoReframeJob, (r, e) => decS_AutoReframeJob(r, e, {})),
+  PhysicsBakeJob: mk<T.PhysicsBakeJob>(encS_PhysicsBakeJob, (r, e) => decS_PhysicsBakeJob(r, e, {})),
+  ParticleBakeJob: mk<T.ParticleBakeJob>(encS_ParticleBakeJob, (r, e) => decS_ParticleBakeJob(r, e, {})),
   JobSpec: mk<T.JobSpec>(encU_JobSpec, decU_JobSpec),
   StartJob: mk<T.StartJob>(encS_StartJob, (r, e) => decS_StartJob(r, e, {})),
   CancelJob: mk<T.CancelJob>(encS_CancelJob, (r, e) => decS_CancelJob(r, e, {})),

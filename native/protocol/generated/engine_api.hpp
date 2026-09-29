@@ -1059,6 +1059,8 @@ struct TrackApplyJob;
 struct RotoBrushJob;
 struct ContentAwareFillJob;
 struct AutoReframeJob;
+struct PhysicsBakeJob;
+struct ParticleBakeJob;
 struct JobSpec;
 struct StartJob;
 struct CancelJob;
@@ -2989,6 +2991,23 @@ struct AutoReframeJob {
   bool operator==(const AutoReframeJob&) const = default;
 };
 
+struct PhysicsBakeJob {
+  std::vector<LayerId> layers;
+  TimeRange range;
+  std::optional<std::uint32_t> every_n_frames;
+  std::optional<double> simplify_tolerance;
+  bool operator==(const PhysicsBakeJob&) const = default;
+};
+
+struct ParticleBakeJob {
+  LayerId layer;
+  TimeRange range;
+  std::optional<std::uint32_t> every_n_frames;
+  std::optional<double> simplify_tolerance;
+  std::optional<std::uint32_t> max_particles;
+  bool operator==(const ParticleBakeJob&) const = default;
+};
+
 struct JobSpec {
   enum class Kind : std::uint32_t {
     track_motion = 1,
@@ -3007,8 +3026,10 @@ struct JobSpec {
     roto_brush = 1712,
     content_aware_fill = 1713,
     auto_reframe = 1714,
+    physics_bake = 1715,
+    particle_bake = 1716,
   };
-  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob, ProxyJob, AudioDuckJob, AudioGateJob, TrackApplyJob, RotoBrushJob, ContentAwareFillJob, AutoReframeJob> v;
+  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob, ProxyJob, AudioDuckJob, AudioGateJob, TrackApplyJob, RotoBrushJob, ContentAwareFillJob, AutoReframeJob, PhysicsBakeJob, ParticleBakeJob> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const JobSpec&) const = default;
 };
@@ -6079,6 +6100,10 @@ void encode(wire::Writer& w, const ContentAwareFillJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ContentAwareFillJob& out);
 void encode(wire::Writer& w, const AutoReframeJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, AutoReframeJob& out);
+void encode(wire::Writer& w, const PhysicsBakeJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PhysicsBakeJob& out);
+void encode(wire::Writer& w, const ParticleBakeJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ParticleBakeJob& out);
 void encode(wire::Writer& w, const JobSpec& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, JobSpec& out);
 void encode(wire::Writer& w, const StartJob& v);

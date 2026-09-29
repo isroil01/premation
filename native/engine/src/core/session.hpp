@@ -346,6 +346,7 @@ class Session {
   JobRecord* find_job(const std::string& id);
   /// JobDocContext.layerToComp over this document (world2DAt; nullopt for 3D).
   std::function<std::optional<std::array<double, 6>>(std::string_view, double)> layer_to_comp();
+  std::function<std::vector<std::pair<std::string, double>>(std::string_view, double)> layer_values();
   /// Drain the runner: progress events, results applied (core thread, from tick()).
   void poll_jobs(Clock::time_point now);
   /// Apply a held result as ONE history entry (origin engine). False with the error recorded on the job.
