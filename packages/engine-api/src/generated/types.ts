@@ -317,6 +317,14 @@ export type LayerConversion =
   | 'bakeTransform';
 export const LayerConversionValues = ['shapesFromText', 'masksFromText', 'shapesFromVector', 'editableText', 'uncompose', 'bakeTransform'] as const;
 
+/** B4 round 8 — a Merge Paths boolean. */
+export type MergeOp =
+  | 'union'
+  | 'subtract'
+  | 'intersect'
+  | 'exclude';
+export const MergeOpValues = ['union', 'subtract', 'intersect', 'exclude'] as const;
+
 export type Edge =
   | 'in'
   | 'out';
@@ -1565,6 +1573,9 @@ export interface AssembleComposition {
   overlap: Time;
 }
 
+/** B4 round 8 — a legacy in-place precomp GROUP (a precomp-flagged group carrying its own layers, placing no composition) that never got a settings record becomes a composition: the record opening it in a tab would have made (its name; the enclosing composition's size, rate and duration) and a timeline, so getDocument lists it and its layers. The UI sends it once after an open; nothing to migrate = no history entry. Returns the migrated ids. */
+export interface MigrateLegacyPrecomps {}
+
 export interface PrecomposeResult {
   comp: ItemId;
   layer: LayerId;
@@ -1878,6 +1889,12 @@ export interface DocumentFragment {
   version: number;
   /** Encoded payload (engine-defined; JSON in the TS engine). */
   data: Uint8Array;
+}
+
+/** B4 round 8 — Merge Paths ▸ Live <op> (mergePaths.ts planLiveMerge): of `layers`, the unlocked shapes whose stored outline is a closed region are the operands (flagged `layer/booleanOperand`, hidden); a result shape layer "Boolean (<op>)" storing `booleanOp` / `booleanSources` (the renderer re-evaluates it every frame), seeded at the boolean's box with the first operand's style, lands above the first operand. One entry. `invalidArgument` when fewer than two closed paths overlap for the op; `unsupported` without the engine's polygon booleans. */
+export interface CreateLiveMerge {
+  layers: LayerId[];
+  op: MergeOp;
 }
 
 export interface LayerRef {
@@ -3698,6 +3715,24 @@ export interface GlyphBox {
   advance: number;
 }
 
+/** B4 round 8 — one face of an extruded 3D layer (face picking): `kind` front | back | side | bevel (the material group), `suffix` the renderer's face suffix (a mesh triangle: its role), `points` the polygon in WORLD px, `verts` a mesh triangle's vertex indices (empty for a quad). */
+export interface LayerFace {
+  kind: string;
+  suffix: string;
+  points: Vec3[];
+  verts: number[];
+}
+
+export interface LayerFaces {
+  faces: LayerFace[];
+}
+
+/** B4 round 8 — the faces of an extruded 3D layer at `time` (facePicking.ts projectedFaces before its projection): the renderer's extrusion mesh with its front cap, else the flat-quad fallback, in world px; empty for a layer with no extrusion. The UI projects them through its view. `unsupported` without the frame builder. */
+export interface GetLayerFaces {
+  layer: LayerId;
+  time: Time;
+}
+
 export interface HitTest {
   comp: ItemId;
   time: Time;
@@ -4823,6 +4858,7 @@ export type Command =
   | ({ type: 'trimCompToWorkArea' } & TrimCompToWorkArea)
   | ({ type: 'cropComposition' } & CropComposition)
   | ({ type: 'assembleComposition' } & AssembleComposition)
+  | ({ type: 'migrateLegacyPrecomps' } & MigrateLegacyPrecomps)
   | ({ type: 'addRenderItems' } & AddRenderItems)
   | ({ type: 'setRenderItem' } & SetRenderItem)
   | ({ type: 'removeRenderItems' } & RemoveRenderItems)
@@ -4846,6 +4882,7 @@ export type Command =
   | ({ type: 'setLayerComment' } & SetLayerComment)
   | ({ type: 'poseIk3D' } & PoseIk3D)
   | ({ type: 'bakeIk3D' } & BakeIk3D)
+  | ({ type: 'createLiveMerge' } & CreateLiveMerge)
   | ({ type: 'setLayerTiming' } & SetLayerTiming)
   | ({ type: 'moveLayersInTime' } & MoveLayersInTime)
   | ({ type: 'trimLayers' } & TrimLayers)
@@ -4982,6 +5019,7 @@ export type CommandResult =
   | ({ type: 'trimCompToWorkArea' } & Empty)
   | ({ type: 'cropComposition' } & Empty)
   | ({ type: 'assembleComposition' } & ItemRef)
+  | ({ type: 'migrateLegacyPrecomps' } & ItemList)
   | ({ type: 'addRenderItems' } & RenderItemList)
   | ({ type: 'setRenderItem' } & Empty)
   | ({ type: 'removeRenderItems' } & Empty)
@@ -5005,6 +5043,7 @@ export type CommandResult =
   | ({ type: 'setLayerComment' } & Empty)
   | ({ type: 'poseIk3D' } & IkResult)
   | ({ type: 'bakeIk3D' } & IkResult)
+  | ({ type: 'createLiveMerge' } & LayerRef)
   | ({ type: 'setLayerTiming' } & Empty)
   | ({ type: 'moveLayersInTime' } & Empty)
   | ({ type: 'trimLayers' } & Empty)
@@ -5131,6 +5170,7 @@ export type Query =
   | ({ type: 'getCapabilities' } & GetCapabilities)
   | ({ type: 'listPlugins' } & ListPlugins)
   | ({ type: 'getEffectUi' } & GetEffectUi)
+  | ({ type: 'getLayerFaces' } & GetLayerFaces)
   | ({ type: 'hitTest' } & HitTest)
   | ({ type: 'getLayerBounds' } & GetLayerBounds)
   | ({ type: 'getLayerTransforms' } & GetLayerTransforms)
@@ -5184,6 +5224,7 @@ export type QueryResult =
   | ({ type: 'getCapabilities' } & Capabilities)
   | ({ type: 'listPlugins' } & PluginList)
   | ({ type: 'getEffectUi' } & EffectUi)
+  | ({ type: 'getLayerFaces' } & LayerFaces)
   | ({ type: 'hitTest' } & HitResult)
   | ({ type: 'getLayerBounds' } & LayerBoundsList)
   | ({ type: 'getLayerTransforms' } & LayerTransformList)
@@ -5284,6 +5325,7 @@ export interface CommandArgs {
   trimCompToWorkArea: TrimCompToWorkArea;
   cropComposition: CropComposition;
   assembleComposition: AssembleComposition;
+  migrateLegacyPrecomps: MigrateLegacyPrecomps;
   addRenderItems: AddRenderItems;
   setRenderItem: SetRenderItem;
   removeRenderItems: RemoveRenderItems;
@@ -5307,6 +5349,7 @@ export interface CommandArgs {
   setLayerComment: SetLayerComment;
   poseIk3D: PoseIk3D;
   bakeIk3D: BakeIk3D;
+  createLiveMerge: CreateLiveMerge;
   setLayerTiming: SetLayerTiming;
   moveLayersInTime: MoveLayersInTime;
   trimLayers: TrimLayers;
@@ -5443,6 +5486,7 @@ export interface CommandResults {
   trimCompToWorkArea: Empty;
   cropComposition: Empty;
   assembleComposition: ItemRef;
+  migrateLegacyPrecomps: ItemList;
   addRenderItems: RenderItemList;
   setRenderItem: Empty;
   removeRenderItems: Empty;
@@ -5466,6 +5510,7 @@ export interface CommandResults {
   setLayerComment: Empty;
   poseIk3D: IkResult;
   bakeIk3D: IkResult;
+  createLiveMerge: LayerRef;
   setLayerTiming: Empty;
   moveLayersInTime: Empty;
   trimLayers: Empty;
@@ -5592,6 +5637,7 @@ export interface QueryArgs {
   getCapabilities: GetCapabilities;
   listPlugins: ListPlugins;
   getEffectUi: GetEffectUi;
+  getLayerFaces: GetLayerFaces;
   hitTest: HitTest;
   getLayerBounds: GetLayerBounds;
   getLayerTransforms: GetLayerTransforms;
@@ -5645,6 +5691,7 @@ export interface QueryResults {
   getCapabilities: Capabilities;
   listPlugins: PluginList;
   getEffectUi: EffectUi;
+  getLayerFaces: LayerFaces;
   hitTest: HitResult;
   getLayerBounds: LayerBoundsList;
   getLayerTransforms: LayerTransformList;

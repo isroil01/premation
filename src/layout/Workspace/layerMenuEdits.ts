@@ -19,7 +19,6 @@ import { apiParentOf, compOfLayer, graph as docGraph, isLayer, layerIdsOfComp } 
 import { offDocument } from '@core/engine/offDocument';
 import { encodeFragment } from '@core/engine/handlers/layers';
 import { mergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
-import { liveMergeBatch, liveMergeResultId, type LiveMergeBatch } from '@core/scene/liveMergeCommands';
 import { labelIndexOf } from '@core/engine/model';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
@@ -285,7 +284,8 @@ export async function arrangeLayersEdit(ids: readonly string[], action: StackAct
  * to different compositions (a layer cannot move between compositions).
  */
 export async function groupSelectedLayersEdit(): Promise<boolean> {
-  const layers = useSelectionStore.getState().ids.filter((id) => isLayer(id));
+  const m = documentMirror();
+  const layers = useSelectionStore.getState().ids.filter((id) => m.layer(id) !== undefined);
   if (layers.length === 0) return true;
   if (new Set(layers.map((id) => compOfLayer(id))).size !== 1) return false;
   const comp = compOfLayer(layers[0]!)!;
@@ -361,26 +361,18 @@ export async function bakeMergePathsEdit(op: MergeOp): Promise<string[]> {
 }
 
 /**
- * Merge Paths ▸ Live <op>: the selected paths stay in the document as hidden
- * operands and a result layer re-evaluates their boolean every frame
- * (liveMergeCommands.ts — pasteLayers of the result, `layer/booleanOperand`
- * and the visibility switch on the operands). One undo entry; the result is
+ * Merge Paths ▸ Live <op>: the engine's `createLiveMerge` (B4 round 8) — the
+ * selected closed paths stay in the document as hidden operands and a result
+ * layer re-evaluates their boolean every frame. One undo entry; the result is
  * selected. Resolves to its id, or null (fewer than two closed paths, an empty
- * boolean, or the engine refused).
+ * boolean, or the engine refused — reported).
  */
 export async function liveMergePathsEdit(op: MergeOp): Promise<string | null> {
-  const label = `Live Merge Paths (${op})`;
-  let batch: LiveMergeBatch | null;
-  try {
-    batch = liveMergeBatch(op);
-  } catch (err) {
-    reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
-    return null;
-  }
-  if (!batch) return null;
-  const res = await edit(label, batch.commands);
+  const m = documentMirror();
+  const layers = useSelectionStore.getState().ids.filter((id) => m.layer(id) !== undefined);
+  const res = await edit(`Live Merge Paths (${op})`, [{ type: 'createLiveMerge', layers, op } as Command]);
   if (!res.ok) return null;
-  const id = liveMergeResultId(res.value);
+  const id = (res.value[0] as { layer?: string } | undefined)?.layer ?? null;
   if (id) useSelectionStore.getState().set([id]);
   return id;
 }

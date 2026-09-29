@@ -273,6 +273,67 @@ function projectedMeshFaces(
 }
 
 /**
+ * One face as the engine answers `getLayerFaces` (B4 round 8): its polygon in
+ * WORLD px (the layer's model matrix applied), a mesh triangle carrying its
+ * vertex indices.
+ */
+export interface WorldFace {
+  kind: FaceKind;
+  suffix: string;
+  points: ReadonlyArray<{ x: number; y: number; z: number }>;
+  verts?: readonly [number, number, number];
+}
+
+/**
+ * The engine's world-space faces through a view's projector — the projection
+ * half of `projectedFaces`, with the same back-face cull for mesh triangles
+ * (calibrated from the caps) and the same edge-on rule for quads.
+ */
+export function projectWorldFaces(faces: ReadonlyArray<WorldFace>, project: Projector): PickedFace[] {
+  const out: PickedFace[] = [];
+  let mesh = false;
+  for (const f of faces) {
+    const quad: Pt[] = [];
+    let depth = 0;
+    let clipped = false;
+    for (const p of f.points) {
+      const s = project(p);
+      if (s.clipped) clipped = true;
+      quad.push({ x: s.x, y: s.y });
+      depth += s.depth;
+    }
+    if (clipped || quad.length < 3) continue;
+    depth /= quad.length;
+    if (f.verts) {
+      mesh = true;
+      out.push({ kind: f.kind, suffix: f.suffix, quad, depth, area: signedPolygonArea(quad), verts: f.verts });
+    } else {
+      out.push({ kind: f.kind, suffix: f.suffix, quad, depth, area: polygonArea(quad) });
+    }
+  }
+  if (!mesh) return out;
+  // The mesh path's cull (projectedMeshFaces): the nearer cap's winding is the facing one.
+  let frontArea = 0, frontDepth = 0, frontN = 0;
+  let backArea = 0, backDepth = 0, backN = 0;
+  for (const f of out) {
+    if (f.kind === 'front') { frontArea += f.area; frontDepth += f.depth; frontN++; }
+    else if (f.kind === 'back') { backArea += f.area; backDepth += f.depth; backN++; }
+  }
+  const capOk = (area: number) => Math.abs(area) >= MIN_PICKABLE_AREA;
+  let facing = 0;
+  if (frontN && backN && capOk(frontArea) && capOk(backArea)) {
+    facing = frontDepth / frontN <= backDepth / backN ? Math.sign(frontArea) : Math.sign(backArea);
+  } else if (frontN && capOk(frontArea)) facing = Math.sign(frontArea);
+  else if (backN && capOk(backArea)) facing = Math.sign(backArea);
+  const visible: PickedFace[] = [];
+  for (const f of out) {
+    if (f.verts && facing !== 0 && Math.sign(f.area) === -facing) continue;
+    visible.push({ ...f, area: Math.abs(f.area) });
+  }
+  return visible;
+}
+
+/**
  * Every drawable face of an extruded layer, projected to comp space.
  *
  * `world3d` is the layer's model matrix (the same one buildSnapshot composes);

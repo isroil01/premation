@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "convert_geometry.hpp"
 #include "model.hpp"
 #include "readers.hpp"
 #include "scene_types.hpp"
@@ -43,6 +44,11 @@ struct WorldOutline {
   bool closed = true;
 };
 [[nodiscard]] std::optional<WorldOutline> node_world_outline(const doc::Node& n, const std::string& id, const OperandReader& r);
+
+/// mergePaths.ts `planLiveMerge`'s probe over `layers` (collectMergeableSelection:
+/// unlocked shapes whose STORED outline is closed — nodeWorldPolygon with no
+/// sample — then booleanPolygons and the union box of the result).
+[[nodiscard]] doc::LiveMergeProbe live_merge_probe(const doc::Document& d, const std::vector<std::string>& layers, std::string_view op);
 
 /// `readLiveBoolean(node) !== null`.
 [[nodiscard]] bool has_live_boolean(const doc::Node& n);

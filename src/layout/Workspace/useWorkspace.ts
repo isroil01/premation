@@ -26,7 +26,6 @@ import { applyChannelViewToCanvas, channelNeedsPass } from '@core/rendering/chan
 import { mayServeCachedFrame, mayFillFromPausedRender, playbackBlitWorthwhile } from '@core/rendering/previewCacheGate';
 import { useWorkspaceStore } from '@stores/projectStore';
 import workspaceStyles from './Workspace.module.css';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { compHasWireframeQualityLayer, paintWireframeQualityLayers } from './wireframeQualityOverlay';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore, clampOverlayOpacity } from '@stores/guidesStore';
@@ -108,7 +107,8 @@ import {
   type NavTarget,
 } from '@core/workspace/cameraNav';
 import { useFaceSelectionStore } from '@stores/faceSelectionStore';
-import { facesOfNode, pickFace, faceHighlightGroups } from '@core/scene/facePicking';
+import { pickFace, faceHighlightGroups } from '@core/scene/facePicking';
+import { fetchLayerFaces, layerFacesNow, onLayerFaces, projectFacesForView } from './layerFaces';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
 import { RULER_CSS_PX, inStrip, rulerStrips } from './rulerGeometry';
@@ -1566,6 +1566,8 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   useEffect(() => {
     const controller = getWorkspaceController();
     const unFace = useFaceSelectionStore.subscribe(() => controller.requestRender());
+    // The engine's faces landing (getLayerFaces) repaint the highlight.
+    const unFaces = onLayerFaces(() => { if (useFaceSelectionStore.getState().enabled) controller.requestRender(); });
     // A face belongs to its layer: selecting a different layer must drop it,
     // or the inspector would keep pointing at a side of something else.
     const unSel = useSelectionStore.subscribe((s) => {
@@ -1574,6 +1576,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     });
     return () => {
       unFace();
+      unFaces();
       unSel();
     };
   }, []);
@@ -1829,28 +1832,36 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (useFaceSelectionStore.getState().enabled) {
         const comp = compSize();
         const at = controller.ws.screenToWorld(local(e));
-        const tryNode = (id: string | undefined): boolean => {
-          const n = id ? defaultSceneGraph.getNode(id) : null;
-          if (!n) return false;
-          const face = pickFace(facesOfNode(n, playheadTime(), comp.w, comp.h), at);
-          if (!face) return false;
-          e.preventDefault();
-          // Select the layer too: the inspector edits face materials on the
-          // selected layer, so a face with no layer selected has nothing to
-          // write to.
-          useSelectionStore.getState().set([n.id]);
-          useFaceSelectionStore.getState().select(n.id, face.kind, face.suffix);
-          controller.requestRender();
-          return true;
+        const time = playheadTime();
+        e.preventDefault();
+        // The faces are the ENGINE's (getLayerFaces, B4 round 8): a layer's
+        // faces this frame, projected through the view on screen. The pick
+        // resolves when the answer lands (at once when it is cached).
+        const faceOf = async (id: string | undefined) => {
+          if (!id) return null;
+          const faces = await fetchLayerFaces(id, time);
+          const face = pickFace(projectFacesForView(faces, time, comp.w, comp.h), at);
+          return face ? { id, face } : null;
         };
-        // The layer being styled wins over whatever the plain hit-test finds:
-        // a flat layer drawn in front of it would otherwise swallow every click,
-        // and it has no faces to offer in exchange.
-        if (tryNode(useSelectionStore.getState().ids[0])) return;
-        if (tryNode(controller.ws.hitTestScreen(local(e))?.id)) return;
-        // Clicking empty canvas in face mode drops the face, keeping the layer.
-        useFaceSelectionStore.getState().clear();
-        controller.requestRender();
+        const selected = useSelectionStore.getState().ids[0];
+        const hit = controller.ws.hitTestScreen(local(e))?.id;
+        void (async () => {
+          // The layer being styled wins over whatever the plain hit-test finds:
+          // a flat layer drawn in front of it would otherwise swallow every
+          // click, and it has no faces to offer in exchange.
+          const picked = (await faceOf(selected)) ?? (hit !== selected ? await faceOf(hit) : null);
+          if (picked) {
+            // Select the layer too: the inspector edits face materials on the
+            // selected layer, so a face with no layer selected has nothing to
+            // write to.
+            useSelectionStore.getState().set([picked.id]);
+            useFaceSelectionStore.getState().select(picked.id, picked.face.kind, picked.face.suffix);
+          } else {
+            // Clicking empty canvas in face mode drops the face, keeping the layer.
+            useFaceSelectionStore.getState().clear();
+          }
+          controller.requestRender();
+        })();
         return;
       }
       /*
@@ -3418,10 +3429,11 @@ function paintFaceSelection(canvas: HTMLCanvasElement, controller: WorkspaceCont
   if (!fs.enabled) return;
   const nodeId = fs.nodeId ?? useSelectionStore.getState().ids[0];
   if (!nodeId) return;
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
   const { w: cw, h: ch } = compSize();
-  const faces = facesOfNode(node, playheadTime(), cw, ch);
+  const time = playheadTime();
+  const world = layerFacesNow(nodeId, time);
+  if (!world) return;
+  const faces = projectFacesForView(world, time, cw, ch);
   if (faces.length === 0) return;
 
   const ctx = canvas.getContext('2d');

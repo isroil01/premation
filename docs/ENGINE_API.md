@@ -2401,6 +2401,26 @@ from the struct's maximum + 800.
   (`layout/Inspector/bakeEdits.ts`). `dynamicsBakeNative.test` holds them to
   the TypeScript reference samplers on seeded cases. The C++ particle carries
   its birth index (`Particle.index`) for the bake's grouping.
+- **`getLayerFaces {layer, time}`** (1936 → `LayerFaces`): face picking's
+  geometry (facePicking.ts `projectedFaces` before its projection) — an
+  extruded 3D layer's faces in WORLD px from the frame builder's snapshot: the
+  renderer's extrusion mesh with its front cap (one face per triangle, `verts`
+  its vertex indices), else the flat quads of the fallback and the inset front
+  cap; empty for a layer with no extrusion. The viewport projects them through
+  the view it shows (`layout/Workspace/layerFaces.ts`, `projectWorldFaces`).
+  `unsupported` without the frame builder (the TypeScript engine).
+- **`createLiveMerge {layers, op}`** (1942 → `LayerRef`, `MergeOp` union |
+  subtract | intersect | exclude): Merge Paths ▸ Live <op> in one command
+  (planLiveMerge + liveMergeCommands.ts, the latter deleted): the closed
+  operands (the conversion geometry's polygon-boolean probe) flagged
+  `layer/booleanOperand` and hidden, a "Boolean (<op>)" result above the first
+  operand. `invalidArgument` for fewer than two closed paths / an empty
+  boolean; `unsupported` in the TypeScript engine.
+- **`migrateLegacyPrecomps {}`** (1943 → `ItemList`): legacy in-place precomp
+  groups without a settings record get one (their name; the enclosing comp's
+  size, rate, duration) and a timeline, so getDocument lists them and their
+  layers. The document session sends it after every open / recovery; nothing
+  to migrate records no entry. `unsupported` in the TypeScript engine.
 
 
 ## 16. Files

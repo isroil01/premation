@@ -523,4 +523,40 @@ ResultOf<api::AssembleComposition> handle(const api::AssembleComposition& c, HCt
   return api::ItemRef{id};
 }
 
+// B4 round 8 — a legacy in-place precomp GROUP (a precomp-flagged group that
+// carries its own layers and places no composition) is a composition only once
+// it has a settings record; one never opened in a tab had none, so getDocument
+// did not list it or its layers. On open the UI sends this once: every such
+// group gets the record opening it in a tab would have made (projectStore
+// ensureComp: its name, the enclosing composition's size, rate and duration)
+// and a timeline. One undoable entry; nothing to migrate = no entry.
+ResultOf<api::MigrateLegacyPrecomps> handle(const api::MigrateLegacyPrecomps& /*c*/, HCtx& x) {
+  Document& d = x.d;
+  std::vector<std::string> legacy;
+  for (const auto& [id, n] : d.nodes()) {
+    if (!n || !n->parent || n->children.empty() || !is_precomp(*n) || read_comp_ref(*n) || d.comp(id) != nullptr) continue;
+    legacy.push_back(id);
+  }
+  api::ItemList out;
+  for (const std::string& id : legacy) {
+    const Node& n = *d.node(id);
+    Json rec = default_comp_record();
+    rec.set("name", Json::string(n.name.empty() ? std::string("Composition") : n.name));
+    if (const std::optional<std::string> host = enclosing_comp_root_of(d, *n.parent)) {
+      if (const Json* h = d.comp(*host); h != nullptr) {
+        for (const char* k : {"width", "height", "fps", "durationSeconds"}) {
+          if (h->at(k).is_number()) rec.set(k, h->at(k));
+        }
+      }
+    }
+    rec.set("id", Json::string(id));
+    d.comp_mut(id) = rec;
+    ensure_timeline(d, id);
+    tl_sync_from_scene(d, id);
+    out.items.push_back(id);
+  }
+  x.label = "Upgrade Legacy Precomps";
+  return out;
+}
+
 }  // namespace premation::doc

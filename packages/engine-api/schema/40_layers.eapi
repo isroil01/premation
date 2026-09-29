@@ -206,6 +206,11 @@ struct DocumentFragment {
   data: bytes = 2;
 }
 
+/// B4 round 8 — a Merge Paths boolean.
+enum MergeOp { union = 0; subtract = 1; intersect = 2; exclude = 3; }
+/// B4 round 8 — Merge Paths ▸ Live <op> (mergePaths.ts planLiveMerge): of `layers`, the unlocked shapes whose stored outline is a closed region are the operands (flagged `layer/booleanOperand`, hidden); a result shape layer "Boolean (<op>)" storing `booleanOp` / `booleanSources` (the renderer re-evaluates it every frame), seeded at the boolean's box with the first operand's style, lands above the first operand. One entry. `invalidArgument` when fewer than two closed paths overlap for the op; `unsupported` without the engine's polygon booleans.
+command createLiveMerge = 1942 { layers: LayerId[] = 1; op: MergeOp = 2; } -> LayerRef;
+
 struct LayerRef { layer: LayerId = 1; }
 struct LayerList { layers: LayerId[] = 1; }
 struct GroupList { groups: PropPath[] = 1; }

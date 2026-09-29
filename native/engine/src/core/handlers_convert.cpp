@@ -39,6 +39,7 @@
 #include "fxstate.hpp"
 #include "handlers_groups.hpp"
 #include "handlers_layers.hpp"
+#include "handlers_properties.hpp"
 #include "native_effects.hpp"
 #include "props.hpp"
 #include "readmodel.hpp"
@@ -895,6 +896,91 @@ ResultOf<api::SeparateLayer> handle(const api::SeparateLayer& c, HCtx& x) {
   (void)handle(del, x);
   x.label = "Separate Layer";
   return api::LayerList{parts};
+}
+
+// B4 round 8 — Merge Paths ▸ Live <op> (mergePaths.ts planLiveMerge +
+// liveMergeCommands.ts, now one engine command): the operands whose stored
+// outline is a closed region (the probe: the conversion geometry's polygon
+// booleans) stay in the document, flagged `layer/booleanOperand` and hidden;
+// a result shape layer — "Boolean (<op>)", seeded at the boolean's box, the
+// first operand's Style and fx (never its operand / solid flags) with the
+// `booleanOp` / `booleanSources` the renderer re-evaluates every frame — lands
+// beside the first operand, above it. One entry; the result is the answer.
+ResultOf<api::CreateLiveMerge> handle(const api::CreateLiveMerge& c, HCtx& x) {
+  Document& d = x.d;
+  require_geometry(x, "createLiveMerge");
+  for (const std::string& id : c.layers) (void)require_layer(d, id);
+  const std::string op(api::to_string(c.op));
+  const std::optional<LiveMergeProbe> probe = x.geometry->live_merge_probe(d, c.layers, op);
+  if (!probe) fail(ErrorCode::unsupported, "'createLiveMerge' needs the engine's polygon booleans; this engine has none");
+  if (probe->sources.size() < 2) {
+    fail(ErrorCode::invalid_argument, "Live Merge Paths needs at least two overlapping shape layers with closed paths");
+  }
+  const std::string& first = probe->sources.front();
+  const std::string comp = comp_of_layer(d, first).value_or("");
+  for (const std::string& id : probe->sources) {
+    if (comp_of_layer(d, id) != comp) fail(ErrorCode::invalid_argument, "the paths to merge must share one composition", {.layer = id});
+  }
+  const Node& src = *d.node(first);
+  const std::string parentId = src.parent.value_or(comp);
+  // The first operand's place in the stack: the result goes there, above it.
+  const std::vector<std::string> stack = layer_ids_of_comp(d, comp);
+  const auto at = std::find(stack.begin(), stack.end(), first);
+  const std::size_t index = at != stack.end() ? static_cast<std::size_t>(at - stack.begin()) : 0;
+
+  const std::string id = x.mint_id("layer_");
+  Node node;
+  node.id = id;
+  node.name = "Boolean (" + op + ")";
+  Json t = Json::object();
+  t.set("__kind", Json::string("shape"));
+  t.set("x", Json::number(probe->cx));
+  t.set("y", Json::number(probe->cy));
+  t.set("rotation", Json::number(0));
+  t.set("scaleX", Json::number(1));
+  t.set("scaleY", Json::number(1));
+  t.set("anchorX", Json::number(0));
+  t.set("anchorY", Json::number(0));
+  t.set("width", Json::number(probe->width));
+  t.set("height", Json::number(probe->height));
+  t.set("shapeType", Json::string("path"));
+  node.components.push_back(Component{id + "_t", "Transform", std::move(t)});
+  Json style = Json::object();
+  if (const Component* s = src.comp("Style")) {
+    style = s->props;
+  } else {
+    style.set("opacity", Json::number(100));
+    style.set("fill", Json::string("#2b7eff"));
+  }
+  node.components.push_back(Component{id + "_s", "Style", std::move(style)});
+  Json fx = src.comp("fx") != nullptr ? src.comp("fx")->props : Json::object();
+  fx.erase("booleanOperand");
+  fx.erase("solid");
+  fx.set("booleanOp", Json::string(op));
+  Json sources = Json::array();
+  for (const std::string& s : probe->sources) sources.arr_mut().push_back(Json::string(s));
+  fx.set("booleanSources", std::move(sources));
+  node.components.push_back(Component{id + "_fx", "fx", std::move(fx)});
+  Json geom = Json::object();
+  geom.set("points", Json::array());
+  node.components.push_back(Component{id + "_g", "Geometry", std::move(geom)});
+  node.parent = parentId;
+  sg_add_child(d, parentId, std::move(node));
+  tl_sync_from_scene(d, comp);
+  move_in_stack(d, comp, {id}, index);
+
+  // The operands: sampled by the result, not painted.
+  api::SetProperties flags;
+  for (const std::string& s : probe->sources) {
+    flags.writes.push_back(api::PropertyWrite{api::PropRef{s, "layer/booleanOperand"}, v_bool(true), std::nullopt});
+  }
+  (void)handle(flags, x);
+  api::SetLayerSwitches hide;
+  hide.layers = probe->sources;
+  hide.patch.visible = false;
+  (void)handle(hide, x);
+  x.label = "Live Merge Paths (" + op + ")";
+  return api::LayerRef{id};
 }
 
 }  // namespace premation::doc

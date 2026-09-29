@@ -128,6 +128,10 @@ const LayerConversion_TO_NUM: Record<string, number> = { 'shapesFromText': 0, 'm
 const LayerConversion_FROM_NUM: readonly (T.LayerConversion | undefined)[] = ['shapesFromText', 'masksFromText', 'shapesFromVector', 'editableText', 'uncompose', 'bakeTransform'];
 function enc_LayerConversion(v: T.LayerConversion): number { const n = LayerConversion_TO_NUM[v]; if (n === undefined) throw new RangeError('LayerConversion: invalid value ' + String(v)); return n; }
 function dec_LayerConversion(n: number): T.LayerConversion { const v = LayerConversion_FROM_NUM[n]; if (v === undefined) throw new DecodeError('LayerConversion: unknown value ' + n, 'badEnum'); return v; }
+const MergeOp_TO_NUM: Record<string, number> = { 'union': 0, 'subtract': 1, 'intersect': 2, 'exclude': 3 };
+const MergeOp_FROM_NUM: readonly (T.MergeOp | undefined)[] = ['union', 'subtract', 'intersect', 'exclude'];
+function enc_MergeOp(v: T.MergeOp): number { const n = MergeOp_TO_NUM[v]; if (n === undefined) throw new RangeError('MergeOp: invalid value ' + String(v)); return n; }
+function dec_MergeOp(n: number): T.MergeOp { const v = MergeOp_FROM_NUM[n]; if (v === undefined) throw new DecodeError('MergeOp: unknown value ' + n, 'badEnum'); return v; }
 const Edge_TO_NUM: Record<string, number> = { 'in': 0, 'out': 1 };
 const Edge_FROM_NUM: readonly (T.Edge | undefined)[] = ['in', 'out'];
 function enc_Edge(v: T.Edge): number { const n = Edge_TO_NUM[v]; if (n === undefined) throw new RangeError('Edge: invalid value ' + String(v)); return n; }
@@ -3385,6 +3389,19 @@ function decS_AssembleComposition(r: Reader, end: number, o: any): T.AssembleCom
   o.overlap = v_overlap;
   return o;
 }
+function encS_MigrateLegacyPrecomps(w: Writer, v: T.MigrateLegacyPrecomps): void {
+  void w; void v;
+}
+function decS_MigrateLegacyPrecomps(r: Reader, end: number, o: any): T.MigrateLegacyPrecomps {
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  return o;
+}
 function encS_PrecomposeResult(w: Writer, v: T.PrecomposeResult): void {
   w.byte(10); w.str(v.comp);
   w.byte(18); w.str(v.layer);
@@ -4595,6 +4612,28 @@ function decS_DocumentFragment(r: Reader, end: number, o: any): T.DocumentFragme
   if (!h_data) throw new DecodeError('DocumentFragment.data: missing', 'missingField');
   o.version = v_version;
   o.data = v_data;
+  return o;
+}
+function encS_CreateLiveMerge(w: Writer, v: T.CreateLiveMerge): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(16); w.varint(enc_MergeOp(v.op));
+}
+function decS_CreateLiveMerge(r: Reader, end: number, o: any): T.CreateLiveMerge {
+  const l_layers: string[] = [];
+  let h_op = false;
+  let v_op: T.MergeOp | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      case 16: v_op = dec_MergeOp(r.varint()); h_op = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_op) throw new DecodeError('CreateLiveMerge.op: missing', 'missingField');
+  o.layers = l_layers;
+  o.op = v_op;
   return o;
 }
 function encS_LayerRef(w: Writer, v: T.LayerRef): void {
@@ -11474,6 +11513,78 @@ function decS_GlyphBox(r: Reader, end: number, o: any): T.GlyphBox {
   o.advance = v_advance;
   return o;
 }
+function encS_LayerFace(w: Writer, v: T.LayerFace): void {
+  w.byte(10); w.str(v.kind);
+  w.byte(18); w.str(v.suffix);
+  { const a = v.points; for (let i = 0; i < a.length; i++) { w.byte(26); { const s = w.beginLd(); encS_Vec3(w, a[i]!); w.endLd(s); } } }
+  { const a = v.verts; if (a.length) { w.byte(34); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u32(a[i]!); w.endLd(s); } }
+}
+function decS_LayerFace(r: Reader, end: number, o: any): T.LayerFace {
+  const l_points: T.Vec3[] = [];
+  const l_verts: number[] = [];
+  let h_kind = false;
+  let h_suffix = false;
+  let v_kind: string | undefined;
+  let v_suffix: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_kind = r.str(); h_kind = true; break;
+      case 18: v_suffix = r.str(); h_suffix = true; break;
+      case 26: l_points.push(decS_Vec3(r, r.ldEnd(), {})); break;
+      case 34: { const e = r.ldEnd(); while (r.pos < e) l_verts.push(r.u32()); r.expectAt(e); break; }
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_kind) throw new DecodeError('LayerFace.kind: missing', 'missingField');
+  if (!h_suffix) throw new DecodeError('LayerFace.suffix: missing', 'missingField');
+  o.kind = v_kind;
+  o.suffix = v_suffix;
+  o.points = l_points;
+  o.verts = l_verts;
+  return o;
+}
+function encS_LayerFaces(w: Writer, v: T.LayerFaces): void {
+  { const a = v.faces; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_LayerFace(w, a[i]!); w.endLd(s); } } }
+}
+function decS_LayerFaces(r: Reader, end: number, o: any): T.LayerFaces {
+  const l_faces: T.LayerFace[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_faces.push(decS_LayerFace(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.faces = l_faces;
+  return o;
+}
+function encS_GetLayerFaces(w: Writer, v: T.GetLayerFaces): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(16); w.i64(v.time);
+}
+function decS_GetLayerFaces(r: Reader, end: number, o: any): T.GetLayerFaces {
+  let h_layer = false;
+  let h_time = false;
+  let v_layer: string | undefined;
+  let v_time: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 16: v_time = r.i64(); h_time = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('GetLayerFaces.layer: missing', 'missingField');
+  if (!h_time) throw new DecodeError('GetLayerFaces.time: missing', 'missingField');
+  o.layer = v_layer;
+  o.time = v_time;
+  return o;
+}
 function encS_HitTest(w: Writer, v: T.HitTest): void {
   w.byte(10); w.str(v.comp);
   w.byte(16); w.i64(v.time);
@@ -16004,6 +16115,8 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_SetContentAwareFill(w, v); w.endLd(s); } return;
     case 'poseIk3D': w.varint(15522); { const s = w.beginLd(); encS_PoseIk3D(w, v); w.endLd(s); } return;
     case 'bakeIk3D': w.varint(15530); { const s = w.beginLd(); encS_BakeIk3D(w, v); w.endLd(s); } return;
+    case 'createLiveMerge': w.varint(15538); { const s = w.beginLd(); encS_CreateLiveMerge(w, v); w.endLd(s); } return;
+    case 'migrateLegacyPrecomps': w.varint(15546); { const s = w.beginLd(); encS_MigrateLegacyPrecomps(w, v); w.endLd(s); } return;
     default: throw new RangeError('Command: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16168,6 +16281,8 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 14818: out = decS_SetContentAwareFill(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.Command; break;
       case 15522: out = decS_PoseIk3D(r, r.ldEnd(), { type: 'poseIk3D' }) as T.Command; break;
       case 15530: out = decS_BakeIk3D(r, r.ldEnd(), { type: 'bakeIk3D' }) as T.Command; break;
+      case 15538: out = decS_CreateLiveMerge(r, r.ldEnd(), { type: 'createLiveMerge' }) as T.Command; break;
+      case 15546: out = decS_MigrateLegacyPrecomps(r, r.ldEnd(), { type: 'migrateLegacyPrecomps' }) as T.Command; break;
       default: r.skip(key);
     }
   }
@@ -16332,6 +16447,8 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'poseIk3D': w.varint(15522); { const s = w.beginLd(); encS_IkResult(w, v); w.endLd(s); } return;
     case 'bakeIk3D': w.varint(15530); { const s = w.beginLd(); encS_IkResult(w, v); w.endLd(s); } return;
+    case 'createLiveMerge': w.varint(15538); { const s = w.beginLd(); encS_LayerRef(w, v); w.endLd(s); } return;
+    case 'migrateLegacyPrecomps': w.varint(15546); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
     default: throw new RangeError('CommandResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16496,6 +16613,8 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 14818: out = decS_Empty(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.CommandResult; break;
       case 15522: out = decS_IkResult(r, r.ldEnd(), { type: 'poseIk3D' }) as T.CommandResult; break;
       case 15530: out = decS_IkResult(r, r.ldEnd(), { type: 'bakeIk3D' }) as T.CommandResult; break;
+      case 15538: out = decS_LayerRef(r, r.ldEnd(), { type: 'createLiveMerge' }) as T.CommandResult; break;
+      case 15546: out = decS_ItemList(r, r.ldEnd(), { type: 'migrateLegacyPrecomps' }) as T.CommandResult; break;
       default: r.skip(key);
     }
   }
@@ -16554,6 +16673,7 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'getSourceSize': w.varint(15466); { const s = w.beginLd(); encS_GetSourceSize(w, v); w.endLd(s); } return;
     case 'checkPrecompose': w.varint(15474); { const s = w.beginLd(); encS_CheckPrecompose(w, v); w.endLd(s); } return;
     case 'getTimelineRows': w.varint(15482); { const s = w.beginLd(); encS_GetTimelineRows(w, v); w.endLd(s); } return;
+    case 'getLayerFaces': w.varint(15490); { const s = w.beginLd(); encS_GetLayerFaces(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16612,6 +16732,7 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 15466: out = decS_GetSourceSize(r, r.ldEnd(), { type: 'getSourceSize' }) as T.Query; break;
       case 15474: out = decS_CheckPrecompose(r, r.ldEnd(), { type: 'checkPrecompose' }) as T.Query; break;
       case 15482: out = decS_GetTimelineRows(r, r.ldEnd(), { type: 'getTimelineRows' }) as T.Query; break;
+      case 15490: out = decS_GetLayerFaces(r, r.ldEnd(), { type: 'getLayerFaces' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -16670,6 +16791,7 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'getSourceSize': w.varint(15466); { const s = w.beginLd(); encS_SourceSizes(w, v); w.endLd(s); } return;
     case 'checkPrecompose': w.varint(15474); { const s = w.beginLd(); encS_PrecomposeCheck(w, v); w.endLd(s); } return;
     case 'getTimelineRows': w.varint(15482); { const s = w.beginLd(); encS_TimelineRowSets(w, v); w.endLd(s); } return;
+    case 'getLayerFaces': w.varint(15490); { const s = w.beginLd(); encS_LayerFaces(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16728,6 +16850,7 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 15466: out = decS_SourceSizes(r, r.ldEnd(), { type: 'getSourceSize' }) as T.QueryResult; break;
       case 15474: out = decS_PrecomposeCheck(r, r.ldEnd(), { type: 'checkPrecompose' }) as T.QueryResult; break;
       case 15482: out = decS_TimelineRowSets(r, r.ldEnd(), { type: 'getTimelineRows' }) as T.QueryResult; break;
+      case 15490: out = decS_LayerFaces(r, r.ldEnd(), { type: 'getLayerFaces' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -16936,6 +17059,7 @@ export const codecs = {
   TrimCompToWorkArea: mk<T.TrimCompToWorkArea>(encS_TrimCompToWorkArea, (r, e) => decS_TrimCompToWorkArea(r, e, {})),
   CropComposition: mk<T.CropComposition>(encS_CropComposition, (r, e) => decS_CropComposition(r, e, {})),
   AssembleComposition: mk<T.AssembleComposition>(encS_AssembleComposition, (r, e) => decS_AssembleComposition(r, e, {})),
+  MigrateLegacyPrecomps: mk<T.MigrateLegacyPrecomps>(encS_MigrateLegacyPrecomps, (r, e) => decS_MigrateLegacyPrecomps(r, e, {})),
   PrecomposeResult: mk<T.PrecomposeResult>(encS_PrecomposeResult, (r, e) => decS_PrecomposeResult(r, e, {})),
   RenderSettings: mk<T.RenderSettings>(encS_RenderSettings, (r, e) => decS_RenderSettings(r, e, {})),
   RenderSettingsPatch: mk<T.RenderSettingsPatch>(encS_RenderSettingsPatch, (r, e) => decS_RenderSettingsPatch(r, e, {})),
@@ -16972,6 +17096,7 @@ export const codecs = {
   PoseIk3D: mk<T.PoseIk3D>(encS_PoseIk3D, (r, e) => decS_PoseIk3D(r, e, {})),
   BakeIk3D: mk<T.BakeIk3D>(encS_BakeIk3D, (r, e) => decS_BakeIk3D(r, e, {})),
   DocumentFragment: mk<T.DocumentFragment>(encS_DocumentFragment, (r, e) => decS_DocumentFragment(r, e, {})),
+  CreateLiveMerge: mk<T.CreateLiveMerge>(encS_CreateLiveMerge, (r, e) => decS_CreateLiveMerge(r, e, {})),
   LayerRef: mk<T.LayerRef>(encS_LayerRef, (r, e) => decS_LayerRef(r, e, {})),
   LayerList: mk<T.LayerList>(encS_LayerList, (r, e) => decS_LayerList(r, e, {})),
   GroupList: mk<T.GroupList>(encS_GroupList, (r, e) => decS_GroupList(r, e, {})),
@@ -17202,6 +17327,9 @@ export const codecs = {
   LayerBounds: mk<T.LayerBounds>(encS_LayerBounds, (r, e) => decS_LayerBounds(r, e, {})),
   LayerTransform: mk<T.LayerTransform>(encS_LayerTransform, (r, e) => decS_LayerTransform(r, e, {})),
   GlyphBox: mk<T.GlyphBox>(encS_GlyphBox, (r, e) => decS_GlyphBox(r, e, {})),
+  LayerFace: mk<T.LayerFace>(encS_LayerFace, (r, e) => decS_LayerFace(r, e, {})),
+  LayerFaces: mk<T.LayerFaces>(encS_LayerFaces, (r, e) => decS_LayerFaces(r, e, {})),
+  GetLayerFaces: mk<T.GetLayerFaces>(encS_GetLayerFaces, (r, e) => decS_GetLayerFaces(r, e, {})),
   HitTest: mk<T.HitTest>(encS_HitTest, (r, e) => decS_HitTest(r, e, {})),
   GetLayerBounds: mk<T.GetLayerBounds>(encS_GetLayerBounds, (r, e) => decS_GetLayerBounds(r, e, {})),
   GetLayerTransforms: mk<T.GetLayerTransforms>(encS_GetLayerTransforms, (r, e) => decS_GetLayerTransforms(r, e, {})),

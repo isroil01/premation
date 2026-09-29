@@ -77,6 +77,9 @@ struct QCtx {
   /// geometry: hitTest answers `unsupported`.
   std::function<bool(const std::string& comp, api::Time time, api::Vec2 point, std::vector<std::string>& topmostFirst)>
       hitTest{};
+  /// B4 round 8: an extruded 3D layer's faces in world px (session_hooks.hpp
+  /// FrameBuilder::layer_faces). Unset, or nullopt = no frame builder: `unsupported`.
+  std::function<std::optional<api::LayerFaces>(const std::string& comp, api::Time time, const std::string& layer)> layerFaces{};
   /// D2w: draw a still (getThumbnail). Unset = no renderer: `unsupported`.
   std::function<StillImage(const StillRequest& request)> still{};
   /// D2w: a viewport's slot size in physical pixels; nullopt = no such viewport open.

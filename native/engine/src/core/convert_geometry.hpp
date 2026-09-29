@@ -102,6 +102,15 @@ struct SvgShapes {
   std::vector<std::string> notCarried;
 };
 
+/// B4 round 8 — what `createLiveMerge` needs of the boolean (mergePaths.ts
+/// planLiveMerge's probe): the layers whose STORED outline is a closed region,
+/// in the order given, and the union box of the boolean of them (world px).
+/// `sources` fewer than two = nothing to merge (or an empty boolean).
+struct LiveMergeProbe {
+  std::vector<std::string> sources;
+  double cx = 0, cy = 0, width = 1, height = 1;
+};
+
 class ConvertGeometry {
  public:
   ConvertGeometry() = default;
@@ -123,6 +132,13 @@ class ConvertGeometry {
   [[nodiscard]] virtual std::optional<SvgShapes> svg_shapes(std::string_view markup,
                                                             const std::optional<std::string>& fillOverride,
                                                             std::string& why) = 0;
+  /// The live Merge Paths probe of `layers` for `op` ('union' | 'subtract' |
+  /// 'intersect' | 'exclude'); nullopt = this engine has no polygon booleans.
+  [[nodiscard]] virtual std::optional<LiveMergeProbe> live_merge_probe(const Document& /*d*/,
+                                                                       const std::vector<std::string>& /*layers*/,
+                                                                       std::string_view /*op*/) {
+    return std::nullopt;
+  }
 };
 
 }  // namespace premation::doc

@@ -30,5 +30,7 @@ ResultOf<api::TrimCompToWorkArea> handle(const api::TrimCompToWorkArea& c, HCtx&
 ResultOf<api::CropComposition> handle(const api::CropComposition& c, HCtx& x);
 ResultOf<api::Precompose> handle(const api::Precompose& c, HCtx& x);
 ResultOf<api::AssembleComposition> handle(const api::AssembleComposition& c, HCtx& x);
+/// B4 round 8: legacy nested precomp groups become compositions (a settings record each).
+ResultOf<api::MigrateLegacyPrecomps> handle(const api::MigrateLegacyPrecomps& c, HCtx& x);
 
 }  // namespace premation::doc

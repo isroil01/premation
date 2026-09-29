@@ -1078,6 +1078,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   src/scene/particle_port.cpp     #   particle layers (sims, the Canvas2D field)
   src/scene/polygon_clipping.cpp  #   polygon-clipping (Martinez) + splaytree + orient2d, exact
   src/scene/merge_paths.cpp       #   live Merge Paths (mergePaths.ts)
+  src/scene/layer_faces.cpp       #   getLayerFaces: face picking's extrusion faces (facePicking.ts)
     src/plugins/scene_native_fx.cpp
     src/plugins/scene_finish.cpp
   )
