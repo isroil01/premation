@@ -13,7 +13,6 @@
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { EditorTabs } from './EditorTabs';
 import { TransportBar } from '@layout/Workspace/TransportBar';
-import { SCENE_TAB_ID, useEditorTabStore } from '@stores/editorTabStore';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import {
@@ -25,7 +24,6 @@ import { TRANSPORT_DEMOTE_ORDER } from '@layout/Workspace/transportOverflow';
 
 beforeEach(() => {
   localStorage.clear();
-  useEditorTabStore.setState({ tabs: [], activeId: SCENE_TAB_ID });
   useRenderQualityStore.getState().setResolution(1);
 });
 
@@ -74,7 +72,7 @@ it('renders the display controls inside the transport row, balanced across left 
 });
 
 it('the tabs row carries none of them — only the tabs, the lock and the panel menu', () => {
-  render(<EditorTabs scene={<canvas />} renderTab={() => null} />);
+  render(<EditorTabs scene={<canvas />} />);
   const strip = screen.getByRole('tablist', { name: 'Editor tabs' });
   expect(within(strip).queryByRole('group', { name: 'Viewport display' })).toBeNull();
   for (const name of [/^Viewport layout:/, /^Preview resolution:/, 'Preview', /^Overlays/, /^Pop out/]) {

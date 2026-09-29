@@ -6,21 +6,23 @@
  * Scene owns a WebGL/WebGPU context, the playback position and the viewport
  * transform. Rendering it conditionally — `{active === 'scene' && <Scene/>}`,
  * which is the obvious way to write a tab switcher — destroys all three every
- * time the user opens a plugin page, and re-acquiring a GPU context is both
+ * time the user opens the Layer panel, and re-acquiring a GPU context is both
  * visibly slow and, on some drivers, not guaranteed to succeed. So Scene is
- * rendered unconditionally and hidden with CSS, and the other tabs are drawn
+ * rendered unconditionally and hidden with CSS, and the Layer panel is drawn
  * over it.
+ *
+ * (Until 0.9 this strip also held JavaScript plugins' pages as closable tabs,
+ * with an overflow menu and Ctrl/Cmd+W to close one. The plugin system is
+ * gone, and those tabs with it; the Ctrl/Cmd+W guard below stays.)
  *
  * `visibility: hidden`, not `display: none`: `display: none` collapses the
  * box, the canvas inside resizes to zero, and returning to Scene gives a black
  * stage until something forces a resize. This editor has had that bug before.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useDismissOnOutside } from '@hooks/useDismissOnOutside';
+import { useEffect, useMemo, type ReactNode } from 'react';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
-import { SCENE_TAB_ID, useEditorTabStore, type EditorTab } from '@stores/editorTabStore';
 import { useActiveCompName } from '@layout/Composition/activeCompName';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -43,29 +45,9 @@ import styles from './EditorTabs.module.css';
 export interface EditorTabsProps {
   /** The viewport. Rendered once, always, and never unmounted by this component. */
   scene: ReactNode;
-  /** Draw the body of a non-Scene tab. */
-  renderTab: (tab: EditorTab) => ReactNode;
 }
 
-export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
-  const tabs = useEditorTabStore((s) => s.tabs);
-  const activeId = useEditorTabStore((s) => s.activeId);
-  const activate = useEditorTabStore((s) => s.activate);
-  const close = useEditorTabStore((s) => s.close);
-  const pin = useEditorTabStore((s) => s.pin);
-  const focusRelative = useEditorTabStore((s) => s.focusRelative);
-
-  const [overflowOpen, setOverflowOpen] = useState(false);
-  const stripRef = useRef<HTMLDivElement>(null);
-  const overflowBtnRef = useRef<HTMLButtonElement>(null);
-  const overflowMenuRef = useRef<HTMLDivElement>(null);
-  const closeOverflow = useCallback(() => setOverflowOpen(false), []);
-  // Click anywhere else, or Escape, puts the menu away — the chevron was the
-  // only thing that could close it before.
-  useDismissOnOutside(overflowOpen, [overflowBtnRef, overflowMenuRef], closeOverflow);
-
-  const activeTab = tabs.find((t) => t.id === activeId);
-  const sceneActive = activeId === SCENE_TAB_ID;
+export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
   // A pristine, never-adopted, still-empty comp is the AE fresh-project state
   // — the engine keeps a root under the hood. Drawing into it makes it real by
   // use, flag or no flag.
@@ -126,40 +108,24 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
   const viewMode = useWorkspaceViewStore((s) => s.mode);
 
   /**
-   * Ctrl/Cmd+W closes the active tab — and never Scene.
+   * Ctrl/Cmd+W does nothing here — deliberately.
    *
-   * Scene is not closeable, so with Scene focused this must do NOTHING rather
-   * than fall through to the next handler or, worse, to the browser/Electron
-   * default of closing the window. Someone reaching for "close this tab" with
-   * the viewport focused must not lose their session.
+   * Nothing in this strip is closeable (Scene never is), and letting the key
+   * fall through would reach the browser/Electron default of closing the
+   * window. Someone reaching for "close this tab" with the viewport focused
+   * must not lose their session.
    */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key.toLowerCase() === 'w') {
-        e.preventDefault();
-        const current = useEditorTabStore.getState().activeId;
-        if (current !== SCENE_TAB_ID) close(current);
-        return;
-      }
-      // Arrow navigation only while the strip itself has focus, or every left
-      // arrow on the canvas would move a tab.
-      if (!stripRef.current?.contains(document.activeElement)) return;
-      if (e.key === 'ArrowRight') { e.preventDefault(); focusRelative(1); }
-      if (e.key === 'ArrowLeft') { e.preventDefault(); focusRelative(-1); }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'w') e.preventDefault();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [close, focusRelative]);
-
-  /** Middle click closes, the way it does in every other tab strip. */
-  const onAuxClick = useCallback((e: React.MouseEvent, id: string) => {
-    if (e.button === 1) { e.preventDefault(); close(id); }
-  }, [close]);
+  }, []);
 
   return (
     <div className={styles.root}>
-      <div className={styles.strip} role="tablist" aria-label="Editor tabs" ref={stripRef}>
+      <div className={styles.strip} role="tablist" aria-label="Editor tabs">
         <div className={styles.tabs}>
         {/*
           Composition's tab, labelled with the COMPOSITION's name like After Effects:
@@ -168,13 +134,12 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
         <button
           type="button"
           role="tab"
-          aria-selected={sceneActive && !layerViewerOpen}
-          className={cn(styles.tab, sceneActive && !layerViewerOpen && styles.tabActive)}
+          aria-selected={!layerViewerOpen}
+          className={cn(styles.tab, !layerViewerOpen && styles.tabActive)}
           title={`Composition: ${compName || 'none'}${activeDirty ? ' — unsaved changes' : ''}`}
           onClick={() => {
-            // Back to the composition — from a plugin tab or the Layer panel.
+            // Back to the composition from the Layer panel.
             useLayerViewerStore.getState().close();
-            activate(SCENE_TAB_ID);
           }}
           onContextMenu={(e) => {
             // AE's viewer menu: ONE Composition viewer, switched between the
@@ -190,7 +155,6 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
                 label: st.comps[t.compositionId]?.name ?? documentMirror().layer(t.compositionId)?.name ?? t.title,
                 icon: t.id === st.activeTabId ? ('check' as const) : undefined,
                 onSelect: () => {
-                  activate(SCENE_TAB_ID);
                   useProjectStore.getState().actions.setActiveTab(t.id);
                 },
               })),
@@ -277,45 +241,13 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
           }
           onClick={() => {
             if (layerViewerOpen) { useLayerViewerStore.getState().close(); return; }
-            if (singleSelectedLayer) {
-              activate(SCENE_TAB_ID);
-              openLayerPanel(singleSelectedLayer);
-            }
+            if (singleSelectedLayer) openLayerPanel(singleSelectedLayer);
           }}
         >
           <Icon name="layers" size="sm" />
           <span className={styles.tabLabel}>Layer {layerTabName ? `(${layerTabName})` : '(none)'}</span>
         </button>
 
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={tab.id === activeId}
-            className={cn(
-              styles.tab,
-              tab.id === activeId && styles.tabActive,
-              tab.preview && styles.tabPreview,
-            )}
-            title={tab.title}
-            onClick={() => activate(tab.id)}
-            onDoubleClick={() => pin(tab.id)}
-            onAuxClick={(e) => onAuxClick(e, tab.id)}
-          >
-            <Icon name="plugin" size="sm" />
-            <span className={styles.tabLabel}>{tab.title}</span>
-            <span
-              role="button"
-              tabIndex={-1}
-              aria-label={`Close ${tab.title}`}
-              className={styles.close}
-              onClick={(e) => { e.stopPropagation(); close(tab.id); }}
-            >
-              <Icon name="close" size="sm" />
-            </span>
-          </button>
-        ))}
         </div>
 
         <div className={styles.panelActions}>
@@ -389,71 +321,28 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
           >
             <Icon name="menu" size="sm" />
           </button>
-          {tabs.length > 0 && (
-            <button
-              ref={overflowBtnRef}
-              type="button"
-              className={styles.overflow}
-              aria-haspopup="menu"
-              aria-expanded={overflowOpen}
-              onClick={() => setOverflowOpen((v) => !v)}
-              title="All open tabs"
-            >
-              <Icon name="chevron-down" size="sm" />
-            </button>
-          )}
         </div>
       </div>
 
-      {overflowOpen && (
-        <div ref={overflowMenuRef} className={styles.overflowMenu} role="menu">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="menuitem"
-              className={styles.overflowItem}
-              onClick={() => { activate(tab.id); setOverflowOpen(false); }}
-            >
-              {tab.title}
-            </button>
-          ))}
-          <button
-            type="button"
-            role="menuitem"
-            className={styles.overflowItem}
-            onClick={() => { useEditorTabStore.getState().closeAll(); setOverflowOpen(false); }}
-          >
-            Close all tabs
-          </button>
-        </div>
-      )}
-
       <div className={styles.body}>
         {/*
-          UNCONDITIONAL. Do not wrap this in `{sceneActive && …}`.
+          UNCONDITIONAL. Do not wrap this in `{!layerViewerOpen && …}`.
           The GPU context, playback state and viewport transform live in here,
           and all three are lost the moment it leaves the tree.
         */}
         <div
-          className={cn(styles.scenePane, (!sceneActive || layerViewerOpen) && styles.sceneHidden)}
-          aria-hidden={!sceneActive || layerViewerOpen}
+          className={cn(styles.scenePane, layerViewerOpen && styles.sceneHidden)}
+          aria-hidden={layerViewerOpen}
           data-testid="scene-pane"
         >
           {scene}
         </div>
 
         {/* AE's Layer panel, over the composition viewer — which stays mounted
-            and is only hidden, exactly as it is for a plugin tab. */}
-        {layerViewerOpen && sceneActive && (
+            and is only hidden. */}
+        {layerViewerOpen && (
           <div className={styles.tabPane} role="tabpanel" aria-label="Layer panel" data-testid="layer-pane">
             <LayerViewer />
-          </div>
-        )}
-
-        {activeTab && (
-          <div className={styles.tabPane} role="tabpanel" data-testid="tab-pane">
-            {renderTab(activeTab)}
           </div>
         )}
       </div>

@@ -8,12 +8,10 @@
 
 import { act, render, screen } from '@testing-library/react';
 import { EditorTabs } from './EditorTabs';
-import { SCENE_TAB_ID, useEditorTabStore } from '@stores/editorTabStore';
 import { useProjectStore } from '@stores/projectStore';
 
 beforeEach(() => {
   localStorage.clear();
-  act(() => { useEditorTabStore.setState({ tabs: [], activeId: SCENE_TAB_ID }); });
 });
 
 function activeTabId(): string {
@@ -27,7 +25,7 @@ function activeTabId(): string {
 
 describe('Composition tab dirty dot', () => {
   it('appears when the active tab has unsaved edits and clears on save', () => {
-    render(<EditorTabs scene={<canvas />} renderTab={() => null} />);
+    render(<EditorTabs scene={<canvas />} />);
     const id = activeTabId();
     act(() => { useProjectStore.getState().actions.markDirty(id, false); });
     expect(screen.queryByTestId('comp-dirty-dot')).toBeNull();

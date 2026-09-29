@@ -93,9 +93,6 @@
   outline-offset: -2px;
 }
 
-/* A preview tab reads as provisional, which is exactly what it is. */
-.tabPreview { font-style: italic; }
-
 /* Unsaved-changes marker on the Composition tab — the same token and size as
    the ProjectStatus dot in the top bar, so "dirty" looks like one thing. */
 .dirtyDot {
@@ -112,23 +109,6 @@
   min-width: 0;
   line-height: 1;
 }
-
-.close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  opacity: 0.6;
-}
-.close:hover { background: var(--color-active); opacity: 1; }
-.close:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; }
 
 .panelActions {
   margin-left: auto;
@@ -162,47 +142,6 @@
 .panelActionBtnOn {
   color: var(--color-primary);
 }
-
-.overflow {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 var(--space-2);
-  border: none;
-  border-left: 1px solid var(--color-border);
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-.overflow:hover { color: var(--color-text-primary); background: var(--color-hover); }
-.overflow:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; }
-
-.overflowMenu {
-  position: absolute;
-  right: var(--space-2);
-  top: var(--bar-height-panel);
-  z-index: var(--z-index-popover);
-  min-width: 220px;
-  padding: var(--space-1);
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-}
-
-.overflowItem {
-  display: block;
-  width: 100%;
-  padding: var(--space-1) var(--space-2);
-  border: none;
-  background: transparent;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-label);
-  text-align: left;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-}
-.overflowItem:hover { background: var(--color-hover); }
 
 .body {
   position: relative;
