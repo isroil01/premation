@@ -27,17 +27,13 @@
 
 import type { KeyId, NodeId } from '@app-types/common';
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
-import { flicksToSeconds, type Keyframe, type LayerInfo, type PropertyInfo } from '@motion/engine-api';
+import { flicksToSeconds, type Keyframe, type LayerInfo, type PropertyInfo, type TimelineRow } from '@motion/engine-api';
 import { selectionKeyId, timelineTracksOf } from '@core/mirror/keySelection';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { trackRefIn, type MirrorTreeLike } from '@core/mirror/trackIndex';
-import {
-  buildStaticPropertyTree,
-  groupForProp,
-  MASK_ANIM_PROP,
-  type StaticPropertyRow,
-} from '@core/timeline/propertyTree';
+import { groupForProp, MASK_ANIM_PROP, type TimelineGroupKey } from '@core/timeline/propertyTree';
 import { documentMirror } from '@stores/documentMirror';
+import { timelineRowsNow } from '@stores/timelineRows';
 import type { TimelinePropertyTrack, TimelineKeyframeRef } from './TimelineModel';
 
 /** What the rows are built from: one layer's mirror records. */
@@ -46,12 +42,17 @@ export interface PropertyRowSources {
   tree: MirrorTreeLike | undefined;
   /** Every animated property's keys (path → keys), `DocumentMirror.layerKeyframes`. */
   keys: ReadonlyMap<string, readonly Keyframe[]>;
+  /** The layer's AE row projection (`getTimelineRows`); undefined while it is fetched. */
+  rows?: readonly TimelineRow[] | undefined;
 }
+
+/** One row of the projection, its section typed. */
+type StaticPropertyRow = TimelineRow & { group: TimelineGroupKey };
 
 /** The session mirror's records for one layer (loads its tree on demand). */
 export function mirrorRowSources(nodeId: string): PropertyRowSources {
   const m = documentMirror();
-  return { layer: m.layer(nodeId), tree: m.tree(nodeId), keys: m.layerKeyframes(nodeId) };
+  return { layer: m.layer(nodeId), tree: m.tree(nodeId), keys: m.layerKeyframes(nodeId), rows: timelineRowsNow(nodeId) };
 }
 
 const NUMERIC = new Set(['scalar', 'int', 'bool', 'choice', 'vec2', 'vec3', 'vec4']);
@@ -220,8 +221,8 @@ export function buildPropertyRows(nodeId: string, src: PropertyRowSources = mirr
   }
 
   const out: TimelinePropertyTrack[] = [];
-  // B4-gap: the timeline's AE row projection (sections, order, placeholder rows, the legacy track names row writes use) — the mirror tree lists the catalog in another order and with more properties (Width/Height under `layer`, not Contents); moving the projection onto the tree is its own parity-checked step.
-  for (const spec of buildStaticPropertyTree(nodeId)) {
+  // The rows and their order are the engine's AE row projection (`getTimelineRows`); the mirror supplies the keys and values.
+  for (const spec of (src.rows ?? []) as readonly StaticPropertyRow[]) {
     if (spec.maskTrack) {
       out.push(maskRow(nodeId, spec, masks));
       continue;

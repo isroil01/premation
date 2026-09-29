@@ -140,6 +140,7 @@ export class EngineDocumentSession {
   async open(path: string): Promise<OpenProjectResult> {
     const r = await this.run('openProject', this.o.engine().execute({ type: 'openProject', path }));
     await this.dropRecovery();
+    await this.upgradeLegacyPrecomps();
     await this.dropPluginContent();
     return r;
   }
@@ -235,6 +236,7 @@ export class EngineDocumentSession {
     }
     if (!opened) await this.run('newProject', engine.execute({ type: 'newProject' }));
     await this.run('restoreDocument', engine.execute({ type: 'restoreDocument', document: new TextEncoder().encode(text), label: RECOVER_LABEL }));
+    await this.upgradeLegacyPrecomps();
     await this.dropPluginContent();
     await this.o.mirror.whenIdle();
     return true;
@@ -243,6 +245,21 @@ export class EngineDocumentSession {
   /** "Discard" in the recovery prompt. */
   async discardRecovery(): Promise<void> {
     await this.dropRecovery();
+  }
+
+  /**
+   * B4 round 8: legacy in-place precomp groups become compositions
+   * (`migrateLegacyPrecomps`, one undoable entry, none when there is nothing to
+   * upgrade), so the document lists them and their layers. An engine that
+   * refuses (the TypeScript one) leaves the document as it opened.
+   */
+  private async upgradeLegacyPrecomps(): Promise<void> {
+    try {
+      const r = await this.o.engine().execute({ type: 'migrateLegacyPrecomps' });
+      if (r.ok && r.value.items.length > 0) await this.o.mirror.whenIdle();
+    } catch {
+      /* the document stays as it opened */
+    }
   }
 
   /** A project that still carries JavaScript-plugin content: dropped as one entry, said once. */

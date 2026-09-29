@@ -1,56 +1,40 @@
 /**
- * ikEdits — 3D IK Bake as a CLIENT MACRO over the engine API (B3z,
- * docs/ENGINE_API.md §1 rule 7, §15.9 Rigging: "3D IK (Ik3DSection) is a
- * client macro over transform rotation keys").
- *
- * The solve is pure arithmetic over values the client reads (`planIk3DBake`,
- * boneIK3d.ts); its result is ONE batch of existing primitives: the joints'
- * current X / Y / Z Rotation keys deleted (`deleteKeyframes`, ids from
- * `getKeyframes`) and one linear key per frame added (`addKeyframes`, comp-time
- * flicks — the engine converts to each joint's keyframe axis). One undo entry;
- * undo restores the previous keys with their ids.
+ * 3D IK through the engine (B4 round 8): `poseIk3D` solves once at a time and
+ * writes the joints' rotations; `bakeIk3D` solves every frame of a range and
+ * replaces the joints' X / Y / Z Rotation with one linear key per frame. Both
+ * are ONE engine command (one undo entry); the solver runs in the engine
+ * (C++ handlers_dynamics.cpp, TS handlers/dynamics.ts).
  */
 
-import type { Command, KeyframeInsert, PropRef } from '@motion/engine-api';
-import { engine } from '@core/engine/engineInstance';
-import { compTime, values } from '@core/engine/propRefs';
-import { planIk3DBake, type IkOptions } from '@core/scene/boneIK3d';
-import { trackRef } from './inspectorEdits';
+import { secondsToFlicks, type IkOptions as ApiIkOptions } from '@motion/engine-api';
+import type { IkOptions } from '@core/scene/boneIK3d';
+import { edit } from '@core/engine/uiEdits';
 
-const ROTATION_TRACKS = [['rotationX', 'rx'], ['rotationY', 'ry'], ['rotation', 'rz']] as const;
+function apiOptions(o: IkOptions | undefined): ApiIkOptions | undefined {
+  if (!o) return undefined;
+  return {
+    ...(o.iterations !== undefined ? { iterations: Math.max(1, Math.round(o.iterations)) } : {}),
+    ...(o.tolerance !== undefined ? { tolerance: o.tolerance } : {}),
+    ...(o.maxStepRad !== undefined ? { maxStepRad: o.maxStepRad } : {}),
+  };
+}
 
-/**
- * The bake of `chain` (root → tip) against `targetId` over [t0, t1] comp
- * seconds, as commands — or null when the chain / target cannot resolve or a
- * joint's rotation is not addressable.
- */
-export async function ik3DBakeCommands(
-  chain: string[],
-  targetId: string,
-  t0: number,
-  t1: number,
-  fps: number,
-  opts?: IkOptions,
-): Promise<{ frames: number; commands: Command[] } | null> {
-  const plan = planIk3DBake(chain, targetId, t0, t1, fps, opts);
-  if (!plan) return null;
-  const refs: PropRef[] = [];
-  const keys: KeyframeInsert[] = [];
-  for (const j of plan.joints) {
-    for (const [track, field] of ROTATION_TRACKS) {
-      const r = trackRef(j.id, track);
-      if (!r) return null;
-      refs.push(r.ref);
-      for (const k of j[field]) {
-        keys.push({ prop: r.ref, time: compTime(k.t), value: values.scalar(k.value), easing: 'linear', spatialIn: [], spatialOut: [] });
-      }
-    }
-  }
-  const res = await engine().query({ type: 'getKeyframes', props: refs });
-  if (!res.ok) return null;
-  const ids = res.value.sets.flatMap((s) => s.keyframes.map((k) => k.id));
-  const commands: Command[] = [];
-  if (ids.length > 0) commands.push({ type: 'deleteKeyframes', ids });
-  if (keys.length > 0) commands.push({ type: 'addKeyframes', keys });
-  return { frames: plan.frames, commands };
+/** Pose `chain` (root → tip) at `target` once, at comp `seconds`. Resolves to whether the engine did it. */
+export async function poseIk3DEdit(chain: readonly string[], target: string, seconds: number, opts?: IkOptions): Promise<boolean> {
+  const options = apiOptions(opts);
+  const res = await edit('Pose 3D IK', {
+    type: 'poseIk3D', chain: [...chain], target, time: secondsToFlicks(seconds), ...(options ? { options } : {}),
+  });
+  return res.ok;
+}
+
+/** Bake `chain` against `target` over [t0, t1] comp seconds. Resolves to the frames baked (0 = refused). */
+export async function bakeIk3DEdit(chain: readonly string[], target: string, t0: number, t1: number, opts?: IkOptions): Promise<number> {
+  const options = apiOptions(opts);
+  const res = await edit('Bake 3D IK', {
+    type: 'bakeIk3D', chain: [...chain], target,
+    range: { start: secondsToFlicks(t0), duration: secondsToFlicks(Math.max(0, t1 - t0)) },
+    ...(options ? { options } : {}),
+  });
+  return res.ok ? (res.value[0] as { frames?: number } | undefined)?.frames ?? 0 : 0;
 }

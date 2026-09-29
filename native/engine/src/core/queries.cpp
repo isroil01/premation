@@ -1019,6 +1019,17 @@ struct Q {
   api::QueryResult operator()(const api::GetSourceSize& q) const {
     return query_result_for<api::GetSourceSize>(api::SourceSizes{source_sizes(d, q.layers)});
   }
+  api::QueryResult operator()(const api::GetLayerFaces& q) const {
+    const std::optional<std::string> comp = comp_of_layer(d, q.layer);
+    if (!comp) fail(ErrorCode::not_found, "no layer '" + q.layer + "'", {.layer = q.layer});
+    std::optional<api::LayerFaces> faces = c.layerFaces ? c.layerFaces(*comp, q.time, q.layer) : std::nullopt;
+    if (!faces) fail(ErrorCode::unsupported, "'getLayerFaces' needs the engine's frame builder (the extrusion mesh); this engine has none");
+    return query_result_for<api::GetLayerFaces>(std::move(*faces));
+  }
+
+  api::QueryResult operator()(const api::GetTimelineRows& q) const {
+    return query_result_for<api::GetTimelineRows>(api::TimelineRowSets{timeline_rows(d, q.layers)});
+  }
   api::QueryResult operator()(const api::CheckPrecompose& q) const {
     require_comp(d, q.comp);
     return query_result_for<api::CheckPrecompose>(api::PrecomposeCheck{precompose_leave_reason(d, q.comp, q.layers)});

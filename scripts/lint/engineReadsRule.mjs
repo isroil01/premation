@@ -60,7 +60,8 @@ const SINGLETONS = new Set(['defaultSceneGraph', 'defaultAnimation']);
  * applies at a call site: the project store's tabs, dirty flags and active tab
  * are editor session state; its `comps` records are the document).
  */
-const ENGINE_MARKER = /\b(defaultSceneGraph|defaultAnimation|getTimelineController|useCompositionStore|useAssetStore|useSceneStore|useMotionBlurStore|getNode\(|readNodeKind\(|catalogFor\()/;
+// (`useAssetStore` / `useCompositionStore` are no markers since round 7: mirror projections, see DOC_STORES.)
+const ENGINE_MARKER = /\b(defaultSceneGraph|defaultAnimation|getTimelineController|useSceneStore|useMotionBlurStore|getNode\(|readNodeKind\(|catalogFor\()/;
 const PROJECT_STORE_MARKER = /\buseProjectStore\b/;
 const PROJECT_COMPS_MARKER = /\bcomps\b/;
 
@@ -110,7 +111,7 @@ const PURE_READS = new Set([
   'bindPoseBones', // core/rig/skeletonCommands: maps the SkeletonRig it is given
   'isPrimitiveMeshType', 'defaultPrimitiveSpec', // core/scene/primitiveLayer: type guard, default spec table
   'motionPathTimeWindow', // core/motion/motionPath: window arithmetic
-  'pickFace', 'faceHighlightGroups', // core/scene/facePicking: geometry over the faces it is given
+  'pickFace', 'faceHighlightGroups', 'projectWorldFaces', // core/scene/facePicking: geometry over the faces it is given
   'thinSamples', // core/paint/paintSpace: point thinning
   'unifiedNavModeFor', // core/workspace/cameraNav: mouse button → navigation mode
   'focusRangeAt', // core/scene/camera3d: depth-of-field maths over the DofConfig it is given

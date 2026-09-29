@@ -36,7 +36,6 @@ import { audioEngine } from '@core/audio/AudioEngine';
 import { AudioEffectsSection } from './AudioEffectsSection';
 import { previewEngineJob } from '@core/engine/engineJobs';
 import {
-  ensureAudioBuffer,
   AUDIO_AMPLITUDE_PROP,
   DEFAULT_AUDIO_KEYFRAME_OPTIONS,
   type AudioKeyframeOptions,
@@ -53,11 +52,6 @@ import { DEFAULT_FADE_SEC, type FadeSide } from '@core/audio/audioFades';
 import { useEngineEdit } from './useEngineEdit';
 import { scalarValueCommands } from './inspectorEdits';
 import { barTimingCommand, convertAudioToKeyframesEdit, fadeEdit, muteEdit, unbarredTimingCommand } from './audioEdits';
-// Importing the command module registers "Remove Silence…" and "Duck Under
-// Voice…"; importing the dialogs is what tells those commands how to open. The
-// three are pulled in together here so the menu entries cannot exist without a
-// dialog behind them.
-import '@core/audio/audioCommands';
 import { openSilenceRemovalDialog } from './SilenceRemovalDialog';
 import { openDuckingDialog } from './DuckingDialog';
 import { openGateDialog } from './GateDialog';
@@ -104,11 +98,11 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
   const assetId = isAudio ? layer?.source ?? '' : '';
 
   // Kick off decoding for this asset (idempotent) so the waveform appears.
-  // Engine-side until E2: the decode is the editor's audio engine's (it
-  // resolves the playable media URL, which the API does not carry).
   useEffect(() => {
-    if (assetId) void ensureAudioBuffer(nodeId);
-  }, [assetId, nodeId]);
+    // The item's playable media (`ItemInfo.mediaUrl`), decoded for the waveform display only.
+    const url = assetId ? documentMirror().item(assetId)?.mediaUrl : undefined;
+    if (assetId && url) void audioEngine.load(assetId, url);
+  }, [assetId]);
 
   const wave = assetId ? audioEngine.getWaveform(assetId) : undefined;
   const path = useMemo(() => (wave ? waveformPath(wave.peaks, WAVE_W, WAVE_H) : ''), [wave]);

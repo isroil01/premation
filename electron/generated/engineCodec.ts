@@ -128,6 +128,10 @@ const LayerConversion_TO_NUM: Record<string, number> = { 'shapesFromText': 0, 'm
 const LayerConversion_FROM_NUM: readonly (T.LayerConversion | undefined)[] = ['shapesFromText', 'masksFromText', 'shapesFromVector', 'editableText', 'uncompose', 'bakeTransform'];
 function enc_LayerConversion(v: T.LayerConversion): number { const n = LayerConversion_TO_NUM[v]; if (n === undefined) throw new RangeError('LayerConversion: invalid value ' + String(v)); return n; }
 function dec_LayerConversion(n: number): T.LayerConversion { const v = LayerConversion_FROM_NUM[n]; if (v === undefined) throw new DecodeError('LayerConversion: unknown value ' + n, 'badEnum'); return v; }
+const MergeOp_TO_NUM: Record<string, number> = { 'union': 0, 'subtract': 1, 'intersect': 2, 'exclude': 3 };
+const MergeOp_FROM_NUM: readonly (T.MergeOp | undefined)[] = ['union', 'subtract', 'intersect', 'exclude'];
+function enc_MergeOp(v: T.MergeOp): number { const n = MergeOp_TO_NUM[v]; if (n === undefined) throw new RangeError('MergeOp: invalid value ' + String(v)); return n; }
+function dec_MergeOp(n: number): T.MergeOp { const v = MergeOp_FROM_NUM[n]; if (v === undefined) throw new DecodeError('MergeOp: unknown value ' + n, 'badEnum'); return v; }
 const Edge_TO_NUM: Record<string, number> = { 'in': 0, 'out': 1 };
 const Edge_FROM_NUM: readonly (T.Edge | undefined)[] = ['in', 'out'];
 function enc_Edge(v: T.Edge): number { const n = Edge_TO_NUM[v]; if (n === undefined) throw new RangeError('Edge: invalid value ' + String(v)); return n; }
@@ -3385,6 +3389,19 @@ function decS_AssembleComposition(r: Reader, end: number, o: any): T.AssembleCom
   o.overlap = v_overlap;
   return o;
 }
+function encS_MigrateLegacyPrecomps(w: Writer, v: T.MigrateLegacyPrecomps): void {
+  void w; void v;
+}
+function decS_MigrateLegacyPrecomps(r: Reader, end: number, o: any): T.MigrateLegacyPrecomps {
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  return o;
+}
 function encS_PrecomposeResult(w: Writer, v: T.PrecomposeResult): void {
   w.byte(10); w.str(v.comp);
   w.byte(18); w.str(v.layer);
@@ -4467,6 +4484,112 @@ function decS_SetLayerComment(r: Reader, end: number, o: any): T.SetLayerComment
   o.comment = v_comment;
   return o;
 }
+function encS_IkOptions(w: Writer, v: T.IkOptions): void {
+  if (v.iterations !== undefined) { w.byte(8); w.u32(v.iterations); }
+  if (v.tolerance !== undefined) { w.byte(17); w.f64(v.tolerance); }
+  if (v.maxStepRad !== undefined) { w.byte(25); w.f64(v.maxStepRad); }
+}
+function decS_IkOptions(r: Reader, end: number, o: any): T.IkOptions {
+  let v_iterations: number | undefined;
+  let v_tolerance: number | undefined;
+  let v_maxStepRad: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_iterations = r.u32(); break;
+      case 17: v_tolerance = r.f64(); break;
+      case 25: v_maxStepRad = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (v_iterations !== undefined) o.iterations = v_iterations;
+  if (v_tolerance !== undefined) o.tolerance = v_tolerance;
+  if (v_maxStepRad !== undefined) o.maxStepRad = v_maxStepRad;
+  return o;
+}
+function encS_IkResult(w: Writer, v: T.IkResult): void {
+  w.byte(8); w.u32(v.frames);
+}
+function decS_IkResult(r: Reader, end: number, o: any): T.IkResult {
+  let h_frames = false;
+  let v_frames: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_frames = r.u32(); h_frames = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_frames) throw new DecodeError('IkResult.frames: missing', 'missingField');
+  o.frames = v_frames;
+  return o;
+}
+function encS_PoseIk3D(w: Writer, v: T.PoseIk3D): void {
+  { const a = v.chain; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(18); w.str(v.target);
+  w.byte(24); w.i64(v.time);
+  if (v.options !== undefined) { w.byte(34); { const s = w.beginLd(); encS_IkOptions(w, v.options); w.endLd(s); } }
+}
+function decS_PoseIk3D(r: Reader, end: number, o: any): T.PoseIk3D {
+  const l_chain: string[] = [];
+  let h_target = false;
+  let h_time = false;
+  let v_target: string | undefined;
+  let v_time: number | undefined;
+  let v_options: T.IkOptions | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_chain.push(r.str()); break;
+      case 18: v_target = r.str(); h_target = true; break;
+      case 24: v_time = r.i64(); h_time = true; break;
+      case 34: v_options = decS_IkOptions(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_target) throw new DecodeError('PoseIk3D.target: missing', 'missingField');
+  if (!h_time) throw new DecodeError('PoseIk3D.time: missing', 'missingField');
+  o.chain = l_chain;
+  o.target = v_target;
+  o.time = v_time;
+  if (v_options !== undefined) o.options = v_options;
+  return o;
+}
+function encS_BakeIk3D(w: Writer, v: T.BakeIk3D): void {
+  { const a = v.chain; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(18); w.str(v.target);
+  w.byte(26); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  if (v.options !== undefined) { w.byte(34); { const s = w.beginLd(); encS_IkOptions(w, v.options); w.endLd(s); } }
+}
+function decS_BakeIk3D(r: Reader, end: number, o: any): T.BakeIk3D {
+  const l_chain: string[] = [];
+  let h_target = false;
+  let h_range = false;
+  let v_target: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  let v_options: T.IkOptions | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_chain.push(r.str()); break;
+      case 18: v_target = r.str(); h_target = true; break;
+      case 26: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 34: v_options = decS_IkOptions(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_target) throw new DecodeError('BakeIk3D.target: missing', 'missingField');
+  if (!h_range) throw new DecodeError('BakeIk3D.range: missing', 'missingField');
+  o.chain = l_chain;
+  o.target = v_target;
+  o.range = v_range;
+  if (v_options !== undefined) o.options = v_options;
+  return o;
+}
 function encS_DocumentFragment(w: Writer, v: T.DocumentFragment): void {
   w.byte(8); w.u32(v.version);
   w.byte(18); w.bytes(v.data);
@@ -4489,6 +4612,28 @@ function decS_DocumentFragment(r: Reader, end: number, o: any): T.DocumentFragme
   if (!h_data) throw new DecodeError('DocumentFragment.data: missing', 'missingField');
   o.version = v_version;
   o.data = v_data;
+  return o;
+}
+function encS_CreateLiveMerge(w: Writer, v: T.CreateLiveMerge): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(16); w.varint(enc_MergeOp(v.op));
+}
+function decS_CreateLiveMerge(r: Reader, end: number, o: any): T.CreateLiveMerge {
+  const l_layers: string[] = [];
+  let h_op = false;
+  let v_op: T.MergeOp | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      case 16: v_op = dec_MergeOp(r.varint()); h_op = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_op) throw new DecodeError('CreateLiveMerge.op: missing', 'missingField');
+  o.layers = l_layers;
+  o.op = v_op;
   return o;
 }
 function encS_LayerRef(w: Writer, v: T.LayerRef): void {
@@ -7765,6 +7910,7 @@ function encS_AudioAnalysisJob(w: Writer, v: T.AudioAnalysisJob): void {
   if (v.beatEvery !== undefined) { w.varint(5712); w.u32(v.beatEvery); }
   if (v.driver !== undefined) { w.varint(5722); w.str(v.driver); }
   if (v.driverComp !== undefined) { w.varint(5730); w.str(v.driverComp); }
+  if (v.amplitudeNull !== undefined) { w.varint(5736); w.bool(v.amplitudeNull); }
 }
 function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJob {
   let h_layer = false;
@@ -7790,6 +7936,7 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
   let v_beatEvery: number | undefined;
   let v_driver: string | undefined;
   let v_driverComp: string | undefined;
+  let v_amplitudeNull: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7810,6 +7957,7 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
       case 5712: v_beatEvery = r.u32(); break;
       case 5722: v_driver = r.str(); break;
       case 5730: v_driverComp = r.str(); break;
+      case 5736: v_amplitudeNull = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -7837,6 +7985,7 @@ function decS_AudioAnalysisJob(r: Reader, end: number, o: any): T.AudioAnalysisJ
   if (v_beatEvery !== undefined) o.beatEvery = v_beatEvery;
   if (v_driver !== undefined) o.driver = v_driver;
   if (v_driverComp !== undefined) o.driverComp = v_driverComp;
+  if (v_amplitudeNull !== undefined) o.amplitudeNull = v_amplitudeNull;
   return o;
 }
 function encS_AudioDuckJob(w: Writer, v: T.AudioDuckJob): void {
@@ -8177,6 +8326,72 @@ function decS_AutoReframeJob(r: Reader, end: number, o: any): T.AutoReframeJob {
   if (v_name !== undefined) o.name = v_name;
   if (v_deadZone !== undefined) o.deadZone = v_deadZone;
   if (v_lagSeconds !== undefined) o.lagSeconds = v_lagSeconds;
+  return o;
+}
+function encS_PhysicsBakeJob(w: Writer, v: T.PhysicsBakeJob): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  if (v.everyNFrames !== undefined) { w.byte(24); w.u32(v.everyNFrames); }
+  if (v.simplifyTolerance !== undefined) { w.byte(33); w.f64(v.simplifyTolerance); }
+}
+function decS_PhysicsBakeJob(r: Reader, end: number, o: any): T.PhysicsBakeJob {
+  const l_layers: string[] = [];
+  let h_range = false;
+  let v_range: T.TimeRange | undefined;
+  let v_everyNFrames: number | undefined;
+  let v_simplifyTolerance: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 24: v_everyNFrames = r.u32(); break;
+      case 33: v_simplifyTolerance = r.f64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_range) throw new DecodeError('PhysicsBakeJob.range: missing', 'missingField');
+  o.layers = l_layers;
+  o.range = v_range;
+  if (v_everyNFrames !== undefined) o.everyNFrames = v_everyNFrames;
+  if (v_simplifyTolerance !== undefined) o.simplifyTolerance = v_simplifyTolerance;
+  return o;
+}
+function encS_ParticleBakeJob(w: Writer, v: T.ParticleBakeJob): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  if (v.everyNFrames !== undefined) { w.byte(24); w.u32(v.everyNFrames); }
+  if (v.simplifyTolerance !== undefined) { w.byte(33); w.f64(v.simplifyTolerance); }
+  if (v.maxParticles !== undefined) { w.byte(40); w.u32(v.maxParticles); }
+}
+function decS_ParticleBakeJob(r: Reader, end: number, o: any): T.ParticleBakeJob {
+  let h_layer = false;
+  let h_range = false;
+  let v_layer: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  let v_everyNFrames: number | undefined;
+  let v_simplifyTolerance: number | undefined;
+  let v_maxParticles: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 24: v_everyNFrames = r.u32(); break;
+      case 33: v_simplifyTolerance = r.f64(); break;
+      case 40: v_maxParticles = r.u32(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('ParticleBakeJob.layer: missing', 'missingField');
+  if (!h_range) throw new DecodeError('ParticleBakeJob.range: missing', 'missingField');
+  o.layer = v_layer;
+  o.range = v_range;
+  if (v_everyNFrames !== undefined) o.everyNFrames = v_everyNFrames;
+  if (v_simplifyTolerance !== undefined) o.simplifyTolerance = v_simplifyTolerance;
+  if (v_maxParticles !== undefined) o.maxParticles = v_maxParticles;
   return o;
 }
 function encS_RigLogoJob(w: Writer, v: T.RigLogoJob): void {
@@ -9810,6 +10025,112 @@ function decS_PrecomposeCheck(r: Reader, end: number, o: any): T.PrecomposeCheck
   o.leaveAttributesReason = v_leaveAttributesReason;
   return o;
 }
+function encS_GetTimelineRows(w: Writer, v: T.GetTimelineRows): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+}
+function decS_GetTimelineRows(r: Reader, end: number, o: any): T.GetTimelineRows {
+  const l_layers: string[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.layers = l_layers;
+  return o;
+}
+function encS_TimelineRow(w: Writer, v: T.TimelineRow): void {
+  w.byte(10); w.str(v.prop);
+  w.byte(18); w.str(v.label);
+  w.byte(26); w.str(v.group);
+  { const a = v.members; for (let i = 0; i < a.length; i++) { w.byte(34); w.str(a[i]!); } }
+  if (v.merged !== undefined) { w.byte(42); w.str(v.merged); }
+  { const a = v.valueProps; for (let i = 0; i < a.length; i++) { w.byte(50); w.str(a[i]!); } }
+  if (v.valueUnit !== undefined) { w.byte(58); w.str(v.valueUnit); }
+  w.byte(64); w.bool(v.maskTrack);
+}
+function decS_TimelineRow(r: Reader, end: number, o: any): T.TimelineRow {
+  const l_members: string[] = [];
+  const l_valueProps: string[] = [];
+  let h_prop = false;
+  let h_label = false;
+  let h_group = false;
+  let h_maskTrack = false;
+  let v_prop: string | undefined;
+  let v_label: string | undefined;
+  let v_group: string | undefined;
+  let v_merged: string | undefined;
+  let v_valueUnit: string | undefined;
+  let v_maskTrack: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_prop = r.str(); h_prop = true; break;
+      case 18: v_label = r.str(); h_label = true; break;
+      case 26: v_group = r.str(); h_group = true; break;
+      case 34: l_members.push(r.str()); break;
+      case 42: v_merged = r.str(); break;
+      case 50: l_valueProps.push(r.str()); break;
+      case 58: v_valueUnit = r.str(); break;
+      case 64: v_maskTrack = r.bool(); h_maskTrack = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_prop) throw new DecodeError('TimelineRow.prop: missing', 'missingField');
+  if (!h_label) throw new DecodeError('TimelineRow.label: missing', 'missingField');
+  if (!h_group) throw new DecodeError('TimelineRow.group: missing', 'missingField');
+  if (!h_maskTrack) throw new DecodeError('TimelineRow.maskTrack: missing', 'missingField');
+  o.prop = v_prop;
+  o.label = v_label;
+  o.group = v_group;
+  o.members = l_members;
+  if (v_merged !== undefined) o.merged = v_merged;
+  o.valueProps = l_valueProps;
+  if (v_valueUnit !== undefined) o.valueUnit = v_valueUnit;
+  o.maskTrack = v_maskTrack;
+  return o;
+}
+function encS_TimelineRowSet(w: Writer, v: T.TimelineRowSet): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.rows; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_TimelineRow(w, a[i]!); w.endLd(s); } } }
+}
+function decS_TimelineRowSet(r: Reader, end: number, o: any): T.TimelineRowSet {
+  const l_rows: T.TimelineRow[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_rows.push(decS_TimelineRow(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('TimelineRowSet.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.rows = l_rows;
+  return o;
+}
+function encS_TimelineRowSets(w: Writer, v: T.TimelineRowSets): void {
+  { const a = v.sets; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_TimelineRowSet(w, a[i]!); w.endLd(s); } } }
+}
+function decS_TimelineRowSets(r: Reader, end: number, o: any): T.TimelineRowSets {
+  const l_sets: T.TimelineRowSet[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_sets.push(decS_TimelineRowSet(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.sets = l_sets;
+  return o;
+}
 function encS_RigBoneWeight(w: Writer, v: T.RigBoneWeight): void {
   w.byte(10); w.str(v.bone);
   w.byte(17); w.f64(v.weight);
@@ -11308,6 +11629,78 @@ function decS_GlyphBox(r: Reader, end: number, o: any): T.GlyphBox {
   o.box = v_box;
   o.baseline = v_baseline;
   o.advance = v_advance;
+  return o;
+}
+function encS_LayerFace(w: Writer, v: T.LayerFace): void {
+  w.byte(10); w.str(v.kind);
+  w.byte(18); w.str(v.suffix);
+  { const a = v.points; for (let i = 0; i < a.length; i++) { w.byte(26); { const s = w.beginLd(); encS_Vec3(w, a[i]!); w.endLd(s); } } }
+  { const a = v.verts; if (a.length) { w.byte(34); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u32(a[i]!); w.endLd(s); } }
+}
+function decS_LayerFace(r: Reader, end: number, o: any): T.LayerFace {
+  const l_points: T.Vec3[] = [];
+  const l_verts: number[] = [];
+  let h_kind = false;
+  let h_suffix = false;
+  let v_kind: string | undefined;
+  let v_suffix: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_kind = r.str(); h_kind = true; break;
+      case 18: v_suffix = r.str(); h_suffix = true; break;
+      case 26: l_points.push(decS_Vec3(r, r.ldEnd(), {})); break;
+      case 34: { const e = r.ldEnd(); while (r.pos < e) l_verts.push(r.u32()); r.expectAt(e); break; }
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_kind) throw new DecodeError('LayerFace.kind: missing', 'missingField');
+  if (!h_suffix) throw new DecodeError('LayerFace.suffix: missing', 'missingField');
+  o.kind = v_kind;
+  o.suffix = v_suffix;
+  o.points = l_points;
+  o.verts = l_verts;
+  return o;
+}
+function encS_LayerFaces(w: Writer, v: T.LayerFaces): void {
+  { const a = v.faces; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_LayerFace(w, a[i]!); w.endLd(s); } } }
+}
+function decS_LayerFaces(r: Reader, end: number, o: any): T.LayerFaces {
+  const l_faces: T.LayerFace[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_faces.push(decS_LayerFace(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.faces = l_faces;
+  return o;
+}
+function encS_GetLayerFaces(w: Writer, v: T.GetLayerFaces): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(16); w.i64(v.time);
+}
+function decS_GetLayerFaces(r: Reader, end: number, o: any): T.GetLayerFaces {
+  let h_layer = false;
+  let h_time = false;
+  let v_layer: string | undefined;
+  let v_time: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 16: v_time = r.i64(); h_time = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('GetLayerFaces.layer: missing', 'missingField');
+  if (!h_time) throw new DecodeError('GetLayerFaces.time: missing', 'missingField');
+  o.layer = v_layer;
+  o.time = v_time;
   return o;
 }
 function encS_HitTest(w: Writer, v: T.HitTest): void {
@@ -15618,6 +16011,8 @@ function encU_JobSpec(w: Writer, v: T.JobSpec): void {
     case 'contentAwareFill': w.varint(13706); { const s = w.beginLd(); encS_ContentAwareFillJob(w, v.value); w.endLd(s); } return;
     case 'autoReframe': w.varint(13714); { const s = w.beginLd(); encS_AutoReframeJob(w, v.value); w.endLd(s); } return;
     case 'rigLogo': w.varint(13722); { const s = w.beginLd(); encS_RigLogoJob(w, v.value); w.endLd(s); } return;
+    case 'physicsBake': w.varint(13730); { const s = w.beginLd(); encS_PhysicsBakeJob(w, v.value); w.endLd(s); } return;
+    case 'particleBake': w.varint(13738); { const s = w.beginLd(); encS_ParticleBakeJob(w, v.value); w.endLd(s); } return;
     default: throw new RangeError('JobSpec: unknown kind ' + String((v as { kind?: unknown }).kind));
   }
 }
@@ -15644,6 +16039,8 @@ function decU_JobSpec(r: Reader, end: number): T.JobSpec {
       case 13706: out = { kind: 'contentAwareFill', value: decS_ContentAwareFillJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13714: out = { kind: 'autoReframe', value: decS_AutoReframeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13722: out = { kind: 'rigLogo', value: decS_RigLogoJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13730: out = { kind: 'physicsBake', value: decS_PhysicsBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13738: out = { kind: 'particleBake', value: decS_ParticleBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       default: r.skip(key);
     }
   }
@@ -15837,6 +16234,10 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_SetOverlayGeometry(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_SetContentAwareFill(w, v); w.endLd(s); } return;
     case 'setCaptions': w.varint(14826); { const s = w.beginLd(); encS_SetCaptions(w, v); w.endLd(s); } return;
+    case 'poseIk3D': w.varint(15522); { const s = w.beginLd(); encS_PoseIk3D(w, v); w.endLd(s); } return;
+    case 'bakeIk3D': w.varint(15530); { const s = w.beginLd(); encS_BakeIk3D(w, v); w.endLd(s); } return;
+    case 'createLiveMerge': w.varint(15538); { const s = w.beginLd(); encS_CreateLiveMerge(w, v); w.endLd(s); } return;
+    case 'migrateLegacyPrecomps': w.varint(15546); { const s = w.beginLd(); encS_MigrateLegacyPrecomps(w, v); w.endLd(s); } return;
     default: throw new RangeError('Command: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16000,6 +16401,10 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 14170: out = decS_SetOverlayGeometry(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.Command; break;
       case 14818: out = decS_SetContentAwareFill(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.Command; break;
       case 14826: out = decS_SetCaptions(r, r.ldEnd(), { type: 'setCaptions' }) as T.Command; break;
+      case 15522: out = decS_PoseIk3D(r, r.ldEnd(), { type: 'poseIk3D' }) as T.Command; break;
+      case 15530: out = decS_BakeIk3D(r, r.ldEnd(), { type: 'bakeIk3D' }) as T.Command; break;
+      case 15538: out = decS_CreateLiveMerge(r, r.ldEnd(), { type: 'createLiveMerge' }) as T.Command; break;
+      case 15546: out = decS_MigrateLegacyPrecomps(r, r.ldEnd(), { type: 'migrateLegacyPrecomps' }) as T.Command; break;
       default: r.skip(key);
     }
   }
@@ -16163,6 +16568,10 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setCaptions': w.varint(14826); { const s = w.beginLd(); encS_LayerList(w, v); w.endLd(s); } return;
+    case 'poseIk3D': w.varint(15522); { const s = w.beginLd(); encS_IkResult(w, v); w.endLd(s); } return;
+    case 'bakeIk3D': w.varint(15530); { const s = w.beginLd(); encS_IkResult(w, v); w.endLd(s); } return;
+    case 'createLiveMerge': w.varint(15538); { const s = w.beginLd(); encS_LayerRef(w, v); w.endLd(s); } return;
+    case 'migrateLegacyPrecomps': w.varint(15546); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
     default: throw new RangeError('CommandResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16326,6 +16735,10 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 14170: out = decS_Empty(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.CommandResult; break;
       case 14818: out = decS_Empty(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.CommandResult; break;
       case 14826: out = decS_LayerList(r, r.ldEnd(), { type: 'setCaptions' }) as T.CommandResult; break;
+      case 15522: out = decS_IkResult(r, r.ldEnd(), { type: 'poseIk3D' }) as T.CommandResult; break;
+      case 15530: out = decS_IkResult(r, r.ldEnd(), { type: 'bakeIk3D' }) as T.CommandResult; break;
+      case 15538: out = decS_LayerRef(r, r.ldEnd(), { type: 'createLiveMerge' }) as T.CommandResult; break;
+      case 15546: out = decS_ItemList(r, r.ldEnd(), { type: 'migrateLegacyPrecomps' }) as T.CommandResult; break;
       default: r.skip(key);
     }
   }
@@ -16384,6 +16797,8 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'getSourceSize': w.varint(15466); { const s = w.beginLd(); encS_GetSourceSize(w, v); w.endLd(s); } return;
     case 'checkPrecompose': w.varint(15474); { const s = w.beginLd(); encS_CheckPrecompose(w, v); w.endLd(s); } return;
     case 'renderDocumentStill': w.varint(15482); { const s = w.beginLd(); encS_RenderDocumentStill(w, v); w.endLd(s); } return;
+    case 'getLayerFaces': w.varint(15490); { const s = w.beginLd(); encS_GetLayerFaces(w, v); w.endLd(s); } return;
+    case 'getTimelineRows': w.varint(15498); { const s = w.beginLd(); encS_GetTimelineRows(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16442,6 +16857,8 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 15466: out = decS_GetSourceSize(r, r.ldEnd(), { type: 'getSourceSize' }) as T.Query; break;
       case 15474: out = decS_CheckPrecompose(r, r.ldEnd(), { type: 'checkPrecompose' }) as T.Query; break;
       case 15482: out = decS_RenderDocumentStill(r, r.ldEnd(), { type: 'renderDocumentStill' }) as T.Query; break;
+      case 15490: out = decS_GetLayerFaces(r, r.ldEnd(), { type: 'getLayerFaces' }) as T.Query; break;
+      case 15498: out = decS_GetTimelineRows(r, r.ldEnd(), { type: 'getTimelineRows' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -16500,6 +16917,8 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'getSourceSize': w.varint(15466); { const s = w.beginLd(); encS_SourceSizes(w, v); w.endLd(s); } return;
     case 'checkPrecompose': w.varint(15474); { const s = w.beginLd(); encS_PrecomposeCheck(w, v); w.endLd(s); } return;
     case 'renderDocumentStill': w.varint(15482); { const s = w.beginLd(); encS_Thumbnail(w, v); w.endLd(s); } return;
+    case 'getLayerFaces': w.varint(15490); { const s = w.beginLd(); encS_LayerFaces(w, v); w.endLd(s); } return;
+    case 'getTimelineRows': w.varint(15498); { const s = w.beginLd(); encS_TimelineRowSets(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16558,6 +16977,8 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 15466: out = decS_SourceSizes(r, r.ldEnd(), { type: 'getSourceSize' }) as T.QueryResult; break;
       case 15474: out = decS_PrecomposeCheck(r, r.ldEnd(), { type: 'checkPrecompose' }) as T.QueryResult; break;
       case 15482: out = decS_Thumbnail(r, r.ldEnd(), { type: 'renderDocumentStill' }) as T.QueryResult; break;
+      case 15490: out = decS_LayerFaces(r, r.ldEnd(), { type: 'getLayerFaces' }) as T.QueryResult; break;
+      case 15498: out = decS_TimelineRowSets(r, r.ldEnd(), { type: 'getTimelineRows' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -16766,6 +17187,7 @@ export const codecs = {
   TrimCompToWorkArea: mk<T.TrimCompToWorkArea>(encS_TrimCompToWorkArea, (r, e) => decS_TrimCompToWorkArea(r, e, {})),
   CropComposition: mk<T.CropComposition>(encS_CropComposition, (r, e) => decS_CropComposition(r, e, {})),
   AssembleComposition: mk<T.AssembleComposition>(encS_AssembleComposition, (r, e) => decS_AssembleComposition(r, e, {})),
+  MigrateLegacyPrecomps: mk<T.MigrateLegacyPrecomps>(encS_MigrateLegacyPrecomps, (r, e) => decS_MigrateLegacyPrecomps(r, e, {})),
   PrecomposeResult: mk<T.PrecomposeResult>(encS_PrecomposeResult, (r, e) => decS_PrecomposeResult(r, e, {})),
   RenderSettings: mk<T.RenderSettings>(encS_RenderSettings, (r, e) => decS_RenderSettings(r, e, {})),
   RenderSettingsPatch: mk<T.RenderSettingsPatch>(encS_RenderSettingsPatch, (r, e) => decS_RenderSettingsPatch(r, e, {})),
@@ -16797,7 +17219,12 @@ export const codecs = {
   SeparateLayer: mk<T.SeparateLayer>(encS_SeparateLayer, (r, e) => decS_SeparateLayer(r, e, {})),
   AutoTrace: mk<T.AutoTrace>(encS_AutoTrace, (r, e) => decS_AutoTrace(r, e, {})),
   SetLayerComment: mk<T.SetLayerComment>(encS_SetLayerComment, (r, e) => decS_SetLayerComment(r, e, {})),
+  IkOptions: mk<T.IkOptions>(encS_IkOptions, (r, e) => decS_IkOptions(r, e, {})),
+  IkResult: mk<T.IkResult>(encS_IkResult, (r, e) => decS_IkResult(r, e, {})),
+  PoseIk3D: mk<T.PoseIk3D>(encS_PoseIk3D, (r, e) => decS_PoseIk3D(r, e, {})),
+  BakeIk3D: mk<T.BakeIk3D>(encS_BakeIk3D, (r, e) => decS_BakeIk3D(r, e, {})),
   DocumentFragment: mk<T.DocumentFragment>(encS_DocumentFragment, (r, e) => decS_DocumentFragment(r, e, {})),
+  CreateLiveMerge: mk<T.CreateLiveMerge>(encS_CreateLiveMerge, (r, e) => decS_CreateLiveMerge(r, e, {})),
   LayerRef: mk<T.LayerRef>(encS_LayerRef, (r, e) => decS_LayerRef(r, e, {})),
   LayerList: mk<T.LayerList>(encS_LayerList, (r, e) => decS_LayerList(r, e, {})),
   GroupList: mk<T.GroupList>(encS_GroupList, (r, e) => decS_GroupList(r, e, {})),
@@ -16923,6 +17350,8 @@ export const codecs = {
   RotoBrushJob: mk<T.RotoBrushJob>(encS_RotoBrushJob, (r, e) => decS_RotoBrushJob(r, e, {})),
   ContentAwareFillJob: mk<T.ContentAwareFillJob>(encS_ContentAwareFillJob, (r, e) => decS_ContentAwareFillJob(r, e, {})),
   AutoReframeJob: mk<T.AutoReframeJob>(encS_AutoReframeJob, (r, e) => decS_AutoReframeJob(r, e, {})),
+  PhysicsBakeJob: mk<T.PhysicsBakeJob>(encS_PhysicsBakeJob, (r, e) => decS_PhysicsBakeJob(r, e, {})),
+  ParticleBakeJob: mk<T.ParticleBakeJob>(encS_ParticleBakeJob, (r, e) => decS_ParticleBakeJob(r, e, {})),
   RigLogoJob: mk<T.RigLogoJob>(encS_RigLogoJob, (r, e) => decS_RigLogoJob(r, e, {})),
   JobSpec: mk<T.JobSpec>(encU_JobSpec, decU_JobSpec),
   StartJob: mk<T.StartJob>(encS_StartJob, (r, e) => decS_StartJob(r, e, {})),
@@ -16974,6 +17403,10 @@ export const codecs = {
   SourceSizes: mk<T.SourceSizes>(encS_SourceSizes, (r, e) => decS_SourceSizes(r, e, {})),
   CheckPrecompose: mk<T.CheckPrecompose>(encS_CheckPrecompose, (r, e) => decS_CheckPrecompose(r, e, {})),
   PrecomposeCheck: mk<T.PrecomposeCheck>(encS_PrecomposeCheck, (r, e) => decS_PrecomposeCheck(r, e, {})),
+  GetTimelineRows: mk<T.GetTimelineRows>(encS_GetTimelineRows, (r, e) => decS_GetTimelineRows(r, e, {})),
+  TimelineRow: mk<T.TimelineRow>(encS_TimelineRow, (r, e) => decS_TimelineRow(r, e, {})),
+  TimelineRowSet: mk<T.TimelineRowSet>(encS_TimelineRowSet, (r, e) => decS_TimelineRowSet(r, e, {})),
+  TimelineRowSets: mk<T.TimelineRowSets>(encS_TimelineRowSets, (r, e) => decS_TimelineRowSets(r, e, {})),
   RigBoneWeight: mk<T.RigBoneWeight>(encS_RigBoneWeight, (r, e) => decS_RigBoneWeight(r, e, {})),
   GetRigPose: mk<T.GetRigPose>(encS_GetRigPose, (r, e) => decS_GetRigPose(r, e, {})),
   RigPose: mk<T.RigPose>(encS_RigPose, (r, e) => decS_RigPose(r, e, {})),
@@ -17026,6 +17459,9 @@ export const codecs = {
   LayerBounds: mk<T.LayerBounds>(encS_LayerBounds, (r, e) => decS_LayerBounds(r, e, {})),
   LayerTransform: mk<T.LayerTransform>(encS_LayerTransform, (r, e) => decS_LayerTransform(r, e, {})),
   GlyphBox: mk<T.GlyphBox>(encS_GlyphBox, (r, e) => decS_GlyphBox(r, e, {})),
+  LayerFace: mk<T.LayerFace>(encS_LayerFace, (r, e) => decS_LayerFace(r, e, {})),
+  LayerFaces: mk<T.LayerFaces>(encS_LayerFaces, (r, e) => decS_LayerFaces(r, e, {})),
+  GetLayerFaces: mk<T.GetLayerFaces>(encS_GetLayerFaces, (r, e) => decS_GetLayerFaces(r, e, {})),
   HitTest: mk<T.HitTest>(encS_HitTest, (r, e) => decS_HitTest(r, e, {})),
   GetLayerBounds: mk<T.GetLayerBounds>(encS_GetLayerBounds, (r, e) => decS_GetLayerBounds(r, e, {})),
   GetLayerTransforms: mk<T.GetLayerTransforms>(encS_GetLayerTransforms, (r, e) => decS_GetLayerTransforms(r, e, {})),

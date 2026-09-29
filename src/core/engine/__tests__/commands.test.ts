@@ -36,6 +36,24 @@ function paintStroke(layer: string): Command {
   };
 }
 
+/** A 3D chain (root → elbow → tip) and a target null, for the IK cases. */
+async function ikRig(s: Scene, h: Harness): Promise<{ chain: string[]; target: string }> {
+  const mk = async (name: string, x: number): Promise<string> => {
+    const { layer } = await h.run({ type: 'createLayer', comp: s.comp, kind: 'null', name, init: [] });
+    await h.run({ type: 'setLayerSwitches', layers: [layer], patch: { threeD: true } });
+    await h.run({ type: 'setProperty', prop: { layer, path: 'transform/position' }, value: { kind: 'vec3', value: { x, y: 0, z: 0 } } });
+    return layer;
+  };
+  const root = await mk('Root', 100);
+  const elbow = await mk('Elbow', 200);
+  const tip = await mk('Tip', 300);
+  await h.run({ type: 'setParent', layers: [elbow], parent: root, keepWorldTransform: true });
+  await h.run({ type: 'setParent', layers: [tip], parent: elbow, keepWorldTransform: true });
+  const target = await mk('Target', 150);
+  await h.run({ type: 'addKeyframes', keys: [0, 1].map((t) => ({ prop: { layer: target, path: 'transform/position' }, time: sec(t), value: { kind: 'vec3', value: { x: 150, y: 120 * t, z: 0 } }, spatialIn: [], spatialOut: [] })) });
+  return { chain: [root, elbow, tip], target };
+}
+
 export const CASES: Partial<Record<CommandType, Case>> = {
   // ── Project ──
   setProjectSettings: { cmd: () => ({ type: 'setProjectSettings', patch: { timeDisplay: 'frames', framesStartAt: 1 } }) },
@@ -362,6 +380,12 @@ export const CASES: Partial<Record<CommandType, Case>> = {
   setColorManagement: { cmd: () => ({ type: 'setColorManagement', patch: { workingSpace: 'acesCg', displayTransform: 'pq', bitDepth: 32 } }) },
   applyJobResult: { cmd: () => ({ type: 'applyJobResult', job: 'job1' }), fails: 'notFound' },
   setPluginData: { cmd: (s) => ({ type: 'setPluginData', layer: s.A, group: `effects/${s.fx}`, key: 'state', data: new Uint8Array([1, 2, 3, 250]) }) },
+  // B4 round 8 — 3D IK over a two-joint chain of 3D nulls aimed at a third.
+  poseIk3D: { cmd: async (s, h) => ({ type: 'poseIk3D', ...(await ikRig(s, h)), time: sec(1) }) },
+  bakeIk3D: { cmd: async (s, h) => ({ type: 'bakeIk3D', ...(await ikRig(s, h)), range: { start: 0, duration: sec(0.5) } }) },
+  // B4 round 8 — engine-only (the conversion geometry's polygon booleans; the TS engine has no handler).
+  createLiveMerge: { cmd: (s) => ({ type: 'createLiveMerge', layers: [s.A, s.B], op: 'union' }), fails: 'unsupported' },
+  migrateLegacyPrecomps: { cmd: () => ({ type: 'migrateLegacyPrecomps' }), fails: 'unsupported' },
   setCaptions: { cmd: (s) => ({ type: 'setCaptions', comp: s.comp, cues: [{ start: 0, end: sec(1), text: 'Hello' }] }), fails: 'unsupported' },
   setContentAwareFill: { cmd: (s) => ({ type: 'setContentAwareFill', layer: s.A, frames: [{ time: 0, src: 'file:///fill/frame_00000.png' }, { time: 705_600_000, src: 'file:///fill/frame_00001.png' }] }) },
 };
@@ -374,7 +398,7 @@ const edits = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t]
 
 test('every edit command in the schema has a case', () => {
   expect(edits.filter((t) => !CASES[t])).toEqual([]);
-  expect(edits.length).toBe(122);
+  expect(edits.length).toBe(126);
 });
 
 describe.each(edits)('%s', (type) => {

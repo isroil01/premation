@@ -120,30 +120,16 @@ describe('an AI turn on the engine', () => {
     expect(h.doc()).toBe(after);
   });
 
-  it('merge_paths is one engine entry: the result pasted, the operands flagged and hidden', async () => {
-    const before = h.doc();
+  // merge_paths sends the engine's createLiveMerge (B4 round 8): the C++ engine's polygon booleans
+  // make the result (facesMergeNative.test); the TypeScript engine refuses it and the tool says so.
+  it('merge_paths sends createLiveMerge; an engine without polygon booleans refuses it', async () => {
     const r = await runToolTurn('AI: merge', [
       { name: 'create_layer', args: { id: 'ma', kind: 'shape', shape: 'rect', name: 'A', x: 100, y: 100, width: 80, height: 80 } },
       { name: 'create_layer', args: { id: 'mb', kind: 'shape', shape: 'rect', name: 'B', x: 140, y: 100, width: 80, height: 80 } },
       { name: 'merge_paths', args: { op: 'union', nodeIds: ['ma', 'mb'] } },
     ]);
-    expect(r.results.map((x) => x.ok ? 'ok' : x.content)).toEqual(['ok', 'ok', 'ok']);
-    expect(r.outcome).toEqual({ kind: 'engine', gaps: [] });
-    expect(historyLabels()).toEqual(['AI: merge']);
-    const resultId = (r.results[2]!.data as { resultIds: string[] }).resultIds[0]!;
-    const result = defaultSceneGraph.getNode(resultId)!;
-    const fx = result.components.find((c) => c.type === 'fx')!.props;
-    expect(fx.booleanOp).toBe('union');
-    // The engine mints the layer ids; the model's aliases ('ma', 'mb') resolve to them.
-    const operands = [0, 1].map((i) => (r.results[i]!.data as { id: string }).id);
-    expect(fx.booleanSources).toEqual(operands);
-    for (const id of operands) {
-      const n = defaultSceneGraph.getNode(id)!;
-      expect(n.visible).toBe(false);
-      expect(n.components.find((c) => c.type === 'fx')?.props.booleanOperand).toBe(true);
-    }
-    await h.run({ type: 'undo' });
-    expect(h.doc()).toBe(before);
+    expect(r.results.slice(0, 2).every((x) => x.ok)).toBe(true);
+    expect(r.results[2]!.ok).toBe(false);
   });
 
   it('B5: polystars, text animators, masks, path operators, styles, rigs and a group time remap stay on the engine', async () => {

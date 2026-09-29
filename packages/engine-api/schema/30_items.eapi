@@ -203,6 +203,8 @@ command trimCompToWorkArea = 105 { comp: ItemId = 1; }
 command cropComposition = 106 { comp: ItemId = 1; region: Rect = 2; }
 /// Build a composition from clips laid end to end (Assemble / New Comp from Selection ▸ sequence).
 command assembleComposition = 107 { items: ItemId[] = 1; name: string = 2; overlap: Time = 3; } -> ItemRef;
+/// B4 round 8 — a legacy in-place precomp GROUP (a precomp-flagged group carrying its own layers, placing no composition) that never got a settings record becomes a composition: the record opening it in a tab would have made (its name; the enclosing composition's size, rate and duration) and a timeline, so getDocument lists it and its layers. The UI sends it once after an open; nothing to migrate = no history entry. Returns the migrated ids.
+command migrateLegacyPrecomps = 1943 {} -> ItemList;
 
 struct PrecomposeResult { comp: ItemId = 1; layer: LayerId = 2; }
 

@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "canvas.hpp"
 #include "model.hpp"
@@ -38,6 +39,18 @@ namespace premation::scene {
 /// The field texture's spec (AppTextureProvider.setParticles' inputs).
 [[nodiscard]] Json particle_field_spec(const Json& cfg, double timeSec, double fieldW, double fieldH, double transformScale,
                                        double rasterScale, double fps);
+
+/// One live particle as the bake reads it (bakeDynamics.ts sampleParticleLayers):
+/// emitter-local px with the emitter box's centre at the origin, `index` the birth index.
+struct ParticleSample {
+  double index = 0;
+  double x = 0, y = 0, size = 0, opacity = 0;
+};
+
+/// bakeDynamics.ts `particlesAtFrame`: the renderer's own two entry points by sim
+/// mode — ballistic `simulateParticles(cfg, frame / fps)`, stateful the cached
+/// history keyed `key` (`particlesFromSoA(stateAt(frame))`).
+[[nodiscard]] std::vector<ParticleSample> particles_at_frame(const Json& cfg, double frame, double fps, const std::string& key);
 
 /// `drawParticleField` into a fresh canvas sized by the spec's scale. `mediaBase`
 /// resolves a relative sprite source; a sprite that does not decode draws the

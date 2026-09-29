@@ -510,6 +510,8 @@ The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 | `prerender` | — | `importFiles` of the rendered files ("Pre-render") | `{outputs}` |
 | `rotoBrush` | rotoBrush.ts | one "Roto Brush" mask, a path key per frame ("Roto Brush") | `{frames, keyframes}` |
 | `contentAwareFill` | contentAwareFillVideo.ts | PNGs under `Content-Aware Fill/` + `setContentAwareFill` | `{frames, filledPixels}` |
+| `physicsBake` | bakeDynamics.ts (samplePhysicsTracks) over rigid_body.cpp | every enabled body of the composition seeds the renderer's solver (flatten order, authored pose; world gravity 0 / 1800, comp walls, 4 passes); each requested DYNAMIC body's position (and rotation for a spinning body) keyed per sampled frame, linear with the last key held, Douglas-Peucker thinned by `simplifyTolerance`; `layer/physics` set `enabled:false` ("Bake physics to keyframes") | `{layers, frames, tracks, keyframes}` |
+| `particleBake` | bakeDynamics.ts (sampleParticleLayers) over particle_port.cpp (`particles_at_frame`, birth index) | a "<emitter> Baked" null parented to the emitter; one ellipse / rectangle per particle (earliest born, `maxParticles` default 200) at its first-seen size in the start colour, keyed x / y / scale / opacity (a zero hold one frame outside its life); the emitter hidden ("Bake particles to layers"). The config is resolved per frame on the core thread (`JobDocContext.layerValues`: the emitter's `particle.<key>` tracks) | `{containerId, layerIds, seen, capped, particles, keyframes}` |
 | `autoReframe` | autoReframe.ts (saliency, reframePath) | a NEW composition holding the source as a precomp, the pan keyed on separated position ("Auto-reframe"); the source comp is rendered small by a child `--export` (PNG frames read through the OS still codec) | `{samples, cuts, keyframes, comp, layer}` |
 | `rigLogo` | scene/rigLogo.ts | one image / shape layer holding nothing: two puppet pins, "Anchor" (bottom centre) and "Wave" (top centre); anything else: the selection drawn alone together (`isolateLayers`) on a transparent comp by a child `--export`, cropped to its pixels + 4 px, `importBytes` (`derived`), an image layer "<name> (Rigged)" where it drew above the topmost selected layer, then the pins ("Rig Logo for Animation") | `{mode: 'self' \| 'rasterize', layer, item?, width?, height?}` |
 | `transcribe` | captions/transcribe.ts + electron/aiProxy.ts transcribeAudio | nothing (the caption commands build layers from the cues; `createCaptions` must be false). 2026-09-28: `comp`'s sound over `range` mixed by a child `--export` (`audioOnly`: the export's offline mix, no picture preflight), 16 kHz mono WAV, POSTed to OpenAI whisper-1 (`verbose_json`, segment + word timings) over the OS HTTP stack (WinHTTP / libcurl, no redirects). The key: `credential`, written into the request by Electron MAIN from its keystore as it passes (engineHost `transcribeCredential`); the page never has it, main logs the request without it, the engine drops it from its log and never persists or returns it. Errors carry aiProxy's code in `detail` (`{"code":"no_key" / "auth" / "rate_limit" / "network" / "silent" / "empty" …}`) | `{cues:[{start,end,text}], words:[…], language}` (composition seconds, cues de-overlapped) |
@@ -2367,6 +2369,61 @@ from the struct's maximum + 800.
 - Parity: the d1 / undo fixtures were re-blessed for this; the differing
   records were VALUE-only and confined to the two paint sessions (G2 "paint
   stroke normalisation", B3 "paint strokes") — no outcome or step moved.
+
+### 15.16 B4 round 8 — the row projection and 3D IK in the engine (both engines, 2026-09-29)
+
+- **`getTimelineRows {layers}`** (1937 → `TimelineRowSets`): the timeline's
+  After Effects row projection of each layer — both engines' static property
+  tree (TS `propertyTree.ts buildStaticPropertyTree`, C++ `ptree.cpp
+  build_static_property_tree`, which now carries `valueProps`): the rows in
+  AE's twirl order, each with `members` (the tracks its stopwatch keys),
+  `merged` (Position's pseudo track), `valueProps`, `valueUnit` and
+  `maskTrack`. Unknown ids answer no set. The timeline's property rows, the
+  E / M / MM / F reveal keys and UU read it (`stores/timelineRows.ts`);
+  `timelineRowsNative.test` compares both engines field by field.
+- **`poseIk3D {chain, target, time, options?}`** (1940) and **`bakeIk3D
+  {chain, target, range, options?}`** (1941) → `IkResult {frames}`: 3D IK on
+  ordinary layers (boneIK3d.ts; C++ `handlers_dynamics.cpp`). CCD over a parent
+  chain of 3D layers (root → tip; the tip is the end effector) aimed at the
+  target's world origin; the pose writes every joint but the tip's X / Y / Z
+  Rotation at `time` (setProperty rules), the bake solves every composition
+  frame of the range (each solve seeded by the previous) and replaces those
+  rotations with one linear key per frame. `IkOptions {iterations, tolerance,
+  maxStepRad}` default to 12 / 0.5 px / 0.6 rad. One entry each;
+  `ikNative.test` compares the solved angles of both engines.
+- **`AudioAnalysisJob.amplitudeNull`** (717): After Effects' Convert Audio to
+  Keyframes — the job's result creates a "<layer> Amplitude" null in the
+  layer's composition with three Slider Controls (Both Channels / Left /
+  Right), each keyed from its channel's envelope at composition time through
+  the layer's bar; one entry. The summary's `amplitudeNull` counts the keys
+  per channel. The Animation menu command sends it (`audioAmplitudeNullEdit`).
+- **`physicsBake`** (1716) / **`particleBake`** (1717) job kinds (§4.9 table):
+  Bake Physics to Keyframes and Bake Particles to Layers run in the engine
+  (`kind_dynamics_bake.cpp`), sampling the renderer's own solvers; the
+  Inspector's bake dialogs and the palette commands send them
+  (`layout/Inspector/bakeEdits.ts`). `dynamicsBakeNative.test` holds them to
+  the TypeScript reference samplers on seeded cases. The C++ particle carries
+  its birth index (`Particle.index`) for the bake's grouping.
+- **`getLayerFaces {layer, time}`** (1936 → `LayerFaces`): face picking's
+  geometry (facePicking.ts `projectedFaces` before its projection) — an
+  extruded 3D layer's faces in WORLD px from the frame builder's snapshot: the
+  renderer's extrusion mesh with its front cap (one face per triangle, `verts`
+  its vertex indices), else the flat quads of the fallback and the inset front
+  cap; empty for a layer with no extrusion. The viewport projects them through
+  the view it shows (`layout/Workspace/layerFaces.ts`, `projectWorldFaces`).
+  `unsupported` without the frame builder (the TypeScript engine).
+- **`createLiveMerge {layers, op}`** (1942 → `LayerRef`, `MergeOp` union |
+  subtract | intersect | exclude): Merge Paths ▸ Live <op> in one command
+  (planLiveMerge + liveMergeCommands.ts, the latter deleted): the closed
+  operands (the conversion geometry's polygon-boolean probe) flagged
+  `layer/booleanOperand` and hidden, a "Boolean (<op>)" result above the first
+  operand. `invalidArgument` for fewer than two closed paths / an empty
+  boolean; `unsupported` in the TypeScript engine.
+- **`migrateLegacyPrecomps {}`** (1943 → `ItemList`): legacy in-place precomp
+  groups without a settings record get one (their name; the enclosing comp's
+  size, rate, duration) and a timeline, so getDocument lists them and their
+  layers. The document session sends it after every open / recovery; nothing
+  to migrate records no entry. `unsupported` in the TypeScript engine.
 
 
 ## 16. Files

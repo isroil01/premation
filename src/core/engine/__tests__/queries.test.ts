@@ -16,7 +16,7 @@ beforeEach(async () => {
 afterEach(async () => { await h.dispose(); });
 
 /** Queries the TypeScript engine cannot answer from document data (they need the renderer). */
-const UNSUPPORTED: QueryType[] = ['getWaveform', 'getThumbnail', 'renderDocumentStill', 'hitTest', 'readPixels'];
+const UNSUPPORTED: QueryType[] = ['getWaveform', 'getThumbnail', 'renderDocumentStill', 'hitTest', 'readPixels', 'getLayerFaces'];
 /** Measured with the page's canvas: answered where the test canvas has metrics, `unsupported` where it has none. */
 const NEEDS_METRICS: QueryType[] = ['getTextLayout'];
 
@@ -41,6 +41,8 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
   mapLayerTime: (x) => ({ type: 'mapLayerTime', layer: x.A, time: sec(1), outward: false }),
   getSourceSize: (x) => ({ type: 'getSourceSize', layers: [x.A, x.V] }),
   checkPrecompose: (x) => ({ type: 'checkPrecompose', comp: x.comp, layers: [x.A] }),
+  getTimelineRows: (x) => ({ type: 'getTimelineRows', layers: [x.A, x.T] }),
+  getLayerFaces: (x) => ({ type: 'getLayerFaces', layer: x.A, time: 0 }),
   getWaveform: (x) => ({ type: 'getWaveform', layer: x.V, range: { start: 0, duration: sec(1) }, buckets: 10 }),
   listFonts: () => ({ type: 'listFonts', query: '' }),
   getItems: (x) => ({ type: 'getItems', items: [x.footage, x.comp2, x.folder] }),
@@ -75,8 +77,8 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
 test('every query in the schema has a case', () => {
   expect(Object.keys(QUERIES).sort()).toEqual(Object.keys(CASES).sort());
   // 42 + the five B4 round 5 item-fact queries (getDocumentColors … checkPrecompose) + getRigPose (B4 round 5, the rig)
-  // + renderDocumentStill (P4, version compare).
-  expect(Object.keys(QUERIES)).toHaveLength(49);
+  // + renderDocumentStill (P4, version compare) + getTimelineRows / getLayerFaces (B4 round 8).
+  expect(Object.keys(QUERIES)).toHaveLength(51);
 });
 
 test('capturePreset: keys rebased to 0 and out of pixels against the layer\'s comp; effects renumbered; empty layers say so', async () => {

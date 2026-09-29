@@ -24,7 +24,8 @@ import { pruneKeyframeSelectionToNodes, useKeyframeSelectionStore } from '@store
 import { prunePropertySelectionToNodes } from '@stores/propertySelectionStore';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { copyEdit, cutEdit, pasteEdit } from './clipboardEdits';
-import { audioSliderNullEdit, canExponentialScale, expressionBakeEdit, exponentialScaleEdit, hasBakeableExpression } from './menuCommandEdits';
+import { audioAmplitudeNullEdit } from '@layout/Inspector/audioEdits';
+import { canExponentialScale, expressionBakeEdit, exponentialScaleEdit, hasBakeableExpression } from './menuCommandEdits';
 import { goToMarkerIndex, isTransportPlaying, pauseTransport, playTransport } from '@core/timeline/timelineView';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
@@ -69,7 +70,6 @@ import { cloudProjectsEnabled } from '@core/config/edition';
 import { chooseBundleDir, bundleDirPickerAvailable } from '@core/project/bundle/bundleProjectIO';
 import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
 import { useOnboardingStore } from '@stores/onboardingStore';
-import { projectDocumentIO } from '@core/project/projectDocumentIO';
 import { incrementName } from '@core/project/incrementName';
 import { confirmDiscardChanges } from '@core/project/confirmDiscard';
 import {
@@ -95,9 +95,9 @@ import { openAutoOrientDialog } from '@layout/Composition/AutoOrientDialog';
 import { buildCameraCommands } from '@core/scene/cameraCommands';
 import { buildSmartAnimateCommands, installSmartAnimateCommandSync } from './commands/smartAnimateCommands';
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
-import { buildIk3DCommands } from '@core/scene/ikCommands';
-import { buildBakeCommands } from '@core/simulation/bakeCommands';
-import { buildAudioCommands } from '@core/audio/audioCommands';
+import { buildIk3DCommands } from './commands/ikCommands';
+import { buildBakeCommands } from './commands/bakeCommands';
+import { buildAudioCommands } from '@layout/Inspector/audioCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { easingTargetKeyframes } from '@core/animation/easingSelection';
 import { useAssetStore } from '@stores/assetStore';
@@ -727,7 +727,7 @@ function buildMergePathCommands(): ReadonlyArray<Command> {
     icon: 'layers' as const,
     enabled,
     execute: () => {
-      // The result is pasted and the operands flagged in ONE batch (liveMergeCommands.ts).
+      // The engine's createLiveMerge: the result made and the operands flagged in ONE entry.
       void liveMergePathsEdit(op).then((id) => {
         if (id) notify(`Live boolean (${op}) — operands stay editable`, 'success');
         else notify('Select at least two shape layers with closed paths', 'warning');
@@ -1352,14 +1352,15 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       execute: () => {
         const nodeId = useSelectionStore.getState().ids[0];
         if (!nodeId) return;
-        // The null (sliders and keys included) is built off-document and pasted: one entry.
-        void audioSliderNullEdit(nodeId).then(({ nodeId: nullId, written }) => {
-          if (!nullId) {
+        // AE's result: an "<layer> Amplitude" null with Both Channels / Left / Right sliders keyed —
+        // built by the engine's audioAnalysis job (amplitudeNull), one entry.
+        void audioAmplitudeNullEdit(nodeId).then((r) => {
+          if (!r) {
             notify('That layer has no decodable audio.', 'warning');
             return;
           }
-          const total = [...written.values()].reduce((a, b) => a + b, 0);
-          notify(`Audio → ${total} keyframes across ${written.size} sliders`, 'success');
+          const total = r.keys.both + r.keys.left + r.keys.right;
+          notify(`Audio → ${total} keyframes across 3 sliders`, 'success');
         });
       },
     },
@@ -2548,12 +2549,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         track(theme.subscribe((t) => usePreferenceStore.getState().set('theme', asThemeId(t))));
         theme.apply();
 
-        // Project: bridge to the scene document and refresh scene UI on load.
-        const project = getProjectManager();
-        // The FULL document (scene + animation + comps + timelines + render
-        // settings). This was `sceneProjectIO` — scene-only — so every local
-        // save silently dropped the entire animation.
-        project.setDocumentIO(projectDocumentIO);
+        // Project: refresh scene UI on load.
+        // The document lifecycle is the engine's (engineOwnedSession: ProjectManager delegates to it).
         track(getEventBus().on('ProjectLoaded', () => bumpScene()));
         track(getEventBus().on('ProjectUnloaded', () => bumpScene()));
         // The expression engine's providers (change sink, audio level, ctrl(),

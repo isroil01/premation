@@ -27,6 +27,8 @@ struct StaticPropertyRow {
   std::vector<std::string> members;
   std::optional<std::string> merged;
   std::optional<std::string> valueUnit;
+  /// The tracks the row's value field edits; absent = its members (propertyTree.ts `valueProps`).
+  std::optional<std::vector<std::string>> valueProps;
   bool maskTrack = false;
 };
 

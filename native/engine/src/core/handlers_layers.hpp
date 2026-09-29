@@ -40,6 +40,8 @@ ResultOf<api::UngroupLayer> handle(const api::UngroupLayer& c, HCtx& x);
 ResultOf<api::PasteLayers> handle(const api::PasteLayers& c, HCtx& x);
 ResultOf<api::DuplicateLayers> handle(const api::DuplicateLayers& c, HCtx& x);
 ResultOf<api::ConvertLayer> handle(const api::ConvertLayer& c, HCtx& x);
+/// B4 round 8: Live Merge Paths (handlers_convert.cpp).
+ResultOf<api::CreateLiveMerge> handle(const api::CreateLiveMerge& c, HCtx& x);
 ResultOf<api::SeparateLayer> handle(const api::SeparateLayer& c, HCtx& x);
 ResultOf<api::AutoTrace> handle(const api::AutoTrace& c, HCtx& x);
 /// threeD.ts `set3DEnabled(node, on)` (solids seed from the ACTIVE comp's size).

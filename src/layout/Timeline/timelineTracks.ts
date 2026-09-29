@@ -23,13 +23,14 @@
  */
 
 import type { KeyId, NodeId, TrackId } from '@app-types/common';
-import { flicksToSeconds, type Keyframe, type LayerInfo, type Marker } from '@motion/engine-api';
+import { flicksToSeconds, type Keyframe, type LayerInfo, type Marker, type TimelineRow } from '@motion/engine-api';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { KIND_COLOR, KIND_FILL, KIND_ICON } from '@core/scene/sceneDerive';
 import type { SceneKind } from '@core/scene/seedDefaultScene';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import type { MirrorTreeLike } from '@core/mirror/trackIndex';
 import type { MirrorComp } from '@stores/documentMirror';
+import { timelineRowsNow } from '@stores/timelineRows';
 import { buildPropertyRows } from './buildPropertyRows';
 import { selectionKeyId } from '@core/mirror/keySelection';
 import type { TimelineKeyframeRef, TimelineMarker, TimelineModel, TimelineTrack } from './TimelineModel';
@@ -40,6 +41,8 @@ export interface TimelineMirrorRead {
   layer(id: string): LayerInfo | undefined;
   layerKeyframes(layer: string): ReadonlyMap<string, readonly Keyframe[]>;
   tree(layer: string): MirrorTreeLike | undefined;
+  /** The layer's AE row projection (`getTimelineRows`); undefined while it is fetched. */
+  rows?(layer: string): readonly TimelineRow[] | undefined;
 }
 
 const HEX = /^#[0-9a-fA-F]{3,8}$/;
@@ -97,6 +100,7 @@ interface CacheEntry {
   layer: LayerInfo;
   keys: ReadonlyMap<string, readonly Keyframe[]>;
   tree: MirrorTreeLike | undefined;
+  rows: readonly TimelineRow[] | undefined;
   depth: number;
   expanded: boolean;
   custom: string | undefined;
@@ -115,13 +119,14 @@ function buildTrack(
   kind: SceneKind,
   keys: ReadonlyMap<string, readonly Keyframe[]>,
   tree: MirrorTreeLike | undefined,
+  rows: readonly TimelineRow[] | undefined,
   depth: number,
   expanded: boolean,
   custom: string | undefined,
 ): TimelineTrack {
   const id = layer.id;
   const label = labelHex(layer) ?? custom;
-  const properties = expanded ? buildPropertyRows(id, { layer, tree, keys }) : [];
+  const properties = expanded ? buildPropertyRows(id, { layer, tree, keys, rows }) : [];
   // The summary resolves member tracks through the tree when one is loaded
   // (expanded rows, or a tree some panel retains); without it the path stands in.
   const keyframes = expanded ? properties.flatMap((p) => p.keyframes) : summaryKeys(id, keys, tree);
@@ -233,15 +238,16 @@ export function buildTimelineTracks(
     // An expanded row needs its tree (the caller retains it); a collapsed one
     // uses it only if some panel already has it loaded.
     const tree = expanded ? m.tree(id) : undefined;
+    const rows = expanded ? (m.rows ? m.rows(id) : timelineRowsNow(id)) : undefined;
     const custom = customLabelHex(layer);
     const hit = cache.get(id);
     if (hit && hit.layer === layer && hit.keys === keys && hit.depth === depth && hit.expanded === expanded
-      && hit.tree === tree && hit.custom === custom) {
+      && hit.tree === tree && hit.rows === rows && hit.custom === custom) {
       out.push(hit.track);
       continue;
     }
-    const track = buildTrack(layer, kind, keys, tree, depth, expanded, custom);
-    cache.set(id, { layer, keys, tree, depth, expanded, custom, track });
+    const track = buildTrack(layer, kind, keys, tree, rows, depth, expanded, custom);
+    cache.set(id, { layer, keys, tree, rows, depth, expanded, custom, track });
     out.push(track);
   }
   // Drop entries for layers no longer shown (deleted, hidden, another comp).

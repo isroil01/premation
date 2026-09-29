@@ -242,6 +242,11 @@ describe('boundary fixtures', () => {
     // At t=0 the animated x is 0, so the pin sits where an unanimated layer
     // would put it — which is what makes the NEXT assertion meaningful.
     expect(at0).toEqual({ x: 30, y: 0 });
+  });
+
+  // Its own test (a fresh engine): the overlay reads the ENGINE's frame geometry, cached per document revision,
+  // and these fixtures write the scene directly (no revision) — a second fixture in one test would read the first's.
+  it('follows the ANIMATED layer transform: an animated x different from the static prop moves the pin', async () => {
     // A layer whose animated value at t=0 differs from its static prop is the
     // case that separates the two readers: static x = 0, animated x = 250.
     const shifted = await pinAt(() => {

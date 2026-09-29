@@ -233,7 +233,7 @@ function gradientGeometryDragCommands(t: EditTarget, next: GradientPaint, grip: 
 }
 
 /** The overlay geometry the gizmo maps through: the layer's drawn box. */
-const GRADIENT_KINDS: ReadonlyArray<OverlayKind> = ['bounds'];
+const GRADIENT_KINDS: ReadonlyArray<OverlayKind> = ['bounds', 'transform'];
 
 export function GradientHandleOverlay(): JSX.Element | null {
   // Frame-coalesced: a drag bumps the scene revision per pointer event and this
@@ -257,9 +257,9 @@ export function GradientHandleOverlay(): JSX.Element | null {
   // B4: paint from the mirror, the drawn box from the overlay geometry push.
   const m = documentMirror();
   const node = nodeId ? m.layer(nodeId) ?? null : null;
-  const [, setGeoTick] = useState(0);
+  const [geoTick, setGeoTick] = useState(0);
   useEffect(() => {
-    void requestOverlayLayers(MAIN_VIEWPORT, 'gradientHandles', nodeId ? [nodeId] : [], GRADIENT_KINDS).then(() => setGeoTick((t) => t + 1));
+    void requestOverlayLayers(MAIN_VIEWPORT, 'gradientHandles', nodeId ? [nodeId] : [], GRADIENT_KINDS, nodeId ? ['active'] : []).then(() => setGeoTick((t) => t + 1));
     return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'gradientHandles', [], GRADIENT_KINDS); };
   }, [nodeId]);
   const box = nodeId ? overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(time))?.box : undefined;
@@ -326,8 +326,8 @@ export function GradientHandleOverlay(): JSX.Element | null {
   const camera = getWorkspaceController().ws.camera;
   const mapping = useMemo(
     () => (nodeId ? layerScreenMapping(nodeId, time, comp, camera) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton
-    [nodeId, time, comp.width, comp.height, sceneTick],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton; the geometry tick re-reads the push
+    [nodeId, time, comp.width, comp.height, sceneTick, geoTick],
   );
 
   const width = geom?.width ?? 0;
@@ -422,6 +422,7 @@ export function GradientHandleOverlay(): JSX.Element | null {
    * node, not on the geometry, so dragging does not tear the listeners down and
    * rebuild them on every frame.
    */
+  const drawn = !!(nodeId && paint && view && mapping);
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg || !armed) return;
@@ -594,7 +595,8 @@ export function GradientHandleOverlay(): JSX.Element | null {
       svg.removeEventListener('dblclick', onDblClick);
       if (drag) { drag = null; void gesture.end(); endViewportGesture(); }
     };
-  }, [armed, nodeId, selectStop, gesture]);
+  // `drawn`: the svg mounts only once the layer's projection has landed (the overlay push).
+  }, [armed, nodeId, selectStop, gesture, drawn]);
 
   /**
    * Escape puts the gizmo away; Delete removes the selected stop.

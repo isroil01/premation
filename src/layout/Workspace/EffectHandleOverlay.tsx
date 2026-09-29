@@ -58,7 +58,7 @@ const VERTEX_R = 5;
 const TANGENT_R = 3.5;
 
 /** The overlay geometry the handles map through: the layer's drawn box. */
-const HANDLE_KINDS: ReadonlyArray<OverlayKind> = ['bounds'];
+const HANDLE_KINDS: ReadonlyArray<OverlayKind> = ['bounds', 'transform'];
 
 export function EffectHandleOverlay(): JSX.Element | null {
   // Frame-coalesced: a drag bumps the revision per pointer event, and this
@@ -78,10 +78,10 @@ export function EffectHandleOverlay(): JSX.Element | null {
   // B4: the effect stack from the mirror; the layer's drawn box from the overlay
   // geometry push (asked for here, whatever else subscribes the layer).
   const tree = useMirrorTree(nodeId);
-  const [, setGeoTick] = useState(0);
+  const [geoTick, setGeoTick] = useState(0);
   useEffect(() => {
     // Re-render once the engine has the subscription: the box exists from then.
-    void requestOverlayLayers(MAIN_VIEWPORT, 'effectHandles', nodeId ? [nodeId] : [], HANDLE_KINDS).then(() => setGeoTick((t) => t + 1));
+    void requestOverlayLayers(MAIN_VIEWPORT, 'effectHandles', nodeId ? [nodeId] : [], HANDLE_KINDS, nodeId ? ['active'] : []).then(() => setGeoTick((t) => t + 1));
     return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'effectHandles', [], HANDLE_KINDS); };
   }, [nodeId]);
   const node = nodeId ? documentMirror().layer(nodeId) ?? null : null;
@@ -121,8 +121,8 @@ export function EffectHandleOverlay(): JSX.Element | null {
    */
   const mapping = useMemo(
     () => (nodeId ? layerScreenMapping(nodeId, time, comp, camera) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton
-    [nodeId, time, comp.width, comp.height, sceneTick],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton; the geometry tick re-reads the push
+    [nodeId, time, comp.width, comp.height, sceneTick, geoTick],
   );
 
   const toScreen = useMemo(() => {

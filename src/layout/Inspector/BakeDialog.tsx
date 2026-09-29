@@ -23,22 +23,8 @@ import { Modal } from '@components/Modal';
 import { Button } from '@components/Button';
 import { PropertyRow } from '@components/PropertyRow';
 import { ValueField } from '@components/ValueField';
-import { flicksToSeconds } from '@motion/engine-api';
-import { compFps, useActiveMirrorComp, type MirrorComp } from '@hooks/useMirror';
-import { DEFAULT_PARTICLE_BAKE_CAP, type BakeRangeOptions } from '@core/simulation/bakeDynamics';
-
-/**
- * The range a bake opens with (the twin of bakeCommands' `defaultBakeRange`,
- * read from the document mirror): the active composition's WORK AREA — which
- * the document states as the whole composition when none is set — every frame.
- */
-function mirrorBakeRange(comp: MirrorComp | undefined): BakeRangeOptions {
-  const s = comp?.settings;
-  const fps = compFps(comp);
-  const from = s ? flicksToSeconds(s.workArea.start) : 0;
-  const to = s ? flicksToSeconds(s.workArea.start + s.workArea.duration) : 0;
-  return { from, to, fps, everyNFrames: 1 };
-}
+import { useActiveMirrorComp } from '@hooks/useMirror';
+import { DEFAULT_PARTICLE_BAKE_CAP, mirrorBakeRange, type BakeRange } from './bakeEdits';
 
 export interface BakeDialogProps {
   open: boolean;
@@ -46,7 +32,7 @@ export interface BakeDialogProps {
   title: string;
   /** Show the per-particle layer cap (the particle bake only). */
   withParticleCap?: boolean;
-  onBake: (opts: BakeRangeOptions & { maxParticles?: number }) => void;
+  onBake: (opts: BakeRange & { maxParticles?: number }) => void;
 }
 
 export function BakeDialog({

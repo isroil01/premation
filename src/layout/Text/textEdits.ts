@@ -32,8 +32,7 @@ import { isTrackAnimated, readTrack } from '@core/mirror/selection';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorTrackWatch } from '@hooks/useMirror';
 import { strokeOverFillFor } from '@core/text/textFields';
-import { planMasksFromText, buildMasksFromTextSolid, type MasksFromTextResult } from '@core/scene/masksFromText';
-import { insertBuiltLayers } from '@core/engine/offDocument';
+import type { MasksFromTextResult } from '@core/scene/masksFromText';
 import { convertLayerViaEngine } from '@layout/Scene/layerCreateEdits';
 import type { SelectorKind } from '@core/text/textAnimators';
 import { remapRunFonts } from '@core/fonts/replaceFonts';
@@ -386,16 +385,8 @@ export async function masksFromTextEdit(nodeId: string, seconds: number = getTim
     const masks = tree.ok ? tree.value.nodes.filter((n) => /^masks\/[^/]+$/.test(n.path)).length : 0;
     return { id, source: viaEngine.source ?? 'outlines', masks };
   }
-  // The TypeScript engine answers `convertLayer {masksFromText}` `unsupported`: the editor builds it.
-  const plan = await planMasksFromText(nodeId, seconds);
-  if (!plan) return null;
-  let made: MasksFromTextResult | null = null;
-  const ids = await insertBuiltLayers('Create Masks from Text', comp, () => { made = buildMasksFromTextSolid(plan); }, {
-    after: [{ type: 'setLayerSwitches', layers: [nodeId], patch: { visible: false } }],
-  });
-  const r = made as MasksFromTextResult | null;
-  if (!ids || ids.length === 0 || !r) return null;
-  return { ...r, id: ids[0]! };
+  void seconds;
+  return null;
 }
 
 // ── Document-wide text macros (client macros over the API, ONE entry each) ──

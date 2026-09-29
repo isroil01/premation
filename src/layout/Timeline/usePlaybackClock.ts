@@ -1,177 +1,38 @@
 /**
- * usePlaybackClock — the real-time clock that pumps the Timeline Engine while
- * playing.
+ * usePlaybackClock — keeps the page's playhead model in step with the
+ * transport while the C++ engine runs the clock.
  *
- * The `@motion/timeline` engine (via {@link TimelineController}) is the single
- * authority for `time` / `playing`; it advances its own playhead on `tick(dtMs)`
- * (looping within its loop range or auto-pausing at the end) and mirrors the
- * result into `playbackClockStore` — the transient clock the UI reads through
- * `useCurrentTime` — with the project store's tab record refreshed only at
- * coarse moments. This hook is just the wall-clock pump: on each frame while
- * playing it feeds the engine the elapsed milliseconds.
- *
- * Scheduling is visibility-aware: requestAnimationFrame while visible (smooth,
- * vsync-aligned), falling back to a timer when the window is hidden — rAF is
- * paused for hidden documents, and a desktop editor's playhead should keep
- * running when the window loses focus.
+ * The engine owns the clock (audio paced, ENGINE_API §6): its `playhead`
+ * events move the TimelineController and the transient clock the UI reads
+ * (core/engine/engineTransport.ts). The page no longer pumps time itself; this
+ * hook only mirrors the active tab's play flag into the playhead model and
+ * stops every composition but the active one.
  *
  * Mount once, near the timeline host.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useWorkspaceStore } from '@stores/projectStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { pauseInactiveComps } from '@core/timeline/timelineView';
-import { videoDiag, playbackHealth } from '@core/rendering/videoPlaybackDiag';
-import { flushRenderNow } from '@core/perf/framePump';
-import { useEngineViewportActive } from '@hooks/useEngineViewport';
-
-/** Element lag (ms behind the playhead) where the timeline starts slowing to
- *  meet the decoder. Under this, the rate trim absorbs it invisibly. */
-const MEDIA_LAG_SLOW_MS = 100;
-
-/**
- * How recently a decoder must have reported for its lag to slow the transport.
- *
- * Deliberately much shorter than `VIDEO_DIAG_LIVE_MS` (2s), which is the window
- * the status-bar health readout uses. Diagnostic samples are never deleted —
- * they are only overwritten while their element is being fed — so a clip that
- * has ended, been trimmed out, hidden or deleted leaves its LAST sample behind,
- * and that sample is by definition the worst one it ever reported. Pacing on
- * the 2s window meant a heavy clip kept the playhead crawling at up to 0.4×
- * for two full seconds of content that needed no decoder at all. A decoder
- * that is genuinely live re-reports on every rendered frame, so anything older
- * than a few frames is not describing what is on screen now.
- */
-const MEDIA_PACE_FRESH_MS = 250;
-
-/**
- * How much of this tick's advance the slowest live video decoder can actually
- * sustain, in (0.4 … 1]. A decoder that cannot keep realtime on this machine
- * shows up as growing NEGATIVE drift in videoDiag; scaling the timeline's
- * advance by this factor is the decode half of the After Effects contract —
- * the playhead may never outrun the pipeline. The old behaviour chased the
- * starving decoder with forward hard seeks instead: a mid-GOP decode (frozen
- * picture, seconds long) every 1.5s, which read as "some parts freeze".
- */
-function mediaPaceFactor(now: number): number {
-  let factor = 1;
-  for (const s of videoDiag.samples.values()) {
-    if (now - s.updatedAt > MEDIA_PACE_FRESH_MS) continue;
-    if (s.seeking || s.ended) continue;
-    // Cache-blit syncs report the element's position while its pixels are
-    // NOT on screen (the cache is). Slowing the timeline for those turned
-    // fully-cached playback — which needs no decoder at all — into a
-    // fast/slow oscillation that tracked an invisible element's struggles.
-    if (s.syncOnly) continue;
-    if (s.driftMs < -MEDIA_LAG_SLOW_MS) {
-      // Ramp from the knee, not from zero drift. The old form
-      // (`1 + driftMs/1000 * 0.6`) evaluated to 0.94 at the −100ms threshold,
-      // so the instant a decoder crossed it the transport STEPPED down 6% —
-      // and stepped back up on the way out. Measuring the excess past the knee
-      // makes the response continuous: exactly 1.0 at −100ms, ~0.76 at −500ms,
-      // floored at 0.4 so a dying element can never stall the transport.
-      const excessMs = -s.driftMs - MEDIA_LAG_SLOW_MS;
-      factor = Math.min(factor, Math.max(0.4, 1 - (excessMs / 1000) * 0.6));
-    }
-  }
-  return factor;
-}
+import { pauseInactiveComps, syncTransportPlaying } from '@core/timeline/timelineView';
+import { playbackHealth } from '@core/rendering/videoPlaybackDiag';
 
 export function usePlaybackClock(): void {
   const playing = useWorkspaceStore((s) =>
     s.activeTabId ? s.tabs[s.activeTabId]?.playing ?? false : false,
   );
   const activeTabId = useWorkspaceStore((s) => s.activeTabId);
-  const engineClock = useEngineViewportActive();
 
-  const lastRef = useRef<number | undefined>(undefined);
-
-  // Exactly one composition may hold the transport, because there is exactly
-  // one pump and it follows the active tab. Whenever the active tab changes,
-  // stop everything else — see TimelineController.pauseInactiveComps for what
-  // leaving them running did (a comp that resumed playing on its own when you
-  // switched back to its tab).
+  // Exactly one composition may hold the transport: whenever the active tab
+  // changes, stop everything else (TimelineController.pauseInactiveComps).
   useEffect(() => {
     pauseInactiveComps();
   }, [activeTabId]);
 
   useEffect(() => {
-    // B4-kept: the transport PUMP — `tick` advances the TS controller's clock
-    // every played frame and `fps` paces it. Per-frame playhead state, not a
-    // document read; it becomes the engine's transport clock in C/D (§5).
-    const controller = getTimelineController();
-    // Keep the engine's play-state in sync with the store flag the transport flips.
-    if (playing && !controller.isPlaying) controller.play();
-    if (!playing && controller.isPlaying) controller.pause();
-
-    if (!playing || engineClock) {
-      // D5: when the C++ engine owns the document, IT runs the clock (audio
-      // paced) and its playhead events move this controller
-      // (core/engine/engineTransport.ts) — pumping here too would race it.
-      lastRef.current = undefined;
-      playbackHealth.realtimeFactor = 1;
-      return;
-    }
-
-    let cancelled = false;
-    const handle: { raf?: number; timer?: ReturnType<typeof setTimeout> } = {};
-
-    const schedule = (fn: (frameTs?: number) => void): void => {
-      if (typeof document !== 'undefined' && document.hidden) {
-        handle.timer = setTimeout(() => fn(), 1000 / 60);
-      } else {
-        handle.raf = requestAnimationFrame(fn);
-      }
-    };
-
-    // `frameTs` is the rAF timestamp (undefined from the hidden-window timer).
-    const tick = (frameTs?: number): void => {
-      if (cancelled) return;
-      const now = performance.now();
-      const last = lastRef.current ?? now;
-      const dtMs = now - last;
-      lastRef.current = now;
-
-      // AFTER EFFECTS pacing, not Premiere pacing: the playhead may never
-      // outrun rendering. Each pump tick advances at most ~1.5 comp frames,
-      // so when a frame takes longer than its budget the TIMELINE slows down
-      // and every frame still gets rendered and cached — the first pass over
-      // a heavy comp plays slower than realtime, fills the preview cache
-      // completely, and the next loop plays realtime from green. Unclamped
-      // wall-clock deltas did the opposite: the playhead skipped whatever
-      // rendering couldn't finish, the skipped frames never entered the
-      // cache, and uncached spans stuttered forever ("some parts play, some
-      // parts look broken"). On a machine that renders inside the budget the
-      // clamp never engages (a 60Hz tick is ~0.5 frames at 30fps).
-      const frameMs = 1000 / Math.max(1, controller.fps);
-      const paced = Math.min(dtMs, frameMs * 1.5);
-      const advance = paced * mediaPaceFactor(now);
-
-      // Publish how close to realtime the transport ran (EMA). The audio
-      // bridge mutes on sustained sub-realtime preview — the AE behaviour.
-      if (dtMs > 0) {
-        const inst = Math.min(1, advance / dtMs);
-        playbackHealth.realtimeFactor += (inst - playbackHealth.realtimeFactor) * 0.15;
-      }
-
-      // The engine advances its playhead and mirrors seconds into the store.
-      const stillPlaying = controller.tick(advance);
-      // The clock write above asked the viewport for a redraw (through its
-      // clock subscription, no React in between). Draw it in THIS frame rather
-      // than the next one — one vsync less latency on every played frame.
-      flushRenderNow(frameTs);
-      if (!stillPlaying) return; // engine auto-paused (and cleared the store flag)
-      schedule(tick);
-    };
-
-    schedule(tick);
-    return () => {
-      cancelled = true;
-      if (handle.raf !== undefined) cancelAnimationFrame(handle.raf);
-      if (handle.timer !== undefined) clearTimeout(handle.timer);
-    };
-  }, [playing, engineClock]);
+    syncTransportPlaying(playing);
+    // The engine paces playback itself; the page's realtime estimate stays at 1.
+    playbackHealth.realtimeFactor = 1;
+  }, [playing]);
 }
 
 export default usePlaybackClock;

@@ -23,7 +23,7 @@ import { rigRestPoints, RigPointerQueue } from './rigPointer';
 const GIZMO_R = 26;
 
 /** The overlay geometry the pins draw from: the rig (pins, lattice, focus path) and the layer's box. */
-const PUPPET_KINDS: ReadonlyArray<OverlayKind> = ['rig', 'bounds'];
+const PUPPET_KINDS: ReadonlyArray<OverlayKind> = ['rig', 'bounds', 'transform'];
 
 /**
  * Pointer capture is a nicety, not a precondition: it keeps a drag alive when
@@ -144,7 +144,7 @@ export function PuppetOverlay(): JSX.Element | null {
   // layer's rig and box, the selected pin's motion path, the Puppet tool's
   // authoring mesh (a pinless layer shows the mesh its first pin lands on).
   useEffect(() => {
-    void requestOverlayLayers(MAIN_VIEWPORT, 'puppetPins', active ? [selectedNodeId!] : [], PUPPET_KINDS).then(() => setTick((t) => t + 1));
+    void requestOverlayLayers(MAIN_VIEWPORT, 'puppetPins', active ? [selectedNodeId!] : [], PUPPET_KINDS, active ? ['active'] : []).then(() => setTick((t) => t + 1));
     void setOverlayRigFocus(MAIN_VIEWPORT, active ? { pin: selectedPinId ?? '', bone: '', authoring: true } : undefined);
     return () => {
       void requestOverlayLayers(MAIN_VIEWPORT, 'puppetPins', [], PUPPET_KINDS);

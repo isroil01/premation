@@ -44,6 +44,9 @@ using LayerSpace = std::variant<motion::xf::LayerSpace2D, motion::xf::LayerSpace
                                                        double compWidth, double compHeight);
 
 // B4 round 5 — the view half of the overlay push (overlay_geometry.cpp) reads the same resolvers.
+/// nodeMatrix.ts `resolveNode3DTransform(node, seconds)`: the node's 3D transform, animated values winning
+/// (nullopt for a kind with no geometry). B4 round 8: the IK solver's joint locals.
+[[nodiscard]] std::optional<motion::xf::Node3DTransform> local_3d_at(const SpaceCtx& c, const Node& n, double seconds);
 /// liveWorld3d.ts `parentWorldMatrixAt(node, seconds)`: nullopt without a parent.
 [[nodiscard]] std::optional<motion::xf::Mat4> parent_world_at(const SpaceCtx& c, std::string_view node, double seconds);
 /// liveWorld3d.ts `toWorldPointAt(node, seconds, p)`: a point in the node's parent space → world.

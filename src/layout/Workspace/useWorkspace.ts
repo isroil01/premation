@@ -26,7 +26,6 @@ import { applyChannelViewToCanvas, channelNeedsPass } from '@core/rendering/chan
 import { mayServeCachedFrame, mayFillFromPausedRender, playbackBlitWorthwhile } from '@core/rendering/previewCacheGate';
 import { useWorkspaceStore } from '@stores/projectStore';
 import workspaceStyles from './Workspace.module.css';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { compHasWireframeQualityLayer, paintWireframeQualityLayers } from './wireframeQualityOverlay';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore, clampOverlayOpacity } from '@stores/guidesStore';
@@ -73,7 +72,6 @@ import {
   type PositionKeyIds,
   type PositionTracks,
 } from './viewportEdits';
-import { parentWorld2DAt } from '@core/scene/layerSpace';
 import { Matrix } from '@motion/scene';
 import { useTextEditStore } from '@stores/textEditStore';
 import { openContextMenu } from '@stores/contextMenuStore';
@@ -82,7 +80,8 @@ import { createOnionSkinPainter } from '@core/rendering/onionSkinPainter';
 import type { PaintMode } from '@core/paint/paintStrokes';
 import { commitPaintDrag } from '@core/engine/paintEdits';
 import { ctrlDragBrush, penSample } from '@core/paint/paintCapture';
-import { paintSpaceAt, thinSamples, type PaintSpace } from '@core/paint/paintSpace';
+import { thinSamples, type PaintSpace } from '@core/paint/paintSpace';
+import { paintSpaceFromPush } from './paintSpaceFromPush';
 import { usePaintStore } from '@stores/paintStore';
 import { publishProbe, clearProbe } from './useWorkspaceProbe';
 import {
@@ -108,7 +107,8 @@ import {
   type NavTarget,
 } from '@core/workspace/cameraNav';
 import { useFaceSelectionStore } from '@stores/faceSelectionStore';
-import { facesOfNode, pickFace, faceHighlightGroups } from '@core/scene/facePicking';
+import { pickFace, faceHighlightGroups } from '@core/scene/facePicking';
+import { fetchLayerFaces, layerFacesNow, onLayerFaces, projectFacesForView } from './layerFaces';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
 import { RULER_CSS_PX, inStrip, rulerStrips } from './rulerGeometry';
@@ -1538,15 +1538,23 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     const controller = getWorkspaceController();
     const sync = (ids: readonly string[]): void => {
       void requestOverlayLayers(MAIN_VIEWPORT, 'selection', ids, ids.length === 1 ? OVERLAY_KINDS_ONE : OVERLAY_KINDS_MANY);
+      // A single layer's parent: its matrix maps a motion-path drag back into the space the path is keyed in.
+      const parent = ids.length === 1 ? documentMirror().layer(ids[0]!)?.parent : undefined;
+      void requestOverlayLayers(MAIN_VIEWPORT, 'selectionParent', parent ? [parent] : [], ['transform']);
+      // The Paint panel's clone source on another layer: its space maps an Alt-click aim.
+      const source = usePaintStore.getState().cloneSourceLayerId;
+      void requestOverlayLayers(MAIN_VIEWPORT, 'paintSource', source && !ids.includes(source) ? [source] : [], ['transform']);
     };
     sync(useSelectionStore.getState().ids);
     const unSel = useSelectionStore.subscribe((st) => sync(st.ids));
+    const unSource = usePaintStore.subscribe((st, prev) => { if (st.cloneSourceLayerId !== prev.cloneSourceLayerId) sync(useSelectionStore.getState().ids); });
     const unGeo = subscribeOverlayGeometry(MAIN_VIEWPORT, () => controller.requestRender());
     // B4 round 5: the main view mode's camera rides every frame (camera navigation,
     // the motion path's 3D projection and the looked-through test read it — viewNav.ts).
     const unView = requestMainViewCamera();
     return () => {
       unSel();
+      unSource();
       unGeo();
       unView();
     };
@@ -1558,6 +1566,8 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   useEffect(() => {
     const controller = getWorkspaceController();
     const unFace = useFaceSelectionStore.subscribe(() => controller.requestRender());
+    // The engine's faces landing (getLayerFaces) repaint the highlight.
+    const unFaces = onLayerFaces(() => { if (useFaceSelectionStore.getState().enabled) controller.requestRender(); });
     // A face belongs to its layer: selecting a different layer must drop it,
     // or the inspector would keep pointing at a side of something else.
     const unSel = useSelectionStore.subscribe((s) => {
@@ -1566,6 +1576,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     });
     return () => {
       unFace();
+      unFaces();
       unSel();
     };
   }, []);
@@ -1821,28 +1832,36 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (useFaceSelectionStore.getState().enabled) {
         const comp = compSize();
         const at = controller.ws.screenToWorld(local(e));
-        const tryNode = (id: string | undefined): boolean => {
-          const n = id ? defaultSceneGraph.getNode(id) : null;
-          if (!n) return false;
-          const face = pickFace(facesOfNode(n, playheadTime(), comp.w, comp.h), at);
-          if (!face) return false;
-          e.preventDefault();
-          // Select the layer too: the inspector edits face materials on the
-          // selected layer, so a face with no layer selected has nothing to
-          // write to.
-          useSelectionStore.getState().set([n.id]);
-          useFaceSelectionStore.getState().select(n.id, face.kind, face.suffix);
-          controller.requestRender();
-          return true;
+        const time = playheadTime();
+        e.preventDefault();
+        // The faces are the ENGINE's (getLayerFaces, B4 round 8): a layer's
+        // faces this frame, projected through the view on screen. The pick
+        // resolves when the answer lands (at once when it is cached).
+        const faceOf = async (id: string | undefined) => {
+          if (!id) return null;
+          const faces = await fetchLayerFaces(id, time);
+          const face = pickFace(projectFacesForView(faces, time, comp.w, comp.h), at);
+          return face ? { id, face } : null;
         };
-        // The layer being styled wins over whatever the plain hit-test finds:
-        // a flat layer drawn in front of it would otherwise swallow every click,
-        // and it has no faces to offer in exchange.
-        if (tryNode(useSelectionStore.getState().ids[0])) return;
-        if (tryNode(controller.ws.hitTestScreen(local(e))?.id)) return;
-        // Clicking empty canvas in face mode drops the face, keeping the layer.
-        useFaceSelectionStore.getState().clear();
-        controller.requestRender();
+        const selected = useSelectionStore.getState().ids[0];
+        const hit = controller.ws.hitTestScreen(local(e))?.id;
+        void (async () => {
+          // The layer being styled wins over whatever the plain hit-test finds:
+          // a flat layer drawn in front of it would otherwise swallow every
+          // click, and it has no faces to offer in exchange.
+          const picked = (await faceOf(selected)) ?? (hit !== selected ? await faceOf(hit) : null);
+          if (picked) {
+            // Select the layer too: the inspector edits face materials on the
+            // selected layer, so a face with no layer selected has nothing to
+            // write to.
+            useSelectionStore.getState().set([picked.id]);
+            useFaceSelectionStore.getState().select(picked.id, picked.face.kind, picked.face.suffix);
+          } else {
+            // Clicking empty canvas in face mode drops the face, keeping the layer.
+            useFaceSelectionStore.getState().clear();
+          }
+          controller.requestRender();
+        })();
         return;
       }
       /*
@@ -1891,7 +1910,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         // for a 3D layer the view on screen. Resolved once and carried on the
         // drag, so the whole stroke maps through the pose it was drawn over.
         const comp = compSize();
-        const space = paintSpaceAt(node.id, playheadTime(), { width: comp.w, height: comp.h });
+        const space = paintSpaceFromPush(node.id, playheadTime(), { width: comp.w, height: comp.h });
         const pressLocal = space?.toLocal(cp) ?? null;
         if (!space || !pressLocal) {
           // Edge-on to the view (or scaled to nothing): there is no surface
@@ -1930,7 +1949,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             const srcId = paintSettings.cloneSourceLayerId && paintSettings.cloneSourceLayerId !== node.id
               ? paintSettings.cloneSourceLayerId
               : node.id;
-            const srcSpace = srcId === node.id ? space : paintSpaceAt(srcId, playheadTime(), { width: comp.w, height: comp.h });
+            const srcSpace = srcId === node.id ? space : paintSpaceFromPush(srcId, playheadTime(), { width: comp.w, height: comp.h });
             const at = srcSpace?.toLocal(cp) ?? null;
             if (!at) return;
             paintSettings.set({ cloneSource: { nodeId: srcId, x: at.x, y: at.y, compX: cp.x, compY: cp.y }, alignedOffset: null });
@@ -3203,7 +3222,12 @@ function paintOverlay(
  * comp coordinates would teleport the key by the parent's transform.
  */
 function compToPath(nodeId: string, time: number, p: { x: number; y: number }): { x: number; y: number } {
-  return Matrix.transformPoint(Matrix.invert(parentWorld2DAt(nodeId, time)), p);
+  const parent = documentMirror().layer(nodeId)?.parent;
+  if (!parent) return p;
+  // The parent's layer → comp matrix from the push (the 2D chain; a 3D parent's world, sliced to its plane).
+  const m = overlayLayer(MAIN_VIEWPORT, parent, secondsToFlicks(time))?.matrix;
+  if (!m || m.length < 16) return p;
+  return Matrix.transformPoint(Matrix.invert({ a: m[0]!, b: m[1]!, c: m[4]!, d: m[5]!, e: m[12]!, f: m[13]! }), p);
 }
 
 /**
@@ -3405,10 +3429,11 @@ function paintFaceSelection(canvas: HTMLCanvasElement, controller: WorkspaceCont
   if (!fs.enabled) return;
   const nodeId = fs.nodeId ?? useSelectionStore.getState().ids[0];
   if (!nodeId) return;
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
   const { w: cw, h: ch } = compSize();
-  const faces = facesOfNode(node, playheadTime(), cw, ch);
+  const time = playheadTime();
+  const world = layerFacesNow(nodeId, time);
+  if (!world) return;
+  const faces = projectFacesForView(world, time, cw, ch);
   if (faces.length === 0) return;
 
   const ctx = canvas.getContext('2d');

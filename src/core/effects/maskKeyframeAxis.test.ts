@@ -20,6 +20,7 @@ import { MASK_ANIM_PROP } from '@core/timeline/propertyTree';
 import { createCommandPort } from '@core/workspace/ports';
 import { engineIdle } from '@core/engine/engineInstance';
 import { buildPropertyRows } from '../../layout/Timeline/buildPropertyRows';
+import { fetchTimelineRows } from '@stores/timelineRows';
 import { readNodeMaskAnim, type LayerMask, type MaskPoint } from './mask';
 import type { SceneNode } from '@core/types';
 
@@ -121,6 +122,7 @@ describe('mask shape keyframes — one time axis for write and read', () => {
     // The reshape is an engine command (B3): it lands asynchronously.
     await engineIdle();
 
+    await fetchTimelineRows([LAYER]);
     const row = buildPropertyRows(LAYER).find((r) => r.prop === MASK_ANIM_PROP);
     expect(row).toBeDefined();
     // Keyframes 0s / 1s / 4s on a bar that starts at 1s → comp 1s / 2s / 5s.

@@ -141,6 +141,8 @@ struct AudioAnalysisJob {
   /// P4 — an Audio driver's envelope (audioDriver.ts computeDriverEnvelope): `driver` is the AudioDriver JSON (band — 'full' | 'low' | 'mid' | 'high' | {lo, hi} Hz — attackMs, releaseMs, gate, normalize, min, max, curve, smoothFrames). The source is `layer`'s sound, or with `layer` '' the composition `driverComp`'s mix (a child engine's offline mix, as transcribe). Over the work area (else the whole composition) at its frame rate. Summary `driver: {raw: [0..1 per frame], mapped: [the property's units], start, end, fps}`. Nothing is written — the page splices the keys (one entry with the driver record).
   driver?: string = 715;
   driverComp?: ItemId = 716;
+  /// B4 round 8 — After Effects' Convert Audio to Keyframes: a new "<layer> Amplitude" NULL in the layer's composition carrying three Slider Controls ("Both Channels", "Left", "Right"), each keyed from its channel's envelope (the amplitude options above apply; keys at composition time through the layer's bar). Any audio or video layer with sound; independent of `amplitudeKeyframes`. The summary's `amplitudeNull` counts the keys per channel.
+  amplitudeNull?: bool = 717;
 }
 /// Ducking (ducking.ts planDucking): lower `music`'s level under the voice (`voices[0]`; the page's dialog ducks under one layer) over the composition's work area, as Audio Levels keyframes, and remember the parameters (`audio/ducking`). `params` is the DuckingParams JSON (duckDb, thresholdDb, attackMs, releaseMs, holdMs); absent keys take the defaults.
 struct AudioDuckJob { music: LayerId = 1; voices: LayerId[] = 2; params: string = 3; }
@@ -174,6 +176,10 @@ struct RotoBrushJob { layer: LayerId = 1; range: TimeRange = 2; seed: Vec2 = 3; 
 struct ContentAwareFillJob { layer: LayerId = 1; range: TimeRange = 2; outputFolder: string = 3; }
 /// Auto-reframe (autoReframe.ts autoReframeComposition): `comp` rendered small (160 px wide, 12 frames/s) by a child engine, saliency + shot cuts per frame (saliency.ts, sceneEditDetect.ts), a dead-zone / lag camera path (reframePath.ts); a NEW composition `width`×`height` holding `comp` as a precomp layer scaled to cover, with the pan keyed on its separated position. The source is untouched.
 struct AutoReframeJob { comp: ItemId = 1; width: u32 = 2; height: u32 = 3; name?: string = 4; deadZone?: f64 = 5; lagSeconds?: f64 = 6; }
+/// Bake Physics to Keyframes (bakeDynamics.ts bakePhysicsToKeyframes): the composition's rigid bodies stepped by the renderer's own solver (every body, so collisions match the viewport; the world is the engine's: gravity 0 / 1800, the comp rectangle as walls, 4 passes), sampled at each frame of `range` (every `everyNFrames`th, the last frame always) and written onto the `layers` that carry an enabled DYNAMIC body — position, and rotation for a body that spins — as linear keys with the last one held, Douglas-Peucker thinned by `simplifyTolerance` (value units; 0 = every sample). Their physics is switched off in the same entry. Refused (invalidArgument) when none of `layers` has an enabled dynamic body.
+struct PhysicsBakeJob { layers: LayerId[] = 1; range: TimeRange = 2; everyNFrames?: u32 = 3; simplifyTolerance?: f64 = 4; }
+/// Bake Particles to Layers (bakeDynamics.ts bakeParticlesToLayers): the emitter's particles (the renderer's sim, its `particle.<key>` tracks sampled per frame) at each frame of `range`, one keyed ellipse (a square emitter: rectangle) per particle — x / y / scale / opacity, invisible outside its life — under a new "<emitter> Baked" null parented to the emitter; the emitter is hidden. At most `maxParticles` (default 200) layers, the earliest born; the summary reports `seen` and `capped`.
+struct ParticleBakeJob { layer: LayerId = 1; range: TimeRange = 2; everyNFrames?: u32 = 3; simplifyTolerance?: f64 = 4; maxParticles?: u32 = 5; }
 /// Rig Logo for Animation (rigLogo.ts): the selection as ONE riggable layer with a starter puppet — an "Anchor" pin at the bottom centre and a "Wave" pin at the top centre (layer space). One image or shape layer holding nothing is rigged in place; anything else (a group, a precomp, text, several layers) is drawn alone on a transparent comp at `time` (absent = the playhead) by a child engine, cropped to its pixels (+4 px), imported as a PNG (importBytes, source `derived`) and placed as an image layer "<name> (Rigged)" where it drew, above the topmost selected layer — and that is rigged. The layers must share a composition. Result: {mode: 'self' | 'rasterize', layer} (layer = the rigged one, once applied).
 struct RigLogoJob { layers: LayerId[] = 1; time?: Time = 2; }
 
@@ -195,6 +201,8 @@ union JobSpec {
   contentAwareFill: ContentAwareFillJob = 1713;
   autoReframe: AutoReframeJob = 1714;
   rigLogo: RigLogoJob = 1715;
+  physicsBake: PhysicsBakeJob = 1716;
+  particleBake: ParticleBakeJob = 1717;
 }
 
 command startJob = 850 [control] { job: JobSpec = 1; apply: bool = 2; } -> JobRef;

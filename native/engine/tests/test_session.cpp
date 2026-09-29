@@ -433,6 +433,8 @@ TEST_CASE("session: every command answers; only what the TS engine refuses is un
   // the TS engine does not implement either); the transport/viewport/render
   // controls that need the GPU process answer on the frame channel instead.
   const std::set<std::string> tsRefuses = {"convertLayer", "separateLayer", "autoTrace",
+                                           // B4 round 8: the polygon-boolean probe is the conversion geometry's
+                                           "createLiveMerge",
                                            // a non-.motion path: .aep import is the editor's importer (misc.ts)
                                            "importProject"};
   for (const auto& u : unsupported) {

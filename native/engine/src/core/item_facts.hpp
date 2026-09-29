@@ -32,4 +32,7 @@ namespace premation::doc {
 /// `getSourceSize`: fitCommands.ts `intrinsicSizeOf` per layer; layers with none (and unknown ids) left out.
 [[nodiscard]] std::vector<api::LayerSourceSize> source_sizes(const Document& d, const std::vector<std::string>& layers);
 
+/// B4 round 8 — getTimelineRows: each layer's timeline row projection (build_static_property_tree); unknown ids skipped.
+[[nodiscard]] std::vector<api::TimelineRowSet> timeline_rows(const Document& d, const std::vector<std::string>& layers);
+
 }  // namespace premation::doc

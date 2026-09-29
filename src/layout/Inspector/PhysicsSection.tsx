@@ -17,11 +17,7 @@ import { edit } from '@core/engine/uiEdits';
 import { useEngineEdit } from './useEngineEdit';
 import { jsonFieldCommands } from './layerFieldEdits';
 import type { BodyKind, ColliderShape, PhysicsBodyConfig } from '@core/simulation/rigidBody';
-// Importing this module is what REGISTERS `dynamics.bakePhysics` /
-// `dynamics.bakeParticles`. It has to be imported from somewhere that runs at
-// boot, and the Inspector is the surface that owns the feature — so the
-// commands need no entry in the boot sequence to exist.
-import { runPhysicsBake } from '@core/simulation/bakeCommands';
+import { runPhysicsBake } from './bakeEdits';
 import { BakeDialog } from './BakeDialog';
 import panel from '@layout/Effects/EffectsPanel.module.css';
 

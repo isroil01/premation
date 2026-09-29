@@ -48,7 +48,8 @@ import {
   type ApplyDriverResult,
   type AudioDriver,
 } from '@core/audio/audioDriver';
-import type { AudioKeyframeOptions } from '@core/audio/audioKeyframes';
+import { DEFAULT_AUDIO_KEYFRAME_OPTIONS, type AudioKeyframeOptions } from '@core/audio/audioKeyframes';
+import { useSelectionStore } from '@stores/selectionStore';
 import { apiUnitFactor } from '@core/engine/props';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
@@ -278,6 +279,35 @@ export async function convertAudioToKeyframesEdit(nodeId: string, opts: AudioKey
     },
   });
   return out && out.status === 'done' ? out.result?.amplitude?.keyframes ?? 0 : 0;
+}
+
+/**
+ * After Effects' Convert Audio to Keyframes (the Animation menu): a new "<layer> Amplitude" NULL with
+ * Both Channels / Left / Right Slider Controls keyed from the layer's loudness — the engine's audioAnalysis
+ * job (`amplitudeNull`) decodes, measures and builds it as ONE entry. Resolves to the new null's id (found
+ * by name among the composition's layers) and the keys per channel, or null when nothing was written.
+ */
+export async function audioAmplitudeNullEdit(
+  nodeId: string,
+  opts: AudioKeyframeOptions = DEFAULT_AUDIO_KEYFRAME_OPTIONS,
+): Promise<{ nullId: string | null; keys: { both: number; left: number; right: number } } | null> {
+  const m = documentMirror();
+  const comp = m.layer(nodeId)?.comp;
+  const before = new Set(comp ? m.comp(comp)?.layers ?? [] : []);
+  const out = await runEngineJob<{ amplitudeNull?: { both: number; left: number; right: number } }>({
+    kind: 'audioAnalysis',
+    value: {
+      layer: nodeId, beats: false, amplitudeKeyframes: false, silence: false, removeSilence: false, beatMarkers: false, amplitudeNull: true,
+      amplitudeFrameStep: Math.max(1, Math.floor(opts.frameStep)), amplitudeMinDelta: opts.minDelta,
+      amplitudeSmoothing: Math.max(1, Math.floor(opts.smoothing)), amplitudeGain: opts.gain,
+    },
+  });
+  const keys = out && out.status === 'done' ? out.result?.amplitudeNull : undefined;
+  if (!keys || keys.both + keys.left + keys.right === 0) return null;
+  await m.whenIdle();
+  const nullId = (comp ? m.comp(comp)?.layers ?? [] : []).find((id) => !before.has(id) && m.layer(id)?.kind === 'null') ?? null;
+  if (nullId) useSelectionStore.getState().set([nullId]);
+  return { nullId, keys };
 }
 
 // ── Level, pan, mute, timing ───────────────────────────────────────────

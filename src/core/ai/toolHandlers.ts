@@ -1493,22 +1493,23 @@ const setPuppetPinKeyframes: AiTool['handler'] = async (input, ctx) => {
 };
 
 import type { MergeOp } from '@core/scene/mergePaths';
-import { liveMergeBatch, liveMergeResultId } from '@core/scene/liveMergeCommands';
 
 /**
- * Live merge keeps sources animatable — the designed-motion default. ONE
- * engine batch (liveMergeCommands.ts): the result layer pasted, the operands
- * flagged `layer/booleanOperand` and hidden — the menus' own route.
+ * Live merge keeps sources animatable — the designed-motion default. The
+ * engine's `createLiveMerge`: the result layer made, the operands flagged
+ * `layer/booleanOperand` and hidden — the menus' own route.
  */
 const mergePathsHandler: AiTool['handler'] = async (input, ctx) => {
   const i = input as { op: MergeOp; nodeIds: string[] };
   const missing = await filterSeq(i.nodeIds, async (id) => !(await ctx.scene.has(id)));
   if (missing.length > 0) return fail(`Unknown nodeId(s): ${missing.join(', ')}`);
-  // The planner merges the selection (editor state, not the document).
-  useSelectionStore.getState().set(i.nodeIds);
-  const batch = liveMergeBatch(i.op);
-  if (!batch) return fail(`Failed to apply merge operation '${i.op}': give at least two overlapping shape layers with closed paths.`);
-  const resultId = liveMergeResultId(await ctx.engine.apply(batch.commands));
+  let resultId: string | null = null;
+  try {
+    const out = await ctx.engine.apply([{ type: 'createLiveMerge', layers: i.nodeIds, op: i.op } as Command]);
+    resultId = (out[0] as { layer?: string } | undefined)?.layer ?? null;
+  } catch {
+    return fail(`Failed to apply merge operation '${i.op}': give at least two overlapping shape layers with closed paths.`);
+  }
   if (!resultId) return fail(`Failed to apply merge operation '${i.op}' on layers.`);
   useSelectionStore.getState().set([resultId]);
   return ok(`Applied live merge '${i.op}'. Result: ${resultId}. Sources stay editable.`, { resultIds: [resultId] });

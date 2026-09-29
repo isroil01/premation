@@ -25,6 +25,9 @@
 #include "text_outlines.hpp"
 #include "fonts.hpp"
 #include "frame_hit.hpp"
+#include "layer_faces.hpp"
+#include "merge_paths.hpp"
+#include "snapshot_build.hpp"
 #include "log.hpp"
 #include "passes.hpp"
 #include "png_write.hpp"
@@ -365,6 +368,29 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       doc::fail(api::ErrorCode::internal, std::string("the frame could not be built: ") + e.what());
     }
     return true;
+  }
+
+  // B4 round 8: createLiveMerge's probe (merge_paths.cpp).
+  std::optional<doc::LiveMergeProbe> live_merge_probe(const doc::Document& d, const std::vector<std::string>& layers,
+                                                      std::string_view op) override {
+    return scene::live_merge_probe(d, layers, op);
+  }
+
+  // B4 round 8: face picking's geometry (layer_faces.cpp) from the snapshot of the layer's composition.
+  std::optional<api::LayerFaces> layer_faces(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
+                                             doc::ExprCache& cache, std::string_view comp, api::Time time,
+                                             std::string_view layer) override {
+    const doc::Node* n = d.node(layer);
+    if (n == nullptr) return api::LayerFaces{};
+    (void)register_fonts(d);
+    register_families(*n);
+    const BuildContext ctx = context(d, view, expr, cache);
+    try {
+      const Snapshot snap = build_snapshot(ctx, snapshot_comp_of(d, comp), doc::flicks_to_seconds(time), std::nullopt);
+      return layer_faces_of(snap, *n, layer, measurer_->canvas_options());
+    } catch (const std::exception& e) {
+      doc::fail(api::ErrorCode::internal, std::string("the faces could not be built: ") + e.what());
+    }
   }
 
  private:

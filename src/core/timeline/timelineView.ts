@@ -88,6 +88,13 @@ export function pauseTransport(): void {
   getTimelineController().pause();
 }
 
+/** Keep the page's playhead model in the play state the active tab's flag says (the engine plays; this only mirrors it). */
+export function syncTransportPlaying(playing: boolean): void {
+  const controller = getTimelineController();
+  if (playing && !controller.isPlaying) controller.play();
+  if (!playing && controller.isPlaying) controller.pause();
+}
+
 export function togglePlayTransport(): void {
   getTimelineController().togglePlay();
 }

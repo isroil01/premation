@@ -159,6 +159,70 @@ Json local_bezier(const pc::Ring& ring, double cx, double cy) {
 
 bool has_live_boolean(const doc::Node& n) { return read_live_boolean(n).has_value(); }
 
+doc::LiveMergeProbe live_merge_probe(const doc::Document& d, const std::vector<std::string>& layers, std::string_view op) {
+  doc::LiveMergeProbe out;
+  pc::OpType type = pc::OpType::union_;
+  if (op == "subtract") type = pc::OpType::difference;
+  else if (op == "intersect") type = pc::OpType::intersection;
+  else if (op == "exclude") type = pc::OpType::xor_;
+  // nodeWorldOutline with no sample: the stored transform (x, y, rotation, scaleX / scaleY) and no animated path.
+  const Values none;
+  OperandReader r;
+  r.node = [&d](const std::string& id) { return d.node(id); };
+  r.world = [&d](const std::string& id) {
+    motion::xf::Local2D w;
+    const doc::Node* n = d.node(id);
+    const doc::Component* t = n != nullptr ? n->comp("Transform") : nullptr;
+    if (t == nullptr) return w;
+    const Json& p = t->props;
+    const auto num = [&p](std::string_view k, double fb) { return p.at(k).is_number() ? p.at(k).num() : fb; };
+    w.x = num("x", 0);
+    w.y = num("y", 0);
+    w.rotation = num("rotation", 0);
+    w.scale_x = num("scaleX", 1);
+    w.scale_y = num("scaleY", 1);
+    return w;
+  };
+  r.values = [&none](const std::string&) -> const Values& { return none; };
+  r.pathPoints = [](const std::string&) { return Json(); };
+  std::vector<pc::Polygon> polys;
+  std::vector<std::string> sources;
+  for (const std::string& id : layers) {
+    const doc::Node* n = d.node(id);
+    if (n == nullptr || n->locked) continue;
+    const std::optional<WorldOutline> o = node_world_outline(*n, id, r);
+    if (!o || !o->closed || o->points.size() < 3) continue;
+    pc::Ring ring = o->points;
+    ring.push_back(ring.front());
+    polys.push_back(pc::Polygon{std::move(ring)});
+    sources.push_back(id);
+  }
+  if (polys.size() < 2) return out;
+  std::vector<pc::MultiPolygon> rest;
+  for (std::size_t i = 1; i < polys.size(); ++i) rest.push_back(pc::MultiPolygon{polys[i]});
+  const pc::MultiPolygon probe = pc::run(type, pc::MultiPolygon{polys[0]}, rest);
+  if (probe.empty()) return out;
+  constexpr double kInf = std::numeric_limits<double>::infinity();
+  double minX = kInf, minY = kInf, maxX = -kInf, maxY = -kInf;
+  for (const pc::Polygon& poly : probe) {
+    for (const pc::Ring& ring : poly) {
+      for (const auto& [px, py] : ring) {
+        minX = std::min(minX, px);
+        minY = std::min(minY, py);
+        maxX = std::max(maxX, px);
+        maxY = std::max(maxY, py);
+      }
+    }
+  }
+  if (!(minX <= maxX)) return out;
+  out.sources = std::move(sources);
+  out.cx = (minX + maxX) / 2;
+  out.cy = (minY + maxY) / 2;
+  out.width = std::max(1.0, maxX - minX);
+  out.height = std::max(1.0, maxY - minY);
+  return out;
+}
+
 std::optional<LiveBooleanResult> evaluate_live_boolean(const doc::Node& result, const OperandReader& r) {
   const std::optional<LiveBoolean> cfg = read_live_boolean(result);
   if (!cfg) return std::nullopt;

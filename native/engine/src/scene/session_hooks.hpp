@@ -162,6 +162,18 @@ class FrameBuilder {
                         std::vector<std::string>& /*topmostFirst*/) {
     return false;
   }
+
+  /// getLayerFaces (B4 round 8, face picking): the faces of `layer` — an
+  /// extruded 3D layer — at `time` in WORLD px (the layer's model matrix
+  /// applied): the renderer's extrusion mesh with its front cap (a triangle
+  /// per face, its vertex indices kept), else the flat-quad fallback. Empty
+  /// for a layer with no extrusion. Nullopt = this builder cannot answer.
+  [[nodiscard]] virtual std::optional<api::LayerFaces> layer_faces(const doc::Document& /*d*/, const doc::EditorView& /*view*/,
+                                                                   const doc::ExprEnv& /*expr*/, doc::ExprCache& /*cache*/,
+                                                                   std::string_view /*comp*/, api::Time /*time*/,
+                                                                   std::string_view /*layer*/) {
+    return std::nullopt;
+  }
 };
 
 /// The transport's master clock and the document's sound — the seam of

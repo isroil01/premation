@@ -2,6 +2,7 @@
 #pragma once
 
 #include "handlers_comps.hpp"
+#include "handlers_dynamics.hpp"
 #include "handlers_groups.hpp"
 #include "handlers_items.hpp"
 #include "handlers_layers.hpp"

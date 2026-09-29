@@ -5,8 +5,8 @@
  *
  * Same shape as EffectHandleOverlay, on purpose: pointer plumbing and SVG
  * only, projection through the shared `layerScreenMapping`, hit-testing in
- * SCREEN pixels at constant radius. The maths that isn't drawing lives in
- * core/tracking (`trackSampleToComp`).
+ * SCREEN pixels at constant radius. Source samples map through the layer's
+ * drawn box and the frame's projection (the overlay push).
  *
  * Points are stored in SOURCE pixels (trackerStore's contract): the overlay
  * converts source → layer-local (content is centred on the local origin) →
@@ -39,7 +39,6 @@ import { useTrackerStore } from '@stores/trackerStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { trackSampleToComp } from '@core/tracking/applyTrack';
 import { runAutoTrack } from '@core/tracking/autoTrackCommand';
 import { runObjectMaskPick } from '@core/tracking/objectMask';
 import { mirrorSourceDisplaySize } from '@core/mirror/sourceSize';
@@ -75,7 +74,7 @@ function confidenceAlpha(confidence: number): number {
 }
 
 /** The overlay geometry the tracked layer's points map through: its drawn box. */
-const TRACK_KINDS: ReadonlyArray<OverlayKind> = ['bounds'];
+const TRACK_KINDS: ReadonlyArray<OverlayKind> = ['bounds', 'transform'];
 
 export function TrackPointOverlay(): JSX.Element | null {
   // Frame-coalesced — visual tracking only; the raw rev re-rendered per
@@ -118,10 +117,10 @@ export function TrackPointOverlay(): JSX.Element | null {
   const active = armed && nodeId ? nodeId : null;
   // B4: the tracked layer's drawn box from the overlay geometry push (asked for
   // here: the Motion Source need not be selected).
-  const [, setGeoTick] = useState(0);
+  const [geoTick, setGeoTick] = useState(0);
   useEffect(() => {
     // Re-render once the engine has the subscription: the box exists from then.
-    void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', active ? [active] : [], TRACK_KINDS).then(() => setGeoTick((t) => t + 1));
+    void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', active ? [active] : [], TRACK_KINDS, active ? ['active'] : []).then(() => setGeoTick((t) => t + 1));
     return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', [], TRACK_KINDS); };
   }, [active]);
   const box = active ? overlayLayer(MAIN_VIEWPORT, active, secondsToFlicks(time))?.box : undefined;
@@ -132,8 +131,8 @@ export function TrackPointOverlay(): JSX.Element | null {
   const camera = getWorkspaceController().ws.camera;
   const mapping = useMemo(
     () => (active ? layerScreenMapping(active, time, comp, camera) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton
-    [active, time, comp.width, comp.height, sceneTick],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton; the geometry tick re-reads the push
+    [active, time, comp.width, comp.height, sceneTick, geoTick],
   );
 
   const sourceToScreen = useMemo(() => {
@@ -469,12 +468,13 @@ export function TrackPointOverlay(): JSX.Element | null {
         track
           .filter((s) => Math.abs(s.compTime - time) <= PATH_WINDOW_S)
           .map((s) => {
-            const c = trackSampleToComp(
-              active, s.x, s.y, s.compTime, result.sourceWidth, result.sourceHeight, comp,
-            );
-            if (!c) return null;
+            // Source px → the layer's drawn box (local) → screen, through the frame's own projection
+            // (the overlay push: the samples inside the window are drawn on the layer as it is now).
+            if (!mapping || !box || box.length < 4 || result.sourceWidth <= 0 || result.sourceHeight <= 0) return null;
+            const lx = box[0]! + (s.x / result.sourceWidth) * box[2]!;
+            const ly = box[1]! + (s.y / result.sourceHeight) * box[3]!;
             return {
-              sc: camera.worldToScreen({ x: c.x, y: c.y }),
+              sc: mapping.localToScreen(lx, ly),
               coasted: s.coasted,
               confidence: s.confidence,
             };

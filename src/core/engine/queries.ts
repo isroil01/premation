@@ -39,7 +39,7 @@ import { installSourceTextProvider } from '@core/textExpr/sourceTextProvider';
 import { layerBoundsAnswer } from './layerBoundsQuery';
 import { rigPoseAnswer } from './rigOverlay';
 import { memberTracksAnswer } from './memberKeysQuery';
-import { documentColorsAnswer, captionCuesAnswer, mapLayerTimeAnswer, sourceSizesAnswer, precomposeCheckAnswer } from './itemFactsQueries';
+import { documentColorsAnswer, captionCuesAnswer, mapLayerTimeAnswer, sourceSizesAnswer, precomposeCheckAnswer, timelineRowsAnswer } from './itemFactsQueries';
 import { encodeFragment } from './handlers/layers';
 import { GROUP_TYPES } from './handlers/groups';
 import { checkTime, flicksToSeconds } from './time';
@@ -418,6 +418,8 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
       return { type: q.type, cues: captionCuesAnswer(q) };
     case 'mapLayerTime':
       return { type: q.type, ...mapLayerTimeAnswer(q) };
+    case 'getTimelineRows':
+      return { type: q.type, sets: timelineRowsAnswer(q.layers) };
     case 'getSourceSize':
       return { type: q.type, sizes: sourceSizesAnswer(q) };
     case 'checkPrecompose':

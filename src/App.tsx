@@ -72,7 +72,7 @@ import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
 import { installLegacyTimelineSync } from '@core/engine/timelineUpkeep';
 import { useGesture } from '@hooks/useGesture';
-import { flicksToSeconds, type Command } from '@motion/engine-api';
+import { flicksToSeconds, type Command, type TimelineRow } from '@motion/engine-api';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
 import { mirrorBarOf, mirrorCompBars, type MirrorBar } from '@core/mirror/clipBars';
 import { settingsFps } from '@core/mirror/compFacts';
@@ -89,8 +89,9 @@ import {
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { readTrack } from '@core/mirror/selection';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
-import { MASK_ANIM_PROP, buildStaticPropertyTree } from '@core/timeline/propertyTree';
-import { modifiedPropertyRows } from '@core/animation/modifiedProps';
+import { MASK_ANIM_PROP } from '@core/timeline/propertyTree';
+import { fetchTimelineRows, timelineRowsNow } from '@stores/timelineRows';
+import { modifiedRowsOf } from '@layout/Timeline/modifiedRows';
 import { useTimelinePixelsPerSecond, useTimelineRuler, useTimelineTracks } from '@layout/Timeline/useTimelineModel';
 import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
 import { bindAdaptiveResolution } from '@stores/renderQualityStore';
@@ -393,16 +394,19 @@ function EditorShellInner(): JSX.Element {
     let lastM = 0;
 
     /**
-     * Rows derived from the property TREE — the model only builds rows for expanded tracks.
-     * B4-kept: the row ids are the legacy AE row projection's (`buildStaticPropertyTree`, the timeline exit
-     * table's `buildPropertyRows` row) — they move with that projection onto the mirror tree.
+     * Rows of the engine's AE row projection (`getTimelineRows`) — the model only builds rows for expanded
+     * tracks. The selection's projection is fetched as it changes, so a reveal key reads it synchronously.
      */
+    const rowsOf = (id: string): readonly TimelineRow[] => timelineRowsNow(id) ?? [];
     const effectRows = (ids: readonly string[]): string[] => [
-      ...new Set(ids.flatMap((id) => buildStaticPropertyTree(id).filter((r) => r.group === 'effects').map((r) => r.prop))),
+      ...new Set(ids.flatMap((id) => rowsOf(id).filter((r) => r.group === 'effects').map((r) => r.prop))),
     ];
     const allMaskRows = (ids: readonly string[]): string[] => [
-      ...new Set([MASK_ANIM_PROP, ...ids.flatMap((id) => buildStaticPropertyTree(id).filter((r) => r.group === 'masks').map((r) => r.prop))]),
+      ...new Set([MASK_ANIM_PROP, ...ids.flatMap((id) => rowsOf(id).filter((r) => r.group === 'masks').map((r) => r.prop))]),
     ];
+    const offSelection = useSelectionStore.subscribe((st, prev) => {
+      if (st.ids !== prev.ids && st.ids.length > 0) void fetchTimelineRows(st.ids);
+    });
     /**
      * A layer's animated member tracks (the engine's `getMemberKeyframes`: keyed tracks and
      * expressions, catalog or not) spelled the way the timeline draws them — x / y / z are ONE
@@ -549,20 +553,20 @@ function EditorShellInner(): JSX.Element {
         // AE's UU: animated, expressed, OR set away from the default — read
         // from the scene and engine, not the model (which only builds rows for
         // expanded tracks and cannot see an un-keyed 50 % scale).
-        // B4-kept: `modifiedPropertyRows` compares every STORED prop (catalog or not) with its default and
-        // names rows in the legacy row projection — it moves with that projection (see effectRows).
-        const withRows = targetIds
-          .map((id) => ({ id, rows: modifiedPropertyRows(id) }))
-          .filter((v) => v.rows.length > 0);
-        const filter = new Set<string>();
-        for (const v of withRows) for (const r of v.rows) filter.add(r);
-        setRevealFilter(filter.size > 0 ? [...filter] : null);
-        setExpandedIds((cur) => {
-          const revealed = targetIds.every((id: string) => cur.includes(id));
-          const set = new Set(cur);
-          if (revealed) for (const id of targetIds) set.delete(id);
-          else for (const v of withRows) set.add(v.id);
-          return [...set];
+        // The engine's rows and stored values (layout/Timeline/modifiedRows.ts), asked now.
+        const at = playheadNow();
+        void Promise.all(targetIds.map(async (id: string) => ({ id, rows: await modifiedRowsOf(id, at) }))).then((all) => {
+          const withRows = all.filter((v) => v.rows.length > 0);
+          const filter = new Set<string>();
+          for (const v of withRows) for (const r of v.rows) filter.add(r);
+          setRevealFilter(filter.size > 0 ? [...filter] : null);
+          setExpandedIds((cur) => {
+            const revealed = targetIds.every((id: string) => cur.includes(id));
+            const set = new Set(cur);
+            if (revealed) for (const id of targetIds) set.delete(id);
+            else for (const v of withRows) set.add(v.id);
+            return [...set];
+          });
         });
         return;
       }
@@ -611,6 +615,7 @@ function EditorShellInner(): JSX.Element {
     return () => {
       window.removeEventListener('keydown', onKey);
       sub.dispose();
+      offSelection();
     };
   }, []);
 

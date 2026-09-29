@@ -21,7 +21,7 @@ import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorProperty } from '@hooks/useMirror';
 import { gateOf } from '@core/mirror/audio';
-import { setAudioToolOpener } from '@core/audio/audioCommands';
+import { setAudioToolOpener } from './audioCommands';
 import { DEFAULT_GATE, type GateParams } from '@core/audio/audioGate';
 import { removeGateEdit } from './audioEdits';
 import { previewEngineJob, runEngineJob } from '@core/engine/engineJobs';

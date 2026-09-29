@@ -33,9 +33,7 @@ import { useEngineEdit } from './useEngineEdit';
 import { useGesture } from '@hooks/useGesture';
 import { jsonFieldCommands } from './layerFieldEdits';
 import { stopwatchCommands, valueCommands } from './inspectorEdits';
-// Same registration-by-import as PhysicsSection: loading this module is what
-// puts `dynamics.bakeParticles` in the command registry.
-import { runParticleBake } from '@core/simulation/bakeCommands';
+import { runParticleBake } from './bakeEdits';
 import { BakeDialog } from './BakeDialog';
 import styles from './TransformSection.module.css';
 

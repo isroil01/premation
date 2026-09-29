@@ -317,6 +317,14 @@ export type LayerConversion =
   | 'bakeTransform';
 export const LayerConversionValues = ['shapesFromText', 'masksFromText', 'shapesFromVector', 'editableText', 'uncompose', 'bakeTransform'] as const;
 
+/** B4 round 8 — a Merge Paths boolean. */
+export type MergeOp =
+  | 'union'
+  | 'subtract'
+  | 'intersect'
+  | 'exclude';
+export const MergeOpValues = ['union', 'subtract', 'intersect', 'exclude'] as const;
+
 export type Edge =
   | 'in'
   | 'out';
@@ -1565,6 +1573,9 @@ export interface AssembleComposition {
   overlap: Time;
 }
 
+/** B4 round 8 — a legacy in-place precomp GROUP (a precomp-flagged group carrying its own layers, placing no composition) that never got a settings record becomes a composition: the record opening it in a tab would have made (its name; the enclosing composition's size, rate and duration) and a timeline, so getDocument lists it and its layers. The UI sends it once after an open; nothing to migrate = no history entry. Returns the migrated ids. */
+export interface MigrateLegacyPrecomps {}
+
 export interface PrecomposeResult {
   comp: ItemId;
   layer: LayerId;
@@ -1841,12 +1852,49 @@ export interface SetLayerComment {
   comment: string;
 }
 
+/** B4 round 8 — 3D IK solver options (boneIK3d.ts IK_DEFAULTS: 12 sweeps, 0.5 px, 0.6 rad per step). */
+export interface IkOptions {
+  /** CCD sweeps over the chain. */
+  iterations?: number;
+  /** Stop early when the tip lands within this many px of the target. */
+  tolerance?: number;
+  /** Per-step rotation clamp, radians (the damping that keeps CCD stable). */
+  maxStepRad?: number;
+}
+
+export interface IkResult {
+  /** Frames solved (1 for a pose). */
+  frames: number;
+}
+
+/** B4 round 8 — 3D IK on ordinary layers (Ik3DSection, boneIK3d.ts): CCD over `chain` (root → tip, a parent chain of 3D layers; the tip is the end effector and keeps its own rotation) aimed at `target`'s world origin at comp `time`. Every joint but the tip gets its solved X / Y / Z Rotation at `time` (setProperty rules: a keyed rotation gets a key there, else the static value). One entry. `invalidArgument` for a chain shorter than two or a joint that is not 3D. */
+export interface PoseIk3D {
+  chain: LayerId[];
+  target: LayerId;
+  time: Time;
+  options?: IkOptions;
+}
+
+/** B4 round 8 — IK baked against an ANIMATED target (boneIK3d.ts planIk3DBake): solved at every composition frame of `range` (both ends included), each solve seeded from the previous pose, and every joint but the tip's X / Y / Z Rotation REPLACED by one linear key per frame. One entry; `IkResult.frames` = the frames solved. */
+export interface BakeIk3D {
+  chain: LayerId[];
+  target: LayerId;
+  range: TimeRange;
+  options?: IkOptions;
+}
+
 /** A self-contained piece of document (layers + the items they reference) as produced by copyLayers. Opaque to the UI. */
 export interface DocumentFragment {
   /** Fragment format version. */
   version: number;
   /** Encoded payload (engine-defined; JSON in the TS engine). */
   data: Uint8Array;
+}
+
+/** B4 round 8 — Merge Paths ▸ Live <op> (mergePaths.ts planLiveMerge): of `layers`, the unlocked shapes whose stored outline is a closed region are the operands (flagged `layer/booleanOperand`, hidden); a result shape layer "Boolean (<op>)" storing `booleanOp` / `booleanSources` (the renderer re-evaluates it every frame), seeded at the boolean's box with the first operand's style, lands above the first operand. One entry. `invalidArgument` when fewer than two closed paths overlap for the op; `unsupported` without the engine's polygon booleans. */
+export interface CreateLiveMerge {
+  layers: LayerId[];
+  op: MergeOp;
 }
 
 export interface LayerRef {
@@ -2786,6 +2834,8 @@ export interface AudioAnalysisJob {
   /** P4 — an Audio driver's envelope (audioDriver.ts computeDriverEnvelope): `driver` is the AudioDriver JSON (band — 'full' | 'low' | 'mid' | 'high' | {lo, hi} Hz — attackMs, releaseMs, gate, normalize, min, max, curve, smoothFrames). The source is `layer`'s sound, or with `layer` '' the composition `driverComp`'s mix (a child engine's offline mix, as transcribe). Over the work area (else the whole composition) at its frame rate. Summary `driver: {raw: [0..1 per frame], mapped: [the property's units], start, end, fps}`. Nothing is written — the page splices the keys (one entry with the driver record). */
   driver?: string;
   driverComp?: ItemId;
+  /** B4 round 8 — After Effects' Convert Audio to Keyframes: a new "<layer> Amplitude" NULL in the layer's composition carrying three Slider Controls ("Both Channels", "Left", "Right"), each keyed from its channel's envelope (the amplitude options above apply; keys at composition time through the layer's bar). Any audio or video layer with sound; independent of `amplitudeKeyframes`. The summary's `amplitudeNull` counts the keys per channel. */
+  amplitudeNull?: boolean;
 }
 
 /** Ducking (ducking.ts planDucking): lower `music`'s level under the voice (`voices[0]`; the page's dialog ducks under one layer) over the composition's work area, as Audio Levels keyframes, and remember the parameters (`audio/ducking`). `params` is the DuckingParams JSON (duckDb, thresholdDb, attackMs, releaseMs, holdMs); absent keys take the defaults. */
@@ -2872,6 +2922,23 @@ export interface AutoReframeJob {
   lagSeconds?: number;
 }
 
+/** Bake Physics to Keyframes (bakeDynamics.ts bakePhysicsToKeyframes): the composition's rigid bodies stepped by the renderer's own solver (every body, so collisions match the viewport; the world is the engine's: gravity 0 / 1800, the comp rectangle as walls, 4 passes), sampled at each frame of `range` (every `everyNFrames`th, the last frame always) and written onto the `layers` that carry an enabled DYNAMIC body — position, and rotation for a body that spins — as linear keys with the last one held, Douglas-Peucker thinned by `simplifyTolerance` (value units; 0 = every sample). Their physics is switched off in the same entry. Refused (invalidArgument) when none of `layers` has an enabled dynamic body. */
+export interface PhysicsBakeJob {
+  layers: LayerId[];
+  range: TimeRange;
+  everyNFrames?: number;
+  simplifyTolerance?: number;
+}
+
+/** Bake Particles to Layers (bakeDynamics.ts bakeParticlesToLayers): the emitter's particles (the renderer's sim, its `particle.<key>` tracks sampled per frame) at each frame of `range`, one keyed ellipse (a square emitter: rectangle) per particle — x / y / scale / opacity, invisible outside its life — under a new "<emitter> Baked" null parented to the emitter; the emitter is hidden. At most `maxParticles` (default 200) layers, the earliest born; the summary reports `seen` and `capped`. */
+export interface ParticleBakeJob {
+  layer: LayerId;
+  range: TimeRange;
+  everyNFrames?: number;
+  simplifyTolerance?: number;
+  maxParticles?: number;
+}
+
 /** Rig Logo for Animation (rigLogo.ts): the selection as ONE riggable layer with a starter puppet — an "Anchor" pin at the bottom centre and a "Wave" pin at the top centre (layer space). One image or shape layer holding nothing is rigged in place; anything else (a group, a precomp, text, several layers) is drawn alone on a transparent comp at `time` (absent = the playhead) by a child engine, cropped to its pixels (+4 px), imported as a PNG (importBytes, source `derived`) and placed as an image layer "<name> (Rigged)" where it drew, above the topmost selected layer — and that is rigged. The layers must share a composition. Result: {mode: 'self' | 'rasterize', layer} (layer = the rigged one, once applied). */
 export interface RigLogoJob {
   layers: LayerId[];
@@ -2895,7 +2962,9 @@ export type JobSpec =
   | { kind: 'rotoBrush'; value: RotoBrushJob }
   | { kind: 'contentAwareFill'; value: ContentAwareFillJob }
   | { kind: 'autoReframe'; value: AutoReframeJob }
-  | { kind: 'rigLogo'; value: RigLogoJob };
+  | { kind: 'rigLogo'; value: RigLogoJob }
+  | { kind: 'physicsBake'; value: PhysicsBakeJob }
+  | { kind: 'particleBake'; value: ParticleBakeJob };
 export type JobSpecKind = JobSpec['kind'];
 
 export interface StartJob {
@@ -3290,6 +3359,31 @@ export interface PrecomposeCheck {
   leaveAttributesReason: string;
 }
 
+/** B4 round 8 — the timeline's After Effects ROW projection of each layer (both engines' `buildStaticPropertyTree` / `build_static_property_tree`): the rows in AE's twirl order (Text, Contents, Masks, Effects, Transform, Camera / Light Options, Layer Styles, Geometry / Material Options, Audio, Time), each with the legacy track names behind it. `members` = the tracks its stopwatch keys (empty = no stopwatch); `merged` = the pseudo track the members collapse under once keyed (Position); `valueProps` = the tracks its value field edits; `maskTrack` = keyed as a whole-mask track. Unknown ids answer no set. */
+export interface GetTimelineRows {
+  layers: LayerId[];
+}
+
+export interface TimelineRow {
+  prop: string;
+  label: string;
+  group: string;
+  members: string[];
+  merged?: string;
+  valueProps: string[];
+  valueUnit?: string;
+  maskTrack: boolean;
+}
+
+export interface TimelineRowSet {
+  layer: LayerId;
+  rows: TimelineRow[];
+}
+
+export interface TimelineRowSets {
+  sets: TimelineRowSet[];
+}
+
 export interface RigBoneWeight {
   bone: string;
   weight: number;
@@ -3651,6 +3745,24 @@ export interface GlyphBox {
   box: Rect;
   baseline: number;
   advance: number;
+}
+
+/** B4 round 8 — one face of an extruded 3D layer (face picking): `kind` front | back | side | bevel (the material group), `suffix` the renderer's face suffix (a mesh triangle: its role), `points` the polygon in WORLD px, `verts` a mesh triangle's vertex indices (empty for a quad). */
+export interface LayerFace {
+  kind: string;
+  suffix: string;
+  points: Vec3[];
+  verts: number[];
+}
+
+export interface LayerFaces {
+  faces: LayerFace[];
+}
+
+/** B4 round 8 — the faces of an extruded 3D layer at `time` (facePicking.ts projectedFaces before its projection): the renderer's extrusion mesh with its front cap, else the flat-quad fallback, in world px; empty for a layer with no extrusion. The UI projects them through its view. `unsupported` without the frame builder. */
+export interface GetLayerFaces {
+  layer: LayerId;
+  time: Time;
 }
 
 export interface HitTest {
@@ -4778,6 +4890,7 @@ export type Command =
   | ({ type: 'trimCompToWorkArea' } & TrimCompToWorkArea)
   | ({ type: 'cropComposition' } & CropComposition)
   | ({ type: 'assembleComposition' } & AssembleComposition)
+  | ({ type: 'migrateLegacyPrecomps' } & MigrateLegacyPrecomps)
   | ({ type: 'addRenderItems' } & AddRenderItems)
   | ({ type: 'setRenderItem' } & SetRenderItem)
   | ({ type: 'removeRenderItems' } & RemoveRenderItems)
@@ -4799,6 +4912,9 @@ export type Command =
   | ({ type: 'separateLayer' } & SeparateLayer)
   | ({ type: 'autoTrace' } & AutoTrace)
   | ({ type: 'setLayerComment' } & SetLayerComment)
+  | ({ type: 'poseIk3D' } & PoseIk3D)
+  | ({ type: 'bakeIk3D' } & BakeIk3D)
+  | ({ type: 'createLiveMerge' } & CreateLiveMerge)
   | ({ type: 'setLayerTiming' } & SetLayerTiming)
   | ({ type: 'moveLayersInTime' } & MoveLayersInTime)
   | ({ type: 'trimLayers' } & TrimLayers)
@@ -4936,6 +5052,7 @@ export type CommandResult =
   | ({ type: 'trimCompToWorkArea' } & Empty)
   | ({ type: 'cropComposition' } & Empty)
   | ({ type: 'assembleComposition' } & ItemRef)
+  | ({ type: 'migrateLegacyPrecomps' } & ItemList)
   | ({ type: 'addRenderItems' } & RenderItemList)
   | ({ type: 'setRenderItem' } & Empty)
   | ({ type: 'removeRenderItems' } & Empty)
@@ -4957,6 +5074,9 @@ export type CommandResult =
   | ({ type: 'separateLayer' } & LayerList)
   | ({ type: 'autoTrace' } & GroupList)
   | ({ type: 'setLayerComment' } & Empty)
+  | ({ type: 'poseIk3D' } & IkResult)
+  | ({ type: 'bakeIk3D' } & IkResult)
+  | ({ type: 'createLiveMerge' } & LayerRef)
   | ({ type: 'setLayerTiming' } & Empty)
   | ({ type: 'moveLayersInTime' } & Empty)
   | ({ type: 'trimLayers' } & Empty)
@@ -5069,6 +5189,7 @@ export type Query =
   | ({ type: 'mapLayerTime' } & MapLayerTime)
   | ({ type: 'getSourceSize' } & GetSourceSize)
   | ({ type: 'checkPrecompose' } & CheckPrecompose)
+  | ({ type: 'getTimelineRows' } & GetTimelineRows)
   | ({ type: 'getRigPose' } & GetRigPose)
   | ({ type: 'getWaveform' } & GetWaveform)
   | ({ type: 'listFonts' } & ListFonts)
@@ -5084,6 +5205,7 @@ export type Query =
   | ({ type: 'getCapabilities' } & GetCapabilities)
   | ({ type: 'listPlugins' } & ListPlugins)
   | ({ type: 'getEffectUi' } & GetEffectUi)
+  | ({ type: 'getLayerFaces' } & GetLayerFaces)
   | ({ type: 'hitTest' } & HitTest)
   | ({ type: 'getLayerBounds' } & GetLayerBounds)
   | ({ type: 'getLayerTransforms' } & GetLayerTransforms)
@@ -5122,6 +5244,7 @@ export type QueryResult =
   | ({ type: 'mapLayerTime' } & MappedTime)
   | ({ type: 'getSourceSize' } & SourceSizes)
   | ({ type: 'checkPrecompose' } & PrecomposeCheck)
+  | ({ type: 'getTimelineRows' } & TimelineRowSets)
   | ({ type: 'getRigPose' } & RigPose)
   | ({ type: 'getWaveform' } & WaveformPeaks)
   | ({ type: 'listFonts' } & FontList)
@@ -5137,6 +5260,7 @@ export type QueryResult =
   | ({ type: 'getCapabilities' } & Capabilities)
   | ({ type: 'listPlugins' } & PluginList)
   | ({ type: 'getEffectUi' } & EffectUi)
+  | ({ type: 'getLayerFaces' } & LayerFaces)
   | ({ type: 'hitTest' } & HitResult)
   | ({ type: 'getLayerBounds' } & LayerBoundsList)
   | ({ type: 'getLayerTransforms' } & LayerTransformList)
@@ -5237,6 +5361,7 @@ export interface CommandArgs {
   trimCompToWorkArea: TrimCompToWorkArea;
   cropComposition: CropComposition;
   assembleComposition: AssembleComposition;
+  migrateLegacyPrecomps: MigrateLegacyPrecomps;
   addRenderItems: AddRenderItems;
   setRenderItem: SetRenderItem;
   removeRenderItems: RemoveRenderItems;
@@ -5258,6 +5383,9 @@ export interface CommandArgs {
   separateLayer: SeparateLayer;
   autoTrace: AutoTrace;
   setLayerComment: SetLayerComment;
+  poseIk3D: PoseIk3D;
+  bakeIk3D: BakeIk3D;
+  createLiveMerge: CreateLiveMerge;
   setLayerTiming: SetLayerTiming;
   moveLayersInTime: MoveLayersInTime;
   trimLayers: TrimLayers;
@@ -5395,6 +5523,7 @@ export interface CommandResults {
   trimCompToWorkArea: Empty;
   cropComposition: Empty;
   assembleComposition: ItemRef;
+  migrateLegacyPrecomps: ItemList;
   addRenderItems: RenderItemList;
   setRenderItem: Empty;
   removeRenderItems: Empty;
@@ -5416,6 +5545,9 @@ export interface CommandResults {
   separateLayer: LayerList;
   autoTrace: GroupList;
   setLayerComment: Empty;
+  poseIk3D: IkResult;
+  bakeIk3D: IkResult;
+  createLiveMerge: LayerRef;
   setLayerTiming: Empty;
   moveLayersInTime: Empty;
   trimLayers: Empty;
@@ -5528,6 +5660,7 @@ export interface QueryArgs {
   mapLayerTime: MapLayerTime;
   getSourceSize: GetSourceSize;
   checkPrecompose: CheckPrecompose;
+  getTimelineRows: GetTimelineRows;
   getRigPose: GetRigPose;
   getWaveform: GetWaveform;
   listFonts: ListFonts;
@@ -5543,6 +5676,7 @@ export interface QueryArgs {
   getCapabilities: GetCapabilities;
   listPlugins: ListPlugins;
   getEffectUi: GetEffectUi;
+  getLayerFaces: GetLayerFaces;
   hitTest: HitTest;
   getLayerBounds: GetLayerBounds;
   getLayerTransforms: GetLayerTransforms;
@@ -5581,6 +5715,7 @@ export interface QueryResults {
   mapLayerTime: MappedTime;
   getSourceSize: SourceSizes;
   checkPrecompose: PrecomposeCheck;
+  getTimelineRows: TimelineRowSets;
   getRigPose: RigPose;
   getWaveform: WaveformPeaks;
   listFonts: FontList;
@@ -5596,6 +5731,7 @@ export interface QueryResults {
   getCapabilities: Capabilities;
   listPlugins: PluginList;
   getEffectUi: EffectUi;
+  getLayerFaces: LayerFaces;
   hitTest: HitResult;
   getLayerBounds: LayerBoundsList;
   getLayerTransforms: LayerTransformList;

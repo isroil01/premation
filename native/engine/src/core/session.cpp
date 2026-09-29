@@ -1107,6 +1107,10 @@ api::QueryResult Session::run_query(const api::Query& q) {
       frameBuilder_->set_media_base(media_base());
       return frameBuilder_->hit_test(doc_, view_, exprEnv_, exprCache_, comp, time, point, out);
     };
+    c.layerFaces = [this](const std::string& comp, api::Time time, const std::string& layer) {
+      frameBuilder_->set_media_base(media_base());
+      return frameBuilder_->layer_faces(doc_, view_, exprEnv_, exprCache_, comp, time, layer);
+    };
   }
   c.still = [this](const doc::StillRequest& r) { return render_still(r); };
   c.documentStill = [this](const doc::Json& file, const std::string& comp, api::Time time, std::uint32_t maxSize) {

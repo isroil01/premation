@@ -412,6 +412,7 @@ set(ENGINE_DOC_SOURCES
   src/core/fxstate.cpp
   src/core/handlers_common.cpp
   src/core/handlers_comps.cpp
+  src/core/handlers_dynamics.cpp
   src/core/handlers_groups.cpp
   src/core/handlers_items.cpp
   src/core/handlers_layers.cpp
@@ -1077,6 +1078,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   src/scene/particle_port.cpp     #   particle layers (sims, the Canvas2D field)
   src/scene/polygon_clipping.cpp  #   polygon-clipping (Martinez) + splaytree + orient2d, exact
   src/scene/merge_paths.cpp       #   live Merge Paths (mergePaths.ts)
+  src/scene/layer_faces.cpp       #   getLayerFaces: face picking's extrusion faces (facePicking.ts)
     src/plugins/scene_native_fx.cpp
     src/plugins/scene_finish.cpp
   )
@@ -1255,6 +1257,7 @@ if(FFMPEG_FOUND AND TARGET engine_audio)
     src/jobs/kind_roto_brush.cpp
     src/jobs/kind_content_aware.cpp
     src/jobs/kind_auto_reframe.cpp
+    src/jobs/kind_dynamics_bake.cpp
     src/jobs/kind_rig_logo.cpp
     src/jobs/kind_transcribe.cpp
     src/jobs/child_export.cpp
@@ -1268,6 +1271,7 @@ if(FFMPEG_FOUND AND TARGET engine_audio)
   # renderer uses (scene/image_decode_ffi.cpp) — the vcpkg ffmpeg has no still decoders.
   if(TARGET engine_scene)
     target_link_libraries(engine_jobs PRIVATE engine_scene)
+    target_compile_definitions(engine_jobs PRIVATE PREMATION_JOBS_HAVE_SCENE=1)  # the particle bake (particle_port.hpp)
   endif()
   find_package(onnxruntime CONFIG QUIET)
   if(onnxruntime_FOUND)

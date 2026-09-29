@@ -225,6 +225,11 @@
     "type": "assembleComposition"
   },
   {
+    "id": 1943,
+    "kind": "edit",
+    "type": "migrateLegacyPrecomps"
+  },
+  {
     "id": 150,
     "kind": "edit",
     "type": "addRenderItems"
@@ -328,6 +333,21 @@
     "id": 216,
     "kind": "edit",
     "type": "setLayerComment"
+  },
+  {
+    "id": 1940,
+    "kind": "edit",
+    "type": "poseIk3D"
+  },
+  {
+    "id": 1941,
+    "kind": "edit",
+    "type": "bakeIk3D"
+  },
+  {
+    "id": 1942,
+    "kind": "edit",
+    "type": "createLiveMerge"
   },
   {
     "id": 300,

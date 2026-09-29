@@ -29,6 +29,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "engine_api.hpp"
@@ -115,6 +116,10 @@ struct JobDocContext {
   /// -> composition pixels); nullopt for a 3D layer / camera / light. Empty
   /// when the caller has no evaluator (tests): a kind that needs it refuses.
   std::function<std::optional<std::array<double, 6>>(std::string_view layer, double seconds)> layerToComp;
+  /// `evaluateNode(layer, compToKeyframeTime(layer, s))`: every keyed / expressed
+  /// prop of the layer at composition second `s`, sampled (the particle bake's
+  /// `particle.<key>` tracks). Empty when the caller has no evaluator.
+  std::function<std::vector<std::pair<std::string, double>>(std::string_view layer, double seconds)> layerValues;
   /// A layer's base (unscaled) box at composition second `s`, px: {width,
   /// height} (layer_geometry_at). nullopt for a kind with no box. Empty = none.
   std::function<std::optional<std::array<double, 2>>(std::string_view layer, double seconds)> layerSize;

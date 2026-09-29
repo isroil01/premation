@@ -16,7 +16,6 @@ import {
   evaluateLiveBoolean,
 } from './mergePaths';
 import type { SceneNode } from '@core/types';
-import { liveMergeOperandCommands } from './liveMergeCommands';
 
 function rect(id: string, x: number, y: number, w: number, h: number): SceneNode {
   return {
@@ -203,16 +202,6 @@ describe('planLiveMerge', () => {
       expect(isBooleanOperand(n)).toBe(false);
       expect(n.visible).toBe(true);
     }
-    expect(liveMergeOperandCommands(plan.sourceIds)).toEqual([
-      {
-        type: 'setProperties',
-        writes: [
-          { prop: { layer: 'lm_a', path: 'layer/booleanOperand' }, value: { kind: 'bool', value: true } },
-          { prop: { layer: 'lm_b', path: 'layer/booleanOperand' }, value: { kind: 'bool', value: true } },
-        ],
-      },
-      { type: 'setLayerSwitches', layers: ['lm_a', 'lm_b'], patch: { visible: false } },
-    ]);
 
     defaultSceneGraph.addChild(plan.parentId, plan.node);
     const result = defaultSceneGraph.getNode(plan.node.id)!;
