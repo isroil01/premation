@@ -42,7 +42,8 @@ import { useGuidesStore, CAMERA_ORTHO_VIEWS, type Camera3dMode } from '@stores/g
 import { CUSTOM_VIEW_IDS, CUSTOM_VIEW_LABEL } from '@core/workspace/customViews';
 import { effectiveViewMode, useCompCameraViews } from '@layout/TopNav/ViewControls';
 import type { RenderView } from '@core/rendering/RenderBackend';
-import { useViewportRenderer } from './useViewportRenderer';
+import { EnginePaneSurface } from '@components/EngineSurface/EnginePaneSurface';
+import { paintWireframeOverlay } from './useViewportRenderer';
 import { usePaneWorkspace } from './usePaneWorkspace';
 import { paneViewTransform } from './useSceneRefGeometry';
 import { useGizmo3d } from './useGizmo3d';
@@ -76,7 +77,6 @@ const VIEW_OPTIONS: ReadonlyArray<{ id: Camera3dMode; label: string }> = [
 ];
 
 export function SecondaryViewPane({ mode: modeProp, onModeChange, style, className }: SecondaryViewPaneProps = {}): JSX.Element {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wireframeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const time = useActiveWorkspace()?.time ?? 0;
@@ -174,7 +174,13 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
     () => ({ canvasRef: wireframeCanvasRef, nodes: () => paneScene.getNodes() }),
     [paneScene],
   );
-  useViewportRenderer(canvasRef, containerRef, sceneRev + framingRev, time, undefined, undefined, mode, getRenderView, wireframeOverlay);
+  // The pixels are the engine's (EnginePaneSurface below, on this pane's own
+  // engine viewport and view); Quality = Wireframe boxes are still painted from
+  // the page's geometry through the pane's view, each time anything moved.
+  const wireframePaintedRef = useRef(false);
+  useEffect(() => {
+    paintWireframeOverlay(wireframeOverlay, wireframeCanvasRef.current, getRenderView(), { width: compWidth, height: compHeight }, wireframePaintedRef);
+  }, [wireframeOverlay, getRenderView, compWidth, compHeight, sceneRev, framingRev, time, mode, paneBox.width, paneBox.height]);
   const selectedIds = useSelectionStore((s) => s.ids);
   // Selection outline from the PANE's own projection — the main viewport's
   // corners describe a different view and would draw the box in the wrong place.
@@ -212,10 +218,13 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
         ...style,
       }}
     >
-      {/* The canvas is pure output; interaction rides on the overlay above it,
-          which spans the same box and carries the pane's pointer handlers. */}
-      <canvas
-        ref={canvasRef}
+      {/* The engine's frames of THIS pane's view (its own engine viewport); pure
+          output — interaction rides on the overlay above it, which spans the
+          same box and carries the pane's pointer handlers. */}
+      <EnginePaneSurface
+        mode={mode}
+        getView={getPaneView}
+        framingRev={framingRev}
         style={{
           display: 'block',
           position: 'absolute',

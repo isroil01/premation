@@ -33,7 +33,7 @@
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import type { ChannelView, EngineFrameMeta, EventBatch, PreviewResolution as EnginePreviewResolution, ProcessEngineClient } from '@motion/engine-api';
+import type { ChannelView, EngineFrameMeta, EventBatch, PreviewResolution as EnginePreviewResolution, ProcessEngineClient, VideoFrameLike } from '@motion/engine-api';
 import {
   createAppProcessEngine,
   lastProcessEngineNotice,
@@ -50,6 +50,8 @@ import { viewportHudStats } from '@stores/viewportDisplayStore';
 import { publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { compUvRect, parseCssRgb } from './pasteboard';
+import { BOARD_FLOATS, createFrameBlitter } from './frameBlit';
+import { subscribeEngineFrames } from './engineFrameHub';
 import styles from './EngineSurface.module.css';
 
 /**
@@ -83,64 +85,6 @@ export function copyRouteDpr(cssWidth: number, cssHeight: number, dpr: number): 
 }
 
 export type EngineSurfaceMode = 'beside' | 'viewport';
-
-// ── the WebGPU members this file uses (typed locally; lib.dom has no WebGPU) ──
-
-interface SurfGpu {
-  requestAdapter(): Promise<SurfAdapter | null>;
-  getPreferredCanvasFormat(): string;
-}
-interface SurfAdapter {
-  requestDevice(): Promise<SurfDevice>;
-}
-interface SurfDevice {
-  createShaderModule(d: { code: string }): unknown;
-  createRenderPipeline(d: Record<string, unknown>): { getBindGroupLayout(i: number): unknown };
-  createSampler(d: Record<string, unknown>): unknown;
-  createBuffer(d: { size: number; usage: number }): unknown;
-  importExternalTexture(d: { source: VideoFrame }): unknown;
-  createBindGroup(d: Record<string, unknown>): unknown;
-  createCommandEncoder(): {
-    beginRenderPass(d: Record<string, unknown>): {
-      setPipeline(p: unknown): void;
-      setBindGroup(i: number, g: unknown): void;
-      draw(n: number): void;
-      end(): void;
-    };
-    finish(): unknown;
-  };
-  queue: { submit(b: unknown[]): void; onSubmittedWorkDone(): Promise<void>; writeBuffer(b: unknown, offset: number, data: Float32Array): void };
-  destroy(): void;
-}
-interface SurfContext {
-  configure(d: Record<string, unknown>): void;
-  getCurrentTexture(): { createView(): unknown };
-}
-
-// `board`: the comp rect in UV (x0, y0, x1, y1) and the pasteboard colour
-// (rgb; a = 1 paints it outside the rect, 0 shows the frame as it is) — pasteboard.ts.
-const WGSL = /* wgsl */ `
-struct Board { rect: vec4f, color: vec4f };
-@group(0) @binding(0) var samp: sampler;
-@group(0) @binding(1) var tex: texture_external;
-@group(0) @binding(2) var<uniform> board: Board;
-struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
-@vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {
-  var p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
-  var o: VOut;
-  o.pos = vec4f(p[i], 0.0, 1.0);
-  o.uv = vec2f((p[i].x + 1.0) * 0.5, 1.0 - (p[i].y + 1.0) * 0.5);
-  return o;
-}
-@fragment fn fs(v: VOut) -> @location(0) vec4f {
-  let c = textureSampleBaseClampToEdge(tex, samp, v.uv);
-  let inside = v.uv.x >= board.rect.x && v.uv.x <= board.rect.z && v.uv.y >= board.rect.y && v.uv.y <= board.rect.w;
-  if (board.color.a > 0.5 && !inside) { return vec4f(board.color.rgb, 1.0); }
-  return c;
-}`;
-
-/** GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST (lib.dom has no WebGPU constants). */
-const UNIFORM_COPY_DST = 0x0040 | 0x0008;
 
 /** What the real-app harness reads: `window.__premationEngineSurface`. */
 export interface EngineSurfaceStats {
@@ -235,18 +179,13 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     };
 
     let disposed = false;
-    let device: SurfDevice | null = null;
-    let ctx: SurfContext | null = null;
     // B4 round 2: while the engine draws THE viewport, the overlays' geometry is the frames' (overlayGeometry.ts).
     // Known once main answered viewportBase; nothing is sent before (sendViewport waits).
     let vp: number | null = null;
-    let pipeline: { getBindGroupLayout(i: number): unknown } | null = null;
-    let sampler: unknown = null;
     // The pasteboard (pasteboard.ts): the uniform, its CPU copy (reused every
     // draw — no per-frame allocation), the camera the engine last applied, and
     // the theme colour (re-read at most once a second: theme / Settings changes).
-    let boardBuf: unknown = null;
-    const boardData = new Float32Array(8);
+    const boardData = new Float32Array(BOARD_FLOATS);
     let applied: NonNullable<EngineSurfaceStats['lastViewport']> | null = null;
     let boardRgb: [number, number, number] | null = null;
     let boardColorAt = Number.NEGATIVE_INFINITY;
@@ -257,39 +196,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     let hudAt = 0;
     let sawFirst = false;
     const slowTimer = isViewport ? setTimeout(() => { if (!sawFirst && !disposed) setWaitingLong(true); }, 3000) : null;
-
-    // ── GPU ──
-    void (async () => {
-      try {
-        const gpu = (navigator as unknown as { gpu?: SurfGpu }).gpu;
-        if (!gpu) throw new Error('WebGPU unavailable');
-        const adapter = await gpu.requestAdapter();
-        if (!adapter) throw new Error('no WebGPU adapter');
-        const dev = await adapter.requestDevice();
-        if (disposed) {
-          dev.destroy();
-          return;
-        }
-        const c = canvas.getContext('webgpu') as unknown as SurfContext | null;
-        if (!c) throw new Error('no webgpu canvas context');
-        const format = gpu.getPreferredCanvasFormat();
-        c.configure({ device: dev, format, alphaMode: 'opaque' });
-        const module = dev.createShaderModule({ code: WGSL });
-        pipeline = dev.createRenderPipeline({
-          layout: 'auto',
-          vertex: { module, entryPoint: 'vs' },
-          fragment: { module, entryPoint: 'fs', targets: [{ format }] },
-          primitive: { topology: 'triangle-list' },
-        });
-        sampler = dev.createSampler({ magFilter: 'linear', minFilter: 'linear' });
-        boardBuf = dev.createBuffer({ size: boardData.byteLength, usage: UNIFORM_COPY_DST });
-        device = dev;
-        ctx = c;
-        if (pending) schedule();
-      } catch (e) {
-        fail(e);
-      }
-    })();
+    // The WebGPU blit (frameBlit.ts): up asynchronously; the newest frame waits for it.
+    const blitter = createFrameBlitter(canvas, () => { if (pending) schedule(); }, fail);
 
     /**
      * The pasteboard uniform for a w×h frame: the comp rect under the camera the
@@ -325,35 +233,19 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       const p = pending;
       pending = null;
       if (!p) return;
-      if (!device || !ctx || !pipeline) {
+      if (!blitter.ready()) {
         pending = p;  // GPU not up yet: keep the newest frame
         return;
       }
       try {
         const w = p.frame.displayWidth;
         const h = p.frame.displayHeight;
-        if (canvas.width !== w || canvas.height !== h) {
-          canvas.width = w;
-          canvas.height = h;
-        }
         writeBoard(w, h);
-        device.queue.writeBuffer(boardBuf, 0, boardData);
-        const ext = device.importExternalTexture({ source: p.frame });
-        const bind = device.createBindGroup({
-          layout: pipeline.getBindGroupLayout(0),
-          entries: [{ binding: 0, resource: sampler }, { binding: 1, resource: ext }, { binding: 2, resource: { buffer: boardBuf } }],
-        });
-        const enc = device.createCommandEncoder();
-        const pass = enc.beginRenderPass({
-          colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
-        });
-        pass.setPipeline(pipeline);
-        pass.setBindGroup(0, bind);
-        pass.draw(3);
-        pass.end();
-        device.queue.submit([enc.finish()]);
-        // The slot goes back to the engine once the GPU no longer reads it.
-        device.queue.onSubmittedWorkDone().then(p.release, p.release);
+        // The blit releases the slot to the engine once the GPU no longer reads it.
+        if (!blitter.draw(p.frame, boardData, p.release)) {
+          pending = p;
+          return;
+        }
         const now = performance.now();
         // B4 round 2: the overlays read THIS frame's geometry (the records it carried) from now on.
         if (isViewport && (p.meta.geometry || p.meta.geometryViews)) {
@@ -395,12 +287,11 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       if (!raf && !disposed) raf = requestAnimationFrame(draw);
     }
 
-    bridge.onFrame((frame, meta, release) => {
-      // C: another viewport of this window (a second view) is not this surface's.
-      if (vp === null || (meta as EngineFrameMeta).viewport !== vp) {
-        release();
-        return;
-      }
+    // This surface's frames only: the hub routes the window's frames by viewport
+    // (a 2-up / 4-up pane is another viewport of this window), subscribed once
+    // the id is known below.
+    let unFrames: (() => void) | null = null;
+    const onFrame = (frame: VideoFrameLike, meta: EngineFrameMeta, release: () => void): void => {
       stats.received += 1;
       const route = (meta as EngineFrameMeta).route ?? 'shared';
       if (route !== stats.route) {
@@ -415,9 +306,9 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         stats.superseded += 1;
         pending.release();  // newest wins; the older slot goes straight back
       }
-      pending = { frame: frame as VideoFrame, meta: meta as EngineFrameMeta, release };
+      pending = { frame: frame as VideoFrame, meta, release };
       schedule();
-    });
+    };
 
     // ── viewport: size, camera, channel (one request in flight, latest wins) ──
     let inFlight = false;
@@ -522,6 +413,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     void surfaceViewportId(bridge).then((id) => {
       if (disposed) return;
       vp = id;
+      unFrames = subscribeEngineFrames(id, onFrame);
       // B4 round 2: while the engine draws THE viewport, the overlays' geometry is the frames'.
       if (isViewport) setEngineDrivenViewport(id, true);
       requestViewport();
@@ -570,14 +462,14 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       dprQuery?.removeEventListener('change', onDpr);
       if (raf) cancelAnimationFrame(raf);
       if (sizeRaf) cancelAnimationFrame(sizeRaf);
-      bridge.onFrame?.(null);
+      unFrames?.();
       pending?.release();
       pending = null;
       if (vp !== null) {
         void client.execute({ type: 'closeViewport', viewport: vp });
         if (isViewport) setEngineDrivenViewport(vp, false);
       }
-      device?.destroy();
+      blitter.dispose();
     };
   }, [client, mode]);
 
