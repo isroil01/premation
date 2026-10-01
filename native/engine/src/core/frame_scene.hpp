@@ -5,6 +5,7 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <cstdint>
 #include <future>
 #include <memory>
@@ -58,6 +59,18 @@ struct RenderJob {
   std::vector<api::OverlayView> views;
 };
 
+/// setViewport `customView`: a custom 3D view (customViews.ts CustomViewParams)
+/// — the eye starts `distance` behind the point of interest along −z, orbits
+/// by yaw / pitch (degrees) and looks at it. Absent distance = 1.2 × the comp's
+/// default focal length; absent poi = the comp centre on z = 0.
+struct CustomViewParams {
+  double yaw = 0;
+  double pitch = 0;
+  std::optional<double> distance;
+  std::optional<std::array<double, 3>> poi;
+  bool operator==(const CustomViewParams&) const = default;
+};
+
 /// A viewport's output: slot textures of width × height physical pixels.
 struct ViewportConfig {
   std::uint32_t viewport = 0;
@@ -75,6 +88,13 @@ struct ViewportConfig {
   double panY = 0.0;
   /// CSS px per physical px of the slot (the slot is width × height physical px).
   double devicePixelRatio = 1.0;
+  /// setViewport `view`: the 3D view this viewport renders — 'active' (the
+  /// composition's camera), an axis view (front, back, left, right, top,
+  /// bottom), `camera:<layer>` or 'custom' (SnapshotComp.camera3dMode; baked
+  /// into each job like the zoom, never a ring change).
+  std::string view = "active";
+  /// With view = 'custom': the view's own camera replaces the scene camera.
+  std::optional<CustomViewParams> customView;
   /// setViewportHiddenLayers: layers this viewport's frames do not draw (the
   /// text layer being edited in place). Filled per frame by the Session; never
   /// part of a surface's stored config.

@@ -1044,6 +1044,7 @@ struct SetLoop;
 struct SetPreviewQuality;
 struct SetAudioPreview;
 struct SetActiveComposition;
+struct CustomView;
 struct SetViewport;
 struct CloseViewport;
 struct SetCacheBudget;
@@ -2780,6 +2781,14 @@ struct SetActiveComposition {
   bool operator==(const SetActiveComposition&) const = default;
 };
 
+struct CustomView {
+  double yaw = 0.0;
+  double pitch = 0.0;
+  std::optional<double> distance;
+  std::optional<Vec3> poi;
+  bool operator==(const CustomView&) const = default;
+};
+
 struct SetViewport {
   std::uint32_t viewport = 0;
   std::uint32_t width = 0;
@@ -2794,6 +2803,8 @@ struct SetViewport {
   std::string display_transform;
   std::optional<LayerId> layer;
   bool layer_render_effects = false;
+  std::optional<std::string> view;
+  std::optional<CustomView> custom_view;
   bool operator==(const SetViewport&) const = default;
 };
 
@@ -6160,6 +6171,8 @@ void encode(wire::Writer& w, const SetAudioPreview& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetAudioPreview& out);
 void encode(wire::Writer& w, const SetActiveComposition& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetActiveComposition& out);
+void encode(wire::Writer& w, const CustomView& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CustomView& out);
 void encode(wire::Writer& w, const SetViewport& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetViewport& out);
 void encode(wire::Writer& w, const CloseViewport& v);

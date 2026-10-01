@@ -9584,6 +9584,52 @@ Status decode(wire::Reader& r, SetActiveComposition& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const CustomView& v) {
+  w.varint(9U); w.f64(v.yaw);
+  w.varint(17U); w.f64(v.pitch);
+  if (v.distance.has_value()) { w.varint(25U); w.f64(*v.distance); }
+  if (v.poi.has_value()) { w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, *v.poi); w.end_ld(s); } }
+}
+
+Status decode(wire::Reader& r, CustomView& out) {
+  bool has_yaw = false;
+  bool has_pitch = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 9U: {
+        if (!r.f64(out.yaw)) return Status::truncated;
+        has_yaw = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.pitch)) return Status::truncated;
+        has_pitch = true;
+        break;
+      }
+      case 25U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.distance = std::move(e);
+        break;
+      }
+      case 34U: {
+        Vec3 e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.poi = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_yaw) return Status::missing_field;
+  if (!has_pitch) return Status::missing_field;
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const SetViewport& v) {
   w.varint(8U); w.varint(v.viewport);
   w.varint(16U); w.varint(v.width);
@@ -9598,6 +9644,8 @@ void encode(wire::Writer& w, const SetViewport& v) {
   w.varint(90U); w.str(v.display_transform);
   if (v.layer.has_value()) { w.varint(98U); w.str(*v.layer); }
   w.varint(104U); w.boolean(v.layer_render_effects);
+  if (v.view.has_value()) { w.varint(114U); w.str(*v.view); }
+  if (v.custom_view.has_value()) { w.varint(122U); { const std::size_t s = w.begin_ld(); encode(w, *v.custom_view); w.end_ld(s); } }
 }
 
 Status decode(wire::Reader& r, SetViewport& out) {
@@ -9681,6 +9729,18 @@ Status decode(wire::Reader& r, SetViewport& out) {
       case 104U: {
         if (!r.boolean(out.layer_render_effects)) return Status::truncated;
         has_layer_render_effects = true;
+        break;
+      }
+      case 114U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.view = std::move(e);
+        break;
+      }
+      case 122U: {
+        CustomView e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.custom_view = std::move(e);
         break;
       }
       default:
@@ -28327,7 +28387,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 499> kNames = {
+constexpr std::array<std::string_view, 500> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -28569,6 +28629,7 @@ constexpr std::array<std::string_view, 499> kNames = {
     "SetPreviewQuality",
     "SetAudioPreview",
     "SetActiveComposition",
+    "CustomView",
     "SetViewport",
     "CloseViewport",
     "SetCacheBudget",
@@ -29074,6 +29135,7 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "SetPreviewQuality") return roundtrip<SetPreviewQuality>(bytes, out);
   if (type == "SetAudioPreview") return roundtrip<SetAudioPreview>(bytes, out);
   if (type == "SetActiveComposition") return roundtrip<SetActiveComposition>(bytes, out);
+  if (type == "CustomView") return roundtrip<CustomView>(bytes, out);
   if (type == "SetViewport") return roundtrip<SetViewport>(bytes, out);
   if (type == "CloseViewport") return roundtrip<CloseViewport>(bytes, out);
   if (type == "SetCacheBudget") return roundtrip<SetCacheBudget>(bytes, out);

@@ -98,6 +98,9 @@ command setActiveComposition = 807 [control] { comp: ItemId = 1; }
 
 enum ChannelView { rgb = 0; red = 1; green = 2; blue = 3; alpha = 4; rgbStraight = 5; }
 
+/// A custom 3D view (customViews.ts CustomViewParams): the eye starts `distance` behind the point of interest along −z, orbits by yaw / pitch (degrees) and looks at it; the lens is the composition's default. Absent distance = 1.2 × the default focal length; absent poi = the comp centre on z = 0.
+struct CustomView { yaw: f64 = 1; pitch: f64 = 2; distance?: f64 = 3; poi?: Vec3 = 4; }
+
 /// A viewport's render parameters: pixel size, zoom/pan, region of interest, channel, exposure.
 command setViewport = 808 [control, coalesce] {
   viewport: u32 = 1;
@@ -115,6 +118,10 @@ command setViewport = 808 [control, coalesce] {
   /// Show a single layer (Layer panel) instead of the composition.
   layer?: LayerId = 12;
   layerRenderEffects: bool = 13;
+  /// The 3D view this viewport renders (the editor's camera3dMode): absent, '' or 'active' = the composition's camera; an axis view (front, back, left, right, top, bottom); `camera:<layer>`; or 'custom' with `customView`. Every viewport has its own (a 2-up / 4-up pane).
+  view?: string = 14;
+  /// With view = 'custom': the view's own camera replaces the scene camera (depth of field and camera motion blur off, as in a custom view).
+  customView?: CustomView = 15;
 }
 command closeViewport = 809 [control] { viewport: u32 = 1; }
 command setCacheBudget = 810 [control] { ramMegabytes: u64 = 1; diskMegabytes: u64 = 2; diskPath: string = 3; }

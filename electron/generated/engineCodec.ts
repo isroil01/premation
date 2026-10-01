@@ -7302,6 +7302,38 @@ function decS_SetActiveComposition(r: Reader, end: number, o: any): T.SetActiveC
   o.comp = v_comp;
   return o;
 }
+function encS_CustomView(w: Writer, v: T.CustomView): void {
+  w.byte(9); w.f64(v.yaw);
+  w.byte(17); w.f64(v.pitch);
+  if (v.distance !== undefined) { w.byte(25); w.f64(v.distance); }
+  if (v.poi !== undefined) { w.byte(34); { const s = w.beginLd(); encS_Vec3(w, v.poi); w.endLd(s); } }
+}
+function decS_CustomView(r: Reader, end: number, o: any): T.CustomView {
+  let h_yaw = false;
+  let h_pitch = false;
+  let v_yaw: number | undefined;
+  let v_pitch: number | undefined;
+  let v_distance: number | undefined;
+  let v_poi: T.Vec3 | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 9: v_yaw = r.f64(); h_yaw = true; break;
+      case 17: v_pitch = r.f64(); h_pitch = true; break;
+      case 25: v_distance = r.f64(); break;
+      case 34: v_poi = decS_Vec3(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_yaw) throw new DecodeError('CustomView.yaw: missing', 'missingField');
+  if (!h_pitch) throw new DecodeError('CustomView.pitch: missing', 'missingField');
+  o.yaw = v_yaw;
+  o.pitch = v_pitch;
+  if (v_distance !== undefined) o.distance = v_distance;
+  if (v_poi !== undefined) o.poi = v_poi;
+  return o;
+}
 function encS_SetViewport(w: Writer, v: T.SetViewport): void {
   w.byte(8); w.u32(v.viewport);
   w.byte(16); w.u32(v.width);
@@ -7316,6 +7348,8 @@ function encS_SetViewport(w: Writer, v: T.SetViewport): void {
   w.byte(90); w.str(v.displayTransform);
   if (v.layer !== undefined) { w.byte(98); w.str(v.layer); }
   w.byte(104); w.bool(v.layerRenderEffects);
+  if (v.view !== undefined) { w.byte(114); w.str(v.view); }
+  if (v.customView !== undefined) { w.byte(122); { const s = w.beginLd(); encS_CustomView(w, v.customView); w.endLd(s); } }
 }
 function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   let h_viewport = false;
@@ -7342,6 +7376,8 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   let v_displayTransform: string | undefined;
   let v_layer: string | undefined;
   let v_layerRenderEffects: boolean | undefined;
+  let v_view: string | undefined;
+  let v_customView: T.CustomView | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7358,6 +7394,8 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
       case 90: v_displayTransform = r.str(); h_displayTransform = true; break;
       case 98: v_layer = r.str(); break;
       case 104: v_layerRenderEffects = r.bool(); h_layerRenderEffects = true; break;
+      case 114: v_view = r.str(); break;
+      case 122: v_customView = decS_CustomView(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -7386,6 +7424,8 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   o.displayTransform = v_displayTransform;
   if (v_layer !== undefined) o.layer = v_layer;
   o.layerRenderEffects = v_layerRenderEffects;
+  if (v_view !== undefined) o.view = v_view;
+  if (v_customView !== undefined) o.customView = v_customView;
   return o;
 }
 function encS_CloseViewport(w: Writer, v: T.CloseViewport): void {
@@ -17390,6 +17430,7 @@ export const codecs = {
   SetPreviewQuality: mk<T.SetPreviewQuality>(encS_SetPreviewQuality, (r, e) => decS_SetPreviewQuality(r, e, {})),
   SetAudioPreview: mk<T.SetAudioPreview>(encS_SetAudioPreview, (r, e) => decS_SetAudioPreview(r, e, {})),
   SetActiveComposition: mk<T.SetActiveComposition>(encS_SetActiveComposition, (r, e) => decS_SetActiveComposition(r, e, {})),
+  CustomView: mk<T.CustomView>(encS_CustomView, (r, e) => decS_CustomView(r, e, {})),
   SetViewport: mk<T.SetViewport>(encS_SetViewport, (r, e) => decS_SetViewport(r, e, {})),
   CloseViewport: mk<T.CloseViewport>(encS_CloseViewport, (r, e) => decS_CloseViewport(r, e, {})),
   SetCacheBudget: mk<T.SetCacheBudget>(encS_SetCacheBudget, (r, e) => decS_SetCacheBudget(r, e, {})),

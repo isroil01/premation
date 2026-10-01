@@ -1948,6 +1948,29 @@ SnapshotComp snapshot_comp_of(const Document& d, std::string_view comp) {
   return s;
 }
 
+SnapshotComp with_viewport_view(SnapshotComp sc, const ViewportConfig& viewport) {
+  if (viewport.view.empty() || viewport.view == "active") return sc;
+  if (viewport.view != "custom") {
+    sc.camera3dMode = viewport.view;
+    return sc;
+  }
+  if (!viewport.customView) return sc;
+  // customViews.ts resolveCustomView + customViewCamera.
+  const CustomViewParams& p = *viewport.customView;
+  const double w = std::max(1.0, sc.width);
+  const double h = std::max(1.0, sc.height);
+  const motion::xf::Camera def = motion::xf::default_camera(w, h);
+  const double distance = p.distance.value_or(def.focal_length * 1.2);
+  const motion::xf::Vec3 poi = p.poi ? motion::xf::Vec3{(*p.poi)[0], (*p.poi)[1], (*p.poi)[2]} : motion::xf::Vec3{w / 2, h / 2, 0};
+  const motion::xf::Orbited orbited = motion::xf::orbit_camera({poi.x, poi.y, poi.z - distance}, poi, p.yaw, p.pitch);
+  const motion::xf::Orientation look = motion::xf::look_at_orientation(orbited.position, poi);
+  motion::xf::Camera cam{.position = orbited.position, .focal_length = def.focal_length, .principal = def.principal, .orientation = std::nullopt};
+  if (look.yaw != 0 || look.pitch != 0) cam.orientation = look;
+  sc.camera3dMode = "active";
+  sc.customViewCamera = cam;
+  return sc;
+}
+
 std::optional<std::array<double, 4>> cover_uv_rect(double sourceW, double sourceH, double slotW, double slotH) {
   if (!(sourceW > 0) || !(sourceH > 0) || !(slotW > 0) || !(slotH > 0)) return std::nullopt;
   const double sourceAspect = sourceW / sourceH;

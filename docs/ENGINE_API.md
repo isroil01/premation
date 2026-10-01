@@ -617,7 +617,7 @@ UI's business (it may re-select the ids named in the undone entry's events).
 | `setLoop` | once / loop / ping-pong. |
 | `setPreviewQuality` | Resolution (full/half/third/quarter/auto), fast previews (off/adaptive/draft/wireframe), draft 3D, motion blur in preview, adaptive floor. |
 | `setAudioPreview` | Mute, volume, scrub audio. |
-| `setViewport` [c] / `closeViewport` | Per viewport: pixel size, DPR, zoom, pan, region of interest, channel (RGB/R/G/B/alpha/straight), exposure, transparency grid, display transform, single-layer view (Layer panel) with or without effects. |
+| `setViewport` [c] / `closeViewport` | Per viewport: pixel size, DPR, zoom, pan, region of interest, channel (RGB/R/G/B/alpha/straight), exposure, transparency grid, display transform, single-layer view (Layer panel) with or without effects, and the 3D `view` it renders — absent / `active` (the composition's camera), an axis view (`front` … `bottom`), `camera:<layer>`, or `custom` with `customView` (the orbit of customViews.ts, resolved to the same camera the page's chrome uses; replaces the scene camera). Each viewport has its own view (2-up / 4-up panes); like the zoom it is baked into the frame job, never a ring change. |
 | `setCacheBudget`, `purgeCache` | RAM/disk cache sizing and purges. |
 | `setInteracting` | Hint while dragging: the engine may drop to draft until it ends. |
 | `setViewportHiddenLayers` | `{viewport, layers}` — the layers a viewport does not draw (the text layer being edited in place). Replaces the viewport's set; empty = all draw; closing the viewport drops it. View state: no history, no revision; exports, thumbnails and other viewports still draw the layer. |

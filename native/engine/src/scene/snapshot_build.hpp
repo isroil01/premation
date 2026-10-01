@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "anim.hpp"
+#include "frame_scene.hpp"
 #include "model.hpp"
 #include "scene_types.hpp"
 #include "text_measure.hpp"
@@ -56,6 +57,15 @@ struct BuildContext {
 /// The comp-level inputs the editor's viewport hands buildSnapshot for a
 /// composition record (useViewportRenderer: `{...comp, rootId}`).
 [[nodiscard]] SnapshotComp snapshot_comp_of(const doc::Document& d, std::string_view comp);
+
+/// The viewport's 3D view onto the comp (setViewport `view` / `customView`):
+/// what buildSnapshot read from the editor's camera3dMode / customViewCamera.
+/// '' / 'active' leave the comp's camera; an axis view or `camera:<id>` is the
+/// snapshot's camera3dMode; 'custom' resolves customViews.ts customViewCamera —
+/// the eye `distance` behind the point of interest along −z, orbited by
+/// yaw / pitch, looking at it, with the comp's default lens — which replaces
+/// the scene camera (threed_port: no DOF, no camera motion blur).
+[[nodiscard]] SnapshotComp with_viewport_view(SnapshotComp sc, const ViewportConfig& viewport);
 
 /// The composition's motion blur as the viewport passes it (motionBlurStore + comp fps).
 [[nodiscard]] MotionBlurCfg motion_blur_of(const doc::Document& d, std::string_view comp);

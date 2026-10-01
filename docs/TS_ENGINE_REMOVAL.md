@@ -319,11 +319,56 @@ anything else rendered alone — several layers together, `isolateLayers` —
 cropped, imported with `importBytes` and rigged; the page rasterize is
 deleted); HDR10 / HLG exports; CLI `--captions` / `--data` / `--commands`.
 
-Still on the page (no engine job yet — **post-launch** C++ jobs): particle /
-physics bakes (`bakeDynamics`), the IK3D bake, environment SH
-(`ensureEnvironmentSh`) and live merge. These keep the TypeScript renderer,
-effects and evaluation referenced, so step 4 (deleting those packages) is
-post-launch too. The `EditorTabs` strip is left for the UI cleanup.
+B4 round 8 moved the last page-only jobs into the engine: the particle /
+physics bakes (`kind_dynamics_bake.cpp`), the IK3D bake (`bakeIk3D`) and live
+merge (`createLiveMerge`); the engine computes its own environment SH
+(`env_asset.hpp`; the page's `ensureEnvironmentSh` only fills the TS renderer's
+cache). What still references the TypeScript renderer, effects and evaluation
+(checked 2026-10-01, ~218k production lines over src/core and packages):
+
+- *The page renderer* (`packages/renderer`, `src/core/rendering`, the
+  `src/core/effects` runtime): the secondary view panes (`SecondaryViewPane`,
+  `useViewportRenderer`), the Layer panel (`useLayerViewerRenderer`),
+  presentation mode, the scopes' frame tap and snapshot compare (read from the
+  page canvas), the preview cache UI (`frameCache` / `frameDiskCache`: cache
+  bars, actions, stats) and onion skin; plus small utilities with no engine
+  dependence (`Color`, `strokeTracks`, `gradientPaintTracks`, `roiGeometry`,
+  `localBlobSource`, `componentThumbs`, `channelView`, `videoPlaybackDiag`)
+  that move out before the delete. UI effect METADATA now comes from the
+  engine catalog (`src/core/inspector/effectCatalog.ts`, 2026-10-01).
+- *The page replica* (`LocalEngine`, `src/core/engine/handlers`,
+  `legacyRefresh`, `sceneStore`'s graph and the evaluation under it): 98
+  non-test files still read the replica's scene graph (28 in `core/scene`, 11
+  in `core/template`, 9 in the UI dirs), the off-document layer builders
+  (`offDocument.ts`) run against it, the pane hit tests go through it, and
+  186 jest suites use it as their harness (23 already run the C++ binary,
+  `__testHelpers__/nativeEngine.ts`).
+
+**The order (each stage leaves tsc / lint / jest green):**
+1. Small, independent: the CLI `--data` style runs (done), the JS-plugin
+   leftovers (done), the UI effect metadata (done).
+2. The page renderer goes. Engine features first: `setViewport.view` /
+   `customView` (done 2026-10-01: each viewport renders its own Active / axis /
+   camera / custom view — before this the engine rendered every viewport as
+   Active Camera and the view selector only moved the page's chrome); the
+   secondary panes, the Layer panel (`setViewport.layer` is kept but not
+   rendered yet — `session.cpp` SetViewport) and presentation mode as
+   `EngineSurface`s with their own viewport id; scopes / compare tapping the
+   engine's frame; a cache-state query for the cache bars; onion skin drawn by
+   the engine. Then delete.
+3. The page replica goes: the remaining `sceneStore` readers move to the
+   mirror / the overlay push / engine queries (`hitTest` gains a `viewport`
+   so a pane's picks project through its own view), the off-document builders
+   run against the mirror or become commands, the 186 harness suites move to
+   the C++ binary or go with the behaviour they tested. Then delete the
+   evaluation, media, text, audio, paint, svg, scene and animation runtime —
+   minus the document helpers the UI keeps (relocated).
+4. Sweep: parity generators + the TS harness, `packages/render-tests`' TS side
+   (the native golden gate stays), native-bridge + napi, the eslint layering
+   and ratchet configs, `EditorTabs`, deps (mp4box, polygon-clipping;
+   onnxruntime-web is referenced only by config; fflate stays — recovery,
+   portable .motion and the Lottie library use it), CLAUDE.md and
+   NATIVE_CORE_PLAN.md (both still call the TS engine a fallback).
 
 **Phase 4 — delete, in dependency order:** flags + fallbacks; JS plugin system;
 renderer + effects; media/text/audio; evaluation; parity generators + TS harness

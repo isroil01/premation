@@ -1015,6 +1015,16 @@ struct ControlVisitor {
     v.panX = std::isfinite(c.pan.x) ? c.pan.x : 0.0;
     v.panY = std::isfinite(c.pan.y) ? c.pan.y : 0.0;
     v.devicePixelRatio = dpr;
+    // The pane's 3D view: '' = the composition's camera; a custom view carries its own orbit.
+    v.view = c.view && !c.view->empty() ? *c.view : std::string("active");
+    if (v.view == "custom" && c.custom_view) {
+      CustomViewParams cv;
+      cv.yaw = std::isfinite(c.custom_view->yaw) ? c.custom_view->yaw : 0.0;
+      cv.pitch = std::isfinite(c.custom_view->pitch) ? c.custom_view->pitch : 0.0;
+      if (c.custom_view->distance && std::isfinite(*c.custom_view->distance) && *c.custom_view->distance > 0) cv.distance = *c.custom_view->distance;
+      if (const auto& p = c.custom_view->poi; p && std::isfinite(p->x) && std::isfinite(p->y) && std::isfinite(p->z)) cv.poi = {p->x, p->y, p->z};
+      v.customView = cv;
+    }
     // C: each viewport id is its own engine surface (a pop-out, a second view).
     const auto it = s.surfaces_.find(c.viewport);
     if (it == s.surfaces_.end() || !(it->second == v)) {

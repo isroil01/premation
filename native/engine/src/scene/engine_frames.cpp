@@ -70,6 +70,7 @@ using Json = js::Json;
 /// A UTF-8 path string as a path (not the ANSI code page on Windows).
 std::filesystem::path utf8_path(const std::string& s) { return {std::u8string(s.begin(), s.end())}; }
 
+
 // ── fonts ─────────────────────────────────────────────────────────────────
 
 /// One thread's FontSet (FontSet is filled before shaping, then read-only —
@@ -238,7 +239,7 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       out->mediaBase = mediaBase_;
       BuildContext ctx = context(d, view, expr, cache);
       ctx.hiddenLayers = viewport.hiddenLayers;  // setViewportHiddenLayers: the text under the in-place editor
-      const SnapshotComp sc = snapshot_comp_of(d, comp);
+      const SnapshotComp sc = with_viewport_view(snapshot_comp_of(d, comp), viewport);
       // The comp contain-fitted into the slot, centred, over black — C2's
       // compositor placement (render/compositor.cpp), which the page's
       // overlays are drawn against (docs/VIEWPORT_ROUTE.md).

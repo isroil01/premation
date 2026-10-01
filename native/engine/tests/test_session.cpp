@@ -953,3 +953,52 @@ TEST_CASE("session: motion blur and colour management are undoable document reco
   for (int i = 0; i < 3; ++i) REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
   CHECK(state_of(h.session.document()) == before);
 }
+
+TEST_CASE("setViewport: each viewport renders its own 3D view, baked into its config", "[session][viewport]") {
+  Harness h(64);
+  (void)h.hello();
+  const auto comp = make_comp(h, 30);
+  (void)make_layer(h, comp);
+  api::SetActiveComposition active;
+  active.comp = comp;
+  REQUIRE(is_ok(h.run(cmd(active))));
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 1.0;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  // Absent = the composition's camera.
+  CHECK(h.sink.config(1).view == "active");
+  CHECK_FALSE(h.sink.config(1).customView.has_value());
+
+  v.view = "top";
+  REQUIRE(is_ok(h.run(cmd(v))));
+  CHECK(h.sink.config(1).view == "top");
+
+  // A second pane keeps its own view: a custom orbit about a point of interest.
+  api::SetViewport v2 = v;
+  v2.viewport = 2;
+  v2.view = "custom";
+  api::CustomView cv;
+  cv.yaw = 30;
+  cv.pitch = -20;
+  cv.distance = 900;
+  cv.poi = api::Vec3{100, 50, 0};
+  v2.custom_view = cv;
+  REQUIRE(is_ok(h.run(cmd(v2))));
+  CHECK(h.sink.config(1).view == "top");
+  const ViewportConfig c2 = h.sink.config(2);
+  CHECK(c2.view == "custom");
+  REQUIRE(c2.customView.has_value());
+  CHECK(c2.customView->yaw == 30);
+  CHECK(c2.customView->pitch == -20);
+  CHECK(c2.customView->distance == 900);
+  CHECK(c2.customView->poi == std::array<double, 3>{100, 50, 0});
+
+  // '' means the composition's camera too; an orbit sent without view = 'custom' is dropped.
+  v2.view = "";
+  REQUIRE(is_ok(h.run(cmd(v2))));
+  CHECK(h.sink.config(2).view == "active");
+  CHECK_FALSE(h.sink.config(2).customView.has_value());
+}

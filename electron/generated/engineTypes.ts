@@ -2642,6 +2642,14 @@ export interface SetActiveComposition {
   comp: ItemId;
 }
 
+/** A custom 3D view (customViews.ts CustomViewParams): the eye starts `distance` behind the point of interest along −z, orbits by yaw / pitch (degrees) and looks at it; the lens is the composition's default. Absent distance = 1.2 × the default focal length; absent poi = the comp centre on z = 0. */
+export interface CustomView {
+  yaw: number;
+  pitch: number;
+  distance?: number;
+  poi?: Vec3;
+}
+
 /** A viewport's render parameters: pixel size, zoom/pan, region of interest, channel, exposure. */
 export interface SetViewport {
   viewport: number;
@@ -2659,6 +2667,10 @@ export interface SetViewport {
   /** Show a single layer (Layer panel) instead of the composition. */
   layer?: LayerId;
   layerRenderEffects: boolean;
+  /** The 3D view this viewport renders (the editor's camera3dMode): absent, '' or 'active' = the composition's camera; an axis view (front, back, left, right, top, bottom); `camera:<layer>`; or 'custom' with `customView`. Every viewport has its own (a 2-up / 4-up pane). */
+  view?: string;
+  /** With view = 'custom': the view's own camera replaces the scene camera (depth of field and camera motion blur off, as in a custom view). */
+  customView?: CustomView;
 }
 
 export interface CloseViewport {

@@ -44,6 +44,7 @@ import {
 } from '@core/engine/process/processEngine';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { useGuidesStore } from '@stores/guidesStore';
+import { isCustomViewId, type CustomViewParams } from '@core/workspace/customViews';
 import { useRenderQualityStore, type PreviewResolution } from '@stores/renderQualityStore';
 import { viewportHudStats } from '@stores/viewportDisplayStore';
 import { publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
@@ -161,7 +162,13 @@ export interface EngineSurfaceStats {
   /** performance.now() when the last frame was drawn (edit → frame latency, harness). */
   lastDrawnAt: number;
   viewportsSent: number;
-  lastViewport: { width: number; height: number; dpr: number; zoom: number; panX: number; panY: number } | null;
+  lastViewport: {
+    width: number; height: number; dpr: number; zoom: number; panX: number; panY: number;
+    /** setViewport `view`: the 3D view this surface renders ('active', an axis view, `camera:<id>`, 'custom'). */
+    view: string;
+    /** The custom view's orbit when `view` is 'custom' (customViews.ts), else null. */
+    customView: CustomViewParams | null;
+  } | null;
   errors: string[];
 }
 
@@ -421,7 +428,13 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       const height = Math.max(1, Math.round(r.height));
       const pageDpr = window.devicePixelRatio || 1;
       const dpr = stats.route === 'copy' ? copyRouteDpr(width, height, pageDpr) : pageDpr;
-      if (!isViewport) return { width, height, dpr, zoom: 0, panX: 0, panY: 0 };  // fit
+      if (!isViewport) return { width, height, dpr, zoom: 0, panX: 0, panY: 0, view: 'active', customView: null };  // fit
+      // The viewport's 3D view (View ▸ 3D View): the engine renders the axis
+      // and camera views itself; a custom view sends its orbit, resolved to the
+      // same camera customViewCamera builds for the page's chrome.
+      const g = useGuidesStore.getState();
+      const view = isCustomViewId(g.camera3dMode) ? 'custom' : g.camera3dMode;
+      const customView = isCustomViewId(g.camera3dMode) ? g.customViews[g.camera3dMode] : null;
       // The page's camera (WorkspaceController.getView: CSS px per comp px and
       // the comp origin on screen) → the comp point at the viewport centre.
       const v = getWorkspaceController().getView();
@@ -430,8 +443,12 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         width, height, dpr, zoom,
         panX: zoom > 0 ? (r.width / 2 - v.offsetX) / zoom : 0,
         panY: zoom > 0 ? (r.height / 2 - v.offsetY) / zoom : 0,
+        view, customView,
       };
     };
+    const sameCustomView = (a: CustomViewParams | null, b: CustomViewParams | null): boolean =>
+      a === b || (a !== null && b !== null && a.yaw === b.yaw && a.pitch === b.pitch && a.distance === b.distance
+        && (a.poi === b.poi || (a.poi !== null && b.poi !== null && a.poi.x === b.poi.x && a.poi.y === b.poi.y && a.poi.z === b.poi.z)));
     let lastChannel = useGuidesStore.getState().channel;
     const sendViewport = (force = false): void => {
       if (disposed || vp === null) return;
@@ -439,7 +456,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       const last = stats.lastViewport;
       const channel = useGuidesStore.getState().channel;
       if (!force && last && channel === lastChannel && last.width === d.width && last.height === d.height && last.dpr === d.dpr
-        && last.zoom === d.zoom && last.panX === d.panX && last.panY === d.panY) return;
+        && last.zoom === d.zoom && last.panX === d.panX && last.panY === d.panY
+        && last.view === d.view && sameCustomView(last.customView, d.customView)) return;
       if (inFlight) {
         again = true;
         return;
@@ -461,6 +479,15 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         transparencyGrid: false,
         displayTransform: '',
         layerRenderEffects: true,
+        view: d.view,
+        ...(d.customView ? {
+          customView: {
+            yaw: d.customView.yaw,
+            pitch: d.customView.pitch,
+            ...(d.customView.distance !== null ? { distance: d.customView.distance } : {}),
+            ...(d.customView.poi !== null ? { poi: d.customView.poi } : {}),
+          },
+        } : {}),
       }).then((res) => {
         if (!res.ok) fail(`setViewport: ${res.error.code} ${res.error.message}`);
         else applied = d;  // frames from here on are drawn with this camera (the pasteboard rect)
@@ -502,7 +529,10 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     // Viewport mode: the workspace's render tick runs whenever the camera may
     // have moved (pan, zoom, fit, resize) — compare and send, in that frame.
     const unRender = isViewport ? getWorkspaceController().onRender(() => sendViewport()) : null;
-    const unGuides = isViewport ? useGuidesStore.subscribe((s) => { if (s.channel !== lastChannel) sendViewport(); }) : null;
+    // The channel and the 3D view both ride on setViewport; `sendViewport` drops a request that changes nothing.
+    const unGuides = isViewport ? useGuidesStore.subscribe((s, prev) => {
+      if (s.channel !== lastChannel || s.camera3dMode !== prev.camera3dMode || s.customViews !== prev.customViews) sendViewport();
+    }) : null;
     // Preview resolution (Full / Half / Third / Quarter) → the engine's.
     let lastRes: PreviewResolution | null = null;
     const sendResolution = (): void => {
