@@ -1,13 +1,13 @@
 /**
  * effectPreviewThumbs — a 96×54 picture of what an effect DOES, made cheaply.
  *
- * Every entry in `EFFECT_DEFS` carries a `css()` builder: the CSS `filter`
- * function string that renders the effect off the GPU path (blur, hue-rotate,
- * drop-shadow, brightness…). Canvas2D honours the same grammar through
- * `ctx.filter`, so a synchronous preview is one `drawImage` of a standard
- * plate with that filter set — no engine, no snapshot, no async. Effects that
- * are `gpuOnly` return an empty filter string and get `null` here; the panel
- * shows their icon and category instead of pretending.
+ * The CSS-filter family of effects (blur, hue-rotate, drop-shadow,
+ * brightness…) has a CSS `filter` function string — `effectPreviewFilter` in
+ * the catalog helper. Canvas2D honours the same grammar through `ctx.filter`,
+ * so a synchronous preview is one `drawImage` of a standard plate with that
+ * filter set — no engine, no snapshot, no async. Effects that are `gpuOnly`,
+ * or that have no CSS form, get `null` here; the panel shows their icon and
+ * category instead of pretending.
  *
  * The plate is deliberately busy — a gradient, a saturated disc, a hard-edged
  * bar and "Aa" — because a blur on a flat colour looks like nothing, and the
@@ -20,8 +20,10 @@
  * caller treats the same as "no cheap preview".
  */
 
-import type { EffectDef } from '@core/effects/effects';
-import { defaultParams } from '@core/effects/effects';
+import { defaultParams, effectPreviewFilter, type EffectDef, type EffectParams } from '@core/inspector/effectCatalog';
+
+/** The CSS `filter` previewing an effect at `params` ('' = none). */
+export type PreviewFilter = (type: string, params: EffectParams) => string;
 
 export const EFFECT_PREVIEW_W = 96;
 export const EFFECT_PREVIEW_H = 54;
@@ -64,20 +66,20 @@ export function peekEffectPreview(type: string): string | null | undefined {
   return cache.get(type);
 }
 
-/** Make (or fetch) the preview for one effect. Synchronous and cheap. */
-export function effectPreviewFor(def: EffectDef): string | null {
+/** Make (or fetch) the preview for one effect. Synchronous and cheap. `css` is a test seam. */
+export function effectPreviewFor(def: EffectDef, css: PreviewFilter = effectPreviewFilter): string | null {
   const known = cache.get(def.type);
   if (known !== undefined) return known;
-  const url = render(def);
+  const url = render(def, css);
   cache.set(def.type, url);
   return url;
 }
 
-function render(def: EffectDef): string | null {
+function render(def: EffectDef, css: PreviewFilter): string | null {
   if (def.gpuOnly) return null;
   let filter = '';
   try {
-    filter = def.css(defaultParams(def)).trim();
+    filter = css(def.type, defaultParams(def)).trim();
   } catch {
     return null;
   }

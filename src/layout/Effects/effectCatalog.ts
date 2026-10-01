@@ -11,7 +11,7 @@
 
 import { useMemo } from 'react';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { EFFECT_DEFS, type EffectDef } from '@core/effects/effects';
+import { EFFECT_DEFS, type EffectDef } from '@core/inspector/effectCatalog';
 
 /** Starred effect type ids — preference, same rationale as library favourites. */
 export function useEffectFavorites(): {

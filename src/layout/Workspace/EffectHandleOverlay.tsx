@@ -37,7 +37,7 @@ import { useEffectHandleStore } from '@stores/effectHandleStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { effectPropPath } from '@core/effects/effects';
+import { effectPropPath } from '@core/inspector/effectCatalog';
 import { layerScreenMapping } from './layerScreen';
 import {
   collectEffectHandles,

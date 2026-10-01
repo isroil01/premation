@@ -14,7 +14,7 @@ import { useMemo, useState } from 'react';
 import { Popover } from '@components/Popover';
 import { SearchField } from '@components/SearchField';
 import { Icon } from '@components/Icon';
-import type { EffectDef, EffectType } from '@core/effects/effects';
+import type { EffectDef, EffectType } from '@core/inspector/effectCatalog';
 import { addEffectEdit } from './effectEdits';
 import { EFFECT_CATEGORY } from './effectCategory';
 import { useAllEffectDefs, useEffectFavorites } from './effectCatalog';

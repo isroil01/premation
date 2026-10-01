@@ -52,7 +52,7 @@ import { CurveEditor } from './CurveEditor';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useTrackNavigator } from '@layout/Inspector/AnimToggle';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorTrackWatch, useMirrorTree } from '@hooks/useMirror';
+import { useMirrorTrackWatch, useMirrorTreeGroups } from '@hooks/useMirror';
 import { isTrackAnimated, readTrack, valueNumbersAt, trackRef as mirrorTrackRef } from '@core/mirror/selection';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { mirrorEffects, mirrorMaskHeaders } from '@core/mirror/effects';
@@ -68,7 +68,7 @@ import {
   type EffectParamDef,
   type EffectParamValue,
   type CurvePoints,
-} from '@core/effects/effects';
+} from '@core/inspector/effectCatalog';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { engineRowMenuItems } from '@layout/Inspector/propertyRowMenu';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
@@ -697,9 +697,13 @@ function effectHeaderMenuItems(nodeId: string, effectId: string, name: string): 
   ];
 }
 
+/** The root group of the layer's property tree the stack reads. */
+const EFFECTS_ROOT: readonly string[] = ['effects'];
+
 export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
-  // B4: the stack from the layer's mirror property tree (re-renders when the tree changes).
-  const tree = useMirrorTree(nodeId);
+  // B4: the stack from the layer's mirror property tree (re-renders when the `effects` group changes — not on
+  // a write elsewhere on the layer, e.g. a drag of Position).
+  const tree = useMirrorTreeGroups(nodeId, EFFECTS_ROOT);
   const effects = mirrorEffects(tree);
   // "Gaussian Blur 2" for the second of a kind — see effectDisplayNames.
   const names = effectDisplayNames(effects);

@@ -13,7 +13,7 @@
  * from `CommandPalette.tsx` so the sources can be unit-tested without a DOM.
  */
 
-import { EFFECT_DEFS, effectDefFor, type EffectType } from '@core/effects/effects';
+import { EFFECT_DEFS, effectDefFor, type EffectType } from '@core/inspector/effectCatalog';
 import { EFFECT_CATEGORY } from '@layout/Effects/effectCategory';
 import { revealEffectsInProperties } from '@layout/Effects/revealEffectControls';
 import { addEffectEdit } from '@layout/Effects/effectEdits';

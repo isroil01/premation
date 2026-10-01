@@ -13,7 +13,7 @@ import type { ColorStop, FillPaint } from '@core/paint/fill';
 import { defaultStroke, normalizeStroke, type Stroke } from '@core/paint/stroke';
 import { documentMirror } from '@stores/documentMirror';
 import { mirrorStrokes } from '@core/mirror/paintFields';
-import { parseColorChannels } from '@core/effects/effects';
+import { parseColorChannels } from '@core/inspector/effectCatalog';
 import { isLayer } from '@core/engine/doc';
 import { compTime } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';

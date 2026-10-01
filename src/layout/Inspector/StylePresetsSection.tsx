@@ -17,7 +17,7 @@ import { useUIStore } from '@stores/uiStore';
 import { getTime } from '@stores/playbackClockStore';
 import { sortedStops, type FillPaint } from '@core/paint/fill';
 import { LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS } from '@core/effects/layerStyles';
-import { parseColorChannels } from '@core/effects/effects';
+import { parseColorChannels } from '@core/inspector/effectCatalog';
 import { STYLE_FIELDS } from '@core/engine/effectFieldSpecs';
 import { isLayer } from '@core/engine/doc';
 import { componentOfType, paths, ref, values as apiValues } from '@core/engine/propRefs';

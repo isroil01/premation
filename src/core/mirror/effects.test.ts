@@ -10,7 +10,8 @@ import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { engineIdle } from '@core/engine/engineInstance';
-import { EFFECT_DEFS, getNodeEffects, paramsOf, type EffectParamDef } from '@core/effects/effects';
+import { EFFECT_DEFS, getNodeEffects, type EffectParamDef } from '@core/effects/effects';
+import { paramsOf } from '@core/inspector/effectCatalog';
 import { documentMirror, resetDocumentMirror } from '@stores/documentMirror';
 import { mirrorEffectHeaders, mirrorEffects } from './effects';
 

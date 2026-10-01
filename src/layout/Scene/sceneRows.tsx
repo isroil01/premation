@@ -16,7 +16,7 @@ import { Icon, type IconName } from '@components/Icon';
 import type { TreeNode } from '@components/TreeView';
 import type { LayerInfo, LayerSearchFacts } from '@motion/engine-api';
 import { KIND_GLYPH_COLOR, KIND_ICON } from '@core/scene/sceneDerive';
-import { effectDisplayNames, type Effect } from '@core/effects/effects';
+import { effectDisplayNames, type Effect } from '@core/inspector/effectCatalog';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { mirrorIconName } from '@core/mirror/layerGlyph';
 import { mirrorLabelColor } from '@core/mirror/layerLabels';

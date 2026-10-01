@@ -14,7 +14,7 @@
 
 import { useLayoutStore } from '@stores/layoutStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import type { EffectType } from '@core/effects/effects';
+import type { EffectType } from '@core/inspector/effectCatalog';
 import { addEffectEdit } from './effectEdits';
 
 export function revealEffectControls(): void {

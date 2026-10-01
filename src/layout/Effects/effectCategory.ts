@@ -8,7 +8,7 @@
  * palette test.
  */
 
-import type { EffectType } from '@core/effects/effects';
+import type { EffectType } from '@core/inspector/effectCatalog';
 
 /**
  * Browser folders, following After Effects' own grouping so the names are the
@@ -17,8 +17,10 @@ import type { EffectType } from '@core/effects/effects';
  * A `Record` keyed by `EffectType`, NOT an if-chain with a catch-all: the
  * previous version routed two named lists and dropped EVERYTHING else into a
  * single "Stylize, Keying & Utility" bucket — 24 of the 38 effects in one
- * accordion, which is the folder users open most. Typing it this way means a
- * new effect type is a compile error until it is filed somewhere.
+ * accordion, which is the folder users open most. The effect types now come
+ * from the engine's catalog (a plain string id), so a new effect without a
+ * folder is no longer a compile error; `effectMenu.test.ts` pins that every
+ * catalog effect is filed here (an unfiled one drops out of the Effect menu).
  */
 export const EFFECT_CATEGORY: Record<EffectType, string> = {
   // Blur & Sharpen

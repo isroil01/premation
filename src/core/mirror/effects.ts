@@ -26,7 +26,7 @@ import {
   type EffectParamDef,
   type EffectParamValue,
   type EffectType,
-} from '@core/effects/effects';
+} from '@core/inspector/effectCatalog';
 import { plainValue, storedNumber, trackRefIn, type MirrorTreeLike } from './trackIndex';
 
 /** Expression controls' group-id prefix (engine/controlSpecs.ts `CONTROL_PREFIX`). */

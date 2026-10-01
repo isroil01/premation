@@ -23,7 +23,7 @@
 
 import type { Command, PropRef, Value } from '@motion/engine-api';
 import { catalogFor } from '@core/engine/props';
-import { parseColorChannels } from '@core/effects/effects';
+import { parseColorChannels } from '@core/inspector/effectCatalog';
 import { compOfLayer, isLayer } from '@core/engine/doc';
 import { engine } from '@core/engine/engineInstance';
 import { compTime, paths, values as apiValues, fieldValue, componentOfType } from '@core/engine/propRefs';

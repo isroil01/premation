@@ -28,7 +28,7 @@
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
-import { EFFECT_DEFS, type EffectDef, type EffectType } from '@core/effects/effects';
+import { EFFECT_DEFS, type EffectDef, type EffectType } from '@core/inspector/effectCatalog';
 import { EFFECT_CATEGORY, EFFECT_CATEGORY_ORDER } from '@layout/Effects/effectCategory';
 import { revealEffectsInProperties } from '@layout/Effects/revealEffectControls';
 import { addEffectEdit } from '@layout/Effects/effectEdits';
@@ -90,6 +90,9 @@ export function buildEffectMenuItems(): MenuItemModel[] {
   const byCategory = new Map<string, EffectDef[]>();
   for (const d of EFFECT_DEFS) {
     const cat = EFFECT_CATEGORY[d.type];
+    // An effect not filed in a folder has no submenu to sit in; the test that
+    // lists every catalog effect in the menu reports it by name.
+    if (cat === undefined) continue;
     const list = byCategory.get(cat);
     if (list) list.push(d);
     else byCategory.set(cat, [d]);

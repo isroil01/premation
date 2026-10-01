@@ -8,7 +8,7 @@
  */
 
 import { useRef, useState } from 'react';
-import type { CurvePoints } from '@core/effects/effects';
+import type { CurvePoints } from '@core/inspector/effectCatalog';
 
 const SIZE = 168; // px, square
 const PAD = 8;

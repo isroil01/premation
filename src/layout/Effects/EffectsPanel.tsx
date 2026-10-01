@@ -21,7 +21,7 @@ import { BrowserRow, BrowserTag, BrowserEmpty } from '@components/BrowserTree';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
-import type { EffectDef } from '@core/effects/effects';
+import type { EffectDef } from '@core/inspector/effectCatalog';
 import { addEffectAndReveal, revealEffectsInProperties } from './revealEffectControls';
 import { useAllEffectDefs, useEffectFavorites } from './effectCatalog';
 import {

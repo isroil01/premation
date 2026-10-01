@@ -22,7 +22,7 @@ import { compTime } from '@core/engine/propRefs';
 import { framesToFlicks } from '@core/engine/time';
 import { labelIndexOf } from '@core/engine/model';
 import { isLayer } from '@core/engine/doc';
-import { parseColorChannels } from '@core/effects/effects';
+import { parseColorChannels } from '@core/inspector/effectCatalog';
 import { openLayerCompositionWhenKnown } from './compNavigationEdits';
 import type { AutoOrientMode } from '@core/scene/autoOrient';
 import { mirrorAutoOrientMode, mirrorCanAutoOrient, mirrorCanBe3D } from '@core/mirror/layerFacts';

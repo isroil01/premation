@@ -14,7 +14,7 @@
  */
 
 import type { IconName } from '@components/Icon';
-import type { EffectDef } from '@core/effects/effects';
+import type { EffectDef } from '@core/inspector/effectCatalog';
 
 /** Folder header height, and leaf height — the virtual list's row geometry. */
 export const FX_FOLDER_ROW_H = 26;

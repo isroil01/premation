@@ -45,7 +45,7 @@ import {
   type EffectParamDef,
   type EffectParamValue,
   type EffectType,
-} from '@core/effects/effects';
+} from '@core/inspector/effectCatalog';
 import {
   holdCopiedEffects,
   listEffectPresets,

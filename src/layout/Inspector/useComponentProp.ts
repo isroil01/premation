@@ -33,7 +33,7 @@ import { useMirrorKeys, useRetainTree } from '@hooks/useMirror';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { componentPropPath, componentPropValue } from '@core/mirror/componentProps';
 import { getTime } from '@stores/playbackClockStore';
-import { parseColorChannels } from '@core/effects/effects';
+import { parseColorChannels } from '@core/inspector/effectCatalog';
 import { compTime } from '@core/engine/propRefs';
 import { values as apiValues, fieldWrite, fieldBindingForComponentProp, componentOfType, componentPropHome, isPluginLayerComponent } from '@core/engine/propRefs';
 import { isLayer } from '@core/engine/doc';

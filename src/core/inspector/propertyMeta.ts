@@ -28,9 +28,8 @@
  *                returns something, so there is no reason to.
  */
 
-import {
-  EFFECT_DEFS, EFFECT_OPACITY_KEY, effectDefFor, getNodeEffects, type EffectParamDef,
-} from '@core/effects/effects';
+import { EFFECT_DEFS, EFFECT_OPACITY_KEY, effectDefFor, type EffectParamDef } from './effectCatalog';
+import { getNodeEffects } from '@core/effects/effects';
 import {
   LAYER_STYLE_EFFECT_TYPE,
   LAYER_STYLE_LABEL,
@@ -214,6 +213,15 @@ const MULT = (label: string, group: PropertyGroup, order: number): MetaSpec => (
   label, group, type: 'multiplier', unit: 'x', step: 0.01, precision: 2, defaultValue: 1, resettable: true, order,
 });
 
+/**
+ * Transform scale: STORED as a multiplier (1 = 100 %), SHOWN as a percentage —
+ * the panel says "100%", AE's number. Unbounded below for the same reason as
+ * `MULT` (a negative scale flips the layer).
+ */
+const SCALE = (label: string, group: PropertyGroup, order: number): MetaSpec => ({
+  label, group, type: 'percent', unit: '%', step: 0.01, precision: 1, defaultValue: 1, resettable: true, displayScale: 100, order,
+});
+
 const PCT = (label: string, group: PropertyGroup, order: number, max = 100): MetaSpec => ({
   label, group, type: 'percent', unit: '%', min: 0, max, step: 1, precision: 1, defaultValue: max, resettable: true, order,
 });
@@ -261,10 +269,10 @@ const STATIC: Record<string, MetaSpec> = {
   z: PX('Position Z', 'transform', ORDER.position),
 
   // Transform — scale. `scale` is the legacy uniform prop; scaleX/Y/Z supersede it.
-  scale: MULT('Scale', 'transform', ORDER.scale),
-  scaleX: MULT('Scale X', 'transform', ORDER.scale),
-  scaleY: MULT('Scale Y', 'transform', ORDER.scale),
-  scaleZ: MULT('Scale Z', 'transform', ORDER.scale),
+  scale: SCALE('Scale', 'transform', ORDER.scale),
+  scaleX: SCALE('Scale X', 'transform', ORDER.scale),
+  scaleY: SCALE('Scale Y', 'transform', ORDER.scale),
+  scaleZ: SCALE('Scale Z', 'transform', ORDER.scale),
 
   // Transform — rotation / orientation
   rotation: DEG('Rotation', 'transform', ORDER.rotation),
