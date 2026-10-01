@@ -70,7 +70,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorLayersWatch } from '@hooks/useMirror';
+import { useMirrorLayersShapeWatch } from '@hooks/useMirror';
 import { InspectorContent } from '@layout/Inspector/InspectorContent';
 import { InspectorSelectionProvider } from '@layout/Inspector/inspectorSelection';
 import {
@@ -149,13 +149,20 @@ function registerInspectorCommands(): void {
 
 registerInspectorCommands();
 
+/** Root groups of a layer's property tree that decide which sections the panel lists (`layer/cloner`, `layer/physics`). */
+const SHELL_ROOTS: readonly string[] = ['layer'];
+
 export function PropertiesPanel(): JSX.Element {
   const selected = useSelectionStore((s) => s.ids);
   const primary = selected[0] ?? null;
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
-  // The SELECTION's revisions, not the scene's — see the module note.
-  useMirrorLayersWatch(selected);
+  // The SELECTION's headers, tree SHAPES and `layer/*` records (which sections
+  // exist: a cloner or physics record adds Effects), not the scene's and not
+  // its other values — see the module note. The shell draws no property value
+  // (the sections subscribe to their own rows), so a drag step on a selected
+  // layer must not re-run the shell and hand every section a fresh element tree.
+  useMirrorLayersShapeWatch(selected, SHELL_ROOTS);
   const mirror = documentMirror();
   const hasLayer = !!(primary && mirror.layer(primary));
   const liveCount = hasLayer ? selected.filter((id) => mirror.hasLayer(id)).length : 0;

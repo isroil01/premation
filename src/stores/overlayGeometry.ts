@@ -109,12 +109,54 @@ function notify(viewport: number): void {
   for (const l of listeners.get(viewport) ?? []) l();
 }
 
+/** Layer ids the mirror held when the removal watch last looked (see `watchLayerRemovals`). */
+let mirrorLayers: ReadonlySet<string> = new Set();
+let stopLayerWatch: (() => void) | null = null;
+
+/**
+ * A layer the document no longer has must leave the pushed sets AT ONCE.
+ *
+ * The pushed set is the last DRAWN frame's, and the frame carrying a delete
+ * lands after the mirror (and the page's replica, and the selection prune) has
+ * already seen it: for that window `overlayLayer` still answered with the gone
+ * layer's box and matrix, so every overlay that read it when the mirror revision
+ * moved — the effect / gradient / track-point / roto / rig chrome — drew its box
+ * over nothing, and none of them re-reads when the frame lands. Dropping the
+ * record here makes "gone" answer `undefined` as `overlayLayer` promises, and
+ * tells the listeners so frame-synchronous painters repaint without it.
+ *
+ * Exactly the ids that LEFT the mirror are dropped (not "any id it does not
+ * hold"): a layer whose record arrives before the mirror has learned of it is
+ * not gone.
+ */
+function watchLayerRemovals(): () => void {
+  mirrorLayers = new Set(documentMirror().layerIds());
+  return documentMirror().subscribe(['layers'], () => {
+    const now = new Set(documentMirror().layerIds());
+    const removed: string[] = [];
+    for (const id of mirrorLayers) if (!now.has(id)) removed.push(id);
+    mirrorLayers = now;
+    if (removed.length === 0) return;
+    for (const [viewport, set] of pushed) {
+      let dropped = false;
+      for (const id of removed) dropped = set.layers.delete(id) || dropped;
+      if (dropped) notify(viewport);
+    }
+  });
+}
+
 /** EngineSurface: the C++ engine draws `viewport` (true) or stopped (false). */
 export function setEngineDrivenViewport(viewport: number, driven: boolean): void {
-  if (driven) engineDriven.add(viewport);
-  else {
+  if (driven) {
+    engineDriven.add(viewport);
+    stopLayerWatch ??= watchLayerRemovals();
+  } else {
     engineDriven.delete(viewport);
     pushed.delete(viewport);
+    if (engineDriven.size === 0) {
+      stopLayerWatch?.();
+      stopLayerWatch = null;
+    }
   }
 }
 

@@ -9,7 +9,15 @@ import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import { overlayGeometryAt } from '@core/engine/overlayGeometry';
-import { overlayScreenPlacement, overlayView, requestOverlayLayers } from './overlayGeometry';
+import {
+  overlayLayer,
+  overlayScreenPlacement,
+  overlayView,
+  publishFrameGeometry,
+  requestOverlayLayers,
+  setEngineDrivenViewport,
+  subscribeOverlayGeometry,
+} from './overlayGeometry';
 
 let h: Harness & { engine: LocalEngine };
 beforeEach(async () => { h = await setupAppEngine(); });
@@ -49,6 +57,65 @@ test('an owner may ask for view cameras alone; the frame set answers them by mod
   expect(v?.camera).not.toBe('');
   expect(overlayView(7, 'front', 0)?.camera).toBe(v?.camera);
   expect(overlayView(7, 'left', 0)).toBeUndefined();
+});
+
+describe('a deleted layer leaves the pushed geometry (no stale selection chrome)', () => {
+  const VP = 8;
+  afterEach(() => {
+    setEngineDrivenViewport(VP, false);
+    requestOverlayLayers(VP, 'a', [], []);
+  });
+
+  /** What a drawn frame carries for the layers the viewport asked for. */
+  async function landFrame(ids: string[]): Promise<void> {
+    requestOverlayLayers(VP, 'a', ids, ['transform', 'bounds']);
+    await engineIdle();
+    publishFrameGeometry(VP, 0, 1, overlayGeometryAt(VP, 0));
+  }
+
+  test('the engine deleting a layer drops its record and tells the listeners, before any new frame lands', async () => {
+    const A = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'A', init: [] })).layer;
+    const B = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'B', init: [] })).layer;
+    setEngineDrivenViewport(VP, true);
+    await landFrame([A, B]);
+    expect(overlayLayer(VP, A, 0)?.box).toHaveLength(4);
+    expect(overlayLayer(VP, B, 0)?.box).toHaveLength(4);
+
+    let told = 0;
+    const off = subscribeOverlayGeometry(VP, () => { told += 1; });
+    await h.run({ type: 'deleteLayers', layers: [A] });
+    await engineIdle();
+    off();
+
+    // No frame has landed since the delete: the pushed set still holds the last one.
+    expect(overlayLayer(VP, A, 0)).toBeUndefined();
+    expect(overlayLayer(VP, B, 0)?.box).toHaveLength(4);
+    expect(told).toBeGreaterThan(0);
+  });
+
+  test('undo brings the layer back only with the frame that carries it', async () => {
+    const A = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'A', init: [] })).layer;
+    setEngineDrivenViewport(VP, true);
+    await landFrame([A]);
+    await h.run({ type: 'deleteLayers', layers: [A] });
+    await engineIdle();
+    expect(overlayLayer(VP, A, 0)).toBeUndefined();
+    await h.run({ type: 'undo' });
+    await engineIdle();
+    // The engine's next frame carries it again (the subscription still names it).
+    publishFrameGeometry(VP, 0, 2, overlayGeometryAt(VP, 0));
+    expect(overlayLayer(VP, A, 0)?.box).toHaveLength(4);
+  });
+
+  test('a viewport the page draws itself is untouched (its records are computed, not pushed)', async () => {
+    const A = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'A', init: [] })).layer;
+    requestOverlayLayers(VP, 'a', [A], ['bounds']);
+    await engineIdle();
+    expect(overlayLayer(VP, A, 0)?.box).toHaveLength(4);
+    await h.run({ type: 'deleteLayers', layers: [A] });
+    await engineIdle();
+    expect(overlayLayer(VP, A, 0)).toBeUndefined();
+  });
 });
 
 test('overlayScreenPlacement reads origin, angle and axis scales off the pushed matrix', () => {

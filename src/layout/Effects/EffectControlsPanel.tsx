@@ -7,7 +7,7 @@ import { useState, type ReactNode } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { useMirrorLayer, useMirrorTreeGroups } from '@hooks/useMirror';
 import { mirrorPathOps } from '@core/mirror/layerFacts';
 import { jsonField } from '@core/mirror/layerFields';
 import { PathOpControls } from '@layout/Inspector/PathOpControls';
@@ -20,6 +20,9 @@ import { Button } from '@components/Button';
 import styles from './EffectsPanel.module.css';
 
 const isObject = (v: unknown): boolean => !!v && typeof v === 'object';
+
+/** The root groups of the layer's property tree the body reads: path operators, cloner / physics records. */
+const CONTROLS_ROOTS: readonly string[] = ['contents', 'layer'];
 
 const QUICK_CATEGORIES = [
   { name: 'Blur & Sharpen', icon: 'blur' as const, effectId: 'gaussian-blur' },
@@ -43,7 +46,9 @@ export function EffectControlsBody({ nodeId, empty }: { nodeId: string; empty: R
   const primary = nodeId;
   // B4: the layer's header (effect count) and property tree (path operators,
   // `layer/cloner`, `layer/physics`) from the document mirror.
-  const tree = useMirrorTree(primary);
+  // Read: the header, the path operators (`contents`) and the cloner / physics records (`layer`) — the
+  // stack itself is EffectStack's. A write elsewhere (a drag of Position) must not re-render this.
+  const tree = useMirrorTreeGroups(primary, CONTROLS_ROOTS);
   const m = documentMirror();
   const layer = m.layer(primary);
   const count = layer?.effectCount ?? 0;

@@ -110,3 +110,28 @@ TEST_CASE("a Source Text expression replaces the drawn text and its style", "[sc
   CHECK(shift->runs.arr()[0].at("end").num() == 6);
   CHECK(shift->runs.arr()[0].at("style").at("fill").str() == "#ff0000");
 }
+
+TEST_CASE("a viewport hides the layers it is told to, and draws the rest", "[scene][viewport]") {
+  const auto parsed = premation::js::parse(kProject);
+  REQUIRE(parsed.has_value());
+  doc::Document d;
+  doc::EditorView view;
+  (void)doc::restore_document(d, view, *parsed, {});
+  doc::ExprCache cache;
+  const doc::DocExprEnv env(d, view, cache);
+  sc::BuildContext ctx{d, view, env, cache, nullptr, {}};
+
+  const sc::Snapshot shown = sc::build_snapshot(ctx, sc::snapshot_comp_of(d, "comp_root"), 0, std::nullopt);
+  const sc::RLayer* plainShown = layer(shown, "plain");
+  REQUIRE(plainShown != nullptr);
+  CHECK(plainShown->visible);
+
+  // setViewportHiddenLayers: the text under the in-place editor.
+  ctx.hiddenLayers = {"plain"};
+  const sc::Snapshot hidden = sc::build_snapshot(ctx, sc::snapshot_comp_of(d, "comp_root"), 0, std::nullopt);
+  const sc::RLayer* plainHidden = layer(hidden, "plain");
+  CHECK((plainHidden == nullptr || !plainHidden->visible));
+  const sc::RLayer* bang = layer(hidden, "bang");
+  REQUIRE(bang != nullptr);
+  CHECK(bang->visible);  // the other layers draw as before
+}

@@ -1026,6 +1026,7 @@ struct ControlVisitor {
   }
   R operator()(const api::CloseViewport& c) const {
     if (s.viewports_.erase(c.viewport) == 0) fail(ErrorCode::not_found, "no viewport " + std::to_string(c.viewport));
+    s.hiddenLayers_.erase(c.viewport);
     if (const auto it = s.surfaces_.find(c.viewport); it != s.surfaces_.end()) {
       ViewportConfig closed = it->second;
       closed.open = false;
@@ -1037,6 +1038,17 @@ struct ControlVisitor {
   R operator()(const api::SetCacheBudget&) const { return result_for<api::SetCacheBudget>(); }
   R operator()(const api::PurgeCache&) const { return result_for<api::PurgeCache>(); }
   R operator()(const api::SetInteracting&) const { return result_for<api::SetInteracting>(); }
+  R operator()(const api::SetViewportHiddenLayers& c) const {
+    // A viewport's own state: replaces its set; empty = every layer draws. Kept
+    // for a viewport that is not open yet, dropped when it closes.
+    if (c.layers.empty()) {
+      s.hiddenLayers_.erase(c.viewport);
+    } else {
+      s.hiddenLayers_.insert_or_assign(c.viewport, c.layers);
+    }
+    if (s.any_viewport_open()) s.request_render();
+    return result_for<api::SetViewportHiddenLayers>();
+  }
   R operator()(const api::SetOverlayGeometry& c) const {
     // B4 round 2: replace this viewport's subscription (none = unsubscribe); the next frame carries it.
     auto& subs = s.overlays_;
@@ -1571,8 +1583,12 @@ void Session::submit_frame(std::uint32_t clockDropped) {
   }
 }
 
-void Session::submit_frame_to(const ViewportConfig& port, const std::string& c, std::uint32_t clockDropped, bool announce) {
+void Session::submit_frame_to(const ViewportConfig& surface, const std::string& c, std::uint32_t clockDropped, bool announce) {
   RenderJob job;
+  // The surface's config plus this frame's editor-side hidden layers (they ride
+  // beside the config, not in it: see `hiddenLayers_`).
+  ViewportConfig port = surface;
+  if (const auto hidden = hiddenLayers_.find(surface.viewport); hidden != hiddenLayers_.end()) port.hiddenLayers = hidden->second;
   if (frameBuilder_ != nullptr) {
     // D2w: the engine's own scene builder (scene/snapshot_build.cpp) — the
     // document through the render graph. Per-layer failures and features

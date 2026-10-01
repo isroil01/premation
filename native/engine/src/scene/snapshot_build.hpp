@@ -44,6 +44,10 @@ struct BuildContext {
   /// More layers drawn alone together with `isolateLayer` (Rig Logo renders a
   /// multi-layer selection as one picture); each with what it holds.
   std::vector<std::string> isolateAlso{};
+  /// Layers the viewport being built does not draw (setViewportHiddenLayers:
+  /// the text layer under the in-place editor). Like an off eye switch, for this
+  /// frame only. Empty = none.
+  std::vector<std::string> hiddenLayers{};
   /// The project folder relative media paths resolve against (the texture
   /// feed's mediaBase); empty = none (a relative path is reported).
   std::filesystem::path mediaBase{};

@@ -79,7 +79,7 @@ import { isLibraryAsset, type AssetFolder, type ImportedAsset } from '@stores/as
 import { useMirrorAssetRecords, useMirrorFolders } from '@hooks/useAssetRecords';
 import { useAssetsViewStore, type AssetSortKey } from '@stores/assetsViewStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorRevision } from '@hooks/useMirror';
+import { useMirrorStructRevision } from '@hooks/useMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
 import { openSourceMonitor } from '@stores/sourceMonitorStore';
@@ -206,9 +206,10 @@ export function AssetsPanel(): JSX.Element {
   const setDrawerOpen = useAssetsViewStore((s) => s.setDrawerOpen);
 
   // Which layers use which asset — every layer's source item, from the
-  // document mirror, re-derived per document revision (the only thing that
-  // can change the answer).
-  const docRev = useMirrorRevision();
+  // document mirror, re-derived per STRUCTURAL document change (a layer's
+  // source is its header: a property value write cannot change the answer,
+  // and must not re-run this on every step of a viewport drag).
+  const docRev = useMirrorStructRevision();
   const usage = useMemo(() => {
     void docRev;
     const m = documentMirror();

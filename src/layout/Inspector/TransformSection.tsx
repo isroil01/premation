@@ -105,6 +105,12 @@ const MORE_KEY = 'transform.more';
  */
 const SECTION_TRACKS: readonly string[] = ['anchorX', 'anchorY', 'width', 'height', 'opacity', 'fillOpacity', 'skew', 'skewAxis'];
 
+/**
+ * Scale's fields already arrive in percent (`displayScale: 100` in the
+ * registry); a pair row draws no per-field unit, so this only supplies the `%`.
+ */
+const SCALE_PERCENT: UnitDisplay = { scale: 1, offset: 0, unit: '%', precision: 1 };
+
 /** One field of a pair row, with an optional display unit. */
 function field(prop: string, prefix: string, display?: UnitDisplay | null): PairFieldSpec {
   return { prop, prefix, displayContext: display ?? null };
@@ -268,7 +274,7 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
   };
 
   // Units switch on Position (px | % of composition) and Anchor Point (px | %
-  // of layer). Scale has none — it is already a percentage.
+  // of layer). Scale has none — it is a percentage in every unit mode.
   const unitToggle = (key: keyof TransformUnits, label: string, ofWhat: string): JSX.Element => {
     const pct = units[key] === '%';
     return (
@@ -369,7 +375,7 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
             <MultiPropertyPairRow
               nodeId={nodeId}
               label="Scale"
-              props={[field('scaleX', 'W'), field('scaleY', 'H')]}
+              props={[field('scaleX', 'W', SCALE_PERCENT), field('scaleY', 'H', SCALE_PERCENT)]}
               linked={{ value: linkedScale, onToggle: () => setLinkedScale((v) => !v), label: 'Scale dimensions' }}
             />
           )}

@@ -196,7 +196,9 @@ export const TrackHeader = memo(function TrackHeader({
   const layer = useMirrorLayer(track.id);
   const currentParent = layer?.parent ?? null;
   const parentLayer = useMirrorLayer(currentParent);
-  useMirrorKeys(uiKindOf(layer) === 'shape' ? [`tree:${track.id}`] : NO_KEYS);
+  // The sunburst asks the shape's stroke / corner numbers (`layer/*`) and the tree's shape — NOT the whole
+  // tree: a drag of Position (`transform/*`) must not re-render every shape row of the timeline.
+  useMirrorKeys(uiKindOf(layer) === 'shape' ? [`struct:${track.id}`, `grp:${track.id}|layer`] : NO_KEYS);
   const collapseKind = layer ? collapseSwitchKind(track.id) : null;
   const collapseOn = collapseKind ? layer?.switches.collapse === true : false;
   const hasQuality = !!layer && qualitySwitchAvailable(track.id);

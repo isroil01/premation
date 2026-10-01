@@ -19,7 +19,7 @@ describe('propertyMeta — static entries', () => {
     expect(propertyLabel('scaleX')).toBe('Scale X');
     expect(propertyUnit('x')).toBe('px');
     expect(propertyUnit('rotation')).toBe('°');
-    expect(propertyUnit('scaleX')).toBe('x');
+    expect(propertyUnit('scaleX')).toBe('%');
     expect(propertyUnit('opacity')).toBe('%');
   });
 
@@ -59,6 +59,16 @@ describe('propertyMeta — static entries', () => {
     expect(m.max).toBe(1);
     expect(m.displayScale).toBe(100);
     expect(m.unit).toBe('%');
+  });
+
+  it('shows Scale as a percentage of a stored multiplier — "100%", not "1"', () => {
+    for (const p of ['scale', 'scaleX', 'scaleY', 'scaleZ']) {
+      const m = resolvePropertyMeta(p);
+      expect(m).toMatchObject({ unit: '%', type: 'percent', displayScale: 100, defaultValue: 1 });
+      // Unbounded: a negative scale is how a layer is flipped.
+      expect(m.min).toBeUndefined();
+      expect(m.max).toBeUndefined();
+    }
   });
 
   it('labels the merged Position pseudo-track off the engine constant', () => {
@@ -187,7 +197,7 @@ describe('propertyMeta — group placeholders', () => {
   it('borrows label and unit from a representative member', () => {
     expect(propertyLabel(groupPlaceholderPath('anchor'))).toBe('Anchor Point');
     expect(propertyUnit(groupPlaceholderPath('anchor'))).toBe('px');
-    expect(propertyUnit(groupPlaceholderPath('scale'))).toBe('x');
+    expect(propertyUnit(groupPlaceholderPath('scale'))).toBe('%');
     expect(propertyUnit(groupPlaceholderPath('opacity'))).toBe('%');
   });
 

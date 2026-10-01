@@ -25,7 +25,7 @@ export const CONTROLS_COVERED: CommandType[] = [
   'undo', 'redo', 'jumpToHistory', 'beginGesture', 'endGesture', 'clearHistory', 'setHistoryLimit',
   'newProject', 'openProject', 'saveProject', 'revertProject', 'collectFiles', 'setAutosave', 'reloadItems',
   'play', 'pause', 'seek', 'step', 'setLoop', 'setPreviewQuality', 'setAudioPreview', 'setActiveComposition',
-  'setViewport', 'closeViewport', 'setCacheBudget', 'purgeCache', 'setInteracting',
+  'setViewport', 'closeViewport', 'setCacheBudget', 'purgeCache', 'setInteracting', 'setViewportHiddenLayers',
   'startJob', 'cancelJob', 'setPluginEnabled',
   // B3z History ▸ Snapshot — exercised in b3zLastWrites.test.ts.
   'addHistoryCheckpoint',
@@ -36,7 +36,7 @@ export const CONTROLS_COVERED: CommandType[] = [
 test('the list above covers every non-edit command', () => {
   const nonEdit = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t].kind !== 'edit');
   expect(nonEdit.filter((t) => !CONTROLS_COVERED.includes(t))).toEqual([]);
-  expect(nonEdit.length).toBe(32);
+  expect(nonEdit.length).toBe(33);
 });
 
 test('undo / redo / jumpToHistory walk one linear history; empty stacks are typed errors', async () => {
@@ -211,6 +211,7 @@ test('transport controls report through ephemeral events and never touch the doc
   await h.run({ type: 'setCacheBudget', ramMegabytes: 4096, diskMegabytes: 0, diskPath: '' });
   await h.run({ type: 'purgeCache', kind: 'all' });
   await h.run({ type: 'setInteracting', interacting: true });
+  await h.run({ type: 'setViewportHiddenLayers', viewport: 1, layers: ['text_a'] });
   expect(h.engine.transport.time).toBe(sec(2) + Math.round((3 * 705_600_000) / 30));
   const ph = h.batches.flatMap((b) => b.events).filter((e) => e.type === 'playhead');
   expect(ph.length).toBeGreaterThan(0);

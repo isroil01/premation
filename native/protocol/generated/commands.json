@@ -755,6 +755,11 @@
     "type": "setInteracting"
   },
   {
+    "id": 813,
+    "kind": "control",
+    "type": "setViewportHiddenLayers"
+  },
+  {
     "id": 1771,
     "kind": "control",
     "type": "setOverlayGeometry"

@@ -236,7 +236,8 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       // Fonts the text names, registered before measuring (and forwarded to the render thread).
       out->fontFamilies = register_fonts(d);
       out->mediaBase = mediaBase_;
-      const BuildContext ctx = context(d, view, expr, cache);
+      BuildContext ctx = context(d, view, expr, cache);
+      ctx.hiddenLayers = viewport.hiddenLayers;  // setViewportHiddenLayers: the text under the in-place editor
       const SnapshotComp sc = snapshot_comp_of(d, comp);
       // The comp contain-fitted into the slot, centred, over black — C2's
       // compositor placement (render/compositor.cpp), which the page's

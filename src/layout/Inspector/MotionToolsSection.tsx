@@ -10,7 +10,7 @@
  * collapsed header, two small subheads.
  */
 
-import { useMirrorTree } from '@hooks/useMirror';
+import { useMirrorTreeShape } from '@hooks/useMirror';
 import { AudioDriverSection, hasAudioDriverSection } from './AudioDriverSection';
 import { ModifierStackSection, hasModifierStackSection } from './ModifierStackSection';
 import styles from './MotionToolsSection.module.css';
@@ -24,8 +24,8 @@ export function MotionToolsSection({ nodeId }: { nodeId: string }): JSX.Element 
   // Before any early return — the hook count must not depend on the node, and
   // the predicates below have to be asked again when the layer changes. Both
   // ask which numeric properties the layer HAS: its header and its property
-  // tree in the document mirror (B4), not its values.
-  useMirrorTree(nodeId);
+  // tree in the document mirror (B4), not its values — so the tree's SHAPE only.
+  useMirrorTreeShape(nodeId);
   const modifiers = hasModifierStackSection(nodeId);
   const driver = hasAudioDriverSection(nodeId);
   if (!modifiers && !driver) return null;

@@ -220,11 +220,15 @@ export function TextEditOverlay(): JSX.Element | null {
     return () => cancelAnimationFrame(raf);
   }, [nodeId]);
 
-  // Hide the canvas glyphs while the overlay is up, and restore them on close.
+  // The engine draws the viewport, so it draws this layer's text under the
+  // editor too — the box is transparent. Ask it to leave the layer out of this
+  // viewport's frames while the box is up (view state: no history, no revision,
+  // the document untouched) and to draw it again on close — after the commit
+  // has landed, so the new text is what comes back.
   useEffect(() => {
-    if (!nodeId) return;
-    getWorkspaceController().requestRender();
-    return () => getWorkspaceController().requestRender();
+    if (!nodeId) return undefined;
+    void engine().execute({ type: 'setViewportHiddenLayers', viewport: MAIN_VIEWPORT, layers: [nodeId] });
+    return () => { void engine().execute({ type: 'setViewportHiddenLayers', viewport: MAIN_VIEWPORT, layers: [] }); };
   }, [nodeId]);
   useLayoutEffect(() => {
     committedRef.current = false;

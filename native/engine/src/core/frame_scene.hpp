@@ -75,6 +75,10 @@ struct ViewportConfig {
   double panY = 0.0;
   /// CSS px per physical px of the slot (the slot is width × height physical px).
   double devicePixelRatio = 1.0;
+  /// setViewportHiddenLayers: layers this viewport's frames do not draw (the
+  /// text layer being edited in place). Filled per frame by the Session; never
+  /// part of a surface's stored config.
+  std::vector<std::string> hiddenLayers;
   bool operator==(const ViewportConfig&) const = default;
 };
 

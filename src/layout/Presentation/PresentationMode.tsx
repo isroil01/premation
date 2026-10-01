@@ -47,8 +47,9 @@ export function PresentationMode(): JSX.Element | null {
   const exit = usePresentationStore((s) => s.exit);
   const ws = useActiveWorkspace();
   const setPlaying = useWorkspaceStore((s) => s.actions.setPlaying);
-  // Any document revision repaints (the renderer also listens to the engine's frame signals).
-  const sceneRev = useMirrorRevision();
+  // Any document revision repaints (the renderer also listens to the engine's frame signals) — while the
+  // mode is ACTIVE; an inactive one must not re-render on every viewport drag step.
+  const sceneRev = useMirrorRevision(active);
 
   // The active composition's settings, from the document mirror.
   const settings = useActiveMirrorComp()?.settings;

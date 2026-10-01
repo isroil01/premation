@@ -43,8 +43,16 @@
  * Keyed, so a component wakes only for what it reads: `layer:<id>`,
  * `layers` (membership), `comp:<id>`, `comps`, `order:<comp>`,
  * `transitions:<comp>`, `items`, `item:<id>`, `tree:<id>`,
+ * `struct:<id>` (a layer's property tree changed SHAPE: a node added / removed,
+ * a group's children, a property's type / name / limits, the tree (re)loaded —
+ * NOT a value / keyframe / expression change; what a row that only resolves
+ * track names needs beside its own `prop:` / `value:` keys),
+ * `grp:<id>|<root>` (anything under one ROOT group of a layer's tree — the
+ * first path segment: `transform`, `layer`, `effects` … — value writes included:
+ * for a section that reads many properties of one group),
  * `prop:<id>|<path>`, `keys:<id>`, `key:<id>|<path>`, `value:<id>|<path>`,
- * `history`, `status`, `settings`, `renderQueue`, `errors:<comp>`, `doc`,
+ * `history`, `status`, `settings`, `renderQueue`, `errors:<comp>`, `doc`
+ * (every revision) and `docStruct` (every revision that is not ONLY property values),
  * and (F2) `guides`, `swatches`, `materials`, `motionBlur`, `colorManagement`
  * (anything revisioned). Listeners are called ONCE per batch however many
  * keys they matched — one React update per engine batch, never per event
@@ -180,6 +188,34 @@ function keep<T>(prev: T | undefined, next: T): T {
 
 // ── Trees ────────────────────────────────────────────────────────────────
 
+/** The property fields that are STATE (they move when the user edits a value); everything else describes the tree. */
+const STATE_FIELDS: ReadonlySet<string> = new Set(['value', 'stored', 'animated', 'keyframeCount', 'expression', 'expressionEnabled', 'expressionError', 'memberExpressions']);
+
+/**
+ * Did a restated property change what the tree's SHAPE is — its kind, names,
+ * value type, dimensions, limits, choices, visibility, a group's child list …
+ * everything but the property's STATE (its value, keyframe count, animated
+ * flag, expression)? A value write is not shape: it wakes the property's own
+ * `prop:` / `value:` keys (and its root group's `grp:` key), never `struct:`.
+ */
+function shapeChanged(prev: PropertyInfo, next: PropertyInfo): boolean {
+  if (prev === next) return false;
+  const a = prev as unknown as Record<string, unknown>;
+  const b = next as unknown as Record<string, unknown>;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    if (STATE_FIELDS.has(k)) continue;
+    if (!same(a[k], b[k])) return true;
+  }
+  return false;
+}
+
+/** A property path's root group (its first segment): the unit of the `grp:` subscription. */
+function rootOf(path: string): string {
+  const i = path.indexOf('/');
+  return i < 0 ? path : path.slice(0, i);
+}
+
 interface TreeEntry {
   tree: MirrorTree | null;
   /** Revision the tree reflects (events at or below it are already in it). */
@@ -227,6 +263,7 @@ export class DocumentMirror {
   private statusValue: MirrorStatus = 'empty';
   private errorValue: string | null = null;
   private rev: Revision = 0;
+  private structRev = 0;
   private generationValue = 0;
 
   private projectPathValue = '';
@@ -294,6 +331,12 @@ export class DocumentMirror {
   get error(): string | null { return this.errorValue; }
   /** The document revision the mirror shows. */
   get revision(): Revision { return this.rev; }
+  /**
+   * Moves with every document change that is NOT only property values — layers, comps, items, stack order, keyframes,
+   * tree shape — and on every (re)load; NOT on a value write (a drag step, a typed number). What a panel that draws
+   * the document's STRUCTURE (the layer tree, the asset usage list) re-renders on (key `docStruct`).
+   */
+  get structRevision(): number { return this.structRev; }
   /** Bumped by every (re)load: a different document may be showing. */
   get generation(): number { return this.generationValue; }
   get projectPath(): string { return this.projectPathValue; }
@@ -472,6 +515,17 @@ export class DocumentMirror {
     };
   }
 
+  /** Did this batch touch anything but property values (and the ephemeral status keys)? */
+  private pendingHasStructure(): boolean {
+    if (!this.pending) return false;
+    for (const k of this.pending) {
+      if (k === 'doc' || k === 'history' || k === 'status') continue;
+      if (k.startsWith('prop:') || k.startsWith('value:') || k.startsWith('tree:') || k.startsWith('grp:') || k.startsWith('errors:')) continue;
+      return true;
+    }
+    return false;
+  }
+
   private touch(key: string): void {
     (this.pending ?? (this.pending = new Set())).add(key);
   }
@@ -572,6 +626,7 @@ export class DocumentMirror {
 
   private install(doc: DocumentSnapshot): void {
     this.generationValue += 1;
+    this.structRev += 1;
     this.statusValue = 'ready';
     this.errorValue = null;
     this.rev = doc.revision;
@@ -679,6 +734,7 @@ export class DocumentMirror {
     e.dirtyRev = -1;
     if (!sync) {
       this.touch(`tree:${layer}`);
+      this.touch(`struct:${layer}`);
       for (const p of next.nodes.keys()) this.touch(`prop:${layer}|${p}`);
       this.flushNotify();
     }
@@ -844,7 +900,10 @@ export class DocumentMirror {
             }
             this.touch(`layer:${id}`);
             if (this.keyMap.delete(id)) this.touch(`keys:${id}`);
-            if (this.trees.delete(id)) this.touch(`tree:${id}`);
+            if (this.trees.delete(id)) {
+              this.touch(`tree:${id}`);
+              this.touch(`struct:${id}`);
+            }
             trees.delete(id);
             keyMaps.delete(id);
           }
@@ -875,6 +934,9 @@ export class DocumentMirror {
             this.touch(`prop:${e.layer}|${p.path}`);
             this.touch(`value:${e.layer}|${p.path}`);
             this.touch(`tree:${e.layer}`);
+            this.touch(`grp:${e.layer}|${rootOf(p.path)}`);
+            // A value change (a drag step, a keyframe) leaves the tree's SHAPE alone.
+            if (!prev || shapeChanged(prev, next)) this.touch(`struct:${e.layer}`);
           }
           break;
         }
@@ -908,6 +970,7 @@ export class DocumentMirror {
             }
           }
           this.touch(`tree:${e.layer}`);
+          this.touch(`struct:${e.layer}`);
           break;
         }
         case 'keyframesChanged':
@@ -1028,6 +1091,10 @@ export class DocumentMirror {
     if (revisioned) {
       this.rev = b.toRevision;
       this.touch('doc');
+      if (this.pendingHasStructure()) {
+        this.structRev += 1;
+        this.touch('docStruct');
+      }
     }
     this.flushNotify();
   }

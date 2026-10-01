@@ -33,8 +33,8 @@ import type { Command } from '@motion/engine-api';
 import { Button } from '@components/Button';
 import { ValueField } from '@components/ValueField';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
-import { mirrorModifierStacks, mirrorNumericTracks } from '@core/mirror/modifierStacks';
+import { useMirrorLayer, useMirrorProperty, useMirrorTreeShape } from '@hooks/useMirror';
+import { MODIFIERS_PATH, mirrorModifierStacks, mirrorNumericTracks } from '@core/mirror/modifierStacks';
 import { memberHasExpression } from '@core/mirror/memberExpressions';
 import { trackRef } from '@core/mirror/selection';
 import { BAKE_REFUSAL_TEXT } from '@core/animation/convertExpressionToKeyframes';
@@ -284,7 +284,10 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
   // B4: the layer's header and property tree (the numeric tracks, the
   // `layer/modifiers` record) from the document mirror.
   const layer = useMirrorLayer(nodeId);
-  const tree = useMirrorTree(nodeId);
+  // The options are the tree's SHAPE; the stacks are the `layer/modifiers` record, watched as its own
+  // property — so a value write elsewhere on the layer (a viewport drag) does not re-render this.
+  const tree = useMirrorTreeShape(nodeId);
+  useMirrorProperty(nodeId, MODIFIERS_PATH);
 
   // No early return above this line: every hook below runs on every render,
   // including for a node that has just been deleted.

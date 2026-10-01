@@ -351,8 +351,9 @@ export function CommandPalette(): JSX.Element | null {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Subscribe to document revisions so the layer/comp lists (names included) stay fresh.
-  useMirrorRevision();
+  // Subscribe to document revisions so the layer/comp lists (names included) stay fresh — only while the
+  // palette is OPEN: a closed one must not re-render (and re-list the document) on every viewport drag step.
+  useMirrorRevision(open);
 
   // Global Cmd/Ctrl+Shift+P — works even when a form field is focused, which is
   // why this is a listener rather than a registry command (ShortcutManager

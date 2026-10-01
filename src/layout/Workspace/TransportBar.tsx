@@ -35,7 +35,7 @@
  * viewport region (the popout timeline mounts a second copy).
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { cn } from '@utils/cn';
@@ -68,7 +68,12 @@ import {
 } from '@core/timeline/transportController';
 import styles from './TransportBar.module.css';
 
-export function TransportBar(): JSX.Element {
+/**
+ * Memoised: it takes no props and subscribes to everything it draws (workspace
+ * and preference stores, the composition's mirror record), so the viewport shell
+ * above it re-rendering — once per painted frame of a drag — has nothing to tell it.
+ */
+export const TransportBar = memo(function TransportBar(): JSX.Element {
   const ws = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId] : null));
   const activeTabId = useWorkspaceStore((s) => s.activeTabId);
   const selectedIds = useSelectionStore((s) => s.ids);
@@ -359,7 +364,7 @@ export function TransportBar(): JSX.Element {
       </div>
     </div>
   );
-}
+});
 
 /**
  * The shuttle's rate, beside PLAY, only while a shuttle is running.

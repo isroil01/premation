@@ -95,6 +95,27 @@ describe('TextEditOverlay', () => {
     promptSpy.mockRestore();
   });
 
+  it('keeps the engine from drawing the text under the box: the layer is hidden in the viewport while editing, drawn again after', async () => {
+    const hidden = (): unknown[] =>
+      spy.mock.calls.map((c) => c[0]).filter((c) => (c as { type: string }).type === 'setViewportHiddenLayers');
+    const spy = jest.spyOn(h.engine, 'execute');
+    const { getByRole } = render(<TextEditOverlay />);
+    expect(hidden()).toEqual([]);
+
+    act(() => useTextEditStore.getState().begin(T));
+    expect(hidden()).toEqual([{ type: 'setViewportHiddenLayers', viewport: 1, layers: [T] }]);
+
+    await commitWith(() => getByRole('textbox').dispatchEvent(ctrlEnter()));
+    // Closed: the viewport draws the layer again (an empty set).
+    expect(hidden()).toEqual([
+      { type: 'setViewportHiddenLayers', viewport: 1, layers: [T] },
+      { type: 'setViewportHiddenLayers', viewport: 1, layers: [] },
+    ]);
+    // It is view state: the document has no trace of it.
+    expect(historyLabels()).not.toContain('setViewportHiddenLayers');
+    spy.mockRestore();
+  });
+
   it('an editor that opened before the layer reached the mirror fills in, selected, once its text arrives', async () => {
     // The real-app Type tool: the layer is created and the edit begins before
     // its tree is in the mirror, so the box opened EMPTY over the engine's glyphs.

@@ -124,6 +124,8 @@ enum PurgeKind { all = 0; ram = 1; disk = 2; undo = 3; images = 4; }
 command purgeCache = 811 [control] { kind: PurgeKind = 1; }
 /// Interaction hint: the UI is dragging, the engine may drop to draft quality until it ends.
 command setInteracting = 812 [control] { interacting: bool = 1; }
+/// The layers a viewport does not draw — editor state, not document state: the text layer being edited in place (the editor shows its text, so the engine must not draw it underneath). Replaces the viewport's previous set; empty = draw every layer. Hides the layer itself (as its eye switch would) in that viewport's frames only: exports, thumbnails and other viewports draw it. A control: no history, no revision.
+command setViewportHiddenLayers = 813 [control] { viewport: u32 = 1; layers: LayerId[] = 2; }
 
 /// B4 — what the overlay geometry push carries for each subscribed layer (FrameGeometry, 95_frames).
 enum OverlayKind { transform = 0; bounds = 1; motionPath = 2; rig = 3; textBox = 4; scene3d = 8; }

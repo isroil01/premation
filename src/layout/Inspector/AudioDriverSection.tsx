@@ -26,7 +26,7 @@ import { Slider } from '@components/Slider';
 import { ValueField } from '@components/ValueField';
 import type { LayerInfo } from '@motion/engine-api';
 import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
-import { useActiveMirrorComp, useMirrorLayers, useMirrorProperty, useMirrorSelect, useMirrorTree } from '@hooks/useMirror';
+import { useActiveMirrorComp, useMirrorLayers, useMirrorProperty, useMirrorSelect, useMirrorTreeShape } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { membersOf } from '@core/mirror/trackIndex';
@@ -135,8 +135,10 @@ function bandValue(band: AudioBand): string {
 export function AudioDriverSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   // The document mirror (B4): the layer's property tree (the options), its
   // remembered drivers (`audio/drivers`), every audio layer (the sources) and
-  // the active composition's work area (the bake range).
-  const tree = useMirrorTree(nodeId);
+  // the active composition's work area (the bake range). The options are the
+  // tree's SHAPE (which numeric properties exist); the drivers are their own
+  // property below.
+  const tree = useMirrorTreeShape(nodeId);
   const layer = documentMirror().layer(nodeId);
   const driversInfo = useMirrorProperty(nodeId, 'audio/drivers');
   const comp = useActiveMirrorComp();

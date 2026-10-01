@@ -146,6 +146,10 @@ export class Transport {
       case 'setInteracting':
         this.interacting = cmd.interacting;
         return {};
+      case 'setViewportHiddenLayers':
+        // Viewport state for the C++ engine's frames. This engine's renderer hides the text
+        // being edited itself (textEditStore → buildSnapshot), so there is nothing to keep.
+        return {};
       case 'setOverlayGeometry':
         // B4 round 2: the page's renderer asks for the records per painted frame (overlayGeometry.ts).
         setOverlaySubscription(cmd.viewport, cmd.layers, cmd.kinds);

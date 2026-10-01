@@ -26,12 +26,11 @@
  * the strokes above it; a shortened dash pattern drops its slots' tracks).
  */
 
-import { useMemo } from 'react';
 import type { Command } from '@motion/engine-api';
 import { Icon } from '@components/Icon';
 import { Checkbox } from '@components/Checkbox';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorLayersWatch } from '@hooks/useMirror';
+import { useMirrorKeys, useRetainTree } from '@hooks/useMirror';
 import { mirrorStrokeAt, mirrorStrokes } from '@core/mirror/paintFields';
 import { isTrackAnimated } from '@core/mirror/selection';
 import { edit } from '@core/engine/uiEdits';
@@ -516,9 +515,10 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
 }
 
 export function StrokeRows({ nodeId }: { nodeId: string }): JSX.Element | null {
-  // B4: the stack (`layer/strokes`) and every stroke track's keys — a whole-layer watch.
-  const watchIds = useMemo(() => [nodeId], [nodeId]);
-  useMirrorLayersWatch(watchIds);
+  // B4: the stack (`layer/strokes`, under the `layer` group) and every stroke track's keys. Not the whole tree:
+  // a drag of Position (`transform/*`) must not re-render the stroke rows.
+  useRetainTree(nodeId);
+  useMirrorKeys([`layer:${nodeId}`, `struct:${nodeId}`, `grp:${nodeId}|layer`, `keys:${nodeId}`]);
   const m = documentMirror();
   if (!m.layer(nodeId)) return null;
 

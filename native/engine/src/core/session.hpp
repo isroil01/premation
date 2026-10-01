@@ -300,6 +300,10 @@ class Session {
   /// a pop-out window's, a second view. Each gets its own frame per tick,
   /// built with its own camera, into its own ring (FrameSink).
   std::map<std::uint32_t, ViewportConfig> surfaces_;
+  /// setViewportHiddenLayers: the layers each viewport does not draw (editor
+  /// state, kept beside the surface config so a setViewport per pointer move
+  /// does not reset it). Absent = every layer draws.
+  std::map<std::uint32_t, std::vector<std::string>> hiddenLayers_;
   [[nodiscard]] bool any_viewport_open() const noexcept { return !surfaces_.empty(); }
   double resolution_ = 1.0;
   bool renderDirty_ = false;

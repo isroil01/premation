@@ -620,6 +620,7 @@ UI's business (it may re-select the ids named in the undone entry's events).
 | `setViewport` [c] / `closeViewport` | Per viewport: pixel size, DPR, zoom, pan, region of interest, channel (RGB/R/G/B/alpha/straight), exposure, transparency grid, display transform, single-layer view (Layer panel) with or without effects. |
 | `setCacheBudget`, `purgeCache` | RAM/disk cache sizing and purges. |
 | `setInteracting` | Hint while dragging: the engine may drop to draft until it ends. |
+| `setViewportHiddenLayers` | `{viewport, layers}` — the layers a viewport does not draw (the text layer being edited in place). Replaces the viewport's set; empty = all draw; closing the viewport drops it. View state: no history, no revision; exports, thumbnails and other viewports still draw the layer. |
 
 The engine reports the clock with ephemeral `playhead` events (at most once per
 displayed frame, and after every seek) and `transportChanged` on state changes;

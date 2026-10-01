@@ -63,7 +63,11 @@ export function TextBoxHandles({ overflow: liveOverflow }: {
   const editingId = useTextEditStore((s) => s.nodeId);
   const activeTool = useUIStore((s) => s.activeTool) as string;
   const selection = useSelectionStore((s) => s.ids);
-  useMirrorRevision();
+  // The target is derived from the mirror (the layer's kind and paragraph box), so it follows the document
+  // revision — but only while there is a CANDIDATE (an editor open, or the Type tool with one layer selected).
+  // Otherwise the answer is null whatever the document does, and this must not re-render per drag step.
+  const typeTool = activeTool === 'text' || activeTool === 'vertical-text';
+  useMirrorRevision(editingId !== null || (typeTool && selection.length === 1));
   const target = textBoxTargetId(editingId, activeTool, selection);
   // The layer's measured paragraph box (the engine's getTextLayout).
   const layout = useTextLayout(target);

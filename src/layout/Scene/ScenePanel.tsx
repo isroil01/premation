@@ -40,7 +40,7 @@ import { PickWhip } from '@components/PickWhip';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useActiveCompId, useMirrorRevision } from '@hooks/useMirror';
+import { useActiveCompId, useMirrorRevision, useMirrorStructRevision } from '@hooks/useMirror';
 import { useSearchFacts } from '@hooks/useSearchFacts';
 import { mirrorCanBeParentOf } from '@core/mirror/parenting';
 import { useUIStore } from '@stores/uiStore';
@@ -98,16 +98,19 @@ const DENSITIES: ReadonlyArray<{ id: RowDensity; label: string }> = [
 export { sceneGraphToTree } from './sceneRows';
 
 /**
- * A counter that ticks when the document changes (B4: the mirror's revision).
+ * A counter that ticks when the document's STRUCTURE changes (B4: the mirror's
+ * `docStruct`, not its revision).
  *
  * The tree draws structure, the values that appear on a row (names, switches,
- * labels, kinds, icons) and, for the filters, keyframes and effects — so any
- * edit may change it, as the legacy `NodeUpdated` / `AnimationChanged` ticks
- * it replaces said. An edit is a revision; a played frame or a viewport hover
- * is not, so this never ticks per frame.
+ * labels, kinds, icons — all layer HEADERS) and, for the filters, keyframes and
+ * the effect count — so any edit but a pure property VALUE write may change it.
+ * A value write — every step of a viewport drag, a scrubbed or typed number —
+ * cannot: on the plain revision this panel re-derived its whole tree (and
+ * re-rendered every row) per pointer move. A played frame or a viewport hover is
+ * not an edit either, so this never ticks per frame.
  */
 function useDocumentRevision(): number {
-  return useMirrorRevision();
+  return useMirrorStructRevision();
 }
 
 /**
@@ -217,10 +220,11 @@ export function ScenePanel(): JSX.Element {
     of being re-derived per node per keystroke by both walks.
   */
   // Effects / Expressions searched: the engine's document-wide facts (B4).
-  const searchFacts = useSearchFacts(
-    q.length > 0 && (stored.fields.includes('effects') || stored.fields.includes('expressions')),
-    rev,
-  );
+  // The facts include expression TEXT and effect names, which a value write can change, so a search that
+  // reads them follows the plain revision (only while it searches those fields).
+  const searchesFacts = q.length > 0 && (stored.fields.includes('effects') || stored.fields.includes('expressions'));
+  const factsRev = useMirrorRevision(searchesFacts);
+  const searchFacts = useSearchFacts(searchesFacts, factsRev);
   const factsOf = useMemo(
     () => makeFactsReader(stored.fields, q.length > 0, undefined, searchFacts),
     // eslint-disable-next-line react-hooks/exhaustive-deps

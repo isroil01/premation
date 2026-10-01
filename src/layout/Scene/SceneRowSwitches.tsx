@@ -51,7 +51,9 @@ export function SceneRowSwitches({ nodeId, flags }: SceneRowSwitchesProps): JSX.
   // geometry), so the tree is kept loaded only while one of them is shown.
   const needsTree = flags.includes('threeD') || flags.includes('collapse');
   useRetainTree(needsTree ? nodeId : null);
-  useMirrorKeys(needsTree ? [`layer:${nodeId}`, `tree:${nodeId}`] : [`layer:${nodeId}`]);
+  // The tree keys are the tree's SHAPE and its `layer/*` group (stroke / corner numbers) — not the whole tree,
+  // which moves on every write of the layer, a viewport drag step included.
+  useMirrorKeys(needsTree ? [`layer:${nodeId}`, `struct:${nodeId}`, `grp:${nodeId}|layer`] : [`layer:${nodeId}`]);
   const m = documentMirror();
   const layer = m.layer(nodeId);
 

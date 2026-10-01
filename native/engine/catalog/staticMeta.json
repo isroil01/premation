@@ -44,30 +44,34 @@
   "scale": {
     "label": "Scale",
     "group": "transform",
-    "type": "multiplier",
-    "unit": "x",
-    "defaultValue": 1
+    "type": "percent",
+    "unit": "%",
+    "defaultValue": 1,
+    "displayScale": 100
   },
   "scaleX": {
     "label": "Scale X",
     "group": "transform",
-    "type": "multiplier",
-    "unit": "x",
-    "defaultValue": 1
+    "type": "percent",
+    "unit": "%",
+    "defaultValue": 1,
+    "displayScale": 100
   },
   "scaleY": {
     "label": "Scale Y",
     "group": "transform",
-    "type": "multiplier",
-    "unit": "x",
-    "defaultValue": 1
+    "type": "percent",
+    "unit": "%",
+    "defaultValue": 1,
+    "displayScale": 100
   },
   "scaleZ": {
     "label": "Scale Z",
     "group": "transform",
-    "type": "multiplier",
-    "unit": "x",
-    "defaultValue": 1
+    "type": "percent",
+    "unit": "%",
+    "defaultValue": 1,
+    "displayScale": 100
   },
   "rotation": {
     "label": "Rotation",

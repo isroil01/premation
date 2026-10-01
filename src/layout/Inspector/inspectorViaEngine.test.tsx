@@ -62,10 +62,12 @@ async function typeInto(name: string, value: string): Promise<void> {
   await idle();
 }
 
-test('a typed Scale (a multiplier field) crosses the API in percent and lands as the stored multiplier; Linked Scale is one entry; undo/redo exact', async () => {
+test('a typed Scale (shown in %, stored as a multiplier) crosses the API in percent and lands as the stored multiplier; Linked Scale is one entry; undo/redo exact', async () => {
   renderTransform([s.A]);
+  // The field reads "100%", not the stored 1.
+  expect(screen.getByRole('spinbutton', { name: 'Scale X' }).textContent).toContain('100');
   const before = h.doc();
-  await typeInto('Scale X', '1.5');
+  await typeInto('Scale X', '150');
   expect(stored(s.A, 'scaleX')).toBeCloseTo(1.5);
   // Linked (the default): H follows W in the SAME write.
   expect(stored(s.A, 'scaleY')).toBeCloseTo(1.5);

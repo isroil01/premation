@@ -23,7 +23,7 @@ import type { Command } from '@motion/engine-api';
 import { Icon } from '@components/Icon';
 import { useSelectionStore } from '@stores/selectionStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorComp, useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { useMirrorComp, useMirrorLayer, useMirrorTreeShape } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { childOrderOf } from '@core/mirror/layerTree';
 import { isLayer } from '@core/engine/doc';
@@ -183,7 +183,9 @@ function AppearanceSectionInner({ nodeId }: { nodeId: string }): JSX.Element | n
   // stack (the layers parented to this one). The rows below watch their own
   // properties.
   const layer = useMirrorLayer(nodeId);
-  const tree = useMirrorTree(nodeId);
+  // SHAPE only (`nodes.has`): a value write on the layer — every step of a viewport drag — must not
+  // re-render this section and its rows.
+  const tree = useMirrorTreeShape(nodeId);
   useMirrorComp(layer?.comp);
 
   // No early return above this line: every hook below has to run on every

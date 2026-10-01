@@ -337,6 +337,10 @@ class Walk final : public Scene3DHost {
   /// layers under it and the groups above it — soloed for this walk alone.
   std::set<std::string, std::less<>> isolated_;
   [[nodiscard]] bool soloed(const doc::Node& n) const { return isolated_.empty() ? n.solo : isolated_.contains(n.id); }
+  /// The layer's eye, plus the viewport's editor-side hide (BuildContext::hiddenLayers).
+  [[nodiscard]] bool shown(const doc::Node& n) const {
+    return n.visible && std::ranges::find(c_.hiddenLayers, n.id) == c_.hiddenLayers.end();
+  }
 
   std::vector<const doc::Node*> nodes_;
   /// The walked nodes' owner: collapsed-instance clones and override copies.
@@ -1546,7 +1550,7 @@ void Walk::build_node(const doc::Node& n) {
   l.stroke = strokeFold.stroke;
   l.strokes = strokeFold.strokes;
   l.color = finalColor;
-  l.visible = n.visible && (!anySolo_ || soloed(n)) && !(comp_.forExport && read_is_guide_layer(n));
+  l.visible = shown(n) && (!anySolo_ || soloed(n)) && !(comp_.forExport && read_is_guide_layer(n));
   std::string name = n.name;
   std::ranges::transform(name, name.begin(), [](char ch) { return ch >= 'A' && ch <= 'Z' ? static_cast<char>(ch - 'A' + 'a') : ch; });
   const bool nameEllipse = name.find("circle") != std::string::npos || name.find("ellip") != std::string::npos ||
@@ -1847,7 +1851,7 @@ Snapshot Walk::run() {
       order.push_back(n);
     }
     const auto willDraw = [&](const doc::Node& n) {
-      return n.visible && (!anySolo_ || soloed(n)) && !(comp_.forExport && read_is_guide_layer(n));
+      return shown(n) && (!anySolo_ || soloed(n)) && !(comp_.forExport && read_is_guide_layer(n));
     };
     for (std::size_t i = 0; i < order.size(); ++i) {
       const doc::Node& n = *order[i];

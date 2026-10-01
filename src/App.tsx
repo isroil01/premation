@@ -77,7 +77,7 @@ import { useSpaceTransport } from '@hooks/useSpaceTransport';
 import { mirrorBarOf, mirrorCompBars, type MirrorBar } from '@core/mirror/clipBars';
 import { settingsFps } from '@core/mirror/compFacts';
 import { mirrorCompIdForTransition, mirrorTransitionAtCut } from '@core/mirror/transitions';
-import { activeCompIdNow, useMirrorRevision } from '@hooks/useMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
 import {
   goToNextKeyframe,
   goToPrevKeyframe,
@@ -203,10 +203,15 @@ function EditorShellInner(): JSX.Element {
     else store.toggle({ nodeId: trackId, prop });
   };
   const addSelected = useSelectionStore((s) => s.add);
-  // The shell re-renders on every document revision (the mirror's); the
-  // timeline model's rows subscribe to the document mirror themselves
-  // (Timeline/useTimelineModel).
-  useMirrorRevision();
+  // NO document-revision subscription here. The shell used to re-render on
+  // every revision of the mirror (`useMirrorRevision`), and because it hosts
+  // the whole editor tree (TopNav, the dock, the timeline, every panel — few of
+  // them memoized) each engine batch re-rendered the entire UI: one viewport
+  // drag step = one document revision = ~600 component renders (measured by
+  // `src/layout/dragRenderScope.test.tsx`). Nothing the shell renders reads the
+  // document directly: the timeline model's rows subscribe to the mirror
+  // themselves (Timeline/useTimelineModel), and every panel subscribes to the
+  // mirror keys it reads.
   // Scalar selectors, NOT `useActiveWorkspace`.
   //
   // `useActiveWorkspace` returns the whole tab OBJECT, which immer replaces on

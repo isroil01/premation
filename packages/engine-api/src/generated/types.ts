@@ -2680,6 +2680,12 @@ export interface SetInteracting {
   interacting: boolean;
 }
 
+/** The layers a viewport does not draw — editor state, not document state: the text layer being edited in place (the editor shows its text, so the engine must not draw it underneath). Replaces the viewport's previous set; empty = draw every layer. Hides the layer itself (as its eye switch would) in that viewport's frames only: exports, thumbnails and other viewports draw it. A control: no history, no revision. */
+export interface SetViewportHiddenLayers {
+  viewport: number;
+  layers: LayerId[];
+}
+
 /** B4 round 5 — one overlay's share of a subscription (setOverlayGeometry `groups`): its layers get ITS kinds, not every kind another overlay asked for. */
 export interface OverlayRequest {
   layers: LayerId[];
@@ -5004,6 +5010,7 @@ export type Command =
   | ({ type: 'setCacheBudget' } & SetCacheBudget)
   | ({ type: 'purgeCache' } & PurgeCache)
   | ({ type: 'setInteracting' } & SetInteracting)
+  | ({ type: 'setViewportHiddenLayers' } & SetViewportHiddenLayers)
   | ({ type: 'setOverlayGeometry' } & SetOverlayGeometry)
   | ({ type: 'startJob' } & StartJob)
   | ({ type: 'cancelJob' } & CancelJob)
@@ -5167,6 +5174,7 @@ export type CommandResult =
   | ({ type: 'setCacheBudget' } & Empty)
   | ({ type: 'purgeCache' } & Empty)
   | ({ type: 'setInteracting' } & Empty)
+  | ({ type: 'setViewportHiddenLayers' } & Empty)
   | ({ type: 'setOverlayGeometry' } & Empty)
   | ({ type: 'startJob' } & JobRef)
   | ({ type: 'cancelJob' } & Empty)
@@ -5477,6 +5485,7 @@ export interface CommandArgs {
   setCacheBudget: SetCacheBudget;
   purgeCache: PurgeCache;
   setInteracting: SetInteracting;
+  setViewportHiddenLayers: SetViewportHiddenLayers;
   setOverlayGeometry: SetOverlayGeometry;
   startJob: StartJob;
   cancelJob: CancelJob;
@@ -5640,6 +5649,7 @@ export interface CommandResults {
   setCacheBudget: Empty;
   purgeCache: Empty;
   setInteracting: Empty;
+  setViewportHiddenLayers: Empty;
   setOverlayGeometry: Empty;
   startJob: JobRef;
   cancelJob: Empty;

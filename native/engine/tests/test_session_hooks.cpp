@@ -245,6 +245,46 @@ TEST_CASE("session hooks: a camera-only setViewport keeps the slot ring (D5)", "
   CHECK(ring_config_changed(a, b));
 }
 
+TEST_CASE("session hooks: setViewportHiddenLayers reaches the frame builder and outlives camera moves", "[session][frames]") {
+  Harness h(64);
+  FakeBuilder builder;
+  h.session.set_frame_builder(&builder);
+  (void)h.hello();
+  (void)open_comp(h);
+  CHECK(builder.lastViewport.hiddenLayers.empty());
+
+  api::SetViewportHiddenLayers hide;
+  hide.viewport = 1;
+  hide.layers = {"text_a"};
+  const int before = builder.builds;
+  REQUIRE(is_ok(h.run(cmd(hide))));
+  CHECK(builder.builds > before);  // the viewport redraws without the layer
+  REQUIRE(builder.lastViewport.hiddenLayers.size() == 1);
+  CHECK(builder.lastViewport.hiddenLayers[0] == "text_a");
+
+  // A camera move (a setViewport per pointer move) keeps the set.
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 1.0;
+  v.zoom = 2.0;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  REQUIRE(builder.lastViewport.hiddenLayers.size() == 1);
+
+  // Empty = draw every layer again.
+  hide.layers.clear();
+  REQUIRE(is_ok(h.run(cmd(hide))));
+  CHECK(builder.lastViewport.hiddenLayers.empty());
+
+  // Closing the viewport drops its set: a viewport reopened under the same id starts clean.
+  hide.layers = {"text_a"};
+  REQUIRE(is_ok(h.run(cmd(hide))));
+  REQUIRE(is_ok(h.run(cmd(api::CloseViewport{1}))));
+  REQUIRE(is_ok(h.run(cmd(v))));
+  CHECK(builder.lastViewport.hiddenLayers.empty());
+}
+
 TEST_CASE("session hooks: getLayerErrors answers the set last announced (D5)", "[session][frames]") {
   Harness h(64);
   FakeBuilder builder;
