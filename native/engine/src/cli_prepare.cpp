@@ -187,6 +187,30 @@ struct FillOutcome {
 };
 
 /**
+ * The layer's style runs as `text/styleRuns` answers them (grapheme-indexed
+ * JSON), or nullopt when it has none. A static Source Text write drops the runs
+ * that indexed the old text; the editor re-sends them after the write
+ * (textEdits.ts keepRunsCommands), and so does a data fill.
+ */
+std::optional<std::string> current_style_runs(Client& c, const std::string& layer) {
+  api::GetPropertyValues q;
+  q.props.push_back(api::PropRef{layer, "text/styleRuns"});
+  q.time = 0;
+  q.evaluated = false;
+  const api::Response r = c.ask(query(std::move(q)));
+  if (error_of(r)) return std::nullopt;
+  const auto* qr = std::get_if<api::QueryResult>(&r.outcome.v);
+  const auto* pv = qr != nullptr ? std::get_if<api::PropertyValues>(&qr->v) : nullptr;
+  if (pv == nullptr || pv->values.empty()) return std::nullopt;
+  const api::Value& v = pv->values.front().value;
+  if (v.kind() != doc::VK::json) return std::nullopt;
+  const std::string& runs = doc::get<doc::VK::json>(v);
+  const std::optional<Json> parsed = js::parse(runs);
+  if (!parsed || !parsed->is_array() || parsed->arr().empty()) return std::nullopt;
+  return runs;
+}
+
+/**
  * One data row into the composition's template fields (templateFieldEdits.ts
  * fillDataRowEdit): text → Source Text, a hex colour → Fill Color, a number →
  * the field's catalog property in API units; media and other kinds are
@@ -221,9 +245,11 @@ std::variant<FillOutcome, std::string> fill_row(Client& c, const std::string& co
     }
     api::SetProperty sp;
     sp.time = 0;
+    std::optional<std::string> keepRuns;
     if (kind == "text" && component == "Text" && prop == "content") {
       sp.prop = api::PropRef{layer, "text/sourceText"};
       sp.value = doc::v_string(cell.str());
+      keepRuns = current_style_runs(c, layer);
     } else if (prop == "fill" && kind == "color") {
       const auto rgba = hex_color(cell.str());
       if (!rgba) {
@@ -253,6 +279,14 @@ std::variant<FillOutcome, std::string> fill_row(Client& c, const std::string& co
       continue;
     }
     batch.commands.push_back(command(std::move(sp)));
+    if (keepRuns) {
+      // After the Source Text write in the same batch: the runs land after the write cleared them.
+      api::SetProperty runs;
+      runs.time = 0;
+      runs.prop = api::PropRef{layer, "text/styleRuns"};
+      runs.value = doc::v_json(std::move(*keepRuns));
+      batch.commands.push_back(command(std::move(runs)));
+    }
     out.filled.push_back(id);
   }
   if (batch.commands.empty()) return out;

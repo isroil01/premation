@@ -301,8 +301,10 @@ paths (371 → 367).
   p4-round3: `--commands` (main encodes the recorded requests with the
   generated codec, `--prepare` replays them), `--data` (the `--prepare` fill
   step, one render per row) and `--captions` (the `setCaptions` command) run
-  in the engine too. Gap: a `--data` Source Text fill does not keep the
-  page's per-run styles (`keepRunsCommands`).
+  in the engine too. A `--data` Source Text fill keeps the layer's per-run
+  styles the way the editor does (`keepRunsCommands`): `fill_row` reads
+  `text/styleRuns` first and re-sends it after the Source Text write in the
+  same batch (2026-10-01).
 - *Render worker* renders only through `premation-engine --export`; its
   offscreen window, render page, preload and Vite bundle are deleted.
 
