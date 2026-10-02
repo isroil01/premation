@@ -61,7 +61,7 @@ import {
   strokeTrackPath,
   strokeTrackPathsFor,
   type StrokeTrackParam,
-} from '@core/rendering/strokeTracks';
+} from '@core/paint/strokeTracks';
 import { layerBoxAt } from '@stores/layerBoxes';
 import { useLayerBoxes } from '@hooks/useLayerBoxes';
 import { getTime } from '@stores/playbackClockStore';

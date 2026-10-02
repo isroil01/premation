@@ -10,7 +10,7 @@ import {
   type MotionSamplePoint, type Sim,
 } from './globalMotion';
 import { downsampleLuma } from './smoothStabilize';
-import type { FlowField } from '@core/rendering/pixelMotionFlow';
+import type { FlowField } from '@core/video/pixelMotionFlow';
 
 /** Observations of a known similarity over a grid. */
 function observationsOf(s: Sim, jitter: (i: number) => [number, number] = () => [0, 0]): MotionSamplePoint[] {

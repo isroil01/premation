@@ -9,7 +9,7 @@
 import { isAnimatableProp } from './toolContext';
 import { pathOpPropPath, newPathOpId } from '@core/scene/pathOps';
 import { polystarPropPath } from '@core/scene/polystar';
-import { FILL_GRADIENT_TRACKS } from '@core/rendering/gradientPaintTracks';
+import { FILL_GRADIENT_TRACKS } from '@core/paint/gradientPaintTracks';
 
 describe('isAnimatableProp', () => {
   it('REGRESSION: accepts the exact path pathOpPropPath mints', () => {

@@ -17,7 +17,7 @@ import type { ImportedAsset } from '@stores/assetStore';
 import { useUIStore } from '@stores/uiStore';
 import { getProjectManager } from '@core/services/coreServices';
 import { isBundlePath } from '@core/project/bundle/bundleProjectIO';
-import { isLocalBlobRef, LOCAL_BLOB_SCHEME } from '@core/rendering/localBlobSource';
+import { isLocalBlobRef, LOCAL_BLOB_SCHEME } from '@core/assets/local/localBlobSource';
 
 /** Whether this build can show a file in the OS file manager at all. */
 export function canRevealAssets(): boolean {

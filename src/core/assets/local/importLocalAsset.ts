@@ -15,7 +15,7 @@ import { getProjectManager } from '@core/services/coreServices';
 import { detectBundleFs } from '@core/project/bundle/bundleFsEnv';
 import { isBundlePath } from '@core/project/bundle/bundleProjectIO';
 import { importAssetToBundle } from './assetBundleIO';
-import { localBlobRef } from '@core/rendering/localBlobSource';
+import { localBlobRef } from '@core/assets/local/localBlobSource';
 import type { AssetRecord } from './blobTypes';
 
 export interface LocalImportResult {

@@ -33,7 +33,7 @@
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import type { ChannelView, EngineFrameMeta, EventBatch, PreviewResolution as EnginePreviewResolution, ProcessEngineClient, VideoFrameLike } from '@motion/engine-api';
+import { flicksToSeconds, type ChannelView, type EngineFrameMeta, type EventBatch, type PreviewResolution as EnginePreviewResolution, type ProcessEngineClient, type VideoFrameLike } from '@motion/engine-api';
 import {
   createAppProcessEngine,
   lastProcessEngineNotice,
@@ -47,7 +47,10 @@ import { useGuidesStore } from '@stores/guidesStore';
 import { isCustomViewId, type CustomViewParams } from '@core/workspace/customViews';
 import { useRenderQualityStore, type PreviewResolution } from '@stores/renderQualityStore';
 import { viewportHudStats } from '@stores/viewportDisplayStore';
+import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
+import { useCompareStore } from '@stores/compareStore';
+import { publishFrame } from '@core/engine/frameTap';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { compUvRect, parseCssRgb } from './pasteboard';
 import { BOARD_FLOATS, createFrameBlitter } from './frameBlit';
@@ -112,6 +115,8 @@ export interface EngineSurfaceStats {
     view: string;
     /** The custom view's orbit when `view` is 'custom' (customViews.ts), else null. */
     customView: CustomViewParams | null;
+    /** setViewport `onion`, or null when onion skins are off. */
+    onion: { before: number; after: number; step: number; opacity: number; colorize: boolean } | null;
   } | null;
   errors: string[];
 }
@@ -241,6 +246,14 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         const w = p.frame.displayWidth;
         const h = p.frame.displayHeight;
         writeBoard(w, h);
+        if (isViewport) {
+          // The scopes (frameTap) and a snapshot compare read THIS frame — the
+          // engine's VideoFrame, drawn into a 2D copy now, before `release`
+          // closes it. The tap returns on a size / clock check when nobody listens.
+          const seconds = flicksToSeconds(p.meta.time);
+          publishFrame(p.frame, seconds);
+          if (useCompareStore.getState().pending) useCompareStore.getState().captureFrom(p.frame, seconds, getWorkspaceController().getView());
+        }
         // The blit releases the slot to the engine once the GPU no longer reads it.
         if (!blitter.draw(p.frame, boardData, p.release)) {
           pending = p;
@@ -319,13 +332,17 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       const height = Math.max(1, Math.round(r.height));
       const pageDpr = window.devicePixelRatio || 1;
       const dpr = stats.route === 'copy' ? copyRouteDpr(width, height, pageDpr) : pageDpr;
-      if (!isViewport) return { width, height, dpr, zoom: 0, panX: 0, panY: 0, view: 'active', customView: null };  // fit
+      if (!isViewport) return { width, height, dpr, zoom: 0, panX: 0, panY: 0, view: 'active', customView: null, onion: null };  // fit
       // The viewport's 3D view (View ▸ 3D View): the engine renders the axis
       // and camera views itself; a custom view sends its orbit, resolved to the
       // same camera customViewCamera builds for the page's chrome.
       const g = useGuidesStore.getState();
       const view = isCustomViewId(g.camera3dMode) ? 'custom' : g.camera3dMode;
       const customView = isCustomViewId(g.camera3dMode) ? g.customViews[g.camera3dMode] : null;
+      const onionState = useOnionSkinStore.getState();
+      const onion = onionState.enabled && onionState.opacity > 0 && (onionState.before > 0 || onionState.after > 0)
+        ? { before: onionState.before, after: onionState.after, step: onionState.step, opacity: onionState.opacity, colorize: onionState.colorize }
+        : null;
       // The page's camera (WorkspaceController.getView: CSS px per comp px and
       // the comp origin on screen) → the comp point at the viewport centre.
       const v = getWorkspaceController().getView();
@@ -334,9 +351,12 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         width, height, dpr, zoom,
         panX: zoom > 0 ? (r.width / 2 - v.offsetX) / zoom : 0,
         panY: zoom > 0 ? (r.height / 2 - v.offsetY) / zoom : 0,
-        view, customView,
+        view, customView, onion,
       };
     };
+    const sameOnion = (a: NonNullable<EngineSurfaceStats['lastViewport']>['onion'], b: NonNullable<EngineSurfaceStats['lastViewport']>['onion']): boolean =>
+      a === b || (a !== null && b !== null && a.before === b.before && a.after === b.after && a.step === b.step
+        && a.opacity === b.opacity && a.colorize === b.colorize);
     const sameCustomView = (a: CustomViewParams | null, b: CustomViewParams | null): boolean =>
       a === b || (a !== null && b !== null && a.yaw === b.yaw && a.pitch === b.pitch && a.distance === b.distance
         && (a.poi === b.poi || (a.poi !== null && b.poi !== null && a.poi.x === b.poi.x && a.poi.y === b.poi.y && a.poi.z === b.poi.z)));
@@ -348,7 +368,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       const channel = useGuidesStore.getState().channel;
       if (!force && last && channel === lastChannel && last.width === d.width && last.height === d.height && last.dpr === d.dpr
         && last.zoom === d.zoom && last.panX === d.panX && last.panY === d.panY
-        && last.view === d.view && sameCustomView(last.customView, d.customView)) return;
+        && last.view === d.view && sameCustomView(last.customView, d.customView) && sameOnion(last.onion, d.onion)) return;
       if (inFlight) {
         again = true;
         return;
@@ -379,6 +399,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
             ...(d.customView.poi !== null ? { poi: d.customView.poi } : {}),
           },
         } : {}),
+        ...(d.onion ? { onion: d.onion } : {}),
       }).then((res) => {
         if (!res.ok) fail(`setViewport: ${res.error.code} ${res.error.message}`);
         else applied = d;  // frames from here on are drawn with this camera (the pasteboard rect)
@@ -425,6 +446,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     const unGuides = isViewport ? useGuidesStore.subscribe((s, prev) => {
       if (s.channel !== lastChannel || s.camera3dMode !== prev.camera3dMode || s.customViews !== prev.customViews) sendViewport();
     }) : null;
+    const unOnion = isViewport ? useOnionSkinStore.subscribe(() => sendViewport()) : null;
     // Preview resolution (Full / Half / Third / Quarter) → the engine's.
     let lastRes: PreviewResolution | null = null;
     const sendResolution = (): void => {
@@ -457,6 +479,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       unsub();
       unRender?.();
       unGuides?.();
+      unOnion?.();
       unQuality?.();
       ro.disconnect();
       dprQuery?.removeEventListener('change', onDpr);

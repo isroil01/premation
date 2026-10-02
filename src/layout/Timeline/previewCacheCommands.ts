@@ -27,9 +27,11 @@
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
+import { engine } from '@core/engine/engineInstance';
 import { viewportFrameCache } from '@core/rendering/frameCache';
 import { activeViewportDiskCache } from '@core/rendering/frameDiskCache';
 import { requestPreviewCache } from '@stores/cacheRequestStore';
+import { engineCacheSnapshot } from './engineCacheCoverage';
 import { useUIStore } from '@stores/uiStore';
 import { formatCacheMb, previewCacheStats } from './previewCacheStats';
 
@@ -99,14 +101,16 @@ export function cacheWorkAreaNow(): void {
 }
 
 export function purgeRamPreview(): void {
-  const held = viewportFrameCache.totalBytesHeld / (1024 * 1024);
+  const held = Math.max(viewportFrameCache.totalBytesHeld, engineCacheSnapshot().ramBytes) / (1024 * 1024);
   if (held <= 0) {
     toast('RAM preview is already empty', 'info');
     return;
   }
   // Memory only. The disk tier keeps everything, so frames come straight back
-  // as the playhead reaches them.
+  // as the playhead reaches them. The bars read the engine cache, so that
+  // one is cleared too.
   viewportFrameCache.clear();
+  void engine().execute({ type: 'purgeCache', kind: 'ram' });
   toast(`Purged ${formatCacheMb(held)} from the RAM preview`, 'success');
 }
 
@@ -142,7 +146,7 @@ export function buildPreviewCacheCommands(): ReadonlyArray<Command> {
       label: 'Purge RAM Preview',
       description: 'Empty the memory tier of the preview cache. The disk tier keeps its frames.',
       icon: 'trash',
-      enabled: () => viewportFrameCache.totalBytesHeld > 0,
+      enabled: () => viewportFrameCache.totalBytesHeld > 0 || engineCacheSnapshot().ramBytes > 0,
       execute: () => {
         purgeRamPreview();
       },

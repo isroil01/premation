@@ -57,7 +57,7 @@ import { bakeScheduler, type BakeScheduler } from '@core/effects/bakeWorkerPool'
 import { perfBegin, perfEnd, PerfStage } from '@core/perf/framePerf';
 import { scaleEffectLengths, type Effect } from '@core/effects/effects';
 import { deinterlaceData, deinterlaceInto, type FieldOrder } from './deinterlace';
-import { videoDiag } from './videoPlaybackDiag';
+import { videoDiag } from '@core/media/videoPlaybackDiag';
 import { videoDecodeStats } from '@core/video/decodeStats';
 import { paintMaskMatte, type LayerMask } from '@core/effects/mask';
 import { drawParticleField, particleFieldSignature, type ParticleSpriteImage } from '@core/particles/particleRender';
@@ -69,7 +69,7 @@ import {
   attachVideoSrc,
   detachVideoSrc,
   resolveLocalBlobObjectUrl,
-} from './localBlobSource';
+} from '@core/assets/local/localBlobSource';
 import {
   offlineBarsRgba,
   OFFLINE_BARS_W,

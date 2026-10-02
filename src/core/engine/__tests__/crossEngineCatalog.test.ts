@@ -39,7 +39,7 @@ import { ANIMATOR_PARAMS, SELECTOR_PARAMS, OPTIONAL_ANIMATOR_PROPERTIES, default
 import { defaultSelector } from '@core/text/textSelectors';
 import { PAINT_OPTION_KEYS, PAINT_CLONE_KEYS, PAINT_TRANSFORM_KEYS, PAINT_KEY_LABEL, PAINT_KEY_UNIT, PAINT_PERCENT_KEYS } from '@core/paint/paintProps';
 import { LABEL_COLORS } from '@core/scene/labelColor';
-import { STROKE_TRACK_PARAMS, STROKE_DASH_PARAMS } from '@core/rendering/strokeTracks';
+import { STROKE_TRACK_PARAMS, STROKE_DASH_PARAMS } from '@core/paint/strokeTracks';
 import { MASK_PROPERTY_KEYS } from '@core/effects/mask';
 import { TEXT_PATH_PARAMS } from '@core/text/textPath';
 import { TEXT_FIELDS, ANIMATOR_FIELDS, ANIMATOR_OPTIONAL_FIELDS, SELECTOR_FIELDS, SELECTOR_KIND_PARAMS } from '@core/text/textFields';

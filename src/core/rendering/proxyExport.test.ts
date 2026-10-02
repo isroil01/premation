@@ -190,10 +190,11 @@ describe('structural guards', () => {
     }
   });
 
-  it('exactly two viewport hosts opt in, and they are the ones we think', () => {
-    // If this count changes, a third render surface started using proxies and
-    // someone has to decide deliberately whether that surface is an output.
-    const hosts = ['src/layout/Workspace/useWorkspace.ts', 'src/layout/Workspace/useViewportRenderer.ts'];
+  it('exactly one page viewport host opts in, and it is the one we think', () => {
+    // If this count changes, another page render surface started using proxies
+    // and someone has to decide deliberately whether that surface is an output.
+    // (The panes, the Layer panel and presentation mode are engine surfaces now.)
+    const hosts = ['src/layout/Workspace/useWorkspace.ts'];
     for (const h of hosts) expect(read(h)).toContain('useProxies: useProxies');
   });
 });

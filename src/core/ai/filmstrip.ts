@@ -29,7 +29,7 @@
 import type { AiImage } from '@motion/ai-tools';
 import type { ToolContext } from '@motion/ai-tools';
 import { useCompositionStore } from '@stores/compositionStore';
-import { engineCompStill } from '@core/rendering/engineStill';
+import { engineCompStill } from '@core/engine/engineStill';
 
 /** Target frames in a strip. Enough to show a curve; few enough to stay legible. */
 export const STRIP_MIN = 16;

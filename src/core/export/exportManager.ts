@@ -21,8 +21,8 @@ import {
   strokeColorChannelPaths,
   strokeGradientGeometryFor,
   strokeTrackPath,
-} from '@core/rendering/strokeTracks';
-import { paintBlendToLottie } from '@core/rendering/raster/paintBlend';
+} from '@core/paint/strokeTracks';
+import { paintBlendToLottie } from '@core/paint/paintBlend';
 import { paintRenderOrder } from '@core/rendering/raster/vectorDraw';
 import { liveDocument } from '@core/project/liveDocument';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';

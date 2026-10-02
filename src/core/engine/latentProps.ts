@@ -8,7 +8,7 @@ import type { SceneNode } from '@core/types';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { is3DEnabled } from '@core/scene/threeD';
 import { readNodeStrokes } from '@core/paint/stroke';
-import { strokeTrackPath, type StrokeTrackParam } from '@core/rendering/strokeTracks';
+import { strokeTrackPath, type StrokeTrackParam } from '@core/paint/strokeTracks';
 import { nodeMorphTargetCount, MORPH_PROP_PREFIX } from '@core/scene/modelMorph';
 import { LATENT_PROPS, type LatentWhen } from './latentPropSpecs';
 

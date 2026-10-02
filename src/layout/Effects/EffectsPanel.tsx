@@ -48,7 +48,7 @@ import {
 } from '@core/effects/mask';
 import { edit } from '@core/engine/uiEdits';
 import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
-import { SIZE } from '@core/rendering/buildSnapshot';
+import { SIZE } from '@core/scene/layerKindSize';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import {
   addMaskEdit,

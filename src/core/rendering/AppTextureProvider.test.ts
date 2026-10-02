@@ -13,7 +13,7 @@
 
 import { ResourceManager, NullBackend } from '@motion/renderer';
 import { AppTextureProvider, textCssFont, spotConeFactor, poolProfile, type ImageLoader, type VideoFactory } from './AppTextureProvider';
-import { videoDiag } from './videoPlaybackDiag';
+import { videoDiag } from '@core/media/videoPlaybackDiag';
 import type { RenderLayer } from './RenderBackend';
 import * as maskModule from '@core/effects/mask';
 

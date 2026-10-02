@@ -19,9 +19,12 @@ import { usePresentationStore } from '@stores/presentationStore';
 import { useWorkspaceStore, useActiveWorkspace } from '@stores/projectStore';
 import { useCurrentTime } from '@stores/playbackClockStore';
 import { useMirrorRevision } from '@hooks/useMirror';
-import { activeCompRecordNow } from '@hooks/useActiveCompRecord';
 import { useRenderQualityStore, RESOLUTION_LABELS, type PreviewResolution } from '@stores/renderQualityStore';
-import { useViewportRenderer } from '@layout/Workspace/useViewportRenderer';
+import { paintWireframeOverlay } from '@layout/Workspace/wireframeOverlay';
+import { paneViewTransform } from '@layout/Workspace/useSceneRefGeometry';
+import { EnginePaneSurface } from '@components/EngineSurface/EnginePaneSurface';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { engineCompStill } from '@core/engine/engineStill';
 import {
   goToEnd,
   goToStart,
@@ -35,7 +38,7 @@ import { useActiveMirrorComp } from '@hooks/useMirror';
 import { settingsDurationSeconds, settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
 import { framesToTimecode } from '@core/time/timecode';
 import { openExportDialog } from '@layout/Export/ExportDialog';
-import { pageFrameWireframeNodes, pageStillFrame } from '@core/rendering/pageFrame';
+import { pageFrameWireframeNodes } from '@core/rendering/pageFrame';
 import styles from './PresentationMode.module.css';
 
 const QUALITY_ORDER: PreviewResolution[] = [1, 2, 3, 4];
@@ -71,7 +74,6 @@ export function PresentationMode(): JSX.Element | null {
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scrubRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
 
@@ -87,9 +89,17 @@ export function PresentationMode(): JSX.Element | null {
     () => ({ canvasRef: wireframeCanvasRef, nodes: pageFrameWireframeNodes }),
     [],
   );
-  const { initError } = useViewportRenderer(
-    canvasRef, stageRef, sceneRev, time, undefined, undefined, undefined, undefined, wireframeOverlay,
-  );
+  // The pixels are the engine's (EnginePaneSurface, contain-fitted into the
+  // stage on its own engine viewport); Quality = Wireframe boxes are painted
+  // from the page's geometry through the same contain fit whenever anything moved.
+  const wireframePaintedRef = useRef(false);
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!active || !stage) return;
+    const r = stage.getBoundingClientRect();
+    const view = r.width > 0 && r.height > 0 ? paneViewTransform(r.width, r.height, width, height) : undefined;
+    paintWireframeOverlay(wireframeOverlay, wireframeCanvasRef.current, view, { width, height }, wireframePaintedRef);
+  }, [active, wireframeOverlay, width, height, sceneRev, time]);
   // NOTE: no usePlaybackClock here — App.tsx runs the single shared clock; a
   // second instance would double-tick the controller (2× playback speed).
 
@@ -109,10 +119,10 @@ export function PresentationMode(): JSX.Element | null {
   // the event loop to stall and making Esc/close completely unresponsive.
   //
   // Fix: defer auto-play by one rAF (≈ one paint) so React has committed the
-  // portal DOM and useViewportRenderer's attach effect has had a chance to run
-  // and size the canvas. This is not a "wait for GPU ready" — the backend may
-  // still be initialising — but it gives the layout engine time to mount the
-  // canvas before the first frame is requested.
+  // portal DOM and the engine surface has mounted and measured its box. This
+  // is not a "wait for the first frame" — the engine may still be rendering —
+  // but it gives the layout engine time to mount the stage before playback
+  // is requested.
   useEffect(() => {
     if (!active) {
       setPlaying(false);
@@ -176,7 +186,9 @@ export function PresentationMode(): JSX.Element | null {
   const downloadFrame = useCallback(() => {
     void (async () => {
       // The composition record from the mirror; the frame from the engine's page-render seam.
-      const blob = await pageStillFrame(activeCompRecordNow(), currentFrame);
+      // The engine's still of this frame at full size (getThumbnail, engineStill.ts).
+      const compId = activeCompIdNow();
+      const blob = compId ? await engineCompStill(compId, currentFrame / fps, Math.max(width, height)) : null;
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -187,7 +199,7 @@ export function PresentationMode(): JSX.Element | null {
       a.remove();
       URL.revokeObjectURL(url);
     })();
-  }, [name, currentFrame]);
+  }, [name, currentFrame, fps, width, height]);
 
   // ── Seekable scrub bar ─────────────────────────────────────────────
   const seekToClientX = useCallback((clientX: number) => {
@@ -291,28 +303,15 @@ export function PresentationMode(): JSX.Element | null {
       </div>
 
       <div className={styles.stage} ref={stageRef}>
-        <canvas ref={canvasRef} className={styles.canvas} />
-        {/* Quality = Wireframe boxes, laid exactly over the content canvas by
-            `paintWireframeOverlay` (position and size are set per frame). */}
-        <canvas ref={wireframeCanvasRef} aria-hidden style={{ position: 'absolute', pointerEvents: 'none' }} />
-        {/* Loading spinner — shown until the first rAF fires (backend mounting).
+        {active && <EnginePaneSurface mode="active" framingRev={0} className={styles.canvas} />}
+        {/* Quality = Wireframe boxes over the stage, through the same contain fit
+            the engine draws with (`paintWireframeOverlay`). */}
+        <canvas ref={wireframeCanvasRef} aria-hidden style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
+        {/* Loading spinner — shown until the first rAF fires (surface mounting).
             Prevents the user from seeing a blank stage and assuming it's broken. */}
-        {!backendReady && !initError && (
+        {!backendReady && (
           <div className={styles.stageLoader} aria-label="Loading preview…">
             <div className={styles.stageSpinner} />
-          </div>
-        )}
-        {/* The renderer could not start. Presentation Mode is the LAST GPU
-            context the page creates, so it is the first to be refused when the
-            browser's live-context cap is reached — and a silent black stage here
-            reads as "my composition is broken" rather than "this window could
-            not get a GPU". */}
-        {initError && (
-          <div className={styles.stageLoader} role="alert">
-            <div className={styles.stageError}>
-              <strong>Preview unavailable</strong>
-              <span>{initError}</span>
-            </div>
           </div>
         )}
       </div>

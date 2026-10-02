@@ -13,7 +13,7 @@
  */
 
 import { create } from 'zustand';
-import { DEFAULT_ONION_SKIN, type OnionSkinSettings } from '@core/rendering/onionSkin';
+import { DEFAULT_ONION_SKIN, type OnionSkinSettings } from '@core/workspace/onionSkin';
 
 interface OnionSkinState extends OnionSkinSettings {
   set(patch: Partial<OnionSkinSettings>): void;

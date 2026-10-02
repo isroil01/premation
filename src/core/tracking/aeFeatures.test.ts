@@ -1,6 +1,6 @@
 import { floodMatte, matteToPath, morphClose, morphOpen, refineRotoMatte } from './rotoMatte';
 import { warpMatte } from './rotoBrush';
-import { computeFlow, lumaOf } from '@core/rendering/pixelMotionFlow';
+import { computeFlow, lumaOf } from '@core/video/pixelMotionFlow';
 import { inpaintPatchMatch, propagateFillFrame } from '@core/effects/contentAwareFill';
 import { solveSfmCameraPath } from './sfmCamera';
 import { bundleAdjust, yprToR } from './bundleAdjust';

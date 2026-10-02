@@ -67,7 +67,7 @@ import { parsePaintColorPath, parsePaintPropPath } from '@core/paint/paintProps'
 import { readNodePaint, updatePaintStroke } from '@core/paint/paintStrokes';
 import { paintStrokePatch, readPaintStrokeValue } from '@core/paint/paintValues';
 import { isGradientGeometryProp, readGradientGeometryProp, writeGradientGeometryProp } from './gradientGeometryProps';
-import { parseStrokeTrackPath } from '@core/rendering/strokeTracks';
+import { parseStrokeTrackPath } from '@core/paint/strokeTracks';
 import { readStrokeParam, strokeEntryAt, withStrokeParam } from '@core/paint/strokeValues';
 import { storeNodeStrokeAt } from '@core/paint/stroke';
 import { AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP, percentToDb } from '@core/audio/audioParams';

@@ -29,6 +29,9 @@ import { viewportFrameCache } from '@core/rendering/frameCache';
 
 export type CompareMode = 'toggle' | 'side-by-side' | 'wipe' | 'difference';
 
+/** What a snapshot is captured from: the page's content canvas, or the engine's VideoFrame. */
+export type CompareSource = HTMLCanvasElement | VideoFrame;
+
 export const COMPARE_MODE_LABEL: Record<CompareMode, string> = {
   toggle: 'Toggle (A/B)',
   'side-by-side': 'Side by side',
@@ -82,7 +85,7 @@ interface CompareStore {
    * nothing is pending. Returns the snapshot's id, or null.
    */
   captureFrom: (
-    canvas: HTMLCanvasElement,
+    canvas: CompareSource,
     time: number,
     view: { scale: number; offsetX: number; offsetY: number },
   ) => string | null;
@@ -107,11 +110,15 @@ let seq = 0;
  * A synchronous 2D copy of a canvas — the step that makes the pixels safe to
  * turn into a bitmap later. Returns null when the canvas is empty.
  */
-function copyCanvas(canvas: HTMLCanvasElement): HTMLCanvasElement | null {
-  if (canvas.width < 1 || canvas.height < 1) return null;
+function copyCanvas(canvas: CompareSource): HTMLCanvasElement | null {
+  // The engine's frame is a VideoFrame (EngineSurface captures from it before
+  // `release` closes it); it draws like a canvas, sized by its display size.
+  const w = 'displayWidth' in canvas ? canvas.displayWidth : canvas.width;
+  const h = 'displayHeight' in canvas ? canvas.displayHeight : canvas.height;
+  if (w < 1 || h < 1) return null;
   const copy = document.createElement('canvas');
-  copy.width = canvas.width;
-  copy.height = canvas.height;
+  copy.width = w;
+  copy.height = h;
   const ctx = copy.getContext('2d');
   if (!ctx) return null;
   ctx.drawImage(canvas, 0, 0);

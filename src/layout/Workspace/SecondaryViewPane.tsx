@@ -41,9 +41,9 @@ import { useActiveCompRootId, useActiveCompSize, useMirrorRevisionFrame } from '
 import { useGuidesStore, CAMERA_ORTHO_VIEWS, type Camera3dMode } from '@stores/guidesStore';
 import { CUSTOM_VIEW_IDS, CUSTOM_VIEW_LABEL } from '@core/workspace/customViews';
 import { effectiveViewMode, useCompCameraViews } from '@layout/TopNav/ViewControls';
-import type { RenderView } from '@core/rendering/RenderBackend';
+import type { RenderView } from '@core/workspace/renderView';
 import { EnginePaneSurface } from '@components/EngineSurface/EnginePaneSurface';
-import { paintWireframeOverlay } from './useViewportRenderer';
+import { paintWireframeOverlay } from './wireframeOverlay';
 import { usePaneWorkspace } from './usePaneWorkspace';
 import { paneViewTransform } from './useSceneRefGeometry';
 import { useGizmo3d } from './useGizmo3d';

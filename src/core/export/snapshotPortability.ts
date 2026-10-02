@@ -37,7 +37,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isLocalFirst } from '@core/config/flags';
-import { LOCAL_BLOB_SCHEME } from '@core/rendering/localBlobSource';
+import { LOCAL_BLOB_SCHEME } from '@core/assets/local/localBlobSource';
 
 /** One media reference a layer carries: the durable id and the stored src. */
 export interface MediaRef {

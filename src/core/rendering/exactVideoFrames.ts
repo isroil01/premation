@@ -60,7 +60,7 @@
  */
 
 import { requestMediaRepaint } from './repaintScheduler';
-import { isLocalBlobRef, resolveLocalBlobObjectUrl, releaseLocalBlobObjectUrl } from './localBlobSource';
+import { isLocalBlobRef, resolveLocalBlobObjectUrl, releaseLocalBlobObjectUrl } from '@core/assets/local/localBlobSource';
 import type { DemuxedVideo } from '@core/video/mp4Demuxer';
 import { demuxFile } from '@core/video/demuxClient';
 import {

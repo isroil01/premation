@@ -11,7 +11,7 @@
 
 import { render, screen, fireEvent } from '@testing-library/react';
 import { useOnionSkinStore, ONION_MAX_SIDE } from '@stores/onionSkinStore';
-import { DEFAULT_ONION_SKIN } from '@core/rendering/onionSkin';
+import { DEFAULT_ONION_SKIN } from '@core/workspace/onionSkin';
 import { OnionSkinSettingsPopover } from './OnionSkinSettings';
 
 function open(): void {

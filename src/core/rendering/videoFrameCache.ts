@@ -54,7 +54,7 @@
  */
 
 import { requestMediaRepaint } from './repaintScheduler';
-import { attachVideoSrc, detachVideoSrc } from './localBlobSource';
+import { attachVideoSrc, detachVideoSrc } from '@core/assets/local/localBlobSource';
 
 /** Times within this many seconds are the same frame. Tighter than the 0.05s
  *  deadband the live path uses — that deadband is ~1.5 frames at 30fps and

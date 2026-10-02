@@ -446,8 +446,8 @@ function animatedKfs(lp: LottieProp | undefined, comp: number, fr: number, mul =
   return c.kfs && c.kfs.length >= 2 ? c.kfs : undefined;
 }
 
-import { strokeTrackPath, dashParamAt } from '@core/rendering/strokeTracks';
-import { lottieBlendToPaint, type PaintBlendMode } from '@core/rendering/raster/paintBlend';
+import { strokeTrackPath, dashParamAt } from '@core/paint/strokeTracks';
+import { lottieBlendToPaint, type PaintBlendMode } from '@core/paint/paintBlend';
 import type { StrokeGradientGeometry } from '@core/paint/stroke';
 
 /**

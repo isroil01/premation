@@ -19,7 +19,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { writeTransformProps, readTransformProp } from '@core/scene/transformWrite';
 import { compSourceOf } from '@core/composition/compSizes';
 import { sourceOf, type SourceInfo } from '@core/source/sourceInfo';
-import { SIZE } from '@core/rendering/buildSnapshot';
+import { SIZE } from '@core/scene/layerKindSize';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import type { SceneNode } from '@core/types';
 

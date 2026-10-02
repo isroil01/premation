@@ -32,7 +32,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Workspace, modifiersFrom, type PointerInput, type SceneGraphPort } from '@motion/workspace';
 import type { Camera3dMode } from '@stores/guidesStore';
-import type { RenderView } from '@core/rendering/RenderBackend';
+import type { RenderView } from '@core/workspace/renderView';
 import { createSceneGraphPort, createSelectionPort, createCommandPort } from '@core/workspace/ports';
 import { paneViewTransform } from './useSceneRefGeometry';
 import { useUIStore } from '@stores/uiStore';

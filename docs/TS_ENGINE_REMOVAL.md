@@ -331,10 +331,19 @@ cache). What still references the TypeScript renderer, effects and evaluation
   `useViewportRenderer`), the Layer panel (`useLayerViewerRenderer`),
   presentation mode, the scopes' frame tap and snapshot compare (read from the
   page canvas), the preview cache UI (`frameCache` / `frameDiskCache`: cache
-  bars, actions, stats) and onion skin; plus small utilities with no engine
-  dependence (`Color`, `strokeTracks`, `gradientPaintTracks`, `roiGeometry`,
-  `localBlobSource`, `componentThumbs`, `channelView`, `videoPlaybackDiag`)
-  that move out before the delete. UI effect METADATA now comes from the
+   bars, actions, stats) and onion skin. The helpers the UI keeps have moved
+   out (`strokeTracks` and `gradientPaintTracks` in `src/core/paint`,
+   `localBlobSource` in `src/core/assets/local`, `roiGeometry`, `channelView`
+   and the onion-skin plan in `src/core/workspace`, `videoPlaybackDiag` in
+   `src/core/media`, `engineStill`, `frameTap` and `mediaRepaint` in
+   `src/core/engine`, `idleCacheSpan` in `src/core/timeline`, per-kind `SIZE`
+   in `src/core/scene/layerKindSize.ts`, the viewport camera `RenderView` in
+   `src/core/workspace/renderView.ts`, and paint blend modes in
+   `src/core/paint/paintBlend.ts`, optical flow in `src/core/video/pixelMotionFlow.ts`,
+   canvas GPU ownership in `src/core/workspace/canvasOwnership.ts`, and the
+   playback blit policy in `src/core/perf/playbackBlitPolicy.ts`). `Color` still lives in
+   `packages/renderer` (the GPU package's own math). `componentThumbs` still
+   renders through the page backend, so it stays until that backend goes. UI effect METADATA now comes from the
   engine catalog (`src/core/inspector/effectCatalog.ts`, 2026-10-01).
 - *The page replica* (`LocalEngine`, `src/core/engine/handlers`,
   `legacyRefresh`, `sceneStore`'s graph and the evaluation under it): 98
@@ -351,11 +360,22 @@ cache). What still references the TypeScript renderer, effects and evaluation
    `customView` (done 2026-10-01: each viewport renders its own Active / axis /
    camera / custom view — before this the engine rendered every viewport as
    Active Camera and the view selector only moved the page's chrome); the
-   secondary panes, the Layer panel (`setViewport.layer` is kept but not
-   rendered yet — `session.cpp` SetViewport) and presentation mode as
-   `EngineSurface`s with their own viewport id; scopes / compare tapping the
-   engine's frame; a cache-state query for the cache bars; onion skin drawn by
-   the engine. Then delete.
+   secondary panes (done: `EnginePaneSurface`, one engine viewport per pane,
+   `engineFrameHub.ts` routing the window's frames) and the Layer panel
+   (done: `setViewport.layer` is rendered — `BuildContext::layerView`, the
+   one-layer walk; `time` / `layerSourceTime` hold the panel's ruler;
+   `useLayerViewerRenderer` deleted) and presentation mode (done: an
+   `EnginePaneSurface`, the still through `engineCompStill`;
+   `useViewportRenderer` deleted — the wireframe painter lives on in
+   `wireframeOverlay.ts`); scopes / compare tapping the engine's frame
+   (done: EngineSurface publishes each drawn VideoFrame to `frameTap` and
+   `compareStore.captureFrom` before `release` closes it; the region callback
+   maps the comp rect the same way); a cache-state query for the cache bars
+   (done: `getCacheCoverage` — the bars and the Preview readout follow the
+   engine's VRAM frame cache; there is no disk tier); onion skin drawn by the
+   engine (done: `setViewport.onion` — ghosts are built with a transparent
+   background and composited over the live frame while playback is stopped).
+   Then delete.
 3. The page replica goes: the remaining `sceneStore` readers move to the
    mirror / the overlay push / engine queries (`hitTest` gains a `viewport`
    so a pane's picks project through its own view), the off-document builders

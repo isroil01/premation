@@ -17,7 +17,7 @@ import {
   resolveFlowOptions,
   searchAllCells,
   SEARCH_STRIDE,
-} from './pixelMotionFlow';
+} from '@core/video/pixelMotionFlow';
 import {
   DISPLACEMENT_BIAS,
   flowFromSearchTexels,

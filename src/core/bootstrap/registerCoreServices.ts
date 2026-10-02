@@ -22,7 +22,7 @@ import {
   RoutedProjectStorage,
 } from '@core/persistence/ProjectStorage';
 import { initLocalIndex } from '@core/localIndex/sqliteLocalIndex';
-import { setLocalBlobResolver } from '@core/rendering/localBlobSource';
+import { setLocalBlobResolver } from '@core/assets/local/localBlobSource';
 import { createBlobStore } from '@core/assets/local/blobStoreEnv';
 import { isBundlePath } from '@core/project/bundle/bundleProjectIO';
 import { isLocalFirst } from '@core/config/flags';

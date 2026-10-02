@@ -54,7 +54,7 @@ import {
   setFrameTapInterval,
   setFrameTapRegion,
   subscribeFrames,
-} from '@core/rendering/frameTap';
+} from '@core/engine/frameTap';
 import { captureScopeFrame, liveCompRegion, type ScopeFrame, type ScopeFrameMiss } from './scopeFrame';
 import { EmptyState } from '@components/EmptyState';
 import styles from './ScopesPanel.module.css';

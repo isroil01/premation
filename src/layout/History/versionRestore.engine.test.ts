@@ -18,7 +18,7 @@ jest.mock('@core/api/client', () => {
     },
   };
 });
-jest.mock('@core/rendering/engineStill', () => ({
+jest.mock('@core/engine/engineStill', () => ({
   engineCompStill: jest.fn(async () => new Blob(['frame'])),
   engineDocumentStill: jest.fn(async () => new Blob(['frame'])),
 }));

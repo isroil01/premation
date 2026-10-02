@@ -21,9 +21,9 @@ import { createSceneGraphPort } from '@core/workspace/ports';
 import type { MotionBlurConfig } from '@core/effects/motionBlur';
 import { clipGeometrySignature } from '@core/timeline/TimelineController';
 import { memoizedSceneContentHash } from './sceneContentHash';
-import { isMediaDecodeRepaint } from './mediaRepaint';
+import { isMediaDecodeRepaint } from '@core/engine/mediaRepaint';
 import { getEventBus } from '@core/events/EventBus';
-import { engineCompStill, ENGINE_STILL_MAX } from './engineStill';
+import { engineCompStill, ENGINE_STILL_MAX } from '@core/engine/engineStill';
 import { buildSnapshot, type SnapshotFocus, type SnapshotComp } from './buildSnapshot';
 import type { RenderOverlays, RenderSnapshot, RenderView } from './RenderBackend';
 

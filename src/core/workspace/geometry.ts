@@ -9,7 +9,7 @@
 
 import type { SceneNode } from '@core/types';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { SIZE } from '@core/rendering/buildSnapshot';
+import { SIZE } from '@core/scene/layerKindSize';
 import { measureTextNodeLayout, measureTextNodeParagraphBox, measureTextNodeSize, measureTextNodeSelectionBox } from '@core/text/measureText';
 import { hasTextPath, readParagraphBox } from '@core/text/textExtras';
 import { applyTextPath, pathGlyphBounds, readTextPathConfig, textPathGeometry } from '@core/text/textPath';

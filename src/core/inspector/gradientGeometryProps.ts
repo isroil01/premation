@@ -10,7 +10,7 @@
  * layer lists its gradient geometry among its rows.
  *
  * The keyframed values reach the renderer through `applyGradientTracks`
- * (`core/rendering/gradientPaintTracks.ts`), which uses the same names.
+ * (`core/paint/gradientPaintTracks.ts`), which uses the same names.
  */
 
 import type { SceneNode } from '@core/types';
@@ -21,7 +21,7 @@ import {
   FILL_GRADIENT_TRACKS,
   TEXT_STROKE_GRADIENT_TRACKS,
   type GradientTrackNames,
-} from '@core/rendering/gradientPaintTracks';
+} from '@core/paint/gradientPaintTracks';
 import { updateNodeComponentProp } from './InspectorAPI';
 
 type GradientPaint = LinearFill | RadialFill;

@@ -19,12 +19,12 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useAssetStore } from '@stores/assetStore';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import { computeFlow } from '@core/rendering/pixelMotionFlow';
+import { computeFlow } from '@core/video/pixelMotionFlow';
 import { fitSimilarity, flowSamplePoints, stabilizingCorrections, IDENTITY_SIM, type Sim } from './globalMotion';
 import { applySmoothStabilize, applySubspaceMeshSequence } from './applyTrack';
 import { estimateRollingShutterShear, fitSubspaceWarp, applyRollingShutterRepair } from './subspaceWarp';
 import { planAnalysisDecode } from './analysisTier';
-import { fetchAssetSrc } from '@core/rendering/localBlobSource';
+import { fetchAssetSrc } from '@core/assets/local/localBlobSource';
 
 export interface SmoothStabilizeRequest {
   nodeId: string;

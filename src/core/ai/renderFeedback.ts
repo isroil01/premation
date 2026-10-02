@@ -15,7 +15,7 @@
 
 import type { AiImage } from '@motion/ai-tools';
 import { useCompositionStore } from '@stores/compositionStore';
-import { engineCompStill } from '@core/rendering/engineStill';
+import { engineCompStill } from '@core/engine/engineStill';
 import { processImageFile } from './imageAttachment';
 
 /** A frame render can hang in a backgrounded tab — never let it stall the run. */

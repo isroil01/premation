@@ -84,7 +84,7 @@ import { AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP } from '@core/audio/audioParams';
 import { gradientGeometryPropsFor } from '@core/inspector/gradientGeometryProps';
 import { readNodeStrokes } from '@core/paint/stroke';
 import { isIdentityTaper, isIdentityWave } from '@core/scene/strokeProfile';
-import { strokeTrackPath, dashParamAt, type StrokeTrackParam } from '@core/rendering/strokeTracks';
+import { strokeTrackPath, dashParamAt, type StrokeTrackParam } from '@core/paint/strokeTracks';
 
 /**
  * The sections a layer's properties fall into, in AE's own twirl order.

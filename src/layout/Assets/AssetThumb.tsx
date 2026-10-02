@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
 import type { ImportedAsset } from '@stores/assetStore';
-import { attachVideoSrc, detachVideoSrc } from '@core/rendering/localBlobSource';
+import { attachVideoSrc, detachVideoSrc } from '@core/assets/local/localBlobSource';
 import { getAssetVisualInfo } from './assetVisuals';
 import { formatDuration } from './assetListLogic';
 import { peekVideoPoster, requestVideoPoster } from './videoPosters';

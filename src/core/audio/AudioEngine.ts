@@ -20,7 +20,7 @@ import { getAudioHardware, applyOutputDevice } from './audioHardware';
 import {
   connectAudioEffects, hasBackwards, reverseBuffer, backwardsOffset, type AudioEffect,
 } from './audioEffects';
-import { fetchAssetSrc } from '@core/rendering/localBlobSource';
+import { fetchAssetSrc } from '@core/assets/local/localBlobSource';
 
 /** One audio layer's transport-relevant state, derived from the scene. */
 export interface AudioLayerState {

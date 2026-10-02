@@ -68,8 +68,8 @@ describe('only the interactive viewport opts in', () => {
     return out;
   };
 
-  it('the two viewport hosts pass wireframeLayers: true', () => {
-    for (const h of ['src/layout/Workspace/useWorkspace.ts', 'src/layout/Workspace/useViewportRenderer.ts']) {
+  it('the page viewport host passes wireframeLayers: true (the panes, the Layer panel and presentation mode are engine surfaces)', () => {
+    for (const h of ['src/layout/Workspace/useWorkspace.ts']) {
       expect(read(h)).toContain('wireframeLayers: true');
     }
   });

@@ -37,7 +37,7 @@
  */
 
 import { viewportFrameCache } from '@core/rendering/frameCache';
-import { latestTappedFrame } from '@core/rendering/frameTap';
+import { latestTappedFrame } from '@core/engine/frameTap';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { playheadSeconds } from '@core/timeline/timelineView';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';

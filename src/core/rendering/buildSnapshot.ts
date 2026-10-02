@@ -47,7 +47,7 @@ import {
 } from '@core/effects/motionBlur';
 import { readNodeFill, readNodeFills, sampleFillAt, type FillPaint } from '@core/paint/fill';
 import { readNodeStrokes } from '@core/paint/stroke';
-import { resolveStrokeStack } from './strokeTracks';
+import { resolveStrokeStack } from '@core/paint/strokeTracks';
 import { useAssetStore } from '@stores/assetStore';
 import { localMatrix, worldTransformOf, worldMatrixOf, localUnderParent, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
 import { parentWorld3d, resolveNode3DTransform, composeNodeWorld3d } from '@core/scene/nodeMatrix';
@@ -67,7 +67,7 @@ import { readNodeParticle, resolveParticleConfig } from '@core/particles/particl
 // the render-tests harness and in export, neither of which has a plugin host.
 import { measureParagraphBox, measureTextNodeSize, readMeasuredTextStyle } from '@core/text/measureText';
 import { hasTextPath, readTextStrokePaint, textExtrasForNode } from '@core/text/textExtras';
-import { applyGradientTracks, TEXT_STROKE_GRADIENT_TRACKS } from './gradientPaintTracks';
+import { applyGradientTracks, TEXT_STROKE_GRADIENT_TRACKS } from '@core/paint/gradientPaintTracks';
 import { withTextMoreOptions } from '@core/text/textMoreOptions';
 import { resolveFontAxes } from '@core/text/fontAxes';
 import { graphemeCount } from '@core/text/graphemes';
@@ -132,7 +132,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 const DEG = Math.PI / 180;
 import type { MotionSample } from './RenderBackend';
 import type { AnimationEngine } from '@motion/animation';
-import type { RenderSnapshot, RenderLayer, LayerKind, SubpathPaint, SsaoConfig } from './RenderBackend';
+import type { RenderSnapshot, RenderLayer, SubpathPaint, SsaoConfig } from './RenderBackend';
 import { contentHashOf } from './contentHash';
 import { probeStaticPrecomp } from './staticPrecompCache';
 import { rasterPadding } from './raster/vectorDraw';
@@ -554,14 +554,8 @@ function readBaseUncached(node: SceneNode): {
   };
 }
 
-/** Fixed on-canvas size per layer kind (comp px). Shared with the Workspace
- *  interaction engine so hit-testing/selection overlays match what's drawn. */
-export const SIZE: Record<LayerKind, { w: number; h: number }> = {
-  shape: { w: 220, h: 220 },
-  text: { w: 320, h: 80 },
-  image: { w: 280, h: 180 },
-  video: { w: 480, h: 270 },
-};
+export { SIZE } from '@core/scene/layerKindSize';
+import { SIZE } from '@core/scene/layerKindSize';
 
 /**
  * Per-run paint for a chain's output, or null when no run needs any.

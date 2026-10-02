@@ -32,7 +32,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
-import type { RenderView } from '@core/rendering/RenderBackend';
+import type { RenderView } from '@core/workspace/renderView';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 

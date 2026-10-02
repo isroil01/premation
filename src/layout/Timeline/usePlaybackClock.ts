@@ -14,7 +14,7 @@
 import { useEffect } from 'react';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { pauseInactiveComps, syncTransportPlaying } from '@core/timeline/timelineView';
-import { playbackHealth } from '@core/rendering/videoPlaybackDiag';
+import { playbackHealth } from '@core/media/videoPlaybackDiag';
 
 export function usePlaybackClock(): void {
   const playing = useWorkspaceStore((s) =>

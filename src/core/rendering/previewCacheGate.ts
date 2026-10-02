@@ -52,6 +52,10 @@
  *  `frame / fps` round trips. */
 const GRID_EPSILON = 1e-3;
 
+import { PlaybackBlitPolicy, playbackBlitPolicy } from '@core/perf/playbackBlitPolicy';
+
+export { PlaybackBlitPolicy, playbackBlitPolicy };
+
 export interface PreviewCacheState {
   /** Transport state. Playback always renders on the grid and never mid-gesture. */
   playing: boolean;
@@ -122,83 +126,6 @@ export function mayServeCachedFrame(s: PreviewCacheState): boolean {
  * rather than "seek to now" issued sixty times a second.
  */
 export const MIN_PLAYBACK_BLIT_RUN = 3;
-
-/** Consecutive over-budget live renders before single-frame blits are allowed,
- *  and consecutive in-budget ones before they are withdrawn. Asymmetric like the
- *  adaptive-resolution hysteresis: quick to help, slow to stop helping, so the
- *  decision cannot flip back and forth frame to frame. */
-const SLOW_LIVE_TO_ENTER = 3;
-const FAST_LIVE_TO_EXIT = 30;
-/** How much dearer than a blit a live render must be before a lone hit wins. */
-const LIVE_OVER_BLIT = 2;
-
-/**
- * When a SHORT run is still worth blitting.
- *
- * The run rule above assumes the live render keeps up. When it does not — a
- * comp whose every live frame already exceeds the frame period — the premise
- * inverts: the live path is dropping frames regardless, an isolated cached hit
- * is a correct frame at the cost of one 2D blit, and the park that goes with it
- * targets the playhead itself (the run ends where it starts), so it asks the
- * video element for exactly the frame the next live render wants anyway.
- *
- * Both costs are MEASURED, never assumed: `noteLiveRender` is fed the per-frame
- * playback render time (renderQualityStore.reportPlaybackFrame), `noteBlit` the
- * frame cache's own copy time, which is the same frame-sized 2D drawImage a
- * blit performs. Until both exist nothing changes.
- *
- * Flicker is what the hysteresis is for: the decision is entered after three
- * slow live frames and left only after thirty fast ones. Blit frames report no
- * live time at all, so a stretch of blits cannot talk the policy out of itself.
- * What it cannot see is resolution — a cache warmed at Full served between live
- * frames degraded by adaptive resolution alternates sharpness, as the paused
- * serve always has.
- */
-export class PlaybackBlitPolicy {
-  private liveMs = NaN;
-  private blitMs = NaN;
-  private slow = false;
-  private over = 0;
-  private under = 0;
-
-  /** One live playback render: its cost and the frame period it had. */
-  noteLiveRender(ms: number, budgetMs: number): void {
-    if (!Number.isFinite(ms) || !(budgetMs > 0)) return;
-    this.liveMs = Number.isNaN(this.liveMs) ? ms : this.liveMs * 0.7 + ms * 0.3;
-    if (ms > budgetMs) {
-      this.over += 1;
-      this.under = 0;
-      if (this.over >= SLOW_LIVE_TO_ENTER) this.slow = true;
-    } else {
-      this.under += 1;
-      this.over = 0;
-      if (this.under >= FAST_LIVE_TO_EXIT) this.slow = false;
-    }
-  }
-
-  /** One frame-sized 2D copy (the cache's own copy, a blit's twin). */
-  noteBlit(ms: number): void {
-    if (!Number.isFinite(ms) || ms < 0) return;
-    this.blitMs = Number.isNaN(this.blitMs) ? ms : this.blitMs * 0.8 + ms * 0.2;
-  }
-
-  /** May a cached frame with a run shorter than MIN_PLAYBACK_BLIT_RUN be served? */
-  get singleFrameBlits(): boolean {
-    if (!this.slow || Number.isNaN(this.blitMs) || Number.isNaN(this.liveMs)) return false;
-    return this.liveMs > Math.max(this.blitMs, 0.1) * LIVE_OVER_BLIT;
-  }
-
-  reset(): void {
-    this.liveMs = NaN;
-    this.blitMs = NaN;
-    this.slow = false;
-    this.over = 0;
-    this.under = 0;
-  }
-}
-
-/** The viewport's policy, fed by the render-quality store and the frame cache. */
-export const playbackBlitPolicy = new PlaybackBlitPolicy();
 
 /**
  * Is this playback hit worth blitting, given where its cached run ends?

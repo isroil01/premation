@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-jest.mock('@core/rendering/engineStill', () => ({ engineCompStill: jest.fn(), engineDocumentStill: jest.fn() }));
+jest.mock('@core/engine/engineStill', () => ({ engineCompStill: jest.fn(), engineDocumentStill: jest.fn() }));
 jest.mock('@core/api/client', () => ({ api: {} }));
 
 import { frameAt } from './VersionCompareDialog';

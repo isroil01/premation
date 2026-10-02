@@ -22,7 +22,7 @@ import type { Guide, GuideAxis, WorkspaceOverlay } from '@motion/workspace';
 import { modifiersFrom, drawToolOptions, type PointerInput, type WheelInput } from '@motion/workspace';
 import renderCache from '@core/rendering/renderCache';
 import { viewportFrameCache } from '@core/rendering/frameCache';
-import { applyChannelViewToCanvas, channelNeedsPass } from '@core/rendering/channelView';
+import { applyChannelViewToCanvas, channelNeedsPass } from '@core/workspace/channelView';
 import { mayServeCachedFrame, mayFillFromPausedRender, playbackBlitWorthwhile } from '@core/rendering/previewCacheGate';
 import { useWorkspaceStore } from '@stores/projectStore';
 import workspaceStyles from './Workspace.module.css';
@@ -30,10 +30,10 @@ import { compHasWireframeQualityLayer, paintWireframeQualityLayers } from './wir
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore, clampOverlayOpacity } from '@stores/guidesStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { idleCacheSpan, nextSpanFrame } from '@core/rendering/idleCacheSpan';
+import { idleCacheSpan, nextSpanFrame } from '@core/timeline/idleCacheSpan';
 import { onPreviewCacheRequest } from '@stores/cacheRequestStore';
-import { publishFrame } from '@core/rendering/frameTap';
-import { roiHandleAt, resizeRoi, clampRoi, roiHandleCursor, type RoiHandle } from '@core/rendering/roiGeometry';
+import { publishFrame } from '@core/engine/frameTap';
+import { roiHandleAt, resizeRoi, clampRoi, roiHandleCursor, type RoiHandle } from '@core/workspace/roiGeometry';
 import { activeCompSettingsNow, useActiveMotionBlur } from '@hooks/useMirrorFrame';
 import { settingsWorkArea } from '@core/mirror/compFacts';
 import { previewIncludesVideo } from '@stores/previewBehaviorStore';
@@ -473,7 +473,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     /**
      * Channel view (Red / Green / Blue / Alpha): copy the frame just rendered
      * onto the 2D blit layer and rewrite its pixels there. See
-     * `core/rendering/channelView.ts` for why this is a pixel pass and not a
+     * `core/workspace/channelView.ts` for why this is a pixel pass and not a
      * CSS filter. A no-op in RGB, which is every frame that is not being
      * inspected.
      */
@@ -1378,7 +1378,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   const channel = useGuidesStore((s) => s.channel);
   useEffect(() => {
     // The view itself is a pixel pass on the blit layer (`presentChannelView`
-    // in the render effect — see core/rendering/channelView.ts for why it is
+    // in the render effect — see core/workspace/channelView.ts for why it is
     // not a CSS filter). This effect only handles the mode CHANGE: hide the
     // blit layer so the frame drawn under the previous mode is not on screen
     // until the render effect (which lists `channel` in its deps) draws the

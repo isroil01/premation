@@ -24,7 +24,7 @@ import {
   STROKE_DASH_PARAMS,
   strokeGradientGeometryFor,
   type StrokeTrackParam,
-} from '@core/rendering/strokeTracks';
+} from '@core/paint/strokeTracks';
 import { normalizeStroke, readNodeStrokes, type Stroke, type StrokeGradientGeometry } from './stroke';
 
 const TAPER_FIELD: Partial<Record<StrokeTrackParam, keyof StrokeTaper>> = {

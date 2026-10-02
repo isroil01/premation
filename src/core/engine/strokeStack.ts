@@ -20,7 +20,7 @@ import { defaultAnimation, type NodeAnimSnapshot } from '@motion/animation';
 import type { Value } from '@motion/engine-api';
 import type { SceneNode } from '@core/types';
 import { readNodeStrokes, storeNodeStrokes, normalizeStroke, type Stroke } from '@core/paint/stroke';
-import { dashParamAt, strokeTrackPath, strokeTrackPathsFor } from '@core/rendering/strokeTracks';
+import { dashParamAt, strokeTrackPath, strokeTrackPathsFor } from '@core/paint/strokeTracks';
 import { fail } from './errors';
 
 /** A stack entry: an object with a numeric width (stroke.ts `isStroke`). */

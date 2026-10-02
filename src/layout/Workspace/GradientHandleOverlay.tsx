@@ -69,7 +69,7 @@ import {
   FILL_GRADIENT_TRACKS,
   TEXT_STROKE_GRADIENT_TRACKS,
   type GradientTrackNames,
-} from '@core/rendering/gradientPaintTracks';
+} from '@core/paint/gradientPaintTracks';
 import { ColorPicker } from '@components/ColorPicker';
 import {
   sortedStops,
@@ -77,7 +77,7 @@ import {
   type FillPaint,
 } from '@core/paint/fill';
 import type { Stroke, StrokeGradientGeometry } from '@core/paint/stroke';
-import { strokeGradientGeometryFor, strokeTrackPath } from '@core/rendering/strokeTracks';
+import { strokeGradientGeometryFor, strokeTrackPath } from '@core/paint/strokeTracks';
 import { useGradientEditStore, type GradientEditTarget } from './gradientEditStore';
 import { strokePatchCommands } from '@layout/Inspector/appearance/paintEdits';
 import { gradientGeometryCommands, gradientPaintCommands, gradientStopsCommands } from './viewportEdits';

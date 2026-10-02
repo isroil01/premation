@@ -9,7 +9,7 @@
  */
 
 import { createOnionSkinPainter } from './onionSkinPainter';
-import { DEFAULT_ONION_SKIN, type OnionSkinSettings } from './onionSkin';
+import { DEFAULT_ONION_SKIN, type OnionSkinSettings } from '@core/workspace/onionSkin';
 
 const VISIBLE = 'onionVisible';
 

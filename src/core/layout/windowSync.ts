@@ -27,7 +27,7 @@
 import { syncChannel } from './syncChannel';
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { getEventBus } from '@core/events/EventBus';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
+import { isMediaDecodeRepaint } from '@core/engine/mediaRepaint';
 import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';

@@ -14,9 +14,8 @@
  * "347 / 348" forever.
  */
 
-import { viewportFrameCache } from '@core/rendering/frameCache';
-import { activeViewportDiskCache } from '@core/rendering/frameDiskCache';
-import { idleCacheSpan, type IdleCacheSpan } from '@core/rendering/idleCacheSpan';
+import { idleCacheSpan, type IdleCacheSpan } from '@core/timeline/idleCacheSpan';
+import { engineCacheSnapshot } from './engineCacheCoverage';
 import { settingsDurationSeconds, settingsFps, settingsHasWorkArea, settingsWorkArea } from '@core/mirror/compFacts';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
@@ -61,18 +60,21 @@ export function previewCacheSpan(): IdleCacheSpan | null {
   });
 }
 
+function frameInRanges(frame: number, fps: number, ranges: ReadonlyArray<{ start: number; end: number }>): boolean {
+  const t = frame / fps;
+  return ranges.some((range) => t >= range.start - 1e-6 && t < range.end - 1e-6);
+}
+
 export function previewCacheStats(): PreviewCacheStats {
   const span = previewCacheSpan();
-  const disk = activeViewportDiskCache();
+  const coverage = engineCacheSnapshot();
 
-  // A linear probe over the span. `has` and not `get`: a probe must not
-  // re-order the LRU (the idle pump's comment says why — scanning a cached run
-  // used to promote all of it, so eviction then dropped the frames nearest the
-  // playhead) and must not fire a disk look-ahead per frame.
   let cached = 0;
   if (span) {
+    const settings = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+    const fps = settingsFps(settings, 30);
     for (let f = span.start; f <= span.end; f++) {
-      if (viewportFrameCache.has(f)) cached += 1;
+      if (frameInRanges(f, fps, coverage.ram)) cached += 1;
     }
   }
 
@@ -81,8 +83,8 @@ export function previewCacheStats(): PreviewCacheStats {
     total: span ? span.length : 0,
     // Whether a work area is SET: the API states "none" as the whole composition (settingsHasWorkArea).
     workArea: settingsHasWorkArea(documentMirror().comp(activeCompIdNow() ?? '')?.settings),
-    ramMb: viewportFrameCache.totalBytesHeld / MB,
-    diskMb: disk ? disk.totalBytes / MB : null,
+    ramMb: coverage.ramBytes / MB,
+    diskMb: coverage.diskBytes > 0 ? coverage.diskBytes / MB : null,
   };
 }
 

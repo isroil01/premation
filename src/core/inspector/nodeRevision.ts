@@ -29,7 +29,7 @@
  */
 
 import { getEventBus } from '@core/events/EventBus';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
+import { isMediaDecodeRepaint } from '@core/engine/mediaRepaint';
 import { useSceneRevision } from '@stores/sceneStore';
 
 type Listener = () => void;

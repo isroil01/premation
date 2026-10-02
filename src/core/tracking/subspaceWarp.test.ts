@@ -4,7 +4,7 @@ import {
   applyRollingShutterRepair,
   sampleSubspace,
 } from './subspaceWarp';
-import type { FlowField } from '@core/rendering/pixelMotionFlow';
+import type { FlowField } from '@core/video/pixelMotionFlow';
 import { IDENTITY_SIM, type Sim } from './globalMotion';
 
 function fieldFrom(

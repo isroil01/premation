@@ -10,7 +10,7 @@
  * this module only solves.
  */
 
-import type { FlowField } from '@core/rendering/pixelMotionFlow';
+import type { FlowField } from '@core/video/pixelMotionFlow';
 import {
   applySim,
   fitSimilarity,

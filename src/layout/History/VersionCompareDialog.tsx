@@ -19,7 +19,7 @@ import { useVersionHistoryStore } from '@stores/versionHistoryStore';
 import { getCloudProjectId } from '@stores/cloudProjectStore';
 import { api, type ProjectVersionSummary } from '@core/api/client';
 import type { EditorDocument } from '@core/api/cloudDocument';
-import { engineCompStill, engineDocumentStill } from '@core/rendering/engineStill';
+import { engineCompStill, engineDocumentStill } from '@core/engine/engineStill';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { restoreVersionAsOneEdit } from './versionRestore';
 import styles from './VersionCompareDialog.module.css';

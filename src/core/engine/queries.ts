@@ -468,6 +468,9 @@ export function runQuery(q: Query, ctx: QueryCtx): QueryResult {
       return { type: q.type, ...ctx.history() };
     case 'getRenderStats':
       return { type: q.type, gpuFrameMs: 0, cpuFrameMs: 0, fps: 0, droppedFrames: 0, vramBytes: 0, ramCacheBytes: 0, diskCacheBytes: 0, cacheHitRate: 0, decodeMs: 0 };
+    case 'getCacheCoverage':
+      if (q.comp) requireComp(q.comp);
+      return { type: q.type, ram: [], disk: [], ramBytes: 0, diskBytes: 0 };
     case 'getLayerErrors':
       if (q.comp) requireComp(q.comp);
       // Render errors are recorded on each frame's snapshot by the editor's renderer (§10).

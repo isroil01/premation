@@ -16,7 +16,7 @@
 import { createRenderBackend } from '@core/rendering/createRenderBackend';
 import { buildSnapshot, COMP_WIDTH, COMP_HEIGHT, DEFAULT_COMP, type SnapshotComp } from '@core/rendering/buildSnapshot';
 import type { MotionBlurConfig } from '@core/effects/motionBlur';
-import type { RenderView } from '@core/rendering/RenderBackend';
+import type { RenderView } from '@core/workspace/renderView';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 // Shared with the tracking walks — see that module for why an `await` alone
 // does not hand the thread back.

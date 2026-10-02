@@ -32,6 +32,7 @@ import {
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { getThemeManager, getSettingsManager } from '@core/services/coreServices';
 import { activeViewportDiskCache } from '@core/rendering/frameDiskCache';
+import { engine } from '@core/engine/engineInstance';
 import { viewportFrameCache } from '@core/rendering/frameCache';
 import { PREVIEW_DISK_MIN_GB, PREVIEW_DISK_MAX_GB } from '@stores/preferenceStore';
 import { getAccentColor, setAccentColor } from '@core/theme/accent';
@@ -1051,6 +1052,7 @@ function PreviewCacheControl(): JSX.Element {
           // Memory only. The disk tier keeps everything, so the frames come
           // straight back as the playhead reaches them.
           viewportFrameCache.clear();
+          void engine().execute({ type: 'purgeCache', kind: 'ram' });
           bump((n) => n + 1);
         }}
       >

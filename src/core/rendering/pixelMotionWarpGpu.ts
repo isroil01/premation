@@ -46,8 +46,8 @@
  * nothing and a warp is just uniforms + one draw.
  */
 
-import type { FlowField } from './pixelMotionFlow';
-import { warpBlend } from './pixelMotionFlow';
+import type { FlowField } from '@core/video/pixelMotionFlow';
+import { warpBlend } from '@core/video/pixelMotionFlow';
 
 /** Max per-channel difference (0..255) the self-check tolerates between the
  *  GPU and CPU warp of the synthetic pair. Real mapping bugs (flipped Y,

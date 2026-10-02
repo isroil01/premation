@@ -66,7 +66,7 @@ const TIMES = [0, sec(0.5), sec(1), sec(1.5)];
  * (copyLayers is compared: both engines write the fragment in one canonical
  * key order, so its BYTES must be identical — G2.)
  */
-const QUERY_EXEMPT = new Set(['getCapabilities', 'getRenderStats', 'getCommandLog', 'getJobs', 'listFonts']);
+const QUERY_EXEMPT = new Set(['getCapabilities', 'getRenderStats', 'getCacheCoverage', 'getCommandLog', 'getJobs', 'listFonts']);
 /**
  * What each engine SAVED must agree on these document keys (G2 #7: the stores
  * no command edits — they ride through open → save; byte-identical JSON).

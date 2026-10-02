@@ -16,7 +16,7 @@
  * version in IndexedDB beside the asset record.
  */
 
-import { attachVideoSrc, detachVideoSrc } from '@core/rendering/localBlobSource';
+import { attachVideoSrc, detachVideoSrc } from '@core/assets/local/localBlobSource';
 
 const POSTER_W = 160;
 const POSTER_H = 90;

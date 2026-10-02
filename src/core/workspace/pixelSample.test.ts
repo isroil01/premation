@@ -1,5 +1,5 @@
 import { cssToDevicePixel, samplePixelRgba } from './pixelSample';
-import { markGpuOwned } from '../rendering/canvasOwnership';
+import { markGpuOwned } from './canvasOwnership';
 
 /**
  * The packaged-build "GPU unavailable" regression: `samplePixelRgba` runs from

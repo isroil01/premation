@@ -17,7 +17,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { computeFlow, lumaIntOf, warpBlend, type FlowOptions } from './pixelMotionFlow';
+import { computeFlow, lumaIntOf, warpBlend, type FlowOptions } from '@core/video/pixelMotionFlow';
 import { deinterlaceData } from './deinterlace';
 
 const OUT = path.resolve(__dirname, '../../../native/engine/tests/data/pixel_motion_parity.json');

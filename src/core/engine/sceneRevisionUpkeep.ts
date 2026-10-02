@@ -16,7 +16,7 @@
  */
 
 import { getEventBus } from '@core/events/EventBus';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
+import { isMediaDecodeRepaint } from '@core/engine/mediaRepaint';
 import { bumpScene } from '@stores/sceneStore';
 
 /** Subscribe; returns the unsubscribe. */

@@ -36,7 +36,7 @@ import { useProjectStore } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { trackValueCommands } from './viewportEdits';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
-import type { RenderView } from '@core/rendering/RenderBackend';
+import type { RenderView } from '@core/workspace/renderView';
 import { Project3D, type Vec3 } from '@motion/scene';
 import { Gizmo3D, pointLines, type GizmoHandleType, type RenderedGizmo3D, type SnapLine, type SnapPointTarget } from '@motion/workspace';
 import { snapActive, snapGizmoTranslate } from './gizmo3dSnap';

@@ -40,7 +40,7 @@ import { POSITION_PSEUDO_PROP } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { readAnimatorData } from '@core/text/textAnimators';
-import { parseStrokeTrackPath, strokeTrackPath } from '@core/rendering/strokeTracks';
+import { parseStrokeTrackPath, strokeTrackPath } from '@core/paint/strokeTracks';
 import {
   PAINT_KEY_LABEL,
   PAINT_KEY_UNIT,
@@ -404,7 +404,7 @@ const STATIC: Record<string, MetaSpec> = {
 
   // ── The rest of AE's Stroke group, keyframeable on strokes[0] ──
   // Same contract as everything above: each is folded by `resolveStrokeTracks`
-  // (rendering/strokeTracks.ts), whose quoted table satisfies the G2 guard.
+  // (paint/strokeTracks.ts), whose quoted table satisfies the G2 guard.
   // Strokes 2+ use `stroke.<i>.<param>`, resolved by `resolveStrokeStackParam`.
   strokeOpacity: {
     label: 'Stroke Opacity', group: 'stroke', type: 'percent', unit: '%',

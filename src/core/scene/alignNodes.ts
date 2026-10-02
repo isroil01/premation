@@ -49,7 +49,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
 import { writeTransformProps } from '@core/scene/transformWrite';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { SIZE } from '@core/rendering/buildSnapshot';
+import { SIZE } from '@core/scene/layerKindSize';
 import { world2DAt, parentWorld2DAt } from '@core/scene/layerSpace';
 import { useProjectStore } from '@stores/projectStore';
 import { Matrix } from '@motion/scene';

@@ -10,7 +10,7 @@
 
 import { Workspace, Rect, commands, type CommandPort, type SceneGraphPort } from '@motion/workspace';
 import type { Tool as UITool } from '@stores/uiStore';
-import type { RenderView } from '@core/rendering/RenderBackend';
+import type { RenderView } from '@core/workspace/renderView';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { createSceneGraphPort, createSelectionPort, createCommandPort, nudgeNodes } from './ports';

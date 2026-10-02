@@ -18,7 +18,7 @@ import { useAssetStore } from '@stores/assetStore';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { demuxFile } from '@core/video/demuxClient';
 import { ExactVideoSource, webCodecsAvailable } from '@core/video/exactVideoSource';
-import { computeFlow, lumaOf, sampleFlow } from '@core/rendering/pixelMotionFlow';
+import { computeFlow, lumaOf, sampleFlow } from '@core/video/pixelMotionFlow';
 import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
 import { readGeometry } from '@core/workspace/geometry';
 import {
@@ -31,7 +31,7 @@ import {
 import { floodMatte, matteToPath, refineRotoMatte } from './rotoMatte';
 import { grabCutMatte } from './grabCut';
 import { sourceDisplaySize } from './trackerSource';
-import { fetchAssetSrc } from '@core/rendering/localBlobSource';
+import { fetchAssetSrc } from '@core/assets/local/localBlobSource';
 
 export interface RotoBrushRequest {
   nodeId: string;

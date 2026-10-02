@@ -35,7 +35,7 @@
 
 import { detectBundleFs } from '@core/project/bundle/bundleFsEnv';
 import { loadAssetRegistry, saveAssetRegistry } from './assetBundleIO';
-import { localBlobRef, isLocalBlobRef } from '@core/rendering/localBlobSource';
+import { localBlobRef, isLocalBlobRef } from '@core/assets/local/localBlobSource';
 import { inferAssetType } from './blobTypes';
 import type { AssetRecord } from './blobTypes';
 import type { EditorDocument } from '@core/api/cloudDocument';

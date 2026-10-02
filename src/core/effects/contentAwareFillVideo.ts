@@ -17,7 +17,7 @@ import { readNodeMaskAt, getNodeMask } from '@core/effects/mask';
 import { readGeometry } from '@core/workspace/geometry';
 import type { SceneNode } from '@core/types';
 import { propagateFillBidirectional } from './contentAwareFill';
-import { fetchAssetSrc } from '@core/rendering/localBlobSource';
+import { fetchAssetSrc } from '@core/assets/local/localBlobSource';
 
 export interface ContentAwareFillFrame {
   t: number;

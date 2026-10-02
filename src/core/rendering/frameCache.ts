@@ -80,7 +80,7 @@
  */
 
 import { LOOK_AHEAD, type FrameDiskCache } from './frameDiskCache';
-import { playbackBlitPolicy } from './previewCacheGate';
+import { playbackBlitPolicy } from '@core/perf/playbackBlitPolicy';
 
 /**
  * How far ahead the disk tier may promote, given how many frames RAM holds.

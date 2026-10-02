@@ -65,7 +65,7 @@ import { uiKindOf } from '@core/mirror/layerKinds';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { focusRangeAt } from '@core/scene/camera3d';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
-import type { RenderView } from '@core/rendering/RenderBackend';
+import type { RenderView } from '@core/workspace/renderView';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
 import { GestureSession } from '@core/engine/uiEdits';

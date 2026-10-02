@@ -12,7 +12,7 @@
  */
 
 import { create } from 'zustand';
-import { playbackBlitPolicy } from '@core/rendering/previewCacheGate';
+import { playbackBlitPolicy } from '@core/perf/playbackBlitPolicy';
 
 /** 1 = Full, 2 = Half, 3 = Third, 4 = Quarter. */
 export type PreviewResolution = 1 | 2 | 3 | 4;

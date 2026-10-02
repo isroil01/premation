@@ -25,8 +25,8 @@
  */
 
 import { useEffect, useRef, useState, memo } from 'react';
-import { viewportFrameCache } from '@core/rendering/frameCache';
 import { coalesceCacheBarRanges, layoutCacheBarSegments, type CacheBarSegment } from './cacheBarLayout';
+import { engineCacheSnapshot, subscribeEngineCache } from './engineCacheCoverage';
 import styles from './Timeline.module.css';
 
 /** How often the lanes re-read coverage while it is changing. */
@@ -59,13 +59,14 @@ function CacheBarsImpl({ fps, pixelsPerSecond, leftOffset, rulerHeight }: CacheB
     const sample = (): void => {
       const { fps: f, pixelsPerSecond: pps, leftOffset: off } = layout.current;
       const safeFps = f > 0 ? f : 30;
+      const coverage = engineCacheSnapshot();
       const ram = layoutCacheBarSegments(
-        coalesceCacheBarRanges(viewportFrameCache.ranges(safeFps), safeFps, pps),
+        coalesceCacheBarRanges(coverage.ram, safeFps, pps),
         pps,
         off,
       );
       const disk = layoutCacheBarSegments(
-        coalesceCacheBarRanges(viewportFrameCache.diskRanges(safeFps), safeFps, pps),
+        coalesceCacheBarRanges(coverage.disk, safeFps, pps),
         pps,
         off,
       );
@@ -81,7 +82,7 @@ function CacheBarsImpl({ fps, pixelsPerSecond, leftOffset, rulerHeight }: CacheB
       sample();
     };
 
-    const off = viewportFrameCache.onChange(() => {
+    const off = subscribeEngineCache(() => {
       // Trailing throttle: the first change of a burst schedules one flush and
       // every change until it fires rides along.
       if (timer !== null) return;

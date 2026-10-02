@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react';
-import type { EngineFrameMeta, EventBatch, ProcessEngineClient } from '@motion/engine-api';
+import { secondsToFlicks, type EngineFrameMeta, type EventBatch, type ProcessEngineClient } from '@motion/engine-api';
 import { processEngine, subscribeProcessEngine } from '@core/engine/process/processEngine';
 import { isCustomViewId, type CustomViewParams } from '@core/workspace/customViews';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
@@ -30,6 +30,17 @@ export interface PaneView {
   offsetY: number;
 }
 
+/** The Layer panel (setViewport `layer`): one layer alone at its source size, contain-fitted. */
+export interface PaneLayerView {
+  id: string;
+  /** The panel's Render switch: false shows the untouched source. */
+  renderEffects: boolean;
+  /** A held comp time, seconds (the panel's own ruler); absent = the session clock. */
+  time?: number;
+  /** With `time`: the layer's source time at it, seconds. */
+  sourceTime?: number;
+}
+
 interface Desired {
   width: number;
   height: number;
@@ -39,6 +50,7 @@ interface Desired {
   panY: number;
   view: string;
   customView: CustomViewParams | null;
+  layer: PaneLayerView | null;
 }
 
 interface Pending {
@@ -55,17 +67,25 @@ function sameCustomView(a: CustomViewParams | null, b: CustomViewParams | null):
   return a.poi !== null && b.poi !== null && a.poi.x === b.poi.x && a.poi.y === b.poi.y && a.poi.z === b.poi.z;
 }
 
-function sameDesired(a: Desired, b: Desired): boolean {
-  return a.width === b.width && a.height === b.height && a.dpr === b.dpr && a.zoom === b.zoom && a.panX === b.panX
-    && a.panY === b.panY && a.view === b.view && sameCustomView(a.customView, b.customView);
+function sameLayerView(a: PaneLayerView | null, b: PaneLayerView | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  return a.id === b.id && a.renderEffects === b.renderEffects && a.time === b.time && a.sourceTime === b.sourceTime;
 }
 
-export function EnginePaneSurface({ mode, getView, framingRev, className, style }: {
+function sameDesired(a: Desired, b: Desired): boolean {
+  return a.width === b.width && a.height === b.height && a.dpr === b.dpr && a.zoom === b.zoom && a.panX === b.panX
+    && a.panY === b.panY && a.view === b.view && sameCustomView(a.customView, b.customView) && sameLayerView(a.layer, b.layer);
+}
+
+export function EnginePaneSurface({ mode, getView, framingRev, layer, className, style }: {
   mode: Camera3dMode;
-  /** The pane's live camera (usePaneWorkspace getRenderView, with the contain fit as the fallback). */
-  getView: () => PaneView;
+  /** The pane's live camera (usePaneWorkspace getRenderView, with the contain fit as the fallback); absent = the engine contain-fits the frame. */
+  getView?: () => PaneView;
   /** Bumps whenever the pane's camera moves: the viewport is re-sent then. */
   framingRev: number;
+  /** The Layer panel: this layer alone instead of the composition. */
+  layer?: PaneLayerView;
   className?: string;
   style?: CSSProperties;
 }): JSX.Element | null {
@@ -75,11 +95,13 @@ export function EnginePaneSurface({ mode, getView, framingRev, className, style 
   modeRef.current = mode;
   const getViewRef = useRef(getView);
   getViewRef.current = getView;
-  // The effect below installs the sender; a view / framing change asks it to compare and send.
+  const layerRef = useRef(layer);
+  layerRef.current = layer;
+  // The effect below installs the sender; a view / framing / layer change asks it to compare and send.
   const requestRef = useRef<() => void>(() => {});
   useEffect(() => {
     requestRef.current();
-  }, [mode, framingRev]);
+  }, [mode, framingRev, layer?.id, layer?.renderEffects, layer?.time, layer?.sourceTime]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -118,16 +140,17 @@ export function EnginePaneSurface({ mode, getView, framingRev, className, style 
       const height = Math.max(1, Math.round(r.height));
       const pageDpr = window.devicePixelRatio || 1;
       const dpr = route === 'copy' ? copyRouteDpr(width, height, pageDpr) : pageDpr;
-      const v = getViewRef.current();
-      const zoom = v.scale > 0 && Number.isFinite(v.scale) ? v.scale : 0;
+      const v = getViewRef.current?.();
+      const zoom = v && v.scale > 0 && Number.isFinite(v.scale) ? v.scale : 0;  // 0 = the engine's contain fit
       const g = useGuidesStore.getState();
       const m = modeRef.current;
       return {
         width, height, dpr, zoom,
-        panX: zoom > 0 ? (r.width / 2 - v.offsetX) / zoom : 0,
-        panY: zoom > 0 ? (r.height / 2 - v.offsetY) / zoom : 0,
+        panX: v && zoom > 0 ? (r.width / 2 - v.offsetX) / zoom : 0,
+        panY: v && zoom > 0 ? (r.height / 2 - v.offsetY) / zoom : 0,
         view: isCustomViewId(m) ? 'custom' : m,
         customView: isCustomViewId(m) ? g.customViews[m] : null,
+        layer: layerRef.current ?? null,
       };
     };
     const send = (): void => {
@@ -152,7 +175,12 @@ export function EnginePaneSurface({ mode, getView, framingRev, className, style 
         exposure: 0,
         transparencyGrid: false,
         displayTransform: '',
-        layerRenderEffects: true,
+        ...(d.layer ? {
+          layer: d.layer.id,
+          layerRenderEffects: d.layer.renderEffects,
+          ...(d.layer.time !== undefined ? { time: secondsToFlicks(d.layer.time) } : {}),
+          ...(d.layer.time !== undefined && d.layer.sourceTime !== undefined ? { layerSourceTime: secondsToFlicks(d.layer.sourceTime) } : {}),
+        } : { layerRenderEffects: true }),
         view: d.view,
         ...(d.customView ? {
           customView: {

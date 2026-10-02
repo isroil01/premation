@@ -48,7 +48,7 @@ export const FRAME_BLENDS: ReadonlyArray<{ value: FrameBlend; label: string }> =
   { value: 'none', label: 'Off' },
   { value: 'mix', label: 'Frame Mix' },
   // Optical-flow warp between the bracket frames — the smooth-slow-motion
-  // mode. Deterministic CPU flow + warp (see rendering/pixelMotionFlow.ts);
+  // mode. Deterministic CPU flow + warp (see video/pixelMotionFlow.ts);
   // costs real per-frame work, which is why it is a mode and not the default.
   { value: 'pixelMotion', label: 'Pixel Motion' },
 ];

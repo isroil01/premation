@@ -30,9 +30,7 @@
  * scope reading that includes letterbox is wrong, so the consumer installs a
  * {@link setFrameTapRegion} callback returning the comp's rect in canvas
  * pixels, and the tap crops to it. The callback lives with the consumer rather
- * than here on purpose: this module must not import the workspace camera, or
- * `@core/rendering` would start depending on `@core/workspace` for the benefit
- * of one panel.
+ * than here on purpose: this module must not import the workspace camera.
  *
  * ## Wiring
  *
@@ -44,6 +42,9 @@
  * Until then this module is inert and consumers fall back to the RAM preview
  * cache, which holds plain 2D canvases and can be read at any time.
  */
+
+/** What a frame is published from: the page's content canvas, or the engine's VideoFrame (EngineSurface). */
+export type FrameTapSource = HTMLCanvasElement | VideoFrame;
 
 /** A detached copy of one rendered frame. Safe to hold and read later. */
 export interface TappedFrame {
@@ -146,19 +147,25 @@ export function latestTappedFrame(maxAgeMs = 1000): TappedFrame | null {
  * take the preview down with it — a failed readback drops the frame silently
  * and the consumer falls back to the preview cache.
  */
-export function publishFrame(canvas: HTMLCanvasElement | null | undefined, timeSec: number): void {
+export function publishFrame(canvas: FrameTapSource | null | undefined, timeSec: number): void {
   if (listeners.size === 0) return;
-  if (!canvas || canvas.width < 1 || canvas.height < 1) return;
+  if (!canvas) return;
+  // The engine's frame is a VideoFrame (EngineSurface draws it; `release`
+  // closes it after the blit) — a CanvasImageSource like a canvas, sized by
+  // its display size.
+  const srcW = 'displayWidth' in canvas ? canvas.displayWidth : canvas.width;
+  const srcH = 'displayHeight' in canvas ? canvas.displayHeight : canvas.height;
+  if (srcW < 1 || srcH < 1) return;
   const t = now();
   if (t - lastPublishAt < minIntervalMs) return;
   lastPublishAt = t;
 
   try {
-    const region = regionFn?.(canvas.width, canvas.height) ?? null;
-    const sx = Math.max(0, Math.min(canvas.width - 1, Math.floor(region?.x ?? 0)));
-    const sy = Math.max(0, Math.min(canvas.height - 1, Math.floor(region?.y ?? 0)));
-    const sw = Math.max(1, Math.min(canvas.width - sx, Math.round(region?.width ?? canvas.width)));
-    const sh = Math.max(1, Math.min(canvas.height - sy, Math.round(region?.height ?? canvas.height)));
+    const region = regionFn?.(srcW, srcH) ?? null;
+    const sx = Math.max(0, Math.min(srcW - 1, Math.floor(region?.x ?? 0)));
+    const sy = Math.max(0, Math.min(srcH - 1, Math.floor(region?.y ?? 0)));
+    const sw = Math.max(1, Math.min(srcW - sx, Math.round(region?.width ?? srcW)));
+    const sh = Math.max(1, Math.min(srcH - sy, Math.round(region?.height ?? srcH)));
 
     const scale = Math.min(1, MAX_TAP_WIDTH / sw);
     const dw = Math.max(1, Math.round(sw * scale));

@@ -44,7 +44,7 @@ import { useTextEditStore } from '@stores/textEditStore';
 import { AppTextureProvider, type ImageBakeSpec } from './AppTextureProvider';
 import { getFloatExrForAsset } from '@core/media/floatExr';
 import { getEventBus } from '@core/events/EventBus';
-import { markGpuOwned } from './canvasOwnership';
+import { markGpuOwned } from '@core/workspace/canvasOwnership';
 import { useColorManagementStore } from '@stores/colorManagementStore';
 import { useViewerLutStore, VIEWER_LUT_TEXTURE_KEY } from '@stores/viewerLutStore';
 import { createRasterScaleSettle } from './rasterScaleSettle';

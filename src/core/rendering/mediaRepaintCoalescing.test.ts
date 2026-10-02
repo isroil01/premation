@@ -9,7 +9,7 @@
 
 import { ExactVideoFrameCache, type ExactSourceLike, type LoadedExactSource } from './exactVideoFrames';
 import { mediaRepaints, syncFlushScheduler, rafFlushScheduler } from './repaintScheduler';
-import { isMediaDecodeRepaint } from './mediaRepaint';
+import { isMediaDecodeRepaint } from '@core/engine/mediaRepaint';
 import { setEventBus, EventBus } from '@core/events/EventBus';
 import type { DecodedFrameLike } from '@core/video/exactVideoSource';
 

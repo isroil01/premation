@@ -6,7 +6,7 @@
  * without Adobe's neural prior). Pure CPU; works offline on exact frames.
  */
 
-import { computeFlow, lumaOf, sampleFlow } from '@core/rendering/pixelMotionFlow';
+import { computeFlow, lumaOf, sampleFlow } from '@core/video/pixelMotionFlow';
 
 export interface InpaintOptions {
   /** Patch half-size (default 4 → 9×9). */

@@ -42,7 +42,7 @@
  * exactly as before.
  */
 
-import { computeFlow, lumaIntOf, warpBlend, type FlowField } from './pixelMotionFlow';
+import { computeFlow, lumaIntOf, warpBlend, type FlowField } from '@core/video/pixelMotionFlow';
 import { getGpuFlowEstimator } from './pixelMotionFlowGpu';
 import { getGpuWarper } from './pixelMotionWarpGpu';
 

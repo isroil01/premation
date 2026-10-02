@@ -25,7 +25,7 @@ import {
   strokePaintStyle,
   type PaintOp,
 } from './vectorDraw';
-import { paintCompositeOperation, normalizePaintOpOptions, lottieBlendToPaint, paintBlendToLottie } from './paintBlend';
+import { paintCompositeOperation, normalizePaintOpOptions, lottieBlendToPaint, paintBlendToLottie } from '@core/paint/paintBlend';
 import type { FillPaint, LinearFill, RadialFill } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import type { RenderLayer } from '../RenderBackend';

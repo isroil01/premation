@@ -351,7 +351,7 @@ writes them to the bundle blob store (dedup by hash), and returns a
 The renderer resolves that scheme lazily:
 
 ```ts
-// src/core/rendering/localBlobSource.ts:44-50
+// src/core/assets/local/localBlobSource.ts:44-50
 export async function loadLocalBlobObjectUrl(src: string): Promise<string | null> {
   if (!resolver || !isLocalBlobRef(src)) return null;
   const bytes = await resolver(src.slice(LOCAL_BLOB_SCHEME.length));
@@ -1799,7 +1799,7 @@ IMPORT
 
 STORAGE
   src/core/assets/local/importLocalAsset.ts  content-addressed bundle import
-  src/core/rendering/localBlobSource.ts ..... motion-blob: resolution
+  src/core/assets/local/localBlobSource.ts ..... motion-blob: resolution
   src/core/services/AssetDatabase.ts ........ IndexedDB tier
 
 PROXIES

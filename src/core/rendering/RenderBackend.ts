@@ -17,6 +17,9 @@ import type { ShaderLight } from '@core/scene/lightShading';
 import type { DofConfig } from '@core/scene/camera3d';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
+import type { RenderView } from '@core/workspace/renderView';
+
+export type { RenderView };
 
 export type LayerKind = 'shape' | 'text' | 'image' | 'video';
 
@@ -664,18 +667,6 @@ export interface RenderOverlays {
   proportionalRows?: number;
   safeArea?: boolean;
   rulers?: boolean;
-}
-
-/**
- * View transform (comp → canvas, in CSS pixels) supplied by the Workspace
- * camera. When present the backend uses it verbatim instead of its own
- * fit-to-surface, so pan/zoom from the interaction engine drive what's drawn.
- *   canvasPx = compPx * scale + offset
- */
-export interface RenderView {
-  scale: number;
-  offsetX: number;
-  offsetY: number;
 }
 
 export interface RenderSnapshot {

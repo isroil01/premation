@@ -52,7 +52,7 @@ import { useCurrentTime, setTime } from '@stores/playbackClockStore';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { paneViewTransform } from '@layout/Workspace/useSceneRefGeometry';
-import { useLayerViewerRenderer } from './useLayerViewerRenderer';
+import { EnginePaneSurface } from '@components/EngineSurface/EnginePaneSurface';
 import { LayerMaskEditor } from './LayerMaskEditor';
 import { LayerPaintSurface } from './LayerPaintSurface';
 import styles from './LayerViewer.module.css';
@@ -184,7 +184,6 @@ export function LayerViewer(): JSX.Element | null {
 
   const frame = node && nodeId ? layerFrame(m, nodeId, node) : { width: 1, height: 1 };
   const stageRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stage, setStage] = useState({ width: 0, height: 0 });
   useEffect(() => {
     const el = stageRef.current;
@@ -200,14 +199,17 @@ export function LayerViewer(): JSX.Element | null {
   const renderCompTime = heldLayerTime !== null
     ? Math.min(Math.max(0, compTimeAt(heldLayerTime)), compDuration)
     : compTime;
-  const { initError } = useLayerViewerRenderer(canvasRef, stageRef, {
-    nodeId: node ? nodeId : null,
-    render: renderOn,
-    frameWidth: frame.width,
-    frameHeight: frame.height,
-    compTime: renderCompTime,
-    ...(heldLayerTime !== null ? { sourceTime: heldLayerTime } : {}),
-  });
+  // The pixels are the engine's: this layer alone, at its source size, on its
+  // own engine viewport (setViewport `layer`), at the panel's held time when
+  // the ruler is scrubbed, else at the comp playhead.
+  const layerView = useMemo(
+    () => (node && nodeId ? {
+      id: nodeId,
+      renderEffects: renderOn,
+      ...(heldLayerTime !== null ? { time: renderCompTime, sourceTime: heldLayerTime } : {}),
+    } : undefined),
+    [node, nodeId, renderOn, heldLayerTime, renderCompTime],
+  );
 
   // ── Ruler: scrub + In/Out brackets ─────────────────────────────────
   const rulerRef = useRef<HTMLDivElement>(null);
@@ -392,7 +394,7 @@ export function LayerViewer(): JSX.Element | null {
       </div>
 
       <div ref={stageRef} className={styles.stage}>
-        <canvas ref={canvasRef} className={styles.canvas} />
+        {layerView ? <EnginePaneSurface mode="active" framingRev={0} layer={layerView} className={styles.canvas} /> : null}
         {view ? (
           <svg className={styles.overlay} width={stage.width} height={stage.height} aria-hidden>
             <rect
@@ -433,7 +435,6 @@ export function LayerViewer(): JSX.Element | null {
             compTime={renderCompTime}
           />
         ) : null}
-        {initError ? <div className={styles.error}>{initError}</div> : null}
       </div>
 
       <div className={styles.footer}>

@@ -22,7 +22,7 @@
  * feature would look like it was showing exactly one wrong frame.
  */
 
-import { onionSkinPlan, onionSkinSignature, type OnionSkinSettings } from './onionSkin';
+import { onionSkinPlan, onionSkinSignature, type OnionSkinSettings } from '@core/workspace/onionSkin';
 
 export interface OnionSkinPainterDeps {
   /** The WebGL content canvas the ghosts are rendered into and captured from. */

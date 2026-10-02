@@ -40,7 +40,7 @@ import { resolveCornerRadii, clampCornerRadii, type CornerRadiiProps } from '@co
 import { readNodeAnchor, anchorCompensation } from '@core/scene/anchor';
 import { readTransformProp } from '@core/scene/transformWrite';
 import { enableContinuousRasterByDefault } from '@core/scene/continuousRaster';
-import { SIZE } from '@core/rendering/buildSnapshot';
+import { SIZE } from '@core/scene/layerKindSize';
 import { readNodeKind as kindOf } from '@core/scene/sceneDerive';
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';

@@ -64,7 +64,7 @@ import {
   isLocalBlobRef,
   resolveLocalBlobObjectUrl,
   releaseLocalBlobObjectUrl,
-} from '@core/rendering/localBlobSource';
+} from '@core/assets/local/localBlobSource';
 import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
 import type { DemuxedVideo } from '@core/video/mp4Demuxer';
 import { demuxFile } from '@core/video/demuxClient';

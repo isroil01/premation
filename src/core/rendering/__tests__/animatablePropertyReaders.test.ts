@@ -60,11 +60,19 @@ const REPO_ROOT = resolve(__dirname, '../../../..');
  */
 const PIXEL_PATH = [
   'src/core/rendering',
+  // Stroke and gradient track names live with the paint fold, not the page
+  // renderer. Their quoted tables are what this guard reads.
+  'src/core/paint/strokeTracks.ts',
+  'src/core/paint/gradientPaintTracks.ts',
   'packages/renderer/src',
   'src/core/audio',
 ];
 
 function readAll(dir: string, acc: string[] = []): string[] {
+  if (statSync(dir).isFile()) {
+    if (/\.tsx?$/.test(dir) && !/\.test\.tsx?$/.test(dir)) acc.push(readFileSync(dir, 'utf8'));
+    return acc;
+  }
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) {

@@ -13,7 +13,7 @@ import { render, screen } from '@testing-library/react';
 import { accumulateFor, ScopesPanel, statusText } from './ScopesPanel';
 import { compRectInCanvas } from './scopeFrame';
 import { SCOPE_BINS } from '@core/video/scopes';
-import { frameTapActive } from '@core/rendering/frameTap';
+import { frameTapActive } from '@core/engine/frameTap';
 
 describe('accumulateFor', () => {
   const frame = {

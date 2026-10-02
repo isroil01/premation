@@ -41,7 +41,7 @@ import {
   SEARCH_STRIDE,
   type FlowField,
   type FlowOptions,
-} from './pixelMotionFlow';
+} from '@core/video/pixelMotionFlow';
 
 /** Winner displacements are small signed ints; RGBA32UI is unsigned. */
 export const DISPLACEMENT_BIAS = 32768;

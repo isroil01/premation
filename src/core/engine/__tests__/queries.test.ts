@@ -66,6 +66,7 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
   getDependencies: (x) => ({ type: 'getDependencies', layer: x.A }),
   getHistory: () => ({ type: 'getHistory' }),
   getRenderStats: () => ({ type: 'getRenderStats' }),
+  getCacheCoverage: (x) => ({ type: 'getCacheCoverage', comp: x.comp }),
   getLayerErrors: (x) => ({ type: 'getLayerErrors', comp: x.comp }),
   getJobs: () => ({ type: 'getJobs' }),
   getRenderQueue: () => ({ type: 'getRenderQueue' }),
@@ -77,8 +78,9 @@ const CASES: Record<QueryType, (s: Scene) => Query> = {
 test('every query in the schema has a case', () => {
   expect(Object.keys(QUERIES).sort()).toEqual(Object.keys(CASES).sort());
   // 42 + the five B4 round 5 item-fact queries (getDocumentColors … checkPrecompose) + getRigPose (B4 round 5, the rig)
-  // + renderDocumentStill (P4, version compare) + getTimelineRows / getLayerFaces (B4 round 8).
-  expect(Object.keys(QUERIES)).toHaveLength(51);
+  // + renderDocumentStill (P4, version compare) + getTimelineRows / getLayerFaces (B4 round 8)
+  // + getCacheCoverage (the timeline cache bars).
+  expect(Object.keys(QUERIES)).toHaveLength(52);
 });
 
 test('capturePreset: keys rebased to 0 and out of pixels against the layer\'s comp; effects renumbered; empty layers say so', async () => {

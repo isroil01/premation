@@ -115,7 +115,7 @@ export interface AppEventPayloads {
    *
    * `media: true` marks a DECODE/UPLOAD repaint — a video frame landing, a
    * texture finishing — as opposed to a document edit. The distinction matters
-   * to almost every listener (see `@core/rendering/mediaRepaint`), and it is
+   * to almost every listener (see `@core/engine/mediaRepaint`), and it is
    * set by the emitter rather than inferred from `nodeId`, because the id of a
    * media repaint is a source URL whose shape depends on the edition.
    */

@@ -107,6 +107,8 @@ const NOT_DOCUMENT_MODULES = [
   '@core/workspace/cameraBookmarks', // viewport view state
   '@core/plugins/uiTools', // which plugin tool is active (editor state)
   '@core/plugins/uiCanvas', // plugin on-canvas draw lists (overlay, not the document)
+  '@core/workspace/channelView', // filters a canvas's pixels for the channel view (moved out of @core/rendering)
+  '@core/paint/gradientPaintTracks', // pure: a paint value with sampled tracks folded in (moved out of @core/rendering)
 ];
 
 /** Names that match WRITE_VERB but are not document writes. Reason each. */

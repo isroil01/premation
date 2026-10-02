@@ -4,7 +4,7 @@
  * is pure/testable; `samplePixelRgba` does the DOM read (guarded).
  */
 
-import { isGpuOwned } from '@core/rendering/canvasOwnership';
+import { isGpuOwned } from '@core/workspace/canvasOwnership';
 
 /** CSS-space point (relative to the canvas top-left) → integer device pixel, or
  *  null if it falls outside the canvas backing store. `rect` is the canvas's

@@ -17,12 +17,12 @@ import type { SceneNode } from '@core/types';
 import { bumpScene } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
 import { defaultAnimation } from '@motion/animation';
-import { strokeTrackPathsFor } from '@core/rendering/strokeTracks';
+import { strokeTrackPathsFor } from '@core/paint/strokeTracks';
 import {
   normalizePaintOpOptions,
   type PaintBlendMode,
   type PaintComposite,
-} from '@core/rendering/raster/paintBlend';
+} from '@core/paint/paintBlend';
 import type { FillPaint } from './fill';
 
 export type StrokeAlign = 'inside' | 'center' | 'outside';
@@ -45,7 +45,7 @@ export {
   type PaintBlendMode,
   type PaintComposite,
   type PaintOpOptions,
-} from '@core/rendering/raster/paintBlend';
+} from '@core/paint/paintBlend';
 
 /**
  * AE's Gradient Stroke geometry: a free Start Point and End Point, plus the

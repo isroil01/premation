@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { videoDiag, VIDEO_DIAG_LIVE_MS, DropRateWindow } from '@core/rendering/videoPlaybackDiag';
+import { videoDiag, VIDEO_DIAG_LIVE_MS, DropRateWindow } from '@core/media/videoPlaybackDiag';
 import { useUIStore } from '@stores/uiStore';
 import { cn } from '@utils/cn';
 import styles from './EditorStatusBar.module.css';

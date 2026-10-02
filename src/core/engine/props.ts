@@ -81,7 +81,7 @@ import { EFFECT_FIELDS, STYLE_FIELDS, GLASS_PROPERTIES } from './effectFieldSpec
 import { parseTextPathPropPath } from '@core/text/textPath';
 import { latentMembers } from './latentProps';
 import { addPluginBindings, pluginApiPath, pluginPanelGroupPaths } from './pluginProps';
-import { parseStrokeTrackPath } from '@core/rendering/strokeTracks';
+import { parseStrokeTrackPath } from '@core/paint/strokeTracks';
 import { strokeEntryAt } from '@core/paint/strokeValues';
 import { readNodePaint } from '@core/paint/paintStrokes';
 import { strokeDisplayNames } from '@core/paint/paintProps';

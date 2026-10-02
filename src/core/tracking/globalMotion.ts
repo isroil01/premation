@@ -19,7 +19,7 @@
  * corrections, so preview and export agree.
  */
 
-import type { FlowField } from '@core/rendering/pixelMotionFlow';
+import type { FlowField } from '@core/video/pixelMotionFlow';
 
 /**
  * Similarity transform p' = R·s·p + t, stored as the four linear-solve

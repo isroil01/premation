@@ -25,7 +25,7 @@ import {
   type RadialFill,
 } from '@core/paint/fill';
 import type { Stroke, StrokeCap, StrokeGradientGeometry, StrokeJoin } from '@core/paint/stroke';
-import { paintCompositeOperation, type PaintOpOptions } from './paintBlend';
+import { paintCompositeOperation, type PaintOpOptions } from '@core/paint/paintBlend';
 import type { Pt } from '@core/scene/trimPath';
 import { layerSubpaths, hasPathGeometry } from './subpaths';
 import { paintReach } from '@core/paint/paintRaster';

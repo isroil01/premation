@@ -52,7 +52,7 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { HistoryService } from '@core/commands/HistoryService';
 import type { IUndoableCommand } from '@core/commands/Command';
 import { getEventBus } from '@core/events/EventBus';
-import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
+import { isMediaDecodeRepaint } from '@core/engine/mediaRepaint';
 import { restoreDocument, captureDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { projectDocumentIO } from '@core/project/projectDocumentIO';
 import { useProjectStore } from '@stores/projectStore';
