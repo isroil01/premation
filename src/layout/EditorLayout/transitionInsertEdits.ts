@@ -17,8 +17,7 @@
  */
 
 import type { Command } from '@motion/engine-api';
-import { buildLayerFragment, OffDocumentError, type BuiltLayers } from '@core/engine/offDocument';
-import { edit, reportEngineError } from '@core/engine/uiEdits';
+import { reportEngineError } from '@core/engine/uiEdits';
 import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
 import { applyTransitionItem, type ApplyTransitionResult } from '@core/library/transitionLibrary';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -26,6 +25,11 @@ import { engine } from '@core/engine/engineInstance';
 import { offDocument } from '@core/engine/offDocument';
 import { assistantKeyframeCommands } from '@core/engine/assistantKeys';
 import { getTransitionItem } from '@core/library/transitionLibrary';
+import { buildTransitionPanels, type BuiltTransitionPanels } from '@core/library/transitionFragment';
+import { previewChoreography } from '@core/library/insertPreview';
+import { insertFragment } from '@/engine-client/insertFragment';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import { documentMirror } from '@stores/documentMirror';
 
 /**
@@ -35,35 +39,50 @@ import { documentMirror } from '@stores/documentMirror';
  */
 export async function applyTransitionEdit(transId: string, label: string): Promise<ApplyTransitionResult | null> {
   const comp = activeInsertTarget()?.comp;
-  if (!comp) return null;
-  let made: ApplyTransitionResult | null = null;
-  let built: BuiltLayers | null;
-  try {
-    built = buildLayerFragment(comp, () => { made = applyTransitionItem(transId); });
-  } catch (err) {
-    if (!(err instanceof OffDocumentError)) {
-      reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
-      return null;
-    }
-    // Layer mode: the recipe keys the selected layers' own tracks. (Not
-    // `addTransition`: these recipes are keyframe choreography on any layer,
-    // not a cut transition between two bars.)
-    return layerTransitionEdit(transId, label);
+  const item = getTransitionItem(transId);
+  if (!comp || !item) return null;
+  // Layer mode: the recipe keys the selected content layers' own tracks. (Not
+  // `addTransition`: these recipes are keyframe choreography on any layer,
+  // not a cut transition between two bars.)
+  if (!item.solidOnly && layerTargets().length > 0) {
+    const keyed = await layerTransitionEdit(transId, label);
+    if (keyed) return keyed;
   }
-  const r = made as ApplyTransitionResult | null;
-  if (!built || !r) return null;
-  const paste = {
-    type: 'pasteLayers', comp, fragment: built.fragment, index: built.index, ...(built.parent ? { parent: built.parent } : {}),
-  } as Command;
-  const res = await edit(label, paste);
-  if (!res.ok) return null;
-  const ids = (res.value[0] as { layers?: string[] } | undefined)?.layers ?? [];
-  const map = new Map(built.scratchIds.map((s, i) => [s, ids[i]]));
-  const panels = (built.selected.length > 0 ? built.selected : built.tops)
-    .map((s) => map.get(s))
-    .filter((x): x is string => !!x);
-  if (panels.length > 0) useSelectionStore.getState().set(panels);
-  return { mode: 'solid', nodeIds: panels };
+  // Solid mode: the panels laid into a fragment, ONE pasteLayers entry, selected.
+  const t0 = getPlayheadTime();
+  let made: BuiltTransitionPanels | null = null;
+  const ids = await insertFragment(label, (b, f) => {
+    made = buildTransitionPanels(b, f, transId, t0);
+    return made?.panels ?? null;
+  }, { comp });
+  const r = made as BuiltTransitionPanels | null;
+  if (!ids || ids.length === 0 || !r) return null;
+  for (const id of ids) transitionPanels.add(id);
+  // Rest half-covered (solidRestTime): the midpoint hides the comp, the end shows nothing.
+  previewChoreography({ from: t0, to: t0 + r.duration, restAt: t0 + r.restAfter });
+  // Insert order (the paste returns the front-most panel first).
+  return { mode: 'solid', nodeIds: [...ids].reverse() };
+}
+
+/**
+ * The panels this session's solid-mode transitions inserted. A panel left
+ * selected by the previous apply is scenery for a cut, not content — the next
+ * apply inserts its own panel instead of keying onto it
+ * (transitionLibrary.ts TRANSITION_PANEL_PROP). B4-gap: the API does not
+ * report the stored `__transitionPanel` mark, so a panel from an earlier
+ * session reads as content.
+ */
+const transitionPanels = new Set<string>();
+
+/** The selected content layers a layer-mode transition keys (no cameras / lights / audio, no panels). */
+function layerTargets(): string[] {
+  const m = documentMirror();
+  return useSelectionStore.getState().ids.filter((id) => {
+    const l = m.layer(id);
+    if (!l || transitionPanels.has(id)) return false;
+    const k = uiKindOf(l);
+    return k !== 'camera' && k !== 'light' && k !== 'audio';
+  });
 }
 
 /** A scratch node part whose `fx` stack holds a Blur effect. */

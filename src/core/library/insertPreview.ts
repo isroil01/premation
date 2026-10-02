@@ -20,7 +20,7 @@
  * frame. The user still ends up looking at a frame that shows the result.
  */
 
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { isTransportPlaying, pauseTransport, playTransport, seekPlayhead } from '@core/timeline/timelineView';
 import { usePreferenceStore } from '@stores/preferenceStore';
 
 export interface PreviewSpec {
@@ -49,7 +49,6 @@ let pending: ReturnType<typeof setTimeout> | null = null;
  * engine itself.
  */
 export function previewChoreography(spec: PreviewSpec): void {
-  const controller = getTimelineController();
   const rest = spec.restAt ?? spec.to;
   const span = Math.max(0, spec.to - spec.from);
 
@@ -62,12 +61,12 @@ export function previewChoreography(spec: PreviewSpec): void {
   // Reduce-motion (and zero-length choreographies) skip straight to the frame
   // that shows the result — the point of the preview, without the motion.
   if (usePreferenceStore.getState().editorReduceMotion || span <= 0) {
-    controller.seekSeconds(rest);
+    seekPlayhead(rest);
     return;
   }
 
-  controller.seekSeconds(spec.from);
-  controller.play();
+  seekPlayhead(spec.from);
+  playTransport();
 
   // A small tail so the last keyframe is actually reached before we stop —
   // the final frame lands on the tick at or after `to`, not before it.
@@ -76,9 +75,9 @@ export function previewChoreography(spec: PreviewSpec): void {
     // If the user took over the transport in the meantime, leave it alone:
     // yanking the playhead out of a deliberate playback is worse than not
     // settling. Only a preview still in flight gets parked.
-    if (!controller.isPlaying) return;
-    controller.pause();
-    controller.seekSeconds(rest);
+    if (!isTransportPlaying()) return;
+    pauseTransport();
+    seekPlayhead(rest);
   }, span * 1000 + 80);
 }
 

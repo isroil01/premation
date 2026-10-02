@@ -754,7 +754,7 @@ export interface ApplyTransitionResult {
  * transition. Excluded from auto-targeting so a second apply falls through to
  * inserting its own panel, while a genuine layer stays targetable as before.
  */
-const TRANSITION_PANEL_PROP = '__transitionPanel';
+export const TRANSITION_PANEL_PROP = '__transitionPanel';
 
 /** True for a layer this library inserted to cover a cut. */
 function isTransitionPanel(node: SceneNode): boolean {
