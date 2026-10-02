@@ -2,7 +2,19 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ClonerSection } from './ClonerSection';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { addLayer, idle } from './__testHelpers__/engineLayers';
-import { enableNodeCloner, readNodeClonerRaw, nodeHasCloner, CLONER_PROP } from '@core/scene/clonerExpand';
+import { DEFAULT_CLONER, type ClonerConfig } from '@core/scene/cloner';
+
+/** The fx key `layer/cloner` is stored under (layerFieldSpecs). */
+const CLONER_PROP = '__cloner';
+
+/** The cloner config as stored on the layer, or undefined when it has none. */
+function storedCloner(): Partial<ClonerConfig> | undefined {
+  for (const c of defaultSceneGraph.getNode('rect')?.components ?? []) {
+    const raw = (c.props as Record<string, unknown>)[CLONER_PROP];
+    if (raw && typeof raw === 'object') return raw as Partial<ClonerConfig>;
+  }
+  return undefined;
+}
 
 describe('ClonerSection in Effect Controls', () => {
   beforeEach(() => {
@@ -17,7 +29,7 @@ describe('ClonerSection in Effect Controls', () => {
       transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
       components: [],
     } as any);
-    enableNodeCloner('rect');
+    defaultSceneGraph.setFxKey('rect', CLONER_PROP, { ...DEFAULT_CLONER, enabled: true });
   });
 
   it('renders AE Effect Card with fx badge and title', async () => {
@@ -35,7 +47,7 @@ describe('ClonerSection in Effect Controls', () => {
 
     fireEvent.change(modeSelect, { target: { value: 'grid' } });
     await idle();
-    expect(readNodeClonerRaw(defaultSceneGraph.getNode('rect')).mode).toBe('grid');
+    expect(storedCloner()?.mode).toBe('grid');
   });
 
   it('allows removing cloner from layer', async () => {
@@ -43,8 +55,7 @@ describe('ClonerSection in Effect Controls', () => {
     const removeBtn = screen.getByTitle('Remove Cloner effect');
     fireEvent.click(removeBtn);
     await idle();
-    const node = defaultSceneGraph.getNode('rect');
-    expect(nodeHasCloner(node)).toBe(false);
+    expect(storedCloner()).toBeUndefined();
   });
 
   it('allows resetting cloner parameters to default', async () => {
@@ -59,8 +70,8 @@ describe('ClonerSection in Effect Controls', () => {
     const resetBtn = screen.getByTitle('Restore cloner parameters to default');
     fireEvent.click(resetBtn);
     await idle();
-    const cfg = readNodeClonerRaw(defaultSceneGraph.getNode('rect'));
-    expect(cfg.mode).toBe('linear');
-    expect(cfg.count).toBe(5);
+    const cfg = storedCloner();
+    expect(cfg?.mode).toBe('linear');
+    expect(cfg?.count).toBe(5);
   });
 });

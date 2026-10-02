@@ -1,11 +1,7 @@
 /**
- * Viewer LUT is session-only and never reaches auxiliary (export) frames.
+ * Viewer LUT is session-only: loaded from .cube text, held in the store, dropped on clear.
  */
 import { useViewerLutStore } from '@stores/viewerLutStore';
-import {
-  setActiveViewerLut,
-  getActiveViewerLut,
-} from '@motion/renderer';
 
 const IDENTITY_2 = `
 TITLE "identity"
@@ -23,7 +19,6 @@ LUT_3D_SIZE 2
 describe('viewerLutStore', () => {
   beforeEach(() => {
     useViewerLutStore.getState().clear();
-    setActiveViewerLut(null);
   });
 
   it('loads a valid .cube and exposes name + signature', () => {
@@ -45,24 +40,5 @@ describe('viewerLutStore', () => {
     useViewerLutStore.getState().clear();
     expect(useViewerLutStore.getState().lut).toBeNull();
     expect(useViewerLutStore.getState().name).toBeNull();
-  });
-});
-
-describe('setActiveViewerLut (export isolation)', () => {
-  afterEach(() => setActiveViewerLut(null));
-
-  it('holds meta for the viewport blit path', () => {
-    setActiveViewerLut({
-      size: 2, is1d: false, intensity: 1, domainMin: 0, domainMax: 1,
-    });
-    expect(getActiveViewerLut()?.size).toBe(2);
-  });
-
-  it('null meta means scene-blit skips the LUT material', () => {
-    setActiveViewerLut({
-      size: 2, is1d: false, intensity: 1, domainMin: 0, domainMax: 1,
-    });
-    setActiveViewerLut(null);
-    expect(getActiveViewerLut()).toBeNull();
   });
 });

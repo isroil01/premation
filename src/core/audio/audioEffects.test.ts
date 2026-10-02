@@ -1,16 +1,12 @@
 /**
- * Audio effects — the graph, and the preview/export parity that constrains it.
+ * Audio effects — the preview graph.
  *
- * THE ASSERTION THAT MATTERS is `both paths build through the same function`.
- * Everything else here is ordinary unit testing; that one guards the failure
- * this subsystem is shaped to prevent. A mix that sounds right while scrubbing
- * and renders differently is discoverable only by exporting a file and
- * listening to all of it, which is the worst feedback loop in the app. The
- * shape of that bug is always the same — a new effect wired into `AudioEngine`
- * and forgotten in `audioMixdown`, or vice versa — so the guard reads BOTH call
- * sites and insists neither builds its own nodes.
+ * The page's export mixdown (`audioMixdown`) is gone — the C++ engine renders
+ * the exported audio — so the guard that kept the preview and export paths
+ * building through one function went with it. What is left is ordinary unit
+ * testing of the chain the preview builds.
  *
- * The second thing pinned is that an empty chain returns the input node
+ * The thing pinned hardest is that an empty chain returns the input node
  * untouched. Existing projects must produce the identical audio graph they did
  * before this file existed; "no effects" has to mean no nodes, not a
  * pass-through gain that quietly changes nothing except the graph shape.
@@ -229,94 +225,5 @@ describe('the chain is readable, writable and reachable', () => {
 
   it('the scene read path attaches the chain to every voice', () => {
     expect(readSource('core/audio/audioScene.ts')).toMatch(/effects: readAudioEffects\(node\)/);
-  });
-});
-
-describe('preview and export cannot drift apart', () => {
-  it('both paths build through the same function, and neither rolls its own', () => {
-    for (const file of ['core/audio/AudioEngine.ts', 'core/audio/audioMixdown.ts']) {
-      const s = readSource(file);
-      expect(s).toMatch(/connectAudioEffects\(ctx, source, l\.effects,/);
-    }
-  });
-
-  /**
-   * The automation window has to reach BOTH paths, and its absence is silent.
-   *
-   * Omit it and every effect parameter falls back to its static value — the
-   * chain still builds, the layer still sounds, and only a keyframed parameter
-   * is wrong. On the offline path that means a curve the user watched work in
-   * preview arrives frozen in the export, which is the exact divergence this
-   * whole module is shaped to prevent.
-   */
-  it('both paths hand the chain the voice window, so parameters can animate', () => {
-    for (const file of ['core/audio/AudioEngine.ts', 'core/audio/audioMixdown.ts']) {
-      const s = readSource(file);
-      expect(s).toMatch(/nodeId: l\.nodeId/);
-      expect(s).toMatch(/startCompSec:/);
-      expect(s).toMatch(/durationSec:/);
-      expect(s).toMatch(/whenCtx:/);
-    }
-  });
-
-  it('schedules effect parameters through the LEVEL’s ramp builder, not a second one', () => {
-    // `audioParams.ts` opens by saying effect parameters should reuse
-    // `buildParamRamp` rather than growing a second scheduling path. A second
-    // sampler with its own rate and end-pin rule would drift from this one the
-    // day either fixed a rounding bug.
-    const s = readSource('core/audio/audioEffects.ts');
-    expect(s).toMatch(/from '\.\/audioParams'/);
-    expect(s).toMatch(/buildRamp\(/);
-    expect(s).toMatch(/applyRamp\(/);
-  });
-
-  it('the builder accepts BaseAudioContext, so an offline call cannot be refused', () => {
-    // Typing it `AudioContext` is precisely how a live-only path gets written
-    // by accident: the offline call would fail to compile and get "fixed" with
-    // a second implementation.
-    expect(readSource('core/audio/audioEffects.ts')).toMatch(/ctx: BaseAudioContext/);
-  });
-
-  it('effects are applied BEFORE the level gain in both paths', () => {
-    // Order matters and must match: a delay's feedback after the gain would
-    // outrun a fade to silence in preview and not in export, or vice versa.
-    //
-    // Matched through the chain's `node` because the builder now returns the
-    // tail AND the scheduled sources it created — see `AudioEffectChain`.
-    for (const file of ['core/audio/AudioEngine.ts', 'core/audio/audioMixdown.ts']) {
-      const src = readSource(file);
-      expect(src).toMatch(/const chain = connectAudioEffects\(/);
-      expect(src).toMatch(/chain\.node\.connect\(gain\)/);
-    }
-  });
-
-  /**
-   * The generator effects have a second way to be silently wrong, and it is
-   * ASYMMETRIC between the two paths.
-   *
-   * An LFO or a tone generator does nothing until it is started, and the start
-   * belongs to whoever owns the voice window — these two files, not the
-   * builder. Miss it in the live engine and preview is silent, which someone
-   * notices immediately. Miss it offline and only the EXPORT is silent, which
-   * nobody finds until they ship the file.
-   */
-  it('both paths start AND stop the chain’s own oscillators', () => {
-    for (const file of ['core/audio/AudioEngine.ts', 'core/audio/audioMixdown.ts']) {
-      const src = readSource(file);
-      expect(src).toMatch(/for \(const s of chain\.sources\)/);
-      expect(src).toMatch(/s\.start\(/);
-      expect(src).toMatch(/s\.stop\(/);
-    }
-  });
-
-  it('both paths reverse the BUFFER and mirror the offset together', () => {
-    // Doing one without the other plays the wrong span of the file, in time,
-    // with nothing to indicate it — see `backwardsOffset`.
-    for (const file of ['core/audio/AudioEngine.ts', 'core/audio/audioMixdown.ts']) {
-      const src = readSource(file);
-      expect(src).toMatch(/hasBackwards\(/);
-      expect(src).toMatch(/reverseBuffer\(/);
-      expect(src).toMatch(/backwardsOffset\(/);
-    }
   });
 });

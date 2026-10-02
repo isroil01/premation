@@ -20,12 +20,15 @@
  * copies synchronously into a 2D canvas first, so the bitmap is decoupled
  * from the GL buffer's lifetime.
  *
- * "Compare with cached frame at time…" reads the RAM preview instead — those
- * frames are already 2D-readable copies.
+ * With the engine viewport the source is the engine's VideoFrame
+ * (`EngineSurface` calls `captureFrom` before the frame is released). A
+ * snapshot of another time is not taken from a preview cache — the engine's
+ * cache is not readable from the page; `engineCompStill`
+ * (`@core/engine/engineStill`) renders a frame at any time and `addSnapshot`
+ * takes the result.
  */
 
 import { create } from 'zustand';
-import { viewportFrameCache } from '@core/rendering/frameCache';
 
 export type CompareMode = 'toggle' | 'side-by-side' | 'wipe' | 'difference';
 
@@ -89,8 +92,6 @@ interface CompareStore {
     time: number,
     view: { scale: number; offsetX: number; offsetY: number },
   ) => string | null;
-  /** Snapshot a RAM-preview frame by comp frame index. False when not cached. */
-  captureCachedFrame: (frame: number, fps: number, view: { scale: number; offsetX: number; offsetY: number }) => boolean;
   addSnapshot: (snap: Omit<CompareSnapshot, 'id' | 'takenAt'>) => string;
   remove: (id: string) => void;
   clear: () => void;
@@ -186,22 +187,6 @@ export const useCompareStore = create<CompareStore>((set, get) => ({
       }));
     });
     return id;
-  },
-
-  captureCachedFrame: (frame, fps, view) => {
-    const hit = viewportFrameCache.get(frame);
-    if (!hit) return false;
-    const label = `Cached frame ${frame} (${(frame / Math.max(1, fps)).toFixed(2)}s)`;
-    set({ pending: null });
-    const id = get().addSnapshot({
-      label, time: frame / Math.max(1, fps), bitmap: hit, width: hit.width, height: hit.height, view,
-    });
-    // The cache OWNS `hit`; take a private copy so an eviction cannot close
-    // the bitmap under the comparison.
-    void bitmapOf(hit).then((bitmap) => {
-      set((s) => ({ snapshots: s.snapshots.map((x) => (x.id === id ? { ...x, bitmap } : x)) }));
-    });
-    return true;
   },
 
   addSnapshot: (snap) => {

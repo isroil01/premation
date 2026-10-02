@@ -11,12 +11,13 @@
  * The overlay↔render PARITY of the same branch lives in overlayMeshParity.
  */
 
-import { nodeRestMesh } from './rigMeshInputs';
-import { primeImageCoverageCache, clearImageCoverageCache } from '@core/rendering/imageAlphaCoverage';
+import { nodeRestMesh, rigMeshPad } from './rigMeshInputs';
+import { primeImageCoverageCache, clearImageCoverageCache } from './imageAlphaCoverage';
 import { coverageMaskFromImageData } from './puppet';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
 import type { SkeletonRig } from './skeletonCommands';
+import type { Stroke } from '@core/paint/stroke';
 
 const W = 120;
 const H = 120;
@@ -84,5 +85,34 @@ describe('a skeleton-only layer forwards its mesh settings', () => {
   it('meshDensity still reaches it too', () => {
     expect(build({ meshDensity: 8 }).vertices.length)
       .not.toBe(build({ meshDensity: 20 }).vertices.length);
+  });
+});
+
+describe('rigMeshPad — the drawn reach the rest mesh is grown by', () => {
+  const stroke = (extra: Partial<Stroke> = {}): Stroke => ({
+    enabled: true, color: '#fff', width: 8, opacity: 1, align: 'center', dash: [], cap: 'butt', join: 'miter', ...extra,
+  });
+
+  it('only an ellipse shape is padded', () => {
+    expect(rigMeshPad(false, { stroke: stroke() })).toBe(0);
+    expect(rigMeshPad(true, {})).toBe(0);
+  });
+
+  it('a centre stroke reaches its width, an outside stroke double, an inside stroke nothing', () => {
+    expect(rigMeshPad(true, { stroke: stroke() })).toBe(9);
+    expect(rigMeshPad(true, { stroke: stroke({ align: 'outside' }) })).toBe(17);
+    expect(rigMeshPad(true, { stroke: stroke({ align: 'inside' }) })).toBe(0);
+  });
+
+  it('the stroke STACK wins over the single stroke, and the widest entry governs', () => {
+    expect(rigMeshPad(true, { stroke: stroke({ width: 40 }), strokes: [stroke({ width: 4 }), stroke({ width: 12 })] })).toBe(13);
+  });
+
+  it('a wave adds its amount to the band', () => {
+    expect(rigMeshPad(true, { stroke: stroke({ wave: { amount: -5, wavelength: 10 } as Stroke['wave'] }) })).toBe(14);
+  });
+
+  it('is capped', () => {
+    expect(rigMeshPad(true, { stroke: stroke({ width: 4000 }) })).toBe(512);
   });
 });

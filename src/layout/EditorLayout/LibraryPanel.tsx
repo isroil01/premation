@@ -7,8 +7,11 @@
  * rail with surfaces most users opened once.
  *
  * Every card here PLAYS OR DRAWS ITS OWN CONTENT rather than illustrating it:
- * the mograph cards run the same build and choreography the insert writes, the
- * transition cards replay the real keyframe recipe against an isolated engine,
+ * the mograph cards are the same build and choreography the insert writes and
+ * the transition cards the real keyframe recipe — each drawn by the ENGINE from
+ * an isolated preview document (a still; the motion plays while the card is
+ * hovered or focused, core/template/previewController.ts) — the component
+ * thumbnails are the engine's stills too,
  * the SFX bars are the synthesized clip's actual peak envelope, and the Lottie
  * cards render the document `applyImportPlan` will realise. A hand-drawn
  * impression of an item can keep looking right long after the item stopped
@@ -36,7 +39,7 @@ import { insertShape, insertText } from '@core/scene/sceneInsert';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
-import { componentThumb, onComponentThumbReady } from '@core/rendering/componentThumbs';
+import { componentThumb, onComponentThumbReady } from '@core/library/componentThumbs';
 import { MOGRAPH_ITEMS, buildMographItem, previewMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
 import { TRANSITION_ITEMS, createTransitionPlayer, type TransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
 import { applyTransitionEdit } from './transitionInsertEdits';
@@ -85,7 +88,7 @@ export function ComponentsPanel(): JSX.Element {
   const hasSelection = useSelectionStore((s) => s.ids.length > 0);
   const [showSaveInput, setShowSaveInput] = useState(false);
   const [componentName, setComponentName] = useState('My Component');
-  // Thumbnails render async on the GPU engine — repaint the grid as each lands.
+  // Thumbnails are the engine's stills, answered asynchronously — repaint the grid as each lands.
   const [, setThumbTick] = useState(0);
   useEffect(() => onComponentThumbReady(() => setThumbTick((t) => t + 1)), []);
 
@@ -276,8 +279,9 @@ export function TextPanel(): JSX.Element {
 
 
 // ── Motion Graphics Panel ─────────────────────────────────────────
-// Real programmatic mograph elements — the card previews PLAY the same
-// build + choreography the insert writes (shared gallery ticker).
+// Real programmatic mograph elements — the card previews are the same build +
+// choreography the insert writes, drawn by the engine (a still; the motion
+// plays on hover / focus — the shared gallery controller).
 
 function MographCard({ item }: { item: MographItem }): JSX.Element {
   const notify = useUIStore((s) => s.notify);
@@ -359,7 +363,8 @@ function MotionGFXContent(): JSX.Element {
  *
  *  The card used to be two colour swatches, which made "Whip Pan" and "Cross
  *  Fade" visually identical — you had to apply an item and undo it to find out
- *  what it did. This replays the real recipe against an isolated engine, so the
+ *  what it did. This keys the real recipe into an isolated preview document the
+ *  engine draws (a still at rest, the move while hovered or focused), so the
  *  card shows the move it will write. */
 function TransitionCard({ item, onApply }: { item: TransitionItem; onApply: () => void }): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);

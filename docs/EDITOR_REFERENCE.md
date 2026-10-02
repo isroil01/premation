@@ -70,8 +70,8 @@ rediscovered in git history and believed a second time.
 | Canvas tools | 23 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 18 | `renderSpec.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` / `DataExportFormat` |
-| Stores | 77 | `src/stores/*.ts` |
-| Packages | 15 | `packages/*` |
+| Stores | 75 | `src/stores/*.ts` |
+| Packages | 14 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
 
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        77 Zustand stores
+                          ├── src/stores/*        75 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          16 workspace packages
                                 ├── scene       scene graph + components

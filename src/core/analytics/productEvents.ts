@@ -31,7 +31,6 @@ import { IS_ELECTRON } from '@core/api/env';
 import { hasSession } from '@core/api/session';
 import { getEventBus } from '@core/events/EventBus';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { useRenderBackendStore } from '@stores/renderBackendStore';
 
 /** Mirrors motion-back's `ProductEventName` enum. A new name there is a migration. */
 export type ProductEventName =
@@ -204,11 +203,11 @@ export function mediaKindOf(file: { name: string; type?: string }): MediaKind {
 }
 
 function context(): EventBatch['context'] {
-  const tier = useRenderBackendStore.getState().activeTier;
   return {
     appVersion: APP_VERSION,
     platform: `${IS_ELECTRON ? 'electron' : 'web'}-${getUiPlatform()}`,
-    renderBackend: tier,
+    // The C++ engine is the only renderer (Dawn: D3D12 / Metal).
+    renderBackend: 'engine',
   };
 }
 

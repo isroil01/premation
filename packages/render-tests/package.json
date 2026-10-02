@@ -4,8 +4,6 @@
   "private": true,
   "description": "Golden-frame regression suite (Phase 0) — deterministic pixel diffing of the render engines.",
   "scripts": {
-    "render-tests": "node scripts/run.mjs",
-    "update": "node scripts/run.mjs --update",
     "native-golden": "node scripts/native-golden.mjs"
   }
 }

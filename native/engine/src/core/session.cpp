@@ -1571,6 +1571,8 @@ void Session::emit_stats(Clock::time_point now) {
   st.cpu_frame_ms = buildMs_;
   st.fps = c.fps;
   st.dropped_frames = c.dropped + clockDropped_;
+  // What the viewport frame cache holds (VRAM; the HUD's cache row and getCacheCoverage agree).
+  st.ram_cache_bytes = sink_.cache_coverage().ramBytes;
   std::vector<api::Event> ev;
   ev.push_back(make_event(api::RenderStatsUpdatedEvent{st}));
   send_events(revision_, revision_, std::move(ev), std::nullopt, api::Origin::engine);

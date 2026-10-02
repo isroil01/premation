@@ -94,7 +94,6 @@ export default defineConfig(({ mode }) => ({
       '@motion/workspace': path.resolve(__dirname, 'packages/workspace/src/index.ts'),
       '@motion/timeline': path.resolve(__dirname, 'packages/timeline/src/index.ts'),
       '@motion/animation': path.resolve(__dirname, 'packages/animation/src/index.ts'),
-      '@motion/renderer': path.resolve(__dirname, 'packages/renderer/src/index.ts'),
       '@motion/ai-tools': path.resolve(__dirname, 'packages/ai-tools/src/index.ts'),
       // These four resolve through tsconfig `paths` and the Jest moduleNameMapper
       // as well. All three lists have to agree: a package missing from THIS one
@@ -117,7 +116,6 @@ export default defineConfig(({ mode }) => ({
         manualChunks: {
           react: ['react', 'react-dom'],
           state: ['zustand', 'immer'],
-          renderer: ['@motion/renderer'],
         },
       },
     },

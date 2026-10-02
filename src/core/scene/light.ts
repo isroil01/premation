@@ -142,7 +142,16 @@ export const LIGHT_DEFAULTS = {
   envReflections: 100,
 } as const;
 
-const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
+/**
+ * How many lights shade one 3D draw. The engine takes the first eight scene
+ * lights with a non-zero gain, in scene order, and ignores the rest
+ * (`kMaxLights` in native/engine/src/render_graph/threed.cpp — the packed
+ * light array of the shading uniform is this long). The inspector reads it to
+ * say so where lights are edited. Change it only together with the engine's.
+ */
+export const MAX_LIGHTS3D = 8;
+
+const num =(v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
 
 function lightType(v: unknown): LightType {
   return v === 'ambient' || v === 'spot' || v === 'parallel' || v === 'environment' ? v : 'point';

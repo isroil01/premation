@@ -1,18 +1,16 @@
 /**
- * Convert to Paragraph / Point Text must not move the text.
+ * Convert to Paragraph / Point Text and Box Auto-Size as document edits: which
+ * layers convert, what the conversion writes (the box, the soft wraps turned
+ * into returns) and that each is one undoable history entry.
  *
- * "Did not move" is measured on what the painter actually draws: each line's
- * fillText, turned into its left pen x and baseline, mapped through the
- * layer's rotation and scale into composition space — before and after. The
- * canvas is jest's Skia backing, so widths are real font metrics.
+ * The canvas is jest's Skia backing, so the wrap is measured with real font
+ * metrics. That the text does not MOVE on screen is the engine's to prove.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import type { SceneNode } from '@core/types';
-import { textPaintSpecFromNode } from '@core/scene/shapesFromText';
-import { paintTextInBox } from '@core/rendering/raster/textPaint';
 import { readParagraphBox } from '@core/text/textExtras';
 import { hasCanvas } from '@core/effects/__testHelpers__/canvasFidelity';
 import {
@@ -63,50 +61,6 @@ function textNode(textProps: Record<string, unknown>): SceneNode {
 const textProps = (): Record<string, unknown> =>
   defaultSceneGraph.getNode(ID)!.components.find((c) => c.type === 'Text')!.props as Record<string, unknown>;
 
-/** Composition-space pen start + baseline of every drawn line. */
-function drawnLines(): Array<{ text: string; x: number; y: number }> {
-  const node = defaultSceneGraph.getNode(ID)!;
-  const spec = textPaintSpecFromNode(node)!;
-  const real = document.createElement('canvas').getContext('2d')!;
-  const fills: Array<{ text: string; x: number; y: number; align: string; font: string }> = [];
-  const state: Record<string, unknown> = {
-    font: '', letterSpacing: '0px', textAlign: 'left', textBaseline: 'middle', fillStyle: '', strokeStyle: '', globalAlpha: 1,
-  };
-  const ctx = Object.assign(state, {
-    save: () => {}, restore: () => {}, translate: () => {}, rotate: () => {}, scale: () => {}, transform: () => {},
-    strokeText: () => {},
-    fillText: (text: string, x: number, y: number) =>
-      fills.push({ text, x, y, align: String(state.textAlign), font: String(state.font) }),
-    measureText: (t: string) => {
-      real.font = String(state.font);
-      return real.measureText(t);
-    },
-  });
-  paintTextInBox(ctx as unknown as CanvasRenderingContext2D, spec);
-  const tr = node.components.find((c) => c.type === 'Transform')!.props as Record<string, number>;
-  const rad = (tr.rotation! * Math.PI) / 180;
-  return fills.map((f) => {
-    real.font = f.font;
-    const w = real.measureText(f.text).width;
-    const left = f.align === 'center' ? f.x - w / 2 : f.align === 'right' ? f.x - w : f.x;
-    const lx = (left - spec.width / 2) * tr.scaleX!;
-    const ly = (f.y - spec.height / 2) * tr.scaleY!;
-    return {
-      text: f.text,
-      x: tr.x! + Math.cos(rad) * lx - Math.sin(rad) * ly,
-      y: tr.y! + Math.sin(rad) * lx + Math.cos(rad) * ly,
-    };
-  });
-}
-
-function expectSamePlaces(a: ReturnType<typeof drawnLines>, b: ReturnType<typeof drawnLines>): void {
-  expect(b.map((l) => l.text)).toEqual(a.map((l) => l.text));
-  a.forEach((line, i) => {
-    expect([line.text, b[i]!.x]).toEqual([line.text, expect.closeTo(line.x, 3)]);
-    expect([line.text, b[i]!.y]).toEqual([line.text, expect.closeTo(line.y, 3)]);
-  });
-}
-
 beforeEach(async () => {
   h = await setupAppEngine();
   useSelectionStore.setState({ ids: [] });
@@ -130,10 +84,9 @@ describe('text on a path', () => {
   });
 });
 
-maybe('Convert to Paragraph / Point Text — no visual jump', () => {
-  it.each(['left', 'center', 'right'])('point → paragraph (%s aligned, rotated + scaled layer)', async (align) => {
+maybe('Convert to Paragraph / Point Text — the document edit', () => {
+  it.each(['left', 'center', 'right'])('point → paragraph is one undoable entry with a fixed box (%s aligned, rotated + scaled layer)', async (align) => {
     addLayer(textNode({ content: 'Hello there\nsecond line', align }));
-    const before = drawnLines();
     const entries = historyLabels().length;
     const doc0 = h.doc();
     expect(await convertToParagraphText([ID])).toEqual([ID]);
@@ -146,40 +99,26 @@ maybe('Convert to Paragraph / Point Text — no visual jump', () => {
     expect(h.doc()).toEqual(doc1);
     const box = readParagraphBox(defaultSceneGraph.getNode(ID)!)!;
     expect(box).toMatchObject({ fixedHeight: true, autoSize: 'off' });
-    expectSamePlaces(before, drawnLines());
   });
 
   it.each(['left', 'center', 'right'])('paragraph → point turns soft wraps into returns (%s aligned)', async (align) => {
     const content = 'alpha beta gamma delta epsilon zeta';
     addLayer(textNode({ content, align, boxWidth: 180, boxHeight: 400, boxVerticalAlign: 'center' }));
-    const before = drawnLines();
-    expect(before.length).toBeGreaterThan(1); // it really wrapped
     const entries = historyLabels().length;
     expect(await convertToPointText([ID])).toEqual([ID]);
     expect(historyLabels()).toHaveLength(entries + 1);
     const p = textProps();
     expect(p.boxWidth).toBe(0);
-    expect(String(p.content).split('\n')).toHaveLength(before.length);
+    expect(String(p.content).split('\n').length).toBeGreaterThan(1); // it really wrapped
     // One-for-one: each soft-wrap space became a return, nothing else changed.
     expect(String(p.content).replace(/\n/g, ' ')).toBe(content);
-    expectSamePlaces(before, drawnLines());
   });
 
-  it('round-trips point → paragraph → point in place', async () => {
-    addLayer(textNode({ content: 'Round\ntrip', align: 'right' }));
-    const before = drawnLines();
-    await convertToParagraphText([ID]);
-    await convertToPointText([ID]);
-    expectSamePlaces(before, drawnLines());
-  });
-
-  it('switching an auto-height box to a fixed mode keeps the text where it is', async () => {
+  it('switching an auto-height box to a fixed mode is one entry that bakes the height', async () => {
     addLayer(textNode({ content: 'alpha beta gamma delta', boxWidth: 160 }));
-    const before = drawnLines();
     expect(await setBoxAutoSize(ID, 'off')).toBe(true);
     expect(historyLabels().at(-1)).toBe('Box Auto-Size');
     expect(textProps().boxHeight).toBeGreaterThan(0);
-    expectSamePlaces(before, drawnLines());
   });
 });
 

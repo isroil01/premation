@@ -63,7 +63,7 @@ import { glassPropPath } from '@core/effects/glassResolve';
 import { GLASS_PROPERTIES, STYLE_FIELDS } from '@core/engine/effectFieldSpecs';
 import type { MaskPath } from '@core/effects/mask';
 import type { FrameBlend as StoredFrameBlend } from '@core/scene/layerTime';
-import { Color } from '@motion/renderer';
+import { Color } from '@core/paint/color';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';

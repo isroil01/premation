@@ -1,19 +1,19 @@
 /**
  * Essential Properties — two instances of one comp must be able to differ.
  *
- * THE TEST THAT MATTERS IS THE ANIMATED ONE. Overrides have two halves that are
- * easy to build separately and fatal to build alone:
+ * Overrides have two halves that are easy to build separately and fatal to
+ * build alone:
  *
- *   static  — patched onto the clone's Transform by `expandCompInstances`.
- *   animated— `buildSnapshot`'s `anim` shim dropping the prop, so the ORIGINAL
- *             node's track stops outvoting that patch on every frame.
+ *   static  — patched onto the clone's components by `expandCompInstances`.
+ *   animated— the renderer dropping the overridden props from the clone's
+ *             evaluated values, so the ORIGINAL node's track stops outvoting
+ *             that patch on every frame.
  *
  * Build only the first and you get a control that works on a static layer and
  * does nothing at all the moment someone keyframes it — no error, no warning,
- * just a value that never appears. That is the shape of the four dead controls
- * this repo has already paid for. `overrides a KEYFRAMED property` below is the
- * assertion that would fail if the shim were removed, and it is the reason this
- * file exists at all.
+ * just a value that never appears. This file pins the document side: storage,
+ * the static patch, and the set of props (`overriddenPropsFor`, colour channels
+ * included) the renderer is told to drop. The drop itself is the engine's.
  */
 
 import { readSource } from '@/__testHelpers__/readSource';
@@ -36,7 +36,6 @@ import {
 import defaultSceneGraph from './DefaultSceneGraph';
 import { SCENE_KIND_PROP } from './seedDefaultScene';
 import { flattenComposition } from './sceneDerive';
-import { buildSnapshot } from '@core/rendering/buildSnapshot';
 import { defaultAnimation } from '@motion/animation';
 import { useProjectStore } from '@stores/projectStore';
 import type { SceneNode } from '@core/types';
@@ -103,10 +102,8 @@ const cloneNamed = (id: string): SceneNode => expand().find((n) => n.id === id)!
 const transformProps = (n: SceneNode): Record<string, unknown> =>
   n.components.find((c) => c.type === 'Transform')!.props as Record<string, unknown>;
 
-const snapshot = (rootId = 'comp_root'): ReturnType<typeof buildSnapshot> =>
-  buildSnapshot(defaultSceneGraph, defaultAnimation, 0, undefined, undefined, undefined, undefined, {
-    width: 1920, height: 1080, background: '#000', transparent: false, rootId,
-  });
+const styleProps = (n: SceneNode): Record<string, unknown> =>
+  n.components.find((c) => c.type === 'Style')!.props as Record<string, unknown>;
 
 describe('override storage', () => {
   it('round-trips through the fx component', () => {
@@ -220,67 +217,25 @@ describe('the headline capability', () => {
   });
 });
 
-describe('the animated half — the dead-control guard', () => {
-  it('overrides a KEYFRAMED property, instead of being outvoted every frame', () => {
-    addShape('b_shape', 'comp_b', 10);
-    addInstance('inst1', 'comp_root', 'comp_b');
-    addInstance('inst2', 'comp_root', 'comp_b');
-    // The SOURCE layer is animated: without the shim in buildSnapshot's `anim`,
-    // `evaluateNode` returns x=777 for the clone and the static patch is dead.
-    defaultAnimation.setKeyframe('b_shape', 'x', 0, 777);
-
-    setCompOverride('inst1', 'b_shape', 'x', 400);
-
-    const layerX = (instId: string): number => {
-      const c = snapshot().layers.find((l) => l.id === instId)!;
-      return c.precompLayers!.find((l) => l.id === `${instId}::b_shape`)!.x;
-    };
-    // Overridden instance takes the override; the other still animates.
-    expect(layerX('inst1')).toBe(400);
-    expect(layerX('inst2')).toBe(777);
-  });
-
-  it('reports an overridden prop as not animated, so the UI does not offer a track', () => {
-    addShape('b_shape', 'comp_b');
-    addInstance('inst1', 'comp_root', 'comp_b');
-    defaultAnimation.setKeyframe('b_shape', 'opacity', 0, 20);
-    setCompOverride('inst1', 'b_shape', 'opacity', 90);
-    const c = snapshot().layers.find((l) => l.id === 'inst1')!;
-    expect(c.precompLayers!.find((l) => l.id === 'inst1::b_shape')!.opacity).toBeCloseTo(0.9);
-  });
-
-  it('an un-overridden animated prop is untouched', () => {
-    addShape('b_shape', 'comp_b');
-    addInstance('inst1', 'comp_root', 'comp_b');
-    defaultAnimation.setKeyframe('b_shape', 'x', 0, 777);
-    setCompOverride('inst1', 'b_shape', 'opacity', 50);
-    const c = snapshot().layers.find((l) => l.id === 'inst1')!;
-    expect(c.precompLayers!.find((l) => l.id === 'inst1::b_shape')!.x).toBe(777);
-  });
-
-  // ── Colour: the same guard, one indirection further out ──────────────
-  //
+describe('colour overrides — the dead-control guard, one indirection further out', () => {
   // A colour is STORED as `fill` and KEYFRAMED as `fill_r/_g/_b`. Suppressing
-  // only `fill` leaves those three live, `buildSnapshot`'s `a?.has('fill_r')`
-  // branch wins, and the override is repainted over on every frame — the exact
-  // dead-control shape this describe block exists for, on the property most
-  // likely to be templated.
+  // only `fill` leaves those three live, the renderer's animated-channel
+  // branch wins, and the override is repainted over on every frame — the
+  // dead-control shape the file header describes, on the property most likely
+  // to be templated.
 
-  const layerFill = (instId: string): string | undefined => {
-    const c = snapshot().layers.find((l) => l.id === instId)!;
-    return c.precompLayers!.find((l) => l.id === `${instId}::b_shape`)!.fill;
-  };
+  const cloneFill = (instId: string): unknown => styleProps(cloneNamed(`${instId}::b_shape`)).fill;
 
   it('overrides a STATIC fill per instance', () => {
     addShape('b_shape', 'comp_b');
     addInstance('inst1', 'comp_root', 'comp_b');
     addInstance('inst2', 'comp_root', 'comp_b');
     setCompOverride('inst1', 'b_shape', 'fill', '#00ff00');
-    expect(layerFill('inst1')).toBe('#00ff00');
-    expect(layerFill('inst2')).toBe('#f00');
+    expect(cloneFill('inst1')).toBe('#00ff00');
+    expect(cloneFill('inst2')).toBe('#f00');
   });
 
-  it('overrides a KEYFRAMED fill, beating the fill_r/_g/_b channels', () => {
+  it('a fill override suppresses the fill_r/_g/_b channels a KEYFRAMED colour animates as, per instance', () => {
     addShape('b_shape', 'comp_b');
     addInstance('inst1', 'comp_root', 'comp_b');
     addInstance('inst2', 'comp_root', 'comp_b');
@@ -291,10 +246,14 @@ describe('the animated half — the dead-control guard', () => {
 
     setCompOverride('inst1', 'b_shape', 'fill', '#00ff00');
 
-    expect(layerFill('inst1')).toBe('#00ff00');
+    const suppressed = (instId: string): string[] | null => {
+      const props = overriddenPropsFor(readCompOverrides(defaultSceneGraph.getNode(instId)), 'b_shape');
+      return props ? [...props].sort() : null;
+    };
+    expect(suppressed('inst1')).toEqual(['fill', 'fill_b', 'fill_g', 'fill_r']);
     // The un-overridden instance still animates, so the suppression is scoped
     // to the instance rather than disabling the track outright.
-    expect(layerFill('inst2')?.toLowerCase()).toContain('0000ff');
+    expect(suppressed('inst2')).toBeNull();
   });
 });
 
@@ -412,34 +371,6 @@ describe('override depth', () => {
 
     expect(transformProps(cloneNamed('inst1::b_deep')).x).toBe(456);
     expect(transformProps(cloneNamed('inst1::b_group')).x).toBe(10);
-  });
-
-  it('a grandchild override survives the ANIMATED half too', () => {
-    addShape('b_group', 'comp_b');
-    addShape('b_deep', 'b_group', 11);
-    addInstance('inst1', 'comp_root', 'comp_b');
-    addInstance('inst2', 'comp_root', 'comp_b');
-    defaultAnimation.setKeyframe('b_deep', 'x', 0, 11);
-    defaultAnimation.setKeyframe('b_deep', 'x', 1, 99);
-    setCompOverride('inst1', 'b_deep', 'x', 456);
-
-    const find = (layers: ReadonlyArray<{ id: string; x: number; precompLayers?: ReadonlyArray<never> }>, id: string): { x: number } | undefined => {
-      for (const l of layers) {
-        if (l.id === id) return l;
-        const nested = (l as { precompLayers?: typeof layers }).precompLayers;
-        if (nested) {
-          const hit = find(nested, id);
-          if (hit) return hit;
-        }
-      }
-      return undefined;
-    };
-    const snap = snapshot().layers as never;
-    const overridden = find(snap, 'inst1::b_deep');
-    const inherited = find(snap, 'inst2::b_deep');
-    expect(overridden).toBeTruthy();
-    expect(inherited).toBeTruthy();
-    expect(overridden!.x - inherited!.x).toBeCloseTo(456 - 11, 9);
   });
 });
 

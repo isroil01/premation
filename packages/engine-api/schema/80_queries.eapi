@@ -489,7 +489,7 @@ struct GlyphBox { index: u32 = 1; line: u32 = 2; box: Rect = 3; baseline: f64 = 
 /// B4 round 8 — one face of an extruded 3D layer (face picking): `kind` front | back | side | bevel (the material group), `suffix` the renderer's face suffix (a mesh triangle: its role), `points` the polygon in WORLD px, `verts` a mesh triangle's vertex indices (empty for a quad).
 struct LayerFace { kind: string = 1; suffix: string = 2; points: Vec3[] = 3; verts: u32[] = 4; }
 struct LayerFaces { faces: LayerFace[] = 1; }
-/// B4 round 8 — the faces of an extruded 3D layer at `time` (facePicking.ts projectedFaces before its projection): the renderer's extrusion mesh with its front cap, else the flat-quad fallback, in world px; empty for a layer with no extrusion. The UI projects them through its view. `unsupported` without the frame builder.
+/// B4 round 8 — the faces of an extruded 3D layer at `time` (what facePicking.ts projects through a view and picks from): the renderer's extrusion mesh with its front cap, else the flat-quad fallback, in world px; empty for a layer with no extrusion. The UI projects them through its view. `unsupported` without the frame builder.
 query getLayerFaces = 1936 { layer: LayerId = 1; time: Time = 2; } -> LayerFaces;
 query hitTest = 1060 { comp: ItemId = 1; time: Time = 2; point: Vec2 = 3; mode: HitMode = 4; includeLocked: bool = 5; } -> HitResult;
 query getLayerBounds = 1061 { layers: LayerId[] = 1; time: Time = 2; space: BoundsSpace = 3; includeEffects: bool = 4; viewport?: u32 = 5; } -> LayerBoundsList;

@@ -13,7 +13,7 @@ import type { LayerBlendMode } from '@core/effects/blendMode';
  * "Previous" is the paint listed immediately above in AE's Contents order. Our
  * stacks have that order implicitly — strokes above fills, later entries above
  * earlier ones — which is exactly the order every layer has always rendered in
- * when every entry says 'below'. See `paintRenderOrder` in vectorDraw.
+ * when every entry says 'below'. See `paintRenderOrder` in `./paintOrder`.
  */
 export type PaintComposite = 'below' | 'above';
 

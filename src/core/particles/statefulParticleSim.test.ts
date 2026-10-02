@@ -10,7 +10,6 @@ import {
   particlesFromSoA,
 } from './statefulParticleSim';
 import { clearStatefulParticleCaches, statefulParticleCache } from './statefulParticleCache';
-import { particleSprites } from './particleRender';
 
 const FPS = 30;
 
@@ -100,23 +99,5 @@ describe('statefulParticleSim', () => {
     const list = particlesFromSoA(state, cfg);
     expect(list.length).toBeGreaterThan(0);
     expect(list[0]!.color).toMatch(/^rgba\(/);
-  });
-
-  it('particleSprites stateful path is scrub-stable', () => {
-    const cfg = fountainCfg();
-    const t = 2.5;
-    const a = particleSprites(cfg, t, 400, 400, { fps: FPS, cacheKey: 'scrub' });
-    clearStatefulParticleCaches();
-    const b = particleSprites(cfg, t, 400, 400, { fps: FPS, cacheKey: 'scrub' });
-    expect(a.length).toBe(b.length);
-    expect(a.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join('|')).toBe(
-      b.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join('|'),
-    );
-  });
-
-  it('ballistic mode still ignores stateful options', () => {
-    const cfg = fountainCfg({ simMode: 'ballistic' });
-    const sprites = particleSprites(cfg, 1, 400, 400);
-    expect(sprites.length).toBeGreaterThan(0);
   });
 });

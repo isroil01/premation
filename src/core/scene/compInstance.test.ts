@@ -1,11 +1,9 @@
 /**
  * Comp instances — a composition used as a layer inside another composition.
  *
- * The instance node is flagged precomp + `__compRef`; at snapshot time it
- * expands into render-only clones (prefixed ids) routed through the precomp
- * texture path, sampling the ORIGINAL nodes' animation. These tests pin the
- * expansion, the id indirection, cycle safety, and that the render actually
- * contains the referenced comp's content — per instance.
+ * The instance node is flagged precomp + `__compRef`; it expands into
+ * render-only clones (prefixed ids), sampling the ORIGINAL nodes' animation.
+ * These tests pin the expansion, the id indirection and cycle safety.
  */
 
 import { expandCompInstances, instanceSourceOf, readCompRef, wouldCreateCompCycle, COMP_REF_PROP } from './compInstance';
@@ -13,7 +11,6 @@ import { insertCompInstance } from './sceneInsert';
 import defaultSceneGraph from './DefaultSceneGraph';
 import { SCENE_KIND_PROP } from './seedDefaultScene';
 import { flattenComposition } from './sceneDerive';
-import { buildSnapshot } from '@core/rendering/buildSnapshot';
 import { defaultAnimation } from '@motion/animation';
 import { useProjectStore } from '@stores/projectStore';
 import type { SceneNode } from '@core/types';
@@ -99,6 +96,17 @@ describe('expandCompInstances', () => {
     expect(out.some((n) => n.id === 'inst2::b_shape')).toBe(true);
   });
 
+  it('does not leak instance machinery into an expansion of the source comp itself', () => {
+    addShape('b_shape', 'comp_b');
+    addInstance('inst1', 'comp_root', 'comp_b');
+    // Expanding comp_b directly: just its own shape, input untouched.
+    const nodes = flattenComposition(defaultSceneGraph, 'comp_b');
+    const out = expandCompInstances(defaultSceneGraph, nodes, 'comp_b');
+    expect(out).toBe(nodes);
+    expect(out.some((n) => n.id === 'b_shape')).toBe(true);
+    expect(out.some((n) => n.id.includes('::'))).toBe(false);
+  });
+
   it('refuses self-reference and reference cycles', () => {
     addShape('b_shape', 'comp_b');
     // comp_b already contains an instance of comp_root → root ⊂ b would cycle.
@@ -127,34 +135,5 @@ describe('insertCompInstance', () => {
   it('refuses a cycle', () => {
     addInstance('back_ref', 'comp_b', 'comp_root');
     expect(insertCompInstance('comp_b')).toBeNull();
-  });
-});
-
-describe('render integration', () => {
-  it('renders the referenced content inside the instance container, per instance', () => {
-    addShape('b_shape', 'comp_b');
-    addInstance('inst1', 'comp_root', 'comp_b');
-    addInstance('inst2', 'comp_root', 'comp_b');
-
-    const snap = buildSnapshot(defaultSceneGraph, defaultAnimation, 0, undefined, undefined, undefined, undefined, {
-      width: 1920, height: 1080, background: '#000', transparent: false, rootId: 'comp_root',
-    });
-
-    const containers = snap.layers.filter((l) => l.precompLayers);
-    expect(containers.map((c) => c.id).sort()).toEqual(['inst1', 'inst2']);
-    for (const c of containers) {
-      expect(c.precompLayers!.some((l) => l.id === `${c.id}::b_shape`)).toBe(true);
-    }
-  });
-
-  it('does not leak the source comp into a snapshot of the source itself', () => {
-    addShape('b_shape', 'comp_b');
-    addInstance('inst1', 'comp_root', 'comp_b');
-    const snap = buildSnapshot(defaultSceneGraph, defaultAnimation, 0, undefined, undefined, undefined, undefined, {
-      width: 1920, height: 1080, background: '#000', transparent: false, rootId: 'comp_b',
-    });
-    // Rendering comp_b directly: just its own shape, no instance machinery.
-    expect(snap.layers.some((l) => l.id === 'b_shape')).toBe(true);
-    expect(snap.layers.some((l) => l.precompLayers)).toBe(false);
   });
 });

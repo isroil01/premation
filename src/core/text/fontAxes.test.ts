@@ -13,7 +13,6 @@ import {
   isAxisTag,
 } from './fontAxes';
 import { featureSettingsString } from './fontFaceVariants';
-import { textFontVariationSettings } from '@core/rendering/AppTextureProvider';
 import type { SceneNode } from '@core/types';
 
 /** A minimal sfnt: a table directory with one `fvar`, and the table itself. */
@@ -77,7 +76,7 @@ describe('variation string', () => {
       return parts.length ? parts.join(', ') : undefined;
     };
     for (const [w, wd, sl] of [['600', undefined, undefined], ['350', 87.5, -8], [undefined, 120, undefined], [undefined, undefined, undefined]] as const) {
-      expect(textFontVariationSettings({ fontWeight: w, fontWidth: wd, fontSlant: sl })).toBe(legacy(w, wd, sl));
+      expect(fontVariationString({ fontWeight: w, fontWidth: wd, fontSlant: sl })).toBe(legacy(w, wd, sl));
     }
   });
 

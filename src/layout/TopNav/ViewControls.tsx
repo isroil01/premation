@@ -35,7 +35,7 @@ import { edit } from '@core/engine/uiEdits';
 import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { Dropdown, type DropdownItem, type DropdownProps } from '@components/Dropdown';
 import { OnionSkinSettingsPopover } from '@layout/BottomTimeline/OnionSkinSettings';
-import { cacheWorkAreaNow, installPreviewCacheCommands } from '@layout/Timeline/previewCacheCommands';
+import { cacheWorkAreaNow, canCacheWorkArea, installPreviewCacheCommands } from '@layout/Timeline/previewCacheCommands';
 import { describePreviewCache, previewCacheStats } from '@layout/Timeline/previewCacheStats';
 import styles from './TopNav.module.css';
 
@@ -189,6 +189,9 @@ export function usePreviewMenuItems(): { items: DropdownItem[]; degraded: boolea
       id: 'preview-cache-now',
       label: 'Cache Work Area Now',
       icon: 'refresh',
+      // The engine fills its cache from the frames it draws; it cannot pre-render a
+      // span yet (CACHE_WORK_AREA_UNAVAILABLE, previewCacheCommands.ts).
+      disabled: !canCacheWorkArea(),
       onSelect: cacheWorkAreaNow,
     },
     { type: 'separator' },

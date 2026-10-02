@@ -22,7 +22,6 @@
  */
 
 import { useEffect } from 'react';
-import { MAX_LIGHTS3D } from '@motion/renderer';
 import { useMirrorFootage, useMirrorLayer } from '@hooks/useMirror';
 import { useActiveCompLayers } from '@hooks/useMirrorFields';
 import { uiKindOf } from '@core/mirror/layerKinds';
@@ -35,7 +34,7 @@ import { getTime } from '@stores/playbackClockStore';
 import { edit } from '@core/engine/uiEdits';
 import { componentOfType, values } from '@core/engine/propRefs';
 import { POI_PATH } from '@core/engine/pointOfInterest';
-import { LIGHT_DEFAULTS, type LightType, type LightFalloff } from '@core/scene/light';
+import { LIGHT_DEFAULTS, MAX_LIGHTS3D, type LightType, type LightFalloff } from '@core/scene/light';
 import {
   ENVIRONMENT_PRESETS,
   DEFAULT_ENVIRONMENT_PRESET,
@@ -233,12 +232,11 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
     }, kelvinToHex(p.kelvin));
   };
 
-  // The GPU uploads at most MAX_LIGHTS3D lights per draw (uniforms.ts caps the
-  // packed array); extra scene lights are silently truncated by layer order.
-  // Silent is the problem — say so where lights are edited. Counted from the
-  // live graph (enabled light layers in the active comp), the same population
-  // buildSnapshot collects into `sceneLights`; already re-rendered by the
-  // scene-revision subscription above, so this adds no new per-frame work.
+  // The engine shades with at most MAX_LIGHTS3D lights per draw (`kMaxLights`,
+  // native/engine/src/render_graph/threed.cpp); extra scene lights are silently
+  // dropped by layer order. Silent is the problem — say so where lights are
+  // edited. Counted from the document mirror (visible light layers in the
+  // active comp), so this adds no per-frame work.
   // (An environment light expands into an ambient + up-to-six-parallel rig, so
   // the true uploaded count can be higher still — the count here is the floor.)
   const lightLayerCount = compLayers

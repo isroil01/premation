@@ -11,9 +11,7 @@ import {
   paintSignature,
   strokeDeviceMatrix,
 } from './paintRaster';
-import { normalizeStroke, type PaintConfig, type PaintStroke } from './paintStrokes';
-import { rasterPadding } from '@core/rendering/raster/vectorDraw';
-import type { RenderLayer } from '@core/rendering/RenderBackend';
+import { normalizeStroke, type PaintStroke } from './paintStrokes';
 
 const stroke = (over: Partial<PaintStroke> = {}): PaintStroke => ({
   id: 's1',
@@ -78,16 +76,6 @@ describe('paint padding', () => {
     // sigma = 0.4·20/3 → 3σ = 8
     expect(paintReach({ strokes: [stroke({ size: 20, hardness: 0.6 })] })).toBeCloseTo(18);
     expect(paintReach(undefined)).toBe(0);
-  });
-
-  const paint: PaintConfig = { strokes: [stroke({ size: 40, hardness: 0.5 })] }; // reach 20 + 20 = 40
-
-  test('shape and text rasters pad for soft paint; image and video clip to their frame', () => {
-    const base = { id: 'l', x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, width: 100, height: 40, opacity: 1, visible: true, paint };
-    expect(rasterPadding({ ...base, kind: 'shape', primitive: 'rect' } as RenderLayer)).toBeGreaterThanOrEqual(40);
-    expect(rasterPadding({ ...base, kind: 'text' } as RenderLayer)).toBeGreaterThanOrEqual(40);
-    expect(rasterPadding({ ...base, kind: 'image' } as RenderLayer)).toBe(0);
-    expect(rasterPadding({ ...base, kind: 'video' } as RenderLayer)).toBe(0);
   });
 });
 

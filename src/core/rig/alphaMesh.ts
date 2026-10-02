@@ -48,7 +48,7 @@
  * to the grid. A worse mesh is always better than a broken one.
  */
 
-import { extractAlphaContours } from '@core/effects/vegas';
+import { extractAlphaContours } from './alphaContours';
 import { pointInRing, signedArea, type Pt2 } from '@core/geometry/polygonTriangulate';
 import type { PuppetCoverageMask } from './puppet';
 

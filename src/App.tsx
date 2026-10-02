@@ -22,8 +22,6 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { copyKeyframes } from '@core/animation/keyframeClipboard';
-import { viewportFrameCache } from '@core/rendering/frameCache';
-import { createViewportDiskCache } from '@core/rendering/frameDiskCache';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { bumpScene } from '@stores/sceneStore';
 import { useProjectStore } from '@stores/projectStore';
@@ -640,31 +638,9 @@ function EditorShellInner(): JSX.Element {
   // mirror record (seconds).
   const ruler = useTimelineRuler(activeCompId);
 
-  // The disk tier under the RAM cache, so a looped work area longer than ~2s
-  // stops re-rendering from scratch on every pass.
-  //
-  // OPEN BEFORE ATTACH. `open()` purges what the previous session left (its
-  // frames are keyed by revision counters that have since reset — see
-  // frameDiskCache.ts). Attaching first would let the render loop write frames
-  // that the purge then deletes, so the cache would silently drop everything
-  // from its first few hundred milliseconds.
-  useEffect(() => {
-    const disk = createViewportDiskCache();
-    if (!disk) return;
-    let cancelled = false;
-    void disk.open().then(() => {
-      if (!cancelled) viewportFrameCache.attachDisk(disk);
-    });
-    return () => {
-      cancelled = true;
-      viewportFrameCache.attachDisk(null);
-      // End of session: commit whatever manifest changes are still sitting in
-      // the debounce. Without this the last frames written before the editor
-      // closed would be on disk but absent from the manifest, and the next
-      // launch's reconcile would delete them as orphans.
-      disk.flushManifest();
-    };
-  }, []);
+  // No preview cache is attached here: the frame cache is the engine's (video
+  // memory, sized from the graphics adapter). It has no disk tier, and it
+  // ignores `setCacheBudget`, so there is no budget or path to send it either.
 
   // NOTE: preview-coverage (the green RAM lane and blue disk lane under the
   // ruler) is deliberately NOT state here any more. It changes on every

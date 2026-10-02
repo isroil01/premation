@@ -6,7 +6,7 @@
  *   • AI Engine — provider keys and model configuration (when AI edition is active)
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import { cn } from '@utils/cn';
 import { Button } from '@components/Button';
 import { Input } from '@components/Input';
@@ -31,10 +31,9 @@ import {
 } from '@core/commands/shortcutOverrides';
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { getThemeManager, getSettingsManager } from '@core/services/coreServices';
-import { activeViewportDiskCache } from '@core/rendering/frameDiskCache';
 import { engine } from '@core/engine/engineInstance';
-import { viewportFrameCache } from '@core/rendering/frameCache';
-import { PREVIEW_DISK_MIN_GB, PREVIEW_DISK_MAX_GB } from '@stores/preferenceStore';
+import { engineCacheSnapshot, subscribeEngineCache } from '@layout/Timeline/engineCacheCoverage';
+import { formatCacheMb } from '@layout/Timeline/previewCacheStats';
 import { getAccentColor, setAccentColor } from '@core/theme/accent';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import type { KeyChord } from '@app-types/common';
@@ -477,7 +476,6 @@ export function AppearanceTab(): JSX.Element {
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const confirmOnClose = usePreferenceStore((s) => s.confirmOnClose);
   const retainOriginalSvg = usePreferenceStore((s) => s.retainOriginalSvg);
-  const idleCacheWorkArea = usePreferenceStore((s) => s.idleCacheWorkArea);
   const shareUsageData = usePreferenceStore((s) => s.shareUsageData);
   const setPref = usePreferenceStore((s) => s.set);
 
@@ -927,18 +925,6 @@ export function AppearanceTab(): JSX.Element {
               aria-label="Retain original SVG sources"
             />
           </div>
-
-          <div className={styles.switchRow}>
-            <div className={styles.settingInfo}>
-              <span className={styles.settingTitle}>Background Idle Cache Work Area</span>
-              <span className={styles.settingDesc}>Pre-render timeline frames during user idle periods for smoother real-time scrubbing.</span>
-            </div>
-            <Switch
-              checked={idleCacheWorkArea}
-              onChange={(e) => setPref('idleCacheWorkArea', e.target.checked)}
-              aria-label="Idle cache work area"
-            />
-          </div>
         </div>
       </div>
 
@@ -947,16 +933,16 @@ export function AppearanceTab(): JSX.Element {
       <div className={styles.sectionGroup}>
         <div className={styles.sectionHeading}>
           <span className={styles.sectionTitle}>Storage, Cache & Intelligence</span>
-          <span className={styles.hint}>Manage disk cache usage and optional neural segmentation models.</span>
+          <span className={styles.hint}>Manage the preview cache and optional neural segmentation models.</span>
         </div>
 
         <div className={styles.settingCard}>
           <div className={styles.settingRow}>
             <div className={styles.settingInfo}>
-              <span className={styles.settingTitle}>Render Frame Disk Cache</span>
+              <span className={styles.settingTitle}>Preview Frame Cache</span>
               <span className={styles.settingDesc}>
-                Disk space used for cached frames, onion skins, and parked states.
-                A new limit applies from the next launch.
+                Rendered frames the engine keeps in video memory, so playback and scrubbing
+                do not draw them twice. Its size follows the graphics card&apos;s memory.
               </span>
             </div>
             <div className={styles.settingRight}>
@@ -1001,76 +987,41 @@ export function AppearanceTab(): JSX.Element {
 
 
 /**
- * The preview cache's size, its budget, and the two ways to empty it.
+ * The preview cache: what the engine holds, and the way to empty it.
  *
- * TWO purges, not one, and the distinction is not cosmetic. Emptying memory
- * costs a re-promotion from disk — seconds, and only for what is on screen.
- * Emptying disk throws away every rendered frame the machine holds, including
- * the parked states an undo would have come back to, and re-earning that is
- * minutes of rendering. Offering only the second (which is what "Purge Cache"
- * did) means anyone who wanted to reclaim a little memory paid the whole bill.
+ * The cache is the engine's — the frames it has drawn, kept in video memory
+ * and evicted least-recently-used at a budget it sizes from the graphics
+ * adapter. The readout is `getCacheCoverage` (polled only while this row is
+ * mounted); the button is `purgeCache { kind: 'ram' }`.
+ *
+ * No "Limit" field and no "Empty Disk": the engine has no disk tier, and
+ * although its API carries `setCacheBudget`, the engine accepts it and changes
+ * nothing. A field that set a number nobody reads would be a lie in a settings
+ * dialog, so there is none until the engine honours it.
  */
 function PreviewCacheControl(): JSX.Element {
-  const [, bump] = useState(0);
-  const gb = usePreferenceStore((s) => s.previewDiskCacheGb);
-  const setPref = usePreferenceStore((s) => s.set);
-  const disk = activeViewportDiskCache();
-  if (!disk) {
-    return <span className={styles.hint}>Unavailable in this environment.</span>;
-  }
-  const mb = disk.totalBytes / (1024 * 1024);
-  const ramMb = viewportFrameCache.totalBytesHeld / (1024 * 1024);
-  const parked = disk.retainedGenerations;
+  const cache = useSyncExternalStore(subscribeEngineCache, engineCacheSnapshot);
+  const MB = 1024 * 1024;
+  const empty = cache.ramBytes <= 0 && cache.diskBytes <= 0;
   return (
     <div className={styles.cacheControlWrap}>
       <span className={styles.cacheSizeReadout}>
-        {mb < 1 ? '< 1' : Math.round(mb)} MB disk
-        {' · '}
-        {ramMb < 1 ? '< 1' : Math.round(ramMb)} MB memory
-        {parked > 0 ? ` · ${parked} parked state${parked === 1 ? '' : 's'}` : ''}
+        {formatCacheMb(cache.ramBytes / MB)} video memory
+        {cache.diskBytes > 0 ? ` · ${formatCacheMb(cache.diskBytes / MB)} disk` : ''}
       </span>
-      <label className={styles.cacheBudgetLabel}>
-        <span>Limit</span>
-        <input
-          type="number"
-          className={styles.cacheBudgetInput}
-          min={PREVIEW_DISK_MIN_GB}
-          max={PREVIEW_DISK_MAX_GB}
-          step={0.5}
-          value={gb}
-          onChange={(e) => {
-            const v = Number.parseFloat(e.currentTarget.value);
-            if (Number.isFinite(v)) setPref('previewDiskCacheGb', v);
-          }}
-        />
-        <span>GB</span>
-      </label>
       <Button
         variant="ghost"
         size="sm"
+        disabled={empty}
         onClick={() => {
-          // Memory only. The disk tier keeps everything, so the frames come
-          // straight back as the playhead reaches them.
-          viewportFrameCache.clear();
+          // The frame cache only (`ram`), never `all`: that kind also names the
+          // undo history. Frames are drawn again as the playhead reaches them;
+          // the readout follows on its next poll.
           void engine().execute({ type: 'purgeCache', kind: 'ram' });
-          bump((n) => n + 1);
         }}
       >
         <Icon name="trash" size="sm" />
-        <span>Empty Memory</span>
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => {
-          void disk.purge().then(() => {
-            viewportFrameCache.clear();
-            bump((n) => n + 1);
-          });
-        }}
-      >
-        <Icon name="trash" size="sm" />
-        <span>Empty Disk</span>
+        <span>Empty Cache</span>
       </Button>
     </div>
   );

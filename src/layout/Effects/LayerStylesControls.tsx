@@ -39,7 +39,7 @@ import { useActiveWorkspace, resolveGlobalLight } from '@stores/projectStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useActiveMirrorComp, useMirrorTrackWatch, useMirrorTreeGroups } from '@hooks/useMirror';
 import { isTrackAnimated, readTrack, trackRef, valueNumbersAt } from '@core/mirror/selection';
-import { Color } from '@motion/renderer';
+import { Color } from '@core/paint/color';
 import { effectPropPath, resolveChannelColor } from '@core/inspector/effectCatalog';
 import { glassPropPath, type GlassParam } from '@core/effects/glassResolve';
 import { mirrorLayerStyles } from '@core/mirror/layerFacts';

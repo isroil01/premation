@@ -14,7 +14,7 @@
  *
  * Resolution, plus the one ASSEMBLY that composes it (`nodeRestMesh`). No
  * solving. The coverage mask is cached by asset identity inside
- * `imageAlphaCoverage` and the mesh by node identity inside `getCachedRestMesh`;
+ * `./imageAlphaCoverage` and the mesh by node identity inside `getCachedRestMesh`;
  * neither cache is owned here.
  *
  * `lookupAsset` stays INJECTED throughout, so this module never reaches for a
@@ -27,10 +27,13 @@ import type { SceneKind } from '@core/scene/seedDefaultScene';
 import { assetUrl } from '@core/api/client';
 import { readNodeSequence, sequenceSrcAt } from '@core/scene/imageSequence';
 import { svgLayerSrc } from '@core/svg/svgLayer';
-import { getImageCoverageMask } from '@core/rendering/imageAlphaCoverage';
+import { getImageCoverageMask } from './imageAlphaCoverage';
 import { resolveMediaSrc, type ProxyRecord, type ProxyTier } from '@core/assets/proxy';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { rasterPadding } from '@core/rendering/raster/vectorDraw';
+import { paintReach } from '@core/paint/paintRaster';
+import type { PaintConfig } from '@core/paint/paintStrokes';
+import type { Stroke } from '@core/paint/stroke';
+import { isIdentityWave } from '@core/scene/strokeProfile';
 import { readNodePuppet, getCachedRestMesh, silhouetteFromPathPoints, resolvePuppetSilhouette } from './puppet';
 import { readNodeSkeleton } from './skeletonCommands';
 import type { PuppetCoverageMask, PuppetRig, PuppetSilhouette } from './puppet';
@@ -162,6 +165,41 @@ export function rigCoverageMask(
   return getImageCoverageMask(assetId ?? src, src);
 }
 
+/** Ceiling on the pad, in px per side (the raster's own cap). */
+const MAX_RIG_PAD = 512;
+
+/**
+ * How far the layer's DRAWN pixels reach past its box, in px per side — the pad
+ * the rest mesh is grown by, so the lattice covers a stroke's band and a paint
+ * stroke's brush rather than only the geometric box.
+ *
+ * This is the rule the rest mesh has always been built with (what the raster's
+ * padding answered for the inputs `nodeRestMesh` gave it): only an
+ * ELLIPSE-primitive shape is padded — by its widest non-inside stroke band (an
+ * outside stroke is built at double width) plus that stroke's wave amount, or
+ * by its paint strokes' reach when that is larger. Every other layer meshes its
+ * own box.
+ */
+export function rigMeshPad(
+  ellipse: boolean,
+  paints: { stroke?: Stroke; strokes?: ReadonlyArray<Stroke>; paint?: PaintConfig | null },
+): number {
+  if (!ellipse) return 0;
+  const strokes = paints.strokes && paints.strokes.length > 0 ? paints.strokes : paints.stroke ? [paints.stroke] : [];
+  let pad = 0;
+  for (const s of strokes) {
+    if (!s || s.width <= 0) continue;
+    // Inside is clipped to the fill, so nothing it draws (wave included) escapes.
+    if (s.align === 'inside') continue;
+    const band = s.align === 'outside' ? s.width * 2 : s.width;
+    const waveReach = isIdentityWave(s.wave) ? 0 : Math.abs(s.wave!.amount);
+    if (band + waveReach > pad) pad = band + waveReach;
+  }
+  const paintPad = paintReach(paints.paint);
+  if (paintPad > pad) pad = paintPad;
+  return pad > 0 ? Math.min(MAX_RIG_PAD, Math.ceil(pad + 1)) : 0;
+}
+
 /**
  * The REST MESH for a node's rig, assembled from the inputs above.
  *
@@ -242,14 +280,13 @@ export function nodeRestMesh(
     geom.height,
     meshRig.meshMode,
   );
-  // `rasterPadding` reads the paint/stroke shape the rasterizer pads for, so the
-  // mesh covers the drawn pixels rather than the geometric box.
-  const pad = rasterPadding({
-    kind: geom.ellipse ? 'shape' : 'rect',
-    stroke: node.components.find((c) => c.type === 'Stroke')?.props.stroke,
-    strokes: node.components.find((c) => c.type === 'Strokes')?.props.strokes,
-    paint: node.components.find((c) => c.type === 'Paint')?.props.paint,
-  } as never);
+  // The stroke / paint reach the layer's raster is padded by, so the mesh covers
+  // the drawn pixels rather than the geometric box.
+  const pad = rigMeshPad(geom.ellipse, {
+    stroke: node.components.find((c) => c.type === 'Stroke')?.props.stroke as Stroke | undefined,
+    strokes: node.components.find((c) => c.type === 'Strokes')?.props.strokes as Stroke[] | undefined,
+    paint: node.components.find((c) => c.type === 'Paint')?.props.paint as PaintConfig | undefined,
+  });
 
   return getCachedRestMesh(node.id, geom.width, geom.height, pad, meshRig, silhouette, coverage);
 }

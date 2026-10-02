@@ -68,8 +68,7 @@ export function sourceTextAt(m: DocumentMirror, id: string, seconds: number): st
 
 /**
  * Whether the layer is a text layer with something to outline (Create Shapes /
- * Masks from Text): `canCreateShapesFromText`'s mirror twin — its Source Text
- * is not blank.
+ * Masks from Text), read from the mirror — its Source Text is not blank.
  */
 export function canOutlineText(m: DocumentMirror, id: string): boolean {
   if (uiKindOf(m.layer(id)) !== 'text') return false;

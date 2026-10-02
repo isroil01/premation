@@ -38,7 +38,6 @@ import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { layerSpaceAt } from '@core/scene/layerSpace';
-import { defaultWarpPoints } from './bezierWarp';
 import {
   EFFECT_HANDLES,
   collectEffectHandles,
@@ -116,21 +115,6 @@ describe('collecting handles', () => {
     expect(collectEffectHandles('blur', { amount: 5 }, 100, 100)).toEqual([]);
     expect(hasEffectHandles('blur')).toBe(false);
     expect(hasEffectHandles('bezier-warp')).toBe(true);
-  });
-
-  /**
-   * The §2·0 guard on the registry. A handle table that disagrees with the
-   * effect's own rest geometry draws the user a patch different from the one
-   * that renders — and nothing else in the system would notice, because both
-   * halves are internally consistent.
-   */
-  it('bezier-warp rests EXACTLY where defaultWarpPoints puts them', () => {
-    const w = 240, h = 160;
-    const pts = defaultWarpPoints(w, h);
-    const handles = collectEffectHandles('bezier-warp', {}, w, h);
-    expect(handles).toHaveLength(12);
-    expect(handles.map((x) => [r6(x.pos.x), r6(x.pos.y)]))
-      .toEqual(pts.map((p) => [r6(p.x), r6(p.y)]));
   });
 
   it('corner-pin rests on the untransformed rectangle, in the effect’s order', () => {

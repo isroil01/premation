@@ -5,9 +5,10 @@
  * field writes straight through the scene graph via the template store, so the
  * design and animation stay locked and only the data changes.
  *
- * Gallery cards animate continuously through the shared preview controller (one
- * capped rAF loop, off-screen cards paused), rendering the REAL snapshot so a
- * card shows exactly what applying/inserting produces.
+ * Gallery cards go through the shared preview controller: each shows the
+ * ENGINE's still of the real scene (off-screen cards ask for nothing) and plays
+ * its animation while hovered or focused, so a card shows exactly what
+ * applying/inserting produces.
  */
 
 import { useEffect, useMemo, useRef, type ChangeEvent } from 'react';
@@ -24,8 +25,8 @@ import { liveComps } from '@core/mirror/compNames';
 import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { TEMPLATES } from '@core/template/registry';
-import { templateThumbnail, createTemplatePlayer } from '@core/template/templatePreview';
-import { ANIM_PRESETS, insertAnimPreset, animPresetThumbnail, createAnimPresetPlayer, type AnimPreset } from '@core/template/animPresets';
+import { createTemplatePlayer } from '@core/template/templatePreview';
+import { ANIM_PRESETS, insertAnimPreset, createAnimPresetPlayer, type AnimPreset } from '@core/template/animPresets';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import type { TemplateDefinition, TemplateField } from '@core/template/templateTypes';
 import { publishCurrentTemplate } from '@core/automation/publishTemplate';
@@ -100,10 +101,9 @@ function TemplateGallery(): JSX.Element {
   );
 }
 
-/** A drop-in animated element — full-bleed live preview that loops; click to add
- *  at centre / drag to place at the drop point. */
+/** A drop-in animated element — full-bleed preview (the engine's still; it plays
+ *  on hover); click to add at centre / drag to place at the drop point. */
 function AnimPresetCard({ preset }: { preset: AnimPreset }): JSX.Element {
-  const poster = useMemo(() => animPresetThumbnail(preset), [preset]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -124,7 +124,6 @@ function AnimPresetCard({ preset }: { preset: AnimPreset }): JSX.Element {
       onClick={() => { void insertBuiltLayers(`Insert ${preset.name}`, activeCompIdNow() ?? 'comp_root', () => insertAnimPreset(preset.id)); }}
     >
       <span className={styles.previewFrame} data-aspect="16:9">
-        {poster && <img className={styles.poster} src={poster} alt="" aria-hidden />}
         <canvas ref={canvasRef} className={styles.previewCanvas} aria-hidden />
         <span className={styles.addBadge} aria-hidden><Icon name="plus" size="sm" /></span>
       </span>
@@ -133,9 +132,8 @@ function AnimPresetCard({ preset }: { preset: AnimPreset }): JSX.Element {
   );
 }
 
-/** One scene-template card — full-bleed looping preview of the real scene. */
+/** One scene-template card — full-bleed preview of the real scene (plays on hover). */
 function TemplateCard({ template, onPick }: { template: TemplateDefinition; onPick: () => void }): JSX.Element {
-  const poster = useMemo(() => templateThumbnail(template), [template]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -148,7 +146,6 @@ function TemplateCard({ template, onPick }: { template: TemplateDefinition; onPi
   return (
     <button type="button" className={styles.card} title={template.name} onClick={onPick}>
       <span className={styles.previewFrame} data-aspect={template.aspect}>
-        {poster && <img className={styles.poster} src={poster} alt="" aria-hidden />}
         <canvas ref={canvasRef} className={styles.previewCanvas} aria-hidden />
       </span>
       <span className={styles.cardMeta}>

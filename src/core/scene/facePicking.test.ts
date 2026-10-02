@@ -1,127 +1,123 @@
 /**
- * Face picking — the geometry, not the wiring.
+ * Face picking — the view half: the engine's world faces (`getLayerFaces`)
+ * projected, culled, picked and grouped.
  *
- * These use an explicit projector so a failure means the picking maths is wrong,
- * not that a camera moved.
+ * These use an explicit projector and hand-built world faces, so a failure
+ * means the picking maths is wrong, not that a camera or the engine's mesh
+ * moved. The geometry itself (which faces an extruded layer has) is the
+ * engine's and is pinned on the real binary in
+ * core/engine/__tests__/facesMergeNative.test.ts.
  *
- * Two paths are under test. The MESH path is what the renderer draws (glyphs,
- * path shapes, rounded rects); jsdom has no canvas, so text tracing is mocked
- * to a square "glyph" inside a wider layer box. The QUAD fallback is what both
- * the renderer and the picker use when no outline can be produced; it is
- * reached here through the same seam the render tests use.
+ * Two face shapes are under test: the flat QUADS of the engine's fallback, and
+ * the mesh TRIANGLES (with vertex indices) of its extrusion mesh.
  */
 
-import { projectedFaces, pickFace, faceHighlightGroups } from './facePicking';
-import { setExtrusionMeshPath, clearExtrusionMeshCaches } from './extrusionMesh';
-import { Matrix4Math } from '@motion/scene';
-import type { SceneNode } from '@core/types';
+import { projectWorldFaces, pickFace, faceHighlightGroups, isPickableFace, type WorldFace } from './facePicking';
+import type { FaceKind } from './faceMaterials';
 
-const textPaintSpecFromNode = jest.fn();
-const traceTextSpec = jest.fn();
-jest.mock('@core/scene/shapesFromText', () => ({
-  textPaintSpecFromNode: (node: unknown) => textPaintSpecFromNode(node),
-  traceTextSpec: (spec: unknown) => traceTextSpec(spec),
-}));
+interface P3 { x: number; y: number; z: number }
 
 /** Orthographic-down-the-z-axis projector: screen == x/y, depth == z. */
-const ortho = (p: { x: number; y: number; z: number }) => ({ x: p.x, y: p.y, depth: p.z });
+const ortho = (p: P3) => ({ x: p.x, y: p.y, depth: p.z });
 
-function node(props: Record<string, unknown>, extra: Array<{ id: string; type: string; props: Record<string, unknown> }> = []): SceneNode {
-  return {
-    id: 'n1',
-    name: 'n',
-    parent: null,
-    children: [],
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [{ id: 'tr', type: 'Transform', props }, ...extra],
-  } as unknown as SceneNode;
+/** Rotate about the Y axis (through the origin). */
+const rotY = (a: number) => (p: P3): P3 => ({
+  x: p.x * Math.cos(a) + p.z * Math.sin(a),
+  y: p.y,
+  z: -p.x * Math.sin(a) + p.z * Math.cos(a),
+});
+const IDENTITY = (p: P3): P3 => p;
+/** 90° about Y: a side wall faces the camera, the caps go edge-on. */
+const TURNED_Y = rotY(Math.PI / 2);
+/** ~35° about Y: the front cap AND a side wall are both in view. */
+const TILTED_Y = rotY(0.6);
+/** 180° about Y: the back cap faces the camera. */
+const FLIPPED_Y = rotY(Math.PI);
+
+/** The 8 corners of a w×h box extruded `d` away from the camera (front at z 0). */
+function corners(w: number, h: number, d: number): P3[] {
+  const hw = w / 2, hh = h / 2;
+  return [
+    { x: -hw, y: -hh, z: 0 }, { x: hw, y: -hh, z: 0 }, { x: hw, y: hh, z: 0 }, { x: -hw, y: hh, z: 0 },
+    { x: -hw, y: -hh, z: d }, { x: hw, y: -hh, z: d }, { x: hw, y: hh, z: d }, { x: -hw, y: hh, z: d },
+  ];
 }
 
-const IDENTITY = Matrix4Math.compose({
-  position: { x: 0, y: 0, z: 0 },
-  rotation: { x: 0, y: 0, z: 0 },
-  scale: { x: 1, y: 1, z: 1 },
-  anchor: { x: 0, y: 0, z: 0 },
-});
-
-/** 90° about Y: the right-hand wall faces the camera, the caps go edge-on. */
-const TURNED_Y = Matrix4Math.compose({
-  position: { x: 0, y: 0, z: 0 },
-  rotation: { x: 0, y: Math.PI / 2, z: 0 },
-  scale: { x: 1, y: 1, z: 1 },
-  anchor: { x: 0, y: 0, z: 0 },
-});
-
-/** ~35° about Y: the front cap AND the right-hand wall are both in view. */
-const TILTED_Y = Matrix4Math.compose({
-  position: { x: 0, y: 0, z: 0 },
-  rotation: { x: 0, y: 0.6, z: 0 },
-  scale: { x: 1, y: 1, z: 1 },
-  anchor: { x: 0, y: 0, z: 0 },
-});
-
-/** A 20×20 square "glyph" centred in whatever box the text layer measures. */
-const square = [
-  { x: -10, y: -10, inX: -10, inY: -10, outX: -10, outY: -10 },
-  { x: 10, y: -10, inX: 10, inY: -10, outX: 10, outY: -10 },
-  { x: 10, y: 10, inX: 10, inY: 10, outX: 10, outY: 10 },
-  { x: -10, y: 10, inX: -10, inY: 10, outX: -10, outY: 10 },
+/** Each face of the box: its kind, its suffix, its corner indices, its outward normal. */
+const BOX_FACES: Array<{ kind: FaceKind; suffix: string; idx: [number, number, number, number]; n: P3 }> = [
+  { kind: 'front', suffix: 'front', idx: [0, 1, 2, 3], n: { x: 0, y: 0, z: -1 } },
+  { kind: 'back', suffix: 'back', idx: [4, 5, 6, 7], n: { x: 0, y: 0, z: 1 } },
+  { kind: 'side', suffix: 't', idx: [0, 1, 5, 4], n: { x: 0, y: -1, z: 0 } },
+  { kind: 'side', suffix: 'r', idx: [1, 2, 6, 5], n: { x: 1, y: 0, z: 0 } },
+  { kind: 'side', suffix: 'b', idx: [2, 3, 7, 6], n: { x: 0, y: 1, z: 0 } },
+  { kind: 'side', suffix: 'l', idx: [3, 0, 4, 7], n: { x: -1, y: 0, z: 0 } },
 ];
 
-beforeEach(() => {
-  clearExtrusionMeshCaches();
-  setExtrusionMeshPath(true);
-  textPaintSpecFromNode.mockReset();
-  traceTextSpec.mockReset();
-  textPaintSpecFromNode.mockReturnValue(null);
-  traceTextSpec.mockReturnValue(null);
-});
+/** The box as the engine's flat-quad fallback answers it. */
+function quadBox(w: number, h: number, d: number, world: (p: P3) => P3 = IDENTITY): WorldFace[] {
+  const c = corners(w, h, d).map(world);
+  return BOX_FACES.map((f) => ({ kind: f.kind, suffix: f.suffix, points: f.idx.map((i) => c[i]!) }));
+}
 
-afterAll(() => setExtrusionMeshPath(true));
+/**
+ * The box as the engine's extrusion mesh answers it: two triangles per face,
+ * each wound to agree with its outward normal, the suffix the face's kind.
+ */
+function meshBox(w: number, h: number, d: number, world: (p: P3) => P3 = IDENTITY): WorldFace[] {
+  const rest = corners(w, h, d);
+  const c = rest.map(world);
+  const out: WorldFace[] = [];
+  for (const f of BOX_FACES) {
+    const tris: Array<[number, number, number]> = [[f.idx[0], f.idx[1], f.idx[2]], [f.idx[0], f.idx[2], f.idx[3]]];
+    for (const t of tris) {
+      const [a, b, cc] = [rest[t[0]]!, rest[t[1]]!, rest[t[2]]!];
+      const u = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+      const v = { x: cc.x - a.x, y: cc.y - a.y, z: cc.z - a.z };
+      const dot = (u.y * v.z - u.z * v.y) * f.n.x + (u.z * v.x - u.x * v.z) * f.n.y + (u.x * v.y - u.y * v.x) * f.n.z;
+      const verts: [number, number, number] = dot >= 0 ? t : [t[0], t[2], t[1]];
+      out.push({ kind: f.kind, suffix: f.kind, points: verts.map((i) => c[i]!), verts });
+    }
+  }
+  return out;
+}
 
-describe('projectedFaces — quad fallback (no outline available)', () => {
-  beforeEach(() => setExtrusionMeshPath(false));
-
-  it('returns nothing for an unextruded layer (it is just the plane)', () => {
-    expect(projectedFaces(node({ extrusionDepth: 0 }), IDENTITY, 100, 100, ortho)).toEqual([]);
+describe('projectWorldFaces — the quad fallback', () => {
+  it('projects nothing from nothing', () => {
+    expect(projectWorldFaces([], ortho)).toEqual([]);
   });
 
-  it('emits a front cap, a back cap and four walls for a plain box', () => {
-    const faces = projectedFaces(node({ extrusionDepth: 50 }), IDENTITY, 100, 80, ortho);
+  it('keeps every quad, with no vertex indices', () => {
+    const faces = projectWorldFaces(quadBox(100, 80, 50), ortho);
     const kinds = faces.map((f) => f.kind);
     expect(kinds.filter((k) => k === 'front')).toHaveLength(1);
     expect(kinds.filter((k) => k === 'back')).toHaveLength(1);
     expect(kinds.filter((k) => k === 'side')).toHaveLength(4);
-    expect(kinds).not.toContain('bevel');
-    expect(faces.every((f) => f.verts === undefined)).toBe(true);
-  });
-
-  it('classifies chamfer rings as bevel, not side', () => {
-    const faces = projectedFaces(node({ extrusionDepth: 60, bevelDepth: 10 }), IDENTITY, 100, 100, ortho);
-    expect(faces.filter((f) => f.kind === 'bevel').length).toBeGreaterThan(0);
-    // Bevels must not be miscounted as walls — that is what makes the two
-    // material rows address different geometry.
-    expect(faces.filter((f) => f.kind === 'side').length).toBe(4);
+    expect(faces.every((f) => f.verts === undefined && f.quad.length === 4)).toBe(true);
   });
 
   it('puts the back cap further from the camera than the front', () => {
-    const faces = projectedFaces(node({ extrusionDepth: 50 }), IDENTITY, 100, 100, ortho);
+    const faces = projectWorldFaces(quadBox(100, 100, 50), ortho);
     const front = faces.find((f) => f.kind === 'front')!;
     const back = faces.find((f) => f.kind === 'back')!;
     expect(back.depth).toBeGreaterThan(front.depth);
   });
 
-  it('insets the front cap by the bevel, exactly as the renderer draws it', () => {
-    const bevelled = projectedFaces(node({ extrusionDepth: 60, bevelDepth: 10 }), IDENTITY, 100, 100, ortho)
-      .find((f) => f.kind === 'front')!;
-    const xs = bevelled.quad.map((p) => p.x);
-    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(80, 5);
+  it('measures the projected area, so an edge-on face reads as ~0', () => {
+    const faces = projectWorldFaces(quadBox(100, 80, 50), ortho);
+    expect(faces.find((f) => f.kind === 'front')!.area).toBeCloseTo(8000, 5);
+    // Looking straight down z every wall is edge-on.
+    expect(faces.filter((f) => f.kind === 'side').every((f) => f.area < 1e-6 && !isPickableFace(f))).toBe(true);
+  });
+
+  it('drops a face with a point the projector clipped', () => {
+    const clipBehind = (p: P3) => ({ x: p.x, y: p.y, depth: p.z, clipped: p.z > 10 });
+    const faces = projectWorldFaces(quadBox(100, 100, 50), clipBehind);
+    expect(faces.map((f) => f.kind)).toEqual(['front']);
   });
 });
 
 describe('pickFace — quad fallback', () => {
-  beforeEach(() => setExtrusionMeshPath(false));
-  const faces = () => projectedFaces(node({ extrusionDepth: 50 }), IDENTITY, 100, 100, ortho);
+  const faces = () => projectWorldFaces(quadBox(100, 100, 50), ortho);
 
   it('picks the front face at the centre — it is nearest the camera', () => {
     expect(pickFace(faces(), { x: 0, y: 0 })!.kind).toBe('front');
@@ -139,134 +135,85 @@ describe('pickFace — quad fallback', () => {
   });
 
   it('picks a side wall when the object is turned so a wall faces the camera', () => {
-    const f = projectedFaces(node({ extrusionDepth: 50 }), TURNED_Y, 100, 100, ortho);
-    expect(pickFace(f, { x: 0, y: 0 })!.kind).toBe('side');
+    const f = projectWorldFaces(quadBox(100, 100, 50, TURNED_Y), ortho);
+    expect(pickFace(f, { x: 10, y: 0 })!.kind).toBe('side');
   });
 
   it('ignores an edge-on face even though it sits at the nearest depth', () => {
-    // Turned 90°, the front cap collapses to a line THROUGH the origin at z = 0
-    // — nearer than the wall the user is actually looking at. Nearest-wins alone
-    // would hand it every click.
-    const f = projectedFaces(node({ extrusionDepth: 50 }), TURNED_Y, 100, 100, ortho);
+    // Turned 90°, the caps collapse to lines; one of them is nearer than part of
+    // the wall the user is actually looking at. Nearest-wins alone would hand it
+    // the click.
+    const f = projectWorldFaces(quadBox(100, 100, 50, TURNED_Y), ortho);
     const front = f.find((x) => x.kind === 'front')!;
     expect(front.area).toBeLessThan(1);
-    expect(front.depth).toBeLessThan(pickFace(f, { x: 0, y: 0 })!.depth);
+    expect(pickFace(f, { x: 0, y: 0 })?.kind).not.toBe('front');
   });
 
   it('carries the renderer face suffix, so a highlight can name the exact quad', () => {
     const picked = pickFace(faces(), { x: 0, y: 0 })!;
-    expect(typeof picked.suffix).toBe('string');
-    expect(picked.suffix.length).toBeGreaterThan(0);
+    expect(picked.suffix).toBe('front');
   });
 });
 
-describe('projectedFaces — mesh path (what the renderer draws)', () => {
-  it('routes a plain rect through the mesh: triangles per kind, back faces culled', () => {
-    const faces = projectedFaces(node({ extrusionDepth: 50 }), IDENTITY, 100, 80, ortho);
+describe('projectWorldFaces — mesh triangles (what the engine draws)', () => {
+  it('culls the faces turned away: front cap in, back cap out', () => {
+    const faces = projectWorldFaces(meshBox(100, 80, 50), ortho);
     expect(faces.length).toBeGreaterThan(0);
     expect(faces.every((f) => f.verts !== undefined && f.quad.length === 3)).toBe(true);
-    // Looking straight down z: the front cap faces us, the back cap is culled.
     expect(faces.some((f) => f.kind === 'front')).toBe(true);
     expect(faces.some((f) => f.kind === 'back')).toBe(false);
-    // The suffix of a mesh face is its kind, so every triangle of a surface
-    // highlights together.
-    expect(faces.every((f) => f.suffix === f.kind)).toBe(true);
+    // Areas come back unsigned, whatever the winding was.
+    expect(faces.every((f) => f.area >= 0)).toBe(true);
   });
 
   it('picks the front cap at the centre, and nothing outside the box', () => {
-    const faces = projectedFaces(node({ extrusionDepth: 50 }), IDENTITY, 100, 80, ortho);
+    const faces = projectWorldFaces(meshBox(100, 80, 50), ortho);
     expect(pickFace(faces, { x: 0, y: 0 })!.kind).toBe('front');
     expect(pickFace(faces, { x: 500, y: 500 })).toBeNull();
   });
 
   it('shows the back cap, not the front, when the object is turned around', () => {
-    const flipped = Matrix4Math.compose({
-      position: { x: 0, y: 0, z: 0 },
-      rotation: { x: 0, y: Math.PI, z: 0 },
-      scale: { x: 1, y: 1, z: 1 },
-      anchor: { x: 0, y: 0, z: 0 },
-    });
-    const faces = projectedFaces(node({ extrusionDepth: 50 }), flipped, 100, 80, ortho);
+    const faces = projectWorldFaces(meshBox(100, 80, 50, FLIPPED_Y), ortho);
     expect(pickFace(faces, { x: 0, y: 0 })!.kind).toBe('back');
     expect(faces.some((f) => f.kind === 'front')).toBe(false);
   });
 
+  it('the cull does not depend on the projector\'s handedness', () => {
+    const mirrored = (p: P3) => ({ x: -p.x, y: p.y, depth: p.z });
+    const faces = projectWorldFaces(meshBox(100, 80, 50), mirrored);
+    expect(faces.some((f) => f.kind === 'front')).toBe(true);
+    expect(faces.some((f) => f.kind === 'back')).toBe(false);
+  });
+
   it('picks a wall when the box is turned so a wall faces the camera', () => {
-    const faces = projectedFaces(node({ extrusionDepth: 50 }), TURNED_Y, 100, 100, ortho);
-    expect(pickFace(faces, { x: 0, y: 0 })!.kind).toBe('side');
+    const faces = projectWorldFaces(meshBox(100, 100, 50, TURNED_Y), ortho);
+    expect(pickFace(faces, { x: 10, y: 0 })!.kind).toBe('side');
   });
 
-  it('classifies bevel triangles as bevel and insets the front cap by the mesh bevel', () => {
-    const faces = projectedFaces(node({ extrusionDepth: 60, bevelDepth: 10 }), IDENTITY, 100, 100, ortho);
-    expect(faces.some((f) => f.kind === 'bevel')).toBe(true);
-    // Just inside the outer edge is chamfer, the centre is the cap.
+  it('tilted: the cap where the cap is, the wall where the wall is, nothing beside them', () => {
+    const faces = projectWorldFaces(meshBox(20, 20, 40, TILTED_Y), ortho);
     expect(pickFace(faces, { x: 0, y: 0 })!.kind).toBe('front');
-    expect(pickFace(faces, { x: 45, y: 0 })!.kind).toBe('bevel');
+    // Tilted 0.6 rad about Y, the right wall (x = 10, z ∈ [0, 40]) sweeps
+    // screen x from 10·cos to 10·cos + 40·sin ≈ 8.3 … 30.8.
+    expect(pickFace(faces, { x: 20, y: 0 })!.kind).toBe('side');
+    // The left wall faces away (culled), so just left of the cap is empty.
+    expect(pickFace(faces, { x: -9, y: 0 })).toBeNull();
+    expect(pickFace(faces, { x: 70, y: 0 })).toBeNull();
+    expect(pickFace(faces, { x: 0, y: 30 })).toBeNull();
   });
 
-  it('outlines an ellipse as a ring, so a click in the corner of its box misses', () => {
-    const faces = projectedFaces(node({ extrusionDepth: 40 }), IDENTITY, 100, 100, ortho, true);
-    expect(pickFace(faces, { x: 0, y: 0 })!.kind).toBe('front');
-    expect(pickFace(faces, { x: 47, y: 47 })).toBeNull();
-  });
-
-  it('uses a path shape\'s own outline rather than its bounding box', () => {
-    // A triangle filling the lower-left half of a 100×100 box.
-    const tri = [
-      { x: -50, y: -50, inX: -50, inY: -50, outX: -50, outY: -50 },
-      { x: -50, y: 50, inX: -50, inY: 50, outX: -50, outY: 50 },
-      { x: 50, y: 50, inX: 50, inY: 50, outX: 50, outY: 50 },
-    ];
-    const n = node({ extrusionDepth: 40 }, [{ id: 'g', type: 'Geometry', props: { points: tri } }]);
-    const faces = projectedFaces(n, IDENTITY, 100, 100, ortho);
-    expect(pickFace(faces, { x: -30, y: 30 })!.kind).toBe('front');
-    // Inside the box, outside the triangle: nothing is drawn there.
-    expect(pickFace(faces, { x: 30, y: -30 })).toBeNull();
-  });
-
-  describe('text', () => {
-    const textNode = () => node({ extrusionDepth: 40 }, [{ id: 'k', type: 'Text', props: { __kind: 'text' } }]);
-    beforeEach(() => {
-      textPaintSpecFromNode.mockReturnValue({ text: 'I', fontSize: 48, color: '#ffffff', width: 200, height: 80 });
-      traceTextSpec.mockReturnValue([{ points: square, open: false }]);
-    });
-
-    it('outlines the glyph in the measured text box the renderer extrudes', () => {
-      projectedFaces(textNode(), IDENTITY, 200, 80, ortho);
-      expect(textPaintSpecFromNode).toHaveBeenCalledTimes(1);
-      expect(traceTextSpec).toHaveBeenCalledTimes(1);
-      expect(traceTextSpec.mock.calls[0]![0]).toMatchObject({ text: 'I', width: 200, height: 80 });
-    });
-
-    it('picks the glyph wall where it is drawn, and nothing in the box beside the glyph', () => {
-      const faces = projectedFaces(textNode(), TILTED_Y, 200, 80, ortho);
-      // Straight ahead: the glyph's front cap.
-      expect(pickFace(faces, { x: 0, y: 0 })!.kind).toBe('front');
-      // Tilted 0.6 rad about Y, the glyph's right wall (x = 10, z ∈ [0, 40])
-      // sweeps screen x from 10·cos to 10·cos + 40·sin ≈ 8.3 … 30.8.
-      const wall = pickFace(faces, { x: 20, y: 0 });
-      expect(wall).not.toBeNull();
-      expect(wall!.kind).toBe('side');
-      // Well inside the 200×80 layer box, but no glyph there: the old rect
-      // faces would have answered 'front' here.
-      expect(pickFace(faces, { x: 70, y: 0 })).toBeNull();
-      expect(pickFace(faces, { x: 0, y: 30 })).toBeNull();
-    });
-
-    it('falls back to the box faces when the text cannot be traced (headless)', () => {
-      traceTextSpec.mockReturnValue(null);
-      const faces = projectedFaces(textNode(), IDENTITY, 200, 80, ortho);
-      expect(faces.length).toBeGreaterThan(0);
-      expect(faces.every((f) => f.verts === undefined)).toBe(true);
-      expect(pickFace(faces, { x: 70, y: 0 })!.kind).toBe('front');
-    });
+  it('keeps quads unculled when they ride with triangles', () => {
+    // A mixed answer never happens for one layer, but the cull must only ever
+    // apply to faces that carry a winding (triangles).
+    const mixed: WorldFace[] = [...meshBox(100, 80, 50), { kind: 'back', suffix: 'q', points: corners(100, 80, 50).slice(4) }];
+    const faces = projectWorldFaces(mixed, ortho);
+    expect(faces.some((f) => f.suffix === 'q')).toBe(true);
   });
 });
 
 describe('faceHighlightGroups', () => {
   it('keeps every quad-fallback face as its own surface with its four edges', () => {
-    setExtrusionMeshPath(false);
-    const faces = projectedFaces(node({ extrusionDepth: 50 }), TILTED_Y, 100, 100, ortho);
+    const faces = projectWorldFaces(quadBox(100, 100, 50, TILTED_Y), ortho);
     const groups = faceHighlightGroups(faces);
     const visible = faces.filter((f) => f.area >= 4);
     expect(groups).toHaveLength(visible.length);
@@ -274,12 +221,19 @@ describe('faceHighlightGroups', () => {
   });
 
   it('merges every triangle of a mesh kind into one surface outlined by its boundary', () => {
-    const faces = projectedFaces(node({ extrusionDepth: 50 }), IDENTITY, 100, 80, ortho);
+    const faces = projectWorldFaces(meshBox(100, 80, 50), ortho);
     const groups = faceHighlightGroups(faces);
     const front = groups.find((g) => g.kind === 'front')!;
-    expect(front.polygons.length).toBeGreaterThanOrEqual(2);
+    expect(front.polygons).toHaveLength(2);
     // The cap's boundary is the rectangle: four edges, however it triangulates.
     expect(front.outline).toHaveLength(4);
     expect(groups.filter((g) => g.kind === 'front')).toHaveLength(1);
+  });
+
+  it('reports the mean depth of a surface, so far surfaces paint first', () => {
+    const faces = projectWorldFaces(quadBox(100, 100, 50), ortho);
+    const groups = faceHighlightGroups(faces);
+    expect(groups.find((g) => g.kind === 'front')!.depth).toBeCloseTo(0, 6);
+    expect(groups.find((g) => g.kind === 'back')!.depth).toBeCloseTo(50, 6);
   });
 });

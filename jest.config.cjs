@@ -44,7 +44,6 @@ module.exports = {
     // Path aliases — keep in sync with tsconfig.json "paths".
     '^@motion/scene$': '<rootDir>/packages/scene/src/index.ts',
     '^@motion/animation$': '<rootDir>/packages/animation/src/index.ts',
-    '^@motion/renderer$': '<rootDir>/packages/renderer/src/index.ts',
     '^@motion/workspace$': '<rootDir>/packages/workspace/src/index.ts',
     '^@motion/timeline$': '<rootDir>/packages/timeline/src/index.ts',
     '^@motion/ai-tools$': '<rootDir>/packages/ai-tools/src/index.ts',

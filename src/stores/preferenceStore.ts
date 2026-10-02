@@ -73,31 +73,6 @@ export interface Preferences {
    */
   retainOriginalSvg: boolean;
   /**
-   * While the editor is idle, cache the whole WORK AREA rather than a few
-   * seconds ahead of the playhead.
-   *
-   * On by default, because it is what makes a preview real-time: After Effects
-   * fills the work area for the same reason, and a five-second look-ahead only
-   * ever helps the first press of play. The pass yields on a time budget,
-   * stands down on any interaction, and runs once per invalidation rather than
-   * continuously — but it is still real GPU work, and someone on a laptop who
-   * would rather it stayed quiet should be able to say so.
-   */
-  idleCacheWorkArea: boolean;
-  /**
-   * Disk budget for the preview frame cache, in GIGABYTES.
-   *
-   * A PREFERENCE because it is a statement about this machine, not about any
-   * project: how much of your disk you are willing to spend on not re-rendering
-   * is the same answer for every comp you open, and it is the one cache setting
-   * whose right value the app cannot guess. A laptop with 60 GB free and a
-   * workstation with 4 TB want different numbers and neither is wrong.
-   *
-   * Clamped on read (`previewDiskCacheBytes`) rather than trusted: this is
-   * persisted JSON, so it can come back as anything.
-   */
-  previewDiskCacheGb: number;
-  /**
    * Draw the thin bounding box around every layer in the 3D reference overlay.
    *
    * A PREFERENCE, not view state, and the distinction is the whole reason this
@@ -325,9 +300,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
    */
   timelineHeaderWidth: 899,
   retainOriginalSvg: true,
-  idleCacheWorkArea: true,
-  // The previous hardcoded budget, so nobody's cache changes size by upgrading.
-  previewDiskCacheGb: 4,
   showLayerBounds: true,
   deviceWireframesAll: false,
   useProxies: true,
@@ -538,21 +510,3 @@ export async function applyPreferencesToDocument(): Promise<void> {
   applyUiPreferences();
 }
 
-/**
- * The preview disk budget in BYTES, clamped to something a browser will
- * actually honour.
- *
- * Below the floor the tier cannot hold a usable span and is worse than nothing
- * (the same reasoning as `streamPlanFor`'s frame-count floor); above the
- * ceiling an IndexedDB store will hit the browser's own quota and be evicted
- * wholesale, which is a far worse experience than a smaller cache that works.
- */
-export const PREVIEW_DISK_MIN_GB = 0.5;
-export const PREVIEW_DISK_MAX_GB = 64;
-
-export function previewDiskCacheBytes(): number {
-  const gb = usePreferenceStore.getState().previewDiskCacheGb;
-  const safe = Number.isFinite(gb) ? gb : 4;
-  const clamped = Math.min(PREVIEW_DISK_MAX_GB, Math.max(PREVIEW_DISK_MIN_GB, safe));
-  return Math.round(clamped * 1024 * 1024 * 1024);
-}

@@ -2,7 +2,7 @@
  * Morph targets — the deformation stack's front half. What must not silently
  * break: the delta conversion (a blink that pushes the eyelid the WRONG way
  * after the y-flip), the weighted blend, the weights→morph0 keyframe bake,
- * and the snapshot path swapping blended vertices in under a weight-hashed
+ * and `morphedMeshFor` handing out blended vertices under a weight-hashed
  * key (so a held expression re-uploads nothing).
  */
 
@@ -11,6 +11,7 @@ import { bakeWeightTracks } from './modelAnimation';
 import {
   morphVertices,
   morphTag,
+  morphedMeshFor,
   readMorphWeights,
   clearMorphMemo,
   nodeMorphTargetCount,
@@ -25,14 +26,9 @@ import {
   modelPrimitiveFor,
   MODEL_COMPONENT,
 } from './modelMesh';
-import { buildSnapshot } from '@core/rendering/buildSnapshot';
-import SceneGraph from './SceneGraph';
-import { AnimationEngine } from '@motion/animation';
 import type { SceneNode } from '@core/types';
 import { SCENE_KIND_PROP } from './seedDefaultScene';
 import { buildMorphTriGlb } from '@/__testHelpers__/buildTestGlb';
-
-const COMP = { width: 800, height: 600, background: '#101014' };
 
 describe('glTF morph parsing', () => {
   it('reads targets, mesh weights and the weights channel', () => {
@@ -105,7 +101,7 @@ describe('morphVertices', () => {
   });
 });
 
-// ── Snapshot path ───────────────────────────────────────────────────────────
+// ── The renderer-facing blend ───────────────────────────────────────────────
 
 const meshLayer = (key: string, morph0: number | undefined): SceneNode => ({
   id: 'meshL', name: 'meshL', parent: null, children: [], visible: true, locked: false,
@@ -126,35 +122,32 @@ const meshLayer = (key: string, morph0: number | undefined): SceneNode => ({
   ],
 } as unknown as SceneNode);
 
-describe('buildSnapshot — morphed vertices', () => {
+describe('morphedMeshFor — morphed vertices', () => {
   afterEach(() => {
     clearModelRegistry();
     clearMorphMemo();
   });
 
-  const snap = (n: SceneNode) => {
-    const g = new SceneGraph();
-    g.addNode(n);
-    return buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP);
-  };
-
   it('a nonzero weight swaps in blended vertices under a weight-hashed key', () => {
     const glb = buildMorphTriGlb();
     const key = modelKeyForBytes(new Uint8Array(glb));
     registerModel(key, glb);
-    const mesh = snap(meshLayer(key, 1)).layers.find((l) => l.id.startsWith('meshL'))!.extrudedMesh!;
+    const entry = modelPrimitiveFor({ modelKey: key, mesh: 0, prim: 0 })!;
+    const mesh = morphedMeshFor(meshLayer(key, 1), entry, null)!;
     expect(mesh.key.startsWith(`${key}:m0p0:mo-`)).toBe(true);
     // Vertex 0: base (0,0,0) + 1 × delta (0,−1,0).
     expect(mesh.vertices[1]).toBeCloseTo(-1, 5);
   });
 
-  it('weight zero renders the untouched base mesh under the base key', () => {
+  it('weight zero leaves the untouched base mesh under the base key', () => {
     const glb = buildMorphTriGlb();
     const key = modelKeyForBytes(new Uint8Array(glb));
     registerModel(key, glb);
-    const mesh = snap(meshLayer(key, 0)).layers.find((l) => l.id.startsWith('meshL'))!.extrudedMesh!;
-    expect(mesh.key).toBe(`${key}:m0p0`);
-    expect(mesh.vertices[1]).toBeCloseTo(0, 5);
+    const entry = modelPrimitiveFor({ modelKey: key, mesh: 0, prim: 0 })!;
+    // Nothing morphs → null, and the caller draws the registered primitive.
+    expect(morphedMeshFor(meshLayer(key, 0), entry, null)).toBeNull();
+    expect(entry.key).toBe(`${key}:m0p0`);
+    expect(entry.vertices[1]).toBeCloseTo(0, 5);
   });
 
   it('readMorphWeights prefers the animated track over the stored prop', () => {

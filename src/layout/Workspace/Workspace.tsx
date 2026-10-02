@@ -88,7 +88,6 @@ import { useWorkspace } from './useWorkspace';
 import { TransportBar } from './TransportBar';
 import { ViewportHud } from './ViewportHud';
 import { EngineSurface } from '@components/EngineSurface/EngineSurface';
-import { useEngineViewportActive } from '@hooks/useEngineViewport';
 import { EngineUnportedNotice } from './EngineUnportedNotice';
 import { CompareOverlay } from './CompareOverlay';
 import { RotoBrushOverlay } from './RotoBrushOverlay';
@@ -317,28 +316,16 @@ export function WorkspaceViewport({
     getWorkspaceController().requestRender();
   }, [workspaceMode]);
 
-  // D5: the C++ engine's frames are the viewport (owner flag on, no fallback).
-  const engineViewport = useEngineViewportActive();
   const stageRef   = useRef<HTMLDivElement | null>(null);
   const canvasRef  = useRef<HTMLCanvasElement | null>(null);
-  // RAM-preview blit layer — see `.cacheCanvas`. Sits between the content and
-  // the interaction overlay so cached pixels replace the render, not the chrome.
-  const cacheRef   = useRef<HTMLCanvasElement | null>(null);
-  // Onion-skin ghosts — see `.onionCanvas`. Above content and cache, below the
-  // interaction overlay.
-  const onionRef   = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
-  const { focus, focusKey } = useFocusContext();
-
+  const { focusKey } = useFocusContext();
 
   const { ready, renderError } = useWorkspace({
     contentCanvasRef: canvasRef,
-    cacheCanvasRef: cacheRef,
-    onionCanvasRef: onionRef,
     overlayCanvasRef: overlayRef,
     stageRef,
     sceneRev,
-    focus,
     focusKey,
   });
 
@@ -665,12 +652,11 @@ export function WorkspaceViewport({
             ref={canvasRef}
             className={cn(styles.canvas, displayMode !== 'shaded' && styles.canvasHidden)}
           />
-          {/* D5: when the C++ engine owns the document its frames ARE the
-              picture — right after the (idle) TypeScript canvas, under the
-              cache / onion / overlay canvases and every handle below. */}
-          {engineViewport && <EngineSurface mode="viewport" />}
-          <canvas ref={cacheRef} className={styles.cacheCanvas} data-workspace-cache="" />
-          <canvas ref={onionRef} className={styles.onionCanvas} data-workspace-onion="" />
+          {/* The C++ engine's frames ARE the picture (onion skins and the
+              channel view included) — under the overlay canvas and every
+              handle below. Renders nothing where there is no engine bridge
+              (jest, a browser build). */}
+          <EngineSurface mode="viewport" />
           <canvas ref={overlayRef} className={styles.overlay} data-workspace-overlay="" />
           {/* Blank-comp start surface — After Effects' empty Composition
               panel, as a REPLACEMENT: opaque over the stage, so no comp frame
@@ -686,19 +672,18 @@ export function WorkspaceViewport({
           {sceneIsEmpty && allCompsPristine && !creationToolActive && (
             <EmptyCompositionView />
           )}
-          {/* Scene loading indicator — until the backend paints its first frame. */}
+          {/* Viewport loading indicator — until the overlay is attached and sized. */}
           {!ready && !renderError && (
             <div className={styles.loading} data-workspace-loading="">
               <div className={styles.loadingSpinner} />
             </div>
           )}
-          {/* GPU init failed on every tier — say so instead of a blank stage. */}
+          {/* The viewport canvases could not be attached — say so instead of a blank stage. */}
           {renderError && (
             <div className={styles.loading} data-workspace-render-error="">
               <div className={styles.renderError} role="alert">
                 <strong>Preview unavailable</strong>
                 <span>{renderError}</span>
-                <span>Close other GPU-heavy tabs or windows, then reopen this project.</span>
               </div>
             </div>
           )}
@@ -737,11 +722,8 @@ export function WorkspaceViewport({
           <CompareOverlay />
           {/* fps / frame ms / cache / resolution / backend, top-left. */}
           <ViewportHud />
-          {/* The C++ engine's picture, beside (not instead of) this viewport —
-              renders nothing unless the process backend is on
-              (PREMATION_ENGINE=process; NATIVE_CORE_PLAN C3). In owner mode
-              it is the viewport instead (above), plus what it cannot draw yet. */}
-          {engineViewport ? <EngineUnportedNotice /> : <EngineSurface />}
+          {/* What the engine cannot draw yet, named per layer. */}
+          <EngineUnportedNotice />
           {/* Ctrl+Enter: an AI prompt anchored to the selection's screen rect. */}
           <InlineAiPrompt />
         </div>

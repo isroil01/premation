@@ -47,7 +47,6 @@ import { panelAssetSelectionIds, selectedPanelAssets, selectedPanelFootage } fro
 import { customConfirm, customPrompt } from '@components/Modal';
 import { baselineHistoryEdit } from '@core/engine/historyBaseline';
 import { performUndo, performRedo } from '@stores/historyStore';
-import { attachRenderBackendEvents } from '@stores/renderBackendStore';
 import { openAbout } from '@layout/Help/AboutDialog';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { usePresentationStore } from '@stores/presentationStore';
@@ -80,7 +79,7 @@ import {
 } from '@core/project/projectSession';
 import type { SaveOutcome } from '@core/project/ProjectManager';
 import { canSyncCurrentProject, syncCurrentProject } from '@core/sync/syncCurrentProject';
-import { pageStillFrame } from '@core/rendering/pageFrame';
+import { engineCompFrameStill } from '@core/engine/engineStill';
 import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
 import { buildCaptionCommands } from './commands/captionCommands';
 import { buildChoreographyCommands } from '@core/animation/choreographyCommands';
@@ -939,7 +938,7 @@ function hasPathVertices(id: string): boolean {
   return v?.kind === 'path' && v.value.vertices.length > 0;
 }
 
-/** A text layer with something to outline (`shapesFromText.canCreateShapesFromText`). */
+/** A text layer with something to outline. */
 function hasOutlinableText(id: string): boolean {
   const m = documentMirror();
   if (uiKindOf(m.layer(id)) !== 'text') return false;
@@ -2534,7 +2533,6 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         panels,
         workspace,
       });
-      track(attachRenderBackendEvents());
       track(installProductAnalytics());
 
       // Core services are registered inside Application.boot; track the rest of
@@ -2637,9 +2635,9 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             enabled: () => true,
             execute: async () => {
               // B4: the composition record from the mirror, the playhead frame from the transport
-              // seam; the frame from the TypeScript engine's page renderer seam.
+              // seam; the frame is the engine's still.
               const { comp: c, frame } = stillFrameTarget();
-              const blob = await pageStillFrame(c, frame);
+              const blob = await engineCompFrameStill(c, frame);
               if (!blob) { notify('Could not render the frame', 'warning'); return; }
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
@@ -2658,7 +2656,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             enabled: () => typeof navigator !== 'undefined' && !!navigator.clipboard?.write,
             execute: async () => {
               const { frame, comp: c } = stillFrameTarget();
-              const blob = await pageStillFrame(c, frame);
+              const blob = await engineCompFrameStill(c, frame);
               if (!blob) { notify('Could not render the frame', 'warning'); return; }
               try {
                 await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);

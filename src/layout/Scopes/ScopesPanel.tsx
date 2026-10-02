@@ -315,7 +315,8 @@ export function statusText(status: Status): { text: string; warn: boolean } {
   if (status.partial) {
     return { text: 'Partial — comp is cropped by the viewport', warn: true };
   }
-  return { text: status.source === 'tap' ? 'Live' : 'From preview cache', warn: false };
+  // One source now — the engine's frame, through the frame tap.
+  return { text: 'Live', warn: false };
 }
 
 export function ScopesPanel(): JSX.Element {

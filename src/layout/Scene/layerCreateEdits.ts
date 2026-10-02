@@ -4,13 +4,12 @@
  * Create Nulls From Path Points. The Layers panel's row menu and the Layer
  * menu commands call these, so there is one implementation.
  *
- * Both are client macros: the geometry is computed in the editor (glyph
- * outlines need its fonts; a path's vertices are sampled at the playhead), the
- * new layers are BUILT off-document and sent as ONE `pasteLayers` — one undo
- * entry, engine-minted ids, the result selected.
+ * Shapes from Text is the engine's `convertLayer` (its fonts, its text
+ * layout). Nulls From Path Points is a client macro: the path's vertices are
+ * sampled at the playhead, the nulls are BUILT off-document and sent as ONE
+ * `pasteLayers` — one undo entry, engine-minted ids, the result selected.
  */
 
-import type { ShapesFromTextSource } from '@core/scene/shapesFromText';
 import { createNullsFromPath } from '@core/scene/nullsFromPaths';
 import { compOfLayer, isLayer } from '@core/engine/doc';
 import { insertBuiltLayers } from '@core/engine/offDocument';
@@ -22,20 +21,20 @@ import { values } from '@core/engine/propRefs';
 import { useSelectionStore } from '@stores/selectionStore';
 
 /**
- * AE's Layer ▸ Create ▸ Create Shapes from Text: the glyph outlines (from the
- * font, or traced — `outlineTextNode`) as a path layer beside the text, and the
- * text hidden (AE keeps it). ONE batch: `pasteLayers` of the built shape +
- * `setLayerSwitches{visible:false}` on the text; the shape is selected.
- * Resolves to the new layer's id and which source produced the outlines, or
- * null when the text could not be outlined (or the engine refused, toasted).
+ * Where a text conversion's outlines came from: the font's own Béziers
+ * ('outlines'), or a trace of the painted text ('traced') when the face cannot
+ * be read or the layout needs the painter. The engine says which in the made
+ * layer's name.
  */
+export type ShapesFromTextSource = 'outlines' | 'traced';
+
 /**
  * `convertLayer` in the engine that owns the document (the C++ engine: the
  * font's own Béziers on its fonts, or a trace of the painted text) — ONE
  * entry, the made layers selected. `null` when the engine does not convert
- * (the TypeScript engine, a --no-gpu / headless C++ engine: `unsupported`), so
- * the caller's editor macro runs; `[]` when the engine refused for another
- * reason (reported).
+ * (a harness without the engine process, a --no-gpu / headless C++ engine:
+ * `unsupported`) — there is no page conversion to fall back to; `[]` when the
+ * engine refused for another reason (reported).
  */
 export async function convertLayerViaEngine(
   label: string,
@@ -56,6 +55,13 @@ export async function convertLayerViaEngine(
   return { layers, source: /\(traced\)$/.test(name) ? 'traced' : 'outlines' };
 }
 
+/**
+ * AE's Layer ▸ Create ▸ Create Shapes from Text: the glyph outlines as a path
+ * layer beside the text, and the text hidden (AE keeps it) — the engine's
+ * `convertLayer`, one entry, the shape selected. Resolves to the new layer's id
+ * and which source produced the outlines, or null when the text could not be
+ * outlined (or the engine refused, toasted).
+ */
 export async function shapesFromTextEdit(
   nodeId: string,
   seconds: number,

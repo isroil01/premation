@@ -55,25 +55,3 @@ it('does nothing for a non-shape or a primitive with no vertices', () => {
 });
 
 // One undo step through the engine (and Points Follow Nulls' bindings): layout/Scene/layerCreateEdits.test.ts.
-describe('points follow nulls', () => {
-  it('records a binding per vertex, and the snapshot moves the vertex to the null', async () => {
-    defaultSceneGraph.addNode(triangle('t', 300, 200));
-    const ids = createNullsFromPath('t', 0);
-    // The binding `nullsFromPathEdit` writes through `layer/pointBindings`.
-    const geom = defaultSceneGraph.getNode('t')!.components.find((c) => c.type === 'Geometry')!;
-    defaultSceneGraph.writeProp('t', geom.id, 'pointBindings', ids.map((nullId, index) => ({ index, nullId })));
-
-    // Drag the first null 40 px right in its local (= shape-local) space.
-    const first = defaultSceneGraph.getNode(ids[0]!)!;
-    const tc = first.components.find((c) => c.type === 'Transform')!;
-    defaultSceneGraph.writeProp(ids[0]!, tc.id, 'x', 40);
-
-    const { buildSnapshot } = await import('@core/rendering/buildSnapshot');
-    const snap = buildSnapshot(defaultSceneGraph, defaultAnimation, 0);
-    const layer = snap.layers.find((l) => l.id === 't')!;
-    expect(layer.pathPoints?.[0]?.x).toBeCloseTo(40, 3);
-    expect(layer.pathPoints?.[0]?.y).toBeCloseTo(-50, 3);
-    // Unbound-moved vertices stay put.
-    expect(layer.pathPoints?.[1]?.x).toBeCloseTo(50, 3);
-  });
-});

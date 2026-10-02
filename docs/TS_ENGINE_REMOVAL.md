@@ -333,17 +333,16 @@ cache). What still references the TypeScript renderer, effects and evaluation
   page canvas), the preview cache UI (`frameCache` / `frameDiskCache`: cache
    bars, actions, stats) and onion skin. The helpers the UI keeps have moved
    out (`strokeTracks` and `gradientPaintTracks` in `src/core/paint`,
-   `localBlobSource` in `src/core/assets/local`, `roiGeometry`, `channelView`
+   `localBlobSource` in `src/core/assets/local`, `roiGeometry`
    and the onion-skin plan in `src/core/workspace`, `videoPlaybackDiag` in
    `src/core/media`, `engineStill`, `frameTap` and `mediaRepaint` in
    `src/core/engine`, `idleCacheSpan` in `src/core/timeline`, per-kind `SIZE`
    in `src/core/scene/layerKindSize.ts`, the viewport camera `RenderView` in
    `src/core/workspace/renderView.ts`, and paint blend modes in
-   `src/core/paint/paintBlend.ts`, optical flow in `src/core/video/pixelMotionFlow.ts`,
+   `src/core/paint/paintBlend.ts`,
    canvas GPU ownership in `src/core/workspace/canvasOwnership.ts`, and the
-   playback blit policy in `src/core/perf/playbackBlitPolicy.ts`). `Color` still lives in
-   `packages/renderer` (the GPU package's own math). `componentThumbs` still
-   renders through the page backend, so it stays until that backend goes. UI effect METADATA now comes from the
+   playback blit policy in `src/core/perf/playbackBlitPolicy.ts`; `Color` in
+   `src/core/paint/color.ts`). UI effect METADATA now comes from the
   engine catalog (`src/core/inspector/effectCatalog.ts`, 2026-10-01).
 - *The page replica* (`LocalEngine`, `src/core/engine/handlers`,
   `legacyRefresh`, `sceneStore`'s graph and the evaluation under it): 98
@@ -375,7 +374,37 @@ cache). What still references the TypeScript renderer, effects and evaluation
    engine's VRAM frame cache; there is no disk tier); onion skin drawn by the
    engine (done: `setViewport.onion` — ghosts are built with a transparent
    background and composited over the live frame while playback is stopped).
-   Then delete.
+   **Deleted 2026-10-02:** `packages/renderer`, `src/core/rendering`, the effect
+   kernels under `src/core/effects` (canvas2dEffects and the ~60 files behind
+   it), the page trackers, the worker decoder, the audio mixdown / spectrum /
+   waveform generators, extrusion mesh / light shading / corner pin / cloner
+   expansion, live SVG raster, the TS render-test harness (Electron +
+   SwiftShader) and every test that covered them — everything unreachable from
+   the app's entry points once the renderer went. `useWorkspace` paints only
+   the chrome; the viewport HUD shows the engine's stats; the render-tier
+   store, the page RAM / disk preview cache and its preferences are gone.
+   What stays in `src/core/effects` is the effect document model the replica
+   still reads (effects.ts, mask, layerStyles, blendMode, …) — step 3.
+   Library / template / preset thumbnails are engine stills
+   (`core/engine/previewDocument.ts`, `core/library/componentThumbs.ts`):
+   gallery cards show a still and play a flipbook on hover or focus, instead of
+   every visible card looping.
+
+   Engine gaps this exposed (the page renderer did them; the engine does not
+   yet — each is honest in the UI, none is faked):
+   - *Cache Work Area Now* — no engine command pre-renders a span; the command
+     is disabled with its reason. The cache fills from frames the engine draws.
+   - `setCacheBudget` is accepted and does nothing (the budget is a share of
+     the adapter's VRAM at engine start); there is no disk cache tier, so the
+     disk budget, the disk bar and Purge Disk Cache are gone or hidden.
+   - Focus Mode ghosting: the predicate (`core/workspace/snapshotFocus.ts`) is
+     not sent to the engine, so non-focused layers are not dimmed.
+   - The page's content canvas is blank under the engine viewport, so the
+     tracker loupe, the clone-source lens and the AI chat's viewport thumbnail
+     have no pixels to read (they need the engine's frame — the frame tap or a
+     still).
+   - Quality = Wireframe boxes are still painted from the replica's geometry
+     (`wireframeOverlay.ts`), until step 3 moves them to the overlay push.
 3. The page replica goes: the remaining `sceneStore` readers move to the
    mirror / the overlay push / engine queries (`hitTest` gains a `viewport`
    so a pane's picks project through its own view), the off-document builders

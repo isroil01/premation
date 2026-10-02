@@ -16,7 +16,6 @@
 import SceneGraph from '@core/scene/SceneGraph';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { AnimationEngine } from '@motion/animation';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useWorkspaceStore } from '@stores/projectStore';
@@ -24,8 +23,7 @@ import { bumpScene } from '@stores/sceneStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { addRoot, addText, addShape, liveKf, type SetKf } from './templates/builders';
 import { animatorPropPath, type TextAnimatorData } from '@core/text/textAnimators';
-import { renderThumbnail } from './templatePreview';
-import { mountPreview } from './previewController';
+import { mountPreview, type PreviewSpec } from './previewController';
 
 export type { SetKf };
 
@@ -235,13 +233,10 @@ export function insertAnimPreset(presetId: string, x?: number, y?: number): stri
   return id;
 }
 
-// ── Card preview (isolated; samples a representative motion frame) ────
-const thumbCache = new Map<string, string>();
+// ── Card preview (isolated; the engine's picture of the same build) ───
 
-/** Build the isolated preview graph + choreography for a preset (16:9 comp). */
-function previewSpec(preset: AnimPreset): {
-  build: (g: SceneGraph) => void; animate: (set: SetKf) => void;
-} {
+/** The preview recipe of a preset: its element and choreography in a 16:9 comp. */
+export function animPresetPreviewSpec(preset: AnimPreset): PreviewSpec {
   const cx = PREVIEW_W / 2, cy = PREVIEW_H / 2;
   return {
     build: (g) => {
@@ -250,32 +245,21 @@ function previewSpec(preset: AnimPreset): {
       preset.applyAnimators?.(g, 'el');
     },
     animate: (set) => preset.animate(set, 'el', cx, cy, 0, 1),
-  };
-}
-
-export function animPresetThumbnail(preset: AnimPreset): string | null {
-  const hit = thumbCache.get(preset.id);
-  if (hit) return hit;
-  const spec = previewSpec(preset);
-  const anim = new AnimationEngine();
-  spec.animate((nid, prop, time, value, ease) => anim.setKeyframe(nid, prop, time, value, ease ?? 'easeInOut'));
-  const url = renderThumbnail(spec.build, PREVIEW_W, PREVIEW_H, { anim, time: preset.previewTime });
-  if (url) thumbCache.set(preset.id, url);
-  return url;
-}
-
-/**
- * Play a preset's animation live into `canvas`, looping continuously via the
- * shared gallery ticker. Isolated throwaway graph + preview engine, so it never
- * touches the live scene. Returns a stop that unmounts it.
- */
-export function createAnimPresetPlayer(canvas: HTMLCanvasElement, preset: AnimPreset): { stop: () => void } {
-  const spec = previewSpec(preset);
-  return mountPreview(canvas, {
-    build: spec.build,
-    animate: spec.animate,
+    // The preset's own representative motion frame is the card's still.
+    posterTime: preset.previewTime,
+    cacheKey: `animPreset:${preset.id}`,
     width: PREVIEW_W,
     height: PREVIEW_H,
     background: 'rgba(0,0,0,0)',
-  });
+  };
+}
+
+/**
+ * Show a preset on `canvas` through the shared gallery controller: the engine's
+ * still of it, its animation playing while the card is hovered or focused.
+ * Isolated throwaway graph + preview engine, so it never touches the live
+ * scene. Returns a stop that unmounts it.
+ */
+export function createAnimPresetPlayer(canvas: HTMLCanvasElement, preset: AnimPreset): { stop: () => void } {
+  return mountPreview(canvas, animPresetPreviewSpec(preset));
 }

@@ -31,7 +31,7 @@
 
 import type { Stroke, StrokeGradientGeometry } from '@core/paint/stroke';
 import type { FillPaint } from '@core/paint/fill';
-import { Color } from '@motion/renderer';
+import { Color } from '@core/paint/color';
 
 /** Every per-stroke keyframeable parameter, in AE's Stroke group order. */
 export const STROKE_TRACK_PARAMS = [

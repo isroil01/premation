@@ -6,24 +6,24 @@
  * `autoOrient`; neither does anything else. The value was written, persisted,
  * round-tripped and displayed — and consumed by nobody.
  *
- * Widening it was the surprise. There are exactly TWO readers, both in
- * `buildSnapshot`'s drawn-layer loop (`readNodeAutoOrient`, then
- * `isAutoOrientedToCamera`). That loop skips `group`/`null`/`camera`/`audio` at
- * its top and diverts `light` a few lines later, so the mode is dead on FIVE
- * kinds, not one. `null` is the one that stings: auto-orienting a null with
- * children parented to it is a standard AE rig, and the control looked live.
+ * Widening it was the surprise. The frame builder reads auto-orient only in
+ * its drawn-layer loop, which skips `group`/`null`/`camera`/`audio` at its top
+ * and diverts `light` a few lines later, so the mode is dead on FIVE kinds,
+ * not one. `null` is the one that stings: auto-orienting a null with children
+ * parented to it is a standard AE rig, and the control looked live.
  *
  * This is the fourth control of this exact shape found in this repo — after the
  * spot cone that did nothing on a 2D layer, three light params that stopped at
  * the CPU, and `frameBlend` writing a flag no renderer read. Each cost nothing
- * to run, which is why each survived. So the guard is not "remember this one":
- * it DERIVES the dead set from `buildSnapshot.ts`'s own skip list, the way the
- * feature-count table derives from the registries. Change the loop and this
- * fails until the predicate agrees.
+ * to run, which is why each survived.
  *
- * IF THIS FAILS because you WIRED one of these kinds: remove it from
- * `AUTO_ORIENT_DEAD_KINDS` in the same commit that adds the reader. That edit
- * is the signal this test exists to produce.
+ * The dead set used to be DERIVED here from the TypeScript renderer's skip
+ * list (`buildSnapshot.ts`, deleted with the page renderer); the C++ walk
+ * (native/engine/src/scene/snapshot_build.cpp) skips the same kinds. What this
+ * still pins is the predicate and the UI gate on it.
+ *
+ * IF you WIRE one of these kinds in the engine: remove it from
+ * `AUTO_ORIENT_DEAD_KINDS` in the same commit that adds the reader.
  */
 
 import { readSource } from '@/__testHelpers__/readSource';
@@ -45,34 +45,6 @@ function node(kind: string, opts: { transform?: boolean } = {}): SceneNode {
 }
 
 describe('auto-orient is offered only where it is read', () => {
-  it('the dead set matches the kinds buildSnapshot skips before reading it', () => {
-    const src = readSource('core/rendering/buildSnapshot.ts');
-
-    // The drawn-layer loop's top-of-loop bail. Extracted rather than restated,
-    // so editing the loop moves this test's expectation with it. `continue` or
-    // `return`: the per-layer body became `buildLayerNode` (one throwing layer
-    // is skipped, not the frame), so its bail is a `return` — same skip.
-    const skip = /if \(kind === 'group'[^)]*\) (?:continue|return);/.exec(src)?.[0];
-    expect(skip).toBeTruthy();
-    const skipped = [...(skip as string).matchAll(/kind === '(\w+)'/g)].map((m) => m[1]);
-    expect(skipped.sort()).toEqual(['audio', 'camera', 'group', 'null']);
-
-    // `light` never reaches the transform block either — it is diverted into
-    // its own branch above it. Assert that branch still exists rather than
-    // trusting the memory of having read it.
-    expect(src).toMatch(/if \(kind === 'light'\) \{/);
-
-    expect([...AUTO_ORIENT_DEAD_KINDS].sort())
-      .toEqual([...skipped, 'light'].sort());
-  });
-
-  it('both readers really are inside that loop, and there are only two', () => {
-    const src = readSource('core/rendering/buildSnapshot.ts');
-    const readers = [...src.matchAll(/readNodeAutoOrient|isAutoOrientedToCamera/g)];
-    // Two call sites + the one import line that names both.
-    expect(readers).toHaveLength(4);
-  });
-
   it.each([...AUTO_ORIENT_DEAD_KINDS])('hides the control on a %s layer', (kind) => {
     expect(canAutoOrient(node(kind))).toBe(false);
   });

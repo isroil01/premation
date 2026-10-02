@@ -1,34 +1,36 @@
 /**
  * Getting the current composited frame's pixels to the Scopes panel.
  *
- * Two sources, in preference order, and neither one required a change to the
- * render loop to exist:
+ * One source: **the frame tap** (`@core/engine/frameTap`). `EngineSurface`
+ * publishes the engine's frame as it draws it — a detached copy, rate-limited,
+ * and nothing at all while no scope is open — and the panel reads the freshest
+ * one on its own timer. (The page preview cache used to be a second source; it
+ * went with the page renderer, and the engine's frame cache is video memory
+ * the page cannot read.)
  *
- * 1. **The frame tap** ({@link subscribeFrames}). Exact, always current, and
- *    inert until one line is added to the viewport loop. When that line is
- *    present the panel simply reads the freshest published frame.
+ * ## Why the frame has to be cropped
  *
- * 2. **The RAM preview cache** (`viewportFrameCache`). Its entries are plain 2D
- *    canvases — the cache copies the WebGL content canvas into one on the way
- *    in — so unlike the live viewport surface they can be read back at any
- *    time, from any task. That is what makes this path work with zero edits to
- *    Workspace or Providers, and it is the default.
+ * The published frame is the VIEWPORT, not the composition: it holds the comp
+ * at whatever pan and zoom are in force, somewhere inside a field of letterbox.
+ * Scoping it whole would fold the letterbox into every reading — a zoomed-out
+ * comp would look like it had a huge black floor, and zooming the viewport
+ * would visibly change the scope, which is the single most misleading thing a
+ * scope can do.
  *
- * ## Why the cached frame has to be cropped
+ * So the comp's rect is reconstructed from the workspace camera's view
+ * transform (`canvasPx = compPx * scale + offset`, in CSS pixels) and the
+ * ratio between the frame's pixel width and the viewport's CSS width — which
+ * folds device pixel ratio and the preview resolution into one number without
+ * this module having to know that either of them exists. The panel installs
+ * {@link liveCompRegion} as the tap's crop.
  *
- * A cache entry is the VIEWPORT, not the composition. It is the content canvas
- * at whatever pan, zoom and preview resolution were in force, so it holds the
- * comp somewhere inside a field of letterbox. Scoping it whole would fold the
- * letterbox into every reading — a zoomed-out comp would look like it had a
- * huge black floor, and zooming the viewport would visibly change the scope,
- * which is the single most misleading thing a scope can do.
+ * ## What a miss means
  *
- * So the comp's rect is reconstructed from the same two facts the render loop
- * itself uses: the workspace camera's view transform (`canvasPx = compPx *
- * scale + offset`, in CSS pixels) and the ratio between the cached canvas's
- * pixel width and the viewport's CSS width — which folds device pixel ratio
- * and the Full/Half/Third/Quarter preview resolution into one number without
- * this module having to know that either of them exists.
+ *   `no-frame`    nothing has been published recently (the panel just opened,
+ *                 or the engine has not drawn since).
+ *   `off-screen`  the comp is wholly outside the viewport. The tap has no rect
+ *                 to crop to then, so what it copied is letterbox — refused
+ *                 rather than plotted.
  *
  * When the comp is only partly on screen the crop is clamped to what is
  * actually there and the result is flagged {@link ScopeFrame.partial}, because
@@ -36,13 +38,11 @@
  * refuses. The panel says so on screen.
  */
 
-import { viewportFrameCache } from '@core/rendering/frameCache';
 import { latestTappedFrame } from '@core/engine/frameTap';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { playheadSeconds } from '@core/timeline/timelineView';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import { settingsFps } from '@core/mirror/compFacts';
-import { SCOPE_SAMPLE_WIDTH } from '@core/video/scopes';
 
 export interface ScopeFrame {
   /** RGBA, straight alpha. */
@@ -50,14 +50,14 @@ export interface ScopeFrame {
   readonly width: number;
   readonly height: number;
   /** Which route produced it — surfaced in the panel's status line. */
-  readonly source: 'tap' | 'cache';
+  readonly source: 'tap';
   /** True when the comp rect was clipped by the viewport edge. */
   readonly partial: boolean;
   /** Composition frame this reading is of. */
   readonly frame: number;
 }
 
-/** Why there is nothing to show, when there is nothing to show. */
+/** Why there is nothing to show, when there is nothing to show (see the module header). */
 export type ScopeFrameMiss = 'no-frame' | 'off-screen';
 
 export interface ScopeFrameResult {
@@ -65,7 +65,7 @@ export interface ScopeFrameResult {
   miss: ScopeFrameMiss | null;
 }
 
-/** The comp's rect inside a cached viewport canvas, in that canvas's pixels. */
+/** The comp's rect inside a viewport canvas, in that canvas's pixels. */
 export interface CompRect {
   x: number;
   y: number;
@@ -144,30 +144,28 @@ export function currentScopeFrame(): number {
   }
 }
 
-let scratch: HTMLCanvasElement | null = null;
-let scratchCtx: CanvasRenderingContext2D | null = null;
-
-function readCanvasRegion(
-  source: CanvasImageSource,
-  rect: { x: number; y: number; width: number; height: number },
-): { data: Uint8ClampedArray; width: number; height: number } | null {
-  const scale = Math.min(1, SCOPE_SAMPLE_WIDTH / rect.width);
-  const dw = Math.max(1, Math.round(rect.width * scale));
-  const dh = Math.max(1, Math.round(rect.height * scale));
-  if (!scratch) {
-    scratch = document.createElement('canvas');
-    scratchCtx = scratch.getContext('2d', { willReadFrequently: true });
+/**
+ * Where the comp sits in the viewport right now, in CSS pixels.
+ *
+ * `known: false` when the question cannot be asked (no workspace, no active
+ * composition, a viewport with no size yet) — which is not the same as the
+ * comp being off screen, and must not be reported as that.
+ */
+export function compRegionInViewport(): { known: boolean; rect: CompRect | null } {
+  try {
+    const controller = getWorkspaceController();
+    const comp = activeCompSettingsNow();
+    const size = controller.ws.viewport.size;
+    if (!comp || !(size.width > 0) || !(size.height > 0)) return { known: false, rect: null };
+    // CSS pixels on both sides, so the dpr / resolution factor is 1.
+    const rect = compRectInCanvas(size.width, size.height, size.width, controller.getView(), {
+      width: comp.width,
+      height: comp.height,
+    });
+    return { known: true, rect };
+  } catch {
+    return { known: false, rect: null };
   }
-  const ctx = scratchCtx;
-  if (!ctx || !scratch) return null;
-  if (scratch.width !== dw || scratch.height !== dh) {
-    scratch.width = dw;
-    scratch.height = dh;
-  }
-  ctx.clearRect(0, 0, dw, dh);
-  ctx.drawImage(source, rect.x, rect.y, rect.width, rect.height, 0, 0, dw, dh);
-  const img = ctx.getImageData(0, 0, dw, dh);
-  return { data: img.data, width: dw, height: dh };
 }
 
 /**
@@ -175,58 +173,26 @@ function readCanvasRegion(
  *
  * `maxTapAgeMs` is deliberately generous: while the editor sits paused nothing
  * re-renders, so the last published frame IS the current one no matter how old
- * it is — but it must still be for the frame the playhead is on, which is what
- * the frame comparison below checks.
+ * it is.
  */
 export function captureScopeFrame(maxTapAgeMs = 2000): ScopeFrameResult {
-  const frame = currentScopeFrame();
-
   const tapped = latestTappedFrame(maxTapAgeMs);
-  if (tapped) {
-    return {
-      frame: {
-        data: tapped.data,
-        width: tapped.width,
-        height: tapped.height,
-        source: 'tap',
-        // The tap crops with `liveCompRegion`, which already clamps; treating
-        // its output as whole would be a lie only in the same rare case the
-        // cache path reports, and the tap has no way to tell us. Ask the
-        // camera again — it is three field reads.
-        partial: !(liveCompRegion(tapped.width, tapped.height)?.whole ?? true),
-        frame,
-      },
-      miss: null,
-    };
-  }
+  if (!tapped) return { frame: null, miss: 'no-frame' };
 
-  let cached: HTMLCanvasElement | null = null;
-  try {
-    cached = viewportFrameCache.get(frame);
-  } catch {
-    cached = null;
-  }
-  if (!cached || cached.width < 1 || cached.height < 1) return { frame: null, miss: 'no-frame' };
-
-  const rect = liveCompRegion(cached.width, cached.height);
-  if (!rect) return { frame: null, miss: 'off-screen' };
-
-  let read: { data: Uint8ClampedArray; width: number; height: number } | null = null;
-  try {
-    read = readCanvasRegion(cached, rect);
-  } catch {
-    read = null;
-  }
-  if (!read) return { frame: null, miss: 'no-frame' };
+  // The tap crops to the comp's rect and has no way to say whether it could.
+  // Ask the camera — it is three field reads. No rect at all means the tap
+  // copied the whole viewport, and that is letterbox, not the picture.
+  const region = compRegionInViewport();
+  if (region.known && !region.rect) return { frame: null, miss: 'off-screen' };
 
   return {
     frame: {
-      data: read.data,
-      width: read.width,
-      height: read.height,
-      source: 'cache',
-      partial: !rect.whole,
-      frame,
+      data: tapped.data,
+      width: tapped.width,
+      height: tapped.height,
+      source: 'tap',
+      partial: region.rect ? !region.rect.whole : false,
+      frame: currentScopeFrame(),
     },
     miss: null,
   };

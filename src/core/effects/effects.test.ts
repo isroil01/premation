@@ -11,9 +11,6 @@ import {
   type Effect,
   moveEffectTo,
 } from './effects';
-import { isLutEffect } from './colorLut';
-import { isCanvas2dOnlyEffect } from './canvas2dEffects';
-import { isTemporalEffect } from './effects';
 
 /**
  * Deliberately the LEGACY shape (a single `amount`, no `params`) — every
@@ -197,98 +194,6 @@ describe('EFFECT_DEFS', () => {
     const glow = EFFECT_DEFS.find((d) => d.type === 'glow')!;
     const red = glow.css({ ...defaultParams(glow), color: '#ff0000', intensity: 100 });
     expect(red).toBe('drop-shadow(0 0 16px rgba(255,0,0,1))');
-  });
-
-  // Effects with no CSS-filter form, rendered instead by the Canvas2D pixel
-  // pass as a 3×3 colour matrix + offset (Tint, Channel Mixer). Distinct from
-  // LUT effects (per-channel curves) and gpuOnly shader effects.
-  const MATRIX_PIXEL_EFFECTS = new Set<string>(['tint', 'channel-mixer']);
-  // Generators drawn by the Canvas2D pixel pass (proceduralCanvas2d.ts) — they
-  // used to be gpuOnly; now they render on every backend.
-  const PROCEDURAL_EFFECTS = new Set<string>(['gradient-ramp', 'fractal-noise']);
-  // Canvas2D-only generators / pixel passes with no GPU shader form
-  // (canvas2dEffects.ts). Read the REAL predicate rather than a copy of the list.
-  //
-  // GPU spatial effects with empty CSS (CompositionPass materials) — Fill,
-  // Stroke, Sharpen, Noise used to be Canvas2D-only; they now run as shaders.
-  //
-  // `apply-color-lut` joined them when it gained a strip texture and a shader:
-  // it left the forces-a-bake list (so it no longer answers to
-  // `isCanvas2dOnlyEffect`) while KEEPING its Canvas2D pass for layers baked
-  // for other reasons — exactly the position the four above are in.
-  const GPU_SPATIAL_NO_CSS = new Set<string>([
-    'fill', 'stroke', 'sharpen', 'noise', 'apply-color-lut',
-    // Ported 2026-08-12, the first of the CPU population to move. Same
-    // position as the five above: a shader in CompositionPass, no CSS form,
-    // and its Canvas2D pass retained as the reference the GPU one is diffed
-    // against.
-    'beam',
-    // Ported 2026-08-14 by the GPU light-family pass — they left CANVAS2D_ONLY
-    // then but never joined this classification, which is what broke the two
-    // EFFECT_DEFS assertions below.
-    'light-sweep', 'lens-flare', 'light-rays',
-    // Round six (2026-08-14): the per-pixel colour ports.
-    'vignette', 'black-and-white', 'tritone', 'photo-filter', 'threshold', 'vibrance',
-    // Waves 2-3 (2026-08-15): warps + neighbourhood passes.
-    'mirror', 'offset', 'bulge', 'twirl', 'spherize', 'kaleidoscope', 'ripple',
-    'chromatic-aberration', 'magnify', 'mosaic', 'find-edges', 'emboss', 'color-emboss', 'halftone',
-    // Round seven (2026-09-06): the footage set.
-    'gaussian-blur', 'fast-box-blur', 'radial-blur', 'corner-pin', 'transform',
-    // Deep Glow (2026-09-08): a multi-pass in CompositionPass, no CSS form.
-    'deep-glow',
-    // Energy Beam (2026-09-08): a Generate shader in the round-twelve single-pass table.
-    'beam-path',
-    // Round fourteen (2026-09-06): histogram colour autos.
-    'equalize', 'auto-levels', 'auto-contrast', 'auto-color',
-    // Rounds twelve + thirteen (2026-09-06).
-    'turbulent-displace', 'curl-noise', 'roughen-edges', 'scatter', 'colorama', 'selective-color', 'turbulent-noise', 'add-grain', 'median', 'dust-scratches', 'block-dissolve', 'gradient-wipe', 'card-wipe', 'strobe-light', 'burn-film', 'light-wipe', 'grid-wipe', 'noise-alpha', 'brush-strokes', 'bilateral-blur', 'smart-blur', 'camera-lens-blur', 'mesh-warp', 'liquify', 'bezier-warp', 'cell-pattern', 'radio-waves', 'light-burst', 'write-on', 'star-burst', 'snowfall', 'rainfall', 'cartoon', 'inner-shadow', 'inner-glow', 'satin', 'bevel',
-    // Round eleven (2026-09-06): advanced distort / transition / stylize.
-    // cc-repetile has no shader (its CPU pass is a visible no-op) but no CSS
-    // form either; it sits here for the same reason.
-    'polar-coordinates', 'optics-compensation', 'warp', 'page-turn', 'split', 'slant', 'smear', 'rolling-shutter', 'flo-motion', 'lens', 'griddler', 'ball-action', 'drizzle', 'jaws', 'pixel-polly', 'twister', 'card-dance', 'unmult', 'cc-composite', 'cc-scatterize', 'radial-fast-blur', 'scale-wipe', 'texturize', 'threads', 'hex-tile', 'radial-shadow', 'cross-blur', 'plastic', 'glass', 'vector-blur', 'cc-repetile',
-    // Round ten (2026-09-06): neighbourhood passes + drawn generators.
-    'channel-blur', 'minimax', 'unsharp-mask', 'shadow-highlight', 'checkerboard', 'grid', 'four-color-gradient', 'circle', 'ellipse',
-    // Round nine (2026-09-06): per-pixel colour / channel / transitions.
-    'directional-blur', 'linear-wipe', 'shift-channels', 'alpha-levels', 'solid-composite', 'channel-combiner', 'remove-color-matting', 'change-color', 'change-to-color', 'leave-color', 'toner', 'venetian-blinds', 'radial-wipe', 'iris-wipe', 'line-sweep',
-    // Round eight (2026-09-06): the keying set.
-    'keylight', 'wave-warp', 'linear-color-key', 'luma-key', 'color-key', 'color-range', 'extract', 'spill-suppressor', 'simple-choker', 'matte-choker',
-    // Effects round seven (2026-09-06). Fifteen — the round's other three are
-    // per-channel transfers and are already covered by `isLutEffect`.
-    'cc-tiler', 'ripple-pulse', 'radial-scale-wipe', 'glass-wipe', 'image-wipe',
-    'color-difference-key', 'wire-removal', 'broadcast-colors', 'noise-hls',
-    'block-load', 'kernel', '3d-glasses', 'fractal', 'particle-systems', 'cc-bubbles',
-  ]);
-  // Temporal effects (Echo, Posterize Time) are resolved in buildSnapshot's
-  // time plumbing, not as a per-layer pass. Read the REAL predicate — this was
-  // a second private list beside the Canvas2D one, and it went stale for the
-  // same reason.
-
-  const isNonCss = (type: string, gpuOnly?: boolean): boolean =>
-    gpuOnly === true ||
-    isLutEffect(type as never) ||
-    MATRIX_PIXEL_EFFECTS.has(type) ||
-    PROCEDURAL_EFFECTS.has(type) ||
-    isCanvas2dOnlyEffect(type) ||
-    GPU_SPATIAL_NO_CSS.has(type) ||
-    isTemporalEffect(type);
-
-  test('every CSS-form effect compiles to a non-empty filter at its defaults', () => {
-    // Six categories now: CSS-form (non-empty css), GPU-only shader effects,
-    // per-pixel LUT effects (Levels/Curves), matrix pixel effects
-    // (Tint/Channel Mixer), Canvas2D procedural generators (Gradient Ramp/
-    // Fractal Noise), and Canvas2D-only pixel passes (Fill/Stroke/Sharpen/…).
-    // Only the first must produce a CSS string.
-    for (const d of EFFECT_DEFS) {
-      if (isNonCss(d.type, d.gpuOnly)) continue;
-      expect(d.css(defaultParams(d)).length).toBeGreaterThan(0);
-    }
-  });
-
-  test('an effect has no CSS form exactly when it is GPU-only, LUT, matrix pixel, procedural, or Canvas2D-only', () => {
-    for (const d of EFFECT_DEFS) {
-      const noCss = d.css(defaultParams(d)) === '';
-      expect(noCss).toBe(isNonCss(d.type, d.gpuOnly));
-    }
   });
 });
 

@@ -41,7 +41,7 @@ import { addEffect, getNodeEffects, effectPropPath } from '@core/effects/effects
 import { setNodeMotionBlur } from '@core/effects/motionBlur';
 import { addMaskPath, setMaskPoints, keyframeMask, ellipseMask, getNodeMask } from '@core/effects/mask';
 import { liveKf, addRoot, addShape, type Ease } from '@core/template/templates/builders';
-import { mountPreview } from '@core/template/previewController';
+import { mountPreview, type PreviewSpec } from '@core/template/previewController';
 import { previewChoreography } from './insertPreview';
 
 export type TransitionCategory = 'fade' | 'slide' | 'zoom' | 'whip' | 'glitch' | 'wipe';
@@ -916,20 +916,20 @@ const PREVIEW_W = 320, PREVIEW_H = 180;
 const PREVIEWABLE = new Set(['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']);
 
 /**
- * Play a transition onto `canvas` through the shared gallery ticker.
+ * The preview recipe of a transition.
  *
  * Layer-mode items animate a "shot" card over a contrasting backdrop — the
  * incoming frame — so a slide really slides across something. Solid-only items
  * choreograph their own solids over that same backdrop, which is exactly what
  * they do in the comp.
  */
-export function createTransitionPlayer(canvas: HTMLCanvasElement, item: TransitionItem): { stop: () => void } {
+export function transitionPreviewSpec(item: TransitionItem): PreviewSpec {
   const box: CompBox = { width: PREVIEW_W, height: PREVIEW_H };
   const cx = PREVIEW_W / 2, cy = PREVIEW_H / 2;
   const cardW = PREVIEW_W * 0.66, cardH = PREVIEW_H * 0.66;
   const pose: LayerPose = { x: cx, y: cy, scaleX: 1, scaleY: 1, rotation: 0, width: cardW, height: cardH };
 
-  return mountPreview(canvas, {
+  return {
     build: (g) => {
       addRoot(g, 'tpl_root', item.name);
       // The incoming shot, always present underneath.
@@ -960,10 +960,22 @@ export function createTransitionPlayer(canvas: HTMLCanvasElement, item: Transiti
     // A beat of the settled pose before the loop restarts, so the card reads as
     // "arrives and lands" rather than a stutter.
     duration: item.duration + 0.45,
+    // A solid-only item's still is its half-covered frame (see `solidRestTime`):
+    // its end pose is an empty frame. A layer-mode entrance rests on its pose.
+    posterTime: item.solidOnly ? solidRestTime(item.id, box) : undefined,
+    cacheKey: `transition:${item.id}`,
     width: PREVIEW_W,
     height: PREVIEW_H,
     background: '#101016',
-  });
+  };
+}
+
+/**
+ * Show a transition on `canvas` through the shared gallery controller: the
+ * engine's still of it, the move playing while the card is hovered or focused.
+ */
+export function createTransitionPlayer(canvas: HTMLCanvasElement, item: TransitionItem): { stop: () => void } {
+  return mountPreview(canvas, transitionPreviewSpec(item));
 }
 
 /**

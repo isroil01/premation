@@ -32,8 +32,7 @@ import { isTrackAnimated, readTrack } from '@core/mirror/selection';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorTrackWatch } from '@hooks/useMirror';
 import { strokeOverFillFor } from '@core/text/textFields';
-import type { MasksFromTextResult } from '@core/scene/masksFromText';
-import { convertLayerViaEngine } from '@layout/Scene/layerCreateEdits';
+import { convertLayerViaEngine, type ShapesFromTextSource } from '@layout/Scene/layerCreateEdits';
 import type { SelectorKind } from '@core/text/textAnimators';
 import { remapRunFonts } from '@core/fonts/replaceFonts';
 import { familyKey } from '@core/fonts/missingFonts';
@@ -365,28 +364,32 @@ export function textPresetEdit(nodeIds: ReadonlyArray<string>, values: PresetVal
 
 // ── Create Masks from Text ──────────────────────────────────────────────
 
+/** What Create Masks from Text made: the solid, where its outlines came from, how many masks. */
+export interface MasksFromTextResult {
+  id: string;
+  source: ShapesFromTextSource;
+  masks: number;
+}
+
 /**
- * AE's Layer ▸ Create ▸ Create Masks from Text through the engine: the glyph
- * outlines need the editor's fonts (asynchronous), so the solid and its masks
- * are BUILT off-document (`buildMasksFromTextSolid`) and sent as ONE batch —
- * `pasteLayers` (the comp-sized solid in the text colour, one mask per contour)
- * + `setLayerSwitches{visible:false}` on the text (AE hides it). One undo entry;
- * the new solid is selected. Null when the text cannot be outlined.
+ * AE's Layer ▸ Create ▸ Create Masks from Text — the engine's `convertLayer`
+ * (the font's own Béziers, or a trace of the painted text, in the layer's
+ * evaluated space): a comp-sized solid in the text colour with one mask per
+ * glyph contour (counters as Subtract masks), and the text hidden (AE hides
+ * it). One undo entry; the new solid is selected. Null when the text cannot be
+ * outlined or the engine does not convert (reported).
  */
 export async function masksFromTextEdit(nodeId: string, seconds: number = getTime()): Promise<MasksFromTextResult | null> {
   const comp = isLayer(nodeId) ? compOfLayer(nodeId) : null;
   if (!comp) return null;
-  // The C++ engine converts itself (the font's own Béziers, the layer's evaluated space).
-  const viaEngine = await convertLayerViaEngine('Create Masks from Text', nodeId, 'masksFromText');
-  if (viaEngine) {
-    const id = viaEngine.layers[0];
-    if (!id) return null;
-    const tree = await engine().query({ type: 'getPropertyTree', layer: id, path: 'masks', depth: 1 });
-    const masks = tree.ok ? tree.value.nodes.filter((n) => /^masks\/[^/]+$/.test(n.path)).length : 0;
-    return { id, source: viaEngine.source ?? 'outlines', masks };
-  }
+  // The engine converts at the playhead it holds.
   void seconds;
-  return null;
+  const viaEngine = await convertLayerViaEngine('Create Masks from Text', nodeId, 'masksFromText');
+  const id = viaEngine?.layers[0];
+  if (!id) return null;
+  const tree = await engine().query({ type: 'getPropertyTree', layer: id, path: 'masks', depth: 1 });
+  const masks = tree.ok ? tree.value.nodes.filter((n) => /^masks\/[^/]+$/.test(n.path)).length : 0;
+  return { id, source: viaEngine.source ?? 'outlines', masks };
 }
 
 // ── Document-wide text macros (client macros over the API, ONE entry each) ──

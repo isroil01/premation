@@ -11,10 +11,25 @@
  * exactly like the rest of the effect catalogue.
  */
 
-import { parseHex } from '@core/effects/canvas2dEffects';
 import { wanderOffset } from './particleField';
 import { parseColorChannels, channelsToColor } from '@core/effects/effects';
 import type { SceneNode } from '@core/types';
+
+/** "#rgb" / "#rrggbb" → 0..255 channels; anything else reads as mid grey. */
+function parseHex(hex: string): [number, number, number] {
+  const s = hex.trim();
+  let m = /^#([0-9a-f]{6})$/i.exec(s);
+  if (m) {
+    const n = parseInt(m[1]!, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  m = /^#([0-9a-f]{3})$/i.exec(s);
+  if (m) {
+    const t = m[1]!;
+    return [parseInt(t[0]! + t[0]!, 16), parseInt(t[1]! + t[1]!, 16), parseInt(t[2]! + t[2]!, 16)];
+  }
+  return [128, 128, 128];
+}
 
 /** `sphere` is a 3D VOLUME: uniform in a ball of diameter `emitterWidth`, so z is born with it. */
 export type EmitterType = 'point' | 'box' | 'circle' | 'sphere';

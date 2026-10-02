@@ -11,16 +11,16 @@
 
 import { render, screen } from '@testing-library/react';
 import { accumulateFor, ScopesPanel, statusText } from './ScopesPanel';
-import { compRectInCanvas } from './scopeFrame';
+import { captureScopeFrame, compRectInCanvas } from './scopeFrame';
 import { SCOPE_BINS } from '@core/video/scopes';
-import { frameTapActive } from '@core/engine/frameTap';
+import { frameTapActive, resetFrameTap } from '@core/engine/frameTap';
 
 describe('accumulateFor', () => {
   const frame = {
     data: new Uint8ClampedArray([255, 0, 0, 255, 255, 0, 0, 255]),
     width: 2,
     height: 1,
-    source: 'cache' as const,
+    source: 'tap' as const,
     partial: false,
     frame: 0,
   };
@@ -65,7 +65,7 @@ describe('statusText', () => {
   it('says when a reading covers less than the whole frame', () => {
     // The failure this guards: a scope that silently reports on the visible
     // half of a panned-off comp looks exactly like a correct reading.
-    expect(statusText({ source: 'cache', partial: true, miss: null })).toEqual({
+    expect(statusText({ source: 'tap', partial: true, miss: null })).toEqual({
       text: 'Partial — comp is cropped by the viewport',
       warn: true,
     });
@@ -75,16 +75,24 @@ describe('statusText', () => {
     });
   });
 
-  it('names the source of a whole-frame reading', () => {
+  it('reads Live for a whole-frame reading, and waits quietly for the first frame', () => {
     expect(statusText({ source: 'tap', partial: false, miss: null })).toEqual({
       text: 'Live',
       warn: false,
     });
-    expect(statusText({ source: 'cache', partial: false, miss: null })).toEqual({
-      text: 'From preview cache',
+    expect(statusText({ source: null, partial: false, miss: 'no-frame' })).toEqual({
+      text: 'Waiting for a rendered frame',
       warn: false,
     });
-    expect(statusText({ source: null, partial: false, miss: 'no-frame' }).warn).toBe(false);
+  });
+});
+
+describe('captureScopeFrame', () => {
+  afterEach(() => resetFrameTap());
+
+  it('has no frame until the engine surface publishes one', () => {
+    // The frame tap is the only source: no page preview cache stands behind it.
+    expect(captureScopeFrame()).toEqual({ frame: null, miss: 'no-frame' });
   });
 });
 

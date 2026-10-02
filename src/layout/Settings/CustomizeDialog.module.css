@@ -854,31 +854,6 @@
   overflow-y: auto;
 }
 
-/* Preview-cache budget: a small numeric field inline with the purge buttons. */
-.cacheBudgetLabel {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
-.cacheBudgetInput {
-  width: 4.5rem;
-  padding: var(--space-1) var(--space-2);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-primary);
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-}
-
-.cacheBudgetInput:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 1px;
-}
-
 /* A quiet explanatory line under a settings row. Used by the Audio pane, where
    several settings need a sentence to be usable at all (why device names can be
    blank, why latency only applies from the next playback). */

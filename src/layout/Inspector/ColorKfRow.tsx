@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Color } from '@motion/renderer';
+import { Color } from '@core/paint/color';
 import { secondsToFlicks } from '@motion/engine-api';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';

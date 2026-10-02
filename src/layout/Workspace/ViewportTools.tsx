@@ -39,7 +39,6 @@ import { hasAnyKeys, hasPositionKeys, hasPositionTangents } from '@core/mirror/m
 import { compHasKind } from '@core/mirror/deviceNames';
 import { editPositionKeys } from './viewportEdits';
 import { set3DEdit } from './layerMenuEdits';
-import { useRenderBackendStore } from '@stores/renderBackendStore';
 import styles from './ViewportTools.module.css';
 
 import { useUIStore } from '@stores/uiStore';
@@ -59,7 +58,6 @@ import { cameraViewLabel, effectiveViewMode } from '@layout/TopNav/ViewControls'
  * already had one.
  */
 function ViewportStatus(): JSX.Element | null {
-  const isSoftware = useRenderBackendStore((s) => s.isSoftwareFallback);
   const storeMode = useGuidesStore((s) => s.camera3dMode);
   const setCamera3dMode = useGuidesStore((s) => s.setCamera3dMode);
   // A camera view whose camera has gone renders as the Active Camera, so it
@@ -67,38 +65,22 @@ function ViewportStatus(): JSX.Element | null {
   // The parent's scene subscription re-renders this when cameras change.
   const camera3dMode = effectiveViewMode(storeMode);
 
-  if (camera3dMode === 'active' && !isSoftware) return null;
+  if (camera3dMode === 'active') return null;
 
   return (
     <div className={styles.group}>
       {/* Active 3D view name (AE shows the view in the viewer bar). Click
           returns to Active Camera — shortcut `1`. */}
-      {camera3dMode !== 'active' && (
-        <button
-          className={styles.headerBtn}
-          onClick={() => setCamera3dMode('active')}
-          aria-label={`Viewing through ${cameraViewLabel(camera3dMode)} — return to the Active Camera`}
-          title="Viewing through a 3D view — click to return to Active Camera (1)"
-        >
-          <Icon name="camera" size="sm" />
-          <span className={styles.viewName}>{cameraViewLabel(camera3dMode)}</span>
-        </button>
-      )}
+      <button
+        className={styles.headerBtn}
+        onClick={() => setCamera3dMode('active')}
+        aria-label={`Viewing through ${cameraViewLabel(camera3dMode)} — return to the Active Camera`}
+        title="Viewing through a 3D view — click to return to Active Camera (1)"
+      >
+        <Icon name="camera" size="sm" />
+        <span className={styles.viewName}>{cameraViewLabel(camera3dMode)}</span>
+      </button>
 
-      {/*
-        No WebGPU/WebGL2 badge.
-
-        Which backend the preview happens to be on is not a fact a user acts on
-        — it costs a permanent slot to tell them something true and useless. The
-        `GPU unavailable` badge stays, because that one IS actionable: nothing
-        is rendering and they need to know why.
-      */}
-      {isSoftware && (
-        <span className={styles.softwareBadge} title="Both WebGPU and WebGL2 failed to initialize, so the preview cannot render. Close other GPU-heavy windows and reopen the project.">
-          <Icon name="warning" size="sm" />
-          GPU unavailable
-        </span>
-      )}
       <span className={styles.sep} />
     </div>
   );
@@ -148,10 +130,9 @@ export function ViewportTools(): JSX.Element | null {
     }
   };
 
-  const isSoftware = useRenderBackendStore((s) => s.isSoftwareFallback);
   const storeMode = useGuidesStore((s) => s.camera3dMode);
   const camera3dMode = effectiveViewMode(storeMode);
-  const hasStatus = camera3dMode !== 'active' || isSoftware;
+  const hasStatus = camera3dMode !== 'active';
   const hasTools = hasPositionAnim || (hasAnyAnim && !hasPositionAnim) || eligible3D.length > 0;
   if (!hasStatus && !hasTools) return null;
 

@@ -3805,7 +3805,7 @@ export interface LayerFaces {
   faces: LayerFace[];
 }
 
-/** B4 round 8 — the faces of an extruded 3D layer at `time` (facePicking.ts projectedFaces before its projection): the renderer's extrusion mesh with its front cap, else the flat-quad fallback, in world px; empty for a layer with no extrusion. The UI projects them through its view. `unsupported` without the frame builder. */
+/** B4 round 8 — the faces of an extruded 3D layer at `time` (what facePicking.ts projects through a view and picks from): the renderer's extrusion mesh with its front cap, else the flat-quad fallback, in world px; empty for a layer with no extrusion. The UI projects them through its view. `unsupported` without the frame builder. */
 export interface GetLayerFaces {
   layer: LayerId;
   time: Time;

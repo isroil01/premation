@@ -1,33 +1,15 @@
-# Golden-frame render-tests (Phase 0 of the single-engine unification).
+# Golden-frame render-tests: the NATIVE gate.
 #
-# Runs the offscreen-Electron + SwiftShader golden suite headlessly. SwiftShader
-# pins BOTH drivers so "same runner image ⇒ same bytes": ANGLE-SwiftShader for
-# the WebGL2 oracle, Dawn over Vulkan-SwiftShader for WebGPU (flags in
-# packages/render-tests/electron/main.cjs — no GPU and no extra apt packages
-# needed). xvfb provides the virtual display Electron needs on Linux CI.
-#
-# What gates here: everything. The WebGL2 oracle diffs against the committed
-# references, and the WebGPU pass — the product's PRIMARY backend — feeds the
-# semantic gates (alpha, 3D styles, plugin effects, extrusion reach) and the
-# pixel ratchet. run.mjs REQUIRES the WebGPU pass to produce frames when CI is
-# set: a runner where the adapter silently vanishes fails the build instead of
-# skipping every WebGPU gate while printing green, which is what this job did
-# for months. (HARNESS_REQUIRE_WEBGPU=0 is the documented escape hatch if the
-# runner image ever breaks the adapter and the oracle half must keep gating.)
-#
-# Electron runs with --no-sandbox: a runner installs node_modules as a non-root
-# user, so chrome-sandbox can never be the root-owned mode-4755 binary the SUID
-# helper demands, and it aborts the process rather than dropping the sandbox. See
-# the note in packages/render-tests/electron/main.cjs.
+# premation-scene (the C++ engine) renders every scene document under
+# packages/render-tests/scenes and the frames are compared with the committed
+# references. The TypeScript page renderer and its Electron + SwiftShader
+# harness are gone (docs/TS_ENGINE_REMOVAL.md); this is the only golden gate.
 name: render-tests
 
 on:
   push:
     paths:
-      - 'src/core/rendering/**'
-      - 'packages/renderer/**'
       - 'packages/render-tests/**'
-      - 'src/core/export/**'
       - 'native/**'
       - '.github/actions/build-engine/**'
       - '.github/workflows/render-tests.yml'
@@ -35,36 +17,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  golden:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          # electron 44 declares node >= 22.12 (and downloads its binary on the
-          # first `import 'electron'` in run.mjs, not in a postinstall).
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Install
-        run: npm ci
-
-      - name: Render-tests (oracle gate + GPU parity dashboard)
-        # xvfb-run gives Electron a display; SwiftShader switches are set in
-        # electron/main.cjs. The runner exits non-zero on any oracle regression
-        # or expect-pass GPU failure.
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" npm run render-tests
-
-      - name: Upload failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: render-tests-diffs
-          path: packages/render-tests/.artifacts/diff/
-          if-no-files-found: ignore
-          retention-days: 14
-
   # The NATIVE golden gate (docs/TS_ENGINE_REMOVAL.md "Golden gate → native vs
   # the reference folders"): premation-scene — built from the same
   # *-engine preset as premation-engine, with the vcpkg binary cache of

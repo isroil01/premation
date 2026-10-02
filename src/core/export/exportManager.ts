@@ -23,7 +23,7 @@ import {
   strokeTrackPath,
 } from '@core/paint/strokeTracks';
 import { paintBlendToLottie } from '@core/paint/paintBlend';
-import { paintRenderOrder } from '@core/rendering/raster/vectorDraw';
+import { paintRenderOrder } from '@core/paint/paintOrder';
 import { liveDocument } from '@core/project/liveDocument';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 import { compRootOf } from '@core/scene/parenting';
@@ -481,7 +481,7 @@ export function lottieShapesFor(node: SceneNode, fr = 30): unknown[] {
 
   const groupItems: unknown[] = [geometry];
   // Lottie draws a group's FIRST paint item on top, so the paints go out
-  // FRONT → BACK in the order the renderer composites them (`paintRenderOrder`,
+  // FRONT → BACK in the order the engine composites them (`paintRenderOrder`,
   // which resolves each paint's Composite). With every paint at its default
   // that is today's order: strokes first, top one leading, then the fill — which
   // also leaves the primary (bottom) stroke last among the strokes, the one an

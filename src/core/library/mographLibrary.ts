@@ -7,7 +7,7 @@
  * inserted element lands looking exactly like its card.
  *
  * Geometry uses only rect / ellipse / text primitives so the Canvas2D gallery
- * previewer (templatePreview.drawSnapshot) renders every design faithfully.
+ * previewer (the engine, through previewController) renders every design faithfully.
  * Two engine features beyond plain keyframes are used through `decorate`:
  *   • expressions (loopOut / wiggle) for genuinely infinite loops — evaluated
  *     by buildSnapshot in BOTH the live scene and the isolated card engine;
@@ -28,7 +28,7 @@ import { setInsertedClipWindow } from './clipWindow';
 import { defaultAnimation } from '@motion/animation';
 import { setNodeMotionBlur } from '@core/effects/motionBlur';
 import { addRoot, addText, addGradientShape, radialFill, linearFill, liveKf, choreographyDuration, choreographyRestTime, type SetKf } from '@core/template/templates/builders';
-import { mountPreview } from '@core/template/previewController';
+import { mountPreview, type PreviewSpec } from '@core/template/previewController';
 import { previewChoreography } from './insertPreview';
 import { MOGRAPH_ID_PROP, nameMographParts } from './mographParams';
 import type { SceneNode, Transform } from '@core/types';
@@ -1038,13 +1038,13 @@ export function previewMographItem(mgId: string): void {
 
 // ── Animated card preview (isolated; same build + choreography) ──────
 
-/** Play an item's animation live into `canvas` via the shared gallery ticker.
- *  Isolated throwaway graph — never touches the live scene. Expressions and
- *  text.source keyframes replay through the SAME buildSnapshot evaluation the
- *  live renderer uses, so loop/counter cards are faithful. */
-export function createMographPlayer(canvas: HTMLCanvasElement, item: MographItem): { stop: () => void } {
+/** The preview recipe of an item: the same build, choreography and decoration
+ *  the insert writes, in the preview comp. Expressions and text.source
+ *  keyframes ride in the preview document, so the ENGINE evaluates them as it
+ *  does once the item is inserted — loop / counter cards are faithful. */
+export function mographPreviewSpec(item: MographItem): PreviewSpec {
   const cx = PREVIEW_W / 2, cy = PREVIEW_H / 2;
-  return mountPreview(canvas, {
+  return {
     build: (g) => {
       addRoot(g, 'tpl_root', item.name);
       item.build(g, 'el', 'tpl_root', cx, cy, 1);
@@ -1059,8 +1059,16 @@ export function createMographPlayer(canvas: HTMLCanvasElement, item: MographItem
         }
       : undefined,
     duration: item.loop ? item.previewSeconds ?? 4 : undefined,
+    cacheKey: `mograph:${item.id}`,
     width: PREVIEW_W,
     height: PREVIEW_H,
     background: '#101016',
-  });
+  };
+}
+
+/** Show an item on `canvas` through the shared gallery controller: the engine's
+ *  still of it, its animation playing while the card is hovered or focused.
+ *  Isolated throwaway graph — never touches the live scene. */
+export function createMographPlayer(canvas: HTMLCanvasElement, item: MographItem): { stop: () => void } {
+  return mountPreview(canvas, mographPreviewSpec(item));
 }

@@ -9,7 +9,6 @@ import { tryRegisterSamOnnxFromUrl } from '@core/tracking/samOnnxLoader';
 import { restoreSamModelAtBoot, useSamModelStore } from '@stores/samModelStore';
 import { registerBundledSamAtBoot } from '@core/tracking/samBundled';
 import { parseEdition, setEdition } from '@core/config/edition';
-import { setDevRendererBuild } from '@core/rendering/rendererIdentity';
 import { purgeLegacyLocalAiKeys } from '@core/api/purgeLocalKeys';
 import { configureUiPlatform } from '@core/config/uiPlatform';
 import { setDevBuild } from '@core/config/devBuild';
@@ -37,11 +36,8 @@ configureUiPlatform({
 // because the local edition implies local-first storage.
 const edition = parseEdition(import.meta.env.VITE_EDITION as string | undefined);
 
-// A dev build's version does not move between edits, so it cannot tell
-// yesterday's renderer from today's — and the disk frame cache now survives a
-// restart. Read here for the same reason the flags above are: `import.meta`
-// trips Jest under this repo's CJS transform.
-setDevRendererBuild(import.meta.env.DEV === true);
+// Read here for the same reason the flags above are: `import.meta` trips Jest
+// under this repo's CJS transform.
 // Developer-only menu entries (the demo-scene loader) show in dev builds only.
 setDevBuild(import.meta.env.DEV === true);
 setEdition(edition);

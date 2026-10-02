@@ -1,10 +1,7 @@
 /**
- * Environment light — the probe math and, crucially, the SIGN of the derived
- * rig: "light arrives from above" must actually brighten upward-facing
- * surfaces through the real shading path, or the whole feature is a lamp
- * wired backwards. The shading test goes through shadeLayer itself, so the
- * rig encoding is pinned against the engine's own convention rather than
- * against what a comment claims it is.
+ * Environment light — the probe math and the derived rig: a sky brighter
+ * above must yield irradiance and a rig light that arrive from above (−y in
+ * compositor space), or the whole feature is a lamp wired backwards.
  */
 
 import {
@@ -24,32 +21,11 @@ import {
   ENV_PROJECT_MAX_HEIGHT,
   type EnvPixels,
 } from './environmentLight';
-import { shadeLayer, type SceneLight } from './lightShading';
 
 function uniformEnv(value: number): EnvPixels {
   const width = 16, height = 8;
   const data = new Float32Array(width * height * 3).fill(value);
   return { width, height, data };
-}
-
-/** Encode a rig light the way buildSnapshot's expansion does. */
-function rigToSceneLights(rig: ReturnType<typeof environmentRig>): SceneLight[] {
-  const centre = { x: 960, y: 540, z: 0 };
-  const FAR = 100000;
-  return rig.map((rl) => rl.kind === 'ambient'
-    ? {
-        type: 'ambient' as const, color: rl.color, intensity: rl.intensity,
-        radius: 500, angle: 0, cone: 45, shadows: false,
-        falloff: 'none' as const, x: centre.x, y: centre.y, z: 0,
-      }
-    : {
-        type: 'parallel' as const, color: rl.color, intensity: rl.intensity,
-        radius: 500, angle: 0, cone: 45, shadows: false, falloff: 'none' as const,
-        x: centre.x - rl.from!.x * FAR,
-        y: centre.y - rl.from!.y * FAR,
-        z: 0 - rl.from!.z * FAR,
-        poi: centre,
-      });
 }
 
 describe('SH probe', () => {
@@ -266,20 +242,5 @@ describe('environment sky values', () => {
     }
     // …and hands back the identical object on a repeat, i.e. it is a cache.
     expect(environmentRigFor('sunset', 80, 37)).toBe(environmentRigFor('sunset', 80, 37));
-  });
-});
-
-describe('rig → shadeLayer sign convention', () => {
-  it('light "from above" brightens an up-facing surface more than a down-facing one', () => {
-    const rig = environmentRig(presetSh('sky'), 100, 0)
-      .filter((l) => l.kind === 'parallel' && l.from!.y === -1);
-    expect(rig.length).toBe(1);
-    const lights = rigToSceneLights(rig);
-    const at = { x: 960, y: 540, z: 0 };
-    const up = shadeLayer([0, -1, 0], at, lights, undefined, true);
-    const down = shadeLayer([0, 1, 0], at, lights, undefined, true);
-    const lum = (g: readonly number[] | null): number => (g ? g[0]! + g[1]! + g[2]! : 0);
-    expect(lum(up)).toBeGreaterThan(lum(down));
-    expect(lum(up)).toBeGreaterThan(0.01);
   });
 });

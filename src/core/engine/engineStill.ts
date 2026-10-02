@@ -32,6 +32,15 @@ export async function engineCompStill(compId: string, seconds: number, maxSize: 
   return res.ok ? toBlob(res.value) : null;
 }
 
+/**
+ * One frame of a composition as a PNG at full size (up to ENGINE_STILL_MAX) —
+ * Save Frame As / Copy Frame. `frame` is a composition frame index.
+ */
+export function engineCompFrameStill(comp: { id: string; fps: number; width: number; height: number }, frame: number): Promise<Blob | null> {
+  const fps = comp.fps > 0 ? comp.fps : 30;
+  return engineCompStill(comp.id, frame / fps, Math.max(comp.width, comp.height));
+}
+
 /** A composition of `document` (an EditorDocument) at `seconds`; `compId` absent = its active tab's. */
 export async function engineDocumentStill(document: unknown, seconds: number, maxSize: number, compId?: string): Promise<Blob | null> {
   const res = await engine().query({

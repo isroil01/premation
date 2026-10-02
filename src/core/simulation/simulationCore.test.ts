@@ -12,6 +12,10 @@
  * test; it fails the first backward seek. Since monotonic playback is also the
  * common case, a test suite that mirrored real usage would miss precisely the
  * bug this design is built to avoid.
+ *
+ * The simulation driven through the cache is the stateful particle sim — a
+ * floor bounce makes it genuinely history-dependent, so no closed form could
+ * answer `stateAt` and a wrong cache cannot agree with the replay by luck.
  */
 
 import {
@@ -19,28 +23,46 @@ import {
   SimulationPreRollLimit,
   type Simulation,
 } from './simulationCore';
+import { DEFAULT_PARTICLE_CONFIG, type ParticleConfig } from '@core/particles/particleSim';
 import {
-  createBounceSim,
-  bounceDigest,
-  DEFAULT_BOUNCE_CONFIG,
-  type BounceState,
-} from './bounceSim';
+  createStatefulParticleSim,
+  digestParticleSoA,
+  type ParticleSoA,
+} from '@core/particles/statefulParticleSim';
 
 /** The definition of the state: no cache, no snapshots, just stepping. */
-function naiveStateAt(sim: Simulation<BounceState>, frame: number): BounceState {
+function naiveStateAt(sim: Simulation<ParticleSoA>, frame: number): ParticleSoA {
   let s = sim.init();
   for (let f = 1; f <= frame; f++) s = sim.step(s, f);
   return s;
 }
 
-const sim = (): Simulation<BounceState> => createBounceSim({ ...DEFAULT_BOUNCE_CONFIG, count: 24 });
+/** Particles emitted DOWN onto a floor — the config statefulParticleSim.test.ts
+ *  proves bounces under; emission, slot recycling and bounces are all in play. */
+const CONFIG: ParticleConfig = {
+  ...DEFAULT_PARTICLE_CONFIG,
+  simMode: 'stateful',
+  birthRate: 60,
+  maxParticles: 80,
+  lifetime: 3,
+  speed: 100,
+  direction: 90,
+  spread: 10,
+  gravityY: 600,
+  seed: 7,
+};
+
+const sim = (): Simulation<ParticleSoA> =>
+  createStatefulParticleSim(CONFIG, { fps: 30, floorY: 80, restitution: 0.85, damping: 1 });
+
+const digest = digestParticleSoA;
 
 describe('SimulationCache — the ordering invariant', () => {
   it('agrees with naive stepping at every frame it is asked for, in order', () => {
     const s = sim();
     const cache = new SimulationCache(s, { snapshotInterval: 10 });
     for (const f of [0, 1, 7, 10, 33, 100]) {
-      expect([f, bounceDigest(cache.stateAt(f))]).toEqual([f, bounceDigest(naiveStateAt(s, f))]);
+      expect([f, digest(cache.stateAt(f))]).toEqual([f, digest(naiveStateAt(s, f))]);
     }
   });
 
@@ -50,8 +72,8 @@ describe('SimulationCache — the ordering invariant', () => {
     const s = sim();
     const cache = new SimulationCache(s, { snapshotInterval: 10 });
     cache.stateAt(200);
-    expect(bounceDigest(cache.stateAt(10))).toBe(bounceDigest(naiveStateAt(s, 10)));
-    expect(bounceDigest(cache.stateAt(3))).toBe(bounceDigest(naiveStateAt(s, 3)));
+    expect(digest(cache.stateAt(10))).toBe(digest(naiveStateAt(s, 10)));
+    expect(digest(cache.stateAt(3))).toBe(digest(naiveStateAt(s, 3)));
   });
 
   it('is unchanged by a deliberately chaotic access order', () => {
@@ -59,7 +81,7 @@ describe('SimulationCache — the ordering invariant', () => {
     const cache = new SimulationCache(s, { snapshotInterval: 7 });
     const order = [97, 4, 60, 1, 60, 120, 0, 33, 121, 5, 97, 200, 61];
     for (const f of order) {
-      expect([f, bounceDigest(cache.stateAt(f))]).toEqual([f, bounceDigest(naiveStateAt(s, f))]);
+      expect([f, digest(cache.stateAt(f))]).toEqual([f, digest(naiveStateAt(s, f))]);
     }
   });
 
@@ -74,7 +96,7 @@ describe('SimulationCache — the ordering invariant', () => {
     for (const f of [140, 12, 99, 3]) scrubbed.stateAt(f);
     for (let f = 0; f <= 140; f++) played.stateAt(f);
     for (const f of [0, 3, 12, 99, 140]) {
-      expect([f, bounceDigest(scrubbed.stateAt(f))]).toEqual([f, bounceDigest(played.stateAt(f))]);
+      expect([f, digest(scrubbed.stateAt(f))]).toEqual([f, digest(played.stateAt(f))]);
     }
   });
 
@@ -84,7 +106,7 @@ describe('SimulationCache — the ordering invariant', () => {
     const s = sim();
     const cache = new SimulationCache(s, { snapshotInterval: 5, maxSnapshots: 3 });
     for (let f = 0; f <= 300; f += 5) cache.stateAt(f);
-    expect(bounceDigest(cache.stateAt(40))).toBe(bounceDigest(naiveStateAt(s, 40)));
+    expect(digest(cache.stateAt(40))).toBe(digest(naiveStateAt(s, 40)));
     expect(cache.getStats().snapshots).toBeLessThanOrEqual(4); // 3 + pinned frame 0
   });
 });
@@ -97,12 +119,14 @@ describe('SimulationCache — ownership and mutation', () => {
     // every later answer for the lifetime of the cache.
     const s = sim();
     const cache = new SimulationCache(s, { snapshotInterval: 10 });
-    const before = bounceDigest(cache.stateAt(0));
+    const before = digest(cache.stateAt(0));
     const handed = cache.stateAt(0);
-    handed.x[0] = 99999;
-    handed.vy[0] = -99999;
-    expect(bounceDigest(cache.stateAt(0))).toBe(before);
-    expect(bounceDigest(cache.stateAt(30))).toBe(bounceDigest(naiveStateAt(s, 30)));
+    // The emitter's accumulator and id counter: live at frame 0 (no particle is
+    // born yet) and the seed of everything that follows.
+    handed.emitAcc[0] = 99999;
+    handed.nextId[0] = 99999;
+    expect(digest(cache.stateAt(0))).toBe(before);
+    expect(digest(cache.stateAt(30))).toBe(digest(naiveStateAt(s, 30)));
   });
 
   it('clone() copies typed-array buffers rather than sharing them', () => {
@@ -123,9 +147,9 @@ describe('SimulationCache — seeking and bounds', () => {
     // during ordinary scrubbing.
     const s = sim();
     const cache = new SimulationCache(s, {});
-    const zero = bounceDigest(naiveStateAt(s, 0));
-    expect(bounceDigest(cache.stateAt(-1))).toBe(zero);
-    expect(bounceDigest(cache.stateAt(-10_000))).toBe(zero);
+    const zero = digest(naiveStateAt(s, 0));
+    expect(digest(cache.stateAt(-1))).toBe(zero);
+    expect(digest(cache.stateAt(-10_000))).toBe(zero);
   });
 
   it('refuses a seek that would pre-roll past the limit', () => {
@@ -142,7 +166,7 @@ describe('SimulationCache — seeking and bounds', () => {
     const cache = new SimulationCache(s, { snapshotInterval: 2, maxSnapshots: 2 });
     for (let f = 0; f <= 100; f += 2) cache.stateAt(f);
     // Everything mid-timeline is long evicted; frame 0 must still answer.
-    expect(bounceDigest(cache.stateAt(0))).toBe(bounceDigest(naiveStateAt(s, 0)));
+    expect(digest(cache.stateAt(0))).toBe(digest(naiveStateAt(s, 0)));
   });
 
   it('reset() re-seeds, because a config change is a different history', () => {
@@ -151,7 +175,7 @@ describe('SimulationCache — seeking and bounds', () => {
     cache.stateAt(100);
     cache.reset();
     expect(cache.getStats().stepped).toBe(0);
-    expect(bounceDigest(cache.stateAt(50))).toBe(bounceDigest(naiveStateAt(s, 50)));
+    expect(digest(cache.stateAt(50))).toBe(digest(naiveStateAt(s, 50)));
   });
 });
 
@@ -175,49 +199,5 @@ describe('SimulationCache — the cost it is hiding', () => {
     const before = cache.getStats().stepped;
     cache.stateAt(4997);
     expect(cache.getStats().stepped - before).toBeLessThanOrEqual(10);
-  });
-});
-
-describe('bounceSim is genuinely history-dependent', () => {
-  it('collides — so no closed form could answer stateAt', () => {
-    // If nothing ever hit a wall this would be ballistic and the whole
-    // subsystem would be unnecessary, so the premise is asserted rather than
-    // assumed. A particle whose vertical velocity REVERSES sign has bounced.
-    const s = sim();
-    let bounced = false;
-    let prev = s.init();
-    for (let f = 1; f <= 200 && !bounced; f++) {
-      const before = prev.vy.slice();
-      prev = s.step(prev, f);
-      for (let i = 0; i < before.length; i++) {
-        if (before[i]! > 0 && prev.vy[i]! < 0) { bounced = true; break; }
-      }
-    }
-    expect(bounced).toBe(true);
-  });
-
-  it('is seeded, not random — same config, same history', () => {
-    const a = createBounceSim({ ...DEFAULT_BOUNCE_CONFIG, count: 16, seed: 7 });
-    const b = createBounceSim({ ...DEFAULT_BOUNCE_CONFIG, count: 16, seed: 7 });
-    const c = createBounceSim({ ...DEFAULT_BOUNCE_CONFIG, count: 16, seed: 8 });
-    expect(bounceDigest(naiveStateAt(a, 60))).toBe(bounceDigest(naiveStateAt(b, 60)));
-    expect(bounceDigest(naiveStateAt(c, 60))).not.toBe(bounceDigest(naiveStateAt(a, 60)));
-  });
-
-  it('keeps particles inside the box, including after an overshoot', () => {
-    // Reflecting without clamping leaves a fast particle outside the wall,
-    // where it reflects again every frame and buzzes. Driven hard enough to
-    // overshoot: high gravity, full restitution.
-    const s = createBounceSim({
-      ...DEFAULT_BOUNCE_CONFIG, count: 32, gravity: 40, restitution: 1, damping: 1,
-    });
-    const st = naiveStateAt(s, 300);
-    const r = DEFAULT_BOUNCE_CONFIG.radius;
-    for (let i = 0; i < st.x.length; i++) {
-      expect(st.x[i]!).toBeGreaterThanOrEqual(r - 1e-9);
-      expect(st.x[i]!).toBeLessThanOrEqual(DEFAULT_BOUNCE_CONFIG.width - r + 1e-9);
-      expect(st.y[i]!).toBeGreaterThanOrEqual(r - 1e-9);
-      expect(st.y[i]!).toBeLessThanOrEqual(DEFAULT_BOUNCE_CONFIG.height - r + 1e-9);
-    }
   });
 });

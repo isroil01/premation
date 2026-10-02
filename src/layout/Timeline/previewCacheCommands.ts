@@ -6,48 +6,79 @@
  * re-scan ship as one unit, so nothing else has to be edited to add or remove
  * them. Registration is idempotent (the registry replaces by id).
  *
- * ## Why three and not one
+ * ## The cache is the engine's
  *
- * Emptying MEMORY costs a re-promotion from the disk tier — seconds, and only
- * for what is on screen. Emptying DISK throws away every rendered frame the
- * machine holds, including the parked generations an undo would have come back
- * to, and re-earning that is minutes of rendering. A single "Purge Cache"
- * makes anyone who wanted to reclaim a little memory pay the whole bill, which
- * is why the settings dialog already splits them; these are the same two
- * actions, reachable from where the cache is actually visible.
+ * The frames the viewport shows are drawn by `premation-engine`, and so is the
+ * cache they come back from: a frame cache in VIDEO MEMORY, keyed by content,
+ * filled by every exact frame the engine draws (playback, a scrub, a parked
+ * playhead) and evicted least-recently-used at a budget the engine sizes from
+ * the graphics adapter. There is no disk tier. What these commands can do is
+ * what the engine API offers (`purgeCache`, `getCacheCoverage`):
  *
- * ## Why caching is a REQUEST
- *
- * The pump that renders frames into the cache lives inside `useWorkspace`'s
- * viewport effect and cannot be called from out here — see `cacheRequestStore`.
- * "Cache Work Area" therefore asks; the pump keeps every safety decision
- * (playing, exporting, hidden tab, span already full) where it already is.
+ *   Purge RAM Preview     `purgeCache { kind: 'ram' }` — empties that cache.
+ *   Purge Disk Cache      `purgeCache { kind: 'disk' }` — nothing to empty
+ *                         today; the command is enabled only when the engine
+ *                         reports disk bytes, which it never does yet.
+ *   Cache Work Area Now   the engine has NO command that pre-renders a span
+ *                         into its cache, so this is disabled and says why. It
+ *                         does not start a job that could never finish.
  */
 
 import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { engine } from '@core/engine/engineInstance';
-import { viewportFrameCache } from '@core/rendering/frameCache';
-import { activeViewportDiskCache } from '@core/rendering/frameDiskCache';
-import { requestPreviewCache } from '@stores/cacheRequestStore';
-import { engineCacheSnapshot } from './engineCacheCoverage';
 import { useUIStore } from '@stores/uiStore';
+import { engineCacheSnapshot } from './engineCacheCoverage';
 import { formatCacheMb, previewCacheStats } from './previewCacheStats';
 
 export const PREVIEW_CACHE_WORK_AREA_COMMAND = asCommandId('preview.cacheWorkArea');
 export const PREVIEW_PURGE_RAM_COMMAND = asCommandId('preview.purgeRam');
 export const PREVIEW_PURGE_DISK_COMMAND = asCommandId('preview.purgeDisk');
 
+const MB = 1024 * 1024;
+
 /**
- * Confirm-less feedback. None of the three needs a dialog: caching is additive,
- * and both purges cost render time rather than user data — a modal in front of
- * them would be more expensive than the mistake it prevents.
+ * Why "Cache Work Area Now" cannot run. One sentence, shown wherever the
+ * action is offered (the command's description, the lane button's tooltip, the
+ * menu row, the toast).
+ */
+export const CACHE_WORK_AREA_UNAVAILABLE =
+  'The engine caches frames as it draws them and has no pre-render yet — play the work area once to fill the cache.';
+
+/** Why "Purge Disk Cache" has nothing to do. */
+export const DISK_CACHE_UNAVAILABLE = 'The engine keeps its preview cache in video memory — there is no disk cache.';
+
+/**
+ * Whether the engine can pre-render a span into its frame cache. It cannot:
+ * the API has `purgeCache` and `setCacheBudget`, no fill. A function so the
+ * button, the menu row and the command ask one place, and so the day the
+ * engine grows the command there is one line to change.
+ */
+export function canCacheWorkArea(): boolean {
+  return false;
+}
+
+/** Whether the engine reports a disk tier with something in it. */
+export function hasEngineDiskCache(): boolean {
+  return engineCacheSnapshot().diskBytes > 0;
+}
+
+/**
+ * Confirm-less feedback. None of the three needs a dialog: both purges cost
+ * render time rather than user data — a modal in front of them would be more
+ * expensive than the mistake it prevents.
  */
 function toast(message: string, level: 'info' | 'success' | 'warning' = 'info'): void {
   useUIStore.getState().notify({ level, message, durationMs: 3200 });
 }
 
+/**
+ * "Cache Work Area Now". Says what is true: either the span is already in the
+ * engine's cache, or it is not and the engine cannot be asked to fill it.
+ * Callers that offer the action unconditionally (the Preview menu) reach this,
+ * so it answers rather than failing silently.
+ */
 export function cacheWorkAreaNow(): void {
   const stats = previewCacheStats();
   if (stats.total === 0) {
@@ -55,76 +86,39 @@ export function cacheWorkAreaNow(): void {
     return;
   }
   if (stats.cached >= stats.total) {
-    toast(
-      stats.workArea ? 'Work area is already cached' : 'Composition is already cached',
-      'info',
-    );
+    toast(stats.workArea ? 'Work area is already cached' : 'Composition is already cached', 'info');
     return;
   }
-  requestPreviewCache();
-  const missing = stats.total - stats.cached;
-  const what = stats.workArea ? 'work area' : 'composition';
-  // A JOB, not a timed toast: the pass runs on for as long as the work area is
-  // long, and a notice that disappeared after three seconds told the user
-  // nothing about whether it finished. The cache reports no callback, so the
-  // job follows `previewCacheStats()` at 2 Hz until every frame is in — or
-  // until the count stops moving (the pass stands down on interaction, and a
-  // job that never ends is worse than one that says "paused").
-  const JOB_ID = 'cache-work-area';
-  const ui = useUIStore.getState();
-  ui.startJob({ id: JOB_ID, label: `Caching ${missing} frame${missing === 1 ? '' : 's'} of the ${what}…`, progress: stats.cached / stats.total });
-  let lastCached = stats.cached;
-  let stalledTicks = 0;
-  const timer = window.setInterval(() => {
-    const now = previewCacheStats();
-    const done = now.total === 0 || now.cached >= now.total;
-    if (done) {
-      window.clearInterval(timer);
-      useUIStore.getState().finishJob(JOB_ID, { status: 'done', message: `Cached the ${what} — ${now.cached} frames` });
-      return;
-    }
-    stalledTicks = now.cached === lastCached ? stalledTicks + 1 : 0;
-    lastCached = now.cached;
-    useUIStore.getState().updateJob(JOB_ID, {
-      progress: now.cached / now.total,
-      label: `Caching the ${what}… ${now.cached} / ${now.total} frames`,
-    });
-    // Ten seconds without a new frame: the pass has stood down.
-    if (stalledTicks >= 20) {
-      window.clearInterval(timer);
-      useUIStore.getState().finishJob(JOB_ID, {
-        status: 'cancelled',
-        message: `Caching paused at ${now.cached} / ${now.total} frames — it resumes when the editor is idle`,
-      });
-    }
-  }, 500);
+  if (!canCacheWorkArea()) {
+    toast(`${stats.cached} / ${stats.total} frames cached. ${CACHE_WORK_AREA_UNAVAILABLE}`, 'warning');
+  }
 }
 
 export function purgeRamPreview(): void {
-  const held = Math.max(viewportFrameCache.totalBytesHeld, engineCacheSnapshot().ramBytes) / (1024 * 1024);
-  if (held <= 0) {
-    toast('RAM preview is already empty', 'info');
-    return;
-  }
-  // Memory only. The disk tier keeps everything, so frames come straight back
-  // as the playhead reaches them. The bars read the engine cache, so that
-  // one is cleared too.
-  viewportFrameCache.clear();
-  void engine().execute({ type: 'purgeCache', kind: 'ram' });
-  toast(`Purged ${formatCacheMb(held)} from the RAM preview`, 'success');
+  // The size is the last sample the cache bars took — it can be stale (nothing
+  // polls with the timeline hidden), so the purge is sent whatever it says and
+  // only the wording depends on it.
+  const held = engineCacheSnapshot().ramBytes / MB;
+  void engine().execute({ type: 'purgeCache', kind: 'ram' }).then((res) => {
+    if (!res.ok) {
+      toast(`Could not purge the preview cache: ${res.error.message}`, 'warning');
+      return;
+    }
+    toast(held > 0 ? `Purged ${formatCacheMb(held)} from the preview cache` : 'Purged the preview cache', 'success');
+  });
 }
 
 export function purgeDiskCache(): void {
-  const disk = activeViewportDiskCache();
-  if (!disk) {
-    toast('No disk cache in this environment', 'warning');
+  if (!hasEngineDiskCache()) {
+    toast(DISK_CACHE_UNAVAILABLE, 'info');
     return;
   }
-  const held = disk.totalBytes / (1024 * 1024);
-  void disk.purge().then(() => {
-    // RAM too: leaving it behind would show a green bar over frames the disk
-    // tier can no longer back, and the first eviction would silently lose them.
-    viewportFrameCache.clear();
+  const held = engineCacheSnapshot().diskBytes / MB;
+  void engine().execute({ type: 'purgeCache', kind: 'disk' }).then((res) => {
+    if (!res.ok) {
+      toast(`Could not purge the disk cache: ${res.error.message}`, 'warning');
+      return;
+    }
     toast(`Purged ${formatCacheMb(held)} of disk cache`, 'success');
   });
 }
@@ -134,9 +128,11 @@ export function buildPreviewCacheCommands(): ReadonlyArray<Command> {
     {
       id: PREVIEW_CACHE_WORK_AREA_COMMAND,
       label: 'Cache Work Area Now',
-      description:
-        'Pre-render the work area (or the whole composition when none is set) into the RAM preview.',
+      description: canCacheWorkArea()
+        ? 'Pre-render the work area (or the whole composition when none is set) into the preview cache.'
+        : `Unavailable. ${CACHE_WORK_AREA_UNAVAILABLE}`,
       icon: 'refresh',
+      enabled: canCacheWorkArea,
       execute: () => {
         cacheWorkAreaNow();
       },
@@ -144,9 +140,8 @@ export function buildPreviewCacheCommands(): ReadonlyArray<Command> {
     {
       id: PREVIEW_PURGE_RAM_COMMAND,
       label: 'Purge RAM Preview',
-      description: 'Empty the memory tier of the preview cache. The disk tier keeps its frames.',
+      description: 'Empty the preview frame cache the engine holds in video memory. Frames are drawn again as the playhead reaches them.',
       icon: 'trash',
-      enabled: () => viewportFrameCache.totalBytesHeld > 0 || engineCacheSnapshot().ramBytes > 0,
       execute: () => {
         purgeRamPreview();
       },
@@ -154,9 +149,9 @@ export function buildPreviewCacheCommands(): ReadonlyArray<Command> {
     {
       id: PREVIEW_PURGE_DISK_COMMAND,
       label: 'Purge Disk Cache',
-      description: 'Empty the disk tier — every rendered frame the machine holds, parked states included.',
+      description: `Empty the disk tier of the preview cache. ${DISK_CACHE_UNAVAILABLE}`,
       icon: 'trash',
-      enabled: () => activeViewportDiskCache() !== null,
+      enabled: hasEngineDiskCache,
       execute: () => {
         purgeDiskCache();
       },

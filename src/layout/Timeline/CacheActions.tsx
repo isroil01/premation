@@ -13,22 +13,31 @@
  * comp, and a control that slides off the edge of the panel when you scroll is
  * a control you cannot find.
  *
+ * ## What the engine offers
+ *
+ * The cache is the engine's (video memory, filled by the frames it draws). It
+ * can be emptied (`purgeCache`); it cannot be asked to pre-render a span, so
+ * "cache now" is shown disabled with the reason rather than pretending — see
+ * `previewCacheCommands`. A disk row appears only if the engine ever reports a
+ * disk tier.
+ *
  * ## Self-subscribing, throttled — like CacheBars
  *
- * Coverage changes on every cached frame. This leaf reads it directly from the
- * cache at {@link REFRESH_HZ} and nothing above it re-renders, which is the
- * same contract `CacheBars` documents at length and for the same reason. 2Hz,
- * not 10: this is a frame COUNT, and a number ticking ten times a second is
- * unreadable in a way a growing bar is not.
+ * Coverage changes on every cached frame. This leaf reads the engine's
+ * coverage snapshot at {@link REFRESH_HZ} and nothing above it re-renders,
+ * which is the same contract `CacheBars` documents at length and for the same
+ * reason. 2Hz, not 10: this is a frame COUNT, and a number ticking ten times a
+ * second is unreadable in a way a growing bar is not.
  */
 
 import { useCallback, useEffect, useState, memo } from 'react';
 import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
-import { viewportFrameCache } from '@core/rendering/frameCache';
-import { activeViewportDiskCache } from '@core/rendering/frameDiskCache';
+import { subscribeEngineCache } from './engineCacheCoverage';
 import {
+  CACHE_WORK_AREA_UNAVAILABLE,
   cacheWorkAreaNow,
+  canCacheWorkArea,
   installPreviewCacheCommands,
   purgeDiskCache,
   purgeRamPreview,
@@ -69,8 +78,9 @@ export function usePreviewCacheStats(): { stats: PreviewCacheStats; refresh: () 
     };
 
     // Trailing throttle: the first change of a burst schedules one flush and
-    // every change until it fires rides along.
-    const off = viewportFrameCache.onChange(() => {
+    // every change until it fires rides along. Subscribing is also what keeps
+    // the engine coverage poll running while this readout is on screen.
+    const off = subscribeEngineCache(() => {
       if (timer !== null) return;
       timer = setTimeout(flush, 1000 / REFRESH_HZ);
     });
@@ -90,11 +100,14 @@ export function usePreviewCacheStats(): { stats: PreviewCacheStats; refresh: () 
   return { stats, refresh };
 }
 
-/** The dropdown's rows: cache now, purge RAM, purge disk. */
+/**
+ * The dropdown's rows: cache now (disabled, with the reason, while the engine
+ * has no pre-render), purge RAM, and purge disk when the engine has a disk tier.
+ */
 export function previewCacheMenuItems(stats: PreviewCacheStats, refresh: () => void): DropdownItem[] {
   const hasRam = stats.ramMb > 0;
-  const hasDisk = activeViewportDiskCache() !== null;
-  return [
+  const canCache = canCacheWorkArea();
+  const items: DropdownItem[] = [
     { type: 'label', label: describePreviewCache(stats) },
     { type: 'separator' },
     {
@@ -102,12 +115,15 @@ export function previewCacheMenuItems(stats: PreviewCacheStats, refresh: () => v
       id: 'cache-work-area',
       label: stats.workArea ? 'Cache Work Area Now' : 'Cache Composition Now',
       icon: 'refresh',
-      disabled: stats.total === 0,
+      disabled: !canCache || stats.total === 0,
       onSelect: () => {
         cacheWorkAreaNow();
         refresh();
       },
     },
+  ];
+  if (!canCache) items.push({ type: 'label', label: CACHE_WORK_AREA_UNAVAILABLE });
+  items.push(
     { type: 'separator' },
     {
       type: 'item',
@@ -120,24 +136,35 @@ export function previewCacheMenuItems(stats: PreviewCacheStats, refresh: () => v
         refresh();
       },
     },
-    {
+  );
+  // The engine's cache is video memory only; `diskMb` is null until it reports
+  // a disk tier, and a purge row for a tier that does not exist is noise.
+  if (stats.diskMb !== null) {
+    items.push({
       type: 'item',
       id: 'purge-disk',
       label: 'Purge Disk Cache',
       icon: 'trash',
       danger: true,
-      disabled: !hasDisk,
       onSelect: () => {
         purgeDiskCache();
         refresh();
       },
-    },
-  ];
+    });
+  }
+  return items;
 }
 
 function CacheActionsImpl(): JSX.Element {
   const { stats, refresh } = usePreviewCacheStats();
   const full = stats.total > 0 && stats.cached >= stats.total;
+  const canCache = canCacheWorkArea();
+  const what = stats.workArea ? 'work area' : 'composition';
+  const cacheTitle = full
+    ? `${stats.workArea ? 'Work area' : 'Composition'} is already cached`
+    : canCache
+      ? `Cache ${what} now — ${describePreviewCache(stats)}`
+      : `${describePreviewCache(stats)}. ${CACHE_WORK_AREA_UNAVAILABLE}`;
 
   return (
     <div className={styles.group} role="group" aria-label="Preview cache">
@@ -150,13 +177,9 @@ function CacheActionsImpl(): JSX.Element {
       <button
         type="button"
         className={styles.btn}
-        title={
-          full
-            ? `${stats.workArea ? 'Work area' : 'Composition'} is already cached`
-            : `Cache ${stats.workArea ? 'work area' : 'composition'} now — ${describePreviewCache(stats)}`
-        }
-        aria-label="Cache work area now"
-        disabled={stats.total === 0}
+        title={cacheTitle}
+        aria-label={canCache ? 'Cache work area now' : `Cache work area now — unavailable. ${CACHE_WORK_AREA_UNAVAILABLE}`}
+        disabled={!canCache || stats.total === 0}
         onClick={() => {
           cacheWorkAreaNow();
           refresh();

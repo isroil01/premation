@@ -38,7 +38,7 @@ import { useActiveMirrorComp } from '@hooks/useMirror';
 import { settingsDurationSeconds, settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
 import { framesToTimecode } from '@core/time/timecode';
 import { openExportDialog } from '@layout/Export/ExportDialog';
-import { pageFrameWireframeNodes } from '@core/rendering/pageFrame';
+import { activeViewWireframeNodes } from '@core/workspace/wireframeNodes';
 import styles from './PresentationMode.module.css';
 
 const QUALITY_ORDER: PreviewResolution[] = [1, 2, 3, 4];
@@ -86,7 +86,7 @@ export function PresentationMode(): JSX.Element | null {
   // boxes come from the main viewport's scene, which follows the same view mode.
   const wireframeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const wireframeOverlay = useMemo(
-    () => ({ canvasRef: wireframeCanvasRef, nodes: pageFrameWireframeNodes }),
+    () => ({ canvasRef: wireframeCanvasRef, nodes: activeViewWireframeNodes }),
     [],
   );
   // The pixels are the engine's (EnginePaneSurface, contain-fitted into the

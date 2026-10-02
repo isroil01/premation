@@ -7,11 +7,13 @@
  * answer at all from the Preview menu at the top of the screen. So the same
  * coverage is also available as three numbers.
  *
+ * The numbers are the ENGINE's (`getCacheCoverage`, through
+ * `engineCacheCoverage`): the frames its video-memory frame cache holds and the
+ * bytes they take. It has no disk tier, so `diskMb` is null until it reports one.
+ *
  * The span is resolved with `idleCacheSpan` rather than by re-deriving the
- * work area here, so the readout describes EXACTLY the frames the idle pump
- * would fill — including the exclusive-end off-by-one that function exists to
- * get right. A readout that disagreed with the pump by one frame would say
- * "347 / 348" forever.
+ * work area here — it gets the exclusive-end off-by-one right, and a readout
+ * that was one frame out would say "347 / 348" forever.
  */
 
 import { idleCacheSpan, type IdleCacheSpan } from '@core/timeline/idleCacheSpan';
@@ -23,25 +25,21 @@ import { activeCompIdNow } from '@hooks/useMirror';
 const MB = 1024 * 1024;
 
 export interface PreviewCacheStats {
-  /** Frames of the span held in RAM right now. */
+  /** Frames of the span the engine's frame cache holds right now. */
   cached: number;
   /** Frames the span has. 0 when there is nothing to cache. */
   total: number;
   /** True when the span is a work area rather than the whole composition. */
   workArea: boolean;
-  /** RAM the preview cache holds — live plus parked generations. */
+  /** Memory the engine's frame cache holds (video memory). */
   ramMb: number;
-  /** Disk-tier size, or null where no disk tier exists (jsdom, no IndexedDB). */
+  /** Disk-tier size, or null while the engine reports none (it has no disk tier). */
   diskMb: number | null;
 }
 
 /**
- * The span "Cache Work Area" fills: the work area when one is set, else the
- * whole composition.
- *
- * `wholeSpan: true` unconditionally — this is the explicit, user-pressed path,
- * so the `idleCacheWorkArea` preference (which only ever asked the BACKGROUND
- * pump to stay quiet) must not shrink it to a five-second look-ahead.
+ * The span the readout counts: the work area when one is set, else the whole
+ * composition (`wholeSpan: true` — never a look-ahead window).
  */
 export function previewCacheSpan(): IdleCacheSpan | null {
   // The active composition's settings from the document mirror (B4). Its work

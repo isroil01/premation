@@ -7,7 +7,7 @@
 import { useMemo } from 'react';
 import { useFocusStore, focusActiveSet, isFocusActive } from '@stores/focusStore';
 import { documentMirror } from '@stores/documentMirror';
-import type { SnapshotFocus } from '@core/rendering/buildSnapshot';
+import type { SnapshotFocus } from '@core/workspace/snapshotFocus';
 
 export interface Crumb {
   /** -1 = the root document ("Main"); >=0 = index into the focus path. */

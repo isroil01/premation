@@ -11,11 +11,9 @@
 import { createComposition, createOrAdoptComposition, deleteComposition, duplicateComposition, pristineCompToAdopt, renameComposition } from './compositionOps';
 import { defaultAnimation } from '@motion/animation';
 import { useProjectStore } from '@stores/projectStore';
-import { buildSnapshot } from '@core/rendering/buildSnapshot';
 import { flattenComposition } from '@core/scene/sceneDerive';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { AnimationEngine } from '@motion/animation';
 import type { SceneNode } from '@core/types';
 
 /** Add a shape layer INTO a composition (addChild links parent → children). */
@@ -152,23 +150,6 @@ describe('composition scoping', () => {
   it('falls back to the whole scene for a missing root', () => {
     addLayer('a', 'comp_root');
     expect(flattenComposition(defaultSceneGraph, 'nope').length).toBeGreaterThan(0);
-  });
-
-  it('renders ONE composition, not every comp at once', () => {
-    addLayer('a', 'comp_root');
-    const second = createComposition({ name: 'Second' });
-    addLayer('b', second);
-
-    const render = (rootId: string) =>
-      buildSnapshot(defaultSceneGraph, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, {
-        width: 800, height: 600, background: '#000', rootId,
-      }).layers.map((l) => l.id);
-
-    // Without rootId the renderer walks every root and draws both comps.
-    expect(render('comp_root')).toContain('a');
-    expect(render('comp_root')).not.toContain('b');
-    expect(render(second)).toContain('b');
-    expect(render(second)).not.toContain('a');
   });
 });
 
