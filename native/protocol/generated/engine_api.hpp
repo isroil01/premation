@@ -5367,6 +5367,7 @@ struct OverlayLayerGeometry {
   std::vector<double> text_box;
   std::vector<double> path_frames;
   std::vector<double> path_now;
+  std::vector<double> local;
   std::optional<OverlayScene3D> scene;
   std::optional<OverlayRig> rig;
   bool operator==(const OverlayLayerGeometry&) const = default;

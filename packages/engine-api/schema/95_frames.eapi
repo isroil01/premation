@@ -80,6 +80,8 @@ struct OverlayLayerGeometry {
   pathFrames: f64[] = 10;
   /// motionPath: the position at the frame's own time: x, y, z (comp space as `path`).
   pathNow: f64[] = 11;
+  /// transform (block 3): the layer's OWN transform at the frame, stored units, animated values winning (what the 2D chain and the 3D compose read): x, y, z, rotation (Z, degrees), scaleX, scaleY (multipliers), anchorX, anchorY, anchorZ. The 2D `matrix` has no anchor term: the drawn content sits at matrix · T(−anchor) — what the viewport's selection box and hit test need. Empty for a layer with no geometry.
+  local: f64[] = 12;
   /// scene3d (B4 round 5): a camera's, light's or 3D layer's reference-geometry inputs at the frame; absent for any other layer. Rides the layer's first record.
   scene?: OverlayScene3D = 40;
   /// rig (B4 round 5): the layer's puppet pins / skeleton at the frame (OverlayRig); absent without a rig to show. A long rig spans several records: the `rig` arrays of a layer's records concatenate in arrival order.

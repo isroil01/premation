@@ -8,20 +8,22 @@
  * insert helper tree.
  */
 
-import defaultSceneGraph from './DefaultSceneGraph';
 import { useProjectStore } from '@stores/projectStore';
+import { compItemIds, isCompItem } from '@core/mirror/docFacts';
 
 /**
- * Root node id of the composition the active tab is editing. For drill-down
- * precomp tabs this is the precomp group node, which is exactly where an
- * insert should land. Falls back to the first root only when the tab points
- * at a comp with no scene node (never the case for healthy documents).
+ * Id of the composition the active tab is editing (the engine document's, read
+ * from the mirror). For drill-down precomp tabs this is the precomp group,
+ * which is exactly where an insert should land. Falls back to the first
+ * composition only when the tab points at one the document does not have
+ * (never the case for healthy documents), and to the tab's own id before the
+ * mirror has the document.
  */
 export function activeCompRootId(): string {
   const proj = useProjectStore.getState();
   const compId = proj.tabs[proj.activeTabId ?? '']?.compositionId;
-  if (compId && defaultSceneGraph.getNode(compId)) return compId;
-  return defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  if (compId && isCompItem(compId)) return compId;
+  return compItemIds()[0] ?? compId ?? 'comp_root';
 }
 
 /**

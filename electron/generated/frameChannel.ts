@@ -88,6 +88,8 @@ export interface OverlayLayerGeometry {
   pathFrames: number[];
   /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`). */
   pathNow: number[];
+  /** transform (block 3): the layer's OWN transform at the frame, stored units, animated values winning (what the 2D chain and the 3D compose read): x, y, z, rotation (Z, degrees), scaleX, scaleY (multipliers), anchorX, anchorY, anchorZ. The 2D `matrix` has no anchor term: the drawn content sits at matrix · T(−anchor) — what the viewport's selection box and hit test need. Empty for a layer with no geometry. */
+  local: number[];
   /** scene3d (B4 round 5): a camera's, light's or 3D layer's reference-geometry inputs at the frame; absent for any other layer. Rides the layer's first record. */
   scene?: OverlayScene3D;
   /** rig (B4 round 5): the layer's puppet pins / skeleton at the frame (OverlayRig); absent without a rig to show. A long rig spans several records: the `rig` arrays of a layer's records concatenate in arrival order. */
@@ -418,6 +420,7 @@ function encS_OverlayLayerGeometry(w: Writer, v: OverlayLayerGeometry): void {
   { const a = v.textBox; if (a.length) { w.byte(74); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   { const a = v.pathFrames; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   { const a = v.pathNow; if (a.length) { w.byte(90); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.local; if (a.length) { w.byte(98); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   if (v.scene !== undefined) { w.varint(322); { const s = w.beginLd(); encS_OverlayScene3D(w, v.scene); w.endLd(s); } }
   if (v.rig !== undefined) { w.varint(402); { const s = w.beginLd(); encS_OverlayRig(w, v.rig); w.endLd(s); } }
 }
@@ -432,6 +435,7 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayer
   const l_textBox: number[] = [];
   const l_pathFrames: number[] = [];
   const l_pathNow: number[] = [];
+  const l_local: number[] = [];
   let h_layer = false;
   let v_layer: string | undefined;
   let v_scene: OverlayScene3D | undefined;
@@ -450,6 +454,7 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayer
       case 74: { const e = r.ldEnd(); while (r.pos < e) l_textBox.push(r.f64()); r.expectAt(e); break; }
       case 82: { const e = r.ldEnd(); while (r.pos < e) l_pathFrames.push(r.f64()); r.expectAt(e); break; }
       case 90: { const e = r.ldEnd(); while (r.pos < e) l_pathNow.push(r.f64()); r.expectAt(e); break; }
+      case 98: { const e = r.ldEnd(); while (r.pos < e) l_local.push(r.f64()); r.expectAt(e); break; }
       case 322: v_scene = decS_OverlayScene3D(r, r.ldEnd(), {}); break;
       case 402: v_rig = decS_OverlayRig(r, r.ldEnd(), {}); break;
       default: r.skip(key);
@@ -468,6 +473,7 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayer
   o.textBox = l_textBox;
   o.pathFrames = l_pathFrames;
   o.pathNow = l_pathNow;
+  o.local = l_local;
   if (v_scene !== undefined) o.scene = v_scene;
   if (v_rig !== undefined) o.rig = v_rig;
   return o;

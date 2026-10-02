@@ -3,46 +3,33 @@
  *
  * Every surface that has to agree with the rendered pixels needs this exact
  * branch — ortho views project with no camera at all, custom views project
- * through their STORED view camera (the scene camera is ignored), and the active
- * camera resolves position + focal + orbit through the same `readSceneCamera` the
- * renderer uses. Getting any of that subtly different is what makes selection
+ * through their STORED view camera (the scene camera is ignored), and the
+ * active camera / a `camera:<id>` view project through the camera the engine
+ * resolved for the frame on screen (the overlay geometry push's view camera,
+ * `OverlayView` — position, focal length, orbit, parents lifted, exactly as it
+ * rendered). Getting any of that subtly different is what makes selection
  * outlines drift off the layers they belong to.
  *
- * `ports.ts` had the only correct copy, inline. This is that logic extracted so
- * face picking (and anything else that needs to hit-test projected 3D geometry)
- * cannot drift from it.
+ * The view mode's camera rides the main viewport's frames once someone asks
+ * for it (`requestOverlayLayers(…, views)`: the viewport's own mode is held by
+ * viewNav.ts, a pane's by its scene port); before the first such frame the
+ * default camera framed to the comp stands in.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readSceneCamera, viewCameraNode } from '@core/scene/camera3d';
-import { orthoViewOf } from '@core/scene/cameraViewMode';
-import { toWorldPointAt } from '@core/scene/liveWorld3d';
-import { getRemappedTime } from '@core/timeline/TimelineController';
-import { defaultAnimation } from '@motion/animation';
+import { secondsToFlicks } from '@motion/engine-api';
 import { Project3D } from '@motion/scene';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
+import { MAIN_VIEWPORT, overlayView } from '@stores/overlayGeometry';
+import { orthoViewOf } from '@core/scene/cameraViewMode';
+import { projectorOf, viewCameraOf } from '@core/mirror/viewGeometry';
 
 export type Projector = (p: { x: number; y: number; z: number }) => Project3D.Projected;
 
 /**
- * One-entry memo of the projector, valid for the CURRENT TASK ONLY.
- *
- * The view is the same for every layer in a frame, but the hit-test index is
- * rebuilt per node — and building a projector walks the whole scene to find the
- * camera, twice (once here, once inside `readSceneCamera`). That made a rebuild
- * O(N²) full-scene traversals, on every playhead tick during playback and on
- * every drag tick.
- *
- * Scoped to the task rather than keyed on revisions on purpose. The N calls that
- * matter all happen inside ONE synchronous rebuild, so a task-scoped memo
- * collapses the whole cost — while a longer-lived cache would have to enumerate
- * everything a projection depends on (view mode, custom view, camera position,
- * orbit, focal length, AND camera keyframes edited while the playhead is
- * parked). Getting that list wrong freezes the projection and drifts the
- * selection chrome off the layers, which is the exact bug this module exists to
- * prevent. A stale projector is far worse than a repeated one.
+ * One-entry memo of the projector, valid for the CURRENT TASK ONLY: the view
+ * is the same for every layer in a frame, and the hit-test index asks per
+ * node. Scoped to the task rather than keyed on revisions, so a camera edit
+ * landing in a later task can never be served a projector built before it.
  */
 let memo: { key: string; projector: Projector } | null = null;
 let memoScheduled = false;
@@ -55,8 +42,7 @@ export function resetViewProjectorCache(): void {
 /**
  * Build the projector for the view that is on screen right now.
  *
- * `time` is raw COMP time — the camera's own remap is applied internally, so a
- * caller passes the playhead, not a layer time.
+ * `time` is raw COMP time (seconds) — the frame whose view camera is used.
  */
 export function currentViewProjector(
   width: number,
@@ -66,12 +52,12 @@ export function currentViewProjector(
 ): Projector {
   // An explicit view is what lets a SECONDARY pane be interactive: its nodes
   // must project through the view IT shows, not through whatever the main
-  // viewport happens to be set to. Omitted (the main viewport) still means "the
-  // view on screen right now", so every existing caller is unchanged.
+  // viewport happens to be set to.
   const mode = view ?? useGuidesStore.getState().camera3dMode;
   const key = `${width}|${height}|${time}|${mode}`;
   if (memo && memo.key === key) return memo.projector;
-  const projector = buildViewProjector(width, height, time, mode);
+  const camera = viewCameraOf(mode, overlayView(MAIN_VIEWPORT, mode, secondsToFlicks(time)), useGuidesStore.getState().customViews, width, height);
+  const projector: Projector = projectorOf(mode, camera, width, height);
   memo = { key, projector };
   if (!memoScheduled) {
     memoScheduled = true;
@@ -90,8 +76,7 @@ export function currentViewProjector(
  *
  * Exported because turning a drag back into a world translation needs the same
  * camera the projection used — its basis for direction, and a layer's projected
- * `scale` for magnitude. Resolving it a second time somewhere else is how the
- * chrome and the edit end up disagreeing about where the user pointed.
+ * `scale` for magnitude.
  */
 export function currentViewCamera(
   width: number,
@@ -99,54 +84,7 @@ export function currentViewCamera(
   time: number,
   view?: Camera3dMode,
 ): Project3D.Camera3D | null {
-  const cameraMode = view ?? useGuidesStore.getState().camera3dMode;
-  if (orthoViewOf(cameraMode)) return null;
-
-  if (isCustomViewId(cameraMode)) {
-    return customViewCamera(useGuidesStore.getState().customViews[cameraMode], width, height);
-  }
-
-  // The SAME resolver the renderer uses. This module used to run its own
-  // `flattenScene` + first-match search, which is how the viewport could end up
-  // projecting through a different camera than the render — scoped differently
-  // (whole project vs. active comp) and ordered differently (bottom-most vs.
-  // top-most) once those rules were corrected in one place and not the other.
-  // And through the camera a `camera:<id>` view names, with the renderer's
-  // fallback — the chrome has to project through the node the pixels did.
-  const rootId = useCompositionStore.getState().comp().id;
-  const cameraNode = viewCameraNode(defaultSceneGraph, cameraMode, rootId);
-  if (!cameraNode) return Project3D.defaultCamera(width, height);
-  // Sample the camera at the playhead — an animated/orbited camera otherwise
-  // projects through frame 0's view.
-  const camNode = cameraNode;
-  const camTime = getRemappedTime(camNode.id, time);
-  const camValues = defaultAnimation.evaluateNode(camNode.id, camTime);
-  // With the parent LIFT the renderer applies (`buildSnapshot` passes the same
-  // `toWorldPointAt`). Without it a camera parented to a null — the standard
-  // orbit rig — projected the chrome from the camera's LOCAL position while the
-  // pixels came from its world one: every gizmo and hit-test drifted by the
-  // null's offset, landing at the comp corner for a null at the comp centre.
-  return readSceneCamera(
-    defaultSceneGraph, width, height,
-    (id, p) => (id === camNode.id ? camValues.get(p) : undefined),
-    rootId,
-    (id, p) => toWorldPointAt(id, time, p),
-    { view: cameraMode },
-  );
-}
-
-function buildViewProjector(
-  width: number,
-  height: number,
-  time: number,
-  cameraMode: Camera3dMode = useGuidesStore.getState().camera3dMode,
-): Projector {
-  const orthoView: Project3D.OrthoView | null = orthoViewOf(cameraMode);
-
-  if (orthoView) {
-    return (p) => Project3D.projectOrtho(p, orthoView, width, height);
-  }
-
-  const camera = currentViewCamera(width, height, time, cameraMode)!;
-  return (p) => Project3D.projectPoint(p, camera);
+  const mode = view ?? useGuidesStore.getState().camera3dMode;
+  if (orthoViewOf(mode)) return null;
+  return viewCameraOf(mode, overlayView(MAIN_VIEWPORT, mode, secondsToFlicks(time)), useGuidesStore.getState().customViews, width, height);
 }

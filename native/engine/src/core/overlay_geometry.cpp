@@ -51,6 +51,14 @@ std::vector<double> matrix_of(const PCtx& pc, const std::string& layer, double s
   return {m.a, m.b, 0, 0, m.c, m.d, 0, 0, 0, 0, 1, 0, m.e, m.f, 0, 1};
 }
 
+/// The layer's own transform at the frame (block 3, OverlayLayerGeometry.local): x, y, z, rotation (Z),
+/// scaleX, scaleY, anchorX, anchorY, anchorZ — the resolver the 2D chain and the 3D compose read. Empty without geometry.
+std::vector<double> local_of(const PCtx& pc, const Node& n, double seconds) {
+  const auto t = local_3d_at(SpaceCtx{pc.d, pc.view, pc.expr, pc.cache}, n, seconds);
+  if (!t) return {};
+  return {t->x, t->y, t->z, t->rotation_z, t->scale_x, t->scale_y, t->anchor_x, t->anchor_y, t->anchor_z};
+}
+
 /// getLayerBounds' box (layer space) and corners (comp space); false when the layer has no box (or no text port for text).
 bool bounds_of(const PCtx& pc, TextQueries* text, const std::string& layer, double seconds, api::OverlayLayerGeometry& g) {
   std::optional<LayerGeometry> geo;
@@ -379,7 +387,7 @@ const Node* view_camera_node(const std::vector<const Node*>& nodes, const std::s
 /// A conservative payload estimate for one record (field tags, lengths, the id, 8 bytes per f64).
 std::size_t estimate(const api::OverlayLayerGeometry& g) {
   std::size_t doubles = g.matrix.size() + g.box.size() + g.corners.size() + g.path.size() + g.path_keys.size() + g.pins.size() +
-                        g.bones.size() + g.text_box.size() + g.path_frames.size() + g.path_now.size();
+                        g.bones.size() + g.text_box.size() + g.path_frames.size() + g.path_now.size() + g.local.size();
   std::size_t extra = 0;
   if (g.scene) {
     const api::OverlayScene3D& s = *g.scene;
@@ -403,6 +411,7 @@ std::vector<api::OverlayLayerGeometry> split(api::OverlayLayerGeometry g) {
   head.corners = std::move(g.corners);
   head.text_box = std::move(g.text_box);
   head.path_now = std::move(g.path_now);
+  head.local = std::move(g.local);
   head.pins = std::move(g.pins);
   head.bones = std::move(g.bones);
   head.scene = std::move(g.scene);  // B4 round 5: rides the head record
@@ -565,7 +574,10 @@ std::vector<api::OverlayLayerGeometry> overlay_geometry(const PCtx& pc, TextQuer
     const auto wants = [&kinds](api::OverlayKind k) { return std::find(kinds.begin(), kinds.end(), k) != kinds.end(); };
     api::OverlayLayerGeometry g;
     g.layer = layer;
-    if (wants(api::OverlayKind::transform)) g.matrix = matrix_of(pc, layer, seconds);
+    if (wants(api::OverlayKind::transform)) {
+      g.matrix = matrix_of(pc, layer, seconds);
+      g.local = local_of(pc, *n, seconds);
+    }
     if (wants(api::OverlayKind::bounds)) (void)bounds_of(pc, text, layer, seconds, g);
     if (wants(api::OverlayKind::motion_path)) motion_path_of(pc, layer, seconds, g);
     if (wants(api::OverlayKind::text_box)) text_box_of(pc, text, layer, seconds, g);

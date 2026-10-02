@@ -13816,6 +13816,7 @@ function encS_OverlayLayerGeometry(w: Writer, v: T.OverlayLayerGeometry): void {
   { const a = v.textBox; if (a.length) { w.byte(74); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   { const a = v.pathFrames; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   { const a = v.pathNow; if (a.length) { w.byte(90); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.local; if (a.length) { w.byte(98); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   if (v.scene !== undefined) { w.varint(322); { const s = w.beginLd(); encS_OverlayScene3D(w, v.scene); w.endLd(s); } }
   if (v.rig !== undefined) { w.varint(402); { const s = w.beginLd(); encS_OverlayRig(w, v.rig); w.endLd(s); } }
 }
@@ -13830,6 +13831,7 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): T.OverlayLay
   const l_textBox: number[] = [];
   const l_pathFrames: number[] = [];
   const l_pathNow: number[] = [];
+  const l_local: number[] = [];
   let h_layer = false;
   let v_layer: string | undefined;
   let v_scene: T.OverlayScene3D | undefined;
@@ -13848,6 +13850,7 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): T.OverlayLay
       case 74: { const e = r.ldEnd(); while (r.pos < e) l_textBox.push(r.f64()); r.expectAt(e); break; }
       case 82: { const e = r.ldEnd(); while (r.pos < e) l_pathFrames.push(r.f64()); r.expectAt(e); break; }
       case 90: { const e = r.ldEnd(); while (r.pos < e) l_pathNow.push(r.f64()); r.expectAt(e); break; }
+      case 98: { const e = r.ldEnd(); while (r.pos < e) l_local.push(r.f64()); r.expectAt(e); break; }
       case 322: v_scene = decS_OverlayScene3D(r, r.ldEnd(), {}); break;
       case 402: v_rig = decS_OverlayRig(r, r.ldEnd(), {}); break;
       default: r.skip(key);
@@ -13866,6 +13869,7 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): T.OverlayLay
   o.textBox = l_textBox;
   o.pathFrames = l_pathFrames;
   o.pathNow = l_pathNow;
+  o.local = l_local;
   if (v_scene !== undefined) o.scene = v_scene;
   if (v_rig !== undefined) o.rig = v_rig;
   return o;

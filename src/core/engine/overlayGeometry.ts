@@ -18,6 +18,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { compSizeOf } from '@core/composition/compSizes';
 import { parentWorld2DAt, world2DAt, world3DAt } from '@core/scene/layerSpace';
 import { readNode3D } from '@core/scene/threeD';
+import { resolveNode3DTransform } from '@core/scene/nodeMatrix';
 import { readGeometry } from '@core/workspace/geometry';
 import { compToKeyframeTime, getRemappedTime } from '@core/timeline/TimelineController';
 import { layerGeometryAt } from './layerBoundsQuery';
@@ -93,6 +94,13 @@ function matrixOf(id: string, seconds: number): number[] {
   if (m3) return Array.from(m3);
   const m = world2DAt(id, seconds);
   return [m.a, m.b, 0, 0, m.c, m.d, 0, 0, 0, 0, 1, 0, m.e, m.f, 0, 1];
+}
+
+/** The layer's own transform at `seconds` (block 3, `local`): x, y, z, rotation, scaleX, scaleY, anchorX, anchorY, anchorZ. */
+function localOf(id: string, seconds: number): number[] {
+  const node = defaultSceneGraph.getNode(id);
+  const t = node ? resolveNode3DTransform(node, seconds) : null;
+  return t ? [t.x, t.y, t.z, t.rotationZ, t.scaleX, t.scaleY, t.anchorX, t.anchorY, t.anchorZ] : [];
 }
 
 function boundsOf(id: string, seconds: number, g: OverlayLayerGeometry): void {
@@ -190,7 +198,7 @@ function motionPathOf(id: string, seconds: number, g: OverlayLayerGeometry): voi
 }
 
 function emptyRecord(layer: string): OverlayLayerGeometry {
-  return { layer, matrix: [], box: [], corners: [], path: [], pathKeys: [], pins: [], bones: [], textBox: [], pathFrames: [], pathNow: [] };
+  return { layer, matrix: [], box: [], corners: [], path: [], pathKeys: [], pins: [], bones: [], textBox: [], pathFrames: [], pathNow: [], local: [] };
 }
 
 /** The viewport's subscribed geometry at comp time `seconds`, in subscription order (the C++ producer's twin). */
@@ -200,7 +208,10 @@ export function overlayGeometryAt(viewport: number, seconds: number): OverlayLay
   for (const [id, kinds] of subscribedLayerKinds(viewport)) {
     if (!isLayer(id)) continue;
     const g = emptyRecord(id);
-    if (kinds.has('transform')) g.matrix = matrixOf(id, seconds);
+    if (kinds.has('transform')) {
+      g.matrix = matrixOf(id, seconds);
+      g.local = localOf(id, seconds);
+    }
     if (kinds.has('bounds')) boundsOf(id, seconds, g);
     if (kinds.has('motionPath')) motionPathOf(id, seconds, g);
     if (kinds.has('textBox')) textBoxOf(id, seconds, g);

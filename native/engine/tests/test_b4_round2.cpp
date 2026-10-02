@@ -366,6 +366,59 @@ TEST_CASE("setOverlayGeometry: every frame of the viewport is preceded by its ge
   for (const auto& m : h.frameMsgs) CHECK_FALSE(std::holds_alternative<api::FrameGeometry>(m.v));
 }
 
+TEST_CASE("setOverlayGeometry transform: the layer's own transform rides with the matrix (block 3, `local`)", "[b4r2][overlay]") {
+  Harness h;
+  (void)h.hello();
+  const auto layer = make_layer(h, "comp_root", api::LayerKind::shape);
+  api::SetProperty anchor;
+  anchor.prop = {layer, "transform/anchorPoint"};
+  anchor.value = vec2(10, -20);
+  REQUIRE(is_ok(h.run(cmd(anchor))));
+  api::AddKeyframes a;
+  for (const auto& [t, x] : std::vector<std::pair<api::Time, double>>{{0, 100}, {kSec, 300}}) {
+    api::KeyframeInsert k;
+    k.prop = {layer, "transform/position"};
+    k.time = t;
+    k.value = vec2(x, 200);
+    a.keys.push_back(std::move(k));
+  }
+  REQUIRE(is_ok(h.run(cmd(a))));
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 1.0;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  api::SetOverlayGeometry sub;
+  sub.viewport = 1;
+  sub.layers = {layer};
+  sub.kinds = {api::OverlayKind::transform};
+  REQUIRE(is_ok(h.run(cmd(sub))));
+  h.release_all();
+  h.frameMsgs.clear();
+  REQUIRE(is_ok(h.run(cmd(api::Seek{kSec / 2}))));
+  h.advance(std::chrono::milliseconds(40));
+  std::vector<double> local;
+  std::vector<double> matrix;
+  for (const auto& m : h.frameMsgs) {
+    if (const auto* g = std::get_if<api::FrameGeometry>(&m.v)) {
+      for (const auto& r : g->layers) {
+        local.insert(local.end(), r.local.begin(), r.local.end());
+        matrix.insert(matrix.end(), r.matrix.begin(), r.matrix.end());
+      }
+    }
+  }
+  REQUIRE(local.size() == 9);
+  CHECK(local[0] == Approx(200));  // x at the frame (keyed)
+  CHECK(local[1] == Approx(200));
+  CHECK(local[4] == Approx(1));    // scale as a multiplier
+  CHECK(local[5] == Approx(1));
+  CHECK(local[6] == Approx(10));   // the anchor the 2D matrix leaves out
+  CHECK(local[7] == Approx(-20));
+  REQUIRE(matrix.size() == 16);
+  CHECK(matrix[12] == Approx(200));  // the 2D chain: position, no anchor term
+}
+
 TEST_CASE("pack_frame_geometry: long paths split under the frame channel's payload cap and merge back", "[b4r2][overlay]") {
   api::OverlayLayerGeometry g;
   g.layer = "layer_with_a_long_path";

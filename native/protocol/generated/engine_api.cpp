@@ -25685,6 +25685,7 @@ void encode(wire::Writer& w, const OverlayLayerGeometry& v) {
   if (!v.text_box.empty()) { w.varint(74U); const std::size_t s = w.begin_ld(); for (const auto& e : v.text_box) w.f64(e); w.end_ld(s); }
   if (!v.path_frames.empty()) { w.varint(82U); const std::size_t s = w.begin_ld(); for (const auto& e : v.path_frames) w.f64(e); w.end_ld(s); }
   if (!v.path_now.empty()) { w.varint(90U); const std::size_t s = w.begin_ld(); for (const auto& e : v.path_now) w.f64(e); w.end_ld(s); }
+  if (!v.local.empty()) { w.varint(98U); const std::size_t s = w.begin_ld(); for (const auto& e : v.local) w.f64(e); w.end_ld(s); }
   if (v.scene.has_value()) { w.varint(322U); { const std::size_t s = w.begin_ld(); encode(w, *v.scene); w.end_ld(s); } }
   if (v.rig.has_value()) { w.varint(402U); { const std::size_t s = w.begin_ld(); encode(w, *v.rig); w.end_ld(s); } }
 }
@@ -25758,6 +25759,12 @@ Status decode(wire::Reader& r, OverlayLayerGeometry& out) {
         wire::Reader sub;
         if (!r.ld(sub)) return Status::truncated;
         while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.path_now.push_back(e); }
+        break;
+      }
+      case 98U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.local.push_back(e); }
         break;
       }
       case 322U: {

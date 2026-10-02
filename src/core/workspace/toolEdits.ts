@@ -10,13 +10,12 @@
  * `edit`. Every value is ABSOLUTE (start state + drag), never a delta.
  */
 
-import type { Command, KeyframeInsert, PathVertexState, PropertyWrite, PropRef, Value } from '@motion/engine-api';
-import { defaultAnimation } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import type { Command, KeyframeInsert, PathVertexState, PropertyInfo, PropertyWrite, PropRef, Value } from '@motion/engine-api';
 import type { MaskPoint } from '@core/effects/mask';
 import { apiUnitFactor } from '@core/engine/props';
-import { isLayer } from '@core/mirror/docFacts';
-import { compTime, memberWrite, numbersOfValue, propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
+import { documentMirror } from '@stores/documentMirror';
+import { numbersOfValue, trackRefIn, type MirrorTreeLike } from '@core/mirror/trackIndex';
+import { compTime, valueOfNumbers } from '@core/engine/propRefs';
 
 /** One layer's new values, by today's track names (`x`, `rotationX`, `effect.fx_1.tl_x`, `focusDistance`). */
 export interface NodeTrackValues {
@@ -50,26 +49,28 @@ export function trackValueCommands(items: ReadonlyArray<NodeTrackValues>, opts: 
   const sets: PropertyWrite[] = [];
   const keys: KeyframeInsert[] = [];
   const time = compTime(opts.seconds);
+  const m = documentMirror();
   for (const item of items) {
-    const node = defaultSceneGraph.getNode(item.nodeId);
-    if (!node || node.locked) continue;
-    if (!isLayer(item.nodeId)) return null;
+    const layer = m.layer(item.nodeId);
+    // A vanished layer is skipped, as a locked one is (the engine would refuse the whole batch).
+    if (!layer || layer.switches.locked) continue;
+    const tree = m.tree(item.nodeId);
+    if (!tree) return null;
     const groups = new Map<string, { prop: PropRef; valueType: Parameters<typeof valueOfNumbers>[0]; nums: number[]; animated: boolean }>();
     for (const [track, v] of Object.entries(item.values)) {
       if (typeof v !== 'number' || !Number.isFinite(v)) continue;
-      const r = propRefForTrack(item.nodeId, track);
+      const r = memberRefIn(tree, track);
       if (!r) return null;
-      let g = groups.get(r.ref.path);
+      let g = groups.get(r.info.path);
       if (!g) {
-        const base = memberWrite(item.nodeId, track, v, opts.seconds);
-        if (!base) return null;
         g = {
-          prop: r.ref,
-          valueType: r.valueType,
-          nums: numbersOfValue(base.value),
-          animated: r.members.some((m) => defaultAnimation.isAnimated(item.nodeId, m)),
+          prop: { layer: item.nodeId, path: r.info.path },
+          valueType: r.info.valueType,
+          // The members this write does not name keep the value they have at that time.
+          nums: currentNumbers(item.nodeId, r.info, time),
+          animated: r.info.animated || m.keyframes(item.nodeId, r.info.path).length > 0,
         };
-        groups.set(r.ref.path, g);
+        groups.set(r.info.path, g);
       }
       g.nums[r.member] = v * apiUnitFactor(track);
     }
@@ -83,6 +84,39 @@ export function trackValueCommands(items: ReadonlyArray<NodeTrackValues>, opts: 
   if (sets.length > 0) out.push({ type: 'setProperties', writes: sets });
   if (keys.length > 0) out.push({ type: 'addKeyframes', keys });
   return out;
+}
+
+/**
+ * The property a track lives in on the layer's mirror tree, and which member:
+ * the tree's own index (`x` → Position member 0, `scaleY` → Scale member 1, a
+ * scalar by its match name or path), else an effect / expression-control
+ * param named the editor's way (`effect.<id>.<key>`, a point param's
+ * `<key>_x` / `<key>_y`).
+ */
+function memberRefIn(tree: MirrorTreeLike, track: string): { info: PropertyInfo; member: number } | null {
+  const r = trackRefIn(tree, track);
+  if (r && r.info.kind === 'property') return { info: r.info, member: r.member };
+  const fx = /^effect\.([^.]+)\.(.+)$/.exec(track);
+  if (!fx) return null;
+  const direct = tree.nodes.get(`effects/${fx[1]}/${fx[2]}`);
+  if (direct?.kind === 'property') return { info: direct, member: 0 };
+  const axis = /^(.+)_([xyz])$/.exec(fx[2]!);
+  if (!axis) return null;
+  const point = tree.nodes.get(`effects/${fx[1]}/${axis[1]}`);
+  if (point?.kind !== 'property' || point.dimensions < 2) return null;
+  return { info: point, member: 'xyz'.indexOf(axis[2]!) };
+}
+
+/**
+ * A property's numbers at comp time `time` (flicks), API units: a static one's
+ * stored value, an animated one's value there (the mirror's batched value at
+ * that time; the last one it knows until that batch lands).
+ */
+function currentNumbers(layer: string, info: PropertyInfo, time: number): number[] {
+  const nums = numbersOfValue(documentMirror().valueAt(layer, info.path, time) ?? info.value);
+  const dims = Math.max(1, info.dimensions);
+  while (nums.length < dims) nums.push(0);
+  return nums;
 }
 
 /**

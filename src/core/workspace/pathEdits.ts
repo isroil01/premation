@@ -25,15 +25,13 @@
  */
 
 import type { BezierPath, Command, FeatherPoint, Keyframe, KeyframePatch, PropRef, Value } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { isLayer } from '@core/mirror/docFacts';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { documentMirror } from '@stores/documentMirror';
 import { bezierToPoints } from '@core/engine/props';
 import { compTime, paths, ref, values } from '@core/engine/propRefs';
-import { readNodeMask } from '@core/effects/mask';
-import type { ID } from '@core/types';
 import { vertexStatesOfPoints } from './toolEdits';
 
 /** A drawn shape layer's own outline (the catalog's path value over Geometry points + `path.points`). */
@@ -97,33 +95,47 @@ export interface OutlineTarget {
 export const outlineRef = (t: OutlineTarget): PropRef =>
   ref(t.nodeId, t.maskId !== null ? paths.mask(t.maskId, 'path') : SHAPE_PATH);
 
-/** The outline as stored (static), read directly (B3_PATTERNS §8), or undefined. */
+/**
+ * The outline's path property in the layer's mirror tree: a mask's
+ * `masks/<id>/path`, or a drawn shape's `layer/path.points` (the catalog lists
+ * it only for a shape with at least two stored vertices). Undefined while the
+ * layer's tree is not loaded (`loadTree` first where that matters).
+ */
+function outlineInfo(t: OutlineTarget): Extract<Value, { kind: 'path' }> | undefined {
+  const m = documentMirror();
+  if (t.maskId === null && uiKindOf(m.layer(t.nodeId)) !== 'shape') return undefined;
+  const v = m.tree(t.nodeId)?.nodes.get(outlineRef(t).path)?.value;
+  return v?.kind === 'path' ? v : undefined;
+}
+
+/**
+ * The outline as stored (static: the PropertyInfo value of an unanimated
+ * outline — the only case its callers read it for), from the mirror, or
+ * undefined.
+ */
 function storedOutline(t: OutlineTarget): { points: OutlinePoint[]; closed: boolean } | undefined {
-  const node = defaultSceneGraph.getNode(t.nodeId as ID);
-  if (!node) return undefined;
-  if (t.maskId !== null) {
-    const p = readNodeMask(node)?.paths.find((x) => x.id === t.maskId);
-    return p ? { points: p.points, closed: p.closed } : undefined;
-  }
-  const g = node.components.find((c) => c.type === 'Geometry');
-  const pts = g?.props.points;
-  if (!Array.isArray(pts) || pts.length < 2) return undefined;
-  const full = (pts as Array<Partial<OutlinePoint> & { x: number; y: number }>).map((p) => ({
-    ...p, inX: p.inX ?? p.x, inY: p.inY ?? p.y, outX: p.outX ?? p.x, outY: p.outY ?? p.y,
-  }));
-  return { points: full, closed: g!.props.open !== true };
+  const v = outlineInfo(t);
+  if (!v) return undefined;
+  if (t.maskId === null && v.value.vertices.length < 4) return undefined;
+  return { points: pathValuePoints(v.value), closed: v.value.closed };
 }
 
 /**
  * Whether the API addresses this outline: a composition layer's mask, or a
  * drawn shape layer's own outline (a shape with at least two stored vertices —
- * what the catalog lists as `layer/path.points`, a path value).
+ * what the catalog lists as `layer/path.points`, a path value). Read from the
+ * layer's mirror tree: a layer whose tree is not loaded yet answers false
+ * (the viewport keeps the selection's trees loaded — ports.ts).
  */
 export function outlineOnEngine(t: OutlineTarget): boolean {
   if (!isLayer(t.nodeId)) return false;
-  if (t.maskId !== null) return storedOutline(t) !== undefined;
-  const node = defaultSceneGraph.getNode(t.nodeId as ID);
-  return !!node && readNodeKind(node) === 'shape' && storedOutline(t) !== undefined;
+  return storedOutline(t) !== undefined;
+}
+
+/** Load the targets' trees (the mirror fetches them on demand) before reading their outlines. */
+async function loadTrees(targets: ReadonlyArray<OutlineTarget>): Promise<void> {
+  const m = documentMirror();
+  await Promise.all([...new Set(targets.map((t) => t.nodeId))].map((id) => m.loadTree(id)));
 }
 
 /** The keyframes of each ref (engine ids and values), or null when the query failed (toasted). */
@@ -154,6 +166,7 @@ export async function everyStateCommands(label: string, edits: ReadonlyArray<Out
   const refs = edits.map(outlineRef);
   const keys = await keysOf(label, refs);
   if (!keys) return null;
+  await loadTrees(edits);
   const out: Command[] = [];
   const patches: KeyframePatch[] = [];
   edits.forEach((e, i) => {
@@ -225,6 +238,7 @@ export async function pasteCommands(
   const refs = targets.map(outlineRef);
   const keys = await keysOf(label, refs.filter((_, i) => targets[i]!.maskId !== null));
   if (!keys) return null;
+  await loadTrees(targets);
   const patches: KeyframePatch[] = [];
   const sets: Command[] = [];
   let mi = 0;

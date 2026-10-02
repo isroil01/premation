@@ -86,8 +86,9 @@ describe('trackValueCommands (the viewport dual path)', () => {
     expect(defaultAnimation.isAnimated(s.A, 'rotation')).toBe(true);
   });
 
-  it('skips locked layers (the engine would refuse the whole batch)', () => {
-    defaultSceneGraph.getNode(s.A)!.locked = true;
+  it('skips locked layers (the engine would refuse the whole batch)', async () => {
+    await h.run({ type: 'setLayerSwitches', layers: [s.A], patch: { locked: true } });
+    await engineIdle();
     expect(trackValueCommands([{ nodeId: s.A, values: { x: 1 } }], { seconds: 0 })).toEqual([]);
   });
 
