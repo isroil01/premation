@@ -10,7 +10,8 @@
  * then — §6 last paragraph).
  */
 
-import { setOverlayGroupsAndViews, setOverlaySubscription } from './overlayGeometry';
+import { overlayGeometryAt, overlayViewsAt, setOverlayGroupsAndViews, setOverlaySubscription } from './overlayGeometry';
+import { installOverlayGeometryProducer } from '@stores/overlayGeometry';
 import { setOverlayRigOptions } from './rigOverlay';
 import type { Command, Event, TimeRange, LoopMode, TransportState } from '@motion/engine-api';
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -43,6 +44,10 @@ export class Transport {
 
   constructor(emit: (events: Event[]) => void) {
     this.emit = emit;
+    // This engine has no frame channel: a viewport it is asked about reads the
+    // records it computes for its own subscription (the C++ engine's arrive
+    // with its frames instead).
+    installOverlayGeometryProducer({ layersAt: overlayGeometryAt, viewsAt: overlayViewsAt });
   }
 
   private activeComp(): string {

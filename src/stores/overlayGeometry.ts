@@ -19,8 +19,27 @@
 
 import { flicksToSeconds, type OverlayKind, type OverlayLayerGeometry, type OverlayRequest, type OverlayRig, type OverlayRigOptions, type OverlayView } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
-import { overlayGeometryAt, overlayViewsAt } from '@core/engine/overlayGeometry';
 import { documentMirror } from './documentMirror';
+
+/**
+ * The records of a viewport no engine frame carries (no FrameGeometry): what
+ * an in-process engine computes for its own subscription at a comp time. The
+ * TypeScript engine installs its producer here (core/engine/transport.ts) — the
+ * page never calls into an engine's evaluation itself; with no producer
+ * installed, a viewport the C++ engine does not draw has no geometry.
+ */
+export interface OverlayGeometryProducer {
+  layersAt(viewport: number, seconds: number): OverlayLayerGeometry[];
+  viewsAt(viewport: number, seconds: number): OverlayView[];
+}
+
+let producer: OverlayGeometryProducer | null = null;
+
+/** An in-process engine's overlay producer (null removes it). */
+export function installOverlayGeometryProducer(p: OverlayGeometryProducer | null): void {
+  producer = p;
+  computed.clear();
+}
 
 /** The editor's main viewport (EngineSurface's ENGINE_SURFACE_VIEWPORT): the id the overlays subscribe under in both engines. */
 export const MAIN_VIEWPORT = 1;
@@ -278,11 +297,12 @@ export function overlayLayer(viewport: number, layer: string, time: number): Ove
 /** The frame set the viewport shows at comp time `time` (flicks): the pushed one, else the TypeScript engine's (once per time and revision). */
 function frameSet(viewport: number, time: number): FrameSet | undefined {
   if (engineDriven.has(viewport)) return pushed.get(viewport);
+  if (!producer) return undefined;
   const rev = documentMirror().revision;
   let set = computed.get(viewport);
   if (!set || set.time !== time || set.revision !== rev) {
     const seconds = flicksToSeconds(time);
-    set = { time, revision: rev, layers: merge(overlayGeometryAt(viewport, seconds)), views: viewsByMode(overlayViewsAt(viewport, seconds)) };
+    set = { time, revision: rev, layers: merge(producer.layersAt(viewport, seconds)), views: viewsByMode(producer.viewsAt(viewport, seconds)) };
     computed.set(viewport, set);
   }
   return set;
