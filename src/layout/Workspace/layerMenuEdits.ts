@@ -15,7 +15,9 @@
 import type { Command, LayerSwitchesPatch, PropRef } from '@motion/engine-api';
 import { reorderSiblings, type StackAction } from '@core/scene/parenting';
 import type { FrameBlend } from '@core/scene/layerTime';
-import { apiParentOf, compOfLayer, graph as docGraph, isLayer, layerIdsOfComp } from '@core/engine/doc';
+// The scratch build (offDocument) reads the replica it runs against, not the mirror.
+import { graph as docGraph, compOfLayer as scratchCompOf, layerIdsOfComp as scratchLayerIds } from '@core/engine/doc';
+import { apiParentOf, compOfLayer, isLayer, layerIdsOfComp } from '@core/mirror/docFacts';
 import { offDocument } from '@core/engine/offDocument';
 import { encodeFragment } from '@core/engine/handlers/layers';
 import { mergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
@@ -326,10 +328,10 @@ export async function bakeMergePathsEdit(op: MergeOp): Promise<string[]> {
   let plan: { removed: string[]; paste: Command } | null;
   try {
     plan = offDocument(() => mergeSelectedPaths(op), ({ value: made, changed, before }) => {
-      const comp = made[0] ? compOfLayer(made[0]) : null;
+      const comp = made[0] ? scratchCompOf(made[0]) : null;
       if (!comp) return null;
       const created = new Set(made);
-      const stack = layerIdsOfComp(comp);
+      const stack = scratchLayerIds(comp);
       const tops = stack.filter((id) => created.has(id));
       const first = stack.indexOf(tops[0]!);
       const index = stack.slice(0, first).filter((id) => !created.has(id)).length;

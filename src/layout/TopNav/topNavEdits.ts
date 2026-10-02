@@ -9,7 +9,7 @@ import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { controlSpecOf, CONTROL_PREFIX, type ControlKind } from '@core/engine/controlSpecs';
 import { insertBuiltLayers } from '@core/engine/offDocument';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { compTime, paths, values } from '@core/engine/propRefs';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { makeNode } from '@core/scene/sceneInsert';

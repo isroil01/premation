@@ -53,7 +53,7 @@ import {
 } from '@stores/sceneViewStore';
 import { getEventBus } from '@core/events/EventBus';
 import type { RenameLayerResult } from '@core/scene/renameLayer';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
 import { KIND_LABEL } from '@core/scene/sceneDerive';
 import { parentLayer } from '@layout/Inspector/inspectorEdits';

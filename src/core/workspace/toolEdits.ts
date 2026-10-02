@@ -15,7 +15,7 @@ import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { MaskPoint } from '@core/effects/mask';
 import { apiUnitFactor } from '@core/engine/props';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { compTime, memberWrite, numbersOfValue, propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
 
 /** One layer's new values, by today's track names (`x`, `rotationX`, `effect.fx_1.tl_x`, `focusDistance`). */

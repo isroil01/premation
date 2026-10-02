@@ -29,7 +29,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { bezierToPoints } from '@core/engine/props';
 import { compTime, paths, ref, values } from '@core/engine/propRefs';
 import { readNodeMask } from '@core/effects/mask';

@@ -23,7 +23,7 @@ import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { plainValue } from '@core/mirror/trackIndex';
 import { staticLevelDb, staticPan } from '@core/mirror/audio';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { values } from '@core/engine/propRefs';
 import { engine } from '@core/engine/engineInstance';
 import {

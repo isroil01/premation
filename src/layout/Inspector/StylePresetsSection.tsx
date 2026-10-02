@@ -19,7 +19,7 @@ import { sortedStops, type FillPaint } from '@core/paint/fill';
 import { LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS } from '@core/effects/layerStyles';
 import { parseColorChannels } from '@core/inspector/effectCatalog';
 import { STYLE_FIELDS } from '@core/engine/effectFieldSpecs';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { componentOfType, paths, ref, values as apiValues } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';
 import { fieldCommands } from '@layout/Text/textEdits';

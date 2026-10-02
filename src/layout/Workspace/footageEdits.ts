@@ -30,7 +30,7 @@ import { FLICKS_PER_SECOND, type Command, type CompSettingsPatch, type LayerKind
 import { engine } from '@core/engine/engineInstance';
 import { reportEngineError } from '@core/engine/uiEdits';
 import { buildLayerFragment, type BuiltLayers } from '@core/engine/offDocument';
-import { layerIdsOfComp } from '@core/engine/doc';
+import { layerIdsOfComp } from '@core/mirror/docFacts';
 import { compTime } from '@core/engine/propRefs';
 import { insertMedia, insertSvgDocument, setNodeWorldPosition } from '@core/scene/sceneInsert';
 import { activeCompIdNow } from '@hooks/useMirror';

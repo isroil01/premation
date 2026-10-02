@@ -25,7 +25,8 @@ import type { Command, Keyframe, LayerSwitches, LayerSwitchesPatch, LayerTiming,
 import { offDocument } from './offDocument';
 import { keyframeSets, layerSwitches, layerTiming, propertyTree } from './model';
 import { catalogFor } from './props';
-import { apiParentOf, graph, isLayer } from './doc';
+import { graph } from './doc';
+import { apiParentOf, isLayer } from '@core/mirror/docFacts';
 
 interface LayerState {
   keys: Map<string, Keyframe[]>;

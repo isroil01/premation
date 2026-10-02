@@ -38,7 +38,7 @@ import { reindexRuns } from '@core/text/richText';
 import { utf16ToGraphemeIndex } from '@core/text/graphemes';
 import { readParagraphDirection, resolveAlignForDirection } from '@core/text/textExtras';
 import { isAutoTextLayerName, textLayerNameFor } from '@core/text/textLayerName';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { commitSourceTextEdit } from './viewportEdits';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import { installTextCommands } from '@layout/Inspector/textCommands';

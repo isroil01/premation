@@ -19,7 +19,7 @@ import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useProjectStore } from '@stores/projectStore';
 import { fail } from './errors';
-import { compOfLayer } from './doc';
+import { compOfLayer } from '@core/mirror/docFacts';
 import { dropTrackProps } from './fields';
 
 export const POI_PATH = 'transform/orientTowardsPointOfInterest';

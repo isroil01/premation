@@ -16,7 +16,7 @@ import {
   usePreferenceStore,
 } from '@stores/preferenceStore';
 import { insertBuiltLayers } from '@core/engine/offDocument';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { isPickArmed } from '@stores/trackerStore';

@@ -11,7 +11,7 @@
  */
 
 import { createNullsFromPath } from '@core/scene/nullsFromPaths';
-import { compOfLayer, isLayer } from '@core/engine/doc';
+import { compOfLayer, isLayer } from '@core/mirror/docFacts';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';

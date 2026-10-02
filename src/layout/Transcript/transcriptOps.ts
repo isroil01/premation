@@ -39,7 +39,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { flicksToSeconds, type Command } from '@motion/engine-api';
 import { framesToFlicks } from '@core/engine/time';
-import { compOfLayer } from '@core/engine/doc';
+import { compOfLayer } from '@core/mirror/docFacts';
 import { downloadBlob } from '@core/export/exportManager';
 import { toSrt, toVtt, type Cue } from '@core/captions/captionFormat';
 import { captionReplaceCommands } from '@core/engine/captionEdit';

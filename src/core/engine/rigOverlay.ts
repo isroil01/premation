@@ -31,7 +31,7 @@ import type { Mat2D } from '@core/rig/mat2d';
 import { applyIk, getSkeletonBinding, skinPointAt, skinRigVertices, unskinPoint, type SkeletonBinding } from '@core/rig/rigDeform';
 import { nodeRestMesh } from '@core/rig/rigMeshInputs';
 import { fail } from './errors';
-import { isLayer } from './doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { layerGeometryAt } from './layerBoundsQuery';
 import { checkTime, flicksToSeconds } from './time';
 

@@ -24,7 +24,7 @@ import { deviceWorldPosition, deviceWorldRotationDeg, parentWorldMatrixAt, toWor
 import { readGeometry } from '@core/workspace/geometry';
 import { compSizeOf, compSourceOf } from '@core/composition/compSizes';
 import { getRemappedTime, governingClipsFor } from '@core/timeline/TimelineController';
-import { compOfLayer } from './doc';
+import { compOfLayer } from '@core/mirror/docFacts';
 import { compFps } from './time';
 
 /** A resolved Camera3D as the push carries it: position, focalLength, principal, yaw, pitch, roll. */

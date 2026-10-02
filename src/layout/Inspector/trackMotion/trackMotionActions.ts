@@ -18,7 +18,7 @@ import { uiKindOf } from '@core/mirror/layerKinds';
 import { canParentTo } from '@core/mirror/tracking';
 import { runAutoTrack } from '@core/tracking/autoTrackCommand';
 import { edit } from '@core/engine/uiEdits';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { customConfirm } from '@components/Modal';
 import { needsSelfApplyConfirm, selfApplyConfirmCopy } from './applyTargetGuard';
 

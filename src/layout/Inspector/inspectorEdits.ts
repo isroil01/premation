@@ -54,7 +54,7 @@ import {
 import { compTime, propRefForTrack, valueOfNumbers, type TrackRef } from '@core/engine/propRefs';
 import { apiUnitFactor } from '@core/engine/props';
 import { engine } from '@core/engine/engineInstance';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { trackMatteCommand } from '@core/engine/trackWrites';
 import { KEYFRAME_EPS, readTrack } from '@core/mirror/selection';
 import { numbersOfValue } from '@core/mirror/trackIndex';

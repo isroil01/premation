@@ -36,7 +36,7 @@ import { getTime } from '@stores/playbackClockStore';
 import { parseColorChannels } from '@core/inspector/effectCatalog';
 import { compTime } from '@core/engine/propRefs';
 import { values as apiValues, fieldWrite, fieldBindingForComponentProp, componentOfType, componentPropHome, isPluginLayerComponent } from '@core/engine/propRefs';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { catalogFor } from '@core/engine/props';
 import { trackRef, trackWrites } from './inspectorEdits';

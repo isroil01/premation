@@ -20,7 +20,7 @@ import type { Command, EngineClient, RenameLayerResult as EngineRenameResult } f
 import { childOrderOf, type MirrorTreeRead } from '@core/mirror/layerTree';
 import { mirrorCanBeParentOf } from '@core/mirror/parenting';
 import type { RenameLayerResult, RepairedRef } from '@core/scene/renameLayer';
-import { apiParentOf, compOfLayer, isCompItem, isLayer, layersUsingItem } from '@core/engine/doc';
+import { apiParentOf, compOfLayer, isCompItem, isLayer, layersUsingItem } from '@core/mirror/docFacts';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';

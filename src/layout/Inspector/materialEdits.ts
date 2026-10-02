@@ -18,7 +18,7 @@
  */
 
 import type { Command, PropertyWrite, Value } from '@motion/engine-api';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { catalogFor } from '@core/engine/props';
 import { compTime, values } from '@core/engine/propRefs';
 import { normalizeMaterialParams, type MaterialParams } from '@core/scene/material';

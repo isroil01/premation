@@ -24,7 +24,7 @@
 import type { Command, PropRef, Value } from '@motion/engine-api';
 import { catalogFor } from '@core/engine/props';
 import { parseColorChannels } from '@core/inspector/effectCatalog';
-import { compOfLayer, isLayer } from '@core/engine/doc';
+import { compOfLayer, isLayer } from '@core/mirror/docFacts';
 import { engine } from '@core/engine/engineInstance';
 import { compTime, paths, values as apiValues, fieldValue, componentOfType } from '@core/engine/propRefs';
 import { edit, reportEngineError } from '@core/engine/uiEdits';

@@ -24,7 +24,7 @@ import { childOrderOf } from '@core/mirror/layerTree';
 import { mirrorLayerFlag, mirrorLayerFlagAvailable } from '@core/mirror/layerSwitchFacts';
 import { notifyCameraTipIfMissingIn } from '@core/mirror/cameras';
 import { mirrorMaskIds } from '@core/mirror/masks';
-import { compOfLayer, isCompItem, isLayer } from '@core/engine/doc';
+import { compOfLayer, isCompItem, isLayer } from '@core/mirror/docFacts';
 import { compTime, type TrackRef } from '@core/engine/propRefs';
 import { edit } from '@core/engine/uiEdits';
 import { trackValuesAt } from '@stores/trackValues';

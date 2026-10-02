@@ -34,7 +34,7 @@ import { useMirrorKeys, useRetainTree } from '@hooks/useMirror';
 import { mirrorStrokeAt, mirrorStrokes } from '@core/mirror/paintFields';
 import { isTrackAnimated } from '@core/mirror/selection';
 import { edit } from '@core/engine/uiEdits';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { convertFill, type FillType } from '@core/paint/fill';
 import {
   IDENTITY_TAPER as TAPER_DEFAULTS,

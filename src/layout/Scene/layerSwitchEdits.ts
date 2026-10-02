@@ -16,7 +16,7 @@
  */
 
 import type { Command, LayerSwitchesPatch } from '@motion/engine-api';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { edit } from '@core/engine/uiEdits';
 import { layerFlagDef, type LayerFlag } from '@core/scene/layerFlags';
 import { nextQuality, type LayerQuality } from '@core/effects/layerQuality';

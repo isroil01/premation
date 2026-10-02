@@ -74,7 +74,7 @@ import {
 } from '@core/workspace/viewportGesture';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import type { Command, PathTopologyOp, PropRef, Value } from '@motion/engine-api';
-import { compOfLayer, isLayer } from '@core/engine/doc';
+import { compOfLayer, isLayer } from '@core/mirror/docFacts';
 import { compTime, paths, propRefForTrack } from '@core/engine/propRefs';
 import { maskPointsToPath, trackValueCommands, type NodeTrackValues } from '@core/workspace/toolEdits';
 import { outlineOnEngine, outlineRef } from '@core/workspace/pathEdits';

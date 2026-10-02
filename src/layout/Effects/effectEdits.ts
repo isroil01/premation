@@ -29,7 +29,7 @@
 
 import type { Command, PropertyInit, PropertyWrite, Value } from '@motion/engine-api';
 import { edit } from '@core/engine/uiEdits';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { maskToBezier } from '@core/engine/props';
 import { compTime, paths, ref, values } from '@core/engine/propRefs';
 import { engine } from '@core/engine/engineInstance';

@@ -33,7 +33,7 @@ import { documentMirror } from '@stores/documentMirror';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 
 // ── Reads (display facts a write needs) ──────────────────────────────
 

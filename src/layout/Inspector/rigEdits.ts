@@ -25,7 +25,7 @@
  */
 
 import type { Command, PropertyInit, Value } from '@motion/engine-api';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { compTime, values } from '@core/engine/propRefs';
 import { rigMatch, rigPaths } from '@core/engine/rigPaths';
 import type { IKTarget } from '@core/rig/skeletonCommands';

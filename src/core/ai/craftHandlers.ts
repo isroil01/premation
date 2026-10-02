@@ -17,7 +17,7 @@ import type { AiTool, ToolContext, ToolResult } from '@motion/ai-tools';
 import { bakeSpring, bindAlias, resolveSpring, thinSamples, type SpringParams, type SpringPresetName } from '@motion/ai-tools';
 import { refreshAfterLegacy } from './toolContext';
 import { makeStop } from '@core/paint/fill';
-import { compOfLayer, layerIdsOfComp } from '@core/engine/doc';
+import { compOfLayer, layerIdsOfComp } from '@core/mirror/docFacts';
 import { isAnimatableProp } from './toolContext';
 import { mapSeq, filterSeq } from './asyncList';
 import type { Command } from '@motion/engine-api';

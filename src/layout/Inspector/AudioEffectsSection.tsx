@@ -33,7 +33,7 @@ import {
 } from '@core/audio/audioEffects';
 import { shortId } from '@utils/lang';
 import { values } from '@core/engine/propRefs';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { useEngineEdit, type EngineEdit } from './useEngineEdit';
 import styles from './ParentControl.module.css';
 import ta from './TextAnimatorControls.module.css';

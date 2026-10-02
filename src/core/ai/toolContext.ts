@@ -76,7 +76,7 @@ import type { EffectType } from '@core/effects/effects';
 import { listPresets } from '@core/animation/animationPresets';
 import { bumpScene } from '@stores/sceneStore';
 import { engine } from '@core/engine/engineInstance';
-import { layerSubtree } from '@core/engine/doc';
+import { layerSubtree } from '@core/mirror/docFacts';
 import { keyTargetFor, keyAddressable, separateDimensionsCommand, apiColorOfHex, effectParamCommand, propWriteCommand, ENGINE_EASINGS, activePlayheadSeconds } from '@core/engine/trackWrites';
 import { propRefForTrack, memberWrite, memberWrites } from '@core/engine/propRefs';
 import { readRuns } from '@core/text/richText';

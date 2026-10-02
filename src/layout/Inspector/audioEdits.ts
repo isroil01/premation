@@ -35,7 +35,7 @@ import type { Command, PropRef } from '@motion/engine-api';
 import { edit } from '@core/engine/uiEdits';
 import { engine } from '@core/engine/engineInstance';
 import { compTime, propRefForTrack, values } from '@core/engine/propRefs';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { AUDIO_LEVEL_DB_PROP } from '@core/audio/audioParams';
 import { DEFAULT_FADE_SEC, type FadeSide } from '@core/audio/audioFades';

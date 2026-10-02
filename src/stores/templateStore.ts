@@ -16,7 +16,7 @@ import type { Command } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { buildTemplateFragment } from '@/engine-client/templateFragment';
-import { layerIdsOfComp } from '@core/engine/doc';
+import { layerIdsOfComp } from '@core/mirror/docFacts';
 import { compTime } from '@core/engine/propRefs';
 import { hexToColor } from '@core/engine/model';
 import { fillMediaFieldEdit, isMediaField, templateFieldCommands, templateFieldValues } from '@layout/Templates/templateFieldEdits';

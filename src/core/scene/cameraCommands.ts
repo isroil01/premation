@@ -63,7 +63,7 @@ import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { engine, localEngine } from '@core/engine/engineInstance';
 import { engineOwnsDocumentNow } from '@core/engine/engineOwnership';
 import { layerDiffCommands } from '@core/engine/layerDiffCommands';
-import { compOfLayer } from '@core/engine/doc';
+import { compOfLayer } from '@core/mirror/docFacts';
 import { propRefForTrack } from '@core/engine/propRefs';
 import { trackValueCommands } from '@core/workspace/toolEdits';
 import { usePreferenceStore } from '@stores/preferenceStore';

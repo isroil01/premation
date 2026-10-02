@@ -451,6 +451,23 @@ export class DocumentMirror {
     return e.tree ?? undefined;
   }
 
+  /**
+   * The layer's property tree once it is loaded — for a WRITE that composes
+   * its commands from the current tree (a menu action, a drop): over the pipe
+   * `tree` answers undefined until the fetch lands. Undefined when the layer
+   * is unknown or the engine cannot describe it.
+   */
+  async loadTree(layer: string): Promise<MirrorTree | undefined> {
+    const now = this.tree(layer);
+    if (now) return now;
+    // Either the tree or (a layer the snapshot did not list) the header is in flight.
+    await this.whenIdle();
+    const next = this.tree(layer);
+    if (next || !this.layer(layer)) return next;
+    await this.whenIdle();
+    return this.tree(layer);
+  }
+
   /** One node of a layer's property tree (loads the tree like `tree`). */
   property(layer: string, path: string): PropertyInfo | undefined {
     return this.tree(layer)?.nodes.get(path);
@@ -590,6 +607,37 @@ export class DocumentMirror {
     return p;
   }
 
+  private revWaiters: Array<{ rev: Revision; resolve: () => void }> = [];
+
+  /**
+   * Resolves once the mirror shows revision `rev` (or a newer one / a reload).
+   * Over the pipe a command's RESPONSE can overtake its events, so code that
+   * reads the mirror right after `await edit(...)` waits here first (uiEdits
+   * `edit` does). Gives up after `timeoutMs` — a lost batch resyncs on its own.
+   */
+  whenAt(rev: Revision, timeoutMs = 2000): Promise<void> {
+    if (this.statusValue !== 'ready' || this.rev >= rev) return Promise.resolve();
+    return new Promise((resolve) => {
+      const w = { rev, resolve };
+      this.revWaiters.push(w);
+      setTimeout(() => {
+        const i = this.revWaiters.indexOf(w);
+        if (i >= 0) this.revWaiters.splice(i, 1);
+        resolve();
+      }, timeoutMs);
+    });
+  }
+
+  private releaseRevWaiters(all = false): void {
+    if (this.revWaiters.length === 0) return;
+    const keep: typeof this.revWaiters = [];
+    for (const w of this.revWaiters) {
+      if (all || this.rev >= w.rev) w.resolve();
+      else keep.push(w);
+    }
+    this.revWaiters = keep;
+  }
+
   /** Resolves when no fetch is in flight (tests, and the benchmark's settle step). */
   whenIdle(): Promise<void> {
     if (this.asyncInFlight === 0 && !this.buffer && !this.valueFlushScheduled) return Promise.resolve();
@@ -609,10 +657,12 @@ export class DocumentMirror {
       this.statusValue = 'error';
       this.errorValue = `${r.error.code}: ${r.error.message}`;
       this.flushNotify(true);
+      this.releaseRevWaiters(true);
       return;
     }
     this.install(r.value);
     this.flushNotify(true);
+    this.releaseRevWaiters();
     for (const b of buffered) {
       const pending = this.buffer as EventBatch[] | null;
       if (pending) {
@@ -1097,6 +1147,7 @@ export class DocumentMirror {
       }
     }
     this.flushNotify();
+    if (revisioned) this.releaseRevWaiters();
   }
 
   private applyEphemeral(b: EventBatch): void {

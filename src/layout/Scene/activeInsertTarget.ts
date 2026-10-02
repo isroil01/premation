@@ -5,7 +5,7 @@
  * editor state (the tab) instead of the scene singleton (B4).
  */
 
-import { compItemIds, compOfLayer, isCompItem, isLayer } from '@core/engine/doc';
+import { compItemIds, compOfLayer, isCompItem, isLayer } from '@core/mirror/docFacts';
 import { useProjectStore } from '@stores/projectStore';
 
 export interface InsertTarget {

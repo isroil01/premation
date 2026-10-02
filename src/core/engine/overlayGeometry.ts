@@ -21,7 +21,7 @@ import { readNode3D } from '@core/scene/threeD';
 import { readGeometry } from '@core/workspace/geometry';
 import { compToKeyframeTime, getRemappedTime } from '@core/timeline/TimelineController';
 import { layerGeometryAt } from './layerBoundsQuery';
-import { compOfLayer, isLayer } from './doc';
+import { compOfLayer, isLayer } from '@core/mirror/docFacts';
 import { compFps } from './time';
 
 interface Subscription {

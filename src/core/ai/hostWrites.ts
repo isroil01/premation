@@ -31,7 +31,7 @@ import { buildSvgLayerFragment } from '@/engine-client/svgFragment';
 import { buildSvgShapeGroup, type BuiltSvgShapes } from '@core/svg/svgConvert';
 import { forgetSvgLayerSrc, readSvgLayer } from '@core/svg/svgLayer';
 import { buildLayerFragment, type BuiltLayers } from '@core/engine/offDocument';
-import { apiParentOf, compOfLayer, layerIdsOfComp } from '@core/engine/doc';
+import { apiParentOf, compOfLayer, layerIdsOfComp } from '@core/mirror/docFacts';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';

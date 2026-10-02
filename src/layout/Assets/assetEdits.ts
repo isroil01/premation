@@ -20,7 +20,7 @@ import type { Command, ImportBytesFile, InterpretationPatch } from '@motion/engi
 import { engine } from '@core/engine/engineInstance';
 import { diskPathOf } from '@core/assets/local/diskPathOf';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
-import { layersUsingItem } from '@core/engine/doc';
+import { layersUsingItem } from '@core/mirror/docFacts';
 import { rateOf } from '@layout/Composition/compositionEdits';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
 import type { ImportedAsset } from '@stores/assetStore';

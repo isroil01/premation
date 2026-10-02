@@ -26,7 +26,7 @@ import { documentMirror } from '@stores/documentMirror';
 import { useMirrorComp, useMirrorLayer, useMirrorTreeShape } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { childOrderOf } from '@core/mirror/layerTree';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { edit } from '@core/engine/uiEdits';
 import { mirrorFill, mirrorStrokeAt } from '@core/mirror/paintFields';
 import type { Stroke } from '@core/paint/stroke';

@@ -19,6 +19,7 @@
 
 import type { Command, CommandResult, EngineError, EngineResult, EngineClient } from '@motion/engine-api';
 import { useUIStore } from '@stores/uiStore';
+import { documentMirror, hasDocumentMirror } from '@stores/documentMirror';
 import { engine, engineGeneration } from './engineInstance';
 
 export interface EditOptions {
@@ -77,6 +78,9 @@ export async function edit(
   if (list.length === 0) return { ok: true, value: [], revision: client.revision };
   const res = await client.batch(label, [...list]);
   if (!res.ok && !opts.quiet) reportEngineError(label, res.error);
+  // The response can overtake its events over the pipe: what the caller reads
+  // next comes from the mirror, so let it catch up to this revision first.
+  else if (res.ok && !opts.client && hasDocumentMirror()) await documentMirror().whenAt(res.revision);
   return res;
 }
 

@@ -28,7 +28,7 @@ import type { Command } from '@motion/engine-api';
 import { setAnimEditBridge, setAnimEditRunBridge, type AnimEditCommand } from '@core/animation/animationCommands';
 import { assistantKeyframeCommands } from './assistantKeys';
 import { layerDiffCommands } from './layerDiffCommands';
-import { isLayer } from './doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { engineOwnsDocumentNow } from './engineOwnership';
 import { propRefForTrack } from './propRefs';
 import { edit, reportEngineError } from './uiEdits';
@@ -37,7 +37,7 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 /**
  * Only a USER edit is bridged: while history is suspended the writer runs
  * inside the page engine applying a request (the engine already has it) or
- * inside an off-document run (its caller sends the result) — bridging it too
+ * inside an off-document run (its caller sends the result) ï¿½ bridging it too
  * would apply it twice.
  */
 function userEdit(): boolean {
@@ -95,7 +95,7 @@ export function bridgeAnimEdit(command: AnimEditCommand): boolean {
 /**
  * `runAnimEdit(label, mutate)` when the engine owns the document: the whole
  * mutation off-document, its effect on existing layers sent as ONE engine
- * entry (layerDiffCommands.ts — keyframes, static values, expressions,
+ * entry (layerDiffCommands.ts ï¿½ keyframes, static values, expressions,
  * switches, parent, timing). What it cannot carry (a created layer, an item)
  * is reported; nothing of it is left on the replica alone.
  */

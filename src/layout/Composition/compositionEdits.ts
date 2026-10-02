@@ -21,7 +21,7 @@ import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
 import { framesToFlicks } from '@core/engine/time';
 import { labelIndexOf } from '@core/engine/model';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { parseColorChannels } from '@core/inspector/effectCatalog';
 import { openLayerCompositionWhenKnown } from './compNavigationEdits';
 import type { AutoOrientMode } from '@core/scene/autoOrient';

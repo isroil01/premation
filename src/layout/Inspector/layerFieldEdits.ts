@@ -12,7 +12,7 @@
  */
 
 import type { Command, Value } from '@motion/engine-api';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { catalogFor } from '@core/engine/props';
 import { values } from '@core/engine/propRefs';
 

@@ -25,7 +25,7 @@ import { hasTextLayer } from '@layout/Text/textMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getTime } from '@stores/playbackClockStore';
 import { edit } from '@core/engine/uiEdits';
-import { isLayer } from '@core/engine/doc';
+import { isLayer } from '@core/mirror/docFacts';
 import { fieldCommands } from '@layout/Text/textEdits';
 import { componentPropsCommands } from './useComponentProp';
 

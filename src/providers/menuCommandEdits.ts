@@ -10,7 +10,7 @@
 import type { Command, Keyframe as ApiKeyframe, PropRef } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { edit } from '@core/engine/uiEdits';
-import { compOfLayer, isLayer } from '@core/engine/doc';
+import { compOfLayer, isLayer } from '@core/mirror/docFacts';
 import { compFps } from '@core/engine/time';
 import { catalogFor, keyTimeToFlicks, numbersOf, readKeys, vectorValue } from '@core/engine/props';
 import {
