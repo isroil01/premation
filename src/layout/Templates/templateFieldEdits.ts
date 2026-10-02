@@ -26,6 +26,7 @@ import { compTime, values as apiValues } from '@core/engine/propRefs';
 import { hexToColor } from '@core/engine/model';
 import { coerceCell, type FillResult } from '@core/template/dataFill';
 import type { DataRow } from '@core/template/dataTable';
+import type { BatchFieldOps } from '@core/template/batchRender';
 import type { TemplateField } from '@core/template/templateTypes';
 import { sourceTextCommand } from '@layout/Text/textEdits';
 import { scalarValueCommands, trackRef } from '@layout/Inspector/inspectorEdits';
@@ -217,4 +218,24 @@ export async function templateFieldValues(fields: readonly TemplateField[], seco
     if (shown !== undefined) out[a.field.id] = shown;
   }
   return out;
+}
+
+/**
+ * The batch render's field read / fill / restore through the engine
+ * (batchRender.ts `BatchFieldOps`): the values asked of the engine at
+ * `seconds`, each row applied by `fillDataRowEdit`, the template put back as
+ * ONE "Restore template after batch" entry of `templateFieldCommands`.
+ */
+export function engineBatchFieldOps(seconds: number): BatchFieldOps {
+  return {
+    read: async (fields) => {
+      const values = await templateFieldValues(fields.filter((f) => !isMediaField(f)), seconds);
+      return fields.filter((f) => values[f.id] !== undefined).map((field) => ({ field, value: values[field.id]! }));
+    },
+    fill: (fields, row, label) => fillDataRowEdit(fields, row, label, seconds),
+    restore: async (saved, label) => {
+      const cmds = saved.flatMap(({ field, value }) => templateFieldCommands(field, value, seconds) ?? []);
+      if (cmds.length > 0) await edit(label, cmds);
+    },
+  };
 }

@@ -13,7 +13,7 @@ import { engineIdle } from '@core/engine/engineInstance';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { TemplateField } from '@core/template/templateTypes';
 import { useTemplateStore } from '@stores/templateStore';
-import { fillDataRowEdit, fillMediaFieldEdit, slotBoxOf, templateFieldCommands, templateFieldValues } from './templateFieldEdits';
+import { engineBatchFieldOps, fillDataRowEdit, fillMediaFieldEdit, slotBoxOf, templateFieldCommands, templateFieldValues } from './templateFieldEdits';
 import { documentMirror } from '@stores/documentMirror';
 import { declareSlot } from '@core/template/mediaSlots';
 import { useAssetStore } from '@stores/assetStore';
@@ -96,7 +96,7 @@ describe('templateStore.setField', () => {
   it('writes a text field through the engine as one entry and keeps the value map live', async () => {
     const field = textField();
     useTemplateStore.setState({
-      active: { id: '__authored', name: 'T', width: 1920, height: 1080, layout: () => {}, build: () => {}, fields: [field] },
+      active: { id: '__authored', name: 'T', width: 1920, height: 1080, layout: () => {}, fields: [field] },
       values: { headline: '' },
     });
     const before = h.doc();
@@ -114,7 +114,7 @@ describe('templateStore.setField', () => {
   it('routes the commands through the caller’s send (a typing gesture)', () => {
     const field = colorField();
     useTemplateStore.setState({
-      active: { id: '__authored', name: 'T', width: 1920, height: 1080, layout: () => {}, build: () => {}, fields: [field] },
+      active: { id: '__authored', name: 'T', width: 1920, height: 1080, layout: () => {}, fields: [field] },
       values: {},
     });
     const sent: Array<[string, unknown[]]> = [];
@@ -172,5 +172,20 @@ describe('reads through the engine (B4 round 5)', () => {
     await h.run({ type: 'setProperty', prop: { layer: V, path: 'layer/slotFit' }, value: { kind: 'choice', value: 'contain' } });
     expect(await slotBoxOf(V, { width: 640, height: 360 }, 0)).toEqual({ width: 300, height: 169 });
     expect(await slotBoxOf(V, null, 0)).toBeNull();
+  });
+});
+
+describe('engineBatchFieldOps', () => {
+  it('reads the fields, fills a row and puts the template back as one entry', async () => {
+    const ops = engineBatchFieldOps(0);
+    const saved = await ops.read([textField(), colorField(), mediaField()]);
+    expect(saved.map((x) => x.field.id)).toEqual(['headline', 'accent']);
+    await ops.fill([textField()], { headline: 'Grace' }, 'Fill row 1');
+    await engineIdle();
+    expect(prop(s.T, 'Text', 'content')).toBe('Grace');
+    await ops.restore(saved, 'Restore template after batch');
+    await engineIdle();
+    expect(historyLabels().at(-1)).toBe('Restore template after batch');
+    expect(prop(s.T, 'Text', 'content')).toBe(saved[0]!.value);
   });
 });

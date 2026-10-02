@@ -140,7 +140,7 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
       active: {
         id: '__authored', name: 'This composition',
         width: comp.width, height: comp.height,
-        layout: () => {}, build: () => {}, fields,
+        layout: () => {}, fields,
       },
       values,
     });

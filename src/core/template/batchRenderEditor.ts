@@ -14,7 +14,7 @@
  */
 
 import { outputExtFor, type OutputFormat } from '@core/export/renderSpec';
-import { renderDataRows, resolveOutputName, type BatchRenderSummary } from './batchRender';
+import { renderDataRows, resolveOutputName, type BatchFieldOps, type BatchRenderSummary } from './batchRender';
 import type { DataTable } from './dataTable';
 import type { TemplateField } from './templateTypes';
 
@@ -29,6 +29,8 @@ export const BATCH_FORMATS: ReadonlyArray<{ format: OutputFormat; label: string 
 export interface EditorBatchOptions {
   table: DataTable;
   fields: ReadonlyArray<TemplateField>;
+  /** The field read / fill / restore (the engine's: layout/Templates/templateFieldEdits.ts). */
+  fieldOps: BatchFieldOps;
   /** File-name pattern with `{token}`s — see `resolveOutputName`. */
   pattern: string;
   format: OutputFormat;
@@ -53,10 +55,11 @@ export function batchFileName(pattern: string, format: OutputFormat): string {
 
 /** Render one file per row of `table`. */
 export async function runEditorBatchRender(opts: EditorBatchOptions): Promise<BatchRenderSummary> {
-  const { table, fields, pattern, format, renderFile, onRow, onProgress, startRow, signal } = opts;
+  const { table, fields, fieldOps, pattern, format, renderFile, onRow, onProgress, startRow, signal } = opts;
   return renderDataRows({
     table,
     fields,
+    fieldOps,
     namer: (row, index) =>
       batchFileName(resolveOutputName(pattern, row, index, table.rows.length), format),
     renderRow: (outputPath, rowProgress, rowSignal) => renderFile(outputPath, rowProgress, rowSignal),

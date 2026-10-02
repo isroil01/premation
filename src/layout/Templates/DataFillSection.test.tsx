@@ -30,6 +30,7 @@ const applyDataRow = jest.fn<FillResult, [readonly TemplateField[], Row, string?
 jest.mock('./templateFieldEdits', () => ({
   fillDataRowEdit: async (fields: readonly TemplateField[], row: Row, label?: string) =>
     applyDataRow(fields, row, label),
+  engineBatchFieldOps: () => ({ read: () => [], fill: () => ({ filled: [], skippedKind: [], failed: [] }), restore: () => {} }),
 }));
 
 const notify = jest.fn();

@@ -57,7 +57,6 @@ export const photoPromoTemplate: TemplateDefinition = {
   height: CH,
   description: 'A swappable photo in an accent frame with headline, subhead and price.',
   layout: layoutPhotoPromo,
-  build: buildPhotoPromo,
   settings: { fps: 60, durationSeconds: 5, background: '#0b1020' },
   animate: animatePhotoPromo,
   previewTime: 1.7,

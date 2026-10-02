@@ -29,9 +29,6 @@
  * and it is decidable without rendering anything.
  */
 
-import { applyDataRow } from './dataFill';
-import { readTemplateFieldValue, writeTemplateField } from './templateFields';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import type { DataRow, DataTable } from './dataTable';
 import type { TemplateField } from './templateTypes';
 import type { FillResult } from './dataFill';
@@ -142,9 +139,32 @@ export interface BatchRenderSummary {
   nextRow: number | null;
 }
 
+/** A field value the batch read before the loop and puts back after it. */
+export interface SavedFieldValue {
+  field: TemplateField;
+  value: string | number;
+}
+
+/**
+ * How the batch reads, fills and restores the template's fields — injected:
+ * the editor sends engine commands and reads the engine's values
+ * (layout/Templates/templateFieldEdits.ts `engineBatchFieldOps`); the loop
+ * does not care which.
+ */
+export interface BatchFieldOps {
+  /** The fields' current values (only ones a write can restore). */
+  read: (fields: ReadonlyArray<TemplateField>) => Promise<SavedFieldValue[]> | SavedFieldValue[];
+  /** Apply one row as ONE undoable edit named `label`. */
+  fill: (fields: ReadonlyArray<TemplateField>, row: DataRow, label: string) => Promise<FillResult> | FillResult;
+  /** Write the saved values back as ONE undoable edit named `label`. */
+  restore: (saved: ReadonlyArray<SavedFieldValue>, label: string) => Promise<void> | void;
+}
+
 export interface BatchRenderOptions {
   table: DataTable;
   fields: ReadonlyArray<TemplateField>;
+  /** The field read / fill / restore. */
+  fieldOps: BatchFieldOps;
   /** Output path (or name) for each row — usually `resolveOutputName`. */
   namer: (row: DataRow, index: number) => string;
   /**
@@ -175,27 +195,20 @@ export interface BatchRenderOptions {
   signal?: AbortSignal;
 }
 
-/** Snapshot the fields' current values so the batch can put them back. */
-function captureFieldValues(
-  fields: ReadonlyArray<TemplateField>,
-): Array<{ field: TemplateField; value: string | number }> {
-  const out: Array<{ field: TemplateField; value: string | number }> = [];
-  for (const field of fields) {
-    const value = readTemplateFieldValue(field);
-    // Only values a write can restore. A field whose target has gone missing
-    // reads undefined, and writing `undefined` back would be worse than
-    // leaving whatever the last row put there.
-    if (typeof value === 'string' || typeof value === 'number') out.push({ field, value });
-  }
-  return out;
+/**
+ * Snapshot the fields' current values so the batch can put them back. Only
+ * values a write can restore: a field whose target has gone missing reads
+ * undefined, and writing `undefined` back would be worse than leaving whatever
+ * the last row put there.
+ */
+async function captureFieldValues(ops: BatchFieldOps, fields: ReadonlyArray<TemplateField>): Promise<SavedFieldValue[]> {
+  return (await ops.read(fields)).filter((s) => typeof s.value === 'string' || typeof s.value === 'number');
 }
 
 /** Put the template back the way the user left it, as one undo entry. */
-function restoreFieldValues(saved: ReturnType<typeof captureFieldValues>): void {
+async function restoreFieldValues(ops: BatchFieldOps, saved: SavedFieldValue[]): Promise<void> {
   if (saved.length === 0) return;
-  runAnimEdit('Restore template after batch', () => {
-    for (const { field, value } of saved) writeTemplateField(field, value);
-  });
+  await ops.restore(saved, 'Restore template after batch');
 }
 
 /**
@@ -206,11 +219,11 @@ function restoreFieldValues(saved: ReturnType<typeof captureFieldValues>): void 
  * ABORT is different and stops immediately: the user asked it to stop.
  */
 export async function renderDataRows(opts: BatchRenderOptions): Promise<BatchRenderSummary> {
-  const { table, fields, namer, renderRow, onRow, onProgress, signal } = opts;
+  const { table, fields, fieldOps, namer, renderRow, onRow, onProgress, signal } = opts;
   const total = table.rows.length;
   const from = Math.max(0, Math.min(total, Math.floor(opts.startRow ?? 0)));
   const rows: BatchRowOutcome[] = [];
-  const saved = captureFieldValues(fields);
+  const saved = await captureFieldValues(fieldOps, fields);
   /** Where a resume would pick up. Null once the loop reaches the end. */
   let nextRow: number | null = from >= total ? null : from;
 
@@ -220,7 +233,7 @@ export async function renderDataRows(opts: BatchRenderOptions): Promise<BatchRen
       nextRow = i;
       const row = table.rows[i] as DataRow;
       const outputPath = namer(row, i);
-      const fill = applyDataRow(fields, row, `Fill row ${i + 1}`);
+      const fill = await fieldOps.fill(fields, row, `Fill row ${i + 1}`);
 
       const outcome: BatchRowOutcome = { index: i, outputPath, fill };
       try {
@@ -244,7 +257,7 @@ export async function renderDataRows(opts: BatchRenderOptions): Promise<BatchRen
   } finally {
     // In a `finally`, so an abort or a thrown namer still hands the user their
     // own document back rather than the last row it happened to reach.
-    restoreFieldValues(saved);
+    await restoreFieldValues(fieldOps, saved);
   }
 
   return {

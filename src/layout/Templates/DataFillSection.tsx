@@ -39,7 +39,7 @@ import { activeCompIdNow } from '@hooks/useMirror';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { joinOutputPath, renderAndWait } from '@layout/Export/supervisorQueue';
-import { fillDataRowEdit } from './templateFieldEdits';
+import { engineBatchFieldOps, fillDataRowEdit } from './templateFieldEdits';
 import styles from './DataFillSection.module.css';
 
 /**
@@ -158,6 +158,8 @@ export function DataFillSection({ fields }: { fields: ReadonlyArray<TemplateFiel
       const summary = await runEditorBatchRender({
         table,
         fields,
+        // Fill / read / restore through the engine, at the playhead the batch started on.
+        fieldOps: engineBatchFieldOps(getTime()),
         pattern,
         format,
         renderFile: async (fileName, onProgress, signal) => {

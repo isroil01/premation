@@ -8,7 +8,9 @@
  */
 
 import { zipBytes, type ZipEntry } from '@core/export/zip';
-import { readAuthoredFields } from '@core/template/templateAuthoring';
+import { authoredFieldsOf } from '@core/mirror/templateFields';
+import { documentMirror } from '@stores/documentMirror';
+import { useProjectStore } from '@stores/projectStore';
 import { liveDocument } from '@core/project/liveDocument';
 import type { TemplateField } from '@core/template/templateTypes';
 
@@ -21,13 +23,21 @@ export interface MogrtPackage {
   document: unknown;
 }
 
+/** The composition in view (the active tab's), else the document's first. */
+function activeComp(): string {
+  const s = useProjectStore.getState();
+  const id = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
+  const m = documentMirror();
+  return id && m.comp(id) ? id : m.compIds[0] ?? '';
+}
+
 /** F2: the document is the owner's (the engine's exportDocument when it owns it). */
 export async function buildMogrtPackage(name = 'Untitled'): Promise<MogrtPackage> {
   return {
     format: 'premation-mogrt-v1',
     name,
     createdAt: new Date().toISOString(),
-    fields: readAuthoredFields(),
+    fields: authoredFieldsOf(documentMirror().comp(activeComp())?.settings),
     document: await liveDocument(),
   };
 }

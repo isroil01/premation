@@ -8,11 +8,22 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { TEMPLATES, getTemplate } from './registry';
 import { readTemplateFieldValue, writeTemplateField } from './templateFields';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { liveKf } from './templates/builders';
+import type { TemplateDefinition } from './templateTypes';
+
+/** The template laid into the page replica (what the removed `build` did, minus the comp settings). */
+function buildIntoReplica(tpl: TemplateDefinition): void {
+  const root = activeCompRootId();
+  defaultSceneGraph.clear();
+  (tpl.layout as (g: typeof defaultSceneGraph, rootId: string) => void)(defaultSceneGraph, root);
+  tpl.animate?.(liveKf);
+}
 
 describe('template fields', () => {
   for (const tpl of TEMPLATES) {
     describe(tpl.name, () => {
-      beforeEach(() => tpl.build());
+      beforeEach(() => buildIntoReplica(tpl));
 
       it('every exposed field targets a real node + component + prop', () => {
         for (const f of tpl.fields) {

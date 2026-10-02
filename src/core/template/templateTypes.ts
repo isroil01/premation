@@ -85,10 +85,7 @@ export interface TemplateDefinition {
    *  target) into the given graph. Pure structure — no animation, no store
    *  writes — so it can render into a throwaway graph for a thumbnail. */
   layout: (graph: import('@core/scene/SceneGraph').default) => void;
-  /** Clears the live scene graph, runs layout into it, applies the animation,
-   *  sets the composition and bumps the scene. */
-  build: () => void;
-  /** The composition settings `build` gives the comp (the engine-API apply sends them as
+  /** The composition settings the template gives the comp (the engine-API apply sends them as
    *  `setCompositionSettings`; templateStore). Absent = leave the comp as it is. */
   settings?: { fps: number; durationSeconds: number; background: string };
   /** The template's motion, defined ONCE against an abstract keyframe setter so

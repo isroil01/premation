@@ -41,7 +41,18 @@ import {
   renderDataRows,
   resolveOutputName,
   sanitizeNameToken,
+  type BatchFieldOps,
 } from './batchRender';
+import { applyDataRow as fill } from './dataFill';
+import { readTemplateFieldValue, writeTemplateField } from './templateFields';
+import { runAnimEdit } from '@core/animation/animationCommands';
+
+/** The field ops over the (mocked) legacy field helpers. */
+const OPS: BatchFieldOps = {
+  read: (fields) => fields.map((field) => ({ field, value: readTemplateFieldValue(field) as string | number })),
+  fill: (fields, row, label) => fill(fields, row, label),
+  restore: (saved, label) => runAnimEdit(label, () => { for (const s of saved) writeTemplateField(s.field, s.value); }),
+};
 
 const FIELDS: TemplateField[] = [
   { id: 'name', label: 'Name', kind: 'text', target: { nodeId: 'n1', componentType: 'Text', prop: 'content' }, default: 'Name' },
@@ -121,7 +132,7 @@ describe('patternVariesPerRow', () => {
 describe('renderDataRows', () => {
   it('renders once per row, in order, sequentially', async () => {
     const order: string[] = [];
-    const summary = await renderDataRows({
+    const summary = await renderDataRows({ fieldOps: OPS,
       table: TABLE,
       fields: FIELDS,
       namer: (row) => `${row.name}.mp4`,
@@ -135,7 +146,7 @@ describe('renderDataRows', () => {
 
   it('applies each row BEFORE its render, which is the whole point', async () => {
     const seen: Array<{ applied: number; rendered: string }> = [];
-    await renderDataRows({
+    await renderDataRows({ fieldOps: OPS,
       table: TABLE,
       fields: FIELDS,
       namer: (row) => `${row.name}.mp4`,
@@ -153,7 +164,7 @@ describe('renderDataRows', () => {
   });
 
   it('keeps going past a failed row and reports it', async () => {
-    const summary = await renderDataRows({
+    const summary = await renderDataRows({ fieldOps: OPS,
       table: TABLE,
       fields: FIELDS,
       namer: (row) => `${row.name}.mp4`,
@@ -172,7 +183,7 @@ describe('renderDataRows', () => {
 
   it('restores the template afterwards, so row 3 is not left on the layers', async () => {
     currentValues.set('name', 'AUTHORED');
-    await renderDataRows({
+    await renderDataRows({ fieldOps: OPS,
       table: TABLE,
       fields: FIELDS,
       namer: (row) => `${row.name}.mp4`,
@@ -184,7 +195,7 @@ describe('renderDataRows', () => {
   it('restores the template even when the batch is aborted part-way', async () => {
     currentValues.set('name', 'AUTHORED');
     const abort = new AbortController();
-    const summary = await renderDataRows({
+    const summary = await renderDataRows({ fieldOps: OPS,
       table: TABLE,
       fields: FIELDS,
       namer: (row) => `${row.name}.mp4`,
@@ -199,7 +210,7 @@ describe('renderDataRows', () => {
   it('restores the template even when naming throws mid-batch', async () => {
     currentValues.set('name', 'AUTHORED');
     await expect(
-      renderDataRows({
+      renderDataRows({ fieldOps: OPS,
         table: TABLE,
         fields: FIELDS,
         namer: (row, i) => {
@@ -217,7 +228,7 @@ describe('renderDataRows', () => {
     // disk, so the loss was not even visible.
     const abort = new AbortController();
     let seen = 0;
-    const summary = await renderDataRows({
+    const summary = await renderDataRows({ fieldOps: OPS,
       table: TABLE,
       fields: FIELDS,
       namer: (row) => `${row.name}.mp4`,
@@ -230,7 +241,7 @@ describe('renderDataRows', () => {
   });
 
   it('reports nextRow null when the pass finished', async () => {
-    const summary = await renderDataRows({
+    const summary = await renderDataRows({ fieldOps: OPS,
       table: TABLE,
       fields: FIELDS,
       namer: (row) => `${row.name}.mp4`,
@@ -241,7 +252,7 @@ describe('renderDataRows', () => {
 
   it('resumes from a row, skipping what already landed', async () => {
     const rendered: string[] = [];
-    const summary = await renderDataRows({
+    const summary = await renderDataRows({ fieldOps: OPS,
       table: TABLE,
       fields: FIELDS,
       namer: (row) => `${row.name}.mp4`,
@@ -254,7 +265,7 @@ describe('renderDataRows', () => {
   });
 
   it('treats a start past the end as nothing left to do', async () => {
-    const summary = await renderDataRows({
+    const summary = await renderDataRows({ fieldOps: OPS,
       table: TABLE,
       fields: FIELDS,
       namer: (row) => `${row.name}.mp4`,
@@ -267,7 +278,7 @@ describe('renderDataRows', () => {
 
   it('reports progress across the whole batch, not per row', async () => {
     const seen: number[] = [];
-    await renderDataRows({
+    await renderDataRows({ fieldOps: OPS,
       table: TABLE,
       fields: FIELDS,
       namer: (row) => `${row.name}.mp4`,
@@ -282,7 +293,7 @@ describe('renderDataRows', () => {
   it('writes nothing back when there is nothing readable to restore', async () => {
     // A field whose target node has gone reads undefined; writing that back
     // would replace the last row's text with nothing at all.
-    await renderDataRows({
+    await renderDataRows({ fieldOps: OPS,
       table: TABLE,
       fields: FIELDS,
       namer: (row) => `${row.name}.mp4`,
