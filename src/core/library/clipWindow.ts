@@ -49,6 +49,27 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 const MIN_WINDOW_SEC = 2 / 30;
 
 /**
+ * The bar {@link setInsertedClipWindow} trims a NEW layer's default bar to, as
+ * fragment data (frames of the comp at `fps`): `[startSec, startSec +
+ * durationSec + 1 frame]`, `sourceIn` advanced with the head so the source
+ * mapping stays the identity. Null when no window applies (the default bar).
+ * Pure — what an engine-client insert puts on the layer it builds.
+ */
+export function insertedClipWindow(
+  startSec: number,
+  durationSec: number,
+  fps: number,
+  compFrames: number,
+): { start: number; duration: number; sourceIn: number; sourceDuration: null } | null {
+  if (!Number.isFinite(startSec) || !Number.isFinite(durationSec)) return null;
+  if (durationSec < MIN_WINDOW_SEC || !(fps > 0) || !(compFrames > 0)) return null;
+  const start = Math.round(Math.max(0, startSec) * fps);
+  const end = Math.round((Math.max(0, startSec) + durationSec + 1 / fps) * fps);
+  const head = Math.min(start, Math.max(start, end) - 1);
+  return { start: head, duration: Math.max(1, end - head), sourceIn: head, sourceDuration: null };
+}
+
+/**
  * Trim `nodeId`'s clip to `[startSec, startSec + durationSec]`.
  *
  * A no-op when the node has no clip (nothing was seeded, or the caller ran

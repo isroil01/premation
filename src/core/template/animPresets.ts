@@ -14,16 +14,13 @@
  */
 
 import SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { useWorkspaceStore } from '@stores/projectStore';
-import { bumpScene } from '@stores/sceneStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { addRoot, addText, addShape, liveKf, type SetKf } from './templates/builders';
+import { addRoot, addText, addShape, type SetKf } from './templates/builders';
 import { animatorPropPath, type TextAnimatorData } from '@core/text/textAnimators';
+import type { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import type { InsertFrame } from '@/engine-client/insertFragment';
 import { mountPreview, type PreviewSpec } from './previewController';
+
+
 
 export type { SetKf };
 
@@ -204,32 +201,27 @@ export function getAnimPreset(id: string): AnimPreset | null {
 // ── Insert into the live composition ─────────────────────────────────
 let seq = 0;
 
-/** Insert an animated preset into the current comp at (x, y) — comp centre when
- *  omitted — starting at the current playhead. Element size + motion scale to
- *  the comp so the result matches the preview card. Returns the new node id. */
-export function insertAnimPreset(presetId: string, x?: number, y?: number): string | null {
+
+/**
+ * {@link insertAnimPreset} as an ENGINE CLIENT: the preset's element, text
+ * animators and choreography (starting at `t0`, the playhead — a new layer
+ * starts at 0, so comp and layer seconds agree), laid into `b` under
+ * `frame.comp` at (x, y) (comp centre when omitted). Returns the element's
+ * scratch id (the one layer to select), null for an unknown preset. The app
+ * pastes it as one `pasteLayers`.
+ */
+export function buildAnimPresetFragment(b: FragmentBuilder, frame: InsertFrame, presetId: string, t0: number, x?: number, y?: number): string | null {
   const preset = getAnimPreset(presetId);
   if (!preset) return null;
-  const comp = useCompositionStore.getState();
-  const u = unitFor(comp.height || REF_H);
-  const px = x ?? comp.width / 2;
-  const py = y ?? comp.height / 2;
-  const rootId = activeCompRootId();
+  const u = unitFor(frame.height || REF_H);
+  const px = x ?? frame.width / 2;
+  const py = y ?? frame.height / 2;
   const id = `anim_${(seq += 1)}`;
-
-  preset.build(defaultSceneGraph, id, rootId, px, py, u);
-  preset.applyAnimators?.(defaultSceneGraph, id);
-
-  // Start at the playhead so the animation plays from where the user is.
-  const ws = useWorkspaceStore.getState();
-  const t0 = (ws.activeTabId ? ws.tabs[ws.activeTabId]?.time : 0) ?? 0;
-  const tc = getTimelineController();
-  // t0 offsets the choreography to the playhead; liveKf maps seconds → layer time.
-  preset.animate(liveKf, id, px, py, t0, u);
-
-  useSelectionStore.getState().set([id]);
-  tc.syncFromScene();
-  bumpScene();
+  // The presets lay node literals with SceneGraph's addChild / writeProp, which the builder implements.
+  const g = b as unknown as SceneGraph;
+  preset.build(g, id, frame.comp, px, py, u);
+  preset.applyAnimators?.(g, id);
+  preset.animate(b.keyframeSetter('easeInOut'), id, px, py, t0, u);
   return id;
 }
 

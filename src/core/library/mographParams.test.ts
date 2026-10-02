@@ -15,7 +15,8 @@ import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { writeTemplateField } from '@core/template/templateFields';
 import type { SceneNode } from '@core/types';
 
-import { MOGRAPH_ITEMS, insertMographItem } from './mographLibrary';
+import { MOGRAPH_ITEMS } from './mographLibrary';
+import { insertMographItem } from './mographInsertLegacy';
 import {
   findMographRoot, mographIdOf, readMographFields, partLabel, MOGRAPH_ID_PROP,
 } from './mographParams';

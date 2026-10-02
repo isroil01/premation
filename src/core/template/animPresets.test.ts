@@ -9,7 +9,8 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
-import { ANIM_PRESETS, insertAnimPreset, getAnimPreset } from './animPresets';
+import { ANIM_PRESETS, getAnimPreset } from './animPresets';
+import { insertAnimPreset } from './animPresetsLegacy';
 import { buildTitleCard } from './templates/titleCard';
 
 describe('animated presets', () => {

@@ -29,7 +29,8 @@ import { makeSvgComponent } from '@core/svg/svgLayer';
 import { buildLayerFragment } from '../offDocument';
 import { insertCamera, insertLight, insertShape, insertText } from '@core/scene/sceneInsert';
 import { buildLottieItem, LOTTIE_ITEMS } from '@core/library/lottieLibrary';
-import { buildMographItem, MOGRAPH_ITEMS } from '@core/library/mographLibrary';
+import { MOGRAPH_ITEMS } from '@core/library/mographLibrary';
+import { buildMographItem } from '@core/library/mographInsertLegacy';
 import { setNodeMatte } from '@core/effects/matte';
 import { useSelectionStore } from '@stores/selectionStore';
 

@@ -12,7 +12,8 @@ import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import { documentMirror } from '@stores/documentMirror';
-import { MOGRAPH_ITEMS, insertMographItem } from '@core/library/mographLibrary';
+import { MOGRAPH_ITEMS } from '@core/library/mographLibrary';
+import { insertMographItem } from '@core/library/mographInsertLegacy';
 import { readMographFields, findMographRoot } from '@core/library/mographParams';
 import type { TemplateField } from '@core/template/templateTypes';
 import {

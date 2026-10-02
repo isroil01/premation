@@ -16,22 +16,19 @@
  */
 
 import type SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useWorkspaceStore } from '@stores/projectStore';
-import { bumpScene } from '@stores/sceneStore';
-import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
-import { setInsertedClipWindow } from './clipWindow';
-import { defaultAnimation } from '@motion/animation';
-import { setNodeMotionBlur } from '@core/effects/motionBlur';
-import { addRoot, addText, addGradientShape, radialFill, linearFill, liveKf, choreographyDuration, choreographyRestTime, type SetKf } from '@core/template/templates/builders';
+import { insertedClipWindow } from './clipWindow';
+import { partLabel } from '@core/mirror/mographFields';
+import type { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import type { InsertFrame } from '@/engine-client/insertFragment';
+import { addRoot, addText, addGradientShape, radialFill, linearFill, choreographyDuration, choreographyRestTime, type SetKf } from '@core/template/templates/builders';
 import { mountPreview, type PreviewSpec } from '@core/template/previewController';
 import { previewChoreography } from './insertPreview';
-import { MOGRAPH_ID_PROP, nameMographParts } from './mographParams';
+import { MOGRAPH_ID_PROP } from './mographParams';
 import type { SceneNode, Transform } from '@core/types';
+
+
 
 export type MographCategory = 'lower-thirds' | 'callouts' | 'titles' | 'data' | 'shapes' | 'loops';
 
@@ -944,80 +941,45 @@ export function mographRestTime(item: MographItem): number {
 
 let seq = 0;
 
-/** Insert a motion-graphics item at (x, y) — comp centre when omitted —
- *  starting at the playhead, then preview it. Returns the group node id, or null. */
-export function insertMographItem(mgId: string, x?: number, y?: number): string | null {
-  const id = buildMographItem(mgId, x, y);
-  if (id) previewMographItem(mgId);
-  return id;
-}
 
 /**
- * The BUILDER alone (B3z): the item's layer set, keys, expressions and bar,
- * selected — no preview. The editor runs it off-document and inserts the
- * result as ONE `pasteLayers` (offDocument.ts), then calls
- * {@link previewMographItem}.
+ * {@link buildMographItem} as an ENGINE CLIENT: the item's group, parts,
+ * keyframes (starting at `t0`, the playhead — a new layer starts at 0, so
+ * comp and layer seconds agree), expressions, text.source keys, motion-blur
+ * switches and its clip window, laid into `b` under `frame.comp`. Returns the
+ * group's scratch id (the one layer to select), null for an unknown id. The
+ * app pastes the fragment as one `pasteLayers`, then previews the item.
  */
-export function buildMographItem(mgId: string, x?: number, y?: number): string | null {
+export function buildMographFragment(b: FragmentBuilder, frame: InsertFrame, mgId: string, t0: number, x?: number, y?: number): string | null {
   const item = getMographItem(mgId);
   if (!item) return null;
-  const comp = useCompositionStore.getState();
-  const u = (comp.height || REF_H) / REF_H;
-  const px = x ?? comp.width / 2;
-  const py = y ?? comp.height / 2;
-  const rootId = activeCompRootId();
+  const u = (frame.height || REF_H) / REF_H;
+  const px = x ?? frame.width / 2;
+  const py = y ?? frame.height / 2;
   const baseId = `mg_${(seq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
-
-  // Group wrapper so the element moves/scales as one unit.
-  const group = {
-    id: baseId, name: item.name, parent: rootId, children: [],
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true, locked: false,
-    // The catalog id rides on the group so the subtree stays recognisable as
-    // ONE inserted element afterwards — that is what lets the Inspector offer
-    // its text and colour blanks instead of leaving the user to hunt for the
-    // right child layer and guess which prop is safe to touch.
+  b.addChild(frame.comp, {
+    id: baseId, name: item.name,
     components: [{ id: `${baseId}_m`, type: 'group', props: { [SCENE_KIND_PROP]: 'group', [MOGRAPH_ID_PROP]: item.id } }],
-  } as unknown as SceneNode;
-  defaultSceneGraph.addChild(rootId, group);
-  item.build(defaultSceneGraph, baseId, baseId, px, py, u);
-  // Builders default a node's name to its id; unrenamed, the Layers panel fills
-  // with `mg_3_kf9a_rule`. Name the parts after what the ids describe.
-  nameMographParts(baseId);
-
-  const ws = useWorkspaceStore.getState();
-  const t0 = (ws.activeTabId ? ws.tabs[ws.activeTabId]?.time : 0) ?? 0;
-  item.animate(liveKf, baseId, px, py, t0, u);
-
-  // Expressions + text data keyframes onto the LIVE engine (canonical time).
-  const liveOps: MographOps = {
-    expr: (id, prop, src) => defaultAnimation.setExpression(id, prop, src),
-    textKf: (id, timeSec, value) =>
-      defaultAnimation.setDataKeyframe(id, 'text.source', 'text', compToKeyframeTime(id, timeSec), value),
-  };
-  item.decorate?.(liveOps, baseId, px, py, t0, u);
-
-  // Per-layer motion-blur switch for whip/slam moves (renders when the comp's
-  // motion-blur master switch is on).
-  for (const sfx of item.motionBlurIds ?? []) setNodeMotionBlur(`${baseId}${sfx}`, true);
-
-  useSelectionStore.getState().set([baseId]);
-  getTimelineController().syncFromScene();
-
-  /*
-    The bar says what the item IS: it starts where it was dropped and ends when
-    its choreography does.
-
-    `syncFromScene` has just seeded a full-comp bar starting at zero, which is
-    right for a layer the user drew and wrong for a finished 0.9-second lower
-    third dropped at two seconds — the timeline would say nothing true about
-    when it plays or when it is over, which is most of what a timeline is for.
-
-    A LOOPING item keeps the full bar: its animation is a rule with no end, so
-    an arbitrary window would be a lie in the other direction.
-  */
-  if (!item.loop) setInsertedClipWindow(baseId, t0, mographDuration(item));
-  bumpScene();
+  });
+  // The catalog builders lay node literals with SceneGraph's addChild, which the
+  // fragment builder implements (templates/layoutHelpers.ts does the same).
+  item.build(b as unknown as SceneGraph, baseId, baseId, px, py, u);
+  // Builders default a node's name to its id: name the parts after what the ids describe.
+  for (const id of b.layerIds()) {
+    if (id !== baseId && b.row(id).name === id) b.row(id).name = partLabel(baseId, id);
+  }
+  item.animate(b.keyframeSetter('easeInOut'), baseId, px, py, t0, u);
+  item.decorate?.({
+    expr: (id, prop, src) => b.setExpression(id, prop, src),
+    textKf: (id, timeSec, value) => b.setDataKeyframe(id, 'text.source', 'text', timeSec, value),
+  }, baseId, px, py, t0, u);
+  for (const sfx of item.motionBlurIds ?? []) if (b.has(`${baseId}${sfx}`)) b.setFx(`${baseId}${sfx}`, 'motionBlur', true);
+  // The bar says what the item IS (clipWindow.ts): from the drop time to one
+  // frame past its choreography; a looping item keeps the full bar.
+  if (!item.loop) {
+    const bar = insertedClipWindow(t0, mographDuration(item), frame.fps, Math.round(frame.durationSeconds * frame.fps));
+    if (bar) b.setBars(baseId, [bar]);
+  }
   return baseId;
 }
 

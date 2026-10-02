@@ -26,8 +26,9 @@ import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { TEMPLATES } from '@core/template/registry';
 import { createTemplatePlayer } from '@core/template/templatePreview';
-import { ANIM_PRESETS, insertAnimPreset, createAnimPresetPlayer, type AnimPreset } from '@core/template/animPresets';
-import { insertBuiltLayers } from '@core/engine/offDocument';
+import { ANIM_PRESETS, buildAnimPresetFragment, createAnimPresetPlayer, type AnimPreset } from '@core/template/animPresets';
+import { insertFragment } from '@/engine-client/insertFragment';
+import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import type { TemplateDefinition, TemplateField } from '@core/template/templateTypes';
 import { publishCurrentTemplate } from '@core/automation/publishTemplate';
 import { isPublicFieldId } from '@core/automation/fieldIds';
@@ -120,8 +121,8 @@ function AnimPresetCard({ preset }: { preset: AnimPreset }): JSX.Element {
       title={`${preset.name} — click to add, drag to place`}
       draggable
       onDragStart={(e) => setCanvasDrag(e, { kind: 'animPreset', presetId: preset.id })}
-      // The preset's styled layer tree is built off-document → ONE pasteLayers entry.
-      onClick={() => { void insertBuiltLayers(`Insert ${preset.name}`, activeCompIdNow() ?? 'comp_root', () => insertAnimPreset(preset.id)); }}
+      // The preset's styled layer tree is laid into a fragment → ONE pasteLayers entry.
+      onClick={() => { void insertFragment(`Insert ${preset.name}`, (b, f) => buildAnimPresetFragment(b, f, preset.id, getPlayheadTime()), { comp: activeCompIdNow() ?? 'comp_root' }); }}
     >
       <span className={styles.previewFrame} data-aspect="16:9">
         <canvas ref={canvasRef} className={styles.previewCanvas} aria-hidden />

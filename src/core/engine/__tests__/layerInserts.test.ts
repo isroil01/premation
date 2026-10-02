@@ -8,11 +8,14 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { insertCamera, insertLight, insertPrimitive, insertShape, insertText } from '@core/scene/sceneInsert';
 import { buildSolidLayer } from '@core/scene/layerSettings';
-import { buildMographItem, MOGRAPH_ITEMS } from '@core/library/mographLibrary';
+import { MOGRAPH_ITEMS } from '@core/library/mographLibrary';
+import { buildMographItem } from '@core/library/mographInsertLegacy';
 import { buildLottieItem, LOTTIE_ITEMS } from '@core/library/lottieLibrary';
-import { insertCursorItem, CURSOR_ITEMS } from '@core/library/cursorLibrary';
+import { buildCursorItem, CURSOR_ITEMS } from '@core/library/cursorLibrary';
+import { legacyFrame, legacySink } from '@core/scene/sceneInsert';
 import { insertUiComponent, UI_COMPONENTS } from '@core/library/uiKitLibrary';
-import { insertAnimPreset, ANIM_PRESETS } from '@core/template/animPresets';
+import { ANIM_PRESETS } from '@core/template/animPresets';
+import { insertAnimPreset } from '@core/template/animPresetsLegacy';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { readMatte, setNodeMatte } from '@core/effects/matte';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -77,7 +80,7 @@ it('a solid from Solid Settings', async () => {
 it('library items: motion graphic, Lottie, cursor, UI kit, animation preset', async () => {
   await roundTrip('Insert MG', () => buildMographItem(MOGRAPH_ITEMS[0]!.id));
   await roundTrip('Insert Lottie', () => buildLottieItem(LOTTIE_ITEMS[0]!.id));
-  await roundTrip('Insert Cursor', () => insertCursorItem(CURSOR_ITEMS[0]!.id, 200, 200));
+  await roundTrip('Insert Cursor', () => buildCursorItem(legacySink(), legacyFrame(), CURSOR_ITEMS[0]!.id, 0, 200, 200));
   await roundTrip('Insert UI', () => insertUiComponent(UI_COMPONENTS[0]!.id, 300, 300));
   await roundTrip('Insert Preset', () => insertAnimPreset(ANIM_PRESETS[0]!.id, 400, 400));
 });

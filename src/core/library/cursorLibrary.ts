@@ -14,17 +14,11 @@
  * construction).
  */
 
-import type SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { bezierCorner as corner } from '@motion/workspace';
-import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { useWorkspaceStore } from '@stores/projectStore';
-import { bumpScene } from '@stores/sceneStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { liveKf, type SetKf } from '@core/template/templates/builders';
+import { type SetKf } from '@core/template/templates/builders';
+import type { LayerSink } from '@/engine-client/layerSink';
+import type { InsertFrame } from '@/engine-client/insertFragment';
 import type { SceneNode, Transform } from '@core/types';
 
 export type CursorCategory = 'pointer' | 'text' | 'resize' | 'zoom' | 'tools' | 'effects';
@@ -408,7 +402,7 @@ const tf = (x: number, y: number): Transform => ({ position: { x, y }, rotation:
 let seq = 0;
 const nid = (base: string): string => `${base}_${(seq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
 
-function addGroup(graph: SceneGraph, id: string, parent: string, name: string, x: number, y: number): string {
+function addGroup(graph: LayerSink, id: string, parent: string, name: string, x: number, y: number): string {
   const node = {
     id, name, parent, children: [], transform: tf(x, y), visible: true, locked: false,
     components: [{ id: `${id}_m`, type: 'group', props: { [SCENE_KIND_PROP]: 'group' } }],
@@ -419,7 +413,7 @@ function addGroup(graph: SceneGraph, id: string, parent: string, name: string, x
 
 /** A closed vector path layer (design-box points, centred on (x,y), scaled by `k` px/unit). */
 function addPath(
-  graph: SceneGraph, id: string, parent: string, name: string,
+  graph: LayerSink, id: string, parent: string, name: string,
   pts: readonly Pt[], x: number, y: number, k: number, fill: string,
   stroke?: { color: string; width: number },
 ): string {
@@ -442,7 +436,7 @@ function addPath(
 }
 
 function addEllipse(
-  graph: SceneGraph, id: string, parent: string, name: string,
+  graph: LayerSink, id: string, parent: string, name: string,
   x: number, y: number, w: number, h: number, fill: string,
   stroke?: { color: string; width: number },
 ): string {
@@ -463,7 +457,7 @@ function addEllipse(
 
 /** Realise one design part as a scene node. `k` = pixels per design unit. */
 function addPart(
-  graph: SceneGraph, parent: string, part: CursorPart, index: number, k: number, accent: string,
+  graph: LayerSink, parent: string, part: CursorPart, index: number, k: number, accent: string,
 ): string {
   const half = CURSOR_DESIGN_BOX / 2;
   if (part.kind === 'path') {
@@ -513,24 +507,24 @@ function orbit(set: SetKf, dotId: string, t0: number, radiusPx: number, periodSe
 }
 
 /**
- * Insert a cursor library item into the live composition at (x, y) — comp
+ * A cursor library item laid into `sink` under `frame.comp` at (x, y) — comp
  * centre when omitted. Animated items get their keyframe choreography starting
- * at the playhead (canonical time mapping via liveKf → compToKeyframeTime).
- * Returns the inserted root node id, or null for an unknown id.
+ * at `t0` (the playhead, seconds; a new layer starts at 0, so comp and layer
+ * time agree). Returns the root group id (the one layer to select), or null
+ * for an unknown id. The app pastes it as one `pasteLayers`.
  */
-export function insertCursorItem(cursorId: string, x?: number, y?: number): string | null {
+export function buildCursorItem(sink: LayerSink, frame: InsertFrame, cursorId: string, t0: number, x?: number, y?: number): string | null {
   const item = getCursorItem(cursorId);
   const design = DESIGNS[cursorId];
   if (!item || !design) return null;
-  const comp = useCompositionStore.getState();
+  const comp = frame;
   const u = (comp.height || 720) / 720;
   const px = x ?? comp.width / 2;
   const py = y ?? comp.height / 2;
-  const rootId = activeCompRootId();
-  const ws = useWorkspaceStore.getState();
-  const t0 = (ws.activeTabId ? ws.tabs[ws.activeTabId]?.time : 0) ?? 0;
+  const rootId = frame.comp;
+  const liveKf: SetKf = (id, prop, t, v, ease) => sink.setKeyframe(id, prop, t, v, ease ?? 'easeInOut');
 
-  const g = defaultSceneGraph;
+  const g = sink;
   const groupId = addGroup(g, nid('cursor'), rootId, item.name, px, py);
   const k = (design.size / CURSOR_DESIGN_BOX) * u; // px per design unit
 
@@ -575,8 +569,5 @@ export function insertCursorItem(cursorId: string, x?: number, y?: number): stri
       break; // static designs — no choreography
   }
 
-  useSelectionStore.getState().set([groupId]);
-  getTimelineController().syncFromScene();
-  bumpScene();
   return groupId;
 }

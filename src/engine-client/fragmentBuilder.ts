@@ -398,6 +398,14 @@ export class FragmentBuilder {
     return true;
   }
 
+  /** SceneGraph's `writeProp`: `key` on the layer's component with id `componentId`; false when there is none. */
+  writeProp(id: string, componentId: string, key: string, value: unknown): boolean {
+    const c = this.row(id).components.find((x) => x.id === componentId);
+    if (!c) return false;
+    c.props[key] = clone(value);
+    return true;
+  }
+
   /**
    * Write `key` on the layer's `fx` component, created on demand (id
    * `<layer>_fx`, appended) — SceneGraph `setFx`: fill, fills, stroke, strokes,
@@ -471,6 +479,25 @@ export class FragmentBuilder {
     const keys = clone(keyframes.filter((k) => finite(k.t))).sort((x, y) => x.t - y.t);
     if (keys.length === 0) a.data.delete(prop);
     else a.data.set(prop, { nodeId: id, prop, kind, keyframes: keys });
+  }
+
+  /**
+   * One data keyframe (AnimationEngine.setDataKeyframe): appended to the
+   * layer's `prop` track of `kind` (created on demand); a key already at `t`
+   * is replaced. Keys stay sorted by time.
+   */
+  setDataKeyframe(id: string, prop: string, kind: string, t: number, value: unknown, easing?: string): void {
+    if (!finite(t)) return;
+    const a = this.anim(id);
+    const track = a.data.get(prop) ?? { nodeId: id, prop, kind, keyframes: [] };
+    const key: FragmentDataKeyframe = { t, value: clone(value), ...(easing ? { easing } : {}) };
+    const at = track.keyframes.findIndex((k) => k.t === t);
+    if (at >= 0) track.keyframes[at] = key;
+    else {
+      track.keyframes.push(key);
+      track.keyframes.sort((x, y) => x.t - y.t);
+    }
+    a.data.set(prop, track);
   }
 
   /** An expression on a property (empty source removes it). */

@@ -46,20 +46,19 @@ import { insertFragment } from '@/engine-client/insertFragment';
 import { EmptyCompositionView } from './EmptyCompositionView';
 import { importBrowserFilesEdit } from '@layout/Assets/assetEdits';
 import { insertMediaEdit, newCompFromFootageEdit } from './footageEdits';
-import { insertCursorItem } from '@core/library/cursorLibrary';
+import { buildCursorItem } from '@core/library/cursorLibrary';
 import { buildUiComponent } from '@core/library/uiKitLibrary';
-import { buildMographItem, previewMographItem } from '@core/library/mographLibrary';
+import { buildMographFragment, previewMographItem } from '@core/library/mographLibrary';
 import { getTransitionItem } from '@core/library/transitionLibrary';
 import { applyTransitionEdit } from '@layout/EditorLayout/transitionInsertEdits';
 import { insertSfxEdit } from '@layout/EditorLayout/sfxInsertEdits';
 import { insertLottieItemEdit } from '@layout/EditorLayout/lottieInsertEdits';
-import { insertBuiltLayers } from '@core/engine/offDocument';
 import { assetRecordNow } from '@stores/assetSession';
 import { useComponentStore } from '@stores/componentStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { addEffectAndReveal } from '@layout/Effects/revealEffectControls';
-import { insertAnimPreset } from '@core/template/animPresets';
+import { buildAnimPresetFragment } from '@core/template/animPresets';
 import { UI_COMPONENT_PRESETS } from '@core/scene/uiComponents';
 
 import { SecondaryViewPane } from './SecondaryViewPane';
@@ -558,20 +557,20 @@ export function WorkspaceViewport({
         break;
       }
       // Library items are client-side node builders (layers + keys + effects + expressions):
-      // they run off-document at the drop point and land as ONE pasteLayers entry.
+      // laid into a fragment at the drop point (keys from the playhead), ONE pasteLayers entry.
       case 'animPreset':
         // A self-contained animated element — insert at the drop point.
-        void insertBuiltLayers('Insert Animation Preset', comp, () => insertAnimPreset(payload.presetId, world.x, world.y));
+        void insertFragment('Insert Animation Preset', (b, f) => buildAnimPresetFragment(b, f, payload.presetId, getPlayheadTime(), world.x, world.y), { comp });
         break;
       case 'cursor':
-        void insertBuiltLayers('Insert Cursor', comp, () => insertCursorItem(payload.cursorId, world.x, world.y));
+        void insertFragment('Insert Cursor', (b, f) => buildCursorItem(b, f, payload.cursorId, getPlayheadTime(), world.x, world.y), { comp });
         break;
       case 'uikit':
         void insertFragment('Insert UI Component', (b, f) => buildUiComponent(b, f, payload.componentId, world.x, world.y), { comp });
         break;
       case 'mograph': {
         const mgId = payload.mographId;
-        void insertBuiltLayers('Insert Motion Graphic', comp, () => buildMographItem(mgId, world.x, world.y))
+        void insertFragment('Insert Motion Graphic', (b, f) => buildMographFragment(b, f, mgId, getPlayheadTime(), world.x, world.y), { comp })
           .then((ids) => { if (ids && ids.length > 0) previewMographItem(mgId); });
         break;
       }

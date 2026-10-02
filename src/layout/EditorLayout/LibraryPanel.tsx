@@ -36,11 +36,12 @@ import { useComponentStore } from '@stores/componentStore';
 import { useUIStore } from '@stores/uiStore';
 import { getEventBus } from '@core/events/EventBus';
 import { insertShapeEdit, insertTextEdit } from '@/engine-client/insertEdits';
-import { insertBuiltLayers } from '@core/engine/offDocument';
+import { insertFragment } from '@/engine-client/insertFragment';
+import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { componentThumb, onComponentThumbReady } from '@core/library/componentThumbs';
-import { MOGRAPH_ITEMS, buildMographItem, previewMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
+import { MOGRAPH_ITEMS, buildMographFragment, previewMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
 import { TRANSITION_ITEMS, createTransitionPlayer, type TransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
 import { applyTransitionEdit } from './transitionInsertEdits';
 import { SFX_ITEMS, sfxWaveform, type SfxItem, type SfxCategory } from '@core/library/sfxLibrary';
@@ -300,10 +301,9 @@ function MographCard({ item }: { item: MographItem }): JSX.Element {
       draggable
       onDragStart={(e) => setCanvasDrag(e, { kind: 'mograph', mographId: item.id, name: item.name })}
       onClick={async () => {
-        // The item's rigged layer set (shapes, styled text, keys, expressions) is built
-        // off-document and lands as ONE pasteLayers entry; then its choreography previews.
-        // B4-kept: the builder runs against the TS engine's scratch state (an engine-side builder, not a display read).
-        const ids = await insertBuiltLayers(`Insert ${item.name}`, (activeCompIdNow() ?? 'comp_root'), () => buildMographItem(item.id));
+        // The item's rigged layer set (shapes, styled text, keys, expressions) is laid into a
+        // fragment and lands as ONE pasteLayers entry; then its choreography previews.
+        const ids = await insertFragment(`Insert ${item.name}`, (b, f) => buildMographFragment(b, f, item.id, getPlayheadTime()), { comp: activeCompIdNow() ?? 'comp_root' });
         if (ids === null) return; // refused — already toasted
         const id = ids[0];
         if (id) previewMographItem(item.id);
