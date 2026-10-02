@@ -2,12 +2,11 @@
  * D5 — transport through the C++ engine when it owns the document
  * (NATIVE_CORE_PLAN §5 D5, ENGINE_API.md §6: the engine owns the clock).
  *
- * The page keeps its playhead MODEL — the TimelineController and the transient
- * clock (playbackClockStore) every timeline widget already reads — but while
- * the engine owns the document the page no longer advances it
- * (usePlaybackClock stands down). Instead:
+ * The page keeps its playhead MODEL — the transient clock (playbackClockStore)
+ * every timeline widget reads, moved through core/timeline/timelineView.ts —
+ * but never advances it itself. Instead:
  *
- *   engine → page   `playhead` events move the controller (→ the clock store →
+ *   engine → page   `playhead` events write the clock store (→
  *                   the timeline's playhead, the time readouts, the overlays);
  *                   `transportChanged` sets the active tab's `playing` flag.
  *   page → engine   a playhead move the ENGINE did not cause (a scrub, a click
@@ -26,10 +25,10 @@
 
 import { frameToFlicks, flicksToSeconds, type EngineClient, type EventBatch } from '@motion/engine-api';
 import { useProjectStore } from '@stores/projectStore';
-import { getClock, usePlaybackClockStore } from '@stores/playbackClockStore';
+import { getClock, setTime, usePlaybackClockStore } from '@stores/playbackClockStore';
 import { documentMirror } from '@stores/documentMirror';
 import { previewIncludesAudio } from '@stores/previewBehaviorStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { isTransportLooping } from '@core/timeline/timelineView';
 
 export interface EngineTransportStats {
   seeksSent: number;
@@ -130,7 +129,7 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
     enginePlaying = playing;
     if (playing) {
       st.plays += 1;
-      const looping = safe(() => getTimelineController().isLooping(), true);
+      const looping = isTransportLooping();
       const tab = activeTab();
       const workArea = tab ? documentMirror().comp(tab.comp)?.settings.workArea : undefined;
       void client().execute({ type: 'setLoop', mode: looping ? 'loop' : 'once' });
@@ -170,10 +169,12 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
         st.playheadEvents += 1;
         applying = true;
         try {
-          // The controller mirrors a frame-exact time into the clock store.
-          getTimelineController().seekSeconds(flicksToSeconds(e.time));
-        } catch {
-          // no timeline for this comp in the page (yet)
+          // A FRAME-EXACT time into the clock store: the frame the engine drew.
+          const rate = documentMirror().comp(tab.comp)?.settings.frameRate;
+          if (rate && rate.num > 0) {
+            const frame = Math.round((flicksToSeconds(e.time) * rate.num) / (rate.den || 1));
+            if (getClock(tab.id).frame !== frame || !tab.playing) setTime(tab.id, (frame * (rate.den || 1)) / rate.num, frame);
+          }
         } finally {
           applying = false;
         }
@@ -250,10 +251,3 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
   return teardown;
 }
 
-function safe<T>(fn: () => T, fallback: T): T {
-  try {
-    return fn();
-  } catch {
-    return fallback;
-  }
-}

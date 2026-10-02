@@ -9,7 +9,11 @@
  */
 
 import { act, renderHook } from '@testing-library/react';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import * as timelineView from '@core/timeline/timelineView';
+import { flicksToSeconds } from '@motion/engine-api';
+import { documentMirror } from '@stores/documentMirror';
+import { getClock } from '@stores/playbackClockStore';
+import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
@@ -25,8 +29,6 @@ let A = '';
 beforeEach(async () => {
   h = await setupAppEngine();
   A = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'a', init: [] })).layer;
-  const c = getTimelineController();
-  c.syncFromScene('comp_root');
   useSelectionStore.getState().set([A]);
   document.body.innerHTML = '';
 });
@@ -39,7 +41,13 @@ async function idle(): Promise<void> {
   await act(async () => { await engineIdle(); });
 }
 
-const bar = () => getTimelineController().getLayersForNode(A)[0]!;
+/** The layer's bar in whole frames of its 30 fps composition (from the mirror). */
+const bar = (): { start: number; end: number } => {
+  const tm = documentMirror().layer(A)!.timing;
+  return { start: Math.round(flicksToSeconds(tm.inPoint) * 30), end: Math.round(flicksToSeconds(tm.outPoint) * 30) };
+};
+const seekFrame = (f: number): void => timelineView.seekPlayhead(f / 30);
+const playheadFrame = (): number => getClock(useProjectStore.getState().activeTabId).frame;
 
 function press(target: EventTarget, init: KeyboardEventInit): KeyboardEvent {
   const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
@@ -61,22 +69,20 @@ function timelineRow(): HTMLElement {
 describe('Alt+Page Down / Page Up — nudge the selected layers', () => {
   it('POSITIVE CONTROL: unmodified Page Down is still "next frame", not a nudge', () => {
     renderHook(() => useTimelineKeys());
-    const c = getTimelineController();
-    c.timeline.seek(10);
+    seekFrame(10);
     press(window, { key: 'PageDown' });
-    expect(Math.round(c.timeline.currentFrame)).toBe(11);
+    expect(playheadFrame()).toBe(11);
     expect(bar().start).toBe(0);
   });
 
   it('Alt+Page Down moves the layer one frame later and leaves the playhead alone', async () => {
     renderHook(() => useTimelineKeys());
-    const c = getTimelineController();
-    c.timeline.seek(10);
+    seekFrame(10);
     const e = press(window, { key: 'PageDown', altKey: true });
     await idle();
     expect(bar().start).toBe(1);
     expect(historyLabels().at(-1)).toBe('Nudge Layer');
-    expect(Math.round(c.timeline.currentFrame)).toBe(10);
+    expect(playheadFrame()).toBe(10);
     expect(e.defaultPrevented).toBe(true);
   });
 
@@ -121,18 +127,16 @@ describe('Alt+Page Down / Page Up — nudge the selected layers', () => {
 
   it('other Alt chords still fall through untouched', () => {
     renderHook(() => useTimelineKeys());
-    const c = getTimelineController();
-    c.timeline.seek(10);
+    seekFrame(10);
     press(window, { key: 'Home', altKey: true });
-    expect(Math.round(c.timeline.currentFrame)).toBe(10);
+    expect(playheadFrame()).toBe(10);
   });
 });
 
 describe('] from the keyboard', () => {
   it('moves the out point of a full-length layer to the playhead', async () => {
     renderHook(() => useTimelineKeys());
-    const c = getTimelineController();
-    c.timeline.seek(60);
+    seekFrame(60);
     press(window, { key: ']' });
     await idle();
     expect(bar().end).toBe(60);
@@ -143,8 +147,8 @@ describe('] from the keyboard', () => {
 describe('J / K — previous / next keyframe only where the timeline claimed them', () => {
   it('K from the timeline goes to the next keyframe', () => {
     renderHook(() => useTimelineKeys());
-    const next = jest.spyOn(getTimelineController(), 'goToNextKeyframe').mockImplementation(() => undefined as never);
-    const prev = jest.spyOn(getTimelineController(), 'goToPrevKeyframe').mockImplementation(() => undefined as never);
+    const next = jest.spyOn(timelineView, 'goToNextKeyframe').mockImplementation(() => undefined as never);
+    const prev = jest.spyOn(timelineView, 'goToPrevKeyframe').mockImplementation(() => undefined as never);
     const row = timelineRow();
     press(row, { key: 'k' });
     press(row, { key: 'j' });
@@ -158,8 +162,8 @@ describe('J / K — previous / next keyframe only where the timeline claimed the
     // Before: J stepped keyframes from any panel the shuttle did not own, while
     // K was eaten by a global chord — one half of a pair, working alone.
     renderHook(() => useTimelineKeys());
-    const next = jest.spyOn(getTimelineController(), 'goToNextKeyframe').mockImplementation(() => undefined as never);
-    const prev = jest.spyOn(getTimelineController(), 'goToPrevKeyframe').mockImplementation(() => undefined as never);
+    const next = jest.spyOn(timelineView, 'goToNextKeyframe').mockImplementation(() => undefined as never);
+    const prev = jest.spyOn(timelineView, 'goToPrevKeyframe').mockImplementation(() => undefined as never);
     const elsewhere = document.createElement('div');
     document.body.appendChild(elsewhere);
     const ej = press(elsewhere, { key: 'j' });

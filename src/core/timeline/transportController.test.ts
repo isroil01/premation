@@ -1,16 +1,14 @@
 /**
  * The shared transport controller: JKL rates, K+J / K+L stepping, in/out
- * summaries and audio scrub slices — all against a fake driver, so the tests
+ * summaries — all against a fake driver, so the tests
  * describe the contract both viewers rely on rather than either viewer.
  */
 
 import {
   createShuttle,
   threePointSummary,
-  scrubAudioAt,
   type TransportDriver,
 } from './transportController';
-import { audioEngine } from '@core/audio/AudioEngine';
 
 type FakeDriver = TransportDriver & { time: number; paused: number };
 
@@ -160,37 +158,5 @@ describe('threePointSummary', () => {
     expect(threePointSummary(3, 2, 4)).toBeNull();
     expect(threePointSummary(2, 2, 4)).toBeNull();
     expect(threePointSummary(null, null, 0)).toBeNull();
-  });
-});
-
-describe('scrubAudioAt', () => {
-  const buffer = { duration: 5 } as AudioBuffer;
-  let spy: jest.SpyInstance;
-  beforeEach(() => {
-    spy = jest.spyOn(audioEngine, 'decodedBuffer').mockImplementation((id) => (id === 'a1' ? buffer : undefined));
-  });
-  afterEach(() => spy.mockRestore());
-
-  it('plays one slice per audible layer at the layer-local offset, with the level as gain', () => {
-    const played: Array<[number, number]> = [];
-    const n = scrubAudioAt(
-      2,
-      [
-        { nodeId: 'n', assetId: 'a1', src: '', levelDb: -6, startSec: 1, inSec: 0.5, outSec: 4, muted: false },
-        { nodeId: 'm', assetId: 'a1', src: '', levelDb: 0, startSec: 1, inSec: 0, outSec: 4, muted: true },
-        { nodeId: 'o', assetId: 'missing', src: '', levelDb: 0, startSec: 0, inSec: 0, outSec: 4, muted: false },
-      ] as never,
-      (_b, offset, gain) => { played.push([offset, gain]); },
-    );
-    expect(n).toBe(1);
-    expect(played[0]![0]).toBeCloseTo(1.5, 9);
-    expect(played[0]![1]).toBeCloseTo(Math.pow(10, -6 / 20), 9);
-  });
-
-  it('is silent before a layer starts and past its out point', () => {
-    const play = jest.fn();
-    scrubAudioAt(0.5, [{ nodeId: 'n', assetId: 'a1', src: '', levelDb: 0, startSec: 1, inSec: 0, outSec: 4, muted: false }] as never, play);
-    scrubAudioAt(6, [{ nodeId: 'n', assetId: 'a1', src: '', levelDb: 0, startSec: 1, inSec: 0, outSec: 4, muted: false }] as never, play);
-    expect(play).not.toHaveBeenCalled();
   });
 });

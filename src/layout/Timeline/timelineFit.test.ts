@@ -1,5 +1,5 @@
 /**
- * The controller (the ruler's zoom) and the active composition's mirror
+ * The ruler's zoom (timelineView) and the active composition's mirror
  * settings are mocked: this suite is about the fit ARITHMETIC and the
  * zoom-then-scroll ordering, neither of which needs a real timeline engine.
  */
@@ -11,8 +11,8 @@ const controller = {
   setPixelsPerSecond: jest.fn(),
 };
 
-jest.mock('@core/timeline/TimelineController', () => ({
-  getTimelineController: () => controller,
+jest.mock('@core/timeline/timelineView', () => ({
+  setTimelinePixelsPerSecond: (pps: number, anchor?: number) => controller.setPixelsPerSecond(pps, anchor),
 }));
 
 // The API states "no work area" as the whole composition.

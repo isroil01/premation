@@ -20,7 +20,7 @@
 import type { Command, EngineClient, EventBatch } from '@motion/engine-api';
 import { useProjectStore } from '@stores/projectStore';
 import { getClock } from '@stores/playbackClockStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { seekPlayhead } from '@core/timeline/timelineView';
 import { installEngineTransport, type EngineTransportStats } from '../engineTransport';
 
 const FLICKS = 705_600_000;
@@ -30,6 +30,7 @@ jest.mock('@stores/documentMirror', () => {
   const comp = {
     settings: {
       frameRate: { num: 30, den: 1 },
+      duration: 10 * 705_600_000,
       workArea: { start: 0, duration: 10 * 705_600_000 },
     },
   };
@@ -133,8 +134,7 @@ describe('engine transport (the engine owns the clock)', () => {
 
   beforeEach(async () => {
     setPlaying(false);
-    getTimelineController().pause();
-    getTimelineController().seekSeconds(0);
+    seekPlayhead(0);
     await flush();
   });
   afterEach(async () => {
@@ -202,7 +202,7 @@ describe('engine transport (the engine owns the clock)', () => {
     await flush();
 
     const before = eng.count('seek');
-    getTimelineController().seekSeconds(3);
+    seekPlayhead(3);
     await flush();
     expect(eng.count('seek')).toBe(before + 1);
     expect(eng.frame).toBe(90);
@@ -269,7 +269,7 @@ describe('engine transport (the engine owns the clock)', () => {
     const sent = eng.log.length;
     setPlaying(true);
     await flush();
-    getTimelineController().seekSeconds(2);
+    seekPlayhead(2);
     await flush();
     expect(eng.log.length).toBe(sent);
   });

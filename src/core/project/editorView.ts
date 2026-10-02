@@ -24,8 +24,8 @@
 
 import type { SerializedTimeline } from '@motion/timeline';
 import { useProjectStore, type SerializedWorkspaceTabs } from '@stores/projectStore';
-import { commitAllTimes } from '@stores/playbackClockStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { commitAllTimes, getClock } from '@stores/playbackClockStore';
+import { patchTimelineView, useTimelineViewStore } from '@stores/timelineViewStore';
 import { rememberProjectView, recallProjectView } from '@stores/projectViewStore';
 
 /** What is saved per project file on this machine. */
@@ -68,28 +68,28 @@ export function withoutTimelineView(t: SerializedTimeline): SerializedTimeline {
 
 /** Everything this module keeps, from the live editor. */
 export function captureEditorView(): EditorViewState {
+  const openTabs = captureOpenTabs();
   const timelines: EditorViewState['timelines'] = {};
-  for (const [id, t] of Object.entries(getTimelineController().capture())) {
-    timelines[id] = { ...(t.view ? { view: { ...t.view } } : {}), currentFrame: t.currentFrame };
+  const tabOf = (comp: string): string | undefined => Object.values(openTabs.tabs).find((t) => t.compositionId === comp)?.id;
+  for (const [comp, v] of Object.entries(useTimelineViewStore.getState().views)) {
+    const tab = tabOf(comp);
+    timelines[comp] = {
+      ...(v.pixelsPerFrame !== undefined ? { view: { pixelsPerFrame: v.pixelsPerFrame, scrollX: v.scrollX, scrollY: v.scrollY, viewportWidth: 0 } } : {}),
+      ...(tab ? { currentFrame: getClock(tab).frame } : {}),
+    };
   }
-  return { version: 1, openTabs: captureOpenTabs(), timelines };
+  return { version: 1, openTabs, timelines };
 }
 
 /** Put a remembered view back (after the document it belongs to was restored). */
 export function applyEditorView(v: EditorViewState | null | undefined): void {
   if (!v) return;
   if (v.timelines) {
-    const c = getTimelineController();
     for (const [comp, tv] of Object.entries(v.timelines)) {
-      try {
-        const reg = c.peekTimeline(comp);
-        if (!reg) continue; // a composition the document no longer has
-        // View state only: no history, no document change.
-        if (tv.view) reg.timeline._internal().setView(tv.view);
-        if (typeof tv.currentFrame === 'number') reg.timeline.playhead.set(tv.currentFrame);
-      } catch {
-        // Tolerant: a remembered view never blocks an open.
-      }
+      // View state only: no history, no document change. (The playhead comes
+      // back with the open tabs below; `currentFrame` is written for old builds.)
+      const ppf = tv.view?.pixelsPerFrame;
+      if (typeof ppf === 'number' && ppf > 0) patchTimelineView(comp, { pixelsPerFrame: ppf, scrollX: Math.max(0, tv.view?.scrollX ?? 0), scrollY: Math.max(0, tv.view?.scrollY ?? 0) });
     }
   }
   if (v.openTabs) {

@@ -54,12 +54,6 @@ function fps(): number {
   return settingsFps(activeSettings()) || 30;
 }
 
-/** The active composition's length, whole frames. */
-function compFrames(): number {
-  const s = activeSettings();
-  return s ? Math.round(framesOfTime(s.duration, fps())) : 0;
-}
-
 /** The playhead, whole frames of the active composition. */
 function playheadFrame(): number {
   return Math.round(playheadSeconds() * fps());
@@ -535,68 +529,9 @@ export async function replaceSourceWithAsset(nodeId: string | null, assetId: str
   return res.ok;
 }
 
-// ── Work area ─────────────────────────────────────────────────────────
+// ── Work area (core/timeline/workAreaEdits.ts: the shared transport sends them too) ──
 
-/** Set the work area in comp seconds (whole frames, inside the comp). */
-export async function setWorkArea(startSeconds: number, endSeconds: number): Promise<void> {
-  const rate = fps();
-  const startF = Math.max(0, Math.round(startSeconds * rate));
-  const endF = Math.min(compFrames(), Math.round(endSeconds * rate));
-  if (endF <= startF) return;
-  await sendWorkArea(startF, endF);
-}
-
-/**
- * Shift+B — clear the work area: it covers the whole composition again and
- * follows its duration (`clearWorkArea`, B3z).
- */
-export async function clearWorkArea(): Promise<void> {
-  // Nothing to clear when the work area already covers the whole composition
-  // (the API always states one; "none" is the full range).
-  const wa = workAreaFrames();
-  if (!wa || (wa.start === 0 && wa.duration >= compFrames())) return;
-  await edit('Clear Work Area', { type: 'clearWorkArea', comp: activeCompId() });
-}
-
-/** The active composition's work area, whole frames. */
-function workAreaFrames(): { start: number; duration: number } | null {
-  const s = activeSettings();
-  if (!s) return null;
-  const rate = fps();
-  return { start: Math.round(framesOfTime(s.workArea.start, rate)), duration: Math.round(framesOfTime(s.workArea.duration, rate)) };
-}
-
-async function sendWorkArea(startF: number, endF: number): Promise<void> {
-  const rate = fps();
-  const wa = workAreaFrames();
-  if (wa && wa.start === startF && wa.duration === endF - startF) return;
-  await edit('Work Area', {
-    type: 'setWorkArea',
-    comp: activeCompId(),
-    range: { start: framesToFlicks(startF, rate), duration: framesToFlicks(endF - startF, rate) },
-  });
-}
-
-/** B — the work-area in point at the playhead (at/past the out point MOVES the area). */
-export async function setWorkAreaIn(): Promise<void> {
-  const f = playheadFrame();
-  const wa = workAreaFrames();
-  const last = compFrames();
-  const outFrame = wa && f < wa.start + wa.duration ? wa.start + wa.duration : last;
-  const start = Math.max(0, Math.min(f, last - 1));
-  if (outFrame <= start) return;
-  await sendWorkArea(start, outFrame);
-}
-
-/** N — the work-area out point at the playhead (at/before the in point pulls it back to 0). */
-export async function setWorkAreaOut(): Promise<void> {
-  const f = playheadFrame();
-  const wa = workAreaFrames();
-  const inFrame = wa && f > wa.start ? wa.start : 0;
-  const end = Math.min(compFrames(), Math.max(f, inFrame + 1));
-  if (end <= inFrame) return;
-  await sendWorkArea(inFrame, end);
-}
+export { setWorkArea, clearWorkArea, setWorkAreaIn, setWorkAreaOut } from '@core/timeline/workAreaEdits';
 
 /** The active composition's duration (the timeline's duration field). */
 export async function setCompDuration(seconds: number): Promise<void> {

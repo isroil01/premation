@@ -7,12 +7,12 @@
  *   expressionBakeEdit     Convert Expression to Keyframes — the API command
  */
 
-import type { Command, Keyframe as ApiKeyframe, PropRef } from '@motion/engine-api';
+import { flicksToSeconds, secondsToFlicks, type Command, type Keyframe as ApiKeyframe, type PropRef } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { edit } from '@core/engine/uiEdits';
 import { compOfLayer, isLayer } from '@core/mirror/docFacts';
 import { compFps } from '@core/engine/time';
-import { catalogFor, keyTimeToFlicks, numbersOf, readKeys, vectorValue } from '@core/engine/props';
+import { vectorValue } from '@core/engine/props';
 import {
   planExponentialScale,
   refuseExponentialScale,
@@ -46,16 +46,21 @@ function linearKey(time: number, value: ApiKeyframe['value']): ApiKeyframe {
  */
 export async function exponentialScaleEdit(nodeId: string): Promise<ExpScaleResult> {
   const none = new Map<string, number>();
-  const b = isLayer(nodeId) ? catalogFor(nodeId).byMember.get('scaleX') : undefined;
-  if (!b || !b.animatable) return { written: none, refusal: 'needs-two-keyframes' };
-  const have = readKeys(nodeId, b);
+  const m = documentMirror();
+  if (isLayer(nodeId)) await m.loadTree(nodeId);
+  const b = trackRef(m, nodeId, 'scaleX');
+  if (!b || !b.info.animatable) return { written: none, refusal: 'needs-two-keyframes' };
+  // The mirror's keys are on the composition's time axis (flicks).
+  const have = m.keyframes(nodeId, b.path);
   const first = have[0];
   const last = have[have.length - 1];
   if (!first || !last || have.length < 2) return { written: none, refusal: 'needs-two-keyframes' };
-  const from = numbersOf(b, first.value);
-  const to = numbersOf(b, last.value);
+  const from = numbersOfValue(first.value);
+  const to = numbersOfValue(last.value);
+  const t0 = flicksToSeconds(first.time);
+  const t1 = flicksToSeconds(last.time);
   // API values (percent): the ramp is a ratio, so the unit does not matter.
-  const ranges: ExpScaleRange[] = b.members.map((_m, i) => ({ t0: first.t, t1: last.t, s0: from[i] ?? 100, s1: to[i] ?? 100 }));
+  const ranges: ExpScaleRange[] = b.members.map((_m, i) => ({ t0, t1, s0: from[i] ?? 100, s1: to[i] ?? 100 }));
   for (const r of ranges) {
     const refusal = refuseExponentialScale(r);
     if (refusal) return { written: none, refusal };
@@ -66,8 +71,8 @@ export async function exponentialScaleEdit(nodeId: string): Promise<ExpScaleResu
   const plans = ranges.map((r) => planExponentialScale(r, fps));
   const lead = plans[0] ?? [];
   const keys = lead.map((k, j) => linearKey(
-    keyTimeToFlicks(nodeId, b, k.t),
-    vectorValue(b.valueType, plans.map((p, i) => p[j]?.value ?? ranges[i]!.s1)),
+    secondsToFlicks(k.t),
+    vectorValue(b.info.valueType, plans.map((p, i) => p[j]?.value ?? ranges[i]!.s1)),
   ));
   const res = await edit('Exponential scale', { type: 'setKeyframes', prop: { layer: nodeId, path: b.path }, keys });
   if (!res.ok) return { written: none, refusal: null };

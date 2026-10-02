@@ -37,12 +37,12 @@
  * on its root, the viewport registers commands (see `viewportCommands`).
  */
 
-import { getTimelineController } from './TimelineController';
-import { audioEngine, type AudioLayerState } from '@core/audio/AudioEngine';
-import { readAudioLayers } from '@core/audio/audioScene';
+import { playheadSeconds, seekPlayhead, isTransportPlaying, pauseTransport } from './timelineView';
+import { activeWorkAreaSeconds, clearWorkArea, setWorkAreaIn, setWorkAreaOut } from './workAreaEdits';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
+import { documentMirror } from '@stores/documentMirror';
+import { engine } from '@core/engine/engineInstance';
 import { useProjectStore } from '@stores/projectStore';
-import { subscribeTime } from '@stores/playbackClockStore';
-import { useUIStore } from '@stores/uiStore';
 
 // ── Driver ─────────────────────────────────────────────────────────
 
@@ -239,16 +239,20 @@ export function createShuttle(driver: TransportDriver, opts: ShuttleOptions = {}
 
 // ── The comp viewport's driver ─────────────────────────────────────
 
-/** A driver over the active composition's TimelineController. */
+/** A driver over the active composition's transport (core/timeline/timelineView.ts). */
 export function compositionTransportDriver(): TransportDriver {
+  const settings = () => {
+    const ws = useProjectStore.getState();
+    const tab = ws.activeTabId ? ws.tabs[ws.activeTabId] : undefined;
+    return documentMirror().comp(tab?.compositionId ?? '')?.settings;
+  };
   return {
-    getTime: () => getTimelineController().currentSeconds,
-    duration: () => getTimelineController().durationSeconds,
-    fps: () => getTimelineController().fps,
-    seek: (t) => getTimelineController().seekSeconds(t),
+    getTime: () => playheadSeconds(),
+    duration: () => settingsDurationSeconds(settings(), 0),
+    fps: () => settingsFps(settings()),
+    seek: (t) => seekPlayhead(t),
     pause: () => {
-      const c = getTimelineController();
-      if (c.isPlaying) c.pause();
+      if (isTransportPlaying()) pauseTransport();
     },
   };
 }
@@ -287,36 +291,36 @@ export function __resetCompositionShuttle(): void {
 
 export function markIn(): void {
   getCompositionShuttle().stop();
-  getTimelineController().setWorkAreaIn();
+  void setWorkAreaIn();
 }
 
 export function markOut(): void {
   getCompositionShuttle().stop();
-  getTimelineController().setWorkAreaOut();
+  void setWorkAreaOut();
 }
 
 export function goToIn(): boolean {
-  const wa = getTimelineController().getWorkArea();
+  const wa = activeWorkAreaSeconds();
   if (!wa) return false;
   getCompositionShuttle().stop();
-  getTimelineController().seekSeconds(wa.start);
+  seekPlayhead(wa.start);
   return true;
 }
 
 export function goToOut(): boolean {
-  const wa = getTimelineController().getWorkArea();
+  const wa = activeWorkAreaSeconds();
   if (!wa) return false;
   getCompositionShuttle().stop();
-  getTimelineController().seekSeconds(wa.end);
+  seekPlayhead(wa.end);
   return true;
 }
 
 export function clearInOut(): void {
-  getTimelineController().clearWorkArea();
+  void clearWorkArea();
 }
 
 export function hasInOut(): boolean {
-  return getTimelineController().getWorkArea() !== null;
+  return activeWorkAreaSeconds() !== null;
 }
 
 /**
@@ -338,130 +342,19 @@ export function threePointSummary(
 // ── Audio scrub ────────────────────────────────────────────────────
 
 /**
- * How long a scrub slice sounds, ms. Long enough to be recognisable as the
- * word or the beat under the playhead, short enough that dragging quickly
- * does not smear.
+ * Audio scrub is the ENGINE's (ENGINE_API.md §6): a `seek` in `scrub` mode —
+ * what a playhead drag sends (core/engine/engineTransport.ts) — sounds a grain
+ * of the mix under the playhead when the preview's `scrubAudio` is on
+ * (`setAudioPreview`). The page decodes and plays nothing.
  */
-export const SCRUB_SLICE_MS = 70;
-
-/** A private context for scrub slices, so `AudioEngine.sync` cannot cut them. */
-let scrubCtx: AudioContext | null = null;
-let lastScrubAt = -Infinity;
 let scrubEnabled = true;
-
-function scrubContext(): AudioContext | null {
-  if (scrubCtx) return scrubCtx;
-  const Ctor: typeof AudioContext | undefined =
-    (globalThis as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
-    ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!Ctor) return null;
-  try {
-    scrubCtx = new Ctor();
-  } catch {
-    scrubCtx = null;
-  }
-  return scrubCtx;
-}
 
 /** Whether playhead drags make sound. Off is silent scrubbing, like AE's default. */
 export function setAudioScrubEnabled(on: boolean): void {
   scrubEnabled = on;
+  void engine().execute({ type: 'setAudioPreview', muted: false, volume: 1, scrubAudio: on });
 }
 
 export function isAudioScrubEnabled(): boolean {
   return scrubEnabled;
-}
-
-/**
- * Sound the audio under `timeSec` for one short slice. Pure over `layers`
- * and the engine's decoded buffers; `play` is injectable for tests.
- *
- * Voices are NOT started through `AudioEngine.sync`: `useAudioPlayback`
- * re-syncs with `playing:false` on every playhead change while paused, which
- * would stop a scrub voice the same tick it started. Slices play on a private
- * context instead, from the same decoded buffers.
- */
-export function scrubAudioAt(
-  timeSec: number,
-  layers: readonly AudioLayerState[],
-  play: (buffer: AudioBuffer, offsetSec: number, gain: number) => void = playSlice,
-): number {
-  let voices = 0;
-  for (const l of layers) {
-    if (l.muted) continue;
-    const rate = Math.max(0.01, l.playbackRate ?? 1);
-    const localT = timeSec - l.startSec;
-    if (localT < 0) continue;
-    const buffer = audioEngine.decodedBuffer(l.assetId);
-    if (!buffer) continue;
-    const outSec = l.outSec > 0 ? l.outSec : buffer.duration;
-    const offset = l.inSec + localT * rate;
-    if (offset >= outSec || offset >= buffer.duration) continue;
-    const gain = Math.pow(10, (l.levelDb ?? 0) / 20);
-    play(buffer, offset, gain);
-    voices++;
-  }
-  return voices;
-}
-
-function playSlice(buffer: AudioBuffer, offsetSec: number, gain: number): void {
-  const ctx = scrubContext();
-  if (!ctx) return;
-  try {
-    if (ctx.state === 'suspended') void ctx.resume();
-    const src = ctx.createBufferSource();
-    src.buffer = buffer;
-    const g = ctx.createGain();
-    g.gain.value = Math.max(0, Math.min(4, gain));
-    src.connect(g);
-    g.connect(ctx.destination);
-    src.start(0, offsetSec, SCRUB_SLICE_MS / 1000);
-    src.onended = () => {
-      try { src.disconnect(); g.disconnect(); } catch { /* gone */ }
-    };
-  } catch {
-    /* a closed context or an unusable buffer — silence is the right fallback */
-  }
-}
-
-/**
- * Wire audio scrubbing to playhead DRAGS: while the UI drag flag is up and
- * the transport is not playing, every playhead move sounds a slice. Returns
- * the unsubscribe. One installation per app — the transport strip mounts it.
- */
-export function installAudioScrub(): () => void {
-  let offTime: (() => void) | null = null;
-  let boundTab: string | null = null;
-
-  const bind = (): void => {
-    const tab = useProjectStore.getState().activeTabId;
-    if (tab === boundTab) return;
-    offTime?.();
-    boundTab = tab;
-    offTime = tab
-      ? subscribeTime(tab, (t) => {
-          if (!scrubEnabled) return;
-          const ui = useUIStore.getState();
-          if (!ui.isDragging) return;
-          const ps = useProjectStore.getState();
-          const rec = ps.tabs[tab];
-          if (!rec || rec.playing) return;
-          const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-          // One slice per slice-length: a 120Hz drag must not stack voices.
-          if (nowMs - lastScrubAt < SCRUB_SLICE_MS * 0.8) return;
-          lastScrubAt = nowMs;
-          scrubAudioAt(t, readAudioLayers(rec.compositionId));
-        })
-      : null;
-  };
-  bind();
-  const offTab = useProjectStore.subscribe((s, prev) => {
-    if (s.activeTabId !== prev.activeTabId) bind();
-  });
-  return () => {
-    offTab();
-    offTime?.();
-    offTime = null;
-    boundTab = null;
-  };
 }

@@ -16,7 +16,7 @@
 import { useProjectStore } from '@stores/projectStore';
 import { baselineHistoryNow } from '@core/engine/historyBaseline';
 import { clearRecovery } from '@core/persistence/recovery';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { resetTimelineViews } from '@stores/timelineViewStore';
 import { resetSessionAssets } from '@core/project/sessionAssets';
 
 /**
@@ -102,7 +102,7 @@ export function afterProjectLoaded(): void {
  */
 export function resetProjectWorkspace(): void {
   useProjectStore.getState().actions.resetTabs();
-  getTimelineController().reset();
+  resetTimelineViews();
   resetSessionAssets();
 }
 

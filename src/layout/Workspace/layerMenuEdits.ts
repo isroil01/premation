@@ -17,7 +17,7 @@ import { reorderSiblings, type StackAction } from '@core/scene/parenting';
 import type { FrameBlend } from '@core/scene/layerTime';
 // The scratch build (offDocument) reads the replica it runs against, not the mirror.
 import { graph as docGraph, compOfLayer as scratchCompOf, layerIdsOfComp as scratchLayerIds } from '@core/engine/doc';
-import { apiParentOf, compOfLayer, isLayer, layerIdsOfComp } from '@core/mirror/docFacts';
+import { apiParentOf, compOfLayer, isLayer } from '@core/mirror/docFacts';
 import { offDocument } from '@core/engine/offDocument';
 import { encodeFragment } from '@core/engine/handlers/layers';
 import { mergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';

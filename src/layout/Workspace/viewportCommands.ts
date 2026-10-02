@@ -41,7 +41,6 @@ import {
   goToOut,
   clearInOut,
   hasInOut,
-  installAudioScrub,
   isAudioScrubEnabled,
   setAudioScrubEnabled,
 } from '@core/timeline/transportController';
@@ -498,10 +497,8 @@ export function installViewportCommands(): void {
       if (e.key === 'k' || e.key === 'K') getCompositionShuttle().keyUp('k');
     };
     window.addEventListener('keyup', onKeyUp, { capture: true });
-    const offScrub = installAudioScrub();
     teardown = () => {
       window.removeEventListener('keyup', onKeyUp, { capture: true } as EventListenerOptions);
-      offScrub();
     };
   }
 }
