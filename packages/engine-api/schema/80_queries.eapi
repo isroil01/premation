@@ -630,6 +630,19 @@ query getJobs = 1083 {} -> JobList;
 query getRenderQueue = 1084 {} -> RenderQueueState;
 /// The command log since `fromRevision` (B5 replay, bug reports).
 query getCommandLog = 1085 { fromRevision: Revision = 1; } -> CommandLog;
+/// Frames the viewport frame cache holds, for the timeline cache bars.
+/// `ram` ranges are comp time, end exclusive. `disk` is empty: the engine
+/// cache is VRAM only. `comp` absent = the active composition; another comp
+/// answers empty (coverage is the composition the viewport is drawing).
+query getCacheCoverage = 1089 { comp?: ItemId = 1; } -> CacheCoverage;
+
+struct CacheRange { start: Time = 1; end: Time = 2; }
+struct CacheCoverage {
+  ram: CacheRange[] = 1;
+  disk: CacheRange[] = 2;
+  ramBytes: u64 = 3;
+  diskBytes: u64 = 4;
+}
 
 struct LayerErrorList { errors: LayerError[] = 1; }
 struct JobList { jobs: JobInfo[] = 1; }

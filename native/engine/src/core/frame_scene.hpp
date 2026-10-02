@@ -4,6 +4,7 @@
 // (document revision, comp time) — no clock, no RNG (CLAUDE.md determinism).
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <cstdint>
@@ -57,7 +58,51 @@ struct RenderJob {
   std::vector<api::OverlayLayerGeometry> geometry;
   /// B4 round 5: the subscribed views' cameras at this frame (FrameGeometry.views).
   std::vector<api::OverlayView> views;
+  /// Record this frame in the viewport cache coverage (the timeline bars).
+  /// Composition viewports only: a Layer-panel or held-time viewport draws a
+  /// different picture at the same clock frame.
+  bool recordCoverage = false;
+  /// Ghosts composited over the live frame after it is drawn (onion skins).
+  /// The live frame is what the cache stores; the ghosts are not.
+  struct OnionGhost {
+    std::shared_ptr<BuiltFrame> built;
+    float opacity = 0;
+    float tintR = 0;
+    float tintG = 0;
+    float tintB = 0;
+    float tintStrength = 0;
+  };
+  std::vector<OnionGhost> onion;
 };
+
+/// getCacheCoverage: which composition frames the viewport frame cache holds.
+/// Ranges are frame indices, end exclusive. The session turns them into comp time.
+struct CacheCoverageSnap {
+  std::vector<std::pair<std::int64_t, std::int64_t>> ram;
+  std::uint64_t ramBytes = 0;
+  std::uint64_t diskBytes = 0;
+};
+
+/// Adjacent frame indices become half-open ranges [start, end).
+[[nodiscard]] inline std::vector<std::pair<std::int64_t, std::int64_t>> coalesce_frame_indices(
+    std::vector<std::int64_t> frames) {
+  std::sort(frames.begin(), frames.end());
+  frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+  std::vector<std::pair<std::int64_t, std::int64_t>> out;
+  if (frames.empty()) return out;
+  std::int64_t start = frames.front();
+  std::int64_t prev = start;
+  for (std::size_t i = 1; i < frames.size(); ++i) {
+    if (frames[i] == prev + 1) {
+      prev = frames[i];
+      continue;
+    }
+    out.emplace_back(start, prev + 1);
+    start = prev = frames[i];
+  }
+  out.emplace_back(start, prev + 1);
+  return out;
+}
 
 /// setViewport `customView`: a custom 3D view (customViews.ts CustomViewParams)
 /// — the eye starts `distance` behind the point of interest along −z, orbits
@@ -95,10 +140,26 @@ struct ViewportConfig {
   std::string view = "active";
   /// With view = 'custom': the view's own camera replaces the scene camera.
   std::optional<CustomViewParams> customView;
+  /// setViewport `layer`: the Layer panel — this one layer alone, untransformed
+  /// at its source size (BuildContext::layerView); '' = the composition.
+  std::string layer;
+  /// setViewport `layerRenderEffects`: false shows the untouched source.
+  bool layerRenderEffects = true;
+  /// setViewport `time`: a held comp time this viewport renders at (the Layer
+  /// panel's own ruler); absent = the session clock.
+  std::optional<api::Time> time;
+  /// setViewport `layerSourceTime`: with `layer`, the layer's source time at the held time.
+  std::optional<api::Time> layerSourceTime;
   /// setViewportHiddenLayers: layers this viewport's frames do not draw (the
   /// text layer being edited in place). Filled per frame by the Session; never
   /// part of a surface's stored config.
   std::vector<std::string> hiddenLayers;
+  /// setViewport `onion`. Absent = off. Playback ignores it (ghosts are for a
+  /// still playhead). Not a ring change.
+  std::optional<api::OnionSkin> onion;
+  /// Build this frame with a transparent background (an onion ghost). Never
+  /// stored on a surface — only the copy handed to the frame builder.
+  bool ghost = false;
   bool operator==(const ViewportConfig&) const = default;
 };
 
@@ -188,6 +249,10 @@ class FrameSink {
   virtual void set_copy(bool /*copy*/) {}
   [[nodiscard]] virtual bool copy_supported() const { return false; }
   [[nodiscard]] virtual RenderCounters counters() const = 0;
+  /// Viewport frame-cache coverage (zeros when there is no cache).
+  [[nodiscard]] virtual CacheCoverageSnap cache_coverage() const { return {}; }
+  /// Drop the viewport frame cache (Purge RAM). The next frames fill it again.
+  virtual void purge_frame_cache() {}
   [[nodiscard]] virtual std::string adapter() const = 0;
   [[nodiscard]] virtual std::string backend() const = 0;
 

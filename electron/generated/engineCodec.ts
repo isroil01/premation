@@ -7334,6 +7334,48 @@ function decS_CustomView(r: Reader, end: number, o: any): T.CustomView {
   if (v_poi !== undefined) o.poi = v_poi;
   return o;
 }
+function encS_OnionSkin(w: Writer, v: T.OnionSkin): void {
+  w.byte(8); w.u32(v.before);
+  w.byte(16); w.u32(v.after);
+  w.byte(24); w.u32(v.step);
+  w.byte(33); w.f64(v.opacity);
+  w.byte(40); w.bool(v.colorize);
+}
+function decS_OnionSkin(r: Reader, end: number, o: any): T.OnionSkin {
+  let h_before = false;
+  let h_after = false;
+  let h_step = false;
+  let h_opacity = false;
+  let h_colorize = false;
+  let v_before: number | undefined;
+  let v_after: number | undefined;
+  let v_step: number | undefined;
+  let v_opacity: number | undefined;
+  let v_colorize: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_before = r.u32(); h_before = true; break;
+      case 16: v_after = r.u32(); h_after = true; break;
+      case 24: v_step = r.u32(); h_step = true; break;
+      case 33: v_opacity = r.f64(); h_opacity = true; break;
+      case 40: v_colorize = r.bool(); h_colorize = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_before) throw new DecodeError('OnionSkin.before: missing', 'missingField');
+  if (!h_after) throw new DecodeError('OnionSkin.after: missing', 'missingField');
+  if (!h_step) throw new DecodeError('OnionSkin.step: missing', 'missingField');
+  if (!h_opacity) throw new DecodeError('OnionSkin.opacity: missing', 'missingField');
+  if (!h_colorize) throw new DecodeError('OnionSkin.colorize: missing', 'missingField');
+  o.before = v_before;
+  o.after = v_after;
+  o.step = v_step;
+  o.opacity = v_opacity;
+  o.colorize = v_colorize;
+  return o;
+}
 function encS_SetViewport(w: Writer, v: T.SetViewport): void {
   w.byte(8); w.u32(v.viewport);
   w.byte(16); w.u32(v.width);
@@ -7350,6 +7392,9 @@ function encS_SetViewport(w: Writer, v: T.SetViewport): void {
   w.byte(104); w.bool(v.layerRenderEffects);
   if (v.view !== undefined) { w.byte(114); w.str(v.view); }
   if (v.customView !== undefined) { w.byte(122); { const s = w.beginLd(); encS_CustomView(w, v.customView); w.endLd(s); } }
+  if (v.time !== undefined) { w.varint(128); w.i64(v.time); }
+  if (v.layerSourceTime !== undefined) { w.varint(136); w.i64(v.layerSourceTime); }
+  if (v.onion !== undefined) { w.varint(146); { const s = w.beginLd(); encS_OnionSkin(w, v.onion); w.endLd(s); } }
 }
 function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   let h_viewport = false;
@@ -7378,6 +7423,9 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   let v_layerRenderEffects: boolean | undefined;
   let v_view: string | undefined;
   let v_customView: T.CustomView | undefined;
+  let v_time: number | undefined;
+  let v_layerSourceTime: number | undefined;
+  let v_onion: T.OnionSkin | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7396,6 +7444,9 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
       case 104: v_layerRenderEffects = r.bool(); h_layerRenderEffects = true; break;
       case 114: v_view = r.str(); break;
       case 122: v_customView = decS_CustomView(r, r.ldEnd(), {}); break;
+      case 128: v_time = r.i64(); break;
+      case 136: v_layerSourceTime = r.i64(); break;
+      case 146: v_onion = decS_OnionSkin(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -7426,6 +7477,9 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   o.layerRenderEffects = v_layerRenderEffects;
   if (v_view !== undefined) o.view = v_view;
   if (v_customView !== undefined) o.customView = v_customView;
+  if (v_time !== undefined) o.time = v_time;
+  if (v_layerSourceTime !== undefined) o.layerSourceTime = v_layerSourceTime;
+  if (v_onion !== undefined) o.onion = v_onion;
   return o;
 }
 function encS_CloseViewport(w: Writer, v: T.CloseViewport): void {
@@ -12715,6 +12769,78 @@ function decS_GetCommandLog(r: Reader, end: number, o: any): T.GetCommandLog {
   o.fromRevision = v_fromRevision;
   return o;
 }
+function encS_GetCacheCoverage(w: Writer, v: T.GetCacheCoverage): void {
+  if (v.comp !== undefined) { w.byte(10); w.str(v.comp); }
+}
+function decS_GetCacheCoverage(r: Reader, end: number, o: any): T.GetCacheCoverage {
+  let v_comp: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_comp = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (v_comp !== undefined) o.comp = v_comp;
+  return o;
+}
+function encS_CacheRange(w: Writer, v: T.CacheRange): void {
+  w.byte(8); w.i64(v.start);
+  w.byte(16); w.i64(v.end);
+}
+function decS_CacheRange(r: Reader, end: number, o: any): T.CacheRange {
+  let h_start = false;
+  let h_end = false;
+  let v_start: number | undefined;
+  let v_end: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_start = r.i64(); h_start = true; break;
+      case 16: v_end = r.i64(); h_end = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_start) throw new DecodeError('CacheRange.start: missing', 'missingField');
+  if (!h_end) throw new DecodeError('CacheRange.end: missing', 'missingField');
+  o.start = v_start;
+  o.end = v_end;
+  return o;
+}
+function encS_CacheCoverage(w: Writer, v: T.CacheCoverage): void {
+  { const a = v.ram; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_CacheRange(w, a[i]!); w.endLd(s); } } }
+  { const a = v.disk; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_CacheRange(w, a[i]!); w.endLd(s); } } }
+  w.byte(24); w.u64(v.ramBytes);
+  w.byte(32); w.u64(v.diskBytes);
+}
+function decS_CacheCoverage(r: Reader, end: number, o: any): T.CacheCoverage {
+  const l_ram: T.CacheRange[] = [];
+  const l_disk: T.CacheRange[] = [];
+  let h_ramBytes = false;
+  let h_diskBytes = false;
+  let v_ramBytes: number | undefined;
+  let v_diskBytes: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_ram.push(decS_CacheRange(r, r.ldEnd(), {})); break;
+      case 18: l_disk.push(decS_CacheRange(r, r.ldEnd(), {})); break;
+      case 24: v_ramBytes = r.u64(); h_ramBytes = true; break;
+      case 32: v_diskBytes = r.u64(); h_diskBytes = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_ramBytes) throw new DecodeError('CacheCoverage.ramBytes: missing', 'missingField');
+  if (!h_diskBytes) throw new DecodeError('CacheCoverage.diskBytes: missing', 'missingField');
+  o.ram = l_ram;
+  o.disk = l_disk;
+  o.ramBytes = v_ramBytes;
+  o.diskBytes = v_diskBytes;
+  return o;
+}
 function encS_LayerErrorList(w: Writer, v: T.LayerErrorList): void {
   { const a = v.errors; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_LayerError(w, a[i]!); w.endLd(s); } } }
 }
@@ -16889,6 +17015,7 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'listPlugins': w.varint(8690); { const s = w.beginLd(); encS_ListPlugins(w, v); w.endLd(s); } return;
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_GetEffectUi(w, v); w.endLd(s); } return;
     case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportDocument(w, v); w.endLd(s); } return;
+    case 'getCacheCoverage': w.varint(8714); { const s = w.beginLd(); encS_GetCacheCoverage(w, v); w.endLd(s); } return;
     case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturePreset(w, v); w.endLd(s); } return;
     case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_CopyKeyframes(w, v); w.endLd(s); } return;
     case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopyEffects(w, v); w.endLd(s); } return;
@@ -16949,6 +17076,7 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 8690: out = decS_ListPlugins(r, r.ldEnd(), { type: 'listPlugins' }) as T.Query; break;
       case 8698: out = decS_GetEffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.Query; break;
       case 8706: out = decS_ExportDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.Query; break;
+      case 8714: out = decS_GetCacheCoverage(r, r.ldEnd(), { type: 'getCacheCoverage' }) as T.Query; break;
       case 15106: out = decS_CapturePreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.Query; break;
       case 15114: out = decS_CopyKeyframes(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.Query; break;
       case 15122: out = decS_CopyEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.Query; break;
@@ -17009,6 +17137,7 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'listPlugins': w.varint(8690); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_EffectUi(w, v); w.endLd(s); } return;
     case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportedDocument(w, v); w.endLd(s); } return;
+    case 'getCacheCoverage': w.varint(8714); { const s = w.beginLd(); encS_CacheCoverage(w, v); w.endLd(s); } return;
     case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturedPreset(w, v); w.endLd(s); } return;
     case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_KeyframeSets(w, v); w.endLd(s); } return;
     case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopiedEffects(w, v); w.endLd(s); } return;
@@ -17069,6 +17198,7 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 8690: out = decS_PluginList(r, r.ldEnd(), { type: 'listPlugins' }) as T.QueryResult; break;
       case 8698: out = decS_EffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.QueryResult; break;
       case 8706: out = decS_ExportedDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.QueryResult; break;
+      case 8714: out = decS_CacheCoverage(r, r.ldEnd(), { type: 'getCacheCoverage' }) as T.QueryResult; break;
       case 15106: out = decS_CapturedPreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.QueryResult; break;
       case 15114: out = decS_KeyframeSets(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.QueryResult; break;
       case 15122: out = decS_CopiedEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.QueryResult; break;
@@ -17431,6 +17561,7 @@ export const codecs = {
   SetAudioPreview: mk<T.SetAudioPreview>(encS_SetAudioPreview, (r, e) => decS_SetAudioPreview(r, e, {})),
   SetActiveComposition: mk<T.SetActiveComposition>(encS_SetActiveComposition, (r, e) => decS_SetActiveComposition(r, e, {})),
   CustomView: mk<T.CustomView>(encS_CustomView, (r, e) => decS_CustomView(r, e, {})),
+  OnionSkin: mk<T.OnionSkin>(encS_OnionSkin, (r, e) => decS_OnionSkin(r, e, {})),
   SetViewport: mk<T.SetViewport>(encS_SetViewport, (r, e) => decS_SetViewport(r, e, {})),
   CloseViewport: mk<T.CloseViewport>(encS_CloseViewport, (r, e) => decS_CloseViewport(r, e, {})),
   SetCacheBudget: mk<T.SetCacheBudget>(encS_SetCacheBudget, (r, e) => decS_SetCacheBudget(r, e, {})),
@@ -17600,6 +17731,9 @@ export const codecs = {
   GetJobs: mk<T.GetJobs>(encS_GetJobs, (r, e) => decS_GetJobs(r, e, {})),
   GetRenderQueue: mk<T.GetRenderQueue>(encS_GetRenderQueue, (r, e) => decS_GetRenderQueue(r, e, {})),
   GetCommandLog: mk<T.GetCommandLog>(encS_GetCommandLog, (r, e) => decS_GetCommandLog(r, e, {})),
+  GetCacheCoverage: mk<T.GetCacheCoverage>(encS_GetCacheCoverage, (r, e) => decS_GetCacheCoverage(r, e, {})),
+  CacheRange: mk<T.CacheRange>(encS_CacheRange, (r, e) => decS_CacheRange(r, e, {})),
+  CacheCoverage: mk<T.CacheCoverage>(encS_CacheCoverage, (r, e) => decS_CacheCoverage(r, e, {})),
   LayerErrorList: mk<T.LayerErrorList>(encS_LayerErrorList, (r, e) => decS_LayerErrorList(r, e, {})),
   JobList: mk<T.JobList>(encS_JobList, (r, e) => decS_JobList(r, e, {})),
   RenderQueueState: mk<T.RenderQueueState>(encS_RenderQueueState, (r, e) => decS_RenderQueueState(r, e, {})),

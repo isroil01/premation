@@ -110,7 +110,44 @@ bool Compositor::init(const Gpu& gpu) {
   textured_ = make_pipeline(texturedModule_, "vs", "fs", kRtFormat, true, true);
   blit_ = make_pipeline(presentModule_, "vs_blit", "fs_blit", kSlotFormat, false, false);
   blitU_ = uniform_buffer(dev, sizeof(PresentU));
-  return textured_ != nullptr && blit_ != nullptr;
+  static constexpr const char* kOnionWgsl = R"WGSL(
+struct Onion {
+  opacity : f32,
+  strength : f32,
+  tint : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> u : Onion;
+@group(0) @binding(1) var src : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+};
+
+@vertex fn vs_onion(@builtin(vertex_index) vi : u32) -> VOut {
+  var c = array<vec2<f32>, 6>(vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0),
+                              vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0));
+  let p = c[vi];
+  var o : VOut;
+  o.pos = vec4<f32>(p * 2.0 - vec2<f32>(1.0, 1.0), 0.0, 1.0);
+  o.uv = vec2<f32>(p.x, 1.0 - p.y);
+  return o;
+}
+
+@fragment fn fs_onion(i : VOut) -> @location(0) vec4<f32> {
+  let c = textureSample(src, smp, i.uv);
+  let a0 = c.a;
+  let straight = select(vec3<f32>(0.0), c.rgb / max(a0, 1e-4), a0 > 0.0);
+  let tinted = mix(straight, u.tint.rgb, u.strength);
+  let a = a0 * u.opacity;
+  return vec4<f32>(tinted * a, a);
+}
+)WGSL";
+  onionModule_ = compile(dev, kOnionWgsl, "engine:onion");
+  onion_ = make_pipeline(onionModule_, "vs_onion", "fs_onion", kSlotFormat, false, true);
+  onionU_ = uniform_buffer(dev, 32);
+  return textured_ != nullptr && blit_ != nullptr && onion_ != nullptr;
 }
 
 wgpu::RenderPipeline Compositor::make_pipeline(const wgpu::ShaderModule& module, const char* vs, const char* fs,
@@ -246,6 +283,38 @@ void Compositor::encode(wgpu::CommandEncoder& encoder, const FrameScene& scene, 
   wgpu::RenderPassEncoder p = encoder.BeginRenderPass(&rp);
   p.SetPipeline(blit_);
   p.SetBindGroup(0, blitGroup_);
+  p.Draw(6);
+  p.End();
+}
+
+void Compositor::blend_over(wgpu::CommandEncoder& encoder, const wgpu::TextureView& src, const wgpu::TextureView& target,
+                            float opacity, float tintR, float tintG, float tintB, float tintStrength) {
+  if (onion_ == nullptr || gpu_ == nullptr) return;
+  // WGSL aligns `tint: vec4` to 16, so two f32s are padded out to 16.
+  struct OnionU {
+    float opacity;
+    float strength;
+    float pad0;
+    float pad1;
+    float tintR;
+    float tintG;
+    float tintB;
+    float tintA;
+  };
+  static_assert(sizeof(OnionU) == 32);
+  OnionU u{opacity, tintStrength, 0, 0, tintR, tintG, tintB, 0};
+  gpu_->queue.WriteBuffer(onionU_, 0, &u, sizeof(u));
+  const wgpu::BindGroup group = make_group(gpu_->device, onion_, onionU_, src, clamp_);
+  wgpu::RenderPassColorAttachment att{};
+  att.view = target;
+  att.loadOp = wgpu::LoadOp::Load;
+  att.storeOp = wgpu::StoreOp::Store;
+  wgpu::RenderPassDescriptor rp{};
+  rp.colorAttachmentCount = 1;
+  rp.colorAttachments = &att;
+  wgpu::RenderPassEncoder p = encoder.BeginRenderPass(&rp);
+  p.SetPipeline(onion_);
+  p.SetBindGroup(0, group);
   p.Draw(6);
   p.End();
 }

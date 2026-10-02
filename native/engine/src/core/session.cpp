@@ -18,6 +18,7 @@
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "scene_build.hpp"
+#include "onion_skin.hpp"
 #include "time_conv.hpp"
 #include "variant_util.hpp"
 
@@ -1002,7 +1003,7 @@ struct ControlVisitor {
     const double w = std::round(static_cast<double>(c.width) * dpr);
     const double h = std::round(static_cast<double>(c.height) * dpr);
     s.viewports_.insert(c.viewport);
-    if (c.layer || w > 16384.0 || h > 16384.0 || dpr > 8.0) return result_for<api::SetViewport>();  // state kept; not rendered
+    if (w > 16384.0 || h > 16384.0 || dpr > 8.0) return result_for<api::SetViewport>();  // state kept; not rendered
     ViewportConfig v;
     v.viewport = c.viewport;
     v.width = static_cast<std::uint32_t>(w);
@@ -1025,6 +1026,22 @@ struct ControlVisitor {
       if (const auto& p = c.custom_view->poi; p && std::isfinite(p->x) && std::isfinite(p->y) && std::isfinite(p->z)) cv.poi = {p->x, p->y, p->z};
       v.customView = cv;
     }
+    // The Layer panel: one layer alone at its source size, optionally at a held time.
+    if (c.layer && !c.layer->empty()) {
+      if (s.doc_.node(*c.layer) == nullptr) fail(ErrorCode::not_found, "no layer " + *c.layer, {.layer = *c.layer});
+      v.layer = *c.layer;
+      v.layerRenderEffects = c.layer_render_effects;
+    }
+    if (c.time && *c.time >= 0) v.time = *c.time;
+    if (c.layer_source_time && v.time) v.layerSourceTime = *c.layer_source_time;
+    if (c.onion && v.layer.empty()) {
+      api::OnionSkin skin = *c.onion;
+      skin.before = std::min<std::uint32_t>(skin.before, 8);
+      skin.after = std::min<std::uint32_t>(skin.after, 8);
+      skin.step = std::max<std::uint32_t>(1, std::min<std::uint32_t>(skin.step == 0 ? 1 : skin.step, 30));
+      skin.opacity = std::isfinite(skin.opacity) ? std::clamp(skin.opacity, 0.0, 1.0) : 0.0;
+      if (skin.before > 0 || skin.after > 0) v.onion = skin;
+    }
     // C: each viewport id is its own engine surface (a pop-out, a second view).
     const auto it = s.surfaces_.find(c.viewport);
     if (it == s.surfaces_.end() || !(it->second == v)) {
@@ -1046,7 +1063,10 @@ struct ControlVisitor {
     return result_for<api::CloseViewport>();
   }
   R operator()(const api::SetCacheBudget&) const { return result_for<api::SetCacheBudget>(); }
-  R operator()(const api::PurgeCache&) const { return result_for<api::PurgeCache>(); }
+  R operator()(const api::PurgeCache& c) const {
+    if (c.kind == api::PurgeKind::all || c.kind == api::PurgeKind::ram) s.sink_.purge_frame_cache();
+    return result_for<api::PurgeCache>();
+  }
   R operator()(const api::SetInteracting&) const { return result_for<api::SetInteracting>(); }
   R operator()(const api::SetViewportHiddenLayers& c) const {
     // A viewport's own state: replaces its set; empty = every layer draws. Kept
@@ -1119,6 +1139,22 @@ api::QueryResult Session::run_query(const api::Query& q) {
     st.dropped_frames = rc.dropped;
     st.cpu_frame_ms = buildMs_;
     return st;
+  };
+  c.cacheCoverage = [this](const std::optional<std::string>& comp) {
+    api::CacheCoverage out;
+    const auto active = active_comp();
+    if (comp && active && *comp != *active) return out;
+    if (comp && !active) return out;
+    const double fps = active ? doc::comp_fps(doc_, *active) : 30.0;
+    const CacheCoverageSnap snap = sink_.cache_coverage();
+    out.ram_bytes = snap.ramBytes;
+    out.disk_bytes = snap.diskBytes;
+    out.ram.reserve(snap.ram.size());
+    for (const auto& [start, end] : snap.ram) {
+      out.ram.push_back(api::CacheRange{doc::frames_to_flicks(static_cast<double>(start), fps),
+                                        doc::frames_to_flicks(static_cast<double>(end), fps)});
+    }
+    return out;
   };
   c.layerErrors = [this](const std::string& comp) {
     if (!comp.empty() && comp != layerErrorsComp_) return std::vector<api::LayerError>{};
@@ -1599,6 +1635,8 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
   // beside the config, not in it: see `hiddenLayers_`).
   ViewportConfig port = surface;
   if (const auto hidden = hiddenLayers_.find(surface.viewport); hidden != hiddenLayers_.end()) port.hiddenLayers = hidden->second;
+  // A held viewport (the Layer panel's own ruler) renders at its time, not the clock's.
+  const api::Time t = port.time.value_or(time_);
   if (frameBuilder_ != nullptr) {
     // D2w: the engine's own scene builder (scene/snapshot_build.cpp) — the
     // document through the render graph. Per-layer failures and features
@@ -1606,7 +1644,7 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
     std::vector<api::LayerError> errors;
     const auto t0 = Clock::now();
     frameBuilder_->set_media_base(media_base());
-    job.built = frameBuilder_->build(doc_, view_, exprEnv_, exprCache_, c, time_, port, playing_, errors);
+    job.built = frameBuilder_->build(doc_, view_, exprEnv_, exprCache_, c, t, port, playing_, errors);
     // Measurement only (RenderStats.cpuFrameMs): an exponential moving average.
     const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     buildMs_ = buildMs_ <= 0 ? ms : buildMs_ + (ms - buildMs_) * 0.2;
@@ -1615,10 +1653,11 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
   // The scene's quad vector changes hands (core → render thread) once per
   // frame: one small allocation per frame, deliberately, so the two threads
   // never share a buffer.
-  if (!job.built) doc::build_frame_scene(pctx(), c, time_, job.scene);
+  if (!job.built) doc::build_frame_scene(pctx(), c, t, job.scene);
   job.viewport = port.viewport;
+  job.recordCoverage = port.layer.empty() && !port.time;
   job.frame = frame_;
-  job.time = time_;
+  job.time = t;
   job.revision = revision_;
   job.clockDropped = clockDropped;
   // B4 round 2: the overlays' geometry at this frame's time and revision, read here on the core thread;
@@ -1630,7 +1669,61 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
     job.views = doc::overlay_views(pctx(), o, active_comp(), time_);  // B4 round 5: the view cameras
     attach_overlay_rig(o, job.geometry);                                // B4 round 5: the rig records
   }
+  attach_onion(job, port, c);
   sink_.submit(std::move(job));
+}
+
+void Session::attach_onion(RenderJob& job, const ViewportConfig& port, const std::string& comp) {
+  if (playing_ || !port.onion || !port.layer.empty() || port.time || frameBuilder_ == nullptr) return;
+  const api::OnionSkin skin = *port.onion;
+  OnionMemo& memo = onionMemo_[port.viewport];
+  const bool same = memo.revision == revision_ && memo.frame == job.frame && memo.width == port.width &&
+                    memo.height == port.height && memo.zoom == port.zoom && memo.panX == port.panX &&
+                    memo.panY == port.panY && memo.dpr == port.devicePixelRatio && memo.view == port.view &&
+                    memo.custom == port.customView && memo.settings == skin;
+  if (!same) {
+    OnionPlanSettings plan;
+    plan.before = static_cast<int>(skin.before);
+    plan.after = static_cast<int>(skin.after);
+    plan.step = static_cast<int>(skin.step);
+    plan.opacity = skin.opacity;
+    plan.colorize = skin.colorize;
+    const double fps = doc::comp_fps(doc_, comp);
+    const auto planned = onion_skin_plan(job.frame, plan, 0, static_cast<std::int64_t>(doc::comp_duration_frames(doc_, comp)));
+    ViewportConfig ghostPort = port;
+    ghostPort.ghost = true;
+    ghostPort.onion.reset();
+    std::vector<RenderJob::OnionGhost> built;
+    built.reserve(planned.size());
+    frameBuilder_->set_media_base(media_base());
+    for (const OnionGhostPlan& g : planned) {
+      std::vector<api::LayerError> errors;
+      auto frame = frameBuilder_->build(doc_, view_, exprEnv_, exprCache_, comp,
+                                        doc::frames_to_flicks(static_cast<double>(g.frame), fps), ghostPort, false, errors);
+      if (!frame) continue;
+      RenderJob::OnionGhost ghost;
+      ghost.built = std::move(frame);
+      ghost.opacity = g.opacity;
+      ghost.tintR = g.tintR;
+      ghost.tintG = g.tintG;
+      ghost.tintB = g.tintB;
+      ghost.tintStrength = g.tintStrength;
+      built.push_back(std::move(ghost));
+    }
+    memo.revision = revision_;
+    memo.frame = job.frame;
+    memo.width = port.width;
+    memo.height = port.height;
+    memo.zoom = port.zoom;
+    memo.panX = port.panX;
+    memo.panY = port.panY;
+    memo.dpr = port.devicePixelRatio;
+    memo.view = port.view;
+    memo.custom = port.customView;
+    memo.settings = skin;
+    memo.ghosts = std::move(built);
+  }
+  job.onion = memo.ghosts;
 }
 
 void Session::attach_overlay_rig(const doc::OverlaySubscription& o, std::vector<api::OverlayLayerGeometry>& geometry) {

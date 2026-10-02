@@ -26,6 +26,13 @@ class Compositor {
   void encode(wgpu::CommandEncoder& encoder, const FrameScene& scene, const wgpu::TextureView& target,
               std::uint32_t targetWidth, std::uint32_t targetHeight, double resolution);
 
+  /// Source-over `src` onto `target` (both RGBA8Unorm, same size). `src` is
+  /// premultiplied. `tintStrength` 0 leaves the colour; otherwise the straight
+  /// colour is mixed toward `tint` (sRGB 0..1) by that amount, then drawn at
+  /// `opacity`. Used for onion-skin ghosts.
+  void blend_over(wgpu::CommandEncoder& encoder, const wgpu::TextureView& src, const wgpu::TextureView& target,
+                  float opacity, float tintR, float tintG, float tintB, float tintStrength);
+
  private:
   struct QuadSlot {
     wgpu::Buffer uniforms;
@@ -45,6 +52,9 @@ class Compositor {
   wgpu::ShaderModule presentModule_;
   wgpu::RenderPipeline textured_;
   wgpu::RenderPipeline blit_;
+  wgpu::ShaderModule onionModule_;
+  wgpu::RenderPipeline onion_;
+  wgpu::Buffer onionU_;
   wgpu::Buffer blitU_;
   wgpu::BindGroup blitGroup_;
   wgpu::Texture rt_;

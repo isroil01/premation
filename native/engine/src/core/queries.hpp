@@ -94,6 +94,9 @@ struct QCtx {
   TextQueries* text = nullptr;  // after the positional members (Session builds QCtx{…} positionally)
   /// B4 round 5: the rig as the overlays see it (getRigPose; scene/rig_overlay.cpp). Null = `unsupported`.
   RigQueries* rig = nullptr;
+  /// getCacheCoverage. Unset = empty (no viewport cache). `comp` absent = the
+  /// composition the viewport is drawing; a different comp answers empty.
+  std::function<api::CacheCoverage(const std::optional<std::string>&)> cacheCoverage{};
 };
 
 /// `catalogFor(layer)` through the query's cache (require_layer first).

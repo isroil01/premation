@@ -2650,6 +2650,15 @@ export interface CustomView {
   poi?: Vec3;
 }
 
+/** Onion-skin ghosts (onionSkin.ts). Past is warm, future is cool, when `colorize`. */
+export interface OnionSkin {
+  before: number;
+  after: number;
+  step: number;
+  opacity: number;
+  colorize: boolean;
+}
+
 /** A viewport's render parameters: pixel size, zoom/pan, region of interest, channel, exposure. */
 export interface SetViewport {
   viewport: number;
@@ -2664,13 +2673,24 @@ export interface SetViewport {
   transparencyGrid: boolean;
   /** View LUT / display transform name ('' = project default). */
   displayTransform: string;
-  /** Show a single layer (Layer panel) instead of the composition. */
+  /** Show a single layer (Layer panel) instead of the composition: the layer alone — eye on, un-soloed, a collapsed comp sealed, live at every time — untransformed at its source size, with none of what the comp does to it (placement, 3D, opacity, blend, mattes). */
   layer?: LayerId;
+  /** With `layer`: false shows the untouched source — no masks, effects, paint, corner pin, glass or backdrop blur (the Layer panel's Render switch). */
   layerRenderEffects: boolean;
   /** The 3D view this viewport renders (the editor's camera3dMode): absent, '' or 'active' = the composition's camera; an axis view (front, back, left, right, top, bottom); `camera:<layer>`; or 'custom' with `customView`. Every viewport has its own (a 2-up / 4-up pane). */
   view?: string;
   /** With view = 'custom': the view's own camera replaces the scene camera (depth of field and camera motion blur off, as in a custom view). */
   customView?: CustomView;
+  /** A held time for this viewport (the Layer panel's own ruler): its frames render at this comp time instead of the session clock; absent = the clock. */
+  time?: Time;
+  /** With `layer` and `time`: the layer's source time at the held time (the Layer panel scrubs in layer time), overriding the layer's own retime. */
+  layerSourceTime?: Time;
+  /**
+   * Onion skins for this viewport. Absent = off. The engine draws the ghosts
+   * (transparent, tinted, farthest first) over the live frame while playback
+   * is stopped. Ignored on a layer view.
+   */
+  onion?: OnionSkin;
 }
 
 export interface CloseViewport {
@@ -4013,6 +4033,28 @@ export interface GetCommandLog {
   fromRevision: Revision;
 }
 
+/**
+ * Frames the viewport frame cache holds, for the timeline cache bars.
+ * `ram` ranges are comp time, end exclusive. `disk` is empty: the engine
+ * cache is VRAM only. `comp` absent = the active composition; another comp
+ * answers empty (coverage is the composition the viewport is drawing).
+ */
+export interface GetCacheCoverage {
+  comp?: ItemId;
+}
+
+export interface CacheRange {
+  start: Time;
+  end: Time;
+}
+
+export interface CacheCoverage {
+  ram: CacheRange[];
+  disk: CacheRange[];
+  ramBytes: number;
+  diskBytes: number;
+}
+
 export interface LayerErrorList {
   errors: LayerError[];
 }
@@ -5249,7 +5291,8 @@ export type Query =
   | ({ type: 'getLayerErrors' } & GetLayerErrors)
   | ({ type: 'getJobs' } & GetJobs)
   | ({ type: 'getRenderQueue' } & GetRenderQueue)
-  | ({ type: 'getCommandLog' } & GetCommandLog);
+  | ({ type: 'getCommandLog' } & GetCommandLog)
+  | ({ type: 'getCacheCoverage' } & GetCacheCoverage);
 export type QueryType = Query['type'];
 
 /** The typed result of a query; same key as its query. */
@@ -5304,7 +5347,8 @@ export type QueryResult =
   | ({ type: 'getLayerErrors' } & LayerErrorList)
   | ({ type: 'getJobs' } & JobList)
   | ({ type: 'getRenderQueue' } & RenderQueueState)
-  | ({ type: 'getCommandLog' } & CommandLog);
+  | ({ type: 'getCommandLog' } & CommandLog)
+  | ({ type: 'getCacheCoverage' } & CacheCoverage);
 export type QueryResultType = QueryResult['type'];
 
 /** Every change / status event, keyed by its schema id. */
@@ -5725,6 +5769,7 @@ export interface QueryArgs {
   getJobs: GetJobs;
   getRenderQueue: GetRenderQueue;
   getCommandLog: GetCommandLog;
+  getCacheCoverage: GetCacheCoverage;
 }
 
 /** Result of each query, by name. */
@@ -5780,6 +5825,7 @@ export interface QueryResults {
   getJobs: JobList;
   getRenderQueue: RenderQueueState;
   getCommandLog: CommandLog;
+  getCacheCoverage: CacheCoverage;
 }
 
 /** Payload of each event, by name. */

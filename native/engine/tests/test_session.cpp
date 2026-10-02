@@ -1002,3 +1002,47 @@ TEST_CASE("setViewport: each viewport renders its own 3D view, baked into its co
   CHECK(h.sink.config(2).view == "active");
   CHECK_FALSE(h.sink.config(2).customView.has_value());
 }
+
+TEST_CASE("setViewport: the Layer panel's viewport renders one layer, optionally at a held time", "[session][viewport]") {
+  Harness h(64);
+  (void)h.hello();
+  const auto comp = make_comp(h, 30);
+  const auto layer = make_layer(h, comp);
+  api::SetActiveComposition active;
+  active.comp = comp;
+  REQUIRE(is_ok(h.run(cmd(active))));
+  api::SetViewport v;
+  v.viewport = 3;
+  v.width = 200;
+  v.height = 100;
+  v.device_pixel_ratio = 1.0;
+  v.layer = layer;
+  v.layer_render_effects = false;
+  const std::size_t before = h.sink.submitted();
+  REQUIRE(is_ok(h.run(cmd(v))));
+  // Rendered (it used to be kept but not rendered), with the layer on its config.
+  CHECK(h.sink.submitted() > before);
+  const ViewportConfig c = h.sink.config(3);
+  CHECK(c.layer == layer);
+  CHECK_FALSE(c.layerRenderEffects);
+  CHECK_FALSE(c.time.has_value());
+  CHECK_FALSE(c.layerSourceTime.has_value());
+
+  // A held time: the frame renders there, not at the clock (still at 0).
+  v.time = 15 * (kSec / 30);
+  v.layer_source_time = 2 * (kSec / 30);
+  REQUIRE(is_ok(h.run(cmd(v))));
+  CHECK(h.sink.config(3).time == 15 * (kSec / 30));
+  CHECK(h.sink.config(3).layerSourceTime == 2 * (kSec / 30));
+  REQUIRE_FALSE(h.frames_ready().empty());
+  CHECK(h.frames_ready().back().time == 15 * (kSec / 30));
+  CHECK(h.session.time() == 0);
+
+  // A source time without a held time is meaningless and dropped; an unknown layer is refused.
+  v.time.reset();
+  REQUIRE(is_ok(h.run(cmd(v))));
+  CHECK_FALSE(h.sink.config(3).time.has_value());
+  CHECK_FALSE(h.sink.config(3).layerSourceTime.has_value());
+  v.layer = "nope";
+  CHECK_FALSE(is_ok(h.run(cmd(v))));
+}

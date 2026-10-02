@@ -337,10 +337,15 @@ class Walk final : public Scene3DHost {
   /// layers under it and the groups above it — soloed for this walk alone.
   std::set<std::string, std::less<>> isolated_;
   [[nodiscard]] bool soloed(const doc::Node& n) const { return isolated_.empty() ? n.solo : isolated_.contains(n.id); }
+  /// The Layer panel's layer (BuildContext::layerView): drawn whatever its switches say.
+  [[nodiscard]] bool layer_view_of(const doc::Node& n) const { return c_.layerView && c_.layerView->id == n.id; }
   /// The layer's eye, plus the viewport's editor-side hide (BuildContext::hiddenLayers).
   [[nodiscard]] bool shown(const doc::Node& n) const {
+    if (layer_view_of(n)) return true;
     return n.visible && std::ranges::find(c_.hiddenLayers, n.id) == c_.hiddenLayers.end();
   }
+  /// A collapsed comp layer — except in the Layer panel, where it is sealed (shown as a card).
+  [[nodiscard]] bool collapsed(const doc::Node& n) const { return !layer_view_of(n) && doc::read_comp_collapse(n); }
 
   std::vector<const doc::Node*> nodes_;
   /// The walked nodes' owner: collapsed-instance clones and override copies.
@@ -398,6 +403,8 @@ std::optional<double> Walk::retimed_at(const std::string& id, double tt) {
 }
 
 double Walk::retimed_source_at(const std::string& id, double tt) {
+  // The Layer panel scrubbing in layer time: its source time wins over the layer's own retime.
+  if (c_.layerView && c_.layerView->sourceTime && id == c_.layerView->id) return *c_.layerView->sourceTime;
   const std::optional<double> retimed = retimed_at(id, tt);
   return retimed ? remap(id, *retimed, true, true) : remap(id, tt, false);
 }
@@ -496,6 +503,8 @@ double Walk::clone_time_offset(const std::string& id) const {
 }
 
 bool Walk::is_live_at(const std::string& id) {
+  // The Layer panel shows the whole source, In/Out or not.
+  if (c_.layerView && id == c_.layerView->id) return true;
   const auto it = live_.find(id);
   if (it != live_.end()) return it->second;
   bool live = true;
@@ -1047,7 +1056,7 @@ void Walk::build_node(const doc::Node& n) {
     // A SEALED instance renders the referenced comp through its own recursive
     // pass; a COLLAPSED one was expanded into this walk and draws nothing itself.
     const auto ref = doc::read_comp_ref(n);
-    if (ref && !doc::read_comp_collapse(n)) {
+    if (ref && !collapsed(n)) {
       if (!fullBuild_.contains(n.id)) {
         emit_stub(n);
       } else {
@@ -1765,11 +1774,22 @@ void Walk::build_node(const doc::Node& n) {
 
 Snapshot Walk::run() {
   // Collapsed instances expand into clones; a sealed pass applies its overrides (comp_instance.cpp).
-  wn_ = expand_walk_nodes(d_, flatten_composition(d_, comp_.rootId), comp_.rootId, comp_.compOverrides);
+  if (c_.layerView) {
+    // LAYER PANEL: the one layer and nothing else — not the layers parented to
+    // it — and sealed: no collapsed-instance expansion (the panel shows a
+    // collapsed comp as a card, drawn by its own pass).
+    std::vector<const doc::Node*> flat = flatten_composition(d_, comp_.rootId);
+    std::erase_if(flat, [&](const doc::Node* n) { return n->id != c_.layerView->id; });
+    wn_ = WalkNodes{};
+    wn_.nodes = std::move(flat);
+  } else {
+    wn_ = expand_walk_nodes(d_, flatten_composition(d_, comp_.rootId), comp_.rootId, comp_.compOverrides);
+  }
   expand_cloners(wn_, raw_);  // cloner_port.cpp
   nodes_ = wn_.nodes;
   for (const doc::Node* n : nodes_) byId_.emplace(n->id, n);
-  anySolo_ = std::ranges::any_of(nodes_, [](const doc::Node* n) { return n->solo; });
+  // The Layer panel's layer draws un-soloed.
+  anySolo_ = !c_.layerView && std::ranges::any_of(nodes_, [](const doc::Node* n) { return n->solo; });
   std::set<std::string, std::less<>> roots;
   if (!c_.isolateLayer.empty() && byId_.contains(c_.isolateLayer)) roots.insert(c_.isolateLayer);
   for (const std::string& id : c_.isolateAlso) {
@@ -1844,7 +1864,7 @@ Snapshot Walk::run() {
     for (const doc::Node* n : nodes_) {
       const std::string k = n->kind();
       if (k == "group" || k == "null" || k == "camera" || k == "audio") continue;
-      if (k == "comp" && doc::read_comp_collapse(*n)) continue;
+      if (k == "comp" && collapsed(*n)) continue;
       const Json& bo = fx_props(*n).at("booleanOperand");
       if (bo.is_bool() && bo.b()) continue;
       if (!is_live_at(n->id)) continue;
@@ -1893,6 +1913,48 @@ Snapshot Walk::run() {
     }
   }
   attach_precomps(layers_);
+  if (c_.layerView) {
+    // LAYER PANEL (buildSnapshot `comp.layerView`): keep only the layer itself —
+    // the `::shadow` / `::ext-*` / `::ch<n>` helpers a node can emit belong to the
+    // comp render — and take back off it everything the comp does TO it:
+    // placement, 3D, opacity, blending, mattes. With Render off, also the masks,
+    // effects and paint, leaving the untouched source.
+    const std::string& id = c_.layerView->id;
+    std::erase_if(layers_, [&](const RLayer& l) { return l.id != id; });
+    for (RLayer& l : layers_) {
+      l.x = comp_.width / 2;
+      l.y = comp_.height / 2;
+      l.rotation = 0;
+      l.scaleX = 1;
+      l.scaleY = 1;
+      l.depth = 0;
+      l.opacity = 1;
+      l.blend = "normal";
+      l.visible = true;
+      l.matrix.reset();
+      l.world3d.reset();
+      l.quad3d.reset();
+      l.anchorX = 0;
+      l.anchorY = 0;
+      l.skew.reset();
+      l.skewAxis.reset();
+      l.motionSamples.clear();
+      l.lighting.reset();
+      l.shade3d.reset();
+      l.matte.reset();
+      l.matteSourceId.reset();
+      l.isMatteSource = false;
+      l.preserveTransparency = false;
+      if (!c_.layerView->render) {
+        l.effects.clear();
+        l.mask = Json();
+        l.paint = Json();
+        l.cornerPin.reset();
+        l.glass.reset();
+        l.backdropBlur.reset();
+      }
+    }
+  }
   // Landed beams, projected shadows and the 3D depth sort (before the matte pairing, as the TS).
   three_->finish(layers_);
   for (const auto& [id, what] : three_->unported()) {

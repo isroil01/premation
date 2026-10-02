@@ -320,6 +320,24 @@ class Session {
   }
   /// B4 round 5: fill the `rig` records of a frame's geometry for the layers `o` subscribes with the rig kind.
   void attach_overlay_rig(const doc::OverlaySubscription& o, std::vector<api::OverlayLayerGeometry>& geometry);
+  /// Onion skins: ghost frames for this viewport, reused while the playhead,
+  /// the document and the camera stay put.
+  struct OnionMemo {
+    std::uint64_t revision = ~std::uint64_t{0};
+    std::int64_t frame = -1;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    double zoom = 0;
+    double panX = 0;
+    double panY = 0;
+    double dpr = 0;
+    std::string view;
+    std::optional<CustomViewParams> custom;
+    api::OnionSkin settings{};
+    std::vector<RenderJob::OnionGhost> ghosts;
+  };
+  std::map<std::uint32_t, OnionMemo> onionMemo_;
+  void attach_onion(RenderJob& job, const ViewportConfig& port, const std::string& comp);
   std::vector<api::LayerError> layerErrors_;   // the set last announced (layerErrors event)
   std::string layerErrorsComp_;
   /// D5: the frame builder's CPU time per frame (ms, moving average) — the

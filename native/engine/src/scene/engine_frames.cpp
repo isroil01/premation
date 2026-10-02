@@ -25,6 +25,7 @@
 #include "text_outlines.hpp"
 #include "fonts.hpp"
 #include "frame_hit.hpp"
+#include "item_facts.hpp"
 #include "layer_faces.hpp"
 #include "merge_paths.hpp"
 #include "snapshot_build.hpp"
@@ -239,7 +240,23 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       out->mediaBase = mediaBase_;
       BuildContext ctx = context(d, view, expr, cache);
       ctx.hiddenLayers = viewport.hiddenLayers;  // setViewportHiddenLayers: the text under the in-place editor
-      const SnapshotComp sc = with_viewport_view(snapshot_comp_of(d, comp), viewport);
+      SnapshotComp sc = with_viewport_view(snapshot_comp_of(d, comp), viewport);
+      if (!viewport.layer.empty()) {
+        // The Layer panel: the layer alone at its source size, over transparency,
+        // through the composition's own camera (useLayerViewerRenderer).
+        ctx.layerView = BuildContext::LayerView{
+            viewport.layer, viewport.layerRenderEffects,
+            viewport.layerSourceTime ? std::optional<double>(doc::flicks_to_seconds(*viewport.layerSourceTime)) : std::nullopt};
+        for (const api::LayerSourceSize& z : doc::source_sizes(d, {viewport.layer})) {
+          if (z.width > 0 && z.height > 0) {
+            sc.width = z.width;
+            sc.height = z.height;
+          }
+        }
+        sc.transparent = true;
+        sc.camera3dMode = "active";
+        sc.customViewCamera.reset();
+      }
       // The comp contain-fitted into the slot, centred, over black — C2's
       // compositor placement (render/compositor.cpp), which the page's
       // overlays are drawn against (docs/VIEWPORT_ROUTE.md).
@@ -257,7 +274,8 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
         vs.centerX = viewport.panX;
         vs.centerY = viewport.panY;
       }
-      vs.clear = api::Color{0, 0, 0, 1};
+      vs.clear = viewport.ghost ? api::Color{0, 0, 0, 0} : api::Color{0, 0, 0, 1};
+      if (viewport.ghost) sc.transparent = true;
       vs.surfaceFormat = api::RenderTextureFormat::rgba8unorm;
       const double seconds = doc::flicks_to_seconds(time);
       NativeFrame nf = build_native_frame(ctx, comp, seconds, vs, true);

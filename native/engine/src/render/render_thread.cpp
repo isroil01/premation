@@ -198,6 +198,78 @@ FrameCacheStats RenderThread::cache_stats() const {
   return cacheStats_;
 }
 
+CacheCoverageSnap RenderThread::cache_coverage() const {
+  const std::lock_guard<std::mutex> lock(m_);
+  return coverage_;
+}
+
+void RenderThread::purge_frame_cache() {
+  post([this] {
+    if (cache_) cache_->clear();
+    covered_.clear();
+    publish_coverage();
+  });
+}
+
+void RenderThread::note_coverage(std::int64_t frame, std::uint64_t key) {
+  auto& keys = covered_[frame];
+  if (std::find(keys.begin(), keys.end(), key) == keys.end()) {
+    keys.push_back(key);
+    // A zoom or a pane is a new content key for the same frame. Keep the
+    // recent ones; an unbounded list would count every camera drag forever.
+    constexpr std::size_t kKeysPerFrame = 4;
+    if (keys.size() > kKeysPerFrame) keys.erase(keys.begin());
+  }
+  publish_coverage();
+}
+
+void RenderThread::composite_onion(const RenderJob& job, const wgpu::TextureView& slot, std::uint32_t width,
+                                   std::uint32_t height) {
+  if (!drawer_ || width == 0 || height == 0) return;
+  if (onionTex_ == nullptr || onionW_ != width || onionH_ != height) {
+    wgpu::TextureDescriptor td{};
+    td.size = {width, height, 1};
+    td.format = wgpu::TextureFormat::RGBA8Unorm;
+    td.usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding;
+    onionTex_ = gpu_->device.CreateTexture(&td);
+    onionView_ = onionTex_.CreateView();
+    onionW_ = width;
+    onionH_ = height;
+  }
+  for (const RenderJob::OnionGhost& ghost : job.onion) {
+    if (!ghost.built) continue;
+    std::string error;
+    if (!drawer_->draw(*ghost.built, onionView_, width, height, error)) {
+      PREMATION_LOG(error, "onion_draw_failed").kv("error", error);
+      continue;
+    }
+    wgpu::CommandEncoder enc = gpu_->device.CreateCommandEncoder();
+    compositor_->blend_over(enc, onionView_, slot, ghost.opacity, ghost.tintR, ghost.tintG, ghost.tintB, ghost.tintStrength);
+    const wgpu::CommandBuffer cb = enc.Finish();
+    gpu_->queue.Submit(1, &cb);
+  }
+}
+
+void RenderThread::publish_coverage() {
+  std::vector<std::int64_t> frames;
+  frames.reserve(covered_.size());
+  for (auto it = covered_.begin(); it != covered_.end();) {
+    auto& keys = it->second;
+    std::erase_if(keys, [this](std::uint64_t key) { return cache_ == nullptr || !cache_->contains(key); });
+    if (keys.empty()) {
+      it = covered_.erase(it);
+      continue;
+    }
+    frames.push_back(it->first);
+    ++it;
+  }
+  CacheCoverageSnap snap;
+  snap.ram = coalesce_frame_indices(std::move(frames));
+  snap.ramBytes = cache_ ? static_cast<std::uint64_t>(cache_->stats().bytes) : 0;
+  const std::lock_guard<std::mutex> lock(m_);
+  coverage_ = std::move(snap);
+}
+
 std::string RenderThread::open_gpu() {
 #if defined(PREMATION_SHARED_TEXTURE)
   // Windows (NT handles), macOS (IOSurfaces), Linux with GBM (dmabufs): a host to share with.
@@ -248,8 +320,14 @@ void RenderThread::close_gpu() {
     // concurrent configure() inserting a viewport.
     const std::lock_guard<std::mutex> lock(m_);
     for (auto& [id, p] : ports_) p->slots.reset();
+    coverage_ = {};
   }
   retired_.clear();
+  covered_.clear();
+  onionTex_ = nullptr;
+  onionView_ = nullptr;
+  onionW_ = 0;
+  onionH_ = 0;
   cache_.reset();
   drawer_.reset();
   compositor_.reset();
@@ -577,6 +655,7 @@ void RenderThread::render(Port& port, RenderJob& job, std::uint32_t slot, const 
         const wgpu::CommandBuffer cb = enc.Finish();
         gpu_->queue.Submit(1, &cb);
         drawn = true;
+        if (job.recordCoverage) note_coverage(job.frame, *key);
       }
     }
     if (!drawn) {
@@ -589,8 +668,10 @@ void RenderThread::render(Port& port, RenderJob& job, std::uint32_t slot, const 
         cache_->store(*key, set.width, set.height, slotTexture, enc);
         const wgpu::CommandBuffer cb = enc.Finish();
         gpu_->queue.Submit(1, &cb);
+        if (job.recordCoverage) note_coverage(job.frame, *key);
       }
     }
+    if (drawn && !job.onion.empty() && compositor_) composite_onion(job, set.views[slot], set.width, set.height);
   }
   if (!drawn) {
     // C2's quads (a built frame that failed to draw has none: the slot clears to black).

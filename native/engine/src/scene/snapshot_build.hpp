@@ -45,6 +45,19 @@ struct BuildContext {
   /// More layers drawn alone together with `isolateLayer` (Rig Logo renders a
   /// multi-layer selection as one picture); each with what it holds.
   std::vector<std::string> isolateAlso{};
+  /// The Layer panel (setViewport `layer`, buildSnapshot `comp.layerView`):
+  /// this one layer and nothing else — not the layers parented to it — with
+  /// its eye on, un-soloed, sealed if a collapsed comp, live at every time;
+  /// placed untransformed at the frame's centre, with none of what the comp
+  /// does to it. `render` false = the untouched source (no masks, effects,
+  /// paint, corner pin, glass, backdrop blur). `sourceTime` overrides the
+  /// layer's own source time (the panel scrubbing in layer time).
+  struct LayerView {
+    std::string id;
+    bool render = true;
+    std::optional<double> sourceTime;
+  };
+  std::optional<LayerView> layerView{};
   /// Layers the viewport being built does not draw (setViewportHiddenLayers:
   /// the text layer under the in-place editor). Like an off eye switch, for this
   /// frame only. Empty = none.

@@ -1115,7 +1115,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
                                       tests/test_rig_coverage.cpp tests/test_gpu_effect_route.cpp
                                       tests/test_text_outlines.cpp tests/test_svg_shapes.cpp
                                       tests/test_b4_round5_text_glyphs.cpp  # B4 round 5: getTextLayout.glyphs over the harness fonts
-                                      tests/test_viewport_view.cpp)  # setViewport view / customView → the snapshot's camera
+                                      tests/test_viewport_view.cpp  # setViewport view / customView → the snapshot's camera
+                                      tests/test_layer_view.cpp)  # setViewport layer: the Layer panel's one-layer walk
     target_compile_definitions(engine_scene_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
       PREMATION_RASTER_FONTS="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/render-tests/harness/fonts/fonts.json")
     target_link_libraries(engine_scene_tests PRIVATE engine_scene motion::options Catch2::Catch2WithMain)

@@ -1045,6 +1045,7 @@ struct SetPreviewQuality;
 struct SetAudioPreview;
 struct SetActiveComposition;
 struct CustomView;
+struct OnionSkin;
 struct SetViewport;
 struct CloseViewport;
 struct SetCacheBudget;
@@ -1139,6 +1140,7 @@ struct GetLayerErrors;
 struct GetJobs;
 struct GetRenderQueue;
 struct GetCommandLog;
+struct GetCacheCoverage;
 struct Query;
 struct CommandBatch;
 struct RequestBody;
@@ -1260,6 +1262,8 @@ struct JobList;
 struct RenderQueueState;
 struct LogRecord;
 struct CommandLog;
+struct CacheRange;
+struct CacheCoverage;
 struct QueryResult;
 struct BatchResult;
 struct EngineError;
@@ -2789,6 +2793,15 @@ struct CustomView {
   bool operator==(const CustomView&) const = default;
 };
 
+struct OnionSkin {
+  std::uint32_t before = 0;
+  std::uint32_t after = 0;
+  std::uint32_t step = 0;
+  double opacity = 0.0;
+  bool colorize = false;
+  bool operator==(const OnionSkin&) const = default;
+};
+
 struct SetViewport {
   std::uint32_t viewport = 0;
   std::uint32_t width = 0;
@@ -2805,6 +2818,9 @@ struct SetViewport {
   bool layer_render_effects = false;
   std::optional<std::string> view;
   std::optional<CustomView> custom_view;
+  std::optional<Time> time;
+  std::optional<Time> layer_source_time;
+  std::optional<OnionSkin> onion;
   bool operator==(const SetViewport&) const = default;
 };
 
@@ -3636,6 +3652,11 @@ struct GetCommandLog {
   bool operator==(const GetCommandLog&) const = default;
 };
 
+struct GetCacheCoverage {
+  std::optional<ItemId> comp;
+  bool operator==(const GetCacheCoverage&) const = default;
+};
+
 struct Query {
   enum class Kind : std::uint32_t {
     get_document = 1000,
@@ -3689,8 +3710,9 @@ struct Query {
     get_jobs = 1083,
     get_render_queue = 1084,
     get_command_log = 1085,
+    get_cache_coverage = 1089,
   };
-  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetTimelineRows, GetRigPose, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, RenderDocumentStill, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, GetLayerFaces, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog> v;
+  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetTimelineRows, GetRigPose, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, RenderDocumentStill, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, GetLayerFaces, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog, GetCacheCoverage> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Query&) const = default;
 };
@@ -4880,6 +4902,20 @@ struct CommandLog {
   bool operator==(const CommandLog&) const = default;
 };
 
+struct CacheRange {
+  Time start = 0;
+  Time end = 0;
+  bool operator==(const CacheRange&) const = default;
+};
+
+struct CacheCoverage {
+  std::vector<CacheRange> ram;
+  std::vector<CacheRange> disk;
+  std::uint64_t ram_bytes = 0;
+  std::uint64_t disk_bytes = 0;
+  bool operator==(const CacheCoverage&) const = default;
+};
+
 struct QueryResult {
   enum class Kind : std::uint32_t {
     get_document = 1000,
@@ -4933,8 +4969,9 @@ struct QueryResult {
     get_jobs = 1083,
     get_render_queue = 1084,
     get_command_log = 1085,
+    get_cache_coverage = 1089,
   };
-  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, TimelineRowSets, RigPose, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, LayerFaces, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog> v;
+  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, TimelineRowSets, RigPose, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, LayerFaces, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog, CacheCoverage> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const QueryResult&) const = default;
 };
@@ -6173,6 +6210,8 @@ void encode(wire::Writer& w, const SetActiveComposition& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetActiveComposition& out);
 void encode(wire::Writer& w, const CustomView& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CustomView& out);
+void encode(wire::Writer& w, const OnionSkin& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, OnionSkin& out);
 void encode(wire::Writer& w, const SetViewport& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetViewport& out);
 void encode(wire::Writer& w, const CloseViewport& v);
@@ -6361,6 +6400,8 @@ void encode(wire::Writer& w, const GetRenderQueue& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetRenderQueue& out);
 void encode(wire::Writer& w, const GetCommandLog& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetCommandLog& out);
+void encode(wire::Writer& w, const GetCacheCoverage& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetCacheCoverage& out);
 void encode(wire::Writer& w, const Query& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Query& out);
 void encode(wire::Writer& w, const CommandBatch& v);
@@ -6603,6 +6644,10 @@ void encode(wire::Writer& w, const LogRecord& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, LogRecord& out);
 void encode(wire::Writer& w, const CommandLog& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CommandLog& out);
+void encode(wire::Writer& w, const CacheRange& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CacheRange& out);
+void encode(wire::Writer& w, const CacheCoverage& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CacheCoverage& out);
 void encode(wire::Writer& w, const QueryResult& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, QueryResult& out);
 void encode(wire::Writer& w, const BatchResult& v);

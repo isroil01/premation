@@ -29,6 +29,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <thread>
 #include <vector>
 
@@ -135,6 +136,8 @@ class RenderThread final : public FrameSink {
   [[nodiscard]] std::string backend() const override;
   /// D4: the frame cache's counters (zeros when the cache is off).
   [[nodiscard]] FrameCacheStats cache_stats() const;
+  [[nodiscard]] CacheCoverageSnap cache_coverage() const override;
+  void purge_frame_cache() override;
   /// Run on the render thread between frames (below).
   [[nodiscard]] std::future<StillImage> render_still(std::shared_ptr<BuiltFrame> frame, std::uint32_t width,
                                                      std::uint32_t height) override;
@@ -208,6 +211,17 @@ class RenderThread final : public FrameSink {
   // Counters (m_).
   RenderCounters counters_;
   FrameCacheStats cacheStats_;
+  wgpu::Texture onionTex_;
+  wgpu::TextureView onionView_;
+  std::uint32_t onionW_ = 0;
+  std::uint32_t onionH_ = 0;
+  void composite_onion(const RenderJob& job, const wgpu::TextureView& slot, std::uint32_t width, std::uint32_t height);
+  /// Render thread only.
+  void note_coverage(std::int64_t frame, std::uint64_t key);
+  void publish_coverage();
+  /// Render thread only: frame index → content keys still worth counting.
+  std::unordered_map<std::int64_t, std::vector<std::uint64_t>> covered_;
+  CacheCoverageSnap coverage_;
   std::uint64_t windowFrames_ = 0;
   double windowGpuMs_ = 0;
   std::chrono::steady_clock::time_point windowStart_ = std::chrono::steady_clock::now();

@@ -101,6 +101,15 @@ enum ChannelView { rgb = 0; red = 1; green = 2; blue = 3; alpha = 4; rgbStraight
 /// A custom 3D view (customViews.ts CustomViewParams): the eye starts `distance` behind the point of interest along −z, orbits by yaw / pitch (degrees) and looks at it; the lens is the composition's default. Absent distance = 1.2 × the default focal length; absent poi = the comp centre on z = 0.
 struct CustomView { yaw: f64 = 1; pitch: f64 = 2; distance?: f64 = 3; poi?: Vec3 = 4; }
 
+/// Onion-skin ghosts (onionSkin.ts). Past is warm, future is cool, when `colorize`.
+struct OnionSkin {
+  before: u32 = 1;
+  after: u32 = 2;
+  step: u32 = 3;
+  opacity: f64 = 4;
+  colorize: bool = 5;
+}
+
 /// A viewport's render parameters: pixel size, zoom/pan, region of interest, channel, exposure.
 command setViewport = 808 [control, coalesce] {
   viewport: u32 = 1;
@@ -115,13 +124,22 @@ command setViewport = 808 [control, coalesce] {
   transparencyGrid: bool = 10;
   /// View LUT / display transform name ('' = project default).
   displayTransform: string = 11;
-  /// Show a single layer (Layer panel) instead of the composition.
+  /// Show a single layer (Layer panel) instead of the composition: the layer alone — eye on, un-soloed, a collapsed comp sealed, live at every time — untransformed at its source size, with none of what the comp does to it (placement, 3D, opacity, blend, mattes).
   layer?: LayerId = 12;
+  /// With `layer`: false shows the untouched source — no masks, effects, paint, corner pin, glass or backdrop blur (the Layer panel's Render switch).
   layerRenderEffects: bool = 13;
   /// The 3D view this viewport renders (the editor's camera3dMode): absent, '' or 'active' = the composition's camera; an axis view (front, back, left, right, top, bottom); `camera:<layer>`; or 'custom' with `customView`. Every viewport has its own (a 2-up / 4-up pane).
   view?: string = 14;
   /// With view = 'custom': the view's own camera replaces the scene camera (depth of field and camera motion blur off, as in a custom view).
   customView?: CustomView = 15;
+  /// A held time for this viewport (the Layer panel's own ruler): its frames render at this comp time instead of the session clock; absent = the clock.
+  time?: Time = 16;
+  /// With `layer` and `time`: the layer's source time at the held time (the Layer panel scrubs in layer time), overriding the layer's own retime.
+  layerSourceTime?: Time = 17;
+  /// Onion skins for this viewport. Absent = off. The engine draws the ghosts
+  /// (transparent, tinted, farthest first) over the live frame while playback
+  /// is stopped. Ignored on a layer view.
+  onion?: OnionSkin = 18;
 }
 command closeViewport = 809 [control] { viewport: u32 = 1; }
 command setCacheBudget = 810 [control] { ramMegabytes: u64 = 1; diskMegabytes: u64 = 2; diskPath: string = 3; }

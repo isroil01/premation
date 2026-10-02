@@ -229,6 +229,7 @@ export const QUERIES: Readonly<Record<QueryType, QueryInfo>> = {
   getJobs: { id: 1083, family: "Status", result: "JobList", doc: "" },
   getRenderQueue: { id: 1084, family: "Status", result: "RenderQueueState", doc: "" },
   getCommandLog: { id: 1085, family: "Status", result: "CommandLog", doc: "The command log since `fromRevision` (B5 replay, bug reports)." },
+  getCacheCoverage: { id: 1089, family: "Status", result: "CacheCoverage", doc: "Frames the viewport frame cache holds, for the timeline cache bars. `ram` ranges are comp time, end exclusive. `disk` is empty: the engine cache is VRAM only. `comp` absent = the active composition; another comp answers empty (coverage is the composition the viewport is drawing)." },
 };
 
 export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
@@ -268,4 +269,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":81,"structs":489,"unions":11,"commands":160,"queries":51,"events":33} as const;
+export const SCHEMA_COUNTS = {"enums":81,"structs":493,"unions":11,"commands":160,"queries":52,"events":33} as const;

@@ -9630,6 +9630,62 @@ Status decode(wire::Reader& r, CustomView& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const OnionSkin& v) {
+  w.varint(8U); w.varint(v.before);
+  w.varint(16U); w.varint(v.after);
+  w.varint(24U); w.varint(v.step);
+  w.varint(33U); w.f64(v.opacity);
+  w.varint(40U); w.boolean(v.colorize);
+}
+
+Status decode(wire::Reader& r, OnionSkin& out) {
+  bool has_before = false;
+  bool has_after = false;
+  bool has_step = false;
+  bool has_opacity = false;
+  bool has_colorize = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.u32(out.before)) return Status::bad_value;
+        has_before = true;
+        break;
+      }
+      case 16U: {
+        if (!r.u32(out.after)) return Status::bad_value;
+        has_after = true;
+        break;
+      }
+      case 24U: {
+        if (!r.u32(out.step)) return Status::bad_value;
+        has_step = true;
+        break;
+      }
+      case 33U: {
+        if (!r.f64(out.opacity)) return Status::truncated;
+        has_opacity = true;
+        break;
+      }
+      case 40U: {
+        if (!r.boolean(out.colorize)) return Status::truncated;
+        has_colorize = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_before) return Status::missing_field;
+  if (!has_after) return Status::missing_field;
+  if (!has_step) return Status::missing_field;
+  if (!has_opacity) return Status::missing_field;
+  if (!has_colorize) return Status::missing_field;
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const SetViewport& v) {
   w.varint(8U); w.varint(v.viewport);
   w.varint(16U); w.varint(v.width);
@@ -9646,6 +9702,9 @@ void encode(wire::Writer& w, const SetViewport& v) {
   w.varint(104U); w.boolean(v.layer_render_effects);
   if (v.view.has_value()) { w.varint(114U); w.str(*v.view); }
   if (v.custom_view.has_value()) { w.varint(122U); { const std::size_t s = w.begin_ld(); encode(w, *v.custom_view); w.end_ld(s); } }
+  if (v.time.has_value()) { w.varint(128U); w.svarint(*v.time); }
+  if (v.layer_source_time.has_value()) { w.varint(136U); w.svarint(*v.layer_source_time); }
+  if (v.onion.has_value()) { w.varint(146U); { const std::size_t s = w.begin_ld(); encode(w, *v.onion); w.end_ld(s); } }
 }
 
 Status decode(wire::Reader& r, SetViewport& out) {
@@ -9741,6 +9800,24 @@ Status decode(wire::Reader& r, SetViewport& out) {
         CustomView e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.custom_view = std::move(e);
+        break;
+      }
+      case 128U: {
+        Time e = 0;
+        if (!r.svarint(e)) return Status::truncated;
+        out.time = std::move(e);
+        break;
+      }
+      case 136U: {
+        Time e = 0;
+        if (!r.svarint(e)) return Status::truncated;
+        out.layer_source_time = std::move(e);
+        break;
+      }
+      case 146U: {
+        OnionSkin e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.onion = std::move(e);
         break;
       }
       default:
@@ -14907,8 +14984,31 @@ Status decode(wire::Reader& r, GetCommandLog& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const GetCacheCoverage& v) {
+  if (v.comp.has_value()) { w.varint(10U); w.str(*v.comp); }
+}
+
+Status decode(wire::Reader& r, GetCacheCoverage& out) {
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        ItemId e;
+        if (!r.str(e)) return Status::truncated;
+        out.comp = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  return Status::ok;
+}
+
 Query::Kind Query::kind() const noexcept {
-  static constexpr std::array<Kind, 51> kKinds = {Kind::get_document, Kind::export_document, Kind::get_composition, Kind::get_layers, Kind::get_property_tree, Kind::get_property_values, Kind::sample_property, Kind::get_keyframes, Kind::get_motion_path, Kind::get_markers, Kind::copy_layers, Kind::copy_keyframes, Kind::get_member_keyframes, Kind::copy_effects, Kind::get_search_facts, Kind::get_document_colors, Kind::get_caption_cues, Kind::map_layer_time, Kind::get_source_size, Kind::check_precompose, Kind::get_timeline_rows, Kind::get_rig_pose, Kind::get_waveform, Kind::list_fonts, Kind::get_items, Kind::get_svg_document, Kind::get_cryptomatte, Kind::get_thumbnail, Kind::render_document_still, Kind::list_effects, Kind::list_group_types, Kind::list_presets, Kind::capture_preset, Kind::get_capabilities, Kind::list_plugins, Kind::get_effect_ui, Kind::get_layer_faces, Kind::hit_test, Kind::get_layer_bounds, Kind::get_layer_transforms, Kind::get_text_layout, Kind::evaluate_expression, Kind::read_pixels, Kind::find_layers, Kind::get_dependencies, Kind::get_history, Kind::get_render_stats, Kind::get_layer_errors, Kind::get_jobs, Kind::get_render_queue, Kind::get_command_log};
+  static constexpr std::array<Kind, 52> kKinds = {Kind::get_document, Kind::export_document, Kind::get_composition, Kind::get_layers, Kind::get_property_tree, Kind::get_property_values, Kind::sample_property, Kind::get_keyframes, Kind::get_motion_path, Kind::get_markers, Kind::copy_layers, Kind::copy_keyframes, Kind::get_member_keyframes, Kind::copy_effects, Kind::get_search_facts, Kind::get_document_colors, Kind::get_caption_cues, Kind::map_layer_time, Kind::get_source_size, Kind::check_precompose, Kind::get_timeline_rows, Kind::get_rig_pose, Kind::get_waveform, Kind::list_fonts, Kind::get_items, Kind::get_svg_document, Kind::get_cryptomatte, Kind::get_thumbnail, Kind::render_document_still, Kind::list_effects, Kind::list_group_types, Kind::list_presets, Kind::capture_preset, Kind::get_capabilities, Kind::list_plugins, Kind::get_effect_ui, Kind::get_layer_faces, Kind::hit_test, Kind::get_layer_bounds, Kind::get_layer_transforms, Kind::get_text_layout, Kind::evaluate_expression, Kind::read_pixels, Kind::find_layers, Kind::get_dependencies, Kind::get_history, Kind::get_render_stats, Kind::get_layer_errors, Kind::get_jobs, Kind::get_render_queue, Kind::get_command_log, Kind::get_cache_coverage};
   return kKinds[v.index()];
 }
 
@@ -14965,6 +15065,7 @@ void encode(wire::Writer& w, const Query& v) {
     case 48: w.varint(8666U); { const std::size_t s = w.begin_ld(); encode(w, std::get<48>(v.v)); w.end_ld(s); } return;
     case 49: w.varint(8674U); { const std::size_t s = w.begin_ld(); encode(w, std::get<49>(v.v)); w.end_ld(s); } return;
     case 50: w.varint(8682U); { const std::size_t s = w.begin_ld(); encode(w, std::get<50>(v.v)); w.end_ld(s); } return;
+    case 51: w.varint(8714U); { const std::size_t s = w.begin_ld(); encode(w, std::get<51>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -15380,6 +15481,14 @@ Status decode(wire::Reader& r, Query& out) {
         GetCommandLog e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.v.emplace<50>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 8714U: {
+        if (seen) return Status::multiple_variants;
+        GetCacheCoverage e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<51>(std::move(e));
         seen = true;
         break;
       }
@@ -22813,8 +22922,84 @@ Status decode(wire::Reader& r, CommandLog& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const CacheRange& v) {
+  w.varint(8U); w.svarint(v.start);
+  w.varint(16U); w.svarint(v.end);
+}
+
+Status decode(wire::Reader& r, CacheRange& out) {
+  bool has_start = false;
+  bool has_end = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        if (!r.svarint(out.start)) return Status::truncated;
+        has_start = true;
+        break;
+      }
+      case 16U: {
+        if (!r.svarint(out.end)) return Status::truncated;
+        has_end = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_start) return Status::missing_field;
+  if (!has_end) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const CacheCoverage& v) {
+  for (const auto& e : v.ram) { w.varint(10U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  for (const auto& e : v.disk) { w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  w.varint(24U); w.varint(v.ram_bytes);
+  w.varint(32U); w.varint(v.disk_bytes);
+}
+
+Status decode(wire::Reader& r, CacheCoverage& out) {
+  bool has_ram_bytes = false;
+  bool has_disk_bytes = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        auto& e = out.ram.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 18U: {
+        auto& e = out.disk.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 24U: {
+        if (!r.varint(out.ram_bytes)) return Status::truncated;
+        has_ram_bytes = true;
+        break;
+      }
+      case 32U: {
+        if (!r.varint(out.disk_bytes)) return Status::truncated;
+        has_disk_bytes = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_ram_bytes) return Status::missing_field;
+  if (!has_disk_bytes) return Status::missing_field;
+  return Status::ok;
+}
+
 QueryResult::Kind QueryResult::kind() const noexcept {
-  static constexpr std::array<Kind, 51> kKinds = {Kind::get_document, Kind::export_document, Kind::get_composition, Kind::get_layers, Kind::get_property_tree, Kind::get_property_values, Kind::sample_property, Kind::get_keyframes, Kind::get_motion_path, Kind::get_markers, Kind::copy_layers, Kind::copy_keyframes, Kind::get_member_keyframes, Kind::copy_effects, Kind::get_search_facts, Kind::get_document_colors, Kind::get_caption_cues, Kind::map_layer_time, Kind::get_source_size, Kind::check_precompose, Kind::get_timeline_rows, Kind::get_rig_pose, Kind::get_waveform, Kind::list_fonts, Kind::get_items, Kind::get_svg_document, Kind::get_cryptomatte, Kind::get_thumbnail, Kind::render_document_still, Kind::list_effects, Kind::list_group_types, Kind::list_presets, Kind::capture_preset, Kind::get_capabilities, Kind::list_plugins, Kind::get_effect_ui, Kind::get_layer_faces, Kind::hit_test, Kind::get_layer_bounds, Kind::get_layer_transforms, Kind::get_text_layout, Kind::evaluate_expression, Kind::read_pixels, Kind::find_layers, Kind::get_dependencies, Kind::get_history, Kind::get_render_stats, Kind::get_layer_errors, Kind::get_jobs, Kind::get_render_queue, Kind::get_command_log};
+  static constexpr std::array<Kind, 52> kKinds = {Kind::get_document, Kind::export_document, Kind::get_composition, Kind::get_layers, Kind::get_property_tree, Kind::get_property_values, Kind::sample_property, Kind::get_keyframes, Kind::get_motion_path, Kind::get_markers, Kind::copy_layers, Kind::copy_keyframes, Kind::get_member_keyframes, Kind::copy_effects, Kind::get_search_facts, Kind::get_document_colors, Kind::get_caption_cues, Kind::map_layer_time, Kind::get_source_size, Kind::check_precompose, Kind::get_timeline_rows, Kind::get_rig_pose, Kind::get_waveform, Kind::list_fonts, Kind::get_items, Kind::get_svg_document, Kind::get_cryptomatte, Kind::get_thumbnail, Kind::render_document_still, Kind::list_effects, Kind::list_group_types, Kind::list_presets, Kind::capture_preset, Kind::get_capabilities, Kind::list_plugins, Kind::get_effect_ui, Kind::get_layer_faces, Kind::hit_test, Kind::get_layer_bounds, Kind::get_layer_transforms, Kind::get_text_layout, Kind::evaluate_expression, Kind::read_pixels, Kind::find_layers, Kind::get_dependencies, Kind::get_history, Kind::get_render_stats, Kind::get_layer_errors, Kind::get_jobs, Kind::get_render_queue, Kind::get_command_log, Kind::get_cache_coverage};
   return kKinds[v.index()];
 }
 
@@ -22871,6 +23056,7 @@ void encode(wire::Writer& w, const QueryResult& v) {
     case 48: w.varint(8666U); { const std::size_t s = w.begin_ld(); encode(w, std::get<48>(v.v)); w.end_ld(s); } return;
     case 49: w.varint(8674U); { const std::size_t s = w.begin_ld(); encode(w, std::get<49>(v.v)); w.end_ld(s); } return;
     case 50: w.varint(8682U); { const std::size_t s = w.begin_ld(); encode(w, std::get<50>(v.v)); w.end_ld(s); } return;
+    case 51: w.varint(8714U); { const std::size_t s = w.begin_ld(); encode(w, std::get<51>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -23286,6 +23472,14 @@ Status decode(wire::Reader& r, QueryResult& out) {
         CommandLog e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.v.emplace<50>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 8714U: {
+        if (seen) return Status::multiple_variants;
+        CacheCoverage e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<51>(std::move(e));
         seen = true;
         break;
       }
@@ -28387,7 +28581,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 500> kNames = {
+constexpr std::array<std::string_view, 504> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -28630,6 +28824,7 @@ constexpr std::array<std::string_view, 500> kNames = {
     "SetAudioPreview",
     "SetActiveComposition",
     "CustomView",
+    "OnionSkin",
     "SetViewport",
     "CloseViewport",
     "SetCacheBudget",
@@ -28799,6 +28994,9 @@ constexpr std::array<std::string_view, 500> kNames = {
     "GetJobs",
     "GetRenderQueue",
     "GetCommandLog",
+    "GetCacheCoverage",
+    "CacheRange",
+    "CacheCoverage",
     "LayerErrorList",
     "JobList",
     "RenderQueueState",
@@ -29136,6 +29334,7 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "SetAudioPreview") return roundtrip<SetAudioPreview>(bytes, out);
   if (type == "SetActiveComposition") return roundtrip<SetActiveComposition>(bytes, out);
   if (type == "CustomView") return roundtrip<CustomView>(bytes, out);
+  if (type == "OnionSkin") return roundtrip<OnionSkin>(bytes, out);
   if (type == "SetViewport") return roundtrip<SetViewport>(bytes, out);
   if (type == "CloseViewport") return roundtrip<CloseViewport>(bytes, out);
   if (type == "SetCacheBudget") return roundtrip<SetCacheBudget>(bytes, out);
@@ -29305,6 +29504,9 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "GetJobs") return roundtrip<GetJobs>(bytes, out);
   if (type == "GetRenderQueue") return roundtrip<GetRenderQueue>(bytes, out);
   if (type == "GetCommandLog") return roundtrip<GetCommandLog>(bytes, out);
+  if (type == "GetCacheCoverage") return roundtrip<GetCacheCoverage>(bytes, out);
+  if (type == "CacheRange") return roundtrip<CacheRange>(bytes, out);
+  if (type == "CacheCoverage") return roundtrip<CacheCoverage>(bytes, out);
   if (type == "LayerErrorList") return roundtrip<LayerErrorList>(bytes, out);
   if (type == "JobList") return roundtrip<JobList>(bytes, out);
   if (type == "RenderQueueState") return roundtrip<RenderQueueState>(bytes, out);

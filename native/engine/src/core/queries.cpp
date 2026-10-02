@@ -1111,6 +1111,11 @@ struct Q {
   api::QueryResult operator()(const api::GetRenderStats&) const {
     return query_result_for<api::GetRenderStats>(c.renderStats());
   }
+  api::QueryResult operator()(const api::GetCacheCoverage& q) const {
+    if (q.comp) require_comp(d, *q.comp);
+    if (!c.cacheCoverage) return query_result_for<api::GetCacheCoverage>(api::CacheCoverage{});
+    return query_result_for<api::GetCacheCoverage>(c.cacheCoverage(q.comp));
+  }
   api::QueryResult operator()(const api::GetLayerErrors& q) const {
     if (q.comp) require_comp(d, *q.comp);
     // D5: the set the frame builder last announced (a UI that subscribed after

@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "frame_cache.hpp"
+#include "frame_scene.hpp"
+#include "onion_skin.hpp"
 #include "gpu.hpp"
 
 using namespace premation;
@@ -172,6 +174,33 @@ TEST_CASE("frame cache: storing an existing key refreshes it without a second co
   submit(*gpu, enc);
   CHECK(cache.stats().stores == 1);
   CHECK(cache.stats().entries == 1);
+}
+
+TEST_CASE("cached frame indices coalesce into half-open ranges", "[d4]") {
+  const auto ranges = coalesce_frame_indices({3, 1, 2, 2, 5});
+  REQUIRE(ranges.size() == 2);
+  CHECK(ranges[0] == std::pair<std::int64_t, std::int64_t>{1, 4});
+  CHECK(ranges[1] == std::pair<std::int64_t, std::int64_t>{5, 6});
+  CHECK(coalesce_frame_indices({}).empty());
+}
+
+TEST_CASE("onion skins: farthest first, past warm and future cool", "[d4]") {
+  OnionPlanSettings on;
+  on.before = 2;
+  on.after = 2;
+  on.step = 1;
+  on.opacity = 0.5;
+  on.colorize = true;
+  const auto plan = onion_skin_plan(10, on, 0, 100);
+  REQUIRE(plan.size() == 4);
+  CHECK(plan[0].frame == 8);
+  CHECK(plan[1].frame == 12);
+  CHECK(plan[2].frame == 9);
+  CHECK(plan[3].frame == 11);
+  CHECK(plan[0].tintR > plan[0].tintB);
+  CHECK(plan[1].tintB > plan[1].tintR);
+  CHECK(plan[2].opacity > plan[0].opacity);
+  CHECK(onion_skin_plan(10, OnionPlanSettings{}, 0, 100).empty());
 }
 
 TEST_CASE("frame cache: the machine budget is sane", "[d4]") {
