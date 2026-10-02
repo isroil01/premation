@@ -161,6 +161,25 @@ interface AnimState {
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
+/**
+ * The informational row `transform`, derived the way the stored node's is
+ * (SceneGraph's node view): the last `x` / `y` / `rotation` across the
+ * components, scale 1 — never the literal's own `transform` field, which
+ * builders leave at a placeholder once they have written the component.
+ */
+function derivedTransform(components: readonly FragmentComponent[]): FragmentTransform {
+  let x = 0;
+  let y = 0;
+  let rotation = 0;
+  for (const c of components) {
+    const p = c.props;
+    if (finite(p.x)) x = p.x;
+    if (finite(p.y)) y = p.y;
+    if (finite(p.rotation)) rotation = p.rotation;
+  }
+  return { position: { x, y }, rotation, scale: { x: 1, y: 1 } };
+}
+
 /** Deep copy of plain JSON data (the fragment's own copy of what callers hand in). */
 function clone<T>(v: T): T {
   return v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T);
@@ -203,7 +222,9 @@ export function decodeFragmentLayers(f: DocumentFragment): FragmentLayer[] {
 }
 
 /** A node literal `addChild` takes (SceneGraph's SceneNode shape; `parent` / `children` are ignored). */
-export type FragmentNodeInput = Omit<FragmentRow, 'parent' | 'children' | 'transform' | 'visible' | 'locked'> & {
+export type FragmentNodeInput = Omit<FragmentRow, 'name' | 'parent' | 'children' | 'transform' | 'visible' | 'locked'> & {
+  /** Absent = the id (SceneGraph's rule). */
+  name?: string;
   transform?: FragmentTransform;
   visible?: boolean;
   locked?: boolean;
@@ -303,15 +324,12 @@ export class FragmentBuilder {
     if (this.rows.has(node.id) || this.roots.has(node.id)) throw new Error(`fragment: duplicate layer id '${node.id}'`);
     const nested = parent !== null && this.rows.has(parent);
     const components = clone(node.components ?? []).map((c) => ({ id: c.id, type: c.type, props: c.props ?? {} }));
-    const t = components.find((c) => c.type === 'Transform')?.props;
     const row: FragmentRow = {
       id: node.id,
       name: typeof node.name === 'string' ? node.name : node.id,
       parent: nested ? parent : null,
       children: [],
-      transform: node.transform
-        ? clone(node.transform)
-        : { position: { x: finite(t?.x) ? t.x : 0, y: finite(t?.y) ? t.y : 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+      transform: derivedTransform(components),
       components,
       visible: node.visible !== false,
       locked: node.locked === true,
@@ -394,6 +412,11 @@ export class FragmentBuilder {
     }
     if (value === undefined) delete fx.props[key];
     else fx.props[key] = clone(value);
+  }
+
+  /** SceneGraph's spelling of {@link setFx} (`setFxKey`), so a builder written against a {@link LayerSink} lays into either. */
+  setFxKey(id: string, key: string, value: unknown): void {
+    this.setFx(id, key, value);
   }
 
   // ── animation ───────────────────────────────────────────────────────

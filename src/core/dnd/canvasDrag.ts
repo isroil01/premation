@@ -9,7 +9,7 @@
  * the viewport gates the drop on the key alone and only parses on drop.
  */
 
-import type { ShapeKind } from '@core/scene/sceneInsert';
+import type { ShapeKind } from '@core/scene/layerBuilders';
 import type { EffectType } from '@core/inspector/effectCatalog';
 
 export const CANVAS_DRAG_MIME = 'application/x-motion-drag';

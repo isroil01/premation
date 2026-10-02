@@ -41,16 +41,13 @@ import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { compScreenRect } from './compScreenRect';
 import { hasCanvasDrag, readCanvasDrag } from '@core/dnd/canvasDrag';
-import {
-  insertShape,
-  insertText,
-  setNodeWorldPosition,
-} from '@core/scene/sceneInsert';
+import { insertShapeEdit, insertTextEdit } from '@/engine-client/insertEdits';
+import { insertFragment } from '@/engine-client/insertFragment';
 import { EmptyCompositionView } from './EmptyCompositionView';
 import { importBrowserFilesEdit } from '@layout/Assets/assetEdits';
 import { insertMediaEdit, newCompFromFootageEdit } from './footageEdits';
 import { insertCursorItem } from '@core/library/cursorLibrary';
-import { insertUiComponent } from '@core/library/uiKitLibrary';
+import { buildUiComponent } from '@core/library/uiKitLibrary';
 import { buildMographItem, previewMographItem } from '@core/library/mographLibrary';
 import { getTransitionItem } from '@core/library/transitionLibrary';
 import { applyTransitionEdit } from '@layout/EditorLayout/transitionInsertEdits';
@@ -498,22 +495,15 @@ export function WorkspaceViewport({
     const world = controller.ws.screenToWorld(local);
     const comp = activeCompIdNow() ?? 'comp_root';
 
-    // Library and footage inserts: the builder + its placement under the cursor run
-    // OFF-document and land as ONE pasteLayers entry (offDocument.ts), selected.
+    // Library and footage inserts: the builder lays its layers, placed under the
+    // cursor (a top-level layer's position IS its comp position), into a fragment
+    // that lands as ONE pasteLayers entry, selected (engine-client/insertFragment.ts).
     switch (payload.kind) {
       case 'shape':
-        void insertBuiltLayers(`Insert ${payload.label}`, comp, () => {
-          insertShape(payload.primitive, payload.label);
-          const id = useSelectionStore.getState().ids[0];
-          if (id) setNodeWorldPosition(id, world.x, world.y);
-        });
+        void insertShapeEdit(payload.primitive, payload.label, world, `Insert ${payload.label}`, { comp });
         break;
       case 'text':
-        void insertBuiltLayers(`Insert ${payload.label}`, comp, () => {
-          insertText(payload.label, payload.fontSize, payload.weight, payload.extra ?? {});
-          const id = useSelectionStore.getState().ids[0];
-          if (id) setNodeWorldPosition(id, world.x, world.y);
-        });
+        void insertTextEdit(payload.label, payload.fontSize, payload.weight, payload.extra ?? {}, world, `Insert ${payload.label}`, { comp });
         break;
       case 'asset': {
         // AE Alt-drag: REPLACE the source of the layer under the pointer (or
@@ -542,10 +532,8 @@ export function WorkspaceViewport({
       case 'component-preset': {
         const preset = UI_COMPONENT_PRESETS.find((p) => p.id === payload.presetId);
         if (preset) {
-          void insertBuiltLayers(`Insert ${preset.label}`, comp, () => {
-            const gid = preset.insert();
-            if (gid) setNodeWorldPosition(gid, world.x, world.y);
-          });
+          // The group lands on the drop point (its parts are relative to it).
+          void insertFragment(`Insert ${preset.label}`, (b, f) => preset.build(b, f, world), { comp });
         }
         break;
       }
@@ -579,7 +567,7 @@ export function WorkspaceViewport({
         void insertBuiltLayers('Insert Cursor', comp, () => insertCursorItem(payload.cursorId, world.x, world.y));
         break;
       case 'uikit':
-        void insertBuiltLayers('Insert UI Component', comp, () => insertUiComponent(payload.componentId, world.x, world.y));
+        void insertFragment('Insert UI Component', (b, f) => buildUiComponent(b, f, payload.componentId, world.x, world.y), { comp });
         break;
       case 'mograph': {
         const mgId = payload.mographId;

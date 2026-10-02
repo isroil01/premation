@@ -35,7 +35,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useComponentStore } from '@stores/componentStore';
 import { useUIStore } from '@stores/uiStore';
 import { getEventBus } from '@core/events/EventBus';
-import { insertShape, insertText } from '@core/scene/sceneInsert';
+import { insertShapeEdit, insertTextEdit } from '@/engine-client/insertEdits';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
@@ -202,9 +202,9 @@ export function ComponentsPanel(): JSX.Element {
 
 export function ShapesPanel(): JSX.Element {
   const handleShapeInsert = (preset: typeof SHAPE_PRESETS[number]) => {
-    // The shape builder (outline, tangents, stroke, comp-scaled placement) runs off-document →
-    // ONE pasteLayers entry (offDocument.ts).
-    void insertBuiltLayers(`Insert ${preset.label}`, (activeCompIdNow() ?? 'comp_root'), () => insertShape(preset.primitive, preset.label));
+    // The shape builder (outline, tangents, stroke, comp-scaled placement) lays a
+    // fragment → ONE pasteLayers entry (engine-client/insertEdits.ts).
+    void insertShapeEdit(preset.primitive, preset.label);
   };
 
   return (
@@ -235,9 +235,9 @@ export function ShapesPanel(): JSX.Element {
 
 export function TextPanel(): JSX.Element {
   const handleTextInsert = (preset: typeof TEXT_PRESETS[number]) => {
-    // The text preset builder (size, weight, style extras, placement) runs off-document →
-    // ONE pasteLayers entry (offDocument.ts).
-    void insertBuiltLayers(`Insert ${preset.label}`, (activeCompIdNow() ?? 'comp_root'), () => insertText(preset.label, preset.fontSize, preset.weight, (preset as any).extra ?? {}));
+    // The text preset builder (size, weight, style extras, placement) lays a
+    // fragment → ONE pasteLayers entry (engine-client/insertEdits.ts).
+    void insertTextEdit(preset.label, preset.fontSize, preset.weight, (preset as { extra?: Record<string, unknown> }).extra ?? {});
   };
 
   return (

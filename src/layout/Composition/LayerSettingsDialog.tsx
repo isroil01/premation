@@ -17,14 +17,14 @@ import { useUIStore } from '@stores/uiStore';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import {
   DEFAULT_SOLID_COLOR,
-  buildSolidLayer,
   sanitizeLayerSize,
   type LayerSettingsKind,
   type LayerSettingsValues,
 } from '@core/scene/layerSettings';
 import { mirrorLayerSettings, mirrorNextSolidName } from '@core/mirror/layerSettings';
 import { cn } from '@utils/cn';
-import { insertBuiltLayers } from '@core/engine/offDocument';
+import { buildSettingsSolid } from '@core/scene/layerBuilders';
+import { insertFragment } from '@/engine-client/insertFragment';
 import { layerSettingsEdit } from './compositionEdits';
 import styles from './LayerSettingsDialog.module.css';
 
@@ -70,10 +70,9 @@ function LayerSettingsBody({ target, kind, initial, close }: BodyProps): JSX.Ele
         }
       });
     } else {
-      // The New Solid builder (comp-sized, centred, colour, name, size) runs off-document and
-      // lands as ONE pasteLayers entry, selected (offDocument.ts). B4-kept: `buildSolidLayer` is that builder —
-      // a write into the scratch graph, not a display read.
-      void insertBuiltLayers('New Solid', activeCompIdNow() ?? 'comp_root', () => buildSolidLayer(values));
+      // The New Solid builder (comp-sized, centred, colour, name, size) lays a fragment that
+      // lands as ONE pasteLayers entry, selected (engine-client/insertFragment.ts).
+      void insertFragment('New Solid', (b, f) => buildSettingsSolid(b, f, values), { comp: activeCompIdNow() ?? 'comp_root' });
     }
     close();
   };

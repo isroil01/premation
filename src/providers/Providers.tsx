@@ -15,7 +15,6 @@ import {
   applyPreferencesToDocument,
   usePreferenceStore,
 } from '@stores/preferenceStore';
-import { insertBuiltLayers } from '@core/engine/offDocument';
 import { isLayer } from '@core/mirror/docFacts';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -124,7 +123,7 @@ import { PresentationMode } from '@layout/Presentation/PresentationMode';
 import { openPalette } from '@stores/commandPaletteStore';
 import { focusNavigationClaimedNow } from '@core/commands/focusContext';
 import { isNativeMenuActionId } from '@layout/Menu/nativeMenuTemplate';
-import { insertPrimitive, insert3DPrimitive } from '@core/scene/sceneInsert';
+import { insertPrimitiveEdit, insert3DPrimitiveEdit } from '@/engine-client/insertEdits';
 import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
 import { openSolidSettings } from '@layout/Composition/LayerSettingsDialog';
 import { openCameraDialog, openLightDialog } from '@layout/Workspace/SceneInsertDialogs';
@@ -786,8 +785,8 @@ function buildPrimitive3DCommands(): ReadonlyArray<Command> {
     // active comp root itself.
     enabled: () => true,
     execute: () => {
-      // Built off-document, inserted as ONE pasteLayers entry.
-      void insertBuiltLayers(`New ${label}`, activeCompIdNow() ?? 'comp_root', () => insert3DPrimitive(id)).then((ids) => {
+      // Built as a fragment, inserted as ONE pasteLayers entry.
+      void insert3DPrimitiveEdit(id, undefined, `New ${label}`, { comp: activeCompIdNow() ?? 'comp_root' }).then((ids) => {
         if (ids && ids.length > 0) notify(`${label} added`, 'success');
       });
     },
@@ -1811,7 +1810,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 't', meta: true, alt: true, shift: true },
       enabled: () => true,
       // The insert (pointer placement, comp-scaled size) runs off-document → ONE pasteLayers entry.
-      execute: () => { void insertBuiltLayers('New Text Layer', (activeCompIdNow() ?? 'comp_root'), () => insertPrimitive('text', 'Text')); },
+      execute: () => { void insertPrimitiveEdit('text', 'Text', 'New Text Layer', { comp: activeCompIdNow() ?? 'comp_root' }); },
     },
     {
       id: asCommandId('layer.newSolid'),

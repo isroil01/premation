@@ -28,7 +28,7 @@ import { toolShortcut, toolLabelWithShortcut } from './toolShortcuts';
 import { useElementWidth } from './useElementWidth';
 import { collapseFor } from './toolbarCollapse';
 import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
-import { insertPrimitive, insert3DPrimitive, insert3DText } from '@core/scene/sceneInsert';
+import { insertPrimitiveEdit, insert3DPrimitiveEdit, insert3DTextEdit } from '@/engine-client/insertEdits';
 import { insertMediaEdit } from '@layout/Workspace/footageEdits';
 import { typewriterEdit } from '@layout/Text/textEdits';
 import { TEXT_RIGS, addExpressionControlEdit, insertImageSequenceEdit, textRigEdit } from './topNavEdits';
@@ -36,7 +36,6 @@ import { openCameraDialog, openLightDialog, openPrimitiveDialog } from '@layout/
 import { openSolidSettings } from '@layout/Composition/LayerSettingsDialog';
 import { useGuidesStore } from '@stores/guidesStore';
 import { importLottieFileEdit } from '@layout/EditorLayout/lottieInsertEdits';
-import { insertBuiltLayers } from '@core/engine/offDocument';
 import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets } from '@core/animation/animationPresets';
@@ -723,8 +722,8 @@ export function TopNav(): JSX.Element {
                 }
                 items={[
                   // The shape / text inserts (pointer placement, comp-scaled size) run off-document → ONE pasteLayers entry.
-                  { type: 'item', id: 'new-shape', label: 'Shape Layer', icon: 'shape', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New Shape Layer', t.comp, () => insertPrimitive('shape', 'Shape')); } },
-                  { type: 'item', id: 'new-text', label: 'Text Layer', icon: 'type', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New Text Layer', t.comp, () => insertPrimitive('text', 'Text')); } },
+                  { type: 'item', id: 'new-shape', label: 'Shape Layer', icon: 'shape', onSelect: () => { const t = activeInsertTarget(); if (t) void insertPrimitiveEdit('shape', 'Shape', 'New Shape Layer', { comp: t.comp }); } },
+                  { type: 'item', id: 'new-text', label: 'Text Layer', icon: 'type', onSelect: () => { const t = activeInsertTarget(); if (t) void insertPrimitiveEdit('text', 'Text', 'New Text Layer', { comp: t.comp }); } },
                   { type: 'item', id: 'new-solid', label: 'Solid…', icon: 'solid', onSelect: () => openSolidSettings({ mode: 'new' }) },
                   { type: 'separator' },
                   { type: 'item', id: 'new-group', label: 'Group', icon: 'layers', onSelect: () => { void createLayerEdit('group', { name: 'Group', label: 'New Group' }); } },
@@ -754,10 +753,10 @@ export function TopNav(): JSX.Element {
                   { type: 'item', id: 'new-particle', label: 'Particle System', icon: 'sparkles', onSelect: () => { void createLayerEdit('particle', { name: 'Particles 1', label: 'New Particle System' }); } },
                   { type: 'separator' },
                   // Built off-document and inserted as ONE pasteLayers entry (like insertShape).
-                  { type: 'item', id: 'new-3d-text', label: '3D Extruded Text', icon: 'text-3d', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New 3D Text', t.comp, () => insert3DText('3D TEXT')); } },
-                  { type: 'item', id: 'new-3d-cube', label: '3D Cube', icon: 'cube', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New 3D Cube', t.comp, () => insert3DPrimitive('cube')); } },
-                  { type: 'item', id: 'new-3d-sphere', label: '3D Sphere', icon: 'sphere', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New 3D Sphere', t.comp, () => insert3DPrimitive('sphere')); } },
-                  { type: 'item', id: 'new-3d-cylinder', label: '3D Cylinder', icon: 'cylinder', onSelect: () => { const t = activeInsertTarget(); if (t) void insertBuiltLayers('New 3D Cylinder', t.comp, () => insert3DPrimitive('cylinder')); } },
+                  { type: 'item', id: 'new-3d-text', label: '3D Extruded Text', icon: 'text-3d', onSelect: () => { const t = activeInsertTarget(); if (t) void insert3DTextEdit('3D TEXT', 'New 3D Text', { comp: t.comp }); } },
+                  { type: 'item', id: 'new-3d-cube', label: '3D Cube', icon: 'cube', onSelect: () => { const t = activeInsertTarget(); if (t) void insert3DPrimitiveEdit('cube', undefined, 'New 3D Cube', { comp: t.comp }); } },
+                  { type: 'item', id: 'new-3d-sphere', label: '3D Sphere', icon: 'sphere', onSelect: () => { const t = activeInsertTarget(); if (t) void insert3DPrimitiveEdit('sphere', undefined, 'New 3D Sphere', { comp: t.comp }); } },
+                  { type: 'item', id: 'new-3d-cylinder', label: '3D Cylinder', icon: 'cylinder', onSelect: () => { const t = activeInsertTarget(); if (t) void insert3DPrimitiveEdit('cylinder', undefined, 'New 3D Cylinder', { comp: t.comp }); } },
                   // The parametrised route to the same family, plus the shapes a
                   // fixed default cannot express (a torus IS its ring/tube ratio).
                   { type: 'item', id: 'new-3d-primitive', label: '3D Primitive…', icon: 'sphere', onSelect: () => openPrimitiveDialog() },

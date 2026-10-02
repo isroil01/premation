@@ -12,7 +12,12 @@
  * sub-layers in the Scene panel to customize colors or text labels.
  */
 
-import { insertImageNode, insertSvgShapeGroup } from '@core/scene/sceneInsert';
+import { buildImageNode, buildSvgIconGroup } from '@core/scene/layerBuilders';
+import { legacyFrame, legacySink } from '@core/scene/sceneInsert';
+import { bumpScene } from '@stores/sceneStore';
+import { useSelectionStore } from '@stores/selectionStore';
+import type { LayerSink } from '@/engine-client/layerSink';
+import type { InsertFrame } from '@/engine-client/insertFragment';
 
 export type UiCategory = 'buttons' | 'inputs' | 'toggles' | 'feedback' | 'containers' | 'devices';
 
@@ -324,13 +329,27 @@ export function updateUiComponentSvg(itemSvg: string, fill?: string, textContent
  * Double-clicking or selecting sub-layers in the Scene panel allows customization.
  */
 export function insertUiComponent(id: string, x?: number, y?: number): string | null {
+  const made = buildUiComponent(legacySink(), legacyFrame(), id, x, y);
+  if (made) {
+    useSelectionStore.getState().set([made]);
+    bumpScene();
+  }
+  return made;
+}
+
+/**
+ * {@link insertUiComponent}'s layers laid into `sink` under `frame.comp`;
+ * returns the one layer to select (the group, or the image fallback), null
+ * for an unknown id.
+ */
+export function buildUiComponent(sink: LayerSink, frame: InsertFrame, id: string, x?: number, y?: number): string | null {
   const item = BY_ID.get(id);
   if (!item) return null;
 
   // Insert as an editable vector shape group assembly.
   // Every sub-layer (card background, text label, icon, button) becomes a separate
   // editable node under the Master Group body!
-  const groupId = insertSvgShapeGroup(item.svg, item.name, {
+  const groupId = buildSvgIconGroup(sink, frame, item.svg, item.name, {
     x,
     y,
     targetSize: Math.max(item.width, item.height, 320),
@@ -338,7 +357,7 @@ export function insertUiComponent(id: string, x?: number, y?: number): string | 
   if (groupId) return groupId;
 
   // Fallback to high-fidelity vector SVG image node if SVG lacks parsed vector paths
-  return insertImageNode({
+  return buildImageNode(sink, frame, {
     name: item.name,
     src: `data:image/svg+xml,${encodeURIComponent(item.svg)}`,
     width: item.width,

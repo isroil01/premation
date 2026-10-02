@@ -2,12 +2,11 @@
  * The panel's job, end to end: mark a range with the keyboard, press Insert,
  * and get THAT range in the comp.
  *
- * Deliberately not mocked at the seam that would make it trivial. The only
- * fake is `insertMedia` — which fits, PAR-corrects and routes by file type,
- * none of which is this panel's business — and it keeps the one contract the
- * ops depend on: it adds a footage node and selects it. Everything between the
- * `I` key and `Clip.sourceIn` is the real thing: the store's clamping, the
- * seconds → frames conversion, and the trim order.
+ * Deliberately not mocked at the seam that would make it trivial: the media
+ * insert is the real one (a fragment pasted through the engine, the new layer
+ * selected). Everything between the `I` key and `Clip.sourceIn` is the real
+ * thing: the store's clamping, the seconds → frames conversion, and the trim
+ * order.
  *
  * The JKL shuttle is asserted through the store's `playing` flag rather than
  * through the media element, because jsdom's `HTMLMediaElement.play` is a
@@ -26,31 +25,11 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useAssetStore } from '@stores/assetStore';
 import { claimsChord } from '@core/commands/ShortcutManager';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
-import { insertMedia } from '@core/scene/sceneInsert';
 import type { CommandServices } from '@core/commands/Command';
 import type { ImportedAsset } from '@stores/assetStore';
 import type { SceneNode } from '@core/types';
 
-jest.mock('@core/scene/sceneInsert', () => {
-  let seq = 0;
-  return {
-    insertMedia: jest.fn(async (asset: { id: string; name: string; src: string }) => {
-      const graph = jest.requireActual('@core/scene/DefaultSceneGraph').default;
-      const { useSelectionStore: sel } = jest.requireActual('@stores/selectionStore');
-      const { SCENE_KIND_PROP: KIND } = jest.requireActual('@core/scene/seedDefaultScene');
-      const id = `layer_${asset.id}_${++seq}`;
-      graph.addChild('comp_root', {
-        id, name: asset.name, parent: 'comp_root', children: [], visible: true, locked: false,
-        transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-        components: [{
-          id: `${id}_t`, type: 'Transform',
-          props: { [KIND]: 'video', src: asset.src, assetId: asset.id, x: 0, y: 0, width: 64, height: 48 },
-        }],
-      });
-      sel.getState().set([id]);
-    }),
-  };
-});
+
 
 const ASSET: ImportedAsset = {
   id: 'a1', name: 'clip.mp4', type: 'video', src: 'blob:nowhere/clip', size: 1,
@@ -64,7 +43,6 @@ function resetScene(): void {
 }
 
 beforeEach(() => {
-  (insertMedia as jest.Mock).mockClear();
   setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
   getTimelineController().reset();
   resetScene();
@@ -144,9 +122,6 @@ describe('Insert at playhead', () => {
       fireEvent.click(screen.getByText('Insert at playhead'));
       await Promise.resolve();
     });
-
-    expect(insertMedia).toHaveBeenCalledTimes(1);
-    expect((insertMedia as jest.Mock).mock.calls[0]?.[0]).toMatchObject({ id: 'a1' });
 
     await waitFor(() => {
       // The node the insert created — by SELECTION, not by a guessed id: the

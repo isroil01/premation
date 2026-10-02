@@ -20,8 +20,8 @@ import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
 import { settingsWorld } from '@core/mirror/compFacts';
 import { nextDeviceNameIn } from '@core/mirror/deviceNames';
 import { Project3D } from '@motion/scene';
-import { insertCamera, insertLight, insert3DPrimitive, type Primitive3DKind } from '@core/scene/sceneInsert';
-import { insertBuiltLayers } from '@core/engine/offDocument';
+import type { Primitive3DKind } from '@core/scene/layerBuilders';
+import { insertCameraEdit, insertLightEdit, insert3DPrimitiveEdit } from '@/engine-client/insertEdits';
 import {
   defaultPrimitiveSpec,
   isPrimitiveMeshType,
@@ -61,8 +61,8 @@ function CameraDialog({ close }: { close: () => void }): JSX.Element {
 
   const create = (): void => {
     // The camera builder (two-node POI, lens → focal length, placement) runs off-document and
-    // lands as ONE pasteLayers entry (offDocument.ts).
-    void insertBuiltLayers('New Camera', targetComp(), () => insertCamera({ name, focalLength: focalPx, twoNode }));
+    // lands as ONE pasteLayers entry (engine-client/insertEdits.ts).
+    void insertCameraEdit({ name, focalLength: focalPx, twoNode }, 'New Camera', { comp: targetComp() });
     close();
   };
 
@@ -142,9 +142,9 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
 
   const create = (): void => {
     // The light builder (type, colour, intensity, cone, shadows, environment sky) runs
-    // off-document and lands as ONE pasteLayers entry. AE's New Light makes exactly the one
+    // into a fragment and lands as ONE pasteLayers entry. AE's New Light makes exactly the one
     // light asked for — no Ambient Fill beside it (the silent insert keeps adding one).
-    void insertBuiltLayers('New Light', targetComp(), () => insertLight({
+    void insertLightEdit({
       name,
       type,
       intensity,
@@ -154,7 +154,7 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
       castShadows: type === 'environment' ? false : castShadows,
       envPreset: type === 'environment' ? envPreset : undefined,
       ambientFill: false,
-    }));
+    }, 'New Light', { comp: targetComp() });
     close();
   };
 
@@ -306,7 +306,7 @@ function PrimitiveDialog({ close }: { close: () => void }): JSX.Element {
 
   const create = (): void => {
     // Built off-document, inserted as ONE pasteLayers entry.
-    void insertBuiltLayers('New 3D Primitive', activeCompIdNow() ?? 'comp_root', () => insert3DPrimitive(type, mesh ? spec : undefined));
+    void insert3DPrimitiveEdit(type, mesh ? spec : undefined, 'New 3D Primitive', { comp: activeCompIdNow() ?? 'comp_root' });
     close();
   };
 

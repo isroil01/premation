@@ -21,20 +21,15 @@
 
 import type { Command, DocumentFragment, Value } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
-import { edit, reportEngineError } from '@core/engine/uiEdits';
-import { insertBuiltLayers } from '@core/engine/offDocument';
-import { graph as docGraph } from '@core/engine/doc';
+import { reportEngineError } from '@core/engine/uiEdits';
 import { apiParentOf, isLayer } from '@core/mirror/docFacts';
 import { catalogFor, isAnimated, readStatic } from '@core/engine/props';
 import { copyKeyframes } from '@core/animation/keyframeClipboard';
 import { readOsClipboardSvg } from '@core/commands/clipboard';
 import { copyPathFromSelection, pastePathEdit } from '@core/workspace/pathCommands';
 import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
-import { insertSvgDocument } from '@core/scene/sceneInsert';
-import { isAnimatedSvg, scanSvgCapabilities } from '@core/svg/svgCapabilities';
+import { insertSvgDocumentEdit } from '@/engine-client/insertEdits';
 import { documentMirror } from '@stores/documentMirror';
-import { useUIStore } from '@stores/uiStore';
-import { buildSvgLayerFragment } from '@/engine-client/svgFragment';
 import { deleteKeyframesUi, pasteKeyframesAt } from '@layout/Timeline/keyframeEdits';
 import { deleteSelectedLayersEdit } from '@layout/Workspace/layerMenuEdits';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
@@ -89,7 +84,7 @@ export async function copyEdit(): Promise<CopyKind> {
       return null;
     });
   // The copy's names, read now: the originals may be renamed or deleted before the paste.
-  const names = layers.map((id) => docGraph.getNode(id)?.name ?? '');
+  const names = layers.map((id) => documentMirror().layer(id)?.name ?? '');
   held = { kind: 'layers', fragment, names };
   return (await fragment) ? 'layers' : null;
 }
@@ -208,25 +203,13 @@ export async function pasteEdit(): Promise<PasteResult> {
 }
 
 /**
- * Paste an SVG document: a static one is ONE document layer laid into a
- * fragment by the engine client (engine-client/svgFragment.ts); an animated
- * one still takes the importer's router off-document (editable keyframes or a
- * Live SVG, sceneInsert.ts insertSvgDocument).
+ * Paste an SVG document through the importer's router, laid into a fragment
+ * (engine-client/insertEdits.ts): a static one is ONE document layer, an
+ * animated one editable keyframes or a Live SVG — exactly what dropping the
+ * file makes. One `pasteLayers` entry, selected.
  */
 async function pasteSvgDocument(comp: string, svg: string): Promise<string[] | null> {
-  const caps = scanSvgCapabilities(new DOMParser().parseFromString(svg, 'image/svg+xml'));
-  if (isAnimatedSvg(caps)) return insertBuiltLayers('Paste SVG', comp, () => insertSvgDocument(svg, 'Pasted SVG'));
-  const settings = documentMirror().comp(comp)?.settings;
-  const made = buildSvgLayerFragment(svg, 'Pasted SVG', { compWidth: settings?.width ?? 1920, compHeight: settings?.height ?? 1080, capabilities: caps });
-  if (!made) return null;
-  const res = await edit('Paste SVG', [{ type: 'pasteLayers', comp, fragment: made.built.fragment }]);
-  if (!res.ok) return null;
-  const ids = (res.value[0] as { layers?: string[] } | undefined)?.layers ?? [];
-  if (ids.length > 0) useSelectionStore.getState().set(ids);
-  if (made.warnings.length > 0) {
-    useUIStore.getState().notify({ level: 'warning', message: `“Pasted SVG”: ${made.warnings.join(' ')}`, durationMs: 7000 });
-  }
-  return ids;
+  return insertSvgDocumentEdit(svg, 'Pasted SVG', 'Paste SVG', { comp });
 }
 
 /** Forget what Copy took (tests). */

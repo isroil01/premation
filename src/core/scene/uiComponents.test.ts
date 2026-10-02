@@ -1,25 +1,31 @@
 /**
- * UI component presets — each insert should drop an editable GROUP of primitive
- * layers under the composition root, so the user can move/restyle/keyframe it.
+ * UI component presets — each builds an editable GROUP of primitive layers at
+ * the top of the composition (the app pastes it as one entry and selects the
+ * group), so the user can move/restyle/keyframe it. Laid into a fragment, a
+ * preset gives the same layers as laid into the page replica off-document
+ * (the build it replaced).
  */
 
 import { UI_COMPONENT_PRESETS } from './uiComponents';
-import defaultSceneGraph from './DefaultSceneGraph';
-import { useSelectionStore } from '@stores/selectionStore';
-import type { SceneNode } from '@core/types';
+import { legacyFrame, legacySink } from './sceneInsert';
+import { buildLayerFragment } from '@core/engine/offDocument';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { useCompositionStore } from '@stores/compositionStore';
+import { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import { insertFrame } from '@/engine-client/insertFragment';
+import { normalizeFragment } from '@/engine-client/__testHelpers__/fragmentParity';
 
-function seedRoot(): void {
-  defaultSceneGraph.clear();
-  defaultSceneGraph.addNode({
-    id: 'comp_root', name: 'Comp', parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [{ id: 'comp_root_m', type: 'group', props: { __kind: 'group' } }],
-  } as unknown as SceneNode);
-}
+let h: Harness & { engine: LocalEngine };
+beforeEach(async () => {
+  h = await setupAppEngine();
+});
+afterEach(async () => {
+  await h.dispose();
+});
 
 describe('UI component presets', () => {
-  beforeEach(seedRoot);
-
   it('exposes the expected preset set', () => {
     expect(UI_COMPONENT_PRESETS.map((p) => p.id)).toEqual(
       ['code-editor', 'browser', 'phone', 'card', 'button', 'chat', 'notification', 'chart',
@@ -28,19 +34,19 @@ describe('UI component presets', () => {
   });
 
   it.each(UI_COMPONENT_PRESETS.map((p) => [p.id, p] as const))(
-    'inserts "%s" as a selected group of editable layers',
+    'builds "%s" as one top-level group of editable layers (same as the off-document build)',
     (_id, preset) => {
-      const before = defaultSceneGraph.size;
-      const groupId = preset.insert();
-      // It grew the scene by several nodes (group + children).
-      expect(defaultSceneGraph.size).toBeGreaterThan(before + 2);
-      // The group is parented to the comp root and holds children.
-      const g = defaultSceneGraph.getNode(groupId);
-      expect(g).toBeDefined();
-      expect(g!.parent).toBe('comp_root');
-      expect(defaultSceneGraph.getChildren(groupId).length).toBeGreaterThanOrEqual(2);
-      // …and it's selected, ready to move/animate.
-      expect(useSelectionStore.getState().ids).toContain(groupId);
+      const b = new FragmentBuilder({ idPrefix: 'ui' });
+      const groupId = preset.build(b, insertFrame('comp_root'));
+      const built = b.build()!;
+      expect(built.tops).toEqual([groupId]);
+      expect(b.row(groupId).children.length).toBeGreaterThanOrEqual(2);
+      expect(built.layers.length).toBeGreaterThanOrEqual(3);
+
+      const legacy = buildLayerFragment('comp_root', () => preset.build(legacySink(), legacyFrame()));
+      const c = useCompositionStore.getState().comp();
+      const frames = Math.round(c.durationSeconds * c.fps);
+      expect(normalizeFragment(built.fragment, frames)).toEqual(normalizeFragment(legacy!.fragment, frames));
     },
   );
 });

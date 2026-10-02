@@ -29,10 +29,11 @@
 import { FLICKS_PER_SECOND, type Command, type CompSettingsPatch, type LayerKind } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { reportEngineError } from '@core/engine/uiEdits';
-import { buildLayerFragment, type BuiltLayers } from '@core/engine/offDocument';
 import { layerIdsOfComp } from '@core/mirror/docFacts';
 import { compTime } from '@core/engine/propRefs';
-import { insertMedia, insertSvgDocument, setNodeWorldPosition } from '@core/scene/sceneInsert';
+import { buildMedia } from '@core/scene/layerBuilders';
+import { FragmentBuilder, type BuiltFragment } from '@/engine-client/fragmentBuilder';
+import { insertFrame, pastedIds, type InsertFrame } from '@/engine-client/insertFragment';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { mirrorPristineCompToAdopt } from '@core/mirror/compFacts';
 import { documentMirror } from '@stores/documentMirror';
@@ -89,58 +90,51 @@ async function prepareMedia(assets: readonly ImportedAsset[]): Promise<PreparedM
 }
 
 interface BuiltMedia {
-  built: BuiltLayers;
-  /** Per asset, in order: the scratch id of the layer the router left selected for it. */
+  built: BuiltFragment;
+  /** Per asset, in order: the scratch id of the layer the router made for it (the one to select). */
   placed: string[];
 }
 
 /**
- * Run the media router off-document into `comp` (which must be the active
- * composition: the router fits against it). Throws when the build is not a
- * pure insert (`buildLayerFragment`). Null when nothing was built.
+ * Lay the media router (sceneInsert.ts `buildMedia`: contain-fit, PAR, SVG
+ * routing, audio layers) into a fragment for `comp`, fitted against `frame`
+ * (default: the composition's, from the mirror). `at` lands the LAST asset's
+ * layer there (comp px). Null when nothing was built.
  */
-function buildMedia(comp: string, prepared: readonly PreparedMedia[], at?: { x: number; y: number }): BuiltMedia | null {
+function buildMediaFragment(
+  comp: string,
+  prepared: readonly PreparedMedia[],
+  at?: { x: number; y: number },
+  frame: InsertFrame = insertFrame(comp),
+): BuiltMedia | null {
   const unreadable: string[] = [];
   const placed: string[] = [];
-  const built = buildLayerFragment(comp, () => {
-    for (const { asset, svg } of prepared) {
-      if (svg !== null) {
-        const size = Math.max(asset.metadata?.width ?? 0, asset.metadata?.height ?? 0) || undefined;
-        if (!insertSvgDocument(svg, asset.name, { sizeHint: size })) unreadable.push(asset.name);
-      } else {
-        // Synchronous for every non-SVG asset (see insertMediaEdit): the node exists when
-        // this returns, inside the scratch run.
-        void insertMedia(asset);
-      }
-      // Every router insert selects what it created — the per-asset id (a failed insert
-      // leaves the previous selection, which the scratch map below drops).
-      const sel = useSelectionStore.getState().ids[0];
-      if (sel && !placed.includes(sel)) placed.push(sel);
+  const reports: Array<() => void> = [];
+  const b = new FragmentBuilder({ idPrefix: 'media' });
+  prepared.forEach(({ asset, svg }, i) => {
+    const made = buildMedia(b, frame, asset, svg, i === prepared.length - 1 ? at : undefined);
+    if (!made) {
+      unreadable.push(asset.name);
+      return;
     }
-    const last = useSelectionStore.getState().ids[0];
-    if (at && last) setNodeWorldPosition(last, at.x, at.y);
+    placed.push(made.id);
+    reports.push(made.report);
   });
   for (const name of unreadable) notifyUnreadable(name);
+  for (const report of reports) report();
+  const built = b.build();
   return built ? { built, placed } : null;
 }
 
-/** The one `pasteLayers` that lands a build. */
-function pasteOf(comp: string, built: BuiltLayers): Command {
-  return {
-    type: 'pasteLayers',
-    comp,
-    fragment: built.fragment,
-    index: built.index,
-    ...(built.parent ? { parent: built.parent } : {}),
-  } as Command;
+/** The one `pasteLayers` that lands a build (on top of the comp's stack). */
+function pasteOf(comp: string, built: BuiltFragment): Command {
+  return { type: 'pasteLayers', comp, fragment: built.fragment } as Command;
 }
 
 /** Scratch ids → the pasted layers' ids (pasteLayers returns them in fragment order). */
-function mapScratch(built: BuiltLayers, ids: readonly string[], scratch: readonly string[]): string[] {
-  const map = new Map(built.scratchIds.map((s, i) => [s, ids[i]]));
-  return scratch.map((s) => map.get(s)).filter((x): x is string => !!x);
+function mapScratch(built: BuiltFragment, ids: readonly string[], scratch: readonly string[]): string[] {
+  return pastedIds(built, ids, scratch);
 }
-
 export interface MediaInsertOptions {
   /** The undo entry's name (default "Insert <name>" / "Insert N Layers"). */
   label?: string;
@@ -187,7 +181,7 @@ export async function insertMediaEdit(
   const comp = activeCompIdNow() ?? documentMirror().compIds[0] ?? 'comp_root';
   let media: BuiltMedia | null;
   try {
-    media = buildMedia(comp, prepared, opts.at);
+    media = buildMediaFragment(comp, prepared, opts.at);
   } catch (err) {
     reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
     return null;
@@ -234,7 +228,7 @@ export async function insertMediaEdit(
       ok = false;
     } else {
       ids = (res.value as { layers?: string[] }).layers ?? [];
-      const more = follow(selectedOf(built, ids), ids);
+      const more = follow(selectedOf(media, ids), ids);
       if (more.length > 0) {
         const r = await client.batch(label, more);
         if (!r.ok) {
@@ -247,14 +241,14 @@ export async function insertMediaEdit(
     if (!closed.ok) reportEngineError(label, closed.error);
     if (!ok) return null;
   }
-  const sel = selectedOf(built, ids);
+  const sel = selectedOf(media, ids);
   if (sel.length > 0) useSelectionStore.getState().set(sel);
   return ids;
 }
 
 /** The new ids of the layers the builder left selected (else its top layers). */
-function selectedOf(built: BuiltLayers, ids: readonly string[]): string[] {
-  return mapScratch(built, ids, built.selected.length > 0 ? built.selected : built.tops);
+function selectedOf(media: BuiltMedia, ids: readonly string[]): string[] {
+  return mapScratch(media.built, ids, media.placed.length > 0 ? media.placed.slice(-1) : media.built.tops);
 }
 
 // ── New Comp from Footage ─────────────────────────────────────────────
@@ -452,7 +446,9 @@ export async function newCompFromClipsEdit(
   if (rest.length > 0) {
     let media: BuiltMedia | null;
     try {
-      media = buildMedia(comp, rest);
+      // Fitted against the new comp's own settings (the mirror may not have caught up inside the gesture).
+      const s = footageCompSettings(first);
+      media = buildMediaFragment(comp, rest, undefined, { ...insertFrame(comp), width: s.width, height: s.height, fps: s.fps, durationSeconds: s.durationSeconds });
     } catch (err) {
       return fail({ code: 'internal', message: err instanceof Error ? err.message : String(err) });
     }

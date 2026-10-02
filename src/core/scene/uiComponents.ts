@@ -1,26 +1,23 @@
 /**
  * uiComponents — one-click insertable UI mock-ups (browser, phone, card,
- * button, chat bubble, chart, notification). Each inserts a GROUP of ordinary
- * editable primitives (shape + text nodes) at the composition centre and
- * selects it, so the user can move it, restyle it, and keyframe it like any
- * other layer. These are the building blocks a designer needs to assemble a
- * SaaS-style ad by hand.
+ * button, chat bubble, chart, notification). Each builds a GROUP of ordinary
+ * editable primitives (shape + text nodes) at the composition centre, laid
+ * into a {@link LayerSink} (a fragment the caller pastes and selects), so the
+ * user can move it, restyle it, and keyframe it like any other layer. These
+ * are the building blocks a designer needs to assemble a SaaS-style ad by hand.
  *
  * Design language: one shared PALETTE, corner radii on a 6/10/16 rhythm,
  * realistic proportions (traffic lights are discs, status bars carry real
  * glyph clusters, charts have axes + gridlines + two series and a line).
  */
 
-import type { SceneNode, Component, Transform } from '@core/types';
-import defaultSceneGraph from './DefaultSceneGraph';
-import { activeCompRootId } from './activeComp';
+import type { Component, Transform } from '@core/types';
 import { SCENE_KIND_PROP } from './seedDefaultScene';
-import { bumpScene } from '@stores/sceneStore';
-import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
+import type { LayerSink } from '@/engine-client/layerSink';
+import type { InsertFrame } from '@/engine-client/insertFragment';
 
 let seq = 0;
-const uid = (p: string) => `${p}_${(seq += 1)}_${Math.random().toString(36).slice(2, 5)}`;
+const newUid = (p: string) => `${p}_${(seq += 1)}_${Math.random().toString(36).slice(2, 5)}`;
 
 const PALETTE = { ink: '#ffffff', sub: '#9aa3c0', accent: '#635bff', cyan: '#22d3ee', green: '#34d399', pink: '#f472b6', amber: '#fbbf24', panel: '#14141f', panelHi: '#1c1c2b', faint: 'rgba(255,255,255,0.06)' };
 const FAINT2 = 'rgba(255,255,255,0.12)';
@@ -29,95 +26,91 @@ const ACCENT_DIM = 'rgba(99,91,255,0.16)';
 function tf(x: number, y: number, rot = 0): Transform {
   return { position: { x, y }, rotation: rot, scale: { x: 1, y: 1 } };
 }
-function compCenter(): { cx: number; cy: number } {
-  const s = useCompositionStore.getState();
-  return { cx: (s.width ?? 1920) / 2, cy: (s.height ?? 1080) / 2 };
-}
+type At = { x: number; y: number };
 
-function rootId(): string {
-  return activeCompRootId();
-}
-
-/** A group container (structural, holds children so they move together).
- *  `'__root__'` resolves to the composition root. */
-function group(parent: string, name: string, x: number, y: number): string {
-  const p = parent === '__root__' ? rootId() : parent;
-  const id = uid('g');
-  const node: SceneNode = { id, name, parent: p, children: [], visible: true, locked: false, transform: tf(x, y),
-    components: [{ id: `${id}_m`, type: 'group', props: { [SCENE_KIND_PROP]: 'group' } }] } as unknown as SceneNode;
-  defaultSceneGraph.addChild(p, node);
-  return id;
+/** Where the mock-up's group goes: `at` (a canvas drop, comp px), else the comp centre. */
+function compCenter(frame: Pick<InsertFrame, 'width' | 'height'>, at?: At): { cx: number; cy: number } {
+  if (at) return { cx: at.x, cy: at.y };
+  return { cx: (frame.width ?? 1920) / 2, cy: (frame.height ?? 1080) / 2 };
 }
 
 interface ShapeOpts { radius?: number; rotation?: number; opacity?: number; extra?: Component[] }
 
-/** An editable rounded-rect shape with width/height + fill (relative to parent).
- *  The last argument accepts either extra components (legacy) or ShapeOpts. */
-function shape(parent: string, name: string, x: number, y: number, w: number, h: number, fill: string, extraOrOpts?: Component[] | ShapeOpts): string {
-  const opts: ShapeOpts = Array.isArray(extraOrOpts) ? { extra: extraOrOpts } : (extraOrOpts ?? {});
-  const id = uid('s');
-  const comps: Component[] = [
-    { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x, y, rotation: opts.rotation ?? 0, width: w, height: h, ...(opts.radius ? { cornerRadius: opts.radius } : {}) } },
-    { id: `${id}_s`, type: 'Style', props: { opacity: opts.opacity ?? 100, fill } },
-    ...(opts.extra ?? []),
-  ];
-  const node: SceneNode = { id, name, parent, children: [], visible: true, locked: false, transform: tf(x, y), components: comps } as unknown as SceneNode;
-  defaultSceneGraph.addChild(parent, node);
-  return id;
-}
+/**
+ * The drawing kit, laying into `sink`; `'__root__'` is the composition
+ * `root` (the mock's group goes there, its parts under the group).
+ */
+function kit(sink: LayerSink, root: string) {
+  /** A group container (structural, holds children so they move together). */
+  const group = (parent: string, name: string, x: number, y: number): string => {
+    const p = parent === '__root__' ? root : parent;
+    const id = newUid('g');
+    sink.addChild(p, { id, name, transform: tf(x, y),
+      components: [{ id: `${id}_m`, type: 'group', props: { [SCENE_KIND_PROP]: 'group' } }] });
+    return id;
+  };
 
-/** An editable ellipse (true circle when w === h). */
-function disc(parent: string, name: string, x: number, y: number, d: number, fill: string): string {
-  const id = uid('s');
-  const node: SceneNode = { id, name, parent, children: [], visible: true, locked: false, transform: tf(x, y),
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x, y, rotation: 0, width: d, height: d, shapeType: 'ellipse' } },
-      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill } },
-    ] } as unknown as SceneNode;
-  defaultSceneGraph.addChild(parent, node);
-  return id;
-}
+  /** An editable rounded-rect shape with width/height + fill (relative to parent).
+   *  The last argument accepts either extra components (legacy) or ShapeOpts. */
+  const shape = (parent: string, name: string, x: number, y: number, w: number, h: number, fill: string, extraOrOpts?: Component[] | ShapeOpts): string => {
+    const opts: ShapeOpts = Array.isArray(extraOrOpts) ? { extra: extraOrOpts } : (extraOrOpts ?? {});
+    const id = newUid('s');
+    const comps: Component[] = [
+      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x, y, rotation: opts.rotation ?? 0, width: w, height: h, ...(opts.radius ? { cornerRadius: opts.radius } : {}) } },
+      { id: `${id}_s`, type: 'Style', props: { opacity: opts.opacity ?? 100, fill } },
+      ...(opts.extra ?? []),
+    ];
+    sink.addChild(parent, { id, name, transform: tf(x, y), components: comps });
+    return id;
+  };
 
-function text(parent: string, content: string, x: number, y: number, size: number, weight = 600, fill = PALETTE.ink, align = 'left'): string {
-  const id = uid('t');
-  const node: SceneNode = { id, name: content, parent, children: [], visible: true, locked: false, transform: tf(x, y),
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'text', x, y, rotation: 0 } },
-      { id: `${id}_c`, type: 'Text', props: { content, fontSize: size, fontWeight: weight, opacity: 100, fill, align } },
-    ] } as unknown as SceneNode;
-  defaultSceneGraph.addChild(parent, node);
-  return id;
-}
+  /** An editable ellipse (true circle when w === h). */
+  const disc = (parent: string, name: string, x: number, y: number, d: number, fill: string): string => {
+    const id = newUid('s');
+    sink.addChild(parent, { id, name, transform: tf(x, y),
+      components: [
+        { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x, y, rotation: 0, width: d, height: d, shapeType: 'ellipse' } },
+        { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill } },
+      ] });
+    return id;
+  };
 
-/** A thin bar between two points — the segment primitive for line charts. */
-function segment(parent: string, name: string, x0: number, y0: number, x1: number, y1: number, thickness: number, fill: string): string {
-  const len = Math.hypot(x1 - x0, y1 - y0);
-  const rot = (Math.atan2(y1 - y0, x1 - x0) * 180) / Math.PI;
-  return shape(parent, name, (x0 + x1) / 2, (y0 + y1) / 2, len, thickness, fill, { rotation: rot, radius: thickness / 2 });
-}
+  const text = (parent: string, content: string, x: number, y: number, size: number, weight = 600, fill = PALETTE.ink, align = 'left'): string => {
+    const id = newUid('t');
+    sink.addChild(parent, { id, name: content, transform: tf(x, y),
+      components: [
+        { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'text', x, y, rotation: 0 } },
+        { id: `${id}_c`, type: 'Text', props: { content, fontSize: size, fontWeight: weight, opacity: 100, fill, align } },
+      ] });
+    return id;
+  };
 
-/** macOS traffic lights (real discs, correct order + spacing). */
-function trafficLights(parent: string, x: number, y: number): void {
-  disc(parent, 'Close', x, y, 16, PALETTE.pink);
-  disc(parent, 'Min', x + 28, y, 16, PALETTE.amber);
-  disc(parent, 'Max', x + 56, y, 16, PALETTE.green);
-}
+  /** A thin bar between two points — the segment primitive for line charts. */
+  const segment = (parent: string, name: string, x0: number, y0: number, x1: number, y1: number, thickness: number, fill: string): string => {
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    const rot = (Math.atan2(y1 - y0, x1 - x0) * 180) / Math.PI;
+    return shape(parent, name, (x0 + x1) / 2, (y0 + y1) / 2, len, thickness, fill, { rotation: rot, radius: thickness / 2 });
+  };
 
-/** Skeleton text line (rounded, faint). */
-function skel(parent: string, name: string, x: number, y: number, w: number, h = 18, fill = PALETTE.faint): string {
-  return shape(parent, name, x, y, w, h, fill, { radius: h / 2 });
-}
+  /** macOS traffic lights (real discs, correct order + spacing). */
+  const trafficLights = (parent: string, x: number, y: number): void => {
+    disc(parent, 'Close', x, y, 16, PALETTE.pink);
+    disc(parent, 'Min', x + 28, y, 16, PALETTE.amber);
+    disc(parent, 'Max', x + 56, y, 16, PALETTE.green);
+  };
 
-function finish(g: string): string {
-  useSelectionStore.getState().set([g]);
-  bumpScene();
-  return g;
+  /** Skeleton text line (rounded, faint). */
+  const skel = (parent: string, name: string, x: number, y: number, w: number, h = 18, fill = PALETTE.faint): string =>
+    shape(parent, name, x, y, w, h, fill, { radius: h / 2 });
+
+  return { group, shape, disc, text, segment, trafficLights, skel, uid: newUid };
 }
 
 // ── Component presets ─────────────────────────────────────────────────
 
-export function insertBrowserMock(): string {
-  const { cx, cy } = compCenter();
+export function insertBrowserMock(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, text, skel, trafficLights } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Browser', cx, cy);
   shape(g, 'Window', 0, 0, 900, 560, PALETTE.panel, { radius: 16 });
 
@@ -165,11 +158,12 @@ export function insertBrowserMock(): string {
   skel(g, 'Card B Line', 240, 128, 120, 12, FAINT2);
   disc(g, 'Card B Ring', 306, 186, 74, ACCENT_DIM);
   disc(g, 'Card B Core', 306, 186, 46, PALETTE.panelHi);
-  return finish(g);
+  return g;
 }
 
-export function insertPhoneMock(): string {
-  const { cx, cy } = compCenter();
+export function insertPhoneMock(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, text, skel } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Phone', cx, cy);
   shape(g, 'Body', 0, 0, 380, 780, '#0c0c14', { radius: 56 });
   shape(g, 'Screen', 0, 0, 348, 748, PALETTE.panel, { radius: 44 });
@@ -201,11 +195,12 @@ export function insertPhoneMock(): string {
   disc(g, 'Send', 136, 306, 46, PALETTE.accent);
   text(g, '➤', 136, 305, 18, 700, PALETTE.ink, 'center');
   shape(g, 'Home Indicator', 0, 358, 130, 5, FAINT2, { radius: 2.5 });
-  return finish(g);
+  return g;
 }
 
-export function insertCardMock(): string {
-  const { cx, cy } = compCenter();
+export function insertCardMock(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, text, skel } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Card', cx, cy);
   shape(g, 'Panel', 0, 0, 400, 420, PALETTE.panel, { radius: 20 });
   // Header: avatar + name/handle + menu dots.
@@ -230,33 +225,36 @@ export function insertCardMock(): string {
   text(g, '86', 10, 176, 14, 600, PALETTE.sub, 'left');
   disc(g, 'Share', 92, 176, 26, PALETTE.faint);
   text(g, '↗', 92, 175, 15, 700, PALETTE.sub, 'center');
-  return finish(g);
+  return g;
 }
 
-export function insertButtonMock(): string {
-  const { cx, cy } = compCenter();
+export function insertButtonMock(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, text } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Button', cx, cy);
   shape(g, 'Glow', 0, 6, 300, 84, 'rgba(99,91,255,0.35)', { radius: 42 });
   shape(g, 'Fill', 0, 0, 300, 84, PALETTE.accent, { radius: 42 });
   shape(g, 'Top Sheen', 0, -18, 268, 30, 'rgba(255,255,255,0.14)', { radius: 15 });
   text(g, 'Get started', -14, 0, 30, 700, PALETTE.ink, 'center');
   text(g, '→', 106, -1, 28, 700, PALETTE.ink, 'center');
-  return finish(g);
+  return g;
 }
 
-export function insertChatBubble(): string {
-  const { cx, cy } = compCenter();
+export function insertChatBubble(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, text } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Chat Bubble', cx, cy);
   shape(g, 'Bubble', 0, 0, 380, 96, PALETTE.accent, { radius: 24 });
   shape(g, 'Tail', -168, 48, 26, 26, PALETTE.accent, { rotation: 45, radius: 6 });
   text(g, 'Hey! The new build is live 🎉', -160, -10, 20, 600, PALETTE.ink, 'left');
   text(g, '9:41', 128, 26, 13, 500, 'rgba(255,255,255,0.7)', 'left');
   text(g, '✓✓', 158, 26, 13, 700, PALETTE.cyan, 'left');
-  return finish(g);
+  return g;
 }
 
-export function insertNotification(): string {
-  const { cx, cy } = compCenter();
+export function insertNotification(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, text, skel } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Notification', cx, cy);
   shape(g, 'Card', 0, 0, 380, 96, PALETTE.panelHi, { radius: 20 });
   shape(g, 'App Icon', -146, 0, 52, 52, PALETTE.accent, { radius: 14 });
@@ -266,11 +264,12 @@ export function insertNotification(): string {
   skel(g, 'Detail', -46, 28, 120, 8);
   text(g, 'now', 148, -22, 12, 500, PALETTE.sub, 'left');
   disc(g, 'Unread', 168, 8, 10, PALETTE.cyan);
-  return finish(g);
+  return g;
 }
 
-export function insertChartMock(): string {
-  const { cx, cy } = compCenter();
+export function insertChartMock(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, text, skel, segment } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Chart', cx, cy);
   shape(g, 'Panel', 0, 0, 700, 460, PALETTE.panel, { radius: 18 });
   text(g, 'Revenue', -310, -186, 28, 800, PALETTE.ink, 'left');
@@ -312,11 +311,12 @@ export function insertChartMock(): string {
     disc(g, `Point ${i + 1}`, px, py, 12, PALETTE.panel);
     disc(g, `Point Core ${i + 1}`, px, py, 8, PALETTE.amber);
   });
-  return finish(g);
+  return g;
 }
 
-export function insertAvatar(): string {
-  const { cx, cy } = compCenter();
+export function insertAvatar(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, disc, text } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Avatar', cx, cy);
   disc(g, 'Ring', 0, 0, 124, PALETTE.accent);
   disc(g, 'Gap', 0, 0, 112, PALETTE.panel);
@@ -324,21 +324,23 @@ export function insertAvatar(): string {
   text(g, 'AL', 0, 0, 36, 700, PALETTE.ink, 'center');
   disc(g, 'Status Border', 42, 42, 32, PALETTE.panel);
   disc(g, 'Status', 42, 42, 24, PALETTE.green);
-  return finish(g);
+  return g;
 }
 
-export function insertToggle(): string {
-  const { cx, cy } = compCenter();
+export function insertToggle(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, text } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Toggle', cx, cy);
   shape(g, 'Track', 0, 0, 96, 52, PALETTE.accent, { radius: 26 });
   disc(g, 'Knob Shadow', 24, 3, 42, 'rgba(0,0,0,0.25)');
   disc(g, 'Knob', 24, 0, 42, PALETTE.ink);
   text(g, '✓', 24, -1, 18, 800, PALETTE.accent, 'center');
-  return finish(g);
+  return g;
 }
 
-export function insertInputField(): string {
-  const { cx, cy } = compCenter();
+export function insertInputField(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, text } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Input Field', cx, cy);
   text(g, 'EMAIL', -222, -46, 13, 700, PALETTE.sub, 'left');
   shape(g, 'Focus Ring', 0, 4, 472, 72, 'rgba(99,91,255,0.35)', { radius: 18 });
@@ -346,22 +348,24 @@ export function insertInputField(): string {
   disc(g, 'Field Icon', -196, 4, 22, PALETTE.faint);
   text(g, 'you@company.com', -168, 4, 20, 500, PALETTE.sub, 'left');
   shape(g, 'Caret', 20, 4, 2.5, 28, PALETTE.accent);
-  return finish(g);
+  return g;
 }
 
-export function insertProgressBar(): string {
-  const { cx, cy } = compCenter();
+export function insertProgressBar(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, text } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Progress', cx, cy);
   text(g, 'Uploading assets…', -230, -26, 15, 600, PALETTE.sub, 'left');
   shape(g, 'Track', 0, 0, 460, 16, PALETTE.panelHi, { radius: 8 });
   shape(g, 'Fill', -69, 0, 322, 16, PALETTE.accent, { radius: 8 });
   disc(g, 'Head', 92, 0, 24, PALETTE.ink);
   text(g, '70%', 210, 0, 22, 700, PALETTE.ink, 'left');
-  return finish(g);
+  return g;
 }
 
-export function insertStatTile(): string {
-  const { cx, cy } = compCenter();
+export function insertStatTile(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, text } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Stat Tile', cx, cy);
   shape(g, 'Panel', 0, 0, 320, 200, PALETTE.panel, { radius: 16 });
   text(g, 'ACTIVE USERS', -128, -66, 14, 700, PALETTE.sub, 'left');
@@ -375,11 +379,12 @@ export function insertStatTile(): string {
   sp.forEach((v, i) => {
     shape(g, `Spark ${i + 1}`, 34 + i * 18, 58 - (v * 44) / 2, 10, v * 44, i === sp.length - 1 ? PALETTE.green : FAINT2, { radius: 4 });
   });
-  return finish(g);
+  return g;
 }
 
-export function insertTabs(): string {
-  const { cx, cy } = compCenter();
+export function insertTabs(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, text } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Tabs', cx, cy);
   shape(g, 'Bar', 0, 0, 480, 56, PALETTE.panelHi, { radius: 28 });
   shape(g, 'Active Pill', -150, 0, 148, 42, PALETTE.accent, { radius: 21 });
@@ -388,11 +393,12 @@ export function insertTabs(): string {
   disc(g, 'Badge', 46, -12, 16, PALETTE.pink);
   text(g, '3', 46, -13, 11, 800, PALETTE.ink, 'center');
   text(g, 'Settings', 152, 0, 19, 500, PALETTE.sub, 'center');
-  return finish(g);
+  return g;
 }
 
-export function insertTableRow(): string {
-  const { cx, cy } = compCenter();
+export function insertTableRow(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, text } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Table Row', cx, cy);
   shape(g, 'Row', 0, 0, 640, 72, PALETTE.panel, { radius: 14 });
   disc(g, 'Avatar', -272, 0, 44, PALETTE.accent);
@@ -404,11 +410,12 @@ export function insertTableRow(): string {
   text(g, 'Active', 52, 0, 14, 700, PALETTE.green, 'center');
   text(g, '$1,284', 220, 0, 18, 700, PALETTE.ink, 'left');
   for (let i = 0; i < 3; i++) disc(g, `Row Menu ${i + 1}`, 292, -8 + i * 8, 4, PALETTE.sub);
-  return finish(g);
+  return g;
 }
 
-export function insertCursor(): string {
-  const { cx, cy } = compCenter();
+export function insertCursor(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, disc, uid } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'Cursor', cx, cy);
   disc(g, 'Click Ripple', 0, 6, 60, 'rgba(99,91,255,0.35)');
   shape(g, 'Pointer', 0, 0, 26, 26, PALETTE.ink, [
@@ -421,11 +428,12 @@ export function insertCursor(): string {
       { x: -9, y: 6, inX: -9, inY: 6, outX: -9, outY: 6 },
     ] } },
   ]);
-  return finish(g);
+  return g;
 }
 
-export function insertCodeEditorMock(): string {
-  const { cx, cy } = compCenter();
+export function insertCodeEditorMock(sink: LayerSink, frame: InsertFrame, at?: At): string {
+  const { group, shape, text, trafficLights } = kit(sink, frame.comp);
+  const { cx, cy } = compCenter(frame, at);
   const g = group('__root__', 'AI Code Editor', cx, cy);
   // Editor window frame
   shape(g, 'Editor Window', 0, 0, 900, 560, PALETTE.panel, { radius: 16 });
@@ -459,25 +467,30 @@ export function insertCodeEditorMock(): string {
   text(g, 'Ask AI...', 200, 230, 16, 400, PALETTE.sub, 'left');
   shape(g, 'AI Sparkle Button', 420, 230, 32, 32, PALETTE.accent, { radius: 8 });
 
-  return finish(g);
+  return g;
 }
 
-/** All presets, for wiring into the Libraries panel. */
-export const UI_COMPONENT_PRESETS: ReadonlyArray<{ id: string; label: string; insert: () => string }> = [
-  { id: 'code-editor', label: 'AI Code Editor', insert: insertCodeEditorMock },
-  { id: 'browser', label: 'Browser', insert: insertBrowserMock },
-  { id: 'phone', label: 'Phone', insert: insertPhoneMock },
-  { id: 'card', label: 'Card', insert: insertCardMock },
-  { id: 'button', label: 'Button', insert: insertButtonMock },
-  { id: 'chat', label: 'Chat Bubble', insert: insertChatBubble },
-  { id: 'notification', label: 'Notification', insert: insertNotification },
-  { id: 'chart', label: 'Chart', insert: insertChartMock },
-  { id: 'stat', label: 'Stat Tile', insert: insertStatTile },
-  { id: 'avatar', label: 'Avatar', insert: insertAvatar },
-  { id: 'toggle', label: 'Toggle', insert: insertToggle },
-  { id: 'input', label: 'Input Field', insert: insertInputField },
-  { id: 'progress', label: 'Progress', insert: insertProgressBar },
-  { id: 'tabs', label: 'Tabs', insert: insertTabs },
-  { id: 'tablerow', label: 'Table Row', insert: insertTableRow },
-  { id: 'cursor', label: 'Cursor', insert: insertCursor },
+/**
+ * All presets, for wiring into the Libraries panel. `build` lays the mock-up
+ * into a sink under `frame.comp`, centred on the comp, and returns its GROUP
+ * (the one layer to select) — the app sends it as one `pasteLayers`
+ * (engine-client/insertFragment.ts).
+ */
+export const UI_COMPONENT_PRESETS: ReadonlyArray<{ id: string; label: string; build: (sink: LayerSink, frame: InsertFrame, at?: At) => string }> = [
+  { id: 'code-editor', label: 'AI Code Editor', build:insertCodeEditorMock },
+  { id: 'browser', label: 'Browser', build:insertBrowserMock },
+  { id: 'phone', label: 'Phone', build:insertPhoneMock },
+  { id: 'card', label: 'Card', build:insertCardMock },
+  { id: 'button', label: 'Button', build:insertButtonMock },
+  { id: 'chat', label: 'Chat Bubble', build:insertChatBubble },
+  { id: 'notification', label: 'Notification', build:insertNotification },
+  { id: 'chart', label: 'Chart', build:insertChartMock },
+  { id: 'stat', label: 'Stat Tile', build:insertStatTile },
+  { id: 'avatar', label: 'Avatar', build:insertAvatar },
+  { id: 'toggle', label: 'Toggle', build:insertToggle },
+  { id: 'input', label: 'Input Field', build:insertInputField },
+  { id: 'progress', label: 'Progress', build:insertProgressBar },
+  { id: 'tabs', label: 'Tabs', build:insertTabs },
+  { id: 'tablerow', label: 'Table Row', build:insertTableRow },
+  { id: 'cursor', label: 'Cursor', build:insertCursor },
 ];
