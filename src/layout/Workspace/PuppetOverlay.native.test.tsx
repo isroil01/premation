@@ -106,7 +106,7 @@ describe('click-add', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.click(svg, { clientX: 30, clientY: 20 });
+    fireEvent.click(live(container, svg), { clientX: 30, clientY: 20 });
     await idle();
     const pins = (await pinsOf(L));
     expect(pins).toHaveLength(1);
@@ -123,7 +123,7 @@ describe('click-add', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.click(svg, { clientX: 12, clientY: -8 });
+    fireEvent.click(live(container, svg), { clientX: 12, clientY: -8 });
     await idle();
     const pins = (await pinsOf(L));
     expect(pins).toHaveLength(1);
@@ -136,7 +136,7 @@ describe('click-add', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.click(svg, { clientX: 5000, clientY: 5000 });
+    fireEvent.click(live(container, svg), { clientX: 5000, clientY: 5000 });
     await idle();
     expect((await pinsOf(L))).toHaveLength(0);
   });
@@ -146,9 +146,9 @@ describe('click-add', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.click(svg, { clientX: 10, clientY: 10 });
+    fireEvent.click(live(container, svg), { clientX: 10, clientY: 10 });
     await idle();
-    fireEvent.click(svg, { clientX: -10, clientY: -10 });
+    fireEvent.click(live(container, svg), { clientX: -10, clientY: -10 });
     await idle();
     const ids = (await pinsOf(L)).map((p) => p.id);
     expect(ids).toHaveLength(2);
@@ -160,7 +160,7 @@ describe('click-add', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.click(svg, { clientX: 10, clientY: 10 });
+    fireEvent.click(live(container, svg), { clientX: 10, clientY: 10 });
     await idle();
     expect((await pinsOf(L))).toHaveLength(1);
 
@@ -170,7 +170,7 @@ describe('click-add', () => {
     down(pinDot.parentElement!, 10, 10);
     fireEvent.pointerUp(live(container, svg), { clientX: 10, clientY: 10, pointerId: 1 });
     await idle();
-    fireEvent.click(svg, { clientX: 10, clientY: 10 });
+    fireEvent.click(live(container, svg), { clientX: 10, clientY: 10 });
     await idle();
     expect((await pinsOf(L))).toHaveLength(1);
   });
@@ -194,15 +194,22 @@ describe('pointer capture is not a precondition', () => {
 
       await idle();
       const svg = await svgOf(container);
-      fireEvent.click(svg, { clientX: 20, clientY: 0 });
+      fireEvent.click(live(container, svg), { clientX: 20, clientY: 0 });
       await idle();
 
-      const pinDot = await drawn(container, 'circle[r="5"]');
-      expect(() => down(pinDot.parentElement!, 20, 0)).not.toThrow();
-      expect(spy).toHaveBeenCalled();
+      await drawn(container, 'circle[r="5"]');
+      // Pressed on the dot as mounted now (a frame may re-render it): again until the press reached
+      // the handler (it captures the pointer, which throws here).
+      await waitFor(() => {
+        if (spy.mock.calls.length === 0) {
+          const pinDot = container.querySelector('circle[r="5"]')!;
+          expect(() => down(pinDot.parentElement!, 20, 0)).not.toThrow();
+        }
+        expect(spy).toHaveBeenCalled();
+      });
       // The advanced-pin gizmo ring only exists on the SELECTED pin, so its
       // presence proves the handler ran past the throw.
-      expect(container.querySelector('circle[r="26"]')).not.toBeNull();
+      await drawn(container, 'circle[r="26"]');
     } finally {
       spy.mockRestore();
     }
@@ -219,7 +226,7 @@ describe('pointer capture is not a precondition', () => {
 
       await idle();
       const svg = await svgOf(container);
-      fireEvent.click(svg, { clientX: 0, clientY: 0 });
+      fireEvent.click(live(container, svg), { clientX: 0, clientY: 0 });
       await idle();
       const pinId = (await pinsOf(L))[0]!.id;
 
@@ -244,7 +251,7 @@ describe('drag writes animation, not static props', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.click(svg, { clientX: 0, clientY: 0 });
+    fireEvent.click(live(container, svg), { clientX: 0, clientY: 0 });
     await idle();
     const pinId = (await pinsOf(L))[0]!.id;
 
@@ -269,7 +276,7 @@ describe('drag writes animation, not static props', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.click(svg, { clientX: 0, clientY: 0 });
+    fireEvent.click(live(container, svg), { clientX: 0, clientY: 0 });
     await idle();
     const pinId = (await pinsOf(L))[0]!.id;
 
@@ -289,7 +296,7 @@ describe('drag writes animation, not static props', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.click(svg, { clientX: 0, clientY: 0 });
+    fireEvent.click(live(container, svg), { clientX: 0, clientY: 0 });
     await idle();
     const pinId = (await pinsOf(L))[0]!.id;
 
@@ -312,7 +319,7 @@ describe('deletion', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.click(svg, { clientX: 0, clientY: 0 });
+    fireEvent.click(live(container, svg), { clientX: 0, clientY: 0 });
     await idle();
     const pinId = (await pinsOf(L))[0]!.id;
     const rot = await propRef(L, `puppet.${pinId}.rotation`);

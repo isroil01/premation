@@ -30,7 +30,7 @@ import { historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
-import { useRigSelectionStore } from '@stores/rigSelectionStore';
+import { selectedRigBone, useRigSelectionStore } from '@stores/rigSelectionStore';
 import { rigTestLayer } from './__testHelpers__/rigLayer';
 
 /**
@@ -61,6 +61,9 @@ async function svgOf(container: HTMLElement): Promise<SVGSVGElement> {
   await waitFor(() => expect(container.querySelector('svg')).not.toBeNull());
   return container.querySelector('svg')!;
 }
+
+/** The overlay's SVG as mounted NOW (a frame may have re-rendered it since it was found). */
+const live = (container: HTMLElement, fallback: Element): Element => container.querySelector('svg') ?? fallback;
 
 let h: Awaited<ReturnType<typeof setupAppEngine>>;
 /** The rig layer (engine-created, 200 × 160 at the comp origin). */
@@ -133,9 +136,15 @@ describe('weight-paint stroke undo', () => {
     await idle();
     const { container } = utils;
     // Select a bone, then engage the brush.
-    const boneG = container.querySelector('polygon[stroke="var(--color-overlay-rig-bone)"]')!.parentElement!;
-    fireEvent.pointerDown(boneG, { clientX: -60, clientY: 0, pointerId: 1 });
-    fireEvent.pointerUp(container.querySelector('svg')!, { clientX: -60, clientY: 0, pointerId: 1 });
+    // Pressed on the group as mounted now, until the rig selection holds a bone of THIS layer.
+    await waitFor(() => {
+      if (!selectedRigBone(L)) {
+        const boneG = container.querySelector('polygon[stroke="var(--color-overlay-rig-bone)"]')!.parentElement!;
+        fireEvent.pointerDown(boneG, { clientX: -60, clientY: 0, pointerId: 1 });
+        fireEvent.pointerUp(container.querySelector('svg')!, { clientX: -60, clientY: 0, pointerId: 1 });
+      }
+      expect(selectedRigBone(L)).not.toBeNull();
+    });
     await idle();
     return utils;
   }
@@ -143,11 +152,11 @@ describe('weight-paint stroke undo', () => {
   /** A stroke with MANY pointermoves — the case that could over-record. */
   async function stroke(container: HTMLElement): Promise<void> {
     const svg = await svgOf(container);
-    fireEvent.pointerDown(svg, { clientX: -50, clientY: 0, pointerId: 2 });
+    fireEvent.pointerDown(live(container, svg), { clientX: -50, clientY: 0, pointerId: 2 });
     for (let i = 0; i < 12; i++) {
-      fireEvent.pointerMove(svg, { clientX: -50 + i * 6, clientY: 0, pointerId: 2 });
+      fireEvent.pointerMove(live(container, svg), { clientX: -50 + i * 6, clientY: 0, pointerId: 2 });
     }
-    fireEvent.pointerUp(svg, { clientX: 22, clientY: 0, pointerId: 2 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 22, clientY: 0, pointerId: 2 });
   }
 
   it('a 12-move stroke is exactly ONE undo step', async () => {
@@ -203,9 +212,9 @@ describe('Puppet Sketch undo', () => {
     const dot = container.querySelector('circle[r="5"]')!;
     fireEvent.pointerDown(dot.parentElement!, { clientX: 0, clientY: 0, pointerId: 3, ctrlKey: true });
     for (let i = 1; i <= 15; i++) {
-      fireEvent.pointerMove(svg, { clientX: i * 4, clientY: -i * 2, pointerId: 3 });
+      fireEvent.pointerMove(live(container, svg), { clientX: i * 4, clientY: -i * 2, pointerId: 3 });
     }
-    fireEvent.pointerUp(svg, { clientX: 60, clientY: -30, pointerId: 3 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 60, clientY: -30, pointerId: 3 });
   }
 
   it('a 15-sample recording is exactly ONE undo step', async () => {
@@ -254,6 +263,7 @@ describe('spatial tangent drag undo', () => {
     const utils = render(<PuppetOverlay />);
     await idle();
     // Select the pin so its motion path is drawn.
+    await waitFor(() => expect(utils.container.querySelector('circle[r="5"]')).not.toBeNull());
     const dot = utils.container.querySelector('circle[r="5"]')!;
     fireEvent.pointerDown(dot.parentElement!, { clientX: -60, clientY: 0, pointerId: 4 });
     fireEvent.pointerUp(utils.container.querySelector('svg')!, { clientX: -60, clientY: 0, pointerId: 4 });
@@ -273,6 +283,7 @@ describe('spatial tangent drag undo', () => {
   it('a multi-move handle drag is exactly ONE undo step', async () => {
     const { container } = await setup();
     const svg = await svgOf(container);
+    await waitFor(() => expect(container.querySelector('circle[r="3.5"]')).not.toBeNull());
     const handle = container.querySelector('circle[r="3.5"]')!;
 
     const steps = await stepsAdded(async () => {
@@ -280,9 +291,9 @@ describe('spatial tangent drag undo', () => {
       // The handle resolves its key's engine id on press; a hand's first move comes after.
       await idle();
       for (let i = 0; i < 8; i++) {
-        fireEvent.pointerMove(svg, { clientX: -20 + i * 3, clientY: -10 - i * 4, pointerId: 5 });
+        fireEvent.pointerMove(live(container, svg), { clientX: -20 + i * 3, clientY: -10 - i * 4, pointerId: 5 });
       }
-      fireEvent.pointerUp(svg, { clientX: 4, clientY: -42, pointerId: 5 });
+      fireEvent.pointerUp(live(container, svg), { clientX: 4, clientY: -42, pointerId: 5 });
     });
 
     expect((await tangentOf())).toBeTruthy();
@@ -292,11 +303,12 @@ describe('spatial tangent drag undo', () => {
   it('undo removes the tangent and restores the straight path', async () => {
     const { container } = await setup();
     const svg = await svgOf(container);
+    await waitFor(() => expect(container.querySelector('circle[r="3.5"]')).not.toBeNull());
     const handle = container.querySelector('circle[r="3.5"]')!;
     fireEvent.pointerDown(handle.parentElement!, { clientX: -20, clientY: 0, pointerId: 6 });
     await idle();
-    fireEvent.pointerMove(svg, { clientX: 0, clientY: -50, pointerId: 6 });
-    fireEvent.pointerUp(svg, { clientX: 0, clientY: -50, pointerId: 6 });
+    fireEvent.pointerMove(live(container, svg), { clientX: 0, clientY: -50, pointerId: 6 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 0, clientY: -50, pointerId: 6 });
     await idle();
     expect((await tangentOf())).toBeTruthy();
 

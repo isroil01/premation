@@ -7,7 +7,6 @@
  */
 
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
-import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { documentMirror } from '@stores/documentMirror';
 import { docView } from '@core/engine/__testHelpers__/docView';
@@ -99,7 +98,7 @@ describe('move / delete', () => {
       { id: uiKeyId(L, 'opacity', 1), time: 1.5 },
       { id: uiKeyId(L, 'opacity', 2), time: 2.5 },
     ]);
-    await engineIdle();
+    await settleEdits();
     expect((await times('opacity'))).toEqual([0, 1.5, 2.5]);
     expect((await historyLabels()).at(-1)).toBe('Move keyframes');
     const after = (await h.doc());
@@ -144,7 +143,7 @@ describe('move / delete', () => {
 describe('easing', () => {
   it('a preset on every selected key', async () => {
     await easePresetOnKeys([uiKeyId(L, 'opacity', 0), uiKeyId(L, 'opacity', 1)], 'Ease');
-    await engineIdle();
+    await settleEdits();
     expect((await key('opacity', 0))?.easing).toBe('bezier');
     expect((await key('opacity', 1))?.easing).toBe('bezier');
     expect((await key('opacity', 2))?.easing).toBe('linear');
@@ -165,8 +164,7 @@ describe('easing', () => {
   it('keyframe velocity on a scalar: one entry through the engine', async () => {
     const entries = (await historyLabels()).length;
     expect(applyKeyframeVelocity(L, 'opacity', 1, { inSpeed: 10, outSpeed: 80, inInfluence: 0.5, outInfluence: 0.25 })).toBe(true);
-    await engineIdle();
-    await engineIdle();
+    await settleEdits();
     expect((await historyLabels()).length).toBe(entries + 1);
     expect((await historyLabels()).at(-1)).toBe('Keyframe velocity');
     expect((await key('opacity', 0))?.easing).toBe('bezier');
@@ -205,15 +203,12 @@ describe('arrow-key nudge', () => {
     const frame = 1 / 30;
     n.push({ dt: frame, dv: 0 });
     n.push({ dt: frame, dv: 0 });
-    await engineIdle();
-    await engineIdle();
+    await settleEdits();
     n.push({ dt: frame, dv: 0 });
-    await engineIdle();
-    await engineIdle();
+    await settleEdits();
     const before = (await historyLabels()).length;
     jest.advanceTimersByTime(400); // the burst goes quiet → commit
-    await engineIdle();
-    await engineIdle();
+    await settleEdits();
     expect((await historyLabels()).length).toBe(before + 1);
     expect((await historyLabels()).at(-1)).toBe('Nudge keyframes in time');
     expect((await times('opacity'))[1]).toBeCloseTo(1 + 3 * frame, 6);
@@ -226,11 +221,9 @@ describe('arrow-key nudge', () => {
     useKeyframeSelectionStore.getState().set(new Set([uiKeyId(L, 'opacity', 1)]));
     const n = createSelectionNudger();
     n.push({ dt: 0, dv: 10 });
-    await engineIdle();
-    await engineIdle();
+    await settleEdits();
     n.flush();
-    await engineIdle();
-    await engineIdle();
+    await settleEdits();
     expect((await key('opacity', 1))?.value).toBe(60);
     expect((await historyLabels()).at(-1)).toBe('Nudge keyframe value');
   });

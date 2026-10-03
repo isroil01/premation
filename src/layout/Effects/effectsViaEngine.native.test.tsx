@@ -12,8 +12,6 @@
  */
 
 import { render, screen, act, cleanup, fireEvent } from '@testing-library/react';
-import { defaultAnimation } from '@motion/animation';
-import { getEventBus } from '@core/events/EventBus';
 import { clearHistory, setupAppEngine, historyLabels, trackRef, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
@@ -69,7 +67,6 @@ let h: Harness;
 let s: Scene;
 beforeEach(async () => {
   h = await setupAppEngine({ panels: true });
-  defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   s = await buildScene(h);
   clearEffectClipboard();
   await clearHistory();

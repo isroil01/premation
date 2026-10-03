@@ -23,7 +23,6 @@
  */
 
 import { settleToolEdits } from '@core/workspace/viewportGesture';
-import { documentMirror } from '@stores/documentMirror';
 import { useRef } from 'react';
 import { render, act, fireEvent, waitFor } from '@testing-library/react';
 import { Project3D } from '@motion/scene';
@@ -35,7 +34,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import type { RenderView } from '@core/workspace/renderView';
 import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits, waitForFrame } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 
 /**
@@ -114,8 +113,9 @@ afterEach(reset);
  */
 async function settle(): Promise<void> {
   await act(async () => {
-    await documentMirror().whenIdle();
-    await engineIdle();
+    await settleEdits();
+    await waitForFrame(300);
+    await settleEdits();
   });
 }
 

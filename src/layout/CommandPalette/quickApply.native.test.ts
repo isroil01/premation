@@ -6,48 +6,14 @@
  * on the selection says so up front instead of applying and doing nothing.
  */
 
-import SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useSelectionStore } from '@stores/selectionStore';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
-import type { SceneNode } from '@core/types';
 import { effectHits, presetHits } from './quickApply';
 import { parseQuery } from './paletteSearch';
-import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene } from '@core/engine/__testHelpers__/scene';
 
-function node(id: string, kind = 'shape'): SceneNode {
-  return {
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: kind, x: 0, y: 0 } },
-      { id: `${id}_s`, type: 'Style', props: { fill: '#fff', opacity: 100 } },
-      ...(kind === 'text' ? [{ id: `${id}_c`, type: 'Text', props: { content: 'Hi', fontSize: 32 } }] : []),
-    ],
-  };
-}
-
-beforeAll(() => {
-  // runAnimEdit records onto the command system — boot a minimal one.
-  const dummyServices = {
-    undo: { push: () => {}, undo: () => {}, redo: () => {}, canUndo: () => false, canRedo: () => false },
-    selection: { get: () => [], set: () => {}, clear: () => {} },
-    panels: { open: () => {}, close: () => {}, toggle: () => {}, isOpen: () => false },
-    workspace: { setActive: () => {}, getActive: () => '' },
-    get: () => undefined,
-  } as never;
-  setCommandSystem(new CommandSystem({ services: dummyServices, getState: () => ({}) }));
-});
-
 beforeEach(() => {
-  (defaultSceneGraph as unknown as SceneGraph).clear();
-  defaultSceneGraph.addNode(node('a'));
-  defaultSceneGraph.addNode(node('b'));
-  defaultSceneGraph.addNode(node('t', 'text'));
   useSelectionStore.getState().set([]);
 });
 
@@ -77,7 +43,7 @@ describe('effects', () => {
       expect(hit.enabled).toBe(true);
       const before = (await historyLabels()).length;
       hit.apply();
-      await engineIdle();
+      await settleEdits();
       expect((await docView()).getNodeEffects(s.B)).toHaveLength(1);
       expect((await docView()).getNodeEffects(s.P)).toHaveLength(1);
       expect((await historyLabels()).length).toBe(before + 1);
@@ -123,7 +89,7 @@ describe('presets', () => {
       const hit = presetHits('', 200).find((x) => x.enabled)!;
       expect(hit).toBeDefined();
       hit.apply();
-      await engineIdle();
+      await settleEdits();
       expect((await docView()).tracksFor(s.B).length + (await docView()).dataTracksFor(s.B).length).toBeGreaterThan(0);
       expect((await historyLabels()).length).toBe(before + 1);
     } finally {

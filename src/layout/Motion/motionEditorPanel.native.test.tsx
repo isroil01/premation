@@ -20,7 +20,6 @@
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { MotionEditorPanel } from './MotionEditorPanel';
 import { useSelectionStore } from '@stores/selectionStore';
-import { defaultAnimation } from '@motion/animation';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -50,14 +49,8 @@ afterEach(() => {
   useSelectionStore.getState().clear();
 });
 
-const animate = (): void => {
-  defaultAnimation.setKeyframe(NODE, 'y', 0, 0);
-  defaultAnimation.setKeyframe(NODE, 'y', 1, 80);
-};
-
 describe('the panel hosts the shared graph editor', () => {
   it('renders the shared editor’s toolbar, not a private curve', async () => {
-    animate();
     render(<MotionEditorPanel />);
     // Only the shared editor has these: AE's two graph visibility modes and
     // the reference ("before") curve toggle.
@@ -152,7 +145,6 @@ describe('Graph panel workspaces', () => {
   });
 
   it('keeps the bounce preview off the Curve workspace even with keyframes', async () => {
-    animate();
     render(<MotionEditorPanel />);
     expect(screen.getByRole('group', { name: 'Graph visibility' })).toBeTruthy();
     expect(screen.queryByRole('img', { name: 'Bounce curve preview' })).toBeNull();
@@ -160,7 +152,6 @@ describe('Graph panel workspaces', () => {
   });
 
   it('switching to Bounce shows the generator and hides the keyframe graph', async () => {
-    animate();
     render(<MotionEditorPanel />);
     fireEvent.click(screen.getByRole('tab', { name: 'Bounce generator' }));
     expect(screen.getByRole('tab', { name: 'Bounce generator' })).toHaveAttribute('aria-selected', 'true');

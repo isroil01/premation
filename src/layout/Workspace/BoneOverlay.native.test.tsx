@@ -16,7 +16,7 @@ import { isWeightPaintEmpty } from '@core/rig/weightPaint';
 import { clearHistory, setupAppEngine, historyLabels, settleEdits, waitForFrame } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { rigTestLayer } from './__testHelpers__/rigLayer';
-import { useRigSelectionStore } from '@stores/rigSelectionStore';
+import { selectedRigBone, useRigSelectionStore } from '@stores/rigSelectionStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 
 jest.mock('@core/workspace/WorkspaceController', () => ({
@@ -56,11 +56,17 @@ const idle = (): Promise<void> => act(async () => { await settleEdits(); await w
 const live = (container: HTMLElement, fallback: Element): Element => container.querySelector('svg') ?? fallback;
 const bonePolys = (c: HTMLElement) => c.querySelectorAll('polygon[stroke="var(--color-overlay-rig-bone)"]');
 
-/** Select the first bone by pressing on its group. */
-function selectFirstBone(container: HTMLElement): void {
-  const g = bonePolys(container)[0]!.parentElement!;
-  fireEvent.pointerDown(g, { clientX: -60, clientY: 0, pointerId: 1 });
-  fireEvent.pointerUp(container.querySelector('svg')!, { clientX: -60, clientY: 0, pointerId: 1 });
+/** Select the first bone by pressing on its group — the group as mounted now (a frame may
+ * have re-rendered it), pressed again until the rig selection holds it. */
+async function selectFirstBone(container: HTMLElement): Promise<void> {
+  await waitFor(() => {
+    if (!selectedRigBone(L)) {
+      const g = bonePolys(container)[0]!.parentElement!;
+      fireEvent.pointerDown(g, { clientX: -60, clientY: 0, pointerId: 1 });
+      fireEvent.pointerUp(container.querySelector('svg')!, { clientX: -60, clientY: 0, pointerId: 1 });
+    }
+    expect(selectedRigBone(L)).not.toBeNull();
+  });
 }
 
 beforeEach(async () => {
@@ -113,7 +119,7 @@ describe('gating and drawing', () => {
         /^rgba\(\d+, \d+, \d+, 0\.45\)$/.test(p.getAttribute('fill') ?? ''),
       ).length;
     expect(heat()).toBe(0);
-    selectFirstBone(container);
+    await selectFirstBone(container);
     expect(heat()).toBeGreaterThan(0);
   });
 });
@@ -124,7 +130,7 @@ describe('bone authoring', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.pointerDown(svg, { clientX: 70, clientY: 40, pointerId: 1 });
+    fireEvent.pointerDown(live(container, svg), { clientX: 70, clientY: 40, pointerId: 1 });
     fireEvent.pointerUp(live(container, svg), { clientX: 70, clientY: 40, pointerId: 1 });
     fireEvent.click(svg, { clientX: 70, clientY: 40 });
     await idle();
@@ -138,7 +144,7 @@ describe('bone authoring', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.pointerDown(svg, { clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerDown(live(container, svg), { clientX: 100, clientY: 100, pointerId: 1 });
     fireEvent.pointerMove(live(container, svg), { clientX: 160, clientY: 160, pointerId: 1 });
     fireEvent.pointerUp(live(container, svg), { clientX: 160, clientY: 160, pointerId: 1 });
     fireEvent.click(svg, { clientX: 160, clientY: 160 });
@@ -169,7 +175,7 @@ describe('bone authoring', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.pointerDown(svg, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerDown(live(container, svg), { clientX: 10, clientY: 10, pointerId: 1 });
     fireEvent.pointerMove(live(container, svg), { clientX: 60, clientY: 10, pointerId: 1 });
     expect(container.querySelector('[data-bone-draft]')).not.toBeNull();
     fireEvent.keyDown(window, { key: 'Escape' });
@@ -260,10 +266,10 @@ describe('weight painting', () => {
     const { container } = render(<BoneOverlay />);
 
     await idle();
-    selectFirstBone(container);
+    await selectFirstBone(container);
 
     const svg = await svgOf(container);
-    fireEvent.pointerDown(svg, { clientX: -40, clientY: 0, pointerId: 2 });
+    fireEvent.pointerDown(live(container, svg), { clientX: -40, clientY: 0, pointerId: 2 });
     fireEvent.pointerMove(live(container, svg), { clientX: -20, clientY: 0, pointerId: 2 });
     fireEvent.pointerUp(live(container, svg), { clientX: -20, clientY: 0, pointerId: 2 });
     await idle();
@@ -281,7 +287,7 @@ describe('weight painting', () => {
 
     await idle();
     const svg = await svgOf(container);
-    fireEvent.pointerDown(svg, { clientX: -40, clientY: 0, pointerId: 2 });
+    fireEvent.pointerDown(live(container, svg), { clientX: -40, clientY: 0, pointerId: 2 });
     fireEvent.pointerUp(live(container, svg), { clientX: -40, clientY: 0, pointerId: 2 });
     await idle();
     expect(isWeightPaintEmpty((await skelOf())!.weightPaint)).toBe(true);

@@ -11,17 +11,11 @@
 
 import { EFFECT_DEFS } from '@core/effects/effects';
 import { EFFECT_CATEGORY, EFFECT_CATEGORY_ORDER } from '@layout/Effects/effectCategory';
-import SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import type { Command } from '@core/commands/Command';
-import type { SceneNode } from '@core/types';
 import { useSelectionStore } from '@stores/selectionStore';
 import { APP_MENU, type MenuItemModel } from './menuModel';
 import { buildEffectMenuCommands, buildEffectMenuItems, effectCommandId } from './effectMenu';
-import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene } from '@core/engine/__testHelpers__/scene';
 
@@ -75,34 +69,8 @@ describe('Effect menu', () => {
 
 });
 
-function node(id: string): SceneNode {
-  return {
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0 } },
-      { id: `${id}_s`, type: 'Style', props: { fill: 'white', opacity: 100 } },
-    ],
-  };
-}
-
 describe('effect commands', () => {
-  beforeAll(() => {
-    // The edits record onto the command system — boot a minimal one.
-    const dummyServices = {
-      undo: { push: () => {}, undo: () => {}, redo: () => {}, canUndo: () => false, canRedo: () => false },
-      selection: { get: () => [], set: () => {}, clear: () => {} },
-      panels: { open: () => {}, close: () => {}, toggle: () => {}, isOpen: () => false },
-      workspace: { setActive: () => {}, getActive: () => '' },
-      get: () => undefined,
-    } as never;
-    setCommandSystem(new CommandSystem({ services: dummyServices, getState: () => ({}) }));
-  });
-
   beforeEach(() => {
-    (defaultSceneGraph as unknown as SceneGraph).clear();
-    defaultSceneGraph.addNode(node('a'));
-    defaultSceneGraph.addNode(node('b'));
     useSelectionStore.getState().set([]);
   });
 
@@ -122,7 +90,7 @@ describe('effect commands', () => {
       expect(glow().enabled?.()).toBe(true);
       const before = (await historyLabels()).length;
       await glow().execute({} as never);
-      await engineIdle();
+      await settleEdits();
       expect((await docView()).getNodeEffects(s.B).map((e) => e.type)).toEqual(['glow']);
       expect((await docView()).getNodeEffects(s.P).map((e) => e.type)).toEqual(['glow']);
       expect((await historyLabels()).length).toBe(before + 1);

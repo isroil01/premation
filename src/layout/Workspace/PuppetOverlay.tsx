@@ -143,14 +143,19 @@ export function PuppetOverlay(): JSX.Element | null {
   // B4 round 5: the rig comes with the frame (the overlay geometry push): this
   // layer's rig and box, the selected pin's motion path, the Puppet tool's
   // authoring mesh (a pinless layer shows the mesh its first pin lands on).
+  // The layer subscription and the rig focus are sent separately and cleared only on unmount:
+  // clearing them between two sends let a frame land without this layer's geometry, which
+  // dropped the overlay for that frame on every pin selection.
   useEffect(() => {
     void requestOverlayLayers(MAIN_VIEWPORT, 'puppetPins', active ? [selectedNodeId!] : [], PUPPET_KINDS, active ? ['active'] : []).then(() => setTick((t) => t + 1));
+  }, [active, selectedNodeId]);
+  useEffect(() => {
     void setOverlayRigFocus(MAIN_VIEWPORT, active ? { pin: selectedPinId ?? '', bone: '', authoring: true } : undefined);
-    return () => {
-      void requestOverlayLayers(MAIN_VIEWPORT, 'puppetPins', [], PUPPET_KINDS);
-      void setOverlayRigFocus(MAIN_VIEWPORT, undefined);
-    };
   }, [active, selectedNodeId, selectedPinId]);
+  useEffect(() => () => {
+    void requestOverlayLayers(MAIN_VIEWPORT, 'puppetPins', [], PUPPET_KINDS);
+    void setOverlayRigFocus(MAIN_VIEWPORT, undefined);
+  }, []);
 
   // Keyboard listener to delete selected pin
   useEffect(() => {

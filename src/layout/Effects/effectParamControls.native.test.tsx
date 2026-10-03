@@ -21,29 +21,11 @@ import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEng
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene } from '@core/engine/__testHelpers__/scene';
 import { EffectStack } from './EffectStack';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { effectDefFor } from '@core/effects/effects';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 
-const NODE = 'paramctl_node';
-
-beforeEach(() => {
-  try { defaultSceneGraph.removeNode(NODE); } catch { /* first run */ }
-  defaultSceneGraph.addNode({
-    id: NODE,
-    name: 'Layer',
-    parent: null,
-    children: [],
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [],
-    visible: true,
-    locked: false,
-  } as never);
-});
-
 afterEach(async () => {
   cleanup();
-  try { defaultSceneGraph.removeNode(NODE); } catch { /* already gone */ }
   if (harness) {
     await harness.dispose();
     harness = null;

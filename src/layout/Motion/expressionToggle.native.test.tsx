@@ -22,8 +22,6 @@
 
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { ExpressionEditor } from './ExpressionEditor';
-import { defaultAnimation } from '@motion/animation';
-import { getEventBus } from '@core/events/EventBus';
 import { clearHistory, setupAppEngine, historyLabels, settleEdits, sampleTrack, sec } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -41,9 +39,6 @@ const removeX = (): Promise<unknown> => h.run({ type: 'setExpression', prop: POS
 beforeEach(async () => {
   h = await setupAppEngine({ panels: true });
   // Providers binds this at boot; without it nothing tells React the engine moved.
-  defaultAnimation.setChangeListener((nodeId) =>
-    getEventBus().emit('AnimationChanged', { nodeId }),
-  );
   NODE = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'S', init: [] })).layer;
   POS = { layer: NODE, path: 'transform/position' };
   // x: 0 → 100 over 0..2s. The panel renders at the store's playhead, which is

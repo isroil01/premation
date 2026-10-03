@@ -10,6 +10,7 @@ import { documentMirror } from '@stores/documentMirror';
 import { useGuidesStore } from '@stores/guidesStore';
 import { createSceneGraphPort, retainCanvasGeometry } from '../geometryPort';
 import { useSelectionStore } from '@stores/selectionStore';
+import { MAIN_VIEWPORT, overlayLayer } from '@stores/overlayGeometry';
 
 let release: (() => void) | null = null;
 
@@ -22,16 +23,26 @@ export async function settleGeometry(): Promise<void> {
   }
 }
 
-/** Hold the canvas geometry (idempotent) and wait until the engine has the subscription. */
-export async function holdCanvasGeometry(): Promise<void> {
+/**
+ * Hold the canvas geometry (idempotent) and wait until the engine has the
+ * subscription — and, for `ids` (default: the selection), until a frame has
+ * carried their records (the tool writes read them; a loaded run may take a while).
+ */
+export async function holdCanvasGeometry(ids?: readonly string[]): Promise<void> {
   await settleGeometry();
   release ??= retainCanvasGeometry(useGuidesStore.getState().camera3dMode);
   await settleGeometry();
   // An animated outline is the mirror's batched value at the playhead: the
   // first read asks for it (the viewport re-reads every frame; a test reads once).
   const port = createSceneGraphPort();
-  for (const id of useSelectionStore.getState().ids) port.getNode(id as never);
+  const want = ids ?? useSelectionStore.getState().ids;
+  for (const id of want) port.getNode(id as never);
   await settleGeometry();
+  const deadline = Date.now() + 3000;
+  while (want.some((id) => !overlayLayer(MAIN_VIEWPORT, id, 0)) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+    await settleGeometry();
+  }
 }
 
 /** Drop the hold (afterEach). */

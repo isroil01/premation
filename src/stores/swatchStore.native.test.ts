@@ -16,9 +16,7 @@ import {
   normalizeSwatches,
   DOCUMENT_COLOR_LIMIT,
 } from './swatchStore';
-import { setupAppEngine, type Harness } from '@core/engine/__testHelpers__/appEngine';
-import { documentMirror } from './documentMirror';
-import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine, settleEdits, type Harness } from '@core/engine/__testHelpers__/appEngine';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
 
@@ -181,7 +179,7 @@ describe('refreshDocumentColors', () => {
 
       expect(useSwatchStore.getState().documentColors).toEqual([]);
       useSwatchStore.getState().refreshDocumentColors();
-      await engineIdle();
+      await settleEdits();
       for (let i = 0; i < 4; i++) await Promise.resolve();
       expect(useSwatchStore.getState().documentColors).toContain('#c0ffee');
     } finally {
@@ -262,7 +260,7 @@ describe('the engine document round trip (exportDocument → restoreDocument)', 
   afterEach(async () => { await h.dispose(); });
 
   const exported = async (): Promise<Uint8Array> => (await h.query({ type: 'exportDocument' })).document;
-  const settle = async (): Promise<void> => { await engineIdle(); await documentMirror().whenIdle(); };
+  const settle = (): Promise<void> => settleEdits();
 
   it('preserves the project palette, names and order included', async () => {
     const s = useSwatchStore.getState();

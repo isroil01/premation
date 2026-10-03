@@ -17,13 +17,11 @@
 import { commands } from '@motion/workspace';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode, ID } from '@core/types';
-import { engineIdle } from '@core/engine/engineInstance';
 import { insertFragment } from '@/engine-client/insertFragment';
-import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { createCommandPort } from './ports';
-import { settleToolEdits } from './viewportGesture';
 import { holdCanvasGeometry, releaseCanvasGeometry } from './__testHelpers__/canvasGeometry';
 
 const W = 160;
@@ -55,13 +53,12 @@ function shapeNode(id: string, radiusProps: Record<string, number>): SceneNode {
 /** Cut the layer with a vertical world line through its centre; return every
  *  written anchor in LOCAL space (how the runs are stored). */
 async function cutVertically(id: string): Promise<Array<{ x: number; y: number }>> {
-  await holdCanvasGeometry();
+  await holdCanvasGeometry([id]);
   createCommandPort().execute(
     commands.cutPaths([id], { x: CX, y: CY - 400 }, { x: CX, y: CY + 400 }),
   );
   // The cut is one engine edit (`setShapeOutline`).
-  await settleToolEdits();
-  await engineIdle();
+  await settleEdits();
   const node = (await docView()).getNode(id as ID)!;
   const geom = node.components.find((c) => c.type === 'Geometry');
   const subs = geom?.props.subpaths as
@@ -103,7 +100,7 @@ async function addNode(node: SceneNode): Promise<string> {
     b.addChild('comp_root', node);
     return node.id;
   }, { comp: 'comp_root' });
-  await engineIdle();
+  await settleEdits();
   return ids![0]!;
 }
 

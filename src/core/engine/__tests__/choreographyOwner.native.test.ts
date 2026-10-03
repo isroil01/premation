@@ -16,8 +16,6 @@
 import { unwrap, type EngineClient } from '@motion/engine-api';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import type { CommandServices } from '@core/commands/Command';
-import { getEventBus } from '@core/events/EventBus';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { resetSnapshotSharing } from '@core/commands/snapshotSharing';
 import { documentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -71,7 +69,6 @@ async function ownerGroups(layer: string, path: string): Promise<string[]> {
 
 maybe('choreography with the C++ engine as the owner', () => {
   let native: NativeEngine;
-  let subs: Array<{ dispose(): void }> = [];
   let client: EngineClient;
   let layers: string[] = [];
   let text = '';
@@ -87,7 +84,6 @@ maybe('choreography with the C++ engine as the owner', () => {
     await shutdownEngine();
     setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
     resetSnapshotSharing();
-    subs = [getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene())];
     setEngineOwnsDocument(true);
     const files = new Map<string, EditorDocument>();
     bootEngine({ ports: fakePorts(files), ownsDocument: true });
@@ -98,8 +94,6 @@ maybe('choreography with the C++ engine as the owner', () => {
     await shutdownEngine();
     await resetProcessEngine();
     resetEngineOwnership();
-    for (const s of subs) s.dispose();
-    subs = [];
     delete (window as unknown as { motionEditor?: unknown }).motionEditor;
     await native.stop();
   });

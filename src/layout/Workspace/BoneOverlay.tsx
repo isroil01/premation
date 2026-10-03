@@ -239,14 +239,19 @@ export function BoneOverlay(): JSX.Element | null {
   // bone's weights.
   const active = activeTool === 'bone' && !!selectedNodeId;
   const skel = useMirrorJson<SkeletonRig>(active ? selectedNodeId : null, 'layer/skeleton');
+  // The layer subscription and the rig focus are sent separately and cleared only on unmount:
+  // clearing them between two sends let a frame land without this layer's geometry, which
+  // dropped the overlay for that frame on every bone selection.
   useEffect(() => {
     void requestOverlayLayers(MAIN_VIEWPORT, 'boneRig', active ? [selectedNodeId!] : [], BONE_KINDS, active ? ['active'] : []).then(() => setTick((t) => t + 1));
+  }, [active, selectedNodeId]);
+  useEffect(() => {
     void setOverlayRigFocus(MAIN_VIEWPORT, active ? { pin: '', bone: selectedBoneId ?? '', authoring: false } : undefined);
-    return () => {
-      void requestOverlayLayers(MAIN_VIEWPORT, 'boneRig', [], BONE_KINDS);
-      void setOverlayRigFocus(MAIN_VIEWPORT, undefined);
-    };
   }, [active, selectedNodeId, selectedBoneId]);
+  useEffect(() => () => {
+    void requestOverlayLayers(MAIN_VIEWPORT, 'boneRig', [], BONE_KINDS);
+    void setOverlayRigFocus(MAIN_VIEWPORT, undefined);
+  }, []);
 
   // Keyboard listener to delete selected bone
   useEffect(() => {

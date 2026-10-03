@@ -17,12 +17,10 @@
 
 import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { GraphEditor } from './GraphEditor';
-import { defaultAnimation } from '@motion/animation';
 import { rowSelectionId } from '@core/engine/__testHelpers__/selectionIds';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
 import { easePresetById } from '@core/animation/easePresets';
-import { getEventBus } from '@core/events/EventBus';
 import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -48,7 +46,6 @@ beforeAll(() => {
 beforeEach(async () => {
   h = await setupAppEngine({ panels: true });
   // Providers binds this at boot; without it nothing tells React the engine moved.
-  defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   useKeyframeSelectionStore.getState().clear();
   useEaseClipboardStore.setState({ easing: 'linear', bezier: undefined, copied: false });
   NODE = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'G', init: [] })).layer;
