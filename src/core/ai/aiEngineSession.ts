@@ -28,6 +28,8 @@ import type {
 } from '@motion/engine-api';
 import { AiEngineError, type AiEngineSession } from '@motion/ai-tools';
 import { isWriteAroundEngine } from '@core/engine/externalWrites';
+import { engine, hasEngine } from '@core/engine/engineInstance';
+import { documentMirror, hasDocumentMirror } from '@stores/documentMirror';
 
 /** The gap recorded when the engine itself saw a write it did not make. */
 export const RESYNC_GAP = 'a document write outside the engine (the engine resynced)';
@@ -66,11 +68,23 @@ export class EngineTurnSession implements AiEngineSession {
     if (commands.length === 1) {
       const res = await this.client.execute(commands[0]! as never, { origin: this.origin });
       if (!res.ok) throw toAiError(res.error);
+      await this.catchUp(res.revision);
       return [{ type: commands[0]!.type, ...(res.value as object) } as CommandResult];
     }
     const res = await this.client.batch(label, [...commands], { origin: this.origin });
     if (!res.ok) throw toAiError(res.error);
+    await this.catchUp(res.revision);
     return res.value;
+  }
+
+  /**
+   * The tools read the document MIRROR between writes (an id the write minted,
+   * a value it set): on the app's engine, let the mirror reach the write's
+   * revision first — the answer can overtake its events over the pipe (as
+   * `edit()` does).
+   */
+  private async catchUp(revision: number): Promise<void> {
+    if (hasDocumentMirror() && hasEngine() && this.client === engine()) await documentMirror().whenAt(revision);
   }
 
   async query<T extends QueryType>(query: QueryOf<T>): Promise<QueryResults[T]> {

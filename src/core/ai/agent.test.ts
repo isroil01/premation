@@ -579,8 +579,8 @@ describe('tool results teach the model', () => {
     const c = ctx();
     for (let i = 0; i < 8; i++) await reg.execute('create_layer', { kind: 'shape', name: `n${i}` }, c);
     const desc = await reg.execute('describe_scene', { limit: 3 }, c);
-    // 8 created + the comp root.
-    expect(desc.content).toContain('Showing 3 of 9');
+    // The 8 created (the composition is not a layer: the scene lists layers).
+    expect(desc.content).toContain('Showing 3 of 8');
     expect(desc.content).toContain('subtreeOf');
   });
 

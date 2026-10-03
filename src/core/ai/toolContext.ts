@@ -43,33 +43,31 @@ import type {
 } from '@motion/ai-tools';
 import { AiEngineError } from '@motion/ai-tools';
 import {
+  flicksToSeconds,
   secondsToFlicks,
   type Command,
   type CommandResult,
   type Easing,
   type LayerKind,
   type PropRef,
+  type PropertyInfo,
   type PropertyInit,
   type Value,
 } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { THREE_D_PROPS } from '@core/scene/threeD';
-import { readNodePuppet } from '@core/rig/puppet';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { resetSceneWindow } from './sceneWindow';
 import { setRuntimeStyle } from './design';
 import { setEntranceSeed } from './archetypes';
-import { defaultAnimation, SOURCE_TEXT_PROP, type EasingKind } from '@motion/animation';
-import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { readCompRef } from '@core/scene/compInstance';
+import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { POLYSTAR_FX_PROP } from '@core/scene/polystar';
-import { nextDeviceName } from '@core/scene/sceneInsert';
+import { nextDeviceNameIn } from '@core/mirror/deviceNames';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
-import { getNodeEffects, primaryParamKey } from '@core/effects/effects';
+import { documentMirror } from '@stores/documentMirror';
+import { primaryParamKey } from '@core/effects/effects';
 import { defaultPrecompName } from '@core/composition/precompose';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import type { EffectType } from '@core/effects/effects';
@@ -77,17 +75,17 @@ import { listPresets } from '@core/animation/animationPresets';
 import { bumpScene } from '@stores/sceneStore';
 import { engine } from '@core/engine/engineInstance';
 import { layerSubtree } from '@core/mirror/docFacts';
-import { keyTargetFor, keyAddressable, separateDimensionsCommand, apiColorOfHex, effectParamCommand, propWriteCommand, ENGINE_EASINGS, activePlayheadSeconds } from '@core/engine/trackWrites';
-import { propRefForTrack, memberWrite, memberWrites } from '@core/engine/propRefs';
-import { readRuns } from '@core/text/richText';
+import { membersOf, numbersOfValue, trackRefIn } from '@core/mirror/trackIndex';
+import { keyTargetFor, keyAddressable, separateDimensionsCommand, apiColorOfHex, effectParamCommand, ENGINE_EASINGS, activePlayheadSeconds } from '@core/engine/trackWrites';
+import { componentOfType, fieldWrite, propRefForTrack, memberWrite, memberWrites } from '@core/engine/propRefs';
 import { apiUnitFactor, keyAxisSeconds } from '@core/engine/props';
 import { fpsToRational } from '@core/engine/time';
-import { buildLayerFragment } from '@core/engine/offDocument';
-import { assistantKeyframeCommands, type AssistantPlan } from '@core/engine/assistantKeys';
-import type { ID, SceneNode } from '@core/types';
-import { ownerOf, spreadPlacement, transformComponent } from './propOwner';
+import type { SceneNode } from '@core/types';
+import { spreadPlacement } from './propOwner';
 import { EngineTurnSession } from './aiEngineSession';
-import { effectDefFor, readNodeEffects } from '@core/effects/effects';
+import { effectDefFor } from '@core/effects/effects';
+import { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import { allLayerIds, hasNode, layerEffects, layerInfo, layerKind, layerView, puppetPins, staticField, treeOf } from './mirrorReads';
 
 /**
  * Property paths the render pipeline actually samples.
@@ -219,44 +217,6 @@ function distance(a: string, b: string): number {
   return prev[n]!;
 }
 
-const num = (v: unknown, fb = 0): number => (typeof v === 'number' ? v : fb);
-
-const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const optNum = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
-
-function toView(node: SceneNode): SceneNodeView {
-  const t = transformComponent(node);
-  const p = (t?.props ?? {}) as Record<string, unknown>;
-  const styleP = (node.components.find((c) => c.type === 'Style')?.props ?? {}) as Record<string, unknown>;
-  const textP = (node.components.find((c) => c.type === 'Text')?.props ?? {}) as Record<string, unknown>;
-
-  // A gradient/image fill is an object, not a hex — report it as such rather
-  // than dropping it, so the model knows the layer isn't a flat colour.
-  const rawFill = styleP.fill ?? textP.fill ?? textP.color;
-  const fill = str(rawFill) ?? (rawFill && typeof rawFill === 'object' ? 'gradient' : undefined);
-
-  return {
-    id: node.id,
-    name: node.name ?? node.id,
-    kind: readNodeKind(node),
-    parent: (node.parent as string | null) ?? null,
-    visible: node.visible !== false,
-    locked: !!node.locked,
-    x: num(p.x),
-    y: num(p.y),
-    rotation: num(p.rotation),
-    opacity: num(styleP.opacity, 100),
-    ...(fill !== undefined ? { fill } : {}),
-    ...(optNum(p.width) !== undefined ? { width: optNum(p.width) } : {}),
-    ...(optNum(p.height) !== undefined ? { height: optNum(p.height) } : {}),
-    ...(str(textP.content) !== undefined ? { text: str(textP.content) } : {}),
-    ...(optNum(textP.fontSize) !== undefined ? { fontSize: optNum(textP.fontSize) } : {}),
-    ...(optNum(textP.fontWeight) !== undefined ? { fontWeight: optNum(textP.fontWeight) } : {}),
-    ...(str(textP.fontFamily) !== undefined ? { fontFamily: str(textP.fontFamily) } : {}),
-    animated: defaultAnimation.tracksFor(node.id).map((tr) => tr.prop),
-  };
-}
-
 /**
  * Redraw today's panels after a tool's LEGACY writes. Engine commands refresh
  * the panels themselves (legacyRefresh.ts) — and a scene bump after them would
@@ -288,27 +248,14 @@ export async function engineOnly<T>(
 }
 
 /**
- * Send a keyframe helper's off-document result (`assistantKeyframeCommands`:
- * the legacy writer ran against a scratch state, its keyframe change read back
- * through the API model as `setKeyframes` per property). A helper that wrote a
- * track the API does not address is refused — never half-applied.
+ * "Member `prop` := `value` at comp time `t`" as the WHOLE value of its
+ * property (the other members at their value there), or null when `prop` is
+ * not one member of an animatable multi-member property (G1: Scale X / Y,
+ * anchor axes, a colour channel).
  */
-export async function sendKeyPlan(session: AiEngineSession, plan: AssistantPlan<unknown>, what: string): Promise<void> {
-  if (plan.unaddressed.length > 0) {
-    throw new AiEngineError('unsupported', `${what}: the engine API does not address that track (${LEGACY_GAPS.perMemberKey})`);
-  }
-  if (plan.cmds.length > 0) await session.apply(plan.cmds);
-}
-
-/**
- * "Member `prop` := `value` at comp time `t`" as the WHOLE vector value of
- * its property (the other members at their value there), or null when `prop`
- * is not one member of an animatable vector (G1: Scale X / Y, anchor axes).
- */
-function vectorMemberKey(nodeId: string, prop: string, value: number, t: number): { prop: PropRef; value: Value } | null {
-  if (!defaultSceneGraph.getNode(nodeId as ID)) return null;
+function memberKey(nodeId: string, prop: string, value: number, t: number): { prop: PropRef; value: Value } | null {
   const r = propRefForTrack(nodeId, prop);
-  if (!r || !r.animatable || r.members.length < 2 || !r.members.includes(prop) || r.valueType === 'color') return null;
+  if (!r || !r.animatable || r.members.length < 2 || !r.members.includes(prop)) return null;
   const w = memberWrite(nodeId, prop, value, t);
   return w ? { prop: w.prop, value: w.value } : null;
 }
@@ -317,12 +264,11 @@ function vectorMemberKey(nodeId: string, prop: string, value: number, t: number)
  * A bare `effect.<id>` track (the pre-param form) is that effect's primary
  * numeric parameter, `effect.<id>.<key>` — what the engine addresses.
  */
-function effectTrackOf(nodeId: string, prop: string): string {
+async function effectTrackOf(nodeId: string, prop: string): Promise<string> {
   const m = /^effect\.([^.]+)$/.exec(prop);
-  const node = m ? defaultSceneGraph.getNode(nodeId as ID) : undefined;
-  if (!m || !node) return prop;
-  const fx = readNodeEffects(node).find((e) => e.id === m[1]);
-  const primary = fx ? effectDefFor(fx.type)?.params.find((p) => p.type === 'number') : undefined;
+  if (!m) return prop;
+  const fx = (await layerEffects(nodeId)).find((e) => e.id === m[1]);
+  const primary = fx ? effectDefFor(fx.type as EffectType)?.params.find((p) => p.type === 'number') : undefined;
   return primary ? `${prop}.${primary.key}` : prop;
 }
 
@@ -332,11 +278,28 @@ function effectTrackOf(nodeId: string, prop: string): string {
  * scale property (AE's Scale is the vector with its link on).
  */
 function uniformScaleKey(nodeId: string, value: number, t: number): { prop: PropRef; value: Value } | null {
-  if (!defaultSceneGraph.getNode(nodeId as ID)) return null;
   const axes = propRefForTrack(nodeId, 'scaleX')?.members.filter((m) => m === 'scaleX' || m === 'scaleY' || m === 'scaleZ') ?? [];
   if (axes.length < 2) return null;
   const ws = memberWrites(nodeId, Object.fromEntries(axes.map((m) => [m, value])), t);
   return ws && ws.length === 1 ? { prop: ws[0]!.prop, value: ws[0]!.value } : null;
+}
+
+/**
+ * The API key a track's keyframe at a time IS: the track's own property, or —
+ * one member of an unseparated vector — the whole vector's key, with the
+ * dimension its per-dimension ease applies to (After Effects' Scale X handle).
+ */
+function keyRefFor(nodeId: string, prop: string): { ref: PropRef; dim?: number } | null {
+  // The uniform `scale` shorthand keys the whole Scale vector (uniformScaleKey).
+  if (prop === 'scale' && !propRefForTrack(nodeId, 'scale')) {
+    const s = propRefForTrack(nodeId, 'scaleX');
+    return s && s.animatable ? { ref: s.ref } : null;
+  }
+  const target = keyTargetFor(nodeId, prop);
+  if (target && keyAddressable(nodeId, prop, target)) return { ref: target.ref };
+  const r = propRefForTrack(nodeId, prop);
+  if (!r || !r.animatable || !r.members.includes(prop)) return null;
+  return r.members.length > 1 ? { ref: r.ref, dim: r.member } : { ref: r.ref };
 }
 
 const fpsNow = (): number => useCompositionStore.getState().fps || 30;
@@ -394,9 +357,9 @@ const ENGINE_CREATE_INIT: Partial<Record<string, PropertyInit[]>> = {
 
 /**
  * A drawn shape the layer factory has no kind for (a line, a parametric
- * Polystar): the node the pre-engine insert built, as a detached value — it is
- * inserted with ONE `pasteLayers` (the Polygon / Star tools' own route,
- * workspace/ports.ts `insertDrawnLayers`).
+ * Polystar): the node the pre-engine insert built, as a detached value — laid
+ * into a fragment and inserted with ONE `pasteLayers` (the Polygon / Star
+ * tools' own route, workspace/ports.ts `insertDrawnLayers`).
  */
 function drawnShapeNode(name: string, at: { x: number; y: number }, shape: LayerShapeSpec): SceneNode {
   const id = `shape_${Math.random().toString(36).slice(2, 10)}`;
@@ -419,18 +382,24 @@ function freeSession(): AiEngineSession {
 }
 
 export function createSceneFacade(session: AiEngineSession = freeSession()): SceneFacade {
+  const views = async (): Promise<SceneNodeView[]> => {
+    const out: SceneNodeView[] = [];
+    for (const id of allLayerIds()) {
+      const v = await layerView(id);
+      if (v) out.push(v);
+    }
+    return out;
+  };
   return {
-    has: async (id) => !!defaultSceneGraph.getNode(id as ID),
-    // flattenScene, NOT SceneGraph.traverse — traverse only walks the engine
-    // root's direct children, so it misses everything nested.
-    all: async () => flattenScene(defaultSceneGraph).map(toView),
-    get: async (id) => {
-      const n = defaultSceneGraph.getNode(id as ID);
-      return n ? toView(n) : undefined;
-    },
+    has: async (id) => hasNode(id),
+    all: views,
+    get: async (id) => layerView(id),
     nearest: async (id, limit = 5) =>
-      flattenScene(defaultSceneGraph)
-        .map((n) => ({ id: n.id, name: n.name ?? '', d: Math.min(distance(id, n.id), distance(id, n.name ?? '')) }))
+      allLayerIds()
+        .map((lid) => {
+          const name = layerInfo(lid)?.name ?? '';
+          return { id: lid, name, d: Math.min(distance(id, lid), distance(id, name)) };
+        })
         .sort((a, b) => a.d - b.d)
         .slice(0, limit)
         .map((c) => `${c.id}${c.name && c.name !== c.id ? ` ("${c.name}")` : ''}`),
@@ -439,22 +408,24 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
       const ek = ENGINE_CREATE_KINDS[kind];
       if (!ek) throw new AiEngineError('unsupported', `${LEGACY_GAPS.createKind}: ${kind}`);
       const comp = useCompositionStore.getState().comp();
+      const compId = activeCompRootId() as string;
       const trimmed = name.trim();
-      const layerName = trimmed || (kind === 'camera' ? nextDeviceName('camera') : kind === 'light' ? nextDeviceName('light') : '');
+      const m = documentMirror();
+      const layerName = trimmed || (kind === 'camera' || kind === 'light' ? nextDeviceNameIn(m, compId, kind) : '');
       // Nulls and the drawn kinds fan out like the legacy rects; the special
       // kinds keep their own default placement unless the model placed them.
+      // (The grid index counts the composition roots too, as the scene walk did.)
       const fans = kind === 'null' || kind === 'shape' || kind === 'solid' || kind === 'text' || kind === 'group';
-      const place = fans ? (at ?? spreadPlacement(flattenScene(defaultSceneGraph).length, comp.width, comp.height)) : at;
-      const compId = activeCompRootId() as string;
+      const place = fans ? (at ?? spreadPlacement(allLayerIds().length + m.compIds.length, comp.width, comp.height)) : at;
       if (kind === 'shape' && shape && shape.shapeType !== 'rect' && shape.shapeType !== 'ellipse') {
-        // Built off-document, inserted as ONE pasteLayers (replayable, engine ids).
+        // Laid into a fragment, inserted as ONE pasteLayers (replayable, engine ids).
         const node = drawnShapeNode(layerName || name, place ?? { x: comp.width / 2, y: comp.height / 2 }, shape);
-        const built = buildLayerFragment(compId, () => {
-          defaultSceneGraph.addChild(compId as ID, node);
-          if (shape.polystar) defaultSceneGraph.setFxKey(node.id as ID, POLYSTAR_FX_PROP, shape.polystar);
-        });
+        const b = new FragmentBuilder({ idPrefix: 'ai' });
+        b.addChild(null, node);
+        if (shape.polystar) b.setFx(node.id, POLYSTAR_FX_PROP, shape.polystar);
+        const built = b.build();
         if (!built) throw new AiEngineError('internal', `the ${shape.shapeType} insert produced no layer`);
-        const r = await session.apply([{ type: 'pasteLayers', comp: compId, fragment: built.fragment, index: built.index } as Command]);
+        const r = await session.apply([{ type: 'pasteLayers', comp: compId, fragment: built.fragment } as Command]);
         return (r[0] as { layers?: string[] }).layers?.[0] ?? '';
       }
       const init: PropertyInit[] = [
@@ -475,9 +446,7 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
 
     remove: async (id) => {
       // The whole subtree in ONE `deleteLayers` (the doomed set: nothing is
-      // re-parented), which is what the tool means by deleting a layer. A
-      // subtree crossing a precomp barrier deletes the layer itself (its
-      // nested layers are another composition's).
+      // re-parented), which is what the tool means by deleting a layer.
       await session.apply([{ type: 'deleteLayers', layers: layerSubtree(id) ?? [id] } as Command]);
     },
 
@@ -491,22 +460,21 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
     },
 
     setProp: async (nodeId, prop, value) => {
-      const node = defaultSceneGraph.getNode(nodeId as ID);
-      if (!node) return false;
-      const owner = ownerOf(node, prop);
-      if (!owner) return false;
-      return engineOnly(session, `${LEGACY_GAPS.setProp}: ${prop}`, setPropCommand(node, owner.id, prop, value), () => true);
+      if (!layerInfo(nodeId)) return false;
+      const cmds = await setPropCommands(nodeId, prop, value);
+      if (cmds === false) return false;
+      return engineOnly(session, `${LEGACY_GAPS.setProp}: ${prop}`, cmds, () => true);
     },
 
     addEffect: async (nodeId, type, id) => {
       // A caller-chosen id (a library emitter's handle, B5): the engine keeps
-      // it. Ignored if the node already has it (the legacy rule): no write.
-      if (id && getNodeEffects(nodeId).some((e) => e.id === id)) return id;
+      // it. Ignored if the layer already has it (the legacy rule): no write.
+      if (id && (await layerEffects(nodeId)).some((e) => e.id === id)) return id;
       const r = await session.apply([{ type: 'addEffect', layers: [nodeId], effect: type, params: [], ...(id ? { id } : {}) } as Command]);
       return ((r[0] as { groups?: string[] }).groups?.[0] ?? '').split('/')[1] ?? '';
     },
     updateEffect: async (nodeId, effectId, amount) => {
-      const effect = getNodeEffects(nodeId).find((e) => e.id === effectId);
+      const effect = (await layerEffects(nodeId)).find((e) => e.id === effectId);
       const key = effect ? primaryParamKey(effect.type as EffectType) : undefined;
       if (!effect || !key) return;
       await engineOnly(session, `${LEGACY_GAPS.effectParam}: ${effect.type}.${key}`, effectParamCommand(nodeId, effectId, key, amount, playheadSeconds()), () => undefined);
@@ -514,9 +482,9 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
     updateEffectParam: async (nodeId, effectId, key, value) => {
       await engineOnly(session, `${LEGACY_GAPS.effectParam}: ${key}`, effectParamCommand(nodeId, effectId, key, value, playheadSeconds()), () => undefined);
     },
-    listEffects: async (nodeId) => getNodeEffects(nodeId).map((e) => ({ id: e.id, type: e.type })),
+    listEffects: async (nodeId) => layerEffects(nodeId),
     removeEffect: async (nodeId, effectId) => {
-      if (!getNodeEffects(nodeId).some((e) => e.id === effectId)) return;
+      if (!(await layerEffects(nodeId)).some((e) => e.id === effectId)) return;
       await session.apply([{ type: 'removePropertyGroups', groups: [{ layer: nodeId, path: `effects/${effectId}` }] } as Command]);
     },
 
@@ -538,20 +506,20 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
     },
 
     setTimeRemapEnabled: async (nodeId, enabled) => {
-      const node = defaultSceneGraph.getNode(nodeId as ID);
-      if (!node) return false;
+      const layer = layerInfo(nodeId);
+      if (!layer) return false;
       const cmds: Command[] = [];
-      // A composition LAYER is always a precomp — its flag is what makes it
-      // render its comp at all, so it is never cleared here. On a group,
-      // `precomp` is the flag buildSnapshot checks before it will sample
-      // timeRemap at all: its Precompose switch, `layer/precompose`.
-      if (!readCompRef(node)) {
+      // A composition LAYER (a precomp with a source) is always a precomp — its
+      // flag is what makes it render its comp at all, so it is never cleared
+      // here. On a group, `precomp` is the flag buildSnapshot checks before it
+      // will sample timeRemap at all: its Precompose switch, `layer/precompose`.
+      if (!(layer.kind === 'precomp' && layer.source)) {
         cmds.push({ type: 'setProperty', prop: { layer: nodeId, path: 'layer/precompose' }, value: { kind: 'bool', value: enabled } } as Command);
       }
       // The Time Remap PROPERTY exists only once remapping is enabled (AE's
       // Enable Time Remapping: its two boundary keys) — keys on `timeRemap`
       // are addressed through it. Disabling leaves an existing remap alone.
-      if (enabled && !defaultAnimation.isAnimated(nodeId, 'timeRemap')) {
+      if (enabled && !layer.timing.timeRemapEnabled) {
         cmds.push({ type: 'setTimeRemap', layer: nodeId, enabled: true } as Command);
       }
       if (cmds.length > 0) await session.apply(cmds);
@@ -565,54 +533,82 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
       await session.apply([{ type: 'setProperty', prop: { layer: nodeId, path: 'layer/puppet' }, value: { kind: 'json', value: JSON.stringify(puppet ?? null) } } as Command]);
     },
     readPuppet: async (nodeId) => {
-      const node = defaultSceneGraph.getNode(nodeId as ID);
-      if (!node) return undefined;
-      const rig = readNodePuppet(node);
-      if (!rig) return undefined;
-      return { pins: rig.pins.map((p) => ({ id: p.id, name: p.name })) };
+      if (!layerInfo(nodeId)) return undefined;
+      const pins = await puppetPins(nodeId);
+      return pins.length > 0 ? { pins } : undefined;
     },
   };
 }
 
+/** The Text component's props, by the legacy routing rule (propOwner.ts `ownerOf`): they need a text layer. */
+const TEXT_OWNED = new Set(['content', 'fontSize', 'fontWeight', 'fontFamily', 'letterSpacing', 'lineHeight', 'align', 'paragraphSpacing']);
+
 /**
- * The engine command for a static `setProp`, or null when the API cannot say
- * EXACTLY what the tool meant: the catalog must address the prop, the
- * property must be un-animated (a static write on an animated property is a
- * keyframe in the API), and the engine must land it on the component the
- * legacy routing chooses.
+ * The engine commands for a static `setProp`, `null` when the API cannot say
+ * EXACTLY what the tool meant (refused), or `false` when the layer has nothing
+ * that prop could land on (a typographic prop on a shape, a fill on a null —
+ * the legacy routing found no owner). A write on an ANIMATED property is a key
+ * at the playhead — After Effects' setValue on a keyed property (G1); `time`
+ * is ignored when static.
  */
-function setPropCommand(node: SceneNode, ownerId: string, prop: string, value: unknown): Command[] | null {
-  // A static write on an ANIMATED property is a key at the playhead — After
-  // Effects' setValue on a keyed property (G1); `time` is ignored when static.
+async function setPropCommands(nodeId: string, prop: string, value: unknown): Promise<Command[] | null | false> {
   const t = playheadSeconds();
+  const isText = layerKind(nodeId) === 'text';
+  if (TEXT_OWNED.has(prop) && !isText) return false;
+  const tree = await treeOf(nodeId);
+  if (prop === 'fill' && !tree?.nodes.has('layer/fill')) return false;
   if (prop === 'content') {
-    const text = node.components.find((c) => c.type === 'Text');
-    if (typeof value !== 'string' || !text || text.id !== ownerId) return null;
-    const set = { type: 'setProperty', prop: { layer: node.id, path: 'text/sourceText' }, value: { kind: 'string', value }, time: secondsToFlicks(t) } as Command;
+    if (typeof value !== 'string') return null;
+    const set = { type: 'setProperty', prop: { layer: nodeId, path: 'text/sourceText' }, value: { kind: 'string', value }, time: secondsToFlicks(t) } as Command;
     // The legacy writer kept the layer's style runs; so does this (the API's Source Text drops them).
-    const runs = readRuns(node);
-    const keep = runs.length > 0 && !defaultAnimation.getDataTrack(node.id, SOURCE_TEXT_PROP)
-      ? [{ type: 'setProperty', prop: { layer: node.id, path: 'text/styleRuns' }, value: { kind: 'json', value: JSON.stringify(runs) } } as Command]
+    const runs = staticField(tree, 'text/styleRuns');
+    const keep = Array.isArray(runs) && runs.length > 0 && !tree?.nodes.get('text/sourceText')?.animated
+      ? [{ type: 'setProperty', prop: { layer: nodeId, path: 'text/styleRuns' }, value: { kind: 'json', value: JSON.stringify(runs) } } as Command]
       : [];
     return [set, ...keep];
   }
-  // Static fields (G1) and numeric members, as the plugin host sends them too.
-  return propWriteCommand(node, ownerId, prop, value, t);
+  // Static fields (G1: a layer's own fill colour, the Text component's strings
+  // / choices) as the plugin host sends them, then one numeric member of its
+  // property.
+  const owner = componentOfType(nodeId, TEXT_OWNED.has(prop) ? 'Text' : prop === 'fill' ? 'Style' : 'Transform');
+  const fw = owner ? fieldWrite(nodeId, owner, prop, value, t) : null;
+  if (fw) return [{ type: 'setProperty', prop: fw.prop, value: fw.value, ...(fw.time !== undefined ? { time: fw.time } : {}) } as Command];
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const r = propRefForTrack(nodeId, prop);
+  if (!r || !r.members.includes(prop)) return null;
+  const w = memberWrite(nodeId, prop, value, t);
+  if (!w) return null;
+  return [{ type: 'setProperty', prop: w.prop, value: w.value, ...(w.time !== undefined ? { time: w.time } : {}) } as Command];
 }
 
 /** The active composition's playhead, comp seconds (the comp facade's `playhead`). */
 const playheadSeconds = activePlayheadSeconds;
+
+/** A property's expression state for one member track (its per-dimension one on an unseparated vector). */
+function expressionOf(info: PropertyInfo | undefined, member: number, members: number): { source: string; enabled: boolean; error: string } | null {
+  if (!info) return null;
+  const own = members > 1 ? info.memberExpressions?.find((e) => e.member === member) : undefined;
+  if (own) return { source: own.source, enabled: own.enabled, error: own.error };
+  return info.expression !== '' ? { source: info.expression, enabled: info.expressionEnabled, error: info.expressionError } : null;
+}
+
+/** The expression on `prop` of a layer, read from the mirror. */
+async function trackExpressionOf(nodeId: string, prop: string): Promise<{ source: string; enabled: boolean; error: string } | null> {
+  const tree = await treeOf(nodeId);
+  const r = trackRefIn(tree, prop);
+  return r ? expressionOf(r.info, r.member, r.members.length) : null;
+}
 
 export function createAnimFacade(session: AiEngineSession = freeSession()): AnimFacade {
   return {
     isValidProp: async (_nodeId, prop) => isAnimatableProp(prop),
 
     setKeyframe: async (nodeId, rawProp, t, value, easing) => {
-      const prop = effectTrackOf(nodeId, rawProp);
+      const prop = await effectTrackOf(nodeId, rawProp);
       if (!Number.isFinite(value)) throw new AiEngineError('invalidArgument', `keyframe value for '${prop}' is not a finite number`);
+      if (easing !== undefined && !ENGINE_EASINGS.has(easing)) throw new AiEngineError('invalidArgument', `unknown easing '${easing}' for '${prop}'`);
       const target = keyTargetFor(nodeId, prop);
-      const named = easing === undefined || ENGINE_EASINGS.has(easing);
-      if (target && named) {
+      if (target) {
         const add = {
           type: 'addKeyframes',
           keys: [{
@@ -627,25 +623,18 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
         await session.apply(keyAddressable(nodeId, prop, target) ? [add] : [separateDimensionsCommand(nodeId), add]);
         return;
       }
-      // One member of a vector property that has no separate dimensions
-      // (Scale X / Y, an anchor axis — AE keys the whole vector): a key of the
-      // whole value at t, the other members at their value there (G1).
-      const w = !target && named ? (prop === 'scale' ? uniformScaleKey(nodeId, value, t) : vectorMemberKey(nodeId, prop, value, t)) : null;
-      if (w) {
-        await session.apply([{ type: 'addKeyframes', keys: [{ prop: w.prop, time: secondsToFlicks(t), value: w.value, ...(easing ? { easing: easing as Easing } : {}), spatialIn: [], spatialOut: [] }] } as Command]);
-        return;
-      }
-      // Anything else (an easing the API has no name for, a track keyed alone):
-      // the per-track writer off-document, sent as the property's keys.
-      await sendKeyPlan(session, assistantKeyframeCommands([nodeId], () => {
-        defaultAnimation.setKeyframe(nodeId, prop, compToKeyframeTime(nodeId, t), value, easing as EasingKind | undefined);
-      }), `set_keyframes ${prop}`);
+      // One member of a property that has no separate dimensions (Scale X / Y,
+      // an anchor axis, a colour channel — AE keys the whole value): a key of
+      // the whole value at t, the other members at their value there (G1).
+      const w = prop === 'scale' ? uniformScaleKey(nodeId, value, t) : memberKey(nodeId, prop, value, t);
+      if (!w) throw new AiEngineError('unsupported', `set_keyframes ${prop}: ${LEGACY_GAPS.perMemberKey}`);
+      await session.apply([{ type: 'addKeyframes', keys: [{ prop: w.prop, time: secondsToFlicks(t), value: w.value, ...(easing ? { easing: easing as Easing } : {}), spatialIn: [], spatialOut: [] }] } as Command]);
     },
 
     setPointsKeyframe: async (nodeId, prop, t, points) => {
       // A puppet pin's Position (`puppet/pins/<pin>/position`): one vec2 key at
       // comp time t, the pin's data track in the TS engine.
-      const r = defaultSceneGraph.getNode(nodeId as ID) ? propRefForTrack(nodeId, prop) : null;
+      const r = propRefForTrack(nodeId, prop);
       const p = points[0];
       if (!r || !r.animatable || r.valueType !== 'vec2' || !p || points.length !== 1) {
         throw new AiEngineError('unsupported', `${LEGACY_GAPS.pointsKey}: ${prop}`);
@@ -654,73 +643,93 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
     },
 
     removeKeyframe: async (nodeId, prop, t) => {
-      const target = keyTargetFor(nodeId, prop);
-      // AE: deleting a property's last key leaves it static at that key's value (G1).
-      if (target && keyAddressable(nodeId, prop, target)) {
-        const id = await keyIdAt(session, target.ref, t);
-        if (id) await session.apply([{ type: 'deleteKeyframes', ids: [id] } as Command]);
-        return;
-      }
-      await sendKeyPlan(session, assistantKeyframeCommands([nodeId], () => {
-        defaultAnimation.removeKeyframe(nodeId, prop, compToKeyframeTime(nodeId, t));
-      }), `remove_keyframes ${prop}`);
+      // AE: deleting a property's last key leaves it static at that key's value
+      // (G1). A lone member of an unseparated vector has no key of its own to
+      // delete — its key is the whole vector's.
+      const k = keyRefFor(nodeId, prop);
+      if (!k || k.dim !== undefined) throw new AiEngineError('unsupported', `remove_keyframes ${prop}: ${LEGACY_GAPS.perMemberKey}`);
+      const id = await keyIdAt(session, k.ref, t);
+      if (id) await session.apply([{ type: 'deleteKeyframes', ids: [id] } as Command]);
     },
 
-    // Easing and handles go through the per-track writer off-document: it
-    // seeds default handles and continuity exactly as the legacy setter always
-    // did, and a lone member's ease becomes the key's per-dimension ease.
+    // Easing and handles patch the engine's key at t — on one member of an
+    // unseparated vector, that dimension's own ease (`dim`). No key there: no-op.
     setEasing: async (nodeId, prop, t, easing) => {
-      // An addressable key and a named easing: patch the engine's key directly.
-      const target = ENGINE_EASINGS.has(easing) ? keyTargetFor(nodeId, prop) : null;
-      const id = target ? await keyIdAt(session, target.ref, t) : null;
-      if (id) {
-        await session.apply([{ type: 'updateKeyframes', patches: [{ id, easing: easing as Easing, spatialIn: [], spatialOut: [] }] } as Command]);
-        return;
-      }
-      await sendKeyPlan(session, assistantKeyframeCommands([nodeId], () => {
-        defaultAnimation.setEasing(nodeId, prop, compToKeyframeTime(nodeId, t), easing as EasingKind);
-      }), `set_easing ${prop}`);
+      if (!ENGINE_EASINGS.has(easing)) throw new AiEngineError('invalidArgument', `unknown easing '${easing}' for '${prop}'`);
+      const k = keyRefFor(nodeId, prop);
+      if (!k) throw new AiEngineError('unsupported', `set_easing ${prop}: ${LEGACY_GAPS.perMemberKey}`);
+      const id = await keyIdAt(session, k.ref, t);
+      if (id) await session.apply([{ type: 'updateKeyframes', patches: [{ id, easing: easing as Easing, ...(k.dim !== undefined ? { dim: k.dim } : {}), spatialIn: [], spatialOut: [] }] } as Command]);
     },
     setBezier: async (nodeId, prop, t, bezier) => {
-      const handles: [number, number, number, number] = [bezier[0]!, bezier[1]!, bezier[2]!, bezier[3]!];
-      // An addressable key: patch it on the engine (its easing curve), no page rebuild.
-      const target = keyTargetFor(nodeId, prop);
-      const id = target ? await keyIdAt(session, target.ref, t) : null;
+      const k = keyRefFor(nodeId, prop);
+      if (!k) throw new AiEngineError('unsupported', `set_easing ${prop}: ${LEGACY_GAPS.perMemberKey}`);
+      const id = await keyIdAt(session, k.ref, t);
       if (id) {
-        const [x1, y1, x2, y2] = handles;
-        await session.apply([{ type: 'updateKeyframes', patches: [{ id, easing: 'bezier', bezier: { x1, y1, x2, y2 }, spatialIn: [], spatialOut: [] }] } as Command]);
-        return;
+        const [x1 = 0, y1 = 0, x2 = 1, y2 = 1] = bezier;
+        await session.apply([{ type: 'updateKeyframes', patches: [{ id, easing: 'bezier', bezier: { x1, y1, x2, y2 }, ...(k.dim !== undefined ? { dim: k.dim } : {}), spatialIn: [], spatialOut: [] }] } as Command]);
       }
-      await sendKeyPlan(session, assistantKeyframeCommands([nodeId], () => {
-        defaultAnimation.setBezier(nodeId, prop, compToKeyframeTime(nodeId, t), handles);
-      }), `set_easing ${prop}`);
     },
     setRoving: async (nodeId, prop, t, roving) => {
       // Roving is a property of the (spatial) KEY: on merged Position the API
       // key is the whole vector, which is AE's rule (x and y rove together).
-      const r = defaultSceneGraph.getNode(nodeId as ID) ? propRefForTrack(nodeId, prop) : null;
+      const r = propRefForTrack(nodeId, prop);
       if (!r || !r.animatable || !r.members.includes(prop)) throw new AiEngineError('unsupported', `${LEGACY_GAPS.roving}: ${prop}`);
       const id = await keyIdAt(session, r.ref, t);
       if (id) await session.apply([{ type: 'updateKeyframes', patches: [{ id, roving, spatialIn: [], spatialOut: [] }] } as Command]);
     },
     setExpression: async (nodeId, prop, src) => {
-      const r = defaultSceneGraph.getNode(nodeId as ID) ? propRefForTrack(nodeId, prop) : null;
+      const r = propRefForTrack(nodeId, prop);
       if (!r || !r.members.includes(prop)) throw new AiEngineError('unsupported', `${LEGACY_GAPS.expression}: ${prop}`);
-      const enabled = defaultAnimation.hasExpression(nodeId, prop) ? defaultAnimation.isExpressionEnabled(nodeId, prop) : true;
+      // A rewrite keeps the expression's enabled state (a new one is on).
+      const enabled = (await trackExpressionOf(nodeId, prop))?.enabled ?? true;
       // One member of an unseparated vector is Premation's per-dimension
       // expression (`member`); a single-member property is the property's own.
       const member = r.members.length > 1 ? { member: r.member } : {};
       await session.apply([{ type: 'setExpression', prop: r.ref, source: src, enabled, ...member } as Command]);
     },
-    getExpressionError: async (nodeId, prop) => defaultAnimation.getExpressionError(nodeId, prop),
-    isExpressionEnabled: async (nodeId, prop) => defaultAnimation.isExpressionEnabled(nodeId, prop),
-    tracks: async (nodeId) =>
-      defaultAnimation.tracksFor(nodeId).map((tr) => ({
-        prop: tr.prop,
-        // easing is optional on a stored keyframe; the engine treats absent as linear.
-        keyframes: tr.keyframes.map((k): KeyframeView => ({ t: keyframeToCompTime(nodeId, k.t), value: k.value, easing: k.easing ?? 'linear' })),
-      })),
-    evaluate: async (nodeId, t) => Object.fromEntries(defaultAnimation.evaluateNode(nodeId, keyAxisSeconds(nodeId, t))),
+    getExpressionError: async (nodeId, prop) => (await trackExpressionOf(nodeId, prop))?.error || null,
+    isExpressionEnabled: async (nodeId, prop) => (await trackExpressionOf(nodeId, prop))?.enabled ?? false,
+    tracks: async (nodeId) => {
+      // The engine keys a property as a whole: every member of a keyed vector
+      // lists the property's keys (stored units, composition seconds).
+      const tree = await treeOf(nodeId);
+      const out: Array<{ prop: string; keyframes: KeyframeView[] }> = [];
+      for (const [path, keys] of documentMirror().layerKeyframes(nodeId)) {
+        const info = tree?.nodes.get(path);
+        if (!info) continue;
+        membersOf(info).forEach((member, i) => {
+          const factor = trackRefIn(tree, member)?.factor ?? 1;
+          out.push({
+            prop: member,
+            keyframes: keys.map((k): KeyframeView => ({
+              t: flicksToSeconds(k.time),
+              value: (numbersOfValue(k.value)[i] ?? 0) / factor,
+              easing: k.easing ?? 'linear',
+            })),
+          });
+        });
+      }
+      return out;
+    },
+    evaluate: async (nodeId, t) => {
+      // The animated members' evaluated values at comp time t, asked of the engine.
+      const tree = await treeOf(nodeId);
+      const paths = [...documentMirror().layerKeyframes(nodeId).keys()].filter((p) => tree?.nodes.has(p));
+      if (paths.length === 0) return {};
+      const res = await session.query({ type: 'getPropertyValues', props: paths.map((path) => ({ layer: nodeId, path })), time: secondsToFlicks(t), evaluated: true });
+      const out: Record<string, number> = {};
+      for (const v of res.values) {
+        const info = tree?.nodes.get(v.prop.path);
+        if (!info) continue;
+        const nums = numbersOfValue(v.value);
+        membersOf(info).forEach((member, i) => {
+          const n = nums[i];
+          if (typeof n === 'number') out[member] = n / (trackRefIn(tree, member)?.factor ?? 1);
+        });
+      }
+      return out;
+    },
     applyPreset: async (nodeId, name, atTime) => {
       const preset = listPresets().find((p) => p.name === name);
       if (!preset) return false;
