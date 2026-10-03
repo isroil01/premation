@@ -131,10 +131,7 @@ async function verifyTargets(found: ReadonlyArray<{ id: string; tgt: Target | nu
 }
 
 /** Load the property trees of `layers` the mirror does not hold yet: a key resolves to its member on its layer's tree. */
-async function treesOf(layers: Iterable<string | null | undefined>): Promise<void> {
-  const m = documentMirror();
-  await Promise.all([...new Set(layers)].filter((l): l is string => !!l).map((l) => m.loadTree(l)));
-}
+const treesOf = (layers: Iterable<string | null | undefined>): Promise<void> => documentMirror().loadTrees(layers);
 
 /** Selection ids → their targets (null when any is gone). */
 async function resolveSelection(uiIds: Iterable<string>): Promise<Map<string, Target> | null> {

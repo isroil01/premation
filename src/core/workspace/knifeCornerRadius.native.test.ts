@@ -14,11 +14,11 @@
  * write, shapeType flip.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { commands } from '@motion/workspace';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode, ID } from '@core/types';
 import { engineIdle } from '@core/engine/engineInstance';
+import { insertFragment } from '@/engine-client/insertFragment';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -97,22 +97,26 @@ afterEach(async () => {
   await h.dispose();
 });
 
-/** A layer of the composition, seeded directly (the engine resyncs before the cut). */
-function addNode(node: SceneNode): void {
-  defaultSceneGraph.addNode(node);
-  defaultSceneGraph.addChild('comp_root' as ID, node);
+/** A layer of the composition, pasted through the engine; resolves to its id. */
+async function addNode(node: SceneNode): Promise<string> {
+  const ids = await insertFragment('Fixture', (b) => {
+    b.addChild('comp_root', node);
+    return node.id;
+  }, { comp: 'comp_root' });
+  await engineIdle();
+  return ids![0]!;
 }
 
 describe('Knife on a rounded-rect primitive', () => {
   it('SHARP CONTROL: without radii the halves keep a vertex AT each corner', async () => {
-    addNode(shapeNode('knife_sharp', {}));
-    const pts = await cutVertically('knife_sharp');
+    const id = await addNode(shapeNode('knife_sharp', {}));
+    const pts = await cutVertically(id);
     for (const c of CORNERS) expect(minDistTo(pts, c)).toBeLessThan(0.75);
   });
 
   it('a uniform radius survives the cut: every corner stood off by r(√2−1)', async () => {
-    addNode(shapeNode('knife_round', { cornerRadius: R }));
-    const pts = await cutVertically('knife_round');
+    const id = await addNode(shapeNode('knife_round', { cornerRadius: R }));
+    const pts = await cutVertically(id);
     for (const c of CORNERS) {
       const d = minDistTo(pts, c);
       expect(d).toBeGreaterThan(STAND_OFF - 1.5);
@@ -121,8 +125,8 @@ describe('Knife on a rounded-rect primitive', () => {
   });
 
   it('per-corner radii survive: only the corner that asked is rounded', async () => {
-    addNode(shapeNode('knife_tl', { cornerRadiusTL: R }));
-    const pts = await cutVertically('knife_tl');
+    const id = await addNode(shapeNode('knife_tl', { cornerRadiusTL: R }));
+    const pts = await cutVertically(id);
     const dTL = minDistTo(pts, CORNERS[0]!);
     expect(dTL).toBeGreaterThan(STAND_OFF - 1.5);
     expect(dTL).toBeLessThan(STAND_OFF + 1.5);

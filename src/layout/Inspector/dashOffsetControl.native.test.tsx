@@ -23,6 +23,7 @@ import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__test
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
+import { documentMirror } from '@stores/documentMirror';
 import { strokesCommands } from './appearance/paintEdits';
 
 jest.useFakeTimers();
@@ -40,6 +41,7 @@ async function setStroke(dash: number[]): Promise<void> {
     align: 'center', dash, cap: 'butt', join: 'miter',
   }]));
   await clearHistory();
+  await documentMirror().whenIdle();
 }
 
 /** The panel keeps stroke controls behind a popover; open it by its trigger. */
@@ -56,6 +58,7 @@ const undo = async (): Promise<void> => { await act(async () => { await h.run({ 
 beforeEach(async () => {
   h = await setupAppEngine();
   ({ layer: ID } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'dash_probe', init: [] }));
+  await documentMirror().loadTree(ID);
   await clearHistory();
   useSelectionStore.setState({ ids: [ID] } as never);
 });

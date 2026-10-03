@@ -5,9 +5,8 @@
  * before source frame 0, setParent jump. Each: one entry, exact undo, redo.
  */
 
-import { useTransitionStore } from '@stores/transitionStore';
-import { getNodeLayerTime } from '@core/scene/layerTime';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { documentMirror } from '@stores/documentMirror';
+import { engineIdle } from '@core/engine/engineInstance';
 import type { Command } from '@motion/engine-api';
 import { setupAppEngine } from '../__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
@@ -16,6 +15,12 @@ import { sec, type Harness } from '../__testHelpers__/appEngine';
 
 let h: Harness;
 let s: Scene;
+
+/** A marker of the scene's composition as the mirror holds it. */
+async function marker(id: string): Promise<{ color?: string } | undefined> {
+  await engineIdle();
+  return documentMirror().comp(s.comp)?.markers.find((m) => m.id === id);
+}
 
 beforeEach(async () => {
   h = await setupAppEngine();
@@ -51,8 +56,6 @@ describe('transitions', () => {
     await cut();
     const bare = (await h.doc());
     const { transition } = await exact({ type: 'addTransition', left: s.A, right: s.B, kind: 'crossDissolve', duration: f(12), alignment: 'centred' }) as { transition: string };
-    const list = useTransitionStore.getState().list(s.comp);
-    expect(list.map((t) => t.id)).toEqual([transition]);
     expect((await docView()).getTrackKeyframes(s.A, 'opacity')).toHaveLength(2);
     const doc = await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
     expect(doc.comps.find((c) => c.id === s.comp)!.transitions).toMatchObject([{ id: transition, left: s.A, right: s.B, kind: 'crossDissolve', duration: f(12), alignment: 'centred' }]);
@@ -71,7 +74,8 @@ describe('transitions', () => {
       return v;
     });
     expect(strip((await h.doc()))).toEqual(strip(bare));
-    expect(useTransitionStore.getState().list(s.comp)).toEqual([]);
+    const after = await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    expect(after.comps.find((c) => c.id === s.comp)!.transitions).toEqual([]);
   });
 
   it('refuses a cut that is not one, and a transition the handles cannot pay for', async () => {
@@ -92,27 +96,32 @@ describe('markers, work area, freeze', () => {
   it('stores a marker colour token and reports it', async () => {
     const token = 'var(--color-timeline-marker-green)';
     const { ids: [id] } = await exact({ type: 'addMarkers', markers: [{ owner: { comp: s.comp }, time: sec(1), duration: 0, name: 'x', comment: '', label: 0, color: token }] }) as { ids: string[] };
-    expect(getTimelineController().timeline.getMarker(id!)?.color).toBe(token);
+    expect((await marker(id!))?.color).toBe(token);
     await exact({ type: 'updateMarkers', patches: [{ id: id!, color: '' }] });
-    expect(getTimelineController().timeline.getMarker(id!)?.color ?? null).toBeNull();
+    expect((await marker(id!))?.color ?? '').toBe('');
   });
 
   it('clears the work area', async () => {
+    await h.run({ type: 'setWorkArea', comp: s.comp, range: { start: sec(1), duration: sec(1) } });
     await exact({ type: 'clearWorkArea', comp: s.comp });
-    expect(getTimelineController().timeline.getRanges().workArea).toBeNull();
+    // "None" reads back as the whole composition.
+    await engineIdle();
+    const st = documentMirror().comp(s.comp)!.settings;
+    expect(st.workArea).toEqual({ start: 0, duration: st.duration });
   });
 
   it('unfreezes', async () => {
     await h.run({ type: 'freezeFrame', layer: s.V, time: sec(1), lastFrame: false });
+    expect((await docView()).getNodeLayerTime(s.V).freeze).toBe(true);
     await exact({ type: 'unfreezeLayers', layers: [s.V, s.A] });
-    expect(getNodeLayerTime(s.V).freeze).toBe(false);
+    expect((await docView()).getNodeLayerTime(s.V).freeze ?? false).toBe(false);
   });
 });
 
 describe('time stretch, ranges, key shifts', () => {
   it('stretches footage holding the out point and bakes a non-footage layer', async () => {
     await exact({ type: 'timeStretchLayers', layers: [s.V], stretch: 2, hold: 'outPoint' });
-    expect(getNodeLayerTime(s.V).stretch).toBe(200);
+    expect((await docView()).getNodeLayerTime(s.V).stretch).toBe(200);
     const k0 = (await docView()).getTrackKeyframes(s.B, 'x')?.map((k) => k.t);
     await exact({ type: 'timeStretchLayers', layers: [s.B], stretch: -1, hold: 'currentFrame', time: sec(1) });
     expect((await docView()).getTrackKeyframes(s.B, 'x')?.map((k) => k.t)).not.toEqual(k0);
