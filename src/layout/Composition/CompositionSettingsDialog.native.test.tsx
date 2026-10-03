@@ -2,7 +2,7 @@ import { act, render as rtlRender, screen, fireEvent } from '@testing-library/re
 import { openCompositionSettings, CompositionSettings } from './CompositionSettingsDialog';
 import { useModalStore } from '@stores/modalStore';
 import { useProjectStore } from '@stores/projectStore';
-import { useCompositionStore, DEFAULT_COMPOSITION } from '@stores/compositionStore';
+import { useCompositionStore } from '@stores/compositionStore';
 import { TooltipProvider } from '@components/Tooltip';
 import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
@@ -21,18 +21,11 @@ describe('CompositionSettingsDialog', () => {
   beforeEach(async () => {
     h = await setupAppEngine({ panels: true });
     useModalStore.setState({ stack: [] });
-    useProjectStore.getState().actions.updateComp(compId, {
-      ...DEFAULT_COMPOSITION,
-      id: compId,
-      name: 'Main Showcase',
-      width: 1920,
-      height: 1080,
-      fps: 30,
-      durationSeconds: 10,
-      background: '#101014',
-      transparent: false,
-      pristine: undefined,
-    });
+    await h.run({ type: 'setCompositionSettings', comp: compId, patch: {
+      name: 'Main Showcase', width: 1920, height: 1080, frameRate: { num: 30, den: 1 },
+      duration: 10 * 705_600_000, background: { r: 16 / 255, g: 16 / 255, b: 20 / 255, a: 1 }, transparent: false, pristine: false,
+    } });
+    await h.run({ type: 'clearHistory' });
     useProjectStore.getState().actions.openTab(compId, [compId], 'Main Showcase');
   });
   afterEach(async () => {

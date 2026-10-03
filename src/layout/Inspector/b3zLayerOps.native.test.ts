@@ -3,11 +3,11 @@
  * one history entry, undo restores the document exactly, redo re-applies it.
  */
 
-import { insertSvgLayer } from '@core/scene/sceneInsert';
+import { buildSvgLayerFragment } from '@/engine-client/svgFragment';
+import type { Command } from '@motion/engine-api';
 import { readSvgLayer } from '@core/svg/svgLayer';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
-import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits, sec } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import { edit } from '@core/engine/uiEdits';
@@ -23,6 +23,9 @@ let s: Scene;
 beforeEach(async () => {
   h = await setupAppEngine();
   s = await buildScene(h);
+  // The preset builders compose from the layers' trees (the Inspector holds them).
+  await settleEdits();
+  await documentMirror().loadTrees(documentMirror().layerIds());
 });
 afterEach(async () => { await h.dispose(); });
 
@@ -74,7 +77,7 @@ test('the layer motion-blur switch turns the comp master on in the same entry', 
 });
 
 test('clearing the work area is one engine command', async () => {
-  expect(getTimelineController().getWorkArea()).not.toBeNull();
+  await h.run({ type: 'setWorkArea', comp: s.comp, range: { start: 0, duration: sec(2) } });
   await oneExactEntry('Clear Work Area', () => edit('Clear Work Area', { type: 'clearWorkArea', comp: s.comp }));
 });
 
@@ -88,8 +91,9 @@ test('Replace Footage with a library file is replaceLayerSource', async () => {
 
 test('Convert SVG to Editable Shapes = pasteLayers + deleteLayers in one entry, in the SVG layer\'s slot', async () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="40" height="40" fill="#0af"/><circle cx="70" cy="70" r="20" fill="#f00"/></svg>';
-  const id = insertSvgLayer(svg, 'two.svg')!;
-  getTimelineController().syncFromScene();
+  const made = buildSvgLayerFragment(svg, 'two.svg', { compWidth: 1920, compHeight: 1080 })!;
+  const pasted = await h.run({ type: 'pasteLayers', comp: s.comp, fragment: made.built.fragment, index: 0 } as Command) as { layers: string[] };
+  const id = pasted.layers[0]!;
   await settleEdits();
   expect(readSvgLayer((await docView()).getNode(id)!)).not.toBeNull();
   let groupId: string | null = null;

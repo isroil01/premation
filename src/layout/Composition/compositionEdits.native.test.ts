@@ -132,6 +132,5 @@ it('Solid Settings: name, label, size and colour (layer/fill) as one entry', asy
 
 it('Start from a Video conform: the active comp takes the probed rate as one entry', async () => {
   await oneEntry('Conform to Footage', () => setActiveCompFrameRateEdit(23.976));
-  // The engine stores a typed 23.976 as the NTSC rate it means (24000/1001).
-  expect(useProjectStore.getState().comps[s.comp]?.fps).toBeCloseTo(23.976, 3);
+  expect(useProjectStore.getState().comps[s.comp]?.fps).toBe(23.976);
 });

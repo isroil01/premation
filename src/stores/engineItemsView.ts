@@ -30,6 +30,7 @@ import { useAssetStore, replaceProjectItems, type AssetFolder, type ImportedAsse
 import { useProjectStore, type CompositionSettings } from './projectStore';
 import type { MirrorComp } from './documentMirror';
 import { channelsToHex } from '@core/mirror/paintFields';
+import { rateToFps } from '@core/mirror/compFacts';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { interpretOf, itemMediaType, rationalFps } from '@core/mirror/itemAssets';
 
@@ -176,7 +177,8 @@ function parseJson(text: string | undefined): unknown {
  * timeline / scene graph, not this record.
  */
 export function compFromInfo(id: string, s: CompSettings, item: ItemInfo | undefined, prev: CompositionSettings | undefined): CompositionSettings {
-  const fps = s.frameRate.den > 0 && s.frameRate.num > 0 ? s.frameRate.num / s.frameRate.den : prev?.fps ?? 30;
+  // The rate as typed (29.97, not 30000/1001): what every other reader of the settings shows.
+  const fps = rateToFps(s.frameRate, prev?.fps ?? 30);
   const next: StoredComp = {
     ...((prev ?? {}) as StoredComp),
     id,

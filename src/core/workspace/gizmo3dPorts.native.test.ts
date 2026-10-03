@@ -1,3 +1,4 @@
+import { documentMirror } from '@stores/documentMirror';
 /**
  * 3D gizmo transform writes (ports.ts): applyGizmo3DTransforms goes through
  * the engine (B3): a property with a lit stopwatch keys at the playhead (a
@@ -7,7 +8,7 @@
  * the overlay push's scene3d record — core/mirror/viewGeometry.ts transform3DOf.)
  */
 
-import { setupAppEngine, historyLabels, settleEdits, sampleTrack } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits, sampleTrack, storedTrack } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -43,6 +44,9 @@ describe('applyGizmo3DTransforms', () => {
     usePreferenceStore.setState({ timelineAutoKeyframe: false });
     // A 3D layer: z / rotationX are properties of it.
     await h.run({ type: 'setLayerSwitches', layers: [s.A], patch: { threeD: true } });
+    // The gizmo writes through the dragged layers' trees (the selection keeps them loaded).
+    await settleEdits();
+    await documentMirror().loadTrees(documentMirror().layerIds());
   });
 
   afterEach(async () => {
@@ -81,13 +85,13 @@ describe('applyGizmo3DTransforms', () => {
     await h.run({ type: 'addKeyframes', keys: [
       { prop: { layer: s.A, path: 'transform/scale' }, time: 0, spatialIn: [], spatialOut: [] },
     ] });
-    const scale0 = await sampleTrack(s.A, 'scaleX', 0);
+    const scale0 = await storedTrack(s.A, 'scaleX', 0);
     // Position-only gizmo drag on a node with an animated scale:
     await oneEntry('Move', () => {
       applyGizmo3DTransforms([{ id: s.A, values: { x: 300 } }]);
     });
     expect((await docView()).getTrackKeyframes(s.A, 'scaleX')!).toHaveLength(1);
-    expect(await sampleTrack(s.A, 'scaleX', 0)).toBe(scale0); // unchanged
+    expect(await storedTrack(s.A, 'scaleX', 0)).toBe(scale0); // unchanged
     expect((await tp('x'))).toBe(300);
   });
 
@@ -109,7 +113,7 @@ describe('applyGizmo3DTransforms', () => {
       applyGizmo3DTransforms([{ id: s.A, values: { scaleX: 2, scaleY: 2 } }]);
     });
     expect((await docView()).isAnimated(s.A, 'scaleX')).toBe(true);
-    expect(await sampleTrack(s.A, 'scaleX', 0)).toBeCloseTo(2, 9);
+    expect(await storedTrack(s.A, 'scaleX', 0)).toBeCloseTo(2, 9);
   });
 
   it('skips locked nodes', async () => {
