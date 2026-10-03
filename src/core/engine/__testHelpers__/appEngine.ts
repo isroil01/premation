@@ -15,6 +15,7 @@ import type { CommandServices } from '@core/commands/Command';
 import { documentMirror, resetDocumentMirror } from '@stores/documentMirror';
 import { bindEngineDocumentStores } from '@stores/engineDocumentStores';
 import { bindEngineComps, bindEngineItems } from '@stores/engineItemsView';
+import { retainSelectionTrees } from '@stores/selectionTrees';
 import { MAIN_VIEWPORT, publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
 import { settleToolEdits } from '@core/workspace/viewportGesture';
 import { edit } from '../uiEdits';
@@ -197,6 +198,7 @@ export async function setupAppEngine(): Promise<AppHarness> {
     bindEngineDocumentStores({ mirror: m, send: (label, cmd) => edit(label, cmd) }),
     bindEngineItems(m),
     bindEngineComps(m),
+    retainSelectionTrees(),
   ];
   await engineIdle();
   batches.length = 0;

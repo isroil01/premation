@@ -17,9 +17,9 @@ import { BoneControls } from './BoneControls';
 import { readNodePuppet } from '@core/rig/puppet';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { maxExactMeshDensity, SMOOTH_PLAYBACK_MAX_DENSITY } from '@core/rig/arap';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
-import { engineIdle } from '@core/engine/engineInstance';
+import { documentMirror } from '@stores/documentMirror';
 import { rigTestLayer } from '@layout/Workspace/__testHelpers__/rigLayer';
 import { useUIStore } from '@stores/uiStore';
 import { useRigSelectionStore } from '@stores/rigSelectionStore';
@@ -30,7 +30,7 @@ let L = '';
 
 const rigOf = async () => readNodePuppet((await docView()).getNode(L)!);
 const skelOf = async () => readNodeSkeleton((await docView()).getNode(L)!);
-const idle = (): Promise<void> => act(async () => { await engineIdle(); });
+const idle = (): Promise<void> => act(async () => { await settleEdits(); });
 const undo = (): Promise<void> => act(async () => { await h.run({ type: 'undo' }); });
 
 /** Write a whole rig through the engine (setup, then a clean history). */
@@ -63,6 +63,16 @@ function fieldValue(name: string): number {
   return Number(field(name).getAttribute('aria-valuenow'));
 }
 
+/** Render, then let the rig layer's tree (the panels' data) land. */
+async function renderNow(ui: React.ReactElement): Promise<ReturnType<typeof render>> {
+  const r = render(ui);
+  await act(async () => {
+    await documentMirror().loadTree(L);
+    await settleEdits();
+  });
+  return r;
+}
+
 async function pick(label: string, value: string): Promise<void> {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
   await idle();
@@ -90,20 +100,20 @@ describe('PuppetControls', () => {
 
   it('reports the pin count', async () => {
     await withPins();
-    const { getByText } = render(<PuppetControls nodeId={L} />);
+    const { getByText } = await renderNow(<PuppetControls nodeId={L} />);
     expect(getByText('1 pin')).toBeTruthy();
   });
 
   it('switching the solver persists it', async () => {
     await withPins();
-    render(<PuppetControls nodeId={L} />);
+    await renderNow(<PuppetControls nodeId={L} />);
     await pick('Puppet deform solver', 'lbs');
     expect((await rigOf())!.solver).toBe('lbs');
   });
 
   it('switching the mesh mode persists it', async () => {
     await withPins();
-    render(<PuppetControls nodeId={L} />);
+    await renderNow(<PuppetControls nodeId={L} />);
     await pick('Puppet mesh mode', 'silhouette');
     expect((await rigOf())!.meshMode).toBe('silhouette');
   });
@@ -115,7 +125,7 @@ describe('PuppetControls', () => {
 
   it('lists After Effects pin types, defaulting to advanced', async () => {
     await withPins();
-    const { getByLabelText } = render(<PuppetControls nodeId={L} />);
+    const { getByLabelText } = await renderNow(<PuppetControls nodeId={L} />);
     const select = getByLabelText('Pin 1 pin type') as HTMLSelectElement;
     expect(select.value).toBe('advanced');
     expect([...select.options].map((o) => o.value)).toEqual([
@@ -125,14 +135,14 @@ describe('PuppetControls', () => {
 
   it('switching a pin to bend persists it', async () => {
     await withPins();
-    render(<PuppetControls nodeId={L} />);
+    await renderNow(<PuppetControls nodeId={L} />);
     await pick('Pin 1 pin type', 'bend');
     expect((await rigOf())!.pins[0]!.kind).toBe('bend');
   });
 
   it('switching back to advanced persists that too', async () => {
     await withPins({ pins: [{ id: 'pin_1', name: 'Pin 1', x: 0, y: 0, kind: 'bend' }] });
-    const { getByLabelText } = render(<PuppetControls nodeId={L} />);
+    const { getByLabelText } = await renderNow(<PuppetControls nodeId={L} />);
     expect((getByLabelText('Pin 1 pin type') as HTMLSelectElement).value).toBe('bend');
     await pick('Pin 1 pin type', 'advanced');
     expect((await rigOf())!.pins[0]!.kind).toBe('advanced');
@@ -143,18 +153,18 @@ describe('PuppetControls', () => {
     // they mean something different. Showing the note unconditionally would
     // train people to ignore it.
     await withPins();
-    const plain = render(<PuppetControls nodeId={L} />);
+    const plain = await renderNow(<PuppetControls nodeId={L} />);
     expect(plain.container.textContent).not.toMatch(/derived from the advanced pins/i);
     plain.unmount();
 
     await withPins({ pins: [{ id: 'pin_1', name: 'Pin 1', x: 0, y: 0, kind: 'bend' }] });
-    const bend = render(<PuppetControls nodeId={L} />);
+    const bend = await renderNow(<PuppetControls nodeId={L} />);
     expect(bend.container.textContent).toMatch(/derived from the advanced pins/i);
   });
 
   it('shows the exact-solve threshold, and lowers it when a pin has stiffness', async () => {
     await withPins();
-    const plain = render(<PuppetControls nodeId={L} />);
+    const plain = await renderNow(<PuppetControls nodeId={L} />);
     expect(plain.getByText(`(exact ≤ ${maxExactMeshDensity(false)} · fast ≤ ${SMOOTH_PLAYBACK_MAX_DENSITY})`)).toBeTruthy();
     plain.unmount();
 
@@ -163,7 +173,7 @@ describe('PuppetControls', () => {
       meshExpansion: 8,
       pins: [{ id: 'pin_1', name: 'Pin 1', x: 0, y: 0, stiffness: 2 }],
     });
-    const stiff = render(<PuppetControls nodeId={L} />);
+    const stiff = await renderNow(<PuppetControls nodeId={L} />);
     expect(stiff.getByText(`(exact ≤ ${maxExactMeshDensity(true)} · fast ≤ ${SMOOTH_PLAYBACK_MAX_DENSITY})`)).toBeTruthy();
   });
 
@@ -172,7 +182,7 @@ describe('PuppetControls', () => {
 
   it('is silent at a density that is both exact and fast', async () => {
     await withPins({ meshDensity: 20 });
-    expect(notes(render(<PuppetControls nodeId={L} />))).toHaveLength(0);
+    expect(notes(await renderNow(<PuppetControls nodeId={L} />))).toHaveLength(0);
   });
 
   it('warns about COST before it warns about exactness', async () => {
@@ -180,40 +190,40 @@ describe('PuppetControls', () => {
     // exact but already expensive — conflating them would leave this silent and
     // let the "exact" marker read as a recommendation.
     await withPins({ meshDensity: 30 });
-    const n = notes(render(<PuppetControls nodeId={L} />));
+    const n = notes(await renderNow(<PuppetControls nodeId={L} />));
     expect(n.some((t) => /heavy to solve/.test(t))).toBe(true);
     expect(n.some((t) => /falls\s+back/.test(t))).toBe(false);
   });
 
   it('warns about BOTH past the exact threshold (§12.11)', async () => {
     await withPins({ meshDensity: 45 });
-    const n = notes(render(<PuppetControls nodeId={L} />));
+    const n = notes(await renderNow(<PuppetControls nodeId={L} />));
     expect(n.some((t) => /heavy to solve/.test(t))).toBe(true);
     expect(n.some((t) => /falls\s+back/.test(t))).toBe(true);
   });
 
   it('does not warn for the LBS solver, which has neither cliff', async () => {
     await withPins({ meshDensity: 45, solver: 'lbs' });
-    expect(notes(render(<PuppetControls nodeId={L} />))).toHaveLength(0);
+    expect(notes(await renderNow(<PuppetControls nodeId={L} />))).toHaveLength(0);
   });
 
   it('rotation refinement treats 0 as "unlimited" (stored as undefined)', async () => {
     await withPins({ maxRotationDeg: 30 });
-    render(<PuppetControls nodeId={L} />);
+    await renderNow(<PuppetControls nodeId={L} />);
     await setField('Mesh rotation refinement', '0');
     expect((await rigOf())!.maxRotationDeg).toBeUndefined();
   });
 
   it('per-pin scale persists on an advanced pin', async () => {
     await withPins();
-    render(<PuppetControls nodeId={L} />);
+    await renderNow(<PuppetControls nodeId={L} />);
     await setField('Pin 1 scale', '1.5');
     expect((await rigOf())!.pins[0]!.scale).toBeCloseTo(1.5, 5);
   });
 
   it('per-pin overlap persists on an overlap pin', async () => {
     await withPins();
-    render(<PuppetControls nodeId={L} />);
+    await renderNow(<PuppetControls nodeId={L} />);
     await pick('Pin 1 pin type', 'overlap');
     await setField('Pin 1 overlap', '40');
     expect((await rigOf())!.pins[0]!.overlap).toBeCloseTo(40, 5);
@@ -221,7 +231,7 @@ describe('PuppetControls', () => {
 
   it('overlap 0 clears the value rather than storing a no-op', async () => {
     await withPins({ pins: [{ id: 'pin_1', name: 'Pin 1', x: 0, y: 0, kind: 'overlap', overlap: 40 }] });
-    render(<PuppetControls nodeId={L} />);
+    await renderNow(<PuppetControls nodeId={L} />);
     await setField('Pin 1 overlap', '40');
     await setField('Pin 1 overlap', '0');
     expect((await rigOf())!.pins[0]!.overlap).toBeUndefined();
@@ -235,13 +245,13 @@ describe('BoneControls', () => {
 
   it('reports the bone count', async () => {
     await withBones();
-    const { getByText } = render(<BoneControls nodeId={L} />);
+    const { getByText } = await renderNow(<BoneControls nodeId={L} />);
     expect(getByText('1 bone')).toBeTruthy();
   });
 
   it('renames a bone on commit — ONE undo entry, and undo restores the name', async () => {
     await withBones();
-    const { getByLabelText } = render(<BoneControls nodeId={L} />);
+    const { getByLabelText } = await renderNow(<BoneControls nodeId={L} />);
     const input = getByLabelText('Upper name') as HTMLInputElement;
     input.focus();
     fireEvent.change(input, { target: { value: 'Shoulder' } });
@@ -258,7 +268,7 @@ describe('BoneControls', () => {
 
   it('Escape abandons a rename', async () => {
     await withBones();
-    const { getByLabelText } = render(<BoneControls nodeId={L} />);
+    const { getByLabelText } = await renderNow(<BoneControls nodeId={L} />);
     const input = getByLabelText('Upper name') as HTMLInputElement;
     input.focus();
     fireEvent.change(input, { target: { value: 'Oops' } });
@@ -270,7 +280,7 @@ describe('BoneControls', () => {
 
   it('clearing the name falls back to the id rather than storing empty', async () => {
     await withBones();
-    const { getByLabelText } = render(<BoneControls nodeId={L} />);
+    const { getByLabelText } = await renderNow(<BoneControls nodeId={L} />);
     const input = getByLabelText('Upper name');
     fireEvent.change(input, { target: { value: '' } });
     fireEvent.blur(input);
@@ -280,7 +290,7 @@ describe('BoneControls', () => {
 
   it('Rest Angle converts DEGREES to radians (typing 45 must not mean 45 rad)', async () => {
     await withBones();
-    render(<BoneControls nodeId={L} />);
+    await renderNow(<BoneControls nodeId={L} />);
     await setField('Upper rotation', '45');
     // The store is radians; 45° ≈ 0.7854 rad. Storing 45 would fold the limb
     // into itself — the bug this conversion was added for.
@@ -295,13 +305,13 @@ describe('BoneControls', () => {
 
   it('Rest Angle displays the stored radians AS degrees', async () => {
     await withBones({ rotation: Math.PI / 2 });
-    render(<BoneControls nodeId={L} />);
+    await renderNow(<BoneControls nodeId={L} />);
     expect(fieldValue('Upper rotation')).toBeCloseTo(90, 3);
   });
 
   it('bone scale persists', async () => {
     await withBones();
-    render(<BoneControls nodeId={L} />);
+    await renderNow(<BoneControls nodeId={L} />);
     await setField('Upper scale x', '2');
     expect((await skelOf())!.bones[0]!.scaleX).toBeCloseTo(2, 5);
     expect((await skelOf())!.bones[0]!.scaleY ?? 1).toBeCloseTo(1, 5);
@@ -310,7 +320,7 @@ describe('BoneControls', () => {
 
   it('Rest Length and Falloff write the bone; Falloff 0 means unlimited (cleared)', async () => {
     await withBones({ influenceRadius: 30 });
-    render(<BoneControls nodeId={L} />);
+    await renderNow(<BoneControls nodeId={L} />);
     await setField('Upper length', '80');
     expect((await skelOf())!.bones[0]!.length).toBe(80);
     await setField('Upper influence radius', '0');
@@ -322,7 +332,7 @@ describe('BoneControls', () => {
 
   it('a scrub of Rest Length is ONE undo entry, and undo restores the length', async () => {
     await withBones();
-    render(<BoneControls nodeId={L} />);
+    await renderNow(<BoneControls nodeId={L} />);
     const pointer = (type: string, x: number, target: EventTarget = window): void => {
       act(() => {
         target.dispatchEvent(new PointerEvent(type, {
@@ -343,7 +353,7 @@ describe('BoneControls', () => {
 
   it('enabling IK adds a target, and the pole button then appears', async () => {
     await withBones();
-    const { getByText, queryByText } = render(<BoneControls nodeId={L} />);
+    const { getByText, queryByText } = await renderNow(<BoneControls nodeId={L} />);
     expect(queryByText('Add Pole')).toBeNull();
     fireEvent.click(getByText('Enable IK Target'));
     await idle();
@@ -356,7 +366,7 @@ describe('BoneControls', () => {
 
   it('the IK button toggles the goal off again, and undo brings it back', async () => {
     await setRig('layer/skeleton', { bones: [ONE_BONE], ikTargets: [{ boneId: 'bone_1', x: 10, y: 20, chainLength: 1 }] });
-    const { getByText } = render(<BoneControls nodeId={L} />);
+    const { getByText } = await renderNow(<BoneControls nodeId={L} />);
     fireEvent.click(getByText('IK Active'));
     await idle();
     expect((await skelOf())!.ikTargets).toHaveLength(0);
@@ -366,7 +376,7 @@ describe('BoneControls', () => {
 
   it('pole, chain length and goal edit the IK goal, one entry each', async () => {
     await setRig('layer/skeleton', { bones: [ONE_BONE], ikTargets: [{ boneId: 'bone_1', x: 10, y: 20 }] });
-    const { getByText } = render(<BoneControls nodeId={L} />);
+    const { getByText } = await renderNow(<BoneControls nodeId={L} />);
     fireEvent.click(getByText('Add Pole'));
     await idle();
     expect((await skelOf())!.ikTargets![0]!.pole).toBeDefined();
@@ -382,7 +392,7 @@ describe('BoneControls', () => {
 
   it('deleting a bone is one entry; undo restores it', async () => {
     await withBones();
-    render(<BoneControls nodeId={L} />);
+    await renderNow(<BoneControls nodeId={L} />);
     const before = (await h.doc());
     fireEvent.click(screen.getByLabelText('Delete bone Upper'));
     await idle();
@@ -395,7 +405,7 @@ describe('BoneControls', () => {
   it('the skinning mesh settings write the skeleton', async () => {
     await withBones();
     act(() => useUIStore.getState().setBoneRigMode('weights'));
-    render(<BoneControls nodeId={L} />);
+    await renderNow(<BoneControls nodeId={L} />);
     await setField('Skinning mesh density', '12');
     await pick('Skinning mesh mode', 'silhouette');
     await setField('Skinning mesh expansion', '4');
@@ -405,7 +415,7 @@ describe('BoneControls', () => {
 
   it('Auto-Rig replaces the rig in ONE entry', async () => {
     await withBones();
-    render(<BoneControls nodeId={L} />);
+    await renderNow(<BoneControls nodeId={L} />);
     await pick('Auto-rig preset', 'biped');
     expect((await skelOf())!.bones.length).toBeGreaterThan(1);
     expect((await skelOf())!.bones.some((b) => b.id === 'bone_1')).toBe(false);
@@ -418,12 +428,12 @@ describe('BoneControls', () => {
   it('hides the standalone skinning-mesh card when a puppet rig owns the mesh', async () => {
     await withBones();
     act(() => useUIStore.getState().setBoneRigMode('weights'));
-    const plain = render(<BoneControls nodeId={L} />);
+    const plain = await renderNow(<BoneControls nodeId={L} />);
     expect(plain.queryByRole('spinbutton', { name: 'Skinning mesh density' })).not.toBeNull();
     plain.unmount();
 
     await setRig('layer/puppet', { pins: [{ id: 'p', name: 'p', x: 0, y: 0 }] });
-    const shared = render(<BoneControls nodeId={L} />);
+    const shared = await renderNow(<BoneControls nodeId={L} />);
     expect(shared.queryByRole('spinbutton', { name: 'Skinning mesh density' })).toBeNull();
     expect(shared.getByText(/the two rigs compose/i)).toBeTruthy();
   });
