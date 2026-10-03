@@ -5,11 +5,9 @@
  * cut list as EDL/OTIO in a format Avid's importer eats without adapters.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { useAssetStore } from '@stores/assetStore';
-import { assetIdOf } from '@core/source/sourceInfo';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { mirrorMediaClips } from '@core/mirror/mediaClips';
 import { framesToTimecode } from './exportEdl';
 
 export interface AleEvent {
@@ -22,43 +20,28 @@ export interface AleEvent {
   sourceFile: string;
 }
 
-function fpsOf(): number {
-  return getTimelineController().timeline.getFrameRate().fps || 30;
-}
-
-/** Collect ALE rows from the active timeline clip bars. */
+/** Collect ALE rows from the active composition's footage clips (one track per layer). */
 export function collectAleEvents(): { events: AleEvent[]; fps: number } {
-  const controller = getTimelineController();
-  const fps = fpsOf();
-  const assets = useAssetStore.getState().assets;
+  const { fps, clips } = mirrorMediaClips(documentMirror(), activeCompRootId());
   const events: AleEvent[] = [];
+  const trackOf = new Map<string, string>();
   let v = 0;
   let a = 0;
-
-  for (const node of flattenScene(defaultSceneGraph)) {
-    const kind = readNodeKind(node);
-    if (kind !== 'video' && kind !== 'audio' && kind !== 'image') continue;
-    const layers = controller.getLayersForNode(node.id);
-    if (layers.length === 0) continue;
-    const assetId = assetIdOf(node);
-    const asset = assetId ? assets.find((x) => x.id === assetId) : undefined;
-    const trackKind = kind === 'audio' ? 'A' : 'V';
-    const trackNum = kind === 'audio' ? ++a : ++v;
-
-    for (const layer of layers) {
-      if (layer.enabled === false) continue;
-      const start = layer.clip.start;
-      const dur = layer.clip.duration;
-      events.push({
-        name: node.name ?? node.id,
-        tracks: `${trackKind}${trackNum}`,
-        start: framesToTimecode(start, fps),
-        end: framesToTimecode(start + dur, fps),
-        duration: framesToTimecode(dur, fps),
-        tape: asset?.name?.replace(/\.[^.]+$/, '') || 'AX',
-        sourceFile: asset?.name ?? '',
-      });
+  for (const c of clips) {
+    let track = trackOf.get(c.nodeId);
+    if (!track) {
+      track = c.kind === 'audio' ? `A${++a}` : `V${++v}`;
+      trackOf.set(c.nodeId, track);
     }
+    events.push({
+      name: c.name,
+      tracks: track,
+      start: framesToTimecode(c.start, fps),
+      end: framesToTimecode(c.start + c.duration, fps),
+      duration: framesToTimecode(c.duration, fps),
+      tape: c.mediaName?.replace(/.[^.]+$/, '') || 'AX',
+      sourceFile: c.mediaName ?? '',
+    });
   }
   return { events, fps };
 }

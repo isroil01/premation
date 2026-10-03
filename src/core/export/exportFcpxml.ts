@@ -5,12 +5,10 @@
  * XML interchange NLEs actually open; AAF remains a separate binary project.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { useAssetStore } from '@stores/assetStore';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { mirrorMediaClips } from '@core/mirror/mediaClips';
 import { useCompositionStore } from '@stores/compositionStore';
-import { assetIdOf } from '@core/source/sourceInfo';
 
 function esc(s: string): string {
   return s
@@ -120,33 +118,18 @@ ${spine}
 }
 
 export function collectFcpxmlClips(): { clips: FcpxmlClip[]; fps: number } {
-  const controller = getTimelineController();
-  const fps = controller.timeline.getFrameRate().fps || 30;
-  const assets = useAssetStore.getState().assets;
-  const clips: FcpxmlClip[] = [];
-
-  for (const node of flattenScene(defaultSceneGraph)) {
-    const kind = readNodeKind(node);
-    if (kind !== 'video' && kind !== 'audio' && kind !== 'image') continue;
-    const layers = controller.getLayersForNode(node.id);
-    if (layers.length === 0) continue;
-    const assetId = assetIdOf(node);
-    const asset = assetId ? assets.find((a) => a.id === assetId) : undefined;
-    const mediaName = asset?.name ?? `${node.name ?? node.id}.mov`;
-
-    for (const layer of layers) {
-      if (layer.enabled === false) continue;
-      clips.push({
-        name: node.name ?? node.id,
-        mediaName,
-        sourceIn: layer.clip.sourceIn,
-        recordIn: layer.clip.start,
-        duration: layer.clip.duration,
-        kind: kind === 'audio' ? 'audio' : kind === 'image' ? 'image' : 'video',
-      });
-    }
-  }
-  return { clips, fps };
+  const { fps, clips } = mirrorMediaClips(documentMirror(), activeCompRootId());
+  return {
+    fps,
+    clips: clips.map((c) => ({
+      name: c.name,
+      mediaName: c.mediaName ?? `${c.name}.mov`,
+      sourceIn: c.sourceIn,
+      recordIn: c.start,
+      duration: c.duration,
+      kind: c.kind,
+    })),
+  };
 }
 
 export function exportFcpxmlText(title = 'MOTION'): string {

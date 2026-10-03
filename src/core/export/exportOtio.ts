@@ -14,11 +14,9 @@
  * carries the CUT, not the comp.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { useAssetStore } from '@stores/assetStore';
-import { assetIdOf } from '@core/source/sourceInfo';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { mirrorMediaClips } from '@core/mirror/mediaClips';
 
 export interface OtioClipSpec {
   name: string;
@@ -93,38 +91,24 @@ export function otioTimeline(
 
 /** Collect the active scene's clip bars into per-layer track specs. */
 export function collectOtioTracks(): { tracks: OtioTrackSpec[]; fps: number } {
-  const controller = getTimelineController();
-  const fps = controller.timeline.getFrameRate().fps || 30;
-  const assets = useAssetStore.getState().assets;
+  const { fps, clips } = mirrorMediaClips(documentMirror(), activeCompRootId());
   const video: OtioTrackSpec[] = [];
   const audio: OtioTrackSpec[] = [];
-
-  for (const node of flattenScene(defaultSceneGraph)) {
-    const kind = readNodeKind(node);
-    if (kind !== 'video' && kind !== 'audio' && kind !== 'image') continue;
-    const layers = controller.getLayersForNode(node.id);
-    if (layers.length === 0) continue;
-    const assetId = assetIdOf(node);
-    const asset = assetId ? assets.find((a) => a.id === assetId) : undefined;
-
-    const clips: OtioClipSpec[] = [];
-    for (const layer of layers) {
-      if (layer.enabled === false) continue;
-      clips.push({
-        name: node.name ?? node.id,
-        mediaName: asset?.name ?? null,
-        sourceIn: layer.clip.sourceIn,
-        recordIn: layer.clip.start,
-        duration: layer.clip.duration,
-      });
+  // One track per layer (its clips in order), back to front.
+  const byLayer = new Map<string, OtioTrackSpec>();
+  for (const c of clips) {
+    let track = byLayer.get(c.nodeId);
+    if (!track) {
+      const bucket = c.kind === 'audio' ? audio : video;
+      track = {
+        kind: c.kind === 'audio' ? 'Audio' : 'Video',
+        name: `${c.kind === 'audio' ? 'A' : 'V'}${bucket.length + 1} ${c.name}`.trim(),
+        clips: [],
+      };
+      bucket.push(track);
+      byLayer.set(c.nodeId, track);
     }
-    if (clips.length === 0) continue;
-    const bucket = kind === 'audio' ? audio : video;
-    bucket.push({
-      kind: kind === 'audio' ? 'Audio' : 'Video',
-      name: `${kind === 'audio' ? 'A' : 'V'}${bucket.length + 1} ${node.name ?? ''}`.trim(),
-      clips,
-    });
+    track.clips.push({ name: c.name, mediaName: c.mediaName, sourceIn: c.sourceIn, recordIn: c.start, duration: c.duration });
   }
   // Video tracks top-down (topmost layer = V1), matching how editors read.
   video.reverse();

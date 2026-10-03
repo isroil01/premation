@@ -6,11 +6,9 @@
  * times come from clip bars + fps.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { useAssetStore } from '@stores/assetStore';
-import { assetIdOf } from '@core/source/sourceInfo';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { mirrorMediaClips } from '@core/mirror/mediaClips';
 
 function pad2(n: number): string {
   return String(Math.max(0, Math.floor(n))).padStart(2, '0');
@@ -50,42 +48,22 @@ export interface EdlEvent {
  * Build CMX-style events for every video/audio clip bar in the active scene.
  */
 export function buildEdlEvents(title = 'MOTION'): { title: string; fps: number; events: EdlEvent[] } {
-  const controller = getTimelineController();
-  const fps = controller.timeline.getFrameRate().fps || 30;
-  const assets = useAssetStore.getState().assets;
+  const { fps, clips } = mirrorMediaClips(documentMirror(), activeCompRootId());
   const events: EdlEvent[] = [];
   let eventNum = 1;
-
-  for (const node of flattenScene(defaultSceneGraph)) {
-    const kind = readNodeKind(node);
-    if (kind !== 'video' && kind !== 'audio' && kind !== 'image') continue;
-    const layers = controller.getLayersForNode(node.id);
-    if (layers.length === 0) continue;
-    const assetId = assetIdOf(node);
-    const asset = assetId ? assets.find((a) => a.id === assetId) : undefined;
-    const reel = reelName(asset?.name ?? node.name ?? 'CLIP');
-    const track: 'V' | 'A' = kind === 'audio' ? 'A' : 'V';
-
-    for (const layer of layers) {
-      if (layer.enabled === false) continue;
-      const srcIn = layer.clip.sourceIn;
-      const srcOut = layer.clip.sourceIn + layer.clip.duration;
-      const recIn = layer.clip.start;
-      const recOut = layer.clip.start + layer.clip.duration;
-      events.push({
-        event: eventNum++,
-        reel,
-        track,
-        transition: 'C',
-        sourceIn: framesToTimecode(srcIn, fps),
-        sourceOut: framesToTimecode(srcOut, fps),
-        recordIn: framesToTimecode(recIn, fps),
-        recordOut: framesToTimecode(recOut, fps),
-        comment: `* FROM CLIP NAME: ${node.name}`,
-      });
-    }
+  for (const c of clips) {
+    events.push({
+      event: eventNum++,
+      reel: reelName(c.mediaName ?? c.name ?? 'CLIP'),
+      track: c.kind === 'audio' ? 'A' : 'V',
+      transition: 'C',
+      sourceIn: framesToTimecode(c.sourceIn, fps),
+      sourceOut: framesToTimecode(c.sourceIn + c.duration, fps),
+      recordIn: framesToTimecode(c.start, fps),
+      recordOut: framesToTimecode(c.start + c.duration, fps),
+      comment: `* FROM CLIP NAME: ${c.name}`,
+    });
   }
-
   return { title, fps, events };
 }
 
