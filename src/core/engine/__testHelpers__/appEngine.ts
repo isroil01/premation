@@ -9,6 +9,7 @@
  * engine is not built (jest.config.cjs), the Native workflow runs them.
  */
 
+import { configure } from '@testing-library/react';
 import { unwrap, type OverlayLayerGeometry, type OverlayView, type Command, type CommandOf, type CommandResult, type CommandResults, type CommandType, type EngineClient, type EventBatch, type QueryOf, type QueryResults, type QueryType } from '@motion/engine-api';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import type { CommandServices } from '@core/commands/Command';
@@ -27,6 +28,10 @@ import { resetProcessEngine } from '../process/processEngine';
 import { nativeEngineIsHeadless, startNativeEngine, type NativeEngine } from './nativeEngine';
 
 export const S = 705_600_000;
+
+// The suites wait on a real process: under a loaded machine (CI, a parallel
+// run) its answers take longer than jsdom's 1 s default for waitFor / findBy.
+configure({ asyncUtilTimeout: 5000 });
 
 // Captured at import: a suite on fake timers still settles on real time.
 const realSetTimeout = globalThis.setTimeout.bind(globalThis);

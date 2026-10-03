@@ -19,11 +19,10 @@
 
 import { render, act, fireEvent } from '@testing-library/react';
 import { FocusPlaneOverlay } from './FocusPlaneOverlay';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { setTracks } from '@layout/Inspector/__testHelpers__/setTracks';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useFocusPlaneStore } from '@stores/focusPlaneStore';
-import { defaultAnimation } from '@motion/animation';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { setupAppEngine, historyLabels, settleEdits, sampleTrack, propRef } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
@@ -48,14 +47,6 @@ interface CamOpts {
 
 function reset(): void {
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  defaultAnimation.clear?.();
-  for (const id of ['cam1']) {
-    try {
-      defaultSceneGraph.removeNode(id);
-    } catch {
-      /* already gone */
-    }
-  }
   useSelectionStore.getState().set([]);
   useFocusPlaneStore.getState().setVisibility('always');
   useFocusPlaneStore.getState().setDragDistance(null);
@@ -97,10 +88,7 @@ async function settle(): Promise<void> {
 async function engineCamera(h: Awaited<ReturnType<typeof setupAppEngine>>, o: CamOpts = {}): Promise<string> {
   const { dofStrength = 40, focusDistance = 2000, focalLength = 1000 } = o;
   const id = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'camera', name: 'Cam', init: [] })).layer;
-  const tid = (await docView()).getNode(id)!.components.find((c) => c.type === 'Transform')!.id;
-  for (const [k, v] of Object.entries({ x: 960, y: 540, z: -1000, focalLength, focusDistance, dofStrength })) {
-    defaultSceneGraph.writeProp(id, tid, k, v);
-  }
+  await setTracks(h, id, { x: 960, y: 540, z: -1000, focalLength, focusDistance, dofStrength });
   return id;
 }
 
@@ -234,10 +222,7 @@ describe('through the engine API', () => {
   beforeEach(async () => {
     h = await setupAppEngine({ panels: true });
     cam = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'camera', name: 'Cam', init: [] })).layer;
-    const tid = (await docView()).getNode(cam)!.components.find((c) => c.type === 'Transform')!.id;
-    for (const [k, v] of Object.entries({ x: 960, y: 540, z: -1000, focalLength: 1000, focusDistance: 2000, dofStrength: 40 })) {
-      defaultSceneGraph.writeProp(cam, tid, k, v);
-    }
+    await setTracks(h, cam, { x: 960, y: 540, z: -1000, focalLength: 1000, focusDistance: 2000, dofStrength: 40 });
     useGuidesStore.getState().setCamera3dMode('top');
   });
 
