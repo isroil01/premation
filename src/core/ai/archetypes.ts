@@ -14,7 +14,7 @@
  */
 
 import type { ToolContext } from '@motion/ai-tools';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { layerInfo } from './mirrorReads';
 import { addTextAnimatorGroup, patchTextAnimator, setThreeD } from './hostWrites';
 import type { MotionStyle } from './design';
 import {
@@ -123,8 +123,7 @@ export async function applyEntrance(
   }
 
   if (arch === 'char_cascade') {
-    const raw = defaultSceneGraph.getNode(id);
-    if (raw) {
+    if (layerInfo(id)) {
       const idx = await addTextAnimatorGroup(ctx.engine, id);
       // Covered glyphs are invisible and offset down; sweeping the selector
       // window off the string (offset 0 → 100) reveals characters left→right.

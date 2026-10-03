@@ -14,9 +14,7 @@
 import type { ToolContext } from '@motion/ai-tools';
 import { PHYSICS, type Bezier, type MotionStyle } from './design';
 import { pathOpPropPath } from '@core/scene/pathOps';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultPolystar } from '@core/scene/polystar';
-import { measureTextNodeBoxes } from '@core/text/measureText';
 import { defaultStroke, normalizeStroke } from '@core/paint/stroke';
 import { secondsToFlicks, type Command } from '@motion/engine-api';
 import { addPathOperator, ensurePathOperator, patchPathOperator, setThreeD } from './hostWrites';
@@ -425,14 +423,19 @@ export async function recipeKineticText(
    * two glyphs in this exact style (a lone " " is not safe to measure — a
    * measurer is free to trim it).
    */
-  const advanceOf = (id: string, content?: string): number | null => {
-    const node = defaultSceneGraph.getNode(id);
-    const m = node ? measureTextNodeBoxes(node, content !== undefined ? { content } : undefined) : null;
-    return m && m.advance > 0 ? m.advance : null;
+  // The engine's text layout (`getTextLayout`): the selection box's width is the advance.
+  const advanceOf = async (id: string, content?: string): Promise<number | null> => {
+    try {
+      const l = await ctx.engine.query({ type: 'getTextLayout', layer: id, time: 0, ...(content !== undefined ? { overrides: { content } } : {}) });
+      return l.box.width > 0 ? l.box.width : null;
+    } catch {
+      return null;
+    }
   };
-  const wordW = words.map((w, i) => advanceOf(ids[i]!) ?? Math.max(1, w.length) * px * 0.56);
-  const spaced = advanceOf(ids[0]!, 'x x');
-  const tight = advanceOf(ids[0]!, 'xx');
+  const wordW: number[] = [];
+  for (let i = 0; i < words.length; i++) wordW.push((await advanceOf(ids[i]!)) ?? Math.max(1, words[i]!.length) * px * 0.56);
+  const spaced = await advanceOf(ids[0]!, 'x x');
+  const tight = await advanceOf(ids[0]!, 'xx');
   // No canvas to measure with (headless): a typical grotesque's space, ~0.28em.
   const gap = spaced !== null && tight !== null && spaced > tight ? spaced - tight : px * 0.28;
   const totalW = wordW.reduce((a, b) => a + b, 0) + gap * (words.length - 1);
