@@ -113,6 +113,10 @@ const PURE_READS = new Set([
   'motionPathTimeWindow', // core/motion/motionPath: window arithmetic
   'pickFace', 'faceHighlightGroups', 'projectWorldFaces', // core/scene/facePicking: geometry over the faces it is given
   'thinSamples', // core/paint/paintSpace: point thinning
+  // Block 3 fragment builders (checked: they lay what they are handed into a FragmentBuilder).
+  'buildSvgShapeGroupInto', 'buildRevertedSvgLayerInto', // core/svg/svgConvert: markup + carry → fragment rows
+  'mirrorCarry', // core/svg/svgConvert: reads the document MIRROR (allowed), never the replica
+  'buildMergedPaths', // core/scene/mergePaths: copyLayers rows → merged path rows
   'unifiedNavModeFor', // core/workspace/cameraNav: mouse button → navigation mode
   'focusRangeAt', // core/scene/camera3d: depth-of-field maths over the DofConfig it is given
   // B4 Inspector (checked: arguments only — no singleton, store, controller or engine default on any path).

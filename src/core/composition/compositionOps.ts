@@ -15,6 +15,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { insertMedia } from '@core/scene/sceneInsert';
+import { documentMirror, hasDocumentMirror } from '@stores/documentMirror';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import type { ImportedAsset } from '@stores/assetStore';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
@@ -290,6 +291,9 @@ export async function createCompositionFromFootage(asset: ImportedAsset): Promis
   // Adopt the fresh project's pristine comp rather than leaving a phantom
   // "Composition 1" beside the one the footage just defined.
   const id = createOrAdoptComposition({ name, width, height, durationSeconds, fps });
+  // The insert targets the ACTIVE comp, which is resolved on the mirror: let it
+  // hear about the new composition first.
+  if (hasDocumentMirror()) await documentMirror().whenIdle();
   await insertMedia(asset);
   return id;
 }
