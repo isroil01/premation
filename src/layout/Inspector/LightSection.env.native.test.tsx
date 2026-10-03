@@ -30,7 +30,6 @@ import { engineIdle } from '@core/engine/engineInstance';
 import { values } from '@core/engine/propRefs';
 import { readNodeLight, type LightType } from '@core/scene/light';
 import { ENVIRONMENT_PRESETS } from '@core/scene/environmentLight';
-import { useAssetStore } from '@stores/assetStore';
 import { documentMirror } from '@stores/documentMirror';
 import { kelvinToHex, nearestKelvin } from '@core/scene/colorTemperature';
 
@@ -180,18 +179,16 @@ describe('an environment light', () => {
  * the engine cannot parse fails here.
  */
 describe('an environment light lit by an image', () => {
-  const IMG = { id: 'img_hdri', name: 'sunflowers_2k.exr', type: 'image' as const, src: 'blob:hdri', size: 1 };
+  // A library image imported through the engine (the fake port reads any `.png` as a still).
+  const IMG = { id: '', name: 'sunflowers_2k.png' };
 
   beforeEach(async () => {
-    useAssetStore.setState({ assets: [IMG] } as never);
-    // B4: the picker lists the mirror's image items — refetch after the fixture write.
-    documentMirror().start();
-    documentMirror().reload();
+    const { items: [id] } = await h.run({ type: 'importFiles', files: [{ path: `C:/m/${IMG.name}`, asSequence: false, createComposition: false }] });
+    IMG.id = id!;
     await documentMirror().whenIdle();
   });
   afterEach(() => {
     cleanup(); // unmount before the library changes under the section
-    useAssetStore.setState({ assets: [] } as never);
   });
 
   it('picking "Image…" points the sky at a library image', async () => {

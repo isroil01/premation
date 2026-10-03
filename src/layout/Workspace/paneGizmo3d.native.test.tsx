@@ -22,8 +22,10 @@
  *    world axis — ONE undo entry per drag.
  */
 
+import { settleToolEdits } from '@core/workspace/viewportGesture';
+import { documentMirror } from '@stores/documentMirror';
 import { useRef } from 'react';
-import { render, act, fireEvent } from '@testing-library/react';
+import { render, act, fireEvent, waitFor } from '@testing-library/react';
 import { Project3D } from '@motion/scene';
 import { useGizmo3d } from './useGizmo3d';
 import { Gizmo3dOverlay } from './Gizmo3dOverlay';
@@ -112,6 +114,7 @@ afterEach(reset);
  */
 async function settle(): Promise<void> {
   await act(async () => {
+    await documentMirror().whenIdle();
     await engineIdle();
   });
 }
@@ -217,6 +220,7 @@ describe('through the engine API', () => {
       fireEvent.pointerDown(stage, { clientX: tip.x, clientY: tip.y, button: 0, pointerId: 7 });
       fireEvent.pointerMove(window, { clientX: tip.x + 60, clientY: tip.y, pointerId: 7 });
       fireEvent.pointerUp(window, { clientX: tip.x + 60, clientY: tip.y, pointerId: 7 });
+      await settleToolEdits();
       await engineIdle();
     });
 
@@ -268,13 +272,15 @@ describe('through the engine API', () => {
       fireEvent.pointerDown(stage, { clientX: tip.x, clientY: tip.y, button: 0, pointerId: 9 });
       for (const dx of [20, 40, 60]) fireEvent.pointerMove(window, { clientX: tip.x + dx, clientY: tip.y, pointerId: 9 });
       fireEvent.pointerUp(window, { clientX: tip.x + 60, clientY: tip.y, pointerId: 9 });
+      await settleToolEdits();
       await engineIdle();
     });
     const t = (await docView()).getNode(id)!.components.find((c) => c.type === 'Transform')!.props as Record<string, number>;
     expect(t.x).toBeCloseTo(tip.x + 60, 3);
     expect(t.y).toBeCloseTo(START.y, 6);
     expect(t.z).toBeCloseTo(START.z, 6);
-    expect((await historyLabels()).length).toBe(entries + 1);
+    // The gesture closes a few round trips after the pointer-up: wait for its entry.
+    await waitFor(async () => expect((await historyLabels()).length).toBe(entries + 1));
     expect((await historyLabels()).at(-1)).toBe('Move');
     await act(async () => { await h.run({ type: 'undo' }); });
     const back = (await docView()).getNode(id)!.components.find((c) => c.type === 'Transform')!.props as Record<string, number>;

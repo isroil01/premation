@@ -7,25 +7,15 @@ import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 
 describe('InterpretFootageModal', () => {
-  const sampleAsset: ImportedAsset = {
-    id: 'test-asset-1',
-    name: 'interview_take1.mp4',
-    type: 'video',
-    src: 'blob:video1',
-    size: 1048576,
-    metadata: {
-      width: 1920,
-      height: 1080,
-      fps: 29.97,
-      duration: 12.5,
-      hasAlpha: false,
-    },
-  };
-
+  // The footage as the engine imported it (the fake port: 640×360, 4 s, 30 fps); the asset store is its view.
+  let sampleAsset: ImportedAsset;
   let h: Harness;
   beforeEach(async () => {
     h = await setupAppEngine();
-    useAssetStore.setState({ assets: [sampleAsset], folders: [] });
+    const { items: [id] } = await h.run({ type: 'importFiles', files: [{ path: 'C:/m/interview_take1.mp4', asSequence: false, createComposition: false }] });
+    await engineIdle();
+    sampleAsset = useAssetStore.getState().assets.find((a) => a.id === id)!;
+    await h.run({ type: 'clearHistory' });
     useModalStore.setState({ stack: [] });
   });
   afterEach(async () => {
@@ -50,7 +40,7 @@ describe('InterpretFootageModal', () => {
     const { getByText } = render(modal!.render(() => useModalStore.getState().close(modal!.id)));
 
     fireEvent.click(screen.getByLabelText(/Conform to frame rate:/i));
-    fireEvent.change(screen.getByDisplayValue('29.97'), { target: { value: '24' } });
+    fireEvent.change(screen.getByDisplayValue('30'), { target: { value: '24' } });
     await act(async () => {
       fireEvent.click(getByText('OK'));
       await engineIdle();

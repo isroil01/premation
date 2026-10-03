@@ -15,6 +15,7 @@
  * that stood both of those up would be testing the bus.
  */
 
+import { documentMirror } from '@stores/documentMirror';
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
 import { rowSelectionId } from '@core/engine/__testHelpers__/selectionIds';
 import type { Value } from '@motion/engine-api';
@@ -42,6 +43,8 @@ beforeEach(async () => {
   resetHeatForTest();
   h = await setupAppEngine();
   NODE = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'Heat', init: [] })).layer;
+  // The timeline row that asks shows the layer: its property tree is loaded.
+  await documentMirror().loadTree(NODE);
 });
 
 afterEach(async () => {

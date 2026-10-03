@@ -8,7 +8,6 @@ import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appE
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import { documentMirror } from '@stores/documentMirror';
-import { readAuthoredFields } from '@core/template/templateAuthoring';
 import { activeCompIdNow } from '@hooks/useMirror';
 import {
   exposeLayerAsFieldEdit, mirrorAuthoredFields, removeAuthoredFieldEdit, renameAuthoredFieldEdit, renameAuthoredFieldIdEdit, withFieldId,
@@ -45,11 +44,11 @@ async function oneEntry(label: string, act: () => Promise<boolean>): Promise<voi
 test('rename, change the input id, remove — each one entry, stored on the comp', async () => {
   expect(mirrorAuthoredFields(comp).map((f) => f.id)).toEqual(['title', 'accent']);
   await oneEntry('Rename Template Field', () => renameAuthoredFieldEdit('title', 'Headline'));
-  expect(readAuthoredFields(comp)[0]?.label).toBe('Headline');
+  expect(mirrorAuthoredFields(comp)[0]?.label).toBe('Headline');
   await oneEntry('Change Template Input Id', () => renameAuthoredFieldIdEdit('title', 'headline'));
-  expect(readAuthoredFields(comp)[0]?.id).toBe('headline');
+  expect(mirrorAuthoredFields(comp)[0]?.id).toBe('headline');
   await oneEntry('Remove Template Field', () => removeAuthoredFieldEdit('accent'));
-  expect(readAuthoredFields(comp).map((f) => f.id)).toEqual(['headline']);
+  expect(mirrorAuthoredFields(comp).map((f) => f.id)).toEqual(['headline']);
 });
 
 test('a rejected input id sends nothing', async () => {

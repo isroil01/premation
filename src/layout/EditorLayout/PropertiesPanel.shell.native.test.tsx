@@ -25,6 +25,7 @@ import { useProjectStore } from '@stores/projectStore';
 import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
+import { documentMirror } from '@stores/documentMirror';
 import { inspectorSectionsForSelection } from '@layout/Inspector/inspectorSections';
 import { LAYER_SWITCHES, applyLayerSwitch, kindBreakdown } from '@layout/Inspector/SelectionHeader';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -62,6 +63,7 @@ beforeEach(async () => {
   A = await mk('shape', NAME.A);
   B = await mk('shape', NAME.B);
   T = await mk('text', NAME.T);
+  for (const id of [A, B, T]) await documentMirror().loadTree(id);
   await clearHistory();
   useSelectionStore.setState({ ids: [] } as never);
 });

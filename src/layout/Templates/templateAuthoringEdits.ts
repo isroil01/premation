@@ -92,6 +92,8 @@ export async function exposeLayerAsFieldEdit(layerId: string, seconds: number = 
   const m = documentMirror();
   const layer = m.layer(layerId);
   if (!comp || !layer) return null;
+  // The slot rect's Width / Height resolve on the layer's property tree.
+  await m.loadTree(layerId);
   const label = layer.name || 'Field';
   const existing = mirrorAuthoredFields(comp);
   const id = uniqueFieldId(slugFieldId(label) || 'input', new Set(existing.map((f) => f.id)));

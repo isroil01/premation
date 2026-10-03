@@ -25,6 +25,7 @@ import { Accordion, type AccordionItem } from '@components/Accordion';
 import { EmptyState } from '@components/EmptyState';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { documentMirror } from '@stores/documentMirror';
+import { useMirrorTreeShape, useRetainTrees } from '@hooks/useMirror';
 import { InspectorSection } from './InspectorSection';
 import { CompositionSummary } from './CompositionSummary';
 import {
@@ -157,6 +158,10 @@ export interface InspectorContentProps {
 }
 
 export function InspectorContent({ nodeId, query = '', nodeIds }: InspectorContentProps): JSX.Element {
+  // Which sections apply reads the layers' property trees (what they HAVE):
+  // keep them loaded, and draw again when the primary's tree shape lands.
+  useMirrorTreeShape(nodeId);
+  useRetainTrees(nodeIds ?? []);
   if (!nodeId) return <CompositionSummary />;
 
   if (!documentMirror().layer(nodeId)) return <div className={styles.empty}>No node data</div>;

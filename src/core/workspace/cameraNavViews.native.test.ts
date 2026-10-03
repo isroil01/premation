@@ -33,7 +33,7 @@ import {
   trackNavBy,
   unifiedNavModeFor,
 } from './cameraNav';
-import { flushToolBursts } from './viewportGesture';
+import { flushToolBursts, settleToolEdits } from './viewportGesture';
 
 const W = 1920;
 const H = 1080;
@@ -41,7 +41,10 @@ const H = 1080;
 /** A nav write outside a pointer gesture is a wheel-style burst: commit it and let the engine apply it. */
 async function settle(): Promise<void> {
   flushToolBursts();
+  // The burst closes its engine gesture a few round trips after the flush; then the mirror catches up.
+  await settleToolEdits();
   await engineIdle();
+  await documentMirror().whenIdle();
 }
 
 beforeEach(() => {

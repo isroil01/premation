@@ -12,16 +12,14 @@ import { ToolRegistry } from '@motion/ai-tools';
 import type { ToolContext } from '@motion/ai-tools';
 import { buildAiTools } from './toolHandlers';
 import { createToolContext } from './toolContext';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { readCompRef } from '@core/scene/compInstance';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { isPrecomp } from '@core/scene/precomp';
 import { useProjectStore } from '@stores/projectStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import type { SceneNode } from '@core/types';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
+import { engineIdle } from '@core/engine/engineInstance';
 
 function registry(): ToolRegistry {
   const r = new ToolRegistry();
@@ -31,38 +29,18 @@ function registry(): ToolRegistry {
 
 const ctx = (): ToolContext => createToolContext(new AbortController().signal);
 
-function layer(id: string): SceneNode {
-  return {
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 100, y: 100, width: 100, height: 100 } },
-      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#ffffff' } },
-    ],
-  } as unknown as SceneNode;
-}
-
 // Enabling Time Remapping is an engine command (`setTimeRemap`): the turn's
 // writes need the app engine.
 let h: Awaited<ReturnType<typeof setupAppEngine>> | null = null;
 afterEach(async () => { await h?.dispose(); h = null; });
 
+let A = '';
+let B = '';
 beforeEach(async () => {
   h = await setupAppEngine();
-  defaultSceneGraph.clear();
-  defaultSceneGraph.addNode({
-    id: 'comp_root', name: 'Main', parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [{ id: 'comp_root_meta', type: 'group', props: { __kind: 'group' } }],
-  } as unknown as SceneNode);
-  const actions = useProjectStore.getState().actions;
-  actions.resetTabs();
-  actions.replaceComps({
-    comp_root: { id: 'comp_root', name: 'Main', width: 1920, height: 1080, fps: 30, durationSeconds: 10, background: '#101014', transparent: false, startFrame: 0 },
-  });
-  defaultSceneGraph.addChild('comp_root', layer('a') as never);
-  defaultSceneGraph.addChild('comp_root', layer('b') as never);
-  getTimelineController().syncFromScene('comp_root');
+  A = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'a', init: [] })).layer;
+  B = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'b', init: [] })).layer;
+  await engineIdle();
 });
 
 const compLayerIn = async (rootId: string): Promise<SceneNode | undefined> =>
@@ -70,7 +48,7 @@ const compLayerIn = async (rootId: string): Promise<SceneNode | undefined> =>
 
 describe('create_precomp', () => {
   it('makes a real composition and a composition layer in the layers’ place', async () => {
-    const res = await registry().execute('create_precomp', { nodeIds: ['a', 'b'], name: 'Logo' }, ctx());
+    const res = await registry().execute('create_precomp', { nodeIds: [A, B], name: 'Logo' }, ctx());
     expect(res.ok ? true : res.content).toBe(true);
 
     const inst = (await compLayerIn('comp_root'))!;
@@ -78,12 +56,12 @@ describe('create_precomp', () => {
     const compId = readCompRef(inst)!;
     expect(useProjectStore.getState().comps[compId]?.name).toBe('Logo');
     expect((await docView()).getNode(compId)?.parent).toBeNull();
-    expect((await docView()).getNode('a')?.parent).toBe(compId);
-    expect((await docView()).getNode('b')?.parent).toBe(compId);
+    expect((await docView()).getNode(A)?.parent).toBe(compId);
+    expect((await docView()).getNode(B)?.parent).toBe(compId);
   });
 
   it('leaves a composition layer that set_time_remap can retime', async () => {
-    await registry().execute('create_precomp', { nodeIds: ['a'], name: 'Bug' }, ctx());
+    await registry().execute('create_precomp', { nodeIds: [A], name: 'Bug' }, ctx());
     const inst = (await compLayerIn('comp_root'))!;
 
     const res = await registry().execute(
