@@ -20,8 +20,8 @@ command setProperty = 400 [coalesce] { prop: PropRef = 1; value: Value = 2; time
 command setProperties = 401 [coalesce] { writes: PropertyWrite[] = 1; }
 /// Reset to the property's default (a keyframe at `time` if animated).
 command resetProperty = 402 { prop: PropRef = 1; time?: Time = 2; }
-/// The stopwatch. On: one keyframe at `time` holding the current value. Off: removes every keyframe; the static value becomes the value at `time`.
-command setAnimated = 403 { prop: PropRef = 1; animated: bool = 2; time: Time = 3; } -> PropertyWriteResult;
+/// The stopwatch. On: one keyframe at `time` holding the current value. Off: removes every keyframe; the static value becomes the value at `time`. Block 3: `keepStatic` (off only) keeps the static value stored UNDER the keys instead — the removal of a track a tool baked (ducking, a noise gate, a baked audio driver), which leaves the layer as it was before the bake.
+command setAnimated = 403 { prop: PropRef = 1; animated: bool = 2; time: Time = 3; keepStatic?: bool = 4; } -> PropertyWriteResult;
 /// Separate Dimensions (position → X/Y/Z Position). Keyframes are split/merged exactly as AE does.
 command setDimensionsSeparated = 404 { layer: LayerId = 1; path: PropPath = 2; separated: bool = 3; }
 /// Set or replace an expression. An empty source removes it. The expression is stored as given, `enabled` as

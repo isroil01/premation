@@ -312,7 +312,10 @@ export const propertyHandlers: HandlerTable = {
           return { keyframe: id };
         }
         if (!animated) return {};
-        const value = valueAt(layer, b, t);
+        // keepStatic: the value stored UNDER the keys stays (a baked track removed) —
+        // read before the drop, which leaves the last key's value (AE).
+        const kept = cmd.keepStatic ? readStatic(layer, b) : undefined;
+        const value = kept ? (kept.kind === 'none' ? undefined : kept) : valueAt(layer, b, t);
         const times = readKeys(layer, b).map((k) => k.t);
         dropKeys(layer, b, times);
         if (value && ((!b.dataTrack && b.special !== 'maskPath') || b.special === 'rig' || b.special === 'shapePath' || (b.special === 'fillStops' && hasGradientFill(layer)))) writeStatic(layer, b, value);

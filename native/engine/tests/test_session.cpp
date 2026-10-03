@@ -222,6 +222,22 @@ TEST_CASE("session: keyframes interpolate on the keyframe axis", "[session][eval
     REQUIRE(scalar_of(value_of(h, layer, "transform/rotation", kSec - kSec / 30)) == 0.0);
     REQUIRE(scalar_of(value_of(h, layer, "transform/rotation", kSec)) == 90.0);
   }
+  SECTION("the stopwatch off keeps the value at its time; keepStatic keeps the value stored under the keys") {
+    REQUIRE(is_ok(set_prop(h, layer, "transform/opacity", scalar(40))));
+    REQUIRE(is_ok(add_key(h, layer, "transform/opacity", 0, scalar(10), api::Easing::linear)));
+    REQUIRE(is_ok(add_key(h, layer, "transform/opacity", kSec, scalar(90), api::Easing::linear)));
+    api::SetAnimated off;
+    off.prop = {layer, "transform/opacity"};
+    off.animated = false;
+    off.time = kSec / 2;
+    off.keep_static = true;
+    REQUIRE(is_ok(h.run(cmd(off))));
+    REQUIRE(scalar_of(value_of(h, layer, "transform/opacity", 0)) == 40.0);
+    REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+    off.keep_static.reset();
+    REQUIRE(is_ok(h.run(cmd(off))));
+    REQUIRE(scalar_of(value_of(h, layer, "transform/opacity", 0)) == Approx(50.0));
+  }
   SECTION("keyframe ids are stable and minted k<n>") {
     api::GetKeyframes q;
     q.props = {api::PropRef{layer, "transform/position"}};

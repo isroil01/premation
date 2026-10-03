@@ -2397,6 +2397,7 @@ struct SetAnimated {
   PropRef prop;
   bool animated = false;
   Time time = 0;
+  std::optional<bool> keep_static;
   bool operator==(const SetAnimated&) const = default;
 };
 

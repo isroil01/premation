@@ -2138,11 +2138,12 @@ export interface ResetProperty {
   time?: Time;
 }
 
-/** The stopwatch. On: one keyframe at `time` holding the current value. Off: removes every keyframe; the static value becomes the value at `time`. */
+/** The stopwatch. On: one keyframe at `time` holding the current value. Off: removes every keyframe; the static value becomes the value at `time`. Block 3: `keepStatic` (off only) keeps the static value stored UNDER the keys instead — the removal of a track a tool baked (ducking, a noise gate, a baked audio driver), which leaves the layer as it was before the bake. */
 export interface SetAnimated {
   prop: PropRef;
   animated: boolean;
   time: Time;
+  keepStatic?: boolean;
 }
 
 /** Separate Dimensions (position → X/Y/Z Position). Keyframes are split/merged exactly as AE does. */

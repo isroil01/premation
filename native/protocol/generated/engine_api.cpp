@@ -7431,6 +7431,7 @@ void encode(wire::Writer& w, const SetAnimated& v) {
   w.varint(10U); { const std::size_t s = w.begin_ld(); encode(w, v.prop); w.end_ld(s); }
   w.varint(16U); w.boolean(v.animated);
   w.varint(24U); w.svarint(v.time);
+  if (v.keep_static.has_value()) { w.varint(32U); w.boolean(*v.keep_static); }
 }
 
 Status decode(wire::Reader& r, SetAnimated& out) {
@@ -7454,6 +7455,12 @@ Status decode(wire::Reader& r, SetAnimated& out) {
       case 24U: {
         if (!r.svarint(out.time)) return Status::truncated;
         has_time = true;
+        break;
+      }
+      case 32U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.keep_static = std::move(e);
         break;
       }
       default:

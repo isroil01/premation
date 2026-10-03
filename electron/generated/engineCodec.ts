@@ -5548,6 +5548,7 @@ function encS_SetAnimated(w: Writer, v: T.SetAnimated): void {
   w.byte(10); { const s = w.beginLd(); encS_PropRef(w, v.prop); w.endLd(s); }
   w.byte(16); w.bool(v.animated);
   w.byte(24); w.i64(v.time);
+  if (v.keepStatic !== undefined) { w.byte(32); w.bool(v.keepStatic); }
 }
 function decS_SetAnimated(r: Reader, end: number, o: any): T.SetAnimated {
   let h_prop = false;
@@ -5556,12 +5557,14 @@ function decS_SetAnimated(r: Reader, end: number, o: any): T.SetAnimated {
   let v_prop: T.PropRef | undefined;
   let v_animated: boolean | undefined;
   let v_time: number | undefined;
+  let v_keepStatic: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_prop = decS_PropRef(r, r.ldEnd(), {}); h_prop = true; break;
       case 16: v_animated = r.bool(); h_animated = true; break;
       case 24: v_time = r.i64(); h_time = true; break;
+      case 32: v_keepStatic = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -5572,6 +5575,7 @@ function decS_SetAnimated(r: Reader, end: number, o: any): T.SetAnimated {
   o.prop = v_prop;
   o.animated = v_animated;
   o.time = v_time;
+  if (v_keepStatic !== undefined) o.keepStatic = v_keepStatic;
   return o;
 }
 function encS_SetDimensionsSeparated(w: Writer, v: T.SetDimensionsSeparated): void {

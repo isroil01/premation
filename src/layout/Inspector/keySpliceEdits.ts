@@ -35,7 +35,6 @@ import { reportEngineError } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
 import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { secondsToFlicks } from '@motion/engine-api';
-import { catalogFor, readStatic } from '@core/engine/props';
 import { trackRefIn } from '@core/mirror/trackIndex';
 import { documentMirror } from '@stores/documentMirror';
 
@@ -175,19 +174,15 @@ export function spliceSteps(
 
 /**
  * "Remove the track" (the legacy `removeTrack`): every key of `prop` goes and
- * the static value underneath stays what it was. `deleteKeyframes` alone would
- * leave the property at the last key's value (its AE contract), so the static
- * value read before is written back. Empty when the property has no keys.
+ * the static value underneath stays what it was — the stopwatch off with
+ * `keepStatic` (`deleteKeyframes` alone would leave the property at the last
+ * key's value, its AE contract). Empty when the property has no keys.
  */
 export async function removeAnimationCommands(prop: PropRef, client: EngineClient = engine()): Promise<Command[]> {
-  const b = catalogFor(prop.layer).byPath.get(prop.path);
-  if (!b) return [];
   const res = await client.query({ type: 'getKeyframes', props: [prop] });
   if (!res.ok) return [];
-  const ids = res.value.sets.flatMap((s) => s.keyframes.map((k) => k.id));
-  if (ids.length === 0) return [];
-  const before = readStatic(prop.layer, b);
-  return [{ type: 'deleteKeyframes', ids }, { type: 'setProperty', prop, value: before }];
+  if (!res.value.sets.some((s) => s.keyframes.length > 0)) return [];
+  return [{ type: 'setAnimated', prop, animated: false, time: 0, keepStatic: true }];
 }
 
 /**

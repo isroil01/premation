@@ -432,12 +432,16 @@ ResultOf<api::SetAnimated> handle(const api::SetAnimated& c, HCtx& x) {
     return r;
   }
   if (!animated) return r;
-  const std::optional<api::Value> value = value_at(pc, layer, b, t);
+  // keepStatic: the value stored UNDER the keys stays (a baked track removed) —
+  // read before the drop, which leaves the last key's value (AE).
+  const bool keep = c.keep_static.value_or(false);
+  const std::optional<api::Value> value = keep ? std::optional<api::Value>(read_static(x.d, layer, b)) : value_at(pc, layer, b, t);
   std::vector<double> times;
   for (const KeyAt& k : read_keys(x.d, layer, b)) times.push_back(k.t);
   drop_keys(pc, layer, b, times);
-  if (value && ((!b.dataTrack && b.special != Special::maskPath) || b.special == Special::rig || b.special == Special::shapePath ||
-                (b.special == Special::fillStops && has_gradient_fill(*x.d.node(layer))))) {
+  if (value && value->kind() != VK::none &&
+      ((!b.dataTrack && b.special != Special::maskPath) || b.special == Special::rig || b.special == Special::shapePath ||
+       (b.special == Special::fillStops && has_gradient_fill(*x.d.node(layer))))) {
     write_static(x.d, layer, b, *value);
   }
   return r;
