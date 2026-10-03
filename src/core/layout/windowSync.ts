@@ -3,9 +3,7 @@
  *
  * The DOCUMENT is never sent between windows: the C++ engine owns it and every
  * window is a mirror of that engine (main relays its events to each window;
- * edits are engine requests). A pop-out's page replica is filled from the
- * engine's `exportDocument` (engineInstance `refreshReplicaFromEngine`, then
- * replicaRefresh.ts on every foreign batch).
+ * edits are engine requests).
  *
  * What travels here is EDITOR state, which the engine does not hold:
  *
@@ -21,7 +19,6 @@ import { syncChannel } from './syncChannel';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { usePlaybackClockStore, setTime as setClockTime } from '@stores/playbackClockStore';
-import { refreshReplicaFromEngine } from '@core/engine/engineInstance';
 
 /** This window renders a detached panel, not the editor shell. */
 export function isPopoutWindow(): boolean {
@@ -69,9 +66,6 @@ export function startWindowSync(): () => void {
     lastTimeSent = stamp;
     syncChannel.publish<TimePayload>(MSG_TIME, { time: now.time, frame: now.frame });
   });
-
-  // A pop-out's document comes from the engine, not the editor window.
-  if (isPopoutWindow()) void refreshReplicaFromEngine();
 
   const offSelection = syncChannel.subscribe<readonly string[]>(MSG_SELECTION, (ids) => {
     if (!Array.isArray(ids)) return;

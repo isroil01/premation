@@ -62,24 +62,6 @@ export const ANIM_EDIT_COMMAND = asCommandId('anim.edit');
  * applies every change's `after`; `undo` applies every `before`. Both are pure
  * state swaps, so redo (which re-runs `execute`) is deterministic.
  */
-/**
- * B4 round 8 — where a recorded edit goes when the process engine owns the
- * document: installed by core/engine/animEditBridge.ts. Returns true when it
- * took the edit (it is then NOT pushed on the page's history).
- */
-export type AnimEditBridge = (command: AnimEditCommand) => boolean;
-let animEditBridge: AnimEditBridge | null = null;
-export function setAnimEditBridge(bridge: AnimEditBridge | null): void {
-  animEditBridge = bridge;
-}
-
-/** `runAnimEdit`'s route when the process engine owns the document; true when it took the edit. */
-export type AnimEditRunBridge = (label: string, mutate: () => void) => boolean;
-let animEditRunBridge: AnimEditRunBridge | null = null;
-export function setAnimEditRunBridge(bridge: AnimEditRunBridge | null): void {
-  animEditRunBridge = bridge;
-}
-
 export class AnimEditCommand implements Command {
   readonly id = ANIM_EDIT_COMMAND;
   readonly label: string;
@@ -317,11 +299,6 @@ export function recordAnimEdit(command: AnimEditCommand | null): void {
   // of the activation funnel. Only edits that ADD keys count: deleting or
   // re-easing is work, but it is not the moment someone first animates.
   if (command.addsKeyframes()) trackOnce('first_keyframe');
-  // The C++ engine owns the document (the app): the page engine is only its
-  // replica, so an edit made here would reach nothing the engine saves,
-  // renders or exports. The bridge takes it back off the replica and sends it
-  // to the engine as commands — one engine history entry (animEditBridge.ts).
-  if (animEditBridge && command.engineIs(defaultAnimation) && animEditBridge(command)) return;
   const history = getCommandSystem().getHistory();
   const top = history.peek();
   if (
@@ -337,9 +314,5 @@ export function recordAnimEdit(command: AnimEditCommand | null): void {
 
 /** Convenience: capture a mutation on the default engine and record it. */
 export function runAnimEdit(label: string, mutate: () => void, mergeKey?: string): void {
-  // The engine owns the document: the whole mutation — keyframes AND the node
-  // props / switches / parent / timing it writes — runs off-document and goes
-  // to the engine as commands (animEditBridge.ts).
-  if (animEditRunBridge && animEditRunBridge(label, mutate)) return;
   recordAnimEdit(captureAnimEdit(label, mutate, { mergeKey }));
 }

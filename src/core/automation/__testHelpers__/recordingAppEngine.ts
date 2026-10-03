@@ -33,7 +33,7 @@ export async function setupRecordingAppEngine(): Promise<Harness & { engine: Loc
     getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene()),
   ];
   const files = new Map<string, EditorDocument>();
-  const engine = bootEngine({ ports: fakePorts(files), recordLog: true, engineOptions: { verifyScopes: true } });
+  const engine = bootEngine({ ports: fakePorts(files), recordLog: true, engineOptions: { verifyScopes: true } }) as LocalEngine;
   const batches: Harness['batches'] = [];
   engine.subscribe((b) => batches.push(b));
   const h: Harness & { engine: LocalEngine } = {

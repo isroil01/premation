@@ -92,6 +92,21 @@ function keyOfSymbol(sym) {
 for (const sf of files) {
   const modKey = `${norm(sf.fileName)}#<module>`;
   const visit = (owner, n) => {
+    // `await import('…')`: the binding a destructure names does not resolve to
+    // the export, so the caller reaches the WHOLE module (conservative).
+    if (ts.isCallExpression(n) && n.expression.kind === ts.SyntaxKind.ImportKeyword && n.arguments[0] && ts.isStringLiteralLike(n.arguments[0])) {
+      const target = checker.getSymbolAtLocation(n.arguments[0]);
+      const tf = target && target.valueDeclaration && ts.isSourceFile(target.valueDeclaration) ? norm(target.valueDeclaration.fileName) : null;
+      // `const { a, b } = await import('…')` names exactly what it takes.
+      const p = n.parent && ts.isAwaitExpression(n.parent) ? n.parent.parent : null;
+      const names = p && ts.isVariableDeclaration(p) && ts.isObjectBindingPattern(p.name)
+        ? p.name.elements.map((e) => (e.propertyName ?? e.name).getText())
+        : null;
+      if (tf && names && !p.name.elements.some((e) => e.dotDotDotToken)) {
+        for (const nm of names) if (nodes.has(`${tf}#${nm}`)) nodes.get(owner).edges.add(`${tf}#${nm}`);
+        nodes.get(owner).edges.add(`${tf}#<module>`);
+      } else if (tf) for (const k of nodes.keys()) if (k.startsWith(`${tf}#`)) nodes.get(owner).edges.add(k);
+    }
     if (ts.isIdentifier(n)) {
       const k = keyOfSymbol(checker.getSymbolAtLocation(n));
       if (k && k !== owner) nodes.get(owner).edges.add(k);

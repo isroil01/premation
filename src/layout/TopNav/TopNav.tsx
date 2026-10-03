@@ -17,8 +17,7 @@
 import { useRef, useState, useEffect, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getCommandSystem } from '@core/commands/CommandSystem';
-import { performUndo, performRedo } from '@stores/historyStore';
-import { getEventBus } from '@core/events/EventBus';
+import { performUndo, performRedo, historyView, subscribeHistory } from '@stores/historyStore';
 import { Button } from '@components/Button';
 import { IconButton } from '@components/IconButton';
 import { Icon, type IconName } from '@components/Icon';
@@ -346,17 +345,14 @@ export function TopNav(): JSX.Element {
   const layerBoxesVisible = usePreferenceStore((s) => s.showLayerBounds);
   const deviceWireframesAll = usePreferenceStore((s) => s.deviceWireframesAll);
 
-  const [canUndo, setCanUndo] = useState(() => getCommandSystem().getHistory().canUndo());
-  const [canRedo, setCanRedo] = useState(() => getCommandSystem().getHistory().canRedo());
+  const [canUndo, setCanUndo] = useState(() => historyView().canUndo);
+  const [canRedo, setCanRedo] = useState(() => historyView().canRedo);
 
-  useEffect(() => {
-    const handleChanged = () => {
-      setCanUndo(getCommandSystem().getHistory().canUndo());
-      setCanRedo(getCommandSystem().getHistory().canRedo());
-    };
-    const sub = getEventBus().on('UndoStackChanged', handleChanged);
-    return () => sub.dispose();
-  }, []);
+  useEffect(() => subscribeHistory(() => {
+    const h = historyView();
+    setCanUndo(h.canUndo);
+    setCanRedo(h.canRedo);
+  }), []);
 
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const onPickAudio = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {

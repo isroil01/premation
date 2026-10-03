@@ -45,7 +45,7 @@ import {
 import { panelAssetSelectionIds, selectedPanelAssets, selectedPanelFootage } from '@core/composition/assetSelection';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { baselineHistoryEdit } from '@core/engine/historyBaseline';
-import { performUndo, performRedo } from '@stores/historyStore';
+import { historyView, performUndo, performRedo } from '@stores/historyStore';
 import { openAbout } from '@layout/Help/AboutDialog';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { usePresentationStore } from '@stores/presentationStore';
@@ -2549,14 +2549,14 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           id: asCommandId(BuiltinCommands.Undo),
           label: 'Undo',
           shortcut: { key: 'z', meta: true },
-          enabled: () => getCommandSystem().getHistory().canUndo(),
+          enabled: () => historyView().canUndo,
           execute: () => performUndo(),
         });
         registry.register({
           id: asCommandId(BuiltinCommands.Redo),
           label: 'Redo',
           shortcut: { key: 'z', meta: true, shift: true },
-          enabled: () => getCommandSystem().getHistory().canRedo(),
+          enabled: () => historyView().canRedo,
           execute: () => performRedo(),
         });
 

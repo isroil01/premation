@@ -11,7 +11,9 @@
  * This keeps a counter PER NODE, fed from the events that already name the
  * node they touched (`NodeUpdated`, `AnimationChanged`), and bumps every
  * counter only on the events that cannot say (`SceneGraphChanged` — add,
- * delete, reparent). A section keyed on `useNodeRevision(nodeId)` therefore
+ * delete, reparent). The engine's document mirror feeds it the same way: a
+ * layer's `layer:` / `tree:` / `keys:` keys advance that layer, `layers` /
+ * `comps` advance all. A section keyed on `useNodeRevision(nodeId)` therefore
  * sees every change to its own layer and nothing about anyone else's.
  *
  * Not coalesced to a frame: React 18 batches every `setState` raised inside
@@ -31,6 +33,7 @@
 import { getEventBus } from '@core/events/EventBus';
 import { isMediaDecodeRepaint } from '@core/engine/mediaRepaint';
 import { useSceneRevision } from '@stores/sceneStore';
+import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
 
 type Listener = () => void;
 
@@ -40,6 +43,17 @@ let globalRev = 0;
 let wiredBus: unknown = null;
 let disposers: Array<{ dispose(): void }> = [];
 let storeUnsub: (() => void) | null = null;
+let wiredMirror: DocumentMirror | null = null;
+let mirrorUnsub: (() => void) | null = null;
+
+/** The session's document mirror, or null where no engine is registered (a bare unit test). */
+function mirrorOrNull(): DocumentMirror | null {
+  try {
+    return documentMirror();
+  } catch {
+    return null;
+  }
+}
 
 /**
  * True between a `NodeUpdated` and the end of the current microtask.
@@ -78,6 +92,14 @@ export function nodeRevision(nodeId: string): number {
 }
 
 function ensureWired(): void {
+  // The engine's document: a layer added, removed or moved between comps names
+  // no single row, so every counter advances (the replica's SceneGraphChanged).
+  const m = mirrorOrNull();
+  if (m !== wiredMirror) {
+    mirrorUnsub?.();
+    wiredMirror = m;
+    mirrorUnsub = m ? m.subscribe(['layers', 'comps'], notifyAll) : null;
+  }
   const bus = getEventBus();
   if (wiredBus === bus) return;
   for (const d of disposers) d.dispose();
@@ -112,7 +134,10 @@ export function subscribeNodeRevision(nodeId: string, listener: Listener): () =>
     listeners.set(nodeId, set);
   }
   set.add(listener);
+  // The layer's own mirror keys: its header, its property values and its keyframes.
+  const offMirror = wiredMirror?.subscribe([`layer:${nodeId}`, `tree:${nodeId}`, `keys:${nodeId}`], () => notify(nodeId));
   return () => {
+    offMirror?.();
     set?.delete(listener);
     if (set && set.size === 0) listeners.delete(nodeId);
   };

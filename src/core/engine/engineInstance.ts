@@ -35,12 +35,11 @@
  * D5 / F2 — the C++ ENGINE OWNS THE DOCUMENT wherever there is an engine
  * bridge (always in the app; the owner flag and the TypeScript fallback are
  * gone — docs/TS_ENGINE_REMOVAL.md): `engine()` is an `OwnedEngineClient`
- * over the process client. Its events feed `subscribeEngine` (the mirror),
- * undo/redo route to it, and the LocalEngine is only the page's REPLICA (fed
- * the same document-changing requests, ownedEngineClient.ts) until the UI
- * reads only the mirror. A project open / close no longer rebuilds it: the
- * replica received the same newProject / openProject the owner did. Without a
- * bridge (the jest harness) the LocalEngine answers `engine()` itself.
+ * over the process client. Its events feed `subscribeEngine` (the mirror) and
+ * undo/redo route to it. The page keeps NO copy of the document (block 3: the
+ * replica is gone) — no LocalEngine is created; the UI reads the mirror.
+ * Without a bridge (the jest harness, the headless CLI window) the LocalEngine
+ * answers `engine()` itself.
  *
  * No React here (src/core). The hooks over this live in src/hooks.
  */
@@ -50,13 +49,11 @@ import { getEventBus } from '@core/events/EventBus';
 import { LocalEngine, type LocalEngineOptions } from './LocalEngine';
 import { createAppProcessEngine } from './process/processEngine';
 import { OwnedEngineClient } from './ownedEngineClient';
-import { installAnimEditBridge } from './animEditBridge';
 import { setEngineOwnsDocument } from './engineOwnership';
 import { useUIStore } from '@stores/uiStore';
 import { setHistoryRoute } from '@stores/historyStore';
-import { setAppMirrorSource } from '@stores/documentMirror';
+import { documentMirror, hasDocumentMirror, setAppMirrorSource } from '@stores/documentMirror';
 import type { EnginePorts } from './ports';
-import { createReplicaRefresher, type ReplicaRefresher } from './replicaRefresh';
 
 export interface BootEngineOptions {
   ports?: EnginePorts;
@@ -81,8 +78,6 @@ let current: LocalEngine | null = null;
 /** The session's engine while the C++ engine owns the document (else null). */
 let owned: OwnedEngineClient | null = null;
 let detachOwned: (() => void) | null = null;
-/** F2: refreshes the page replica after another window's edit (replicaRefresh.ts). */
-let replicaRefresher: ReplicaRefresher | null = null;
 let bootOpts: BootEngineOptions | null = null;
 let busSubs: Array<{ dispose(): void }> = [];
 let generation = 0;
@@ -100,8 +95,7 @@ function create(): LocalEngine {
     ...(path ? { projectPath: path } : {}),
     ...o.engineOptions,
   });
-  // The replica's events are not the session's while the engine owns the document.
-  detachCurrent = owned ? null : e.subscribe((batch) => fanOut(batch));
+  detachCurrent = e.subscribe((batch) => fanOut(batch));
   return e;
 }
 
@@ -127,9 +121,7 @@ function install(next: LocalEngine, reason: 'opened' | 'created'): void {
     try { l(next); } catch { /* isolate */ }
   }
   // Every install, the first included: a subscriber that outlived a shutdown
-  // (the document mirror, B4) must refetch from the new instance. (Owner mode:
-  // the replica changed, not the document — the owner's own reset covers it.)
-  if (owned) return;
+  // (the document mirror, B4) must refetch from the new instance.
   fanOut({
     fromRevision: 0,
     toRevision: next.documentRevision,
@@ -142,7 +134,7 @@ function install(next: LocalEngine, reason: 'opened' | 'created'): void {
  * The app's Undo/Redo/History-panel jump become engine requests (G2): they
  * are in the command log, so a keyboard-undo session replays revision-exact.
  * They go to the session's engine — the owner when the C++ engine owns the
- * document (which forwards them to the replica).
+ * document.
  */
 function installHistoryRoute(): void {
   setHistoryRoute({
@@ -167,26 +159,13 @@ function noticeToUser(n: { kind: 'unavailable'; reason: string } | { kind: 'rest
 }
 
 /**
- * D5 / F2: make the C++ engine the owner. The LocalEngine (already booted)
- * becomes the page's replica (until the UI reads only the mirror). False when
- * there is no engine bridge (the jest harness): the LocalEngine answers there.
+ * D5 / F2: make the C++ engine the owner — the session's only engine. False
+ * when there is no engine bridge (the jest harness): a LocalEngine answers there.
  */
 function startOwner(): boolean {
-  const pc = createAppProcessEngine({
-    onNotice: (n) => noticeToUser(n),
-    // F2: another window (a pop-out, or the editor from a pop-out) edited the
-    // engine; this window's page replica missed those requests.
-    onForeignBatch: () => replicaRefresher?.schedule(),
-  });
+  const pc = createAppProcessEngine({ onNotice: (n) => noticeToUser(n) });
   if (!pc) return false;
-  owned = new OwnedEngineClient(pc, () => current);
-  // Page-history animation edits reach the owner (animEditBridge.ts), not the replica alone.
-  installAnimEditBridge();
-  replicaRefresher?.dispose();
-  replicaRefresher = createReplicaRefresher({ owner: () => owned ?? engine() });
-  // The replica's own events stop reaching the session; the owner's start.
-  detachCurrent?.();
-  detachCurrent = null;
+  owned = new OwnedEngineClient(pc);
   detachOwned = owned.subscribe((batch) => fanOut(batch));
   installHistoryRoute();
   generation += 1;
@@ -209,49 +188,50 @@ setAppMirrorSource(() => ({
 
 /**
  * Boot the session's engine. Call once the app bus exists (after
- * `Application.boot`) — the engine subscribes to it to detect writes made
- * around the API. Idempotent: a second call re-binds the bus and returns the
- * running instance.
+ * `Application.boot`). Idempotent: a second call re-binds the bus and returns
+ * the running engine. With `ownsDocument` and an engine bridge the C++ engine
+ * is the session's engine and no LocalEngine is created (a portless one booted
+ * earlier by `engine()` is dropped); otherwise a LocalEngine over the live
+ * stores, rebuilt on every project transition.
  */
-export function bootEngine(opts: BootEngineOptions = {}): LocalEngine {
+export function bootEngine(opts: BootEngineOptions = {}): EngineClient {
   bootOpts = opts;
   for (const s of busSubs) s.dispose();
+  busSubs = [];
+  if (owned) return owned;
+  if (opts.ownsDocument) {
+    if (startOwner()) {
+      if (current) {
+        detachCurrent?.();
+        detachCurrent = null;
+        current.dispose();
+        current = null;
+      }
+      return owned!;
+    }
+    setEngineOwnsDocument(false);
+  }
   const bus = getEventBus();
-  // Owner mode: the replica received the same newProject / openProject as the
-  // owner, so a project transition must NOT swap it for a fresh one (that
-  // would forget the document the owner still has).
-  busSubs = opts.ownsDocument || owned
-    ? []
-    : [
-      bus.on('ProjectLoaded', () => rebuildEngine('opened')),
-      bus.on('ProjectUnloaded', () => rebuildEngine('created')),
-    ];
-  let e: LocalEngine;
+  busSubs = [
+    bus.on('ProjectLoaded', () => rebuildEngine('opened')),
+    bus.on('ProjectUnloaded', () => rebuildEngine('created')),
+  ];
   if (current) {
     current.attachBus();
     if (opts.ports) current.attachPorts(opts.ports);
-    e = current;
-  } else {
-    e = create();
-    install(e, 'opened');
+    return current;
   }
-  if (opts.ownsDocument && !owned) {
-    if (!startOwner()) {
-      setEngineOwnsDocument(false);
-      busSubs = [
-        bus.on('ProjectLoaded', () => rebuildEngine('opened')),
-        bus.on('ProjectUnloaded', () => rebuildEngine('created')),
-      ];
-    }
-  }
+  const e = create();
+  install(e, 'opened');
   return e;
 }
 
 /**
- * Replace the engine with a fresh one over the (already swapped) live document.
- * Owner mode: only the replica is replaced (the owner keeps its document).
+ * Replace the TypeScript engine with a fresh one over the (already swapped)
+ * live document. Not in owner mode (the C++ engine keeps its document).
  */
 export function rebuildEngine(reason: 'opened' | 'created' = 'opened'): LocalEngine {
+  if (owned) throw new Error('rebuildEngine: the C++ engine owns the document');
   if (current) detachCurrent?.();
   const e = create();
   install(e, reason);
@@ -268,8 +248,6 @@ export async function shutdownEngine(): Promise<void> {
   // a Providers remount; only this session's view of it goes.
   detachOwned?.();
   detachOwned = null;
-  replicaRefresher?.dispose();
-  replicaRefresher = null;
   owned = null;
   setHistoryRoute(null);
   detachCurrent?.();
@@ -291,15 +269,6 @@ export function engine(): EngineClient {
   return owned ?? current!;
 }
 
-/**
- * F2: refresh this window's page replica from the engine now (a pop-out's
- * first document — windowSync). False when the engine does not own the
- * document here, or nothing could be fetched.
- */
-export function refreshReplicaFromEngine(): Promise<boolean> {
-  return replicaRefresher?.refreshNow() ?? Promise.resolve(false);
-}
-
 /** The owner client while the C++ engine owns the document (diagnostics, the harness). */
 export function ownedEngine(): OwnedEngineClient | null {
   return owned;
@@ -310,6 +279,13 @@ export function ownedEngine(): OwnedEngineClient | null {
  * applied strictly in order). Tests: `fireEvent.click(…); await engineIdle();`.
  */
 export async function engineIdle(): Promise<void> {
+  if (owned) {
+    // Requests are applied in order: a query sent now is answered after every
+    // request before it. Then let the mirror reach that revision.
+    const res = await owned.query({ type: 'getItems', items: [] });
+    if (hasDocumentMirror()) await documentMirror().whenAt(res.revision);
+    return;
+  }
   if (!current) return;
   await current.whenIdle();
 }
@@ -320,7 +296,7 @@ export function localEngine(): LocalEngine | null {
 }
 
 export function hasEngine(): boolean {
-  return current !== null;
+  return current !== null || owned !== null;
 }
 
 /** Bumped on every rebuild (a gesture begun on an older instance is dead). */

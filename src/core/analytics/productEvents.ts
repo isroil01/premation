@@ -31,6 +31,7 @@ import { IS_ELECTRON } from '@core/api/env';
 import { hasSession } from '@core/api/session';
 import { getEventBus } from '@core/events/EventBus';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { historyView, subscribeHistory } from '@stores/historyStore';
 
 /** Mirrors motion-back's `ProductEventName` enum. A new name there is a migration. */
 export type ProductEventName =
@@ -313,9 +314,7 @@ export function __peekQueue(): readonly QueuedEvent[] {
 export function installProductAnalytics(): () => void {
   const bus = getEventBus();
   const subs = [
-    bus.on('UndoStackChanged', ({ canUndo }) => {
-      if (canUndo) trackOnce('edit_session');
-    }),
+    { dispose: subscribeHistory(() => { if (historyView().canUndo) trackOnce('edit_session'); }) },
     bus.on('PlayStateChanged', ({ playing }) => {
       if (playing) trackOnce('preview_played');
     }),

@@ -42,9 +42,8 @@ import { settingsFps } from '@core/mirror/compFacts';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
-import { getCommandSystem } from '@core/commands/CommandSystem';
 import { claimsChord } from '@core/commands/ShortcutManager';
-import { performRedo, performUndo } from '@stores/historyStore';
+import { historyView, performRedo, performUndo } from '@stores/historyStore';
 import { copyKeyframes } from '@core/animation/keyframeClipboard';
 import { pasteKeyframesAt } from './keyframeEdits';
 import { smoothMotionPath } from '@core/motion/motionPath';
@@ -112,11 +111,11 @@ export function useTimelineKeys(): void {
           void splitSelectedAtPlayhead(useSelectionStore.getState().ids);
           return;
         }
-        // Undo / redo via the unified global CommandSystem history.
+        // Undo / redo: the engine's history.
         if (e.key === 'z' || e.key === 'Z') {
           const redo = e.shiftKey;
-          const history = getCommandSystem().getHistory();
-          if (redo ? history.canRedo() : history.canUndo()) {
+          const history = historyView();
+          if (redo ? history.canRedo : history.canUndo) {
             e.preventDefault();
             if (redo) performRedo();
             else performUndo();

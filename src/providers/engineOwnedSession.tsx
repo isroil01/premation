@@ -21,8 +21,8 @@
  *   doc stores    guides / swatches / materials follow the mirror, and a user
  *                 edit to them is an engine command (stores/engineDocumentStores.ts).
  *
- * The first document is an engine `newProject`, sent through the owner so the
- * page's replica starts from the same empty document (ownedEngineClient.ts).
+ * The first document is an engine `newProject`. The page keeps no copy of it:
+ * every panel reads the document mirror.
  */
 
 import { EngineDocumentSession, type RecoveryFiles, type RecoveryIndex, type RecoveryRecord } from '@core/project/engineDocumentSession';

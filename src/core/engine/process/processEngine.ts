@@ -35,14 +35,11 @@ import { isDevBuild } from '@core/config/devBuild';
 export interface AppProcessEngineOptions {
   /** Restart / unavailable notices (a toast). The unavailable notice comes once per outage. */
   onNotice?: (notice: ProcessEngineNotice) => void;
-  /** F2: a batch ANOTHER window caused arrived (this window's page replica refreshes). */
-  onForeignBatch?: () => void;
 }
 
 interface State {
   instance: ProcessEngineClient | null;
   noticeHook: ((n: ProcessEngineNotice) => void) | null;
-  foreignHook: (() => void) | null;
   lastNotice: ProcessEngineNotice | null;
   listeners: Set<() => void>;
 }
@@ -53,7 +50,7 @@ type WindowWithEngine = {
   __premationProcessEngine?: ProcessEngineClient;
 };
 
-const fresh = (): State => ({ instance: null, noticeHook: null, foreignHook: null, lastNotice: null, listeners: new Set() });
+const fresh = (): State => ({ instance: null, noticeHook: null, lastNotice: null, listeners: new Set() });
 let local: State | null = null;
 
 function state(): State {
@@ -107,12 +104,10 @@ export function processEngineOwnsDocument(): Promise<boolean> {
 export function createAppProcessEngine(options: AppProcessEngineOptions = {}): ProcessEngineClient | null {
   const s = state();
   if (options.onNotice) s.noticeHook = options.onNotice;
-  if (options.onForeignBatch) s.foreignHook = options.onForeignBatch;
   if (s.instance) return s.instance;
   const bridge = processEngineBridge();
   if (!bridge) return null;
   s.instance = createProcessEngineClient(bridge, {
-    onForeignBatch: () => state().foreignHook?.(),
     onNotice: (n) => {
       const st = state();
       st.lastNotice = n;

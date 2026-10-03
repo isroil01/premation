@@ -1,7 +1,7 @@
 /**
  * Animate In, Stagger and Animate on Beats with the C++ ENGINE AS THE OWNER
  * (the app's configuration: `bootEngine({ ownsDocument: true })` over the real
- * `premation-engine`, the TypeScript engine as the page's replica).
+ * `premation-engine`; the page keeps no replica).
  *
  * The bug this pins: the choreography commands wrote the page's scene graph
  * and animation stores directly, so only the replica changed — the engine's
@@ -26,7 +26,7 @@ import type { EditorDocument } from '@core/api/cloudDocument';
 import { planChoreography, writeChoreography, DEFAULT_STAGGER_PARAMS } from '@core/animation/choreography';
 import { choreographyEngineEdit } from '@core/animation/choreographyEdits';
 import { revertChoreography, runChoreography } from '@core/animation/choreographyCommands';
-import { bootEngine, engine, localEngine, ownedEngine, shutdownEngine } from '../engineInstance';
+import { bootEngine, engine, engineIdle, ownedEngine, shutdownEngine } from '../engineInstance';
 import { resetEngineOwnership, setEngineOwnsDocument } from '../engineOwnership';
 import { resetProcessEngine } from '../process/processEngine';
 import { fakePorts } from '../__testHelpers__/harness';
@@ -77,7 +77,7 @@ maybe('choreography with the C++ engine as the owner', () => {
   let text = '';
 
   const settle = async (): Promise<void> => {
-    await localEngine()!.whenIdle();
+    await engineIdle();
     await documentMirror().whenIdle();
   };
 
