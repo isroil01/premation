@@ -342,6 +342,14 @@ export function setLayerMatte(nodeId: string, matte: TrackMatte | undefined): vo
   void edit('Track Matte', trackMatteCommand(nodeId, matte));
 }
 
+/** Pin or unpin one property on the layer's Pinned tab (`setPinnedProperties` over the mirror's `LayerInfo.pinned`). */
+export function setPinnedPropEdit(nodeId: string, prop: string, pinned: boolean): void {
+  const current = documentMirror().layer(nodeId)?.pinned;
+  if (!current || current.includes(prop) === pinned) return;
+  const props = pinned ? [...current, prop] : current.filter((p) => p !== prop);
+  void edit(pinned ? 'Pin Property' : 'Unpin Property', { type: 'setPinnedProperties', layer: nodeId, props });
+}
+
 /** Blending mode on these layers, one entry. */
 export function setLayersBlend(nodeIds: readonly string[], mode: string): void {
   const layers = nodeIds.filter((id) => isLayer(id));

@@ -254,6 +254,20 @@ function targetOf(info: PropertyInfo, plugin: boolean): FieldTarget {
 }
 
 /**
+ * The property at API `path` on a layer, as a field write's target (null when
+ * the layer's property tree — loaded on first ask — has no such property).
+ */
+export function fieldTargetAt(nodeId: string, path: string): FieldTarget | null {
+  const n = documentMirror().property(nodeId, path);
+  return n && n.kind === 'property' ? targetOf(n, path.startsWith('plugin/')) : null;
+}
+
+/** Whether the layer's property tree has a property at API `path`. */
+export function hasPropertyAt(nodeId: string, path: string): boolean {
+  return fieldTargetAt(nodeId, path) !== null;
+}
+
+/**
  * The API FIELD property a component prop is (a Text component's
  * `fontFamily` → `text/fontFamily`, `align` → `text/align`, a layer's own
  * `fill` → `layer/fill`, a light's `lightType` → `light/lightType`), or null

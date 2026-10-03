@@ -29,7 +29,7 @@ import { memberExpressionOf } from '@core/mirror/memberExpressions';
 import { edit } from '@core/engine/uiEdits';
 import { essentialPropMenuItems } from '@core/inspector/propertyMenu';
 import { DEFAULT_EXPRESSION, requestExpressionEditor } from '@core/animation/expressionCommands';
-import { easeKeysAtCommands, expressionCommands, keyToggleCommands, stopwatchCommands, trackRef, type EasePreset } from './inspectorEdits';
+import { easeKeysAtCommands, expressionCommands, keyToggleCommands, setPinnedPropEdit, stopwatchCommands, trackRef, type EasePreset } from './inspectorEdits';
 import { pasteKeyframesAt } from '@layout/Timeline/keyframeEdits';
 
 const EASING_PRESETS: ReadonlyArray<{ id: EasePreset; label: string; chord?: KeyChord }> = [
@@ -108,10 +108,7 @@ function pinItems(m: MirrorRead, nodeId: string, prop: string): ContextMenuItem[
       id: 'pin-toggle',
       label: pinned ? 'Unpin from Pinned' : 'Pin to Pinned tab',
       icon: 'push-pin',
-      onSelect: () => {
-        const next = pinned ? layer.pinned.filter((p) => p !== prop) : [...layer.pinned, prop];
-        void edit(pinned ? 'Unpin Property' : 'Pin Property', { type: 'setPinnedProperties', layer: nodeId, props: next });
-      },
+      onSelect: () => { setPinnedPropEdit(nodeId, prop, !pinned); },
     },
   ];
 }

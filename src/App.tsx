@@ -68,7 +68,6 @@ import {
 } from '@layout/Menu/appEdits';
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
-import { installLegacyTimelineSync } from '@core/engine/timelineUpkeep';
 import { useGesture } from '@hooks/useGesture';
 import { flicksToSeconds, type Command, type TimelineRow } from '@motion/engine-api';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
@@ -298,11 +297,6 @@ function EditorShellInner(): JSX.Element {
   // (the comp's stack, each layer's header and keyframes, expanded rows'
   // property trees + the throttled playhead). See Timeline/useTimelineModel.
   const tracks = useTimelineTracks(activeCompId, expandedIds);
-
-  // Keep the Timeline Engine's bars seeded for layers a legacy writer adds
-  // around the engine API: engine-side upkeep (core/engine/timelineUpkeep.ts)
-  // that never drives a render — the rows above re-render from the mirror.
-  useEffect(() => installLegacyTimelineSync(), []);
 
   // Session hydration is owned by AppRouter (before any route renders), so the
   // editor must NOT re-hydrate here — doing so flips auth status to 'loading'

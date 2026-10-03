@@ -6,7 +6,7 @@
  * the scene. This is the same track derivation the editor shell uses.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { clampPps } from '@layout/Timeline/zoomAnchor';
 import { BottomTimeline } from './BottomTimeline';
 import { TransportBar } from '@layout/Workspace/TransportBar';
@@ -17,7 +17,6 @@ import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveCompId } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { installLegacyTimelineSync } from '@core/engine/timelineUpkeep';
 import { playheadSeconds, seekPlayhead, setTimelinePixelsPerSecond, setTimelineScrollPixels } from '@core/timeline/timelineView';
 import { edit } from '@core/engine/uiEdits';
 import { labelIndexOf } from '@core/engine/model';
@@ -30,12 +29,6 @@ export function PopoutTimeline(): JSX.Element {
   const selectedIds = useSelectionStore((s) => s.ids);
 
   const [expandedIds, setExpandedIds] = useState<ReadonlyArray<string>>([]);
-
-  // Keep this window's Timeline Engine bars seeded for layers written around
-  // the engine API (document sync). WRITE-side upkeep of the TS engine, the
-  // same installer App.tsx uses (core/engine/timelineUpkeep); nothing here
-  // drives a render — the rows below follow the document mirror.
-  useEffect(() => installLegacyTimelineSync(), []);
 
   // The same model the editor shell builds (Timeline/useTimelineModel).
   const tracks = useTimelineTracks(activeCompId, expandedIds);

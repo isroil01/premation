@@ -7,7 +7,8 @@
  * does not bump it by itself. That is upkeep OF the engine, not a UI read: the
  * panels re-render from the document mirror's events (docs/B4_MIRROR.md). It
  * moved here from the editor shell (Providers.tsx) and leaves with the TS
- * engine (D1), like `timelineUpkeep.ts` and `expressionProviders.ts`.
+ * engine (D1), like the legacy timeline sync (LocalEngine.attachBus) and
+ * `expressionProviders.ts`.
  *
  * Media decode / upload repaints arrive on the same event at the source's frame
  * rate and are NOT edits: bumping the scene for each one ran a full scene-graph

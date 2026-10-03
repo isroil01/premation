@@ -22,11 +22,11 @@
  */
 
 import type { Command, PropRef, Value } from '@motion/engine-api';
-import { catalogFor } from '@core/engine/props';
+
 import { parseColorChannels } from '@core/inspector/effectCatalog';
 import { compOfLayer, isLayer } from '@core/mirror/docFacts';
 import { engine } from '@core/engine/engineInstance';
-import { compTime, paths, values as apiValues, fieldValue, componentOfType } from '@core/engine/propRefs';
+import { compTime, paths, values as apiValues, fieldValue, fieldTargetAt, componentOfType } from '@core/engine/propRefs';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { isTrackAnimated, readTrack } from '@core/mirror/selection';
 import { documentMirror } from '@stores/documentMirror';
@@ -257,7 +257,7 @@ export async function typewriterEdit(nodeId: string, seconds: number, durationSe
  */
 export function fieldCommands(nodeId: string, path: string, raw: unknown): Command[] {
   if (!isLayer(nodeId)) return [];
-  const b = catalogFor(nodeId).byPath.get(path);
+  const b = fieldTargetAt(nodeId, path);
   const value = b ? fieldValue(b, raw) : null;
   return value ? [{ type: 'setProperty', prop: { layer: nodeId, path }, value }] : [];
 }

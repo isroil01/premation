@@ -19,8 +19,7 @@
 
 import type { Command, PropertyWrite, Value } from '@motion/engine-api';
 import { isLayer } from '@core/mirror/docFacts';
-import { catalogFor } from '@core/engine/props';
-import { compTime, values } from '@core/engine/propRefs';
+import { compTime, hasPropertyAt, values } from '@core/engine/propRefs';
 import { normalizeMaterialParams, type MaterialParams } from '@core/scene/material';
 import { valueCommands } from './inspectorEdits';
 
@@ -34,11 +33,7 @@ export function shadowModeValue(mode: ShadowMode): number {
 /** True when the engine addresses `path` on this layer. */
 export function hasPath(nodeId: string, path: string): boolean {
   if (!isLayer(nodeId)) return false;
-  try {
-    return catalogFor(nodeId).byPath.has(path);
-  } catch {
-    return false;
-  }
+  return hasPropertyAt(nodeId, path);
 }
 
 /** `setProperty` of one static field on each layer that has it (empty when none does). */

@@ -23,7 +23,6 @@ import type { Command, DocumentFragment, Value } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { reportEngineError } from '@core/engine/uiEdits';
 import { apiParentOf, isLayer } from '@core/mirror/docFacts';
-import { catalogFor, isAnimated, readStatic } from '@core/engine/props';
 import { copyKeyframes } from '@core/animation/keyframeClipboard';
 import { readOsClipboardSvg } from '@core/commands/clipboard';
 import { copyPathFromSelection, pastePathEdit } from '@core/workspace/pathCommands';
@@ -102,25 +101,29 @@ export async function cutEdit(): Promise<CopyKind> {
   return kind;
 }
 
-/** A static Position +PASTE_OFFSET on both axes (null when animated or not addressable). */
-function nudgeCommands(layer: string): Command[] {
-  const cat = catalogFor(layer);
-  const whole = cat.byPath.get('transform/position');
+/**
+ * A static Position +PASTE_OFFSET on both axes (none when animated or not
+ * addressable), read from the layer's property tree in the mirror — the
+ * caller waits for the mirror to reach the paste before asking.
+ */
+async function nudgeCommands(layer: string): Promise<Command[]> {
+  const m = documentMirror();
+  await m.loadTree(layer);
   const out: Command[] = [];
   const bump = (path: string, v: Value): void => { out.push({ type: 'setProperty', prop: { layer, path }, value: v }); };
-  if (whole) {
-    if (isAnimated(layer, whole)) return [];
-    const v = readStatic(layer, whole);
+  const whole = m.property(layer, 'transform/position');
+  if (whole && !whole.separated) {
+    const v = whole.value;
+    if (whole.animated || !v) return [];
     if (v.kind === 'vec2') bump(whole.path, { kind: 'vec2', value: { x: v.value.x + PASTE_OFFSET, y: v.value.y + PASTE_OFFSET } });
     else if (v.kind === 'vec3') bump(whole.path, { kind: 'vec3', value: { ...v.value, x: v.value.x + PASTE_OFFSET, y: v.value.y + PASTE_OFFSET } });
     return out;
   }
   // Separated dimensions: each static one moves.
   for (const dim of ['x', 'y']) {
-    const b = cat.byPath.get(`transform/position/${dim}`);
-    if (!b || isAnimated(layer, b)) continue;
-    const v = readStatic(layer, b);
-    if (v.kind === 'scalar') bump(b.path, { kind: 'scalar', value: v.value + PASTE_OFFSET });
+    const d = m.property(layer, `transform/position/${dim}`);
+    if (!d || d.animated || d.value?.kind !== 'scalar') continue;
+    bump(d.path, { kind: 'scalar', value: d.value.value + PASTE_OFFSET });
   }
   return out;
 }
@@ -151,14 +154,16 @@ async function pasteLayersEdit(h: HeldLayers): Promise<string[] | null> {
     ok = false;
   } else {
     const ids = (res.value as { layers?: string[] }).layers ?? [];
+    // The new layers' parents and Position come from the mirror once it has the paste.
+    await documentMirror().whenAt(res.revision);
     const made = new Set(ids);
     tops = ids.filter((id) => !made.has(apiParentOf(id) ?? ''));
     const follow: Command[] = [];
-    tops.forEach((id, i) => {
+    for (const [i, id] of tops.entries()) {
       const name = h.names[i];
       if (name) follow.push({ type: 'renameLayer', layer: id, name: `${name} copy` });
-      follow.push(...nudgeCommands(id));
-    });
+      follow.push(...(await nudgeCommands(id)));
+    }
     if (follow.length > 0) {
       const r = await client.batch(label, follow);
       if (!r.ok) {

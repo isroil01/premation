@@ -231,6 +231,9 @@ export class LocalEngine extends EngineClientBase {
       else this.scheduleExternalFlush();
     };
     this.busDisposers = [
+      // The Timeline Engine's bars follow layers a legacy writer adds around
+      // the engine API — this engine's own upkeep (block 3: it left the app shell).
+      bus.on('SceneGraphChanged', () => getTimelineController().syncFromScene()),
       bus.on('SceneGraphChanged', () => mark()),
       bus.on('NodeUpdated', (p) => mark(p?.nodeId || undefined)),
       bus.on('AnimationChanged', (p) => {

@@ -16,7 +16,8 @@
 import { useMemo } from 'react';
 import { Icon } from '@components/Icon';
 import { PropertyRow } from '@components/PropertyRow';
-import { setPinnedProp, type PinnedEntry } from '@core/inspector/pinnedProps';
+import type { PinnedEntry } from '@core/inspector/pinnedProps';
+import { setPinnedPropEdit } from './inspectorEdits';
 import { mirrorEssentialPropsOf } from '@core/mirror/compOverrides';
 import { useThrottledTime } from '@stores/playbackClockStore';
 import { documentMirror } from '@stores/documentMirror';
@@ -66,7 +67,7 @@ function UnpinButton({ nodeId, prop }: { nodeId: string; prop: string }): JSX.El
       title="Unpin"
       onClick={(e) => {
         e.stopPropagation();
-        setPinnedProp(nodeId, prop, false);
+        setPinnedPropEdit(nodeId, prop, false);
       }}
     >
       <Icon name="close" size="sm" />

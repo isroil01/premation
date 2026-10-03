@@ -13,17 +13,12 @@
 
 import type { Command, Value } from '@motion/engine-api';
 import { isLayer } from '@core/mirror/docFacts';
-import { catalogFor } from '@core/engine/props';
-import { values } from '@core/engine/propRefs';
+import { hasPropertyAt, values } from '@core/engine/propRefs';
 
 /** True when the engine addresses `path` on this layer (the field's `when` holds). */
 export function hasLayerField(nodeId: string, path: string): boolean {
   if (!isLayer(nodeId)) return false;
-  try {
-    return catalogFor(nodeId).byPath.has(path);
-  } catch {
-    return false;
-  }
+  return hasPropertyAt(nodeId, path);
 }
 
 /** `setProperty` of a json field (`null` / `undefined` clears it), or [] when the layer has no such field. */
