@@ -29,16 +29,14 @@ import type { AiTool, ToolContext, ToolResult } from '@motion/ai-tools';
 import { ALL_TOOL_DEFS, bindAlias, mutates } from '@motion/ai-tools';
 import { EFFECT_DEFS, effectDefFor } from '@core/effects/effects';
 import { ANIMATOR_PARAMS } from '@core/text/textAnimators';
-import { readAnimatorData } from '@core/text/textAnimators';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import { isRiggableKind } from '@core/scene/rigLogo';
 import { nextRigIds, usedRigIds } from '@core/rig/rigIds';
-import { readNodePuppet } from '@core/rig/puppet';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { documentMirror } from '@stores/documentMirror';
+import { layerBox, layerInfo, puppetPins } from './mirrorReads';
 
-import { readPathOps, readTrimOp, pathOpPropPath, type PathOp } from '@core/scene/pathOps';
+import { pathOpPropPath, type PathOp } from '@core/scene/pathOps';
 
-import { is3DEnabled } from '@core/scene/threeD';
 import { defaultPolystar } from '@core/scene/polystar';
 import { rectangleMask, ellipseMask, type MaskMode } from '@core/effects/mask';
 import { refreshAfterLegacy } from './toolContext';
@@ -51,7 +49,6 @@ import { decodeBase64Bytes } from './decodeBase64';
 import { generateImageBytes } from './aiImage';
 import { generateVideoBytes, generateSpeechBytes, generate3dBytes } from './aiMedia';
 import { exportCompositionVideo } from './aiExport';
-import { readAudioAssetId } from './audioForCaster';
 import type { AiImageResult, AiMediaResult } from '@app-types/motionEditor';
 import type { EntranceArchetype } from './archetypes';
 import {
@@ -78,11 +75,12 @@ import { CRAFT_HANDLERS } from './craftHandlers';
 import { mapSeq, filterSeq } from './asyncList';
 import { engineOnly } from './toolContext';
 import { activePlayheadSeconds, trackMatteCommand } from '@core/engine/trackWrites';
-import { fieldWrite, memberWrite } from '@core/engine/propRefs';
+import { componentOfType, fieldWrite, memberWrite } from '@core/engine/propRefs';
 import { maskToBezier } from '@core/engine/props';
 import {
   addMaskFromPath, addPathOperator, addTextAnimatorGroup, convertSvgLayer, ensurePathOperator, importAssetBytes,
   insertAssetLayer, insertModelPlaceholder, insertSvgMarkupLayer, patchLayerStyle, patchPathOperator, patchTextAnimator,
+  pathOperators, textAnimators,
 } from './hostWrites';
 import type { Command, PropertyWrite } from '@motion/engine-api';
 
@@ -98,6 +96,9 @@ const fail = (content: string): ToolResult => ({ ok: false, content });
 /** The standard "that id doesn't exist" repair hint. */
 const unknownNode = async (ctx: ToolContext, id: string): Promise<string> =>
   `unknown nodeId '${id}' — did you mean: ${(await ctx.scene.nearest(id)).join(', ') || '(no layers exist yet)'}?`;
+
+/** The editor kind of a layer (the document mirror), null when it is not one. */
+const kindOf = (id: string) => uiKindOf(layerInfo(id));
 
 // ── Read ──────────────────────────────────────────────────────────
 
@@ -400,7 +401,7 @@ const updateLayer: AiTool['handler'] = async (input, ctx) => {
   };
   if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
-  const node = defaultSceneGraph.getNode(i.nodeId);
+  const node = layerInfo(i.nodeId);
   const applied: string[] = [];
 
   const sw = (patch: Record<string, unknown>): Command[] => [{ type: 'setLayerSwitches', layers: [i.nodeId], patch } as Command];
@@ -499,13 +500,14 @@ const updateLayer: AiTool['handler'] = async (input, ctx) => {
     if (i[key] === undefined) continue;
     // The 3D props are inert without the switch, and silently so. Refusing is
     // better than writing a value the renderer will never read.
-    if ((CAMERA_PROPS as readonly string[]).includes(key) && node && readNodeKind(node) !== 'camera') {
+    if ((CAMERA_PROPS as readonly string[]).includes(key) && node && kindOf(i.nodeId) !== 'camera') {
       return fail(
-        `'${key}' is a camera property and '${i.nodeId}' is a ${readNodeKind(node)}. ` +
+        `'${key}' is a camera property and '${i.nodeId}' is a ${kindOf(i.nodeId)}. ` +
         `Create one with create_layer { kind: "camera" } first.`,
       );
     }
-    if ((THREE_D_PROPS as readonly string[]).includes(key) && node && !is3DEnabled(node)) {
+    // The switch as it stands now (a `threeD` in this call was applied first).
+    if ((THREE_D_PROPS as readonly string[]).includes(key) && node && !layerInfo(i.nodeId)?.switches.threeD) {
       return fail(
         `'${key}' needs the layer's 3D switch — pass threeD: true in this same call (it is applied first).`,
       );
@@ -590,7 +592,7 @@ const setKeyframes: AiTool['handler'] = async (input, ctx) => {
     if (
       !isCamera &&
       (THREE_D_PROPS as readonly string[]).includes(k.prop) &&
-      !is3DEnabled(defaultSceneGraph.getNode(k.nodeId)!)
+      !layerInfo(k.nodeId)?.switches.threeD
     ) {
       bad.push(`keyframes[${i}]: '${k.prop}' needs the 3D switch — call update_layer { nodeId: '${k.nodeId}', threeD: true } first.`);
       continue;
@@ -771,16 +773,16 @@ const updateEffectHandler: AiTool['handler'] = async (input, ctx) => {
 const textAnimator: AiTool['handler'] = async (input, ctx) => {
   const i = input as Record<string, unknown> & { nodeId: string; index?: number; remove?: boolean };
   if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
-  const node = defaultSceneGraph.getNode(i.nodeId);
-  if (!node || !node.components.some((c) => c.type === 'Text')) {
+  if (kindOf(i.nodeId) !== 'text') {
     return fail(`${i.nodeId} is not a text layer — text animators only apply to text.`);
   }
 
   let index = i.index;
   if (index === undefined) {
     index = await addTextAnimatorGroup(ctx.engine, i.nodeId);
-  } else if (index >= readAnimatorData(node).length) {
-    return fail(`${i.nodeId} has no animator at index ${index}. It has ${readAnimatorData(node).length}.`);
+  } else {
+    const count = (await textAnimators(ctx.engine, i.nodeId)).length;
+    if (index >= count) return fail(`${i.nodeId} has no animator at index ${index}. It has ${count}.`);
   }
 
   const patch: Record<string, unknown> = {};
@@ -1103,10 +1105,10 @@ const importSvg: AiTool['handler'] = async (input, ctx) => {
  */
 const analyseAudioTool: AiTool['handler'] = async (input) => {
   const { nodeId, maxBeats } = input as { nodeId: string; maxBeats?: number };
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return fail(`No layer with id '${nodeId}'.`);
+  const layer = layerInfo(nodeId);
+  if (!layer) return fail(`No layer with id '${nodeId}'.`);
 
-  const src = useAssetStore.getState().assets.find((a) => a.id === readAudioAssetId(node))?.src;
+  const src = layer.source ? documentMirror().item(layer.source)?.mediaUrl : undefined;
   if (!src) {
     return fail(
       `Layer '${nodeId}' has no audio asset to analyse. Call describe_scene and pick a layer of ` +
@@ -1203,10 +1205,9 @@ const createMask: AiTool['handler'] = async (input, ctx) => {
 
   // Size the mask to the layer's bounds unless told otherwise. Text has no
   // width/height prop, so fall back to a sensible square the AI can resize.
-  const node = defaultSceneGraph.getNode(i.nodeId);
-  const tp = (node?.components.find((c) => c.type === 'Transform')?.props ?? {}) as Record<string, unknown>;
-  const w = i.width ?? (typeof tp.width === 'number' && tp.width > 0 ? tp.width : 200);
-  const h = i.height ?? (typeof tp.height === 'number' && tp.height > 0 ? tp.height : 200);
+  const box = await layerBox(i.nodeId);
+  const w = i.width ?? (box.width !== undefined && box.width > 0 ? box.width : 200);
+  const h = i.height ?? (box.height !== undefined && box.height > 0 ? box.height : 200);
 
   const path = i.shape === 'ellipse' ? ellipseMask(w, h) : rectangleMask(w, h);
   if (i.mode) path.mode = i.mode;
@@ -1415,10 +1416,10 @@ const createPuppetRig: AiTool['handler'] = async (input, ctx) => {
   // A puppet warp mesh needs a bitmap alpha or path silhouette. Groups /
   // precomps / nulls / cameras have no such surface — rig would silently
   // no-op. Tell the model to rasterize (Rig Logo) first.
-  const puppetNode = defaultSceneGraph.getNode(i.layerId);
-  if (puppetNode && !isRiggableKind(readNodeKind(puppetNode))) {
+  const puppetKind = kindOf(i.layerId);
+  if (puppetKind && !isRiggableKind(puppetKind)) {
     return fail(
-      `Layer '${i.layerId}' is a ${readNodeKind(puppetNode)} — puppet rigs only apply to shape or image layers. ` +
+      `Layer '${i.layerId}' is a ${puppetKind} — puppet rigs only apply to shape or image layers. ` +
         `Rasterize it first (the "Rig Logo for Animation" command flattens a group/precomp to a single riggable image).`,
     );
   }
@@ -1427,7 +1428,7 @@ const createPuppetRig: AiTool['handler'] = async (input, ctx) => {
   // share one set of animation tracks.
   const pinIds = nextRigIds(
     'pin_',
-    usedRigIds(puppetNode ? readNodePuppet(puppetNode)?.pins : undefined),
+    usedRigIds(await puppetPins(i.layerId)),
     i.pins.length,
   );
   const pinsList = i.pins.map((p, idx) => ({
@@ -1605,7 +1606,7 @@ const setTrimPathHandler: AiTool['handler'] = async (input, ctx) => {
   // ordered stack the deformers live in — so this creates the entry if the
   // layer has none and then patches it by id.
   const opId = await applyTrim(ctx, i.nodeId, i);
-  const t = readTrimOp(defaultSceneGraph.getNode(i.nodeId)!);
+  const t = (await pathOperators(ctx.engine, i.nodeId)).find((o) => o.id === opId)?.params;
   return ok(
     `Trim path on '${i.nodeId}' is now start ${t?.start ?? 0}%, end ${t?.end ?? 100}%, offset ${t?.offset ?? 0}%. ` +
       `Keyframe '${pathOpPropPath(opId, 'end')}' from 0 to 100 for a stroke draw-on. ` +
@@ -1644,8 +1645,9 @@ const addRepeaterHandler: AiTool['handler'] = async (input, ctx) => {
   };
   if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
-  const chain = readPathOps(defaultSceneGraph.getNode(i.nodeId)!);
-  const repeaters = chain.filter((o) => o.type === 'repeater');
+  const repeaters = (await pathOperators(ctx.engine, i.nodeId))
+    .filter((o) => o.type === 'repeater')
+    .map((o) => ({ id: o.id, copies: o.params.copies }));
 
   /**
    * UPDATE — only when the caller names the operator.
@@ -1775,7 +1777,7 @@ const addPathOperatorHandler: AiTool['handler'] = async (input, ctx) => {
     ...(i.wigglesPerSecond !== undefined ? { wigglesPerSecond: Math.max(0, i.wigglesPerSecond) } : {}),
   });
 
-  const chain = readPathOps(defaultSceneGraph.getNode(i.nodeId)!);
+  const chain = await pathOperators(ctx.engine, i.nodeId);
   return ok(
     `Added '${type}' to '${i.nodeId}' (operator ${chain.length} in the chain, id '${opId}'). ` +
       `Keyframe 'pathop.${opId}.amount' to animate the deformation.`,
@@ -1786,11 +1788,11 @@ const addPathOperatorHandler: AiTool['handler'] = async (input, ctx) => {
 const createSkeletonRigHandler: AiTool['handler'] = async (input, ctx) => {
   const i = input as { layerId: string; bones: Array<{ id: string; parentId?: string; length: number; x?: number; y?: number; rotation?: number }> };
   if (!await ctx.scene.has(i.layerId)) return fail((await unknownNode(ctx, i.layerId)));
-  const node = defaultSceneGraph.getNode(i.layerId);
-  if (!node) return fail(`Node '${i.layerId}' not found.`);
-  if (!isRiggableKind(readNodeKind(node))) {
+  const skelKind = kindOf(i.layerId);
+  if (!skelKind) return fail(`Node '${i.layerId}' not found.`);
+  if (!isRiggableKind(skelKind)) {
     return fail(
-      `Layer '${i.layerId}' is a ${readNodeKind(node)} — skeleton rigs only apply to shape or image layers. ` +
+      `Layer '${i.layerId}' is a ${skelKind} — skeleton rigs only apply to shape or image layers. ` +
         `Rasterize it first (the "Rig Logo for Animation" command flattens a group/precomp to a single riggable image).`,
     );
   }
@@ -1865,15 +1867,14 @@ const recolorLottieVectorHandler: AiTool['handler'] = async (input, ctx) => {
   const at = activePlayheadSeconds();
   const writes: PropertyWrite[] = [];
   const traverseAndRecolor = (id: string) => {
-    const node = defaultSceneGraph.getNode(id);
-    if (!node) return;
-    const kind = readNodeKind(node);
-    if (kind === 'shape') {
-      const style = node.components.find((c) => c.type === 'Style');
-      const w = style ? fieldWrite(id, style.id, 'fill', color, at) : null;
+    const layer = layerInfo(id);
+    if (!layer) return;
+    if (uiKindOf(layer) === 'shape') {
+      const style = componentOfType(id, 'Style');
+      const w = style ? fieldWrite(id, style, 'fill', color, at) : null;
       if (w) writes.push(w);
     }
-    for (const childId of node.children) {
+    for (const childId of layer.children) {
       traverseAndRecolor(childId);
     }
   };
