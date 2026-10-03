@@ -15,7 +15,7 @@
  * the history is read back; undo / redo are the user's (`performUndo`).
  */
 
-import { render, fireEvent, act, cleanup } from '@testing-library/react';
+import { render, fireEvent, act, cleanup, waitFor } from '@testing-library/react';
 import { PuppetOverlay } from './PuppetOverlay';
 import { BoneOverlay } from './BoneOverlay';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -55,6 +55,12 @@ jest.mock('@core/workspace/WorkspaceController', () => ({
     },
   }),
 }));
+
+/** The overlay's SVG, once a frame has carried the geometry it draws from. */
+async function svgOf(container: HTMLElement): Promise<SVGSVGElement> {
+  await waitFor(() => expect(container.querySelector('svg')).not.toBeNull());
+  return container.querySelector('svg')!;
+}
 
 let h: Awaited<ReturnType<typeof setupAppEngine>>;
 /** The rig layer (engine-created, 200 × 160 at the comp origin). */
@@ -135,8 +141,8 @@ describe('weight-paint stroke undo', () => {
   }
 
   /** A stroke with MANY pointermoves — the case that could over-record. */
-  function stroke(container: HTMLElement): void {
-    const svg = container.querySelector('svg')!;
+  async function stroke(container: HTMLElement): Promise<void> {
+    const svg = await svgOf(container);
     fireEvent.pointerDown(svg, { clientX: -50, clientY: 0, pointerId: 2 });
     for (let i = 0; i < 12; i++) {
       fireEvent.pointerMove(svg, { clientX: -50 + i * 6, clientY: 0, pointerId: 2 });
@@ -152,7 +158,7 @@ describe('weight-paint stroke undo', () => {
 
   it('undo restores the unpainted binding, redo brings it back', async () => {
     const { container } = await setup();
-    stroke(container);
+    await stroke(container);
     await idle();
     const painted = (await skelOf()).weightPaint;
     expect(isWeightPaintEmpty(painted)).toBe(false);
@@ -166,10 +172,10 @@ describe('weight-paint stroke undo', () => {
 
   it('two strokes are two steps, undone independently', async () => {
     const { container } = await setup();
-    stroke(container);
+    await stroke(container);
     await idle();
     const afterFirst = (await skelOf()).weightPaint;
-    stroke(container);
+    await stroke(container);
     await idle();
 
     await undo();
@@ -192,8 +198,8 @@ describe('Puppet Sketch undo', () => {
   }
 
   /** Ctrl-drag = record. Many samples, one gesture. */
-  function recordStroke(container: HTMLElement): void {
-    const svg = container.querySelector('svg')!;
+  async function recordStroke(container: HTMLElement): Promise<void> {
+    const svg = await svgOf(container);
     const dot = container.querySelector('circle[r="5"]')!;
     fireEvent.pointerDown(dot.parentElement!, { clientX: 0, clientY: 0, pointerId: 3, ctrlKey: true });
     for (let i = 1; i <= 15; i++) {
@@ -210,7 +216,7 @@ describe('Puppet Sketch undo', () => {
 
   it('undo removes the whole recording, not one keyframe of it', async () => {
     const { container } = await setup();
-    recordStroke(container);
+    await recordStroke(container);
     await idle();
     const before = (await docView()).getDataTrack(L, 'puppet.pin_1.position');
     expect(before!.keyframes.length).toBeGreaterThan(0);
@@ -266,7 +272,7 @@ describe('spatial tangent drag undo', () => {
 
   it('a multi-move handle drag is exactly ONE undo step', async () => {
     const { container } = await setup();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     const handle = container.querySelector('circle[r="3.5"]')!;
 
     const steps = await stepsAdded(async () => {
@@ -285,7 +291,7 @@ describe('spatial tangent drag undo', () => {
 
   it('undo removes the tangent and restores the straight path', async () => {
     const { container } = await setup();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     const handle = container.querySelector('circle[r="3.5"]')!;
     fireEvent.pointerDown(handle.parentElement!, { clientX: -20, clientY: 0, pointerId: 6 });
     await idle();

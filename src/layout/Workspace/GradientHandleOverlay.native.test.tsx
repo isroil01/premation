@@ -54,6 +54,12 @@ jest.mock('@core/workspace/WorkspaceController', () => ({
 const W = 200;
 const H = 160;
 
+/** The overlay's SVG, once a frame has carried the geometry it draws from. */
+async function svgOf(container: HTMLElement): Promise<SVGSVGElement> {
+  await waitFor(() => expect(container.querySelector('svg')).not.toBeNull());
+  return container.querySelector('svg')!;
+}
+
 let h: Harness;
 /** The shape layer under test: W×H, at the comp origin. */
 let ID: string;
@@ -371,7 +377,7 @@ describe('deleting a stop', () => {
     (await freshHistory());
     useGradientEditStore.getState().arm(ID, 0);
     const { container } = await renderOverlay();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     await drag(svg, [100, 0], []);
     await act(async () => {
       fireEvent.keyDown(window, { key: 'Delete' });

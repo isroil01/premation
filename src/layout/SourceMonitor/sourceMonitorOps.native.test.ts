@@ -42,7 +42,7 @@ const c = {
   layersOfComp: (): Array<ReturnType<typeof timingBarFrames>> =>
     (documentMirror().comp('comp_root')?.layers ?? []).map((id) => timingBarFrames(documentMirror().layer(id)!.timing, 30)),
 };
-const getTimelineController = (): typeof c => c;
+const timeline = (): typeof c => c;
 
 let h: Harness;
 
@@ -61,7 +61,7 @@ afterEach(async () => {
 
 describe('insertFromSource', () => {
   it('lands the MARKED part of the file, at the playhead — one entry, undoable', async () => {
-    const c = getTimelineController();
+    const c = timeline();
     c.seekSeconds(1);
     const before = (await h.doc());
     const entries = (await historyLabels()).length;
@@ -90,7 +90,7 @@ describe('insertFromSource', () => {
   });
 
   it('an unmarked clip inserts whole — the range falls back to the file', async () => {
-    const c = getTimelineController();
+    const c = timeline();
     const nodeId = await insertFromSource(ASSET, { inSec: 0, outSec: 10 }, { at: 'time', seconds: 0 });
     await settleEdits();
     const clip = c.getLayersForNode(nodeId!)[0]!.clip;
@@ -99,7 +99,7 @@ describe('insertFromSource', () => {
   });
 
   it('“add to comp end” starts where the last clip finishes, not at the playhead', async () => {
-    const c = getTimelineController();
+    const c = timeline();
     c.seekSeconds(4); // deliberately NOT where the answer should be
     await insertFromSource(ASSET, { inSec: 0, outSec: 2 }, { at: 'time', seconds: 0 });
     await settleEdits();
@@ -125,7 +125,7 @@ describe('sourceRangeEdit', () => {
 
 describe('overwrite', () => {
   it('trims the clip the new one lands on the tail of — with the insert, one entry', async () => {
-    const c = getTimelineController();
+    const c = timeline();
     // An existing clip covering 0–6s.
     const first = await insertFromSource(ASSET, { inSec: 0, outSec: 6 }, { at: 'time', seconds: 0 });
     await settleEdits();
@@ -144,7 +144,7 @@ describe('overwrite', () => {
   });
 
   it('splits a clip that spans the whole insert, leaving a hole', async () => {
-    const c = getTimelineController();
+    const c = timeline();
     const first = await insertFromSource(ASSET, { inSec: 0, outSec: 10 }, { at: 'time', seconds: 0 });
     await settleEdits();
     const before = c.layersOfComp().length;
@@ -161,7 +161,7 @@ describe('overwrite', () => {
   });
 
   it('leaves a clip that sits ENTIRELY inside the range alone, and says so', async () => {
-    const c = getTimelineController();
+    const c = timeline();
     const inner = await insertFromSource(ASSET, { inSec: 0, outSec: 2 }, { at: 'time', seconds: 3 });
     await settleEdits();
     const covered = await overwriteUnder('none', 2, 6);
@@ -170,7 +170,7 @@ describe('overwrite', () => {
   });
 
   it('a plain Insert touches nothing else', async () => {
-    const c = getTimelineController();
+    const c = timeline();
     const first = await insertFromSource(ASSET, { inSec: 0, outSec: 6 }, { at: 'time', seconds: 0 });
     await settleEdits();
     await insertFromSource(ASSET, { inSec: 0, outSec: 3 }, { at: 'time', seconds: 4 });
@@ -181,7 +181,7 @@ describe('overwrite', () => {
 
 describe('newCompFromRange', () => {
   it('a comp that IS the marked shot: conformed, trimmed, shortened — one entry, undoable', async () => {
-    const c = getTimelineController();
+    const c = timeline();
     const before = (await h.doc());
     const entries = (await historyLabels()).length;
 

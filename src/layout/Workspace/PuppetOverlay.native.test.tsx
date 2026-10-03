@@ -11,15 +11,13 @@
  *   • `setPointerCapture` throwing and aborting the whole handler.
  */
 
-import { render, act, fireEvent } from '@testing-library/react';
+import { render, act, fireEvent, waitFor } from '@testing-library/react';
 import { PuppetOverlay } from './PuppetOverlay';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import { defaultAnimation } from '@motion/animation';
 import { readNodePuppet, clearRestMeshCache } from '@core/rig/puppet';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, propRef, settleEdits, waitForFrame } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
-import { engineIdle } from '@core/engine/engineInstance';
 import { rigTestLayer } from './__testHelpers__/rigLayer';
 
 // A fixed 1:1 camera centred on the origin keeps screen↔local arithmetic
@@ -38,13 +36,28 @@ jest.mock('@core/workspace/WorkspaceController', () => ({
   }),
 }));
 
+/** The overlay's SVG, once a frame has carried the geometry it draws from. */
+/** An element of the overlay once a frame has drawn it (a pin just added draws with the next rig push). */
+async function drawn(container: HTMLElement, selector: string): Promise<Element> {
+  await waitFor(() => expect(container.querySelector(selector)).not.toBeNull());
+  return container.querySelector(selector)!;
+}
+
+/** The overlay's SVG as mounted NOW (a frame may have re-rendered it since it was found). */
+const live = (container: HTMLElement, fallback: Element): Element => container.querySelector('svg') ?? fallback;
+
+async function svgOf(container: HTMLElement): Promise<SVGSVGElement> {
+  await waitFor(() => expect(container.querySelector('svg')).not.toBeNull());
+  return container.querySelector('svg')!;
+}
+
 let h: Awaited<ReturnType<typeof setupAppEngine>>;
 /** The rig layer (engine-created). */
 let L = '';
 /** Let the engine apply what the overlay sent (and React re-render). */
 /** Let the engine apply what the overlay sent (and React re-render) — several rounds: the rig push's
  * subscription lands, and pointer input goes through getRigPose before it writes (B4 round 5). */
-const idle = (): Promise<void> => act(async () => { for (let i = 0; i < 6; i++) await engineIdle(); });
+const idle = (): Promise<void> => act(async () => { await settleEdits(); await waitForFrame(300); await settleEdits(); });
 const pinsOf = async (id: string) => readNodePuppet((await docView()).getNode(id)!)?.pins ?? [];
 
 /** jsdom gives every element a zero rect, so offsets are all we control. */
@@ -92,7 +105,7 @@ describe('click-add', () => {
     const { container } = render(<PuppetOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.click(svg, { clientX: 30, clientY: 20 });
     await idle();
     const pins = (await pinsOf(L));
@@ -109,7 +122,7 @@ describe('click-add', () => {
     const { container } = render(<PuppetOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.click(svg, { clientX: 12, clientY: -8 });
     await idle();
     const pins = (await pinsOf(L));
@@ -122,7 +135,7 @@ describe('click-add', () => {
     const { container } = render(<PuppetOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.click(svg, { clientX: 5000, clientY: 5000 });
     await idle();
     expect((await pinsOf(L))).toHaveLength(0);
@@ -132,7 +145,7 @@ describe('click-add', () => {
     const { container } = render(<PuppetOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.click(svg, { clientX: 10, clientY: 10 });
     await idle();
     fireEvent.click(svg, { clientX: -10, clientY: -10 });
@@ -146,16 +159,16 @@ describe('click-add', () => {
     const { container } = render(<PuppetOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.click(svg, { clientX: 10, clientY: 10 });
     await idle();
     expect((await pinsOf(L))).toHaveLength(1);
 
     // pointerup synthesises a click even after stopPropagation on pointerdown;
     // the suppression guard is what stops that click from adding a second pin.
-    const pinDot = container.querySelector('circle[r="5"]')!;
+    const pinDot = await drawn(container, 'circle[r="5"]');
     down(pinDot.parentElement!, 10, 10);
-    fireEvent.pointerUp(svg, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 10, clientY: 10, pointerId: 1 });
     await idle();
     fireEvent.click(svg, { clientX: 10, clientY: 10 });
     await idle();
@@ -180,11 +193,11 @@ describe('pointer capture is not a precondition', () => {
       const { container } = render(<PuppetOverlay />);
 
       await idle();
-      const svg = container.querySelector('svg')!;
+      const svg = await svgOf(container);
       fireEvent.click(svg, { clientX: 20, clientY: 0 });
       await idle();
 
-      const pinDot = container.querySelector('circle[r="5"]')!;
+      const pinDot = await drawn(container, 'circle[r="5"]');
       expect(() => down(pinDot.parentElement!, 20, 0)).not.toThrow();
       expect(spy).toHaveBeenCalled();
       // The advanced-pin gizmo ring only exists on the SELECTED pin, so its
@@ -205,15 +218,15 @@ describe('pointer capture is not a precondition', () => {
       const { container } = render(<PuppetOverlay />);
 
       await idle();
-      const svg = container.querySelector('svg')!;
+      const svg = await svgOf(container);
       fireEvent.click(svg, { clientX: 0, clientY: 0 });
       await idle();
       const pinId = (await pinsOf(L))[0]!.id;
 
-      const pinDot = container.querySelector('circle[r="5"]')!;
+      const pinDot = await drawn(container, 'circle[r="5"]');
       down(pinDot.parentElement!, 0, 0);
-      fireEvent.pointerMove(svg, { clientX: 12, clientY: 8, pointerId: 1 });
-      fireEvent.pointerUp(svg, { clientX: 12, clientY: 8, pointerId: 1 });
+      fireEvent.pointerMove(live(container, svg), { clientX: 12, clientY: 8, pointerId: 1 });
+      fireEvent.pointerUp(live(container, svg), { clientX: 12, clientY: 8, pointerId: 1 });
       await idle();
 
       const v = (await docView()).getDataTrack(L, `puppet.${pinId}.position`)!
@@ -230,15 +243,15 @@ describe('drag writes animation, not static props', () => {
     const { container } = render(<PuppetOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
     await idle();
     const pinId = (await pinsOf(L))[0]!.id;
 
-    const pinDot = container.querySelector('circle[r="5"]')!;
+    const pinDot = await drawn(container, 'circle[r="5"]');
     down(pinDot.parentElement!, 0, 0);
-    fireEvent.pointerMove(svg, { clientX: 25, clientY: -15, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: 25, clientY: -15, pointerId: 1 });
+    fireEvent.pointerMove(live(container, svg), { clientX: 25, clientY: -15, pointerId: 1 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 25, clientY: -15, pointerId: 1 });
     await idle();
 
     const track = (await docView()).getDataTrack(L, `puppet.${pinId}.position`);
@@ -255,15 +268,15 @@ describe('drag writes animation, not static props', () => {
     const { container } = render(<PuppetOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
     await idle();
     const pinId = (await pinsOf(L))[0]!.id;
 
-    const pinDot = container.querySelector('circle[r="5"]')!;
+    const pinDot = await drawn(container, 'circle[r="5"]');
     down(pinDot.parentElement!, 10, 0, { altKey: true });
-    fireEvent.pointerMove(svg, { clientX: 0, clientY: 10, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: 0, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(live(container, svg), { clientX: 0, clientY: 10, pointerId: 1 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 0, clientY: 10, pointerId: 1 });
     await idle();
 
     expect((await docView()).getTrackKeyframes(L, `puppet.${pinId}.rotation`)?.length).toBeGreaterThan(0);
@@ -275,15 +288,15 @@ describe('drag writes animation, not static props', () => {
     const { container } = render(<PuppetOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
     await idle();
     const pinId = (await pinsOf(L))[0]!.id;
 
-    const handle = container.querySelector('rect[width="8"]')!;
+    const handle = await drawn(container, 'rect[width="8"]');
     down(handle, 26, 0);
-    fireEvent.pointerMove(svg, { clientX: 52, clientY: 0, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: 52, clientY: 0, pointerId: 1 });
+    fireEvent.pointerMove(live(container, svg), { clientX: 52, clientY: 0, pointerId: 1 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 52, clientY: 0, pointerId: 1 });
     await idle();
 
     const kfs = (await docView()).getTrackKeyframes(L, `puppet.${pinId}.scale`);
@@ -298,13 +311,16 @@ describe('deletion', () => {
     const { container } = render(<PuppetOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.click(svg, { clientX: 0, clientY: 0 });
     await idle();
     const pinId = (await pinsOf(L))[0]!.id;
-    defaultAnimation.setKeyframe(L, `puppet.${pinId}.rotation`, 0, 15);
+    const rot = await propRef(L, `puppet.${pinId}.rotation`);
+    await h.run({ type: 'addKeyframes', keys: [{ prop: rot, time: 0, value: { kind: 'scalar', value: 15 }, spatialIn: [], spatialOut: [] }] });
+    await idle();
+    expect((await docView()).getTrackKeyframes(L, `puppet.${pinId}.rotation`)).toHaveLength(1);
 
-    const pinDot = container.querySelector('circle[r="5"]')!;
+    const pinDot = await drawn(container, 'circle[r="5"]');
     fireEvent.doubleClick(pinDot.parentElement!, { clientX: 0, clientY: 0 });
     await idle();
 

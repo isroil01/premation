@@ -6,16 +6,15 @@
  * mesh preview, and weight-paint strokes.
  */
 
-import { render, act, fireEvent } from '@testing-library/react';
+import { render, act, fireEvent, waitFor } from '@testing-library/react';
 import { BoneOverlay } from './BoneOverlay';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { clearRestMeshCache } from '@core/rig/puppet';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { isWeightPaintEmpty } from '@core/rig/weightPaint';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits, waitForFrame } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
-import { engineIdle } from '@core/engine/engineInstance';
 import { rigTestLayer } from './__testHelpers__/rigLayer';
 import { useRigSelectionStore } from '@stores/rigSelectionStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -39,6 +38,12 @@ const TWO_BONES = [
   { id: 'fore', name: 'Fore', parentId: 'upper', length: 50, x: 50, y: 0, rotation: 0 },
 ];
 
+/** The overlay's SVG, once a frame has carried the geometry it draws from. */
+async function svgOf(container: HTMLElement): Promise<SVGSVGElement> {
+  await waitFor(() => expect(container.querySelector('svg')).not.toBeNull());
+  return container.querySelector('svg')!;
+}
+
 let h: Awaited<ReturnType<typeof setupAppEngine>>;
 /** The rig layer (engine-created). */
 let L = '';
@@ -46,7 +51,9 @@ const skelOf = async () => readNodeSkeleton((await docView()).getNode(L)!);
 /** Let the engine apply what the overlay sent (and React re-render). */
 /** Let the engine apply what the overlay sent (and React re-render) — several rounds: the rig push's
  * subscription lands, and pointer input goes through getRigPose before it writes (B4 round 5). */
-const idle = (): Promise<void> => act(async () => { for (let i = 0; i < 6; i++) await engineIdle(); });
+const idle = (): Promise<void> => act(async () => { await settleEdits(); await waitForFrame(300); await settleEdits(); });
+/** The overlay's SVG as mounted NOW (a frame may have re-rendered it since it was found). */
+const live = (container: HTMLElement, fallback: Element): Element => container.querySelector('svg') ?? fallback;
 const bonePolys = (c: HTMLElement) => c.querySelectorAll('polygon[stroke="var(--color-overlay-rig-bone)"]');
 
 /** Select the first bone by pressing on its group. */
@@ -116,9 +123,9 @@ describe('bone authoring', () => {
     const { container } = render(<BoneOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.pointerDown(svg, { clientX: 70, clientY: 40, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: 70, clientY: 40, pointerId: 1 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 70, clientY: 40, pointerId: 1 });
     fireEvent.click(svg, { clientX: 70, clientY: 40 });
     await idle();
 
@@ -130,10 +137,10 @@ describe('bone authoring', () => {
     const { container } = render(<BoneOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.pointerDown(svg, { clientX: 100, clientY: 100, pointerId: 1 });
-    fireEvent.pointerMove(svg, { clientX: 160, clientY: 160, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: 160, clientY: 160, pointerId: 1 });
+    fireEvent.pointerMove(live(container, svg), { clientX: 160, clientY: 160, pointerId: 1 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 160, clientY: 160, pointerId: 1 });
     fireEvent.click(svg, { clientX: 160, clientY: 160 });
     await idle();
     const bones = (await skelOf())!.bones;
@@ -148,11 +155,11 @@ describe('bone authoring', () => {
     const { container } = render(<BoneOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     const foreG = bonePolys(container)[1]!.parentElement!;
     fireEvent.pointerDown(foreG, { clientX: 40, clientY: 0, pointerId: 1 });
-    fireEvent.pointerMove(svg, { clientX: 40, clientY: 40, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: 40, clientY: 40, pointerId: 1 });
+    fireEvent.pointerMove(live(container, svg), { clientX: 40, clientY: 40, pointerId: 1 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 40, clientY: 40, pointerId: 1 });
     await idle();
     expect((await skelOf())!.bones.at(-1)?.parentId).toBe('fore');
   });
@@ -161,9 +168,9 @@ describe('bone authoring', () => {
     const { container } = render(<BoneOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.pointerDown(svg, { clientX: 10, clientY: 10, pointerId: 1 });
-    fireEvent.pointerMove(svg, { clientX: 60, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(live(container, svg), { clientX: 60, clientY: 10, pointerId: 1 });
     expect(container.querySelector('[data-bone-draft]')).not.toBeNull();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(container.querySelector('[data-bone-draft]')).toBeNull();
@@ -178,11 +185,11 @@ describe('bone authoring', () => {
     const { container } = render(<BoneOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     const foreG = bonePolys(container)[1]!.parentElement!;
     fireEvent.pointerDown(foreG, { clientX: -10, clientY: 0, pointerId: 1 });
-    fireEvent.pointerMove(svg, { clientX: -10, clientY: 40, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: -10, clientY: 40, pointerId: 1 });
+    fireEvent.pointerMove(live(container, svg), { clientX: -10, clientY: 40, pointerId: 1 });
+    fireEvent.pointerUp(live(container, svg), { clientX: -10, clientY: 40, pointerId: 1 });
     await idle();
     expect((await docView()).getTrackKeyframes(L, 'bone.fore.rotation')?.length).toBeGreaterThan(0);
     expect((await historyLabels()).at(-1)).toBe('Pose Bone fore');
@@ -214,11 +221,11 @@ describe('IK', () => {
     const { container } = render(<BoneOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     const poleG = container.querySelector('polygon[fill="var(--color-overlay-rig-pole)"]')!.parentElement!;
     fireEvent.pointerDown(poleG, { clientX: 0, clientY: -80, pointerId: 1 });
-    fireEvent.pointerMove(svg, { clientX: 5, clientY: 90, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: 5, clientY: 90, pointerId: 1 });
+    fireEvent.pointerMove(live(container, svg), { clientX: 5, clientY: 90, pointerId: 1 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 5, clientY: 90, pointerId: 1 });
     await idle();
 
     expect((await docView()).getTrackKeyframes(L, 'ikPole.fore.x')?.[0]?.value).toBeCloseTo(5, 3);
@@ -255,10 +262,10 @@ describe('weight painting', () => {
     await idle();
     selectFirstBone(container);
 
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.pointerDown(svg, { clientX: -40, clientY: 0, pointerId: 2 });
-    fireEvent.pointerMove(svg, { clientX: -20, clientY: 0, pointerId: 2 });
-    fireEvent.pointerUp(svg, { clientX: -20, clientY: 0, pointerId: 2 });
+    fireEvent.pointerMove(live(container, svg), { clientX: -20, clientY: 0, pointerId: 2 });
+    fireEvent.pointerUp(live(container, svg), { clientX: -20, clientY: 0, pointerId: 2 });
     await idle();
 
     const paint = (await skelOf())!.weightPaint;
@@ -273,9 +280,9 @@ describe('weight painting', () => {
     const { container } = render(<BoneOverlay />);
 
     await idle();
-    const svg = container.querySelector('svg')!;
+    const svg = await svgOf(container);
     fireEvent.pointerDown(svg, { clientX: -40, clientY: 0, pointerId: 2 });
-    fireEvent.pointerUp(svg, { clientX: -40, clientY: 0, pointerId: 2 });
+    fireEvent.pointerUp(live(container, svg), { clientX: -40, clientY: 0, pointerId: 2 });
     await idle();
     expect(isWeightPaintEmpty((await skelOf())!.weightPaint)).toBe(true);
   });

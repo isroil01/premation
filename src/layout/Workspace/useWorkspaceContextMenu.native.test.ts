@@ -4,8 +4,7 @@
  * API cannot express (layers of two compositions) changes nothing and says so.
  */
 
-import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -42,8 +41,8 @@ async function choose(anchor: string, id: string): Promise<void> {
   expect(item?.onSelect).toBeDefined();
   item!.onSelect!();
   // The handlers are fire-and-forget promises; let them land.
-  for (let i = 0; i < 5; i++) await Promise.resolve();
-  await engineIdle();
+  await settleEdits();
+  await settleEdits();
 }
 
 describe('Group Selection', () => {

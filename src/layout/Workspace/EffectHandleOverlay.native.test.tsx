@@ -34,6 +34,12 @@ jest.mock('@core/workspace/WorkspaceController', () => ({
   }),
 }));
 
+/** The overlay's SVG, once a frame has carried the geometry it draws from. */
+async function svgOf(container: HTMLElement): Promise<SVGSVGElement> {
+  await waitFor(() => expect(container.querySelector('svg')).not.toBeNull());
+  return container.querySelector('svg')!;
+}
+
 let h: Harness;
 let ID: string;
 let FX: string;
@@ -87,7 +93,7 @@ async function dragBy(svg: Element, from: [number, number], steps: Array<[number
 
 test('a handle drag writes the params — ONE "Move Bulge Centre" entry; undo restores the document', async () => {
   const { container } = await renderOverlay();
-  const svg = container.querySelector('svg')!;
+  const svg = await svgOf(container);
   const start = (await centre());
   const before = (await h.doc());
 
@@ -110,7 +116,7 @@ test('an animated param keys at the playhead; the static one takes the value', a
   await h.run({ type: 'addKeyframes', keys: [{ prop: { layer: ID, path: ref.path }, time: 0, value: values.scalar(0), spatialIn: [], spatialOut: [] }] });
   await clearHistory();
   const { container } = await renderOverlay();
-  const svg = container.querySelector('svg')!;
+  const svg = await svgOf(container);
   const startY = (await centre()).y;
 
   await dragBy(svg, handleAt(container), [[40, 15]]);
@@ -123,7 +129,7 @@ test('an animated param keys at the playhead; the static one takes the value', a
 
 test('a press that misses every handle writes nothing', async () => {
   const { container } = await renderOverlay();
-  const svg = container.querySelector('svg')!;
+  const svg = await svgOf(container);
   const before = (await h.doc());
   await dragBy(svg, [4000, 4000], [[4030, 4020]]);
   expect((await h.doc())).toEqual(before);
