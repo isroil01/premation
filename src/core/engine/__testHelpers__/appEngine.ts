@@ -22,6 +22,7 @@ import { MAIN_VIEWPORT, publishFrameGeometry, setEngineDrivenViewport, subscribe
 import { settleToolEdits } from '@core/workspace/viewportGesture';
 import { edit, gestureSessionsSettled } from '../uiEdits';
 import { propRefForTrack } from '../propRefs';
+import { apiUnitFactor } from '../props';
 import { bootEngine, engine, engineIdle, shutdownEngine } from '../engineInstance';
 import { resetEngineOwnership, setEngineOwnsDocument } from '../engineOwnership';
 import { resetProcessEngine } from '../process/processEngine';
@@ -285,6 +286,16 @@ export async function sampleTrack(layer: string, track: string, seconds: number)
     return typeof n === 'number' ? n : undefined;
   }
   return undefined;
+}
+
+/**
+ * A legacy track's value at `seconds` in its STORED units (Scale as a
+ * multiplier, Opacity 0–1…): what the TS runtime's `readPropertyValue` gave —
+ * the engine's evaluated value over `apiUnitFactor`.
+ */
+export async function storedTrack(layer: string, track: string, seconds = 0): Promise<number | undefined> {
+  const v = await sampleTrack(layer, track, seconds);
+  return v === undefined ? undefined : v / apiUnitFactor(track);
 }
 
 /** Whether the engine has a gesture open (the history's `gestureOpen`). */

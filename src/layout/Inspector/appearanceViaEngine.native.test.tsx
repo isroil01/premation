@@ -9,12 +9,10 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits, storedTrack } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { readPropertyValue } from '@core/inspector/multiSelection';
-import { getNodeBlend } from '@core/effects/blendMode';
 import { stylePreset } from '@core/style/stylePresets';
 import { useSelectionStore } from '@stores/selectionStore';
 import { applyAppearancePresetEdit, groupSelection, ungroupNode } from './AppearanceSection';
@@ -40,7 +38,12 @@ afterEach(async () => {
 
 const idle = async (): Promise<void> => { await act(async () => { await settleEdits(); }); };
 const parentOf = async (id: string): Promise<string | null | undefined> => (await docView()).getNode(id)?.parent;
-const stored = (id: string, prop: string): number | undefined => readPropertyValue(id, prop, 0);
+/** A track's value at 0 s in stored units, as the engine evaluates it. */
+/** The layer's stored backdrop blur (a style field, not a track). */
+const backdropBlur = async (id: string): Promise<unknown> =>
+  (await docView()).getNode(id)!.components.map((c) => (c.props as Record<string, unknown>).backdropBlur).find((v) => v !== undefined);
+
+const stored = (id: string, prop: string): Promise<number | undefined> => storedTrack(id, prop, 0);
 
 test('a Fill & Stroke preset over the selection is ONE entry: solid fill, stroke patched from the default; undo exact', async () => {
   const before = (await h.doc());
@@ -143,8 +146,8 @@ test('a style preset the engine addresses whole is ONE entry: fills, strokes, st
   expect(st.dropShadow!.opacity).toBeCloseTo(0.45);
   // Left out of the preset = off in the stored object, not the new-style default (on).
   expect(st.dropShadow!.useGlobalLight).toBeFalsy();
-  expect(getNodeBlend(s.A)).toBe('normal');
-  for (const t of ['cornerRadius', 'cornerRadiusTL', 'cornerRadiusTR', 'cornerRadiusBR', 'cornerRadiusBL']) expect(stored(s.A, t)).toBe(16);
+  expect((await docView()).getNodeBlend(s.A)).toBe('normal');
+  for (const t of ['cornerRadius', 'cornerRadiusTL', 'cornerRadiusTR', 'cornerRadiusBR', 'cornerRadiusBL']) expect(await stored(s.A, t)).toBe(16);
   await h.run({ type: 'undo' });
   expect((await h.doc())).toBe(before);
 });
@@ -155,10 +158,10 @@ test('Glass sets the backdrop blur and switching away clears it; a 3D layer take
   const glass = stylePresetCommands(s.A, (await style()), stylePreset('glass')!, '#2b7eff', 0);
   expect(glass.unaddressed).not.toContain('backdropBlur');
   expect((await edit('Apply Glass Style', glass.cmds)).ok).toBe(true);
-  expect(stored(s.A, 'backdropBlur')).toBe(stylePreset('glass')!.backdropBlur);
+  expect(await backdropBlur(s.A)).toBe(stylePreset('glass')!.backdropBlur);
   const sticker = stylePresetCommands(s.A, (await style()), stylePreset('sticker')!, '#2b7eff', 0);
   expect((await edit('Apply Sticker Style', sticker.cmds)).ok).toBe(true);
-  expect(stored(s.A, 'backdropBlur')).toBeUndefined();
+  expect(await backdropBlur(s.A)).toBeUndefined();
   await h.run({ type: 'undo' });
   await h.run({ type: 'undo' });
   expect((await h.doc())).toBe(before);
@@ -169,8 +172,8 @@ test('Glass sets the backdrop blur and switching away clears it; a 3D layer take
   const plan = stylePresetCommands(s.B, bStyle, gold, '#2b7eff', 0);
   expect(plan.unaddressed).not.toEqual(expect.arrayContaining(['specular']));
   expect((await edit('Apply Gold Style', plan.cmds)).ok).toBe(true);
-  expect(stored(s.B, 'specular')).toBe(gold.specular);
-  expect(stored(s.B, 'shininess')).toBe(gold.shininess);
+  expect(await stored(s.B, 'specular')).toBe(gold.specular);
+  expect(await stored(s.B, 'shininess')).toBe(gold.shininess);
 });
 
 test('clicking a style swatch applies it as ONE entry named for the preset', async () => {
@@ -178,20 +181,20 @@ test('clicking a style swatch applies it as ONE entry named for the preset', asy
   fireEvent.click(screen.getByTitle(/^Neon — Hollow shape/));
   await idle();
   expect((await historyLabels())).toEqual(['Apply Neon Style']);
-  expect(getNodeBlend(s.A)).toBe('screen');
+  expect((await docView()).getNodeBlend(s.A)).toBe('screen');
   expect((await docView()).getNodeLayerStyles(s.A).outerGlow).toMatchObject({ enabled: true, size: 26 });
 });
 
 test('Shift-parent (Parent & Link JUMP) is setParent{jump}: ONE entry, the child lands on the parent anchor; undo exact', async () => {
   await h.run({ type: 'setProperty', prop: { layer: s.A, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 420, y: 310 } } });
   await clearHistory();
-  expect(stored(s.A, 'x')).toBeCloseTo(420);
+  expect(await stored(s.A, 'x')).toBeCloseTo(420);
   const before = (await h.doc());
   parentLayer(s.A, s.P, { shiftKey: true });
   await idle();
   expect((await parentOf(s.A))).toBe(s.P);
-  expect(stored(s.A, 'x')).toBeCloseTo(0);
-  expect(stored(s.A, 'y')).toBeCloseTo(0);
+  expect(await stored(s.A, 'x')).toBeCloseTo(0);
+  expect(await stored(s.A, 'y')).toBeCloseTo(0);
   expect((await historyLabels())).toEqual(['Parent']);
   await h.run({ type: 'undo' });
   expect((await h.doc())).toBe(before);

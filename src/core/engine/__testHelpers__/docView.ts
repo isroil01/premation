@@ -17,6 +17,8 @@ import { readNodeFxEnabled, type Effect } from '@core/effects/effects';
 import { readNodeLayerStyles, type LayerStyles } from '@core/effects/layerStyles';
 import { readNodeStroke, readNodeStrokes, type Stroke } from '@core/paint/stroke';
 import type { FillPaint } from '@core/paint/fill';
+import { readNodeMatte, type TrackMatte } from '@core/effects/matte';
+import { readNodeBlend, type LayerBlendMode } from '@core/effects/blendMode';
 import type { LayerMask } from '@core/effects/mask';
 import { engine, engineIdle } from '../engineInstance';
 
@@ -179,6 +181,17 @@ export class DocView {
   getNodeLayerStyles(id: string): LayerStyles {
     const node = this.nodes.get(id);
     return (node ? readNodeLayerStyles(node) : undefined) ?? {};
+  }
+
+  /** The layer's track matte / blend mode (effects/matte.ts, effects/blendMode.ts readers). */
+  getNodeMatte(id: string): TrackMatte | undefined {
+    const node = this.nodes.get(id);
+    return node ? readNodeMatte(node) : undefined;
+  }
+
+  getNodeBlend(id: string): LayerBlendMode {
+    const node = this.nodes.get(id);
+    return node ? readNodeBlend(node) : 'normal';
   }
 
   /** The layer's fx switch (effects.ts readNodeFxEnabled). */

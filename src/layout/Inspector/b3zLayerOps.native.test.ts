@@ -5,7 +5,6 @@
 
 import { insertSvgLayer } from '@core/scene/sceneInsert';
 import { readSvgLayer } from '@core/svg/svgLayer';
-import { getNodeMatte } from '@core/effects/matte';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
@@ -48,7 +47,7 @@ const textProps = async (id: string): Promise<Record<string, unknown>> =>
 
 test('Layer Above (positional) track matte is one engine command', async () => {
   await oneExactEntry('Track Matte', () => setLayerMatte(s.A, { mode: 'luma', inverted: true }));
-  expect(getNodeMatte(s.A)).toEqual({ mode: 'luma', inverted: true });
+  expect((await docView()).getNodeMatte(s.A)).toEqual({ mode: 'luma', inverted: true });
 });
 
 test('a Transform preset with Skew / Fill Opacity at default is one entry (latent bindings)', async () => {

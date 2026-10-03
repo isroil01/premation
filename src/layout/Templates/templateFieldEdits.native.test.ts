@@ -22,6 +22,8 @@ let s: Scene;
 beforeEach(async () => {
   h = await setupAppEngine();
   s = await buildScene(h);
+  // templateFieldCommands composes from the layers' trees (the fill-in panel keeps them loaded).
+  await documentMirror().loadTrees(documentMirror().layerIds());
 });
 afterEach(async () => {
   useTemplateStore.getState().exit();

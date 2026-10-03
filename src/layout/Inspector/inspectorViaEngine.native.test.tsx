@@ -13,12 +13,10 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits, storedTrack } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { readPropertyValue } from '@core/inspector/multiSelection';
-import { getNodeMatte } from '@core/effects/matte';
 import { TransformSection } from './TransformSection';
 import { InspectorSelectionProvider } from './inspectorSelection';
 import { alignLayers, keyToggleCommands, motionPathCommands, parentLayer, setLayerMatte, setLayersSwitch, stopwatchCommands, valueCommands } from './inspectorEdits';
@@ -40,7 +38,8 @@ afterEach(async () => {
 });
 
 const idle = async (): Promise<void> => { await act(async () => { await settleEdits(); }); };
-const stored = (id: string, prop: string): number | undefined => readPropertyValue(id, prop, 0);
+/** A track's value at 0 s in stored units, as the engine evaluates it. */
+const stored = (id: string, prop: string): Promise<number | undefined> => storedTrack(id, prop, 0);
 
 function renderTransform(ids: string[]): void {
   render(
@@ -65,14 +64,14 @@ test('a typed Scale (shown in %, stored as a multiplier) crosses the API in perc
   expect(screen.getByRole('spinbutton', { name: 'Scale X' }).textContent).toContain('100');
   const before = (await h.doc());
   await typeInto('Scale X', '150');
-  expect(stored(s.A, 'scaleX')).toBeCloseTo(1.5);
+  expect(await stored(s.A, 'scaleX')).toBeCloseTo(1.5);
   // Linked (the default): H follows W in the SAME write.
-  expect(stored(s.A, 'scaleY')).toBeCloseTo(1.5);
+  expect(await stored(s.A, 'scaleY')).toBeCloseTo(1.5);
   expect((await historyLabels())).toEqual(['Set Scale X']);
   await h.run({ type: 'undo' });
   expect((await h.doc())).toBe(before);
   await h.run({ type: 'redo' });
-  expect(stored(s.A, 'scaleX')).toBeCloseTo(1.5);
+  expect(await stored(s.A, 'scaleX')).toBeCloseTo(1.5);
 });
 
 test('a typed Position X on an animated layer keys at the playhead (setValueAtTime), one entry', async () => {
@@ -81,7 +80,7 @@ test('a typed Position X on an animated layer keys at the playhead (setValueAtTi
   await typeInto('Position X', '777');
   // Playhead at 0 = the first key: replaced, not added.
   expect((await docView()).getTrackKeyframes(s.B, 'x')!.length).toBe(keys);
-  expect(stored(s.B, 'x')).toBeCloseTo(777);
+  expect(await stored(s.B, 'x')).toBeCloseTo(777);
   expect((await historyLabels())).toHaveLength(1);
 });
 
@@ -90,8 +89,8 @@ test('an anchor preset snaps every selected layer as ONE entry', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Anchor presets' }));
   fireEvent.click(screen.getByRole('button', { name: 'Snap anchor to Top Left' }));
   await idle();
-  expect(stored(s.A, 'anchorX')).toBeLessThan(0);
-  expect(stored(s.B, 'anchorX')).toBeLessThan(0);
+  expect(await stored(s.A, 'anchorX')).toBeLessThan(0);
+  expect(await stored(s.B, 'anchorX')).toBeLessThan(0);
   expect((await historyLabels())).toEqual(['Set Anchor Point']);
 });
 
@@ -100,7 +99,7 @@ test('the value / stopwatch / diamond builders round-trip through undo', async (
   await edit('Animate Rotation', stopwatchCommands([s.A], ['rotation'], 0));
   expect((await docView()).isAnimated(s.A, 'rotation')).toBe(true);
   await edit('Set Rotation', valueCommands([{ nodeId: s.A, values: { rotation: 45 } }], { seconds: 0 }));
-  expect(stored(s.A, 'rotation')).toBeCloseTo(45);
+  expect(await stored(s.A, 'rotation')).toBeCloseTo(45);
   // Diamond at 0 removes the key there; the property stays animated only if other keys exist.
   await edit('Remove Rotation keyframe', await keyToggleCommands([s.A], ['rotation'], 0));
   expect((await historyLabels())).toEqual(['Animate Rotation', 'Set Rotation', 'Remove Rotation keyframe']);
@@ -114,7 +113,7 @@ test('align left moves the selection as ONE "Align" entry', async () => {
   await alignLayers([s.A, s.P], 'left', 'selection', 1920, 1080);
   await idle();
   expect((await historyLabels())).toEqual(['Align']);
-  expect(stored(s.P, 'x')).not.toBeCloseTo(900);
+  expect(await stored(s.P, 'x')).not.toBeCloseTo(900);
 });
 
 test('layer switches, parent and matte are one entry each and undo exactly', async () => {
@@ -125,7 +124,7 @@ test('layer switches, parent and matte are one entry each and undo exactly', asy
   expect((await docView()).getNode(s.A)?.parent).toBe(s.P);
   setLayerMatte(s.B, { mode: 'luma', inverted: true, sourceId: s.V });
   await idle();
-  expect(getNodeMatte(s.B)).toEqual({ mode: 'luma', inverted: true, sourceId: s.V });
+  expect((await docView()).getNodeMatte(s.B)).toEqual({ mode: 'luma', inverted: true, sourceId: s.V });
   expect((await historyLabels())).toEqual(['Enable Motion blur', 'Parent', 'Track Matte']);
   for (let i = 0; i < 3; i++) await h.run({ type: 'undo' });
   expect((await h.doc())).toBe(before);
