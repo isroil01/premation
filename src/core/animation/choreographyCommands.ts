@@ -29,7 +29,7 @@ import {
   type ChoreographyKind,
   type ChoreographyRecord,
 } from '@stores/choreographyStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
 import { choreographyEngineEdit } from './choreographyEdits';
 import { catalogFor } from '@core/engine/props';
 import { easePresetById } from './easePresets';
@@ -83,7 +83,8 @@ export function currentFeel(): ChoreographyFeel {
 
 /** Layers the command would act on: the selection, minus anything gone. */
 function targets(): string[] {
-  return useSelectionStore.getState().ids.filter((id) => defaultSceneGraph.getNode(id) !== undefined);
+  const m = documentMirror();
+  return useSelectionStore.getState().ids.filter((id) => m.hasLayer(id));
 }
 
 /** Composition seconds under the playhead. */
@@ -390,7 +391,8 @@ const LEGACY_STAGGER_SEC = 0.3;
 
 /** Layers a re-stagger can move: selected, and actually animated. */
 export function staggerTargets(): string[] {
-  return targets().filter((id) => defaultAnimation.tracksFor(id).length > 0);
+  const m = documentMirror();
+  return targets().filter((id) => m.layerKeyframes(id).size > 0);
 }
 
 /** The stagger the menu entry applies: last-used params, or the legacy 0.3s. */
