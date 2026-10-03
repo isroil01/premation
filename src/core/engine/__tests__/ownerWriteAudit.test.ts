@@ -41,7 +41,7 @@ import { set3DEnabled } from '@core/scene/threeD';
 import { reparentNode } from '@core/scene/parenting';
 import { applyStretch } from '@core/animation/layerTimeCommands';
 import { createOrbitNullEdit } from '@core/scene/cameraCommands';
-import { importGltfModel } from '@core/scene/modelImport';
+import { buildGltfModel, importGltfModel } from '@core/scene/modelImport';
 import { importModelEdit } from '@layout/Assets/modelImportEdits';
 import { buildQuadGlb } from '@/__testHelpers__/buildTestGlb';
 import { createMulticamEdit } from '@layout/Multicam/multicamEdits';
@@ -118,7 +118,7 @@ const CASES: AuditCase[] = [
   // ── layer builders: off-document, one pasteLayers ──
   { name: 'Import 3D Model (glTF — AssetsPanel / File ▸ Import 3D Model)', expect: 'owner', run: async () => {
     const bytes = buildQuadGlb();
-    const r = await importModelEdit('Import quad.glb', () => importGltfModel(bytes, 'quad.glb'));
+    const r = await importModelEdit('Import quad.glb', (b, f) => buildGltfModel(b, f, bytes, 'quad.glb'));
     expect(r?.layerCount).toBeGreaterThan(0);
   } },
   { name: 'Import 3D Model called directly (the old path)', expect: 'replica-only', run: () => {

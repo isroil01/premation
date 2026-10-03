@@ -45,6 +45,8 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene } from '@stores/sceneStore';
 import type { SceneNode } from '@core/types';
+import type { LayerSink } from '@/engine-client/layerSink';
+import type { InsertFrame } from '@/engine-client/insertFragment';
 
 /** Above this the data-URL document weight gets noticeable — warn, don't block. */
 export const MODEL_SOFT_CAP_BYTES = 20 * 1024 * 1024;
@@ -294,10 +296,10 @@ function normalizeRelPath(p: string): string {
  * this is the ordinary single-file import — same key, same registry, same
  * document storage, same reload path.
  */
-export function importModelFiles(files: ReadonlyArray<ModelSourceFile>): ModelImportResult {
+export function buildModelFiles(sink: LayerSink, frame: InsertFrame, files: ReadonlyArray<ModelSourceFile>): ModelImportResult {
   const model = files.find((f) => MODEL_FILE_PATTERN.test(f.name));
   if (!model) throw new Error('No .glb or .gltf file in the selection.');
-  return importGltfModel(glbFromModelFiles(files), model.name);
+  return buildGltfModel(sink, frame, glbFromModelFiles(files), model.name);
 }
 
 /**
@@ -347,17 +349,44 @@ export interface ModelImportResult {
 }
 
 /**
- * Import a .glb/.gltf into the ACTIVE composition. Registers meshes, creates
- * the layer tree, selects the root. Throws with an actionable message on a
- * file the parser refuses (external .bin, glTF 1.0, …).
+ * Import a .glb/.gltf straight into the PAGE REPLICA's active composition and
+ * select the root — the pre-engine path, kept for the owner-write audit's
+ * "called directly" case. The editor lays the model into a fragment
+ * ({@link buildGltfModel}, layout/Assets/modelImportEdits.ts).
  */
 export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImportResult {
+  const comp = useCompositionStore.getState();
+  const result = buildGltfModel(
+    {
+      addChild: (parent, node) => defaultSceneGraph.addChild(parent, node as SceneNode),
+      setFxKey: (id, key, value) => defaultSceneGraph.setFxKey(id, key, value),
+      setKeyframe: (id, prop, t, value) => defaultAnimation.setKeyframe(id, prop, t, value),
+      setKeyframes: (id, prop, keys) => defaultAnimation.setTrackKeyframes(id, prop, keys as never),
+      setExpression: (id, prop, src) => defaultAnimation.setExpression(id, prop, src),
+    },
+    { comp: activeCompRootId(), width: comp.width, height: comp.height, durationSeconds: comp.durationSeconds, fps: comp.fps, cursor: null },
+    bytes,
+    fileName,
+  );
+  useSelectionStore.getState().set([result.rootId]);
+  bumpScene();
+  return result;
+}
+
+/**
+ * Lay a .glb/.gltf into `sink` under `frame.comp`: registers the meshes and
+ * builds the layer tree (root null holding the model bytes, mesh / node layers,
+ * the first clip baked as keys). Returns the root's id in the sink. Throws
+ * with an actionable message on a file the parser refuses (external .bin,
+ * glTF 1.0, …).
+ */
+export function buildGltfModel(sink: LayerSink, frame: InsertFrame, bytes: ArrayBuffer, fileName: string): ModelImportResult {
   const u8 = new Uint8Array(bytes);
   const modelKey = modelKeyForBytes(u8);
   registerModel(modelKey, bytes);
   const parsed: ParsedGltf = parseGltf(bytes);
 
-  const comp = useCompositionStore.getState();
+  const comp = { width: frame.width, height: frame.height };
   const layout = buildModelLayout(parsed, modelKey, { width: comp.width, height: comp.height });
 
   const rootId = freshId('null');
@@ -379,7 +408,7 @@ export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImpo
       },
     ],
   } as unknown as SceneNode;
-  defaultSceneGraph.addChild(activeCompRootId(), root);
+  sink.addChild(frame.comp, root);
 
   const idsBySpec: string[] = [];
   layout.specs.forEach((spec) => {
@@ -420,7 +449,7 @@ export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImpo
       components,
     } as unknown as SceneNode;
     const parentId = spec.parent === -1 ? rootId : idsBySpec[spec.parent]!;
-    defaultSceneGraph.addChild(parentId, node);
+    sink.addChild(parentId, node);
     idsBySpec.push(id);
   });
 
@@ -437,7 +466,7 @@ export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImpo
       const nodeId = idsBySpec[specIndex];
       if (!nodeId) continue;
       for (const tr of tracks) {
-        defaultAnimation.setTrackKeyframes(nodeId, tr.prop, tr.keyframes);
+        sink.setKeyframes(nodeId, tr.prop, tr.keyframes);
       }
     }
     // 'weights' channels bake onto the MESH LEAF layers (morph weights live
@@ -456,7 +485,7 @@ export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImpo
         const leafId = idsBySpec[si];
         if (!leafId) return;
         for (const tr of tracks) {
-          defaultAnimation.setTrackKeyframes(leafId, tr.prop, tr.keyframes);
+          sink.setKeyframes(leafId, tr.prop, tr.keyframes);
         }
       });
     }
@@ -466,9 +495,6 @@ export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImpo
       extraClips: parsed.animations.filter((a) => a.channels.length > 0).length - 1,
     };
   }
-
-  useSelectionStore.getState().set([rootId]);
-  bumpScene();
 
   return {
     rootId,

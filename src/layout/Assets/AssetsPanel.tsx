@@ -392,13 +392,13 @@ export function AssetsPanel(): JSX.Element {
     const gltfDrop = all.some((f) => /\.gltf$/i.test(f.name));
     if (gltfDrop) {
       try {
-        const { importModelFiles } = await import('@core/scene/modelImport');
+        const { buildModelFiles } = await import('@core/scene/modelImport');
         const sources = await Promise.all(all.map(async (f) => ({
           name: f.name,
           path: f.webkitRelativePath || undefined,
           bytes: await f.arrayBuffer(),
         })));
-        const result = await importModelEdit(`Import ${all.find((f) => /\.gltf$/i.test(f.name))?.name ?? 'model'}`, () => importModelFiles(sources));
+        const result = await importModelEdit(`Import ${all.find((f) => /\.gltf$/i.test(f.name))?.name ?? 'model'}`, (b, f) => buildModelFiles(b, f, sources));
         if (!result) throw new Error('the engine did not take the model');
         const modelName = all.find((f) => /\.gltf$/i.test(f.name))?.name ?? 'model';
         useUIStore.getState().notify({
@@ -423,9 +423,9 @@ export function AssetsPanel(): JSX.Element {
       // mesh layers) rather than a library asset — see modelImport.ts.
       if (/\.(glb|gltf)$/i.test(file.name)) {
         try {
-          const { importGltfModel } = await import('@core/scene/modelImport');
+          const { buildGltfModel } = await import('@core/scene/modelImport');
           const bytes = await file.arrayBuffer();
-          const result = await importModelEdit(`Import ${file.name}`, () => importGltfModel(bytes, file.name));
+          const result = await importModelEdit(`Import ${file.name}`, (b, f) => buildGltfModel(b, f, bytes, file.name));
           if (!result) throw new Error('the engine did not take the model');
           const clipNote = result.clip
             ? ` · clip “${result.clip.name}” baked as keyframes (${result.clip.duration.toFixed(1)}s${result.clip.extraClips > 0 ? `, ${result.clip.extraClips} more clip${result.clip.extraClips === 1 ? '' : 's'} in file` : ''})`

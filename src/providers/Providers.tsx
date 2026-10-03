@@ -393,7 +393,7 @@ export async function openAfterEffectsProjectFile(file: File): Promise<void> {
  * model is not a library asset, it becomes a LAYER TREE, and — the part the
  * asset door cannot express — a `.gltf` needs its `.bin` and its textures
  * selected WITH it. The picker is multi-select and accepts those sidecar types
- * for exactly that reason; `importModelFiles` works out which of the chosen
+ * for exactly that reason; `buildModelFiles` works out which of the chosen
  * files is the model and resolves the rest against it.
  */
 async function pickAndImport3DModel(): Promise<void> {
@@ -412,7 +412,7 @@ async function pickAndImport3DModel(): Promise<void> {
     input.click();
   });
   if (files.length === 0) return;
-  const { importModelFiles, MODEL_FILE_PATTERN } = await import('@core/scene/modelImport');
+  const { buildModelFiles, MODEL_FILE_PATTERN } = await import('@core/scene/modelImport');
   if (!files.some((f) => MODEL_FILE_PATTERN.test(f.name))) {
     notify('Select a .glb or .gltf file (with its .bin and textures, if it has them).', 'warning');
     return;
@@ -427,7 +427,7 @@ async function pickAndImport3DModel(): Promise<void> {
           : {}),
         bytes: await f.arrayBuffer(),
       })));
-    const result = await importModelEdit('Import 3D Model', () => importModelFiles(sources));
+    const result = await importModelEdit('Import 3D Model', (b, f) => buildModelFiles(b, f, sources));
     if (!result) throw new Error('the engine did not take the model');
     const clip = result.clip
       ? ` · clip “${result.clip.name}” baked as keyframes (${result.clip.duration.toFixed(1)}s)`

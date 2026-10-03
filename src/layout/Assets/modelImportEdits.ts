@@ -1,20 +1,24 @@
 /**
  * 3D model import through the engine (B4 round 8, the owner-write audit): the
- * glTF importer builds its layer tree (root null + mesh / node layers, the
- * first clip baked as keys, the model bytes on the root) OFF-document and it
- * lands as ONE `pasteLayers` in the active composition — the engine that owns
- * the document gets it, not only the page's replica.
+ * glTF importer lays its layer tree (root null + mesh / node layers, the first
+ * clip baked as keys, the model bytes on the root) into a fragment — no page
+ * replica — and it lands as ONE `pasteLayers` in the active composition, the
+ * root selected.
  */
 
-import { insertBuiltLayers } from '@core/engine/offDocument';
 import type { ModelImportResult } from '@core/scene/modelImport';
-import { activeCompIdNow } from '@hooks/useMirror';
+import type { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import { insertFragment, type InsertFrame } from '@/engine-client/insertFragment';
 
-/** Run `build` (importGltfModel / importModelFiles) as one engine entry. Null when the engine refused. */
-export async function importModelEdit(label: string, build: () => ModelImportResult): Promise<ModelImportResult | null> {
+/** Run `build` (buildGltfModel / buildModelFiles) as one engine entry. Null when it failed or the engine refused (toasted). */
+export async function importModelEdit(
+  label: string,
+  build: (b: FragmentBuilder, frame: InsertFrame) => ModelImportResult,
+): Promise<ModelImportResult | null> {
   let result: ModelImportResult | null = null;
-  const ids = await insertBuiltLayers(label, activeCompIdNow() ?? 'comp_root', () => {
-    result = build();
+  const ids = await insertFragment(label, (b, frame) => {
+    result = build(b, frame);
+    return result.rootId;
   });
   return ids && ids.length > 0 ? result : null;
 }
