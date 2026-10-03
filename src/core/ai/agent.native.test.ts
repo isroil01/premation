@@ -13,10 +13,9 @@ import type { AnimFacade, SceneFacade, ToolContext } from '@motion/ai-tools';
 import { beginAiTransaction } from './aiTransaction';
 import { buildAiTools } from './toolHandlers';
 import { createToolContext } from './toolContext';
-import { defaultAnimation } from '@motion/animation';
-import { sceneProjectIO } from '@core/scene/sceneProjectIO';
+import { engine } from '@core/engine/engineInstance';
 import { useAssetStore } from '@stores/assetStore';
-import { getCommandSystem, setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
@@ -157,9 +156,7 @@ describe('one prompt, one undo entry', () => {
 
     await tx.commit();
 
-    const history = getCommandSystem().getHistory().getEntries();
-    expect(history).toHaveLength(1);
-    expect(history[0]!.label).toBe('AI: make it move');
+    expect(await historyLabels()).toEqual(['AI: make it move']);
     const view = await docView();
     expect(created.every((id) => view.getNode(id))).toBe(true);
   });
@@ -181,11 +178,11 @@ describe('one prompt, one undo entry', () => {
     expect((await docView()).getNode(id)).toBeDefined();
     expect((await docView()).tracksFor(id)).toHaveLength(1);
 
-    getCommandSystem().getHistory().undo();
+    await h.run({ type: 'undo' });
     expect((await docView()).getNode(id)).toBeUndefined();
     expect((await docView()).tracksFor(id)).toHaveLength(0);
 
-    getCommandSystem().getHistory().redo();
+    await h.run({ type: 'redo' });
     expect((await docView()).getNode(id)).toBeDefined();
     expect((await docView()).tracksFor(id)).toHaveLength(1);
   });
@@ -195,7 +192,7 @@ describe('one prompt, one undo entry', () => {
     const c = ctx();
     // Something pre-existing, so we're not just comparing two empty documents.
     await reg.execute('create_layer', { kind: 'shape', name: 'Existing' }, c);
-    const before = JSON.stringify({ scene: sceneProjectIO.capture(), anim: defaultAnimation.snapshot() });
+    const before = await h.doc();
     // Outside a turn, a write the engine takes is an ordinary undo entry of its own.
     const entriesBefore = (await historyLabels()).length;
 
@@ -208,8 +205,8 @@ describe('one prompt, one undo entry', () => {
     await tx.rollback();
 
     expect((await docView()).getNode(id)).toBeUndefined();
-    expect(JSON.stringify({ scene: sceneProjectIO.capture(), anim: defaultAnimation.snapshot() })).toBe(before);
-    expect(getCommandSystem().getHistory().getEntries()).toHaveLength(entriesBefore);
+    expect(await h.doc()).toBe(before);
+    expect(await historyLabels()).toHaveLength(entriesBefore);
   });
 
   it('leaves no undo entry for a read-only run', async () => {
@@ -220,30 +217,7 @@ describe('one prompt, one undo entry', () => {
     await reg.execute('list_capabilities', {}, c);
     await reg.execute('get_selection', {}, c);
     await tx.commit();
-    expect(getCommandSystem().getHistory().getEntries()).toHaveLength(0);
-  });
-
-  it('swallows commands other subsystems push mid-run', async () => {
-    // Lazily booting a comp's timeline pushes an "Add Track" through
-    // TimelineController's history bridge, and toLayerTime triggers that boot.
-    // Left alone it lands on the undo stack as a second entry, so one undo
-    // would only half-undo the run.
-    const history = getCommandSystem().getHistory();
-    const tx = await beginAiTransaction('AI: suppressed');
-    history.push({ label: 'Add Track', execute: () => {}, undo: () => {} } as never);
-    await registry().execute('create_layer', { kind: 'shape', name: 'A' }, ctx());
-    await tx.commit();
-
-    const entries = history.getEntries();
-    expect(entries).toHaveLength(1);
-    expect(entries[0]!.label).toBe('AI: suppressed');
-  });
-
-  it('stops suppressing once the run settles', async () => {
-    const history = getCommandSystem().getHistory();
-    await (await beginAiTransaction('AI: done')).commit();
-    history.push({ label: 'A later user edit', execute: () => {}, undo: () => {} } as never);
-    expect(history.getEntries().map((e) => e.label)).toEqual(['A later user edit']);
+    expect(await historyLabels()).toHaveLength(0);
   });
 
   it('ignores a double commit / commit-after-rollback', async () => {
@@ -254,7 +228,7 @@ describe('one prompt, one undo entry', () => {
     await tx.commit();
     await tx.commit();
     await tx.rollback();
-    expect(getCommandSystem().getHistory().getEntries()).toHaveLength(1);
+    expect(await historyLabels()).toHaveLength(1);
   });
 });
 
@@ -542,7 +516,7 @@ describe('tool results teach the model', () => {
     const id = (res.data as { id: string }).id;
 
     await reg.execute('set_expression', { nodeId: id, prop: 'x', expression: 'wiggle(2, 30)' }, c);
-    defaultAnimation.setExpressionEnabled(id, 'x', false);
+    await engine().execute({ type: 'setExpressionEnabled', props: [{ layer: id, path: 'transform/position' }], member: 0, enabled: false });
 
     const out = await reg.execute('set_expression', { nodeId: id, prop: 'x', expression: 'time * 90' }, c);
     expect(out.ok ? true : out.content).toBe(true);

@@ -12,6 +12,7 @@ import { act } from '@testing-library/react';
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
 import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
+import { documentMirror } from '@stores/documentMirror';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
 import { incomingSpeed, outgoingSpeed, effectiveBezier, influences } from './speedGraph';
 import { applyKeyframeVelocity, readKeyframeVelocity } from './keyframeVelocity';
@@ -49,6 +50,9 @@ describe('keyframe velocity', () => {
         value: { kind: 'vec2' as const, value: { x: x!, y: y! } }, spatialIn: [], spatialOut: [],
       })),
     })).ids;
+    // The dialog reads the keys off the mirror (the timeline shows the layer).
+    await settleEdits();
+    await documentMirror().loadTree(NODE);
     // Each test starts from an empty undo stack.
     await clearHistory();
   });
