@@ -20,11 +20,11 @@
  */
 
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
+import { documentMirror } from '@stores/documentMirror';
 import { defaultModifier, readModifierStack, type Modifier } from '@core/animation/modifierStack';
 import { ModifierStackSection, hasModifierStackSection } from './ModifierStackSection';
 import { expressionTarget, modifierStackCommands, modifiersMoved, modifiersWithout } from './modifierEdits';
@@ -39,6 +39,8 @@ beforeEach(async () => {
   h = await setupAppEngine();
   s = await buildScene(h);
   L = s.B;
+  // The section reads the layer's property tree (what it can modify).
+  await documentMirror().loadTree(L);
   await clearHistory();
 });
 afterEach(async () => {
@@ -46,7 +48,7 @@ afterEach(async () => {
   await h.dispose();
 });
 
-const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+const idle = async (): Promise<void> => { await act(async () => { await settleEdits(); }); };
 const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
 /** No second entry from the 700 ms recorder on top of the engine's. */
 const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
