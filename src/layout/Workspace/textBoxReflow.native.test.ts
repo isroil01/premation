@@ -4,6 +4,7 @@
  * the box widens and Position moves so the opposite edge stays put.
  */
 
+import { waitFor } from '@testing-library/react';
 import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -44,7 +45,8 @@ test('dragging the right handle widens a fixed box, keeps the left edge, one ent
   const m = documentMirror();
   expect(mirrorParagraphBox(m, T)?.boxWidth).toBe(250);
   expect(readTrack(m, T, 'x', 0)).toBeCloseTo(425);
-  expect((await historyLabels())).toEqual(['Resize Text Box']);
+  // The gesture closes a few promise turns after end(): wait for its entry.
+  await waitFor(async () => expect(await historyLabels()).toEqual(['Resize Text Box']));
 });
 
 test('a locked or point text layer takes no drag', async () => {

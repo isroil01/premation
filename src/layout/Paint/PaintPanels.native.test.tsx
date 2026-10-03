@@ -6,7 +6,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { Command } from '@motion/engine-api';
 import { drawToolOptions } from '@motion/workspace';
-import { getNodePaint } from '@core/paint/paintStrokes';
+import { readNodePaint } from '@core/paint/paintStrokes';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -32,6 +32,8 @@ afterEach(async () => {
 
 const addStroke = async (layer: string, stroke: object): Promise<string> =>
   (await h.run({ type: 'addPaintStroke', layer, stroke: JSON.stringify(stroke), keys: [] }) as { stroke: string }).stroke;
+/** The layer's stored paint (the exported document's node). */
+const paintOf = async (id: string) => readNodePaint((await docView()).getNode(id)! as never);
 const click = async (el: Element): Promise<void> => {
   await act(async () => {
     fireEvent.click(el);
@@ -59,14 +61,14 @@ describe('PaintPanel', () => {
     await addStroke(ID, { points: [{ x: 1, y: 1 }], mode: 'erase' });
     act(() => useSelectionStore.getState().set([ID]));
     render(<PaintPanel />);
-    expect(screen.getByText('Brush 1')).toBeTruthy();
+    expect(await screen.findByText('Brush 1')).toBeTruthy();
     expect(screen.getByText('Eraser 1')).toBeTruthy();
 
     await click(screen.getAllByLabelText('Hide stroke')[0]!);
-    expect(getNodePaint(ID)!.strokes[0]!.visible).toBe(false);
+    expect((await paintOf(ID))!.strokes[0]!.visible).toBe(false);
     expect((await historyLabels()).at(-1)).toBe('Hide Paint Stroke');
     await click(screen.getAllByLabelText('Show stroke')[0]!);
-    expect(getNodePaint(ID)!.strokes[0]!.visible).toBeUndefined();
+    expect((await paintOf(ID))!.strokes[0]!.visible).toBeUndefined();
 
     await click(screen.getAllByLabelText('Animate path')[0]!);
     expect((await docView()).isDataAnimated(ID, `paint.${b}.path`)).toBe(true);
@@ -75,19 +77,19 @@ describe('PaintPanel', () => {
     expect((await docView()).isDataAnimated(ID, `paint.${b}.path`)).toBe(false);
 
     await click(screen.getByLabelText('Paint on Transparent'));
-    expect(getNodePaint(ID)!.onTransparent).toBe(true);
+    expect((await paintOf(ID))!.onTransparent).toBe(true);
     expect((await historyLabels()).at(-1)).toBe('Paint on Transparent');
 
     fireEvent.click(screen.getByText('Brush 1'));
     expect(usePaintStore.getState().selectedStroke).toEqual({ nodeId: ID, strokeId: b });
 
     await click(screen.getAllByLabelText('Delete stroke')[1]!);
-    expect(getNodePaint(ID)!.strokes.map((s) => s.id)).toEqual([b]);
+    expect((await paintOf(ID))!.strokes.map((s) => s.id)).toEqual([b]);
     expect((await historyLabels()).at(-1)).toBe('Delete Paint Stroke');
     await act(async () => {
       await h.run({ type: 'undo' });
     });
-    expect(getNodePaint(ID)!.strokes).toHaveLength(2);
+    expect((await paintOf(ID))!.strokes).toHaveLength(2);
   });
 });
 

@@ -5,7 +5,7 @@
 
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { EffectsSection, EffectsSectionActions, hasEffectsSection } from '../EffectsSection';
-import { addEffect, effectDefFor } from '@core/effects/effects';
+import { effectDefFor } from '@core/effects/effects';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 
@@ -52,12 +52,12 @@ it('says so in one line when the layer has no effects', async () => {
 });
 
 it('renders the applied effects', async () => {
-  await withLayer('solid', (id) => {
-    addEffect(id, 'gaussian-blur');
+  await withLayer('solid', async (id, h) => {
+    await h.run({ type: 'addEffect', layers: [id], effect: 'gaussian-blur', params: [] });
     render(<EffectsSection nodeId={id} />);
 
     const label = effectDefFor('gaussian-blur')!.label;
-    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(await screen.findByText(label)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: `Remove ${label}` })).toBeInTheDocument();
     expect(screen.queryByText('No effects. Use + to add one.')).toBeNull();
   });
@@ -77,9 +77,8 @@ it('the header "+" opens a searchable add menu that adds to the layer', async ()
     const label = effectDefFor('gaussian-blur')!.label;
     fireEvent.change(search, { target: { value: label.slice(0, 5) } });
     fireEvent.click(screen.getByTitle(`Add ${label}`));
-const view = await docView();
 
-    await waitFor(() => expect(view.getNodeEffects(id).map((e) => e.type)).toContain('gaussian-blur'));
+    await waitFor(async () => expect((await docView()).getNodeEffects(id).map((e) => e.type)).toContain('gaussian-blur'));
     // The menu closes once the effect is added.
     expect(screen.queryByRole('searchbox', { name: 'Search effects to add' })).toBeNull();
   } finally {

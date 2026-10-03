@@ -264,8 +264,7 @@ describe('the stagger gesture shifts what is already there', () => {
       nodeIds: LAYERS,
       params: params({ baseOffsetFrames: 6, swingPct: 0 }),
     }))!;
-const view = await docView();
-
+    const view = await docView();
     const starts = LAYERS.map((id) => view.getTrackKeyframes(id, 'opacity')![0]!.t);
     expect(starts[0]).toBeCloseTo(0, 6);
     expect(starts[1]).toBeCloseTo(6 / record.fps, 6);

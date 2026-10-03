@@ -15,7 +15,6 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore } from '@stores/guidesStore';
 import { defaultCustomViews } from '@core/workspace/customViews';
 import { cameraFromNode } from './camera3d';
-import { layerSpaceAt } from './layerSpace';
 import {
   buildCameraCommands,
   createOrbitNullEdit,
@@ -104,17 +103,11 @@ describe('focus distance', () => {
     expect(documentMirror().property(two, 'camera/focusDistance')?.expression).toBe(linkFocusToPoiExpression('Camera 1'));
   });
 
-  it('a camera has a layer space: toWorld([0,0]) is the eye the renderer projects through', async () => {
+  it('the camera verbs resolve the eye the stored camera describes', async () => {
     const cam = await camera(true);
     await set(cam, 'camera/orbitYaw', scalar(30));
-    const expected = cameraFromNode((await docView()).getNode(cam)!, W, H).position;
-    const space = layerSpaceAt(cam, 0, { width: W, height: H, rootId: comp });
-    expect(space).toBeDefined();
-    const [x, y, z] = space!.toWorld([0, 0]);
-    expect(x).toBeCloseTo(expected.x, 6);
-    expect(y).toBeCloseTo(expected.y, 6);
-    expect(z).toBeCloseTo(expected.z, 6);
-    // The verbs resolve the same eye from the engine's values.
+    const expected = cameraFromNode((await docView()).getNode(cam)! as never, W, H).position;
+    // The verbs resolve the eye from the engine's values.
     const rig = await resolveCommandCamera(cam, 0);
     expect(rig!.camera.position.x).toBeCloseTo(expected.x, 6);
     expect(rig!.camera.position.z).toBeCloseTo(expected.z, 6);

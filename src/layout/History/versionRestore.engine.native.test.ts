@@ -24,7 +24,6 @@ jest.mock('@core/engine/engineStill', () => ({
 }));
 
 import { api } from '@core/api/client';
-import { captureDocument } from '@core/api/cloudDocument';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -48,6 +47,12 @@ afterEach(async () => {
   await h.dispose();
 });
 
+/** The document as a saved version holds it: the engine's export. */
+async function exported(): Promise<unknown> {
+  const { document } = await h.query({ type: 'exportDocument' });
+  return JSON.parse(new TextDecoder().decode(document));
+}
+
 async function undoTimes(n: number): Promise<void> {
   for (let i = 0; i < n; i += 1) {
     await performUndo();
@@ -65,7 +70,7 @@ async function redoTimes(n: number): Promise<void> {
 describe('restore a cloud version (restoreVersionAsOneEdit)', () => {
   it('lands the version exactly, and undo brings the pre-restore document back exactly', async () => {
     const version = (await h.doc());
-    (api.restoreVersion as jest.Mock).mockResolvedValue({ document: structuredClone(captureDocument()) });
+    (api.restoreVersion as jest.Mock).mockResolvedValue({ document: await exported() });
 
     // An engine edit after the version was saved: this is what the restore replaces.
     await h.run({ type: 'createLayer', comp: s.comp, kind: 'solid', name: 'After the version', init: [] });
@@ -109,7 +114,7 @@ describe('restore a cloud version (restoreVersionAsOneEdit)', () => {
 
 describe('compare a version (renderVersionFrame)', () => {
   it('swaps the version in and back without an undo entry, leaving the document byte-identical', async () => {
-    const version = structuredClone(captureDocument());
+    const version = (await exported()) as never;
     await h.run({ type: 'createLayer', comp: s.comp, kind: 'solid', name: 'After the version', init: [] });
     const live = (await h.doc());
     const labels = (await historyLabels());

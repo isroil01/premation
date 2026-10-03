@@ -9,7 +9,6 @@ import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appE
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { sec } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
-import { catalogFor, numbersOf, readKeys } from '@core/engine/props';
 import { values } from '@core/engine/propRefs';
 import { documentMirror } from '@stores/documentMirror';
 import { canExponentialScale, exponentialScaleEdit, expressionBakeEdit, hasBakeableExpression } from './menuCommandEdits';
@@ -45,9 +44,13 @@ async function keyScale(layer: string, keys: Array<[number, number, number]>): P
   await engineIdle();
 }
 
-const scaleKeys = (layer: string): Array<{ t: number; v: number[] }> => {
-  const b = catalogFor(layer).byMember.get('scaleX')!;
-  return readKeys(layer, b).map((k) => ({ t: k.t, v: numbersOf(b, k.value) }));
+/** Scale's keys as the engine stores them: comp seconds and the vector's numbers. */
+const scaleKeys = async (layer: string): Promise<Array<{ t: number; v: number[] }>> => {
+  const r = await h.query({ type: 'getKeyframes', props: [{ layer, path: 'transform/scale' }] });
+  return (r.sets[0]?.keyframes ?? []).map((k) => {
+    const v = k.value as { kind: string; value: { x: number; y: number; z?: number } };
+    return { t: k.time / 705_600_000, v: [v.value.x, v.value.y, ...(v.value.z !== undefined ? [v.value.z] : [])] };
+  });
 };
 
 describe('Exponential Scale', () => {
@@ -63,7 +66,7 @@ describe('Exponential Scale', () => {
     expect(r.refusal).toBeNull();
     // Only X ramps; Y is constant.
     expect([...r.written.keys()]).toEqual(['scaleX']);
-    const keys = scaleKeys(layer);
+    const keys = (await scaleKeys(layer));
     expect(keys).toHaveLength(31); // 30 fps over 1 s, both ends
     expect(keys[0]!.v.slice(0, 2)).toEqual([10, 50]);
     expect(keys[30]!.v.slice(0, 2)).toEqual([1000, 50]);

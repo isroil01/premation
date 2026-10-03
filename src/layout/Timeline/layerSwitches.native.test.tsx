@@ -8,7 +8,6 @@ import { act, render, screen, fireEvent } from '@testing-library/react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { readContinuousRaster } from '@core/scene/continuousRaster';
 import { readNodeQuality } from '@core/effects/layerQuality';
-import { getNodeLayerTime } from '@core/scene/layerTime';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
@@ -39,6 +38,12 @@ let NUL = '';
 
 async function idle(): Promise<void> {
   await act(async () => { await engineIdle(); });
+}
+
+/** The layer's stored frame blending (the `fx` time record; absent = off). */
+async function frameBlend(id: string): Promise<string> {
+  const t = (await docView()).props(id, 'fx')?.time as { frameBlend?: string } | undefined;
+  return t?.frameBlend ?? 'none';
 }
 
 beforeAll(() => {
@@ -96,14 +101,14 @@ describe('switch helpers', () => {
     expect(frameBlendSwitchAvailable(VIDEO)).toBe(true);
     toggleFrameBlendSwitch(VIDEO);
     await idle();
-    expect(getNodeLayerTime(VIDEO).frameBlend).toBe('mix');
+    expect((await frameBlend(VIDEO))).toBe('mix');
     await h.run({ type: 'undo' });
-    expect(getNodeLayerTime(VIDEO).frameBlend ?? 'none').toBe('none');
+    expect((await frameBlend(VIDEO))).toBe('none');
     await h.run({ type: 'redo' });
-    expect(getNodeLayerTime(VIDEO).frameBlend).toBe('mix');
+    expect((await frameBlend(VIDEO))).toBe('mix');
     toggleFrameBlendSwitch(VIDEO);
     await idle();
-    expect(getNodeLayerTime(VIDEO).frameBlend).toBe('none');
+    expect((await frameBlend(VIDEO))).toBe('none');
   });
 
   it('Select Label Group selects every layer with the same label', async () => {
