@@ -913,9 +913,9 @@ const playheadSeconds = (): number => getTime();
 // ── Command predicates over the document mirror (B4: read at call time) ──
 
 /**
- * Camera navigation is possible — `cameraNav.findNavTarget() !== null`, which
- * holds exactly when the active composition has 3D content that is not a
- * camera or a light (every branch of it ends in `compHasAny3D`).
+ * Camera navigation is possible — `viewGeometry.navTargetOf(…) !== null`,
+ * which holds exactly when the active composition has 3D content that is not
+ * a camera or a light (its first test).
  */
 function canNavigateCamera(): boolean {
   return compHas3DContent(documentMirror(), activeCompIdNow(), false);

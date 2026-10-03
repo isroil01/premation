@@ -1589,7 +1589,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         if (navTargetNow()) {
           // Smooth dolly: wheel ticks feed an rAF easer instead of stepping z
           // (or a custom view's distance) directly — see cameraNav.ts.
-          smoothDollyNavBy(e.deltaY, compRef.current.width, compRef.current.height);
+          smoothDollyNavBy(e.deltaY, compRef.current.width, compRef.current.height, navTargetNow);
           return;
         }
       }
