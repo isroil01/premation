@@ -1,3 +1,16 @@
+// `*.native.test.*` suites run on the real engine (premation-engine-headless).
+// Without a built engine they are skipped here, not failed; the Native workflow
+// builds the engine and runs them (PREMATION_ENGINE_PATH, as
+// electron/engineSupervisor.ts resolveEngineExecutable reads it).
+const fs = require('node:fs');
+const path = require('node:path');
+const engineExe = process.platform === 'win32' ? 'premation-engine.exe' : 'premation-engine';
+const enginePreset = process.platform === 'win32' ? 'windows-clang-cl-engine' : process.platform === 'darwin' ? 'macos-clang-engine' : 'linux-clang-engine';
+const engineBuilt = process.env.PREMATION_ENGINE_PATH
+  ? fs.existsSync(process.env.PREMATION_ENGINE_PATH)
+  : fs.existsSync(path.join(__dirname, 'native', 'build', enginePreset, 'engine', engineExe));
+const nativeIgnore = engineBuilt ? [] : ['\\.native\\.test\\.[jt]sx?$'];
+
 module.exports = {
   projects: ['<rootDir>', '<rootDir>/packages/*'],
   preset: 'ts-jest',
@@ -21,7 +34,7 @@ module.exports = {
   // `*.bench.test.ts` are timed benchmarks, not tests: minutes of wall time
   // and numbers that mean nothing under a parallel run. `npm run bench` runs
   // them alone (jest.bench.config.cjs).
-  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/dist/', '<rootDir>/dist-electron/', '\\.bench\\.test\\.[jt]sx?$'],
+  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/dist/', '<rootDir>/dist-electron/', '\\.bench\\.test\\.[jt]sx?$', ...nativeIgnore],
   transform: {
     '^.+\\.tsx?$': 'ts-jest',
   },

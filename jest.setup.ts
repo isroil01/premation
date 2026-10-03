@@ -149,3 +149,10 @@ jest.mock('./src/core/api/env', () => ({
   BACKEND_ORIGIN: 'http://localhost:4000',
   API_URL: '/api',
 }));
+
+// The real engine a `*.native.test` suite booted (__testHelpers__/appEngine.ts):
+// one process per test file, stopped when the file is done.
+afterAll(async () => {
+  const stop = (globalThis as { __premationStopNativeEngine?: () => Promise<void> }).__premationStopNativeEngine;
+  if (stop) await stop();
+});

@@ -1,62 +1,172 @@
 /**
- * The APP's engine (engineInstance.ts) in a test: the same booted-enough editor
- * the B2 harness builds (CommandSystem, unified history, scene→timeline mirror),
- * but the engine is the session singleton UI code reaches
- * through `engine()` — with `legacyUiRefresh` on, as in the app, plus
- * `verifyScopes`. Returns a `Harness`, so `buildScene` works unchanged.
+ * The APP's engine in a test: the real `premation-engine` (headless, through the
+ * same EngineSupervisor + bridge the app uses, nativeEngine.ts) as the document
+ * owner, reached through `engine()` exactly as UI code reaches it, with the
+ * document mirror over it. One engine process per test file, reset with
+ * `newProject` + `clearHistory` per `setupAppEngine()`; jest.setup.ts stops it.
+ *
+ * Suites that use it are named `*.native.test.ts(x)`: jest skips them when the
+ * engine is not built (jest.config.cjs), the Native workflow runs them.
  */
 
-import { unwrap } from '@motion/engine-api';
-import { CommandSystem, setCommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
+import { unwrap, type Command, type CommandOf, type CommandResult, type CommandResults, type CommandType, type EngineClient, type EventBatch, type QueryOf, type QueryResults, type QueryType } from '@motion/engine-api';
+import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import type { CommandServices } from '@core/commands/Command';
-import { getEventBus } from '@core/events/EventBus';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { resetSnapshotSharing } from '@core/commands/snapshotSharing';
-import type { EditorDocument } from '@core/api/cloudDocument';
-import { canonicalJson } from '../canonical';
-import { bootEngine, shutdownEngine } from '../engineInstance';
-import type { LocalEngine } from '../LocalEngine';
-import { fakePorts, type Harness } from './harness';
+import { documentMirror, resetDocumentMirror } from '@stores/documentMirror';
+import { bindEngineDocumentStores } from '@stores/engineDocumentStores';
+import { bindEngineComps, bindEngineItems } from '@stores/engineItemsView';
+import { edit } from '../uiEdits';
+import { propRefForTrack } from '../propRefs';
+import { bootEngine, engine, engineIdle, shutdownEngine } from '../engineInstance';
+import { resetEngineOwnership, setEngineOwnsDocument } from '../engineOwnership';
+import { resetProcessEngine } from '../process/processEngine';
+import { startNativeEngine, type NativeEngine } from './nativeEngine';
 
-let subs: Array<{ dispose(): void }> = [];
+export const S = 705_600_000;
+/** Seconds → flicks. */
+export const sec = (s: number): number => Math.round(s * S);
+
+/** What a scene builder needs (buildScene). */
+export interface EngineRunner {
+  run<T extends CommandType>(cmd: CommandOf<T>): Promise<CommandResults[T]>;
+}
+
+export interface AppHarness extends EngineRunner {
+  /** The session's engine (`engine()`). */
+  client: EngineClient;
+  /** Every event batch since setup. */
+  batches: EventBatch[];
+  batch(label: string, cmds: Command[]): Promise<CommandResult[]>;
+  query<T extends QueryType>(q: QueryOf<T>): Promise<QueryResults[T]>;
+  /** The whole document (properties and keyframes), canonical JSON — equal strings, equal documents. */
+  doc(): Promise<string>;
+  dispose(): Promise<void>;
+}
+
+/** Back-compat name for the suites' `let h: Harness`. */
+export type Harness = AppHarness;
+
+let shared: NativeEngine | null = null;
+let starting: Promise<NativeEngine> | null = null;
+
+async function nativeEngine(): Promise<NativeEngine> {
+  if (shared) return shared;
+  // `--test-ports`: the engine's FakePorts — deterministic footage records for
+  // any path, projects kept in memory (what the suites import and save).
+  starting ??= startNativeEngine({ extraArgs: ['--no-gpu', '--test-ports'] }).then((n) => (shared = n));
+  return starting;
+}
+
+/** Stop the file's engine process (jest.setup.ts, afterAll). */
+async function stopShared(): Promise<void> {
+  const n = shared;
+  shared = null;
+  starting = null;
+  for (const off of viewsOff) off();
+  viewsOff = [];
+  await shutdownEngine();
+  await resetProcessEngine();
+  resetEngineOwnership();
+  resetDocumentMirror();
+  delete (window as unknown as { motionEditor?: unknown }).motionEditor;
+  if (n) await n.stop();
+}
+(globalThis as { __premationStopNativeEngine?: () => Promise<void> }).__premationStopNativeEngine = stopShared;
 
 // jsdom has no object URLs; New Project revokes the session's asset URLs.
 const U = URL as unknown as { revokeObjectURL?: (u: string) => void; createObjectURL?: (b: unknown) => string };
 U.revokeObjectURL ??= () => {};
 U.createObjectURL ??= () => 'blob:test';
 
-export async function setupAppEngine(): Promise<Harness & { engine: LocalEngine }> {
-  for (const s of subs) s.dispose();
-  await shutdownEngine();
+/** Sort object keys so two snapshots of one document are the same string. */
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v as object).sort()) out[k] = canonical((v as Record<string, unknown>)[k]);
+    return out;
+  }
+  return v;
+}
+
+let batchesOff: (() => void) | null = null;
+/** The page stores the app binds to the mirror (engineOwnedSession.tsx): items, comps, guides / swatches / materials. */
+let viewsOff: Array<() => void> = [];
+
+export async function setupAppEngine(): Promise<AppHarness> {
+  // A test that left a gesture open (or a dead engine) poisons the next: start over.
+  if (shared) {
+    const r = await shared.bridge.status();
+    let stale = r.state !== 'running';
+    if (!stale) {
+      const hist = await engine().query({ type: 'getHistory' });
+      stale = !hist.ok || hist.value.gestureOpen;
+    }
+    if (stale) await stopShared();
+  }
+  const native = await nativeEngine();
+  (window as unknown as { motionEditor?: unknown }).motionEditor = { engine: native.bridge };
   setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
-  resetSnapshotSharing();
-  subs = [
-    getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene()),
-  ];
-  const files = new Map<string, EditorDocument>();
-  const engine = bootEngine({ ports: fakePorts(files), engineOptions: { verifyScopes: true } }) as LocalEngine;
-  const batches: Harness['batches'] = [];
-  engine.subscribe((b) => batches.push(b));
-  const h: Harness & { engine: LocalEngine } = {
-    engine,
+  setEngineOwnsDocument(true);
+  bootEngine({ ownsDocument: true });
+  const client = engine();
+  batchesOff?.();
+  const batches: EventBatch[] = [];
+  batchesOff = client.subscribe((b) => batches.push(b));
+  const h: AppHarness = {
+    client,
     batches,
-    files,
-    run: async (cmd) => unwrap(await engine.execute(cmd)),
-    batch: async (label, cmds) => unwrap(await engine.batch(label, cmds)),
-    query: async (q) => unwrap(await engine.query(q)),
-    doc: () => canonicalJson(),
+    run: async (cmd) => unwrap(await client.execute(cmd)),
+    batch: async (label, cmds) => unwrap(await client.batch(label, cmds)),
+    query: async (q) => unwrap(await client.query(q)),
+    doc: async () => {
+      await engineIdle();
+      const d = unwrap(await client.query({ type: 'getDocument', includeProperties: true, includeKeyframes: true }));
+      const { revision: _r, dirty: _d, projectPath: _p, ...rest } = d;
+      return JSON.stringify(canonical(rest));
+    },
     dispose: async () => {
-      await shutdownEngine();
-      for (const s of subs) s.dispose();
-      subs = [];
+      batchesOff?.();
+      batchesOff = null;
+      await engineIdle();
+      // The page stores stop following the engine: a store-only test after this one is on its own.
+      for (const off of viewsOff) off();
+      viewsOff = [];
     },
   };
   await h.run({ type: 'newProject' });
-  getCommandSystem().getHistory().clear();
+  await h.run({ type: 'clearHistory' });
+  const m = documentMirror().start();
+  for (const off of viewsOff) off();
+  viewsOff = [
+    bindEngineDocumentStores({ mirror: m, send: (label, cmd) => edit(label, cmd) }),
+    bindEngineItems(m),
+    bindEngineComps(m),
+  ];
+  await engineIdle();
+  batches.length = 0;
   return h;
 }
 
-/** Labels on the unified history stack, oldest first. */
-export function historyLabels(): string[] {
-  return getCommandSystem().getHistory().getEntries().map((e) => e.label);
+/**
+ * The API property a legacy track name (`x`, `rotation`, `effect.<id>.<key>`)
+ * lives on, and the member index within it — from the mirror, its tree loaded.
+ */
+export async function trackRef(layer: string, track: string): Promise<{ path: string; members: string[]; member?: number }> {
+  await engineIdle();
+  await documentMirror().loadTree(layer);
+  const r = propRefForTrack(layer, track);
+  if (!r) throw new Error(`no property for track '${track}' on ${layer}`);
+  const member = r.members.length > 1 ? r.members.indexOf(track) : undefined;
+  return { path: r.ref.path, members: [...r.members], ...(member !== undefined && member >= 0 ? { member } : {}) };
+}
+
+/** Whether the engine has a gesture open (the history's `gestureOpen`). */
+export async function gestureOpen(): Promise<boolean> {
+  return unwrap(await engine().query({ type: 'getHistory' })).gestureOpen;
+}
+
+/** Labels on the engine's undo stack, oldest first. */
+export async function historyLabels(): Promise<string[]> {
+  return unwrap(await engine().query({ type: 'getHistory' })).entries.map((e) => e.label);
 }

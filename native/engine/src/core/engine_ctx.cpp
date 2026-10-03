@@ -229,6 +229,8 @@ bool ends_with_ci(std::string_view s, std::string_view suffix) {
 
 Json FakePorts::import_file(const api::ImportFile& file, const std::string& id) {
   const std::string name = base_name(file.path);
+  // A file named `undecodable…`: the decode failure the import tests need.
+  if (name.find("undecodable") != std::string::npos) fail(api::ErrorCode::io, "cannot decode '" + name + "'");
   const bool audio = ends_with_ci(name, ".wav") || ends_with_ci(name, ".mp3") || ends_with_ci(name, ".aac");
   const bool image = ends_with_ci(name, ".png") || ends_with_ci(name, ".jpg") || ends_with_ci(name, ".jpeg");
   Json a = Json::object();
@@ -252,6 +254,7 @@ Json FakePorts::import_file(const api::ImportFile& file, const std::string& id) 
 
 Json FakePorts::import_bytes(const api::ImportBytesFile& file, const std::string& id) {
   // harness.ts fakePorts.importBytes, field for field.
+  if (file.name.find("undecodable") != std::string::npos) fail(api::ErrorCode::io, "cannot decode '" + file.name + "'");
   const bool audio = ends_with_ci(file.name, ".wav") || ends_with_ci(file.name, ".mp3") || ends_with_ci(file.name, ".aac") ||
                      file.mime_type.starts_with("audio/");
   const bool image = ends_with_ci(file.name, ".png") || ends_with_ci(file.name, ".jpg") || ends_with_ci(file.name, ".jpeg") ||

@@ -576,6 +576,8 @@ add_library(engine_scene_core STATIC
 target_include_directories(engine_scene_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
 find_package(ZLIB REQUIRED)  # exr_read's inflate (zlib_inflate_ffi.cpp)
 target_link_libraries(engine_scene_core PUBLIC engine_core engine_contours motion::jsmath PRIVATE motion::options ZLIB::ZLIB)
+# The headless test engine answers rig queries too (engine_process.cpp).
+target_link_libraries(premation-engine-headless PRIVATE engine_scene_core)
 if(MSVC)
   target_compile_options(engine_scene_core PRIVATE /bigobj)
 endif()

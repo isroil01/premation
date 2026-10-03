@@ -24,6 +24,7 @@
  * as `swatch`, the tint the library thumbnail is drawn in.
  */
 
+import { documentMirror } from './documentMirror';
 import { create } from 'zustand';
 import { getEventBus } from '@core/events/EventBus';
 import { edit } from '@core/engine/uiEdits';
@@ -221,6 +222,9 @@ export const useMaterialStore = create<MaterialStore>((set, get) => ({
 export async function applyMaterialToNodes(ids: readonly string[], materialRefId: string): Promise<boolean> {
   const material = useMaterialStore.getState().find(materialRefId);
   if (!material) return false;
+  // The commands resolve each layer's Material Options on the mirror's tree:
+  // load the ones no panel is holding (a library click on an unshown layer).
+  await Promise.all(ids.map((id) => documentMirror().loadTree(id)));
   const cmds = materialCommands(ids, material.params, getTime());
   if (cmds.length > 0) await edit(`Apply material ${material.name}`, cmds);
   return true;
