@@ -16,6 +16,7 @@ import { documentMirror, resetDocumentMirror } from '@stores/documentMirror';
 import { bindEngineDocumentStores } from '@stores/engineDocumentStores';
 import { bindEngineComps, bindEngineItems } from '@stores/engineItemsView';
 import { retainSelectionTrees } from '@stores/selectionTrees';
+import { installEngineTransport } from '../engineTransport';
 import { MAIN_VIEWPORT, publishFrameGeometry, setEngineDrivenViewport, subscribeOverlayGeometry } from '@stores/overlayGeometry';
 import { settleToolEdits } from '@core/workspace/viewportGesture';
 import { edit, gestureSessionsSettled } from '../uiEdits';
@@ -237,6 +238,8 @@ export async function setupAppEngine(opts: AppEngineOptions = {}): Promise<AppHa
     bindEngineItems(m),
     bindEngineComps(m),
     retainSelectionTrees(),
+    // The playhead reaches the engine (its frames, and their geometry, follow it).
+    installEngineTransport(() => engine(), { seeksSent: 0, seeksCoalesced: 0, playheadEvents: 0, plays: 0, pauses: 0, activeComp: '' }),
     ...(opts.panels ? [holdAllTrees()] : []),
   ];
   await engineIdle();

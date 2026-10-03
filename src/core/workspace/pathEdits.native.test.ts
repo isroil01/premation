@@ -1,3 +1,4 @@
+import { documentMirror } from '@stores/documentMirror';
 /**
  * Layer ▸ Mask and Shape Path on MASKS, Convert Mask to Shape Layer and the
  * Roto Brush's mask — through the engine API (B3, pathEdits.ts): one undo
@@ -5,9 +6,10 @@
  * verbs land in EVERY state of an animated mask.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { insertFragment } from '@/engine-client/insertFragment';
+import type { SceneNode } from '@core/types';
 import { DirectSelectionTool } from '@motion/workspace';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { seekPlayhead } from '@core/timeline/timelineView';
 import { readNodeMask, readNodeMaskAnim, type MaskPath, type MaskPoint } from '@core/effects/mask';
 import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
@@ -41,14 +43,14 @@ const ds = (): DirectSelectionTool => getWorkspaceController().ws.tools.get('dir
 
 beforeEach(async () => {
   h = await setupAppEngine();
-  getTimelineController().seekSeconds(0);
+  seekPlayhead(0);
 });
 afterEach(async () => {
   ds().clearVertexSelection();
   clearPathClipboard();
   useSelectionStore.getState().set([]);
   useUIStore.getState().setActiveTool('select');
-  getTimelineController().seekSeconds(0);
+  seekPlayhead(0);
   await h.dispose();
 });
 
@@ -140,7 +142,7 @@ describe('Mask and Shape Path verbs on masks go through the engine', () => {
     const { layer, mask } = await maskedSolid(square(20));
     const other = await addMask(layer, square(5));
     await animate(layer, mask, square(40));
-    getTimelineController().seekSeconds(0.5);
+    seekPlayhead(0.5);
     useSelectionStore.getState().set([layer]);
     await holdCanvasGeometry();
     await oneEntry('Set Path Keyframe', () => expect(keyframePathAtPlayhead()).toBe(true), async () => {
@@ -170,11 +172,12 @@ describe('Mask and Shape Path verbs on masks go through the engine', () => {
     await animate(dst.layer, dst.mask, square(40));
     useUIStore.getState().setActiveTool('direct-select');
     useSelectionStore.getState().set([src.layer]);
+    await holdCanvasGeometry();
     ds().selectVertices({ nodeId: src.layer as never, maskId: src.mask }, [0]);
     expect(copyPathFromSelection()).toBe(true);
     ds().clearVertexSelection();
     useSelectionStore.getState().set([dst.layer]);
-    getTimelineController().seekSeconds(1);
+    seekPlayhead(1);
     await oneEntry('Paste Path', () => expect(pastePathEdit()).toBe(true), async () => {
       const keys = (await keyPaths(dst.layer, dst.mask));
       expect(keys).toHaveLength(2);
@@ -220,11 +223,18 @@ describe('drawn shape paths go through the engine', () => {
   const outline = (s: number): MaskPoint[] => [pt(0, -s), pt(s, s), pt(-s, s)];
 
   async function drawnPath(s: number): Promise<string> {
-    const { layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'path', name: 'Drawn', init: [] });
-    const node = (await docView()).getNode(layer)!;
-    const geom = node.components.find((c) => c.type === 'Geometry')!;
-    defaultSceneGraph.writeProp(node.id, geom.id, 'points', outline(s));
-    await h.run({ type: 'renameLayer', layer, name: 'Drawn' });
+    // A drawn shape as the pen tool lays it: a path primitive with stored points.
+    const ids = await insertFragment('Fixture', (b) => b.addChild('comp_root', {
+      id: 'drawn', name: 'Drawn', parent: 'comp_root', children: [], visible: true, locked: false,
+      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        { id: 'drawn_t', type: 'Transform', props: { __kind: 'shape', x: 0, y: 0, rotation: 0, shapeType: 'path' } },
+        { id: 'drawn_g', type: 'Geometry', props: { points: outline(s) } },
+      ],
+    } as unknown as SceneNode), { comp: 'comp_root', noSelect: true });
+    const layer = ids![0]!;
+    await settleEdits();
+    await documentMirror().loadTree(layer);
     return layer;
   }
   const geomOf = async (id: string): Promise<Record<string, unknown>> =>
@@ -275,7 +285,7 @@ describe('drawn shape paths go through the engine', () => {
       const view = await docView();
       expect(view.getDataTrack(layer, 'path.points')!.keyframes).toHaveLength(1);
     });
-    getTimelineController().seekSeconds(1);
+    seekPlayhead(1);
     await engineEntry('Set Path Keyframe', () => expect(keyframePathAtPlayhead()).toBe(true), async () => {
       const view = await docView();
       expect(view.getDataTrack(layer, 'path.points')!.keyframes).toHaveLength(2);

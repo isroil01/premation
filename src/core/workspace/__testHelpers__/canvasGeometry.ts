@@ -8,7 +8,8 @@
 import { engineIdle } from '@core/engine/engineInstance';
 import { documentMirror } from '@stores/documentMirror';
 import { useGuidesStore } from '@stores/guidesStore';
-import { retainCanvasGeometry } from '../geometryPort';
+import { createSceneGraphPort, retainCanvasGeometry } from '../geometryPort';
+import { useSelectionStore } from '@stores/selectionStore';
 
 let release: (() => void) | null = null;
 
@@ -21,16 +22,15 @@ export async function settleGeometry(): Promise<void> {
   }
 }
 
-/**
- * Hold the canvas geometry (idempotent) and wait until the engine has the
- * subscription. The mirror is re-read first: fixtures built straight on the
- * TypeScript engine's graph reach it only as an unattributed resync.
- */
+/** Hold the canvas geometry (idempotent) and wait until the engine has the subscription. */
 export async function holdCanvasGeometry(): Promise<void> {
   await settleGeometry();
-  documentMirror().reload();
-  await settleGeometry();
   release ??= retainCanvasGeometry(useGuidesStore.getState().camera3dMode);
+  await settleGeometry();
+  // An animated outline is the mirror's batched value at the playhead: the
+  // first read asks for it (the viewport re-reads every frame; a test reads once).
+  const port = createSceneGraphPort();
+  for (const id of useSelectionStore.getState().ids) port.getNode(id as never);
   await settleGeometry();
 }
 
