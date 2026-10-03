@@ -24,6 +24,7 @@ import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { reparentNode } from '@core/scene/parenting';
 import { engineIdle } from '@core/engine/engineInstance';
 import type { SceneNode } from '@core/types';
+import { holdCanvasGeometry, releaseCanvasGeometry } from '@core/workspace/__testHelpers__/canvasGeometry';
 
 function layer(id: string, kind: string, x: number, y: number, extra: Record<string, unknown> = {}): SceneNode {
   return {
@@ -89,6 +90,7 @@ describe('multiResizeNodes', () => {
 
     // The tool's 2× drag about the pivot at a's anchor (100,0):
     // a stays, b's anchor doubles its distance from the pivot.
+    await holdCanvasGeometry();
     port().execute(commands.multiResizeNodes([
       { id: 'a', scale: { x: 2, y: 2 }, position: { x: 100, y: 0 } },
       { id: 'b', scale: { x: 2, y: 2 }, position: { x: 500, y: 0 } },
@@ -105,6 +107,7 @@ describe('multiResizeNodes', () => {
     reparentNode('sc', 'sp'); // world pose preserved: still at world 100, ×1
     expect(poseAt('sc', 1)).toMatchObject({ x: 100, scaleX: 1 });
 
+    await holdCanvasGeometry();
     port().execute(commands.multiResizeNodes([
       { id: 'sc', scale: { x: 1.5, y: 1.5 }, position: { x: 100, y: 0 } },
     ]) as never);
@@ -121,6 +124,7 @@ describe('multiResizeNodes', () => {
     defaultAnimation.setKeyframes('k', 'x', [{ t: 0, value: 100 }, { t: 2, value: 900 }]);
     expect(poseAt('k', 1).x).toBe(500);
 
+    await holdCanvasGeometry();
     port().execute(commands.multiResizeNodes([
       { id: 'k', scale: { x: 2, y: 2 }, position: { x: 600, y: 100 } },
     ]) as never);
@@ -138,6 +142,7 @@ describe('multiResizeNodes', () => {
     const node = defaultSceneGraph.getNode('l')!;
     (node as { locked: boolean }).locked = true;
 
+    await holdCanvasGeometry();
     port().execute(commands.multiResizeNodes([
       { id: 'l', scale: { x: 2, y: 2 }, position: { x: 700, y: 0 } },
     ]) as never);
@@ -154,6 +159,7 @@ describe('multiRotateNodes', () => {
 
     // A 90° sweep about the group centre (200,0), as the tool resolves it.
     const q = Math.PI / 2;
+    await holdCanvasGeometry();
     port().execute(commands.multiRotateNodes([
       { id: 'a', rotation: q, position: { x: 200, y: -100 } },
       { id: 'b', rotation: q, position: { x: 200, y: 100 } },
@@ -170,6 +176,7 @@ describe('multiRotateNodes', () => {
     reparentNode('rc', 'rp');
     expect(poseAt('rc', 1).rotation).toBeCloseTo(0, 3);
 
+    await holdCanvasGeometry();
     port().execute(commands.multiRotateNodes([
       { id: 'rc', rotation: (10 * Math.PI) / 180, position: { x: 200, y: 0 } },
     ]) as never);
@@ -187,6 +194,7 @@ describe('multiRotateNodes', () => {
     defaultAnimation.setKeyframes('kr', 'rotation', [{ t: 0, value: 0 }, { t: 2, value: 180 }]);
     expect(poseAt('kr', 1).rotation).toBeCloseTo(90, 3);
 
+    await holdCanvasGeometry();
     port().execute(commands.multiRotateNodes([
       { id: 'kr', rotation: Math.PI / 3, position: { x: 100, y: 0 } },
     ]) as never);
@@ -196,3 +204,5 @@ describe('multiRotateNodes', () => {
     expect(poseAt('kr', 1).rotation).toBeCloseTo(60, 3);
   });
 });
+
+afterEach(() => releaseCanvasGeometry());

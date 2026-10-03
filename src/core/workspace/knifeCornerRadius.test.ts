@@ -23,6 +23,7 @@ import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import { createCommandPort } from './ports';
 import { settleToolEdits } from './viewportGesture';
+import { holdCanvasGeometry, releaseCanvasGeometry } from './__testHelpers__/canvasGeometry';
 
 const W = 160;
 const H = 120;
@@ -53,6 +54,7 @@ function shapeNode(id: string, radiusProps: Record<string, number>): SceneNode {
 /** Cut the layer with a vertical world line through its centre; return every
  *  written anchor in LOCAL space (how the runs are stored). */
 async function cutVertically(id: string): Promise<Array<{ x: number; y: number }>> {
+  await holdCanvasGeometry();
   createCommandPort().execute(
     commands.cutPaths([id], { x: CX, y: CY - 400 }, { x: CX, y: CY + 400 }),
   );
@@ -127,3 +129,5 @@ describe('Knife on a rounded-rect primitive', () => {
     expect(minDistTo(pts, CORNERS[1]!)).toBeLessThan(0.75);
   });
 });
+
+afterEach(() => releaseCanvasGeometry());

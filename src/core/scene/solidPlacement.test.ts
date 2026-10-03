@@ -25,6 +25,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { createSceneGraphPort } from '@core/workspace/ports';
+import { holdCanvasGeometry, releaseCanvasGeometry } from '@core/workspace/__testHelpers__/canvasGeometry';
 
 interface Boxed {
   id: string;
@@ -39,7 +40,8 @@ function newSolid(): string {
   return id;
 }
 
-function workspaceNode(id: string): Boxed {
+async function workspaceNode(id: string): Promise<Boxed> {
+  await holdCanvasGeometry();
   const found = [...createSceneGraphPort().getNodes()].find(
     (n) => (n as unknown as Boxed).id === id,
   );
@@ -50,11 +52,12 @@ function workspaceNode(id: string): Boxed {
 beforeAll(() => {
   seedDefaultScene();
 });
+afterAll(() => releaseCanvasGeometry());
 
 describe('a freshly inserted Solid', () => {
-  it('covers the composition exactly, rather than hanging off its corner', () => {
+  it('covers the composition exactly, rather than hanging off its corner', async () => {
     const { width, height } = useCompositionStore.getState();
-    const box = workspaceNode(newSolid()).worldBounds;
+    const box = (await workspaceNode(newSolid())).worldBounds;
 
     expect(box.width).toBeCloseTo(width, 5);
     expect(box.height).toBeCloseTo(height, 5);
@@ -63,9 +66,9 @@ describe('a freshly inserted Solid', () => {
     expect(box.y).toBeCloseTo(0, 5);
   });
 
-  it('places its centre at the comp centre, not at the comp origin', () => {
+  it('places its centre at the comp centre, not at the comp origin', async () => {
     const { width, height } = useCompositionStore.getState();
-    const m = workspaceNode(newSolid()).worldMatrix;
+    const m = (await workspaceNode(newSolid())).worldMatrix;
 
     // The translation IS the layer centre. It used to come out as (0,0) — an
     // identity matrix — because position and anchor cancelled.

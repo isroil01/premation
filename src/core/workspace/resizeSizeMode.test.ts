@@ -28,6 +28,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { commands } from '@motion/workspace';
 import { createCommandPort } from './ports';
 import { engineIdle } from '@core/engine/engineInstance';
+import { holdCanvasGeometry, releaseCanvasGeometry } from './__testHelpers__/canvasGeometry';
 
 type Props = Record<string, unknown>;
 
@@ -40,8 +41,9 @@ function transformProps(id: string): Props {
 }
 
 /** Insert a solid and return its id — solids carry an authored width/height. */
-function newSolid(): string {
+async function newSolid(): Promise<string> {
   insertSolid();
+  await holdCanvasGeometry();
   const ids = useSelectionStore.getState().ids;
   const id = ids[ids.length - 1];
   if (!id) throw new Error('insertSolid selected nothing');
@@ -51,10 +53,11 @@ function newSolid(): string {
 beforeAll(() => {
   seedDefaultScene();
 });
+afterAll(() => releaseCanvasGeometry());
 
 describe('Ctrl-resize writes Size instead of Scale', () => {
   it('doubles width/height and leaves scale exactly where the drag found it', async () => {
-    const id = newSolid();
+    const id = await newSolid();
     const before = transformProps(id);
     const w0 = before.width as number;
     const h0 = before.height as number;
@@ -83,7 +86,7 @@ describe('Ctrl-resize writes Size instead of Scale', () => {
   });
 
   it('leaves Size alone on a plain (unmodified) drag', async () => {
-    const id = newSolid();
+    const id = await newSolid();
     const before = transformProps(id);
     const w0 = before.width as number;
     const h0 = before.height as number;
@@ -107,7 +110,7 @@ describe('Ctrl-resize writes Size instead of Scale', () => {
   });
 
   it('never lets a drag collapse the layer to zero or flip it inside out', async () => {
-    const id = newSolid();
+    const id = await newSolid();
 
     createCommandPort().execute(
       commands.resizeNode(
@@ -138,6 +141,7 @@ describe('Ctrl-resize writes Size instead of Scale', () => {
 describe('text refuses size mode and scales instead', () => {
   it('scales the type rather than writing a width nothing reads', async () => {
     insertText('Headline');
+    await holdCanvasGeometry();
     const ids = useSelectionStore.getState().ids;
     const id = ids[ids.length - 1];
     if (!id) throw new Error('insertText selected nothing');

@@ -275,3 +275,33 @@ TEST_CASE("paths: setShapeOutline stores the Knife's runs", "[session][paths]") 
   s.runs.clear();
   refused(h, cmd(s), api::ErrorCode::invalid_argument);
 }
+
+TEST_CASE("paths: an animated mask path reads as the shape drawn between its keys", "[session][paths][block3]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto a = make_layer(h, comp, api::LayerKind::solid);
+  api::AddMask m;
+  m.layer = a;
+  m.path = tri(50);
+  const auto mr = h.run(cmd(m));
+  REQUIRE(is_ok(mr));
+  const api::PropRef mask{a, result_as<api::GroupList>(mr).groups.at(0) + "/path"};
+  api::SetAnimated on;
+  on.prop = mask;
+  on.animated = true;
+  on.time = 0;
+  REQUIRE(is_ok(h.run(cmd(on))));
+  REQUIRE(is_ok(h.run(set_prop(a, mask.path, path_value(tri(80)), kSec))));
+  // Halfway between the keys: the interpolated shape (what the renderer draws), not the first key.
+  api::GetPropertyValues q;
+  q.props = {mask};
+  q.time = kSec / 2;
+  const auto r = h.ask(qry(q));
+  REQUIRE(is_ok(r));
+  const auto& v = std::get<api::PropertyValues>(std::get<api::QueryResult>(r.outcome.v).v).values.at(0).value;
+  const auto& b = std::get<api::BezierPath>(v.v);
+  REQUIRE(b.vertices.size() == 6);
+  CHECK(b.vertices[1] == -65.0);
+  CHECK(b.vertices[2] == 65.0);
+}

@@ -2,7 +2,7 @@
 
 import { defaultAnimation, sampleTrack, type Keyframe as TsKeyframe, type DataKeyframe } from '@motion/animation';
 import type { PropRef, Value, KeyframeInsert, KeyframePatch, Keyframe } from '@motion/engine-api';
-import { readNodeMaskAnim } from '@core/effects/mask';
+import { readNodeMaskAnim, readNodeMaskAt } from '@core/effects/mask';
 import type { MaskKeyframe } from '@core/effects/mask';
 import { readStaticPropertyValue } from '@core/inspector/propertyValue';
 import { fail } from '../errors';
@@ -24,6 +24,7 @@ import {
   keyTimeToFlicks,
   normalizeKeysAt,
   shapePathValueOf,
+  maskToBezier,
   type PropBinding,
   type KeyWrite,
   type Catalog,
@@ -720,9 +721,11 @@ function clearKeys(layer: string, b: PropBinding): void {
 /** A property's value at stored time `t` (keys sampled, else static). */
 export function valueAt(layer: string, b: PropBinding, t: number): Value | undefined {
   if (b.special === 'maskPath') {
-    const keys = readKeys(layer, b);
-    const k = [...keys].filter((x) => x.t <= t).pop() ?? keys[0];
-    return k?.value ?? readStatic(layer, b);
+    // The shape DRAWN at `t`: the keys interpolated as the renderer does
+    // (mask.readNodeMaskAt), not the key at or before it.
+    const node = graph.getNode(layer);
+    const p = node ? readNodeMaskAt(node, t)?.paths.find((x) => x.id === b.maskId) : undefined;
+    return p ? { kind: 'path', value: maskToBezier(p) } : readStatic(layer, b);
   }
   if (b.dataTrack) {
     const v = defaultAnimation.sampleData(layer, b.dataTrack, t);

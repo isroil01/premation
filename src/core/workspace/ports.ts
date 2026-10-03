@@ -1,18 +1,19 @@
 /**
  * Port implementations that bind the framework-independent `@motion/workspace`
  * engine to this app's real systems:
- *   • SceneGraphPort  → defaultSceneGraph (@motion/scene)
+ *   • SceneGraphPort  → the overlay geometry push + the document mirror (geometryPort.ts)
  *   • SelectionPort   → selectionStore (Zustand, the app's selection truth)
- *   • CommandPort     → scene-graph mutations + bumpScene (undo comes later)
+ *   • CommandPort     → engine commands (one tool action = one engine gesture / edit)
  *
  * The engine reads/drives through these; it never imports the stores directly.
+ * What a write composes from (a layer's transform at the playhead, its parent's
+ * space, its outline) is read from the frame's pushed records and the mirror —
+ * never from the TypeScript engine's document.
  */
 
 import type {
-  SceneGraphPort,
   SelectionPort,
   CommandPort,
-  WorkspaceNode,
   WorkspaceCommand,
   NodeId,
 } from '@motion/workspace';
@@ -29,39 +30,26 @@ import {
   type UpdateNodePathPayload,
   type UpdateMaskPathPayload,
   type CutPathsPayload,
-  Mat,
-  Rect,
-  OBox,
   type PathTopologyEdit,
 } from '@motion/workspace';
 import { cutPathsWithLine, runFromPolygon, type CutSubpath, type CutPoint } from '@core/geometry/pathCut';
 import { shapeOutline } from '@core/scene/pathOps';
-import { resolveCornerRadii, clampCornerRadii, type CornerRadiiProps } from '@core/scene/cornerRadii';
-import { readNodeAnchor, anchorCompensation } from '@core/scene/anchor';
-import { readTransformProp } from '@core/scene/transformWrite';
+import { resolveCornerRadii, clampCornerRadii } from '@core/scene/cornerRadii';
+import { anchorCompensation } from '@core/scene/anchor';
 import { enableContinuousRasterByDefault } from '@core/scene/continuousRaster';
-import { SIZE } from '@core/scene/layerKindSize';
-import { readNodeKind as kindOf } from '@core/scene/sceneDerive';
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { renderComponentsOf, renderTransformOf } from '@core/scene/SceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { uniqueLayerName } from '@core/scene/layerNames';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import { SCENE_KIND_PROP, type SceneKind } from '@core/scene/seedDefaultScene';
-import { flattenComposition } from '@core/scene/sceneDerive';
 import type { SceneNode, ID } from '@core/types';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useTextEditStore } from '@stores/textEditStore';
 import { MIN_BOX_SIZE } from '@core/text/textExtras';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { useViewportDisplayStore } from '@stores/viewportDisplayStore';
-import { subscribeTime } from '@stores/playbackClockStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
-import { readGeometry, localBounds, makeHitTestLocal, isDrawableKind as drawable } from './geometry';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { defaultAnimation } from '@motion/animation';
 import { drawToolOptions } from '@motion/workspace';
 import { newShapeFill, newShapeStroke } from '@core/workspace/shapeToolPaint';
 import {
@@ -73,480 +61,117 @@ import {
   type ToolTransaction,
 } from '@core/workspace/viewportGesture';
 import { insertBuiltLayers } from '@core/engine/offDocument';
-import type { Command, PathTopologyOp, PropRef, Value } from '@motion/engine-api';
+import { secondsToFlicks, type Command, type LayerInfo, type PathTopologyOp, type PropRef, type Value } from '@motion/engine-api';
 import { compOfLayer, isLayer } from '@core/mirror/docFacts';
-import { compTime, paths, propRefForTrack } from '@core/engine/propRefs';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { readTrack, trackRef } from '@core/mirror/selection';
+import { compTime, paths } from '@core/engine/propRefs';
 import { maskPointsToPath, trackValueCommands, type NodeTrackValues } from '@core/workspace/toolEdits';
-import { outlineOnEngine, outlineRef } from '@core/workspace/pathEdits';
+import { outlineOnEngine, outlineRef, SHAPE_PATH } from '@core/workspace/pathEdits';
 import { useProjectStore } from '@stores/projectStore';
-import { getRemappedTime, getTimelineController, governingClipsFor } from '@core/timeline/TimelineController';
-import { is3DEnabled, readNode3D } from '@core/scene/threeD';
-import { Matrix4Math, Project3D } from '@motion/scene';
-import { currentViewProjector, currentViewCamera } from '@core/workspace/viewProjection';
-import { orthoViewOf, isSceneCameraView } from '@core/scene/cameraViewMode';
-import { viewCameraNode } from '@core/scene/camera3d';
-import { composeNodeWorld3d, parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
-import { rectangleMask, ellipseMask, readNodeMask, readNodeMaskAnim, readNodeMaskAt, MaskPath, MaskPoint, type MaskPathEditState } from '@core/effects/mask';
+import { documentMirror } from '@stores/documentMirror';
+import { MAIN_VIEWPORT, overlayLayer, type OverlayLayer } from '@stores/overlayGeometry';
+import { Project3D } from '@motion/scene';
+import { currentViewCamera } from '@core/workspace/viewProjection';
+import { orthoViewOf } from '@core/scene/cameraViewMode';
+import { rectangleMask, ellipseMask, MaskPath, MaskPoint } from '@core/effects/mask';
 import { defaultPolystar, POLYSTAR_FX_PROP, type PolystarType } from '@core/scene/polystar';
 import { defaultTextSize } from '@core/scene/textDefaults';
-
-/** Convex hull (monotone chain) of 2D points, counter-clockwise. */
-function convexHull2D(pts: ReadonlyArray<{ x: number; y: number }>): Array<{ x: number; y: number }> {
-  const p = [...pts].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
-  if (p.length < 3) return p;
-  const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number =>
-    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-  const build = (src: typeof p): typeof p => {
-    const out: typeof p = [];
-    for (const pt of src) {
-      while (out.length >= 2 && cross(out[out.length - 2]!, out[out.length - 1]!, pt) <= 0) out.pop();
-      out.push(pt);
-    }
-    out.pop();
-    return out;
-  };
-  return [...build(p), ...build([...p].reverse())];
-}
-
-/** Even-odd point-in-polygon. */
-function pointInPolygon(pt: { x: number; y: number }, poly: ReadonlyArray<{ x: number; y: number }>): boolean {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const a = poly[i]!;
-    const b = poly[j]!;
-    if (a.y > pt.y !== b.y > pt.y && pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
+import { affineFromCorners, createSceneGraphPort } from './geometryPort';
+import { recordMotionSketchSample, motionSketchNodeId } from '@core/animation/motionSketch';
+import { Matrix, type Matrix2D } from '@motion/scene';
 
 // ── SceneGraphPort ────────────────────────────────────────────────
-/**
- * `wmCache` memoizes ancestor WORLD MATRICES across one enumeration pass.
- *
- * It must be shared by the caller, not defaulted here: every child asks
- * `worldMatrixOf(parent)`, and resolving a parent means reading its geometry —
- * for a group that walks ALL its children. With a per-call cache that walk
- * repeated per sibling, so one imported 158-shape icon cost getNodes O(N²)
- * (measured 3.4 s of a 3.8 s import, re-run on every scene bump). One shared
- * map turns the pass back into O(N).
- */
-/**
- * A node's READ-ONLY view as a plain object — memoized components instead of a
- * rebuild per access.
- *
- * `SceneNode.components` deliberately copies on every read (see
- * `AppNodeView.renderComponents`), and everything below reads it: kind, 3D,
- * anchor, geometry, masks — a dozen times per node. Profiled in the desktop app
- * with 305 layers selected, that one getter was 50.6% of all CPU during
- * playback (2 fps, against 15 fps with nothing selected). This path only ever
- * reads, so it takes the render path's shared arrays, exactly as
- * `staticPrecompCache.plain` does.
- */
-function readOnlyView(n: SceneNode): SceneNode {
-  return {
-    id: n.id, name: n.name, parent: n.parent, children: n.children,
-    visible: n.visible, locked: n.locked, solo: (n as { solo?: boolean }).solo,
-    color: (n as { color?: string }).color,
-    components: renderComponentsOf(n), transform: renderTransformOf(n),
-  } as unknown as SceneNode;
+export { createSceneGraphPort };
+
+// ── What a tool write composes from ───────────────────────────────
+
+/** A layer's own transform at the playhead, stored units (OverlayLayerGeometry.local). */
+interface LocalTransformAt {
+  x: number;
+  y: number;
+  z: number;
+  rotation: number;
+  scaleX: number;
+  scaleY: number;
+  anchorX: number;
+  anchorY: number;
 }
 
-/** Is `nodeId` the camera that `view` (default: the main viewport's) looks through? */
-export function isLookedThrough(nodeId: string, view?: Camera3dMode): boolean {
-  const mode = view ?? useGuidesStore.getState().camera3dMode;
-  if (!isSceneCameraView(mode)) return false;
-  return viewCameraNode(defaultSceneGraph, mode, activeCompRootId() as string)?.id === nodeId;
+/** The frame's pushed record of a layer (the main viewport's, at the playhead), or undefined. */
+function recordOf(id: string): OverlayLayer | undefined {
+  return overlayLayer(MAIN_VIEWPORT, id, secondsToFlicks(playheadSeconds()));
 }
 
-function toWorkspaceNode(
-  liveNode: SceneNode,
-  zIndex: number,
-  wmCache: Map<string, import('@motion/scene').Matrix2D> = new Map(),
-  /** Project through THIS view rather than the main viewport's — see
-   *  {@link createSceneGraphPort}. */
-  view?: Camera3dMode,
-): WorkspaceNode | null {
-  const node = readOnlyView(liveNode);
-  // Retrieve current active tab settings and active playhead time
-  const activeTabId = useProjectStore.getState().activeTabId;
-  const activeTab = useProjectStore.getState().tabs[activeTabId ?? ''];
-  const rawTime = activeTab?.time ?? 0;
-  const compositionId = activeTab?.compositionId ?? 'comp_root';
-  const comp = useProjectStore.getState().comps[compositionId];
-  const width = comp?.width ?? 1920;
-  const height = comp?.height ?? 1080;
-
-  // Evaluate the node's properties at the current playhead time
-  const localTime = getRemappedTime(node.id, rawTime);
-  const av = defaultAnimation.evaluateNode(node.id, localTime);
-
-  const evalMap: Record<string, unknown> = {};
-  for (const [k, val] of av.entries()) evalMap[k] = val;
-  // `liveChildren`: a GROUP's box is the union of its children, and this is the
-  // chrome — the outline, the hit test, the marquee and the snap targets all
-  // have to sit on the artwork as drawn, not on where it rests at time 0.
-  const g = readGeometry(node, evalMap, { liveChildren: true });
-  if (!g) return null;
-
-  const x = av.get('x') ?? g.x;
-  const y = av.get('y') ?? g.y;
-  const scaleX = av.get('scaleX') ?? av.get('scale') ?? g.scaleX;
-  const scaleY = av.get('scaleY') ?? av.get('scale') ?? g.scaleY;
-  const rotationDeg = av.get('rotation') ?? g.rotationDeg;
-  // The pivot, in local space. The renderer places content at
-  // position + R·S·(local − anchor), so the world matrix must carry T(−anchor)
-  // or the selection chrome drifts off anchored layers.
-  const nodeAnchor = readNodeAnchor(node);
-  const anchorX = av.get('anchorX') ?? nodeAnchor.x;
-  const anchorY = av.get('anchorY') ?? nodeAnchor.y;
-
-  // The projection MUST match the renderer's (buildSnapshot) exactly, or the
-  // selection outline drifts off the layer — ortho views, custom views and the
-  // active camera each resolve differently. That branch now lives in
-  // `currentViewProjector` so face picking shares this exact chain instead of
-  // carrying a third copy that can drift.
-  const project = currentViewProjector(width, height, rawTime, view);
-
-  // Calculate the world matrix based on whether 3D is active
-  const is3D = is3DEnabled(node);
-  const kind = readNodeKind(node);
-  // The camera this view looks THROUGH has no presence in it. Seen from inside,
-  // its box, its grab handle and its motion path all project onto the middle of
-  // the frame — a dashed square and a line across a shot that contains neither.
-  // AE never draws the active camera in its own view. From any other view
-  // (Top, Left, Custom, another camera) it is a normal, grabbable device.
-  if (kind === 'camera' && isLookedThrough(node.id, view)) return null;
-  let worldMatrixVal: import('@motion/workspace').Mat2D;
-  /** The layer's full 4×4 model matrix — kept for the extruded-silhouette hit
-   *  test below, which needs to project corners the flat affine cannot express. */
-  let M3D: ReturnType<typeof Matrix4Math.compose> | null = null;
-
-  if (is3D && kind !== 'camera' && kind !== 'light') {
-    // Compose from BASE PROPS with the animated values layered on top.
-    //
-    // This used to read `av.get('z') ?? 0` — and `av` is the ANIMATION map only.
-    // `set3DEnabled` writes base props, not keyframes, so the normal case (a
-    // layer pushed to z = 500 or tilted 30° with no keyframes) hit-tested as
-    // z = 0 / rotX = 0: the selection box, the click target and the 2D handles
-    // all sat on the UNPROJECTED layer while the renderer drew it somewhere
-    // else. `readNode3D` was already imported here and simply not used.
-    //
-    // Orientation and anchorZ are composed too — buildSnapshot's `affineAt`
-    // composes `rotation: {rX+oriX, rY+oriY, rZ+oriZ}` about `anchorZ`, and
-    // omitting them here is the same class of drift.
-    const base3D = readNode3D(node);
-    // 3D parenting: when an ancestor is 3D the chain is composed as 4×4s and
-    // this layer's own transform is LOCAL. `x`/`y` above are already the local
-    // props, and the 2D `worldMatrixOf` branch below is what used to apply the
-    // parent — so the two must not both run. Mirrors buildSnapshot exactly.
-    const parent3d = parentWorld3d(node.id, {
-      parentOf: (nid) => defaultSceneGraph.getNode(nid)?.parent ?? null,
-      local3DOf: (nid) => {
-        const n = defaultSceneGraph.getNode(nid);
-        return n ? resolveNode3DTransform(n, rawTime) : null;
-      },
-      is3DOf: (nid) => {
-        const n = defaultSceneGraph.getNode(nid);
-        return !!n && is3DEnabled(n);
-      },
-      world2DOf: (nid) =>
-        worldMatrixOf(nid, getLocalTransformForPorts, getParentIdForPorts, wmCache),
-    });
-    const local = composeNodeWorld3d({
-      x, y,
-      z: av.get('z') ?? base3D.z,
-      rotationX: av.get('rotationX') ?? base3D.rotationX,
-      rotationY: av.get('rotationY') ?? base3D.rotationY,
-      rotationZ: rotationDeg,
-      orientationX: av.get('orientationX') ?? base3D.orientationX,
-      orientationY: av.get('orientationY') ?? base3D.orientationY,
-      orientationZ: av.get('orientationZ') ?? base3D.orientationZ,
-      scaleX, scaleY,
-      scaleZ: av.get('scaleZ') ?? 1,
-      anchorX, anchorY,
-      anchorZ: av.get('anchorZ') ?? base3D.anchorZ,
-    });
-    const M = parent3d ? Matrix4Math.multiply(parent3d, local) : local;
-    M3D = M;
-
-    const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
-    const X = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
-    const Y = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
-
-    const ax = X.x - O.x;
-    const ay = X.y - O.y;
-    const cx_coeff = Y.x - O.x;
-    const cy_coeff = Y.y - O.y;
-
-    worldMatrixVal = { a: ax, b: ay, c: cx_coeff, d: cy_coeff, e: O.x, f: O.y };
-  } else {
-    const tr = Mat.multiply(Mat.translation(x, y), Mat.rotation((rotationDeg * Math.PI) / 180));
-    const rs = Mat.multiply(tr, Mat.scaling(scaleX, scaleY));
-    const localMat = Mat.multiply(rs, Mat.translation(-anchorX, -anchorY));
-    if (node.parent) {
-      const pw = worldMatrixOf(node.parent as string, getLocalTransformForPorts, getParentIdForPorts, wmCache);
-      worldMatrixVal = Mat.multiply(pw, localMat);
-    } else {
-      worldMatrixVal = localMat;
-    }
+/**
+ * The layer's own transform at the playhead: the pushed record's (the frame
+ * on screen — the canvas subscription names every layer of the active comp),
+ * else the mirror's values at the playhead (a layer whose tree is loaded).
+ */
+function localAt(id: string): LocalTransformAt | null {
+  const l = recordOf(id)?.local;
+  if (l && l.length >= 9) {
+    return { x: l[0]!, y: l[1]!, z: l[2]!, rotation: l[3]!, scaleX: l[4]!, scaleY: l[5]!, anchorX: l[6]!, anchorY: l[7]! };
   }
-
-  const localBoundsVal = localBounds(g);
-  let worldBoundsVal = Rect.transform(localBoundsVal, worldMatrixVal);
-  // The ORIENTED box — the same four corners `Rect.transform` maps, kept as
-  // corners instead of collapsed into their bounding rectangle. This is what
-  // the selection outline draws and what marquee selection tests against.
-  let worldCornersVal = OBox.transformCorners(localBoundsVal, worldMatrixVal);
-  let hitTestLocalVal = makeHitTestLocal(g);
-
-  // ── Extruded 3D bodies: hit-test the whole SILHOUETTE, not the front face ──
-  //
-  // `worldMatrix` above is the affine of the layer's z = 0 plane, and
-  // `hitTestLocal` is a flat |x| ≤ w/2 ∧ |y| ≤ h/2 test inside it. That describes
-  // the FRONT CAP only. An extruded body runs from z = 0 to z = extrusionDepth
-  // (see extrusionFaces), so the moment it is rotated its side walls and back cap
-  // project OUTSIDE that quad — and every pixel of them was unclickable. That is
-  // the "only one side is selectable, the other side isn't" report: whichever
-  // faces happen to fall outside the front-cap quad cannot be picked, and turning
-  // the object around makes the previously-working side stop responding.
-  //
-  // Fix: project the 8 corners of the extruded box, take their convex hull, and
-  // accept any point inside it. The broad-phase AABB has to grow to match, or the
-  // hull is never consulted.
-  if (is3D && kind !== 'camera' && kind !== 'light') {
-    const depth = av.get('extrusionDepth') ?? readNode3D(node).extrusionDepth;
-    if (M3D && depth > 0 && g.width > 0 && g.height > 0) {
-      const hw = g.width / 2;
-      const hh = g.height / 2;
-      const corners: Array<{ x: number; y: number; z: number }> = [];
-      for (const cz of [0, depth]) {
-        for (const cx of [-hw, hw]) {
-          for (const cy of [-hh, hh]) corners.push({ x: cx, y: cy, z: cz });
-        }
-      }
-      const screen = corners.map((c) => {
-        const p = project(Matrix4Math.transformPoint(M3D, c));
-        return { x: p.x, y: p.y };
-      });
-      const hull = convexHull2D(screen);
-      if (hull.length >= 3) {
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const p of hull) {
-          if (p.x < minX) minX = p.x;
-          if (p.y < minY) minY = p.y;
-          if (p.x > maxX) maxX = p.x;
-          if (p.y > maxY) maxY = p.y;
-        }
-        worldBoundsVal = Rect.rect(minX, minY, maxX - minX, maxY - minY);
-        // A projected 3D body is not a rectangle at all, so there is no honest
-        // oriented box for it — its silhouette is an n-gon. The AABB's corners
-        // are the truthful answer here, and the 3D gizmo (not this box) is the
-        // control surface for those layers anyway.
-        worldCornersVal = Rect.corners(worldBoundsVal) as typeof worldCornersVal;
-        const m = worldMatrixVal;
-        // `hitTestLocal` is handed inverse(worldMatrix)·worldPoint, so re-applying
-        // worldMatrix recovers the screen point the hull is expressed in.
-        hitTestLocalVal = (p) =>
-          pointInPolygon({ x: m.a * p.x + m.c * p.y + m.e, y: m.b * p.x + m.d * p.y + m.f }, hull);
-      }
-    }
-  }
-
-  let visibleVal = node.visible !== false;
-  // Governing clips, matching the renderer's own gate: a group's members have
-  // no clips of their own, so asking for theirs left every member of a trimmed
-  // group hit-testable at times it was not drawn.
-  const nodeClips = governingClipsFor(node.id as string);
-  if (nodeClips.length > 0) {
-    const fps = comp?.fps ?? 60;
-    const lastFrame = Math.max(0, Math.round((comp?.durationSeconds ?? 10) * fps) - 1);
-    const gateFrame = Math.min(Math.round(rawTime * fps), lastFrame);
-    if (!nodeClips.some((l: any) => l.isActiveAt(gateFrame))) {
-      visibleVal = false;
-    }
-  }
-
+  const m = documentMirror();
+  if (!m.tree(id)) return null;
+  const s = playheadSeconds();
+  const r = (track: string, d: number): number => readTrack(m, id, track, s) ?? d;
   return {
-    id: node.id as string,
-    parentId: (node.parent as string | null) ?? null,
-    worldBounds: worldBoundsVal,
-    worldCorners: worldCornersVal,
-    worldMatrix: worldMatrixVal,
-    localBounds: localBoundsVal,
-    visible: visibleVal,
-    locked: !!node.locked,
-    zIndex,
-    // Lets the selection layer hide the 2D scale/rotate handles for a 3D layer —
-    // the 3D gizmo owns that transform (see WorkspaceNode.is3D).
-    is3D: is3D && kind !== 'camera' && kind !== 'light',
-    // Cameras and lights are devices: draggable, but with no meaningful scale
-    // or rotation (the renderer hardcodes both), so the grips are suppressed —
-    // see WorkspaceNode.device for the full reasoning.
-    device: kind === 'camera' || kind === 'light',
-    hitTestLocal: hitTestLocalVal,
-    pathPoints: livePathPoints(node, localTime),
-    pathClosed: pathIsClosed(node),
-    pathRotoBezier: pathIsRotoBezier(node),
-    // Masks are editable outlines too — without these the Direct Selection tool
-    // can't see them, which is why a mask's shape was frozen once drawn. Read at
-    // the layer's keyframe time, as the renderer does: an ANIMATED mask shows
-    // its interpolated shape here, not the static one nothing draws — which a
-    // drag would otherwise pick up and write back as the new keyframe.
-    maskPaths: (readNodeMaskAt(node, localTime) ?? readNodeMask(node))?.paths.map((p) => ({ id: p.id, points: p.points, closed: p.closed, rotoBezier: (p as MaskPath & MaskPathEditState).rotoBezier === true })),
-    anchor: { x: anchorX, y: anchorY },
+    x: r('x', 0), y: r('y', 0), z: r('z', 0), rotation: r('rotation', 0),
+    scaleX: r('scaleX', 1), scaleY: r('scaleY', 1), anchorX: r('anchorX', 0), anchorY: r('anchorY', 0),
   };
 }
 
 /**
- * The nodes the VIEWPORT may select, hit-test and drag.
- *
- * Two things this excludes that `flattenScene` does not:
- *
- *  1. **Other compositions.** Comps are sibling root subtrees in one graph, so
- *     walking every root exposed comp #2's layers to clicks inside comp #1.
- *  2. **The composition root itself.** It carries `__kind: 'group'`, which
- *     `isDrawableKind` accepts, so the comp node reported a 280×280 group box at
- *     the comp's (0,0) corner: a small blueprint rectangle that could be clicked,
- *     shown handles, and — because a comp root parents every layer — dragged the
- *     ENTIRE composition around as if the view were panning. A composition is a
- *     container, not a layer; it is selectable in the Scene tree only.
+ * A layer's 2D world chain at the playhead (no anchor term — the space its
+ * CHILDREN's x / y live in): the pushed matrix of a 2D layer, else its box
+ * corners solved back to the affine (they run through the 2D chain for every
+ * layer). Null when the frame carries neither.
  */
-function isCanvasNode(node: SceneNode): boolean {
-  return node.parent !== null;
+function chain2DOf(id: string): Matrix2D | null {
+  const rec = recordOf(id);
+  if (!rec) return null;
+  const layer = documentMirror().layer(id);
+  const k = uiKindOf(layer);
+  if (layer && !layer.switches.threeD && k !== 'camera' && k !== 'light' && rec.matrix.length === 16) {
+    const m = rec.matrix;
+    return { a: m[0]!, b: m[1]!, c: m[4]!, d: m[5]!, e: m[12]!, f: m[13]! };
+  }
+  return affineFromCorners(rec.box, rec.corners);
 }
 
-function canvasNodes(): SceneNode[] {
-  return flattenComposition(defaultSceneGraph, activeCompRootId()).filter(isCanvasNode);
+/** The world affine of a layer's PARENT at the playhead — identity at the top of its composition. */
+function parentChain2D(id: string): Matrix2D {
+  const parent = documentMirror().layer(id)?.parent;
+  return (parent ? chain2DOf(parent) : null) ?? Matrix.identity();
 }
 
-/**
- * @param viewOf Which view this port's nodes are projected through. Omit for the
- *   main viewport, which follows `guidesStore.camera3dMode`. A SECONDARY pane
- *   passes its own view so its hit-testing and selection chrome describe the
- *   pixels IT shows — without this every pane would hit-test against the main
- *   viewport's projection, and clicking a layer in a Top pane would select
- *   whatever happened to sit at that point in the Active Camera view.
- *
- *   A getter rather than a value so a pane can change its view without
- *   rebuilding its port (and its Workspace) from scratch.
- */
-export function createSceneGraphPort(viewOf?: () => Camera3dMode): SceneGraphPort {
-  const view = (): Camera3dMode | undefined => viewOf?.();
-  return {
-    getNodes(): Iterable<WorkspaceNode> {
-      const out: WorkspaceNode[] = [];
-      const flat = canvasNodes();
-      // One ancestor-matrix cache for the whole pass — see toWorkspaceNode.
-      const wmCache = new Map<string, import('@motion/scene').Matrix2D>();
-      const v = view();
-      flat.forEach((node, i) => {
-        const wn = toWorkspaceNode(node, i, wmCache, v);
-        if (wn) out.push(wn);
-      });
-      return out;
-    },
-    getNodesById(ids: readonly NodeId[]): Map<NodeId, WorkspaceNode> {
-      // `getNode`'s per-call setup, paid once: one flatten, one index map, one
-      // ancestor-matrix cache for the whole batch.
-      const out = new Map<NodeId, WorkspaceNode>();
-      const index = new Map<string, number>();
-      canvasNodes().forEach((n, i) => index.set(n.id as string, i));
-      const wmCache = new Map<string, import('@motion/scene').Matrix2D>();
-      const v = view();
-      for (const id of ids) {
-        const node = defaultSceneGraph.getNode(id as ID);
-        if (!node || !isCanvasNode(node)) continue;
-        const wn = toWorkspaceNode(node, index.get(id as string) ?? 0, wmCache, v);
-        if (wn) out.set(id, wn);
-      }
-      return out;
-    },
-    getNode(id: NodeId): WorkspaceNode | undefined {
-      const node = defaultSceneGraph.getNode(id as ID);
-      if (!node || !isCanvasNode(node)) return undefined;
-      // z-index from document order (cheap; the flattened list is small).
-      const flat = canvasNodes();
-      const idx = flat.findIndex((n) => (n.id as string) === id);
-      return toWorkspaceNode(node, idx < 0 ? 0 : idx, undefined, view()) ?? undefined;
-    },
-    selectionGroup(id: NodeId): readonly NodeId[] | null {
-      const rootId = activeCompRootId() as string;
-      const start = defaultSceneGraph.getNode(id as ID);
-      if (!start) return null;
-      let top = start;
-      let guard = 0;
-      while (top.parent && (top.parent as string) !== rootId && guard++ < 256) {
-        const p = defaultSceneGraph.getNode(top.parent as ID);
-        if (!p) break;
-        top = p;
-      }
-      // If the parent group is ALREADY selected, select the clicked sub-layer directly!
-      const currentSelection = useSelectionStore.getState().ids;
-      if (top.id !== start.id && currentSelection.includes(top.id)) {
-        return [id];
-      }
-      // Otherwise, select the parent group so it moves & resizes as 1 body by default.
-      if (top.id !== start.id || defaultSceneGraph.getChildren(top.id).length > 0) {
-        return [top.id as NodeId];
-      }
-      return null;
-    },
-    onChanged(listener: () => void): () => void {
-      const unsubScene = useSceneRevision.subscribe(listener);
-      // The LIVE clock, not the tab record: the record is a ≤4Hz mirror while
-      // playing, so a hit-test index keyed on it lagged the picture by up to a
-      // quarter second. Re-bound whenever the active tab changes.
-      let offTime: (() => void) | null = null;
-      let boundTab: string | null = null;
-      const bindTime = (): void => {
-        const tab = useProjectStore.getState().activeTabId;
-        if (tab === boundTab) return;
-        offTime?.();
-        boundTab = tab;
-        offTime = tab ? subscribeTime(tab, () => listener()) : null;
-      };
-      bindTime();
-      const unsubTab = useProjectStore.subscribe((s, prev) => {
-        if (s.activeTabId !== prev.activeTabId) {
-          bindTime();
-          listener();
-        }
-      });
-      const unsubTime = (): void => {
-        unsubTab();
-        offTime?.();
-        offTime = null;
-      };
-      // The VIEW is an input to every node this port emits.
-      //
-      // `worldMatrix` / `worldBounds` / `worldCorners` are all projected through
-      // `currentViewProjector`, so switching Front → Top moves every 3D layer
-      // even though the scene itself did not change. Without this subscription
-      // nothing invalidated, and the hit-test spatial index kept describing the
-      // PREVIOUS view: layers were then unselectable wherever they had moved to,
-      // and clicking their old positions selected them. Custom-view orbit params
-      // feed the same projector, so they count too.
-      // Seeded from the CURRENT state, not left undefined: the guides store also
-      // carries grid/ROI/draft flags, and an unseeded comparison treats the first
-      // write of any of them as a view change — one spurious full re-enumeration
-      // of the scene per subscription.
-      let lastView: unknown = useGuidesStore.getState().camera3dMode;
-      let lastCustom: unknown = useGuidesStore.getState().customViews;
-      const unsubView = useGuidesStore.subscribe((s) => {
-        if (s.camera3dMode === lastView && s.customViews === lastCustom) return;
-        lastView = s.camera3dMode;
-        lastCustom = s.customViews;
-        listener();
-      });
-      return () => {
-        unsubScene();
-        unsubTime();
-        unsubView();
-      };
-    },
-  };
+/** The layer's drawn content space: its 2D chain with the anchor offset (what its outline and masks are in). */
+function contentWorld2D(id: string): Matrix2D | null {
+  const chain = chain2DOf(id);
+  const l = localAt(id);
+  if (!chain) return null;
+  const ax = l?.anchorX ?? 0;
+  const ay = l?.anchorY ?? 0;
+  return { ...chain, e: chain.e - (chain.a * ax + chain.c * ay), f: chain.f - (chain.b * ax + chain.d * ay) };
+}
+
+/** A layer of a composition, unlocked: its header, else null. */
+function unlockedLayer(id: string): LayerInfo | null {
+  const layer = documentMirror().layer(id);
+  return layer && !layer.switches.locked ? layer : null;
+}
+
+/** The layer's drawn box (local x, y, w, h) on the frame, or null when it has no canvas presence. */
+function boxOf(id: string): [number, number, number, number] | null {
+  const b = recordOf(id)?.box;
+  return b && b.length === 4 ? [b[0]!, b[1]!, b[2]!, b[3]!] : null;
+}
+
+/** Kinds the viewport can resize / rotate (the drawable kinds; a box on the frame says the same). */
+function drawable(id: string): boolean {
+  return boxOf(id) !== null;
 }
 
 // ── SelectionPort ─────────────────────────────────────────────────
@@ -711,80 +336,6 @@ function makeNodeAt(
   return { id, name: uniqueLayerName(displayName), parent: null, children: [], transform, visible: true, locked: false, components };
 }
 
-/** Find the id of the component that carries this node's x/y (the transform). */
-function transformComponentId(node: SceneNode): ID | null {
-  for (const c of node.components) {
-    const p = c.props as Record<string, unknown>;
-    if (typeof p.x === 'number' || typeof p.y === 'number') return c.id;
-  }
-  return null;
-}
-
-import { worldMatrixOf } from '@core/scene/worldTransform';
-import { localTransformAt, parentWorld2DAt, world2DAt } from '@core/scene/layerSpace';
-import { recordMotionSketchSample, motionSketchNodeId } from '@core/animation/motionSketch';
-import { Matrix } from '@motion/scene';
-
-/**
- * The local transform every PARENT-CHAIN walk in this file composes, sampled at
- * the playhead — animated values winning, exactly as `buildSnapshot` reads them.
- *
- * It used to read `readGeometry` alone, i.e. the static base props, so an
- * ANIMATED parent contributed the place it sits at frame 0 rather than the place
- * it is now. Everything downstream of that inherited the error: the selection
- * outline and handles of a layer parented to a moving Null sat somewhere the
- * layer was not, marquee and click hit-testing agreed with the box rather than
- * the pixels, and a viewport drag inverted the wrong parent matrix when turning
- * a screen delta into the layer's own x/y.
- *
- * `localTransformAt` is the reader `world2DAt` and the parenting compensation
- * already use, so the chrome, the expression conversions and the renderer are
- * one computation rather than three that have to be kept in step.
- */
-function getLocalTransformForPorts(id: string) {
-  const s = useProjectStore.getState();
-  return localTransformAt(id, s.tabs[s.activeTabId ?? '']?.time ?? 0);
-}
-
-/**
- * The layer's PARENT space, for turning the tool's answers back into the props
- * a layer actually stores.
- *
- * ── THE MISMATCH THIS CLOSES ────────────────────────────────────────────────
- * Every transform tool measures in WORLD space: the rotate tool takes its start
- * angle off `node.worldMatrix`, the resize tool hands back a world-space centre
- * and the world scale it resolved. A layer's `rotation`, `x`/`y` and
- * `scaleX`/`scaleY` are PARENT-space values. With no parent the two are the
- * same thing and nothing showed; under a parent the writes were wrong by the
- * parent's whole transform, and both gestures threw the layer across the comp:
- *
- *   • rotate, child of a null turned 30°  → asked for 10°, layer went to 40°
- *   • resize, child of a null at x = 400 scaled 2× → asked for 1.5× at x = 100,
- *     layer landed at x = 600 scaled 3×
- *
- * `moveNodes` already inverted the parent for its drag delta (and says so); the
- * other two gestures never did. Parenting a layer to a Null and then scaling or
- * spinning it is an everyday rig, so this was reachable in two clicks.
- */
-function parentSpaceOf(nodeId: string, rawTime: number): {
-  inv: import('@motion/scene').Matrix2D; rotationDeg: number; scaleX: number; scaleY: number;
-} {
-  const m = parentWorld2DAt(nodeId, rawTime);
-  const d = Matrix.decompose(m);
-  const nz = (v: number): number => (Math.abs(v) > 1e-9 ? v : 1);
-  return {
-    inv: Matrix.invert(m),
-    rotationDeg: (d.rotation * 180) / Math.PI,
-    scaleX: nz(d.scale.x),
-    scaleY: nz(d.scale.y),
-  };
-}
-
-function getParentIdForPorts(id: string) {
-  const node = defaultSceneGraph.getNode(id as ID);
-  return node?.parent ?? null;
-}
-
 // ── 3D gizmo transform I/O (shared read/write path with canvas drags) ──
 
 /** The transform props the 3D gizmo reads & writes. */
@@ -798,41 +349,6 @@ export interface Transform3DValues {
   scaleX: number;
   scaleY: number;
   scaleZ: number;
-}
-
-/**
- * A node's transform SAMPLED at the current playhead (animated tracks win,
- * base props fall through) — the same read the renderer does. The gizmo must
- * anchor on this, not the static base props, or it desyncs off any keyframed
- * layer (mirror of the light-icon fix in useWorkspace's paintOverlay).
- */
-export function sampleTransform3DAtPlayhead(node: SceneNode): Transform3DValues {
-  const g = readGeometry(node);
-  const n3d = readNode3D(node);
-  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
-  const lt = getRemappedTime(node.id, rawTime);
-  const av = defaultAnimation.evaluateNode(node.id, lt);
-  return {
-    x: av.get('x') ?? g?.x ?? 0,
-    y: av.get('y') ?? g?.y ?? 0,
-    z: av.get('z') ?? n3d.z,
-    rotationX: av.get('rotationX') ?? n3d.rotationX,
-    rotationY: av.get('rotationY') ?? n3d.rotationY,
-    rotation: av.get('rotation') ?? g?.rotationDeg ?? 0,
-    scaleX: av.get('scaleX') ?? av.get('scale') ?? g?.scaleX ?? 1,
-    scaleY: av.get('scaleY') ?? av.get('scale') ?? g?.scaleY ?? 1,
-    // Depth scale: the Z cube on the scale gizmo writes it, buildSnapshot's
-    // affineAt composes it, extrusion bodies stretch along it. Static read is
-    // straight off the Transform props — readNode3D predates the property.
-    scaleZ: av.get('scaleZ') ?? staticScaleZOf(node),
-  };
-}
-
-/** The Transform component's static scaleZ (1 when absent — flat layers). */
-function staticScaleZOf(node: SceneNode): number {
-  const t = node.components.find((c) => c.type === 'Transform');
-  const v = t ? (t.props as Record<string, unknown>).scaleZ : undefined;
-  return typeof v === 'number' && Number.isFinite(v) ? v : 1;
 }
 
 export interface Gizmo3DNodeUpdate {
@@ -867,63 +383,6 @@ export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): b
   const props = items.flatMap((i) => Object.keys(i.values));
   const label = props.some((p) => p.startsWith('rotation')) ? 'Rotate' : props.some((p) => p.startsWith('scale')) ? 'Scale' : 'Move';
   return sendLayerValues(label, items);
-}
-
-/**
- * Write arbitrary numeric props to ONE node through the same dual path
- * `applyGizmo3DTransforms` uses: static base prop always, plus a keyframe when
- * the prop is already animated or Auto-Keyframe is on.
- *
- * Exists because camera navigation writes props the layer-transform type does
- * not cover — `orbitYaw`, `orbitPitch`, `poiX/Y/Z`, `focalLength`. Those writes
- * went straight to `updateNodeComponentProp`, i.e. base props only, so the C
- * tool could move a camera but could never ANIMATE one: with Auto-Keyframe on,
- * dragging the camera silently produced no keyframes while dragging a layer's
- * gizmo produced them normally. In After Effects the camera tools keyframe like
- * anything else.
- *
- * `mergeKey` coalesces a whole drag into one undo entry — pass something stable
- * for the gesture's duration.
- */
-/**
- * A drag in an ORTHOGRAPHIC view moves the layer along that view's axes.
- *
- * The delta arrives in projected 2D. In Front view that happens to equal world
- * x/y, which is why writing it straight into x/y looked right for years — but in
- * Top view the vertical axis is DEPTH, and in Left/Right the horizontal one is.
- * Writing x/y there moves the layer along the axis the view projects away: it
- * sits still on screen while its real position drifts, and the axis you actually
- * dragged never changes. Measured before this fix: dragging down 223 units in
- * Top view wrote y 540 → 762.8 and left z at 0.
- *
- * Returns null for the active camera and custom views — those are perspective
- * and go through {@link perspectiveDelta3D}, which additionally needs the
- * layer's depth.
- */
-/**
- * A projected 2D drag delta as a WORLD translation, for whichever view is
- * active — the ortho table or the camera's own basis, chosen the same way the
- * layer drag chooses it.
- *
- * Exported so dragging a camera or light handle cannot grow a fourth way to
- * turn a pointer movement into world motion. `at` supplies the depth the
- * perspective case divides by.
- */
-export function viewDragToWorldDelta(
-  delta: { x: number; y: number },
-  view: Camera3dMode,
-  at: { x: number; y: number; z: number },
-  compW: number,
-  compH: number,
-  rawTime: number,
-): { x: number; y: number; z: number } {
-  const ortho = orthoDelta3D(delta, view);
-  if (ortho) return ortho;
-  const camera = currentViewCamera(compW, compH, rawTime, view);
-  // No view camera (shouldn't happen once ortho is excluded) ⇒ treat the drag
-  // as in-plane, which is the pre-3D behaviour.
-  if (!camera) return { x: delta.x, y: delta.y, z: 0 };
-  return perspectiveDelta3D(delta, camera, at);
 }
 
 function orthoDelta3D(
@@ -1084,29 +543,46 @@ interface MoveStart {
   sketch: boolean;
 }
 
+/**
+ * The layer's PARENT space, for turning the tool's answers back into the props
+ * a layer actually stores. Every transform tool measures in WORLD space; a
+ * layer's `rotation`, `x`/`y` and `scaleX`/`scaleY` are PARENT-space values —
+ * without this a child of a turned / scaled null was thrown across the comp by
+ * a rotate or a resize (identity, and so a no-op, without a parent).
+ */
+function parentSpaceOf(nodeId: string): {
+  inv: Matrix2D; rotationDeg: number; scaleX: number; scaleY: number;
+} {
+  const m = parentChain2D(nodeId);
+  const d = Matrix.decompose(m);
+  const nz = (v: number): number => (Math.abs(v) > 1e-9 ? v : 1);
+  return {
+    inv: Matrix.invert(m),
+    rotationDeg: (d.rotation * 180) / Math.PI,
+    scaleX: nz(d.scale.x),
+    scaleY: nz(d.scale.y),
+  };
+}
+
 function captureMoveStarts(ids: readonly NodeId[], view: Camera3dMode): MoveStart[] {
   const rawTime = playheadSeconds();
   const { w: compW, h: compH } = activeCompSize();
   const orthoX = orthoDelta3D({ x: 1, y: 0 }, view);
   const orthoY = orthoDelta3D({ x: 0, y: 1 }, view);
-  // Resolved once: every node in one drag shares the view, and resolving the
-  // camera walks the scene.
+  // Resolved once: every node in one drag shares the view.
   const viewCamera = orthoX ? null : currentViewCamera(compW, compH, rawTime, view);
   const out: MoveStart[] = [];
   for (const id of ids) {
-    const node = defaultSceneGraph.getNode(id as ID);
-    if (!node || node.locked) continue;
-    const g = readGeometry(node);
-    if (!g) continue;
-    const n3 = readNode3D(node);
-    const lt = getRemappedTime(node.id, rawTime);
+    const layer = unlockedLayer(id);
+    const l = layer ? localAt(id) : null;
+    if (!layer || !l) continue;
     let basis: MoveStart['basis'] = null;
-    if (is3DEnabled(node)) {
+    if (layer.switches.threeD) {
       if (orthoX && orthoY) basis = { dx: orthoX, dy: orthoY };
       else if (viewCamera) {
         // Linear in the delta (the depth scale is sampled at the START
         // position), so the basis is the delta's two unit columns.
-        const at = { x: g.x, y: g.y, z: n3.z ?? 0 };
+        const at = { x: l.x, y: l.y, z: l.z };
         basis = {
           dx: perspectiveDelta3D({ x: 1, y: 0 }, viewCamera, at),
           dy: perspectiveDelta3D({ x: 0, y: 1 }, viewCamera, at),
@@ -1114,22 +590,21 @@ function captureMoveStarts(ids: readonly NodeId[], view: Camera3dMode): MoveStar
       }
     }
     let inv: MoveStart['inv'] = null;
-    if (node.parent) {
-      const m = Matrix.invert(worldMatrixOf(node.parent as string, getLocalTransformForPorts, getParentIdForPorts));
+    if (layer.parent) {
+      const m = Matrix.invert(parentChain2D(id));
       inv = { a: m.a, b: m.b, c: m.c, d: m.d };
     }
     out.push({
-      id: node.id as string,
-      x: defaultAnimation.sample(node.id, 'x', lt) ?? g.x,
-      y: defaultAnimation.sample(node.id, 'y', lt) ?? g.y,
-      z: defaultAnimation.sample(node.id, 'z', lt) ?? (n3.z ?? 0),
+      id,
+      x: l.x,
+      y: l.y,
+      z: l.z,
       inv,
       basis,
       // A layer being MOTION SKETCHED always keyframes, whatever the
       // Auto-Keyframe preference says: recording a path is an explicit request
-      // for keyframes, and a fresh layer (no x/y track, Auto-Keyframe off)
-      // would otherwise feed the recorder nothing (found in the real app).
-      sketch: motionSketchNodeId() === node.id,
+      // for keyframes.
+      sketch: motionSketchNodeId() === id,
     });
   }
   return out;
@@ -1230,30 +705,28 @@ function createNode(payload: CreateNodePayload): void {
   const cy = payload.bounds.y + payload.bounds.height / 2;
   // Ellipse is true only for explicit Ellipse kind
   const ellipse = payload.kind === 'Ellipse';
-  
+
   const width = payload.bounds.width;
   const height = payload.bounds.height;
-  
+
   if (payload.maskTargetId) {
     const parentId = payload.maskTargetId as string;
-    const parentNode = defaultSceneGraph.getNode(parentId as ID);
-    if (!parentNode) return;
+    // A node outside a composition has no masks the API can address.
+    if (!isLayer(parentId)) return;
 
     // The SAME local→world matrix the viewport draws and edits this layer's
-    // outlines through (`toWorkspaceNode`): position · R · S · T(−anchor), and
-    // the projected plane for a 3D layer. `worldMatrixOf` has no anchor term
-    // and no projection, so a mask drawn on a layer with a moved anchor landed
-    // offset by the anchor, and on a 3D layer somewhere else entirely — while
-    // Direct Selection then showed its vertices where the renderer put them,
-    // not where they were clicked.
+    // outlines through (the scene port's node: position · R · S · T(−anchor),
+    // the projected plane for a 3D layer) — so a mask lands where it was drawn
+    // and Direct Selection then shows its vertices there.
     const parentWorldMat =
-      toWorkspaceNode(parentNode, 0)?.worldMatrix ??
-      worldMatrixOf(parentId, getLocalTransformForPorts, getParentIdForPorts);
+      createSceneGraphPort().getNode(parentId)?.worldMatrix ??
+      contentWorld2D(parentId) ??
+      Matrix.identity();
     const invParentWorldMat = Matrix.invert(parentWorldMat);
 
     let newMask: MaskPath;
     if (payload.points && payload.points.length > 0) {
-      const points: MaskPoint[] = payload.points.map((p: any) => {
+      const points: MaskPoint[] = payload.points.map((p) => {
         // Convert drawn point (relative to bounds center) to world space
         const wp = { x: p.x + cx, y: p.y + cy };
         const win = { x: p.inX + cx, y: p.inY + cy };
@@ -1278,10 +751,8 @@ function createNode(payload: CreateNodePayload): void {
       // Fallback if points were missing, though workspace tools should provide them.
       newMask = ellipse ? ellipseMask(width, height) : rectangleMask(width, height);
     }
-    
+
     useSelectionStore.getState().set([parentId]);
-    // A node outside a composition has no masks the API can address.
-    if (!isLayer(parentId)) return;
     sendToolEdit('New Mask', [{
       type: 'addMask',
       layer: parentId,
@@ -1455,184 +926,123 @@ function drawnLayerOf(payload: CreateNodePayload): { node: SceneNode; polystar: 
 }
 
 function resizeNode(payload: ResizeNodePayload): void {
-  const node = defaultSceneGraph.getNode(payload.id as ID);
-  if (!node || node.locked) return;
-  const cid = transformComponentId(node);
-  if (!cid) return;
-  const kind = kindOf(node);
-  if (!drawable(kind)) return;
-  
-  // An SVG layer has no `SIZE` key — it rasterizes down the image path — so it
-  // must borrow the image base rather than fall through to the 100×100 default.
-  const sizeKey = kind === 'svg' ? 'image' : kind;
-  let baseW = (SIZE as Record<string, { w: number; h: number }>)[sizeKey]?.w ?? 100;
-  let baseH = (SIZE as Record<string, { w: number; h: number }>)[sizeKey]?.h ?? 100;
-  const transComp = node.components.find((c) => c.type === 'Transform');
-  let authoredSize = false;
-  if (transComp && transComp.props) {
-    if (typeof transComp.props.width === 'number') baseW = transComp.props.width;
-    if (typeof transComp.props.height === 'number') baseH = transComp.props.height;
-    authoredSize =
-      typeof transComp.props.width === 'number' &&
-      typeof transComp.props.height === 'number' &&
-      // TEXT is sized by its glyphs, not by these props: `readGeometry` throws
-      // away a text layer's authored width/height and measures the type
-      // instead. Writing them would move the numbers in the inspector and
-      // change nothing on canvas — worse than the scale the drag would
-      // otherwise have applied, because it looks like the drag did nothing.
-      // (Reflowing a paragraph box is a `boxWidth`/`boxHeight` edit, made by the
-      // Type-tool / text-editing box handles — layout/Workspace/textBoxReflow.ts —
-      // never by this Selection-tool scale path, exactly as in AE.)
-      kind !== 'text';
-  }
+  const id = payload.id as string;
+  const layer = unlockedLayer(id);
+  const box = layer ? boxOf(id) : null;
+  if (!layer || !box) return;
+  const kind = uiKindOf(layer);
+  // The drawn box the tool resized (the frame's — what readGeometry measures).
+  const baseW = box[2] > 0 ? box[2] : 100;
+  const baseH = box[3] > 0 ? box[3] : 100;
   /*
    * Ctrl on a handle asks for the layer's SIZE rather than its Scale, and the
    * tool says so by sending `size` (the new box in the layer's own units).
    *
-   * A layer that cannot express the drag as a size — text, or anything that
-   * somehow lost its dimensions — keeps scaling instead, which is what it did
-   * before the modifier existed. Falling back beats swallowing the gesture.
+   * TEXT is sized by its glyphs, not by a size property (a paragraph box's
+   * reflow is the Type tool's box handles — layout/Workspace/textBoxReflow.ts),
+   * and a layer whose Size the API cannot address keeps scaling instead —
+   * falling back beats swallowing the gesture.
    */
-  const sizing = payload.size !== undefined && authoredSize;
+  const sizing = payload.size !== undefined && kind !== 'text';
   const nextW = payload.size ? snapPx(Math.max(1, Math.abs(payload.size.x))) : baseW;
   const nextH = payload.size ? snapPx(Math.max(1, Math.abs(payload.size.y))) : baseH;
   const b = payload.bounds;
-  // Prefer the scale the TOOL resolved. Inferring it here as
-  // `worldAABB.width / localWidth` is wrong for anything rotated — rotation
-  // inflates the AABB, so the first drag tick multiplied the scale by that
-  // inflation and every later tick re-inflated it. That is what made a corner
-  // drag on a rotated or 3D layer lurch sideways and grow without settling, and
-  // why a text box could never match its glyph width (its local width and
-  // rendered extents disagree, so the ratio was never 1).
-  //
-  // The fallback keeps older callers and tests working; it is only correct for
-  // an unrotated layer, which is the only case it was ever right for.
+  // Prefer the scale the TOOL resolved (absolute against drag-start state, the
+  // ratio contract `resizeRotated.test.ts` pins). Inferring it as
+  // `worldAABB.width / localWidth` is only right for an unrotated layer — the
+  // fallback for older callers.
   const rawCentre = payload.center ?? { x: b.x + b.width / 2, y: b.y + b.height / 2 };
   const scaleX = payload.scale ? payload.scale.x : baseW > 0 ? b.width / baseW : 1;
   const scaleY = payload.scale ? payload.scale.y : baseH > 0 ? b.height / baseH : 1;
 
   // The tool hands back the new box's CENTRE, which for most layers is also the
-  // node's position. For a node whose box is offset from its origin (a group,
-  // whose bounds are its children's union) they differ, and writing the box
-  // centre straight into x/y would teleport it by that offset on the first
-  // drag tick. Convert back through the same rotation/scale the box was
-  // measured in.
-  const geo = readGeometry(node);
+  // node's position. A box offset from its origin (a group's union, a text
+  // layer's font box) is converted back through the same rotation / scale.
+  const offX = box[0] + box[2] / 2;
+  const offY = box[1] + box[3] / 2;
+  const rotationDeg = localAt(id)?.rotation ?? 0;
   const centre = (() => {
-    if (!geo || (geo.offsetX === 0 && geo.offsetY === 0)) return rawCentre;
-    const rad = (geo.rotationDeg * Math.PI) / 180;
+    if (offX === 0 && offY === 0) return rawCentre;
+    const rad = (rotationDeg * Math.PI) / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
-    const ox = geo.offsetX * scaleX;
-    const oy = geo.offsetY * scaleY;
+    const ox = offX * scaleX;
+    const oy = offY * scaleY;
     return { x: rawCentre.x - (ox * cos - oy * sin), y: rawCentre.y - (ox * sin + oy * cos) };
   })();
-  
-  const rawTime = playheadSeconds();
 
-  // World → parent space. `centre` and `scaleX/scaleY` are what the TOOL
-  // measured on screen; `x`/`y`/`scaleX`/`scaleY` are stored relative to the
-  // parent. Identity for an unparented layer, so nothing changes there.
-  const ps = parentSpaceOf(node.id, rawTime);
+  // World → parent space (identity for an unparented layer).
+  const ps = parentSpaceOf(id);
   const localCentreRaw = Matrix.transformPoint(ps.inv, centre);
   const localCentre = { x: snapPx(localCentreRaw.x), y: snapPx(localCentreRaw.y) };
   const localScaleX = scaleX / ps.scaleX;
   const localScaleY = scaleY / ps.scaleY;
 
-  // Everything the tool resolved is ABSOLUTE against drag-start state (the
-  // ratio contract `resizeRotated.test.ts` pins), so each message is the whole
-  // answer. Per-property stopwatch contract: position and scale (or size)
-  // decide independently whether they key — `trackValueCommands` asks each.
+  // Per-property stopwatch contract: position and scale (or size) decide
+  // independently whether they key — `trackValueCommands` asks each.
   const scaleValues = { x: localCentre.x, y: localCentre.y, scaleX: localScaleX, scaleY: localScaleY };
   if (sizing) {
-    // Scale is deliberately left ALONE. The drag expressed itself entirely in
-    // width/height, and writing the (unchanged) scale back would push the
-    // WORLD scale the tool measured onto a node whose own scale is a different
-    // number the moment it has a parent. Keying Scale on a Size drag would
-    // record a value the drag never changed.
-    const sized = sendLayerValues('Resize', [{ nodeId: node.id as string, values: { x: localCentre.x, y: localCentre.y, width: nextW, height: nextH } }]);
+    // Scale is deliberately left ALONE: the drag expressed itself in width /
+    // height, and keying Scale on a Size drag would record a value it never changed.
+    const sized = sendLayerValues('Resize', [{ nodeId: id, values: { x: localCentre.x, y: localCentre.y, width: nextW, height: nextH } }]);
     if (sized) return;
-    // A layer whose Size the API cannot address keeps scaling — falling back
-    // beats swallowing the gesture (the same rule as a layer with no size).
   }
-  sendLayerValues('Scale', [{ nodeId: node.id as string, values: scaleValues }]);
+  sendLayerValues('Scale', [{ nodeId: id, values: scaleValues }]);
 }
+
 function rotateNode(payload: RotateNodePayload): void {
-  const node = defaultSceneGraph.getNode(payload.id as ID);
-  if (!node || node.locked) return;
-  if (!transformComponentId(node)) return;
+  const id = payload.id as string;
+  if (!unlockedLayer(id) || !drawable(id)) return;
   // The tool's angle is ABSOLUTE and in WORLD space (it starts from
-  // `node.worldMatrix`); `rotation` is stored relative to the parent. Subtract
-  // the parent's world rotation — zero, and so a no-op, without a parent.
-  const deg = (payload.rotation * 180) / Math.PI - parentSpaceOf(node.id, playheadSeconds()).rotationDeg;
-  sendLayerValues('Rotate', [{ nodeId: node.id as string, values: { rotation: deg } }]);
+  // `node.worldMatrix`); `rotation` is stored relative to the parent.
+  const deg = (payload.rotation * 180) / Math.PI - parentSpaceOf(id).rotationDeg;
+  sendLayerValues('Rotate', [{ nodeId: id, values: { rotation: deg } }]);
 }
 
 /**
- * Whether a node can take its share of a MULTI-selection transform.
- *
- * Mirrors the single-node gates: `resizeNode` refuses non-drawable kinds, the
- * selection controller withholds the 2D grips from 3D layers (the gizmo owns
- * them) and devices (the renderer ignores their scale/rotation outright). The
- * tool filters the same way before it ever sends the command; this is the
- * belt-and-braces for any other caller.
+ * Whether a layer can take its share of a MULTI-selection transform: a drawn
+ * one, not a device (the renderer ignores their scale / rotation), not 3D (the
+ * gizmo owns those) — the gates the tool applies before it sends.
  */
-function multiTransformable(node: SceneNode): boolean {
-  const kind = kindOf(node);
-  return drawable(kind) && kind !== 'light' && kind !== 'camera' && !is3DEnabled(node);
+function multiTransformable(id: string): boolean {
+  const layer = unlockedLayer(id);
+  const kind = uiKindOf(layer ?? undefined);
+  return !!layer && drawable(id) && kind !== 'light' && kind !== 'camera' && !layer.switches.threeD;
 }
 
 /**
  * Scale a multi-selection about one fixed world pivot — the group-box handle
- * drag. The TOOL resolved everything absolute (per-node world scale and the
- * world point each node's anchor lands on, both derived from drag-START state,
- * the same ratio contract as `resizeNode`); this handler only converts
- * world → parent space. Every node goes in ONE message, so the drag is one
- * undo entry.
- *
- * `item.position` is the ANCHOR's world point, which is `parentWorld · (x, y)`
- * by the renderer's model — so the layer's own x/y is just the parent inverse
- * applied to it, with none of the box-centre/offset correction `resizeNode`
- * needs for its centre-based payload.
+ * drag. The TOOL resolved everything absolute; this converts world → parent
+ * space. Every node goes in ONE message, so the drag is one undo entry.
+ * `item.position` is the ANCHOR's world point, `parentWorld · (x, y)`.
  */
 function multiResizeNodes(payload: MultiResizeNodesPayload): void {
   if (payload.items.length === 0) return;
-  const rawTime = playheadSeconds();
   const items: NodeTrackValues[] = [];
   for (const item of payload.items) {
-    const node = defaultSceneGraph.getNode(item.id as ID);
-    if (!node || node.locked || !multiTransformable(node)) continue;
-    if (!transformComponentId(node)) continue;
-    // World → parent space, the space x/y and scaleX/scaleY actually live in.
-    const ps = parentSpaceOf(node.id, rawTime);
+    const id = item.id as string;
+    if (!multiTransformable(id)) continue;
+    const ps = parentSpaceOf(id);
     const localPos = Matrix.transformPoint(ps.inv, item.position);
     items.push({
-      nodeId: node.id as string,
+      nodeId: id,
       values: { x: localPos.x, y: localPos.y, scaleX: item.scale.x / ps.scaleX, scaleY: item.scale.y / ps.scaleY },
     });
   }
   sendLayerValues('Scale', items);
 }
 
-/**
- * Rotate a multi-selection about the group centre: each node's rotation adds
- * the drag's sweep and its anchor orbits the pivot — both resolved ABSOLUTE by
- * the tool. Same shape as `multiResizeNodes`.
- */
+/** Rotate a multi-selection about the group centre — same shape as `multiResizeNodes`. */
 function multiRotateNodes(payload: MultiRotateNodesPayload): void {
   if (payload.items.length === 0) return;
-  const rawTime = playheadSeconds();
   const items: NodeTrackValues[] = [];
   for (const item of payload.items) {
-    const node = defaultSceneGraph.getNode(item.id as ID);
-    if (!node || node.locked || !multiTransformable(node)) continue;
-    if (!transformComponentId(node)) continue;
-    const ps = parentSpaceOf(node.id, rawTime);
-    // The tool's angle is ABSOLUTE world; `rotation` is stored parent-relative
-    // — the same subtraction rotateNode performs.
+    const id = item.id as string;
+    if (!multiTransformable(id)) continue;
+    const ps = parentSpaceOf(id);
     const localPos = Matrix.transformPoint(ps.inv, item.position);
     items.push({
-      nodeId: node.id as string,
+      nodeId: id,
       values: { rotation: (item.rotation * 180) / Math.PI - ps.rotationDeg, x: localPos.x, y: localPos.y },
     });
   }
@@ -1643,28 +1053,21 @@ function multiRotateNodes(payload: MultiRotateNodesPayload): void {
  * Pan Behind (AE Y): move the anchor and compensate Position so the layer
  * stays put. The tool sends the new anchor ABSOLUTE (layer-local); the
  * compensation is computed from the DRAG-START anchor, position, rotation and
- * scale — all read at the playhead, animated values winning (see
- * `moveAnchorCompensated`, whose arithmetic this is) — so every message is
- * the whole answer and a dropped one loses nothing.
+ * scale at the playhead, so every message is the whole answer.
  */
 function moveAnchor(payload: MoveAnchorPayload): void {
-  const node = defaultSceneGraph.getNode(payload.id as ID);
-  if (!node || node.locked) return;
-  const id = node.id as string;
-  const capture = (): { ax: number; ay: number; x: number; y: number; rot: number; sx: number; sy: number } => ({
-    ax: readTransformProp(id, 'anchorX', 0),
-    ay: readTransformProp(id, 'anchorY', 0),
-    x: readTransformProp(id, 'x', 0),
-    y: readTransformProp(id, 'y', 0),
-    rot: readTransformProp(id, 'rotation', 0),
-    sx: readTransformProp(id, 'scaleX', 1),
-    sy: readTransformProp(id, 'scaleY', 1),
-  });
+  const id = payload.id as string;
+  if (!unlockedLayer(id)) return;
+  const capture = (): { ax: number; ay: number; x: number; y: number; rot: number; sx: number; sy: number } | null => {
+    const l = localAt(id);
+    return l ? { ax: l.anchorX, ay: l.anchorY, x: l.x, y: l.y, rot: l.rotation, sx: l.scaleX, sy: l.scaleY } : null;
+  };
   const txn = currentToolTransaction();
   const anchor = { ...payload.anchor };
   sendLayerValues('Pan Behind', () => {
     // Captured once per drag, when its first message can go.
     const st = txn ? txn.memo(`anchor:${id}`, capture) : capture();
+    if (!st) return [];
     const d = anchorCompensation(anchor.x - st.ax, anchor.y - st.ay, st.rot, st.sx, st.sy);
     return [{ nodeId: id, values: { anchorX: anchor.x, anchorY: anchor.y, x: st.x + d.dx, y: st.y + d.dy } }];
   }, txn);
@@ -1672,15 +1075,14 @@ function moveAnchor(payload: MoveAnchorPayload): void {
 
 /**
  * Delete / Backspace in the viewport: one `deleteLayers` per composition, ONE
- * entry. Locked layers and composition roots stay (the context menu's Delete
- * skips them the same way); the rest of the selection is kept.
+ * entry. Locked layers stay (the context menu's Delete skips them the same
+ * way); the rest of the selection is kept.
  */
 function deleteNodes(payload: DeleteNodesPayload): void {
   if (payload.ids.length === 0) return;
   const byComp = new Map<string, string[]>();
   for (const id of new Set(payload.ids as readonly string[])) {
-    const n = defaultSceneGraph.getNode(id as ID);
-    const comp = n && !n.locked ? compOfLayer(id) : null;
+    const comp = unlockedLayer(id) ? compOfLayer(id) : null;
     if (!comp) continue;
     const list = byComp.get(comp);
     if (list) list.push(id);
@@ -1697,68 +1099,6 @@ function deleteNodes(payload: DeleteNodesPayload): void {
 }
 
 type PathPoint = import('@motion/workspace').BezierPoint;
-
-/** A `path.points` data value as full bezier points (a corner's handles collapse onto it). */
-function toBezierPoints(value: unknown): PathPoint[] | undefined {
-  if (!Array.isArray(value) || value.length < 2) return undefined;
-  const first = value[0] as unknown;
-  if (typeof first !== 'object' || first === null || !('x' in first)) return undefined;
-  return (value as Array<{ x: number; y: number; inX?: number; inY?: number; outX?: number; outY?: number; broken?: boolean; tension?: number }>).map(
-    (p) => ({
-      x: p.x, y: p.y, inX: p.inX ?? p.x, inY: p.inY ?? p.y, outX: p.outX ?? p.x, outY: p.outY ?? p.y,
-      // The editing flags ride along — dropping them here would un-break
-      // every Alt-split handle of an animated path on its next edit.
-      ...(p.broken ? { broken: true } : {}),
-      ...(typeof p.tension === 'number' ? { tension: p.tension } : {}),
-    }),
-  );
-}
-
-/**
- * Carry `broken` / `tension` onto sampled points from the keyframe at or before
- * `t`. The data-track sampler interpolates geometry only, so a sampled vertex
- * has lost its editing state; it is the same vertex as that keyframe's (same
- * index — topology edits keep every keyframe's count equal).
- */
-function withKeyframeFlags(nodeId: string, points: PathPoint[], t: number): PathPoint[] {
-  const track = defaultAnimation.dataTracksFor(nodeId).find((d) => d.prop === 'path.points');
-  if (!track || track.keyframes.length === 0) return points;
-  let key = track.keyframes[0]!;
-  for (const k of track.keyframes) if (k.t <= t + 1e-9) key = k;
-  const src = key.value as Array<{ broken?: boolean; tension?: number }>;
-  if (!Array.isArray(src) || src.length !== points.length) return points;
-  return points.map((p, i) => {
-    const s = src[i];
-    if (!s || (!s.broken && typeof s.tension !== 'number')) return p;
-    return { ...p, ...(s.broken ? { broken: true } : {}), ...(typeof s.tension === 'number' ? { tension: s.tension } : {}) };
-  });
-}
-
-/**
- * The outline the renderer DRAWS at `localTime`: an animated `path.points`
- * track wins over the static Geometry points, exactly as in `buildSnapshot`.
- *
- * This read the static points only, so on an animated shape Direct Selection
- * showed vertices where the path had been at creation and every drag wrote
- * the static prop — which nothing renders once the track exists. The edit
- * never appeared.
- */
-function livePathPoints(node: SceneNode, localTime: number): PathPoint[] | undefined {
-  const live = toBezierPoints(defaultAnimation.sampleData(node.id as string, 'path.points', localTime));
-  if (live) return withKeyframeFlags(node.id as string, live, localTime);
-  return node.components.find((c) => c.type === 'Geometry')?.props.points as PathPoint[] | undefined;
-}
-
-/** `Geometry.open` marks a stroke; everything else wraps, as the renderer reads it. */
-function pathIsClosed(node: SceneNode): boolean | undefined {
-  const geom = node.components.find((c) => c.type === 'Geometry');
-  return geom ? geom.props.open !== true : undefined;
-}
-
-/** `Geometry.rotoBezier` — the layer's own outline has computed handles. */
-function pathIsRotoBezier(node: SceneNode): boolean {
-  return node.components.find((c) => c.type === 'Geometry')?.props.rotoBezier === true;
-}
 
 /** History labels for the structural path edits, as AE names them. */
 const TOPOLOGY_LABEL: Record<string, string> = {
@@ -1834,7 +1174,7 @@ function sendOutlineEdit(
   const reshape: Command[] = animated && payload.topology ? [] : [{
     type: 'setProperty', prop,
     value: maskPointsToPath(payload.points as MaskPoint[], payload.closed ?? closedNow),
-    time: compTime(getTimelineController().currentSeconds),
+    time: compTime(playheadSeconds()),
   }];
   const txn = currentToolTransaction();
   if (!txn) {
@@ -1846,26 +1186,37 @@ function sendOutlineEdit(
   if (reshape.length > 0) txn.send(label, reshape);
 }
 
+/** A path property's state on the mirror: whether it is keyed, and its stored Closed. */
+function pathState(id: string, path: string): { animated: boolean; closed: boolean; valueType: string } | null {
+  const m = documentMirror();
+  const info = m.tree(id)?.nodes.get(path);
+  if (!info) return null;
+  return {
+    animated: info.animated || m.keyframes(id, path).length > 0,
+    closed: info.value?.kind === 'path' ? info.value.value.closed : true,
+    valueType: info.valueType,
+  };
+}
+
 /**
  * Direct Selection / Pen edits of a layer's own outline (`layer/path.points`,
  * see `sendOutlineEdit`). A primitive shape with an animated `path.points`
- * track and no drawn outline keys its reshapes through the data track's path
- * property; a structural edit needs the drawn outline.
+ * track and no drawn outline keys its reshapes through the same property; a
+ * structural edit needs the drawn outline.
  */
 function updateNodePath(payload: UpdateNodePathPayload): void {
-  const node = defaultSceneGraph.getNode(payload.id as ID);
-  if (!node || node.locked) return;
-  const id = node.id as string;
-  const animated = defaultAnimation.isDataAnimated(id, 'path.points');
+  const id = payload.id as string;
+  if (!unlockedLayer(id)) return;
+  const st = pathState(id, SHAPE_PATH);
+  if (!st) return;
   const label = payload.topology ? TOPOLOGY_LABEL[payload.topology.op] ?? 'Edit Path' : 'Edit Path';
   const rotoProp: PropRef = { layer: id, path: 'layer/pathRotoBezier' };
   if (outlineOnEngine({ nodeId: id, maskId: null })) {
-    sendOutlineEdit(label, outlineRef({ nodeId: id, maskId: null }), rotoProp, animated, pathIsClosed(node) !== false, payload);
+    sendOutlineEdit(label, outlineRef({ nodeId: id, maskId: null }), rotoProp, st.animated, st.closed, payload);
     return;
   }
-  const keyed = isLayer(id) && animated ? propRefForTrack(id, 'path.points') : null;
-  if (keyed?.valueType === 'path' && !payload.topology && payload.closed === undefined && payload.rotoBezier === undefined) {
-    sendOutlineEdit(label, keyed.ref, rotoProp, true, pathIsClosed(node) !== false, payload);
+  if (st.animated && st.valueType === 'path' && !payload.topology && payload.closed === undefined && payload.rotoBezier === undefined) {
+    sendOutlineEdit(label, { layer: id, path: SHAPE_PATH }, rotoProp, true, st.closed, payload);
   }
 }
 
@@ -1874,15 +1225,14 @@ function updateNodePath(payload: UpdateNodePathPayload): void {
  * mode, Convert Vertex) — `masks/<id>/path` through `sendOutlineEdit`.
  */
 function updateMaskPathCmd(payload: UpdateMaskPathPayload): void {
-  const node = defaultSceneGraph.getNode(payload.id as ID);
-  if (!node || node.locked) return;
   const id = payload.id as string;
+  if (!unlockedLayer(id)) return;
   const target = { nodeId: id, maskId: payload.maskId };
-  const current = readNodeMask(node)?.paths.find((p) => p.id === payload.maskId);
-  if (!current || !outlineOnEngine(target)) return;
+  const st = pathState(id, paths.mask(payload.maskId, 'path'));
+  if (!st || !outlineOnEngine(target)) return;
   const label = payload.topology ? TOPOLOGY_LABEL[payload.topology.op] ?? 'Edit Mask' : 'Edit Mask';
   sendOutlineEdit(label, outlineRef(target), { layer: id, path: paths.mask(payload.maskId, 'rotoBezier') },
-    readNodeMaskAnim(node).length > 0, current.closed, payload);
+    st.animated, st.closed, payload);
 }
 
 // ── Knife ───────────────────────────────────────────────────────────
@@ -1900,56 +1250,55 @@ function toCutPoint(p: {
 }
 
 /**
- * A shape layer's outline as runs the knife can cut, in LOCAL space.
+ * A shape layer's outline as runs the knife can cut, in LOCAL space — read from
+ * the mirror and the frame:
+ *   1. its drawn outline (`layer/path.points`, the single-run shape);
+ *   2. a PRIMITIVE rectangle / ellipse never converted to a path: its outline
+ *      from the drawn box, the corner radii (per-corner over uniform, CSS
+ *      clamping, comp-px radii through the layer's scale — the renderer's seed)
+ *      and the layer's scale at the playhead. A freshly drawn rectangle has no
+ *      stored points at all, and a knife that refused the shape tools' shapes
+ *      would be a knife for imported art only.
  *
- * Three storage shapes, in the order `buildSnapshot` resolves them, so the
- * knife cuts the outline the renderer is actually drawing:
- *   1. `subpaths` — the multi-run form (an SVG import, a previous cut);
- *   2. `points` — the single-run shorthand;
- *   3. neither — a PRIMITIVE that has never been converted to a path.
- *
- * Case 3 is the one that makes the tool feel finished: a freshly drawn
- * rectangle has no stored points at all, and a knife that refused to cut the
- * shapes the shape tools produce would be a knife for imported art only.
+ * A multi-run outline (an SVG import, a previous cut: `Geometry.subpaths`) has
+ * no API property to read its runs from — it is not cut (null) rather than cut
+ * as a shape it isn't (docs: block 3 report, "Knife on multi-run shapes").
  */
-function readCutRuns(node: SceneNode): CutSubpath[] | null {
-  const geom = node.components.find((c) => c.type === 'Geometry');
-  const subs = geom?.props.subpaths as
-    | Array<{ points?: Array<Parameters<typeof toCutPoint>[0]>; open?: boolean }>
-    | undefined;
-  if (Array.isArray(subs) && subs.length > 0) {
-    const runs = subs
-      .map((r) => ({ points: (r.points ?? []).map(toCutPoint), open: r.open === true }))
-      .filter((r) => r.points.length >= 2);
-    return runs.length > 0 ? runs : null;
+function readCutRuns(id: string, layer: LayerInfo): CutSubpath[] | null {
+  const m = documentMirror();
+  const v = m.tree(id)?.nodes.get(SHAPE_PATH)?.value;
+  if (v?.kind === 'path' && v.value.vertices.length >= 4) {
+    const b = v.value;
+    const pts: CutPoint[] = [];
+    for (let i = 0; i < b.vertices.length / 2; i++) {
+      const x = b.vertices[2 * i]!;
+      const y = b.vertices[2 * i + 1]!;
+      pts.push(toCutPoint({
+        x, y,
+        inX: x + (b.inTangents[2 * i] ?? 0), inY: y + (b.inTangents[2 * i + 1] ?? 0),
+        outX: x + (b.outTangents[2 * i] ?? 0), outY: y + (b.outTangents[2 * i + 1] ?? 0),
+      }));
+    }
+    return [{ points: pts, open: !b.closed }];
   }
-  const pts = geom?.props.points as Array<Parameters<typeof toCutPoint>[0]> | undefined;
-  if (Array.isArray(pts) && pts.length >= 2) {
-    return [{ points: pts.map(toCutPoint), open: geom?.props.open === true }];
-  }
-  const g = readGeometry(node);
-  if (!g) return null;
-  // Only the two primitives whose outline `shapeOutline` actually knows. A
-  // polygon or a star would come back as a rectangle, and cutting a shape into
-  // halves of a shape it isn't is worse than not cutting it.
-  const primitive = g.ellipse ? 'ellipse' : 'rect';
-  const tProps = node.components.find((c) => c.type === 'Transform')?.props as
-    | Record<string, unknown>
-    | undefined;
-  const shapeType = tProps?.shapeType;
-  if (typeof shapeType === 'string' && shapeType !== 'rect' && shapeType !== 'rectangle' && shapeType !== 'ellipse') {
-    return null;
-  }
-  // A rounded rect's rounding is part of its outline: seeding the cut from the
-  // sharp rect made the knife split a shape the screen was not showing — the
-  // halves came back square-cornered. Same resolution (per-corner over uniform,
-  // CSS clamping, comp-px radii mapped through the layer's scale) as the
-  // renderer's own seed in `buildSnapshot`.
-  const corner = (key: keyof CornerRadiiProps): number | undefined => {
-    const v = tProps?.[key];
-    return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, v) : undefined;
+  // Only the two primitives whose outline `shapeOutline` actually knows: a
+  // polygon or a star would come back as a rectangle.
+  const shapeType = layer.shapeType;
+  if (shapeType !== 'rect' && shapeType !== 'rectangle' && shapeType !== 'ellipse') return null;
+  const box = boxOf(id);
+  const l = localAt(id);
+  if (!box || box[2] <= 0 || box[3] <= 0) return null;
+  const s = playheadSeconds();
+  const corner = (track: string): number | undefined => {
+    // A radius the layer does not STORE is absent (the API reports every
+    // property with its default filled in): per-corner over uniform only
+    // where a corner was set.
+    const info = trackRef(m, id, track)?.info;
+    if (!info || (!info.stored && !info.animated)) return undefined;
+    const n = readTrack(m, id, track, s);
+    return typeof n === 'number' && Number.isFinite(n) ? Math.max(0, n) : undefined;
   };
-  const radii = clampCornerRadii(g.width, g.height, resolveCornerRadii({
+  const radii = clampCornerRadii(box[2], box[3], resolveCornerRadii({
     cornerRadius: corner('cornerRadius'),
     cornerRadiusTL: corner('cornerRadiusTL'),
     cornerRadiusTR: corner('cornerRadiusTR'),
@@ -1957,58 +1306,42 @@ function readCutRuns(node: SceneNode): CutSubpath[] | null {
     cornerRadiusBL: corner('cornerRadiusBL'),
   }));
   const outline = shapeOutline(
-    primitive, g.width, g.height, 48, 0,
-    radii, [Math.abs(g.scaleX), Math.abs(g.scaleY)],
+    shapeType === 'ellipse' ? 'ellipse' : 'rect', box[2], box[3], 48, 0,
+    radii, [Math.abs(l?.scaleX ?? 1), Math.abs(l?.scaleY ?? 1)],
   );
   return outline.length >= 3 ? [runFromPolygon(outline)] : null;
 }
 
 /**
- * Knife — split each targeted layer's outline along a world-space line.
- *
- * ONE history entry for the whole gesture, even across several layers: the user
- * made one drag, and an undo that put back three of five cut layers would be a
- * worse state than either end of it. `flush` first, for the same reason every
- * other structural edit does it — a coalescing drag still open would otherwise
- * absorb this into itself.
- *
- * The halves stay on the SAME layer, as sibling runs, which is what the path
- * model already expresses (it is how a boolean's islands and an imported
- * icon's counters are stored). Splitting into sibling LAYERS would need new
- * ids, and layer ids are not stable across a session — so the pieces would be
- * unreachable by anything holding a reference, expressions included.
- */
-/*
- * The halves are one `setShapeOutline` per cut layer (the layer's runs as
- * `Geometry.subpaths`, its shape type `path`), all in ONE entry.
+ * Knife — split each targeted layer's outline along a world-space line, ONE
+ * history entry for the whole gesture. The halves stay on the SAME layer, as
+ * sibling runs: one `setShapeOutline` per cut layer.
  */
 function cutPaths(payload: CutPathsPayload): void {
-  const time = getTimelineController().currentSeconds;
+  const m = documentMirror();
   const cmds: Command[] = [];
 
   for (const rawId of payload.ids) {
     const id = rawId as string;
-    const node = defaultSceneGraph.getNode(id as ID);
-    if (!node || node.locked || !isLayer(id)) continue;
-    if (readNodeKind(node) !== 'shape') continue;
-    // An animated outline wins over stored geometry every frame, so a cut
-    // written to the static props would simply not appear (the engine refuses
-    // it). Silently doing nothing is better than writing geometry that never renders.
-    if (defaultAnimation.isDataAnimated(id, 'path.points')) continue;
+    const layer = unlockedLayer(id);
+    if (!layer || uiKindOf(layer) !== 'shape') continue;
+    // An animated outline wins over stored geometry every frame (the engine
+    // refuses a cut of it): doing nothing beats writing what never renders.
+    if (m.keyframes(id, SHAPE_PATH).length > 0) continue;
 
-    const runs = readCutRuns(node);
+    const runs = readCutRuns(id, layer);
     if (!runs) continue;
 
-    // The drag is measured in WORLD space; stored points are local and centred
-    // on the layer's own origin. One inverse per layer, so a single drag cuts a
-    // rotated child and its unrotated parent along the same visible line.
-    const inv = Matrix.invert(world2DAt(id, time));
+    // The drag is measured in WORLD space; stored points are local. One
+    // inverse per layer (its drawn content space: the chain with the anchor).
+    const world = contentWorld2D(id);
+    if (!world) continue;
+    const inv = Matrix.invert(world);
     const a = Matrix.transformPoint(inv, payload.a);
     const b = Matrix.transformPoint(inv, payload.b);
 
     const cut = cutPathsWithLine(runs, a, b);
-    // Identity: `cutPathsWithLine` hands back the input array when the line
-    // crossed nothing, so a miss costs no write and no undo entry.
+    // Identity: a line that crossed nothing costs no write and no undo entry.
     if (cut === runs) continue;
 
     cmds.push({
@@ -2072,5 +1405,3 @@ export function createCommandPort(viewOf?: () => Camera3dMode): CommandPort {
     },
   };
 }
-
-export { drawable as isDrawableKind, readNodeKind };

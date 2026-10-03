@@ -35,6 +35,7 @@ import {
   toggleClosed,
   toggleRotoBezier,
 } from './pathCommands';
+import { holdCanvasGeometry, releaseCanvasGeometry } from './__testHelpers__/canvasGeometry';
 
 const corner = (x: number, y: number): MaskPoint => ({ x, y, inX: x, inY: y, outX: x, outY: y });
 const tri = (s: number): MaskPoint[] => [corner(0, -s), corner(s, s), corner(-s, s)];
@@ -89,8 +90,10 @@ afterEach(async () => {
 describe('path payload switches reach the document', () => {
   it('closed / rotoBezier on a shape path write Geometry and show on the port', async () => {
     pathLayer('pp_flags', tri(40));
+    await holdCanvasGeometry();
     createCommandPort().execute(commands.updateNodePath('pp_flags' as never, tri(40), undefined, { closed: false, rotoBezier: true }));
     await settle();
+    await holdCanvasGeometry();
     expect(geomOf('pp_flags').open).toBe(true);
     expect(geomOf('pp_flags').rotoBezier).toBe(true);
     const wn = createSceneGraphPort().getNode('pp_flags')!;
@@ -102,6 +105,7 @@ describe('path payload switches reach the document', () => {
     pathLayer('pp_extend', tri(10), true);
     defaultAnimation.setDataKeyframe('pp_extend', 'path.points', 'points', 0, tri(10));
     defaultAnimation.setDataKeyframe('pp_extend', 'path.points', 'points', 2, tri(50));
+    await holdCanvasGeometry();
     createCommandPort().execute(
       commands.updateNodePath('pp_extend' as never, [...tri(10), corner(90, 90)], { op: 'extend', points: [corner(90, 90)], atStart: false }),
     );
@@ -111,11 +115,12 @@ describe('path payload switches reach the document', () => {
     for (const k of keys) expect((k.value as MaskPoint[])[3]).toMatchObject({ x: 90, y: 90 });
   });
 
-  it('an animated path keeps its vertices\' broken flags when read between keyframes', () => {
+  it('an animated path keeps its vertices\' broken flags when read between keyframes', async () => {
     pathLayer('pp_broken', tri(10));
     defaultAnimation.setDataKeyframe('pp_broken', 'path.points', 'points', 0, tri(10).map((p, i) => (i === 1 ? { ...p, broken: true } : p)));
     defaultAnimation.setDataKeyframe('pp_broken', 'path.points', 'points', 2, tri(50).map((p, i) => (i === 1 ? { ...p, broken: true } : p)));
     getTimelineController().seekSeconds(1);
+    await holdCanvasGeometry();
     const pts = createSceneGraphPort().getNode('pp_broken')!.pathPoints!;
     expect(pts[1]!.broken).toBe(true);
     expect(pts[0]!.broken).toBeUndefined();
@@ -125,6 +130,7 @@ describe('path payload switches reach the document', () => {
     add(layer('pp_mask', [
       { id: 'pp_mask_fx', type: 'fx', props: { mask: maskOf(10), maskAnim: [{ t: 0, mask: maskOf(10) }, { t: 4, mask: maskOf(50) }] } },
     ] as SceneNode['components']));
+    await holdCanvasGeometry();
     createCommandPort().execute(commands.updateMaskPath('pp_mask' as never, 'm1', square(10), { op: 'reverse' }, { closed: false }));
     await settle();
     const node = defaultSceneGraph.getNode('pp_mask' as ID)!;
@@ -138,6 +144,7 @@ describe('path payload switches reach the document', () => {
   it('split handles survive a reshape through the engine', async () => {
     pathLayer('pp_split', tri(10));
     const moved = tri(20).map((p, i) => (i === 1 ? { ...p, broken: true, tension: 0.2 } : p));
+    await holdCanvasGeometry();
     createCommandPort().execute(commands.updateNodePath('pp_split' as never, moved));
     await settle();
     expect((geomOf('pp_split').points as Array<MaskPoint & { broken?: boolean; tension?: number }>)[1]).toMatchObject({ x: 20, broken: true, tension: 0.2 });
@@ -148,9 +155,11 @@ describe('Layer ▸ Mask and Shape Path', () => {
   it('Closed toggles the selected layer\'s path', async () => {
     pathLayer('pc_closed', tri(40));
     useSelectionStore.getState().set(['pc_closed']);
+    await holdCanvasGeometry();
     expect(toggleClosed()).toBe(true);
     await settle();
     expect(geomOf('pc_closed').open).toBe(true);
+    await holdCanvasGeometry();
     expect(toggleClosed()).toBe(true);
     await settle();
     expect(geomOf('pc_closed').open).toBeUndefined();
@@ -161,6 +170,7 @@ describe('Layer ▸ Mask and Shape Path', () => {
     defaultAnimation.setDataKeyframe('pc_rev', 'path.points', 'points', 0, tri(10));
     defaultAnimation.setDataKeyframe('pc_rev', 'path.points', 'points', 1, tri(20));
     useSelectionStore.getState().set(['pc_rev']);
+    await holdCanvasGeometry();
     reversePathCommand();
     await settle();
     expect((geomOf('pc_rev').points as MaskPoint[])[0]).toMatchObject({ x: -40, y: 40 });
@@ -173,6 +183,7 @@ describe('Layer ▸ Mask and Shape Path', () => {
     pathLayer('pc_first', square(40));
     defaultAnimation.setDataKeyframe('pc_first', 'path.points', 'points', 1, square(20));
     useSelectionStore.getState().set(['pc_first']);
+    await holdCanvasGeometry();
     ds().selectVertices({ nodeId: 'pc_first', maskId: null }, [2]);
     expect(setFirstVertexCommand()).toBe(true);
     await settle();
@@ -190,6 +201,7 @@ describe('Layer ▸ Mask and Shape Path', () => {
   it('RotoBezier on computes handles and sets the switch', async () => {
     pathLayer('pc_roto', square(30));
     useSelectionStore.getState().set(['pc_roto']);
+    await holdCanvasGeometry();
     toggleRotoBezier();
     await settle();
     expect(geomOf('pc_roto').rotoBezier).toBe(true);
@@ -200,6 +212,7 @@ describe('Layer ▸ Mask and Shape Path', () => {
   it('Alt+Shift+M keys the path at the playhead', async () => {
     pathLayer('pc_key', tri(30));
     useSelectionStore.getState().set(['pc_key']);
+    await holdCanvasGeometry();
     expect(keyframePathAtPlayhead()).toBe(true);
     await settle();
     expect(defaultAnimation.isDataAnimated('pc_key', 'path.points')).toBe(true);
@@ -217,6 +230,7 @@ describe('mask ⇄ shape path clipboard', () => {
   it('copies a mask path and pastes it onto a shape layer\'s path', async () => {
     add(layer('pk_src', [{ id: 'pk_src_fx', type: 'fx', props: { mask: maskOf(25) } }] as SceneNode['components']));
     pathLayer('pk_dst', tri(40), true);
+    await holdCanvasGeometry();
     useUIStore.getState().setActiveTool('direct-select');
     useSelectionStore.getState().set(['pk_src']);
     ds().selectVertices({ nodeId: 'pk_src', maskId: 'm1' }, [0]);
@@ -233,3 +247,5 @@ describe('mask ⇄ shape path clipboard', () => {
     useUIStore.getState().setActiveTool('select');
   });
 });
+
+afterEach(() => releaseCanvasGeometry());

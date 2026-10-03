@@ -1,78 +1,22 @@
 /**
- * 3D gizmo transform I/O (ports.ts) — the read/write contract that fixes the
- * gizmo/object desync:
- *
- *   READ — sampleTransform3DAtPlayhead returns the ANIMATED value when a
- *           track exists (what the renderer draws), base props otherwise.
- *   WRITE — applyGizmo3DTransforms goes through the engine (B3): a property
- *           with a lit stopwatch keys at the playhead (a base-only write is
- *           invisible there, because the renderer samples the track first),
- *           a static one takes the value. Props NOT in the update are never
- *           touched. One undo entry per call; undo restores exactly.
+ * 3D gizmo transform writes (ports.ts): applyGizmo3DTransforms goes through
+ * the engine (B3): a property with a lit stopwatch keys at the playhead (a
+ * base-only write is invisible there, because the renderer samples the track
+ * first), a static one takes the value. Props NOT in the update are never
+ * touched. One undo entry per call; undo restores exactly. (The READ side is
+ * the overlay push's scene3d record — core/mirror/viewGeometry.ts transform3DOf.)
  */
 
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import type { SceneNode } from '@core/types';
 import { engineIdle as engineQueueIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { sampleTransform3DAtPlayhead, applyGizmo3DTransforms } from './ports';
+import { applyGizmo3DTransforms } from './ports';
 import { settleToolEdits } from './viewportGesture';
-
-const NODE = 'gizmo3d-ports-node';
-const TRANS = `${NODE}_t`;
-const ALL_PROPS = ['x', 'y', 'z', 'rotationX', 'rotationY', 'rotation', 'scaleX', 'scaleY', 'scale'] as const;
-
-function makeNode(): SceneNode {
-  return {
-    id: NODE, name: NODE, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 100, y: 200 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      {
-        id: TRANS,
-        type: 'Transform',
-        props: {
-          [SCENE_KIND_PROP]: 'shape',
-          x: 100, y: 200, rotation: 0, scaleX: 1, scaleY: 1, opacity: 100,
-          // 3D-enabled layer (depth props present)
-          z: 0, rotationX: 0, rotationY: 0,
-        },
-      },
-    ],
-  } as unknown as SceneNode;
-}
-
-describe('sampleTransform3DAtPlayhead', () => {
-  beforeEach(() => {
-    defaultSceneGraph.addNode(makeNode());
-  });
-
-  afterEach(() => {
-    for (const p of ALL_PROPS) defaultAnimation.removeTrack(NODE, p);
-    try { defaultSceneGraph.removeNode(NODE); } catch { /* already gone */ }
-  });
-
-  it('returns base transform props when nothing is animated', () => {
-    const tv = sampleTransform3DAtPlayhead(defaultSceneGraph.getNode(NODE)!);
-    expect(tv).toEqual({
-      x: 100, y: 200, z: 0, rotationX: 0, rotationY: 0, rotation: 0, scaleX: 1, scaleY: 1, scaleZ: 1,
-    });
-  });
-
-  it('animated tracks win over base props (what the renderer draws)', () => {
-    defaultAnimation.setKeyframe(NODE, 'x', 0, 555);
-    defaultAnimation.setKeyframe(NODE, 'rotationY', 0, 45);
-    const tv = sampleTransform3DAtPlayhead(defaultSceneGraph.getNode(NODE)!);
-    expect(tv.x).toBe(555); // NOT the stale base 100 the old gizmo anchored on
-    expect(tv.rotationY).toBe(45);
-    expect(tv.y).toBe(200); // un-animated props still read the base
-  });
-});
 
 describe('applyGizmo3DTransforms', () => {
   let h: Harness & { engine: LocalEngine };

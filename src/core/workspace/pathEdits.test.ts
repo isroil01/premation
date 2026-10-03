@@ -18,6 +18,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import type { BezierPath } from '@motion/engine-api';
 import { createSceneGraphPort } from './ports';
+import { holdCanvasGeometry, releaseCanvasGeometry } from './__testHelpers__/canvasGeometry';
 import { getWorkspaceController } from './WorkspaceController';
 import {
   clearPathClipboard,
@@ -95,6 +96,7 @@ describe('Mask and Shape Path verbs on masks go through the engine', () => {
   it('Closed opens a static mask', async () => {
     const { layer, mask } = await maskedSolid(square(20));
     useSelectionStore.getState().set([layer]);
+    await holdCanvasGeometry();
     await oneEntry('Closed', () => expect(toggleClosed()).toBe(true), () => {
       expect(staticPath(layer, mask).closed).toBe(false);
     });
@@ -104,6 +106,7 @@ describe('Mask and Shape Path verbs on masks go through the engine', () => {
     const { layer, mask } = await maskedSolid(square(20));
     await animate(layer, mask, square(40));
     useSelectionStore.getState().set([layer]);
+    await holdCanvasGeometry();
     await oneEntry('Reverse Path Direction', () => expect(reversePathCommand()).toBe(true), () => {
       const keys = keyPaths(layer, mask);
       expect(keys).toHaveLength(2);
@@ -117,6 +120,7 @@ describe('Mask and Shape Path verbs on masks go through the engine', () => {
     const { layer, mask } = await maskedSolid(square(20));
     await animate(layer, mask, square(40));
     useSelectionStore.getState().set([layer]);
+    await holdCanvasGeometry();
     await oneEntry('Closed', () => toggleClosed(), () => {
       for (const p of keyPaths(layer, mask)) expect(p.closed).toBe(false);
     });
@@ -125,6 +129,7 @@ describe('Mask and Shape Path verbs on masks go through the engine', () => {
   it('Set First Vertex rotates the mask and its per-vertex feathers move with the vertices', async () => {
     const { layer, mask } = await maskedSolid({ ...square(20), featherPoints: [{ segment: 2, t: 0, radius: 7, tension: 0 }] });
     useSelectionStore.getState().set([layer]);
+    await holdCanvasGeometry();
     ds().selectVertices({ nodeId: layer as never, maskId: mask }, [2]);
     await oneEntry('Set First Vertex', () => expect(setFirstVertexCommand()).toBe(true), () => {
       const pts = staticPath(layer, mask).points;
@@ -139,6 +144,7 @@ describe('Mask and Shape Path verbs on masks go through the engine', () => {
     await animate(layer, mask, square(40));
     getTimelineController().seekSeconds(0.5);
     useSelectionStore.getState().set([layer]);
+    await holdCanvasGeometry();
     await oneEntry('Set Path Keyframe', () => expect(keyframePathAtPlayhead()).toBe(true), () => {
       const anim = readNodeMaskAnim(defaultSceneGraph.getNode(layer)!);
       expect(anim).toHaveLength(3);
@@ -152,6 +158,7 @@ describe('Mask and Shape Path verbs on masks go through the engine', () => {
   it('a mask with split handles goes through the engine too: its handles stay split', async () => {
     const { layer, mask } = await maskedSolid({ ...square(20), vertexStates: [{ vertex: 1, broken: true }] });
     useSelectionStore.getState().set([layer]);
+    await holdCanvasGeometry();
     await oneEntry('Closed', () => expect(toggleClosed()).toBe(true), () => {
       expect(staticPath(layer, mask).closed).toBe(false);
       expect((staticPath(layer, mask).points[1] as MaskPoint & { broken?: boolean }).broken).toBe(true);
@@ -184,6 +191,7 @@ describe('Convert Mask to Shape Layer', () => {
   it('draws the mask outline where it was, as ONE entry that undo removes', async () => {
     const { layer } = await maskedSolid(square(10), 'Conv');
     useSelectionStore.getState().set([layer]);
+    await holdCanvasGeometry();
     const before = h.doc();
     const entries = historyLabels().length;
     const ids = await convertMasksToShapeLayers();
@@ -244,6 +252,7 @@ describe('drawn shape paths go through the engine', () => {
   it('Closed on a drawn path', async () => {
     const layer = await drawnPath(30);
     useSelectionStore.getState().set([layer]);
+    await holdCanvasGeometry();
     await engineEntry('Closed', () => expect(toggleClosed()).toBe(true), () => {
       expect(geomOf(layer).open).toBe(true);
     });
@@ -252,6 +261,7 @@ describe('drawn shape paths go through the engine', () => {
   it('Reverse Path Direction on a drawn path', async () => {
     const layer = await drawnPath(30);
     useSelectionStore.getState().set([layer]);
+    await holdCanvasGeometry();
     await engineEntry('Reverse Path Direction', () => expect(reversePathCommand()).toBe(true), () => {
       expect((geomOf(layer).points as MaskPoint[])[0]).toMatchObject({ x: -30, y: 30 });
     });
@@ -261,6 +271,7 @@ describe('drawn shape paths go through the engine', () => {
     // (The Path row's stopwatch is the generic property stopwatch: layout/Menu/appEdits.test.ts.)
     const layer = await drawnPath(30);
     useSelectionStore.getState().set([layer]);
+    await holdCanvasGeometry();
     await engineEntry('Set Path Keyframe', () => expect(keyframePathAtPlayhead()).toBe(true), () => {
       expect(defaultAnimation.getDataTrack(layer, 'path.points')!.keyframes).toHaveLength(1);
     });
@@ -270,3 +281,5 @@ describe('drawn shape paths go through the engine', () => {
     });
   });
 });
+
+afterEach(() => releaseCanvasGeometry());

@@ -2665,13 +2665,12 @@ void drop_keys(const PCtx& c, std::string_view layer, const PropBinding& b, cons
 std::optional<api::Value> value_at(const PCtx& c, std::string_view layer, const PropBinding& b, double t) {
   const Document& d = c.d;
   if (b.special == Special::maskPath) {
-    const std::vector<KeyAt> keys = read_keys(d, layer, b);
-    const KeyAt* k = nullptr;
-    for (const KeyAt& x : keys) {
-      if (x.t <= t) k = &x;
-    }
-    if (k == nullptr && !keys.empty()) k = &keys[0];
-    return k != nullptr ? k->value : read_static(d, layer, b);
+    // The shape DRAWN at `t`: the mask keys interpolated as the renderer reads
+    // them (interpolate_mask, scene readers' read_node_mask_at), not the key at
+    // or before it.
+    const std::optional<Json> m = interpolate_mask(read_node_mask_anim(node_of(d, layer)), t);
+    const Json* p = m ? mask_path_by_id(*m, *b.maskId) : nullptr;
+    return p != nullptr ? v_path(mask_to_bezier(*p)) : read_static(d, layer, b);
   }
   if (b.dataTrack) {
     const DataTrack* tr = anim_data_track(d, layer, *b.dataTrack);

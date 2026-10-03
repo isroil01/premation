@@ -43,6 +43,7 @@ import {
 } from '@core/scene/sceneInsert';
 import { reparentNode } from './parenting';
 import type { SceneNode } from '@core/types';
+import { holdCanvasGeometry, releaseCanvasGeometry } from '@core/workspace/__testHelpers__/canvasGeometry';
 
 function layer(id: string, kind: string, x: number, y: number, extra: Record<string, unknown> = {}): SceneNode {
   return {
@@ -175,6 +176,7 @@ describe('commands that must respect the PARENT chain', () => {
     expect(poseAt('rc', 1).rotation).toBeCloseTo(0, 3);
 
     // The tool always sends the ABSOLUTE angle it measured off the world matrix.
+    await holdCanvasGeometry();
     createCommandPort().execute(commands.rotateNode('rc', (10 * Math.PI) / 180, { x: 0, y: 0 }) as never);
     await engineIdle(); // an engine command (B3): lands asynchronously
 
@@ -189,7 +191,9 @@ describe('commands that must respect the PARENT chain', () => {
     const before = poseAt('sc', 1);
     expect(before).toMatchObject({ x: 100, scaleX: 1 });
 
+    await holdCanvasGeometry();
     const box = [...createSceneGraphPort().getNodes()].find((n) => n.id === 'sc')!.worldBounds;
+    await holdCanvasGeometry();
     createCommandPort().execute(commands.resizeNode(
       'sc',
       { x: box.x, y: box.y, width: box.width * 1.5, height: box.height * 1.5 },
@@ -259,12 +263,13 @@ describe('container commands preserve the pose of an ANIMATED layer', () => {
 });
 
 describe('a group’s box answers two different questions', () => {
-  test('the CHROME box follows the children through their animation', () => {
+  test('the CHROME box follows the children through their animation', async () => {
     add(layer('gg', 'group', 0, 0));
     const kid = layer('kid', 'shape', 0, 0);
     defaultSceneGraph.addChild('gg', kid);
     defaultAnimation.setKeyframes('kid', 'x', [{ t: 0, value: 0 }, { t: 2, value: 800 }]);
 
+    await holdCanvasGeometry();
     const chrome = [...createSceneGraphPort().getNodes()].find((n) => n.id === 'gg')!;
     // The child is at 400 right now, so the selection box is centred there —
     // measured from base props it sat at 0, where nothing was drawn.
@@ -282,3 +287,5 @@ describe('a group’s box answers two different questions', () => {
     expect(readGeometry(defaultSceneGraph.getNode('gl')!)!.offsetX).toBeCloseTo(0, 3);
   });
 });
+
+afterEach(() => releaseCanvasGeometry());

@@ -25,6 +25,7 @@ import type { SceneNode, ID } from '@core/types';
 import { createCommandPort, createSceneGraphPort } from './ports';
 import { engineIdle } from '@core/engine/engineInstance';
 import { settleToolEdits } from './viewportGesture';
+import { holdCanvasGeometry, releaseCanvasGeometry } from './__testHelpers__/canvasGeometry';
 
 const corner = (x: number, y: number): MaskPoint => ({ x, y, inX: x, inY: y, outX: x, outY: y });
 const tri = (s: number): MaskPoint[] => [corner(0, -s), corner(s, s), corner(-s, s)];
@@ -84,8 +85,9 @@ describe('an ANIMATED shape path', () => {
     defaultAnimation.setDataKeyframe(ID_, 'path.points', 'points', 2, tri(50));
   };
 
-  it('shows Direct Selection the vertices the renderer draws, not the static ones', () => {
+  it('shows Direct Selection the vertices the renderer draws, not the static ones', async () => {
     setup();
+    await holdCanvasGeometry();
     const pts = createSceneGraphPort().getNode(ID_)!.pathPoints!;
     expect(pts[0]).toMatchObject({ x: 0, y: -10 });
   });
@@ -94,6 +96,7 @@ describe('an ANIMATED shape path', () => {
     setup();
     getTimelineController().seekSeconds(1);
     const t = compToKeyframeTime(ID_, 1);
+    await holdCanvasGeometry();
     createCommandPort().execute(commands.updateNodePath(ID_ as never, tri(33)));
     await settle();
 
@@ -107,6 +110,7 @@ describe('an ANIMATED shape path', () => {
 
   it('adding a vertex replays on EVERY keyframe, so they keep one count', async () => {
     setup();
+    await holdCanvasGeometry();
     createCommandPort().execute(
       commands.updateNodePath(ID_ as never, tri(10), { op: 'insert', segment: 0, u: 0.5 }),
     );
@@ -131,6 +135,7 @@ describe('a vertex added / deleted on an ANIMATED mask', () => {
   it('insert lands in every keyframe (and the static mask), not only at the playhead', async () => {
     setup();
     getTimelineController().seekSeconds(2);
+    await holdCanvasGeometry();
     createCommandPort().execute(
       commands.updateMaskPath(ID_ as never, 'm1', square(30), { op: 'insert', segment: 0, u: 0.5 }),
     );
@@ -145,6 +150,7 @@ describe('a vertex added / deleted on an ANIMATED mask', () => {
 
   it('delete removes the same index everywhere', async () => {
     setup();
+    await holdCanvasGeometry();
     createCommandPort().execute(
       commands.updateMaskPath(ID_ as never, 'm1', square(30).slice(1), { op: 'delete', index: 0 }),
     );
@@ -172,6 +178,7 @@ describe('a Pen outline closed on its first vertex', () => {
   };
 
   it('becomes a closed, FILLED shape', async () => {
+    await holdCanvasGeometry();
     createCommandPort().execute(commands.createNode('Path', { x: 0, y: 0, width: 100, height: 80 }, OUTLINE, undefined, true));
     await drawn(); // a drawn layer is an engine insert (B3)
     const node = created();
@@ -179,14 +186,17 @@ describe('a Pen outline closed on its first vertex', () => {
     expect(geom.props.open).toBeUndefined();
     const fill = node.components.find((c) => c.type === 'Style')!.props.fill;
     expect(fill).not.toBe('rgba(0,0,0,0)');
+    await holdCanvasGeometry();
     expect(createSceneGraphPort().getNode(node.id as string)!.pathClosed).toBe(true);
   });
 
   it('CONTROL: an unclosed Pen outline is still an open stroke', async () => {
+    await holdCanvasGeometry();
     createCommandPort().execute(commands.createNode('Path', { x: 0, y: 0, width: 100, height: 80 }, OUTLINE));
     await drawn();
     const node = created();
     expect(node.components.find((c) => c.type === 'Geometry')!.props.open).toBe(true);
+    await holdCanvasGeometry();
     expect(createSceneGraphPort().getNode(node.id as string)!.pathClosed).toBe(false);
   });
 });
@@ -195,6 +205,7 @@ describe('a Mask Pen outline on an anchored layer', () => {
   it('lands where it was clicked — through the viewport\'s own matrix, anchor included', async () => {
     const ID_ = 'pen_mask_anchor';
     add(layer(ID_, [], { anchorX: 50, anchorY: -20 }));
+    await holdCanvasGeometry();
     const wm = createSceneGraphPort().getNode(ID_)!.worldMatrix;
     // Guard: the anchor really moves the layer's content, or this proves nothing.
     expect(Mat.apply(wm, { x: 0, y: 0 }).x).toBeCloseTo(250);
@@ -204,6 +215,7 @@ describe('a Mask Pen outline on an anchored layer', () => {
     const world = [{ x: 280, y: 200 }, { x: 340, y: 200 }, { x: 310, y: 260 }];
     const bounds = { x: 280, y: 200, width: 60, height: 60 };
     const local = world.map((p) => corner(p.x - 310, p.y - 230));
+    await holdCanvasGeometry();
     createCommandPort().execute(commands.createNode('Path', bounds, local, ID_));
     await engineIdle(); // New Mask is an engine command (B3)
 
@@ -219,3 +231,5 @@ describe('a Mask Pen outline on an anchored layer', () => {
     expect(pts[0]).toMatchObject({ x: 30, y: -20 });
   });
 });
+
+afterEach(() => releaseCanvasGeometry());

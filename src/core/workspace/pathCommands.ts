@@ -39,15 +39,12 @@ import {
   type ToolContext,
   type CreateNodePayload,
 } from '@motion/workspace';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { asCommandId } from '@app-types/common';
 import type { Command } from '@core/commands/Command';
 import type { Command as EngineCommand } from '@motion/engine-api';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { readNodeMask } from '@core/effects/mask';
+import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import type { ID } from '@core/types';
 import { getWorkspaceController } from './WorkspaceController';
 import { createSceneGraphPort, insertDrawnLayers } from './ports';
 import {
@@ -67,6 +64,12 @@ import {
 
 /** The animation path of a shape layer's whole-path track (AE's Path property). */
 export const PATH_ANIM_PROP = 'path.points';
+
+/** The active tab's playhead, comp seconds (the time the tools write at). */
+function playheadSeconds(): number {
+  const s = useProjectStore.getState();
+  return s.tabs[s.activeTabId ?? '']?.time ?? 0;
+}
 
 function notify(message: string, level: 'success' | 'warning' | 'info' = 'info'): void {
   useUIStore.getState().notify({ level, message, durationMs: 2600 });
@@ -251,7 +254,7 @@ export function keyframePathAtPlayhead(): boolean {
     notify('Select a path or mask to keyframe', 'warning');
     return false;
   }
-  const now = getTimelineController().currentSeconds;
+  const now = playheadSeconds();
   const scene = outlineContext().scene;
   const cmds: EngineCommand[] = [];
   const maskedLayers = new Set<string>();
@@ -312,7 +315,7 @@ export function pastePathEdit(): boolean {
   const targets = engineTargets(resolvePathTargets());
   if (targets.length === 0) return false;
   const clip = pathClipboard;
-  sendVerb('Paste Path', pasteCommands('Paste Path', targets.map(targetOf), clip.points, clip.closed, getTimelineController().currentSeconds));
+  sendVerb('Paste Path', pasteCommands('Paste Path', targets.map(targetOf), clip.points, clip.closed, playheadSeconds()));
   directSelection()?.clearVertexSelection();
   return true;
 }
@@ -341,8 +344,7 @@ export async function convertMasksToShapeLayers(): Promise<string[]> {
   const jobs: Array<{ world: BezierPoint[]; closed: boolean }> = [];
   for (const id of ids) {
     const node = scene.getNode(id);
-    const raw = defaultSceneGraph.getNode(id as ID);
-    if (!node || !raw || !readNodeMask(raw)) continue;
+    if (!node || !node.maskPaths?.length) continue;
     for (const o of outlinesOfNode(node)) {
       if (o.maskId === null) continue;
       jobs.push({

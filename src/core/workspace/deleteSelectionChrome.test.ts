@@ -15,6 +15,7 @@ import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { settleToolEdits } from './viewportGesture';
 import { getWorkspaceController } from './WorkspaceController';
+import { holdCanvasGeometry, releaseCanvasGeometry } from './__testHelpers__/canvasGeometry';
 
 async function engineIdle(): Promise<void> {
   await settleToolEdits();
@@ -50,6 +51,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   jest.restoreAllMocks();
+  releaseCanvasGeometry();
   await engineIdle();
   await h.dispose();
 });
@@ -75,6 +77,7 @@ describe('deleting selected layers', () => {
     const ticks: string[][] = [];
     const off = c.onRender(() => { ticks.push(c.ws.overlay().selectionBoxes.map((b) => b.id)); });
     useSelectionStore.getState().set([s.A]);
+    await holdCanvasGeometry();
     runFrames();
     expect(ticks.at(-1)).toEqual([s.A]);
 

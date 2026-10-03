@@ -20,6 +20,7 @@ import { insertSvgLayer, insertSvgShapeGroup } from '@core/scene/sceneInsert';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { createSceneGraphPort } from './ports';
+import { holdCanvasGeometry, releaseCanvasGeometry } from './__testHelpers__/canvasGeometry';
 import { isDrawableKind, readGeometry } from './geometry';
 
 /** 240×120 so a default-square fallback (100×100) cannot pass by accident. */
@@ -51,15 +52,17 @@ describe('a static SVG layer is a first-class canvas object', () => {
     expect(g!.height).toBeCloseTo(120, 0);
   });
 
-  it('is emitted by the scene-graph port, so the viewport can see it at all', () => {
+  it('is emitted by the scene-graph port, so the viewport can see it at all', async () => {
     const id = insertSvgLayer(ICON, 'icon.svg')!;
+    await holdCanvasGeometry();
     const port = createSceneGraphPort();
     expect(port.getNode(id as never)).toBeDefined();
     expect([...port.getNodes()].some((n) => n.id === id)).toBe(true);
   });
 
-  it('hit-tests inside its box and rejects points outside it', () => {
+  it('hit-tests inside its box and rejects points outside it', async () => {
     const id = insertSvgLayer(ICON, 'icon.svg')!;
+    await holdCanvasGeometry();
     const wn = createSceneGraphPort().getNode(id as never)!;
     // hitTestLocal works in the layer's own space, centred on its origin.
     expect(wn.hitTestLocal?.({ x: 0, y: 0 })).toBe(true);
@@ -68,8 +71,9 @@ describe('a static SVG layer is a first-class canvas object', () => {
     expect(wn.hitTestLocal?.({ x: 0, y: 400 })).toBe(false);
   });
 
-  it('has a selection box the size of the artwork', () => {
+  it('has a selection box the size of the artwork', async () => {
     const id = insertSvgLayer(ICON, 'icon.svg')!;
+    await holdCanvasGeometry();
     const wn = createSceneGraphPort().getNode(id as never)!;
     expect(wn.worldBounds.width).toBeCloseTo(240, 0);
     expect(wn.worldBounds.height).toBeCloseTo(120, 0);
@@ -78,8 +82,9 @@ describe('a static SVG layer is a first-class canvas object', () => {
 });
 
 describe('the animated import route is unchanged', () => {
-  it('still converts to shape layers, which stay selectable', () => {
+  it('still converts to shape layers, which stay selectable', async () => {
     const groupId = insertSvgShapeGroup(ANIMATED, 'spin.svg')!;
+    await holdCanvasGeometry();
     expect(groupId).not.toBeNull();
     // The converted result is NOT an svg-kind layer — it is real geometry, and
     // the parts under it carry the shapes.
@@ -91,3 +96,5 @@ describe('the animated import route is unchanged', () => {
     }
   });
 });
+
+afterAll(() => releaseCanvasGeometry());
