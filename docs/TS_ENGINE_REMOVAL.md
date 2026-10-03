@@ -412,6 +412,18 @@ cache). What still references the TypeScript renderer, effects and evaluation
    the C++ binary or go with the behaviour they tested. Then delete the
    evaluation, media, text, audio, paint, svg, scene and animation runtime —
    minus the document helpers the UI keeps (relocated).
+   **Done 2026-10-03 — the app keeps no replica.** Every app reader moved
+   (`scripts/lint/replicaReach.cjs`: 0 reached declarations, `await import()`
+   followed); keyframe assistants run on a scratch `AnimationEngine` seeded
+   from `getMemberKeyframes` and send `setMemberKeyframes`
+   (`core/engine/memberEdits.ts`), comp ↔ keyframe-axis times come from
+   `mapLayerTime keyframeAxis` (both ways) and the overlay push (`pathNow[3]`),
+   paint continues with `updatePaintStroke append`. `engineInstance` creates no
+   LocalEngine when the engine owns the document; `OwnedEngineClient` forwards
+   nothing; `replicaRefresh` / `animEditBridge` are deleted. Undo / redo state,
+   the History panel, per-node inspector revisions and the chrome repaint read
+   the mirror. **Still open:** the harness suites (≈340 of 1 097 still boot the
+   LocalEngine or touch its singletons) and, after them, the runtime deletion.
 4. Sweep: parity generators + the TS harness, `packages/render-tests`' TS side
    (the native golden gate stays), native-bridge + napi, the eslint layering
    and ratchet configs, `EditorTabs`, deps (mp4box, polygon-clipping;
