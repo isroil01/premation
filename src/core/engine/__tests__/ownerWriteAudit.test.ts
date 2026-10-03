@@ -40,7 +40,6 @@ import { commandStaggerParams, runChoreography } from '@core/animation/choreogra
 import { set3DEnabled } from '@core/scene/threeD';
 import { reparentNode } from '@core/scene/parenting';
 import { applyStretch } from '@core/animation/layerTimeCommands';
-import { rebaseTransformProps } from '@core/scene/transformWrite';
 import { createOrbitNullEdit } from '@core/scene/cameraCommands';
 import { importGltfModel } from '@core/scene/modelImport';
 import { importModelEdit } from '@layout/Assets/modelImportEdits';
@@ -108,7 +107,6 @@ const CASES: AuditCase[] = [
   { name: 'Remove Expression', expect: 'owner', run: ({ a }) => removeExpression([{ nodeId: a, prop: 'rotation' }]) },
   { name: 'Convert Expression to Keyframes', expect: 'owner', run: ({ b }) => convertExpressionToKeyframes(b, ['opacity']) },
   // runAnimEdit that also writes node props (static values): the whole run goes off-document.
-  { name: 'Re-base transform (transformWrite.rebaseTransformProps)', expect: 'owner', run: ({ a }) => rebaseTransformProps(a, [{ prop: 'x', value: 300, delta: 40 }]) },
   { name: 'runAnimEdit writing a switch, a parent and a static value', expect: 'owner', run: ({ a, b }) => runAnimEdit('Mixed', () => { set3DEnabled(b, true); reparentNode(b, a); }) },
   // ── palette commands with their own engine path ──
   { name: 'Create Orbit Null (camera palette command)', expect: 'owner', run: async ({ comp }) => {

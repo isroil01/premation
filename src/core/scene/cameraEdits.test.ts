@@ -7,8 +7,8 @@ import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appE
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { engineIdle } from '@core/engine/engineInstance';
-import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { is3DEnabled } from './threeD';
 import { distributeLayersInZ, focusDepthToLayer, linkFocusDistanceToLayer, setFocusDistanceToLayer } from './cameraCommands';
@@ -45,14 +45,14 @@ it('Set Focus Distance to Layer writes the axial depth, drops a Link expression 
   const subject = await layer('solid', 'Subject');
   await h.run({ type: 'setLayerSwitches', layers: [subject], patch: { threeD: true } });
   await h.run({ type: 'setProperty', prop: { layer: subject, path: 'transform/position' }, value: pos(900, 500, 500) });
-  expect(linkFocusDistanceToLayer(cam, subject)).toBe(true);
+  expect(await linkFocusDistanceToLayer(cam, subject)).toBe(true);
   await engineIdle();
-  const depth = focusDepthToLayer(defaultSceneGraph.getNode(cam)!, defaultSceneGraph.getNode(subject)!, 0)!;
+  const depth = (await focusDepthToLayer(cam, subject, 0))!;
   let written: number | null = null;
   await oneEntry('Set Focus Distance to Layer', async () => { written = await setFocusDistanceToLayer(cam, subject, 0); });
   expect(written).toBeCloseTo(depth, 6);
   expect(stored(cam, 'focusDistance')).toBeCloseTo(depth, 1);
-  expect(defaultAnimation.getExpressionSrc(cam, 'focusDistance') ?? '').toBe('');
+  expect(documentMirror().property(cam, 'camera/focusDistance')?.expression ?? '').toBe('');
 });
 
 it('Distribute Layers in Z makes the layers 3D and spreads them in depth — one entry', async () => {

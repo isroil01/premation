@@ -48,6 +48,13 @@ export type CameraWorldOf = (
   point: { x: number; y: number; z: number },
 ) => { x: number; y: number; z: number };
 
+/** The camera props `cameraFromValues` reads (stored units; absent = not set on the camera). */
+export const CAMERA_VALUE_PROPS = [
+  'x', 'y', 'z', 'focalLength', 'orbitYaw', 'orbitPitch', 'poiX', 'poiY', 'poiZ',
+  'orientationX', 'orientationY', 'orientationZ',
+] as const;
+export type CameraValues = Partial<Record<(typeof CAMERA_VALUE_PROPS)[number], number>>;
+
 /** Read x/y/z/focalLength/orbit off a camera node's components (animated values win). */
 export function cameraFromNode(
   node: SceneNode,
@@ -56,49 +63,42 @@ export function cameraFromNode(
   sample?: CameraSample,
   worldOf?: CameraWorldOf,
 ): Camera3D {
-  const def = Project3D.defaultCamera(width, height);
-  let x: number | undefined, y: number | undefined, z: number | undefined, focal: number | undefined;
-  let yaw: number | undefined, pitch: number | undefined;
-  let poiX: number | undefined, poiY: number | undefined, poiZ: number | undefined;
-  let rollProp: number | undefined;
-  let oriXProp: number | undefined, oriYProp: number | undefined;
+  const v: CameraValues = {};
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
-    rollProp = num(p.orientationZ) ?? rollProp;
-    oriXProp = num(p.orientationX) ?? oriXProp;
-    oriYProp = num(p.orientationY) ?? oriYProp;
-    x = num(p.x) ?? x;
-    y = num(p.y) ?? y;
-    z = num(p.z) ?? z;
-    focal = num(p.focalLength) ?? focal;
-    yaw = num(p.orbitYaw) ?? yaw;
-    pitch = num(p.orbitPitch) ?? pitch;
-    poiX = num(p.poiX) ?? poiX;
-    poiY = num(p.poiY) ?? poiY;
-    poiZ = num(p.poiZ) ?? poiZ;
+    for (const k of CAMERA_VALUE_PROPS) v[k] = num(p[k]) ?? v[k];
   }
   // Keyframed values beat the static props; unkeyframed props fall through
   // unchanged, so a camera with no animation resolves exactly as before.
-  x = sample?.(node.id, 'x') ?? x;
-  y = sample?.(node.id, 'y') ?? y;
-  z = sample?.(node.id, 'z') ?? z;
-  focal = sample?.(node.id, 'focalLength') ?? focal;
-  yaw = sample?.(node.id, 'orbitYaw') ?? yaw;
-  pitch = sample?.(node.id, 'orbitPitch') ?? pitch;
-  poiX = sample?.(node.id, 'poiX') ?? poiX;
-  poiY = sample?.(node.id, 'poiY') ?? poiY;
-  poiZ = sample?.(node.id, 'poiZ') ?? poiZ;
-  const focalLength = focal ?? def.focalLength;
+  for (const k of CAMERA_VALUE_PROPS) v[k] = sample?.(node.id, k) ?? v[k];
+  return cameraFromValues(v, width, height, worldOf && ((p) => worldOf(node.id, p)));
+}
+
+/**
+ * The camera a set of camera props resolves to (`cameraFromNode`'s rule, the
+ * values already read — the document mirror's twin hands in the engine's
+ * evaluated values). `lift` takes a point from the camera's PARENT space to
+ * world space (identity when absent).
+ */
+export function cameraFromValues(
+  values: CameraValues,
+  width: number,
+  height: number,
+  lift?: (p: { x: number; y: number; z: number }) => { x: number; y: number; z: number },
+): Camera3D {
+  const def = Project3D.defaultCamera(width, height);
+  const { x, y, z, orbitYaw: yaw, orbitPitch: pitch, poiX, poiY, poiZ } = values;
+  const focalLength = values.focalLength ?? def.focalLength;
   // A camera with no explicit z sits pulled back by its focal length (so the
   // comp plane renders 1:1), matching the default camera.
   //
-  // `worldOf` then composes the parent chain, so a camera parented to a null
+  // `lift` then composes the parent chain, so a camera parented to a null
   // moves, orbits and dollies with it. The eye AND the point of interest go
   // through the same lift: transforming only the eye would swing the camera
   // around a target that stayed pinned in comp space, which reads as the shot
   // sliding off its subject as the rig moves.
-  const lift = worldOf ?? ((_id: string, p: { x: number; y: number; z: number }) => p);
-  const basePosition = lift(node.id, {
+  const toWorld = lift ?? ((p: { x: number; y: number; z: number }) => p);
+  const basePosition = toWorld({
     x: x ?? def.position.x,
     y: y ?? def.position.y,
     z: z ?? -focalLength,
@@ -111,7 +111,7 @@ export function cameraFromNode(
   // Camera ROLL (a dutch angle): spins the frame about the view axis without
   // re-aiming. Stored as `orientationZ` to match the layer transform naming, so
   // the inspector row and the keyframe track look like every other rotation.
-  const roll = sample?.(node.id, 'orientationZ') ?? rollProp ?? 0;
+  const roll = values.orientationZ ?? 0;
 
   /**
    * IN-PLACE rotation — the tripod pan and tilt (AE's camera X/Y Rotation).
@@ -133,8 +133,8 @@ export function cameraFromNode(
    * that moves it, so these rotate about the eye rather than about the POI or
    * the comp centre.
    */
-  const oriX = sample?.(node.id, 'orientationX') ?? oriXProp ?? 0;
-  const oriY = sample?.(node.id, 'orientationY') ?? oriYProp ?? 0;
+  const oriX = values.orientationX ?? 0;
+  const oriY = values.orientationY ?? 0;
 
   const withOrientation = (o: { yaw: number; pitch: number }) => {
     const composed = { yaw: o.yaw + oriY, pitch: o.pitch + oriX };
@@ -145,7 +145,7 @@ export function cameraFromNode(
 
   const hasPOI = poiX !== undefined || poiY !== undefined || poiZ !== undefined;
   if (hasPOI) {
-    const poi = lift(node.id, {
+    const poi = toWorld({
       x: poiX ?? def.principal.x,
       y: poiY ?? def.principal.y,
       z: poiZ ?? 0,

@@ -1,15 +1,25 @@
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation, resolveLayerRef } from '@motion/animation';
+/**
+ * The camera-rig verbs over the engine's document: reads from the mirror and
+ * engine queries, writes as engine commands (cameraEdits.test.ts pins the
+ * history entries).
+ */
+
 import { Project3D } from '@motion/scene';
+import type { Value } from '@motion/engine-api';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { engineIdle } from '@core/engine/engineInstance';
+import { documentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore } from '@stores/guidesStore';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { defaultCustomViews } from '@core/workspace/customViews';
 import { cameraFromNode } from './camera3d';
 import { layerSpaceAt } from './layerSpace';
 import {
   buildCameraCommands,
-  createOrbitNull,
+  createOrbitNullEdit,
   focusDepthToLayer,
   framingFor,
   linkFocusToLayerExpression,
@@ -17,222 +27,196 @@ import {
   lookAt,
   linkFocusDistanceToLayer,
   linkFocusDistanceToPoi,
+  resolveCommandCamera,
 } from './cameraCommands';
 
-function bootCommandSystem(): void {
-  const services = {
-    undo: { push: () => {}, undo: () => {}, redo: () => {}, canUndo: () => false, canRedo: () => false },
-    selection: { get: () => [], set: () => {}, clear: () => {} },
-    panels: { open: () => {}, close: () => {}, toggle: () => {}, isOpen: () => false },
-    workspace: { setActive: () => {}, getActive: () => '' },
-    get: () => undefined,
-  } as never;
-  setCommandSystem(new CommandSystem({ services, getState: () => ({}) as never }));
-}
-
-const CAM = 'cc_camera';
-const SUBJECT = 'cc_subject';
-const OTHER = 'cc_other';
 const W = 1920;
 const H = 1080;
 const FOCAL = Project3D.defaultCamera(W, H).focalLength;
+const comp = 'comp_root';
 
-function addNode(id: string, name: string, kind: string, props: Record<string, unknown>): void {
-  defaultSceneGraph.addChild('comp_root', {
-    id,
-    name,
-    parent: 'comp_root',
-    children: [],
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true,
-    locked: false,
-    components: [{ id: `${id}_t`, type: 'Transform', props: { __kind: kind, ...props } }],
-  } as never);
+let h: Harness & { engine: LocalEngine };
+
+const scalar = (value: number): Value => ({ kind: 'scalar', value });
+const vec3 = (x: number, y: number, z: number): Value => ({ kind: 'vec3', value: { x, y, z } });
+
+async function layer(kind: 'camera' | 'solid', name: string): Promise<string> {
+  return (await h.run({ type: 'createLayer', comp, kind, name, init: [] })).layer;
 }
 
-function props(id: string): Record<string, unknown> {
-  return defaultSceneGraph.getNode(id)!.components[0]!.props as Record<string, unknown>;
+async function set(id: string, path: string, value: Value): Promise<void> {
+  await h.run({ type: 'setProperty', prop: { layer: id, path }, value });
 }
 
-function addCamera(twoNode: boolean): void {
-  addNode(CAM, 'Camera 1', 'camera', {
-    x: W / 2, y: H / 2, z: -FOCAL, focalLength: FOCAL,
-    ...(twoNode ? { poiX: W / 2, poiY: H / 2, poiZ: 0 } : {}),
-  });
+/** A 3D solid at a world position. */
+async function solid3D(name: string, x: number, y: number, z: number): Promise<string> {
+  const id = await layer('solid', name);
+  await h.run({ type: 'setLayerSwitches', layers: [id], patch: { threeD: true } });
+  await set(id, 'transform/position', vec3(x, y, z));
+  return id;
 }
 
-beforeEach(() => {
-  bootCommandSystem();
-  // The jest graph is not seeded: `addChild('comp_root', …)` stores the node
-  // but a walk from the root finds nothing until the root itself exists.
-  if (!defaultSceneGraph.getNode('comp_root')) {
-    defaultSceneGraph.addNode({
-      id: 'comp_root', name: 'Comp', parent: null, children: [], visible: true, locked: false,
-      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-      components: [{ id: 'comp_root_t', type: 'Transform', props: { __kind: 'group' } }],
-    } as never);
-  }
-  for (const id of [CAM, SUBJECT, OTHER]) {
-    if (defaultSceneGraph.getNode(id)) defaultSceneGraph.removeNode(id);
-  }
-  for (const n of [...defaultSceneGraph.getNode('comp_root')?.children ?? []]) {
-    if (n.startsWith('null_orbit_')) defaultSceneGraph.removeNode(n);
-  }
-  // A 3D shape 500 px behind the comp plane, off the optical axis.
-  addNode(SUBJECT, 'Subject', 'shape', { x: 1200, y: 300, z: 500, rotationX: 0, rotationY: 0, width: 200, height: 100 });
-  addNode(OTHER, 'Other', 'shape', { x: 400, y: 800, z: 0, rotationX: 0, rotationY: 0, width: 200, height: 100 });
-  // Tracks outlive their node in the shared engine — a keyframe left by one
-  // test would move the camera in the next.
-  for (const prop of ['x', 'y', 'z', 'poiX', 'poiY', 'poiZ', 'focusDistance', 'orbitYaw']) {
-    if (defaultAnimation.isAnimated(CAM, prop)) defaultAnimation.removeTrack(CAM, prop);
-  }
-  defaultAnimation.setExpression(CAM, 'focusDistance', '');
+/** A camera at the default eye (comp centre, pulled back by the focal length); two-node with its POI at the comp centre. */
+async function camera(twoNode: boolean): Promise<string> {
+  const id = await layer('camera', 'Camera 1');
+  if (twoNode) await h.run({ type: 'setProperty', prop: { layer: id, path: 'transform/orientTowardsPointOfInterest' }, value: { kind: 'bool', value: true } });
+  await engineIdle();
+  await documentMirror().loadTree(id);
+  return id;
+}
+
+const valueOf = (id: string, path: string): Value | undefined => documentMirror().property(id, path)?.value;
+
+beforeEach(async () => {
+  h = await setupAppEngine();
   useSelectionStore.setState({ ids: [] });
   useGuidesStore.setState({ camera3dMode: 'active', customViews: defaultCustomViews(), lastCustomView: 'custom1' });
 });
+afterEach(async () => { await h.dispose(); });
 
 describe('focus distance', () => {
-  it('Set Focus Distance to Layer writes the axial depth the renderer defocuses by', () => {
-    addCamera(false);
-    const cam = defaultSceneGraph.getNode(CAM)!;
-    const subject = defaultSceneGraph.getNode(SUBJECT)!;
+  it('Set Focus Distance to Layer measures the axial depth the renderer defocuses by', async () => {
+    const cam = await camera(false);
+    const subject = await solid3D('Subject', 1200, 300, 500);
     // Straight-on camera: depth is the z gap, not the diagonal distance.
-    expect(focusDepthToLayer(cam, subject, 0)).toBeCloseTo(FOCAL + 500, 6);
+    expect(await focusDepthToLayer(cam, subject, 0)).toBeCloseTo(FOCAL + 500, 6);
     // The write itself goes through the engine — cameraEdits.test.ts.
   });
 
-  it('a layer behind the camera has no focus distance', () => {
-    addCamera(false);
-    defaultSceneGraph.writeProp(SUBJECT, `${SUBJECT}_t`, 'z', -FOCAL - 100);
-    expect(focusDepthToLayer(defaultSceneGraph.getNode(CAM)!, defaultSceneGraph.getNode(SUBJECT)!, 0)).toBeNull();
+  it('a layer behind the camera has no focus distance', async () => {
+    const cam = await camera(false);
+    const subject = await solid3D('Subject', 1200, 300, -FOCAL - 100);
+    expect(await focusDepthToLayer(cam, subject, 0)).toBeNull();
   });
 
-  it('Link writes AE\'s toWorld/length expression', () => {
-    addCamera(true);
-    expect(linkFocusDistanceToLayer(CAM, SUBJECT)).toBe(true);
-    expect(defaultAnimation.getExpressionSrc(CAM, 'focusDistance')).toBe(linkFocusToLayerExpression('Subject'));
+  it('Link writes AE\'s toWorld/length expression', async () => {
+    const cam = await camera(true);
+    const subject = await solid3D('Subject', 1200, 300, 500);
+    expect(await linkFocusDistanceToLayer(cam, subject)).toBe(true);
+    expect(documentMirror().property(cam, 'camera/focusDistance')?.expression).toBe(linkFocusToLayerExpression('Subject'));
     expect(linkFocusToLayerExpression('He said "hi"')).toContain('"He said \\"hi\\""');
   });
 
-  it('Link to Point of Interest needs a two-node camera', () => {
-    addCamera(false);
-    expect(linkFocusDistanceToPoi(CAM)).toBe(false);
-    defaultSceneGraph.removeNode(CAM);
-    addCamera(true);
-    expect(linkFocusDistanceToPoi(CAM)).toBe(true);
-    expect(defaultAnimation.getExpressionSrc(CAM, 'focusDistance')).toBe(linkFocusToPoiExpression('Camera 1'));
+  it('Link to Point of Interest needs a two-node camera', async () => {
+    const one = await camera(false);
+    expect(await linkFocusDistanceToPoi(one)).toBe(false);
+    const two = await camera(true);
+    expect(await linkFocusDistanceToPoi(two)).toBe(true);
+    expect(documentMirror().property(two, 'camera/focusDistance')?.expression).toBe(linkFocusToPoiExpression('Camera 1'));
   });
 
-  it('a camera has a layer space: toWorld([0,0]) is the eye the renderer projects through', () => {
-    addCamera(true);
-    defaultSceneGraph.writeProp(CAM, `${CAM}_t`, 'orbitYaw', 30);
-    const cam = defaultSceneGraph.getNode(CAM)!;
-    const expected = cameraFromNode(cam, W, H).position;
-    const space = layerSpaceAt(CAM, 0, { width: W, height: H, rootId: 'comp_root' });
+  it('a camera has a layer space: toWorld([0,0]) is the eye the renderer projects through', async () => {
+    const cam = await camera(true);
+    await set(cam, 'camera/orbitYaw', scalar(30));
+    const expected = cameraFromNode(defaultSceneGraph.getNode(cam)!, W, H).position;
+    const space = layerSpaceAt(cam, 0, { width: W, height: H, rootId: comp });
     expect(space).toBeDefined();
     const [x, y, z] = space!.toWorld([0, 0]);
     expect(x).toBeCloseTo(expected.x, 6);
     expect(y).toBeCloseTo(expected.y, 6);
     expect(z).toBeCloseTo(expected.z, 6);
+    // The verbs resolve the same eye from the engine's values.
+    const rig = await resolveCommandCamera(cam, 0);
+    expect(rig!.camera.position.x).toBeCloseTo(expected.x, 6);
+    expect(rig!.camera.position.z).toBeCloseTo(expected.z, 6);
   });
 });
 
 describe('Link expressions evaluate live', () => {
-  it('through the same providers the app installs (layer names, base props, layer spaces)', () => {
-    addCamera(true);
-    const byName = (name: string): string | null => {
-      let found: string | null = null;
-      defaultSceneGraph.traverse((n) => { if (found === null && n.name === name) found = n.id; });
-      return found;
+  it('in the engine that stores them (layer names, base props, layer spaces)', async () => {
+    const cam = await camera(true);
+    const subject = await solid3D('Subject', 1200, 300, 500);
+    const focus = async (): Promise<number> => {
+      const r = await h.query({ type: 'getPropertyValues', props: [{ layer: cam, path: 'camera/focusDistance' }], time: 0, evaluated: true });
+      return (r.values[0]!.value as Extract<Value, { kind: 'scalar' }>).value;
     };
-    defaultAnimation.setLayerResolver(byName);
-    defaultAnimation.setBaseValueProvider((nodeId, prop) => {
-      const t = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === 'Transform');
-      const v = t?.props[prop as string];
-      return typeof v === 'number' ? v : undefined;
-    });
-    defaultAnimation.setCompInfoProvider((() => ({ width: W, height: H, duration: 10, fps: 30, numLayers: 3 })) as never);
-    defaultAnimation.setLayerSpaceProvider((self, name, t) => {
-      const id = name === null ? self : resolveLayerRef(name, byName);
-      return id ? layerSpaceAt(id, t, { width: W, height: H, rootId: 'comp_root' }) : undefined;
-    });
-
-    linkFocusDistanceToLayer(CAM, SUBJECT);
-    expect(defaultAnimation.getExpressionError(CAM, 'focusDistance')).toBeNull();
-    // Eye (960, 540, −F) to the subject at (1200, 300, 500): the straight-line distance.
-    expect(defaultAnimation.sample(CAM, 'focusDistance', 0)).toBeCloseTo(Math.hypot(240, 240, FOCAL + 500), 3);
-
-    linkFocusDistanceToPoi(CAM);
+    await linkFocusDistanceToLayer(cam, subject);
+    // Eye (960, 540, −F) to the subject's toWorld([0, 0]) — its layer origin through its world matrix: the straight-line distance.
+    const t = await h.query({ type: 'getLayerTransforms', layers: [subject], time: 0 });
+    const [ox, oy, oz] = [12, 13, 14].map((i) => t.transforms[0]!.matrix[i]!);
+    expect(await focus()).toBeCloseTo(Math.hypot(ox! - W / 2, oy! - H / 2, oz! + FOCAL), 3);
+    await linkFocusDistanceToPoi(cam);
     // POI at the comp centre on the plane, eye pulled back by the focal length.
-    expect(defaultAnimation.sample(CAM, 'focusDistance', 0)).toBeCloseTo(FOCAL, 3);
+    expect(await focus()).toBeCloseTo(FOCAL, 3);
   });
 });
 
 describe('Create Orbit Null', () => {
-  it('parents a two-node camera to a null at its POI without moving the shot', () => {
-    addCamera(true);
-    defaultSceneGraph.writeProp(CAM, `${CAM}_t`, 'orbitYaw', 25);
-    defaultSceneGraph.writeProp(CAM, `${CAM}_t`, 'poiX', 1000);
-    defaultSceneGraph.writeProp(CAM, `${CAM}_t`, 'poiZ', 200);
-    defaultAnimation.setKeyframe(CAM, 'x', 0, W / 2);
-    defaultAnimation.setKeyframe(CAM, 'x', 2, W / 2 + 300);
-    const cam = defaultSceneGraph.getNode(CAM)!;
-    const before = cameraFromNode(cam, W, H, undefined, undefined);
-    const sample = (id: string, prop: string) => defaultAnimation.evaluateNode(id, 0).get(prop);
-    const beforeAnimated = cameraFromNode(cam, W, H, sample);
+  it('parents a two-node camera to a null at its POI without moving the shot', async () => {
+    const cam = await camera(true);
+    await set(cam, 'camera/orbitYaw', scalar(25));
+    await set(cam, 'camera/poiX', scalar(1000));
+    await set(cam, 'camera/poiZ', scalar(200));
+    await h.run({
+      type: 'addKeyframes',
+      keys: [0, 2].map((s) => ({
+        prop: { layer: cam, path: 'transform/position' }, time: s * 705_600_000,
+        value: vec3(W / 2 + s * 150, H / 2, -FOCAL), spatialIn: [], spatialOut: [],
+      })),
+    });
+    await engineIdle();
+    const before = (await resolveCommandCamera(cam, 0))!.camera;
+    const beforeLater = (await resolveCommandCamera(cam, 1.5))!.camera;
 
-    const nullId = createOrbitNull(CAM, 0);
+    const nullId = await createOrbitNullEdit(cam, 0);
     expect(nullId).not.toBeNull();
-    const nul = defaultSceneGraph.getNode(nullId!)!;
-    expect(props(nullId!)).toMatchObject({ x: 1000, y: H / 2, z: 200 });
-    expect(defaultSceneGraph.getNode(CAM)!.parent).toBe(nullId);
+    await engineIdle();
+    const m = documentMirror();
+    expect(m.layer(cam)!.parent).toBe(nullId);
     expect(useSelectionStore.getState().ids).toEqual([nullId]);
+    await m.loadTree(nullId!);
+    expect(valueOf(nullId!, 'transform/position')).toEqual(vec3(1000, H / 2, 200));
 
     // Local props are now relative to the null: POI sits at its origin.
-    expect(props(CAM)).toMatchObject({ poiX: 0, poiY: 0, poiZ: 0, z: -FOCAL - 200 });
-    // The keyframed x track moved with the base prop.
-    const kfs = defaultAnimation.getTrackKeyframes(CAM, 'x')!;
-    expect(kfs[0]!.value).toBeCloseTo(W / 2 - 1000, 6);
-    expect(kfs[1]!.value).toBeCloseTo(W / 2 + 300 - 1000, 6);
+    expect(valueOf(cam, 'camera/poiX')).toEqual(scalar(0));
+    expect(valueOf(cam, 'camera/poiY')).toEqual(scalar(0));
+    expect(valueOf(cam, 'camera/poiZ')).toEqual(scalar(0));
+    // The keyframed Position moved by the same delta, every key.
+    const keys = m.keyframes(cam, 'transform/position').map((k) => k.value);
+    expect(keys).toEqual([vec3(W / 2 - 1000, 0, -FOCAL - 200), vec3(W / 2 + 300 - 1000, 0, -FOCAL - 200)]);
 
     // Resolved through the parent lift, the camera is exactly where it was.
-    const lift = (_id: string, p: { x: number; y: number; z: number }) => {
-      const np = nul.components[0]!.props as Record<string, number>;
-      return { x: p.x + (np.x ?? 0), y: p.y + (np.y ?? 0), z: p.z + (np.z ?? 0) };
-    };
-    const after = cameraFromNode(defaultSceneGraph.getNode(CAM)!, W, H, undefined, lift);
-    expect(after.position.x).toBeCloseTo(before.position.x, 6);
-    expect(after.position.y).toBeCloseTo(before.position.y, 6);
-    expect(after.position.z).toBeCloseTo(before.position.z, 6);
-    expect(after.orientation?.yaw ?? 0).toBeCloseTo(before.orientation?.yaw ?? 0, 6);
-    const afterAnimated = cameraFromNode(defaultSceneGraph.getNode(CAM)!, W, H, sample, lift);
-    expect(afterAnimated.position.x).toBeCloseTo(beforeAnimated.position.x, 6);
+    for (const [t, was] of [[0, before], [1.5, beforeLater]] as const) {
+      const after = (await resolveCommandCamera(cam, t))!.camera;
+      expect(after.position.x).toBeCloseTo(was.position.x, 6);
+      expect(after.position.y).toBeCloseTo(was.position.y, 6);
+      expect(after.position.z).toBeCloseTo(was.position.z, 6);
+      expect(after.orientation?.yaw ?? 0).toBeCloseTo(was.orientation?.yaw ?? 0, 6);
+    }
   });
 
-  it('a one-node camera gets its null at the focus distance along the axis', () => {
-    addCamera(false);
-    defaultSceneGraph.writeProp(CAM, `${CAM}_t`, 'focusDistance', FOCAL + 400);
-    const nullId = createOrbitNull(CAM, 0)!;
-    expect(props(nullId)).toMatchObject({ x: W / 2, y: H / 2 });
-    expect(props(nullId).z as number).toBeCloseTo(400, 6);
-    expect(props(CAM).z as number).toBeCloseTo(-FOCAL - 400, 6);
+  it('a one-node camera gets its null at the focus distance along the axis', async () => {
+    const cam = await camera(false);
+    await set(cam, 'camera/focusDistance', scalar(FOCAL + 400));
+    const nullId = (await createOrbitNullEdit(cam, 0))!;
+    await engineIdle();
+    await documentMirror().loadTree(nullId);
+    const p = valueOf(nullId, 'transform/position');
+    expect(p?.kind).toBe('vec3');
+    const v = (p as Extract<Value, { kind: 'vec3' }>).value;
+    expect(v.x).toBeCloseTo(W / 2, 6);
+    expect(v.y).toBeCloseTo(H / 2, 6);
+    expect(v.z).toBeCloseTo(400, 6);
+    const eye = (valueOf(cam, 'transform/position') as Extract<Value, { kind: 'vec3' }>).value;
+    expect(eye.z).toBeCloseTo(-FOCAL - 400, 6);
   });
 });
 
 describe('Look at', () => {
-  it('frames the selection: POI at the centroid, distance that fits the enclosing sphere', () => {
-    const nodes = [defaultSceneGraph.getNode(SUBJECT)!, defaultSceneGraph.getNode(OTHER)!];
-    const f = framingFor(nodes, 0, W, H)!;
+  it('frames the subjects: POI at the centroid, distance that fits the enclosing sphere', () => {
+    const r = Math.hypot(200, 100) / 2;
+    const f = framingFor([{ p: { x: 1200, y: 300, z: 500 }, r }, { p: { x: 400, y: 800, z: 0 }, r }], W, H)!;
     expect(f.poi).toEqual({ x: 800, y: 550, z: 250 });
-    const spread = Math.hypot(400, 250, 250) + Math.hypot(200, 100) / 2;
+    const spread = Math.hypot(400, 250, 250) + r;
     const fovV = Project3D.fovForFocalLength(H, FOCAL) * (Math.PI / 180);
     expect(f.distance).toBeCloseTo((spread / Math.sin(fovV / 2)) * 1.1, 6);
   });
 
-  it('switches Active Camera to the last custom view and aims it, keeping its angle', () => {
+  it('switches Active Camera to the last custom view and aims it, keeping its angle', async () => {
+    const subject = await solid3D('Subject', 1200, 300, 500);
     useGuidesStore.getState().updateCustomView('custom2', { yaw: 50, pitch: -10 });
     useGuidesStore.setState({ lastCustomView: 'custom2' });
-    const view = lookAt([defaultSceneGraph.getNode(SUBJECT)!], 0);
+    const view = await lookAt([subject], 0);
     expect(view).toBe('custom2');
     const s = useGuidesStore.getState();
     expect(s.camera3dMode).toBe('custom2');
@@ -242,8 +226,10 @@ describe('Look at', () => {
 });
 
 describe('commands', () => {
-  it('enable on the right selections', () => {
-    addCamera(true);
+  it('enable on the right selections', async () => {
+    const cam = await camera(true);
+    const subject = await solid3D('Subject', 1200, 300, 500);
+    const other = await solid3D('Other', 400, 800, 0);
     const byId = new Map(buildCameraCommands().map((c) => [String(c.id), c]));
     useSelectionStore.setState({ ids: [] });
     expect(byId.get('camera.createOrbitNull')!.enabled?.()).toBe(true);
@@ -251,11 +237,11 @@ describe('commands', () => {
     expect(byId.get('camera.linkFocusToPoi')!.enabled?.()).toBe(true);
     expect(byId.get('view.lookAtSelected')!.enabled?.()).toBe(false);
     expect(byId.get('view.lookAtAll')!.enabled?.()).toBe(true);
-    useSelectionStore.setState({ ids: [SUBJECT, CAM] });
+    useSelectionStore.setState({ ids: [subject, cam] });
     expect(byId.get('camera.setFocusToLayer')!.enabled?.()).toBe(true);
     expect(byId.get('camera.linkFocusToLayer')!.enabled?.()).toBe(true);
     expect(byId.get('view.lookAtSelected')!.enabled?.()).toBe(true);
-    useSelectionStore.setState({ ids: [SUBJECT, OTHER] });
+    useSelectionStore.setState({ ids: [subject, other] });
     expect(byId.get('camera.setFocusToLayer')!.enabled?.()).toBe(false);
   });
 });

@@ -9,14 +9,22 @@
  * rack focus meant reading a depth off the gizmo and typing it, and framing a
  * custom view on a subject meant dragging until it looked right.
  *
+ * ## The engine's document, not the page replica
+ *
+ * Every read is the document MIRROR (layer headers, property trees, keys) or
+ * an engine query at the time asked (`trackValuesAt` for evaluated values,
+ * `getLayerTransforms` for world matrices); every write is engine commands.
+ * The camera is resolved from its props with camera3d's own rule
+ * (`cameraFromValues`), lifted through its parent's world matrix.
+ *
  * ## Focus distance is measured the way the renderer measures it
  *
- * `buildSnapshot` defocuses a layer by `dofBlurPx(depth, dof)` where `depth`
- * is `Project3D.projectPoint(world, camera).depth` — the layer's position
- * along the camera's OPTICAL AXIS, not its straight-line distance from the
- * eye. "Set Focus Distance to Layer" therefore writes that same axial depth,
- * so the focal plane lands ON the layer; a Euclidean distance would put it
- * behind the layer by `d·(1 − cos θ)` for any subject off the centre line.
+ * The renderer defocuses a layer by `dofBlurPx(depth, dof)` where `depth` is
+ * `Project3D.projectPoint(world, camera).depth` — the layer's position along
+ * the camera's OPTICAL AXIS, not its straight-line distance from the eye.
+ * "Set Focus Distance to Layer" therefore writes that same axial depth, so the
+ * focal plane lands ON the layer; a Euclidean distance would put it behind the
+ * layer by `d·(1 − cos θ)` for any subject off the centre line.
  *
  * The LINK expressions use `length(...)` — the straight-line form — because an
  * expression cannot see the camera's axis, and because that is the expression
@@ -38,44 +46,30 @@
 
 import { asCommandId } from '@app-types/common';
 import type { Command } from '@core/commands/Command';
-import type { SceneNode } from '@core/types';
-import { defaultAnimation } from '@motion/animation';
-import { Matrix, Matrix4Math, Project3D, type Camera3D, type Vec3 } from '@motion/scene';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
+import type { Command as EngineCommand, Keyframe, Value } from '@motion/engine-api';
+import { Matrix4Math, Project3D, type Camera3D, type Matrix4, type Vec3 } from '@motion/scene';
 import { activeCompRootId, activeCompSize } from '@core/scene/activeComp';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import {
-  viewCameraNode,
-  cameraFromNode,
-  readCameraFocusDistance,
-  readCameraPoi,
-  type CameraSample,
-} from '@core/scene/camera3d';
-import { nodeWorldWithParents3d, toWorldPointAt } from '@core/scene/liveWorld3d';
-import { canBe3D, is3DEnabled, readNode3D } from '@core/scene/threeD';
-import { readNodeAnchor } from '@core/scene/anchor';
-import { world2DAt } from '@core/scene/layerSpace';
-import { enclosingCompRootOf, reparentNode } from '@core/scene/parenting';
-import { readGeometry } from '@core/workspace/geometry';
-import type { Command as EngineCommand } from '@motion/engine-api';
+import { CAMERA_VALUE_PROPS, cameraFromValues, defaultFocalLength, type CameraValues } from '@core/scene/camera3d';
+import { cameraViewNodeId } from '@core/scene/cameraViewMode';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
-import { engine, localEngine } from '@core/engine/engineInstance';
-import { engineOwnsDocumentNow } from '@core/engine/engineOwnership';
-import { layerDiffCommands } from '@core/engine/layerDiffCommands';
+import { engine } from '@core/engine/engineInstance';
+import { compTime, propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
 import { compOfLayer } from '@core/mirror/docFacts';
-import { propRefForTrack } from '@core/engine/propRefs';
+import { mirrorLookThroughCamera, mirrorLookThroughCameras } from '@core/mirror/cameras';
+import { flattenCompLayers } from '@core/mirror/compLayers';
+import { mirrorCanBe3D } from '@core/mirror/layerFacts';
+import { uiKindOf } from '@core/mirror/layerKinds';
+import { numbersOfValue, plainValue, trackRefIn } from '@core/mirror/trackIndex';
 import { trackValueCommands } from '@core/workspace/toolEdits';
-import { usePreferenceStore } from '@stores/preferenceStore';
-import { getRemappedTime } from '@core/timeline/TimelineController';
 import { isCustomViewId, resolveCustomView, type CustomViewId } from '@core/workspace/customViews';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { rebaseTransformProps, rebaseTransformPropsRaw, type TransformRebase } from '@core/scene/transformWrite';
+import { documentMirror } from '@stores/documentMirror';
+import { trackValuesAt } from '@stores/trackValues';
+import { fetchLayerBox } from '@stores/layerBoxes';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { useGuidesStore } from '@stores/guidesStore';
-import { bumpScene } from '@stores/sceneStore';
 
 // ── Shared readers ──────────────────────────────────────────────────────────
 
@@ -84,68 +78,137 @@ function playhead(): number {
   return (project.activeTabId ? project.tabs[project.activeTabId]?.time : 0) ?? 0;
 }
 
-/** Animated values at `time`, layer-time remapped — the renderer's sampler. */
-function sampleAt(time: number): CameraSample {
-  return (id, prop) => defaultAnimation.evaluateNode(id, getRemappedTime(id, time)).get(prop);
-}
-
 function notify(message: string, level: 'info' | 'success' | 'warning' = 'info'): void {
   useUIStore.getState().notify({ level, message, durationMs: 4000 });
 }
 
-function isDevice(node: SceneNode): boolean {
-  const k = readNodeKind(node);
+function kindOf(id: string): string | null {
+  return uiKindOf(documentMirror().layer(id));
+}
+
+function isDevice(id: string): boolean {
+  const k = kindOf(id);
   return k === 'camera' || k === 'light';
 }
 
+function nameOf(id: string): string {
+  return documentMirror().layer(id)?.name ?? id;
+}
+
 /**
- * The camera a command acts on: a SELECTED camera first, else the comp's
- * active camera. Selecting a camera is how you say "this one" when a comp has
- * several; with none selected the one you are looking through is the answer.
+ * The camera a command acts on: a SELECTED camera first, else the camera the
+ * view looks through (a `camera:<id>` view's camera, else the composition's
+ * topmost enabled one). Selecting a camera is how you say "this one" when a
+ * comp has several; with none selected the one you are looking through is the
+ * answer.
  */
-export function commandCamera(): SceneNode | null {
+export function commandCamera(): string | null {
+  const m = documentMirror();
   for (const id of useSelectionStore.getState().ids) {
-    const n = defaultSceneGraph.getNode(id);
-    if (n && readNodeKind(n) === 'camera') return n;
+    if (uiKindOf(m.layer(id)) === 'camera') return id;
   }
-  // Through the view, so in a `camera:<id>` view "the one you are looking
-  // through" is that camera and not the topmost one behind it.
-  return viewCameraNode(defaultSceneGraph, useGuidesStore.getState().camera3dMode, activeCompRootId());
+  const comp = activeCompRootId();
+  const named = mirrorLookThroughCamera(m, cameraViewNodeId(useGuidesStore.getState().camera3dMode), comp);
+  return (named ?? mirrorLookThroughCameras(m, comp)[0])?.id ?? null;
 }
 
 /** The selected layers that are neither cameras nor lights. */
-export function subjectLayers(): SceneNode[] {
-  const out: SceneNode[] = [];
-  for (const id of useSelectionStore.getState().ids) {
-    const n = defaultSceneGraph.getNode(id);
-    if (n && !isDevice(n)) out.push(n);
-  }
-  return out;
+export function subjectLayers(): string[] {
+  const m = documentMirror();
+  return useSelectionStore.getState().ids.filter((id) => !!m.layer(id) && !isDevice(id));
 }
 
-/** The camera resolved exactly as the renderer resolves it — parents, orbit, POI. */
-export function resolveCommandCamera(cam: SceneNode, time: number): Camera3D {
-  const { width, height } = activeCompSize();
-  return cameraFromNode(cam, width, height, sampleAt(time), (id, p) => toWorldPointAt(id, time, p));
+/** Content layers of the active comp, back to front — what "all layers" frames. */
+export function frameableLayers(): string[] {
+  const m = documentMirror();
+  return flattenCompLayers(m, activeCompRootId()).filter((id) => {
+    const layer = m.layer(id);
+    if (!layer || isDevice(id)) return false;
+    const k = uiKindOf(layer);
+    return k !== 'group' && k !== 'comp' && layer.switches.visible !== false;
+  });
 }
 
 /**
- * A layer's world position at `time`: the point its Position places (the
- * anchor), parent chain included. A 2D layer sits on the comp plane at z = 0,
- * which is what `buildSnapshot` and `layerSpaceAt` both say about it.
+ * The tracks of `layer` the layer SETS, evaluated at comp `seconds` (keys and
+ * expressions win) — undefined for a track it stores no value of its own for,
+ * as a prop absent from the node reads in camera3d (a one-node camera has no
+ * POI; an unset focus distance falls back to the focal length).
  */
-export function layerWorldPosition(node: SceneNode, time: number): Vec3 {
-  if (is3DEnabled(node)) {
-    const m = nodeWorldWithParents3d(node, time);
-    if (m) {
-      const a = readNodeAnchor(node);
-      return Matrix4Math.transformPoint(m, { x: a.x, y: a.y, z: readNode3D(node).anchorZ });
-    }
-  }
-  const w = world2DAt(node.id, time);
-  const a = readNodeAnchor(node);
-  const p = Matrix.transformPoint(w, { x: a.x, y: a.y });
-  return { x: p.x, y: p.y, z: 0 };
+async function setTrackValues(layer: string, tracks: ReadonlyArray<string>, seconds: number): Promise<Record<string, number>> {
+  const tree = await documentMirror().loadTree(layer);
+  const now = await trackValuesAt(layer, tracks, seconds);
+  const out: Record<string, number> = {};
+  tracks.forEach((t, i) => {
+    const info = trackRefIn(tree, t)?.info;
+    const v = now[i];
+    if (!info || v === undefined) return;
+    if (info.stored === true || info.animated || (info.expressionEnabled && info.expression !== '')) out[t] = v;
+  });
+  return out;
+}
+
+/** A layer's layer → comp 4×4 at comp `seconds` (getLayerTransforms: a 3D layer's world matrix, else the 2D chain). */
+async function worldMatrixOf(layer: string, seconds: number): Promise<Matrix4 | null> {
+  const res = await engine().query({ type: 'getLayerTransforms', layers: [layer], time: compTime(seconds) });
+  const m = res.ok ? res.value.transforms.find((t) => t.layer === layer)?.matrix : undefined;
+  return m && m.length === 16 ? (m as unknown as Matrix4) : null;
+}
+
+/** The world matrix of a layer's PARENT at `seconds` (null at the top of its comp): what lifts its parent-space points. */
+async function parentWorldOf(layer: string, seconds: number): Promise<Matrix4 | null> {
+  const parent = documentMirror().layer(layer)?.parent;
+  return parent ? worldMatrixOf(parent, seconds) : null;
+}
+
+/** A camera as the renderer resolves it at a time, with what the verbs read off it. */
+interface CameraRig {
+  camera: Camera3D;
+  /** The props the camera sets, evaluated (stored units). */
+  values: CameraValues & { focusDistance?: number };
+  /** Parent space → world. */
+  lift: (p: Vec3) => Vec3;
+  /** The Point of Interest in the camera's parent space (null: a one-node camera). */
+  poi: Vec3 | null;
+  /** The focus distance (px): the stored value, else the focal length. */
+  focus: number;
+}
+
+/** The camera resolved exactly as the renderer resolves it — parents, orbit, POI. Null when `camId` is not a camera. */
+export async function resolveCommandCamera(camId: string, seconds: number): Promise<CameraRig | null> {
+  if (kindOf(camId) !== 'camera') return null;
+  const { width, height } = activeCompSize();
+  const [values, parent] = await Promise.all([
+    setTrackValues(camId, [...CAMERA_VALUE_PROPS, 'focusDistance'], seconds),
+    parentWorldOf(camId, seconds),
+  ]);
+  const lift = (p: Vec3): Vec3 => (parent ? Matrix4Math.transformPoint(parent, p) : p);
+  const hasPoi = values.poiX !== undefined || values.poiY !== undefined || values.poiZ !== undefined;
+  return {
+    camera: cameraFromValues(values, width, height, lift),
+    values,
+    lift,
+    poi: hasPoi ? { x: values.poiX ?? width / 2, y: values.poiY ?? height / 2, z: values.poiZ ?? 0 } : null,
+    focus: values.focusDistance ?? values.focalLength ?? defaultFocalLength(width),
+  };
+}
+
+/**
+ * A layer's world position at `seconds`: the point its Position places (the
+ * anchor), parent chain included. A 2D layer sits on the comp plane at z = 0,
+ * which is what the renderer and `layerSpaceAt` both say about it.
+ */
+export async function layerWorldPosition(id: string, seconds: number): Promise<Vec3 | null> {
+  const layer = documentMirror().layer(id);
+  if (!layer) return null;
+  const [m, [ax = 0, ay = 0, az = 0]] = await Promise.all([
+    worldMatrixOf(id, seconds),
+    trackValuesAt(id, ['anchorX', 'anchorY', 'anchorZ'], seconds),
+  ]);
+  if (!m) return null;
+  const threeD = layer.switches.threeD === true;
+  const p = Matrix4Math.transformPoint(m, { x: ax, y: ay, z: threeD ? az : 0 });
+  return threeD ? p : { x: p.x, y: p.y, z: 0 };
 }
 
 // ── Focus distance ──────────────────────────────────────────────────────────
@@ -155,9 +218,10 @@ export function layerWorldPosition(node: SceneNode, time: number): Vec3 {
  * the camera axis, the number `dofBlurPx` compares against. Null when the
  * layer is behind the camera — there is no focus distance that reaches it.
  */
-export function focusDepthToLayer(cam: SceneNode, target: SceneNode, time: number): number | null {
-  const camera = resolveCommandCamera(cam, time);
-  const o = Project3D.projectPoint(layerWorldPosition(target, time), camera);
+export async function focusDepthToLayer(camId: string, targetId: string, seconds: number): Promise<number | null> {
+  const [rig, p] = await Promise.all([resolveCommandCamera(camId, seconds), layerWorldPosition(targetId, seconds)]);
+  if (!rig || !p) return null;
+  const o = Project3D.projectPoint(p, rig.camera);
   return o.clipped ? null : o.depth;
 }
 
@@ -170,16 +234,12 @@ export function focusDepthToLayer(cam: SceneNode, target: SceneNode, time: numbe
  * behind the camera (or the engine refused — toasted).
  */
 export async function setFocusDistanceToLayer(camId: string, targetId: string, time: number): Promise<number | null> {
-  const cam = defaultSceneGraph.getNode(camId);
-  const target = defaultSceneGraph.getNode(targetId);
-  if (!cam || !target) return null;
-  const depth = focusDepthToLayer(cam, target, time);
+  const depth = await focusDepthToLayer(camId, targetId, time);
   if (depth === null) return null;
   const cmds: EngineCommand[] = [];
   const r = propRefForTrack(camId, 'focusDistance');
-  if (r && defaultAnimation.getExpressionSrc(camId, 'focusDistance')) {
-    cmds.push({ type: 'setExpression', prop: r.ref, source: '', enabled: false });
-  }
+  const info = r ? documentMirror().property(camId, r.ref.path) : undefined;
+  if (r && info?.expression) cmds.push({ type: 'setExpression', prop: r.ref, source: '', enabled: false });
   const values = trackValueCommands(
     [{ nodeId: camId, values: { focusDistance: Math.round(depth * 100) / 100 } }],
     { seconds: time, autoKeyframe: usePreferenceStore.getState().timelineAutoKeyframe },
@@ -211,32 +271,36 @@ export function linkFocusToPoiExpression(cameraName: string): string {
   return `length(sub([layer(${n}, "poiX"), layer(${n}, "poiY"), layer(${n}, "poiZ")], [layer(${n}, "x"), layer(${n}, "y"), layer(${n}, "z")]))`;
 }
 
-export function linkFocusDistanceToLayer(camId: string, targetId: string): boolean {
-  const target = defaultSceneGraph.getNode(targetId);
-  if (!defaultSceneGraph.getNode(camId) || !target) return false;
-  runAnimEdit('Link focus distance to layer', () => {
-    defaultAnimation.setExpression(camId, 'focusDistance', linkFocusToLayerExpression(target.name ?? target.id));
-  });
-  return true;
+/** Put `source` on the camera's Focus Distance as ONE entry. */
+async function setFocusExpression(label: string, camId: string, source: string): Promise<boolean> {
+  await documentMirror().loadTree(camId);
+  const r = propRefForTrack(camId, 'focusDistance');
+  if (!r) return false;
+  return (await edit(label, [{ type: 'setExpression', prop: r.ref, source, enabled: true }])).ok;
 }
 
-export function isTwoNodeCamera(cam: SceneNode, time = playhead()): boolean {
-  const { width, height } = activeCompSize();
-  return readCameraPoi(cam, width, height, sampleAt(time)) !== null;
+export async function linkFocusDistanceToLayer(camId: string, targetId: string): Promise<boolean> {
+  if (kindOf(camId) !== 'camera' || !documentMirror().layer(targetId)) return false;
+  return setFocusExpression('Link focus distance to layer', camId, linkFocusToLayerExpression(nameOf(targetId)));
 }
 
-export function linkFocusDistanceToPoi(camId: string): boolean {
-  const cam = defaultSceneGraph.getNode(camId);
-  if (!cam || !isTwoNodeCamera(cam)) return false;
-  runAnimEdit('Link focus distance to point of interest', () => {
-    defaultAnimation.setExpression(camId, 'focusDistance', linkFocusToPoiExpression(cam.name ?? cam.id));
-  });
-  return true;
+/**
+ * A two-node camera (Auto-Orientation ▸ Orient Towards Point of Interest, AE):
+ * it carries a Point of Interest. Read off the mirror's property tree — false
+ * until the tree has loaded.
+ */
+export function isTwoNodeCamera(camId: string): boolean {
+  if (kindOf(camId) !== 'camera') return false;
+  return plainValue(documentMirror().property(camId, 'transform/orientTowardsPointOfInterest')?.value) === true;
+}
+
+export async function linkFocusDistanceToPoi(camId: string): Promise<boolean> {
+  await documentMirror().loadTree(camId);
+  if (!isTwoNodeCamera(camId)) return false;
+  return setFocusExpression('Link focus distance to point of interest', camId, linkFocusToPoiExpression(nameOf(camId)));
 }
 
 // ── Create Orbit Null ───────────────────────────────────────────────────────
-
-let orbitSeq = 0;
 
 /**
  * Where the orbit null goes: the camera's Point of Interest in WORLD space, or
@@ -245,54 +309,66 @@ let orbitSeq = 0;
  * which is exactly how `unprojectScreenRay` defines it, so a rolled or tilted
  * camera gets the axis it actually looks along.
  */
-export function orbitPivotFor(cam: SceneNode, time: number): Vec3 {
-  const { width, height } = activeCompSize();
-  const sample = sampleAt(time);
-  const poi = readCameraPoi(cam, width, height, sample);
-  if (poi) return toWorldPointAt(cam.id, time, poi);
-  const camera = resolveCommandCamera(cam, time);
-  const focus = readCameraFocusDistance(cam, width, sample);
+export function orbitPivotFor(rig: CameraRig, width: number, height: number): Vec3 {
+  if (rig.poi) return rig.lift(rig.poi);
+  const camera = rig.camera;
   const ray = Project3D.unprojectScreenRay(camera.principal.x, camera.principal.y, camera, null, width, height);
   return {
-    x: ray.origin.x + ray.direction.x * focus,
-    y: ray.origin.y + ray.direction.y * focus,
-    z: ray.origin.z + ray.direction.z * focus,
+    x: ray.origin.x + ray.direction.x * rig.focus,
+    y: ray.origin.y + ray.direction.y * rig.focus,
+    z: ray.origin.z + ray.direction.z * rig.focus,
   };
 }
 
+export interface TransformRebase {
+  prop: string;
+  /** The new BASE value of the prop. */
+  value: number;
+  /** How far every keyframe of the prop's track moves — the change in local value. */
+  delta: number;
+}
+
 interface OrbitPlan {
-  rootId: string;
   name: string;
-  pivot: { x: number; y: number; z: number };
+  pivot: Vec3;
   rebases: TransformRebase[];
 }
 
-/** Where the orbit null goes and how the camera re-bases under it (the replica's document, equal to the engine's). */
-function orbitPlan(camId: string, time: number): OrbitPlan | null {
-  const cam = defaultSceneGraph.getNode(camId);
-  if (!cam || readNodeKind(cam) !== 'camera') return null;
-  const trans = cam.components.find((c) => c.type === 'Transform');
-  if (!trans) return null;
-  const rootId = enclosingCompRootOf(camId) ?? activeCompRootId();
+/**
+ * Where the orbit null goes and how the camera re-bases under it: the eye's
+ * and the POI's STORED (base) values move into the null's space, every key by
+ * the same delta.
+ */
+async function orbitPlan(camId: string, seconds: number): Promise<OrbitPlan | null> {
+  const rig = await resolveCommandCamera(camId, seconds);
+  if (!rig) return null;
+  const m = documentMirror();
+  const tree = m.tree(camId);
   const { width, height } = activeCompSize();
-
-  const pivot = orbitPivotFor(cam, time);
-  const props = trans.props as Record<string, unknown>;
-  const num = (k: string, dflt: number): number => (typeof props[k] === 'number' ? (props[k] as number) : dflt);
+  const pivot = orbitPivotFor(rig, width, height);
   const def = Project3D.defaultCamera(width, height);
-  const focal = num('focalLength', def.focalLength);
-  // The camera's own base position in WORLD space, before the relink.
-  const localEye = { x: num('x', def.position.x), y: num('y', def.position.y), z: num('z', -focal) };
-  const worldEye = toWorldPointAt(camId, time, localEye);
-  const localPoi = readCameraPoi(cam, width, height);
-  const worldPoi = localPoi ? toWorldPointAt(camId, time, localPoi) : null;
+  // The base values the camera stores (the props, not the keys): what the re-base moves.
+  const base = (track: string): number | undefined => {
+    const r = trackRefIn(tree, track);
+    if (!r || r.info.stored !== true) return undefined;
+    const n = numbersOfValue(r.info.value)[r.member];
+    return typeof n === 'number' && Number.isFinite(n) ? n / r.factor : undefined;
+  };
+  const focal = base('focalLength') ?? def.focalLength;
+  const localEye = { x: base('x') ?? def.position.x, y: base('y') ?? def.position.y, z: base('z') ?? -focal };
+  const worldEye = rig.lift(localEye);
+  const px = base('poiX');
+  const py = base('poiY');
+  const pz = base('poiZ');
+  const localPoi = px !== undefined || py !== undefined || pz !== undefined ? { x: px ?? width / 2, y: py ?? height / 2, z: pz ?? 0 } : null;
   const newEye = { x: worldEye.x - pivot.x, y: worldEye.y - pivot.y, z: worldEye.z - pivot.z };
   const rebases: TransformRebase[] = [
     { prop: 'x', value: newEye.x, delta: newEye.x - localEye.x },
     { prop: 'y', value: newEye.y, delta: newEye.y - localEye.y },
     { prop: 'z', value: newEye.z, delta: newEye.z - localEye.z },
   ];
-  if (localPoi && worldPoi) {
+  if (localPoi) {
+    const worldPoi = rig.lift(localPoi);
     const newPoi = { x: worldPoi.x - pivot.x, y: worldPoi.y - pivot.y, z: worldPoi.z - pivot.z };
     rebases.push(
       { prop: 'poiX', value: newPoi.x, delta: newPoi.x - localPoi.x },
@@ -300,68 +376,70 @@ function orbitPlan(camId: string, time: number): OrbitPlan | null {
       { prop: 'poiZ', value: newPoi.z, delta: newPoi.z - localPoi.z },
     );
   }
-  return { rootId, name: `${cam.name ?? 'Camera'} Orbit Null`, pivot, rebases };
+  return { name: `${nameOf(camId)} Orbit Null`, pivot, rebases };
+}
+
+/** One member of a numeric value shifted by `delta` (API units). */
+function shiftedValue(v: Value, shifts: ReadonlyMap<number, number>, type: Parameters<typeof valueOfNumbers>[0]): Value {
+  const nums = numbersOfValue(v).map((n, i) => n + (shifts.get(i) ?? 0));
+  return valueOfNumbers(type, nums);
 }
 
 /**
- * Create a 3D null at the camera's pivot, parent the camera to it and re-base
- * the camera's position and POI so nothing moves on screen.
- *
- * The compensation is done here and not by `reparentNode`'s preserve-world
- * path because that path is 2D: it re-bases x/y and leaves `z` where it was,
- * which for a camera pulled back by its focal length is the whole picture.
- * Base props AND keyframe tracks are shifted by the same delta, so an
- * animated camera keeps its move. Returns the null's id.
- *
- * The page engine as the document's owner only (tests, the CLI); the app
- * (the engine owns the document) uses {@link createOrbitNullEdit}.
+ * Re-base transform properties RIGIDLY, as engine commands composed on the
+ * mirror: a static property takes the new base values, an animated one has
+ * every key shifted by the delta (spatial tangents are value-space offsets, so
+ * a translation leaves them untouched). The opposite of a playhead write —
+ * which would pin one frame and leave the move's other keys in the old space.
  */
-export function createOrbitNull(camId: string, time: number): string | null {
-  const plan = orbitPlan(camId, time);
-  if (!plan) return null;
-  const { rootId, pivot } = plan;
-  const nullId = `null_orbit_${(orbitSeq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
-  const node: SceneNode = {
-    id: nullId,
-    name: plan.name,
-    parent: rootId,
-    children: [],
-    transform: { position: { x: pivot.x, y: pivot.y }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true,
-    locked: false,
-    components: [
-      {
-        id: `${nullId}_t`,
-        type: 'Transform',
-        props: { [SCENE_KIND_PROP]: 'null', x: pivot.x, y: pivot.y, z: pivot.z, rotation: 0, rotationX: 0, rotationY: 0 },
-      },
-    ],
-  };
-  defaultSceneGraph.addChild(rootId, node);
-
-  // Relink WITHOUT the 2D compensation, then re-base all three axes ourselves.
-  if (!reparentNode(camId, nullId, { preserveWorld: false })) {
-    defaultSceneGraph.removeNode(nullId);
-    return null;
+export function rebaseCommands(layer: string, rebases: ReadonlyArray<TransformRebase>): EngineCommand[] | null {
+  const m = documentMirror();
+  const tree = m.tree(layer);
+  if (!tree) return null;
+  const byPath = new Map<string, { rebases: Array<TransformRebase & { member: number; factor: number }> }>();
+  for (const rb of rebases) {
+    if (!Number.isFinite(rb.value) || !Number.isFinite(rb.delta)) continue;
+    const r = trackRefIn(tree, rb.prop);
+    if (!r || !r.info.animatable) return null;
+    let g = byPath.get(r.path);
+    if (!g) byPath.set(r.path, (g = { rebases: [] }));
+    g.rebases.push({ ...rb, member: r.member, factor: r.factor });
   }
-  // Rigid re-base: base props AND every keyframe move into the null's space.
-  rebaseTransformProps(camId, plan.rebases, 'Create orbit null');
-  useSelectionStore.getState().set([nullId]);
-  bumpScene();
-  return nullId;
+  const out: EngineCommand[] = [];
+  for (const [path, g] of byPath) {
+    const info = tree.nodes.get(path)!;
+    const prop = { layer, path };
+    const keys = m.keyframes(layer, path);
+    if (keys.length > 0) {
+      const shifts = new Map(g.rebases.map((rb) => [rb.member, rb.delta * rb.factor] as const));
+      if ([...shifts.values()].every((d) => Math.abs(d) < 1e-9)) continue;
+      out.push({ type: 'setKeyframes', prop, keys: keys.map((k): Keyframe => ({ ...k, value: shiftedValue(k.value, shifts, info.valueType) })) });
+      continue;
+    }
+    const nums = numbersOfValue(info.value);
+    for (const rb of g.rebases) nums[rb.member] = rb.value * rb.factor;
+    out.push({ type: 'setProperty', prop, value: valueOfNumbers(info.valueType, nums) });
+  }
+  return out;
 }
 
 /**
- * Create Orbit Null through the ENGINE (the app: the engine owns the
- * document) as ONE history entry (an engine gesture): the 3D null made at the
- * pivot, the camera parented to it without compensation, and the camera's
- * position / POI re-based (base values and every key) into the null's space.
- * Resolves to the null's id, or null when refused.
+ * Create Orbit Null as ONE history entry (an engine gesture): a 3D null made
+ * at the camera's pivot, the camera parented to it WITHOUT compensation, and
+ * the camera's position / POI re-based (base values and every key) into the
+ * null's space so nothing moves on screen.
+ *
+ * The compensation is done here and not by `setParent`'s keep-world path
+ * because that path is 2D: it re-bases x/y and leaves `z` where it was, which
+ * for a camera pulled back by its focal length is the whole picture. Resolves
+ * to the null's id, or null when refused.
  */
 export async function createOrbitNullEdit(camId: string, time: number): Promise<string | null> {
-  const plan = orbitPlan(camId, time);
+  const plan = await orbitPlan(camId, time);
   const comp = compOfLayer(camId);
   if (!plan || !comp) return null;
+  const rebase = rebaseCommands(camId, plan.rebases);
+  if (!rebase) return null;
   const e = engine();
   const began = await e.execute({ type: 'beginGesture', label: 'Create Orbit Null' });
   if (!began.ok) return null;
@@ -380,53 +458,58 @@ export async function createOrbitNullEdit(camId: string, time: number): Promise<
     if (!placed.ok) return null;
     const parented = await e.execute({ type: 'setParent', layers: [camId], parent: nullId, keepWorldTransform: false });
     if (!parented.ok) return null;
-    // The replica has the relink now (the owner forwards in order); re-base on it off-document.
-    await localEngine()?.whenIdle();
-    const rebase = layerDiffCommands(() => rebaseTransformPropsRaw(camId, plan.rebases));
-    if (rebase.cmds.length > 0) {
-      const res = await e.batch('Create Orbit Null', rebase.cmds);
+    // A relink without compensation leaves the camera's values as they were: the re-base composed above still holds.
+    if (rebase.length > 0) {
+      const res = await e.batch('Create Orbit Null', rebase);
       if (!res.ok) return null;
     }
     ok = true;
   } finally {
     await e.execute({ type: 'endGesture', gesture: began.value.gesture, commit: ok });
   }
-  if (nullId) useSelectionStore.getState().set([nullId]);
+  if (nullId && ok) useSelectionStore.getState().set([nullId]);
   return ok ? nullId : null;
 }
 
 // ── Look at ─────────────────────────────────────────────────────────────────
 
-/** Content layers of the active comp — what "all layers" frames. */
-export function frameableLayers(): SceneNode[] {
-  return flattenComposition(defaultSceneGraph, activeCompRootId()).filter((n) => {
-    if (isDevice(n)) return false;
-    const k = readNodeKind(n);
-    return k !== 'group' && k !== 'comp' && n.visible !== false;
-  });
+/** A layer to frame: its world position and the radius of its box (scale included). */
+export interface FramingSubject {
+  p: Vec3;
+  r: number;
+}
+
+/** The framing subjects of `ids` at comp `seconds` (layers with no position are left out). */
+export async function framingSubjects(ids: ReadonlyArray<string>, seconds: number): Promise<FramingSubject[]> {
+  const t = compTime(seconds);
+  const out = await Promise.all(ids.map(async (id): Promise<FramingSubject | null> => {
+    const [p, box, [sx = 1, sy = 1]] = await Promise.all([
+      layerWorldPosition(id, seconds),
+      fetchLayerBox(id, t),
+      trackValuesAt(id, ['scaleX', 'scaleY'], seconds),
+    ]);
+    if (!p) return null;
+    const r = box ? (Math.hypot(box.width, box.height) / 2) * Math.max(Math.abs(sx), Math.abs(sy)) : 0;
+    return { p, r };
+  }));
+  return out.filter((s): s is FramingSubject => s !== null);
 }
 
 /**
- * The orbit that frames `nodes`: POI at their centroid, distance so the sphere
- * enclosing every layer's box fits the narrower field of view with a little
- * air. Pure — the caller decides which view receives it.
+ * The orbit that frames `subjects`: POI at their centroid, distance so the
+ * sphere enclosing every layer's box fits the narrower field of view with a
+ * little air. Pure — the caller decides which view receives it.
  */
 export function framingFor(
-  nodes: ReadonlyArray<SceneNode>,
-  time: number,
+  subjects: ReadonlyArray<FramingSubject>,
   width: number,
   height: number,
 ): { poi: Vec3; distance: number } | null {
-  if (nodes.length === 0) return null;
-  const pts = nodes.map((n) => {
-    const p = layerWorldPosition(n, time);
-    const g = readGeometry(n);
-    const r = g ? (Math.hypot(g.width, g.height) / 2) * Math.max(Math.abs(g.scaleX), Math.abs(g.scaleY)) : 0;
-    return { p, r };
-  });
-  const poi = pts.reduce((acc, { p }) => ({ x: acc.x + p.x / pts.length, y: acc.y + p.y / pts.length, z: acc.z + p.z / pts.length }), { x: 0, y: 0, z: 0 });
+  if (subjects.length === 0) return null;
+  const n = subjects.length;
+  const poi = subjects.reduce((acc, { p }) => ({ x: acc.x + p.x / n, y: acc.y + p.y / n, z: acc.z + p.z / n }), { x: 0, y: 0, z: 0 });
   let radius = 1;
-  for (const { p, r } of pts) radius = Math.max(radius, Math.hypot(p.x - poi.x, p.y - poi.y, p.z - poi.z) + r);
+  for (const { p, r } of subjects) radius = Math.max(radius, Math.hypot(p.x - poi.x, p.y - poi.y, p.z - poi.z) + r);
   const focal = Project3D.defaultCamera(width, height).focalLength;
   const fovH = Project3D.fovForFocalLength(width, focal);
   const fovV = Project3D.fovForFocalLength(height, focal);
@@ -436,14 +519,14 @@ export function framingFor(
 }
 
 /**
- * Point the custom view at `nodes`. In After Effects this verb is greyed out
+ * Point the custom view at `ids`. In After Effects this verb is greyed out
  * in Active Camera and the ortho views — it aims a VIEW, never the shot camera.
  * Here it switches to the last custom view first, which is what the user is
- * about to do anyway. Returns the view it aimed.
+ * about to do anyway. Resolves to the view it aimed.
  */
-export function lookAt(nodes: ReadonlyArray<SceneNode>, time: number): CustomViewId | null {
+export async function lookAt(ids: ReadonlyArray<string>, seconds: number): Promise<CustomViewId | null> {
   const { width, height } = activeCompSize();
-  const framing = framingFor(nodes, time, width, height);
+  const framing = framingFor(await framingSubjects(ids, seconds), width, height);
   if (!framing) return null;
   const s = useGuidesStore.getState();
   const view: CustomViewId = isCustomViewId(s.camera3dMode) ? s.camera3dMode : s.lastCustomView;
@@ -480,42 +563,41 @@ export function lookAt(nodes: ReadonlyArray<SceneNode>, time: number): CustomVie
  */
 export async function distributeLayersInZ(time: number): Promise<{ count: number; span: number } | null> {
   const { width, height } = activeCompSize();
-  const rootId = activeCompRootId();
-  const selected = subjectLayers().filter(canBe3D);
-  const targets = selected.length >= 2 ? selected : frameableLayers().filter(canBe3D);
+  const m = documentMirror();
+  const canBe3D = async (ids: readonly string[]): Promise<string[]> => {
+    const out: string[] = [];
+    for (const id of ids) if (mirrorCanBe3D(m.layer(id), await m.loadTree(id))) out.push(id);
+    return out;
+  };
+  const selected = await canBe3D(subjectLayers());
+  const targets = selected.length >= 2 ? selected : await canBe3D(frameableLayers());
   if (targets.length < 2) return null;
 
-  // Stacking order, not selection order: later in the flatten = higher in the
+  // Stacking order, not selection order: later in the walk = higher in the
   // stack = nearer the camera.
-  const order = new Map(flattenComposition(defaultSceneGraph, rootId).map((n, i) => [n.id, i]));
-  const sorted = [...targets].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  const order = new Map(flattenCompLayers(m, activeCompRootId()).map((id, i) => [id, i]));
+  const sorted = [...targets].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
 
   const span = Math.round(Math.min(width, height) * 0.35);
   const step = span / (sorted.length - 1);
   const cam = commandCamera();
-  const focal = Math.max(
-    1,
-    cam ? resolveCommandCamera(cam, time).focalLength : Project3D.defaultCamera(width, height).focalLength,
-  );
+  const rig = cam ? await resolveCommandCamera(cam, time) : null;
+  const focal = Math.max(1, rig ? rig.camera.focalLength : Project3D.defaultCamera(width, height).focalLength);
 
-  const av = sampleAt(time);
-  const entries = sorted.map((node, i) => {
+  const entries = await Promise.all(sorted.map(async (id, i) => {
     const z = Math.round(span - i * step);
     const values: Record<string, number> = { z };
-    if (node.parent === rootId) {
+    if (!m.layer(id)?.parent) {
       const factor = (focal + z) / focal;
-      const g = readGeometry(node);
-      const num = (p: string, fb: number): number => av(node.id, p) ?? fb;
-      const x = num('x', g?.x ?? width / 2);
-      const y = num('y', g?.y ?? height / 2);
+      const [x = width / 2, y = height / 2, sx = 1, sy = 1] = await trackValuesAt(id, ['x', 'y', 'scaleX', 'scaleY'], time);
       values.x = width / 2 + (x - width / 2) * factor;
       values.y = height / 2 + (y - height / 2) * factor;
-      values.scaleX = num('scaleX', g?.scaleX ?? 1) * factor;
-      values.scaleY = num('scaleY', g?.scaleY ?? 1) * factor;
+      values.scaleX = sx * factor;
+      values.scaleY = sy * factor;
     }
-    return { nodeId: node.id, values };
-  });
-  const flat = sorted.filter((n) => !is3DEnabled(n)).map((n) => n.id);
+    return { nodeId: id, values };
+  }));
+  const flat = sorted.filter((id) => m.layer(id)?.switches.threeD !== true);
 
   // ONE entry: the 3D switch first (Z is a property only a 3D layer has), then
   // the values, keyed where animated / under Auto-Keyframe.
@@ -530,6 +612,8 @@ export async function distributeLayersInZ(time: number): Promise<{ count: number
   if (flat.length > 0) {
     const res = await client.execute({ type: 'setLayerSwitches', layers: flat, patch: { threeD: true } });
     if (!res.ok) { reportEngineError(label, res.error); ok = false; }
+    // The values below are composed on the trees the switch just grew a Z in.
+    else await m.whenAt(res.revision);
   }
   if (ok) {
     const cmds = trackValueCommands(entries, { seconds: time, autoKeyframe: usePreferenceStore.getState().timelineAutoKeyframe });
@@ -555,14 +639,11 @@ export function buildCameraCommands(): ReadonlyArray<Command> {
       description: 'A 3D null at the camera\'s point of interest, with the camera parented to it',
       icon: 'camera',
       enabled: () => commandCamera() !== null,
-      execute: () => {
+      execute: async () => {
         const cam = commandCamera();
         if (!cam) return;
-        const done = (id: string | null): void => {
-          notify(id ? `Created orbit null for ${cam.name} — rotate it to orbit the camera` : 'Could not create the orbit null', id ? 'success' : 'warning');
-        };
-        if (engineOwnsDocumentNow()) void createOrbitNullEdit(cam.id, playhead()).then(done);
-        else done(createOrbitNull(cam.id, playhead()));
+        const id = await createOrbitNullEdit(cam, playhead());
+        notify(id ? `Created orbit null for ${nameOf(cam)} — rotate it to orbit the camera` : 'Could not create the orbit null', id ? 'success' : 'warning');
       },
     },
     {
@@ -593,8 +674,8 @@ export function buildCameraCommands(): ReadonlyArray<Command> {
         const cam = commandCamera();
         const target = subjectLayers()[0];
         if (!cam || !target) return;
-        const d = await setFocusDistanceToLayer(cam.id, target.id, playhead());
-        notify(d === null ? `${target.name} is behind the camera` : `Focus distance set to ${Math.round(d)} px (${target.name})`, d === null ? 'warning' : 'success');
+        const d = await setFocusDistanceToLayer(cam, target, playhead());
+        notify(d === null ? `${nameOf(target)} is behind the camera` : `Focus distance set to ${Math.round(d)} px (${nameOf(target)})`, d === null ? 'warning' : 'success');
       },
     },
     {
@@ -603,11 +684,11 @@ export function buildCameraCommands(): ReadonlyArray<Command> {
       description: 'Keep the focal plane on the selected layer as either moves (expression)',
       icon: 'camera',
       enabled: oneSubject,
-      execute: () => {
+      execute: async () => {
         const cam = commandCamera();
         const target = subjectLayers()[0];
         if (!cam || !target) return;
-        if (linkFocusDistanceToLayer(cam.id, target.id)) notify(`Focus distance linked to ${target.name}`, 'success');
+        if (await linkFocusDistanceToLayer(cam, target)) notify(`Focus distance linked to ${nameOf(target)}`, 'success');
       },
     },
     {
@@ -619,9 +700,9 @@ export function buildCameraCommands(): ReadonlyArray<Command> {
         const cam = commandCamera();
         return cam !== null && isTwoNodeCamera(cam);
       },
-      execute: () => {
+      execute: async () => {
         const cam = commandCamera();
-        if (cam && linkFocusDistanceToPoi(cam.id)) notify('Focus distance linked to the point of interest', 'success');
+        if (cam && await linkFocusDistanceToPoi(cam)) notify('Focus distance linked to the point of interest', 'success');
       },
     },
     {
@@ -630,7 +711,7 @@ export function buildCameraCommands(): ReadonlyArray<Command> {
       description: 'Aim the custom view at the selected layers and frame them',
       icon: 'frame',
       enabled: () => subjectLayers().length > 0,
-      execute: () => { lookAt(subjectLayers(), playhead()); },
+      execute: async () => { await lookAt(subjectLayers(), playhead()); },
     },
     {
       id: asCommandId('view.lookAtAll'),
@@ -638,7 +719,7 @@ export function buildCameraCommands(): ReadonlyArray<Command> {
       description: 'Aim the custom view at every layer in the composition',
       icon: 'frame',
       enabled: () => frameableLayers().length > 0,
-      execute: () => { lookAt(frameableLayers(), playhead()); },
+      execute: async () => { await lookAt(frameableLayers(), playhead()); },
     },
   ];
 }
