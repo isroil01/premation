@@ -40,6 +40,8 @@ import { is3DEnabled } from '@core/scene/threeD';
 import { POSITION_PSEUDO_PROP, defaultAnimation } from '@motion/animation';
 import {
   resolvePropertyMeta,
+  resolvePropertyMetaWith,
+  type MetaNodeFacts,
   propertyLabel,
   groupPlaceholderPath,
   hasPropertyMeta,
@@ -207,6 +209,16 @@ function geometryRows(node: SceneNode, nodeId: string): StaticPropertyRow[] {
  * property from a plugin layer kind. Those still deserve the right heading.
  */
 export function groupForProp(prop: string, nodeId?: string): TimelineGroupKey {
+  return prefixGroup(prop) ?? groupOfMeta(resolvePropertyMeta(prop, nodeId).group);
+}
+
+/** {@link groupForProp} over meta facts the caller already holds (the document mirror's, core/mirror/metaFacts.ts). */
+export function groupForPropWith(prop: string, facts?: MetaNodeFacts): TimelineGroupKey {
+  return prefixGroup(prop) ?? groupOfMeta(resolvePropertyMetaWith(prop, facts).group);
+}
+
+/** The groups decided by the track name alone. */
+function prefixGroup(prop: string): TimelineGroupKey | null {
   if (prop === MASK_ANIM_PROP || prop.startsWith('mask.')) return 'masks';
   // AE lists Paint as an effect: Effects ▸ Paint ▸ Brush N.
   if (prop.startsWith('paint.')) return 'effects';
@@ -220,8 +232,11 @@ export function groupForProp(prop: string, nodeId?: string): TimelineGroupKey {
   }
   if (prop.startsWith('pathop.')) return 'contents';
   if (prop.startsWith('ta.')) return 'text';
+  return null;
+}
 
-  switch (resolvePropertyMeta(prop, nodeId).group) {
+function groupOfMeta(group: string | undefined): TimelineGroupKey {
+  switch (group) {
     case 'transform':
       return 'transform';
     case 'text':

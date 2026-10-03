@@ -163,7 +163,12 @@ const SCRATCH_ENGINE_ARG = 'scratch';
  * `pasteLayers` command the caller sends. Writer calls lexically inside such a
  * callback are scratch writes, like a helper called with a `scratch` engine.
  */
-const OFF_DOCUMENT_BUILDERS = new Set(['buildLayerFragment', 'insertBuiltLayers', 'offDocument', 'assistantKeyframesEdit', 'assistantKeyframeCommands']);
+// Block 3 (core/engine/memberEdits.ts): the callback runs on a SCRATCH animation
+// engine seeded from getMemberKeyframes; what it changed is sent as setMemberKeyframes.
+const OFF_DOCUMENT_BUILDERS = new Set([
+  'buildLayerFragment', 'insertBuiltLayers', 'offDocument', 'assistantKeyframesEdit', 'assistantKeyframeCommands',
+  'memberKeysEdit', 'runWithKeyTimes', 'choreographyEngineEdit',
+]);
 
 function insideOffDocumentBuilder(context, node) {
   const ancestors = context.sourceCode.getAncestors(node);
