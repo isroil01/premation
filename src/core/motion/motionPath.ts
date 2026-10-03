@@ -9,7 +9,6 @@
  */
 
 import {
-  defaultAnimation,
   autoSpatialTangents,
   effectiveSpatialTangents,
   type AnimationEngine,
@@ -71,14 +70,14 @@ function baseXY(node: SceneNode): { x: number; y: number } {
 }
 
 /** True when the layer has a position (x or y) animation. */
-export function hasPositionAnimation(nodeId: string, engine: AnimationEngine = defaultAnimation): boolean {
+export function hasPositionAnimation(nodeId: string, engine: AnimationEngine): boolean {
   return engine.isAnimated(nodeId, 'x') || engine.isAnimated(nodeId, 'y');
 }
 
 /** A sampler giving the layer's animated position at any time. */
 export function positionSamplerFor(
   node: SceneNode,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): (t: number) => { x: number; y: number } {
   const base = baseXY(node);
   return (t) => ({
@@ -90,7 +89,7 @@ export function positionSamplerFor(
 /** The [min,max] time span across the x and y keyframes (null when none). */
 export function positionSpan(
   nodeId: string,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): { min: number; max: number } | null {
   const xs = engine.getTrackKeyframes(nodeId, 'x') ?? [];
   const ys = engine.getTrackKeyframes(nodeId, 'y') ?? [];
@@ -100,7 +99,7 @@ export function positionSpan(
 }
 
 /** Distinct, sorted keyframe times across the x and y tracks. */
-export function keyframeTimes(nodeId: string, engine: AnimationEngine = defaultAnimation): number[] {
+export function keyframeTimes(nodeId: string, engine: AnimationEngine): number[] {
   const xs = engine.getTrackKeyframes(nodeId, 'x') ?? [];
   const ys = engine.getTrackKeyframes(nodeId, 'y') ?? [];
   return [...new Set([...xs, ...ys].map((k) => k.t))].sort((a, b) => a - b);
@@ -109,7 +108,7 @@ export function keyframeTimes(nodeId: string, engine: AnimationEngine = defaultA
 /** Fine samples of the trajectory for drawing the smooth path curve. */
 export function motionPathSamples(
   node: SceneNode,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
   perSegment = 16,
 ): PathSample[] {
   const span = positionSpan(node.id, engine);
@@ -122,7 +121,7 @@ export function motionPathSamples(
 /** The trajectory position at each keyframe time (drawn as draggable dots). */
 export function motionPathKeyframes(
   node: SceneNode,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): PathSample[] {
   const sampler = positionSamplerFor(node, engine);
   return keyframeTimes(node.id, engine).map((t) => {
@@ -138,8 +137,8 @@ export function motionPathKeyframes(
  */
 export function motionPathFrameSamples(
   node: SceneNode,
-  fps = 30,
-  engine: AnimationEngine = defaultAnimation,
+  fps: number,
+  engine: AnimationEngine,
 ): PathSample[] {
   const span = positionSpan(node.id, engine);
   if (!span || span.max <= span.min) return [];
@@ -198,7 +197,7 @@ function kfAt(
  */
 export function motionPathTangents(
   node: SceneNode,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): PathTangents[] {
   const times = keyframeTimes(node.id, engine);
   const sampler = positionSamplerFor(node, engine);
@@ -242,7 +241,7 @@ export function setPathTangent(
   which: 'in' | 'out',
   handle: { x: number; y: number },
   mirror: boolean,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): void {
   const kx = kfAt(nodeId, 'x', t, engine);
   const ky = kfAt(nodeId, 'y', t, engine);
@@ -280,7 +279,7 @@ export function setPathTangent(
 export function isPathTangentContinuous(
   nodeId: string,
   t: number,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): boolean {
   const kx = kfAt(nodeId, 'x', t, engine);
   if (kx?.spatialInterp === 'auto' || kx?.spatialInterp === 'continuous') return true;
@@ -301,7 +300,7 @@ const POSITION_AXES = ['x', 'y'] as const;
 export function spatialInterpAt(
   nodeId: string,
   t: number,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): SpatialInterp {
   let stored = false;
   let continuous = true;
@@ -358,7 +357,7 @@ export function setSpatialInterpolation(
   nodeId: string,
   t: number,
   mode: SpatialInterp,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): void {
   const keyed = POSITION_AXES.filter((p) => (engine.getTrackKeyframes(nodeId, p) ?? []).some((k) => k.t === t));
   if (keyed.length === 0) return;
@@ -397,7 +396,7 @@ export function setSpatialInterpolation(
 export function toggleVertexInterpolation(
   nodeId: string,
   t: number,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): SpatialInterp {
   const next: SpatialInterp = spatialInterpAt(nodeId, t, engine) === 'linear' ? 'auto' : 'linear';
   setSpatialInterpolation(nodeId, t, next, engine);
@@ -425,19 +424,19 @@ export function motionPathTimeWindow(
 }
 
 /** Auto-bezier the position path (smooth curve through every keyframe). */
-export function smoothMotionPath(nodeId: string, engine: AnimationEngine = defaultAnimation): void {
+export function smoothMotionPath(nodeId: string, engine: AnimationEngine): void {
   engine.smoothSpatialTangents(nodeId, 'x');
   engine.smoothSpatialTangents(nodeId, 'y');
 }
 
 /** Remove all spatial tangents from the position path (straight segments). */
-export function straightenMotionPath(nodeId: string, engine: AnimationEngine = defaultAnimation): void {
+export function straightenMotionPath(nodeId: string, engine: AnimationEngine): void {
   engine.clearSpatialTangents(nodeId, 'x');
   engine.clearSpatialTangents(nodeId, 'y');
 }
 
 /** True when any position keyframe carries an explicit spatial tangent. */
-export function hasPathTangents(nodeId: string, engine: AnimationEngine = defaultAnimation): boolean {
+export function hasPathTangents(nodeId: string, engine: AnimationEngine): boolean {
   for (const prop of ['x', 'y'] as const) {
     const kfs = engine.getTrackKeyframes(nodeId, prop) ?? [];
     if (kfs.some((k) => k.si !== undefined || k.so !== undefined || (k.spatialInterp !== undefined && k.spatialInterp !== 'linear'))) return true;
@@ -449,7 +448,7 @@ export function hasPathTangents(nodeId: string, engine: AnimationEngine = defaul
 export function autoOrientAngleDeg(
   node: SceneNode,
   t: number,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
   eps = 1 / 120,
 ): number | null {
   const sampler = positionSamplerFor(node, engine);

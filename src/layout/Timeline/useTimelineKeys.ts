@@ -48,7 +48,7 @@ import { performRedo, performUndo } from '@stores/historyStore';
 import { copyKeyframes } from '@core/animation/keyframeClipboard';
 import { pasteKeyframesAt } from './keyframeEdits';
 import { smoothMotionPath } from '@core/motion/motionPath';
-import { assistantKeyframesEdit } from '@core/engine/assistantKeys';
+import { editPositionKeysOf } from '@layout/Workspace/viewportEdits';
 import { createSelectionNudger, nudgeForKey } from './keyframeNudge';
 import {
   moveSelectedEndToPlayhead,
@@ -148,14 +148,10 @@ export function useTimelineKeys(): void {
           e.preventDefault();
           const ids = useSelectionStore.getState().ids;
           if (ids.length > 0) {
-            // Off-document, sent as setKeyframes per property: one entry
-            // (core/engine/assistantKeys.ts). B4-gap: the assistant rewrites the
-            // stored x / y member tracks' spatial tangents; `getMemberKeyframes`
-            // reads them, but no command writes member keys in stored form (or
-            // smooths spatial tangents), so it runs as a scratch helper.
-            void assistantKeyframesEdit('Smooth motion path', ids, () => {
-              for (const id of ids) smoothMotionPath(id);
-            });
+            // The viewport's Smooth button, over the selection: the helper runs on
+            // a scratch engine seeded from `getMemberKeyframes`, the changed keys
+            // go as `updateKeyframes` patches — one entry (viewportEdits.ts).
+            void editPositionKeysOf(ids, 'Smooth motion path', (id, scratch) => smoothMotionPath(id, scratch));
           }
           return;
         }

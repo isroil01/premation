@@ -28,11 +28,11 @@ it('Smooth Motion Path: one entry of setKeyframes, undone exactly', async () => 
     { prop: { layer: s.B, path: 'transform/position' }, time: 2 * 705_600_000, value: { kind: 'vec2', value: { x: 500, y: 100 } }, spatialIn: [], spatialOut: [] },
   ] });
   const before = h.doc();
-  const plan = assistantKeyframeCommands([s.B], () => smoothMotionPath(s.B));
+  const plan = assistantKeyframeCommands([s.B], () => smoothMotionPath(s.B, defaultAnimation));
   expect(plan.cmds.map((c) => c.type)).toEqual(['setKeyframes']);
   expect(h.doc()).toBe(before); // the plan changed nothing
   const n = historyLabels().length;
-  const { ok } = await assistantKeyframesEdit('Smooth motion path', [s.B], () => smoothMotionPath(s.B));
+  const { ok } = await assistantKeyframesEdit('Smooth motion path', [s.B], () => smoothMotionPath(s.B, defaultAnimation));
   await engineIdle();
   expect(ok).toBe(true);
   expect(historyLabels().slice(n)).toEqual(['Smooth motion path']);

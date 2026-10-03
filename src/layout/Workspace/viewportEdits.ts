@@ -237,6 +237,21 @@ export async function editPositionKeys(nodeId: string, label: string, mutate: (s
   await edit(label, positionKeyPatchCommands(nodeId, start, ids, mutate));
 }
 
+/** The same Position edit over several layers (a selection), as ONE entry. */
+export async function editPositionKeysOf(
+  nodeIds: readonly string[],
+  label: string,
+  mutate: (nodeId: string, scratch: AnimationEngine) => void,
+): Promise<void> {
+  const cmds: Command[] = [];
+  for (const id of nodeIds) {
+    const start = await capturePositionTracks(id);
+    const ids = await resolvePositionKeyIds(id, start);
+    cmds.push(...positionKeyPatchCommands(id, start, ids, (scratch) => mutate(id, scratch)));
+  }
+  if (cmds.length > 0) await edit(label, cmds);
+}
+
 // ── Text tool ────────────────────────────────────────────────────────
 
 /**
