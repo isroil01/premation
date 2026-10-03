@@ -10,35 +10,14 @@
 
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { AudioDriverSection, hasAudioDriverSection } from './AudioDriverSection';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import {
   readAudioDrivers,
-  writeAudioDriver,
   defaultAudioDriver,
   AUDIO_DRIVER_PROP,
 } from '@core/audio/audioDriver';
-
-function addLayer(id: string, kind = 'shape'): void {
-  defaultSceneGraph.addNode({
-    id,
-    name: 'Layer 1',
-    parent: null,
-    children: [],
-    visible: true,
-    locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      {
-        id: `${id}_t`,
-        type: 'Transform',
-        props: { __kind: kind, x: 0, y: 0, width: 100, height: 100, rotation: 0, opacity: 100 },
-      },
-    ],
-  } as never);
-}
 
 // The section reads the document mirror (B4): the fixture is built through the app's engine.
 describe('AudioDriverSection', () => {
@@ -116,14 +95,20 @@ describe('AudioDriverSection', () => {
 });
 
 describe('driver persistence', () => {
-  beforeEach(() => {
-    defaultSceneGraph.clear();
-    addLayer('rect');
+  let h: Harness;
+  let rect = '';
+  beforeEach(async () => {
+    h = await setupAppEngine({ panels: true });
+    rect = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'Layer 1', init: [] })).layer;
   });
+  afterEach(async () => { await h.dispose(); });
+
+  const writeDrivers = (drivers: unknown) =>
+    h.run({ type: 'setProperty', prop: { layer: rect, path: 'audio/drivers' }, value: { kind: 'json', value: JSON.stringify(drivers) } });
 
   it('round-trips through the node’s hidden __audioDriver map', async () => {
-    writeAudioDriver('rect', { ...defaultAudioDriver('opacity'), band: 'low', min: 10, max: 90 });
-    const node = (await docView()).getNode('rect');
+    await writeDrivers({ opacity: { ...defaultAudioDriver('opacity'), band: 'low', min: 10, max: 90 } });
+    const node = (await docView()).getNode(rect);
     const drivers = readAudioDrivers(node!);
     expect(drivers.opacity?.band).toBe('low');
     expect(drivers.opacity?.min).toBe(10);
@@ -134,12 +119,8 @@ describe('driver persistence', () => {
   });
 
   it('a garbled record degrades to defaults rather than throwing', async () => {
-    const node = (await docView()).getNode('rect');
-    const t = node!.components.find((c) => c.type === 'Transform');
-    defaultSceneGraph.writeProp('rect', t!.id, AUDIO_DRIVER_PROP, {
-      scale: { band: 'nonsense', attackMs: 'soon', curve: 'wobble' },
-    });
-    const drivers = readAudioDrivers((await docView()).getNode('rect')!);
+    await writeDrivers({ scale: { band: 'nonsense', attackMs: 'soon', curve: 'wobble' } });
+    const drivers = readAudioDrivers((await docView()).getNode(rect)!);
     expect(drivers.scale?.band).toBe('full');
     expect(drivers.scale?.curve).toBe('linear');
     expect(typeof drivers.scale?.attackMs).toBe('number');

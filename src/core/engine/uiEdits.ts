@@ -76,6 +76,9 @@ export async function edit(
   const list = Array.isArray(commands) ? commands as readonly Command[] : [commands as Command];
   const client = opts.client ?? engine();
   if (list.length === 0) return { ok: true, value: [], revision: client.revision };
+  // A drag that ended a moment ago is still closing its gesture over the pipe:
+  // an edit sent before it closes would be refused (gestureOpen). Wait for it.
+  if (closing.size > 0) await gestureSessionsSettled();
   const res = await client.batch(label, [...list]);
   if (!res.ok && !opts.quiet) reportEngineError(label, res.error);
   // The response can overtake its events over the pipe: what the caller reads

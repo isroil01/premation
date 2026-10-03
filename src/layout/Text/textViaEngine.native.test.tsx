@@ -280,14 +280,12 @@ describe('Text animators', () => {
 
 describe('Path Options', () => {
   test('a Path Options switch and margin are engine writes on the text-path properties', async () => {
-    // Put the text on a mask path (the legacy attach — an engine gap), then edit its options.
+    // Put the text on a mask path (what the Mask Path menu writes), then edit its options.
     const { groups: [maskPath] } = await h.run({
       type: 'addMask', layer: s.T, mode: 'add', inverted: false,
       path: { vertices: [0, 0, 200, 0, 200, 100], inTangents: [], outTangents: [], closed: false, featherPoints: [], vertexStates: [] },
     });
-    const { setTextPath, defaultTextPath } = await import('@core/text/textPath');
-    act(() => { setTextPath(s.T, { ...defaultTextPath(), pathId: maskPath!.split('/')[1]! }); });
-    jest.advanceTimersByTime(2000);
+    await h.run({ type: 'setProperty', prop: { layer: s.T, path: 'text/pathOptions/path' }, value: { kind: 'string', value: maskPath!.split('/')[1]! } });
     await idle();
     await clearHistory();
     render(<TooltipProvider><TextPathOptions nodeId={s.T} /></TooltipProvider>);

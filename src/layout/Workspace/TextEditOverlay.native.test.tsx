@@ -14,7 +14,7 @@ import type { Value } from '@motion/engine-api';
 import { TextEditOverlay, insideKeepZone } from './TextEditOverlay';
 import { ColorPicker } from '@components/ColorPicker';
 import { useTextEditStore } from '@stores/textEditStore';
-import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits, itFullEngine } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
 
@@ -376,7 +376,8 @@ describe('TextEditOverlay', () => {
     }
   });
 
-  it('a fixed paragraph box clips, aligns like the painter, and flags overflow live', async () => {
+  // The box is the engine's text layout: the full engine only.
+  itFullEngine('a fixed paragraph box clips, aligns like the painter, and flags overflow live', async () => {
     const put = async (boxHeight: number, align: string): Promise<void> => {
       T = await textLayer('Hi', [
         ['text/fontSize', { kind: 'scalar', value: 20 }],

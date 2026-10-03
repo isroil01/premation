@@ -26,6 +26,9 @@ import { resetProcessEngine } from '../process/processEngine';
 import { nativeEngineIsHeadless, startNativeEngine, type NativeEngine } from './nativeEngine';
 
 export const S = 705_600_000;
+
+// Captured at import: a suite on fake timers still settles on real time.
+const realSetTimeout = globalThis.setTimeout.bind(globalThis);
 /** Seconds → flicks. */
 export const sec = (s: number): number => Math.round(s * S);
 
@@ -176,6 +179,8 @@ function holdAllTrees(): () => void {
 export async function setupAppEngine(opts: AppEngineOptions = {}): Promise<AppHarness> {
   // A test that left a gesture open (or a dead engine) poisons the next: start over.
   if (shared) {
+    // A gesture the last test ended a moment ago closes first.
+    if ((await shared.bridge.status()).state === 'running') await settleEdits();
     const r = await shared.bridge.status();
     let stale = r.state !== 'running';
     if (!stale) {
@@ -263,7 +268,11 @@ export async function gestureOpen(): Promise<boolean> {
  * round trips after the pointer-up that ended it.
  */
 export async function settleEdits(): Promise<void> {
-  for (let i = 0; i < 2; i++) {
+  // A UI action is often `void edit()` behind a few awaits (load the trees,
+  // resolve the keys): give such chains a few macrotask turns to reach the
+  // engine, then wait for it and the mirror.
+  for (let i = 0; i < 4; i++) {
+    await new Promise<void>((r) => { realSetTimeout(r, 0); });
     await settleToolEdits();
     await gestureSessionsSettled();
     await engineIdle();

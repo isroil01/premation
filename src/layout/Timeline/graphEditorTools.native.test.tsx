@@ -15,7 +15,7 @@
  * only on which element it hit — and nothing here drags.
  */
 
-import { act, render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { GraphEditor } from './GraphEditor';
 import { defaultAnimation } from '@motion/animation';
 import { rowSelectionId } from '@core/engine/__testHelpers__/selectionIds';
@@ -75,7 +75,7 @@ async function settle(): Promise<void> {
   await act(async () => { await settleEdits(); await settleEdits(); });
 }
 
-const renderGraph = (): ReturnType<typeof render> => {
+const renderGraph = async (): Promise<ReturnType<typeof render>> => {
   view = render(
     <GraphEditor
       selectedNodeIds={[NODE]}
@@ -85,6 +85,8 @@ const renderGraph = (): ReturnType<typeof render> => {
       scrollLeft={0}
     />,
   );
+  // The diamonds draw once the layer's keys land.
+  await waitFor(() => expect(view.container.querySelectorAll('circle').length).toBeGreaterThanOrEqual(3));
   return view;
 };
 
@@ -110,7 +112,7 @@ const kfAt = async (t: number) =>
 
 describe('the tools appear only with a keyframe in hand', () => {
   it('shows nothing until one is selected, then the whole set', async () => {
-    renderGraph();
+    await renderGraph();
     expect(screen.queryByLabelText('Easing kind')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Ease library' })).toBeNull();
 
@@ -126,7 +128,7 @@ describe('the tools appear only with a keyframe in hand', () => {
 
 describe('the easing-kind selector', () => {
   it('offers every kind and reports the selected keyframe’s own', async () => {
-    renderGraph();
+    await renderGraph();
     pick(0);
     const select = screen.getByLabelText('Easing kind') as HTMLSelectElement;
     expect(select.options).toHaveLength(10);
@@ -134,7 +136,7 @@ describe('the easing-kind selector', () => {
   });
 
   it('applies to the WHOLE selection, not just the focused keyframe', async () => {
-    renderGraph();
+    await renderGraph();
     pick(0);
     pick(1, true);
     fireEvent.change(screen.getByLabelText('Easing kind'), { target: { value: 'easeOut' } });
@@ -151,7 +153,7 @@ describe('the easing-kind selector', () => {
   });
 
   it('reads back the kind it wrote — the selector never lies about state', async () => {
-    renderGraph();
+    await renderGraph();
     pick(0);
     fireEvent.change(screen.getByLabelText('Easing kind'), { target: { value: 'hold' } });
     await settle();
@@ -161,7 +163,7 @@ describe('the easing-kind selector', () => {
 
 describe('ease copy / paste', () => {
   it('is disabled until something has been copied', async () => {
-    renderGraph();
+    await renderGraph();
     pick(0);
     expect(screen.getByRole('button', { name: 'Paste ease' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Copy ease' }));
@@ -174,7 +176,7 @@ describe('ease copy / paste', () => {
       patches: [{ id: keyIds[0]!, easing: 'bezier', bezier: { x1: 0.9, y1: 0.02, x2: 0.1, y2: 0.98 }, spatialIn: [], spatialOut: [] }],
     });
     await clearHistory();
-    renderGraph();
+    await renderGraph();
     pick(0);
     fireEvent.click(screen.getByRole('button', { name: 'Copy ease' }));
 
@@ -191,7 +193,7 @@ describe('ease copy / paste', () => {
 
 describe('rove across time', () => {
   it('roves an interior keyframe', async () => {
-    renderGraph();
+    await renderGraph();
     pick(1);
     const rove = screen.getByRole('button', { name: 'Rove across time' });
     expect(rove).not.toBeDisabled();
@@ -203,7 +205,7 @@ describe('rove across time', () => {
   });
 
   it('is disabled on an end keyframe — there is nothing to rove between', async () => {
-    renderGraph();
+    await renderGraph();
     pick(0);
     expect(screen.getByRole('button', { name: 'Rove across time' })).toBeDisabled();
     pick(2);
@@ -213,7 +215,7 @@ describe('rove across time', () => {
 
 describe('the ease library popover', () => {
   it('opens, applies a named curve to the selection, and closes on Escape', async () => {
-    renderGraph();
+    await renderGraph();
     pick(0);
     pick(1, true);
 
@@ -232,7 +234,7 @@ describe('the ease library popover', () => {
   });
 
   it('applies through the shared keyframe ids, so the selection is the target', async () => {
-    renderGraph();
+    await renderGraph();
     pick(2);
     expect([...useKeyframeSelectionStore.getState().ids]).toEqual([
       rowSelectionId(NODE, PROP, 2),
