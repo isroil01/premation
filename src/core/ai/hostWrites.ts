@@ -13,10 +13,8 @@
  */
 
 import { AiEngineError, type AiEngineSession } from '@motion/ai-tools';
-import type { BezierPath, Command, MaskMode as ApiMaskMode, PropertyWrite, Value } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readAnimatorData } from '@core/text/textAnimators';
-import { readPathOps, pathOpPropPath, type PathOp, type PathOpType } from '@core/scene/pathOps';
+import type { BezierPath, Command, MaskMode as ApiMaskMode, PropertyInfo, PropertyWrite, Value } from '@motion/engine-api';
+import { pathOpPropPath, type PathOpType } from '@core/scene/pathOps';
 import { getNodeLayerStyles, layerStyleEffectId, LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS, type LayerStyles } from '@core/effects/layerStyles';
 import { effectPropPath, parseColorChannels } from '@core/effects/effects';
 import { STYLE_FIELDS } from '@core/engine/effectFieldSpecs';
@@ -25,17 +23,17 @@ import { activePlayheadSeconds, apiColorOfHex } from '@core/engine/trackWrites';
 import { catalogFor } from '@core/engine/props';
 import type { MaskPath } from '@core/effects/mask';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { insertAudio, insertMedia, insertSvgDocument, isSvgAsset, readSvgText } from '@core/scene/sceneInsert';
+import { buildMedia, isSvgAsset, readSvgText } from '@core/scene/layerBuilders';
 import { documentMirror } from '@stores/documentMirror';
 import { buildSvgLayerFragment } from '@/engine-client/svgFragment';
 import { buildSvgShapeGroup, type BuiltSvgShapes } from '@core/svg/svgConvert';
-import { forgetSvgLayerSrc, readSvgLayer } from '@core/svg/svgLayer';
-import { buildLayerFragment, type BuiltLayers } from '@core/engine/offDocument';
+import { forgetSvgLayerSrc } from '@core/svg/svgLayer';
+import { buildLayerFragment } from '@core/engine/offDocument';
 import { apiParentOf, compOfLayer, layerIdsOfComp } from '@core/mirror/docFacts';
-import { useSelectionStore } from '@stores/selectionStore';
+import { FragmentBuilder, type BuiltFragment } from '@/engine-client/fragmentBuilder';
+import { insertFrame } from '@/engine-client/insertFragment';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { set3DEnabled } from '@core/scene/threeD';
 import type { SceneNode } from '@core/types';
 
 const setProps = (writes: readonly PropertyWrite[]): Command => ({
@@ -73,6 +71,58 @@ function refuse(what: string, keys: readonly string[]): never {
   throw new AiEngineError('unsupported', `${what}: the engine API does not address ${keys.join(', ')}`);
 }
 
+// ── What a write composes from (asked of the engine) ─────────────────
+
+/**
+ * The child GROUPS of `path` on a layer (`contents`, `text/animators`), in
+ * order — asked of the engine (`getPropertyTree`): the facts a write is
+ * composed from, exact at the write's revision.
+ */
+async function childGroupsOf(session: AiEngineSession, layer: string, path: string): Promise<PropertyInfo[]> {
+  let nodes: readonly PropertyInfo[];
+  try {
+    nodes = (await session.query({ type: 'getPropertyTree', layer, path, depth: 0 })).nodes;
+  } catch {
+    return [];
+  }
+  const prefix = `${path}/`;
+  return nodes.filter((n) => n.kind !== 'property' && n.path.startsWith(prefix) && !n.path.slice(prefix.length).includes('/'));
+}
+
+const lastSegment = (path: string): string => path.slice(path.lastIndexOf('/') + 1);
+
+/** A text layer's animators, in order: each id and its selectors' ids. */
+export async function textAnimators(session: AiEngineSession, layer: string): Promise<Array<{ id: string; selectors: string[] }>> {
+  const out: Array<{ id: string; selectors: string[] }> = [];
+  for (const a of await childGroupsOf(session, layer, 'text/animators')) {
+    const selectors = (await childGroupsOf(session, layer, `${a.path}/selectors`)).map((g) => lastSegment(g.path));
+    out.push({ id: lastSegment(a.path), selectors });
+  }
+  return out;
+}
+
+/** A layer's shape operators (Contents ▸ Trim Paths, Repeater, …), in chain order. */
+export async function pathOperators(session: AiEngineSession, layer: string): Promise<Array<{ id: string; type: string; params: Record<string, number> }>> {
+  let nodes: readonly PropertyInfo[];
+  try {
+    nodes = (await session.query({ type: 'getPropertyTree', layer, path: 'contents', depth: 0 })).nodes;
+  } catch {
+    return [];
+  }
+  const byPath = new Map(nodes.map((n) => [n.path, n]));
+  return nodes
+    .filter((g) => g.kind !== 'property' && g.matchName.startsWith('pathop:') && g.path.split('/').length === 2)
+    .map((g) => {
+      // The operator's static numeric params (stored units), by key.
+      const params: Record<string, number> = {};
+      for (const c of g.children) {
+        const v = byPath.get(c)?.value;
+        if (v?.kind === 'scalar') params[lastSegment(c)] = v.value;
+      }
+      return { id: lastSegment(g.path), type: g.matchName.slice('pathop:'.length), params };
+    });
+}
+
 // ── Switches ─────────────────────────────────────────────────────────
 
 /** The layer's 3D switch (`set3DEnabled`'s replacement). */
@@ -87,8 +137,7 @@ export async function addTextAnimatorGroup(session: AiEngineSession, layer: stri
   const r = await session.apply([{ type: 'addPropertyGroup', layer, parent: 'text/animators', matchName: 'ADBE Text Animator', init: [] } as Command]);
   const path = (r[0] as { groups?: string[] }).groups?.[0] ?? '';
   const id = path.split('/')[2];
-  const node = defaultSceneGraph.getNode(layer);
-  const index = node ? readAnimatorData(node).findIndex((a) => a.id === id) : -1;
+  const index = (await textAnimators(session, layer)).findIndex((a) => a.id === id);
   if (index < 0) throw new AiEngineError('internal', `the new animator '${path}' is not on '${layer}'`);
   return index;
 }
@@ -103,11 +152,10 @@ const SELECTOR0_FIELDS = new Set(['basedOn', 'shape', 'mode', 'units', 'randomiz
  * Numbers land at the playhead (a key where the property is animated).
  */
 export async function patchTextAnimator(session: AiEngineSession, layer: string, index: number, patch: Readonly<Record<string, unknown>>): Promise<void> {
-  const node = defaultSceneGraph.getNode(layer);
-  const a = node ? readAnimatorData(node)[index] : undefined;
+  const a = (await textAnimators(session, layer))[index];
   if (!a) throw new AiEngineError('notFound', `'${layer}' has no animator at index ${index}`);
   const base = `text/animators/${a.id}`;
-  const sel = a.selectors?.[0]?.id;
+  const sel = a.selectors[0];
   const nums: Record<string, number> = {};
   const fields: PropertyWrite[] = [];
   const bad: string[] = [];
@@ -178,16 +226,14 @@ export async function addPathOperator(session: AiEngineSession, layer: string, t
 
 /** `updatePathOp(layer, opId, patch)` as ONE `setProperties` (the operator's type is not patched here). */
 export async function patchPathOperator(session: AiEngineSession, layer: string, opId: string, patch: Readonly<Record<string, unknown>>): Promise<void> {
-  const node = defaultSceneGraph.getNode(layer);
-  if (!node || !readPathOps(node).some((o) => o.id === opId)) throw new AiEngineError('notFound', `'${layer}' has no path operator '${opId}'`);
+  if (!(await pathOperators(session, layer)).some((o) => o.id === opId)) throw new AiEngineError('notFound', `'${layer}' has no path operator '${opId}'`);
   const writes = pathOpWrites(layer, opId, patch);
   if (writes.length > 0) await session.apply([setProps(writes)]);
 }
 
 /** The layer's operator of `type` (the first), adding one at the end of the chain if absent; resolves to its id. */
 export async function ensurePathOperator(session: AiEngineSession, layer: string, type: 'trim' | 'repeater'): Promise<string> {
-  const node = defaultSceneGraph.getNode(layer);
-  const existing = node ? readPathOps(node).find((o: PathOp) => o.type === type) : undefined;
+  const existing = (await pathOperators(session, layer)).find((o) => o.type === type);
   return existing ? existing.id : addPathOperator(session, layer, type);
 }
 
@@ -264,30 +310,28 @@ export async function addMaskFromPath(session: AiEngineSession, layer: string, m
   return id;
 }
 
-// ── Inserts built off-document (media, SVG) ──────────────────────────
+// ── Inserts laid into fragments (media, SVG) ──────────────────────────
 
 /**
- * Run a legacy insert off-document and send its layers as ONE `pasteLayers`
- * (offDocument.ts — the UI's own route for inserts `createLayer` cannot carry:
- * a fitted footage box, an SVG document, a converted group). Resolves to the
- * new top layer's id; null when the builder added nothing.
+ * Send a built fragment as ONE `pasteLayers` (the UI's own route for inserts
+ * `createLayer` cannot carry: a fitted footage box, an SVG document, a 3D
+ * null with a model source). Resolves to the pasted id of scratch layer
+ * `pick` (default: the front-most top-level layer); null when nothing was built.
  */
-async function pasteBuilt(session: AiEngineSession, comp: string, built: BuiltLayers | null, extra: readonly Command[] = []): Promise<string | null> {
+async function pasteFragment(session: AiEngineSession, comp: string, built: BuiltFragment | null, pick?: string): Promise<string | null> {
   if (!built) return null;
-  const r = await session.apply([
-    { type: 'pasteLayers', comp, fragment: built.fragment, index: built.index, ...(built.parent ? { parent: built.parent } : {}) } as Command,
-    ...extra,
-  ]);
+  const r = await session.apply([{ type: 'pasteLayers', comp, fragment: built.fragment } as Command]);
   const ids = (r[0] as { layers?: string[] }).layers ?? [];
-  const at = built.tops[0] ? built.scratchIds.indexOf(built.tops[0]) : 0;
+  const want = pick ?? built.tops[0];
+  const at = want ? built.scratchIds.indexOf(want) : 0;
   return ids[at >= 0 ? at : 0] ?? null;
 }
 
 /**
  * Place an imported asset as a layer, as the Project panel's insert does
- * (`insertMedia`: contain-fitted to the comp, an SVG routed to its document
- * layer or editable shapes, audio as an audio layer) — built off-document,
- * inserted with ONE `pasteLayers`. Resolves to the new layer's id.
+ * (layerBuilders.ts `buildMedia`: contain-fitted to the comp, an SVG routed to
+ * its document layer or editable shapes, audio as an audio layer) — laid into
+ * a fragment, inserted with ONE `pasteLayers`. Resolves to the new layer's id.
  */
 export async function insertAssetLayer(session: AiEngineSession, asset: ImportedAsset, at?: { x?: number; y?: number }): Promise<string | null> {
   const comp = activeCompRootId() as string;
@@ -296,20 +340,15 @@ export async function insertAssetLayer(session: AiEngineSession, asset: Imported
     svgText = await readSvgText(asset.src);
     if (!svgText) throw new AiEngineError('io', `the SVG '${asset.name}' could not be read`);
   }
-  const sizeHint = Math.max(asset.metadata?.width ?? 0, asset.metadata?.height ?? 0) || undefined;
-  const built = buildLayerFragment(comp, () => {
-    if (asset.type === 'audio') insertAudio(asset);
-    else if (svgText !== null) insertSvgDocument(svgText, asset.name, { sizeHint });
-    // Not an SVG: insertMedia's body is synchronous (its only await is the SVG read).
-    else void insertMedia(asset);
-    // The inserters select what they made: place it (a SCRATCH write, like the insert).
-    const id = useSelectionStore.getState().ids[0];
-    const node = id ? defaultSceneGraph.getNode(id) : undefined;
-    const t = node?.components.find((c) => c.type === 'Transform');
-    if (node && t && at?.x !== undefined) defaultSceneGraph.writeProp(node.id, t.id, 'x', at.x);
-    if (node && t && at?.y !== undefined) defaultSceneGraph.writeProp(node.id, t.id, 'y', at.y);
-  });
-  return pasteBuilt(session, comp, built);
+  const b = new FragmentBuilder({ idPrefix: 'ai' });
+  const made = buildMedia(b, insertFrame(comp), asset, svgText);
+  if (!made) return null;
+  // The layer the insert selects, placed where the model asked.
+  if (at?.x !== undefined) b.setProp(made.id, 'Transform', 'x', at.x);
+  if (at?.y !== undefined) b.setProp(made.id, 'Transform', 'y', at.y);
+  const id = await pasteFragment(session, comp, b.build(), made.id);
+  made.report();
+  return id;
 }
 
 /**
@@ -339,8 +378,9 @@ export async function insertSvgMarkupLayer(session: AiEngineSession, markup: str
  * group's id; null when the SVG has no vector paths (nothing sent).
  */
 export async function convertSvgLayer(session: AiEngineSession, nodeId: string): Promise<string | null> {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !readSvgLayer(node)) return null;
+  if (documentMirror().layer(nodeId)?.svg !== 'layer') return null;
+  // B3: the parser still builds against a scratch state of the replica
+  // (svgConvert.ts buildSvgShapeGroup) — it moves with core/svg.
   const comp = compOfLayer(nodeId);
   if (!comp) return null;
   let result: BuiltSvgShapes | null = null;
@@ -373,8 +413,9 @@ export async function importAssetBytes(session: AiEngineSession, file: File): Pr
 
 /**
  * A 3D null that anchors a generated model (`assetId` on its Transform — the
- * compositor does not draw glTF meshes yet), built off-document and inserted
- * with ONE `pasteLayers`: `createLayer` has no footage source for a null.
+ * compositor does not draw glTF meshes yet), laid into a fragment and inserted
+ * with ONE `pasteLayers`: `createLayer` has no footage source for a null. 3D as
+ * `set3DEnabled` makes a layer: the depth props stored, answering lights.
  */
 export async function insertModelPlaceholder(session: AiEngineSession, name: string, at: { x: number; y: number }, assetId: string): Promise<string | null> {
   const comp = activeCompRootId() as string;
@@ -385,12 +426,13 @@ export async function insertModelPlaceholder(session: AiEngineSession, name: str
     components: [{
       id: `${id}_t`,
       type: 'Transform',
-      props: { [SCENE_KIND_PROP]: 'null', x: at.x, y: at.y, rotation: 0, scaleX: 1, scaleY: 1, anchorX: 0, anchorY: 0, width: 100, height: 100, assetId },
+      props: {
+        [SCENE_KIND_PROP]: 'null', x: at.x, y: at.y, rotation: 0, scaleX: 1, scaleY: 1, anchorX: 0, anchorY: 0, width: 100, height: 100, assetId,
+        acceptsLights: true, z: 0, rotationX: 0, rotationY: 0,
+      },
     }],
   };
-  const built = buildLayerFragment(comp, () => {
-    defaultSceneGraph.addChild(comp, node);
-    set3DEnabled(node.id, true);
-  });
-  return pasteBuilt(session, comp, built);
+  const b = new FragmentBuilder({ idPrefix: 'ai' });
+  b.addChild(null, node);
+  return pasteFragment(session, comp, b.build());
 }

@@ -17,7 +17,7 @@ import type { LayerInfo, PropertyInfo } from '@motion/engine-api';
 import type { SceneNodeView } from '@motion/ai-tools';
 import { documentMirror, type MirrorTree } from '@stores/documentMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { membersOf, numbersOfValue, plainValue, storedNumber, trackRefIn } from '@core/mirror/trackIndex';
+import { membersOf, plainValue, storedNumber, trackRefIn } from '@core/mirror/trackIndex';
 import { colorValueHex, mirrorFill } from '@core/mirror/paintFields';
 
 /** A layer of any composition. */
@@ -72,30 +72,6 @@ export function childGroups(tree: MirrorTree | undefined, path: string): Propert
 
 /** The last segment of a property path (a group's id: `contents/op_1` → `op_1`). */
 export const lastSegment = (path: string): string => path.slice(path.lastIndexOf('/') + 1);
-
-/** A layer's shape operators (Contents ▸ Trim Paths, Repeater, …), in chain order: id, type and static numeric params. */
-export async function pathOperators(id: string): Promise<Array<{ id: string; type: string; params: Record<string, number> }>> {
-  const tree = await treeOf(id);
-  return childGroups(tree, 'contents')
-    .filter((g) => g.matchName.startsWith('pathop:'))
-    .map((g) => {
-      const params: Record<string, number> = {};
-      for (const p of g.children) {
-        const n = num(numbersOfValue(tree!.nodes.get(p)?.value)[0]);
-        if (n !== undefined && tree!.nodes.get(p)?.valueType === 'scalar') params[lastSegment(p)] = n;
-      }
-      return { id: lastSegment(g.path), type: g.matchName.slice('pathop:'.length), params };
-    });
-}
-
-/** A text layer's animators, in order: each id and its selectors' ids. */
-export async function textAnimators(id: string): Promise<Array<{ id: string; selectors: string[] }>> {
-  const tree = await treeOf(id);
-  return childGroups(tree, 'text/animators').map((a) => ({
-    id: lastSegment(a.path),
-    selectors: childGroups(tree, `${a.path}/selectors`).map((s) => lastSegment(s.path)),
-  }));
-}
 
 /** The layer's effects (`effects/<id>`, the match name is the effect type), in stack order. */
 export async function layerEffects(id: string): Promise<Array<{ id: string; type: string }>> {
