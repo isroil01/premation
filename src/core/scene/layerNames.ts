@@ -1,6 +1,6 @@
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { flattenComposition } from '@core/scene/sceneDerive';
+import { flattenCompLayers } from '@core/mirror/compLayers';
 
 /**
  * A layer name nothing else in the active comp is using: `base`, then `base 2`,
@@ -10,12 +10,14 @@ import { flattenComposition } from '@core/scene/sceneDerive';
  * are three identical rows in the timeline, the Layers panel, every parent
  * menu and every expression that names a layer — and a name is how a layer is
  * told apart. The first keeps the bare word, so a one-shape project reads as it
- * always did.
+ * always did. Names come from the document mirror (block 3).
  */
 export function uniqueLayerName(base: string): string {
+  const m = documentMirror();
   const used = new Set<string>();
-  for (const n of flattenComposition(defaultSceneGraph, activeCompRootId())) {
-    if (n.name) used.add(n.name.trim());
+  for (const id of flattenCompLayers(m, activeCompRootId())) {
+    const name = m.layer(id)?.name;
+    if (name) used.add(name.trim());
   }
   if (!used.has(base)) return base;
   let i = 2;

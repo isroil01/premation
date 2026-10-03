@@ -1,32 +1,27 @@
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { flattenComposition } from '@core/scene/sceneDerive';
-import { activeCompRootId } from '@core/scene/activeComp';
+import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import type { Harness } from '@core/engine/__testHelpers__/harness';
+import type { LocalEngine } from '@core/engine/LocalEngine';
+import { documentMirror } from '@stores/documentMirror';
 import { uniqueLayerName } from './layerNames';
 
 /**
  * Three drawn rectangles were three rows called "Rectangle" — in the timeline,
  * the Layers panel, every parent menu and every expression that names a layer.
+ * The names are the document's (the mirror), so the layers are made through the engine.
  */
-const ROOT = activeCompRootId() as string;
+let h: Harness & { engine: LocalEngine };
 
-const add = (id: string, name: string): void => {
-  defaultSceneGraph.addChild(ROOT as never, {
-    id, name, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [{ id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape' } }],
-  } as never);
+const add = async (name: string): Promise<void> => {
+  await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name, init: [] });
+  await documentMirror().whenIdle();
 };
 
-beforeEach(() => {
-  if (!defaultSceneGraph.getNode(ROOT as never)) {
-    defaultSceneGraph.addNode({
-      id: ROOT, name: 'Comp', parent: null, children: [], visible: true, locked: false,
-      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-      components: [{ id: `${ROOT}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'group' } }],
-    } as never);
-  }
-  for (const n of flattenComposition(defaultSceneGraph, ROOT)) if (n.id !== ROOT) defaultSceneGraph.removeNode(n.id);
+beforeEach(async () => {
+  h = await setupAppEngine();
+  await documentMirror().whenIdle();
+});
+afterEach(async () => {
+  await h.dispose();
 });
 
 describe('uniqueLayerName', () => {
@@ -34,15 +29,15 @@ describe('uniqueLayerName', () => {
     expect(uniqueLayerName('Rectangle')).toBe('Rectangle');
   });
 
-  it('numbers the ones after it', () => {
-    add('a', 'Rectangle');
+  it('numbers the ones after it', async () => {
+    await add('Rectangle');
     expect(uniqueLayerName('Rectangle')).toBe('Rectangle 2');
-    add('b', 'Rectangle 2');
+    await add('Rectangle 2');
     expect(uniqueLayerName('Rectangle')).toBe('Rectangle 3');
   });
 
-  it('fills a gap a deleted layer left, and ignores other names', () => {
-    add('a', 'Rectangle'); add('c', 'Rectangle 3'); add('s', 'Star');
+  it('fills a gap a deleted layer left, and ignores other names', async () => {
+    await add('Rectangle'); await add('Rectangle 3'); await add('Star');
     expect(uniqueLayerName('Rectangle')).toBe('Rectangle 2');
     expect(uniqueLayerName('Circle')).toBe('Circle');
   });
