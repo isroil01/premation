@@ -32,7 +32,7 @@ const ts = require(path.join(root, 'node_modules/typescript'));
 const DROP = new RegExp(arg('--drop', '^src/core/engine/(handlers/|LocalEngine\\.ts)'));
 const SINKS = new RegExp(arg('--sinks', [
   'src/core/scene/DefaultSceneGraph\\.ts#',
-  'packages/animation/src/AnimationEngine\\.ts#defaultAnimation$',
+  'packages/animation/src/defaultAnimation\\.ts#defaultAnimation$',
   'src/core/timeline/TimelineController\\.ts#getTimelineController$',
   'src/core/engine/doc\\.ts#',
   'src/core/engine/state\\.ts#',

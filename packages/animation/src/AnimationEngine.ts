@@ -1514,8 +1514,3 @@ export interface NodeAnimSnapshot {
   expressions: Record<string, ExpressionState>;
   data: Record<string, DataTrack>;
 }
-
-/** Process-wide default instance (mirrors defaultSceneGraph). */
-export const defaultAnimation = new AnimationEngine();
-
-export default defaultAnimation;

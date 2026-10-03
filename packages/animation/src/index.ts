@@ -100,7 +100,8 @@ export { lottieBezierToPoints, pointsToLottieBezier, lottiePathKeyframes } from 
 export type { LottieBezier, LottieShapeProp } from './lottiePath';
 
 // ── Engine ────────────────────────────────────────────────────────
-export { AnimationEngine, defaultAnimation } from './AnimationEngine';
+export { AnimationEngine } from './AnimationEngine';
+export { defaultAnimation } from './defaultAnimation';
 export type {
   AnimSnapshot,
   NodeAnimSnapshot,

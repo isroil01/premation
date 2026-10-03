@@ -12,7 +12,7 @@ import type { FileAdapter, StoredFile, OpenOptions } from './FileManager';
 import { api, isAuthenticated } from '@core/api/client';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import { liveDocument } from '@core/project/liveDocument';
-import { sceneProjectIO } from '@core/scene/sceneProjectIO';
+import { emptySceneProject } from '@core/scene/sceneProjectIO';
 
 export class ApiFileAdapter implements FileAdapter {
   readonly kind = 'api' as const;
@@ -52,7 +52,7 @@ export class ApiFileAdapter implements FileAdapter {
         const seeded: EditorDocument = {
           ...doc,
           version: doc?.version ?? '1.0.0',
-          scene: sceneProjectIO.createEmpty('Untitled'),
+          scene: emptySceneProject(),
           animation: doc?.animation ?? { tracks: {}, expressions: {} },
         };
         return JSON.stringify(seeded);
