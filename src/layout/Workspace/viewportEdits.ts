@@ -17,22 +17,15 @@
  */
 
 import {
-  secondsToFlicks,
   type Command,
-  type KeyframeInsert,
-  type KeyframePatch,
-  type PropRef,
-  type SpatialInterp as ApiSpatialInterp,
   type Value,
 } from '@motion/engine-api';
-import type { AnimationEngine, Keyframe } from '@motion/animation';
+import type { AnimationEngine } from '@motion/animation';
 import { POSITION_TRACKS, positionTracksFrom, scratchPositionEngine, type PositionTracks } from '@core/mirror/positionTracks';
 import { fetchMemberTracks } from '@stores/memberTracks';
-import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import type { MaskMode, MaskPath, MaskPoint } from '@core/effects/mask';
-import { engine } from '@core/engine/engineInstance';
 import { edit } from '@core/engine/uiEdits';
-import { compTime, paths, propRefForTrack, valueOfNumbers, values } from '@core/engine/propRefs';
+import { compTime, paths, values } from '@core/engine/propRefs';
 import { maskPointsToPath } from '@core/workspace/toolEdits';
 import type { ColorStop, FillPaint } from '@core/paint/fill';
 import { fillPaintCommands, fillStopsCommands, strokePatchCommands, textStrokePaintCommands } from '@layout/Inspector/appearance/paintEdits';
@@ -108,60 +101,15 @@ export async function capturePositionTracks(nodeId: string): Promise<PositionTra
 }
 
 /**
- * The API keyframe ids of a layer's Position keys, by the property path and
- * the STORED key time they have today (`transform/position@0.5`). Ids come
- * from the engine (`getKeyframes`), never from positional codecs.
- */
-export type PositionKeyIds = Map<string, string>;
-
-const keyAddr = (path: string, t: number): string => `${path}@${t}`;
-
-export async function resolvePositionKeyIds(nodeId: string, start: PositionTracks): Promise<PositionKeyIds> {
-  const ids: PositionKeyIds = new Map();
-  const refs = new Map<string, PropRef>();
-  for (const m of POSITION_TRACKS) {
-    if (!start[m]) continue;
-    const r = propRefForTrack(nodeId, m);
-    if (r) refs.set(r.ref.path, r.ref);
-  }
-  if (refs.size === 0) return ids;
-  const res = await engine().query({ type: 'getKeyframes', props: [...refs.values()] });
-  if (!res.ok) return ids;
-  // Half a millisecond: API key times are the stored times mapped to comp time
-  // and rounded to flicks; a key a frame away is never that close.
-  const tol = secondsToFlicks(0.0005);
-  for (const set of res.value.sets) {
-    const r = propRefForTrack(nodeId, set.prop.path);
-    const member = r?.members[0] ?? 'x';
-    for (const m of r?.members ?? [member]) {
-      for (const k of start[m as keyof PositionTracks] ?? []) {
-        const at = secondsToFlicks(keyframeToCompTime(nodeId, k.t, m));
-        const hit = set.keyframes.find((x) => Math.abs(x.time - at) <= tol);
-        if (hit && !ids.has(keyAddr(set.prop.path, k.t))) ids.set(keyAddr(set.prop.path, k.t), hit.id);
-      }
-    }
-  }
-  return ids;
-}
-
-const sameNum = (a: number | undefined, b: number | undefined): boolean =>
-  a === b || (a !== undefined && b !== undefined && Math.abs(a - b) < 1e-9);
-
-function keyChanged(a: Keyframe | undefined, b: Keyframe | undefined): boolean {
-  if (!a || !b) return a !== b;
-  return !sameNum(a.value, b.value) || !sameNum(a.si, b.si) || !sameNum(a.so, b.so)
-    || a.continuous !== b.continuous || a.spatialInterp !== b.spatialInterp;
-}
-
-/**
  * A Position edit expressed with today's pure motion-path logic, as commands.
  *
  * `mutate` runs the legacy helper (`setPathTangent`, `setSpatialInterpolation`,
  * `smoothMotionPath`, …) on a SCRATCH animation engine seeded with the layer's
- * Position tracks as `start` had them; every key it changed becomes an
- * `updateKeyframes` patch (value, spatial tangents, continuity, spatial mode)
- * on the engine's key id. A client macro (ENGINE_API.md §1 rule 7): the
- * arithmetic is the helper's, unchanged, and the write is one command.
+ * Position tracks as `start` had them; every member track it changed is sent
+ * whole as ONE `setMemberKeyframes` (value, tangents, continuity, spatial mode
+ * as the helper left them — no key ids or time mapping involved). A client
+ * macro (ENGINE_API.md §1 rule 7): the arithmetic is the helper's, unchanged,
+ * and the write is one command.
  *
  * Built from the START state every time, so inside a drag each message is
  * absolute (start + pointer) and dropping intermediates loses nothing.
@@ -169,72 +117,24 @@ function keyChanged(a: Keyframe | undefined, b: Keyframe | undefined): boolean {
 export function positionKeyPatchCommands(
   nodeId: string,
   start: PositionTracks,
-  ids: PositionKeyIds,
   mutate: (scratch: AnimationEngine) => void,
 ): Command[] {
   const scratch = scratchPositionEngine(nodeId, start);
-  // The start state, unmutated: what a member with no key at a time evaluates to there.
-  const base = scratchPositionEngine(nodeId, start);
   mutate(scratch);
-
-  const patches: KeyframePatch[] = [];
-  const inserts: KeyframeInsert[] = [];
-  const done = new Set<string>();
+  const tracks: Array<{ member: string; keyframes: string }> = [];
   for (const m of POSITION_TRACKS) {
     const after = scratch.getTrackKeyframes(nodeId, m) ?? [];
-    for (const k of after) {
-      const before = start[m]?.find((x) => x.t === k.t);
-      if (!keyChanged(before, k)) continue;
-      const r = propRefForTrack(nodeId, m);
-      if (!r) continue;
-      const addr = keyAddr(r.ref.path, k.t);
-      if (done.has(addr)) continue;
-      done.add(addr);
-      const member = (mm: string): Keyframe | undefined =>
-        (scratch.getTrackKeyframes(nodeId, mm) ?? []).find((x) => x.t === k.t);
-      const keysOf = r.members.map(member);
-      const nums = keysOf.map((x, i) => x?.value ?? base.sample(nodeId, r.members[i]!, k.t) ?? 0);
-      const value = valueOfNumbers(r.valueType, nums);
-      const id = ids.get(addr);
-      if (!id) {
-        // A member that had no key at this time (legacy unaligned tracks): the
-        // helper created one — add it with its value.
-        inserts.push({ prop: r.ref, time: secondsToFlicks(keyframeToCompTime(nodeId, k.t, m)), value, spatialIn: [], spatialOut: [] });
-        continue;
-      }
-      const si = keysOf.map((x) => x?.si);
-      const so = keysOf.map((x) => x?.so);
-      const anyIn = si.some((v) => v !== undefined);
-      const anyOut = so.some((v) => v !== undefined);
-      const patch: KeyframePatch = {
-        id,
-        value,
-        spatialIn: anyIn ? si.map((v) => v ?? 0) : [],
-        spatialOut: anyOut ? so.map((v) => v ?? 0) : [],
-        // Dropping a tangent (a vertex made Linear) has no per-side form:
-        // clear both, then re-send whichever side remains.
-        ...(!anyIn || !anyOut ? { clearSpatial: true } : {}),
-      };
-      const lead = keysOf.find((x) => x !== undefined);
-      if (lead?.continuous !== undefined) patch.continuous = lead.continuous;
-      const beforeMode = start[m]?.find((x) => x.t === k.t)?.spatialInterp;
-      if (lead && lead.spatialInterp !== beforeMode) {
-        patch.spatialInterp = (lead.spatialInterp ?? 'legacy') as ApiSpatialInterp;
-      }
-      patches.push(patch);
-    }
+    const before = start[m] ?? [];
+    if (JSON.stringify(after) === JSON.stringify(before)) continue;
+    tracks.push({ member: m, keyframes: JSON.stringify(after) });
   }
-  const out: Command[] = [];
-  if (patches.length > 0) out.push({ type: 'updateKeyframes', patches });
-  if (inserts.length > 0) out.push({ type: 'addKeyframes', keys: inserts });
-  return out;
+  return tracks.length > 0 ? [{ type: 'setMemberKeyframes', layer: nodeId, tracks }] : [];
 }
 
-/** One-shot form (a menu item / button): resolve ids, build, send as one entry. */
+/** One-shot form (a menu item / button): build, send as one entry. */
 export async function editPositionKeys(nodeId: string, label: string, mutate: (scratch: AnimationEngine) => void): Promise<void> {
-  const start = await capturePositionTracks(nodeId);
-  const ids = await resolvePositionKeyIds(nodeId, start);
-  await edit(label, positionKeyPatchCommands(nodeId, start, ids, mutate));
+  const cmds = positionKeyPatchCommands(nodeId, await capturePositionTracks(nodeId), mutate);
+  if (cmds.length > 0) await edit(label, cmds);
 }
 
 /** The same Position edit over several layers (a selection), as ONE entry. */
@@ -245,9 +145,7 @@ export async function editPositionKeysOf(
 ): Promise<void> {
   const cmds: Command[] = [];
   for (const id of nodeIds) {
-    const start = await capturePositionTracks(id);
-    const ids = await resolvePositionKeyIds(id, start);
-    cmds.push(...positionKeyPatchCommands(id, start, ids, (scratch) => mutate(id, scratch)));
+    cmds.push(...positionKeyPatchCommands(id, await capturePositionTracks(id), (scratch) => mutate(id, scratch)));
   }
   if (cmds.length > 0) await edit(label, cmds);
 }

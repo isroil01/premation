@@ -150,7 +150,7 @@ export function useTimelineKeys(): void {
           if (ids.length > 0) {
             // The viewport's Smooth button, over the selection: the helper runs on
             // a scratch engine seeded from `getMemberKeyframes`, the changed keys
-            // go as `updateKeyframes` patches — one entry (viewportEdits.ts).
+            // go as `setMemberKeyframes` — one entry (viewportEdits.ts).
             void editPositionKeysOf(ids, 'Smooth motion path', (id, scratch) => smoothMotionPath(id, scratch));
           }
           return;

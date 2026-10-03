@@ -52,8 +52,6 @@ import { GestureSession } from '@core/engine/uiEdits';
 import {
   capturePositionTracks,
   positionKeyPatchCommands,
-  resolvePositionKeyIds,
-  type PositionKeyIds,
   type PositionTracks,
 } from './viewportEdits';
 import { Matrix } from '@motion/scene';
@@ -190,7 +188,8 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     part: 'point' | 'in' | 'out';
     gesture: GestureSession;
     start: PositionTracks;
-    ids: PositionKeyIds | null;
+    /** The press state has landed (`start` is the engine's). */
+    captured: boolean;
     latest: (() => Command[]) | null;
     continuous: boolean;
     broken: boolean;
@@ -1119,7 +1118,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           ...hit,
           gesture: new GestureSession(hit.part === 'point' ? 'Move keyframe' : 'Adjust path tangent'),
           start: {} as PositionTracks,
-          ids: null as PositionKeyIds | null,
+          captured: false,
           latest: null as (() => Command[]) | null,
           continuous: true,
           broken: false,
@@ -1128,7 +1127,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         mp.ready = capturePositionTracks(hit.nodeId).then(async (start) => {
           mp.start = start;
           mp.continuous = positionTangentContinuous(hit.nodeId, hit.t, start);
-          mp.ids = await resolvePositionKeyIds(hit.nodeId, start);
+          mp.captured = true;
           if (mp.latest) mp.gesture.send(mp.latest());
         });
         mpDragRef.current = mp;
@@ -1330,18 +1329,18 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           // Move the point in 2D (both axis tracks get a key at this time;
           // spatial tangents are relative offsets, so they travel with it).
           // `t` is ALREADY the stored keyframe time.
-          ? () => positionKeyPatchCommands(nodeId, drag.start, drag.ids!, (scratch) => {
+          ? () => positionKeyPatchCommands(nodeId, drag.start, (scratch) => {
             scratch.setKeyframe(nodeId, 'x', t, lp.x);
             scratch.setKeyframe(nodeId, 'y', t, lp.y);
           })
           // Pull a spatial tangent handle — bends the path. Mirrored when the
           // point is still continuous (AE smooth).
-          : () => positionKeyPatchCommands(nodeId, drag.start, drag.ids!, (scratch) => {
+          : () => positionKeyPatchCommands(nodeId, drag.start, (scratch) => {
             // B3-legacy: not a write — the tangent arithmetic runs on the scratch engine passed
-            // in; the document edit is the `updateKeyframes` built from it (rule false positive).
+            // in; the document edit is the `setMemberKeyframes` built from it (rule false positive).
             setPathTangent(nodeId, t, part, lp, drag.continuous && !drag.broken, scratch);
           });
-        if (drag.ids) drag.gesture.send(drag.latest());
+        if (drag.captured) drag.gesture.send(drag.latest());
         controller.requestRender();
         return;
       }
