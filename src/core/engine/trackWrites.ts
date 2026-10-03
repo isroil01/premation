@@ -11,7 +11,8 @@
 
 import { secondsToFlicks, type Command, type Easing, type MatteMode, type PropRef, type Value } from '@motion/engine-api';
 import { documentMirror } from '@stores/documentMirror';
-import { getNodeEffects, effectDefFor, parseColorChannels } from '@core/effects/effects';
+import { effectDefFor, parseColorChannels } from '@core/effects/effects';
+import { mirrorEffectHeaders } from '@core/mirror/effects';
 import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { useProjectStore } from '@stores/projectStore';
 import type { SceneNode } from '@core/types';
@@ -81,7 +82,8 @@ export function effectParamCommand(
   value: number | string | boolean,
   seconds: number,
 ): Command[] | null {
-  const effect = getNodeEffects(nodeId).find((e) => e.id === effectId);
+  // The effect's type from the mirror (the `effects/<id>` group's match name).
+  const effect = mirrorEffectHeaders(documentMirror().tree(nodeId)).find((e) => e.id === effectId);
   if (!effect) return null;
   const ref: PropRef = { layer: nodeId, path: `effects/${effectId}/${key}` };
   const time = secondsToFlicks(seconds);

@@ -149,8 +149,8 @@ export async function restoreBundleAssets(path: string | null): Promise<number> 
       }
     });
 
-    // Any layer still holding a dead `blob:` now has a live entry to bind to.
-    rebindAssetSrcs(useAssetStore.getState().assets);
+    // Layers are not rebound: the engine resolves a layer's media from its
+    // item record (id / path), never from a layer's stored `blob:` src.
     return missing.length;
   } catch {
     return 0;

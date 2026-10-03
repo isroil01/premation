@@ -25,10 +25,10 @@ import { activeCompRootId } from '@core/scene/activeComp';
 import { buildMedia, isSvgAsset, readSvgText } from '@core/scene/layerBuilders';
 import { documentMirror } from '@stores/documentMirror';
 import { buildSvgLayerFragment } from '@/engine-client/svgFragment';
-import { buildSvgShapeGroup, type BuiltSvgShapes } from '@core/svg/svgConvert';
+import { buildSvgShapeGroupInto, mirrorCarry } from '@core/svg/svgConvert';
+import { fetchSvgLayerData } from '@core/svg/svgLayerData';
 import { forgetSvgLayerSrc } from '@core/svg/svgLayer';
-import { buildLayerFragment } from '@core/engine/offDocument';
-import { apiParentOf, compOfLayer, layerIdsOfComp } from '@core/mirror/docFacts';
+import { apiParentOf, layerIdsOfComp } from '@core/mirror/docFacts';
 import { FragmentBuilder, type BuiltFragment } from '@/engine-client/fragmentBuilder';
 import { insertFrame } from '@/engine-client/insertFragment';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
@@ -374,24 +374,30 @@ export async function insertSvgMarkupLayer(session: AiEngineSession, markup: str
  * group's id; null when the SVG has no vector paths (nothing sent).
  */
 export async function convertSvgLayer(session: AiEngineSession, nodeId: string): Promise<string | null> {
-  if (documentMirror().layer(nodeId)?.svg !== 'layer') return null;
-  // B3: the parser still builds against a scratch state of the replica
-  // (svgConvert.ts buildSvgShapeGroup) — it moves with core/svg.
-  const comp = compOfLayer(nodeId);
-  if (!comp) return null;
-  let result: BuiltSvgShapes | null = null;
-  const built = buildLayerFragment(comp, () => { result = buildSvgShapeGroup(nodeId); });
-  if (!built || !(result as BuiltSvgShapes | null)) return null;
+  const m = documentMirror();
+  const layer = m.layer(nodeId);
+  if (layer?.svg !== 'layer') return null;
+  const data = await fetchSvgLayerData(nodeId);
+  if (!data) return null;
+  // Built on the client into a fragment (no page replica), as the Inspector's
+  // Convert to Editable Shapes: the layer's own composition is the frame, its
+  // stored transform / appearance the carry.
+  const comp = layer.comp;
+  await m.loadTree(nodeId);
+  const b = new FragmentBuilder({ idPrefix: 'svgconv' });
+  const r = buildSvgShapeGroupInto(b, insertFrame(comp), data, mirrorCarry(nodeId));
+  const built = b.build();
+  if (!built || !r) return null;
   // Replace in place (AE's conversions put the result where the source was):
   // the SVG layer's comp-stack slot, inside the same parent layer when nested.
   const parent = apiParentOf(nodeId);
   const slot = layerIdsOfComp(comp).indexOf(nodeId);
-  const r = await session.apply([
-    { type: 'pasteLayers', comp, fragment: built.fragment, index: slot >= 0 ? slot : built.index, ...(parent ? { parent } : built.parent ? { parent: built.parent } : {}) } as Command,
+  const res = await session.apply([
+    { type: 'pasteLayers', comp, fragment: built.fragment, index: Math.max(0, slot), ...(parent ? { parent } : {}) } as Command,
     { type: 'deleteLayers', layers: [nodeId] } as Command,
   ]);
   forgetSvgLayerSrc(nodeId);
-  return (r[0] as { layers?: string[] }).layers?.[0] ?? null;
+  return (res[0] as { layers?: string[] }).layers?.[0] ?? null;
 }
 
 // ── Media bytes ──────────────────────────────────────────────────────

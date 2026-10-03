@@ -10,8 +10,8 @@
  * GIF encoder and the raw pipe — is gone (docs/TS_ENGINE_REMOVAL.md phase 4).
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation, pointsToLottieBezier } from '@motion/animation';
+import SceneGraph from '@core/scene/SceneGraph';
+import { AnimationEngine, pointsToLottieBezier } from '@motion/animation';
 import { shapeOutline } from '@core/scene/pathOps';
 import { readNodePolystar } from '@core/scene/polystar';
 import { readNodeStrokes, type PaintOpOptions, type Stroke } from '@core/paint/stroke';
@@ -26,7 +26,6 @@ import { paintBlendToLottie } from '@core/paint/paintBlend';
 import { paintRenderOrder } from '@core/paint/paintOrder';
 import { liveDocument } from '@core/project/liveDocument';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { compRootOf } from '@core/scene/parenting';
 import type { SceneNode } from '@core/types';
 import { useUIStore } from '@stores/uiStore';
 import { exportEdlText } from './exportEdl';
@@ -167,8 +166,8 @@ interface LottieBox { cx: number; cy: number; w: number; h: number }
 
 /** One engine track as a Lottie scalar property (static when it has < 2 keys),
  *  with values multiplied by `mul` (e.g. 100 for a 0..1 track Lottie keeps in %). */
-function lottieScalarProp(nodeId: string, prop: string, fr: number, fallback: number, mul = 1): unknown {
-  const tr = defaultAnimation.tracksFor(nodeId).find((t) => t.prop === prop);
+function lottieScalarProp(anim: AnimationEngine, nodeId: string, prop: string, fr: number, fallback: number, mul = 1): unknown {
+  const tr = anim.tracksFor(nodeId).find((t) => t.prop === prop);
   if (!tr || tr.keyframes.length < 2) {
     const v = tr?.keyframes[0]?.value;
     return { a: 0, k: (typeof v === 'number' && Number.isFinite(v) ? v : fallback) * mul };
@@ -187,6 +186,7 @@ function lottieScalarProp(nodeId: string, prop: string, fr: number, fallback: nu
  * no `c`, so its colour channels have nothing to drive.
  */
 function lottieStrokeColorOpacity(
+  anim: AnimationEngine,
   nodeId: string,
   stroke: Stroke,
   index: number,
@@ -196,7 +196,7 @@ function lottieStrokeColorOpacity(
   const [rP, gP, bP, aP] = strokeColorChannelPaths(index) as [string, string, string, string];
   const opP = strokeTrackPath(index, 'opacity');
   const wanted = colorTracks ? [rP, gP, bP, aP, opP] : [opP];
-  const tracks = defaultAnimation.tracksFor(nodeId).filter((t) => wanted.includes(t.prop) && t.keyframes.length > 0);
+  const tracks = anim.tracksFor(nodeId).filter((t) => wanted.includes(t.prop) && t.keyframes.length > 0);
   // The renderer applies the colour channels only when red is present.
   const hasColor = tracks.some((t) => t.prop === rP);
   const hasOpacity = tracks.some((t) => t.prop === opP);
@@ -209,7 +209,7 @@ function lottieStrokeColorOpacity(
   const live = tracks.filter((t) => hasColor || t.prop === opP);
   const times = [...new Set(live.flatMap((t) => t.keyframes.map((k) => k.t)))].sort((a, b) => a - b);
   const at = (prop: string, t: number, dflt: number): number => {
-    const v = defaultAnimation.sample(nodeId, prop, t);
+    const v = anim.sample(nodeId, prop, t);
     return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : dflt;
   };
   const easeAt = (t: number) => live.map((tr) => tr.keyframes.find((k) => k.t === t)).find((k) => k !== undefined) ?? {};
@@ -268,6 +268,7 @@ function lottieGradientFields(paint: FillPaint, box: LottieBox): Record<string, 
  * were keyed at different times still plays back as the frame showed it.
  */
 function lottiePointProp(
+  anim: AnimationEngine,
   nodeId: string,
   xProp: string,
   yProp: string,
@@ -275,9 +276,9 @@ function lottiePointProp(
   fallback: readonly [number, number],
   map: (x: number, y: number) => [number, number],
 ): unknown {
-  const tracks = defaultAnimation.tracksFor(nodeId).filter((t) => (t.prop === xProp || t.prop === yProp) && t.keyframes.length > 0);
+  const tracks = anim.tracksFor(nodeId).filter((t) => (t.prop === xProp || t.prop === yProp) && t.keyframes.length > 0);
   const sample = (prop: string, t: number, dflt: number): number => {
-    const v = defaultAnimation.sample(nodeId, prop, t);
+    const v = anim.sample(nodeId, prop, t);
     return typeof v === 'number' && Number.isFinite(v) ? v : dflt;
   };
   if (!tracks.some((t) => t.keyframes.length >= 2)) {
@@ -310,10 +311,10 @@ function lottiePointProp(
  * Composite as a FIELD — it is exported structurally instead, by the order the
  * paint items are written in (see `lottieShapesFor`).
  */
-function lottieStrokeItem(nodeId: string, stroke: Stroke, index: number, fr: number, box: LottieBox): Record<string, unknown> {
+function lottieStrokeItem(anim: AnimationEngine, nodeId: string, stroke: Stroke, index: number, fr: number, box: LottieBox): Record<string, unknown> {
   const color = stroke.paint?.type === 'solid' ? stroke.paint.color : stroke.color;
   const grad = stroke.paint ? lottieGradientFields(stroke.paint, box) : null;
-  const { c, o } = lottieStrokeColorOpacity(nodeId, { ...stroke, color }, index, !grad, fr);
+  const { c, o } = lottieStrokeColorOpacity(anim, nodeId, { ...stroke, color }, index, !grad, fr);
   let d: unknown[] | undefined;
   if (stroke.dash.some((v) => v > 0)) {
     // An odd pattern repeats doubled (Canvas2D and SVG both); spell that out
@@ -328,13 +329,13 @@ function lottieStrokeItem(nodeId: string, stroke: Stroke, index: number, fr: num
       return {
         n: isDash ? 'd' : 'g',
         nm: `${isDash ? 'dash' : 'gap'}${pair > 1 ? pair : ''}`,
-        v: slot ? lottieScalarProp(nodeId, strokeTrackPath(index, slot), fr, v) : { a: 0, k: v },
+        v: slot ? lottieScalarProp(anim, nodeId, strokeTrackPath(index, slot), fr, v) : { a: 0, k: v },
       };
     });
     d.push({
       n: 'o',
       nm: 'offset',
-      v: lottieScalarProp(nodeId, strokeTrackPath(index, 'dashOffset'), fr, stroke.dashOffset ?? 0),
+      v: lottieScalarProp(anim, nodeId, strokeTrackPath(index, 'dashOffset'), fr, stroke.dashOffset ?? 0),
     });
   }
   const ml = stroke.miterLimit ?? 4;
@@ -343,16 +344,16 @@ function lottieStrokeItem(nodeId: string, stroke: Stroke, index: number, fr: num
   const g = grad && stroke.paint && stroke.paint.type !== 'solid' ? stroke.paint : null;
   const pts = g ? stroke.gradient ?? strokeGradientGeometryFor(g, box.w, box.h) : null;
   const pointTracked = !!g && ['gradientStartX', 'gradientStartY', 'gradientEndX', 'gradientEndY', 'highlightLength', 'highlightAngle']
-    .some((p) => defaultAnimation.isAnimated(nodeId, strokeTrackPath(index, p as 'gradientStartX')));
+    .some((p) => anim.isAnimated(nodeId, strokeTrackPath(index, p as 'gradientStartX')));
   const toBox = (x: number, y: number): [number, number] => [box.cx + (x - 0.5) * box.w, box.cy + (y - 0.5) * box.h];
   const points = g && pts && (stroke.gradient || pointTracked)
     ? {
-        s: lottiePointProp(nodeId, strokeTrackPath(index, 'gradientStartX'), strokeTrackPath(index, 'gradientStartY'), fr, [pts.startX, pts.startY], toBox),
-        e: lottiePointProp(nodeId, strokeTrackPath(index, 'gradientEndX'), strokeTrackPath(index, 'gradientEndY'), fr, [pts.endX, pts.endY], toBox),
+        s: lottiePointProp(anim, nodeId, strokeTrackPath(index, 'gradientStartX'), strokeTrackPath(index, 'gradientStartY'), fr, [pts.startX, pts.startY], toBox),
+        e: lottiePointProp(anim, nodeId, strokeTrackPath(index, 'gradientEndX'), strokeTrackPath(index, 'gradientEndY'), fr, [pts.endX, pts.endY], toBox),
         ...(g.type === 'radial'
           ? {
-              h: lottieScalarProp(nodeId, strokeTrackPath(index, 'highlightLength'), fr, pts.highlightLength ?? 0, 100),
-              a: lottieScalarProp(nodeId, strokeTrackPath(index, 'highlightAngle'), fr, pts.highlightAngle ?? 0),
+              h: lottieScalarProp(anim, nodeId, strokeTrackPath(index, 'highlightLength'), fr, pts.highlightLength ?? 0, 100),
+              a: lottieScalarProp(anim, nodeId, strokeTrackPath(index, 'highlightAngle'), fr, pts.highlightAngle ?? 0),
             }
           : {}),
       }
@@ -362,11 +363,11 @@ function lottieStrokeItem(nodeId: string, stroke: Stroke, index: number, fr: num
     ty: grad ? 'gs' : 'st',
     ...(grad ? { ...grad, ...points } : { c }),
     o,
-    w: lottieScalarProp(nodeId, strokeTrackPath(index, 'width'), fr, stroke.width),
+    w: lottieScalarProp(anim, nodeId, strokeTrackPath(index, 'width'), fr, stroke.width),
     lc: LOTTIE_LINE_CAP[stroke.cap] ?? 1,
     lj: LOTTIE_LINE_JOIN[stroke.join] ?? 1,
     ml,
-    ml2: lottieScalarProp(nodeId, strokeTrackPath(index, 'miterLimit'), fr, ml),
+    ml2: lottieScalarProp(anim, nodeId, strokeTrackPath(index, 'miterLimit'), fr, ml),
     ...(d ? { d } : {}),
     ...(bm ? { bm } : {}),
     nm: `Stroke ${index + 1}`,
@@ -385,7 +386,7 @@ function lottieStrokeItem(nodeId: string, stroke: Stroke, index: number, fr: num
  * data, images need embedded assets) — the caller counts those and tells the
  * user rather than silently shipping a hole.
  */
-export function lottieShapesFor(node: SceneNode, fr = 30): unknown[] {
+export function lottieShapesFor(node: SceneNode, fr: number, anim: AnimationEngine): unknown[] {
   // Hard type-guard: only true vector shape layers export Lottie geometry.
   // Without this, a text/image/video node that happens to carry a default
   // `shapeType:'rect'` Transform with width/height would fall through to the
@@ -505,7 +506,7 @@ export function lottieShapesFor(node: SceneNode, fr = 30): unknown[] {
       groupItems.push(fillItem);
     } else {
       const entry = strokes.find((e) => e.stroke === op.stroke)!;
-      groupItems.push(lottieStrokeItem(node.id, entry.stroke, entry.index, fr, box));
+      groupItems.push(lottieStrokeItem(anim, node.id, entry.stroke, entry.index, fr, box));
     }
   }
   groupItems.push({
@@ -544,15 +545,45 @@ function lottieEase(k: { easing?: string; bezier?: readonly number[] }): Record<
   return { o: { x: [b[0]], y: [b[1]] }, i: { x: [b[2]], y: [b[3]] } };
 }
 
+/**
+ * The document as the ENGINE holds it (`exportDocument`), laid into a scratch
+ * scene graph and animation engine for the exporter to walk — never the page
+ * replica.
+ */
+async function documentSource(): Promise<{ graph: SceneGraph; anim: AnimationEngine }> {
+  const doc = await liveDocument();
+  const graph = new SceneGraph();
+  for (const node of structuredClone(doc.scene?.nodes ?? [])) graph.addNode(node);
+  const anim = new AnimationEngine();
+  if (doc.animation) anim.restore(structuredClone(doc.animation) as Parameters<AnimationEngine['restore']>[0]);
+  return { graph, anim };
+}
+
+/** The top of a node's parent chain in `graph` (its composition root). */
+function compRootIn(graph: SceneGraph, nodeId: string): string | null {
+  let cur = graph.getNode(nodeId);
+  if (!cur) return null;
+  const seen = new Set<string>([cur.id]);
+  while (cur.parent) {
+    const p = graph.getNode(cur.parent);
+    // A cycle or a dangling parent id must not hang the walk.
+    if (!p || seen.has(p.id)) break;
+    seen.add(p.id);
+    cur = p;
+  }
+  return cur.id;
+}
+
 /** Build a Lottie animation from the scene's geometry and transform tracks. */
-function exportLottie(opts: ExportOptions): void {
+async function exportLottie(opts: ExportOptions): Promise<void> {
   const fr = opts.fps;
   const op = Math.round(opts.duration * fr);
+  const { graph, anim } = await documentSource();
   // Scoped to THIS composition: flattenScene walks the whole project, so a
   // multi-comp project exported every comp's layers stacked into one Lottie.
   const rootId = opts.rootId;
-  const layers = flattenScene(defaultSceneGraph)
-    .filter((n) => (rootId ? compRootOf(n.id) === rootId && n.id !== rootId : true))
+  const layers = flattenScene(graph)
+    .filter((n) => (rootId ? compRootIn(graph, n.id) === rootId && n.id !== rootId : true))
     .filter((n) => readNodeKind(n) !== 'group')
     .map((node, idx) => {
       // Base (un-keyframed) value straight off the components — the engine's
@@ -566,9 +597,9 @@ function exportLottie(opts: ExportOptions): void {
         return undefined;
       };
       const kf = (prop: string, mul = 1, fallback = 0): unknown => {
-        const tr = defaultAnimation.tracksFor(node.id).find((t) => t.prop === prop);
+        const tr = anim.tracksFor(node.id).find((t) => t.prop === prop);
         if (!tr || tr.keyframes.length < 2) {
-          const v = defaultAnimation.sample(node.id, prop, 0) ?? baseProp(prop) ?? fallback;
+          const v = anim.sample(node.id, prop, 0) ?? baseProp(prop) ?? fallback;
           return { a: 0, k: v * mul };
         }
         // Real per-segment easing — this was a hardcoded 0.4 bezier for every
@@ -584,10 +615,10 @@ function exportLottie(opts: ExportOptions): void {
       // over the union of keyframe times. (It exported a hardcoded static
       // [100,100,100] before — scale animation vanished from every Lottie.)
       const scaleProps = ['scale', 'scaleX', 'scaleY'] as const;
-      const scaleAnimated = scaleProps.some((p) => defaultAnimation.isAnimated(node.id, p));
+      const scaleAnimated = scaleProps.some((p) => anim.isAnimated(node.id, p));
       const sampleScale = (axis: 'scaleX' | 'scaleY', t: number): number =>
-        defaultAnimation.sample(node.id, 'scale', t) ??
-        defaultAnimation.sample(node.id, axis, t) ??
+        anim.sample(node.id, 'scale', t) ??
+        anim.sample(node.id, axis, t) ??
         baseProp('scale') ?? baseProp(axis) ?? 1;
       let s: unknown;
       if (!scaleAnimated) {
@@ -595,12 +626,12 @@ function exportLottie(opts: ExportOptions): void {
       } else {
         const times = [...new Set(
           scaleProps.flatMap((p) =>
-            defaultAnimation.tracksFor(node.id).find((t) => t.prop === p)?.keyframes.map((k) => k.t) ?? [],
+            anim.tracksFor(node.id).find((t) => t.prop === p)?.keyframes.map((k) => k.t) ?? [],
           ),
         )].sort((a, b) => a - b);
         const easeSourceAt = (t: number) =>
           scaleProps
-            .map((p) => defaultAnimation.tracksFor(node.id).find((tr) => tr.prop === p)?.keyframes.find((k) => k.t === t))
+            .map((p) => anim.tracksFor(node.id).find((tr) => tr.prop === p)?.keyframes.find((k) => k.t === t))
             .find((k) => k !== undefined) ?? {};
         s = {
           a: 1,
@@ -625,7 +656,7 @@ function exportLottie(opts: ExportOptions): void {
           a: { a: 0, k: [0, 0, 0] },
           s,
         },
-        shapes: lottieShapesFor(node, fr),
+        shapes: lottieShapesFor(node, fr, anim),
       };
     });
 
@@ -670,7 +701,7 @@ async function runDataExportFormat(opts: ExportOptions): Promise<void> {
     case 'fcpxml': exportFCPXML(opts); return;
     case 'ale': exportALE(opts); return;
     case 'mogrt': await exportMogrt(opts); return;
-    case 'lottie': exportLottie(opts); return;
+    case 'lottie': await exportLottie(opts); return;
     default:
       throw new Error(`Unsupported export format "${String(opts.format)}".`);
   }

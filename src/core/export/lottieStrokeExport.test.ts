@@ -57,7 +57,7 @@ function importRect(name: string, paints: unknown[]): SceneNode {
 
 type Item = Record<string, unknown> & { ty: string };
 const groupItems = (node: SceneNode, fr = 30): Item[] =>
-  ((lottieShapesFor(defaultSceneGraph.getNode(node.id)!, fr)[0] as { it: Item[] }).it);
+  ((lottieShapesFor(defaultSceneGraph.getNode(node.id)!, fr, defaultAnimation)[0] as { it: Item[] }).it);
 
 describe('Lottie export — fx strokes', () => {
   beforeEach(reset);
