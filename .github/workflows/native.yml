@@ -168,6 +168,22 @@ jobs:
           triplet: ${{ matrix.triplet }}
           vcpkg-commit: ${{ env.VCPKG_COMMIT }}
           test: 'true'
+      # The UI suites on the real engine (`*.native.test.*`, docs/TS_ENGINE_REMOVAL.md
+      # block 3): jest boots premation-engine-headless — the same process minus Dawn.
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Linux'
+        with:
+          node-version: 22
+          cache: npm
+      - name: UI suites on the engine (jest *.native.test)
+        if: runner.os == 'Linux'
+        # Advisory while the suites are being ported (block 3); blocking once they all pass.
+        continue-on-error: true
+        env:
+          PREMATION_ENGINE_PATH: ${{ github.workspace }}/${{ steps.engine.outputs.engine-dir }}/premation-engine-headless
+        run: |
+          npm ci --ignore-scripts
+          npx jest --testPathPattern '\.native\.test' -w 2
       - name: Upload the engine
         uses: actions/upload-artifact@v4
         with:

@@ -8,14 +8,14 @@
  * `insertBuiltLayers` path.)
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
-import { insertBuiltLayers } from '@core/engine/offDocument';
-import { apiParentOf, graph as docGraph, layerKindOf } from '@core/engine/doc';
+import { insertFragment } from '@/engine-client/insertFragment';
+import { documentMirror } from '@stores/documentMirror';
+import { docView } from '@core/engine/__testHelpers__/docView';
 import { useSelectionStore } from '@stores/selectionStore';
 import { nullsFromPathEdit } from './layerCreateEdits';
 
@@ -31,8 +31,8 @@ afterEach(async () => {
 
 /** A three-vertex path shape, inserted through the engine (a pasted fragment). */
 async function addTriangle(): Promise<string> {
-  const ids = await insertBuiltLayers('Fixture', 'comp_root', () => {
-    defaultSceneGraph.addChild('comp_root', {
+  const ids = await insertFragment('Fixture', (b) => {
+    b.addChild('comp_root', {
       id: 'tri', name: 'Tri', parent: 'comp_root', children: [], visible: true, locked: false,
       transform: { position: { x: 300, y: 200 }, rotation: 0, scale: { x: 1, y: 1 } },
       components: [
@@ -44,7 +44,8 @@ async function addTriangle(): Promise<string> {
         ] } },
       ],
     } as unknown as SceneNode);
-  });
+    return 'tri';
+  }, { comp: 'comp_root' });
   await engineIdle();
   return ids![0]!;
 }
@@ -60,8 +61,8 @@ describe('Create Nulls From Path Points', () => {
 
     expect(made).toHaveLength(3);
     for (const id of made) {
-      expect(apiParentOf(id)).toBe(shape);
-      expect(layerKindOf(docGraph.getNode(id)!)).toBe('null');
+      expect(documentMirror().layer(id)?.parent).toBe(shape);
+      expect(documentMirror().layer(id)?.kind).toBe('null');
     }
     expect([...useSelectionStore.getState().ids].sort()).toEqual([...made].sort());
     expect((await historyLabels()).slice(entries)).toEqual(['Create Nulls From Path Points']);
@@ -79,9 +80,9 @@ describe('Create Nulls From Path Points', () => {
     const made = await nullsFromPathEdit(shape, 0, { pointsFollowNulls: true });
     await engineIdle();
     expect(made).toHaveLength(3);
-    const geom = docGraph.getNode(shape)!.components.find((c) => c.type === 'Geometry')!;
-    expect(geom.props.pointBindings).toEqual(useSelectionStore.getState().ids.map((nullId, index) => ({ index, nullId })));
-    expect([...(geom.props.pointBindings as Array<{ nullId: string }>).map((b) => b.nullId)].sort()).toEqual([...made].sort());
+    const geom = (await docView()).props(shape, 'Geometry')!;
+    expect(geom.pointBindings).toEqual(useSelectionStore.getState().ids.map((nullId, index) => ({ index, nullId })));
+    expect([...(geom.pointBindings as Array<{ nullId: string }>).map((b) => b.nullId)].sort()).toEqual([...made].sort());
     expect((await historyLabels()).slice(entries)).toEqual(['Create Nulls From Path Points (Points Follow Nulls)']);
     await h.run({ type: 'undo' });
     await engineIdle();

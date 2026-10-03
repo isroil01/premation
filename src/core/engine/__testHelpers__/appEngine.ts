@@ -9,12 +9,13 @@
  * engine is not built (jest.config.cjs), the Native workflow runs them.
  */
 
-import { unwrap, type Command, type CommandOf, type CommandResult, type CommandResults, type CommandType, type EngineClient, type EventBatch, type QueryOf, type QueryResults, type QueryType } from '@motion/engine-api';
+import { unwrap, type OverlayLayerGeometry, type OverlayView, type Command, type CommandOf, type CommandResult, type CommandResults, type CommandType, type EngineClient, type EventBatch, type QueryOf, type QueryResults, type QueryType } from '@motion/engine-api';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import type { CommandServices } from '@core/commands/Command';
 import { documentMirror, resetDocumentMirror } from '@stores/documentMirror';
 import { bindEngineDocumentStores } from '@stores/engineDocumentStores';
 import { bindEngineComps, bindEngineItems } from '@stores/engineItemsView';
+import { MAIN_VIEWPORT, publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
 import { edit } from '../uiEdits';
 import { propRefForTrack } from '../propRefs';
 import { bootEngine, engine, engineIdle, shutdownEngine } from '../engineInstance';
@@ -53,8 +54,60 @@ async function nativeEngine(): Promise<NativeEngine> {
   if (shared) return shared;
   // `--test-ports`: the engine's FakePorts — deterministic footage records for
   // any path, projects kept in memory (what the suites import and save).
-  starting ??= startNativeEngine({ extraArgs: ['--no-gpu', '--test-ports'] }).then((n) => (shared = n));
+  starting ??= startNativeEngine({ extraArgs: ['--no-gpu', '--test-ports'] }).then((n) => {
+    forwardFrames(n);
+    return (shared = n);
+  });
   return starting;
+}
+
+/**
+ * What EngineSurface and Electron main's FrameForwarder do for a drawn frame,
+ * minus the pixels: the FrameGeometry parts of a frame are collected until
+ * `last`, published with that frame's FrameReady (the overlay geometry mirror),
+ * and the slot is handed back.
+ */
+function forwardFrames(n: NativeEngine): void {
+  const parts = new Map<number, { generation: number; frame: number; layers: OverlayLayerGeometry[]; views: OverlayView[]; last: boolean }>();
+  n.supervisor.on('frame', (m) => {
+    if (m.type === 'geometry') {
+      let p = parts.get(m.viewport);
+      if (!p || p.generation !== m.generation || p.frame !== m.frame || p.last) {
+        p = { generation: m.generation, frame: m.frame, layers: [], views: [], last: false };
+        parts.set(m.viewport, p);
+      }
+      p.layers.push(...m.layers);
+      p.views.push(...m.views);
+      p.last = m.last;
+      return;
+    }
+    if (m.type !== 'frameReady') return;
+    n.supervisor.releaseSlot(m.generation, m.slot);
+    const p = parts.get(m.viewport);
+    const mine = p && p.last && p.generation === m.generation && p.frame === m.frame;
+    if (mine) parts.delete(m.viewport);
+    publishFrameGeometry(m.viewport, m.time, m.revision, mine ? p.layers : [], mine ? p.views : []);
+  });
+}
+
+/** Open the main viewport the way EngineSurface does, so its frames (and their geometry) flow. */
+async function openMainViewport(client: EngineClient): Promise<void> {
+  setEngineDrivenViewport(MAIN_VIEWPORT, true);
+  unwrap(await client.execute({
+    type: 'setViewport',
+    viewport: MAIN_VIEWPORT,
+    width: 1920,
+    height: 1080,
+    devicePixelRatio: 1,
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+    channel: 'rgb',
+    exposure: 0,
+    transparencyGrid: false,
+    displayTransform: '',
+    layerRenderEffects: true,
+    view: 'active',
+  } as Command));
 }
 
 /** Stop the file's engine process (jest.setup.ts, afterAll). */
@@ -136,6 +189,7 @@ export async function setupAppEngine(): Promise<AppHarness> {
   };
   await h.run({ type: 'newProject' });
   await h.run({ type: 'clearHistory' });
+  await openMainViewport(client);
   const m = documentMirror().start();
   for (const off of viewsOff) off();
   viewsOff = [
