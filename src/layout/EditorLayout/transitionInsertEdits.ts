@@ -8,23 +8,30 @@
  *          off-document and the panels land as ONE `pasteLayers`;
  *   layer  the in/out rig keyed onto the selected layers' own tracks.
  *
- * The mode is the builder's own decision (it keys the selection when it can),
- * so the off-document run is tried first: a build that changed existing layers
- * is layer mode — `layerTransitionEdit`, one engine gesture: the Blur effect
- * the recipe keys is added for real first (its id is the engine's), then the
- * recipe runs off-document again and its keys land as setKeyframes, with the
- * motion-blur switch (core/engine/assistantKeys.ts).
+ * Layer mode is tried first when the selection holds content layers —
+ * `layerTransitionEdit`, one engine gesture: the recipe keys a scratch copy of
+ * the layers' stored keyframes (core/engine/memberEdits.ts) against poses read
+ * on the mirror, the Blur effect it keys is added with a caller-chosen id, and
+ * the keys land as setMemberKeyframes with the motion-blur switch.
  */
 
-import type { Command } from '@motion/engine-api';
+import { flicksToSeconds, secondsToFlicks, type Command, type Rect } from '@motion/engine-api';
 import { reportEngineError } from '@core/engine/uiEdits';
 import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
-import { applyTransitionItem, type ApplyTransitionResult } from '@core/library/transitionLibrary';
+import {
+  getTransitionItem,
+  planLayerTransition,
+  type ApplyTransitionResult,
+  type CompBox,
+  type LayerTransitionPlan,
+  type TransitionLayerFacts,
+} from '@core/library/transitionLibrary';
 import { useSelectionStore } from '@stores/selectionStore';
 import { engine } from '@core/engine/engineInstance';
-import { offDocument } from '@core/engine/offDocument';
-import { assistantKeyframeCommands } from '@core/engine/assistantKeys';
-import { getTransitionItem } from '@core/library/transitionLibrary';
+import { memberKeyframeCommands, runWithKeyTimes } from '@core/engine/memberEdits';
+import { mirrorEffectHeaders } from '@core/mirror/effects';
+import { settingsFps } from '@core/mirror/compFacts';
+import { storedNumber, trackRefIn } from '@core/mirror/trackIndex';
 import { buildTransitionPanels, type BuiltTransitionPanels } from '@core/library/transitionFragment';
 import { previewChoreography } from '@core/library/insertPreview';
 import { insertFragment } from '@/engine-client/insertFragment';
@@ -85,21 +92,50 @@ function layerTargets(): string[] {
   });
 }
 
-/** A scratch node part whose `fx` stack holds a Blur effect. */
-function hasBlurPart(part: unknown): boolean {
-  const comps = (part as { components?: Array<{ type: string; props: Record<string, unknown> }> } | undefined)?.components ?? [];
-  const list = comps.find((c) => c.type === 'fx')?.props.effects;
-  return Array.isArray(list) && list.some((e) => (e as { type?: unknown }).type === 'blur');
-}
+/** The comp seconds of `flicks` on a `fps` grid, as `detectPhase` frames. */
+const toFrame = (flicks: number, fps: number): number => Math.round(flicksToSeconds(flicks) * fps);
 
-/** Which layers carry a Blur effect (the mirror: an `effects/<id>` group whose match name is the type). */
-function blurred(layers: readonly string[]): Set<string> {
+/**
+ * The facts a layer-mode recipe reads, from the mirror (static transform,
+ * bar, effects) and the engine (each layer's content box at the playhead,
+ * `getLayerBounds` in layer space — a group's box is its children's union, off
+ * its own origin).
+ */
+async function layerFacts(targets: readonly string[], t0: number): Promise<TransitionLayerFacts> {
   const m = documentMirror();
-  return new Set(layers.filter((id) => {
-    const t = m.tree(id);
-    const kids = t?.nodes.get('effects')?.children ?? [];
-    return kids.some((p) => t?.nodes.get(p)?.matchName === 'blur');
-  }));
+  const bounds = new Map<string, Rect>();
+  const res = await engine().query({ type: 'getLayerBounds', layers: [...targets], time: secondsToFlicks(t0), space: 'layer', includeEffects: false });
+  if (res.ok) for (const b of res.value.bounds) bounds.set(b.layer, b.bounds);
+  const stat = (id: string, track: string, fallback: number): number => {
+    const r = trackRefIn(m.tree(id), track);
+    return (r ? storedNumber(r, r.info.value) : undefined) ?? fallback;
+  };
+  return {
+    pose: (id) => {
+      if (!m.layer(id)) return null;
+      const x = stat(id, 'x', 0);
+      const y = stat(id, 'y', 0);
+      const scaleX = stat(id, 'scaleX', 1);
+      const scaleY = stat(id, 'scaleY', 1);
+      const rotation = stat(id, 'rotation', 0);
+      const b = bounds.get(id);
+      if (b && b.width > 0 && b.height > 0) {
+        return {
+          x, y, scaleX, scaleY, rotation, width: b.width, height: b.height,
+          // The content centre in the layer's own space, scaled — zero for a box centred on its position.
+          offsetX: (b.x + b.width / 2) * scaleX,
+          offsetY: (b.y + b.height / 2) * scaleY,
+        };
+      }
+      return { x, y, scaleX, scaleY, rotation, width: 100, height: 100 };
+    },
+    clips: (id) => {
+      const l = m.layer(id);
+      const fps = settingsFps(l ? m.comp(l.comp)?.settings : undefined);
+      return { fps, clips: l ? [{ start: toFrame(l.timing.inPoint, fps), end: toFrame(l.timing.outPoint, fps) }] : [] };
+    },
+    effects: (id) => mirrorEffectHeaders(m.tree(id)),
+  };
 }
 
 /**
@@ -109,49 +145,53 @@ function blurred(layers: readonly string[]): Set<string> {
  */
 async function layerTransitionEdit(transId: string, label: string): Promise<ApplyTransitionResult | null> {
   const item = getTransitionItem(transId);
-  const targets = useSelectionStore.getState().ids.filter((id) => documentMirror().hasLayer(id));
+  const targets = layerTargets();
   if (!item || targets.length === 0) return null;
-  const hadBlur = blurred(targets);
-  let needBlur: string[];
+  const t0 = getPlayheadTime();
+  const comp = activeInsertTarget()?.comp;
+  const settings = comp ? documentMirror().comp(comp)?.settings : undefined;
+  const box: CompBox = { width: settings?.width || 1920, height: settings?.height || 1080 };
+  let plan: LayerTransitionPlan;
+  let keyCmds: Command[];
   try {
-    needBlur = offDocument(() => applyTransitionItem(transId), ({ after }) =>
-      // The layers the recipe gave a Blur effect (their scratch node part's fx stack).
-      targets.filter((id) => !hadBlur.has(id) && hasBlurPart(after.get(`node:${id}`))));
+    const facts = await layerFacts(targets, t0);
+    const run = await runWithKeyTimes(targets, (scratch, keyTime) => planLayerTransition(transId, targets, t0, box, facts, scratch, keyTime));
+    plan = run.value;
+    keyCmds = memberKeyframeCommands(run.scratch);
   } catch (err) {
     reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
     return null;
   }
+  const result = plan.result;
+  if (!result || keyCmds.length === 0) return null;
   const client = engine();
   const opened = await client.beginGesture(label);
   if (!opened.ok) {
     reportEngineError(label, opened.error);
     return null;
   }
-  let result: ApplyTransitionResult | null = null;
   let ok = true;
   try {
-    if (needBlur.length > 0) {
-      const res = await client.execute({ type: 'addEffect', layers: needBlur, effect: 'blur', params: [] });
+    for (const b of plan.needBlur) {
+      const res = await client.execute({ type: 'addEffect', layers: [b.layer], effect: 'blur', params: [], id: b.id });
       if (!res.ok) throw res.error;
     }
-    const plan = assistantKeyframeCommands(targets, () => applyTransitionItem(transId), { allowNodeChanges: true });
-    result = plan.value;
-    const cmds: Command[] = [...plan.cmds];
-    if (result && item.motionBlur) cmds.push({ type: 'setLayerSwitches', layers: result.nodeIds, patch: { motionBlur: true } });
-    if (!result || cmds.length === 0) {
-      ok = false;
-    } else {
-      const res = await client.batch(label, cmds);
-      if (!res.ok) throw res.error;
-    }
+    const cmds: Command[] = [...keyCmds];
+    if (item.motionBlur) cmds.push({ type: 'setLayerSwitches', layers: result.nodeIds, patch: { motionBlur: true } });
+    const res = await client.batch(label, cmds);
+    if (!res.ok) throw res.error;
   } catch (err) {
     ok = false;
-    result = null;
     const e = err as { code?: string; message?: string };
     reportEngineError(label, e.code ? err as never : { code: 'internal', message: err instanceof Error ? err.message : String(err) });
   }
   const closed = await client.endGesture(opened.value.gesture, ok);
   if (!closed.ok) reportEngineError(label, closed.error);
-  if (result) useSelectionStore.getState().set(result.nodeIds);
+  if (!ok) return null;
+  useSelectionStore.getState().set(result.nodeIds);
+  // An entrance settles VISIBLE at the end; an exit settles invisible by
+  // definition, so it rests at its start instead.
+  const anyEnter = (result.phases ?? []).some((p) => p === 'enter');
+  previewChoreography({ from: t0, to: t0 + item.duration, restAt: anyEnter ? t0 + item.duration : t0 });
   return result;
 }

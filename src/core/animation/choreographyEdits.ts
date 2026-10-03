@@ -21,9 +21,8 @@
  */
 
 import type { Command, EngineError, PropertyInfo } from '@motion/engine-api';
-import { secondsToFlicks, flicksToSeconds } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
-import { memberKeyframeCommands, rescratch, scratchMembers } from '@core/engine/memberEdits';
+import { memberKeyframeCommands, runWithKeyTimes } from '@core/engine/memberEdits';
 import { fieldValue, memberWrites, paths, values as apiValues } from '@core/engine/propRefs';
 import { reportEngineError } from '@core/engine/uiEdits';
 import { mirrorEffectHeaders } from '@core/mirror/effects';
@@ -114,21 +113,6 @@ async function install(label: string, needs: ChoreoNeeds, animatorPatch: Animato
   }
 }
 
-/** The keyframe-axis time of each (layer, comp seconds) the build asked for, from the engine. */
-async function keyTimes(asked: ReadonlyMap<string, Set<number>>): Promise<Map<string, Map<number, number>>> {
-  const client = engine();
-  const out = new Map<string, Map<number, number>>();
-  await Promise.all([...asked].flatMap(([layer, times]) => {
-    const row = new Map<number, number>();
-    out.set(layer, row);
-    return [...times].map(async (t) => {
-      const r = await client.query({ type: 'mapLayerTime', layer, time: secondsToFlicks(t), outward: false, keyframeAxis: true });
-      row.set(t, r.ok && r.value.time !== undefined ? flicksToSeconds(r.value.time) : t);
-    });
-  }));
-  return out;
-}
-
 /**
  * Run a choreography `build` as ONE engine gesture named `label` (see the file
  * header). `build(env)` must be synchronous and deterministic, write only the
@@ -145,24 +129,11 @@ export async function choreographyEngineEdit<T extends ChoreographyBuild>(
   let cmds: Command[];
   let needs: ChoreoNeeds;
   try {
-    const first = await scratchMembers(layers);
     const facts = mirrorFacts();
-    const asked = new Map<string, Set<number>>();
-    build({
-      engine: first.engine,
-      facts,
-      keyTime: (id, t) => {
-        let set = asked.get(id);
-        if (!set) asked.set(id, (set = new Set()));
-        set.add(t);
-        return t;
-      },
-    });
-    const mapped = await keyTimes(asked);
-    const s = rescratch(first);
-    value = build({ engine: s.engine, facts, keyTime: (id, t) => mapped.get(id)?.get(t) ?? t });
+    const run = await runWithKeyTimes(layers, (scratch, keyTime) => build({ engine: scratch, facts, keyTime }));
+    value = run.value;
     needs = value.needs ?? { effects: [], animators: [], threeD: [] };
-    cmds = [...memberKeyframeCommands(s), ...staticCommands(value.statics ?? [])];
+    cmds = [...memberKeyframeCommands(run.scratch), ...staticCommands(value.statics ?? [])];
   } catch (err) {
     reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
     return null;

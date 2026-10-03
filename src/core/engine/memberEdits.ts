@@ -13,9 +13,10 @@
  */
 
 import { AnimationEngine, type Keyframe } from '@motion/animation';
-import type { Command } from '@motion/engine-api';
+import { flicksToSeconds, secondsToFlicks, type Command } from '@motion/engine-api';
 import { fetchMemberTracks } from '@stores/memberTracks';
 import { documentMirror } from '@stores/documentMirror';
+import { engine as engineClient } from './engineInstance';
 import { edit, reportEngineError, type EditOptions } from './uiEdits';
 
 export interface MemberScratch {
@@ -70,6 +71,48 @@ export function memberKeyframeCommands(s: MemberScratch): Command[] {
     if (tracks.length > 0) out.push({ type: 'setMemberKeyframes', layer, tracks });
   }
   return out;
+}
+
+/** Composition seconds → a layer's keyframe axis (a trimmed or retimed clip maps the two differently). */
+export type KeyTime = (layer: string, compSeconds: number) => number;
+
+/** The keyframe-axis time of each (layer, comp seconds) asked for, from the engine (`mapLayerTime` `keyframeAxis`). */
+async function keyTimesOf(asked: ReadonlyMap<string, ReadonlySet<number>>): Promise<Map<string, Map<number, number>>> {
+  const client = engineClient();
+  const out = new Map<string, Map<number, number>>();
+  await Promise.all([...asked].flatMap(([layer, times]) => {
+    const row = new Map<number, number>();
+    out.set(layer, row);
+    return [...times].map(async (t) => {
+      const r = await client.query({ type: 'mapLayerTime', layer, time: secondsToFlicks(t), outward: false, keyframeAxis: true });
+      row.set(t, r.ok && r.value.time !== undefined ? flicksToSeconds(r.value.time) : t);
+    });
+  }));
+  return out;
+}
+
+/**
+ * Run a DETERMINISTIC `build` on the layers' scratch keyframes with the engine's
+ * keyframe axis: once to learn which composition times it keys, then — the
+ * engine having mapped them — again on a fresh scratch with the answers. The
+ * second run's value and scratch are what to send.
+ */
+export async function runWithKeyTimes<T>(
+  layers: readonly string[],
+  build: (scratch: AnimationEngine, keyTime: KeyTime) => T,
+): Promise<{ value: T; scratch: MemberScratch }> {
+  const first = await scratchMembers(layers);
+  const asked = new Map<string, Set<number>>();
+  build(first.engine, (layer, t) => {
+    let set = asked.get(layer);
+    if (!set) asked.set(layer, (set = new Set()));
+    set.add(t);
+    return t;
+  });
+  const mapped = await keyTimesOf(asked);
+  const scratch = rescratch(first);
+  const value = build(scratch.engine, (layer, t) => mapped.get(layer)?.get(t) ?? t);
+  return { value, scratch };
 }
 
 /**

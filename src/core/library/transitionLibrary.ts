@@ -43,6 +43,7 @@ import { addMaskPath, setMaskPoints, keyframeMask, ellipseMask, getNodeMask } fr
 import { liveKf, addRoot, addShape, type Ease } from '@core/template/templates/builders';
 import { mountPreview, type PreviewSpec } from '@core/template/previewController';
 import { previewChoreography } from './insertPreview';
+import type { AnimationEngine } from '@motion/animation';
 
 export type TransitionCategory = 'fade' | 'slide' | 'zoom' | 'whip' | 'glitch' | 'wipe';
 export type TransitionPhase = 'enter' | 'exit';
@@ -898,6 +899,76 @@ export function applyTransitionItem(transId: string): ApplyTransitionResult | nu
   // read as broken, in opposite directions.
   previewChoreography({ from: t0, to: t0 + item.duration, restAt: t0 + solidRestTime(transId, box) });
   return { mode: 'solid', nodeIds: solidIds };
+}
+
+// ── Layer mode, planned (block 3: no replica) ─────────────────────
+
+/** What a layer-mode transition reads of the document (transitionInsertEdits.ts answers from the mirror and the engine). */
+export interface TransitionLayerFacts {
+  /** The pose the recipe is computed against; null skips the layer. */
+  pose(nodeId: string): LayerPose | null;
+  /** The layer's bar on its composition's frame grid, and that rate (`detectPhase`). */
+  clips(nodeId: string): { fps: number; clips: ReadonlyArray<{ start: number; end: number }> };
+  /** The layer's effects, stack order (`type` = the effect's registry type). */
+  effects(nodeId: string): ReadonlyArray<{ id: string; type: string }>;
+}
+
+export interface LayerTransitionPlan {
+  result: ApplyTransitionResult | null;
+  /** Blur effects to add first, with the caller-chosen ids the keys already use. */
+  needBlur: Array<{ layer: string; id: string }>;
+}
+
+/**
+ * Layer mode without touching the document: key the recipe onto `targets`'
+ * tracks on `engine` (comp seconds mapped by `keyTime`), resolving `@blur` to
+ * an existing blur effect or one the caller adds with the id returned in
+ * `needBlur`. The motion-blur switch is the caller's too.
+ */
+export function planLayerTransition(
+  transId: string,
+  targets: readonly string[],
+  t0: number,
+  box: CompBox,
+  facts: TransitionLayerFacts,
+  engine: AnimationEngine,
+  keyTime: (nodeId: string, compSeconds: number) => number,
+): LayerTransitionPlan {
+  const item = getTransitionItem(transId);
+  const needBlur: LayerTransitionPlan['needBlur'] = [];
+  if (!item || item.solidOnly) return { result: null, needBlur };
+  const written: string[] = [];
+  const phases: TransitionPhase[] = [];
+  for (const nodeId of targets) {
+    const pose = facts.pose(nodeId);
+    if (!pose) continue;
+    const { fps, clips } = facts.clips(nodeId);
+    const phase = detectPhase(clips, Math.round(t0 * fps), Math.round((t0 + item.duration) * fps));
+    const recipe = transitionRecipe(transId, pose, box, phase);
+    if (!recipe) continue;
+    let blurTrack: string | undefined;
+    for (const kf of recipe) {
+      let prop = kf.prop;
+      if (prop === '@blur') {
+        if (blurTrack === undefined) {
+          const effects = facts.effects(nodeId);
+          let id = effects.find((e) => e.type === 'blur')?.id;
+          if (!id) {
+            const taken = new Set(effects.map((e) => e.id));
+            id = 'transition_blur';
+            for (let n = 2; taken.has(id); n++) id = `transition_blur_${n}`;
+            needBlur.push({ layer: nodeId, id });
+          }
+          blurTrack = effectPropPath(id, 'amount');
+        }
+        prop = blurTrack;
+      }
+      engine.setKeyframe(nodeId, prop, keyTime(nodeId, t0 + kf.t), kf.value, kf.ease);
+    }
+    written.push(nodeId);
+    phases.push(phase);
+  }
+  return { result: written.length > 0 ? { mode: 'layer', nodeIds: written, phases } : null, needBlur };
 }
 
 // ── Animated card preview (isolated; the SAME recipe apply writes) ───
