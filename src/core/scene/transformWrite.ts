@@ -139,33 +139,6 @@ export interface TransformWrite {
 }
 
 /**
- * Write BASE (static) values only — never a keyframe, no history of its own.
- *
- * For callers that have ALREADY rewritten or removed the props' tracks in the
- * same edit (Flip negates the scale track; Reset removes the tracks), where
- * `writeTransformProps` would wrongly add a keyframe on top. `componentId`
- * defaults to the Transform component; Reset passes the Style/Text component
- * that actually owns `opacity`.
- */
-export function writeTransformBase(
-  nodeId: string,
-  writes: readonly TransformWrite[],
-  componentId?: string,
-): boolean {
-  const node = defaultSceneGraph.getNode(nodeId as ID);
-  if (!node || node.locked) return false;
-  const target = componentId ?? node.components.find((c) => c.type === 'Transform')?.id;
-  if (!target) return false;
-  let changed = false;
-  for (const { prop, value } of writes) {
-    if (!Number.isFinite(value)) continue;
-    defaultSceneGraph.writeProp(nodeId as ID, target, prop, value);
-    changed = true;
-  }
-  return changed;
-}
-
-/**
  * Write transform properties, keyframing whichever ones are animated.
  *
  * Always writes the base prop too, so the static value stays correct for when
