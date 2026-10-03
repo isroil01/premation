@@ -1,57 +1,28 @@
 /**
- * Create Nulls From Paths — a null on every vertex, following the layer.
+ * Create Nulls From Paths — a null on every vertex, following the layer. The
+ * builder halves; the engine edit (one entry, nested under the shape, Points
+ * Follow Nulls' bindings) is layout/Scene/layerCreateEdits.test.ts.
  */
 
-import SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { world2DAt } from '@core/scene/layerSpace';
-import { Matrix } from '@motion/scene';
-import type { SceneNode } from '@core/types';
-import { createNullsFromPath, pathVertices } from './nullsFromPaths';
+import { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import { buildNullsFromPath, pathValueVertices } from './nullsFromPaths';
 
-function triangle(id: string, x: number, y: number, rotation = 0): SceneNode {
-  return {
-    id, name: 'Tri', parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x, y }, rotation, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x, y, rotation, shapeType: 'path' } },
-      { id: `${id}_g`, type: 'Geometry', props: { points: [
-        { x: 0, y: -50, inX: 0, inY: -50, outX: 0, outY: -50 },
-        { x: 50, y: 50, inX: 50, inY: 50, outX: 50, outY: 50 },
-        { x: -50, y: 50, inX: -50, inY: 50, outX: -50, outY: 50 },
-      ] } },
-    ],
-  };
-}
-
-beforeEach(() => {
-  (defaultSceneGraph as unknown as SceneGraph).clear();
-  defaultAnimation.clear();
+it('reads the vertices of a Path value, not a flattened outline', () => {
+  const v = pathValueVertices({
+    kind: 'path',
+    value: { vertices: [0, -50, 50, 50, -50, 50], inTangents: [0, 0, 0, 0, 0, 0], outTangents: [0, 0, 0, 0, 0, 0], closed: true, featherPoints: [] },
+  } as never);
+  expect(v).toEqual([{ x: 0, y: -50 }, { x: 50, y: 50 }, { x: -50, y: 50 }]);
+  expect(pathValueVertices({ kind: 'scalar', value: 1 })).toEqual([]);
+  expect(pathValueVertices(undefined)).toEqual([]);
 });
 
-it('reads the vertices, not a flattened outline', () => {
-  defaultSceneGraph.addNode(triangle('t', 0, 0));
-  expect(pathVertices(defaultSceneGraph.getNode('t')!, 0)).toHaveLength(3);
+it('lays one null per vertex at the vertex (layer space), in vertex order', () => {
+  const b = new FragmentBuilder();
+  const ids = buildNullsFromPath(b, 'Tri', [{ x: 0, y: -50 }, { x: 50, y: 50 }]);
+  expect(ids).toHaveLength(2);
+  expect(b.row(ids[0]!).name).toBe('Tri · Point 1');
+  expect(b.component(ids[1]!, 'Transform')!.props).toMatchObject({ __kind: 'null', x: 50, y: 50 });
+  // Top level in the fragment: the paste nests them under the shape.
+  expect(b.build()!.tops.sort()).toEqual([...ids].sort());
 });
-
-it('lands one null per vertex at its world position, parented to the shape', () => {
-  defaultSceneGraph.addNode(triangle('t', 300, 200, 90));
-  const ids = createNullsFromPath('t', 0);
-  expect(ids).toHaveLength(3);
-  for (const id of ids) expect(defaultSceneGraph.getNode(id)?.parent).toBe('t');
-  // The first vertex (0,-50) rotated 90° about the layer → world (350, 200).
-  const w = Matrix.transformPoint(world2DAt(ids[0]!, 0), { x: 0, y: 0 });
-  expect(w.x).toBeCloseTo(350, 3);
-  expect(w.y).toBeCloseTo(200, 3);
-});
-
-it('does nothing for a non-shape or a primitive with no vertices', () => {
-  defaultSceneGraph.addNode({ ...triangle('r', 0, 0), components: [
-    { id: 'r_t', type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, shapeType: 'rect', width: 10, height: 10 } },
-  ] });
-  expect(createNullsFromPath('r', 0)).toEqual([]);
-});
-
-// One undo step through the engine (and Points Follow Nulls' bindings): layout/Scene/layerCreateEdits.test.ts.

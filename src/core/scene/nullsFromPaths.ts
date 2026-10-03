@@ -16,74 +16,61 @@
  *     data-track form, and a binding the renderer resolves is live through any
  *     parenting or keyframing of the null, which is exactly what the feature
  *     is for.
+ *
+ * The engine's document, not the page replica: the vertices are the shape's
+ * Path (`layer/path.points`) off the mirror, its value at the time asked of
+ * the engine when keyed; the nulls are laid into a fragment
+ * (layout/Scene/layerCreateEdits.ts pastes it under the shape).
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSelectionStore } from '@stores/selectionStore';
-import { bumpScene } from '@stores/sceneStore';
+import type { Value } from '@motion/engine-api';
+import { engine } from '@core/engine/engineInstance';
+import { compTime } from '@core/engine/propRefs';
+import { uiKindOf } from '@core/mirror/layerKinds';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { defaultAnimation } from '@motion/animation';
-import { getRemappedTime } from '@core/timeline/TimelineController';
-import type { SceneNode } from '@core/types';
+import type { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import { documentMirror } from '@stores/documentMirror';
 
-interface Pt { x: number; y: number }
+export interface Pt { x: number; y: number }
 
-/** The shape's anchor points in LAYER space at `time` — the animated path if there is one. */
-export function pathVertices(node: SceneNode, time: number): Pt[] {
-  const live = defaultAnimation.sampleData(node.id, 'path.points', getRemappedTime(node.id, time));
-  if (Array.isArray(live) && live.length > 0 && typeof live[0] === 'object' && live[0] !== null && 'x' in (live[0] as object)) {
-    return (live as Pt[]).map((p) => ({ x: p.x, y: p.y }));
-  }
-  const geom = node.components.find((c) => c.type === 'Geometry');
-  const pts = geom?.props.points;
-  if (Array.isArray(pts) && pts.length > 0) return (pts as Pt[]).map((p) => ({ x: p.x, y: p.y }));
-  return [];
+const PATH = 'layer/path.points';
+
+/** The anchor points of a Path value (layer space), [] for anything else. */
+export function pathValueVertices(v: Value | undefined): Pt[] {
+  if (v?.kind !== 'path') return [];
+  const flat = v.value.vertices;
+  const out: Pt[] = [];
+  for (let i = 0; i + 1 < flat.length; i += 2) out.push({ x: flat[i]!, y: flat[i + 1]! });
+  return out;
 }
 
-let seq = 0;
+/**
+ * A shape layer's anchor points in LAYER space at comp `seconds` — the animated
+ * path's value at that time when it is keyed. [] for a layer that is not a
+ * shape or has no drawn outline (a primitive).
+ */
+export async function pathVertices(shapeId: string, seconds: number): Promise<Pt[]> {
+  const m = documentMirror();
+  if (uiKindOf(m.layer(shapeId)) !== 'shape') return [];
+  await m.loadTree(shapeId);
+  const info = m.property(shapeId, PATH);
+  if (!info) return [];
+  if (!info.animated) return pathValueVertices(info.value);
+  const res = await engine().query({ type: 'getPropertyValues', props: [{ layer: shapeId, path: PATH }], time: compTime(seconds), evaluated: true });
+  return pathValueVertices(res.ok ? res.value.values[0]?.value : info.value);
+}
 
 /**
- * Create the nulls. Returns their ids, in vertex order, and selects them so
- * the next gesture — parent something, add keyframes — acts on the set.
- *
- * An OFF-DOCUMENT builder (`nullsFromPathEdit` inserts its result with one
- * `pasteLayers`); Points Follow Nulls binds the vertices afterwards through
- * `layer/pointBindings`, with the ids the paste minted.
+ * Lay one null per vertex into `b`, in vertex order (the scratch ids). A
+ * Geometry vertex is already in the shape's LOCAL space — the space a child's
+ * position is expressed in — so each null, pasted UNDER the shape, is born at
+ * the vertex's own coordinates and sits on it by construction: no world-space
+ * round trip, nothing to drift.
  */
-export function createNullsFromPath(shapeId: string, time: number): string[] {
-  const node = defaultSceneGraph.getNode(shapeId);
-  if (!node || readNodeKind(node) !== 'shape') return [];
-  const verts = pathVertices(node, time);
-  if (verts.length === 0) return [];
-
-  // A Geometry vertex is already in the shape's LOCAL space — the same space
-  // a child's position is expressed in. So the null is born as a child at the
-  // vertex's own coordinates and sits on it by construction; no world-space
-  // round trip, nothing to drift. The world position is only needed to pin
-  // the claim in tests (`world2DAt(null) === world2DAt(shape) · vertex`).
-  const baseName = node.name ?? 'Path';
-  const ids: string[] = [];
-
-  verts.forEach((v, i) => {
-    const id = `null_${baseName.replace(/\s+/g, '_').toLowerCase()}_${i + 1}_${(seq += 1)}`;
-    const nullNode: SceneNode = {
-      id,
-      name: `${baseName} · Point ${i + 1}`,
-      parent: shapeId,
-      children: [],
-      transform: { position: { x: v.x, y: v.y }, rotation: 0, scale: { x: 1, y: 1 } },
-      visible: true,
-      locked: false,
-      components: [
-        { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'null', x: v.x, y: v.y, rotation: 0 } },
-      ],
-    };
-    defaultSceneGraph.addChild(shapeId, nullNode);
-    ids.push(id);
-  });
-
-  useSelectionStore.getState().set(ids);
-  bumpScene();
-  return ids;
+export function buildNullsFromPath(b: FragmentBuilder, shapeName: string, verts: readonly Pt[]): string[] {
+  const baseName = shapeName || 'Path';
+  return verts.map((v, i) => b.layer({
+    name: `${baseName} · Point ${i + 1}`,
+    components: [{ id: '', type: 'Transform', props: { [SCENE_KIND_PROP]: 'null', x: v.x, y: v.y, rotation: 0 } }],
+  }));
 }

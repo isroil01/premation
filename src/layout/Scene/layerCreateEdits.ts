@@ -6,13 +6,14 @@
  *
  * Shapes from Text is the engine's `convertLayer` (its fonts, its text
  * layout). Nulls From Path Points is a client macro: the path's vertices are
- * sampled at the playhead, the nulls are BUILT off-document and sent as ONE
+ * sampled at the playhead, the nulls are BUILT into a fragment and sent as ONE
  * `pasteLayers` — one undo entry, engine-minted ids, the result selected.
  */
 
-import { createNullsFromPath } from '@core/scene/nullsFromPaths';
+import { buildNullsFromPath, pathVertices } from '@core/scene/nullsFromPaths';
 import { compOfLayer, isLayer } from '@core/mirror/docFacts';
-import { insertBuiltLayers } from '@core/engine/offDocument';
+import { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import { pasteBuilt, pastedIds } from '@/engine-client/insertFragment';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { engineOwnsDocumentNow } from '@core/engine/engineOwnership';
@@ -77,8 +78,9 @@ export async function shapesFromTextEdit(
 
 /**
  * Create Nulls From Path Points: a null at every vertex of the shape's outline
- * at the playhead, parented to (nested in) the shape — `createNullsFromPath`,
- * built off-document and sent as ONE `pasteLayers` INTO the shape. The nulls
+ * at the playhead (`pathVertices`, off the mirror), parented to (nested in)
+ * the shape — laid into a fragment (`buildNullsFromPath`) and sent as ONE
+ * `pasteLayers` INTO the shape. The nulls
  * are selected. Resolves to their ids (`[]` when the layer has no path points,
  * or the engine refused — toasted).
  *
@@ -89,10 +91,20 @@ export async function shapesFromTextEdit(
 export async function nullsFromPathEdit(shapeId: string, seconds: number, opts: { pointsFollowNulls?: boolean } = {}): Promise<string[]> {
   const comp = isLayer(shapeId) ? compOfLayer(shapeId) : null;
   if (!comp) return [];
-  if (!opts.pointsFollowNulls) {
-    const ids = await insertBuiltLayers('Create Nulls From Path Points', comp, () => createNullsFromPath(shapeId, seconds));
-    return ids ?? [];
-  }
+  const verts = await pathVertices(shapeId, seconds);
+  if (verts.length === 0) return [];
+  const b = new FragmentBuilder({ idPrefix: 'nulls' });
+  const scratch = buildNullsFromPath(b, documentMirror().layer(shapeId)?.name ?? '', verts);
+  const built = b.build();
+  /** Paste the nulls under the shape; resolves to their ids in VERTEX order (selected), null when refused. */
+  const paste = async (label: string): Promise<string[] | null> => {
+    const ids = await pasteBuilt(label, comp, built, { parent: shapeId, select: false });
+    if (!ids || !built) return null;
+    const made = pastedIds(built, ids, scratch);
+    useSelectionStore.getState().set(made);
+    return made;
+  };
+  if (!opts.pointsFollowNulls) return (await paste('Create Nulls From Path Points')) ?? [];
   const label = 'Create Nulls From Path Points (Points Follow Nulls)';
   const client = engine();
   const opened = await client.beginGesture(label);
@@ -100,12 +112,10 @@ export async function nullsFromPathEdit(shapeId: string, seconds: number, opts: 
     reportEngineError(label, opened.error);
     return [];
   }
-  const ids = await insertBuiltLayers(label, comp, () => createNullsFromPath(shapeId, seconds));
+  const ids = await paste(label);
   let ok = !!ids && ids.length > 0;
   if (ok) {
-    // `createNullsFromPath` selects its nulls in VERTEX order; the insert
-    // selects the new ids in that order.
-    const bindings = useSelectionStore.getState().ids.map((nullId, index) => ({ index, nullId }));
+    const bindings = ids!.map((nullId, index) => ({ index, nullId }));
     const res = await edit(label, {
       type: 'setProperty', prop: { layer: shapeId, path: 'layer/pointBindings' }, value: values.json(bindings),
     });
