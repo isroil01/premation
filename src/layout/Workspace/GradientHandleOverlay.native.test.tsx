@@ -21,19 +21,17 @@
  * ARE layer-local px and every coordinate below is the projection's own.
  */
 
-import { render, fireEvent, act, cleanup } from '@testing-library/react';
+import { render, fireEvent, act, cleanup, waitFor } from '@testing-library/react';
 import { GradientHandleOverlay } from './GradientHandleOverlay';
 import { useGradientEditStore } from './gradientEditStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { getNodeFill, getNodeFills, type FillPaint, type LinearFill } from '@core/paint/fill';
-import { defaultStroke, getNodeStrokeAt } from '@core/paint/stroke';
-import { defaultAnimation } from '@motion/animation';
+import { readNodeFill, readNodeFills, type FillPaint, type LinearFill } from '@core/paint/fill';
+import { defaultStroke, readNodeStrokes } from '@core/paint/stroke';
 import type { Command } from '@motion/engine-api';
 import { engineIdle } from '@core/engine/engineInstance';
-import { propRefForTrack } from '@core/engine/propRefs';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { documentMirror } from '@stores/documentMirror';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits, trackRef, waitForFrame, itFullEngine } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { fillPaintCommands, strokesCommands, textStrokePaintCommands } from '@layout/Inspector/appearance/paintEdits';
@@ -69,6 +67,9 @@ async function fixture(cmds: Command[]): Promise<void> {
 async function layerAtOrigin(kind: 'shape' | 'text'): Promise<string> {
   const { layer } = await h.run({ type: 'createLayer', comp: 'comp_root', kind, name: kind, init: [] });
   await h.run({ type: 'setProperty', prop: { layer, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 0, y: 0 } } });
+  // The fixtures' field commands compose from the layer's property tree.
+  await engineIdle();
+  await documentMirror().loadTree(layer);
   return layer;
 }
 
@@ -89,8 +90,24 @@ async function linearFillOn(id: string, paint: FillPaint = LINEAR): Promise<void
   await fixture(fillPaintCommands(id, paint));
 }
 
-function currentStops(): Array<{ id: string; offset: number; color: string }> {
-  const fill = getNodeFill(ID);
+/** The layer's fill / fill stack / strokes as the engine stores them. */
+const getNodeFill = async (id: string): Promise<FillPaint | undefined> => readNodeFill((await docView()).getNode(id)!);
+const getNodeFills = async (id: string): Promise<FillPaint[]> => readNodeFills((await docView()).getNode(id)!);
+const getNodeStrokeAt = async (id: string, i: number) => readNodeStrokes((await docView()).getNode(id)!)[i];
+
+/** A track's value at `seconds`, evaluated by the engine. */
+async function sampleAt(id: string, track: string, seconds = 0): Promise<number | undefined> {
+  const r = await trackRef(id, track);
+  const res = await h.query({ type: 'getPropertyValues', props: [{ layer: id, path: r.path }], time: Math.round(seconds * 705_600_000), evaluated: true });
+  const v = res.values[0]?.value as { kind: string; value: unknown } | undefined;
+  if (!v) return undefined;
+  if (typeof v.value === 'number') return v.value;
+  const o = v.value as Record<string, number>;
+  return r.member !== undefined ? Object.values(o)[r.member] : undefined;
+}
+
+async function currentStops(): Promise<Array<{ id: string; offset: number; color: string }>> {
+  const fill = await getNodeFill(ID);
   return fill && fill.type !== 'solid' ? fill.stops : [];
 }
 
@@ -107,7 +124,7 @@ async function drag(svg: Element, from: Pt, moves: Pt[], opts: { altKey?: boolea
     for (const [x, y] of moves) fireEvent.pointerMove(svg, { clientX: x, clientY: y, pointerId: 1, altKey: opts.altKey ?? false });
     const last = moves[moves.length - 1] ?? from;
     fireEvent.pointerUp(svg, { clientX: last[0], clientY: last[1], pointerId: 1 });
-    await engineIdle();
+    await settleEdits();
   });
 }
 
@@ -117,10 +134,12 @@ async function frame(): Promise<void> {
 }
 
 /** Render, then let the mirror and the overlay geometry subscription land (B4: the box comes with the frame). */
-async function renderOverlay(): Promise<ReturnType<typeof render>> {
+async function renderOverlay(opts: { drawn?: boolean } = {}): Promise<ReturnType<typeof render>> {
   const r = render(<GradientHandleOverlay />);
-  await act(async () => { await engineIdle(); });
-  await act(async () => { await engineIdle(); });
+  await act(async () => { await settleEdits(); });
+  // The overlay draws once a frame carries the layer's box.
+  if (opts.drawn === false) await act(async () => { await waitForFrame(); });
+  else await waitFor(() => expect(r.container.querySelector('svg')).not.toBeNull(), { timeout: 3000 });
   return r;
 }
 
@@ -138,9 +157,10 @@ function centreOf(container: HTMLElement, label: string): Pt {
 beforeEach(async () => {
   h = await setupAppEngine();
   ID = await layerAtOrigin('shape');
-  const tid = (await docView()).getNode(ID)!.components.find((c) => c.type === 'Transform')!.id;
-  defaultSceneGraph.writeProp(ID, tid, 'width', W);
-  defaultSceneGraph.writeProp(ID, tid, 'height', H);
+  await h.run({ type: 'setProperties', writes: [
+    { prop: { layer: ID, path: 'layer/width' }, value: { kind: 'scalar', value: W } },
+    { prop: { layer: ID, path: 'layer/height' }, value: { kind: 'scalar', value: H } },
+  ] });
   useSelectionStore.getState().set([ID]);
   useGradientEditStore.getState().disarm();
   usePreferenceStore.setState({ timelineAutoKeyframe: false });
@@ -157,7 +177,7 @@ afterEach(async () => {
 describe('when the gizmo appears at all', () => {
   it('draws nothing for a layer with no gradient fill', async () => {
     await linearFillOn(ID, { type: 'solid', color: '#ff0000' });
-    const { container } = await renderOverlay();
+    const { container } = await renderOverlay({ drawn: false });
     expect(container.querySelector('svg')).toBeNull();
   });
 
@@ -187,7 +207,7 @@ describe('when the gizmo appears at all', () => {
     await linearFillOn(ID);
     useGradientEditStore.getState().arm(ID, 0);
     useSelectionStore.getState().set([]);
-    const { container } = await renderOverlay();
+    const { container } = await renderOverlay({ drawn: false });
     expect(container.querySelector('svg')).toBeNull();
   });
 });
@@ -210,7 +230,7 @@ describe('dragging a stop', () => {
     // camera is 1:1, so that is where the pointer goes.
     await drag(svg, [100, 0], [[60, 0], [30, 0], [0, 0]]);
 
-    const stops = currentStops();
+    const stops = (await currentStops());
     expect(stops).toHaveLength(2);
     expect(stops.find((s) => s.id === 'b')?.offset).toBeCloseTo(0.5);
     // The stop that was not dragged is untouched, colours and all.
@@ -219,13 +239,13 @@ describe('dragging a stop', () => {
 
     await undo();
     expect((await h.doc())).toEqual(before);
-    expect(currentStops().find((s) => s.id === 'b')?.offset).toBe(1);
+    expect((await currentStops()).find((s) => s.id === 'b')?.offset).toBe(1);
   });
 
   it('clamps a drag that runs past the end of the axis', async () => {
     const { svg } = await armed();
     await drag(svg, [-100, 0], [[400, 0]]);
-    expect(currentStops().find((s) => s.id === 'a')?.offset).toBe(1);
+    expect((await currentStops()).find((s) => s.id === 'a')?.offset).toBe(1);
   });
 
   it('adds a stop with the interpolated colour when the axis itself is clicked — ONE "Add Gradient Stop" entry', async () => {
@@ -233,14 +253,14 @@ describe('dragging a stop', () => {
     // Midway along a black→white ramp: the gradient must look identical the
     // instant the stop appears, and only change when it is dragged.
     await drag(svg, [0, 0], []);
-    const stops = currentStops();
+    const stops = (await currentStops());
     expect(stops).toHaveLength(3);
     const added = stops.find((s) => s.id !== 'a' && s.id !== 'b');
     expect(added?.offset).toBeCloseTo(0.5);
     expect(added?.color).toBe('#808080ff');
     expect((await historyLabels())).toEqual(['Add Gradient Stop']);
     await undo();
-    expect(currentStops()).toHaveLength(2);
+    expect((await currentStops())).toHaveLength(2);
   });
 
   it('carries the stop it just added through the rest of the gesture', async () => {
@@ -249,7 +269,7 @@ describe('dragging a stop', () => {
     // the new stop, and write it straight back out of existence.
     const { svg } = await armed();
     await drag(svg, [0, 0], [[25, 0], [50, 0]]);
-    const stops = currentStops();
+    const stops = (await currentStops());
     expect(stops).toHaveLength(3);
     expect(stops.find((s) => s.id !== 'a' && s.id !== 'b')?.offset).toBeCloseTo(0.75);
     // Add + drag is one action.
@@ -259,7 +279,7 @@ describe('dragging a stop', () => {
   it('Alt-drag duplicates instead of moving', async () => {
     const { svg } = await armed();
     await drag(svg, [100, 0], [[0, 0]], { altKey: true });
-    const stops = currentStops();
+    const stops = (await currentStops());
     expect(stops).toHaveLength(3);
     // The original stayed where it was; the copy moved and kept its colour.
     expect(stops.find((s) => s.id === 'b')?.offset).toBe(1);
@@ -274,7 +294,7 @@ describe('dragging a stop', () => {
     // shapes, selecting and panning would stop working while it is armed.
     const { svg } = await armed();
     await drag(svg, [0, 60], [[40, 60]]);
-    expect(currentStops().map((s) => s.offset)).toEqual([0, 1]);
+    expect((await currentStops()).map((s) => s.offset)).toEqual([0, 1]);
     expect((await historyLabels())).toEqual([]);
   });
 
@@ -295,7 +315,7 @@ describe('dragging a grip', () => {
     const before = (await h.doc());
     // The end grip stands 15px past the axis end (100, 0).
     await drag(container.querySelector('svg')!, [115, 0], [[20, 60], [0, 90]]);
-    expect((getNodeFill(ID) as LinearFill).angle).toBeCloseTo(90);
+    expect(((await getNodeFill(ID)) as LinearFill).angle).toBeCloseTo(90);
     expect((await docView()).isAnimated(ID, 'fillAngle')).toBe(false);
     expect((await historyLabels())).toEqual(['Move Gradient Handle']);
     await undo();
@@ -310,7 +330,7 @@ describe('dragging a grip', () => {
     const { container } = await renderOverlay();
     await drag(container.querySelector('svg')!, [115, 0], [[0, 90]]);
     expect((await docView()).isAnimated(ID, 'fillAngle')).toBe(true);
-    expect(defaultAnimation.sample(ID, 'fillAngle', 0)).toBeCloseTo(90);
+    expect((await sampleAt(ID, 'fillAngle'))).toBeCloseTo(90);
     expect((await historyLabels())).toEqual(['Move Gradient Handle']);
   });
 });
@@ -338,12 +358,12 @@ describe('deleting a stop', () => {
     expect(useGradientEditStore.getState().selectedStopId).toBe('b');
     await act(async () => {
       fireEvent.keyDown(window, { key: 'Delete' });
-      await engineIdle();
+      await settleEdits();
     });
-    expect(currentStops().map((s) => s.id)).toEqual(['a', 'c']);
+    expect((await currentStops()).map((s) => s.id)).toEqual(['a', 'c']);
     expect((await historyLabels())).toEqual(['Delete Gradient Stop']);
     await undo();
-    expect(currentStops().map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    expect((await currentStops()).map((s) => s.id)).toEqual(['a', 'b', 'c']);
   });
 
   it('refuses at two stops, because one is not a gradient', async () => {
@@ -355,9 +375,9 @@ describe('deleting a stop', () => {
     await drag(svg, [100, 0], []);
     await act(async () => {
       fireEvent.keyDown(window, { key: 'Delete' });
-      await engineIdle();
+      await settleEdits();
     });
-    expect(currentStops()).toHaveLength(2);
+    expect((await currentStops())).toHaveLength(2);
     expect((await historyLabels())).toEqual([]);
   });
 
@@ -382,17 +402,21 @@ describe('when fill.stops is animated', () => {
     const utils = await renderOverlay();
     return { ...utils, svg: utils.container.querySelector('svg')! };
   }
-  const sampled = (): number[] =>
-    ((defaultAnimation.sampleData(ID, 'fill.stops', 0) as Array<{ pos: number }> | undefined) ?? []).map((s) => s.pos);
+  /** The Colors key's stops at 0 s (the engine's evaluated `layer/fillStops`). */
+  const sampled = async (): Promise<number[]> => {
+    const res = await h.query({ type: 'getPropertyValues', props: [{ layer: ID, path: 'layer/fillStops' }], time: 0, evaluated: true });
+    const v = res.values[0]?.value as { kind: string; value: { stops?: Array<{ offset: number }> } } | undefined;
+    return (v?.value.stops ?? []).map((x) => x.offset);
+  };
 
   it('a drag writes the keyframe, not the static paint', async () => {
     const { svg } = await armedAnimated();
     await drag(svg, [100, 0], [[0, 0]]);
 
-    expect(sampled()).toEqual([0, 0.5]);
+    expect((await sampled())).toEqual([0, 0.5]);
     // The static paint is deliberately untouched: the renderer reads the
     // track, so writing there as well would be an edit nothing samples.
-    expect((getNodeFill(ID) as LinearFill).stops.map((s) => s.offset)).toEqual([0, 1]);
+    expect(((await getNodeFill(ID)) as LinearFill).stops.map((s) => s.offset)).toEqual([0, 1]);
   });
 
   it('a many-move drag is ONE undo entry, and undo restores the key', async () => {
@@ -405,7 +429,7 @@ describe('when fill.stops is animated', () => {
     expect((await historyLabels())).toEqual(['Move Gradient Stop']);
     await undo();
     expect((await h.doc())).toEqual(before);
-    expect(sampled()).toEqual([0, 1]);
+    expect((await sampled())).toEqual([0, 1]);
   });
 
   it('the selection follows a dragged stop past its neighbour, so Delete removes THAT stop', async () => {
@@ -421,15 +445,18 @@ describe('when fill.stops is animated', () => {
       ],
     });
     await drag(svg, [-100, 0], [[0, 0], [50, 0]]);
-    expect(sampled()).toEqual([0.5, 0.75, 1]);
+    expect((await sampled())).toEqual([0.5, 0.75, 1]);
     expect(useGradientEditStore.getState().selectedStopId).toBe('anim_1');
-    // The key is pressed after the gizmo has redrawn the moved list.
+    // The key is pressed after the gizmo has redrawn the moved list (the
+    // mirror's keyed value has landed).
+    await act(async () => { await settleEdits(); });
+    await waitFor(() => expect(document.querySelector('[aria-label="Gradient stop 75%"]')).not.toBeNull());
     await frame();
     await act(async () => {
       fireEvent.keyDown(window, { key: 'Delete' });
-      await engineIdle();
+      await settleEdits();
     });
-    expect(sampled()).toEqual([0.5, 1]);
+    expect((await sampled())).toEqual([0.5, 1]);
     expect((await historyLabels())).toEqual(['Move Gradient Stop', 'Delete Gradient Stop']);
   });
 });
@@ -456,7 +483,7 @@ describe('a fill stack', () => {
     const before = (await h.doc());
     await drag(container.querySelector('svg')!, [100, 0], [[0, 0]]);
 
-    const stack = getNodeFills(ID) as LinearFill[];
+    const stack = (await getNodeFills(ID)) as LinearFill[];
     // The SECOND fill moved; the primary is untouched.
     expect(stack[1]?.stops.find((s) => s.id === 'd')?.offset).toBeCloseTo(0.5);
     expect(stack[0]?.stops.find((s) => s.id === 'b')?.offset).toBe(1);
@@ -472,7 +499,7 @@ describe('a fill stack', () => {
     useGradientEditStore.getState().arm(ID, 1);
     const { container } = await renderOverlay();
     await drag(container.querySelector('svg')!, [115, 0], [[0, 90]]);
-    const stack = getNodeFills(ID) as LinearFill[];
+    const stack = (await getNodeFills(ID)) as LinearFill[];
     expect(stack[1]?.angle).toBeCloseTo(90);
     expect(stack[0]?.angle).toBe(0);
     expect((await docView()).isAnimated(ID, 'fillAngle')).toBe(false);
@@ -498,12 +525,13 @@ describe('a text stroke gradient', () => {
   }
   const strokeOf = async () =>
     (await docView()).getNode(T)!.components.find((c) => c.type === 'Text')!.props.strokePaint as LinearFill;
-  const fillStopsOf = (id: string): number[] => {
-    const f = getNodeFill(id);
+  const fillStopsOf = async (id: string): Promise<number[]> => {
+    const f = await getNodeFill(id);
     return f && f.type !== 'solid' ? f.stops.map((s) => s.offset) : [];
   };
 
-  it('offers a Fill/Stroke chip, and on Stroke a stop drag edits the stroke, not the fill', async () => {
+  // The stroke axis spans the laid-out text: the full engine only.
+  itFullEngine('offers a Fill/Stroke chip, and on Stroke a stop drag edits the stroke, not the fill', async () => {
     await withStrokeGradient();
     await linearFillOn(T);
     (await freshHistory());
@@ -522,7 +550,7 @@ describe('a text stroke gradient', () => {
     await drag(container.querySelector('svg')!, end, [[(start[0] + end[0]) / 2, (start[1] + end[1]) / 2]]);
 
     expect((await strokeOf()).stops.find((s) => s.id === 's1')?.offset).toBeCloseTo(0.5);
-    expect(fillStopsOf(T)).toEqual([0, 1]);
+    expect(await fillStopsOf(T)).toEqual([0, 1]);
     expect((await historyLabels())).toEqual(['Move Gradient Stop']);
     await undo();
     expect((await h.doc())).toEqual(before);
@@ -534,8 +562,8 @@ describe('a text stroke gradient', () => {
   it('a grip drag keyframes strokeAngle when that track is live — ONE undo entry, static paint untouched', async () => {
     await withStrokeGradient();
     // Keyed through the engine (the "live" test reads the mirror's key list, B4).
-    const ref = propRefForTrack(T, 'strokeAngle')!.ref;
-    await h.run({ type: 'setAnimated', prop: ref, animated: true, time: 0 });
+    const ref = await trackRef(T, 'strokeAngle');
+    await h.run({ type: 'setAnimated', prop: { layer: T, path: ref.path }, animated: true, time: 0 });
     await act(async () => { await engineIdle(); });
     (await freshHistory());
     useGradientEditStore.getState().arm(T, 0, 'stroke');
@@ -545,7 +573,7 @@ describe('a text stroke gradient', () => {
     // Straight below the layer origin: the axis turns to 90°.
     await drag(container.querySelector('svg')!, grip, [[20, 60], [0, 90]]);
 
-    expect(defaultAnimation.sample(T, 'strokeAngle', 0)).toBeCloseTo(90);
+    expect((await sampleAt(T, 'strokeAngle'))).toBeCloseTo(90);
     expect((await strokeOf()).angle).toBe(0);
     expect((await historyLabels())).toEqual(['Move Gradient Handle']);
   });
@@ -560,13 +588,13 @@ describe('a shape stroke gradient', () => {
     useGradientEditStore.getState().arm(ID, 0, 'shapeStroke');
     const { container } = await renderOverlay();
     const grip = centreOf(container, 'Gradient Start handle');
-    const endBefore = getNodeStrokeAt(ID, 0);
+    const endBefore = (await getNodeStrokeAt(ID, 0));
     const before = (await h.doc());
 
     // Local (−50, 40) is box-relative (0.25, 0.75).
     await drag(container.querySelector('svg')!, grip, [[-20, 20], [-50, 40]]);
 
-    const g = getNodeStrokeAt(ID, 0)?.gradient;
+    const g = (await getNodeStrokeAt(ID, 0))?.gradient;
     expect(g?.startX).toBeCloseTo(0.25);
     expect(g?.startY).toBeCloseTo(0.75);
     // The END point is the one the stroke showed before (derived from its

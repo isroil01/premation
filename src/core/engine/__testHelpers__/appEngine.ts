@@ -16,14 +16,14 @@ import { documentMirror, resetDocumentMirror } from '@stores/documentMirror';
 import { bindEngineDocumentStores } from '@stores/engineDocumentStores';
 import { bindEngineComps, bindEngineItems } from '@stores/engineItemsView';
 import { retainSelectionTrees } from '@stores/selectionTrees';
-import { MAIN_VIEWPORT, publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
+import { MAIN_VIEWPORT, publishFrameGeometry, setEngineDrivenViewport, subscribeOverlayGeometry } from '@stores/overlayGeometry';
 import { settleToolEdits } from '@core/workspace/viewportGesture';
-import { edit } from '../uiEdits';
+import { edit, gestureSessionsSettled } from '../uiEdits';
 import { propRefForTrack } from '../propRefs';
 import { bootEngine, engine, engineIdle, shutdownEngine } from '../engineInstance';
 import { resetEngineOwnership, setEngineOwnsDocument } from '../engineOwnership';
 import { resetProcessEngine } from '../process/processEngine';
-import { startNativeEngine, type NativeEngine } from './nativeEngine';
+import { nativeEngineIsHeadless, startNativeEngine, type NativeEngine } from './nativeEngine';
 
 export const S = 705_600_000;
 /** Seconds → flicks. */
@@ -231,10 +231,32 @@ export async function gestureOpen(): Promise<boolean> {
 export async function settleEdits(): Promise<void> {
   for (let i = 0; i < 2; i++) {
     await settleToolEdits();
+    await gestureSessionsSettled();
     await engineIdle();
     await documentMirror().whenIdle();
   }
 }
+
+/**
+ * The next frame of the main viewport has landed with its overlay geometry
+ * (or `timeoutMs` passed — a frame the engine had no reason to draw). An
+ * overlay that just subscribed draws from the frame after its subscription.
+ */
+export async function waitForFrame(timeoutMs = 1000): Promise<void> {
+  await settleEdits();
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(done, timeoutMs);
+    const off = subscribeOverlayGeometry(MAIN_VIEWPORT, done);
+    function done(): void {
+      clearTimeout(timer);
+      off();
+      resolve();
+    }
+  });
+}
+
+/** `it` for a test that needs what only the full engine has (text layout, fonts); skipped on the headless build. */
+export const itFullEngine: jest.It = nativeEngineIsHeadless() ? it.skip : it;
 
 /** Empty the engine's undo stack (a test's setup is not part of what it measures). */
 export async function clearHistory(): Promise<void> {

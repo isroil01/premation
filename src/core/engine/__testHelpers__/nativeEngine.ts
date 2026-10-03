@@ -47,6 +47,16 @@ export function nativeEngineExe(): string | null {
   });
 }
 
+/**
+ * True when the engine the suites run is `premation-engine-headless` (no Dawn:
+ * no text layout, fonts, scene or export — a dev machine without the vcpkg
+ * `engine` feature). CI runs the full engine with `--no-gpu`.
+ */
+export function nativeEngineIsHeadless(): boolean {
+  const exe = nativeEngineExe();
+  return !!exe && /headless/i.test(path.basename(exe));
+}
+
 export interface NativeEngine {
   supervisor: EngineSupervisor;
   bridge: EngineBridge;

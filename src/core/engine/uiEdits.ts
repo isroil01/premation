@@ -101,6 +101,17 @@ export async function edit(
  * A session begun on an engine that has since been rebuilt (project opened
  * mid-drag) is dead: its sends and end are dropped.
  */
+/** Gesture ends still in flight (`GestureSession.end`). */
+const closing = new Set<Promise<void>>();
+
+/**
+ * Resolves once every gesture session ended so far has closed its engine
+ * gesture — a drag's undo entry exists from then on (tests await it).
+ */
+export async function gestureSessionsSettled(): Promise<void> {
+  while (closing.size > 0) await Promise.allSettled([...closing]);
+}
+
 export class GestureSession {
   readonly label: string;
   private readonly client: EngineClient;
@@ -189,8 +200,16 @@ export class GestureSession {
   }
 
   /** Commit (default) or revert the gesture. Idempotent. */
-  async end(commit = true): Promise<void> {
-    if (this.ended) return;
+  end(commit = true): Promise<void> {
+    if (this.ended) return Promise.resolve();
+    const p = this.close(commit);
+    closing.add(p);
+    const done = (): void => { closing.delete(p); };
+    p.then(done, done);
+    return p;
+  }
+
+  private async close(commit: boolean): Promise<void> {
     this.ended = true;
     if (!commit) this.pending = [];
     await this.drain();

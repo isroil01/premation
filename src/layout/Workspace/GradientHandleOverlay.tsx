@@ -52,6 +52,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
+import { useMirrorValueAt } from '@hooks/useMirror';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { secondsToFlicks, type Command, type OverlayKind } from '@motion/engine-api';
@@ -314,14 +315,16 @@ export function GradientHandleOverlay(): JSX.Element | null {
    * the track is live, so a diamond sits where the FRAME shows the ramp rather
    * than where the static paint happens to say.
    */
+  // Over the pipe a keyed value lands after the revision that changed it:
+  // subscribe to the value itself so the diamonds follow when it does.
+  const keyedStops = useMirrorValueAt(stopsAnimated ? nodeId : null, FILL_STOPS_PATH, secondsToFlicks(time));
   const stops = useMemo<ColorStop[]>(() => {
     if (!paint || !nodeId) return [];
     if (!stopsAnimated) return paint.stops;
     // Ids are synthesised from the INDEX, which is why every write preserves
     // storage order — see `moveStopTo`.
-    return gradientValueStops(documentMirror().valueAt(nodeId, FILL_STOPS_PATH, secondsToFlicks(time))) ?? paint.stops;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- anim rev drives this
-  }, [paint, nodeId, stopsAnimated, time, sceneTick]);
+    return gradientValueStops(keyedStops) ?? paint.stops;
+  }, [paint, nodeId, stopsAnimated, keyedStops]);
 
   const camera = getWorkspaceController().ws.camera;
   const mapping = useMemo(
