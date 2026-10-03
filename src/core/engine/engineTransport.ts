@@ -166,6 +166,10 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
       if (e.type === 'playhead') {
         const tab = activeTab();
         if (!tab || e.comp !== tab.comp || holdUntilSeek) continue;
+        // Stopped, the page's playhead is the authority: while a page seek is in flight or
+        // queued, an event echoes an OLDER seek — applied, it would overwrite the newer
+        // position (and the queued seek would then send that stale time back).
+        if (!enginePlaying && (seekInFlight || seekPending)) continue;
         st.playheadEvents += 1;
         applying = true;
         try {

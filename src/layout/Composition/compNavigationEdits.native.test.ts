@@ -6,9 +6,9 @@
  */
 
 import type { Command } from '@motion/engine-api';
-import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { waitFor } from '@testing-library/react';
+import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 import { documentMirror } from '@stores/documentMirror';
 import { useProjectStore, type TabInfo } from '@stores/projectStore';
 import { getTime, setTime } from '@stores/playbackClockStore';
@@ -25,11 +25,14 @@ import {
 let h: Harness;
 const ROOT = 'comp_root';
 
-const settle = async (): Promise<void> => {
-  await engineIdle();
-  await documentMirror().whenIdle();
-  for (let i = 0; i < 6; i++) await Promise.resolve();
-};
+/** The engine took the edits, the mirror saw them, and the mapped playhead (a mapLayerTime query) landed. */
+const settle = (): Promise<void> => settleEdits();
+
+/** The mapped playhead lands asynchronously (a `mapLayerTime` query per hop). */
+async function playheadIs(seconds: number): Promise<void> {
+  await settle();
+  await waitFor(() => expect(getTime(active().id)).toBeCloseTo(seconds, 5));
+}
 
 function active(): TabInfo {
   const s = useProjectStore.getState();
@@ -86,22 +89,19 @@ describe('opening and walking the trail', () => {
     expect(active().breadcrumbPath).toEqual([ROOT, lower]);
     expect(active().breadcrumbVia).toEqual([inst]);
     expect(useSelectionStore.getState().ids).toEqual([]);
-    await settle();
-    expect(getTime(active().id)).toBeCloseTo(1, 5);
+    await playheadIs(1);
 
     setTime(active().id, 1.5);
     expect(navigateToCrumb(1)).toBe(false);
     expect(navigateToCrumb(0)).toBe(true);
     expect(active().compositionId).toBe(ROOT);
     expect(active().breadcrumbPath).toEqual([ROOT, lower]);
-    await settle();
-    expect(getTime(active().id)).toBeCloseTo(2.5, 5);
+    await playheadIs(2.5);
 
     expect(canOpenPreviousComposition()).toBe(true);
     expect(openPreviousComposition()).toBe(true);
     expect(active().compositionId).toBe(lower);
-    await settle();
-    expect(getTime(active().id)).toBeCloseTo(1.5, 5);
+    await playheadIs(1.5);
   });
 
   it('steps back out when an undo takes the open comp away', async () => {
