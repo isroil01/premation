@@ -33,7 +33,7 @@ export class CurveSampler {
    * numbers per time), or the property's previous answer while this one is
    * fetched; undefined when the engine cannot sample it (not numeric).
    */
-  get(q: QueryOf<'sampleProperty'>, revision: number): PropertySamples | undefined {
+  get(q: QueryOf<'sampleProperty'>, revision: number | string): PropertySamples | undefined {
     const prop = `${q.prop.layer}\u0000${q.prop.path}`;
     const key = `${q.range.start}|${q.range.duration}|${q.samples}|${revision}`;
     const hit = this.answers.get(prop);

@@ -638,6 +638,15 @@ export class DocumentMirror {
     this.revWaiters = keep;
   }
 
+  /**
+   * A query answered NOW at the mirror's revision when the engine is in
+   * process (its `querySync` fast path), else null — the caller then asks
+   * asynchronously. Never a substitute for subscribing to what you render.
+   */
+  querySync<T extends QueryType>(q: QueryOf<T>): EngineResult<QueryResults[T]> | null {
+    return this.source.querySync?.(q) ?? null;
+  }
+
   /** Resolves when no fetch is in flight (tests, and the benchmark's settle step). */
   whenIdle(): Promise<void> {
     if (this.asyncInFlight === 0 && !this.buffer && !this.valueFlushScheduled) return Promise.resolve();

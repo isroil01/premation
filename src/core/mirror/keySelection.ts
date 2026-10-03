@@ -33,10 +33,9 @@
  * comp time + the engine id).
  */
 
-import { POSITION_PSEUDO_PROP, SOURCE_TEXT_PROP, defaultAnimation } from '@motion/animation';
+import { POSITION_PSEUDO_PROP, SOURCE_TEXT_PROP } from '@motion/animation';
 import { flicksToSeconds, secondsToFlicks, type Keyframe, type PropertyInfo } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeMaskAnim } from '@core/effects/mask';
+import { memberTracksFresh } from '@stores/memberTracks';
 import { memberTrackRef, type MemberKeyRead, type StoredTimeOf } from './memberKeys';
 import { membersOf, type TrackRef } from './trackIndex';
 
@@ -231,24 +230,16 @@ const FALLBACK_KEY_ID = /^@(.+)\|(.+)\|(-?[0-9.eE+-]+)$/;
  *
  * Exact, never a comp→layer time conversion (that one frame-quantizes): a key
  * the engine addresses positionally carries its track and stored time in its
- * id (`storedKeyOf`); every other one is found by its id on the TS engine's own
- * tracks, here. Built once per call, not per key.
+ * id (`storedKeyOf`); every other one is found by its id among the engine's
+ * stored member records, here. Built once per call, not per key.
  */
 export function storedKeyIndex(layer: string): ReadonlyMap<string, StoredKey> {
   const out = new Map<string, StoredKey>();
-  // B4-gap: stored keyframe position — the API carries only comp time + the engine id.
-  for (const tr of defaultAnimation.tracksFor(layer)) {
-    for (const k of tr.keyframes) if (k.id && !out.has(k.id)) out.set(k.id, { track: tr.prop, t: k.t });
-  }
-  for (const dt of defaultAnimation.dataTracksFor(layer)) {
-    for (const k of dt.keyframes) if (k.id && !out.has(k.id)) out.set(k.id, { track: dt.prop, t: k.t });
-  }
-  // Mask-shape snapshots (engine props.ts `maskKeyId`).
-  const node = defaultSceneGraph.getNode(layer);
-  for (const k of node ? readNodeMaskAnim(node) : []) {
-    const id = (k as { id?: string }).id;
-    if (!id) continue;
-    for (const p of k.mask.paths) out.set(`${id}@${p.id}`, { track: MASK_ANIM_TRACK, t: k.t });
+  // The engine's stored member records (`getMemberKeyframes` at THIS revision):
+  // each key's id and its time on the layer's keyframe axis. While an answer
+  // is in flight the index is empty and `storedKeyOf` falls back.
+  for (const tr of memberTracksFresh(layer) ?? []) {
+    for (const k of tr.keyframes) if (k.id && !out.has(k.id)) out.set(k.id, { track: tr.member, t: k.t });
   }
   return out;
 }
