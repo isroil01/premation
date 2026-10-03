@@ -1,17 +1,18 @@
+import { documentMirror } from '@stores/documentMirror';
 /**
  * The editor shell's timeline / menu edits through the engine API (B3): one
  * undo entry per user action, exact undo / redo, the legacy writers' rules.
  */
 
 import { rowSelectionId } from '@core/engine/__testHelpers__/selectionIds';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readLayerFlag } from '@core/scene/layerFlags';
-import { isLayerAudioMuted } from '@core/audio/audioLayerSwitches';
 import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { edit } from '@core/engine/uiEdits';
+import { insertFragment } from '@/engine-client/insertFragment';
+import type { SceneNode } from '@core/types';
 import { useSelectionStore } from '@stores/selectionStore';
 import {
   addKeyframesForSelectionEdit,
@@ -43,6 +44,10 @@ let s: Scene;
 beforeEach(async () => {
   h = await setupAppEngine();
   s = await buildScene(h);
+  // The command builders under test compose from the layers' trees (the
+  // timeline rows that call them show those layers).
+  await settleEdits();
+  await documentMirror().loadTrees(documentMirror().layerIds());
   useSelectionStore.getState().clear();
 });
 
@@ -87,7 +92,7 @@ describe('track switches', () => {
 
   it('the speaker glyph mutes a video layer, not a solid', async () => {
     await roundTrip(() => toggleAudioMuteEdit(s.V), 'Mute layer audio');
-    expect(isLayerAudioMuted(s.V)).toBe(true);
+    expect(documentMirror().layer(s.V)!.switches.audioEnabled).toBe(false);
     const before = (await historyLabels()).length;
     await toggleAudioMuteEdit(s.A);
     expect((await historyLabels()).length).toBe(before);
@@ -99,7 +104,7 @@ describe('track switches', () => {
     await roundTrip(() => toggleLayerFlagEdit(s.B, 'shy'), 'Enable Shy');
     await roundTrip(() => toggleLayerFlagEdit(s.B, 'quality'), 'Quality: Draft');
     await roundTrip(() => toggleLayerFlagEdit(s.A, 'guide'), 'Enable Guide Layer');
-    expect(readLayerFlag((await node(s.A)), 'guide')).toBe(true);
+    expect(documentMirror().layer(s.A)!.switches.guide).toBe(true);
   });
 });
 
@@ -132,10 +137,20 @@ describe('property rows', () => {
   });
 
   it("a drawn shape's Path row stopwatch keys the whole outline, then leaves it static at the playhead", async () => {
-    const { layer } = await h.run({ type: 'createLayer', comp: s.comp, kind: 'path', name: 'Drawn', init: [] });
-    const pts = [[0, -30], [30, 30], [-30, 30]].map(([x, y]) => ({ x: x!, y: y!, inX: x!, inY: y!, outX: x!, outY: y! }));
-    defaultSceneGraph.writeProp(layer, `${layer}_g`, 'points', pts);
-    await h.run({ type: 'renameLayer', layer, name: 'Drawn' });
+    // A drawn shape as the pen tool lays it: a path primitive with stored points.
+    const ids = await insertFragment('Fixture', (b) => {
+      b.addChild(s.comp, {
+        id: 'drawn', name: 'Drawn', parent: s.comp, children: [], visible: true, locked: false,
+        transform: { position: { x: 300, y: 200 }, rotation: 0, scale: { x: 1, y: 1 } },
+        components: [
+          { id: 'drawn_t', type: 'Transform', props: { __kind: 'shape', x: 300, y: 200, rotation: 0, shapeType: 'path' } },
+          { id: 'drawn_g', type: 'Geometry', props: { points: [[0, -30], [30, 30], [-30, 30]].map(([x, y]) => ({ x, y, inX: x, inY: y, outX: x, outY: y })) } },
+        ],
+      } as unknown as SceneNode);
+      return 'drawn';
+    }, { comp: s.comp, noSelect: true });
+    const layer = ids![0]!;
+    await settleEdits();
     await roundTrip(() => propertyStopwatchEdit(layer, ['path.points'], 0), 'Enable animation');
     expect((await docView()).isDataAnimated(layer, 'path.points')).toBe(true);
     await roundTrip(() => propertyStopwatchEdit(layer, ['path.points'], 0), 'Disable animation');
@@ -183,10 +198,11 @@ describe('keyframe menu', () => {
   const uiId = (t: number) => rowSelectionId(s.B, 'Position', t);
 
   it('interpolation kinds and hold, one entry each', async () => {
-    await roundTrip(() => setKeyInterpolationEdit(uiId(0), 'linear', 'Linear interpolation'), 'Set keyframe easing: Linear');
+    // The fixture's keys are linear: hold first, then back to linear — each a change.
     await roundTrip(() => setKeyInterpolationEdit(uiId(0), 'hold', 'Enable hold keyframe'), 'Enable hold keyframe');
     // Scalar tracks spell hold 'step' (the sampler treats both as a hold).
     expect(['hold', 'step']).toContain((await docView()).getTrackKeyframes(s.B, 'x')![0]!.easing);
+    await roundTrip(() => setKeyInterpolationEdit(uiId(0), 'linear', 'Linear interpolation'), 'Set keyframe easing: Linear');
   });
 
   it('roving', async () => {

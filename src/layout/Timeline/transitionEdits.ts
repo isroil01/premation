@@ -30,7 +30,7 @@ export async function addTransitionEdit(
   durationFrames: number = DEFAULT_TRANSITION_FRAMES,
   alignment: TransitionAlignment = 'centred',
 ): Promise<TransitionEditResult> {
-  const res = await edit('', {
+  const res = await edit('Add Transition', {
     type: 'addTransition',
     left: leftNodeId,
     right: rightNodeId,
@@ -63,14 +63,14 @@ function setCommand(leftNodeId: string, id: string, patch: TransitionPatch) {
 
 /** Change a transition's kind, length or alignment — one entry. */
 export async function setTransitionEdit(leftNodeId: string, id: string, patch: TransitionPatch): Promise<TransitionEditResult> {
-  const res = await edit('', setCommand(leftNodeId, id, patch), { quiet: true });
+  const res = await edit('Change Transition', setCommand(leftNodeId, id, patch), { quiet: true });
   return res.ok ? { ok: true, id } : { ok: false, reason: res.error.message };
 }
 
 /** Remove transitions, restoring each cut exactly. */
 export async function removeTransitionsEdit(ids: readonly string[]): Promise<boolean> {
   if (ids.length === 0) return false;
-  const res = await edit('', { type: 'removeTransitions', transitions: [...ids] });
+  const res = await edit(ids.length === 1 ? 'Remove Transition' : 'Remove Transitions', { type: 'removeTransitions', transitions: [...ids] });
   return res.ok;
 }
 

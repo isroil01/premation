@@ -23,15 +23,20 @@
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { ExpressionEditor } from './ExpressionEditor';
 import { defaultAnimation } from '@motion/animation';
-import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getEventBus } from '@core/events/EventBus';
-import { clearHistory, setupAppEngine, historyLabels, settleEdits, sampleTrack } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits, sampleTrack, sec } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 
 // The panel writes through the engine API (B3): a real layer in the app engine.
 let NODE = '';
 let h: Harness;
+/** Position: the `x` row is its member 0. */
+let POS = { layer: '', path: 'transform/position' };
+
+/** The x expression's switch / removal, through the engine. */
+const disableX = (): Promise<unknown> => h.run({ type: 'setExpressionEnabled', props: [POS], member: 0, enabled: false });
+const removeX = (): Promise<unknown> => h.run({ type: 'setExpression', prop: POS, member: 0, source: '', enabled: true });
 
 beforeEach(async () => {
   h = await setupAppEngine({ panels: true });
@@ -40,12 +45,14 @@ beforeEach(async () => {
     getEventBus().emit('AnimationChanged', { nodeId }),
   );
   NODE = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'S', init: [] })).layer;
+  POS = { layer: NODE, path: 'transform/position' };
   // x: 0 → 100 over 0..2s. The panel renders at the store's playhead, which is
   // 0 in a bare test — so the numbers below are read at t=0, where the
   // keyframed value is 0 and the expression's is 200.
-  defaultAnimation.setKeyframe(NODE, 'x', 0, 0);
-  defaultAnimation.setKeyframe(NODE, 'x', 2, 100);
-  defaultAnimation.setExpression(NODE, 'x', 'value + 200');
+  await h.run({ type: 'addKeyframes', keys: [0, 2].map((t) => ({
+    prop: POS, time: sec(t), value: { kind: 'vec2' as const, value: { x: t * 50, y: 0 } }, easing: 'linear' as const, spatialIn: [], spatialOut: [],
+  })) });
+  await h.run({ type: 'setExpression', prop: POS, member: 0, source: 'value + 200', enabled: true });
   await clearHistory();
 });
 
@@ -68,7 +75,7 @@ describe('the toggle exists and reports the engine state', () => {
   });
 
   test('a property with NO expression renders no switch at all', async () => {
-    defaultAnimation.removeExpression(NODE, 'x');
+    await removeX();
     render(<ExpressionEditor nodeId={NODE} prop="x" />);
     expect(screen.queryByRole('switch', { name: 'Expression enabled' })).toBeNull();
     // …and no remove button either: there is nothing to remove.
@@ -76,7 +83,7 @@ describe('the toggle exists and reports the engine state', () => {
   });
 
   test('an attached but DISABLED expression still renders the switch, unchecked', async () => {
-    defaultAnimation.setExpressionEnabled(NODE, 'x', false);
+    await disableX();
     render(<ExpressionEditor nodeId={NODE} prop="x" />);
     expect(toggle()).toHaveAttribute('aria-checked', 'false');
     // The distinction the old `hasExpression`-as-`enabled` conflation lost:
@@ -108,8 +115,7 @@ describe('clicking the toggle drives the engine, undoably', () => {
 
   test('the toggle records ONE undoable command, and undo re-enables', async () => {
     render(<ExpressionEditor nodeId={NODE} prop="x" />);
-    const before = getCommandSystem().getHistory().canUndo();
-    expect(before).toBe(false);
+    expect(await historyLabels()).toEqual([]);
 
     await settle(() => fireEvent.click(toggle()));
     expect((await docView()).isExpressionEnabled(NODE, 'x')).toBe(false);
@@ -128,7 +134,7 @@ describe('the status line does not lie about a disabled expression', () => {
    * property does NOT have, in the one place a user goes to find out.
    */
   test('disabled says so, and does not present the value as the property value', async () => {
-    defaultAnimation.setExpressionEnabled(NODE, 'x', false);
+    await disableX();
     const { container } = render(<ExpressionEditor nodeId={NODE} prop="x" />);
     const text = container.textContent ?? '';
     expect(text).toContain('Disabled');
@@ -169,14 +175,14 @@ describe('completion at the caret', () => {
     });
   };
 
-  const render1 = (): HTMLTextAreaElement => {
-    defaultAnimation.removeExpression(NODE, 'x');
+  const render1 = async (): Promise<HTMLTextAreaElement> => {
+    await removeX();
     render(<ExpressionEditor nodeId={NODE} prop="x" />);
     return editor();
   };
 
   test('typing an identifier opens a ranked list', async () => {
-    const el = render1();
+    const el = await render1();
     type(el, 'wig');
     const list = screen.getByRole('listbox', { name: 'Expression completions' });
     expect(list).toBeTruthy();
@@ -188,13 +194,13 @@ describe('completion at the caret', () => {
   });
 
   test('nothing opens on punctuation or an empty field', async () => {
-    const el = render1();
+    const el = await render1();
     type(el, 'value + ');
     expect(screen.queryByRole('listbox')).toBeNull();
   });
 
   test('Enter accepts the highlighted row and writes the expression through', async () => {
-    const el = render1();
+    const el = await render1();
     type(el, 'wig');
     await settle(() => fireEvent.keyDown(el, { key: 'Enter' }));
     expect((await docView()).getExpressionSrc(NODE, 'x')).toBe('wiggle(2, 30)');
@@ -205,14 +211,14 @@ describe('completion at the caret', () => {
   });
 
   test('Tab accepts too', async () => {
-    const el = render1();
+    const el = await render1();
     type(el, 'wig');
     await settle(() => fireEvent.keyDown(el, { key: 'Tab' }));
     expect((await docView()).getExpressionSrc(NODE, 'x')).toBe('wiggle(2, 30)');
   });
 
   test('the arrows move the highlight, and Enter takes what is highlighted', async () => {
-    const el = render1();
+    const el = await render1();
     type(el, 'loop');
     const before = screen.getAllByRole('option').map((o) => o.textContent ?? '');
     act(() => { fireEvent.keyDown(el, { key: 'ArrowDown' }); });
@@ -226,7 +232,7 @@ describe('completion at the caret', () => {
   });
 
   test('Escape dismisses without touching the text', async () => {
-    const el = render1();
+    const el = await render1();
     type(el, 'wig');
     await settle(() => fireEvent.keyDown(el, { key: 'Escape' }));
     expect(screen.queryByRole('listbox')).toBeNull();
@@ -234,7 +240,7 @@ describe('completion at the caret', () => {
   });
 
   test('Ctrl+Space opens the list on demand', async () => {
-    const el = render1();
+    const el = await render1();
     type(el, 'e');
     act(() => { fireEvent.keyDown(el, { key: 'Escape' }); });
     expect(screen.queryByRole('listbox')).toBeNull();
@@ -243,14 +249,14 @@ describe('completion at the caret', () => {
   });
 
   test('clicking a row accepts it', async () => {
-    const el = render1();
+    const el = await render1();
     type(el, 'wig');
     await settle(() => fireEvent.mouseDown(screen.getAllByRole('option')[0]!));
     expect((await docView()).getExpressionSrc(NODE, 'x')).toBe('wiggle(2, 30)');
   });
 
   test('a dotted access offers that object’s members', async () => {
-    const el = render1();
+    const el = await render1();
     type(el, 'thisComp.wi');
     expect(screen.getAllByRole('option')[0]?.textContent).toContain('thisComp.width');
     await settle(() => fireEvent.keyDown(el, { key: 'Enter' }));
@@ -260,7 +266,7 @@ describe('completion at the caret', () => {
   });
 
   test('the combobox points a screen reader at the highlighted row', async () => {
-    const el = render1();
+    const el = await render1();
     type(el, 'wig');
     expect(el).toHaveAttribute('aria-expanded', 'true');
     const active = el.getAttribute('aria-activedescendant');
