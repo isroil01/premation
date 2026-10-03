@@ -8,8 +8,7 @@
  * undo, redo.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
+import { pasteDrawnShape } from '../__testHelpers__/fixtures';
 import type { BezierPath, Command, PropRef, Value } from '@motion/engine-api';
 import { readNodeMask, readNodeMaskAnim } from '@core/effects/mask';
 import { setupAppEngine } from '../__testHelpers__/appEngine';
@@ -61,8 +60,7 @@ const path = (b: BezierPath): Value => ({ kind: 'path', value: b });
 /** A drawn path layer D (the Pen's Geometry points), as the tools leave it. */
 let D = '';
 async function drawnShape(): Promise<PropRef> {
-  D = (await h.run({ type: 'createLayer', comp: s.comp, kind: 'path', name: 'D', init: [] })).layer;
-  defaultSceneGraph.writeProp(D, `${D}_g`, 'points', tri(10));
+  D = await pasteDrawnShape(s.comp, tri(10), { name: 'D' });
   await h.run({ type: 'setProperty', prop: { layer: s.A, path: 'transform/opacity' }, value: { kind: 'scalar', value: 50 } });
   return { layer: D, path: 'layer/path.points' };
 }
@@ -100,7 +98,7 @@ describe("a shape layer's outline: layer/path.points", () => {
     const keys = await h.query({ type: 'getKeyframes', props: [ref] });
     expect(keys.sets[0]!.keyframes.map((k) => (k.value as { value: BezierPath }).value.closed)).toEqual([false, false]);
     await exact({ type: 'setAnimated', prop: ref, animated: false, time: sec(1) });
-    expect((await docView()).getDataTrack(D, 'path.points')).toBeNull();
+    expect((await docView()).getDataTrack(D, 'path.points') ?? null).toBeNull();
     expect(((await geom(D)).points as Array<{ x: number }>)[1]!.x).toBe(40);
   });
 });
@@ -187,9 +185,10 @@ describe('setShapeOutline', () => {
     expect(t.props.shapeType).toBe('path');
     await refused({ type: 'setShapeOutline', layer: s.T, runs: [bez(10)] }, 'invalidArgument');
     await refused({ type: 'setShapeOutline', layer: D, runs: [] }, 'invalidArgument');
-    defaultAnimation.setDataKeyframe(D, 'path.points', 'points', 0, tri(3));
-    await h.run({ type: 'setProperty', prop: { layer: s.A, path: 'transform/opacity' }, value: { kind: 'scalar', value: 40 } });
-    await refused({ type: 'setShapeOutline', layer: D, runs: [bez(10)] }, 'animated');
+    // An ANIMATED drawn outline (a second drawn shape, keyed on path.points) is refused.
+    const K = await pasteDrawnShape(s.comp, tri(5), { name: 'K' });
+    await h.run({ type: 'addKeyframes', keys: [{ prop: { layer: K, path: 'layer/path.points' }, time: 0, value: path(bez(3)), spatialIn: [], spatialOut: [] }] });
+    await refused({ type: 'setShapeOutline', layer: K, runs: [bez(10)] }, 'animated');
   });
 });
 

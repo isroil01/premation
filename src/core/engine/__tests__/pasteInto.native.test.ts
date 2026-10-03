@@ -4,13 +4,12 @@
  * parenting, track mattes; here every stored layer reference, remapLayerRefs).
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { insertShape } from '@core/scene/sceneInsert';
-import { setupAppEngine } from '../__testHelpers__/appEngine';
+import type { SceneNode } from '@core/types';
+import { insertFragment } from '@/engine-client/insertFragment';
+import { setupAppEngine, settleEdits } from '../__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '../__testHelpers__/scene';
 import type { Harness } from '../__testHelpers__/appEngine';
-import { buildLayerFragment, insertBuiltLayers } from '../offDocument';
 
 let h: Harness;
 let s: Scene;
@@ -22,6 +21,21 @@ beforeEach(async () => {
 afterEach(async () => {
   await h.dispose();
 });
+
+/** A shape layer pasted with stored layer references (fx / Transform props, extra components). */
+async function refLayer(o: { fx?: Record<string, unknown>; transform?: Record<string, unknown>; extra?: Array<{ id: string; type: string; props: Record<string, unknown> }> }): Promise<string> {
+  const ids = await insertFragment('Fixture', (b) => b.addChild(s.comp, {
+    id: 'ref', name: 'B', parent: s.comp, children: [], visible: true, locked: false,
+    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+    components: [
+      { id: 'ref_t', type: 'Transform', props: { __kind: 'shape', x: 0, y: 0, rotation: 0, width: 100, height: 100, ...o.transform } },
+      ...(o.fx ? [{ id: 'ref_fx', type: 'fx', props: o.fx }] : []),
+      ...(o.extra ?? []),
+    ],
+  } as unknown as SceneNode), { comp: s.comp, noSelect: true });
+  await settleEdits();
+  return ids![0]!;
+}
 
 const fxProps = async (id: string): Promise<Record<string, unknown>> =>
   ((await docView()).getNode(id)!.components.find((c) => c.type === 'fx')?.props ?? {}) as Record<string, unknown>;
@@ -62,51 +76,38 @@ describe('pasteLayers parent', () => {
   });
 
   it('keeps the copied stacking: tops and each group’s children (AE)', async () => {
-    const name = async (id: string): Promise<string> => (await docView()).getNode(id)!.name ?? '';
+    const names = async (ids: string[]): Promise<string[]> => {
+      const v = await docView();
+      return ids.map((id) => v.getNode(id)!.name ?? '');
+    };
     const f1 = await h.query({ type: 'copyLayers', layers: [s.A, s.B] });
     await h.run({ type: 'pasteLayers', comp: s.comp2, fragment: f1 });
-    expect((await docView()).layerIdsOfComp(s.comp2).map(name)).toEqual(['A', 'B', 'C2 solid']);
+    expect(await names((await docView()).layerIdsOfComp(s.comp2))).toEqual(['A', 'B', 'C2 solid']);
     const { layer: G } = await h.run({ type: 'groupLayers', layers: [s.A, s.B], name: 'G' });
     const f2 = await h.query({ type: 'copyLayers', layers: [G] });
     const { layers: [g2] } = await h.run({ type: 'pasteLayers', comp: s.comp2, fragment: f2 });
-    expect((await docView()).getChildOrder(g2!).map(name)).toEqual((await docView()).getChildOrder(G).map(name));
-  });
-
-  it('buildLayerFragment inserts into the group the builder built into', async () => {
-    const { layer: G } = await h.run({ type: 'groupLayers', layers: [s.P], name: 'G' });
-    const doc = (await h.doc());
-    const build = async (): Promise<void> => {
-      insertShape('rect', 'Inside');
-      const id = (await docView()).getChildOrder('comp_root').at(-1)!;
-      defaultSceneGraph.setParent(id, G, { preserveWorld: false });
-    };
-    const frag = buildLayerFragment(s.comp, build);
-    expect(frag?.parent).toBe(G);
-    const ids = await insertBuiltLayers('Insert', s.comp, build);
-    expect((await docView()).getNode(ids![0]!)!.parent).toBe(G);
-    await h.run({ type: 'undo' });
-    expect((await h.doc())).toEqual(doc);
+    expect(await names((await docView()).getChildOrder(g2!))).toEqual(await names((await docView()).getChildOrder(G)));
   });
 });
 
 describe('pasteLayers reference remap', () => {
   it('points every stored reference to a pasted layer at its copy, keeps the others', async () => {
+    // B carries every store that names another layer: the cloner, the audio driver
+    // and clone-stamp strokes (stored references no command writes yet, pasted as
+    // the document holds them), then a matte and two effects through the engine.
+    const B = await refLayer({
+      fx: { __cloner: { enabled: true, mode: 'path', pathLayerId: s.A, falloff: { source: 'layer', layerId: s.T } },
+        paint: { strokes: [{ id: 'st1', cloneSourceId: s.A }, { id: 'st2', cloneSourceId: s.T }] } },
+      transform: { __audioDriver: { scale: { prop: 'scale', sourceLayerId: s.A }, opacity: { prop: 'opacity', sourceLayerId: 'mix' } } },
+    });
     // B is matted by A; B's effects take A (Set Matte) and the outside layer T (Displacement Map).
-    await h.run({ type: 'setTrackMatte', layer: s.B, matte: { layer: s.A, mode: 'alpha' } });
-    const { groups: [sm] } = await h.run({ type: 'addEffect', layers: [s.B], effect: 'set-matte', params: [] });
-    await h.run({ type: 'setProperty', prop: { layer: s.B, path: `${sm}/matteLayerId` }, value: { kind: 'layer', value: s.A } });
-    const { groups: [dm] } = await h.run({ type: 'addEffect', layers: [s.B], effect: 'displacement-map', params: [] });
-    await h.run({ type: 'setProperty', prop: { layer: s.B, path: `${dm}/mapLayerId` }, value: { kind: 'layer', value: s.T } });
-    // Stores no command writes yet: cloner, audio driver, clone-stamp strokes.
-    const n = (await docView()).getNode(s.B)!;
-    const fx = n.components.find((c) => c.type === 'fx')!;
-    const t = n.components.find((c) => c.type === 'Transform')!;
-    defaultSceneGraph.writeProp(s.B, fx.id, '__cloner', { enabled: true, mode: 'path', pathLayerId: s.A, falloff: { source: 'layer', layerId: s.T } });
-    defaultSceneGraph.writeProp(s.B, t.id, '__audioDriver', { scale: { prop: 'scale', sourceLayerId: s.A }, opacity: { prop: 'opacity', sourceLayerId: 'mix' } });
-    defaultSceneGraph.setPaint(s.B, { strokes: [{ id: 'st1', cloneSourceId: s.A }, { id: 'st2', cloneSourceId: s.T }] });
-    await h.run({ type: 'renameLayer', layer: s.B, name: 'B' }); // resync after the direct writes
+    await h.run({ type: 'setTrackMatte', layer: B, matte: { layer: s.A, mode: 'alpha' } });
+    const { groups: [sm] } = await h.run({ type: 'addEffect', layers: [B], effect: 'set-matte', params: [] });
+    await h.run({ type: 'setProperty', prop: { layer: B, path: `${sm}/matteLayerId` }, value: { kind: 'layer', value: s.A } });
+    const { groups: [dm] } = await h.run({ type: 'addEffect', layers: [B], effect: 'displacement-map', params: [] });
+    await h.run({ type: 'setProperty', prop: { layer: B, path: `${dm}/mapLayerId` }, value: { kind: 'layer', value: s.T } });
 
-    const frag = await h.query({ type: 'copyLayers', layers: [s.A, s.B] });
+    const frag = await h.query({ type: 'copyLayers', layers: [s.A, B] });
     const doc = (await h.doc());
     const { layers: [a2, b2] } = await h.run({ type: 'pasteLayers', comp: s.comp2, fragment: frag });
     const p = (await fxProps(b2!));
@@ -124,15 +125,14 @@ describe('pasteLayers reference remap', () => {
     const strokes = (p.paint as { strokes: Array<{ cloneSourceId: string }> }).strokes;
     expect(strokes.map((x) => x.cloneSourceId)).toEqual([a2, s.T]);
     // The originals are untouched.
-    expect(((await fxProps(s.B)).matte as { sourceId: string }).sourceId).toBe(s.A);
+    expect(((await fxProps(B)).matte as { sourceId: string }).sourceId).toBe(s.A);
     await h.run({ type: 'undo' });
     expect((await h.doc())).toEqual(doc);
   });
 
   it('remaps a plugin layer\'s layer-valued props', async () => {
-    expect(defaultSceneGraph.addComponent(s.B, { id: `${s.B}_pl`, type: 'pluginLayer:acme.depth', props: { __kind: 'acme.depth', depthMap: s.A, other: s.T, __pluginId: s.A } })).toBe(true);
-    await h.run({ type: 'renameLayer', layer: s.B, name: 'B' });
-    const frag = await h.query({ type: 'copyLayers', layers: [s.A, s.B] });
+    const B = await refLayer({ extra: [{ id: 'ref_pl', type: 'pluginLayer:acme.depth', props: { __kind: 'acme.depth', depthMap: s.A, other: s.T, __pluginId: s.A } }] });
+    const frag = await h.query({ type: 'copyLayers', layers: [s.A, B] });
     const { layers: [a2, b2] } = await h.run({ type: 'pasteLayers', comp: s.comp, fragment: frag });
     const pl = (await docView()).getNode(b2!)!.components.find((c) => c.type === 'pluginLayer:acme.depth')!.props as Record<string, unknown>;
     expect(pl.depthMap).toBe(a2);
