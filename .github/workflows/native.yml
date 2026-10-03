@@ -27,7 +27,6 @@ on:
     branches: [native-core, dev, main]
     paths:
       - 'native/**'
-      - 'packages/native-bridge/**'
       - 'packages/engine-api/**'
       - '.github/workflows/native.yml'
       - '.github/actions/build-engine/**'
@@ -35,7 +34,6 @@ on:
   pull_request:
     paths:
       - 'native/**'
-      - 'packages/native-bridge/**'
       - 'packages/engine-api/**'
       - '.github/workflows/native.yml'
       - '.github/actions/build-engine/**'
@@ -135,41 +133,6 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: native
         run: run-clang-tidy -p build/${{ matrix.preset }} -quiet '.*/native/libs/.*'
-
-      # ── N-API addon ──────────────────────────────────────────────────────
-      - name: N-API addon (cmake-js)
-        working-directory: native/bindings/napi
-        shell: bash
-        # Two first-run failures shaped this step:
-        #  - Windows: CMake resolved `rc` to node_modules/.bin/rc — the npm
-        #    config-loader package of that name, which npx puts first on PATH —
-        #    instead of a resource compiler, and the compiler probe failed.
-        #    Name LLVM's resource compiler explicitly.
-        #  - Linux: cmake-js downloads Node headers from nodejs.org and the
-        #    runner's connection timed out (ETIMEDOUT). Retry the compile.
-        run: |
-          npm install --no-audit --no-fund
-          compile() {
-            if [ "$RUNNER_OS" = "Windows" ]; then
-              npx cmake-js compile -G Ninja --CDCMAKE_C_COMPILER=clang-cl --CDCMAKE_CXX_COMPILER=clang-cl \
-                "--CDCMAKE_RC_COMPILER=C:/Program Files/LLVM/bin/llvm-rc.exe"
-            else
-              CC=clang CXX=clang++ npx cmake-js compile
-            fi
-          }
-          for attempt in 1 2 3; do
-            if compile; then break; fi
-            if [ "$attempt" = 3 ]; then exit 1; fi
-            echo "cmake-js attempt $attempt failed; retrying in 20 s"; sleep 20
-          done
-          node smoke.cjs
-
-      - name: Upload addon
-        uses: actions/upload-artifact@v4
-        with:
-          name: motion_napi-${{ matrix.os }}
-          path: native/bindings/napi/build/Release/motion_napi.node
-          if-no-files-found: error
 
   # premation-engine itself, on every OS it ships on (and Linux, which it runs
   # on through the route-A copy). The first run per triplet builds Dawn and the

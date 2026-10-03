@@ -103,7 +103,6 @@ export default defineConfig(({ mode }) => ({
       '@motion/product-motion': path.resolve(__dirname, 'packages/product-motion/src/index.ts'),
       '@motion/caster': path.resolve(__dirname, 'packages/caster/src/index.ts'),
       '@motion/audio': path.resolve(__dirname, 'packages/audio/src/index.ts'),
-      '@motion/native-bridge': path.resolve(__dirname, 'packages/native-bridge/src/index.ts'),
       '@motion/engine-api': path.resolve(__dirname, 'packages/engine-api/src/index.ts'),
     },
   },

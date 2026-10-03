@@ -9,7 +9,6 @@
  *   node scripts/native.mjs bench     runs the Google Benchmark binary
  *   node scripts/native.mjs tidy      run-clang-tidy over native/libs (needs a configured build)
  *   node scripts/native.mjs wasm      configure + build the Emscripten preset + smoke test
- *   node scripts/native.mjs napi      npm install + cmake-js compile in native/bindings/napi + smoke test
  *   node scripts/native.mjs golden    regenerate native/tests/golden_bezier.inc from the TypeScript
  *
  * Toolchain install per OS: native/README.md. Nothing here downloads anything.
@@ -174,26 +173,10 @@ switch (step) {
     run(process.execPath, [join(nativeDir, 'bindings', 'wasm', 'smoke.mjs')]);
     break;
   }
-  case 'napi': {
-    const dir = join(nativeDir, 'bindings', 'napi');
-    run('npm', ['install', '--no-audit', '--no-fund'], { cwd: dir });
-    const args = ['cmake-js', 'compile'];
-    if (process.platform === 'win32') {
-      // llvm-rc explicitly: under npx, node_modules/.bin/rc (an npm package)
-      // shadows the resource compiler — the same fix as native.yml.
-      args.push('-G', 'Ninja', '--CDCMAKE_C_COMPILER=clang-cl', '--CDCMAKE_CXX_COMPILER=clang-cl', '--CDCMAKE_RC_COMPILER=llvm-rc');
-    }
-    run('npx', args, {
-      cwd: dir,
-      env: process.platform === 'win32' ? process.env : { CC: 'clang', CXX: 'clang++', ...process.env },
-    });
-    run(process.execPath, [join(dir, 'smoke.cjs')]);
-    break;
-  }
   case 'golden':
     run(process.execPath, [join(nativeDir, 'tests', 'gen_golden.ts')]);
     break;
   default:
-    console.log('usage: node scripts/native.mjs configure|build|test|bench|tidy|wasm|napi|golden [--asan|--tsan|--preset NAME]');
+    console.log('usage: node scripts/native.mjs configure|build|test|bench|tidy|wasm|golden [--asan|--tsan|--preset NAME]');
     process.exit(step === 'help' ? 0 : 1);
 }
