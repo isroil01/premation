@@ -14,9 +14,6 @@ import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { readPropertyValue } from '@core/inspector/multiSelection';
-import { getNodeFill, getNodeFills } from '@core/paint/fill';
-import { getNodeStroke, getNodeStrokes } from '@core/paint/stroke';
-import { getNodeLayerStyles } from '@core/effects/layerStyles';
 import { getNodeBlend } from '@core/effects/blendMode';
 import { stylePreset } from '@core/style/stylePresets';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -50,8 +47,8 @@ test('a Fill & Stroke preset over the selection is ONE entry: solid fill, stroke
   await applyAppearancePresetEdit([s.A, s.B], { fillColor: '#ff0000', 'stroke.enabled': true, 'stroke.width': 7, 'stroke.color': '#00ff00' });
   expect((await historyLabels())).toEqual(['Apply Fill & Stroke preset']);
   for (const id of [s.A, s.B]) {
-    expect(getNodeFill(id)).toEqual({ type: 'solid', color: '#ff0000' });
-    expect(getNodeStroke(id)).toMatchObject({ enabled: true, width: 7, color: '#00ff00' });
+    expect((await docView()).getNodeFill(id)).toEqual({ type: 'solid', color: '#ff0000' });
+    expect((await docView()).getNodeStroke(id)).toMatchObject({ enabled: true, width: 7, color: '#00ff00' });
   }
   await h.run({ type: 'undo' });
   expect((await h.doc())).toBe(before);
@@ -138,9 +135,9 @@ test('a style preset the engine addresses whole is ONE entry: fills, strokes, st
   const res = await edit('Apply Sticker Style', plan.cmds);
   expect(res.ok).toBe(true);
   expect((await historyLabels())).toEqual(['Apply Sticker Style']);
-  expect(getNodeFills(s.A)).toEqual(preset.fills('#2b7eff'));
-  expect(getNodeStrokes(s.A).map((x) => [x.color, x.width])).toEqual(preset.strokes!('#2b7eff').map((x) => [x.color, x.width]));
-  const st = getNodeLayerStyles(s.A);
+  expect((await docView()).getNodeFills(s.A)).toEqual(preset.fills('#2b7eff'));
+  expect((await docView()).getNodeStrokes(s.A).map((x) => [x.color, x.width])).toEqual(preset.strokes!('#2b7eff').map((x) => [x.color, x.width]));
+  const st = (await docView()).getNodeLayerStyles(s.A);
   expect(st.innerGlow).toBeUndefined();
   expect(st.dropShadow).toMatchObject({ enabled: true, color: '#000000', distance: 10, angle: 90, blur: 12 });
   expect(st.dropShadow!.opacity).toBeCloseTo(0.45);
@@ -182,7 +179,7 @@ test('clicking a style swatch applies it as ONE entry named for the preset', asy
   await idle();
   expect((await historyLabels())).toEqual(['Apply Neon Style']);
   expect(getNodeBlend(s.A)).toBe('screen');
-  expect(getNodeLayerStyles(s.A).outerGlow).toMatchObject({ enabled: true, size: 26 });
+  expect((await docView()).getNodeLayerStyles(s.A).outerGlow).toMatchObject({ enabled: true, size: 26 });
 });
 
 test('Shift-parent (Parent & Link JUMP) is setParent{jump}: ONE entry, the child lands on the parent anchor; undo exact', async () => {

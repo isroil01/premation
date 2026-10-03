@@ -22,15 +22,13 @@
 
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import type { Command, PropertyInit } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { readNode3D } from '@core/scene/threeD';
 import { MODEL_COMPONENT } from '@core/scene/modelMesh';
-import { defaultAnimation } from '@motion/animation';
-import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits, sampleTrack } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { insertBuiltLayers } from '@core/engine/offDocument';
+import { insertFragment } from '@/engine-client/insertFragment';
 import { values } from '@core/engine/propRefs';
 import { ThreeDControl } from './ThreeDControl';
 import { ModelSection } from './ModelSection';
@@ -192,8 +190,8 @@ describe('Morph Targets section', () => {
   async function meshLayer(weights: Record<string, number>, model: Record<string, unknown>): Promise<string> {
     let ids: string[] | null = null;
     await act(async () => {
-      ids = await insertBuiltLayers('Insert mesh', 'comp_root', () => {
-        defaultSceneGraph.addChild('comp_root', {
+      ids = await insertFragment('Insert mesh', (b) => {
+        b.addChild('comp_root', {
           id: 'mesh', name: 'mesh', parent: null, children: [], visible: true, locked: false,
           transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
           components: [
@@ -205,7 +203,8 @@ describe('Morph Targets section', () => {
             { id: 'mesh_model', type: MODEL_COMPONENT, props: model },
           ],
         } as unknown as SceneNode);
-      }, { select: false });
+        return 'mesh';
+      }, { comp: 'comp_root', noSelect: true });
     });
     const inserted: string[] = ids ?? [];
     expect(inserted).toHaveLength(1);
@@ -238,7 +237,7 @@ describe('Morph Targets section', () => {
 
     fireEvent.change(screen.getByLabelText('Target 1 slider'), { target: { value: '0.9' } });
     await idle();
-    expect(defaultAnimation.sample(mesh, 'morph0', 0)).toBeCloseTo(0.9);
+    expect(await sampleTrack(mesh, 'morph0', 0)).toBeCloseTo(0.9);
     // The static prop is untouched — the track is what the renderer samples.
     expect((await transformProps(mesh)).morph0).toBeCloseTo(0.2);
   });

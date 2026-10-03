@@ -25,9 +25,9 @@ import { useGuidesStore } from '@stores/guidesStore';
 import { useFocusPlaneStore } from '@stores/focusPlaneStore';
 import { defaultAnimation } from '@motion/animation';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits, sampleTrack, propRef } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
-import { propRefForTrack, values } from '@core/engine/propRefs';
+import { values } from '@core/engine/propRefs';
 import { usePreferenceStore } from '@stores/preferenceStore';
 
 jest.mock('@core/workspace/WorkspaceController', () => ({
@@ -287,12 +287,12 @@ describe('through the engine API', () => {
     // track, so a base-only write is invisible and the handle looks broken.
     await h.run({
       type: 'addKeyframes',
-      keys: [{ prop: propRefForTrack(cam, 'focusDistance')!.ref, time: 0, value: values.scalar(2000), spatialIn: [], spatialOut: [] }],
+      keys: [{ prop: (await propRef(cam, 'focusDistance')), time: 0, value: values.scalar(2000), spatialIn: [], spatialOut: [] }],
     });
     const { container } = render(<FocusPlaneOverlay />);
     await settle();
     await idleDrag(container, { x: 0, y: -250 });
-    expect(defaultAnimation.sample(cam, 'focusDistance', 0)).toBeCloseTo(2250, 3);
+    expect(await sampleTrack(cam, 'focusDistance', 0)).toBeCloseTo(2250, 3);
   });
 
   it('keys an unanimated focusDistance under Auto-Keyframe', async () => {
@@ -302,7 +302,7 @@ describe('through the engine API', () => {
       await settle();
       await idleDrag(container, { x: 0, y: -300 });
       expect((await docView()).isAnimated(cam, 'focusDistance')).toBe(true);
-      expect(defaultAnimation.sample(cam, 'focusDistance', 0)).toBeCloseTo(2300, 3);
+      expect(await sampleTrack(cam, 'focusDistance', 0)).toBeCloseTo(2300, 3);
       expect((await historyLabels()).at(-1)).toBe('Focus Distance');
     } finally {
       usePreferenceStore.setState({ timelineAutoKeyframe: false });

@@ -13,7 +13,7 @@
 import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
 import { useSelectionStore } from '@stores/selectionStore';
-import { getNodeStrokes, defaultStroke } from '@core/paint/stroke';
+import { defaultStroke } from '@core/paint/stroke';
 import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -66,7 +66,7 @@ describe('stroke 2 offers the whole AE Stroke group', () => {
     const select = container.querySelector('[aria-label="Stroke 2 blend mode"]') as HTMLSelectElement;
     fireEvent.change(select, { target: { value: 'screen' } });
     await idle();
-    expect(getNodeStrokes(ID).map((s) => s.blendMode)).toEqual([undefined, 'screen']);
+    expect((await docView()).getNodeStrokes(ID).map((s) => s.blendMode)).toEqual([undefined, 'screen']);
     settle();
     expect((await historyLabels())).toHaveLength(1);
     await undo();
@@ -81,17 +81,17 @@ describe('stroke 2 offers the whole AE Stroke group', () => {
       rerender(<AppearanceSection nodeId={ID} />);
     };
     await click('Add dash or gap to stroke 2');
-    expect(getNodeStrokes(ID)[1]!.dash).toEqual([10]);
+    expect((await docView()).getNodeStrokes(ID)[1]!.dash).toEqual([10]);
     await click('Add dash or gap to stroke 2');
-    expect(getNodeStrokes(ID)[1]!.dash).toEqual([10, 10]);
+    expect((await docView()).getNodeStrokes(ID)[1]!.dash).toEqual([10, 10]);
     await click('Remove last dash or gap from stroke 2');
-    expect(getNodeStrokes(ID)[1]!.dash).toEqual([10]);
+    expect((await docView()).getNodeStrokes(ID)[1]!.dash).toEqual([10]);
     // Stroke 1's pattern never moved.
-    expect(getNodeStrokes(ID)[0]!.dash).toEqual([]);
+    expect((await docView()).getNodeStrokes(ID)[0]!.dash).toEqual([]);
     settle();
     expect((await historyLabels())).toHaveLength(3);
     await undo();
-    expect(getNodeStrokes(ID)[1]!.dash).toEqual([10, 10]);
+    expect((await docView()).getNodeStrokes(ID)[1]!.dash).toEqual([10, 10]);
   });
 
   it('its Width stopwatch keys stroke 2’s own track, not the primary’s — one undo entry', async () => {
@@ -113,11 +113,11 @@ describe('stroke 2 offers the whole AE Stroke group', () => {
     const before = (await h.doc());
     fireEvent.click(container.querySelector('[aria-label="Remove stroke 2"]') as HTMLElement);
     await idle();
-    expect(getNodeStrokes(ID)).toHaveLength(1);
+    expect((await docView()).getNodeStrokes(ID)).toHaveLength(1);
     settle();
     expect((await historyLabels())).toEqual(['Remove Stroke 2']);
     await undo();
-    expect(getNodeStrokes(ID)).toHaveLength(2);
+    expect((await docView()).getNodeStrokes(ID)).toHaveLength(2);
     expect((await h.doc())).toBe(before);
   });
 });

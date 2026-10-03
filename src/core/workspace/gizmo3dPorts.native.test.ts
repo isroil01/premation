@@ -7,8 +7,7 @@
  * the overlay push's scene3d record — core/mirror/viewGeometry.ts transform3DOf.)
  */
 
-import { defaultAnimation } from '@motion/animation';
-import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits, sampleTrack } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -71,9 +70,9 @@ describe('applyGizmo3DTransforms', () => {
     });
     // x has a track → the write must land on the track or the renderer
     // (which samples tracks first) never shows it.
-    expect(defaultAnimation.sample(s.A, 'x', 0)).toBe(400);
+    expect(await sampleTrack(s.A, 'x', 0)).toBe(400);
     // y shares the position stopwatch (one Position property).
-    expect(defaultAnimation.sample(s.A, 'y', 0)).toBe(260);
+    expect(await sampleTrack(s.A, 'y', 0)).toBe(260);
     // The key at the playhead was replaced, none added.
     expect((await docView()).getTrackKeyframes(s.A, 'x')!.length).toBe(keys0);
   });
@@ -82,13 +81,13 @@ describe('applyGizmo3DTransforms', () => {
     await h.run({ type: 'addKeyframes', keys: [
       { prop: { layer: s.A, path: 'transform/scale' }, time: 0, spatialIn: [], spatialOut: [] },
     ] });
-    const scale0 = defaultAnimation.sample(s.A, 'scaleX', 0);
+    const scale0 = await sampleTrack(s.A, 'scaleX', 0);
     // Position-only gizmo drag on a node with an animated scale:
     await oneEntry('Move', () => {
       applyGizmo3DTransforms([{ id: s.A, values: { x: 300 } }]);
     });
     expect((await docView()).getTrackKeyframes(s.A, 'scaleX')!).toHaveLength(1);
-    expect(defaultAnimation.sample(s.A, 'scaleX', 0)).toBe(scale0); // unchanged
+    expect(await sampleTrack(s.A, 'scaleX', 0)).toBe(scale0); // unchanged
     expect((await tp('x'))).toBe(300);
   });
 
@@ -99,7 +98,7 @@ describe('applyGizmo3DTransforms', () => {
     await oneEntry('Rotate', () => {
       applyGizmo3DTransforms([{ id: s.A, values: { z: -120, rotationX: 30 } }]);
     });
-    expect(defaultAnimation.sample(s.A, 'z', 0)).toBe(-120); // keyed (Position is animated)
+    expect(await sampleTrack(s.A, 'z', 0)).toBe(-120); // keyed (Position is animated)
     expect((await docView()).isAnimated(s.A, 'rotationX')).toBe(false); // static → the value only
     expect((await tp('rotationX'))).toBe(30);
   });
@@ -110,7 +109,7 @@ describe('applyGizmo3DTransforms', () => {
       applyGizmo3DTransforms([{ id: s.A, values: { scaleX: 2, scaleY: 2 } }]);
     });
     expect((await docView()).isAnimated(s.A, 'scaleX')).toBe(true);
-    expect(defaultAnimation.sample(s.A, 'scaleX', 0)).toBeCloseTo(2, 9);
+    expect(await sampleTrack(s.A, 'scaleX', 0)).toBeCloseTo(2, 9);
   });
 
   it('skips locked nodes', async () => {

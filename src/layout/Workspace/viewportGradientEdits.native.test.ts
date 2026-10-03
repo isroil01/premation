@@ -1,3 +1,4 @@
+import { documentMirror } from '@stores/documentMirror';
 /**
  * The gradient gizmo's command builders (viewportEdits.ts ▸ gradient*Commands)
  * — the per-property rule the overlay test cannot isolate:
@@ -10,11 +11,10 @@
  *     address is written statically instead — never dropped.
  */
 
-import { defaultAnimation } from '@motion/animation';
-import { getNodeFill, getNodeFills, type FillPaint, type LinearFill, type RadialFill } from '@core/paint/fill';
+import { type FillPaint, type LinearFill, type RadialFill } from '@core/paint/fill';
 import { edit } from '@core/engine/uiEdits';
-import { propRefForTrack, values } from '@core/engine/propRefs';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { values } from '@core/engine/propRefs';
+import { clearHistory, setupAppEngine, historyLabels, sampleTrack, propRef, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { fillPaintCommands, textStrokePaintCommands } from '@layout/Inspector/appearance/paintEdits';
@@ -49,13 +49,16 @@ const LINEAR: LinearFill = {
   ],
 };
 
-const target = (over: Partial<GradientPaintTarget> = {}): GradientPaintTarget => ({
-  nodeId: ID, channel: 'fill', fillIndex: 0, strokeIndex: 0, fills: getNodeFills(ID), ...over,
+const target = async (over: Partial<GradientPaintTarget> = {}): Promise<GradientPaintTarget> => ({
+  nodeId: ID, channel: 'fill', fillIndex: 0, strokeIndex: 0, fills: (await docView()).getNodeFills(ID), ...over,
 });
 
 beforeEach(async () => {
   h = await setupAppEngine();
   ID = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'G', init: [] })).layer;
+  // The fixture's field commands (and the edits under test) compose from the layer's tree.
+  await settleEdits();
+  await documentMirror().loadTree(ID);
 });
 
 afterEach(async () => {
@@ -74,11 +77,12 @@ async function roundTrip(label: string, cmds: ReturnType<typeof gradientPaintCom
 
 test('a radial centre with one live coordinate: that one keys, the other lands in the paint — one entry', async () => {
   await h.batch('fixture', fillPaintCommands(ID, RADIAL));
-  const ref = propRefForTrack(ID, 'fillCenterX')!.ref;
+  await settleEdits();
+  const ref = (await propRef(ID, 'fillCenterX'));
   await h.run({ type: 'addKeyframes', keys: [{ prop: ref, time: 0, value: values.scalar(0.5), spatialIn: [], spatialOut: [] }] });
 
-  const t = target();
-  const staticNext = { ...(getNodeFill(ID) as RadialFill), cx: 0.2, cy: 0.7 };
+  const t = await target();
+  const staticNext = { ...((await docView()).getNodeFill(ID) as RadialFill), cx: 0.2, cy: 0.7 };
   const cmds = gradientGeometryCommands(
     t,
     [{ track: 'fillCenterX', value: 0.2 }, { track: 'fillCenterY', value: 0.7 }],
@@ -88,9 +92,9 @@ test('a radial centre with one live coordinate: that one keys, the other lands i
   await roundTrip('Move Gradient Handle', cmds);
   await h.run({ type: 'redo' });
 
-  expect(defaultAnimation.sample(ID, 'fillCenterX', 0)).toBeCloseTo(0.2);
+  expect(await sampleTrack(ID, 'fillCenterX', 0)).toBeCloseTo(0.2);
   expect((await docView()).isAnimated(ID, 'fillCenterY')).toBe(false);
-  expect((getNodeFill(ID) as RadialFill).cy).toBeCloseTo(0.7);
+  expect(((await docView()).getNodeFill(ID) as RadialFill).cy).toBeCloseTo(0.7);
 });
 
 test('a stack slot above the primary is written as its paint — never as the primary’s keys', async () => {
@@ -98,21 +102,25 @@ test('a stack slot above the primary is written as its paint — never as the pr
   await h.batch('fixture', fieldCommands(ID, 'layer/fills', [LINEAR, second]));
   await h.run({ type: 'setAnimated', prop: { layer: ID, path: 'layer/fillStops' }, animated: true, time: 0 });
 
-  const t = target({ fillIndex: 1 });
+  const t = await target({ fillIndex: 1 });
   const moved = [{ id: 'a2', offset: 0.25, color: '#000000' }, { id: 'b2', offset: 1, color: '#ffffff' }];
   await roundTrip('Move Gradient Stop', gradientStopsCommands(t, second as LinearFill, moved, { keyed: true, seconds: 0 }));
   await h.run({ type: 'redo' });
 
-  const stack = getNodeFills(ID) as LinearFill[];
+  const stack = (await docView()).getNodeFills(ID) as LinearFill[];
   expect(stack[1]?.stops.map((s) => s.offset)).toEqual([0.25, 1]);
   // The primary's Colors key is untouched.
-  const key = defaultAnimation.sampleData(ID, 'fill.stops', 0) as Array<{ pos: number }>;
-  expect(key.map((s) => s.pos)).toEqual([0, 1]);
+  const res = await h.query({ type: 'getPropertyValues', props: [{ layer: ID, path: 'layer/fillStops' }], time: 0, evaluated: true });
+  const key = (res.values[0]!.value as { value: { stops: Array<{ offset: number }> } }).value.stops;
+  expect(key.map((s) => s.offset)).toEqual([0, 1]);
 });
 
 test('under Auto-Keyframe a text stroke’s angle keys at the playhead; the stored paint is untouched', async () => {
   const { layer: T } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name: 'T', init: [] });
+  await settleEdits();
+  await documentMirror().loadTree(T);
   await h.batch('fixture', textStrokePaintCommands(T, LINEAR));
+  await settleEdits();
   const t: GradientPaintTarget = { nodeId: T, channel: 'stroke', fillIndex: 0, strokeIndex: 0, fills: [] };
   const cmds = gradientGeometryCommands(
     t,
@@ -123,7 +131,7 @@ test('under Auto-Keyframe a text stroke’s angle keys at the playhead; the stor
   await roundTrip('Move Gradient Handle', cmds);
   await h.run({ type: 'redo' });
 
-  expect(defaultAnimation.sample(T, 'strokeAngle', 0)).toBeCloseTo(45);
+  expect(await sampleTrack(T, 'strokeAngle', 0)).toBeCloseTo(45);
   const text = (await docView()).getNode(T)!.components.find((c) => c.type === 'Text')!.props;
   expect((text.strokePaint as LinearFill).angle).toBe(0);
 });
@@ -131,7 +139,7 @@ test('under Auto-Keyframe a text stroke’s angle keys at the playhead; the stor
 test('a track the engine does not address is written statically, even under Auto-Keyframe — never dropped', async () => {
   // `fillCenterX` exists only while the primary fill is radial.
   await h.batch('fixture', fillPaintCommands(ID, LINEAR));
-  const t = target();
+  const t = await target();
   const cmds = gradientGeometryCommands(
     t,
     [{ track: 'fillCenterX', value: 0.3 }],
@@ -140,6 +148,6 @@ test('a track the engine does not address is written statically, even under Auto
   );
   await roundTrip('Move Gradient Handle', cmds);
   await h.run({ type: 'redo' });
-  expect((getNodeFill(ID) as LinearFill).angle).toBe(30);
+  expect(((await docView()).getNodeFill(ID) as LinearFill).angle).toBe(30);
   expect((await docView()).isAnimated(ID, 'fillCenterX')).toBe(false);
 });

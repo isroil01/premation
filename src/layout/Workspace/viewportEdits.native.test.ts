@@ -4,11 +4,11 @@
  * document the legacy write produced, and an exact undo / redo round trip.
  */
 
-import { AnimationEngine, defaultAnimation, type Keyframe } from '@motion/animation';
+import { AnimationEngine, type Keyframe } from '@motion/animation';
 import { readNodeMask } from '@core/effects/mask';
 import { setSpatialInterpolation, setPathTangent, smoothMotionPath, straightenMotionPath } from '@core/motion/motionPath';
 import { edit, GestureSession } from '@core/engine/uiEdits';
-import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits, sampleTrack } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -75,7 +75,7 @@ describe('trackValueCommands (the viewport dual path)', () => {
     await edit('Move', trackValueCommands([{ nodeId: s.B, values: { x: 150, y: 175 } }], { seconds: 0.5 })!);
     const t = (await docView()).getTrackKeyframes(s.B, 'x')!.map((k) => k.t);
     expect(t).toHaveLength(3);
-    expect(defaultAnimation.sample(s.B, 'x', t[1]!)).toBeCloseTo(150);
+    expect(await sampleTrack(s.B, 'x', t[1]!)).toBeCloseTo(150);
   });
 
   it('Auto-Keyframe keys an unanimated property', async () => {

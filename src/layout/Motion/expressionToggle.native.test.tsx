@@ -25,7 +25,7 @@ import { ExpressionEditor } from './ExpressionEditor';
 import { defaultAnimation } from '@motion/animation';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getEventBus } from '@core/events/EventBus';
-import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits, sampleTrack } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 
@@ -88,13 +88,13 @@ describe('the toggle exists and reports the engine state', () => {
 describe('clicking the toggle drives the engine, undoably', () => {
   test('click disables the expression and the property falls back to its keyframes', async () => {
     render(<ExpressionEditor nodeId={NODE} prop="x" />);
-    expect(defaultAnimation.sample(NODE, 'x', 1)).toBeCloseTo(250);
+    expect(await sampleTrack(NODE, 'x', 1)).toBeCloseTo(250);
 
     await settle(() => fireEvent.click(toggle()));
 
     expect((await docView()).isExpressionEnabled(NODE, 'x')).toBe(false);
     expect((await docView()).hasExpression(NODE, 'x')).toBe(true);
-    expect(defaultAnimation.sample(NODE, 'x', 1)).toBeCloseTo(50);
+    expect(await sampleTrack(NODE, 'x', 1)).toBeCloseTo(50);
     expect(toggle()).toHaveAttribute('aria-checked', 'false');
   });
 
@@ -103,7 +103,7 @@ describe('clicking the toggle drives the engine, undoably', () => {
     await settle(() => fireEvent.click(toggle()));
     await settle(() => fireEvent.click(toggle()));
     expect((await docView()).isExpressionEnabled(NODE, 'x')).toBe(true);
-    expect(defaultAnimation.sample(NODE, 'x', 1)).toBeCloseTo(250);
+    expect(await sampleTrack(NODE, 'x', 1)).toBeCloseTo(250);
   });
 
   test('the toggle records ONE undoable command, and undo re-enables', async () => {

@@ -257,6 +257,28 @@ export async function trackRef(layer: string, track: string): Promise<{ path: st
   return { path: r.ref.path, members: [...r.members], ...(member !== undefined && member >= 0 ? { member } : {}) };
 }
 
+/** The API property a legacy track name lives on, as a PropRef (the layer's tree loaded first). */
+export async function propRef(layer: string, track: string): Promise<{ layer: string; path: string }> {
+  return { layer, path: (await trackRef(layer, track)).path };
+}
+
+/**
+ * A legacy track's value at `seconds` as the engine evaluates it (keys,
+ * expressions) — its member of a vector property. Undefined when the track has
+ * no numeric value.
+ */
+export async function sampleTrack(layer: string, track: string, seconds: number): Promise<number | undefined> {
+  const r = await trackRef(layer, track);
+  const res = unwrap(await engine().query({ type: 'getPropertyValues', props: [{ layer, path: r.path }], time: sec(seconds), evaluated: true }));
+  const v = res.values[0]?.value as { value?: unknown } | undefined;
+  if (typeof v?.value === 'number') return v.value;
+  if (v?.value && typeof v.value === 'object') {
+    const n = Object.values(v.value as Record<string, unknown>)[r.member ?? 0];
+    return typeof n === 'number' ? n : undefined;
+  }
+  return undefined;
+}
+
 /** Whether the engine has a gesture open (the history's `gestureOpen`). */
 export async function gestureOpen(): Promise<boolean> {
   return unwrap(await engine().query({ type: 'getHistory' })).gestureOpen;

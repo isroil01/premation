@@ -1,3 +1,4 @@
+import { docView } from '@core/engine/__testHelpers__/docView';
 /**
  * A gradient STROKE exposes its whole stop list, not just its two ends.
  *
@@ -26,7 +27,7 @@
 import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
 import { useSelectionStore } from '@stores/selectionStore';
-import { getNodeStroke, defaultStroke } from '@core/paint/stroke';
+import { defaultStroke } from '@core/paint/stroke';
 import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { strokesCommands } from './appearance/paintEdits';
@@ -77,8 +78,8 @@ const stopLabels = (c: HTMLElement): string[] =>
 
 describe('the fixture is unclean, as the header requires', () => {
   it('POSITIVE CONTROL: the stroke gradient has THREE stops, not two', async () => {
-    expect(getNodeStroke(ID)?.paint?.type).not.toBe('solid');
-    expect((getNodeStroke(ID)?.paint as { stops: unknown[] }).stops).toHaveLength(3);
+    expect((await docView()).getNodeStroke(ID)?.paint?.type).not.toBe('solid');
+    expect(((await docView()).getNodeStroke(ID)?.paint as { stops: unknown[] }).stops).toHaveLength(3);
   });
 });
 
@@ -116,7 +117,7 @@ describe('editing the MIDDLE stop — the one the old UI could not reach', () =>
     fireEvent.keyDown(field, { key: 'ArrowUp' });
     await idle();
 
-    const stops = (getNodeStroke(ID)?.paint as { stops: Array<{ offset: number }> }).stops;
+    const stops = ((await docView()).getNodeStroke(ID)?.paint as { stops: Array<{ offset: number }> }).stops;
     const offsets = stops.map((s) => s.offset).sort((a, b) => a - b);
     // Anchored to WHICH stop moved: the ends are still 0 and 1, and the middle
     // is no longer 0.5. A write that hit the wrong stop fails on the ends.
@@ -135,7 +136,7 @@ describe('editing the MIDDLE stop — the one the old UI could not reach', () =>
     const remove = [...container.querySelectorAll('[aria-label="Remove stop 2"]')][0] as HTMLElement;
     fireEvent.click(remove);
     await idle();
-    const stops = (getNodeStroke(ID)?.paint as { stops: Array<{ color: string }> }).stops;
+    const stops = ((await docView()).getNodeStroke(ID)?.paint as { stops: Array<{ color: string }> }).stops;
     expect(stops).toHaveLength(2);
     expect(stops.map((s) => s.color).sort()).toEqual(['#0000ff', '#ff0000']);
     settle();

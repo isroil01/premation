@@ -13,7 +13,10 @@
 
 import { unwrap } from '@motion/engine-api';
 import type { Keyframe } from '@motion/animation';
-import type { Effect } from '@core/effects/effects';
+import { readNodeFxEnabled, type Effect } from '@core/effects/effects';
+import { readNodeLayerStyles, type LayerStyles } from '@core/effects/layerStyles';
+import { readNodeStroke, readNodeStrokes, type Stroke } from '@core/paint/stroke';
+import type { FillPaint } from '@core/paint/fill';
 import type { LayerMask } from '@core/effects/mask';
 import { engine, engineIdle } from '../engineInstance';
 
@@ -138,27 +141,50 @@ export class DocView {
   }
 
   /** The primary fill (paint/fill.ts readNodeFill): the `fx` fill paint, else a legacy colour string. */
-  getNodeFill(id: string): Record<string, unknown> | undefined {
+  getNodeFill(id: string): FillPaint | undefined {
     const node = this.nodes.get(id);
     if (!node) return undefined;
     const paint = this.props(id, 'fx')?.fill;
-    if (paint && typeof paint === 'object' && typeof (paint as { type?: unknown }).type === 'string') return paint as Record<string, unknown>;
+    if (paint && typeof paint === 'object' && typeof (paint as { type?: unknown }).type === 'string') return paint as FillPaint;
     for (const c of node.components) {
       const f = c.props.fill;
-      if (typeof f === 'string') return { type: 'solid', color: f };
+      if (typeof f === 'string') return { type: 'solid', color: f } as FillPaint;
     }
     return undefined;
   }
 
   /** The fill stack, bottom to top (paint/fill.ts readNodeFills). */
-  getNodeFills(id: string): Array<Record<string, unknown>> {
+  getNodeFills(id: string): FillPaint[] {
     const arr = this.props(id, 'fx')?.fills;
     if (Array.isArray(arr)) {
       const valid = arr.filter((p) => p && typeof p === 'object' && typeof (p as { type?: unknown }).type === 'string');
-      if (valid.length > 0) return valid as Array<Record<string, unknown>>;
+      if (valid.length > 0) return valid as FillPaint[];
     }
     const one = this.getNodeFill(id);
     return one ? [one] : [];
+  }
+
+  /** The primary stroke / the stroke stack, as paint/stroke.ts reads a node. */
+  getNodeStroke(id: string): Stroke | undefined {
+    const node = this.nodes.get(id);
+    return node ? readNodeStroke(node) : undefined;
+  }
+
+  getNodeStrokes(id: string): Stroke[] {
+    const node = this.nodes.get(id);
+    return node ? readNodeStrokes(node) : [];
+  }
+
+  /** The layer's styles (effects/layerStyles.ts readNodeLayerStyles); empty when none. */
+  getNodeLayerStyles(id: string): LayerStyles {
+    const node = this.nodes.get(id);
+    return (node ? readNodeLayerStyles(node) : undefined) ?? {};
+  }
+
+  /** The layer's fx switch (effects.ts readNodeFxEnabled). */
+  getNodeFxEnabled(id: string): boolean {
+    const node = this.nodes.get(id);
+    return node ? readNodeFxEnabled(node) : true;
   }
 
   /** The layer's stored time record (the `fx` time: reverse, freeze, frame blending…); empty = the defaults. */
