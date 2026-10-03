@@ -13,10 +13,14 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { insertSvgLayer, insertSvgShapeGroup } from '@core/scene/sceneInsert';
+import { insertSvgLayer } from '@core/scene/sceneInsert';
 import { readSvgLayer, readRetainedSvgSource, svgLayerSrc, isSvgLayer } from './svgLayer';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { buildSvgShapeGroup, buildRevertedSvgLayer, canRevertToSvg, describeConversion } from './svgConvert';
+import { buildSvgLayer, buildSvgIconGroup } from '@core/scene/layerBuilders';
+import type { SceneNode } from '@core/types';
+import { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import type { InsertFrame } from '@/engine-client/insertFragment';
+import { buildSvgShapeGroupInto, buildRevertedSvgLayerInto, describeConversion } from './svgConvert';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import * as svgParser from '../../utils/svgParser';
 
@@ -26,21 +30,26 @@ beforeAll(() => {
 
 /*
  * Convert / revert are ONE engine batch in the editor (svgLayerActions.ts:
- * the builder runs off-document, then pasteLayers + deleteLayers). These tests
- * pin the BUILDERS — what the batch pastes — applied in place.
+ * the builder lays the result into a fragment, then pasteLayers +
+ * deleteLayers). These tests pin the BUILDERS — what the batch pastes.
  */
-function convertSvgLayerToShapes(id: string): string | null {
-  const built = buildSvgShapeGroup(id);
-  if (!built) return null;
-  defaultSceneGraph.removeNode(id);
-  return built.groupId;
+const FRAME: InsertFrame = { comp: 'comp_root', width: 1920, height: 1080, durationSeconds: 10, fps: 30, cursor: null };
+
+/** A fragment row read as the stored node it becomes (the svg readers take a node). */
+const asNode = (b: FragmentBuilder, id: string): SceneNode => b.row(id) as unknown as SceneNode;
+
+/** An SVG layer built as the import builds it, and its stored document. */
+function svgLayerData(source: string, name: string) {
+  const b = new FragmentBuilder();
+  const made = buildSvgLayer(b, FRAME, source, name)!;
+  return readSvgLayer(asNode(b, made.id))!;
 }
 
-function revertSvgGroupToLayer(groupId: string): string | null {
-  const id = buildRevertedSvgLayer(groupId);
-  if (!id) return null;
-  defaultSceneGraph.removeNode(groupId);
-  return id;
+/** Convert: the group laid into a fresh fragment, or null. */
+function convertSvg(source: string, name: string): { b: FragmentBuilder; groupId: string } | null {
+  const b = new FragmentBuilder();
+  const built = buildSvgShapeGroupInto(b, FRAME, svgLayerData(source, name), { name });
+  return built ? { b, groupId: built.groupId } : null;
 }
 
 /** A static illustration with `n` independent paths. */
@@ -210,30 +219,23 @@ describe('describeConversion', () => {
 
 describe('convert and revert', () => {
   it('replaces the SVG layer with real shape layers', () => {
-    const id = insertSvgLayer(manyPaths(6), 'six.svg')!;
-    const groupId = convertSvgLayerToShapes(id);
-
-    expect(groupId).not.toBeNull();
-    expect(defaultSceneGraph.getNode(id)).toBeUndefined();
-    expect(defaultSceneGraph.getChildren(groupId!).length).toBeGreaterThan(1);
+    const c = convertSvg(manyPaths(6), 'six.svg');
+    expect(c).not.toBeNull();
+    expect(c!.b.row(c!.groupId).children.length).toBeGreaterThan(1);
   });
 
   it('retains the original on the group, and reverting restores it exactly', () => {
     const source = manyPaths(4);
-    const id = insertSvgLayer(source, 'four.svg')!;
-    const groupId = convertSvgLayerToShapes(id)!;
+    const { b, groupId } = convertSvg(source, 'four.svg')!;
 
-    expect(canRevertToSvg(groupId)).toBe(true);
-    expect(readRetainedSvgSource(defaultSceneGraph.getNode(groupId)!)!.markup).toBe(source);
+    // A converted group keeps the source, not a renderable SVG layer.
+    expect(readRetainedSvgSource(asNode(b, groupId))!.markup).toBe(source);
+    expect(isSvgLayer(asNode(b, groupId))).toBe(false);
 
-    const backId = revertSvgGroupToLayer(groupId)!;
-    expect(defaultSceneGraph.getNode(groupId)).toBeUndefined();
-    expect(readSvgLayer(defaultSceneGraph.getNode(backId)!)!.sourceMarkup).toBe(source);
-  });
-
-  it('does not offer revert on an SVG layer — it is already the original', () => {
-    const id = insertSvgLayer(manyPaths(3), 'three.svg')!;
-    expect(canRevertToSvg(id)).toBe(false);
+    const back = new FragmentBuilder();
+    const made = buildRevertedSvgLayerInto(back, FRAME, readRetainedSvgSource(asNode(b, groupId))!, { name: 'four.svg', x: 300, y: 200 })!;
+    expect(readSvgLayer(asNode(back, made.id))!.sourceMarkup).toBe(source);
+    expect(back.row(made.id).name).toBe('four.svg');
   });
 
   it('reproduces exactly what today\'s import pipeline produces', () => {
@@ -242,28 +244,31 @@ describe('convert and revert', () => {
     // from what the same file used to import as, and nothing would say so.
     const source = manyPaths(9);
 
-    const direct = insertSvgShapeGroup(source, 'direct.svg');
-    const viaLayer = convertSvgLayerToShapes(insertSvgLayer(source, 'direct.svg')!);
+    const directB = new FragmentBuilder();
+    const direct = buildSvgIconGroup(directB, FRAME, source, 'direct.svg');
+    const viaLayer = convertSvg(source, 'direct.svg');
     expect(direct).not.toBeNull();
     expect(viaLayer).not.toBeNull();
 
     /** The shape of a converted group, ignoring generated ids and positions. */
-    const describe_ = (groupId: string) =>
-      defaultSceneGraph.getChildren(groupId).map((child) => ({
-        kind: readNodeKind(child),
-        fill: child.components.find((c) => c.type === 'Style')?.props.fill,
-        points: (child.components.find((c) => c.type === 'Geometry')?.props.points as unknown[] | undefined)?.length,
-      }));
+    const describe_ = (b: FragmentBuilder, groupId: string) =>
+      b.row(groupId).children.map((id) => {
+        const child = asNode(b, id);
+        return {
+          kind: readNodeKind(child),
+          fill: child.components.find((c) => c.type === 'Style')?.props.fill,
+          points: (child.components.find((c) => c.type === 'Geometry')?.props.points as unknown[] | undefined)?.length,
+        };
+      });
 
-    expect(describe_(viaLayer!)).toEqual(describe_(direct!));
+    expect(describe_(viaLayer!.b, viaLayer!.groupId)).toEqual(describe_(directB, direct!));
   });
 
   it('parses the ORIGINAL markup, not the id-scoped copy', () => {
     // The parser resolves url(#grad) by bare name; feeding it the scoped copy
     // would break exactly the fills the user converted in order to edit.
-    const id = insertSvgLayer(GRADIENT_SVG, 'grad.svg')!;
-    const groupId = convertSvgLayerToShapes(id);
-    expect(groupId).not.toBeNull();
-    expect(defaultSceneGraph.getChildren(groupId!).length).toBeGreaterThan(0);
+    const c = convertSvg(GRADIENT_SVG, 'grad.svg');
+    expect(c).not.toBeNull();
+    expect(c!.b.row(c!.groupId).children.length).toBeGreaterThan(0);
   });
 });

@@ -176,6 +176,17 @@ export function storedNumber(ref: TrackRef, v: Value | undefined): number | unde
   return typeof n === 'number' && Number.isFinite(n) ? n / ref.factor : undefined;
 }
 
+/**
+ * The STATIC value a layer stores for a track (stored units, its keys aside),
+ * or undefined when it stores none and the default applies
+ * (`PropertyInfo.stored`) — what reading a prop off the stored node gave.
+ */
+export function storedStaticNumber(tree: MirrorTreeLike | undefined, track: string): number | undefined {
+  const r = trackRefIn(tree, track);
+  if (!r || r.info.stored !== true) return undefined;
+  return storedNumber(r, r.info.value);
+}
+
 /** A string/choice/bool/json value as the plain JS value a control shows. */
 export function plainValue(v: Value | undefined): unknown {
   if (!v) return undefined;

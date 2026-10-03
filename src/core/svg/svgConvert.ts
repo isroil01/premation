@@ -8,7 +8,7 @@
  *
  * Conversion is destructive in the sense that the SVG layer stops existing —
  * but not in the sense that anything is lost. The original markup rides along
- * on the resulting group, so Revert (`buildRevertedSvgLayer`) can put it back exactly,
+ * on the resulting group, so Revert (`buildRevertedSvgLayerInto`) can put it back exactly,
  * and a future release with a better parser can re-run the conversion against
  * the untouched source (§13).
  */
@@ -16,11 +16,16 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
-import { insertSvgShapeGroup, insertSvgLayer, measureSvgText, intersectSvgPaths } from '@core/scene/sceneInsert';
+import { documentMirror } from '@stores/documentMirror';
+import { insertSvgShapeGroup, measureSvgText, intersectSvgPaths } from '@core/scene/sceneInsert';
+import { buildSvgIconGroup, buildSvgLayer } from '@core/scene/layerBuilders';
+import { mirrorLabelColor } from '@core/mirror/layerLabels';
+import { storedStaticNumber } from '@core/mirror/trackIndex';
+import type { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import type { InsertFrame } from '@/engine-client/insertFragment';
 import { parseSvgToShapes } from '../../utils/svgParser';
 import {
   readSvgLayer,
-  readRetainedSvgSource,
   stripToRetainedSource,
   SVG_COMPONENT,
   type SvgLayerData,
@@ -29,7 +34,7 @@ import { isAnimatedSvg } from './svgCapabilities';
 import { getRetainOriginalSvg } from './svgPreferences';
 
 /** The layer properties that must survive the swap in either direction. */
-interface CarriedTransform {
+export interface CarriedTransform {
   x?: number;
   y?: number;
   rotation?: number;
@@ -42,7 +47,41 @@ interface CarriedTransform {
   color?: string;
 }
 
-/** Read the transform/appearance a converted node has to inherit. */
+/**
+ * The transform / appearance a converted layer has to pass on, read off the
+ * document MIRROR: its header (name, switches, label colour) and the STATIC
+ * values its tree stores (keys aside, as the swap always took them). The tree
+ * must be loaded (`documentMirror().loadTree`).
+ */
+export function mirrorCarry(layerId: string): CarriedTransform {
+  const m = documentMirror();
+  const layer = m.layer(layerId);
+  if (!layer) return {};
+  const tree = m.tree(layerId);
+  const out: CarriedTransform = { name: layer.name, visible: layer.switches.visible, locked: layer.switches.locked };
+  const color = mirrorLabelColor(layer);
+  if (color !== undefined) out.color = color;
+  for (const k of ['x', 'y', 'rotation', 'scaleX', 'scaleY', 'opacity'] as const) {
+    const v = storedStaticNumber(tree, k);
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+/** Apply a carried transform onto a layer just laid into a fragment. */
+function applyCarryTo(b: FragmentBuilder, id: string, carry: CarriedTransform): void {
+  const row = b.row(id);
+  if (carry.name) row.name = carry.name;
+  if (carry.visible !== undefined) row.visible = carry.visible;
+  if (carry.locked !== undefined) row.locked = carry.locked;
+  if (carry.color !== undefined) row.color = carry.color;
+  if (carry.rotation !== undefined) b.setProp(id, 'Transform', 'rotation', carry.rotation);
+  if (carry.scaleX !== undefined) b.setProp(id, 'Transform', 'scaleX', carry.scaleX);
+  if (carry.scaleY !== undefined) b.setProp(id, 'Transform', 'scaleY', carry.scaleY);
+  if (carry.opacity !== undefined) b.setProp(id, 'Style', 'opacity', carry.opacity);
+}
+
+/** Read the transform/appearance a converted node has to inherit (the page replica — the AI host's legacy convert only). */
 function carryFrom(nodeId: string): CarriedTransform {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return {};
@@ -143,13 +182,62 @@ export interface BuiltSvgShapes {
   data: SvgLayerData;
 }
 
+/** The `svg` component a converted group keeps: the layer's document minus what only renders it (stripToRetainedSource's set). */
+function retainedSvgProps(data: SvgLayerData): Record<string, unknown> {
+  return {
+    sourceMarkup: data.sourceMarkup,
+    intrinsicWidth: data.intrinsicWidth,
+    intrinsicHeight: data.intrinsicHeight,
+    viewBox: data.viewBox,
+    capabilities: data.capabilities,
+    fileName: data.fileName,
+    ...(data.livePlayback ? { livePlayback: true } : {}),
+  };
+}
+
 /**
- * The BUILD half of the conversion: parse the SVG layer's original markup and
- * add the editable group (carrying the layer's transform / appearance and the
- * retained source) to the active composition. Leaves the SVG layer in place and
- * changes nothing else — the UI runs it off-document (`buildLayerFragment`) and
- * sends the result as `pasteLayers` + `deleteLayers` (B3z, svgLayerActions.ts).
- * Null when the layer is not an SVG or has no vector geometry the parser reaches.
+ * The BUILD half of the conversion: parse the SVG layer's original markup
+ * (`data`, the engine's `getSvgDocument`) and lay the editable group —
+ * carrying the layer's transform / appearance (`carry`, `mirrorCarry`) and
+ * the retained source — into `b`. The caller pastes it in the SVG layer's
+ * slot and deletes the layer, as ONE engine batch (B3z, svgLayerActions.ts).
+ * Null when the document has no vector geometry the parser reaches.
+ */
+export function buildSvgShapeGroupInto(
+  b: FragmentBuilder,
+  frame: InsertFrame,
+  data: SvgLayerData,
+  carry: CarriedTransform,
+): BuiltSvgShapes | null {
+  const shapes = parseSvgToShapes(data.sourceMarkup, {
+    maxDurationSeconds: frame.durationSeconds,
+    measureText: measureSvgText,
+    intersectPaths: intersectSvgPaths,
+  });
+  if (shapes.length === 0) return null;
+  const groupId = buildSvgIconGroup(b, frame, data.sourceMarkup, data.fileName, {
+    x: carry.x,
+    y: carry.y,
+    targetSize: Math.max(data.intrinsicWidth, data.intrinsicHeight),
+    shapes,
+  });
+  if (!groupId) return null;
+  applyCarryTo(b, groupId, carry);
+  // Retain the original on the group so Revert works and a future parser can
+  // re-run against untouched source. Opt-out honoured, though the cost is
+  // negligible next to any raster asset.
+  if (getRetainOriginalSvg()) {
+    // The fragment's own row (plain data, not a scene-graph view): replaced whole.
+    const row = b.row(groupId);
+    row.components = [...row.components, { id: `${groupId}_svgsrc`, type: SVG_COMPONENT, props: retainedSvgProps(data) }];
+  }
+  return { groupId, count: shapes.length, data };
+}
+
+/**
+ * The conversion against the PAGE REPLICA (run off-document): what the AI
+ * host's convert (core/ai/hostWrites.ts `convertSvgLayer`) still calls until
+ * it builds through {@link buildSvgShapeGroupInto} like the editor's verb.
  */
 export function buildSvgShapeGroup(nodeId: string): BuiltSvgShapes | null {
   const node = defaultSceneGraph.getNode(nodeId);
@@ -211,34 +299,24 @@ export function notifySvgConverted(data: SvgLayerData, count: number): void {
 
 /**
  * Revert to Original SVG, the BUILDER half: a converted group's retained
- * source inserted again as an SVG layer carrying the group's transform. Writes
- * the scratch document only — run it inside `buildLayerFragment` and send the
- * layer with the group's removal as ONE engine batch (svgLayerActions.ts
- * `revertSvgToLayer`). Null when the group retained no source or the
- * sanitizer refused it.
+ * source (`source`, the engine's `getSvgDocument` of the group) laid into `b`
+ * as an SVG layer carrying the group's transform (`carry`, `mirrorCarry`). The
+ * caller pastes it with the group's removal as ONE engine batch
+ * (svgLayerActions.ts `revertSvgToLayer`). Null when the sanitizer refused the
+ * markup.
  *
  * Only possible when the source was retained (§13) — which is why retention
  * defaults on: without it this is a one-way door, and "convert" is exactly the
  * kind of operation a user tries in order to see what it does.
  */
-export function buildRevertedSvgLayer(nodeId: string): string | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const retained = readRetainedSvgSource(node);
-  if (!retained) return null;
-  const carry = carryFrom(nodeId);
-  const id = insertSvgLayer(retained.markup, retained.fileName, { x: carry.x, y: carry.y });
-  if (!id) return null;
-  applyCarry(id, carry);
-  return id;
-}
-
-/** True when this node keeps an original SVG it could be reverted to. */
-export function canRevertToSvg(nodeId: string): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return false;
-  // An SVG layer is already the original — revert only means something for a
-  // group that was converted away from one.
-  if (readSvgLayer(node)) return false;
-  return readRetainedSvgSource(node) !== null;
+export function buildRevertedSvgLayerInto(
+  b: FragmentBuilder,
+  frame: InsertFrame,
+  source: { markup: string; fileName: string },
+  carry: CarriedTransform,
+): { id: string; warnings: string[] } | null {
+  const made = buildSvgLayer(b, frame, source.markup, source.fileName, { x: carry.x, y: carry.y });
+  if (!made) return null;
+  applyCarryTo(b, made.id, carry);
+  return made;
 }

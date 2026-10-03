@@ -14,7 +14,7 @@ import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import { engineIdle } from '@core/engine/engineInstance';
 import { edit } from '@core/engine/uiEdits';
 import { applyPresetValues, setLayerMatte } from './inspectorEdits';
-import { convertSvgToShapes } from './svgLayerActions';
+import { convertSvgToShapes, revertSvgToLayer } from './svgLayerActions';
 import { LAYER_SWITCHES, applyLayerSwitch } from './SelectionHeader';
 import { textPresetEdit } from '@layout/Text/textEdits';
 import { replaceFootageFromPath } from './MediaSection';
@@ -99,5 +99,13 @@ test('Convert SVG to Editable Shapes = pasteLayers + deleteLayers in one entry, 
   expect(groupId).not.toBeNull();
   expect(defaultSceneGraph.getNode(id)).toBeUndefined();
   expect(defaultSceneGraph.getChildren(groupId!).length).toBeGreaterThan(1);
+  // The group keeps the source: Revert puts an SVG layer back in its slot, one entry.
+  await engineIdle();
+  expect(documentMirror().layer(groupId!)?.svg).toBe('converted');
+  let backId: string | null = null;
+  await oneExactEntry('Revert to Original SVG', async () => { backId = await revertSvgToLayer(groupId!); });
+  expect(backId).not.toBeNull();
+  expect(defaultSceneGraph.getNode(groupId!)).toBeUndefined();
+  expect(readSvgLayer(defaultSceneGraph.getNode(backId!)!)!.sourceMarkup).toBe(svg);
 });
 

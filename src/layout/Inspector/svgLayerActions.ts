@@ -11,19 +11,21 @@ import type { ContextMenuItem } from '@stores/contextMenuStore';
 import { forgetSvgLayerSrc, type SvgLayerData } from '@core/svg/svgLayer';
 import { isAnimatedSvg, type SvgCapabilities } from '@core/svg/svgCapabilities';
 import { engineOwnsDocumentNow } from '@core/engine/engineOwnership';
-import type { Command, SvgDocument } from '@motion/engine-api';
+import type { Command, DocumentFragment, SvgDocument } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import {
-  buildSvgShapeGroup,
+  buildSvgShapeGroupInto,
+  buildRevertedSvgLayerInto,
   describeConversion,
-  buildRevertedSvgLayer,
+  mirrorCarry,
   notifyNoSvgGeometry,
   notifySvgConverted,
   type BuiltSvgShapes,
 } from '@core/svg/svgConvert';
-import { activeCompIdNow } from '@hooks/useMirror';
+import { notifySvgWarnings } from '@core/scene/layerBuilders';
+import { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import { insertFrame } from '@/engine-client/insertFragment';
 import { documentMirror } from '@stores/documentMirror';
-import { buildLayerFragment, type BuiltLayers } from '@core/engine/offDocument';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { useSelectionStore } from '@stores/selectionStore';
 import { childOrderOf } from '@core/mirror/layerTree';
@@ -102,34 +104,24 @@ export async function convertSvgToShapes(nodeId: string): Promise<string | null>
       return null;
     }
   }
-  const comp = activeCompIdNow() ?? 'comp_root';
-  let result: BuiltSvgShapes | null = null;
-  let built: BuiltLayers | null;
+  // Built on the client into a fragment (no page replica): the layer's own
+  // composition is the frame, its stored transform / appearance the carry.
+  const comp = layer.comp;
+  await documentMirror().loadTree(nodeId);
+  const b = new FragmentBuilder({ idPrefix: 'svgconv' });
+  let r: BuiltSvgShapes | null;
   try {
-    built = buildLayerFragment(comp, () => { result = buildSvgShapeGroup(nodeId); });
+    r = buildSvgShapeGroupInto(b, insertFrame(comp), data, mirrorCarry(nodeId));
   } catch (err) {
     reportEngineError('Convert SVG to Editable Shapes', { code: 'internal', message: err instanceof Error ? err.message : String(err) });
     return null;
   }
-  const r = result as BuiltSvgShapes | null;
+  const built = b.build();
   if (!built || !r) {
     notifyNoSvgGeometry(data.fileName);
     return null;
   }
-  // Replace in place (AE's conversions put the result where the source was):
-  // the SVG layer's stack slot, inside the same parent layer when it is nested.
-  const inComp = layer.comp === comp;
-  const slot = inComp ? (documentMirror().comp(comp)?.layers.indexOf(nodeId) ?? -1) : -1;
-  // The mirror names no comp root as a parent: `parent` is absent at the top.
-  const parent = inComp ? layer.parent : built.parent;
-  const paste = {
-    type: 'pasteLayers',
-    comp,
-    fragment: built.fragment,
-    index: slot >= 0 ? slot : built.index,
-    ...(parent ? { parent } : {}),
-  } as Command;
-  const res = await edit('Convert SVG to Editable Shapes', [paste, { type: 'deleteLayers', layers: [nodeId] }]);
+  const res = await edit('Convert SVG to Editable Shapes', [inPlacePaste(nodeId, built.fragment), { type: 'deleteLayers', layers: [nodeId] }]);
   if (!res.ok) return null;
   const groupId = (res.value[0] as { layers?: string[] } | undefined)?.layers?.[0] ?? null;
   forgetSvgLayerSrc(nodeId);
@@ -139,38 +131,56 @@ export async function convertSvgToShapes(nodeId: string): Promise<string | null>
 }
 
 /**
+ * A `pasteLayers` that puts a fragment where `layerId` is (AE's conversions put
+ * the result where the source was): its stack slot in its composition, inside
+ * the same parent layer when it is nested.
+ */
+function inPlacePaste(layerId: string, fragment: DocumentFragment): Command {
+  const m = documentMirror();
+  const layer = m.layer(layerId)!;
+  const slot = m.comp(layer.comp)?.layers.indexOf(layerId) ?? -1;
+  return {
+    type: 'pasteLayers',
+    comp: layer.comp,
+    fragment,
+    ...(slot >= 0 ? { index: slot } : {}),
+    // The mirror names no comp root as a parent: `parent` is absent at the top.
+    ...(layer.parent ? { parent: layer.parent } : {}),
+  } as Command;
+}
+
+/**
  * Revert to Original SVG — the mirror of `convertSvgToShapes`: the converted
- * group's retained source rebuilt off-document as an SVG layer carrying the
- * group's transform (`buildRevertedSvgLayer`), sent as ONE batch —
- * `pasteLayers` at the group's stack slot (inside the same parent layer when
- * nested), then `deleteLayers` of the group and its shapes. One undo entry.
- * Resolves to the SVG layer's id, or null.
+ * group's retained source (the engine's `getSvgDocument`) rebuilt on the
+ * client as an SVG layer carrying the group's transform
+ * (`buildRevertedSvgLayerInto`), sent as ONE batch — `pasteLayers` at the
+ * group's stack slot (inside the same parent layer when nested), then
+ * `deleteLayers` of the group and its shapes. One undo entry. Resolves to the
+ * SVG layer's id, or null.
  */
 export async function revertSvgToLayer(nodeId: string): Promise<string | null> {
   const label = 'Revert to Original SVG';
   const layer = documentMirror().layer(nodeId);
   if (!layer) return null;
-  const comp = layer.comp;
-  let built: BuiltLayers | null;
+  const res0 = await engine().query({ type: 'getSvgDocument', layer: nodeId });
+  const doc = res0.ok ? res0.value : null;
+  if (!doc || doc.role !== 'converted' || !doc.sourceMarkup) return null;
+  await documentMirror().loadTree(nodeId);
+  const b = new FragmentBuilder({ idPrefix: 'svgrev' });
+  let made: { id: string; warnings: string[] } | null;
   try {
-    built = buildLayerFragment(comp, () => { buildRevertedSvgLayer(nodeId); });
+    made = buildRevertedSvgLayerInto(b, insertFrame(layer.comp), { markup: doc.sourceMarkup, fileName: doc.fileName }, mirrorCarry(nodeId));
   } catch (err) {
     reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
     return null;
   }
-  if (!built) return null;
-  const slot = documentMirror().comp(comp)?.layers.indexOf(nodeId) ?? -1;
-  const paste = {
-    type: 'pasteLayers',
-    comp,
-    fragment: built.fragment,
-    index: slot >= 0 ? slot : built.index,
-    ...(layer.parent ? { parent: layer.parent } : {}),
-  } as Command;
-  const res = await edit(label, [paste, { type: 'deleteLayers', layers: subtreeOf(nodeId) }]);
+  const built = b.build();
+  if (!made || !built) return null;
+  const res = await edit(label, [inPlacePaste(nodeId, built.fragment), { type: 'deleteLayers', layers: subtreeOf(nodeId) }]);
   if (!res.ok) return null;
   const id = (res.value[0] as { layers?: string[] } | undefined)?.layers?.[0] ?? null;
   if (id) useSelectionStore.getState().set([id]);
+  notifySvgWarnings(doc.fileName, made.warnings);
   return id;
 }
 
