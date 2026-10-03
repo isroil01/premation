@@ -13,11 +13,12 @@
 import { render, screen, act, cleanup, fireEvent } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
+import { documentMirror } from '@stores/documentMirror';
 import { TransformSection } from './TransformSection';
 import { InspectorSelectionProvider } from './inspectorSelection';
 
@@ -59,21 +60,26 @@ async function scrub(xs: number[]): Promise<void> {
   pointer('pointerdown', 0, field());
   for (const x of xs) pointer('pointermove', x);
   pointer('pointerup', xs[xs.length - 1]!);
-  await act(async () => { await engineIdle(); });
+  await act(async () => { await settleEdits(); });
 }
 
 const sets = async (): Promise<number> => (await historyLabels()).filter((l) => l === 'Set Opacity').length;
 
-function renderRow(ids: string[]): void {
+async function renderRow(ids: string[]): Promise<void> {
   render(
     <InspectorSelectionProvider nodeIds={ids}>
       <TransformSection nodeId={ids[0]!} />
     </InspectorSelectionProvider>,
   );
+  // The rows draw once the layers' property trees land.
+  await act(async () => {
+    await documentMirror().loadTrees(ids);
+    await settleEdits();
+  });
 }
 
 test('a scrub of the Opacity field is ONE engine entry; undo/redo walk it exactly', async () => {
-  renderRow([s.A]);
+  await renderRow([s.A]);
   const start = (await opacityOf(s.A));
   await scrub([-10, -20, -30, -40, -50]);
   const after = (await opacityOf(s.A));
@@ -92,7 +98,7 @@ test('a scrub of the Opacity field is ONE engine entry; undo/redo walk it exactl
 });
 
 test('a typed value is one entry', async () => {
-  renderRow([s.A]);
+  await renderRow([s.A]);
   fireEvent.keyDown(field(), { key: 'Enter' });
   const input = screen.getByRole('textbox', { name: 'Opacity' });
   fireEvent.change(input, { target: { value: '25' } });
@@ -103,7 +109,7 @@ test('a typed value is one entry', async () => {
 });
 
 test('the stopwatch animates through setAnimated (one entry), and a scrub then keys at the playhead', async () => {
-  renderRow([s.A]);
+  await renderRow([s.A]);
   const stopwatch = screen.getAllByRole('button').find((b) => /animat/i.test(b.getAttribute('aria-label') ?? '') && /opacity/i.test(b.getAttribute('aria-label') ?? ''));
   expect(stopwatch).toBeDefined();
   await act(async () => { fireEvent.click(stopwatch!); await engineIdle(); });
@@ -115,7 +121,7 @@ test('the stopwatch animates through setAnimated (one entry), and a scrub then k
 });
 
 test('over a multi-selection a drag moves every layer, as one entry', async () => {
-  renderRow([s.A, s.B]);
+  await renderRow([s.A, s.B]);
   const a0 = (await opacityOf(s.A));
   const b0 = (await opacityOf(s.B));
   await scrub([-10, -20, -30]);

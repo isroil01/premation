@@ -5,9 +5,7 @@
 
 import { reorderSiblings, type StackAction } from '@core/scene/parenting';
 import { is3DEnabled } from '@core/scene/threeD';
-import { getNodeLayerTime } from '@core/scene/layerTime';
 import { LABEL_COLORS } from '@core/scene/labelColor';
-import { world2DAt } from '@core/scene/layerSpace';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
@@ -33,6 +31,13 @@ import {
 
 let h: Harness;
 let s: Scene;
+
+/** The layer's comp-space translation at 0 s (the engine's layer → comp matrix), as `e`/`f`. */
+async function world2DAt(id: string): Promise<{ e: number; f: number }> {
+  const r = await h.query({ type: 'getLayerTransforms', layers: [id], time: 0 });
+  const m = r.transforms[0]!.matrix;
+  return { e: m[12]!, f: m[13]! };
+}
 const COMP = 'comp_root';
 
 beforeEach(async () => {
@@ -136,8 +141,8 @@ describe('group / ungroup', () => {
   it('a selection across parents of ONE comp: gathered under the first layer’s parent, world pose kept — one entry', async () => {
     await h.run({ type: 'setProperty', prop: { layer: s.P, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 500, y: 400 } } });
     await h.run({ type: 'setParent', layers: [s.A], parent: s.P, keepWorldTransform: true });
-    const worldT = world2DAt(s.T, 0);
-    const worldA = world2DAt(s.A, 0);
+    const worldT = (await world2DAt(s.T));
+    const worldA = (await world2DAt(s.A));
     useSelectionStore.getState().set([s.A, s.T]);
     await roundTrip(async () => { expect(await groupSelectedLayersEdit()).toBe(true); }, 'Group Layers');
     const group = useSelectionStore.getState().ids[0]!;
@@ -145,10 +150,10 @@ describe('group / ungroup', () => {
     expect((await node(group)).parent).toBe(s.P);
     expect((await node(s.A)).parent).toBe(group);
     expect((await node(s.T)).parent).toBe(group);
-    expect(world2DAt(s.T, 0).e).toBeCloseTo(worldT.e, 6);
-    expect(world2DAt(s.T, 0).f).toBeCloseTo(worldT.f, 6);
-    expect(world2DAt(s.A, 0).e).toBeCloseTo(worldA.e, 6);
-    expect(world2DAt(s.A, 0).f).toBeCloseTo(worldA.f, 6);
+    expect((await world2DAt(s.T)).e).toBeCloseTo(worldT.e, 6);
+    expect((await world2DAt(s.T)).f).toBeCloseTo(worldT.f, 6);
+    expect((await world2DAt(s.A)).e).toBeCloseTo(worldA.e, 6);
+    expect((await world2DAt(s.A)).f).toBeCloseTo(worldA.f, 6);
   });
 
   it('a layer and its own parent: the group goes where the parent was, not inside it', async () => {
@@ -220,15 +225,15 @@ describe('switches and keys', () => {
 describe('footage time', () => {
   it('speed keeps the reversal; reverse; freeze; frame blending — one entry each', async () => {
     await roundTrip(() => setStretchEdit(s.V, 200, false), 'Time Stretch');
-    expect(getNodeLayerTime(s.V).stretch).toBe(200);
+    expect((await docView()).getNodeLayerTime(s.V).stretch).toBe(200);
     await roundTrip(() => timeReverseEdit(s.V), 'Time-Reverse Layer');
-    expect(getNodeLayerTime(s.V).reverse).toBe(true);
+    expect((await docView()).getNodeLayerTime(s.V).reverse).toBe(true);
     await setStretchEdit(s.V, 50, true);
-    expect(getNodeLayerTime(s.V).reverse).toBe(true);
-    expect(getNodeLayerTime(s.V).stretch).toBe(50);
+    expect((await docView()).getNodeLayerTime(s.V).reverse).toBe(true);
+    expect((await docView()).getNodeLayerTime(s.V).stretch).toBe(50);
     await roundTrip(() => freezeFrameEdit(s.V, 1), 'Freeze Frame');
-    expect(getNodeLayerTime(s.V).freeze).toBe(true);
+    expect((await docView()).getNodeLayerTime(s.V).freeze).toBe(true);
     await roundTrip(() => setFrameBlendEdit(s.V, 'pixelMotion'), 'Frame Blending');
-    expect(getNodeLayerTime(s.V).frameBlend).toBe('pixelMotion');
+    expect((await docView()).getNodeLayerTime(s.V).frameBlend).toBe('pixelMotion');
   });
 });

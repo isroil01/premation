@@ -10,12 +10,10 @@
  * drawing.
  */
 
-import { render, fireEvent, act, cleanup } from '@testing-library/react';
-import { defaultAnimation } from '@motion/animation';
+import { render, fireEvent, act, cleanup, waitFor } from '@testing-library/react';
 import { paramsOf, effectPropPath } from '@core/effects/effects';
-import { engineIdle } from '@core/engine/engineInstance';
-import { propRefForTrack, values } from '@core/engine/propRefs';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { values } from '@core/engine/propRefs';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits, trackRef } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -71,8 +69,9 @@ function handleAt(container: HTMLElement): [number, number] {
 /** Render, then let the mirror tree and the overlay geometry subscription land (B4). */
 async function renderOverlay(): Promise<ReturnType<typeof render>> {
   const r = render(<EffectHandleOverlay />);
-  await act(async () => { await engineIdle(); });
-  await act(async () => { await engineIdle(); });
+  await act(async () => { await settleEdits(); });
+  // The handles draw once a frame carries the layer's geometry.
+  await waitFor(() => expect(r.container.querySelector('[aria-label="Bulge Centre handle"]')).not.toBeNull());
   return r;
 }
 
@@ -82,7 +81,7 @@ async function dragBy(svg: Element, from: [number, number], steps: Array<[number
     for (const [dx, dy] of steps) fireEvent.pointerMove(svg, { clientX: from[0] + dx, clientY: from[1] + dy, pointerId: 1 });
     const [dx, dy] = steps[steps.length - 1]!;
     fireEvent.pointerUp(svg, { clientX: from[0] + dx, clientY: from[1] + dy, pointerId: 1 });
-    await engineIdle();
+    await settleEdits();
   });
 }
 
@@ -107,8 +106,8 @@ test('a handle drag writes the params — ONE "Move Bulge Centre" entry; undo re
 
 test('an animated param keys at the playhead; the static one takes the value', async () => {
   const track = effectPropPath(FX, 'centerX');
-  const ref = propRefForTrack(ID, track)!.ref;
-  await h.run({ type: 'addKeyframes', keys: [{ prop: ref, time: 0, value: values.scalar(0), spatialIn: [], spatialOut: [] }] });
+  const ref = await trackRef(ID, track);
+  await h.run({ type: 'addKeyframes', keys: [{ prop: { layer: ID, path: ref.path }, time: 0, value: values.scalar(0), spatialIn: [], spatialOut: [] }] });
   await clearHistory();
   const { container } = await renderOverlay();
   const svg = container.querySelector('svg')!;
@@ -116,7 +115,7 @@ test('an animated param keys at the playhead; the static one takes the value', a
 
   await dragBy(svg, handleAt(container), [[40, 15]]);
 
-  expect(defaultAnimation.sample(ID, track, 0)).toBeCloseTo(40, 6);
+  expect((await docView()).getTrackKeyframes(ID, track)?.map((k) => k.value)).toEqual([40]);
   expect((await docView()).isAnimated(ID, effectPropPath(FX, 'centerY'))).toBe(false);
   expect((await centre()).y).toBeCloseTo(startY + 15, 6);
   expect((await historyLabels())).toEqual(['Move Bulge Centre']);

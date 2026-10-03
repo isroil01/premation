@@ -9,8 +9,6 @@ import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appE
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
-import { graph as docGraph } from '@core/engine/doc';
-import { catalogFor, readStatic } from '@core/engine/props';
 import { values } from '@core/engine/propRefs';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
@@ -39,8 +37,10 @@ async function addShape(name: string, x: number, y: number): Promise<string> {
   return layer;
 }
 
-const position = (id: string): unknown => {
-  const v = readStatic(id, catalogFor(id).byPath.get('transform/position')!);
+/** The layer's stored Position, as the engine reports it. */
+const position = async (id: string): Promise<unknown> => {
+  const r = await h.query({ type: 'getPropertyValues', props: [{ layer: id, path: 'transform/position' }], time: 0, evaluated: false });
+  const v = r.values[0]!.value;
   return v.kind === 'vec2' ? v.value : v;
 };
 
@@ -58,10 +58,10 @@ describe('Copy → Paste of layers', () => {
     const added = (await docView()).layerIdsOfComp('comp_root').filter((id) => !layersBefore.includes(id));
     expect(added).toHaveLength(1);
     const copy = added[0]!;
-    expect(docGraph.getNode(copy)?.name).toBe('Box copy');
-    expect(position(copy)).toEqual({ x: 120, y: 70 });
+    expect((await docView()).getNode(copy)?.name).toBe('Box copy');
+    expect(await position(copy)).toEqual({ x: 120, y: 70 });
     // The original is untouched, and the copy is what is selected.
-    expect(position(a)).toEqual({ x: 100, y: 50 });
+    expect(await position(a)).toEqual({ x: 100, y: 50 });
     expect(useSelectionStore.getState().ids).toEqual([copy]);
     expect((await historyLabels()).slice(-1)).toEqual(['Paste']);
 
@@ -79,7 +79,8 @@ describe('Copy → Paste of layers', () => {
 
     await pasteEdit();
     await engineIdle();
-    const names = (await docView()).layerIdsOfComp('comp_root').map((id) => docGraph.getNode(id)?.name);
+    const v = await docView();
+    const names = v.layerIdsOfComp('comp_root').map((id) => v.getNode(id)?.name);
     expect(names).toContain('Box copy');
   });
 
@@ -102,7 +103,8 @@ describe('Cut of layers', () => {
 
     await pasteEdit();
     await engineIdle();
-    const names = (await docView()).layerIdsOfComp('comp_root').map((id) => docGraph.getNode(id)?.name);
+    const v = await docView();
+    const names = v.layerIdsOfComp('comp_root').map((id) => v.getNode(id)?.name);
     expect(names).toContain('Box copy');
   });
 });

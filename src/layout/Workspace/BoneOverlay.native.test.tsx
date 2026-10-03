@@ -8,13 +8,12 @@
 
 import { render, act, fireEvent } from '@testing-library/react';
 import { BoneOverlay } from './BoneOverlay';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { clearRestMeshCache } from '@core/rig/puppet';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { isWeightPaintEmpty } from '@core/rig/weightPaint';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { engineIdle } from '@core/engine/engineInstance';
 import { rigTestLayer } from './__testHelpers__/rigLayer';
@@ -191,14 +190,15 @@ describe('bone authoring', () => {
 });
 
 describe('IK', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     useUIStore.getState().setBoneRigMode('pose');
-    defaultSceneGraph.setSkeleton(L, {
+    await h.run({ type: 'setProperty', prop: { layer: L, path: 'layer/skeleton' }, value: { kind: 'json', value: JSON.stringify({
       bones: TWO_BONES.map((b) => ({ ...b })),
       ikTargets: [{ boneId: 'fore', x: 30, y: 30, enabled: true, pole: { x: 0, y: -80 } }],
       meshDensity: 6,
       meshExpansion: 0,
-    });
+    }) } });
+    await clearHistory();
   });
 
   it('renders the IK target crosshair and the pole handle', async () => {

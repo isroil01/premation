@@ -16,6 +16,7 @@ import { documentMirror, resetDocumentMirror } from '@stores/documentMirror';
 import { bindEngineDocumentStores } from '@stores/engineDocumentStores';
 import { bindEngineComps, bindEngineItems } from '@stores/engineItemsView';
 import { MAIN_VIEWPORT, publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
+import { settleToolEdits } from '@core/workspace/viewportGesture';
 import { edit } from '../uiEdits';
 import { propRefForTrack } from '../propRefs';
 import { bootEngine, engine, engineIdle, shutdownEngine } from '../engineInstance';
@@ -218,6 +219,19 @@ export async function trackRef(layer: string, track: string): Promise<{ path: st
 /** Whether the engine has a gesture open (the history's `gestureOpen`). */
 export async function gestureOpen(): Promise<boolean> {
   return unwrap(await engine().query({ type: 'getHistory' })).gestureOpen;
+}
+
+/**
+ * Everything the UI sent has landed: tool gestures closed (settleToolEdits),
+ * the engine idle, the mirror caught up. Over the pipe a gesture closes a few
+ * round trips after the pointer-up that ended it.
+ */
+export async function settleEdits(): Promise<void> {
+  for (let i = 0; i < 2; i++) {
+    await settleToolEdits();
+    await engineIdle();
+    await documentMirror().whenIdle();
+  }
 }
 
 /** Empty the engine's undo stack (a test's setup is not part of what it measures). */
