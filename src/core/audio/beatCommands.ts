@@ -18,7 +18,7 @@ import { useUIStore } from '@stores/uiStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
 import { planChoreography, writeChoreography, type ChoreographyRequest } from '@core/animation/choreography';
 import { choreographyEngineEdit } from '@core/animation/choreographyEdits';
 import { hash32 } from '@core/animation/entranceArchetypes';
@@ -40,7 +40,8 @@ function playhead(): number {
 
 /** The selection, minus anything that has since been deleted. */
 function targets(): string[] {
-  return useSelectionStore.getState().ids.filter((id) => defaultSceneGraph.getNode(id) !== undefined);
+  const m = documentMirror();
+  return useSelectionStore.getState().ids.filter((id) => m.hasLayer(id));
 }
 
 interface EngineBeats {
@@ -134,9 +135,9 @@ async function animateOnBeats(phase: 'in' | 'out', every: number): Promise<void>
   // The engine's document (choreographyEdits.ts): planned off-document, sent
   // as one gesture — the installs (a blur, a text animator, the 3D switch) and
   // the keyframes.
-  const result = await choreographyEngineEdit(phase === 'in' ? 'Animate in' : 'Animate out', nodeIds, (installs) => {
-    const plan = planChoreography({ ...req, ...(installs ? { installs } : {}) });
-    return { installs: plan.installs, layers: plan.perLayer.length, keyframes: writeChoreography(plan) };
+  const result = await choreographyEngineEdit(phase === 'in' ? 'Animate in' : 'Animate out', nodeIds, (env) => {
+    const plan = planChoreography(req, env);
+    return { installs: plan.installs, needs: plan.needs, layers: plan.perLayer.length, keyframes: writeChoreography(plan, env) };
   });
   if (!result || result.layers === 0) return;
 

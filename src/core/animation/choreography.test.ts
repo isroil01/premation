@@ -9,10 +9,16 @@
  * right resting positions and the right times, and commits the result once.
  */
 
-import { animateLayers, staggerOffsets, CHOREOGRAPHY_ARCHETYPES } from './choreography';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getNodeEffects } from '@core/effects/effects';
-import { readAnimatorData } from '@core/text/textAnimators';
+import {
+  animateLayers as animateWith,
+  planChoreography,
+  staggerOffsets,
+  CHOREOGRAPHY_ARCHETYPES,
+  type ChoreoEnv,
+  type ChoreoFacts,
+  type ChoreographyRequest,
+} from './choreography';
+import type { SceneKind } from '@core/scene/sceneKind';
 import type { AnimationEngine } from '@motion/animation';
 
 interface Written {
@@ -26,13 +32,12 @@ interface Written {
 /**
  * An engine stand-in that records writes and can answer sampled values.
  *
- * `sample` returns undefined by default so the resting position resolves the
- * way it does for a plain static layer — through the node's own props — which
- * is the common case. Pass `sampled` to exercise the other path: a layer that
- * is ALREADY animated, whose resting value is whatever the engine evaluates at
- * that time rather than the stale prop.
+ * `sample` answers the layer's resting x / y (100, 200) by default — what a
+ * plain static layer evaluates to. Pass `sampled` to exercise a layer that is
+ * ALREADY animated, whose resting value is whatever the engine evaluates at
+ * that time.
  */
-function recorder(sampled?: Record<string, number>): {
+function recorder(sampled: Record<string, number> = { x: 100, y: 200 }): {
   engine: AnimationEngine;
   written: Written[];
   beziers: Array<{ prop: string; t: number }>;
@@ -46,32 +51,37 @@ function recorder(sampled?: Record<string, number>): {
     setBezier: (_nodeId: string, prop: string, t: number) => {
       beziers.push({ prop, t });
     },
-    sample: (_nodeId: string, prop: string) => sampled?.[prop],
+    sample: (_nodeId: string, prop: string) => sampled[prop],
     tracksFor: () => [],
   } as unknown as AnimationEngine;
   return { engine, written, beziers };
 }
 
-function addLayer(id: string, x = 100, y = 200): void {
-  defaultSceneGraph.addChild('comp_root', {
-    id,
-    name: id,
-    parent: 'comp_root',
-    children: [],
-    transform: { position: { x, y }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true,
-    locked: false,
-    components: [{ id: `${id}_t`, type: 'Transform', props: { __kind: 'solid', x, y, width: 100, height: 100 } }],
-  } as never);
+/** The document the planner reads (`ChoreoFacts`): what the mirror would answer. */
+interface FakeLayer { kind: SceneKind; threeD?: boolean; effects?: Array<{ id: string; type: string }>; animators?: number }
+let doc: Map<string, FakeLayer>;
+
+const facts: ChoreoFacts = {
+  kind: (id) => doc.get(id)?.kind ?? null,
+  name: (id) => id,
+  threeD: (id) => doc.get(id)?.threeD === true,
+  effects: (id) => doc.get(id)?.effects ?? [],
+  animatorCount: (id) => doc.get(id)?.animators ?? 0,
+};
+
+type Req = ChoreographyRequest & { engine: AnimationEngine };
+
+/** `animateLayers` on a recorder, the keyframe axis = comp time. */
+function animateLayers(req: Req): ReturnType<typeof animateWith> {
+  const { engine, ...rest } = req;
+  const env: ChoreoEnv = { engine, facts, keyTime: (_id, t) => t };
+  return animateWith(rest, env);
 }
 
 const LAYERS = ['l1', 'l2', 'l3', 'l4'];
 
 beforeEach(() => {
-  for (const id of [...LAYERS, 'gone']) {
-    if (defaultSceneGraph.getNode(id)) defaultSceneGraph.removeNode?.(id);
-  }
-  for (const id of LAYERS) addLayer(id);
+  doc = new Map(LAYERS.map((id) => [id, { kind: 'shape' as SceneKind }]));
 });
 
 describe('animateLayers', () => {
@@ -343,27 +353,12 @@ describe('the motion feel is reachable', () => {
 describe('the two structural archetypes', () => {
   const TEXT = 'text_1';
 
-  /** A text layer — `hasTextComponent` looks for a component of type 'Text'. */
-  function addTextLayer(): void {
-    defaultSceneGraph.addChild('comp_root', {
-      id: TEXT,
-      name: TEXT,
-      parent: 'comp_root',
-      children: [],
-      transform: { position: { x: 100, y: 200 }, rotation: 0, scale: { x: 1, y: 1 } },
-      visible: true,
-      locked: false,
-      components: [
-        { id: `${TEXT}_t`, type: 'Transform', props: { __kind: 'text', x: 100, y: 200 } },
-        { id: `${TEXT}_x`, type: 'Text', props: { text: 'HELLO' } },
-      ],
-    } as never);
-  }
-
   beforeEach(() => {
-    if (defaultSceneGraph.getNode(TEXT)) defaultSceneGraph.removeNode?.(TEXT);
-    addTextLayer();
+    doc.set(TEXT, { kind: 'text' });
   });
+
+  const plan = (req: Omit<ChoreographyRequest, 'atCompTime' | 'phase'> & { phase?: 'in' | 'out' }) =>
+    planChoreography({ atCompTime: 0, phase: 'in', ...req }, { engine: recorder().engine, facts });
 
   it('never gives a non-text layer a character cascade', () => {
     // It sweeps a selector across characters. On a solid there is nothing to
@@ -378,37 +373,48 @@ describe('the two structural archetypes', () => {
     expect(seen.size).toBeGreaterThan(1);
   });
 
-  it('installs a blur and animates its amount', () => {
+  it('asks for a blur with a known id and animates its amount', () => {
+    const p = plan({ nodeIds: ['l1'], archetype: 'blur_resolve' });
+    expect(p.needs.effects).toEqual([{ layer: 'l1', id: 'choreo_blur', type: 'blur' }]);
+    expect(p.installs.l1).toEqual({ effectId: 'choreo_blur' });
     const { engine, written } = recorder();
     animateLayers({ nodeIds: ['l1'], atCompTime: 0, phase: 'in', engine, archetype: 'blur_resolve' });
-
-    const blur = getNodeEffects('l1').find((e) => e.type === 'blur');
-    expect(blur).toBeDefined();
     // `effect.<id>.amount` is the effect's own amount.
-    const track = written.filter((w) => w.prop === `effect.${blur!.id}.amount`).sort((a, b) => a.t - b.t);
+    const track = written.filter((w) => w.prop === 'effect.choreo_blur.amount').sort((a, b) => a.t - b.t);
     expect(track.length).toBeGreaterThan(1);
     expect(track[0]!.value).toBeGreaterThan(track[track.length - 1]!.value);
     expect(track[track.length - 1]!.value).toBe(0);
   });
 
-  it('reuses the blur it already added instead of stacking another', () => {
+  it('reuses a blur the layer already has instead of stacking another', () => {
     // Pressing Animate In twice must not leave the layer with two blurs.
-    animateLayers({ nodeIds: ['l1'], atCompTime: 0, phase: 'in', engine: recorder().engine, archetype: 'blur_resolve' });
-    animateLayers({ nodeIds: ['l1'], atCompTime: 0, phase: 'in', engine: recorder().engine, archetype: 'blur_resolve' });
-    expect(getNodeEffects('l1').filter((e) => e.type === 'blur')).toHaveLength(1);
+    doc.set('l1', { kind: 'shape', effects: [{ id: 'fx_3', type: 'blur' }] });
+    const p = plan({ nodeIds: ['l1'], archetype: 'blur_resolve' });
+    expect(p.needs.effects).toEqual([]);
+    expect(p.installs.l1).toEqual({ effectId: 'fx_3' });
   });
 
-  it('installs a text animator and sweeps its selector', () => {
+  it('picks a free id when choreo_blur is taken by another effect', () => {
+    doc.set('l1', { kind: 'shape', effects: [{ id: 'choreo_blur', type: 'glow' }] });
+    expect(plan({ nodeIds: ['l1'], archetype: 'blur_resolve' }).needs.effects[0]!.id).toBe('choreo_blur_2');
+  });
+
+  it('asks for a text animator and sweeps its selector', () => {
+    doc.set(TEXT, { kind: 'text', animators: 2 });
+    const p = plan({ nodeIds: [TEXT], archetype: 'char_cascade' });
+    expect(p.needs.animators).toEqual([{ layer: TEXT, index: 2, reuse: false }]);
     const { engine, written } = recorder();
     animateLayers({ nodeIds: [TEXT], atCompTime: 0, phase: 'in', engine, archetype: 'char_cascade' });
-
-    const animators = readAnimatorData(defaultSceneGraph.getNode(TEXT)!);
-    expect(animators.length).toBeGreaterThan(0);
-    const sweep = written.filter((w) => w.prop.startsWith('ta.') && w.prop.endsWith('.offset'))
-      .sort((a, b) => a.t - b.t);
+    const sweep = written.filter((w) => w.prop === 'ta.2.offset').sort((a, b) => a.t - b.t);
     expect(sweep).toHaveLength(2);
     expect(sweep[0]!.value).toBe(0);
     expect(sweep[1]!.value).toBe(100);
+  });
+
+  it('re-uses the animator a previous run added', () => {
+    doc.set(TEXT, { kind: 'text', animators: 2 });
+    const p = plan({ nodeIds: [TEXT], archetype: 'char_cascade', installs: { [TEXT]: { animatorIndex: 0 } } });
+    expect(p.needs.animators).toEqual([{ layer: TEXT, index: 0, reuse: true }]);
   });
 
   it('offers the cascade to a text layer', () => {
@@ -425,9 +431,22 @@ describe('the two structural archetypes', () => {
     // exit resolves INTO focus while the layer leaves.
     const { engine, written } = recorder();
     animateLayers({ nodeIds: ['l1'], atCompTime: 0, phase: 'out', engine, archetype: 'blur_resolve' });
-    const blur = getNodeEffects('l1').find((e) => e.type === 'blur')!;
-    const track = written.filter((w) => w.prop === `effect.${blur.id}.amount`).sort((a, b) => a.t - b.t);
+    const track = written.filter((w) => w.prop === 'effect.choreo_blur.amount').sort((a, b) => a.t - b.t);
     expect(track[0]!.value).toBe(0);
     expect(track[track.length - 1]!.value).toBeGreaterThan(0);
+  });
+
+  it('asks for the 3D switch only where a tilt needs it', () => {
+    const tilt = (kind: SceneKind, threeD: boolean) => {
+      doc.set('l1', { kind, threeD });
+      const p = plan({ nodeIds: ['l1'], archetype: 'rise' });
+      return p.perLayer[0]!.plans.some((x) => ['rotationX', 'rotationY', 'z'].includes(x.prop)) ? p.needs.threeD : null;
+    };
+    const asked = tilt('shape', false);
+    if (asked !== null) {
+      expect(asked).toEqual(['l1']);
+      expect(tilt('shape', true)).toEqual([]);
+      expect(tilt('camera', false)).toEqual([]);
+    }
   });
 });

@@ -187,9 +187,9 @@ maybe('choreography with the C++ engine as the owner', () => {
     // The beat grid is the audioAnalysis job's; the timing it hands the
     // planner is start times — given here directly.
     const beats = [0.5, 1, 1.5];
-    const result = await choreographyEngineEdit('Animate in', layers, (installs) => {
-      const plan = planChoreography({ nodeIds: layers, atCompTime: beats[0]!, phase: 'in', startTimes: beats, fps: 30, seed: 9, ...(installs ? { installs } : {}) });
-      return { installs: plan.installs, layers: plan.perLayer.length, keyframes: writeChoreography(plan) };
+    const result = await choreographyEngineEdit('Animate in', layers, (env) => {
+      const plan = planChoreography({ nodeIds: layers, atCompTime: beats[0]!, phase: 'in', startTimes: beats, fps: 30, seed: 9 }, env);
+      return { installs: plan.installs, needs: plan.needs, layers: plan.perLayer.length, keyframes: writeChoreography(plan, env) };
     });
     await settle();
     expect(result?.layers).toBe(3);

@@ -21,6 +21,8 @@ import { defaultAnimation, type AnimationEngine, type Keyframe, type PropPath } 
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { getSettingsManager } from '@core/services/coreServices';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror, hasDocumentMirror } from '@stores/documentMirror';
+import { storedStaticNumber } from '@core/mirror/trackIndex';
 import { is3DEnabled, set3DEnabled, THREE_D_PROPS } from '@core/scene/threeD';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { getNodeEffects, writeNodeEffects, type Effect, type EffectParams, type EffectType } from '@core/effects/effects';
@@ -219,22 +221,17 @@ export function captureAnimation(
 }
 
 /** The layer's current value for a property: sampled animation first, then the
- *  base scene prop (searched across the node's components, threeD.ts-style). */
+ *  STATIC value the layer stores for it (stored units; read on the document
+ *  mirror — its property tree must be loaded, core/engine/memberEdits.ts). */
 export function nodeBaseValue(
   nodeId: string,
   prop: PropPath,
   atTime: number,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): number | undefined {
   const sampled = engine.sample(nodeId, prop, atTime);
   if (sampled !== undefined) return sampled;
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return undefined;
-  for (const c of node.components) {
-    const v = (c.props as Record<string, unknown>)[prop];
-    if (typeof v === 'number') return v;
-  }
-  return undefined;
+  return hasDocumentMirror() ? storedStaticNumber(documentMirror().tree(nodeId), prop) : undefined;
 }
 
 /** Apply preset tracks to a node at `atTime`, as one undoable command.

@@ -29,19 +29,10 @@
  * in for the other.
  */
 
-import { defaultAnimation, type AnimationEngine, type Keyframe, type PropPath } from '@motion/animation';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { is3DEnabled, set3DEnabled, THREE_D_PROPS } from '@core/scene/threeD';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { addEffect, effectPropPath, getNodeEffects } from '@core/effects/effects';
-import {
-  addTextAnimator,
-  hasTextComponent,
-  readAnimatorData,
-  updateAnimator,
-} from '@core/text/textAnimators';
-import { runAnimEdit } from './animationCommands';
+import type { AnimationEngine, Keyframe, PropPath } from '@motion/animation';
+import { THREE_D_PROPS } from '@core/scene/threeD';
+import type { SceneKind } from '@core/scene/sceneKind';
+import { effectPropPath } from '@core/effects/effects';
 import { nodeBaseValue } from './animationPresets';
 import type { EasePresetId } from './easePresets';
 import { PHYSICS, type Bezier } from './motionCurves';
@@ -83,9 +74,8 @@ export const CHOREOGRAPHY_ARCHETYPES = [
  * a fallback would quietly over-represent that fallback, which is the
  * everything-looks-the-same problem the archetypes exist to solve.
  */
-function archetypesFor(nodeId: string): readonly EntranceArchetype[] {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (node && hasTextComponent(node)) return CHOREOGRAPHY_ARCHETYPES;
+function archetypesFor(nodeId: string, facts: ChoreoFacts): readonly EntranceArchetype[] {
+  if (facts.kind(nodeId) === 'text') return CHOREOGRAPHY_ARCHETYPES;
   return CHOREOGRAPHY_ARCHETYPES.filter((a) => a !== 'char_cascade');
 }
 
@@ -101,9 +91,46 @@ function archetypesFor(nodeId: string): readonly EntranceArchetype[] {
  * allowed set at all, so passing `generic` for everything made the cascade
  * unreachable even on text layers that could perform it.
  */
-function roleFor(nodeId: string): 'title' | 'generic' {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node && hasTextComponent(node) ? 'title' : 'generic';
+function roleFor(nodeId: string, facts: ChoreoFacts): 'title' | 'generic' {
+  return facts.kind(nodeId) === 'text' ? 'title' : 'generic';
+}
+
+/**
+ * What the planner reads of the document — the layers' facts, never their
+ * stored nodes (core/animation/choreographyEdits.ts answers from the mirror).
+ */
+export interface ChoreoFacts {
+  /** The layer's editor kind; null when there is no such layer. */
+  kind(nodeId: string): SceneKind | null;
+  name(nodeId: string): string;
+  /** Its 3D switch. */
+  threeD(nodeId: string): boolean;
+  /** Its effects, stack order (`type` = the effect's registry type). */
+  effects(nodeId: string): ReadonlyArray<{ id: string; type: string }>;
+  /** How many text animators it has. */
+  animatorCount(nodeId: string): number;
+}
+
+/** Where a choreography runs: keyframes on `engine`, the document read through `facts`. */
+export interface ChoreoEnv {
+  engine: AnimationEngine;
+  facts: ChoreoFacts;
+  /** Composition seconds → the layer's keyframe axis (a trimmed or retimed clip maps the two differently). */
+  keyTime(nodeId: string, compSeconds: number): number;
+}
+
+/**
+ * The STRUCTURAL changes a plan needs before its keyframes mean anything —
+ * performed by the caller as engine commands (choreographyEdits.ts), never by
+ * the planner.
+ */
+export interface ChoreoNeeds {
+  /** A blur effect to add, with the caller-chosen id its keyframes already use. */
+  effects: Array<{ layer: string; id: string; type: string }>;
+  /** The char_cascade text animator at `index` (appended when `reuse` is false; re-set when true). */
+  animators: Array<{ layer: string; index: number; reuse: boolean }>;
+  /** Layers whose 3D switch must be on. */
+  threeD: string[];
 }
 
 export type ChoreographyFeel = 'snappy' | 'smooth' | 'bouncy';
@@ -194,7 +221,6 @@ export interface ChoreographyRequest {
    * re-apply appends another text animator to the same layer.
    */
   installs?: Readonly<Record<string, ChoreoInstall>>;
-  engine?: AnimationEngine;
 }
 
 /**
@@ -433,15 +459,15 @@ export function planStagger(
 export function staggerLayersFor(
   nodeIds: readonly string[],
   atCompTime: number,
-  engine: AnimationEngine = defaultAnimation,
+  env: Pick<ChoreoEnv, 'engine' | 'facts'>,
 ): StaggerLayer[] {
+  const { engine, facts } = env;
   const out: StaggerLayer[] = [];
   for (const nodeId of nodeIds) {
-    const node = defaultSceneGraph.getNode(nodeId);
-    if (!node) continue;
+    if (facts.kind(nodeId) === null) continue;
     out.push({
       nodeId,
-      name: node.name || nodeId,
+      name: facts.name(nodeId) || nodeId,
       x: nodeBaseValue(nodeId, 'x', atCompTime, engine) ?? 0,
       y: nodeBaseValue(nodeId, 'y', atCompTime, engine) ?? 0,
     });
@@ -490,7 +516,7 @@ export interface StaticRestore {
  */
 export function staticsToRestore(
   captured: readonly CapturedTrack[],
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): StaticRestore[] {
   const out: StaticRestore[] = [];
   for (const c of captured) {
@@ -509,7 +535,7 @@ export function staticsToRestore(
  */
 export function captureTracks(
   refs: readonly TrackRef[],
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): CapturedTrack[] {
   const seen = new Set<string>();
   const out: CapturedTrack[] = [];
@@ -544,7 +570,7 @@ export function mergeCaptures(
 /** Put every captured track back exactly. Caller owns the undo entry. */
 export function restoreTracks(
   captured: readonly CapturedTrack[],
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): void {
   for (const c of captured) {
     engine.setTrackKeyframes(c.nodeId, c.prop, c.keyframes ? c.keyframes.map((k) => ({ ...k })) : null);
@@ -554,7 +580,7 @@ export function restoreTracks(
 /** Every track a node currently animates — what a re-stagger will move. */
 export function nodeTrackRefs(
   nodeId: string,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): TrackRef[] {
   return engine.tracksFor(nodeId).map((t) => ({ nodeId, prop: t.prop }));
 }
@@ -569,7 +595,7 @@ export function nodeTrackRefs(
  */
 export function shiftLayerTracks(
   entries: readonly { nodeId: string; deltaSec: number }[],
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): number {
   let moved = 0;
   for (const { nodeId, deltaSec } of entries) {
@@ -613,21 +639,25 @@ function installFor(
   start: number,
   dur: number,
   prior: ChoreoInstall | undefined,
+  facts: ChoreoFacts,
+  needs: ChoreoNeeds,
 ): { plans: EntranceTrackPlan[]; install: ChoreoInstall } {
   if (archetype === 'blur_resolve') {
     // Reuse a blur the layer already has rather than stacking a second one on
     // every re-run — pressing Animate In twice should not leave two blurs. The
     // recorded id wins so a re-apply keeps writing to the same effect even on a
     // layer that has since gained others.
-    const effects = getNodeEffects(nodeId);
+    const effects = facts.effects(nodeId);
     let effectId = effects.find((e) => e.id === prior?.effectId)?.id
       ?? effects.find((e) => e.type === 'blur')?.id;
     if (!effectId) {
-      const before = new Set(effects.map((e) => e.id));
-      addEffect(nodeId, 'blur');
-      effectId = getNodeEffects(nodeId).find((e) => !before.has(e.id))?.id;
+      // A caller-chosen id (addEffect `id`), so the keyframe path is known
+      // before the engine has added the effect.
+      const taken = new Set(effects.map((e) => e.id));
+      effectId = 'choreo_blur';
+      for (let n = 2; taken.has(effectId); n++) effectId = `choreo_blur_${n}`;
+      needs.effects.push({ layer: nodeId, id: effectId, type: 'blur' });
     }
-    if (!effectId) return { plans: [], install: {} };
     // The effect's own amount by its param key (`effect.<id>.amount`, the
     // document property `effects/<id>/amount`): the keyless legacy track is
     // not an addressable property, so the engine would never receive it.
@@ -638,21 +668,16 @@ function installFor(
   }
 
   if (archetype === 'char_cascade') {
-    const node = defaultSceneGraph.getNode(nodeId);
-    const existing = node ? readAnimatorData(node).length : 0;
+    const existing = facts.animatorCount(nodeId);
     // A re-apply re-uses the animator the first apply added. Appending a fresh
     // one each time would leave the layer wearing every rehearsal at once, and
     // no keyframe restore would ever remove them.
-    const reuse = prior?.animatorIndex !== undefined && prior.animatorIndex < existing
-      ? prior.animatorIndex
-      : -1;
-    const index = reuse >= 0 ? reuse : addTextAnimator(nodeId);
-    if (index < 0) return { plans: [], install: {} };
+    const reuse = prior?.animatorIndex !== undefined && prior.animatorIndex < existing;
+    const index = reuse ? prior.animatorIndex! : existing;
     // Covered glyphs start invisible, low and small; sweeping the selector
-    // window off the end of the string reveals them left to right.
-    updateAnimator(nodeId, index, {
-      basedOn: 'characters', shape: 'rampUp', start: 0, end: 100, opacity: 0, y: 16, scale: 88,
-    });
+    // window off the end of the string reveals them left to right
+    // (choreographyEdits.ts CASCADE_ANIMATOR).
+    needs.animators.push({ layer: nodeId, index, reuse });
     return {
       plans: [{
         prop: `ta.${index}.offset`,
@@ -666,15 +691,13 @@ function installFor(
 }
 
 /** Layers whose entrance tilts in 3D need the layer's 3D switch on to render. */
-function enable3DIfNeeded(nodeId: string, plans: readonly EntranceTrackPlan[]): void {
+function needs3D(nodeId: string, plans: readonly EntranceTrackPlan[], facts: ChoreoFacts, needs: ChoreoNeeds): void {
   if (!plans.some((p) => (THREE_D_PROPS as readonly string[]).includes(p.prop))) return;
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const kind = readNodeKind(node);
+  const kind = facts.kind(nodeId);
   // Cameras and lights read their depth props directly — the switch is not
   // theirs to flip.
-  if (kind === 'camera' || kind === 'light') return;
-  if (!is3DEnabled(node)) set3DEnabled(nodeId, true);
+  if (kind === null || kind === 'camera' || kind === 'light') return;
+  if (!facts.threeD(nodeId)) needs.threeD.push(nodeId);
 }
 
 /**
@@ -697,11 +720,13 @@ export interface ChoreographyPlan {
   readonly refs: TrackRef[];
   /** Structural installs used, per node, for the next re-apply to reuse. */
   readonly installs: Record<string, ChoreoInstall>;
+  /** What the caller must install before the keyframes are sent. */
+  readonly needs: ChoreoNeeds;
 }
 
-const EMPTY_PLAN: ChoreographyPlan = {
-  perLayer: [], archetypes: [], offsets: [], durationSec: 0, refs: [], installs: {},
-};
+const emptyPlan = (): ChoreographyPlan => ({
+  perLayer: [], archetypes: [], offsets: [], durationSec: 0, refs: [], installs: {}, needs: { effects: [], animators: [], threeD: [] },
+});
 
 /**
  * Choose the entrances, the resting positions and the times — and perform the
@@ -710,14 +735,14 @@ const EMPTY_PLAN: ChoreographyPlan = {
  *
  * Writes no keyframes. `writeChoreography` does that.
  */
-export function planChoreography(req: ChoreographyRequest): ChoreographyPlan {
-  const engine = req.engine ?? defaultAnimation;
+export function planChoreography(req: ChoreographyRequest, env: Pick<ChoreoEnv, 'engine' | 'facts'>): ChoreographyPlan {
+  const { engine, facts } = env;
   const feel = FEELS[req.feel ?? 'smooth'];
   const seed = req.seed ?? 1;
   const curve = req.curve ?? feel.curve;
 
-  const ids = req.nodeIds.filter((id) => defaultSceneGraph.getNode(id) !== undefined);
-  if (ids.length === 0) return EMPTY_PLAN;
+  const ids = req.nodeIds.filter((id) => facts.kind(id) !== null);
+  if (ids.length === 0) return emptyPlan();
 
   const fps = req.fps && req.fps > 0 ? req.fps : 30;
   const offsets = req.staggerFrames && req.staggerFrames.length > 0
@@ -728,15 +753,16 @@ export function planChoreography(req: ChoreographyRequest): ChoreographyPlan {
   const archetypes: EntranceArchetype[] = [];
   const perLayer: Array<{ nodeId: string; plans: EntranceTrackPlan[] }> = [];
   const installs: Record<string, ChoreoInstall> = {};
+  const needs: ChoreoNeeds = { effects: [], animators: [], threeD: [] };
 
   for (let i = 0; i < ids.length; i++) {
     const nodeId = ids[i]!;
     const start = req.atCompTime + (offsets[i] ?? 0);
     const archetype = req.archetype ?? pickEntranceArchetype({
-      role: roleFor(nodeId),
+      role: roleFor(nodeId, facts),
       seed,
       index: i,
-      allowed: archetypesFor(nodeId),
+      allowed: archetypesFor(nodeId, facts),
     });
     archetypes.push(archetype);
 
@@ -760,7 +786,7 @@ export function planChoreography(req: ChoreographyRequest): ChoreographyPlan {
     });
     // Structural installs contribute their own tracks (blur amount, the text
     // animator's selector offset), which ride the same phase mirroring.
-    const installed = installFor(nodeId, archetype, start, feel.durSec, req.installs?.[nodeId]);
+    const installed = installFor(nodeId, archetype, start, feel.durSec, req.installs?.[nodeId], facts, needs);
     if (installed.install.effectId !== undefined || installed.install.animatorIndex !== undefined) {
       installs[nodeId] = installed.install;
     }
@@ -778,10 +804,8 @@ export function planChoreography(req: ChoreographyRequest): ChoreographyPlan {
     perLayer.push({ nodeId, plans: req.phase === 'out' ? reverseValues(withInstalls) : withInstalls });
   }
 
-  // The 3D switch is a SCENE edit, not an animation edit, so it is flipped
-  // outside the animation transaction — the same split `applyPresetTracks`
-  // makes for the same reason.
-  for (const { nodeId, plans } of perLayer) enable3DIfNeeded(nodeId, plans);
+  // The 3D switch is a SCENE edit, not an animation edit: the caller flips it.
+  for (const { nodeId, plans } of perLayer) needs3D(nodeId, plans, facts, needs);
 
   const refs: TrackRef[] = [];
   for (const { nodeId, plans } of perLayer) {
@@ -795,6 +819,7 @@ export function planChoreography(req: ChoreographyRequest): ChoreographyPlan {
     durationSec: (offsets[offsets.length - 1] ?? 0) + feel.durSec,
     refs,
     installs,
+    needs,
   };
 }
 
@@ -804,8 +829,9 @@ export function planChoreography(req: ChoreographyRequest): ChoreographyPlan {
  */
 export function writeChoreography(
   plan: ChoreographyPlan,
-  engine: AnimationEngine = defaultAnimation,
+  env: Pick<ChoreoEnv, 'engine' | 'keyTime'>,
 ): number {
+  const { engine, keyTime } = env;
   let keyframes = 0;
   for (const { nodeId, plans } of plan.perLayer) {
     for (const track of plans) {
@@ -813,7 +839,7 @@ export function writeChoreography(
         // The keyframe axis, not raw comp time: a trimmed or retimed clip
         // maps the two differently, and writing comp seconds straight in
         // puts the entrance somewhere the layer is not.
-        const t = compToKeyframeTime(nodeId, point.t);
+        const t = keyTime(nodeId, point.t);
         engine.setKeyframe(nodeId, track.prop, t, point.value, point.easing ?? 'easeOut');
         if (point.easing === 'bezier' && point.bezier) {
           engine.setBezier(nodeId, track.prop, t, point.bezier);
@@ -826,22 +852,18 @@ export function writeChoreography(
 }
 
 /**
- * Animate every layer in `nodeIds`, staggered, as one undoable action.
+ * Plan and write in one breath, on `env` — the planner's whole effect in one
+ * call (tests; the app's writers go through choreographyEdits.ts, which also
+ * performs `needs`).
  *
  * Returns what it did rather than a boolean: the caller reports the archetypes
  * back to the user, and a varied result that nobody can see the shape of just
  * looks like the app ignored the request.
  */
-export function animateLayers(req: ChoreographyRequest): ChoreographyResult {
-  const engine = req.engine ?? defaultAnimation;
-  const plan = planChoreography(req);
+export function animateLayers(req: ChoreographyRequest, env: ChoreoEnv): ChoreographyResult {
+  const plan = planChoreography(req, env);
   if (plan.perLayer.length === 0) return EMPTY;
-
-  let keyframes = 0;
-  runAnimEdit(req.phase === 'in' ? 'Animate in' : 'Animate out', () => {
-    keyframes = writeChoreography(plan, engine);
-  });
-
+  const keyframes = writeChoreography(plan, env);
   return {
     layers: plan.perLayer.length,
     keyframes,

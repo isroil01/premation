@@ -15,7 +15,7 @@
  */
 
 import { asCommandId } from '@app-types/common';
-import { defaultAnimation, type PropPath } from '@motion/animation';
+import type { AnimationEngine, PropPath } from '@motion/animation';
 import type { Command } from '@core/commands/Command';
 import { useUIStore } from '@stores/uiStore';
 import { useProjectStore } from '@stores/projectStore';
@@ -30,8 +30,9 @@ import {
   type ChoreographyRecord,
 } from '@stores/choreographyStore';
 import { documentMirror } from '@stores/documentMirror';
-import { choreographyEngineEdit } from './choreographyEdits';
-import { catalogFor } from '@core/engine/props';
+import { choreographyEngineEdit, mirrorFacts } from './choreographyEdits';
+import { scratchMembers } from '@core/engine/memberEdits';
+import { membersOf, trackRefIn } from '@core/mirror/trackIndex';
 import { easePresetById } from './easePresets';
 import {
   captureTracks,
@@ -49,7 +50,9 @@ import {
   writeChoreography,
   type CapturedTrack,
   type StaticRestore,
+  type ChoreoEnv,
   type ChoreoInstall,
+  type ChoreoNeeds,
   type ChoreographyFeel,
   type StaggerParams,
   type TrackRef,
@@ -136,16 +139,12 @@ export interface ChoreographyRunRequest {
  * capture must cover them or a revert leaves them behind.
  */
 function withSiblingMembers(refs: readonly TrackRef[]): TrackRef[] {
+  const m = documentMirror();
   const out: TrackRef[] = [...refs];
   for (const ref of refs) {
-    let props;
-    try {
-      props = catalogFor(ref.nodeId).props;
-    } catch {
-      continue;
-    }
-    const b = props.find((p) => p.animatable && p.members.includes(ref.prop));
-    for (const m of b?.members ?? []) if (m !== ref.prop) out.push({ nodeId: ref.nodeId, prop: m as PropPath });
+    const r = trackRefIn(m.tree(ref.nodeId), ref.prop);
+    if (!r || !r.info.animatable) continue;
+    for (const member of membersOf(r.info)) if (member !== ref.prop) out.push({ nodeId: ref.nodeId, prop: member as PropPath });
   }
   return out;
 }
@@ -154,20 +153,21 @@ function withSiblingMembers(refs: readonly TrackRef[]): TrackRef[] {
  * The statics to put back, minus any whose document property is still
  * animated through another member (a static write there would key it).
  */
-function unanimatedStatics(captured: readonly CapturedTrack[]): StaticRestore[] {
-  return staticsToRestore(captured, defaultAnimation).filter((s) =>
+function unanimatedStatics(captured: readonly CapturedTrack[], engine: AnimationEngine): StaticRestore[] {
+  return staticsToRestore(captured, engine).filter((s) =>
     withSiblingMembers([{ nodeId: s.nodeId, prop: s.prop }])
-      .every((m) => (defaultAnimation.getTrackKeyframes(m.nodeId, m.prop) ?? []).length === 0));
+      .every((m) => (engine.getTrackKeyframes(m.nodeId, m.prop) ?? []).length === 0));
 }
 
 /** Min/max keyframe time across a set of tracks, after the write. */
 function writtenRange(
   refs: readonly TrackRef[],
+  engine: AnimationEngine,
 ): { start: number; end: number } | null {
   let min = Infinity;
   let max = -Infinity;
   for (const ref of refs) {
-    for (const k of defaultAnimation.getTrackKeyframes(ref.nodeId, ref.prop) ?? []) {
+    for (const k of engine.getTrackKeyframes(ref.nodeId, ref.prop) ?? []) {
       if (k.t < min) min = k.t;
       if (k.t > max) max = k.t;
     }
@@ -192,11 +192,13 @@ function writtenRange(
  * engine refused — toasted).
  */
 export async function runChoreography(req: ChoreographyRunRequest): Promise<ChoreographyRecord | null> {
-  const engine = defaultAnimation;
   const fps = useCompositionStore.getState().fps || 30;
   const atCompTime = req.atCompTime ?? req.previous?.atCompTime ?? playhead();
 
-  const layers = staggerLayersFor(req.nodeIds, atCompTime, engine);
+  // The layers' facts and resting positions, read on a scratch copy of their
+  // keys (the build itself reads them again on its own scratch).
+  const probe = await scratchMembers(req.nodeIds);
+  const layers = staggerLayersFor(req.nodeIds, atCompTime, { engine: probe.engine, facts: mirrorFacts() });
   if (layers.length === 0) return null;
 
   const params: StaggerParams = { ...req.params, center: req.params.center ?? compCenter() };
@@ -211,10 +213,12 @@ export async function runChoreography(req: ChoreographyRunRequest): Promise<Chor
 
   // Off-document (see choreographyEdits.ts): writes only scratch state; the
   // translated keyframes and installs are what reach the engine.
-  const build = (planned: Readonly<Record<string, ChoreoInstall>> | undefined) => {
+  const build = (env: ChoreoEnv) => {
+    const { engine } = env;
     let captured: CapturedTrack[] = [];
     let refs: TrackRef[] = [];
     let installs: Record<string, ChoreoInstall> = {};
+    let needs: ChoreoNeeds | undefined;
     let archetypes: EntranceArchetype[] = [];
     let keyframes = 0;
     engine.batch(() => {
@@ -239,24 +243,24 @@ export async function runChoreography(req: ChoreographyRunRequest): Promise<Chor
           fps,
           seed: params.seed,
           staggerFrames: offsetFrames,
-          installs: { ...req.previous?.installs, ...planned },
+          installs: { ...req.previous?.installs },
           ...(curve ? { curve } : {}),
           ...(req.archetype ? { archetype: req.archetype } : {}),
-          engine,
-        });
+        }, env);
         refs = choreo.refs;
         // Captured from the RESTORED state, so for a track the previous run
         // already covered this reproduces that same original — which is why
         // merging the two below is consistent rather than a guess.
         captured = captureTracks(withSiblingMembers(refs), engine);
-        keyframes = writeChoreography(choreo, engine);
+        keyframes = writeChoreography(choreo, env);
         archetypes = choreo.archetypes;
         installs = choreo.installs;
+        needs = choreo.needs;
       }
     });
     // The original capture's statics: what the properties left un-animated return to.
-    const statics = unanimatedStatics(req.previous ? mergeCaptures(req.previous.captured, captured) : captured);
-    return { captured, refs, installs, archetypes, keyframes, range: writtenRange(refs), statics };
+    const statics = unanimatedStatics(req.previous ? mergeCaptures(req.previous.captured, captured) : captured, engine);
+    return { captured, refs, installs, archetypes, keyframes, range: writtenRange(refs, engine), statics, ...(needs ? { needs } : {}) };
   };
 
   const done = await choreographyEngineEdit(label, touched, build);
@@ -310,9 +314,9 @@ export async function revertChoreography(): Promise<boolean> {
   const previous = lastChoreography(compId);
   if (!previous) return false;
   const layers = [...new Set(previous.captured.map((c) => c.nodeId))];
-  const done = await choreographyEngineEdit('Remove choreography', layers, () => {
-    defaultAnimation.batch(() => restoreTracks(previous.captured, defaultAnimation));
-    return { installs: {}, statics: unanimatedStatics(previous.captured) };
+  const done = await choreographyEngineEdit('Remove choreography', layers, ({ engine }) => {
+    engine.batch(() => restoreTracks(previous.captured, engine));
+    return { installs: {}, statics: unanimatedStatics(previous.captured, engine) };
   });
   if (!done) return false;
   useChoreographyStore.getState().clear(compId);
