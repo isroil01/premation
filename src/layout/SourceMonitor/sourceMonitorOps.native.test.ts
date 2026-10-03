@@ -15,7 +15,9 @@
  * entry, and undo restores the document.
  */
 
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { seekPlayhead } from '@core/timeline/timelineView';
+import { timingBarFrames } from '@core/mirror/compFacts';
+import { documentMirror } from '@stores/documentMirror';
 import { insertFromSource, sourceRangeEdit, overwriteUnder, compEndSeconds, newCompFromRange } from './sourceMonitorOps';
 import { useProjectStore } from '@stores/projectStore';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
@@ -24,40 +26,23 @@ import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testH
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 
-/**
- * The real `insertMedia` fits, PAR-corrects and routes by file type — none of
- * which this file is about. The fake keeps the ONE contract the ops depend on
- * (it adds a footage node and SELECTS it) so what is under test is the timing.
- */
-jest.mock('@core/scene/sceneInsert', () => {
-  // A counter, because every insert must produce a DISTINCT layer — reusing an
-  // id made the second insert silently re-trim the first clip, which is the
-  // exact bug shape these tests exist to catch.
-  let seq = 0;
-  return {
-    ...jest.requireActual('@core/scene/sceneInsert'),
-    insertMedia: jest.fn(async (asset: { id: string; name: string; src: string }) => {
-      const graph = jest.requireActual('@core/scene/DefaultSceneGraph').default;
-      const { useSelectionStore: sel } = jest.requireActual('@stores/selectionStore');
-      const { SCENE_KIND_PROP: KIND } = jest.requireActual('@core/scene/seedDefaultScene');
-      const id = `layer_${asset.id}_${++seq}`;
-      graph.addChild('comp_root', {
-        id, name: asset.name, parent: 'comp_root', children: [], visible: true, locked: false,
-        transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-        components: [{
-          id: `${id}_t`, type: 'Transform',
-          props: { [KIND]: 'video', src: asset.src, assetId: asset.id, x: 0, y: 0, width: 64, height: 48 },
-        }],
-      });
-      sel.getState().set([id]);
-    }),
-  };
-});
+/** The footage, imported through the engine (the fake port: 640×360, 30 fps, 10 s from its name). */
+let ASSET: ImportedAsset;
 
-const ASSET: ImportedAsset = {
-  id: 'a1', name: 'clip.mp4', type: 'video', src: 'blob:nowhere/clip', size: 1,
-  metadata: { width: 64, height: 48, duration: 10, fps: 30 },
+/**
+ * The timeline as the editor reads it: a layer's bar in frames of the 30 fps
+ * comp (the mirror's timing), the comp's bars, and the playhead.
+ */
+const c = {
+  seekSeconds: (s: number): void => seekPlayhead(s),
+  getLayersForNode: (id: string): Array<{ clip: ReturnType<typeof timingBarFrames> }> => {
+    const l = documentMirror().layer(id);
+    return l ? [{ clip: timingBarFrames(l.timing, 30) }] : [];
+  },
+  layersOfComp: (): Array<ReturnType<typeof timingBarFrames>> =>
+    (documentMirror().comp('comp_root')?.layers ?? []).map((id) => timingBarFrames(documentMirror().layer(id)!.timing, 30)),
 };
+const getTimelineController = (): typeof c => c;
 
 let h: Harness;
 
@@ -65,7 +50,9 @@ beforeEach(async () => {
   h = await setupAppEngine();
   // A 30 fps, 10 s composition (the fixture every assertion below counts in).
   await h.run({ type: 'setCompositionSettings', comp: 'comp_root', patch: { frameRate: { num: 30, den: 1 }, duration: 10 * 705_600_000 } });
-  useAssetStore.setState({ assets: [...useAssetStore.getState().assets, ASSET] });
+  const { items: [id] } = await h.run({ type: 'importFiles', files: [{ path: 'C:/m/clip_10s.mp4', asSequence: false, createComposition: false }] });
+  await settleEdits();
+  ASSET = useAssetStore.getState().assets.find((a) => a.id === id)!;
 });
 
 afterEach(async () => {
@@ -201,7 +188,7 @@ describe('newCompFromRange', () => {
     const comp = await newCompFromRange(ASSET, { inSec: 2, outSec: 5 });
     await settleEdits();
     expect(comp).not.toBeNull();
-    expect(useProjectStore.getState().comps[comp!]).toMatchObject({ name: 'clip', width: 64, height: 48, fps: 30, durationSeconds: 3 });
+    expect(useProjectStore.getState().comps[comp!]).toMatchObject({ name: 'clip_10s', width: 640, height: 360, fps: 30, durationSeconds: 3 });
     const [layer] = (await docView()).layerIdsOfComp(comp!);
     expect(useSelectionStore.getState().ids).toEqual([layer]);
     // The marked part of the file, from the comp's first frame.

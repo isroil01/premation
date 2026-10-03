@@ -227,6 +227,21 @@ bool ends_with_ci(std::string_view s, std::string_view suffix) {
 }
 }  // namespace
 
+namespace {
+/// A fake file's length: 4 s, or `N` seconds when its name ends in `_<N>s.<ext>` (`clip_10s.mp4`).
+double fake_duration(const std::string& name) {
+  const std::size_t dot = name.rfind('.');
+  const std::size_t us = name.rfind('_', dot);
+  if (dot == std::string::npos || us == std::string::npos || dot < us + 3 || name[dot - 1] != 's') return 4;
+  double v = 0;
+  for (std::size_t i = us + 1; i + 1 < dot; ++i) {
+    if (name[i] < '0' || name[i] > '9') return 4;
+    v = v * 10 + (name[i] - '0');
+  }
+  return v > 0 ? v : 4;
+}
+}  // namespace
+
 Json FakePorts::import_file(const api::ImportFile& file, const std::string& id) {
   const std::string name = base_name(file.path);
   // A file named `undecodable…`: the decode failure the import tests need.
@@ -242,7 +257,7 @@ Json FakePorts::import_file(const api::ImportFile& file, const std::string& id) 
   Json md = Json::object();
   md.set("width", Json::number(640));
   md.set("height", Json::number(360));
-  md.set("duration", Json::number(image ? 0 : 4));
+  md.set("duration", Json::number(image ? 0 : fake_duration(name)));
   md.set("fps", Json::number(30));
   md.set("hasAudioTrack", Json::boolean(!image));
   a.set("metadata", std::move(md));
