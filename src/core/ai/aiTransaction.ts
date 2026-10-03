@@ -11,11 +11,10 @@
  * against either engine. `rollback` is the engine's own cancel
  * (`endGesture{commit:false}`), which reverts every edit of the gesture.
  *
- * A turn whose tools had to write AROUND the engine (a named legacy gap, or a
- * write the engine noticed and resynced) cannot be expressed as that gesture.
- * It still commits as ONE entry — the pre-engine whole-document snapshot — so
- * the user sees no difference; it is just not replayable from the log. The
- * outcome says which (`kind: 'engine' | 'snapshot' | 'empty'`).
+ * Every mutating tool is engine-routed (toolHandlers ENGINE_ROUTED_TOOLS). A
+ * write that still went AROUND the engine (a named legacy gap, or one the
+ * engine noticed and resynced) is REPORTED in the outcome's `gaps`; there is
+ * no page snapshot to fall back on — the engine's document is the one saved.
  */
 
 import type { EngineClient, Origin } from '@motion/engine-api';
@@ -39,11 +38,14 @@ const restore = (s: DocState): void => restoreSnapshotState(s);
 export interface AiTurnOutcome {
   /**
    * `engine`   one engine history entry (replayable from the command log);
-   * `snapshot` one whole-document snapshot entry (a legacy gap was hit);
    * `empty`    nothing changed, no entry.
    */
-  kind: 'engine' | 'snapshot' | 'empty';
-  /** The legacy gaps that forced a snapshot (empty for `engine`). */
+  kind: 'engine' | 'empty';
+  /**
+   * Writes the turn made AROUND the engine (`session.legacy`, or an engine
+   * resync) — reported, never papered over: the engine's document is the one
+   * that is saved, and it did not get them.
+   */
   gaps: readonly string[];
 }
 
@@ -89,22 +91,21 @@ async function openGesture(client: EngineClient, label: string, origin: Origin):
 export async function beginAiTransaction(label: string, opts: BeginTurnOptions = {}): Promise<AiTransaction> {
   const client = opts.client ?? engine();
   const origin = opts.origin ?? 'ai';
-  // A sync point first: the engine builds its lazy timeline mirror and resyncs
-  // any write made around it BEFORE the turn, so neither is the turn's.
+  // A sync point first: the engine resyncs any write made around it BEFORE
+  // the turn, so it is not the turn's.
   await client.batch('', [], { origin });
-  const before = capture();
   const gesture = await openGesture(client, label, origin);
+  // Every engine write of the turn goes into ONE gesture = one undo entry; a
+  // gesture slot still held (a drag that never finished) leaves nothing to
+  // group the turn in, so the turn does not start.
+  if (gesture === null) throw new Error('Another edit is still in progress (a drag that has not finished) — finish it, then ask again.');
   const session = new EngineTurnSession(client, origin);
   // Watch AFTER the gesture opened: a stale write from before the turn is
   // resynced by beginGesture itself and is not this turn's.
   session.watch();
-  // No gesture (a drag never finished): every engine write of the turn would be
-  // its own entry, so the whole turn is a snapshot turn instead.
-  if (gesture === null) session.legacy('no gesture slot (a drag was still open)');
 
   // Other subsystems push their own commands as a side effect of work the run
-  // triggers — lazily booting a comp's timeline emits an "Add Track", for
-  // instance. Those are noise here: the turn's entry covers everything, so a
+  // triggers. Those are noise here: the turn's entry covers everything, so a
   // stray entry would just be a second undo step that half-undoes the run.
   // Engine edits inside the gesture push nothing until endGesture, which runs
   // after `resume`.
@@ -118,42 +119,19 @@ export async function beginAiTransaction(label: string, opts: BeginTurnOptions =
   };
   let settled: Promise<AiTurnOutcome> | null = null;
 
-  const snapshotCommit = async (gestureOpen: boolean): Promise<AiTurnOutcome> => {
-    // Suspended again when the engine commit was tried first (and released
-    // history): the restore below must not let a subsystem push a stray entry.
-    if (released) {
-      history.suspend();
-      released = false;
-    }
-    const after = capture();
-    // The engine's share goes back first (its own cancel); the snapshot then
-    // reinstates the whole finished document, legacy writes included.
-    if (gesture !== null && gestureOpen) await client.endGesture(gesture, false, { origin });
-    restore(after);
-    release();
-    if (statesEqual(before, after)) return { kind: 'empty', gaps: session.legacyGaps };
-    history.push(new StoreSnapshotCommand(label, before, after));
-    bumpScene();
-    return { kind: 'snapshot', gaps: session.legacyGaps };
-  };
-
   const commit = async (): Promise<AiTurnOutcome> => {
     // A sync point: the engine resyncs (and the session hears it) before any
     // command if something wrote around it since the last one.
     await client.batch('', [], { origin });
     try {
-      if (gesture !== null && session.legacyGaps.length === 0) {
-        release();
-        const top = (): unknown => history.getEntries()[history.getIndex()];
-        const was = top();
-        const res = await client.endGesture(gesture, true, { origin });
-        if (res.ok) return { kind: top() !== was ? 'engine' : 'empty', gaps: [] };
-        // The gesture was closed under the turn (a leaked-gesture recovery):
-        // its entry went to the suspended history, so fall back.
-        session.legacy(`the turn's gesture was closed by another client (${res.error.code})`);
-        return await snapshotCommit(false);
-      }
-      return await snapshotCommit(true);
+      release();
+      const top = (): unknown => history.getEntries()[history.getIndex()];
+      const was = top();
+      const res = await client.endGesture(gesture, true, { origin });
+      // The gesture closed under the turn (a leaked-gesture recovery) still
+      // committed its writes in the engine; say so.
+      if (!res.ok) session.legacy(`the turn's gesture was closed by another client (${res.error.code})`);
+      return { kind: res.ok && top() === was ? 'empty' : 'engine', gaps: session.legacyGaps };
     } finally {
       session.dispose();
     }
@@ -161,8 +139,7 @@ export async function beginAiTransaction(label: string, opts: BeginTurnOptions =
 
   const rollback = async (): Promise<void> => {
     try {
-      if (gesture !== null) await client.endGesture(gesture, false, { origin });
-      if (gesture === null || session.legacyGaps.length > 0) restore(before);
+      await client.endGesture(gesture, false, { origin });
     } finally {
       release();
       session.dispose();

@@ -15,12 +15,11 @@
 import { AiEngineError, type AiEngineSession } from '@motion/ai-tools';
 import type { BezierPath, Command, MaskMode as ApiMaskMode, PropertyInfo, PropertyWrite, Value } from '@motion/engine-api';
 import { pathOpPropPath, type PathOpType } from '@core/scene/pathOps';
-import { getNodeLayerStyles, layerStyleEffectId, LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS, type LayerStyles } from '@core/effects/layerStyles';
+import { layerStyleEffectId, LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS, type LayerStyles } from '@core/effects/layerStyles';
 import { effectPropPath, parseColorChannels } from '@core/effects/effects';
 import { STYLE_FIELDS } from '@core/engine/effectFieldSpecs';
 import { memberWrites } from '@core/engine/propRefs';
 import { activePlayheadSeconds, apiColorOfHex } from '@core/engine/trackWrites';
-import { catalogFor } from '@core/engine/props';
 import type { MaskPath } from '@core/effects/mask';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { buildMedia, isSvgAsset, readSvgText } from '@core/scene/layerBuilders';
@@ -41,23 +40,19 @@ const setProps = (writes: readonly PropertyWrite[]): Command => ({
   writes: writes.map((w) => ({ prop: w.prop, value: w.value, ...(w.time !== undefined ? { time: w.time } : {}) })),
 } as Command);
 
-/** Whether the layer's catalog has `path` (a binding exists). */
-function hasPath(layer: string, path: string): boolean {
+/** The layer's properties under `path`, by path, asked of the engine. */
+async function propertiesUnder(session: AiEngineSession, layer: string, path: string): Promise<ReadonlyMap<string, PropertyInfo>> {
   try {
-    return catalogFor(layer).byPath.has(path);
+    const tree = await session.query({ type: 'getPropertyTree', layer, path, depth: 0 });
+    return new Map(tree.nodes.map((n) => [n.path, n]));
   } catch {
-    return false;
+    // No group there yet (a layer without styles): nothing under it.
+    return new Map();
   }
 }
 
-/** The binding at `path`, typed as a field write of `raw`, or null. */
-function fieldValue(layer: string, path: string, raw: unknown): Value | null {
-  let b;
-  try {
-    b = catalogFor(layer).byPath.get(path);
-  } catch {
-    return null;
-  }
+/** The property `b`, typed as a field write of `raw`, or null. */
+function fieldValue(b: PropertyInfo | undefined, raw: unknown): Value | null {
   if (!b) return null;
   if (b.valueType === 'choice' && typeof raw === 'string' && (!b.choices || b.choices.includes(raw))) return { kind: 'choice', value: raw };
   if (b.valueType === 'bool' && typeof raw === 'boolean') return { kind: 'bool', value: raw };
@@ -155,6 +150,7 @@ export async function patchTextAnimator(session: AiEngineSession, layer: string,
   const a = (await textAnimators(session, layer))[index];
   if (!a) throw new AiEngineError('notFound', `'${layer}' has no animator at index ${index}`);
   const base = `text/animators/${a.id}`;
+  const props = await propertiesUnder(session, layer, base);
   const sel = a.selectors[0];
   const nums: Record<string, number> = {};
   const fields: PropertyWrite[] = [];
@@ -166,12 +162,12 @@ export async function patchTextAnimator(session: AiEngineSession, layer: string,
     if (typeof v === 'number') { nums[`ta.${index}.${key}`] = v; continue; }
     if (key === 'color' && typeof v === 'string') {
       color = v;
-      addColor = !hasPath(layer, `${base}/props/color`);
+      addColor = !props.has(`${base}/props/color`);
       continue;
     }
     if (SELECTOR0_FIELDS.has(key) && sel) {
       const path = `${base}/selectors/${sel}/${key}`;
-      const value = fieldValue(layer, path, v);
+      const value = fieldValue(props.get(path), v);
       if (value) { fields.push({ prop: { layer, path }, value }); continue; }
     }
     bad.push(key);
@@ -192,7 +188,7 @@ export async function patchTextAnimator(session: AiEngineSession, layer: string,
 // ── Shape operators (Contents ▸ Trim Paths, Repeater, Zig-Zag, …) ────
 
 /** Numeric params and fields of a path operator as writes (stored units). */
-function pathOpWrites(layer: string, opId: string, patch: Readonly<Record<string, unknown>>): PropertyWrite[] {
+function pathOpWrites(layer: string, opId: string, patch: Readonly<Record<string, unknown>>, props: ReadonlyMap<string, PropertyInfo>): PropertyWrite[] {
   const nums: Record<string, number> = {};
   const fields: PropertyWrite[] = [];
   const bad: string[] = [];
@@ -200,7 +196,7 @@ function pathOpWrites(layer: string, opId: string, patch: Readonly<Record<string
     if (v === undefined || key === 'id' || key === 'type') continue;
     if (typeof v === 'number') { nums[pathOpPropPath(opId, key as never)] = v; continue; }
     const path = `contents/${opId}/${key}`;
-    const value = fieldValue(layer, path, v);
+    const value = fieldValue(props.get(path), v);
     if (value) fields.push({ prop: { layer, path }, value });
     else bad.push(key);
   }
@@ -219,7 +215,7 @@ export async function addPathOperator(session: AiEngineSession, layer: string, t
   const r = await session.apply([{ type: 'addPropertyGroup', layer, parent: 'contents', matchName: `pathop:${type}`, init: [] } as Command]);
   const opId = ((r[0] as { groups?: string[] }).groups?.[0] ?? '').split('/')[1] ?? '';
   if (!opId) throw new AiEngineError('internal', `adding a ${type} to '${layer}' returned no operator`);
-  const writes = pathOpWrites(layer, opId, patch);
+  const writes = pathOpWrites(layer, opId, patch, await propertiesUnder(session, layer, `contents/${opId}`));
   if (writes.length > 0) await session.apply([setProps(writes)]);
   return opId;
 }
@@ -227,7 +223,7 @@ export async function addPathOperator(session: AiEngineSession, layer: string, t
 /** `updatePathOp(layer, opId, patch)` as ONE `setProperties` (the operator's type is not patched here). */
 export async function patchPathOperator(session: AiEngineSession, layer: string, opId: string, patch: Readonly<Record<string, unknown>>): Promise<void> {
   if (!(await pathOperators(session, layer)).some((o) => o.id === opId)) throw new AiEngineError('notFound', `'${layer}' has no path operator '${opId}'`);
-  const writes = pathOpWrites(layer, opId, patch);
+  const writes = pathOpWrites(layer, opId, patch, await propertiesUnder(session, layer, `contents/${opId}`));
   if (writes.length > 0) await session.apply([setProps(writes)]);
 }
 
@@ -247,8 +243,8 @@ export async function ensurePathOperator(session: AiEngineSession, layer: string
  */
 export async function patchLayerStyle(session: AiEngineSession, layer: string, styleKey: keyof LayerStyles, patch: Readonly<Record<string, unknown>>): Promise<void> {
   const key = styleKey as string;
-  const styles = getNodeLayerStyles(layer) as Record<string, { enabled?: boolean } | undefined>;
-  const cur = styles[key];
+  // The style group as the engine reports it (`styles/<key>`, `enabled` = its switch).
+  const cur = (await propertiesUnder(session, layer, 'styles')).get(`styles/${key}`);
   if (!cur) await session.apply([{ type: 'addPropertyGroup', layer, parent: 'styles', matchName: `style:${key}`, init: [] } as Command]);
   else if (patch.enabled === true && cur.enabled === false) {
     await session.apply([{ type: 'setGroupEnabled', groups: [{ layer, path: `styles/${key}` }], enabled: true } as Command]);

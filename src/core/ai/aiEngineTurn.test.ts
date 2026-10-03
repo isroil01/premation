@@ -103,14 +103,14 @@ describe('an AI turn on the engine', () => {
     expect(historyLabels()).toEqual([]);
   });
 
-  it('a turn with a named gap is still ONE entry — a snapshot that names its gaps', async () => {
+  it('a turn with a named gap is still ONE engine entry, and reports the gap', async () => {
     const before = h.doc();
     const tx = await beginAiTransaction('AI: boxes');
     const ctx = createToolContext(new AbortController().signal, undefined, tx.session);
     await ctx.scene.create('null', 'N');
     tx.session.legacy('a test gap');
     const out = await tx.commit();
-    expect(out.kind).toBe('snapshot');
+    expect(out.kind).toBe('engine');
     expect(out.gaps).toEqual(['a test gap']);
     expect(historyLabels()).toEqual(['AI: boxes']);
     const after = h.doc();
@@ -167,7 +167,7 @@ describe('an AI turn on the engine', () => {
       { name: 'set_keyframes', args: { keyframes: [{ nodeId: 'box', prop: 'opacity', t: 0, value: 0 }, { nodeId: 'box', prop: 'opacity', t: 1, value: 100 }, { nodeId: 'box', prop: 'scaleX', t: 0.5, value: 2 }] } },
       { name: 'update_layer', args: { nodeId: 'box', opacity: 50 } },
     ]);
-    expect(r.outcome.kind === 'snapshot' ? r.outcome.gaps : []).toEqual([]);
+    expect(r.outcome.gaps).toEqual([]);
     expect(r.outcome.kind).toBe('engine');
     expect(historyLabels()).toEqual(['AI: title card']);
     // One light: After Effects adds no ambient fill light beside it.
