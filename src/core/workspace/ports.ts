@@ -36,13 +36,12 @@ import { cutPathsWithLine, runFromPolygon, type CutSubpath, type CutPoint } from
 import { shapeOutline } from '@core/scene/pathOps';
 import { resolveCornerRadii, clampCornerRadii } from '@core/scene/cornerRadii';
 import { anchorCompensation } from '@core/scene/anchor';
-import { enableContinuousRasterByDefault } from '@core/scene/continuousRaster';
+import { CONTINUOUS_RASTER_PROP, supportsContinuousRaster } from '@core/scene/continuousRaster';
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { uniqueLayerName } from '@core/scene/layerNames';
 import { SCENE_KIND_PROP, type SceneKind } from '@core/scene/seedDefaultScene';
-import type { SceneNode, ID } from '@core/types';
+import type { SceneNode } from '@core/types';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useTextEditStore } from '@stores/textEditStore';
 import { MIN_BOX_SIZE } from '@core/text/textExtras';
@@ -60,7 +59,9 @@ import {
   settleToolEdits,
   type ToolTransaction,
 } from '@core/workspace/viewportGesture';
-import { insertBuiltLayers } from '@core/engine/offDocument';
+import { reportEngineError } from '@core/engine/uiEdits';
+import { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import { pasteBuilt, pastedIds } from '@/engine-client/insertFragment';
 import { secondsToFlicks, type Command, type LayerInfo, type PathTopologyOp, type PropRef, type Value } from '@motion/engine-api';
 import { compOfLayer, isLayer } from '@core/mirror/docFacts';
 import { uiKindOf } from '@core/mirror/layerKinds';
@@ -779,8 +780,8 @@ function drawnLayerLabel(payload: CreateNodePayload): string {
 
 /**
  * Draw layers into the active composition as ONE engine edit (one undo entry
- * named `label`): the drawn-layer builder below runs off-document and the
- * result goes to the engine as one `pasteLayers` (B3z, `insertBuiltLayers`) —
+ * named `label`): the drawn-layer builder below lays them into a fragment
+ * and the result goes to the engine as one `pasteLayers` (`pasteBuilt`) —
  * the API's `createLayer` cannot carry what a drawn layer is born with (the
  * toolbar Fill / Stroke paints, the drawn outline, a paragraph box, a
  * Polystar's parameters, the continuous-raster default). The new layers are
@@ -795,19 +796,27 @@ export async function insertDrawnLayers(label: string, payloads: readonly Create
   if (payloads.length === 0) return [];
   await settleToolEdits();
   const comp = activeCompRootId() as string;
-  return insertBuiltLayers(label, comp, () => {
+  const b = new FragmentBuilder({ idPrefix: 'drawn' });
+  const scratch: string[] = [];
+  try {
     for (const payload of payloads) {
-      // Built one after another so each name is unique against the last.
       const { node, polystar } = drawnLayerOf(payload);
-      defaultSceneGraph.addChild(comp as ID, node);
-      if (polystar) defaultSceneGraph.setFxKey(node.id, POLYSTAR_FX_PROP, polystar);
+      b.addChild(comp, node);
+      if (polystar) b.setFx(node.id, POLYSTAR_FX_PROP, polystar);
       // The same default every MENU and LIBRARY insert applies. This path —
       // every layer the user DRAWS — was the one place that did not, so a pen
       // path went soft past 400% while the identical shape from the Layer menu
-      // stayed sharp. Must follow `addChild`: the helper reads the node back.
-      enableContinuousRasterByDefault(node.id as string);
+      // stayed sharp.
+      if (supportsContinuousRaster(node)) b.setFx(node.id, CONTINUOUS_RASTER_PROP, true);
+      scratch.push(node.id);
     }
-  });
+  } catch (err) {
+    reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+  const built = b.build();
+  const ids = await pasteBuilt(label, comp, built, { select: scratch });
+  return ids && built ? pastedIds(built, ids, scratch) : ids;
 }
 
 /**
