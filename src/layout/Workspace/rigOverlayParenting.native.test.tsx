@@ -48,8 +48,7 @@ import { defaultAnimation } from '@motion/animation';
 import { clearRestMeshCache } from '@core/rig/puppet';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
-import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 
 jest.mock('@core/workspace/WorkspaceController', () => ({
   getWorkspaceController: () => ({
@@ -69,12 +68,12 @@ jest.mock('@core/workspace/WorkspaceController', () => ({
 // `rig`), so the fixture layers live in the app engine's composition (the
 // TypeScript engine reads this scene graph) and each render settles first.
 let h: Awaited<ReturnType<typeof setupAppEngine>>;
-beforeEach(async () => { h = await setupAppEngine(); });
+beforeEach(async () => { h = await setupAppEngine({ panels: true }); });
 afterEach(async () => { await h.dispose(); });
 /** A top-level fixture layer of the composition. */
 const addLayer = (n: SceneNode): void => defaultSceneGraph.addChild('comp_root', n);
 /** Let the overlay's subscription land and the pushed rig redraw it. */
-const settle = (): Promise<void> => act(async () => { for (let i = 0; i < 6; i++) await engineIdle(); });
+const settle = (): Promise<void> => act(async () => { for (let i = 0; i < 6; i++) await settleEdits(); });
 
 interface Opts { x?: number; y?: number; rotation?: number; scaleX?: number; scaleY?: number; parent?: string | null }
 function node(id: string, o: Opts = {}): SceneNode {

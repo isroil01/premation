@@ -14,8 +14,7 @@ import type { Value } from '@motion/engine-api';
 import { TextEditOverlay, insideKeepZone } from './TextEditOverlay';
 import { ColorPicker } from '@components/ColorPicker';
 import { useTextEditStore } from '@stores/textEditStore';
-import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
 
@@ -55,14 +54,14 @@ async function contentOf(id: string): Promise<string> {
 async function commitWith(fire: () => void): Promise<void> {
   await act(async () => {
     fire();
-    await engineIdle();
+    await settleEdits();
   });
 }
 
 const ctrlEnter = (): KeyboardEvent => new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true });
 
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   T = await textLayer('Hello');
   useTextEditStore.getState().end();
 });
@@ -123,7 +122,7 @@ describe('TextEditOverlay', () => {
     box.textContent = '';  // what the open found
     await act(async () => {
       await h.run({ type: 'setProperty', prop: { layer: T, path: 'text/sourceText' }, value: { kind: 'string', value: 'Arrived' } });
-      await engineIdle();
+      await settleEdits();
     });
     expect(box.textContent).toBe('Arrived');
     expect(window.getSelection()?.toString()).toBe('Arrived');
@@ -137,7 +136,7 @@ describe('TextEditOverlay', () => {
     fireEvent.input(box);  // a keystroke: the draft is now the user's
     await act(async () => {
       await h.run({ type: 'setProperty', prop: { layer: T, path: 'text/sourceText' }, value: { kind: 'string', value: 'Arrived' } });
-      await engineIdle();
+      await settleEdits();
     });
     expect(box.textContent).toBe('');
   });
@@ -393,7 +392,7 @@ describe('TextEditOverlay', () => {
     // (The box is the engine's `getTextLayout` answer — B4: wait for it to land.)
     await put(300, 'center');
     const { getByRole, unmount } = render(<TextEditOverlay />);
-    await act(async () => { useTextEditStore.getState().begin(T); await engineIdle(); });
+    await act(async () => { useTextEditStore.getState().begin(T); await settleEdits(); });
     let box = getByRole('textbox') as HTMLElement;
     expect(box.style.overflow).toBe('hidden');
     expect(parseFloat(box.style.paddingTop)).toBeCloseTo(138, 3);
@@ -405,13 +404,13 @@ describe('TextEditOverlay', () => {
     // does not fit raises the overflow flag before anything is committed.
     await put(30, 'bottom');
     const again = render(<TextEditOverlay />);
-    await act(async () => { useTextEditStore.getState().begin(T); await engineIdle(); });
+    await act(async () => { useTextEditStore.getState().begin(T); await settleEdits(); });
     box = again.getByRole('textbox') as HTMLElement;
     expect(parseFloat(box.style.paddingTop || '0')).toBeCloseTo(6, 3);
     await act(async () => {
       box.innerText = 'Hi\nthere';
       fireEvent.input(box);
-      await engineIdle();
+      await settleEdits();
     });
     expect(box.getAttribute('data-overflow')).toBe('true');
     expect(parseFloat(box.style.paddingTop || '0')).toBe(0);

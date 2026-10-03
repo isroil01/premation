@@ -6,11 +6,10 @@
 
 import { act, renderHook } from '@testing-library/react';
 import type { Command } from '@motion/engine-api';
-import { gestureOpen, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { gestureOpen, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 import { useGesture } from './useGesture';
 
 jest.useFakeTimers();
@@ -18,7 +17,7 @@ jest.useFakeTimers();
 let h: Harness;
 let s: Scene;
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   s = await buildScene(h);
 });
 afterEach(async () => { await h.dispose(); });
@@ -56,7 +55,7 @@ async function drag(g: ReturnType<typeof useGesture>, el?: HTMLElement, vals: nu
     g.begin('Set Opacity', el ? { pointerId: 7, currentTarget: el } : undefined);
     for (const v of vals) g.send(setOpacity(v));
   });
-  await act(async () => { await engineIdle(); });
+  await act(async () => { await settleEdits(); });
 }
 
 const entries = async (): Promise<number> => (await historyLabels()).filter((l) => l === 'Set Opacity').length;
@@ -78,7 +77,7 @@ test('lost pointer capture ends (commits) the drag', async () => {
   const el = target();
   const { result } = renderHook(() => useGesture());
   await drag(result.current, el);
-  await act(async () => { el.dispatchEvent(pointerEvent('lostpointercapture', 7)); await engineIdle(); });
+  await act(async () => { el.dispatchEvent(pointerEvent('lostpointercapture', 7)); await settleEdits(); });
   expect(result.current.isActive()).toBe(false);
   expect(await gestureOpen()).toBe(false);
   expect(await entries()).toBe(1);
@@ -98,7 +97,7 @@ test('pointercancel ends (commits) the drag', async () => {
   const el = target();
   const { result } = renderHook(() => useGesture());
   await drag(result.current, el);
-  await act(async () => { el.dispatchEvent(pointerEvent('pointercancel', 7)); await engineIdle(); });
+  await act(async () => { el.dispatchEvent(pointerEvent('pointercancel', 7)); await settleEdits(); });
   expect(await gestureOpen()).toBe(false);
   expect(await entries()).toBe(1);
 });
@@ -108,7 +107,7 @@ test('Escape cancels: the document returns exactly, nothing is recorded', async 
   const { result } = renderHook(() => useGesture());
   await drag(result.current);
   expect((await opacity())).toBeCloseTo(0.4);
-  await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await engineIdle(); });
+  await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await settleEdits(); });
   expect(await gestureOpen()).toBe(false);
   expect((await h.doc())).toBe(doc);
   expect(await entries()).toBe(0);
@@ -117,7 +116,7 @@ test('Escape cancels: the document returns exactly, nothing is recorded', async 
 test('window blur ends (commits) the drag', async () => {
   const { result } = renderHook(() => useGesture());
   await drag(result.current);
-  await act(async () => { window.dispatchEvent(new Event('blur')); await engineIdle(); });
+  await act(async () => { window.dispatchEvent(new Event('blur')); await settleEdits(); });
   expect(await gestureOpen()).toBe(false);
   expect(await entries()).toBe(1);
 });
@@ -126,7 +125,7 @@ test('unmount mid-drag commits', async () => {
   const { result, unmount } = renderHook(() => useGesture());
   await drag(result.current);
   unmount();
-  await act(async () => { await engineIdle(); });
+  await act(async () => { await settleEdits(); });
   expect(await gestureOpen()).toBe(false);
   expect(await entries()).toBe(1);
 });
@@ -144,6 +143,6 @@ test('send without begin does nothing; end without begin is harmless', async () 
   const { result } = renderHook(() => useGesture());
   const doc = (await h.doc());
   act(() => { result.current.send(setOpacity(0.1)); });
-  await act(async () => { await result.current.end(); await engineIdle(); });
+  await act(async () => { await result.current.end(); await settleEdits(); });
   expect((await h.doc())).toBe(doc);
 });

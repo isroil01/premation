@@ -22,9 +22,8 @@ import { render, cleanup, fireEvent, screen, act } from '@testing-library/react'
 import { BoneControls } from './BoneControls';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { CONTROLLER_SHAPES, CONTROLLER_SIDES } from '@core/rig/controllers';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
-import { engineIdle } from '@core/engine/engineInstance';
 import { rigTestLayer } from '@layout/Workspace/__testHelpers__/rigLayer';
 import { useUIStore } from '@stores/uiStore';
 
@@ -34,7 +33,7 @@ let ID = '';
 
 const rigOf = async () => readNodeSkeleton((await docView()).getNode(ID)!);
 const controllersOf = async () => (await rigOf())?.controllers ?? [];
-const idle = (): Promise<void> => act(async () => { await engineIdle(); });
+const idle = (): Promise<void> => act(async () => { await settleEdits(); });
 const undo = (): Promise<void> => act(async () => { await h.run({ type: 'undo' }); });
 
 async function addController(value: string): Promise<void> {
@@ -43,7 +42,7 @@ async function addController(value: string): Promise<void> {
 }
 
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   ID = await rigTestLayer(h);
   const rig = {
     bones: [

@@ -8,10 +8,9 @@ import { readSvgLayer } from '@core/svg/svgLayer';
 import { getNodeMatte } from '@core/effects/matte';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
-import { engineIdle } from '@core/engine/engineInstance';
 import { edit } from '@core/engine/uiEdits';
 import { applyPresetValues, setLayerMatte } from './inspectorEdits';
 import { convertSvgToShapes, revertSvgToLayer } from './svgLayerActions';
@@ -33,7 +32,7 @@ async function oneExactEntry(label: string, act: () => Promise<unknown> | unknow
   const n = (await historyLabels()).length;
   const before = (await h.doc());
   await act();
-  await engineIdle();
+  await settleEdits();
   expect((await historyLabels())).toHaveLength(n + 1);
   expect((await historyLabels()).at(-1)).toBe(label);
   const after = (await h.doc());
@@ -69,7 +68,7 @@ test('a text preset with font strings, keyword weight, Tracking, Leading and str
 
 test('the layer motion-blur switch turns the comp master on in the same entry', async () => {
   useMotionBlurStore.getState().setEnabled(false);
-  await engineIdle();
+  await settleEdits();
   const spec = LAYER_SWITCHES.find((t) => t.id === 'motionBlur')!;
   await oneExactEntry('Enable Motion blur', () => applyLayerSwitch([s.A], spec));
   expect(useMotionBlurStore.getState().enabled).toBe(true);
@@ -92,7 +91,7 @@ test('Convert SVG to Editable Shapes = pasteLayers + deleteLayers in one entry, 
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="40" height="40" fill="#0af"/><circle cx="70" cy="70" r="20" fill="#f00"/></svg>';
   const id = insertSvgLayer(svg, 'two.svg')!;
   getTimelineController().syncFromScene();
-  await engineIdle();
+  await settleEdits();
   expect(readSvgLayer((await docView()).getNode(id)!)).not.toBeNull();
   let groupId: string | null = null;
   await oneExactEntry('Convert SVG to Editable Shapes', async () => { groupId = await convertSvgToShapes(id); });
@@ -100,7 +99,7 @@ test('Convert SVG to Editable Shapes = pasteLayers + deleteLayers in one entry, 
   expect((await docView()).getNode(id)).toBeUndefined();
   expect((await docView()).getChildren(groupId!).length).toBeGreaterThan(1);
   // The group keeps the source: Revert puts an SVG layer back in its slot, one entry.
-  await engineIdle();
+  await settleEdits();
   expect(documentMirror().layer(groupId!)?.svg).toBe('converted');
   let backId: string | null = null;
   await oneExactEntry('Revert to Original SVG', async () => { backId = await revertSvgToLayer(groupId!); });

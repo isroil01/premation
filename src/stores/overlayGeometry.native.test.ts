@@ -4,9 +4,8 @@
  * withdrawn request leaves the others in place.
  */
 
-import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 import { overlayGeometryAt } from '@core/engine/overlayGeometry';
 import {
   overlayLayer,
@@ -31,7 +30,7 @@ test('each owner’s layers get that owner’s kinds (B4 round 5: one group per 
   const B = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'B', init: [] })).layer;
   requestOverlayLayers(7, 'a', [A], ['transform']);
   requestOverlayLayers(7, 'b', [B, A], ['bounds']);
-  await engineIdle();
+  await settleEdits();
   const both = overlayGeometryAt(7, 0);
   expect(both.map((g) => g.layer)).toEqual([A, B]);
   // A is named by both owners: both kinds. B only by 'b': its box, no matrix (before round 5 every
@@ -41,7 +40,7 @@ test('each owner’s layers get that owner’s kinds (B4 round 5: one group per 
   expect(both[1]!.matrix).toEqual([]);
   expect(both[1]!.box).toHaveLength(4);
   requestOverlayLayers(7, 'b', [], []);
-  await engineIdle();
+  await settleEdits();
   const one = overlayGeometryAt(7, 0);
   expect(one.map((g) => g.layer)).toEqual([A]);
   expect(one[0]!.box).toEqual([]);
@@ -50,7 +49,7 @@ test('each owner’s layers get that owner’s kinds (B4 round 5: one group per 
 test('an owner may ask for view cameras alone; the frame set answers them by mode', async () => {
   await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'camera', name: 'Cam', init: [] });
   requestOverlayLayers(7, 'a', [], [], ['active', 'front']);
-  await engineIdle();
+  await settleEdits();
   const v = overlayView(7, 'active', 0);
   expect(v?.lens).toHaveLength(9);
   expect(v?.camera).not.toBe('');
@@ -68,7 +67,7 @@ describe('a deleted layer leaves the pushed geometry (no stale selection chrome)
   /** What a drawn frame carries for the layers the viewport asked for. */
   async function landFrame(ids: string[]): Promise<void> {
     requestOverlayLayers(VP, 'a', ids, ['transform', 'bounds']);
-    await engineIdle();
+    await settleEdits();
     publishFrameGeometry(VP, 0, 1, overlayGeometryAt(VP, 0));
   }
 
@@ -83,7 +82,7 @@ describe('a deleted layer leaves the pushed geometry (no stale selection chrome)
     let told = 0;
     const off = subscribeOverlayGeometry(VP, () => { told += 1; });
     await h.run({ type: 'deleteLayers', layers: [A] });
-    await engineIdle();
+    await settleEdits();
     off();
 
     // No frame has landed since the delete: the pushed set still holds the last one.
@@ -97,10 +96,10 @@ describe('a deleted layer leaves the pushed geometry (no stale selection chrome)
     setEngineDrivenViewport(VP, true);
     await landFrame([A]);
     await h.run({ type: 'deleteLayers', layers: [A] });
-    await engineIdle();
+    await settleEdits();
     expect(overlayLayer(VP, A, 0)).toBeUndefined();
     await h.run({ type: 'undo' });
-    await engineIdle();
+    await settleEdits();
     // The engine's next frame carries it again (the subscription still names it).
     publishFrameGeometry(VP, 0, 2, overlayGeometryAt(VP, 0));
     expect(overlayLayer(VP, A, 0)?.box).toHaveLength(4);
@@ -109,10 +108,10 @@ describe('a deleted layer leaves the pushed geometry (no stale selection chrome)
   test('a viewport the page draws itself is untouched (its records are computed, not pushed)', async () => {
     const A = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'A', init: [] })).layer;
     requestOverlayLayers(VP, 'a', [A], ['bounds']);
-    await engineIdle();
+    await settleEdits();
     expect(overlayLayer(VP, A, 0)?.box).toHaveLength(4);
     await h.run({ type: 'deleteLayers', layers: [A] });
-    await engineIdle();
+    await settleEdits();
     expect(overlayLayer(VP, A, 0)).toBeUndefined();
   });
 });

@@ -25,17 +25,16 @@ import { ExpressionEditor } from './ExpressionEditor';
 import { defaultAnimation } from '@motion/animation';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getEventBus } from '@core/events/EventBus';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 
 // The panel writes through the engine API (B3): a real layer in the app engine.
 let NODE = '';
 let h: Harness;
 
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   // Providers binds this at boot; without it nothing tells React the engine moved.
   defaultAnimation.setChangeListener((nodeId) =>
     getEventBus().emit('AnimationChanged', { nodeId }),
@@ -57,7 +56,7 @@ afterEach(async () => {
 
 /** Fire, then let the engine apply the edit it sent. */
 const settle = async (fire: () => void): Promise<void> => {
-  await act(async () => { fire(); await engineIdle(); });
+  await act(async () => { fire(); await settleEdits(); });
 };
 
 const toggle = (): HTMLElement => screen.getByRole('switch', { name: 'Expression enabled' });
@@ -140,7 +139,7 @@ describe('the status line does not lie about a disabled expression', () => {
   test('enabled shows the live value as before', async () => {
     const { container } = render(<ExpressionEditor nodeId={NODE} prop="x" />);
     // The preview is the engine's `evaluateExpression` answer (B4): it lands asynchronously.
-    await act(async () => { await engineIdle(); });
+    await act(async () => { await settleEdits(); });
     expect(container.textContent ?? '').toContain('= 200.00');
     expect(container.textContent ?? '').not.toContain('Disabled');
   });

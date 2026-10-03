@@ -9,8 +9,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { DirectSelectionTool } from '@motion/workspace';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { readNodeMask, readNodeMaskAnim, type MaskPath, type MaskPoint } from '@core/effects/mask';
-import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -82,8 +81,8 @@ async function oneEntry(label: string, run: () => unknown, check: () => void | P
   const before = (await h.doc());
   const entries = (await historyLabels()).length;
   run();
-  await engineIdle();
-  await engineIdle();
+  await settleEdits();
+  await settleEdits();
   expect((await historyLabels()).length).toBe(entries + 1);
   expect((await historyLabels()).at(-1)).toBe(label);
   await check();
@@ -195,7 +194,7 @@ describe('Convert Mask to Shape Layer', () => {
     const before = (await h.doc());
     const entries = (await historyLabels()).length;
     const ids = await convertMasksToShapeLayers();
-    await engineIdle();
+    await settleEdits();
     expect(ids).toHaveLength(1);
     expect((await historyLabels()).length).toBe(entries + 1);
     expect((await historyLabels()).at(-1)).toBe('Convert Mask to Shape Layer');
@@ -233,12 +232,12 @@ describe('drawn shape paths go through the engine', () => {
 
   /** ONE entry named `label`; undo restores exactly; redo reapplies. */
   async function engineEntry(label: string, run: () => unknown, check: () => void | Promise<void>): Promise<void> {
-    await engineIdle();
+    await settleEdits();
     const before = (await h.doc());
     const entries = (await historyLabels()).length;
     run();
-    await engineIdle();
-    await engineIdle();
+    await settleEdits();
+    await settleEdits();
     expect((await historyLabels()).length).toBe(entries + 1);
     expect((await historyLabels()).at(-1)).toBe(label);
     await check();

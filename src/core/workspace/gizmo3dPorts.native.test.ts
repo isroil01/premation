@@ -8,24 +8,16 @@
  */
 
 import { defaultAnimation } from '@motion/animation';
-import { engineIdle as engineQueueIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { applyGizmo3DTransforms } from './ports';
-import { settleToolEdits } from './viewportGesture';
 
 describe('applyGizmo3DTransforms', () => {
   let h: Harness;
   let s: Scene;
-
-  /** Every tool action closed AND the engine queue drained. */
-  async function engineIdle(): Promise<void> {
-    await settleToolEdits();
-    await engineQueueIdle();
-  }
 
   const tp = async (prop: string): Promise<unknown> =>
     ((await docView()).getNode(s.A)!.components.find((c) => c.type === 'Transform')!.props as Record<string, unknown>)[prop];
@@ -35,7 +27,7 @@ describe('applyGizmo3DTransforms', () => {
     const before = (await h.doc());
     const n = (await historyLabels()).length;
     run();
-    await engineIdle();
+    await settleEdits();
     const after = (await h.doc());
     expect(after).not.toBe(before);
     expect((await historyLabels()).length).toBe(n + 1);
@@ -55,7 +47,7 @@ describe('applyGizmo3DTransforms', () => {
   });
 
   afterEach(async () => {
-    await engineIdle();
+    await settleEdits();
     await h.dispose();
   });
 
@@ -126,7 +118,7 @@ describe('applyGizmo3DTransforms', () => {
     const x0 = (await tp('x'));
     const n = (await historyLabels()).length;
     applyGizmo3DTransforms([{ id: s.A, values: { x: 999 } }]);
-    await engineIdle();
+    await settleEdits();
     expect((await tp('x'))).toBe(x0);
     expect((await historyLabels()).length).toBe(n);
   });
@@ -135,7 +127,7 @@ describe('applyGizmo3DTransforms', () => {
     const before = (await h.doc());
     const n = (await historyLabels()).length;
     expect(applyGizmo3DTransforms([{ id: s.P, values: { x: 5, z: 10 } }])).toBe(false);
-    await engineIdle();
+    await settleEdits();
     expect((await h.doc())).toBe(before);
     expect((await historyLabels()).length).toBe(n);
   });

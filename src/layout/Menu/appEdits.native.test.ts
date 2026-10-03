@@ -7,8 +7,7 @@ import { rowSelectionId } from '@core/engine/__testHelpers__/selectionIds';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readLayerFlag } from '@core/scene/layerFlags';
 import { isLayerAudioMuted } from '@core/audio/audioLayerSwitches';
-import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -55,7 +54,7 @@ async function roundTrip(run: () => Promise<unknown>, label: string): Promise<vo
   const before = (await h.doc());
   const entries = (await historyLabels()).length;
   await run();
-  await engineIdle();
+  await settleEdits();
   const after = (await h.doc());
   expect(after).not.toBe(before);
   expect((await historyLabels()).length).toBe(entries + 1);
@@ -173,10 +172,10 @@ describe('property rows', () => {
   it('a locked layer gets no command', async () => {
     // Locked through the engine: the lock is read from the document mirror (B4).
     await h.run({ type: 'setLayerSwitches', layers: [s.A], patch: { locked: true } });
-    await engineIdle();
+    await settleEdits();
     expect(propertyValueCommands(s.A, 'opacity', 0.5, 0, false)).toEqual([]);
     await h.run({ type: 'setLayerSwitches', layers: [s.A], patch: { locked: false } });
-    await engineIdle();
+    await settleEdits();
   });
 });
 

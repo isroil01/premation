@@ -17,10 +17,9 @@
  */
 
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
-import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene } from '@core/engine/__testHelpers__/scene';
-import { engineIdle } from '@core/engine/engineInstance';
 import { EffectStack } from './EffectStack';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { effectDefFor } from '@core/effects/effects';
@@ -58,13 +57,13 @@ afterEach(async () => {
  */
 let harness: (Harness) | null = null;
 async function renderStackWith(type: string, beforeRender?: () => void): Promise<void> {
-  harness = await setupAppEngine();
+  harness = await setupAppEngine({ panels: true });
   const s = await buildScene(harness);
   await harness.run({ type: 'addEffect', layers: [s.A], effect: type, params: [] });
   beforeRender?.();
   await act(async () => {
     render(<EffectStack nodeId={s.A} />);
-    await engineIdle();
+    await settleEdits();
   });
 }
 
@@ -86,7 +85,7 @@ describe('Echo Operator — the enum control', () => {
 
   test('opens on AE’s default (Add) and writes the chosen mode back as a NUMBER', async () => {
     // The write goes through the engine API (B3), so the effect sits on a real layer.
-    const h = await setupAppEngine();
+    const h = await setupAppEngine({ panels: true });
     try {
       const s = await buildScene(h);
       await h.run({ type: 'addEffect', layers: [s.A], effect: 'echo', params: [] });
@@ -97,7 +96,7 @@ describe('Echo Operator — the enum control', () => {
 
       await act(async () => {
         fireEvent.change(menu, { target: { value: '3' } });
-        await engineIdle();
+        await settleEdits();
       });
 
       // Stored numeric, like every other param — that is what lets it read

@@ -20,8 +20,7 @@ import { insertFromSource, sourceRangeEdit, overwriteUnder, compEndSeconds, newC
 import { useProjectStore } from '@stores/projectStore';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 
@@ -81,7 +80,7 @@ describe('insertFromSource', () => {
     const entries = (await historyLabels()).length;
 
     const nodeId = await insertFromSource(ASSET, { inSec: 2, outSec: 5 }, { at: 'playhead' });
-    await engineIdle();
+    await settleEdits();
     expect(nodeId).not.toBeNull();
     expect(useSelectionStore.getState().ids).toEqual([nodeId]);
 
@@ -106,7 +105,7 @@ describe('insertFromSource', () => {
   it('an unmarked clip inserts whole — the range falls back to the file', async () => {
     const c = getTimelineController();
     const nodeId = await insertFromSource(ASSET, { inSec: 0, outSec: 10 }, { at: 'time', seconds: 0 });
-    await engineIdle();
+    await settleEdits();
     const clip = c.getLayersForNode(nodeId!)[0]!.clip;
     expect(clip.sourceIn).toBe(0);
     expect(clip.duration).toBe(300);
@@ -116,10 +115,10 @@ describe('insertFromSource', () => {
     const c = getTimelineController();
     c.seekSeconds(4); // deliberately NOT where the answer should be
     await insertFromSource(ASSET, { inSec: 0, outSec: 2 }, { at: 'time', seconds: 0 });
-    await engineIdle();
+    await settleEdits();
 
     const second = await insertFromSource(ASSET, { inSec: 4, outSec: 6 }, { at: 'end' });
-    await engineIdle();
+    await settleEdits();
     const clip = c.getLayersForNode(second!)[0]!.clip;
     expect(clip.start).toBe(60); // frame 60 = the first clip's 2s end
     expect(clip.sourceIn).toBe(120);
@@ -142,12 +141,12 @@ describe('overwrite', () => {
     const c = getTimelineController();
     // An existing clip covering 0–6s.
     const first = await insertFromSource(ASSET, { inSec: 0, outSec: 6 }, { at: 'time', seconds: 0 });
-    await engineIdle();
+    await settleEdits();
 
     // A new one over 4–7s, with overwrite.
     const entries = (await historyLabels()).length;
     const second = await insertFromSource(ASSET, { inSec: 0, outSec: 3 }, { at: 'time', seconds: 4 }, { overwrite: true });
-    await engineIdle();
+    await settleEdits();
 
     expect(c.getLayersForNode(first!)[0]!.clip.duration).toBe(120); // 0–4s
     const newClip = c.getLayersForNode(second!)[0]!.clip;
@@ -160,11 +159,11 @@ describe('overwrite', () => {
   it('splits a clip that spans the whole insert, leaving a hole', async () => {
     const c = getTimelineController();
     const first = await insertFromSource(ASSET, { inSec: 0, outSec: 10 }, { at: 'time', seconds: 0 });
-    await engineIdle();
+    await settleEdits();
     const before = c.layersOfComp().length;
 
     await insertFromSource(ASSET, { inSec: 0, outSec: 2 }, { at: 'time', seconds: 4 }, { overwrite: true });
-    await engineIdle();
+    await settleEdits();
 
     expect(c.getLayersForNode(first!)[0]!.clip.duration).toBe(120); // trimmed to 0–4s
     // +1 for the inserted clip, +1 for the right-hand piece of the split
@@ -177,7 +176,7 @@ describe('overwrite', () => {
   it('leaves a clip that sits ENTIRELY inside the range alone, and says so', async () => {
     const c = getTimelineController();
     const inner = await insertFromSource(ASSET, { inSec: 0, outSec: 2 }, { at: 'time', seconds: 3 });
-    await engineIdle();
+    await settleEdits();
     const covered = await overwriteUnder('none', 2, 6);
     expect(covered).toBe(1);
     expect(c.getLayersForNode(inner!)[0]!.clip.duration).toBe(60);
@@ -186,9 +185,9 @@ describe('overwrite', () => {
   it('a plain Insert touches nothing else', async () => {
     const c = getTimelineController();
     const first = await insertFromSource(ASSET, { inSec: 0, outSec: 6 }, { at: 'time', seconds: 0 });
-    await engineIdle();
+    await settleEdits();
     await insertFromSource(ASSET, { inSec: 0, outSec: 3 }, { at: 'time', seconds: 4 });
-    await engineIdle();
+    await settleEdits();
     expect(c.getLayersForNode(first!)[0]!.clip.duration).toBe(180);
   });
 });
@@ -200,7 +199,7 @@ describe('newCompFromRange', () => {
     const entries = (await historyLabels()).length;
 
     const comp = await newCompFromRange(ASSET, { inSec: 2, outSec: 5 });
-    await engineIdle();
+    await settleEdits();
     expect(comp).not.toBeNull();
     expect(useProjectStore.getState().comps[comp!]).toMatchObject({ name: 'clip', width: 64, height: 48, fps: 30, durationSeconds: 3 });
     const [layer] = (await docView()).layerIdsOfComp(comp!);

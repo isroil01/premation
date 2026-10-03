@@ -15,11 +15,10 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 import { readAnimatorData } from '@core/text/textAnimators';
 import { useProjectStore } from '@stores/projectStore';
 import { TooltipProvider } from '@components/Tooltip';
@@ -35,7 +34,7 @@ jest.useFakeTimers();
 let h: Harness;
 let s: Scene;
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   s = await buildScene(h);
   act(() => { useProjectStore.getState().actions.setTime(0, 0); });
@@ -46,7 +45,7 @@ afterEach(async () => {
   await h.dispose();
 });
 
-const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+const idle = async (): Promise<void> => { await act(async () => { await settleEdits(); }); };
 const textProps = async (id: string): Promise<Record<string, unknown>> =>
   (await docView()).getNode(id)!.components.find((c) => c.type === 'Text')!.props as Record<string, unknown>;
 const animators = async (id: string) => readAnimatorData((await docView()).getNode(id)!);

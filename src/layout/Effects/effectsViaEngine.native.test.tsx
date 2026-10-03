@@ -14,18 +14,19 @@
 import { render, screen, act, cleanup, fireEvent } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, trackRef, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 import { edit } from '@core/engine/uiEdits';
-import { effectDefFor, getNodeFxEnabled, paramsOf, effectOpacityPath } from '@core/effects/effects';
-import { clearEffectClipboard, applyEffectPreset } from '@core/effects/effectClipboard';
+import { effectDefFor, readNodeFxEnabled, paramsOf, effectOpacityPath } from '@core/effects/effects';
+import { clearEffectClipboard } from '@core/effects/effectClipboard';
 import { BUILTIN_EFFECT_PRESETS } from '@core/effects/builtinEffectPresets';
-import { getNodeLayerStyles } from '@core/effects/layerStyles';
+import { readNodeLayerStyles } from '@core/effects/layerStyles';
+
+/** The layer's styles as the engine stores them. */
+const stylesOf = async (id: string) => readNodeLayerStyles((await docView()).getNode(id)!) ?? {};
 import { getNodeMask, rectangleMask } from '@core/effects/mask';
-import { getNodeLayerTime } from '@core/scene/layerTime';
 import { useCompositionStore } from '@stores/compositionStore';
 import { EffectStack } from './EffectStack';
 import { LayerStylesControls } from './LayerStylesControls';
@@ -67,7 +68,7 @@ jest.useFakeTimers();
 let h: Harness;
 let s: Scene;
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   s = await buildScene(h);
   clearEffectClipboard();
@@ -78,7 +79,7 @@ afterEach(async () => {
   await h.dispose();
 });
 
-const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+const idle = async (): Promise<void> => { await act(async () => { await settleEdits(); }); };
 const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
 const redo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'redo' }); }); };
 /** No second entry from the 700 ms recorder on top of the engine's. */
@@ -157,7 +158,7 @@ describe('EffectStack parameter rows', () => {
     const fx = (await fxOf(s.A, 'gaussian-blur'))!;
     const track = `effect.${fx.id}.blurriness`;
     const watch = screen.getByRole('button', { name: 'Enable Blurriness animation' });
-    await act(async () => { fireEvent.click(watch); await engineIdle(); });
+    await act(async () => { fireEvent.click(watch); await settleEdits(); });
     expect((await docView()).isAnimated(s.A, track)).toBe(true);
     await typeInto('Gaussian Blur Blurriness', '77');
     const keys = (await docView()).getTrackKeyframes(s.A, track)!;
@@ -171,7 +172,7 @@ describe('EffectStack parameter rows', () => {
     render(<EffectStack nodeId={s.A} />);
     const box = screen.getByLabelText('Gaussian Blur Repeat Edge Pixels') as HTMLInputElement;
     expect(box.checked).toBe(true);
-    await act(async () => { fireEvent.click(box); await engineIdle(); });
+    await act(async () => { fireEvent.click(box); await settleEdits(); });
     expect(paramsOf((await fxOf(s.A, 'gaussian-blur'))!).repeatEdge).toBe(false);
     settle();
     expect((await historyLabels())).toEqual(['Set Gaussian Blur Repeat Edge Pixels']);
@@ -181,10 +182,10 @@ describe('EffectStack parameter rows', () => {
     render(<EffectStack nodeId={s.A} />);
     const blur = (await fxOf(s.A, 'gaussian-blur'))!.id;
     const disable = screen.getAllByTitle('Disable effect');
-    await act(async () => { fireEvent.click(disable[disable.length - 1]!); await engineIdle(); });
+    await act(async () => { fireEvent.click(disable[disable.length - 1]!); await settleEdits(); });
     expect((await docView()).getNodeEffects(s.A).find((e) => e.id === blur)!.enabled).toBe(false);
 
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Move Gaussian Blur up' })); await engineIdle(); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Move Gaussian Blur up' })); await settleEdits(); });
     expect((await docView()).getNodeEffects(s.A).map((e) => e.id)).toEqual([blur, s.fx]);
 
     await act(async () => { await edit('x', paramCommands(s.A, blur, effectDefFor('gaussian-blur')!.params[0]!, 99, 0)); });
@@ -192,7 +193,7 @@ describe('EffectStack parameter rows', () => {
     await act(async () => { await resetEffectEdit(s.A, blur, 'Gaussian Blur'); });
     expect(paramsOf((await docView()).getNodeEffects(s.A).find((e) => e.id === blur)!).blurriness).toBe(10);
 
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Remove Gaussian Blur' })); await engineIdle(); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Remove Gaussian Blur' })); await settleEdits(); });
     expect((await docView()).getNodeEffects(s.A).some((e) => e.id === blur)).toBe(false);
     settle();
     expect((await historyLabels())).toEqual(['Reset Gaussian Blur', 'Remove Gaussian Blur']);
@@ -207,7 +208,7 @@ test('the enum menu writes the option (stored as its number), one entry', async 
   await clearHistory();
   render(<EffectStack nodeId={s.A} />);
   const menu = screen.getByLabelText('Echo Echo Operator') as HTMLSelectElement;
-  await act(async () => { fireEvent.change(menu, { target: { value: '3' } }); await engineIdle(); });
+  await act(async () => { fireEvent.change(menu, { target: { value: '3' } }); await settleEdits(); });
   const stored = paramsOf((await fxOf(s.A, 'echo'))!).echoOperator;
   expect(stored).toBe(3);
   settle();
@@ -293,37 +294,39 @@ test('copy / paste onto another layer is ONE engine entry with the keyframes; a 
   expect(paramsOf((await fxOf(s.B, 'glow'))!).radius).toBe(radius);
 });
 
-test('a built-in effect preset is ONE engine entry and renders like the legacy paste', async () => {
+/** A preset's effects as data: each one's type and the params it sets. */
+const presetEffects = (name: string) =>
+  BUILTIN_EFFECT_PRESETS.find((p) => p.name === name)!.items.map((i) => ({ type: i.effect.type, params: i.effect.params }));
+
+test('a built-in effect preset is ONE engine entry carrying the preset\'s effects', async () => {
   await act(async () => { expect(await applyEffectPresetEdit('Neon Edge', [s.B])).toBe(true); });
   settle();
   expect((await historyLabels())).toEqual(['Apply Neon Edge']);
-  const viaEngine = (await docView()).getNodeEffects(s.B).map((e) => ({ type: e.type, params: paramsOf(e) }));
+  const applied = (await docView()).getNodeEffects(s.B).map((e) => ({ type: e.type, params: paramsOf(e) }));
+  expect(applied).toMatchObject(presetEffects('Neon Edge'));
   await undo();
   expect((await docView()).getNodeEffects(s.B)).toHaveLength(0);
-  applyEffectPreset('Neon Edge', [s.V]);
-  const viaLegacy = (await docView()).getNodeEffects(s.V).map((e) => ({ type: e.type, params: paramsOf(e) }));
-  expect(viaEngine).toEqual(viaLegacy);
 });
 
-test('EVERY built-in preset applies through the engine, identical to the legacy paste', async () => {
+test('EVERY built-in preset applies through the engine as one entry, its effects and params intact', async () => {
   const fellBack: string[] = [];
   const differ: string[] = [];
   for (const preset of BUILTIN_EFFECT_PRESETS) {
     await clearHistory();
     await act(async () => { await applyEffectPresetEdit(preset.name, [s.B]); });
     if ((await historyLabels()).join() !== `Apply ${preset.name}`) fellBack.push(preset.name);
-    const viaEngine = (await docView()).getNodeEffects(s.B).map((e) => ({ type: e.type, params: paramsOf(e) }));
-    applyEffectPreset(preset.name, [s.V]);
-    const viaLegacy = (await docView()).getNodeEffects(s.V).map((e) => ({ type: e.type, params: paramsOf(e) }));
-    if (JSON.stringify(viaEngine) !== JSON.stringify(viaLegacy)) differ.push(`${preset.name}: ${JSON.stringify(viaEngine)} vs ${JSON.stringify(viaLegacy)}`);
-    await h.run({ type: 'removePropertyGroups', groups: (await docView()).getNodeEffects(s.B).map((e) => ({ layer: s.B, path: `effects/${e.id}` })) });
-    await h.run({ type: 'removePropertyGroups', groups: (await docView()).getNodeEffects(s.V).map((e) => ({ layer: s.V, path: `effects/${e.id}` })) });
+    const applied = (await docView()).getNodeEffects(s.B);
+    const want = presetEffects(preset.name);
+    const same = applied.length === want.length && want.every((w, i) => applied[i]!.type === w.type
+      && Object.entries(w.params ?? {}).every(([k, v]) => k === 'vibrance' || JSON.stringify(paramsOf(applied[i]!)[k]) === JSON.stringify(v)));
+    if (!same) differ.push(`${preset.name}: ${JSON.stringify(applied.map((e) => ({ type: e.type, params: paramsOf(e) })))}`);
+    if (applied.length > 0) await h.run({ type: 'removePropertyGroups', groups: applied.map((e) => ({ layer: s.B, path: `effects/${e.id}` })) });
   }
   expect(differ).toEqual([]);
   // Cinematic Grade sets `vibrance` on Lumetri, a key Lumetri does not declare
-  // (a dead value in the preset data): `addEffect` cannot carry an undeclared
-  // param, so that preset is a `pasteEffects` of its snapshot — still ONE
-  // "Apply" entry, so nothing falls back any more.
+  // (a dead value in the preset data, skipped above): `addEffect` cannot carry
+  // an undeclared param, so that preset is a `pasteEffects` of its snapshot —
+  // still ONE "Apply" entry, so nothing falls back.
   expect(fellBack).toEqual([]);
 });
 
@@ -331,8 +334,9 @@ test('EVERY built-in preset applies through the engine, identical to the legacy 
 
 test('Effect Opacity: an animated value keys through the engine; a static one keeps the legacy writer', async () => {
   expect(effectOpacityCommands(s.A, s.fx, 50, 0)).toBeNull();
-  // Animate it the legacy way (the stopwatch is an engine gap), then key through the engine.
-  defaultAnimation.setKeyframe(s.A, effectOpacityPath(s.fx), 0, 100);
+  // Animate it (one key at 0 holding 100), then key through the engine.
+  const ref = await trackRef(s.A, effectOpacityPath(s.fx));
+  await h.run({ type: 'addKeyframes', keys: [{ prop: { layer: s.A, path: ref.path }, time: 0, value: { kind: 'scalar', value: 100 }, spatialIn: [], spatialOut: [] }] });
   await clearHistory();
   const cmds = effectOpacityCommands(s.A, s.fx, 40, 1);
   expect(cmds).not.toBeNull();
@@ -415,13 +419,13 @@ test('mask card edits: add, mode, inverted, rename, feather, shape stopwatch, re
 
 test('layer styles: the checkbox adds / removes the style, a field scrub is one entry', async () => {
   render(<LayerStylesControls nodeId={s.A} />);
-  await act(async () => { fireEvent.click(screen.getByLabelText('Drop shadow')); await engineIdle(); });
-  expect(getNodeLayerStyles(s.A).dropShadow).toBeDefined();
+  await act(async () => { fireEvent.click(screen.getByLabelText('Drop shadow')); await settleEdits(); });
+  expect((await stylesOf(s.A)).dropShadow).toBeDefined();
   cleanup();
   render(<LayerStylesControls nodeId={s.A} />);
   const before = (await h.doc());
   await typeInto('Opacity', '40');
-  expect(getNodeLayerStyles(s.A).dropShadow!.opacity).toBeCloseTo(0.4);
+  expect((await stylesOf(s.A)).dropShadow!.opacity).toBeCloseTo(0.4);
   await scrub(screen.getByRole('spinbutton', { name: 'Distance' }), [5, 10, 15]);
   settle();
   expect((await historyLabels())).toEqual(['Add Drop Shadow', 'Set Opacity', 'Set Distance']);
@@ -434,22 +438,22 @@ test('layer style switches, Glass and a bound angle go through the engine', asyn
   await act(async () => { await setLayerStyleOnEdit(s.A, 'dropShadow', true, 'Drop Shadow'); });
   await act(async () => { await setLayerStyleOnEdit(s.A, 'glass', true, 'Glass'); });
   await act(async () => { await patchLayerStyleEdit(s.A, 'dropShadow', { useGlobalLight: true }); });
-  expect(getNodeLayerStyles(s.A).dropShadow!.useGlobalLight).not.toBe(false);
+  expect((await stylesOf(s.A)).dropShadow!.useGlobalLight).not.toBe(false);
   await clearHistory();
   const before = (await h.doc());
   render(<LayerStylesControls nodeId={s.A} />);
   // Editing the angle the Global Light drives unbinds it in the same entry.
   await typeInto('Angle', '45');
-  expect(getNodeLayerStyles(s.A).dropShadow).toMatchObject({ angle: 45, useGlobalLight: false });
+  expect((await stylesOf(s.A)).dropShadow).toMatchObject({ angle: 45, useGlobalLight: false });
   cleanup(); // the panel re-renders from its host on a document change
   render(<LayerStylesControls nodeId={s.A} />);
-  await act(async () => { fireEvent.click(screen.getByRole('checkbox', { name: 'Use global light' })); await engineIdle(); });
-  expect(getNodeLayerStyles(s.A).dropShadow!.useGlobalLight).toBe(true);
+  await act(async () => { fireEvent.click(screen.getByRole('checkbox', { name: 'Use global light' })); await settleEdits(); });
+  expect((await stylesOf(s.A)).dropShadow!.useGlobalLight).toBe(true);
   // Glass is `styles/glass/<param>`, valued in stored units (0..1 opacities).
   await typeInto('Glass tint opacity', '50');
-  expect(getNodeLayerStyles(s.A).glass!.tintOpacity).toBeCloseTo(0.5);
+  expect((await stylesOf(s.A)).glass!.tintOpacity).toBeCloseTo(0.5);
   await act(async () => { await patchLayerStyleEdit(s.A, 'glass', { blur: 20, rimColor: '#00ff00' }); });
-  expect(getNodeLayerStyles(s.A).glass).toMatchObject({ blur: 20, rimColor: '#00ff00' });
+  expect((await stylesOf(s.A)).glass).toMatchObject({ blur: 20, rimColor: '#00ff00' });
   settle();
   expect((await historyLabels())).toEqual(['Set Angle', 'Edit Layer Style', 'Set Glass tint opacity', 'Edit Layer Style']);
   for (let i = 0; i < 4; i++) await undo();
@@ -466,25 +470,25 @@ test('Global Light is a composition setting (one entry per typed value)', async 
 
 test('the fx switch, stretch / reverse and frame blending go through the engine', async () => {
   await act(async () => { await setLayerEffectsEnabledEdit(s.A, false); });
-  expect(getNodeFxEnabled(s.A)).toBe(false);
+  expect(readNodeFxEnabled((await docView()).getNode(s.A)!)).toBe(false);
   await act(async () => { await edit('Time Stretch', layerStretchCommands(s.V, 200, false)); });
-  expect(getNodeLayerTime(s.V).stretch).toBeCloseTo(200);
+  expect((await docView()).getNodeLayerTime(s.V).stretch).toBeCloseTo(200);
   await act(async () => { await edit('Time-Reverse Layer', layerStretchCommands(s.V, 200, true)); });
-  expect(getNodeLayerTime(s.V)).toMatchObject({ stretch: 200, reverse: true });
+  expect((await docView()).getNodeLayerTime(s.V)).toMatchObject({ stretch: 200, reverse: true });
   await act(async () => { await setFrameBlendEdit(s.V, 'mix'); });
-  expect(getNodeLayerTime(s.V).frameBlend).toBe('mix');
+  expect((await docView()).getNodeLayerTime(s.V).frameBlend).toBe('mix');
   expect((await historyLabels())).toEqual(['Disable Effects', 'Time Stretch', 'Time-Reverse Layer', 'Frame Blending']);
 });
 
 test('freeze frame on / off and its hold time go through the engine', async () => {
   await act(async () => { await setFreezeFrameEdit(s.V, true, 1); });
-  expect(getNodeLayerTime(s.V)).toMatchObject({ freeze: true, freezeTime: 1 });
+  expect((await docView()).getNodeLayerTime(s.V)).toMatchObject({ freeze: true, freezeTime: 1 });
   await act(async () => { await setFreezeTimeEdit(s.V, 2.5); });
-  expect(getNodeLayerTime(s.V)).toMatchObject({ freeze: true, freezeTime: 2.5 });
+  expect((await docView()).getNodeLayerTime(s.V)).toMatchObject({ freeze: true, freezeTime: 2.5 });
   await act(async () => { await setFreezeFrameEdit(s.V, false, 0); });
-  expect(getNodeLayerTime(s.V).freeze).toBe(false);
+  expect((await docView()).getNodeLayerTime(s.V).freeze ?? false).toBe(false);
   expect((await historyLabels())).toEqual(['Freeze Frame', 'Freeze Frame', 'Unfreeze Frame']);
   await undo();
-  expect(getNodeLayerTime(s.V)).toMatchObject({ freeze: true, freezeTime: 2.5 });
+  expect((await docView()).getNodeLayerTime(s.V)).toMatchObject({ freeze: true, freezeTime: 2.5 });
 });
 

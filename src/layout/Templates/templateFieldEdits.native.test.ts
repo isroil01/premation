@@ -5,11 +5,10 @@
  * rather than written around the engine.
  */
 
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
-import { engineIdle } from '@core/engine/engineInstance';
 import type { TemplateField } from '@core/template/templateTypes';
 import { useTemplateStore } from '@stores/templateStore';
 import { engineBatchFieldOps, fillDataRowEdit, fillMediaFieldEdit, slotBoxOf, templateFieldCommands, templateFieldValues } from './templateFieldEdits';
@@ -69,7 +68,7 @@ describe('fillDataRowEdit', () => {
       'Fill row 1',
       0,
     );
-    await engineIdle();
+    await settleEdits();
     expect(res).toEqual({ filled: ['headline', 'accent'], skippedKind: ['clip'], failed: [] });
     expect((await prop(s.T, 'Text', 'content'))).toBe('Ada Lovelace');
     expect(String((await prop(s.T, 'Text', 'fill'))).toLowerCase()).toMatch(/^#00ff00/);
@@ -85,7 +84,7 @@ describe('fillDataRowEdit', () => {
   it('reports a bad cell as failed and writes nothing when no field matched', async () => {
     const n = (await historyLabels()).length;
     const res = await fillDataRowEdit([colorField()], { accent: 'zzz' }, 'Fill row 2', 0);
-    await engineIdle();
+    await settleEdits();
     expect(res).toEqual({ filled: [], skippedKind: [], failed: ['accent'] });
     expect((await historyLabels()).length).toBe(n);
   });
@@ -101,7 +100,7 @@ describe('templateStore.setField', () => {
     const before = (await h.doc());
     const n = (await historyLabels()).length;
     useTemplateStore.getState().setField('headline', 'Grace');
-    await engineIdle();
+    await settleEdits();
     expect(useTemplateStore.getState().values.headline).toBe('Grace');
     expect((await prop(s.T, 'Text', 'content'))).toBe('Grace');
     expect((await historyLabels()).length).toBe(n + 1);
@@ -138,7 +137,7 @@ describe('media slot fill (from a picked File)', () => {
     };
     const file = new File([new Uint8Array([137, 80, 78, 71])], 'shot.png', { type: 'image/png' });
     const asset = await fillMediaFieldEdit(field, file, 0);
-    await engineIdle();
+    await settleEdits();
     expect(asset).not.toBeNull();
     // (The slot declaration above is a legacy setup write the recorder files separately.)
     expect((await historyLabels()).slice(-2)).toEqual(['Import File', 'Edit Shot']);
@@ -180,10 +179,10 @@ describe('engineBatchFieldOps', () => {
     const saved = await ops.read([textField(), colorField(), mediaField()]);
     expect(saved.map((x) => x.field.id)).toEqual(['headline', 'accent']);
     await ops.fill([textField()], { headline: 'Grace' }, 'Fill row 1');
-    await engineIdle();
+    await settleEdits();
     expect((await prop(s.T, 'Text', 'content'))).toBe('Grace');
     await ops.restore(saved, 'Restore template after batch');
-    await engineIdle();
+    await settleEdits();
     expect((await historyLabels()).at(-1)).toBe('Restore template after batch');
     expect((await prop(s.T, 'Text', 'content'))).toBe(saved[0]!.value);
   });

@@ -11,10 +11,9 @@
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { AudioDriverSection, hasAudioDriverSection } from './AudioDriverSection';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 import {
   readAudioDrivers,
   writeAudioDriver,
@@ -46,9 +45,9 @@ describe('AudioDriverSection', () => {
   let h: Harness;
   let rect = '';
   beforeEach(async () => {
-    h = await setupAppEngine();
+    h = await setupAppEngine({ panels: true });
     rect = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'Layer 1', init: [] })).layer;
-    await act(async () => { await engineIdle(); });
+    await act(async () => { await settleEdits(); });
   });
   afterEach(async () => {
     cleanup();
@@ -103,7 +102,7 @@ describe('AudioDriverSection', () => {
         prop: { layer: rect, path: 'audio/drivers' },
         value: { kind: 'json', value: JSON.stringify({ [path]: { ...defaultAudioDriver(path), min: 50, max: 150 } }) },
       });
-      await engineIdle();
+      await settleEdits();
     });
     // The open section follows the document (a mirror subscription), no remount needed.
     expect(screen.getAllByRole('button', { name: 'Re-bake' }).length).toBeGreaterThan(0);

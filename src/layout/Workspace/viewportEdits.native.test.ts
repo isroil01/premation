@@ -7,9 +7,8 @@
 import { AnimationEngine, defaultAnimation, type Keyframe } from '@motion/animation';
 import { readNodeMask } from '@core/effects/mask';
 import { setSpatialInterpolation, setPathTangent, smoothMotionPath, straightenMotionPath } from '@core/motion/motionPath';
-import { engineIdle } from '@core/engine/engineInstance';
 import { edit, GestureSession } from '@core/engine/uiEdits';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -41,7 +40,7 @@ async function roundTrip(run: () => Promise<unknown>, label: string): Promise<vo
   const before = (await h.doc());
   const entries = (await historyLabels()).length;
   await run();
-  await engineIdle();
+  await settleEdits();
   const after = (await h.doc());
   expect(after).not.toBe(before);
   expect((await historyLabels()).length).toBe(entries + 1);
@@ -86,7 +85,7 @@ describe('trackValueCommands (the viewport dual path)', () => {
 
   it('skips locked layers (the engine would refuse the whole batch)', async () => {
     await h.run({ type: 'setLayerSwitches', layers: [s.A], patch: { locked: true } });
-    await engineIdle();
+    await settleEdits();
     expect(trackValueCommands([{ nodeId: s.A, values: { x: 1 } }], { seconds: 0 })).toEqual([]);
   });
 
@@ -100,7 +99,7 @@ describe('trackValueCommands (the viewport dual path)', () => {
     const g = new GestureSession('Move');
     for (let i = 1; i <= 5; i++) g.send(trackValueCommands([{ nodeId: s.A, values: { x: 100 + i * 10 } }], { seconds: 0 })!);
     await g.end();
-    await engineIdle();
+    await settleEdits();
     expect((await transform(s.A)).x).toBe(150);
     expect((await historyLabels()).length).toBe(entries + 1);
     await h.run({ type: 'undo' });
@@ -181,7 +180,7 @@ describe('motion-path keys (scratch-engine macros)', () => {
       g.send(positionKeyPatchCommands(s.B, start, (e) => setPathTangent(s.B, t0, 'out', p, true, e)));
     }
     await g.end();
-    await engineIdle();
+    await settleEdits();
     expect((await historyLabels()).length).toBe(entries + 1);
     expect((await live(s.B, 'x'))).toEqual(expected.x.map(shape));
     expect((await live(s.B, 'y'))).toEqual(expected.y.map(shape));

@@ -27,10 +27,9 @@ import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { readNode3D } from '@core/scene/threeD';
 import { MODEL_COMPONENT } from '@core/scene/modelMesh';
 import { defaultAnimation } from '@motion/animation';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 import { insertBuiltLayers } from '@core/engine/offDocument';
 import { values } from '@core/engine/propRefs';
 import { ThreeDControl } from './ThreeDControl';
@@ -43,7 +42,7 @@ jest.useFakeTimers();
 let h: Harness;
 
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
 });
 
 afterEach(async () => {
@@ -51,7 +50,7 @@ afterEach(async () => {
   await h.dispose();
 });
 
-const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+const idle = async (): Promise<void> => { await act(async () => { await settleEdits(); }); };
 const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
 /** No second entry from the 700 ms recorder on top of the engine's. */
 const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };

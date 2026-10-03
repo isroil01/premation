@@ -27,9 +27,8 @@ import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getNodeStroke, defaultStroke } from '@core/paint/stroke';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 import { strokesCommands } from './appearance/paintEdits';
 
 jest.useFakeTimers();
@@ -57,7 +56,7 @@ async function seed(): Promise<void> {
 }
 
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   await seed();
 });
 afterEach(async () => {
@@ -65,7 +64,7 @@ afterEach(async () => {
   await h.dispose();
 });
 
-const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+const idle = async (): Promise<void> => { await act(async () => { await settleEdits(); }); };
 /** No second entry from the 700 ms recorder on top of the engine's. */
 const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
 const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };

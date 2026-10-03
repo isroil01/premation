@@ -21,10 +21,9 @@ import {
   TEXT_CONVERT_TO_PARAGRAPH_COMMAND,
   TEXT_CONVERT_TO_POINT_COMMAND,
 } from './paragraphTextCommands';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { engineIdle } from '@core/engine/engineInstance';
 import { documentMirror } from '@stores/documentMirror';
 
 beforeAll(() => {
@@ -131,7 +130,7 @@ describe('convert commands', () => {
   it('are enabled for the matching kind of selected text only', async () => {
     addLayer(textNode({ content: 'x' }));
     // `enabled` reads the mirror: let the legacy load reach it (a resync on the next microtask).
-    await engineIdle();
+    await settleEdits();
     await documentMirror().whenIdle();
     await documentMirror().loadTree(ID);
     await documentMirror().whenIdle();

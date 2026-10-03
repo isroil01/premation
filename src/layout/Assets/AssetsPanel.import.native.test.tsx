@@ -28,10 +28,10 @@ import { useAssetStore } from '@stores/assetStore';
 import { resetAssetsViewForTest, useAssetsViewStore } from '@stores/assetsViewStore';
 import { useUIStore } from '@stores/uiStore';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { engine, engineIdle } from '@core/engine/engineInstance';
+import { engine } from '@core/engine/engineInstance';
 import { importBrowserFilesEdit } from './assetEdits';
 import { documentMirror } from '@stores/documentMirror';
-import { historyLabels, setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { historyLabels, setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 
 jest.mock('@core/services/AssetDatabase', () => ({
@@ -160,7 +160,7 @@ const importViaPicker = (files: File[]): Promise<void> =>
 function withAppEngine(): void {
   let h: Awaited<ReturnType<typeof setupAppEngine>> | null = null;
   beforeEach(async () => {
-    h = await setupAppEngine();
+    h = await setupAppEngine({ panels: true });
     useAssetStore.setState({ assets: [], folders: [] });
   });
   afterEach(async () => { await h?.dispose(); h = null; });
@@ -181,7 +181,7 @@ describe('import never inserts', () => {
 
   it('offers ONE toast, "Imported N files", whose action places them', async () => {
     // The action inserts through the engine (`insertMediaEdit`).
-    const h = await setupAppEngine();
+    const h = await setupAppEngine({ panels: true });
     try {
       useAssetStore.setState({ assets: [], folders: [] });
       renderPanel();
@@ -197,7 +197,7 @@ describe('import never inserts', () => {
       await act(async () => {
         toasts[0]?.action?.onSelect();
         await new Promise((r) => setTimeout(r, 20));
-        await engineIdle();
+        await settleEdits();
       });
       expect((await contentLayerCount())).toBe(before + 2);
       // Both files in ONE undo entry.

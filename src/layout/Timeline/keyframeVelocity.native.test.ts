@@ -10,10 +10,9 @@
 
 import { act } from '@testing-library/react';
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 import { incomingSpeed, outgoingSpeed, effectiveBezier, influences } from './speedGraph';
 import { applyKeyframeVelocity, readKeyframeVelocity } from './keyframeVelocity';
 
@@ -29,8 +28,8 @@ async function apply(prop: string, t: number, v: Parameters<typeof applyKeyframe
   let ok = false;
   await act(async () => {
     ok = applyKeyframeVelocity(NODE, prop, t, v);
-    await engineIdle();
-    await engineIdle();
+    await settleEdits();
+    await settleEdits();
   });
   return ok;
 }

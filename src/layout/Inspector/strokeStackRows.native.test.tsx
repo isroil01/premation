@@ -14,10 +14,9 @@ import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getNodeStrokes, defaultStroke } from '@core/paint/stroke';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 import { strokesCommands } from './appearance/paintEdits';
 
 jest.useFakeTimers();
@@ -26,7 +25,7 @@ let h: Harness;
 let ID: string;
 
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   ({ layer: ID } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'stroke_stack_rows', init: [] }));
   // Two strokes with different values, seeded through the engine as the panel writes them.
   await h.batch('seed', strokesCommands(ID, [
@@ -41,7 +40,7 @@ afterEach(async () => {
   await h.dispose();
 });
 
-const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+const idle = async (): Promise<void> => { await act(async () => { await settleEdits(); }); };
 /** No second entry from the 700 ms recorder on top of the engine's. */
 const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
 const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };

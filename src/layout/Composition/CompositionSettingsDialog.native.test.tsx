@@ -4,10 +4,9 @@ import { useModalStore } from '@stores/modalStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useCompositionStore, DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { TooltipProvider } from '@components/Tooltip';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 
 const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: TooltipProvider });
 
@@ -20,7 +19,7 @@ describe('CompositionSettingsDialog', () => {
   let h: Harness;
 
   beforeEach(async () => {
-    h = await setupAppEngine();
+    h = await setupAppEngine({ panels: true });
     useModalStore.setState({ stack: [] });
     useProjectStore.getState().actions.updateComp(compId, {
       ...DEFAULT_COMPOSITION,
@@ -124,7 +123,7 @@ describe('CompositionSettingsDialog', () => {
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
-      await engineIdle();
+      await settleEdits();
     });
     expect(close).toHaveBeenCalledTimes(1);
     expect(comp().name).toBe('Main Showcase');
@@ -143,7 +142,7 @@ describe('CompositionSettingsDialog', () => {
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
-      await engineIdle();
+      await settleEdits();
     });
 
     expect(close).toHaveBeenCalledTimes(1);
@@ -163,7 +162,7 @@ describe('CompositionSettingsDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: /^29\.97 fps/i }));
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
-      await engineIdle();
+      await settleEdits();
     });
     expect(comp().fps).toBe(29.97);
   });

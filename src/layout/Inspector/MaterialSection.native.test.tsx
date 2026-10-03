@@ -19,7 +19,7 @@ import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import { values } from '@core/engine/propRefs';
-import { readNodeMaterialParams, DEFAULT_MATERIAL_PARAMS } from '@core/scene/material';
+import { DEFAULT_MATERIAL_PARAMS, readNodeMaterial, materialParamsOf } from '@core/scene/material';
 import { useMaterialStore } from '@stores/materialStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { MaterialSection, hasMaterialSection, materialSphereCss } from './MaterialSection';
@@ -27,10 +27,13 @@ import { ThreeDControl } from './ThreeDControl';
 
 jest.useFakeTimers();
 
+/** The layer's surface as the engine stores it. */
+const materialOf = async (id: string) => materialParamsOf(readNodeMaterial((await docView()).getNode(id)!));
+
 let h: Harness;
 
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   useMaterialStore.setState({ materials: [] });
   useSelectionStore.setState({ ids: [], primary: null });
 });
@@ -148,11 +151,11 @@ describe('rows follow the shading model', () => {
     expect(noField('Shininess')).toBeNull();
     expect(field('Roughness')).toBeInTheDocument();
     expect(field('Metal')).toBeInTheDocument();
-    expect(readNodeMaterialParams(box)!.shading).toBe('pbr');
+    expect((await materialOf(box))!.shading).toBe('pbr');
     settle();
     expect((await historyLabels())).toEqual(['Set Shading']);
     await undo();
-    expect(readNodeMaterialParams(box)!.shading).toBe('phong');
+    expect((await materialOf(box))!.shading).toBe('phong');
     expect((await h.doc())).toBe(before);
   });
 
@@ -164,7 +167,7 @@ describe('rows follow the shading model', () => {
     expect(bands.value).toBe('3');
     fireEvent.change(bands, { target: { value: '5' } });
     await idle();
-    expect(readNodeMaterialParams(box)!.toonBands).toBe(5);
+    expect((await materialOf(box))!.toonBands).toBe(5);
   });
 });
 
@@ -176,7 +179,7 @@ describe('the controls that moved keep writing what they wrote', () => {
     fireEvent.change(screen.getByLabelText('Accepts shadows'), { target: { value: 'off' } });
     fireEvent.change(screen.getByLabelText('Light Transmission slider'), { target: { value: '60' } });
     await idle();
-    const m = readNodeMaterialParams(box)!;
+    const m = (await materialOf(box))!;
     expect(m.castsShadows).toBe('only');
     expect(m.acceptsShadows).toBe('off');
     expect(m.lightTransmission).toBe(60);
@@ -187,7 +190,7 @@ describe('the controls that moved keep writing what they wrote', () => {
     mount(box);
     fireEvent.change(screen.getByLabelText('Diffuse slider'), { target: { value: '75' } });
     await idle();
-    expect(readNodeMaterialParams(box)!.diffuse).toBe(75);
+    expect((await materialOf(box))!.diffuse).toBe(75);
     expect(screen.getByRole('spinbutton', { name: 'Diffuse' })).toHaveAttribute('aria-valuenow', '75');
   });
 });
@@ -205,7 +208,7 @@ describe('the library', () => {
     const before = (await h.doc());
     fireEvent.click(screen.getByLabelText('Apply material Steel'));
     await idle();
-    const m = readNodeMaterialParams(box)!;
+    const m = (await materialOf(box))!;
     expect(m.acceptsLights).toBe(true);
     expect(m.shading).toBe('pbr');
     expect(m.specular).toBe(85);
@@ -214,7 +217,7 @@ describe('the library', () => {
     settle();
     expect((await historyLabels())).toEqual(['Apply material Steel']);
     await undo();
-    expect(readNodeMaterialParams(box)).toEqual(DEFAULT_MATERIAL_PARAMS);
+    expect((await materialOf(box))).toEqual(DEFAULT_MATERIAL_PARAMS);
     expect((await h.doc())).toBe(before);
   });
 
@@ -225,8 +228,8 @@ describe('the library', () => {
     mount(box);
     fireEvent.click(screen.getByLabelText('Apply material Gold'));
     await idle();
-    expect(readNodeMaterialParams(other)!.metal).toBe(100);
-    expect(readNodeMaterialParams(box)!.metal).toBe(100);
+    expect((await materialOf(other))!.metal).toBe(100);
+    expect((await materialOf(box))!.metal).toBe(100);
     settle();
     expect((await historyLabels())).toEqual(['Apply material Gold']);
   });
@@ -238,8 +241,8 @@ describe('the library', () => {
     mount(box);
     fireEvent.click(screen.getByLabelText('Apply material Gold'));
     await idle();
-    expect(readNodeMaterialParams(box)!.metal).toBe(100);
-    expect(readNodeMaterialParams(other)).toEqual(DEFAULT_MATERIAL_PARAMS);
+    expect((await materialOf(box))!.metal).toBe(100);
+    expect((await materialOf(other))).toEqual(DEFAULT_MATERIAL_PARAMS);
   });
 
   it('saves the layer’s current surface as a named material, then applies it back', async () => {
@@ -261,10 +264,10 @@ describe('the library', () => {
 
     fireEvent.change(screen.getByLabelText('Specular slider'), { target: { value: '0' } });
     await idle();
-    expect(readNodeMaterialParams(box)!.specular).toBe(0);
+    expect((await materialOf(box))!.specular).toBe(0);
     fireEvent.click(screen.getByLabelText('Apply material Hero'));
     await idle();
-    expect(readNodeMaterialParams(box)!.specular).toBe(70);
+    expect((await materialOf(box))!.specular).toBe(70);
   });
 
   it('renames and deletes a saved material', async () => {
@@ -327,7 +330,7 @@ describe('Advanced-3D axes (Reflections / Transparency)', () => {
     fireEvent.change(screen.getByLabelText('Transparency Rolloff slider'), { target: { value: '50' } });
     fireEvent.change(screen.getByLabelText('Index of Refraction slider'), { target: { value: '1.33' } });
     await idle();
-    const m = readNodeMaterialParams(box)!;
+    const m = (await materialOf(box))!;
     expect(m.reflectionIntensity).toBe(40);
     expect(m.reflectionRolloff).toBe(25);
     expect(m.transparency).toBe(60);
@@ -338,7 +341,7 @@ describe('Advanced-3D axes (Reflections / Transparency)', () => {
     // stores it explicitly: an engine gap listed in the B3 report, pixels equal.)
     fireEvent.change(screen.getByLabelText('Reflection Intensity slider'), { target: { value: '100' } });
     await idle();
-    expect(readNodeMaterialParams(box)!.reflectionIntensity).toBe(100);
+    expect((await materialOf(box))!.reflectionIntensity).toBe(100);
   });
 
   it('Toon replaces the reflection rows with an explanation', async () => {

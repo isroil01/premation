@@ -36,10 +36,9 @@ import { EventBus, setEventBus } from '@core/events/EventBus';
 import { defaultAnimation } from '@motion/animation';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { resetHistory } from '@stores/historyStore';
-import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 
 /** The probe layer — created through the app's engine per section (its id is the engine's). */
 let ID = '';
@@ -61,7 +60,7 @@ const SKELETON = {
  * reads the document only after the engine has applied what the control sent.
  */
 async function idle(): Promise<void> {
-  await act(async () => { await engineIdle(); });
+  await act(async () => { await settleEdits(); });
 }
 
 function discoverSections(): Array<[string, React.ComponentType<{ nodeId: string }>]> {
@@ -200,7 +199,7 @@ async function resetWorld(): Promise<void> {
   // matters: this mirrors `Application.boot()` swapping the bus before
   // Providers subscribes, which is the exact sequence the bug lived in.
   setEventBus(new EventBus());
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   ({ layer: ID } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name: 'hist_probe_layer', init: [] }));
   await h.batch('fixture', [
     { type: 'setProperty', prop: { layer: ID, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Inter' } },

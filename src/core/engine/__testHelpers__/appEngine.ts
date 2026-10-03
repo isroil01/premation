@@ -148,7 +148,32 @@ let batchesOff: (() => void) | null = null;
 /** The page stores the app binds to the mirror (engineOwnedSession.tsx): items, comps, guides / swatches / materials. */
 let viewsOff: Array<() => void> = [];
 
-export async function setupAppEngine(): Promise<AppHarness> {
+export interface AppEngineOptions {
+  /**
+   * A suite of PANELS (Inspector sections, overlays): every layer's property
+   * tree is held as soon as the layer exists — what the open panel does in the
+   * app — and each fixture command (`run` / `batch`) lets the mirror catch up
+   * before it returns, so a render right after a fixture sees its layer.
+   * Suites of edits leave it off: an edit must load what it reads itself.
+   */
+  panels?: boolean;
+}
+
+/** Hold the tree of every layer the mirror knows, as layers appear (`panels`). */
+function holdAllTrees(): () => void {
+  const m = documentMirror();
+  const held = new Map<string, () => void>();
+  const sync = (): void => {
+    const ids = new Set(m.layerIds());
+    for (const [id, release] of held) if (!ids.has(id)) { release(); held.delete(id); }
+    for (const id of ids) if (!held.has(id)) held.set(id, m.retainTree(id));
+  };
+  sync();
+  const off = m.subscribe(['layers'], sync);
+  return () => { off(); for (const r of held.values()) r(); held.clear(); };
+}
+
+export async function setupAppEngine(opts: AppEngineOptions = {}): Promise<AppHarness> {
   // A test that left a gesture open (or a dead engine) poisons the next: start over.
   if (shared) {
     const r = await shared.bridge.status();
@@ -171,8 +196,16 @@ export async function setupAppEngine(): Promise<AppHarness> {
   const h: AppHarness = {
     client,
     batches,
-    run: async (cmd) => unwrap(await client.execute(cmd)),
-    batch: async (label, cmds) => unwrap(await client.batch(label, cmds)),
+    run: async (cmd) => {
+      const r = unwrap(await client.execute(cmd));
+      if (opts.panels) await settleEdits();
+      return r;
+    },
+    batch: async (label, cmds) => {
+      const r = unwrap(await client.batch(label, cmds));
+      if (opts.panels) await settleEdits();
+      return r;
+    },
     query: async (q) => unwrap(await client.query(q)),
     doc: async () => {
       await engineIdle();
@@ -199,6 +232,7 @@ export async function setupAppEngine(): Promise<AppHarness> {
     bindEngineItems(m),
     bindEngineComps(m),
     retainSelectionTrees(),
+    ...(opts.panels ? [holdAllTrees()] : []),
   ];
   await engineIdle();
   batches.length = 0;

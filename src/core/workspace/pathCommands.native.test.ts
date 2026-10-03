@@ -15,8 +15,7 @@ import { commands, DirectSelectionTool, type BezierPoint } from '@motion/workspa
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { readNodeMask, readNodeMaskAnim, type LayerMask, type MaskPoint } from '@core/effects/mask';
 import { buildStaticPropertyTree } from '@core/timeline/propertyTree';
-import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -70,8 +69,8 @@ const pathLayer = (id: string, points: MaskPoint[], open = false): void =>
 const ds = (): DirectSelectionTool => getWorkspaceController().ws.tools.get('direct-select') as DirectSelectionTool;
 const settle = async (): Promise<void> => {
   await settleToolEdits();
-  await engineIdle();
-  await engineIdle();
+  await settleEdits();
+  await settleEdits();
 };
 
 beforeEach(async () => {

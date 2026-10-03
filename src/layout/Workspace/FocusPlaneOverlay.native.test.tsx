@@ -25,8 +25,7 @@ import { useGuidesStore } from '@stores/guidesStore';
 import { useFocusPlaneStore } from '@stores/focusPlaneStore';
 import { defaultAnimation } from '@motion/animation';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
-import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { propRefForTrack, values } from '@core/engine/propRefs';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -86,7 +85,7 @@ afterEach(reset);
  */
 async function settle(): Promise<void> {
   await act(async () => {
-    await engineIdle();
+    await settleEdits();
   });
 }
 
@@ -108,7 +107,7 @@ async function engineCamera(h: Awaited<ReturnType<typeof setupAppEngine>>, o: Ca
 describe('when the plane appears', () => {
   // B4 round 5: cameras are composition LAYERS built through the engine (the push carries layers).
   let h: Awaited<ReturnType<typeof setupAppEngine>>;
-  beforeEach(async () => { h = await setupAppEngine(); });
+  beforeEach(async () => { h = await setupAppEngine({ panels: true }); });
   afterEach(async () => { await h.dispose(); });
 
   it('draws nothing in a composition with no camera at all', async () => {
@@ -176,7 +175,7 @@ describe('bound to a secondary pane’s view', () => {
   /** The pane's transform: a different zoom AND a different origin. */
   const PANE_VIEW = { scale: 2, offsetX: 100, offsetY: 50 };
   let h: Awaited<ReturnType<typeof setupAppEngine>>;
-  beforeEach(async () => { h = await setupAppEngine(); });
+  beforeEach(async () => { h = await setupAppEngine({ panels: true }); });
   afterEach(async () => { await h.dispose(); });
 
   it('draws for the pane’s own mode while the main viewport suppresses it', async () => {
@@ -233,7 +232,7 @@ describe('through the engine API', () => {
   let cam: string;
 
   beforeEach(async () => {
-    h = await setupAppEngine();
+    h = await setupAppEngine({ panels: true });
     cam = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'camera', name: 'Cam', init: [] })).layer;
     const tid = (await docView()).getNode(cam)!.components.find((c) => c.type === 'Transform')!.id;
     for (const [k, v] of Object.entries({ x: 960, y: 540, z: -1000, focalLength: 1000, focusDistance: 2000, dofStrength: 40 })) {
@@ -257,7 +256,7 @@ describe('through the engine API', () => {
   const idleDrag = async (container: HTMLElement, d: { x: number; y: number }): Promise<void> => {
     await act(async () => {
       dragBy(container, d);
-      await engineIdle();
+      await settleEdits();
     });
   };
 
@@ -346,7 +345,7 @@ describe('through the engine API', () => {
       fireEvent.pointerDown(hit, { clientX: 4000, clientY: 4000, button: 0, pointerId: 1 });
       fireEvent.pointerMove(hit, { clientX: 4000, clientY: 4300, pointerId: 1 });
       fireEvent.pointerUp(hit, { clientX: 4000, clientY: 4300, pointerId: 1 });
-      await engineIdle();
+      await settleEdits();
     });
     expect((await focusProp(cam))).toBeCloseTo(2000, 3);
     expect((await historyLabels()).length).toBe(entries);
@@ -358,7 +357,7 @@ describe('through the engine API', () => {
     const entries = (await historyLabels()).length;
     await act(async () => {
       dragBy(container, { x: 0, y: -300 });
-      await engineIdle();
+      await settleEdits();
     });
     expect((await focusProp(cam))).toBeCloseTo(2300, 3);
     expect((await historyLabels()).length).toBe(entries + 1);

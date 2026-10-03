@@ -9,11 +9,10 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 import { readPropertyValue } from '@core/inspector/multiSelection';
 import { getNodeFill, getNodeFills } from '@core/paint/fill';
 import { getNodeStroke, getNodeStrokes } from '@core/paint/stroke';
@@ -31,7 +30,7 @@ jest.useFakeTimers();
 let h: Harness;
 let s: Scene;
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   s = await buildScene(h);
   useSelectionStore.getState().set([]);
@@ -42,7 +41,7 @@ afterEach(async () => {
   await h.dispose();
 });
 
-const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
+const idle = async (): Promise<void> => { await act(async () => { await settleEdits(); }); };
 const parentOf = async (id: string): Promise<string | null | undefined> => (await docView()).getNode(id)?.parent;
 const stored = (id: string, prop: string): number | undefined => readPropertyValue(id, prop, 0);
 

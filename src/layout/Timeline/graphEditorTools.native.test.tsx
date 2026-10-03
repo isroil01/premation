@@ -23,10 +23,9 @@ import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
 import { easePresetById } from '@core/animation/easePresets';
 import { getEventBus } from '@core/events/EventBus';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
-import { engineIdle } from '@core/engine/engineInstance';
 
 // The tools write through the engine API (B3): a real layer in the app engine
 // with three linear Opacity keys (0 → 50 → 100 over 0..2 s), keyed through the
@@ -47,7 +46,7 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
-  h = await setupAppEngine();
+  h = await setupAppEngine({ panels: true });
   // Providers binds this at boot; without it nothing tells React the engine moved.
   defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   useKeyframeSelectionStore.getState().clear();
@@ -73,7 +72,7 @@ let view: ReturnType<typeof render>;
 
 /** Let the engine apply the edit a tool sent (it resolves engine key ids first, B3). */
 async function settle(): Promise<void> {
-  await act(async () => { await engineIdle(); await engineIdle(); });
+  await act(async () => { await settleEdits(); await settleEdits(); });
 }
 
 const renderGraph = (): ReturnType<typeof render> => {
