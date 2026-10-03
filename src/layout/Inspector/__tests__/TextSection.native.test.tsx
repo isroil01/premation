@@ -11,8 +11,7 @@
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { TextSection, hasTextSection } from '../TextSection';
 import { useSelectionStore } from '@stores/selectionStore';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -47,7 +46,7 @@ async function textLayer({ content, ...textProps }: Record<string, unknown>): Pr
   const source = typeof content === 'string' ? sourceTextCommand(id, content, 0) : [];
   expect(source).not.toBeNull();
   await h.batch('seed', [...(source ?? []), ...cmds]);
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   return id;
 }
 

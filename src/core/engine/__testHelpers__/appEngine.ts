@@ -166,6 +166,11 @@ export async function gestureOpen(): Promise<boolean> {
   return unwrap(await engine().query({ type: 'getHistory' })).gestureOpen;
 }
 
+/** Empty the engine's undo stack (a test's setup is not part of what it measures). */
+export async function clearHistory(): Promise<void> {
+  unwrap(await engine().execute({ type: 'clearHistory' }));
+}
+
 /** Labels on the engine's undo stack, oldest first. */
 export async function historyLabels(): Promise<string[]> {
   return unwrap(await engine().query({ type: 'getHistory' })).entries.map((e) => e.label);

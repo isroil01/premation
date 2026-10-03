@@ -4,10 +4,9 @@
  * the box widens and Position moves so the opposite edge stays put.
  */
 
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
-import { getCommandSystem } from '@core/commands/CommandSystem';
 import { documentMirror } from '@stores/documentMirror';
 import { readTrack } from '@core/mirror/selection';
 import { mirrorParagraphBox } from '@layout/Text/textMirror';
@@ -26,9 +25,9 @@ beforeEach(async () => {
       { prop: { layer: T, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 400, y: 300 } } },
     ],
   });
-  documentMirror().tree(T);
+  await documentMirror().loadTree(T);
   await engineIdle();
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 });
 afterEach(async () => { await h.dispose(); });
 

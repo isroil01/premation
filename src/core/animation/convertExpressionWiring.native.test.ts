@@ -109,7 +109,7 @@ describe('the command', () => {
     try {
       const mirrored = async (): Promise<void> => {
         await engineIdle();
-        documentMirror().tree(layer);
+        await documentMirror().loadTree(layer);
         await documentMirror().whenIdle();
       };
       await mirrored();
@@ -175,7 +175,7 @@ describe('the property context menu', () => {
   /** The row menu of `prop` on `layer`, with the mirror caught up (it reads the mirror). */
   const menu = async (layer: string, prop: string) => {
     await engineIdle();
-    documentMirror().tree(layer);
+    await documentMirror().loadTree(layer);
     await documentMirror().whenIdle();
     return engineRowMenuItems({ nodeId: layer, prop, nodeIds: [layer], time: 0, label: prop, resetValue: undefined, setValue: () => undefined });
   };

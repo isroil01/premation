@@ -10,8 +10,7 @@
 
 import { act } from '@testing-library/react';
 import { useSelectionStore } from '@stores/selectionStore';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -43,7 +42,7 @@ beforeEach(async () => {
   const { cmds, rest } = componentPropsCommands(T, componentOfType(T, 'Text')!, { fill: '#ff0000', stroke: '#00ff00', noFill: true }, 0);
   expect(rest).toEqual({});
   await h.batch('seed', cmds);
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   useSelectionStore.setState({ ids: [] });
 });
 

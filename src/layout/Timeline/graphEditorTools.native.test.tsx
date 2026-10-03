@@ -22,9 +22,8 @@ import { rowSelectionId } from '@core/engine/__testHelpers__/selectionIds';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
 import { easePresetById } from '@core/animation/easePresets';
-import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getEventBus } from '@core/events/EventBus';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -61,7 +60,7 @@ beforeEach(async () => {
       value: { kind: 'scalar' as const, value: t * 50 }, easing: 'linear' as const, spatialIn: [], spatialOut: [],
     })),
   })).ids;
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 });
 
 afterEach(async () => {
@@ -175,7 +174,7 @@ describe('ease copy / paste', () => {
       type: 'updateKeyframes',
       patches: [{ id: keyIds[0]!, easing: 'bezier', bezier: { x1: 0.9, y1: 0.02, x2: 0.1, y2: 0.98 }, spatialIn: [], spatialOut: [] }],
     });
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
     renderGraph();
     pick(0);
     fireEvent.click(screen.getByRole('button', { name: 'Copy ease' }));

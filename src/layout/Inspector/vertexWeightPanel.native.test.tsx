@@ -24,13 +24,12 @@
 import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { BoneControls } from './BoneControls';
 import { useSelectionStore } from '@stores/selectionStore';
-import { getCommandSystem } from '@core/commands/CommandSystem';
 import { clearRestMeshCache } from '@core/rig/puppet';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { nodeRestMesh } from '@core/rig/rigMeshInputs';
 import { getSkeletonBinding } from '@core/rig/rigDeform';
 import { readGeometry } from '@core/workspace/geometry';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { engineIdle } from '@core/engine/engineInstance';
 import { rigTestLayer } from '@layout/Workspace/__testHelpers__/rigLayer';
@@ -55,7 +54,7 @@ async function setBones(bones: typeof TWO_BONES): Promise<void> {
   const rig = { bones, ikTargets: [], meshDensity: 8, meshExpansion: 0 };
   await h.run({ type: 'setProperty', prop: { layer: ID, path: 'layer/skeleton' }, value: { kind: 'json', value: JSON.stringify(rig) } });
   await idle();
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 }
 
 /** The binding the panel itself will build — same mesh assembly, by construction. */
@@ -86,7 +85,7 @@ const spinbuttons = (c: HTMLElement): HTMLElement[] =>
 const weightFields = (c: HTMLElement): HTMLElement[] =>
   spinbuttons(c).filter((el) => /weight at vertex/.test(el.getAttribute('aria-label') ?? ''));
 
-const entryCount = (): number => getCommandSystem().getHistory().getEntries().length;
+const entryCount = async (): Promise<number> => (await historyLabels()).length;
 
 /** ArrowUp on the resting spinbutton is a real user gesture that commits. */
 async function nudgeUp(field: HTMLElement): Promise<void> {
@@ -205,9 +204,9 @@ describe('with a multi-influence vertex picked', () => {
     const { container } = render(<BoneControls nodeId={ID} />);
 
     await idle();
-    const before = entryCount();
+    const before = (await entryCount());
     await nudgeUp(weightFields(container)[0]!);
-    expect(entryCount() - before).toBe(1);
+    expect((await entryCount()) - before).toBe(1);
     expect((await historyLabels()).at(-1)).toBe('Set Vertex Weight');
   });
 

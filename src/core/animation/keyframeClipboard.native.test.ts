@@ -62,7 +62,7 @@ test('Copy Keyframe at the playhead takes the key under it; a target without the
     keys: [0, 1].map((s) => ({ prop: { layer: src, path: 'transform/opacity' }, time: sec(s), value: { kind: 'scalar' as const, value: s * 100 }, spatialIn: [], spatialOut: [] })),
   });
   await engineIdle();
-  documentMirror().tree(src);
+  await documentMirror().loadTree(src);
   await documentMirror().whenIdle();
   expect(await copyKeyframeAt(src, 'opacity', 1)).toBe(true);
   expect(clipboardSets()[0]!.keyframes.map((k) => k.time)).toEqual([sec(1)]);

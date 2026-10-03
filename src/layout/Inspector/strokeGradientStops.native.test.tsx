@@ -27,8 +27,7 @@ import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getNodeStroke, defaultStroke } from '@core/paint/stroke';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import { strokesCommands } from './appearance/paintEdits';
@@ -53,7 +52,7 @@ async function seed(): Promise<void> {
     align: 'center', dash: [], cap: 'butt', join: 'miter',
     paint: { type: 'linear', angle: 90, stops: STOPS.map((s) => ({ ...s })) },
   } as never]));
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   useSelectionStore.setState({ ids: [ID] } as never);
 }
 

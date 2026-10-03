@@ -18,6 +18,7 @@ import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { useAssetStore } from '@stores/assetStore';
 import { getCommandSystem, setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 
 let h: Awaited<ReturnType<typeof setupAppEngine>>;
@@ -196,7 +197,7 @@ describe('one prompt, one undo entry', () => {
     await reg.execute('create_layer', { kind: 'shape', name: 'Existing' }, c);
     const before = JSON.stringify({ scene: sceneProjectIO.capture(), anim: defaultAnimation.snapshot() });
     // Outside a turn, a write the engine takes is an ordinary undo entry of its own.
-    const entriesBefore = getCommandSystem().getHistory().getEntries().length;
+    const entriesBefore = (await historyLabels()).length;
 
     const tx = await beginAiTransaction('AI: doomed');
     const res = await reg.execute('create_layer', { kind: 'shape', name: 'Doomed' }, c);

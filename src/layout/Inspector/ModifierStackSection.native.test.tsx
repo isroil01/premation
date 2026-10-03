@@ -20,8 +20,7 @@
  */
 
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -40,7 +39,7 @@ beforeEach(async () => {
   h = await setupAppEngine();
   s = await buildScene(h);
   L = s.B;
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 });
 afterEach(async () => {
   cleanup();
@@ -66,7 +65,7 @@ async function seed(path: string, list: Modifier[]): Promise<void> {
   const cmds = modifierStackCommands(L, path, list);
   expect(cmds.length).toBeGreaterThan(0);
   await act(async () => { await h.batch('seed', cmds); });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 }
 
 const offset = (amount: number): Modifier => ({ ...defaultModifier('offset'), amount } as Modifier);

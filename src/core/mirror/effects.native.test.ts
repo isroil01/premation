@@ -1,10 +1,9 @@
 /**
  * The mirror's effect stack (core/mirror/effects.ts) against the engine's own
- * `getNodeEffects` — on the app engine, for one effect of every parameter
+ * stored record (the exported document's `fx` effects) — on the app engine, for one effect of every parameter
  * type, with Compositing Options set on one of them.
  */
 
-import { defaultAnimation } from '@motion/animation';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
@@ -12,7 +11,7 @@ import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import { EFFECT_DEFS, type EffectParamDef } from '@core/effects/effects';
 import { paramsOf } from '@core/inspector/effectCatalog';
-import { documentMirror, resetDocumentMirror } from '@stores/documentMirror';
+import { documentMirror } from '@stores/documentMirror';
 import { mirrorEffectHeaders, mirrorEffects } from './effects';
 
 jest.useFakeTimers();
@@ -22,11 +21,9 @@ let s: Scene;
 beforeEach(async () => {
   h = await setupAppEngine();
   s = await buildScene(h);
-  resetDocumentMirror();
 });
 afterEach(async () => {
   await h.dispose();
-  defaultAnimation.clear();
 });
 
 const TYPES: ReadonlyArray<EffectParamDef['type']> = ['number', 'color', 'checkbox', 'enum', 'curve', 'layer', 'maskPath'];
@@ -49,7 +46,7 @@ test('mirrorEffects reads the stack getNodeEffects holds: order, switches, param
   await engineIdle();
 
   const m = documentMirror();
-  const tree = m.tree(s.A);
+  const tree = await m.loadTree(s.A);
   const legacy = (await docView()).getNodeEffects(s.A);
   expect(mirrorEffectHeaders(tree).map((e) => [e.id, e.type, e.enabled])).toEqual(legacy.map((e) => [e.id, e.type, e.enabled !== false]));
 

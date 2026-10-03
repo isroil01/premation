@@ -4,13 +4,12 @@
  * (memberExpressions.trackExpressionFacts) on the app engine.
  */
 
-import { defaultAnimation } from '@motion/animation';
 import { secondsToFlicks } from '@motion/engine-api';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
-import { documentMirror, resetDocumentMirror } from '@stores/documentMirror';
+import { documentMirror } from '@stores/documentMirror';
 import { settingsHasWorkArea, settingsSetWorkArea } from './compFacts';
 import { trackExpressionFacts } from './memberExpressions';
 
@@ -40,21 +39,19 @@ describe('trackExpressionFacts', () => {
   beforeEach(async () => {
     h = await setupAppEngine();
     s = await buildScene(h);
-    resetDocumentMirror();
   });
   afterEach(async () => {
     await h.dispose();
-    defaultAnimation.clear();
   });
 
   it('answers per member of an unseparated vector, and for a scalar', async () => {
     const m = documentMirror();
-    m.tree(s.B);
+    await m.loadTree(s.B);
     await h.run({ type: 'setExpression', prop: { layer: s.B, path: 'transform/position' }, source: 'wiggle(1, 5)', enabled: true, member: 1 });
     await h.run({ type: 'setExpression', prop: { layer: s.B, path: 'transform/opacity' }, source: 'value', enabled: false });
     await engineIdle();
     await m.whenIdle();
-    m.tree(s.B);
+    await m.loadTree(s.B);
     expect(trackExpressionFacts(m, s.B, 'x')).toBeNull();
     expect(trackExpressionFacts(m, s.B, 'y')).toMatchObject({ source: 'wiggle(1, 5)', enabled: true });
     expect(trackExpressionFacts(m, s.B, 'opacity')).toMatchObject({ source: 'value', enabled: false });

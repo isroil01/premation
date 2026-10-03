@@ -36,7 +36,7 @@ beforeEach(async () => {
   usePropertySelectionStore.getState().clear();
   setFocusedExpressionRow(null);
   await settle();
-  documentMirror().tree(ID);
+  await documentMirror().loadTree(ID);
   await settle();
 });
 afterEach(async () => {

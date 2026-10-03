@@ -5,8 +5,7 @@ import { TooltipProvider } from '@components/Tooltip';
 import { useSelectionStore } from '@stores/selectionStore';
 import { PANEL_DEFS, availablePanelDefs, panelDef } from '@layout/EditorLayout/panelDefs';
 import { PANEL_COMPONENTS } from '@layout/EditorLayout/panelRenderers';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -54,7 +53,7 @@ describe('Unified Text Panel (Character + Paragraph)', () => {
     const source = typeof content === 'string' ? sourceTextCommand(id, content, 0) : [];
     expect(source).not.toBeNull();
     await h.batch('seed', [...(source ?? []), ...cmds]);
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
     return id;
   };
 

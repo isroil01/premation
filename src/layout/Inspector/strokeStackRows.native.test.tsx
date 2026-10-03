@@ -14,8 +14,7 @@ import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getNodeStrokes, defaultStroke } from '@core/paint/stroke';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -34,7 +33,7 @@ beforeEach(async () => {
     { ...defaultStroke('#ff0000'), width: 8 },
     { ...defaultStroke('#00ff00'), width: 3 },
   ]));
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   useSelectionStore.setState({ ids: [ID] } as never);
 });
 afterEach(async () => {

@@ -1,6 +1,7 @@
 /**
- * The audio readers over the document mirror (B4) against the scene readers
- * they replace — on the app's engine, so the mirror is fed by real events.
+ * The audio readers over the document mirror (B4) — on the app's engine, so
+ * the mirror is fed by real events: levels, bars, fades, the remembered
+ * driver / ducking / gate records (against the stored record), sound layers.
  */
 
 import { act } from '@testing-library/react';
@@ -10,12 +11,9 @@ import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import { documentMirror } from '@stores/documentMirror';
-import { readAudioClipTimings } from '@core/audio/audioScene';
-import { planFadeKeys, staticLevelDbOf } from '@core/audio/audioFades';
 import { readDucking } from '@core/audio/ducking';
 import { readGate } from '@core/audio/audioGate';
-import { defaultAudioDriver, driverRange, readAudioDrivers } from '@core/audio/audioDriver';
-import { audioVoices, pairedAudioNodeIds } from '@core/audio/silenceRemoval';
+import { defaultAudioDriver, readAudioDrivers } from '@core/audio/audioDriver';
 import {
   audioClipTimings,
   audioDriversOf,
@@ -41,29 +39,20 @@ afterEach(async () => { await h.dispose(); });
 const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };
 const json = (v: unknown) => ({ kind: 'json' as const, value: JSON.stringify(v) });
 
-test('the static level, the bar and a fade read as the scene readers read them', async () => {
+test('the static level, the bar and a fade', async () => {
   const m = documentMirror();
-  expect(staticLevelDb(m, s.V)).toBe(staticLevelDbOf(s.V));
+  await m.loadTree(s.V);
+  expect(staticLevelDb(m, s.V)).toBe(0);
   await h.run({ type: 'setProperty', prop: { layer: s.V, path: 'audio/levels' }, value: { kind: 'scalar', value: -8 } });
   await h.run({ type: 'setLayerTiming', items: [{ layer: s.V, inPoint: sec(1), outPoint: sec(4), startTime: sec(0.5) }] });
   await idle();
+  await m.whenIdle();
   expect(staticLevelDb(m, s.V)).toBe(-8);
-  expect(staticLevelDb(m, s.V)).toBe(staticLevelDbOf(s.V));
-  const legacy = readAudioClipTimings(s.V).map(({ startSec, inSec, outSec }) => ({ startSec, inSec, outSec }));
-  const mirror = audioClipTimings(m, s.V).map(({ startSec, inSec, outSec }) => ({ startSec, inSec, outSec }));
-  expect(mirror).toHaveLength(1);
-  expect(mirror[0]!.startSec).toBeCloseTo(legacy[0]!.startSec, 9);
-  expect(mirror[0]!.inSec).toBeCloseTo(legacy[0]!.inSec, 9);
-  expect(mirror[0]!.outSec).toBeCloseTo(legacy[0]!.outSec, 9);
-  for (const side of ['in', 'out'] as const) {
-    const a = planFadeKeys(s.V, side, 1);
-    const b = planFadeKeysIn(m, s.V, side, 1, (t) => t);
-    expect(b).toHaveLength(a.length);
-    b.forEach((k, i) => {
-      expect(k.seconds).toBeCloseTo(a[i]!.seconds, 9);
-      expect(k.value).toBe(a[i]!.value);
-    });
-  }
+  // The bar starts at 1 s in the comp and plays the source from 0.5 s (the clip starts at 0.5 s).
+  expect(audioClipTimings(m, s.V).map(({ startSec, inSec, outSec }) => ({ startSec, inSec, outSec }))).toEqual([{ startSec: 1, inSec: 0.5, outSec: 3.5 }]);
+  // A one-second fade from / to silence (-60 dB) at the bar's ends, to the static level.
+  expect(planFadeKeysIn(m, s.V, 'in', 1, (t) => t)).toEqual([{ seconds: 1, value: -60 }, { seconds: 2, value: -8 }]);
+  expect(planFadeKeysIn(m, s.V, 'out', 1, (t) => t)).toEqual([{ seconds: 3, value: -8 }, { seconds: 4, value: -60 }]);
 });
 
 test('a plain group’s member has no bar of its own (as the timeline gives it none)', async () => {
@@ -71,12 +60,12 @@ test('a plain group’s member has no bar of its own (as the timeline gives it n
   const { layer: child } = await h.run({ type: 'createLayer', comp: s.comp, kind: 'null', name: 'child', parent: g, init: [] });
   await idle();
   const m = documentMirror();
-  expect(hasOwnBar(m, child)).toBe(readAudioClipTimings(child).length > 0);
+  expect(hasOwnBar(m, child)).toBe(false);
   expect(hasOwnBar(m, g)).toBe(true);
   expect(hasOwnBar(m, s.V)).toBe(true);
 });
 
-test('the remembered records normalise exactly as the node readers do', async () => {
+test('the remembered records normalise exactly as the stored record reads', async () => {
   const drivers = { opacity: { ...defaultAudioDriver('opacity'), band: 'low', min: 10 }, scale: { band: 'nonsense', curve: 'wobble' } };
   const ducking = { voiceNodeId: s.V, duckDb: -12, attackMs: 'soon' };
   const gate = { thresholdDb: -50 };
@@ -85,9 +74,13 @@ test('the remembered records normalise exactly as the node readers do', async ()
   await h.run({ type: 'setProperty', prop: { layer: s.V, path: 'audio/gate' }, value: json(gate) });
   await idle();
   const m = documentMirror();
-  const node = (await docView()).getNode(s.V)!;
+  for (const id of [s.V, s.A]) await m.loadTree(id);
+  await m.whenIdle();
+  const node = (await docView()).getNode(s.V)! as never;
   expect(audioDriversOf(m, s.V)).toEqual(readAudioDrivers(node));
+  expect(Object.keys(audioDriversOf(m, s.V)).sort()).toEqual(['opacity', 'scale']);
   expect(duckingOf(m, s.V)).toEqual(readDucking(node));
+  expect(duckingOf(m, s.V)).toMatchObject({ voiceNodeId: s.V, duckDb: -12 });
   expect(gateOf(m, s.V)).toEqual(readGate(node));
   expect(duckingOf(m, s.A)).toBeNull();
   expect(audioDriversOf(m, s.A)).toEqual({});
@@ -97,13 +90,11 @@ test('layers with sound, the paired set and the bake range', async () => {
   const { layer: V2 } = await h.run({ type: 'createLayer', comp: s.comp, kind: 'video', name: 'V2', source: s.footage, init: [] });
   await idle();
   const m = documentMirror();
-  expect(soundLayers(m).map((l) => l.id).sort()).toEqual(audioVoices().map((v) => v.nodeId).sort());
-  expect(pairedSoundLayers(m, s.V).sort()).toEqual(pairedAudioNodeIds(s.V).sort());
+  // The two layers of the same footage: both have sound, and each pairs with the other.
+  expect(soundLayers(m).map((l) => l.id).sort()).toEqual([s.V, V2].sort());
+  expect(pairedSoundLayers(m, s.V).sort()).toEqual([s.V, V2].sort());
   expect(pairedSoundLayers(m, V2)).toContain(s.V);
-  expect(pairedSoundLayers(m, s.A)).toEqual(pairedAudioNodeIds(s.A));
-  const legacy = driverRange();
-  const mirror = driverRangeOf(m.comp(s.comp)?.settings);
-  expect(mirror.fps).toBeCloseTo(legacy.fps, 9);
-  expect(mirror.start).toBeCloseTo(legacy.start, 9);
-  expect(mirror.end).toBeCloseTo(legacy.end, 9);
+  expect(pairedSoundLayers(m, s.A)).toEqual([s.A]);
+  // The bake range is the work area (buildScene: 1 s – 4 s), on the comp's 30 fps.
+  expect(driverRangeOf(m.comp(s.comp)?.settings)).toEqual({ start: 1, end: 4, fps: 30 });
 });

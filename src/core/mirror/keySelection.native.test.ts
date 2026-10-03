@@ -49,6 +49,9 @@ describe('resolving through the mirror', () => {
         { prop: { layer: L, path: 'transform/position' }, time: sec(s), value: { kind: 'vec2' as const, value: { x: s * 10, y: 0 } }, easing: 'linear' as const, spatialIn: [], spatialOut: [] },
       ]),
     });
+    // The members are named on the layer's property tree (as an open row has it loaded).
+    await documentMirror().loadTree(L);
+    await documentMirror().whenIdle();
   });
   afterEach(async () => {
     await h.dispose();

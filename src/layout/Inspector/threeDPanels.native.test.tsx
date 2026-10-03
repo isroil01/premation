@@ -27,8 +27,7 @@ import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { readNode3D } from '@core/scene/threeD';
 import { MODEL_COMPONENT } from '@core/scene/modelMesh';
 import { defaultAnimation } from '@motion/animation';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -85,7 +84,7 @@ async function layer(kind: Kind, name: string, opts: LayerOpts = {}): Promise<st
     }
     if (cmds.length > 0) await h.batch('fixture', cmds);
   });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   return id;
 }
 
@@ -211,7 +210,7 @@ describe('Morph Targets section', () => {
     });
     const inserted: string[] = ids ?? [];
     expect(inserted).toHaveLength(1);
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
     return inserted[0]!;
   }
 

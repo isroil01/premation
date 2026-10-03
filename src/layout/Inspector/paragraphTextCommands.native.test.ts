@@ -133,7 +133,7 @@ describe('convert commands', () => {
     // `enabled` reads the mirror: let the legacy load reach it (a resync on the next microtask).
     await engineIdle();
     await documentMirror().whenIdle();
-    documentMirror().tree(ID);
+    await documentMirror().loadTree(ID);
     await documentMirror().whenIdle();
     expect(toPara.enabled?.()).toBe(false);
     useSelectionStore.setState({ ids: [ID] });

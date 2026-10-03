@@ -33,7 +33,7 @@ test('the Continuous Rasterization switch is offered where supportsContinuousRas
   await engineIdle();
   const m = documentMirror();
   for (const id of [s.A, s.B, s.T, s.V, s.P, ellipse]) {
-    m.tree(id);
+    await m.loadTree(id);
     expect([id, mirrorSupportsContinuousRaster(m, id)]).toEqual([id, supportsContinuousRaster((await docView()).getNode(id))]);
   }
   expect(mirrorSupportsContinuousRaster(m, s.T)).toBe(true);
@@ -49,7 +49,7 @@ test('a placed composition: its source layers and their inherited values', async
   expect(overrideSourceLayers(m, s.comp2).map((l) => l.id)).toEqual([s.c2layer]);
 
   // Inherited values: stored units (scale 1 = 100 %, opacity in %), static here.
-  m.tree(s.c2layer);
+  await m.loadTree(s.c2layer);
   expect(inheritedOverrideValue(m, s.c2layer, 'scaleX', 0)).toBeCloseTo(1, 9);
   expect(inheritedOverrideValue(m, s.c2layer, 'opacity', 0)).toBeCloseTo(100, 9);
   expect(typeof inheritedOverrideValue(m, s.c2layer, 'x', 0)).toBe('number');

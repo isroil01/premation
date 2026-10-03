@@ -20,10 +20,9 @@
 
 import { render, cleanup, fireEvent, screen, act } from '@testing-library/react';
 import { BoneControls } from './BoneControls';
-import { getCommandSystem } from '@core/commands/CommandSystem';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { CONTROLLER_SHAPES, CONTROLLER_SIDES } from '@core/rig/controllers';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { engineIdle } from '@core/engine/engineInstance';
 import { rigTestLayer } from '@layout/Workspace/__testHelpers__/rigLayer';
@@ -55,7 +54,7 @@ beforeEach(async () => {
   };
   await h.run({ type: 'setProperty', prop: { layer: ID, path: 'layer/skeleton' }, value: { kind: 'json', value: JSON.stringify(rig) } });
   await idle();
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   useUIStore.setState({ boneRigMode: 'pose' });
 });
 
@@ -118,7 +117,7 @@ describe('the Controllers section', () => {
     render(<BoneControls nodeId={ID} />);
     await addController('bone:fore');
     const name = (await controllersOf())[0]!.name ?? (await controllersOf())[0]!.id;
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
     fireEvent.change(screen.getByLabelText(`${name} shape`), { target: { value: 'square' } });
     await idle();
     fireEvent.change(screen.getByLabelText(`${name} side`), { target: { value: 'left' } });

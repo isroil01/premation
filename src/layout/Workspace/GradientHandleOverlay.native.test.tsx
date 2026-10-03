@@ -30,11 +30,10 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import { getNodeFill, getNodeFills, type FillPaint, type LinearFill } from '@core/paint/fill';
 import { defaultStroke, getNodeStrokeAt } from '@core/paint/stroke';
 import { defaultAnimation } from '@motion/animation';
-import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { Command } from '@motion/engine-api';
 import { engineIdle } from '@core/engine/engineInstance';
 import { propRefForTrack } from '@core/engine/propRefs';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { fillPaintCommands, strokesCommands, textStrokePaintCommands } from '@layout/Inspector/appearance/paintEdits';
@@ -96,8 +95,8 @@ function currentStops(): Array<{ id: string; offset: number; color: string }> {
 }
 
 /** The history starts empty for the action under test. */
-function freshHistory(): void {
-  getCommandSystem().getHistory().clear();
+async function freshHistory(): Promise<void> {
+  await clearHistory();
 }
 
 type Pt = [number, number];
@@ -198,7 +197,7 @@ describe('when the gizmo appears at all', () => {
 describe('dragging a stop', () => {
   async function armed() {
     await linearFillOn(ID);
-    freshHistory();
+    (await freshHistory());
     useGradientEditStore.getState().arm(ID, 0);
     const utils = await renderOverlay();
     return { ...utils, svg: utils.container.querySelector('svg')! };
@@ -290,7 +289,7 @@ describe('dragging a stop', () => {
 describe('dragging a grip', () => {
   it('turns a linear fill: the static angle, ONE "Move Gradient Handle" entry; undo restores it', async () => {
     await linearFillOn(ID);
-    freshHistory();
+    (await freshHistory());
     useGradientEditStore.getState().arm(ID, 0);
     const { container } = await renderOverlay();
     const before = (await h.doc());
@@ -305,7 +304,7 @@ describe('dragging a grip', () => {
 
   it('keys fillAngle at the playhead under Auto-Keyframe', async () => {
     await linearFillOn(ID);
-    freshHistory();
+    (await freshHistory());
     usePreferenceStore.setState({ timelineAutoKeyframe: true });
     useGradientEditStore.getState().arm(ID, 0);
     const { container } = await renderOverlay();
@@ -327,7 +326,7 @@ describe('deleting a stop', () => {
         { id: 'c', offset: 1, color: '#ffffff' },
       ],
     });
-    freshHistory();
+    (await freshHistory());
     useGradientEditStore.getState().arm(ID, 0);
     const utils = await renderOverlay();
     return { ...utils, svg: utils.container.querySelector('svg')! };
@@ -349,7 +348,7 @@ describe('deleting a stop', () => {
 
   it('refuses at two stops, because one is not a gradient', async () => {
     await linearFillOn(ID);
-    freshHistory();
+    (await freshHistory());
     useGradientEditStore.getState().arm(ID, 0);
     const { container } = await renderOverlay();
     const svg = container.querySelector('svg')!;
@@ -378,7 +377,7 @@ describe('when fill.stops is animated', () => {
     await linearFillOn(ID, paint);
     // The Colors stopwatch: one key at 0 holding the stops.
     await h.run({ type: 'setAnimated', prop: { layer: ID, path: 'layer/fillStops' }, animated: true, time: 0 });
-    freshHistory();
+    (await freshHistory());
     useGradientEditStore.getState().arm(ID, 0);
     const utils = await renderOverlay();
     return { ...utils, svg: utils.container.querySelector('svg')! };
@@ -449,7 +448,7 @@ describe('a fill stack', () => {
         { id: 'd', offset: 1, color: '#00ff00' },
       ] },
     ]));
-    freshHistory();
+    (await freshHistory());
     useGradientEditStore.getState().arm(ID, 1);
     const { container } = await renderOverlay();
     expect(container.querySelectorAll('[aria-label="Which fill to edit"] button')).toHaveLength(2);
@@ -468,7 +467,7 @@ describe('a fill stack', () => {
 
   it('a grip drag on a slot above the primary never keys the primary fill’s geometry', async () => {
     await fixture(fieldCommands(ID, 'layer/fills', [LINEAR, { ...LINEAR, stops: LINEAR.stops.map((s) => ({ ...s, id: `${s.id}2` })) }]));
-    freshHistory();
+    (await freshHistory());
     usePreferenceStore.setState({ timelineAutoKeyframe: true });
     useGradientEditStore.getState().arm(ID, 1);
     const { container } = await renderOverlay();
@@ -507,7 +506,7 @@ describe('a text stroke gradient', () => {
   it('offers a Fill/Stroke chip, and on Stroke a stop drag edits the stroke, not the fill', async () => {
     await withStrokeGradient();
     await linearFillOn(T);
-    freshHistory();
+    (await freshHistory());
     useGradientEditStore.getState().arm(T, 0, 'stroke');
     const { container } = await renderOverlay();
     const chips = container.querySelectorAll('[aria-label="Which paint to edit"] button');
@@ -538,7 +537,7 @@ describe('a text stroke gradient', () => {
     const ref = propRefForTrack(T, 'strokeAngle')!.ref;
     await h.run({ type: 'setAnimated', prop: ref, animated: true, time: 0 });
     await act(async () => { await engineIdle(); });
-    freshHistory();
+    (await freshHistory());
     useGradientEditStore.getState().arm(T, 0, 'stroke');
     const { container } = await renderOverlay();
     const grip = centreOf(container, 'Gradient End handle');
@@ -557,7 +556,7 @@ describe('a text stroke gradient', () => {
 describe('a shape stroke gradient', () => {
   it('a start-grip drag moves the stroke’s Start point only — ONE entry; undo restores it', async () => {
     await fixture(strokesCommands(ID, [{ ...defaultStroke(), paint: LINEAR }]));
-    freshHistory();
+    (await freshHistory());
     useGradientEditStore.getState().arm(ID, 0, 'shapeStroke');
     const { container } = await renderOverlay();
     const grip = centreOf(container, 'Gradient Start handle');

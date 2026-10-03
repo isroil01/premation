@@ -18,7 +18,6 @@ import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
-import { resetDocumentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useChoreographyStore } from '@stores/choreographyStore';
 import { activeCompId } from '@core/animation/choreographyCommands';
@@ -73,7 +72,6 @@ beforeEach(async () => {
   for (const [i, n] of ['A', 'B', 'C'].entries()) LAYERS.push(await addLayer(`Layer ${n}`, 500 - i * 150));
   await engineIdle();
   // The panel's document mirror starts over, as it would on a document reset.
-  resetDocumentMirror();
   useChoreographyStore.setState({ byComp: {}, lastParams: null });
   useSelectionStore.setState({ ids: [...LAYERS] } as never);
 });

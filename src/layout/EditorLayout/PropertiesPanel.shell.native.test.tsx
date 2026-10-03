@@ -22,8 +22,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { TooltipProvider } from '@components/Tooltip/Tooltip';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { inspectorSectionsForSelection } from '@layout/Inspector/inspectorSections';
@@ -54,7 +53,7 @@ function renderPanel(): ReturnType<typeof render> {
 }
 
 const SOLO = LAYER_SWITCHES.find((t) => t.id === 'solo')!;
-const entries = (): number => getCommandSystem().getHistory().getEntries().length;
+const entries = async (): Promise<number> => (await historyLabels()).length;
 
 beforeEach(async () => {
   h = await setupAppEngine();
@@ -63,7 +62,7 @@ beforeEach(async () => {
   A = await mk('shape', NAME.A);
   B = await mk('shape', NAME.B);
   T = await mk('text', NAME.T);
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   useSelectionStore.setState({ ids: [] } as never);
 });
 
@@ -204,12 +203,12 @@ describe('the switches live in the ⋯ menu', () => {
   it('a mixed switch turns everything on, as ONE undo entry', async () => {
     // History wired the way boot wires it (`setupAppEngine`): every edit is an engine entry.
     await h.run({ type: 'setLayerSwitches', layers: [A], patch: SOLO.patch(true) });
-    getCommandSystem().getHistory().clear();
-    const before = entries();
+    await clearHistory();
+    const before = (await entries());
     // B3: the switch is an engine batch — one entry on the one history.
     await applyLayerSwitch([A, B], SOLO);
     expect([(await docView()).getNode(A)?.solo, (await docView()).getNode(B)?.solo]).toEqual([true, true]);
-    expect(entries() - before).toBe(1);
+    expect((await entries()) - before).toBe(1);
     expect((await historyLabels())).toEqual(['Enable Solo']);
     await h.run({ type: 'undo' });
     expect((await docView()).getNode(A)?.solo).toBe(true);

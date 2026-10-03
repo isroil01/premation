@@ -17,7 +17,7 @@ import { canExponentialScale, exponentialScaleEdit, expressionBakeEdit, hasBakea
 /** The layer's mirror records (its property tree included) as of now. */
 async function mirrored(layer: string): Promise<void> {
   await engineIdle();
-  documentMirror().tree(layer);
+  await documentMirror().loadTree(layer);
   await documentMirror().whenIdle();
 }
 

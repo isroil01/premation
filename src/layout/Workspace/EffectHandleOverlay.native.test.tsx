@@ -13,10 +13,9 @@
 import { render, fireEvent, act, cleanup } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { paramsOf, effectPropPath } from '@core/effects/effects';
-import { getCommandSystem } from '@core/commands/CommandSystem';
 import { engineIdle } from '@core/engine/engineInstance';
 import { propRefForTrack, values } from '@core/engine/propRefs';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -47,7 +46,7 @@ beforeEach(async () => {
   await h.run({ type: 'setProperty', prop: { layer: ID, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 0, y: 0 } } });
   const { groups: [group] } = await h.run({ type: 'addEffect', layers: [ID], effect: 'bulge', params: [] });
   FX = group!.split('/')[1]!;
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   useSelectionStore.getState().set([ID]);
   useEffectHandleStore.getState().select(ID, FX);
 });
@@ -110,7 +109,7 @@ test('an animated param keys at the playhead; the static one takes the value', a
   const track = effectPropPath(FX, 'centerX');
   const ref = propRefForTrack(ID, track)!.ref;
   await h.run({ type: 'addKeyframes', keys: [{ prop: ref, time: 0, value: values.scalar(0), spatialIn: [], spatialOut: [] }] });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   const { container } = await renderOverlay();
   const svg = container.querySelector('svg')!;
   const startY = (await centre()).y;

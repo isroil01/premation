@@ -14,8 +14,7 @@
 
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import type { Command } from '@motion/engine-api';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -62,7 +61,7 @@ async function flatLayer(name: string): Promise<string> {
       init: [{ path: 'layer/fill', value: values.color(0x33 / 255, 0x55 / 255, 1) }],
     }));
   });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   return id;
 }
 
@@ -80,7 +79,7 @@ async function threeD(name: string, opts: LayerOpts = {}): Promise<string> {
   if (opts.extrusionDepth !== undefined) cmds.push({ type: 'setProperty', prop: { layer, path: 'geometry/extrusionDepth' }, value: values.scalar(opts.extrusionDepth) });
   if (opts.shading !== undefined) cmds.push({ type: 'setProperty', prop: { layer, path: 'material/shading' }, value: values.choice(opts.shading) });
   await act(async () => { await h.batch('fixture', cmds); });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   return layer;
 }
 

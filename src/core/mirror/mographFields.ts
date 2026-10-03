@@ -93,7 +93,10 @@ export function mirrorMographFields(m: MographMirrorRead, rootId: string | null)
   for (const id of mographPartIds(m, rootId)) {
     const tree = m.tree(id);
     if (!tree) continue;
-    const label = partLabel(rootId, id);
+    // The layer's name is the part's label (the insert names each part from
+    // the author's id suffix, partLabel); the id itself is the engine's once
+    // pasted, so it only answers for a layer that kept its authored id.
+    const label = m.layer(id)?.name || partLabel(rootId, id);
     const source = tree.nodes.get(SOURCE_TEXT);
     if (source && !source.animated) {
       text.push({

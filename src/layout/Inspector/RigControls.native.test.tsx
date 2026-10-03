@@ -17,8 +17,7 @@ import { BoneControls } from './BoneControls';
 import { readNodePuppet } from '@core/rig/puppet';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { maxExactMeshDensity, SMOOTH_PLAYBACK_MAX_DENSITY } from '@core/rig/arap';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { engineIdle } from '@core/engine/engineInstance';
 import { rigTestLayer } from '@layout/Workspace/__testHelpers__/rigLayer';
@@ -38,7 +37,7 @@ const undo = (): Promise<void> => act(async () => { await h.run({ type: 'undo' }
 async function setRig(path: 'layer/puppet' | 'layer/skeleton', rig: unknown): Promise<void> {
   await h.run({ type: 'setProperty', prop: { layer: L, path }, value: { kind: 'json', value: JSON.stringify(rig) } });
   await idle();
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 }
 
 /**

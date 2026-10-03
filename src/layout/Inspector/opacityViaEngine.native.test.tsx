@@ -13,8 +13,7 @@
 import { render, screen, act, cleanup, fireEvent } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -30,7 +29,7 @@ beforeEach(async () => {
   h = await setupAppEngine();
   defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   s = await buildScene(h);
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 });
 afterEach(async () => {
   cleanup();

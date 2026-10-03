@@ -1,18 +1,15 @@
 /**
- * B4: the Speed section's retime reads come from the MIRROR (core/mirror/retime.ts).
- * Pinned on the app engine against the retimeCommands readers they replace,
- * so the section shows — and retimeEdits composes — exactly what it did.
+ * B4: the Speed section's retime reads come from the MIRROR (core/mirror/retime.ts),
+ * pinned on the app engine: the Speed curve against the engine's own
+ * evaluation (getPropertyValues); the source times, the bar and the footage
+ * budget against the fixture's numbers (the curve integrated by hand).
  */
 
-import { defaultAnimation } from '@motion/animation';
 import type { Keyframe } from '@motion/engine-api';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
-import { SPEED_PROP } from '@core/animation/retime';
-import { fitSpeedFactor, planSpeedPreset, retimeBarInfo, retimeSummary, retimedSourceSeconds, sourceFrameAt } from '@core/animation/retimeCommands';
 import { documentMirror } from '@stores/documentMirror';
 import { setSpeedCommands, speedPresetCommands } from './retimeEdits';
 import {
@@ -24,8 +21,6 @@ import {
   mirrorSourceFrameAt,
   mirrorSpeedPercentAt,
 } from '@core/mirror/retime';
-
-jest.useFakeTimers();
 
 let h: Harness;
 let s: Scene;
@@ -57,61 +52,70 @@ afterEach(async () => {
 
 const TIMES = [0, 0.5, 0.9, 1.25, 2, 2.6, 3.1, 4.4, 5.4];
 
-test('the clip bar matches retimeBarInfo', async () => {
-  const legacy = retimeBarInfo(s.V)!;
-  const bar = mirrorRetimeBar(documentMirror(), s.V)!;
-  expect(bar.fps).toBeCloseTo(legacy.fps, 9);
-  expect(bar.inSec).toBeCloseTo(legacy.inSec, 9);
-  expect(bar.outSec).toBeCloseTo(legacy.outSec, 9);
-  expect(bar.clip.offsetSec).toBeCloseTo(legacy.clip.offsetSec, 9);
-  expect(bar.clip.inSec).toBeCloseTo(legacy.clip.inSec, 9);
-  expect(bar.sourceInSec).toBeCloseTo(legacy.sourceInSec, 9);
-  expect(bar.sourceDurationSec ?? -1).toBeCloseTo(legacy.sourceDurationSec ?? -1, 6);
-  expect(bar.sourceFps).toBeCloseTo(legacy.sourceFps, 2);
+/** The engine's own evaluation of the Speed property at comp time `t`. */
+async function engineAt(t: number): Promise<{ speed: number | undefined }> {
+  const v = await h.query({ type: 'getPropertyValues', props: [{ layer: s.V, path: SPEED_PATH }], time: sec(t), evaluated: true });
+  const val = v.values[0]?.value;
+  return { speed: val && val.kind === 'scalar' ? val.value : undefined };
+}
+
+async function settled(): Promise<ReturnType<typeof documentMirror>> {
+  const m = documentMirror();
+  await m.loadTree(s.V);
+  await m.whenIdle();
+  return m;
+}
+
+test('the clip bar: half a second in, the whole 4 s file at 30 fps', async () => {
+  const bar = mirrorRetimeBar(await settled(), s.V)!;
+  expect(bar).toMatchObject({ fps: 30, inSec: 0.5, outSec: 4.5, sourceInSec: 0, sourceDurationSec: 4, sourceFps: 30 });
   expect(bar.clip.offsetSec).toBeCloseTo(-0.5, 9);
+  expect(bar.clip.inSec).toBeCloseTo(0.5, 9);
 });
 
-test('Speed %: the curve, the source time and the frame at the playhead match the animation engine', async () => {
-  const m = documentMirror();
+/**
+ * The source time the layer shows at comp time t (inside the bar): the speed
+ * curve integrated from the bar's start — 1.5 s easing 100 → 25 %, 1 s
+ * linear 25 → 200 %, 1 s held at 200 %, then 80 %.
+ */
+const SOURCE_AT: ReadonlyArray<[number, number]> = [[0.5, 0], [2, 0.9375], [3.1, 2.2625], [4.4, 4.3825]];
+
+test('Speed %: the curve is the engine\'s; the source time is the curve integrated', async () => {
+  const m = await settled();
   const bar = mirrorRetimeBar(m, s.V);
-  const legacyBar = retimeBarInfo(s.V);
   for (const t of TIMES) {
-    const legacySpeed = defaultAnimation.sample(s.V, SPEED_PROP, keyAxisTimeForDisplay(s.V, t));
-    expect(mirrorSpeedPercentAt(m, s.V, t, bar)).toBeCloseTo(legacySpeed!, 6);
-    expect(mirrorRetimedSourceSeconds(m, s.V, t, bar)).toBeCloseTo(retimedSourceSeconds(s.V, t, legacyBar), 6);
-    expect(mirrorSourceFrameAt(m, s.V, t, bar)).toBe(sourceFrameAt(s.V, t, legacyBar));
+    const e = await engineAt(t);
+    expect(e.speed).toBeDefined();
+    expect(mirrorSpeedPercentAt(m, s.V, t, bar)).toBeCloseTo(e.speed!, 6);
+  }
+  for (const [t, src] of SOURCE_AT) {
+    expect(mirrorRetimedSourceSeconds(m, s.V, t, bar)).toBeCloseTo(src, 6);
+    // The frame shown is the source time on the file's 30 fps grid.
+    expect(Math.abs(mirrorSourceFrameAt(m, s.V, t, bar) - src * 30)).toBeLessThan(1);
   }
 });
 
-test('the footage budget and Fit to Footage match retimeSummary / fitSpeedFactor', async () => {
-  const m = documentMirror();
-  const legacy = retimeSummary(s.V)!;
+test('the footage budget and Fit to Footage', async () => {
+  const m = await settled();
   const summary = mirrorRetimeSummary(m, s.V)!;
-  expect(summary.mode).toBe('speed');
-  expect(summary.mode).toBe(legacy.mode);
-  expect(summary.usedSec).toBeCloseTo(legacy.usedSec, 6);
-  expect(summary.outputSec).toBeCloseTo(legacy.outputSec, 9);
-  expect(summary.availableSec ?? -1).toBeCloseTo(legacy.availableSec ?? -1, 6);
-  expect(summary.runsOutAtSec ?? -1).toBeCloseTo(legacy.runsOutAtSec ?? -1, 6);
-  expect(legacy.availableSec).not.toBeNull();
-  expect(fitSpeedFactor(s.V)).not.toBeNull();
-  expect(mirrorFitSpeedFactor(m, s.V)!).toBeCloseTo(fitSpeedFactor(s.V)!, 6);
+  // The integral of the curve over the 4 s bar: 1.5 s at 62.5 %, 1 s at 112.5 %, 1 s held at 200 %, 0.5 s at 80 %.
+  expect(summary).toMatchObject({ mode: 'speed', outputSec: 4, availableSec: 4 });
+  expect(summary.usedSec).toBeCloseTo(4.4625, 6);
+  expect(summary.runsOutAtSec!).toBeCloseTo(4, 6);
+  expect(mirrorFitSpeedFactor(m, s.V)!).toBeCloseTo(8 / 9, 6);
 });
 
-test('Frame Number: the remap curve matches the animation engine', async () => {
+test('Frame Number: the remap the switch writes keeps the source times', async () => {
   await h.run({ type: 'setRetime', layer: s.V, mode: 'frames' });
   await engineIdle();
-  const m = documentMirror();
+  const m = await settled();
   const bar = mirrorRetimeBar(m, s.V);
-  const legacyBar = retimeBarInfo(s.V);
   expect(mirrorRetimeSummary(m, s.V)!.mode).toBe('frames');
-  for (const t of TIMES) {
-    expect(mirrorRetimedSourceSeconds(m, s.V, t, bar)).toBeCloseTo(retimedSourceSeconds(s.V, t, legacyBar), 6);
-    expect(mirrorSourceFrameAt(m, s.V, t, bar)).toBe(sourceFrameAt(s.V, t, legacyBar));
-  }
+  for (const [t, src] of SOURCE_AT) expect(mirrorRetimedSourceSeconds(m, s.V, t, bar)).toBeCloseTo(src, 6);
 });
 
 test('retimeEdits composes from the mirror: the key at the playhead, a preset across the bar', async () => {
+  await settled();
   const keys = documentMirror().keyframes(s.V, SPEED_PATH);
   // The Speed field ON a key updates that key (by its engine id)…
   expect(setSpeedCommands(s.V, 2, 40)[0]).toEqual({
@@ -121,9 +125,11 @@ test('retimeEdits composes from the mirror: the key at the playhead, a preset ac
   expect(setSpeedCommands(s.V, 2.5, 150)[0]).toMatchObject({
     type: 'addKeyframes', keys: [{ prop: { layer: s.V, path: SPEED_PATH }, time: sec(2.5), easing: 'linear' }],
   });
-  // A preset spans the same bar planSpeedPreset measures.
-  const plan = planSpeedPreset(s.V, 'hero')!;
+  // A preset spans the bar: from its in point to (just inside) its out point, eased.
   const cmd = speedPresetCommands(s.V, 'hero')!.commands[0] as { keys: Keyframe[] };
-  expect(cmd.keys.map((k) => k.time)).toEqual(plan.keys.map((k) => sec(k.seconds)));
-  expect(cmd.keys.map((k) => k.easing)).toEqual(plan.keys.map((k) => k.easing));
+  const times = cmd.keys.map((k) => k.time / 705_600_000);
+  expect(times[0]).toBeCloseTo(0.5, 9);
+  expect(times.at(-1)!).toBeGreaterThan(4.4);
+  expect(times.at(-1)!).toBeLessThanOrEqual(4.5);
+  expect(new Set(cmd.keys.map((k) => k.easing))).toEqual(new Set(['easeInOut']));
 });

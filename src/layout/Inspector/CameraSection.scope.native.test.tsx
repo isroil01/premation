@@ -20,8 +20,7 @@ import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
 import { CameraSection } from './CameraSection';
 import { useProjectStore } from '@stores/projectStore';
 import { is3DEnabled } from '@core/scene/threeD';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -68,7 +67,7 @@ describe('Make all 3D is scoped to the active composition', () => {
     ({ layer: CAMERA } = await h.run({ type: 'createLayer', comp: COMP_A, kind: 'camera', name: 'Camera', init: [] }));
     ({ layer: LAYER_B } = await h.run({ type: 'createLayer', comp: COMP_B, kind: 'shape', name: 'B shape', init: [] }));
     openComp(COMP_A);
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
   });
 
   afterEach(async () => {

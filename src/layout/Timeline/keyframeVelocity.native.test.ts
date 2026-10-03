@@ -10,8 +10,7 @@
 
 import { act } from '@testing-library/react';
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -52,7 +51,7 @@ describe('keyframe velocity', () => {
       })),
     })).ids;
     // Each test starts from an empty undo stack.
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
   });
 
   afterEach(async () => {

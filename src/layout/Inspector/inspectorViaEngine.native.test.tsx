@@ -13,8 +13,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -34,7 +33,7 @@ beforeEach(async () => {
   h = await setupAppEngine();
   defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   s = await buildScene(h);
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 });
 afterEach(async () => {
   cleanup();
@@ -112,7 +111,7 @@ test('the value / stopwatch / diamond builders round-trip through undo', async (
 
 test('align left moves the selection as ONE "Align" entry', async () => {
   await edit('', valueCommands([{ nodeId: s.A, values: { x: 100 } }, { nodeId: s.P, values: { x: 900 } }], { seconds: 0 }));
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   await alignLayers([s.A, s.P], 'left', 'selection', 1920, 1080);
   await idle();
   expect((await historyLabels())).toEqual(['Align']);
@@ -136,7 +135,7 @@ test('layer switches, parent and matte are one entry each and undo exactly', asy
 test('smooth then straighten the motion path, one entry each', async () => {
   // A third key so the smooth has a middle vertex to curve through.
   await edit('', { type: 'addKeyframes', keys: [{ prop: { layer: s.B, path: 'transform/position' }, time: 2 * 705_600_000, value: { kind: 'vec2', value: { x: 500, y: 100 } }, spatialIn: [], spatialOut: [] }] });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   await edit('Smooth motion path', await motionPathCommands(s.B, 'smooth'));
   expect(((await docView()).getTrackKeyframes(s.B, 'x') ?? []).some((k) => (k.so ?? 0) !== 0 || (k.si ?? 0) !== 0)).toBe(true);
   await edit('Straighten motion path', await motionPathCommands(s.B, 'straighten'));

@@ -8,7 +8,6 @@
 
 import SceneGraph from '@core/scene/SceneGraph';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useSelectionStore } from '@stores/selectionStore';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
@@ -46,7 +45,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   (defaultSceneGraph as unknown as SceneGraph).clear();
-  defaultAnimation.clear();
   defaultSceneGraph.addNode(node('a'));
   defaultSceneGraph.addNode(node('b'));
   defaultSceneGraph.addNode(node('t', 'text'));

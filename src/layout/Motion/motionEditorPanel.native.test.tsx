@@ -42,14 +42,12 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
-  defaultAnimation.clear();
   useSelectionStore.getState().set([NODE]);
 });
 
 afterEach(() => {
   cleanup();
   useSelectionStore.getState().clear();
-  defaultAnimation.clear();
 });
 
 const animate = (): void => {

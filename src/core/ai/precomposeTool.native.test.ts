@@ -13,7 +13,6 @@ import type { ToolContext } from '@motion/ai-tools';
 import { buildAiTools } from './toolHandlers';
 import { createToolContext } from './toolContext';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { readCompRef } from '@core/scene/compInstance';
 import { readNodeKind } from '@core/scene/sceneDerive';
@@ -50,7 +49,6 @@ afterEach(async () => { await h?.dispose(); h = null; });
 
 beforeEach(async () => {
   h = await setupAppEngine();
-  defaultAnimation.clear();
   defaultSceneGraph.clear();
   defaultSceneGraph.addNode({
     id: 'comp_root', name: 'Main', parent: null, children: [], visible: true, locked: false,

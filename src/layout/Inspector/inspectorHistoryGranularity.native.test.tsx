@@ -33,11 +33,11 @@ import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { EventBus, setEventBus } from '@core/events/EventBus';
-import { getCommandSystem } from '@core/commands/CommandSystem';
 import { defaultAnimation } from '@motion/animation';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { resetHistory } from '@stores/historyStore';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 
@@ -84,8 +84,8 @@ function discoverSections(): Array<[string, React.ComponentType<{ nodeId: string
 const SECTIONS = discoverSections();
 
 /** Entries currently in the undo stack. Non-destructive — never undoes to count. */
-function entryCount(): number {
-  return getCommandSystem().getHistory().getEntries().length;
+async function entryCount(): Promise<number> {
+  return (await historyLabels()).length;
 }
 
 function captured(): string {
@@ -114,7 +114,7 @@ async function probeControl(section: string, el: Element): Promise<Probe> {
   const control = el.getAttribute('aria-label') ?? el.tagName.toLowerCase();
   await idle();
   const before = captured();
-  const entriesBefore = entryCount();
+  const entriesBefore = (await entryCount());
 
   if (el.getAttribute('role') === 'spinbutton') {
     // The resting ValueField: ArrowUp calls onChange(value + step) directly.
@@ -144,7 +144,7 @@ async function probeControl(section: string, el: Element): Promise<Probe> {
   await idle();
   return {
     section, control,
-    added: entryCount() - entriesBefore,
+    added: (await entryCount()) - entriesBefore,
     changed: captured() !== before,
   };
 }
@@ -263,13 +263,13 @@ describe('the probe set is real', () => {
     // The debounced snapshot recorder is gone — only engine commands make
     // entries, so a write around the engine adds none (it is a gap, not an edit).
     await resetWorld();
-    const before = entryCount();
+    const before = (await entryCount());
     defaultSceneGraph.setSkeleton(ID, {
       bones: [{ id: 'solo', name: 'Solo', parentId: null, length: 20, x: 1, y: 2, rotation: 0 }],
       ikTargets: [], meshDensity: 6, meshExpansion: 0,
     } as never);
     await idle();
-    expect(entryCount() - before).toBe(0);
+    expect((await entryCount()) - before).toBe(0);
   });
 });
 

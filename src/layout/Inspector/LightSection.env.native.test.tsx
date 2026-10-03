@@ -23,8 +23,7 @@ import { render, cleanup, fireEvent, screen, act } from '@testing-library/react'
 import type { PropertyInit } from '@motion/engine-api';
 import { LightSection } from './LightSection';
 import { useSelectionStore } from '@stores/selectionStore';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -74,7 +73,7 @@ async function mount(props: LightInit = {}): Promise<void> {
     // The section's writes resolve against the layer's property tree (loaded while the Inspector shows it).
     await documentMirror().loadTree(ID);
   });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   useSelectionStore.setState({ ids: [ID] } as never);
   render(<LightSection nodeId={ID} />);
 }

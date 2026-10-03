@@ -15,8 +15,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -40,7 +39,7 @@ beforeEach(async () => {
   defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   s = await buildScene(h);
   act(() => { useProjectStore.getState().actions.setTime(0, 0); });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 });
 afterEach(async () => {
   cleanup();
@@ -106,7 +105,7 @@ describe('Character panel', () => {
   test('Font Size keys at the playhead when animated (setValueAtTime)', async () => {
     await h.run({ type: 'setAnimated', prop: { layer: s.T, path: 'text/fontSize' }, animated: true, time: 0 });
     act(() => { useProjectStore.getState().actions.setTime(1, 30); });
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
     renderPanel();
     const size = screen.getByLabelText('Font Size');
     fireEvent.change(size, { target: { value: '40' } });
@@ -291,7 +290,7 @@ describe('Path Options', () => {
     act(() => { setTextPath(s.T, { ...defaultTextPath(), pathId: maskPath!.split('/')[1]! }); });
     jest.advanceTimersByTime(2000);
     await idle();
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
     render(<TooltipProvider><TextPathOptions nodeId={s.T} /></TooltipProvider>);
     const { readTextPathConfig } = await import('@core/text/textPath');
     const was = readTextPathConfig((await docView()).getNode(s.T)!)!.perpendicular === true;
@@ -320,7 +319,7 @@ describe('G1: text fields, selector fields, optional properties, Path Options â–
       type: 'addMask', layer: s.T, mode: 'none', inverted: false,
       path: { vertices: [0, 0, 200, 0, 200, 100], inTangents: [], outTangents: [], closed: false, featherPoints: [], vertexStates: [] },
     });
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
     renderPanel();
     const { readTextPathConfig } = await import('@core/text/textPath');
     const before = (await h.doc());

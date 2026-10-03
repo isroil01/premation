@@ -4,7 +4,6 @@
  * expression repair, Remove Pulldown, … Each: one entry, exact undo, redo.
  */
 
-import { defaultAnimation } from '@motion/animation';
 import { useAssetStore } from '@stores/assetStore';
 import type { Command } from '@motion/engine-api';
 import { setupAppEngine } from '../__testHelpers__/appEngine';
@@ -81,13 +80,13 @@ describe('renameLayer follows the expressions that name the layer', () => {
     await h.run({ type: 'setExpression', prop: { layer: s.B, path: 'transform/rotation' }, source: 'layer("Hero").rotation + layerAt( "Hero" ).rotation + layer("#x").rotation', enabled: true });
     const res = await exact({ type: 'renameLayer', layer: s.A, name: 'Villain' }) as { repaired: number; captured: number; nameAlreadyInUse: boolean };
     expect(res).toEqual({ repaired: 2, captured: 0, nameAlreadyInUse: false });
-    const exprs = defaultAnimation.allExpressions().filter((e) => e.nodeId === s.B);
+    const view = await docView();
+    const exprs = view.allExpressions().filter((e) => e.nodeId === s.B);
     expect(exprs.map((e) => e.src).sort()).toEqual([
       "thisComp.layer('Villain').transform.opacity",
       // The rewrite drops the whitespace inside the call (layerNameRefs.ts, both engines).
       'layer("Villain").rotation + layerAt("Villain" ).rotation + layer("#x").rotation',
     ].sort());
-    const view = await docView();
     expect(exprs.some((e) => !view.isExpressionEnabled(e.nodeId, e.prop))).toBe(true);
   });
 

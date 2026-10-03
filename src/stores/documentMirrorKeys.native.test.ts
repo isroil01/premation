@@ -18,6 +18,8 @@ async function setup(): Promise<{ layer: string; count: (key: string) => number;
   await m.whenIdle();
   // Load (and keep) the layer's property tree, as an Inspector does.
   const release = m.retainTree(layer);
+  await m.loadTree(layer);
+  await m.whenIdle();
   expect(m.tree(layer)).toBeDefined();
   const hits = new Map<string, number>();
   const keys = [`prop:${layer}|transform/position`, `value:${layer}|transform/position`, `tree:${layer}`, `struct:${layer}`,

@@ -14,8 +14,7 @@
 import { render, screen, act, cleanup, fireEvent } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -72,7 +71,7 @@ beforeEach(async () => {
   defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   s = await buildScene(h);
   clearEffectClipboard();
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 });
 afterEach(async () => {
   cleanup();
@@ -127,7 +126,7 @@ test('adding an effect to several layers is ONE entry named after the effect', a
 describe('EffectStack parameter rows', () => {
   beforeEach(async () => {
     await addEffectEdit([s.A], 'gaussian-blur'); // the last effect: its card is open
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
   });
 
   test('a scrub of a numeric param is ONE entry; undo/redo walk it exactly', async () => {
@@ -189,7 +188,7 @@ describe('EffectStack parameter rows', () => {
     expect((await docView()).getNodeEffects(s.A).map((e) => e.id)).toEqual([blur, s.fx]);
 
     await act(async () => { await edit('x', paramCommands(s.A, blur, effectDefFor('gaussian-blur')!.params[0]!, 99, 0)); });
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
     await act(async () => { await resetEffectEdit(s.A, blur, 'Gaussian Blur'); });
     expect(paramsOf((await docView()).getNodeEffects(s.A).find((e) => e.id === blur)!).blurriness).toBe(10);
 
@@ -205,7 +204,7 @@ describe('EffectStack parameter rows', () => {
 
 test('the enum menu writes the option (stored as its number), one entry', async () => {
   await addEffectEdit([s.A], 'echo');
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   render(<EffectStack nodeId={s.A} />);
   const menu = screen.getByLabelText('Echo Echo Operator') as HTMLSelectElement;
   await act(async () => { fireEvent.change(menu, { target: { value: '3' } }); await engineIdle(); });
@@ -236,7 +235,7 @@ test('colour, layer-picker and curve params go through setProperty', async () =>
 test('an animated colour param keys all four channels at the playhead, one entry', async () => {
   const color = effectDefFor('glow')!.params.find((p) => p.key === 'color')!;
   await h.run({ type: 'setAnimated', prop: { layer: s.A, path: `effects/${s.fx}/color` }, animated: true, time: 0 });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   await act(async () => { await edit('Set Glow Color', paramCommands(s.A, s.fx, color, '#00ff00', 1)); });
   const g = (await docView()).getTrackKeyframes(s.A, `effect.${s.fx}.color_g`)!;
   expect(g).toHaveLength(2);
@@ -250,7 +249,7 @@ test('a drag-and-drop reorder is one entry and moves the effect by id', async ()
   await addEffectEdit([s.A], 'gaussian-blur');
   await addEffectEdit([s.A], 'echo');
   const ids = (await docView()).getNodeEffects(s.A).map((e) => e.id);
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   await act(async () => { await dropEffectEdit(s.A, ids[2]!, 0); });
   expect((await docView()).getNodeEffects(s.A).map((e) => e.id)).toEqual([ids[2], ids[0], ids[1]]);
   // A drop into its own gap does nothing.
@@ -262,7 +261,7 @@ test('a drag-and-drop reorder is one entry and moves the effect by id', async ()
 
 test('duplicate copies the effect and its keyframes under a new id, one entry', async () => {
   await h.run({ type: 'setAnimated', prop: { layer: s.A, path: `effects/${s.fx}/radius` }, animated: true, time: 0 });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   await act(async () => { await duplicateEffectEdit(s.A, s.fx, 'Glow'); });
   const list = (await docView()).getNodeEffects(s.A);
   expect(list).toHaveLength(2);
@@ -275,7 +274,7 @@ test('duplicate copies the effect and its keyframes under a new id, one entry', 
 test('copy / paste onto another layer is ONE engine entry with the keyframes; a stale clipboard falls back', async () => {
   await h.run({ type: 'setAnimated', prop: { layer: s.A, path: `effects/${s.fx}/radius` }, animated: true, time: 0 });
   expect(await copyEffectsEdit(s.A, [s.fx])).toBe(1);
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   await act(async () => { await pasteEffectsEdit([s.B]); });
   const pasted = (await fxOf(s.B, 'glow'))!;
   expect(pasted).toBeDefined();
@@ -310,7 +309,7 @@ test('EVERY built-in preset applies through the engine, identical to the legacy 
   const fellBack: string[] = [];
   const differ: string[] = [];
   for (const preset of BUILTIN_EFFECT_PRESETS) {
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
     await act(async () => { await applyEffectPresetEdit(preset.name, [s.B]); });
     if ((await historyLabels()).join() !== `Apply ${preset.name}`) fellBack.push(preset.name);
     const viaEngine = (await docView()).getNodeEffects(s.B).map((e) => ({ type: e.type, params: paramsOf(e) }));
@@ -334,7 +333,7 @@ test('Effect Opacity: an animated value keys through the engine; a static one ke
   expect(effectOpacityCommands(s.A, s.fx, 50, 0)).toBeNull();
   // Animate it the legacy way (the stopwatch is an engine gap), then key through the engine.
   defaultAnimation.setKeyframe(s.A, effectOpacityPath(s.fx), 0, 100);
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   const cmds = effectOpacityCommands(s.A, s.fx, 40, 1);
   expect(cmds).not.toBeNull();
   await act(async () => { await edit('Set Effect Opacity', cmds!); });
@@ -436,7 +435,7 @@ test('layer style switches, Glass and a bound angle go through the engine', asyn
   await act(async () => { await setLayerStyleOnEdit(s.A, 'glass', true, 'Glass'); });
   await act(async () => { await patchLayerStyleEdit(s.A, 'dropShadow', { useGlobalLight: true }); });
   expect(getNodeLayerStyles(s.A).dropShadow!.useGlobalLight).not.toBe(false);
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   const before = (await h.doc());
   render(<LayerStylesControls nodeId={s.A} />);
   // Editing the angle the Global Light drives unbinds it in the same entry.

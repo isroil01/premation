@@ -5,10 +5,7 @@
  */
 
 import { render, screen, fireEvent, within, act, cleanup } from '@testing-library/react';
-import { defaultAnimation } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
+import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { readRuns } from '@core/text/richText';
 import { collectFontUsage } from '@core/fonts/missingFonts';
 import { RECENT_FONTS_KEY, resetFontPrefsCacheForTest } from '@core/fonts/fontPrefs';
@@ -17,7 +14,7 @@ import { useUIStore } from '@stores/uiStore';
 import { useModalStore, closeAllModals } from '@stores/modalStore';
 import type { SceneNode } from '@core/types';
 import { ReplaceFontsBody, REPLACE_FONTS_MODAL_ID } from './ReplaceFontsDialog';
-import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, historyLabels, setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { engineIdle } from '@core/engine/engineInstance';
 import { documentMirror } from '@stores/documentMirror';
@@ -26,17 +23,6 @@ class StubResizeObserver {
   observe(): void {}
   unobserve(): void {}
   disconnect(): void {}
-}
-
-function textLayer(id: string, name: string, props: Record<string, unknown>): SceneNode {
-  return {
-    id, name, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'text', x: 0, y: 0 } },
-      { id: `${id}_c`, type: 'Text', props },
-    ],
-  } as unknown as SceneNode;
 }
 
 async function allNodes(): Promise<SceneNode[]> {
@@ -56,22 +42,23 @@ beforeAll(() => {
 beforeEach(() => {
   localStorage.clear();
   resetFontPrefsCacheForTest();
-  defaultAnimation.clear();
-  defaultSceneGraph.clear();
-  getCommandSystem().getHistory().clear();
-  defaultSceneGraph.addNode({
-    id: 'comp_root', name: 'Main', parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [{ id: 'comp_root_meta', type: 'group', props: { __kind: 'group' } }],
-  } as unknown as SceneNode);
-  defaultSceneGraph.addChild('comp_root', textLayer('a', 'Title', { content: 'Hello', fontFamily: 'Brand Sans' }) as never);
-  defaultSceneGraph.addChild('comp_root', textLayer('b', 'Lower third', {
-    content: 'World',
-    fontFamily: 'Inter',
-    __runs: [{ start: 0, end: 2, style: { fontFamily: 'brand sans' } }],
-    __runsIndex: 'grapheme',
-  }) as never);
 });
+
+/** The two text layers every case starts from, on the app's engine: a layer font and a run font of the missing family. */
+async function fontsFixture(h: Awaited<ReturnType<typeof setupAppEngine>>): Promise<{ a: string; b: string }> {
+  const mk = async (name: string): Promise<string> => (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name, init: [] })).layer;
+  const a = await mk('Title'); // listed first: its spelling of the family is the one reported
+  const b = await mk('Lower third');
+  await h.batch('Setup', [
+    { type: 'setProperty', prop: { layer: a, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Brand Sans' } },
+    { type: 'setProperty', prop: { layer: b, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Inter' } },
+    { type: 'setProperty', prop: { layer: b, path: 'text/styleRuns' }, value: { kind: 'json', value: JSON.stringify([{ start: 0, end: 2, style: { fontFamily: 'brand sans' } }]) } },
+  ]);
+  await clearHistory();
+  await engineIdle();
+  await documentMirror().whenIdle();
+  return { a, b };
+}
 
 afterEach(() => {
   cleanup();
@@ -80,6 +67,8 @@ afterEach(() => {
 
 describe('ReplaceFontsBody', () => {
   it('lists the family, a Missing badge and the layers using it; Replace starts disabled', async () => {
+    const h = await setupAppEngine();
+    await fontsFixture(h);
     const usages = collectFontUsage((await allNodes()));
     render(<ReplaceFontsBody usages={usages} missingKeys={new Set(['brand sans'])} close={() => {}} />);
     const row = screen.getByRole('listitem', { name: 'Brand Sans' });
@@ -88,20 +77,13 @@ describe('ReplaceFontsBody', () => {
     // Missing families first.
     expect(screen.getAllByRole('listitem')[0]).toBe(row);
     expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled();
+    await h.dispose();
   });
 
   it('Replace writes layer fonts and run fonts in ONE undo entry (engine: text/fontFamily + text/styleRuns)', async () => {
     // The document on the app engine: the same two layers, built through the API.
     const h = await setupAppEngine();
-    const mk = async (name: string): Promise<string> => (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name, init: [] })).layer;
-    const a = await mk('Title');
-    const b = await mk('Lower third');
-    await h.batch('Setup', [
-      { type: 'setProperty', prop: { layer: a, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Brand Sans' } },
-      { type: 'setProperty', prop: { layer: b, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Inter' } },
-      { type: 'setProperty', prop: { layer: b, path: 'text/styleRuns' }, value: { kind: 'json', value: JSON.stringify([{ start: 0, end: 2, style: { fontFamily: 'brand sans' } }]) } },
-    ]);
-    getCommandSystem().getHistory().clear();
+    const { a, b } = await fontsFixture(h);
     localStorage.setItem(RECENT_FONTS_KEY, JSON.stringify(['Georgia']));
     const close = jest.fn();
     render(<ReplaceFontsBody usages={collectFontUsage((await allNodes()))} missingKeys={new Set(['brand sans'])} close={close} />);
@@ -119,7 +101,7 @@ describe('ReplaceFontsBody', () => {
     expect((await textProps(a)).fontFamily).toBe('Georgia');
     expect((await textProps(b)).fontFamily).toBe('Inter');
     expect(readRuns((await docView()).getNode(b)!)[0]!.style.fontFamily).toBe('Georgia');
-    expect(getCommandSystem().getHistory().getEntries()).toHaveLength(1);
+    expect(await historyLabels()).toHaveLength(1);
 
     await act(async () => { await h.run({ type: 'undo' }); });
     expect((await textProps(a)).fontFamily).toBe('Brand Sans');
@@ -133,17 +115,7 @@ describe('the missing-font check', () => {
   let h: Awaited<ReturnType<typeof setupAppEngine>>;
   beforeEach(async () => {
     h = await setupAppEngine();
-    documentMirror().start();
-    const mk = async (name: string): Promise<string> => (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name, init: [] })).layer;
-    const a = await mk('Title'); // listed first: its spelling of the family is the one reported
-    const b = await mk('Lower third');
-    await h.batch('Setup', [
-      { type: 'setProperty', prop: { layer: a, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Brand Sans' } },
-      { type: 'setProperty', prop: { layer: b, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Inter' } },
-      { type: 'setProperty', prop: { layer: b, path: 'text/styleRuns' }, value: { kind: 'json', value: JSON.stringify([{ start: 0, end: 2, style: { fontFamily: 'brand sans' } }]) } },
-    ]);
-    await engineIdle();
-    await documentMirror().whenIdle();
+    await fontsFixture(h);
   });
   afterEach(async () => { await h.dispose(); });
 

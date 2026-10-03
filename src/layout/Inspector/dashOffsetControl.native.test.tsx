@@ -17,10 +17,9 @@
 import { render, cleanup, fireEvent, screen, act } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
 import { useSelectionStore } from '@stores/selectionStore';
-import { getCommandSystem } from '@core/commands/CommandSystem';
 import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { readNodeStroke, defaultStroke } from '@core/paint/stroke';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -40,7 +39,7 @@ async function setStroke(dash: number[]): Promise<void> {
     ...defaultStroke('#33e0a0'), enabled: true, width: 14, opacity: 1,
     align: 'center', dash, cap: 'butt', join: 'miter',
   }]));
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 }
 
 /** The panel keeps stroke controls behind a popover; open it by its trigger. */
@@ -57,7 +56,7 @@ const undo = async (): Promise<void> => { await act(async () => { await h.run({ 
 beforeEach(async () => {
   h = await setupAppEngine();
   ({ layer: ID } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'shape', name: 'dash_probe', init: [] }));
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   useSelectionStore.setState({ ids: [ID] } as never);
 });
 

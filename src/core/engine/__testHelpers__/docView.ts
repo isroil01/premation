@@ -194,6 +194,15 @@ export class DocView {
     return this.raw.animation?.expressions?.[id]?.[prop]?.src;
   }
 
+  /** Every expression in the document. */
+  allExpressions(): Array<{ nodeId: string; prop: string; src: string; enabled: boolean }> {
+    const out: Array<{ nodeId: string; prop: string; src: string; enabled: boolean }> = [];
+    for (const [nodeId, props] of Object.entries(this.raw.animation?.expressions ?? {})) {
+      for (const [prop, e] of Object.entries(props)) out.push({ nodeId, prop, src: e.src, enabled: e.enabled !== false });
+    }
+    return out;
+  }
+
   hasExpression(id: string, prop: string): boolean {
     return !!this.getExpressionSrc(id, prop);
   }

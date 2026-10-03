@@ -12,10 +12,9 @@
 
 import { defaultAnimation } from '@motion/animation';
 import { getNodeFill, getNodeFills, type FillPaint, type LinearFill, type RadialFill } from '@core/paint/fill';
-import { getCommandSystem } from '@core/commands/CommandSystem';
 import { edit } from '@core/engine/uiEdits';
 import { propRefForTrack, values } from '@core/engine/propRefs';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { fillPaintCommands, textStrokePaintCommands } from '@layout/Inspector/appearance/paintEdits';
@@ -64,7 +63,7 @@ afterEach(async () => {
 });
 
 async function roundTrip(label: string, cmds: ReturnType<typeof gradientPaintCommands>): Promise<void> {
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   const before = (await h.doc());
   const res = await edit(label, cmds);
   expect(res.ok).toBe(true);

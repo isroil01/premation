@@ -6,7 +6,7 @@
 
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { getNodeLayerStyles } from '@core/effects/layerStyles';
+import { docView } from '@core/engine/__testHelpers__/docView';
 import { documentMirror } from '@stores/documentMirror';
 import { engineIdle } from '@core/engine/engineInstance';
 import { mirrorLayerStyles } from './layerFacts';
@@ -44,16 +44,19 @@ test('every style, with edited values and a disabled one, reads back as the stor
     ],
   });
   await h.run({ type: 'setGroupEnabled', groups: [{ layer: L, path: 'styles/satin' }], enabled: false });
-  documentMirror().tree(L);
+  await documentMirror().loadTree(L);
   await engineIdle();
   const tree = documentMirror().tree(L);
   expect(tree).toBeDefined();
-  expectSame(mirrorLayerStyles(tree), getNodeLayerStyles(L));
+  // The stored record: the exported document's `fx.layerStyles`.
+  const stored = ((await docView()).props(L, 'fx')?.layerStyles ?? {}) as Record<string, unknown>;
+  expect(Object.keys(stored).length).toBe(STYLES.length);
+  expectSame(mirrorLayerStyles(tree), stored);
 });
 
 test('a layer with no styles reads as none', async () => {
   const L = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'solid', name: 'S', init: [] })).layer;
-  documentMirror().tree(L);
+  await documentMirror().loadTree(L);
   await engineIdle();
   expect(mirrorLayerStyles(documentMirror().tree(L))).toEqual({});
 });

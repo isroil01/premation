@@ -9,8 +9,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -36,7 +35,7 @@ beforeEach(async () => {
   defaultAnimation.setChangeListener((nodeId) => getEventBus().emit('AnimationChanged', { nodeId }));
   s = await buildScene(h);
   useSelectionStore.getState().set([]);
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 });
 afterEach(async () => {
   cleanup();
@@ -84,7 +83,7 @@ test('Group Parts on siblings is groupLayers: ONE entry, the group selected; und
 test('Group Parts across parents moves the nested layers to the root keeping their world pose, then groups — ONE entry; undo exact', async () => {
   await h.run({ type: 'setParent', layers: [s.A], parent: s.P, keepWorldTransform: true });
   await h.run({ type: 'setProperty', prop: { layer: s.P, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 300, y: 200 } } });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   const world = async (): Promise<number[]> => (await h.query({ type: 'getLayerTransforms', layers: [s.A], time: 0 })).transforms[0]!.matrix;
   const worldBefore = await world();
   const before = (await h.doc());
@@ -103,7 +102,7 @@ test('Group Parts across parents moves the nested layers to the root keeping the
 
 test('Detach Parts on a group layer is ungroupLayer: ONE entry, the parts selected; undo exact', async () => {
   const { layer: group } = await h.run({ type: 'groupLayers', layers: [s.A, s.B], name: 'G' }) as { layer: string };
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   const before = (await h.doc());
   await ungroupNode(group, [s.A, s.B]);
   expect((await docView()).getNode(group)).toBeUndefined();
@@ -117,7 +116,7 @@ test('Detach Parts on a group layer is ungroupLayer: ONE entry, the parts select
 
 test('Detach Parts on a parent that is not a group moves its children to the root and deletes it — ONE entry; undo exact', async () => {
   await h.run({ type: 'setParent', layers: [s.A], parent: s.P, keepWorldTransform: true });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   const before = (await h.doc());
   await ungroupNode(s.P, [s.A]);
   expect((await docView()).getNode(s.P)).toBeUndefined();
@@ -131,7 +130,7 @@ test('Detach Parts on a parent that is not a group moves its children to the roo
 test('a style preset the engine addresses whole is ONE entry: fills, strokes, styles, blend, corners; undo exact', async () => {
   // A style the preset does not state is removed (a preset is a complete look).
   await h.run({ type: 'addPropertyGroup', layer: s.A, parent: 'styles', matchName: 'style:innerGlow', init: [] });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   const before = (await h.doc());
   const preset = stylePreset('sticker')!;
   const node = (await docView()).getNode(s.A)!;
@@ -189,7 +188,7 @@ test('clicking a style swatch applies it as ONE entry named for the preset', asy
 
 test('Shift-parent (Parent & Link JUMP) is setParent{jump}: ONE entry, the child lands on the parent anchor; undo exact', async () => {
   await h.run({ type: 'setProperty', prop: { layer: s.A, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 420, y: 310 } } });
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
   expect(stored(s.A, 'x')).toBeCloseTo(420);
   const before = (await h.doc());
   parentLayer(s.A, s.P, { shiftKey: true });

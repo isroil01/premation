@@ -30,7 +30,7 @@ beforeEach(async () => {
     keys: [0.2, 5].map((t) => ({ prop: { layer: ID, path: 'transform/position' }, time: secondsToFlicks(t), value: { kind: 'vec2', value: { x: 1, y: 1 } }, spatialIn: [], spatialOut: [] })),
   } as EngineCommand);
   await settle();
-  documentMirror().tree(ID);
+  await documentMirror().loadTree(ID);
   await settle();
 });
 afterEach(async () => {

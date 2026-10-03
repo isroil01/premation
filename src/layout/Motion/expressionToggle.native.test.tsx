@@ -25,7 +25,7 @@ import { ExpressionEditor } from './ExpressionEditor';
 import { defaultAnimation } from '@motion/animation';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getEventBus } from '@core/events/EventBus';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -47,7 +47,7 @@ beforeEach(async () => {
   defaultAnimation.setKeyframe(NODE, 'x', 0, 0);
   defaultAnimation.setKeyframe(NODE, 'x', 2, 100);
   defaultAnimation.setExpression(NODE, 'x', 'value + 200');
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 });
 
 afterEach(async () => {

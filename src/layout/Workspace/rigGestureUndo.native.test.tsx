@@ -25,8 +25,8 @@ import { clearRestMeshCache } from '@core/rig/puppet';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { isWeightPaintEmpty } from '@core/rig/weightPaint';
 import { performUndo, performRedo } from '@stores/historyStore';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec } from '@core/engine/__testHelpers__/appEngine';
 import { engineIdle } from '@core/engine/engineInstance';
@@ -72,7 +72,7 @@ const redo = async (): Promise<void> => { await act(async () => { await performR
 const skelOf = async () => readNodeSkeleton((await docView()).getNode(L)!)!;
 
 /** Current undo-stack depth. */
-const undoDepth = (): number => getCommandSystem().getHistory().getEntries().length;
+const undoDepth = async (): Promise<number> => (await historyLabels()).length;
 
 /**
  * Steps the stack GREW by while `fn` ran (and the engine settled).
@@ -83,17 +83,17 @@ const undoDepth = (): number => getCommandSystem().getHistory().getEntries().len
  */
 async function stepsAdded(fn: () => void | Promise<void>): Promise<number> {
   await idle();
-  const before = undoDepth();
+  const before = (await undoDepth());
   await fn();
   await idle();
-  return undoDepth() - before;
+  return (await undoDepth()) - before;
 }
 
 /** Write a whole rig through the engine (setup, then a clean history). */
 async function setRig(path: 'layer/puppet' | 'layer/skeleton', rig: unknown): Promise<void> {
   await h.run({ type: 'setProperty', prop: { layer: L, path }, value: { kind: 'json', value: JSON.stringify(rig) } });
   await idle();
-  getCommandSystem().getHistory().clear();
+  await clearHistory();
 }
 
 beforeEach(async () => {
@@ -243,7 +243,7 @@ describe('spatial tangent drag undo', () => {
       ],
     });
     await idle();
-    getCommandSystem().getHistory().clear();
+    await clearHistory();
     useUIStore.getState().setActiveTool('puppet-pin');
     const utils = render(<PuppetOverlay />);
     await idle();
