@@ -2972,15 +2972,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         bootTask.end();
       }
 
-      // Live cross-window sync: a detached panel mirrors this window's document,
-      // selection and playhead, and its own edits come back the other way.
-      //
-      // MUST be started here, INSIDE the boot IIFE, not beside it: `Application
-      //.boot` calls `setEventBus(new EventBus)`, so anything that subscribes
-      // before boot resolves is attached to a bus that is then thrown away. That
-      // is why the scene-change subscription silently never fired while the
-      // selection one (a plain zustand store, never replaced) worked fine.
-      if (!cancelled) stopSync = startWindowSync({ engineDocument: engineIsOwner });
+      // Live cross-window sync: a detached panel shares this window's selection
+      // and playhead both ways (the document is the engine's — every window
+      // mirrors it). Started once the boot has settled.
+      if (!cancelled) stopSync = startWindowSync();
 
       if (!cancelled) setReady(true);
     })();

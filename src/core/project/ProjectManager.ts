@@ -127,6 +127,8 @@ export interface EngineOwnedDocument {
   /** Collect Files — the engine copies the project and its files into `folder` (engine-api `collectFiles`). */
   collectFiles?(folder: string, onlyUsed: boolean): Promise<{ path: string; bytes: number; missing?: string }>;
   close(): Promise<void>;
+  /** The engine writes its recovery copy now (`force`: even when clean); the stamp, or null when nothing was written. */
+  autosave?(opts: { force?: boolean }): Promise<number | null>;
 }
 
 export class ProjectManager {
@@ -164,6 +166,15 @@ export class ProjectManager {
 
   /** F2: is the document owned by the engine (lifecycle through engine requests)? */
   get engineOwned(): boolean { return this.engineDocument !== null; }
+
+  /**
+   * The Files tab's "Autosave now": the engine writes its recovery copy even
+   * when the document is clean. The stamp, or null when there is no engine
+   * session (or nothing could be written).
+   */
+  async autosaveNow(): Promise<number | null> {
+    return (await this.engineDocument?.autosave?.({ force: true })) ?? null;
+  }
 
   /**
    * F2 / D5: hand the lifecycle to the engine (or back, with null). The app
