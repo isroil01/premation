@@ -23,14 +23,12 @@
 import { create } from 'zustand';
 import type { Command, DocumentFragment } from '@motion/engine-api';
 import type { SceneNode, Component, Transform } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { documentMirror } from './documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { useSelectionStore } from './selectionStore';
-import { insertBuiltLayers } from '@core/engine/offDocument';
+import { insertFragment } from '@/engine-client/insertFragment';
 import { engine } from '@core/engine/engineInstance';
 import { reportEngineError } from '@core/engine/uiEdits';
-import { setNodeWorldPosition } from '@core/scene/sceneInsert';
 import { trackWrites } from '@layout/Inspector/inspectorEdits';
 import { getTime } from './playbackClockStore';
 
@@ -193,13 +191,14 @@ export const useComponentStore = create<ComponentState & ComponentActions>((set,
     const comp = rootId();
     if (def.fragment) return pasteComponent(def as ComponentDef & { fragment: StoredFragment }, comp, at ?? compCenter());
     if (!def.root) return null;
-    // Legacy (v1): built off-document from the saved tree, then migrated to the inserted copy's fragment.
-    const nodes = instantiate(def.root, comp, compCenter());
-    const ids = await insertBuiltLayers(`Insert ${def.name}`, comp, () => {
-      for (const node of nodes) defaultSceneGraph.addChild(node.parent!, node);
-      if (at) setNodeWorldPosition(nodes[0]!.id, at.x, at.y);
-      useSelectionStore.getState().set([nodes[0]!.id]);
-    });
+    // Legacy (v1): the saved tree laid into a fragment (its root at the drop point or the
+    // comp centre) and pasted as one entry, then migrated to the inserted copy's fragment.
+    const legacyRoot = def.root;
+    const ids = await insertFragment(`Insert ${def.name}`, (b) => {
+      const nodes = instantiate(legacyRoot, comp, at ?? compCenter());
+      for (const node of nodes) b.addChild(node.parent!, node);
+      return nodes[0]!.id;
+    }, { comp });
     const root = ids?.[0] ?? null;
     if (root) {
       const fragment = await copyFragment([root]);

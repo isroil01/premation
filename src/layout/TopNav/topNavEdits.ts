@@ -8,11 +8,10 @@ import type { Command, CubicBezier, Easing, PropRef } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { controlSpecOf, CONTROL_PREFIX, type ControlKind } from '@core/engine/controlSpecs';
-import { insertBuiltLayers } from '@core/engine/offDocument';
+import { insertFragment } from '@/engine-client/insertFragment';
 import { isLayer } from '@core/mirror/docFacts';
 import { compTime, paths, values } from '@core/engine/propRefs';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { makeNode } from '@core/scene/sceneInsert';
+import { buildImageSequence } from '@core/scene/layerBuilders';
 import { detectImageSequence } from '@core/scene/imageSequence';
 import { activeInsertTarget } from '@layout/Scene/activeInsertTarget';
 
@@ -172,21 +171,11 @@ export async function insertImageSequenceEdit(files: readonly File[], fps = 30):
   const target = activeInsertTarget();
   if (!target) return release();
   const { comp } = target;
-  const into = target.parent ?? comp;
-  const info = await engine().query({ type: 'getComposition', comp });
-  const size = info.ok ? info.value.comp.settings : { width: 1920, height: 1080 };
-  const ids = await insertBuiltLayers(`Insert ${detected.base}`, comp, () => {
-    // B4-kept: the off-document builder (a WRITE into the scratch graph that lands as one pasteLayers);
-    // `makeNode` is counted because its module reads the composition store (text size default).
-    const node = makeNode('image', detected.base);
-    const t = node.components.find((c) => c.type === 'Transform');
-    if (t) {
-      Object.assign(t.props, { width: dims.w, height: dims.h, src: frames[0], x: size.width / 2, y: size.height / 2 });
-      node.transform.position.x = size.width / 2;
-      node.transform.position.y = size.height / 2;
-    }
-    defaultSceneGraph.addChild(into, node);
-    defaultSceneGraph.setImageSequence(node.id, { frames, fps });
+  // The footage layer laid into a fragment (layerBuilders.ts), ONE pasteLayers entry — into
+  // the target layer when the insert target is one (pasteLayers `parent`).
+  const ids = await insertFragment(`Insert ${detected.base}`, (b, f) => buildImageSequence(b, f, detected.base, frames, dims, fps), {
+    comp,
+    ...(target.parent ? { parent: target.parent } : {}),
   });
   if (!ids || ids.length === 0) return release();
   return true;

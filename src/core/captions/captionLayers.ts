@@ -30,7 +30,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { makeNode } from '@core/scene/sceneInsert';
+import { makeNode } from '@core/scene/layerBuilders';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import type { Command } from '@motion/engine-api';
 import { buildLayerFragment } from '@core/engine/offDocument';
@@ -120,7 +120,7 @@ export function readCaptionCues(rootId: string = activeCompRootId()): Cue[] {
 }
 
 /** Build one caption text node, styled and placed but not yet timed. */
-function makeCaptionNode(
+export function makeCaptionNode(
   cue: Cue,
   style: CaptionStyle,
   comp: { width: number; height: number },

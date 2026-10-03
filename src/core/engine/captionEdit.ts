@@ -3,8 +3,8 @@
  * that REPLACE a composition's captions with `cues`: `deleteLayers` of the
  * caption layers the caller names (the UI reads them off the document mirror:
  * `LayerInfo.caption`), then ONE `pasteLayers` of the styled caption layers the
- * builder (captions/captionLayers.ts `buildCaptionLayers`) makes OFF-DOCUMENT
- * (offDocument.ts `buildLayerFragment`: a scratch tree, never the document).
+ * builder lays into a fragment (captions/captionFragment.ts: plain data, no
+ * document — each layer's bar is its cue, in frames of the target comp).
  *
  * A query-shaped seam: plain data in (cues, style, the composition and its
  * size, the ids to replace), plain data out (the commands and their counts),
@@ -13,9 +13,11 @@
  */
 
 import type { Command } from '@motion/engine-api';
-import { buildCaptionLayers, DEFAULT_CAPTION_STYLE, type CaptionStyle, type CaptionTarget } from '@core/captions/captionLayers';
+import { DEFAULT_CAPTION_STYLE, type CaptionStyle, type CaptionTarget } from '@core/captions/captionLayers';
+import { buildCaptionFragment } from '@core/captions/captionFragment';
+import { settingsFps } from '@core/mirror/compFacts';
+import { documentMirror } from '@stores/documentMirror';
 import type { Cue } from '@core/captions/captionFormat';
-import { buildLayerFragment } from './offDocument';
 
 export interface CaptionEditPlan {
   /** The commands of the edit (send them as ONE batch). */
@@ -35,8 +37,9 @@ export function captionReplaceCommands(
   replace: readonly string[],
   style: CaptionStyle = DEFAULT_CAPTION_STYLE,
 ): CaptionEditPlan {
-  let skipped = 0;
-  const built = buildLayerFragment(target.rootId, () => { skipped = buildCaptionLayers(cues, style, target).skipped; });
+  const fps = settingsFps(documentMirror().comp(target.rootId)?.settings);
+  const { built, skipped: dropped } = buildCaptionFragment(cues, target, fps, style);
+  let skipped = dropped;
   const commands: Command[] = [];
   if (replace.length > 0) commands.push({ type: 'deleteLayers', layers: [...replace] } as Command);
   // The builder appends the captions at the FRONT of the comp (index 0), which
