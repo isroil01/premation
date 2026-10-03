@@ -7,9 +7,8 @@
 
 import { analyseAudio } from '@motion/audio';
 import type { AudioGrid } from '@motion/caster';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { useAssetStore } from '@stores/assetStore';
+import { documentMirror } from '@stores/documentMirror';
+import { uiKindOf } from '@core/mirror/layerKinds';
 
 /** Skip decode on huge files — a 10-minute wav would stall the generative path. */
 const MAX_AUDIO_BYTES = 24 * 1024 * 1024;
@@ -24,19 +23,10 @@ export function readAudioAssetId(node: { components: { props: Record<string, unk
   return undefined;
 }
 
-/**
- * `traverse`, NOT `flattenScene` — the same fix as `core/audio/beatGrid.ts`,
- * for the same reason. On a fresh unsaved project layers hang off the VIRTUAL
- * `comp_root`, so `getRoots()` is empty and a roots-downwards walk sees no
- * layers at all. This silently cost the caster its beat grid on exactly the
- * projects most likely to be generated into: brand-new ones.
- */
+/** The first audio layer anywhere in the document (the mirror lists every composition's layers). */
 function findAudioLayerId(): string | undefined {
-  let found: string | undefined;
-  defaultSceneGraph.traverse((n) => {
-    if (found === undefined && readNodeKind(n) === 'audio') found = n.id;
-  });
-  return found;
+  const m = documentMirror();
+  return m.layerIds().find((id) => uiKindOf(m.layer(id)) === 'audio');
 }
 
 /**
@@ -49,12 +39,10 @@ export async function analyseSceneAudioForCaster(): Promise<AudioGrid | undefine
   const nodeId = findAudioLayerId();
   if (!nodeId) return undefined;
 
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return undefined;
-
-  const assetId = readAudioAssetId(node);
-  const src = useAssetStore.getState().assets.find((a) => a.id === assetId)?.src;
-  if (!src) return undefined;
+  const m = documentMirror();
+  const assetId = m.layer(nodeId)?.source;
+  const src = assetId ? m.item(assetId)?.mediaUrl : undefined;
+  if (!assetId || !src) return undefined;
 
   const key = `${assetId}:${src}`;
   if (cache?.key === key) return cache.grid;
