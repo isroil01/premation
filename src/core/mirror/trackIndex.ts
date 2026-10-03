@@ -56,6 +56,10 @@ const COLOR_CHANNELS = ['_r', '_g', '_b', '_a'] as const;
 /** The member tracks of one property node. */
 export function membersOf(info: PropertyInfo): readonly string[] {
   if (info.kind !== 'property') return [];
+  const named = namedMembers(info);
+  if (named) return named;
+  // A separated Position's dimensions own x / y / z; the merged vector keeps its path only.
+  if (info.separated && info.matchName === 'Position') return [];
   const vec = VECTOR_MEMBERS[info.matchName];
   if (vec) return vec.slice(0, Math.max(1, info.dimensions));
   if (info.valueType === 'color') {
@@ -69,6 +73,44 @@ export function membersOf(info: PropertyInfo): readonly string[] {
   if (fxOpacity) return [`effect.${fxOpacity[1]}.fx.opacity`];
   if (info.dimensions <= 1) return [info.matchName];
   return [];
+}
+
+/**
+ * The track names the TypeScript engine's catalog gives properties whose
+ * match name does not carry them — keyed on the API path, which does
+ * (pinned by trackIndexParity.test.ts against `catalogFor`).
+ */
+function namedMembers(info: PropertyInfo): readonly string[] | null {
+  const p = info.path;
+  if (p === 'text/sourceText') return ['text.source'];
+  if (p === 'layer/fillStops') return ['fill.stops'];
+  let m = /^layer\/([^/]+\.[^/]+)$/.exec(p);
+  if (m && info.valueType === 'path') return [m[1]!];
+  m = /^transform\/position\/(x|y|z)$/.exec(p);
+  if (m) return [m[1]!];
+  m = /^puppet\/pins\/([^/]+)\/([^/]+)$/.exec(p);
+  if (m) return [`puppet.${m[1]}.${m[2]}`];
+  m = /^skeleton\/bones\/([^/]+)\/(position|scale|rotation)$/.exec(p);
+  if (m) {
+    const b = `bone.${m[1]}`;
+    return m[2] === 'position' ? [`${b}.x`, `${b}.y`] : m[2] === 'scale' ? [`${b}.scaleX`, `${b}.scaleY`] : [`${b}.rotation`];
+  }
+  m = /^skeleton\/bones\/([^/]+)\/ik\/(target|mode)$/.exec(p);
+  if (m) return m[2] === 'target' ? [`ikTarget.${m[1]}.x`, `ikTarget.${m[1]}.y`] : [`ikMode.${m[1]}`];
+  // Expression controls (`effects/ctrl_<name>/<param>`): the control's own name, per channel for colours / points.
+  m = /^effects\/(ctrl_[^/]+)\/([^/]+)$/.exec(p);
+  if (m && /Control/.test(info.matchName)) {
+    const c = m[1]!;
+    if (info.valueType === 'color') return [`${c}.r`, `${c}.g`, `${c}.b`];
+    if (info.dimensions >= 2) return ['x', 'y', 'z'].slice(0, info.dimensions).map((d) => `${c}.${d}`);
+    return [c];
+  }
+  // A vector whose match name is its first member (`pluginUi.<…>.origin.x`).
+  if (info.dimensions >= 2 && /\.x$/.test(info.matchName)) {
+    const base = info.matchName.slice(0, -2);
+    return ['x', 'y', 'z', 'w'].slice(0, info.dimensions).map((d) => `${base}.${d}`);
+  }
+  return null;
 }
 
 const cache = new WeakMap<object, Map<string, TrackRef>>();

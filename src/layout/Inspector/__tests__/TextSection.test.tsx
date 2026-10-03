@@ -18,6 +18,8 @@ import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { engineIdle } from '@core/engine/engineInstance';
 import { componentPropsCommands } from '../useComponentProp';
+import { componentOfType } from '@core/engine/propRefs';
+import { documentMirror } from '@stores/documentMirror';
 import { sourceTextCommand } from '@layout/Text/textEdits';
 
 jest.useFakeTimers();
@@ -40,7 +42,8 @@ const textComp = (id: string) => defaultSceneGraph.getNode(id)?.components.find(
 async function textLayer({ content, ...textProps }: Record<string, unknown>): Promise<string> {
   const id = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name: 'text_section_probe', init: [] })).layer;
   // Source Text is its own property; the rest are the Text component's props.
-  const { cmds, rest } = componentPropsCommands(id, textComp(id)!.id, textProps, 0);
+  await documentMirror().loadTree(id);
+  const { cmds, rest } = componentPropsCommands(id, componentOfType(id, 'Text')!, textProps, 0);
   expect(rest).toEqual({});
   const source = typeof content === 'string' ? sourceTextCommand(id, content, 0) : [];
   expect(source).not.toBeNull();

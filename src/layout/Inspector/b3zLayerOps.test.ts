@@ -18,6 +18,7 @@ import { convertSvgToShapes } from './svgLayerActions';
 import { LAYER_SWITCHES, applyLayerSwitch } from './SelectionHeader';
 import { textPresetEdit } from '@layout/Text/textEdits';
 import { replaceFootageFromPath } from './MediaSection';
+import { documentMirror } from '@stores/documentMirror';
 
 let h: Awaited<ReturnType<typeof setupAppEngine>>;
 let s: Scene;
@@ -56,6 +57,8 @@ test('a Transform preset with Skew / Fill Opacity at default is one entry (laten
 });
 
 test('a text preset with font strings, keyword weight, Tracking, Leading and stroke order is one entry', async () => {
+  // The fields resolve against the layer's property tree (the Inspector has it loaded).
+  await documentMirror().loadTree(s.T);
   await oneExactEntry('Apply Text preset', () => textPresetEdit([s.T], {
     fontFamily: 'Georgia', fontWeight: 'bold', fontStyle: 'italic', fontSize: 40,
     letterSpacing: 3, lineHeight: 1.4, strokeWidth: 2, strokeOverFill: true, fill: '#ff0000',

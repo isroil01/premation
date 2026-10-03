@@ -17,6 +17,7 @@ import {
   propRefForTrack,
   pathForTrack,
   propRefForComponentProp,
+  componentOfType,
   memberWrite,
   scalarWrites,
   numbersOfValue,
@@ -120,15 +121,12 @@ describe('through the engine catalog', () => {
     expect(propRefForTrack('ghost', 'opacity')).toBeNull();
   });
 
-  test('component id + prop key → path (catalog first, component root otherwise)', () => {
-    const node = defaultSceneGraph.getNode(s.T)!;
-    const text = node.components.find((c) => c.type === 'Text')!;
-    expect(propRefForComponentProp(s.T, text.id, 'content')).toEqual({ layer: s.T, path: 'text/sourceText' });
-    const withOpacity = defaultSceneGraph.getNode(s.A)!.components.find((c) => typeof (c.props as Record<string, unknown>).opacity === 'number');
-    if (withOpacity) expect(propRefForComponentProp(s.A, withOpacity.id, 'opacity')!.path).toBe('transform/opacity');
-    const t = defaultSceneGraph.getNode(s.A)!.components.find((c) => c.type === 'Transform')!;
-    expect(propRefForComponentProp(s.A, t.id, 'someCustomKnob')!.path).toBe('layer/someCustomKnob');
-    expect(propRefForComponentProp(s.A, 'nope', 'opacity')).toBeNull();
+  test('component (by type) + prop key → path (the tree first, component root otherwise)', () => {
+    expect(propRefForComponentProp(s.T, componentOfType(s.T, 'Text')!, 'content')).toEqual({ layer: s.T, path: 'text/sourceText' });
+    expect(propRefForComponentProp(s.A, componentOfType(s.A, 'Transform')!, 'opacity')!.path).toBe('transform/opacity');
+    expect(propRefForComponentProp(s.A, componentOfType(s.A, 'Transform')!, 'someCustomKnob')!.path).toBe('layer/someCustomKnob');
+    expect(componentOfType('ghost', 'Transform')).toBeUndefined();
+    expect(propRefForComponentProp('ghost', 'type:Transform', 'opacity')).toBeNull();
   });
 
   test('memberWrite composes the whole vector and applies (static and keyed)', async () => {

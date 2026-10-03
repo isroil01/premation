@@ -72,6 +72,8 @@ function initOf(props: LightInit): PropertyInit[] {
 async function mount(props: LightInit = {}): Promise<void> {
   await act(async () => {
     ({ layer: ID } = await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'light', name: 'Probe light', init: initOf(props) }));
+    // The section's writes resolve against the layer's property tree (loaded while the Inspector shows it).
+    await documentMirror().loadTree(ID);
   });
   getCommandSystem().getHistory().clear();
   useSelectionStore.setState({ ids: [ID] } as never);

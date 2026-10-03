@@ -74,6 +74,7 @@ import { KeyIndex } from './keyIndex';
 import { stampMissingKeyIds } from './stamp';
 import { refreshLegacyUi } from './legacyRefresh';
 import { onCryptomatteChanged } from '@core/media/cryptomatte';
+import { installExpressionProviders } from './expressionProviders';
 
 /** Bars mirror their node (name, enabled, locked, membership) — refresh every comp's mirror. */
 function syncTimelines(): void {
@@ -185,6 +186,10 @@ export class LocalEngine extends EngineClientBase {
   constructor(options: LocalEngineOptions = {}) {
     super();
     this.options = { recordLog: true, hashes: false, ...options };
+    // The TypeScript expression evaluator's document inputs (layer(), thisComp,
+    // ctrl(), audio level, Source Text…) are this engine's own wiring — they
+    // go with it (block 3); the app's expressions run in premation-engine.
+    installExpressionProviders();
     this.projectPath = options.projectPath ?? '';
     this.transport = new Transport((events) => this.emitEphemeral(events));
     this.attachBus();

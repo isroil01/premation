@@ -20,10 +20,8 @@ import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
 import { defaultPrecompNameIn } from '@core/mirror/compNames';
 import { engine } from '@core/engine/engineInstance';
-import {
-  precomposeTargets,
-  type PrecomposeMode,
-} from '@core/composition/precompose';
+import type { PrecomposeMode } from '@core/composition/precompose';
+import { mirrorPrecomposeTargets } from '@core/mirror/compLayers';
 import { precomposeEdit } from './compositionEdits';
 import { cn } from '@utils/cn';
 import styles from './PrecomposeDialog.module.css';
@@ -167,7 +165,7 @@ function PrecomposeDialog({ ids, close }: { ids: string[]; close: () => void }):
 export function openPrecomposeDialog(ids: ReadonlyArray<string> = useSelectionStore.getState().ids): void {
   // A READ (which selected layers the pre-compose moves); the ratchet's verb
   // pattern flags `precompose…` names — see the B3 report's false positives.
-  const targets = precomposeTargets(ids);
+  const targets = mirrorPrecomposeTargets(documentMirror(), ids, activeCompIdNow());
   if (targets.length === 0) {
     useUIStore.getState().notify({ level: 'info', message: 'Select the layers to pre-compose first.', durationMs: 4000 });
     return;

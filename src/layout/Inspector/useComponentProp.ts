@@ -20,10 +20,9 @@
  * with a toast — never written around the engine.
  *
  * Reads come from the document MIRROR (B4, `componentPropValue`): the row wakes
- * only when its own property (or the layer's header / tree) changes. Which
- * component a write lands on is the write seam's business
- * (`componentPropHome`, `isPluginLayerComponent` in @core/engine/propRefs) —
- * the API has no components.
+ * only when its own property (or the layer's header / tree) changes. Writes
+ * resolve the key against the layer's property tree (block 3: the API has no
+ * components — a row names its component by TYPE, `componentOfType`).
  */
 
 import { useCallback, useMemo } from 'react';
@@ -35,10 +34,9 @@ import { componentPropPath, componentPropValue } from '@core/mirror/componentPro
 import { getTime } from '@stores/playbackClockStore';
 import { parseColorChannels } from '@core/inspector/effectCatalog';
 import { compTime } from '@core/engine/propRefs';
-import { values as apiValues, fieldWrite, fieldBindingForComponentProp, componentOfType, componentPropHome, isPluginLayerComponent } from '@core/engine/propRefs';
+import { values as apiValues, fieldWrite, fieldBindingForComponentProp, componentOfType, isPluginLayerComponent } from '@core/engine/propRefs';
 import { isLayer } from '@core/mirror/docFacts';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
-import { catalogFor } from '@core/engine/props';
 import { trackRef, trackWrites } from './inspectorEdits';
 import { useEngineEdit } from './useEngineEdit';
 
@@ -83,18 +81,14 @@ export function componentPropCommands(
   if (value === undefined && r.members.length === 1 && r.valueType !== 'color') {
     // "Back to the neutral value" (a cleared iris aspect, a centred pan): the
     // property's default — a key at the playhead when it is animated.
-    const home = componentPropHome(nodeId, key, 'number');
-    if (home !== undefined && home !== componentId) return null;
-    if (!catalogFor(nodeId).byPath.get(r.ref.path)?.defaultValue) return null;
+    if (!documentMirror().property(nodeId, r.ref.path)?.defaultValue) return null;
     return [{ type: 'resetProperty', prop: r.ref, time: compTime(seconds) }];
   }
   if (typeof value === 'number' && Number.isFinite(value) && r.valueType !== 'color') {
-    if (componentPropHome(nodeId, key, 'number') !== componentId) return null;
     const writes = trackWrites(nodeId, { [key]: value }, seconds);
     return writes.length > 0 ? [{ type: 'setProperties', writes }] : null;
   }
   if (typeof value === 'string' && HEX.test(value.trim()) && r.valueType === 'color' && r.ref.path && r.members.length === 4) {
-    if (componentPropHome(nodeId, key, 'string') !== componentId) return null;
     const [cr, cg, cb, ca] = parseColorChannels(value);
     return [{ type: 'setProperty', prop: r.ref, value: apiValues.color(cr, cg, cb, ca), time: compTime(seconds) }];
   }
@@ -119,7 +113,7 @@ export function componentPropsCommands(
   const rest: Record<string, unknown> = {};
   for (const [key, v] of Object.entries(values)) {
     const r = isPluginLayerComponent(nodeId, componentId) ? null : trackRef(nodeId, key);
-    if (r && typeof v === 'number' && Number.isFinite(v) && r.valueType !== 'color' && componentPropHome(nodeId, key, 'number') === componentId) {
+    if (r && typeof v === 'number' && Number.isFinite(v) && r.valueType !== 'color') {
       nums[key] = v;
       continue;
     }

@@ -79,3 +79,23 @@ export function compHas3DContent(m: MirrorCompLayersRead, compId: string | undef
   }
   return false;
 }
+
+/**
+ * The layers a Pre-compose of `ids` moves (the mirror twin of
+ * `precompose.precomposeTargets`), back to front in `compId`'s stack: layers
+ * of THAT composition only, never one inside another selected layer (it
+ * travels with its parent).
+ */
+export function mirrorPrecomposeTargets(m: MirrorCompLayersRead, ids: ReadonlyArray<string>, compId: string | undefined): string[] {
+  if (!compId || !m.comp(compId)) return [];
+  const wanted = new Set(ids.filter((id) => id !== compId && m.layer(id)?.comp === compId));
+  const insideWanted = (id: string): boolean => {
+    let p = m.layer(id)?.parent;
+    for (let guard = 0; p && guard < 256; guard++) {
+      if (wanted.has(p)) return true;
+      p = m.layer(p)?.parent;
+    }
+    return false;
+  };
+  return flattenCompLayers(m, compId).filter((id) => wanted.has(id) && !insideWanted(id));
+}

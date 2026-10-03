@@ -20,7 +20,6 @@
  */
 
 import type { ContextMenuItem } from '@stores/contextMenuStore';
-import { graph as docGraph } from '@core/engine/doc';
 import { useSelectionStore } from '@stores/selectionStore';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
@@ -480,7 +479,8 @@ export function invertSelection(): void {
  * (`deleteLayersEdit`) over exactly these ids.
  */
 export async function deleteLayersWithFeedback(ids: ReadonlyArray<string>): Promise<void> {
-  const lockedCount = ids.filter((id) => docGraph.getNode(id)?.locked).length;
+  const m = documentMirror();
+  const lockedCount = ids.filter((id) => m.layer(id)?.switches.locked).length;
   await deleteLayersEdit(ids);
   if (lockedCount > 0) {
     notify(

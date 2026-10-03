@@ -29,6 +29,7 @@
  */
 
 import { getTimelineController } from './TimelineController';
+import { playheadSeconds, seekPlayhead } from './timelineView';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useProjectStore } from '@stores/projectStore';
@@ -297,6 +298,7 @@ describe('the nine commands are registered', () => {
 // ── The crossing (F30) ─────────────────────────────────────────────
 
 describe('a real Shift+digit keydown moves the playhead', () => {
+  // The playhead is the clock store (block 3: timelineView, not the TypeScript TimelineController).
   // The commands' `enabled` counts the active composition's markers in the
   // document MIRROR (B4), so these markers are made through the app's engine
   // (still out of time order) and have landed in the mirror before the key.
@@ -309,7 +311,7 @@ describe('a real Shift+digit keydown moves the playhead', () => {
     }
     await engineIdle();
     await documentMirror().whenIdle();
-    getTimelineController().timeline.seek(0);
+    seekPlayhead(0 / 30);
   };
   afterEach(async () => {
     await h?.dispose();
@@ -319,14 +321,13 @@ describe('a real Shift+digit keydown moves the playhead', () => {
   it('Shift+1 seeks the first marker — the whole chain, end to end', async () => {
     await addMarkersOutOfOrder();
     wireShortcuts();
-    const c = getTimelineController();
-    c.timeline.seek(0);
+    seekPlayhead(0 / 30);
 
     window.dispatchEvent(new KeyboardEvent('keydown', {
       key: '!', code: 'Digit1', shiftKey: true, bubbles: true, cancelable: true,
     }));
 
-    expect(Math.round(c.timeline.currentFrame)).toBe(30);
+    expect(Math.round(playheadSeconds() * 30)).toBe(30);
   });
 
   it('Shift+3 seeks the third marker, not the third one created', async () => {
@@ -334,40 +335,37 @@ describe('a real Shift+digit keydown moves the playhead', () => {
     // 60 here and this is the assertion that says so.
     await addMarkersOutOfOrder();
     wireShortcuts();
-    const c = getTimelineController();
-    c.timeline.seek(0);
+    seekPlayhead(0 / 30);
 
     window.dispatchEvent(new KeyboardEvent('keydown', {
       key: '#', code: 'Digit3', shiftKey: true, bubbles: true, cancelable: true,
     }));
 
-    expect(Math.round(c.timeline.currentFrame)).toBe(90);
+    expect(Math.round(playheadSeconds() * 30)).toBe(90);
   });
 
   it('Shift+5 with three markers does nothing — the command disables itself', async () => {
     await addMarkersOutOfOrder();
     wireShortcuts();
-    const c = getTimelineController();
-    c.timeline.seek(45);
+    seekPlayhead(45 / 30);
 
     window.dispatchEvent(new KeyboardEvent('keydown', {
       key: '%', code: 'Digit5', shiftKey: true, bubbles: true, cancelable: true,
     }));
 
-    expect(Math.round(c.timeline.currentFrame)).toBe(45);
+    expect(Math.round(playheadSeconds() * 30)).toBe(45);
   });
 
   it('a BARE 1 does not seek a marker — it still belongs to the 3D view', async () => {
     // The collision check, at the layer where a collision would actually bite.
     await addMarkersOutOfOrder();
     wireShortcuts();
-    const c = getTimelineController();
-    c.timeline.seek(45);
+    seekPlayhead(45 / 30);
 
     window.dispatchEvent(new KeyboardEvent('keydown', {
       key: '1', code: 'Digit1', bubbles: true, cancelable: true,
     }));
 
-    expect(Math.round(c.timeline.currentFrame)).toBe(45);
+    expect(Math.round(playheadSeconds() * 30)).toBe(45);
   });
 });

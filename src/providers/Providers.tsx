@@ -117,7 +117,6 @@ import { fetchLayerBox } from '@stores/layerBoxes';
 import { compTime } from '@core/engine/propRefs';
 import { armMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { finishMotionSketchEdit } from './commands/motionSketchEdits';
-import { installExpressionProviders } from '@core/engine/expressionProviders';
 import { installSceneRevisionUpkeep } from '@core/engine/sceneRevisionUpkeep';
 import { ProjectCommands } from '@layout/Menu';
 import { CommandPalette } from '@layout/CommandPalette';
@@ -2574,11 +2573,6 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // The document lifecycle is the engine's (engineOwnedSession: ProjectManager delegates to it).
         track(getEventBus().on('ProjectLoaded', () => bumpScene()));
         track(getEventBus().on('ProjectUnloaded', () => bumpScene()));
-        // The expression engine's providers (change sink, audio level, ctrl(),
-        // layer(), thisComp / thisLayer, sourceRectAtTime, toComp…, marker):
-        // engine-side wiring, see core/engine/expressionProviders.ts. Must run
-        // before any engine emit (seeding below) reaches its listeners.
-        installExpressionProviders();
         // Keyframe edits move the TS engine's scene revision (never for a media
         // decode repaint): engine-side upkeep, see core/engine/sceneRevisionUpkeep.ts.
         track(installSceneRevisionUpkeep());

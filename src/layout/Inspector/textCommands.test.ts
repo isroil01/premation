@@ -16,6 +16,8 @@ import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appE
 import type { Harness } from '@core/engine/__testHelpers__/harness';
 import type { LocalEngine } from '@core/engine/LocalEngine';
 import { engineIdle } from '@core/engine/engineInstance';
+import { componentOfType } from '@core/engine/propRefs';
+import { documentMirror } from '@stores/documentMirror';
 import { componentPropsCommands } from './useComponentProp';
 import {
   buildTextCommands,
@@ -36,8 +38,10 @@ const textProps = (id: string): Record<string, unknown> => textComp(id).props as
 beforeEach(async () => {
   h = await setupAppEngine();
   T = (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name: 'sw1', init: [] })).layer;
-  // Seed through the engine, with the builder the panel writes with.
-  const { cmds, rest } = componentPropsCommands(T, textComp(T).id, { fill: '#ff0000', stroke: '#00ff00', noFill: true }, 0);
+  // Seed through the engine, with the builder the panel writes with (its
+  // writes resolve against the layer's property tree in the mirror).
+  await documentMirror().loadTree(T);
+  const { cmds, rest } = componentPropsCommands(T, componentOfType(T, 'Text')!, { fill: '#ff0000', stroke: '#00ff00', noFill: true }, 0);
   expect(rest).toEqual({});
   await h.batch('seed', cmds);
   getCommandSystem().getHistory().clear();

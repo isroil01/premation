@@ -18,6 +18,7 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { getTimelineController } from '@core/timeline/TimelineController';
+import { playheadSeconds } from '@core/timeline/timelineView';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
@@ -199,7 +200,7 @@ describe('seeking', () => {
     render(<TranscriptPanel />);
     const words = wordsFromCues(CUES);
     fireEvent.pointerDown(chip('this'));
-    expect(getTimelineController().currentSeconds)
+    expect(playheadSeconds())
       .toBeCloseTo(Math.round((words[2]?.start as number) * FPS) / FPS, 3);
   });
 
@@ -207,7 +208,7 @@ describe('seeking', () => {
     seedTranscript();
     render(<TranscriptPanel />);
     fireEvent.click(screen.getByRole('button', { name: '0:03.0' }));
-    expect(getTimelineController().currentSeconds).toBeCloseTo(3, 3);
+    expect(playheadSeconds()).toBeCloseTo(3, 3);
   });
 });
 
