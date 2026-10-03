@@ -4520,6 +4520,28 @@ function decS_SetLayerComment(r: Reader, end: number, o: any): T.SetLayerComment
   o.comment = v_comment;
   return o;
 }
+function encS_SetPinnedProperties(w: Writer, v: T.SetPinnedProperties): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.props; for (let i = 0; i < a.length; i++) { w.byte(18); w.str(a[i]!); } }
+}
+function decS_SetPinnedProperties(r: Reader, end: number, o: any): T.SetPinnedProperties {
+  const l_props: string[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_props.push(r.str()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('SetPinnedProperties.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.props = l_props;
+  return o;
+}
 function encS_IkOptions(w: Writer, v: T.IkOptions): void {
   if (v.iterations !== undefined) { w.byte(8); w.u32(v.iterations); }
   if (v.tolerance !== undefined) { w.byte(17); w.f64(v.tolerance); }
@@ -16368,6 +16390,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'separateLayer': w.varint(1714); { const s = w.beginLd(); encS_SeparateLayer(w, v); w.endLd(s); } return;
     case 'autoTrace': w.varint(1722); { const s = w.beginLd(); encS_AutoTrace(w, v); w.endLd(s); } return;
     case 'setLayerComment': w.varint(1730); { const s = w.beginLd(); encS_SetLayerComment(w, v); w.endLd(s); } return;
+    case 'setPinnedProperties': w.varint(1738); { const s = w.beginLd(); encS_SetPinnedProperties(w, v); w.endLd(s); } return;
     case 'setLayerTiming': w.varint(2402); { const s = w.beginLd(); encS_SetLayerTiming(w, v); w.endLd(s); } return;
     case 'moveLayersInTime': w.varint(2410); { const s = w.beginLd(); encS_MoveLayersInTime(w, v); w.endLd(s); } return;
     case 'trimLayers': w.varint(2418); { const s = w.beginLd(); encS_TrimLayers(w, v); w.endLd(s); } return;
@@ -16537,6 +16560,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 1714: out = decS_SeparateLayer(r, r.ldEnd(), { type: 'separateLayer' }) as T.Command; break;
       case 1722: out = decS_AutoTrace(r, r.ldEnd(), { type: 'autoTrace' }) as T.Command; break;
       case 1730: out = decS_SetLayerComment(r, r.ldEnd(), { type: 'setLayerComment' }) as T.Command; break;
+      case 1738: out = decS_SetPinnedProperties(r, r.ldEnd(), { type: 'setPinnedProperties' }) as T.Command; break;
       case 2402: out = decS_SetLayerTiming(r, r.ldEnd(), { type: 'setLayerTiming' }) as T.Command; break;
       case 2410: out = decS_MoveLayersInTime(r, r.ldEnd(), { type: 'moveLayersInTime' }) as T.Command; break;
       case 2418: out = decS_TrimLayers(r, r.ldEnd(), { type: 'trimLayers' }) as T.Command; break;
@@ -16706,6 +16730,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'separateLayer': w.varint(1714); { const s = w.beginLd(); encS_LayerList(w, v); w.endLd(s); } return;
     case 'autoTrace': w.varint(1722); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
     case 'setLayerComment': w.varint(1730); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setPinnedProperties': w.varint(1738); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setLayerTiming': w.varint(2402); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'moveLayersInTime': w.varint(2410); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'trimLayers': w.varint(2418); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -16875,6 +16900,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 1714: out = decS_LayerList(r, r.ldEnd(), { type: 'separateLayer' }) as T.CommandResult; break;
       case 1722: out = decS_GroupList(r, r.ldEnd(), { type: 'autoTrace' }) as T.CommandResult; break;
       case 1730: out = decS_Empty(r, r.ldEnd(), { type: 'setLayerComment' }) as T.CommandResult; break;
+      case 1738: out = decS_Empty(r, r.ldEnd(), { type: 'setPinnedProperties' }) as T.CommandResult; break;
       case 2402: out = decS_Empty(r, r.ldEnd(), { type: 'setLayerTiming' }) as T.CommandResult; break;
       case 2410: out = decS_Empty(r, r.ldEnd(), { type: 'moveLayersInTime' }) as T.CommandResult; break;
       case 2418: out = decS_Empty(r, r.ldEnd(), { type: 'trimLayers' }) as T.CommandResult; break;
@@ -17456,6 +17482,7 @@ export const codecs = {
   SeparateLayer: mk<T.SeparateLayer>(encS_SeparateLayer, (r, e) => decS_SeparateLayer(r, e, {})),
   AutoTrace: mk<T.AutoTrace>(encS_AutoTrace, (r, e) => decS_AutoTrace(r, e, {})),
   SetLayerComment: mk<T.SetLayerComment>(encS_SetLayerComment, (r, e) => decS_SetLayerComment(r, e, {})),
+  SetPinnedProperties: mk<T.SetPinnedProperties>(encS_SetPinnedProperties, (r, e) => decS_SetPinnedProperties(r, e, {})),
   IkOptions: mk<T.IkOptions>(encS_IkOptions, (r, e) => decS_IkOptions(r, e, {})),
   IkResult: mk<T.IkResult>(encS_IkResult, (r, e) => decS_IkResult(r, e, {})),
   PoseIk3D: mk<T.PoseIk3D>(encS_PoseIk3D, (r, e) => decS_PoseIk3D(r, e, {})),

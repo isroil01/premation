@@ -180,6 +180,9 @@ command autoTrace = 215 { layer: LayerId = 1; range: TimeRange = 2; channel: str
 /// The layer's comment (Comments column).
 command setLayerComment = 216 { layer: LayerId = 1; comment: string = 2; }
 
+/// Block 3 — the layer's Pinned properties (the Inspector's Pinned tab): the editor's track names, in order (`LayerInfo.pinned`); empty clears them. Stored as `__pinnedProps` on the first component that already carries the list, else the layer's first component. Repeats and empty names are dropped. Inverse: the previous list.
+command setPinnedProperties = 217 { layer: LayerId = 1; props: string[] = 2; }
+
 /// B4 round 8 — 3D IK solver options (boneIK3d.ts IK_DEFAULTS: 12 sweeps, 0.5 px, 0.6 rad per step).
 struct IkOptions {
   /// CCD sweeps over the chain.

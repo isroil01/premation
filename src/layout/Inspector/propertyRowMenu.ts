@@ -28,7 +28,6 @@ import { isTrackAnimated, navigatorFor, trackRef as mirrorTrackRef, type MirrorR
 import { memberExpressionOf } from '@core/mirror/memberExpressions';
 import { edit } from '@core/engine/uiEdits';
 import { essentialPropMenuItems } from '@core/inspector/propertyMenu';
-import { setPinnedProp } from '@core/inspector/pinnedProps';
 import { DEFAULT_EXPRESSION, requestExpressionEditor } from '@core/animation/expressionCommands';
 import { easeKeysAtCommands, expressionCommands, keyToggleCommands, stopwatchCommands, trackRef, type EasePreset } from './inspectorEdits';
 import { pasteKeyframesAt } from '@layout/Timeline/keyframeEdits';
@@ -109,7 +108,10 @@ function pinItems(m: MirrorRead, nodeId: string, prop: string): ContextMenuItem[
       id: 'pin-toggle',
       label: pinned ? 'Unpin from Pinned' : 'Pin to Pinned tab',
       icon: 'push-pin',
-      onSelect: () => { setPinnedProp(nodeId, prop, !pinned); },
+      onSelect: () => {
+        const next = pinned ? layer.pinned.filter((p) => p !== prop) : [...layer.pinned, prop];
+        void edit(pinned ? 'Unpin Property' : 'Pin Property', { type: 'setPinnedProperties', layer: nodeId, props: next });
+      },
     },
   ];
 }

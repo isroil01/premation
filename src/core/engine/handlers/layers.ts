@@ -279,6 +279,21 @@ export const layerHandlers: HandlerTable = {
     };
   },
 
+  setPinnedProperties: (cmd) => {
+    const node = requireLayer(cmd.layer);
+    const next = [...new Set(cmd.props.filter((p) => p !== ''))];
+    const host = node.components.find((c) => Array.isArray((c.props as Record<string, unknown>).__pinnedProps)) ?? node.components[0];
+    if (!host) fail('unsupported', `layer '${cmd.layer}' has no component to hold its pinned properties`, { layer: cmd.layer });
+    return {
+      scope: scopeLayer(newScope(), cmd.layer),
+      label: 'Pinned Properties',
+      apply: () => {
+        graph.writeProp(cmd.layer, host.id, '__pinnedProps', next);
+        return {};
+      },
+    };
+  },
+
   setLayerSwitches: (cmd) => {
     const comp = requireLayersInOneComp(cmd.layers);
     const p = cmd.patch;

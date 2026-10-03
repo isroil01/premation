@@ -194,3 +194,28 @@ TEST_CASE("LayerInfo.pluginSchemaVersion: a custom plugin layer's stored schema 
   REQUIRE(is_ok(plain));
   CHECK_FALSE(std::get<api::LayerDetails>(std::get<api::QueryResult>(plain.outcome.v).v).layers.at(0).plugin_schema_version.has_value());
 }
+
+TEST_CASE("setPinnedProperties: the Pinned tab's list, deduplicated, and undoable", "[block3][pinned]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp, api::LayerKind::solid);
+  const auto pinned = [&]() {
+    const auto r = h.ask(qry(api::GetLayers{{layer}}));
+    REQUIRE(is_ok(r));
+    return std::get<api::LayerDetails>(std::get<api::QueryResult>(r.outcome.v).v).layers.at(0).pinned;
+  };
+  CHECK(pinned().empty());
+  api::SetPinnedProperties set;
+  set.layer = layer;
+  set.props = {"opacity", "x", "", "opacity"};
+  REQUIRE(is_ok(h.run(cmd(set))));
+  CHECK(pinned() == std::vector<std::string>{"opacity", "x"});
+  set.props = {"x"};
+  REQUIRE(is_ok(h.run(cmd(set))));
+  CHECK(pinned() == std::vector<std::string>{"x"});
+  REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  CHECK(pinned() == std::vector<std::string>{"opacity", "x"});
+  set.layer = "nope";
+  CHECK_FALSE(is_ok(h.run(cmd(set))));
+}

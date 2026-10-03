@@ -1860,6 +1860,12 @@ export interface SetLayerComment {
   comment: string;
 }
 
+/** Block 3 — the layer's Pinned properties (the Inspector's Pinned tab): the editor's track names, in order (`LayerInfo.pinned`); empty clears them. Stored as `__pinnedProps` on the first component that already carries the list, else the layer's first component. Repeats and empty names are dropped. Inverse: the previous list. */
+export interface SetPinnedProperties {
+  layer: LayerId;
+  props: string[];
+}
+
 /** B4 round 8 — 3D IK solver options (boneIK3d.ts IK_DEFAULTS: 12 sweeps, 0.5 px, 0.6 rad per step). */
 export interface IkOptions {
   /** CCD sweeps over the chain. */
@@ -4981,6 +4987,7 @@ export type Command =
   | ({ type: 'separateLayer' } & SeparateLayer)
   | ({ type: 'autoTrace' } & AutoTrace)
   | ({ type: 'setLayerComment' } & SetLayerComment)
+  | ({ type: 'setPinnedProperties' } & SetPinnedProperties)
   | ({ type: 'poseIk3D' } & PoseIk3D)
   | ({ type: 'bakeIk3D' } & BakeIk3D)
   | ({ type: 'createLiveMerge' } & CreateLiveMerge)
@@ -5145,6 +5152,7 @@ export type CommandResult =
   | ({ type: 'separateLayer' } & LayerList)
   | ({ type: 'autoTrace' } & GroupList)
   | ({ type: 'setLayerComment' } & Empty)
+  | ({ type: 'setPinnedProperties' } & Empty)
   | ({ type: 'poseIk3D' } & IkResult)
   | ({ type: 'bakeIk3D' } & IkResult)
   | ({ type: 'createLiveMerge' } & LayerRef)
@@ -5458,6 +5466,7 @@ export interface CommandArgs {
   separateLayer: SeparateLayer;
   autoTrace: AutoTrace;
   setLayerComment: SetLayerComment;
+  setPinnedProperties: SetPinnedProperties;
   poseIk3D: PoseIk3D;
   bakeIk3D: BakeIk3D;
   createLiveMerge: CreateLiveMerge;
@@ -5622,6 +5631,7 @@ export interface CommandResults {
   separateLayer: LayerList;
   autoTrace: GroupList;
   setLayerComment: Empty;
+  setPinnedProperties: Empty;
   poseIk3D: IkResult;
   bakeIk3D: IkResult;
   createLiveMerge: LayerRef;

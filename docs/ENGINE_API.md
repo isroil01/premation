@@ -370,6 +370,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `reorderLayers` | Move a set (keeping relative order) to `toIndex`. Inverse: previous full order. |
 | `setParent` | `keepWorldTransform` (AE default) rewrites transform values/keys so nothing jumps. Inverse: previous parent **and** the rewritten transform values/keys. Error `cycle`. |
 | `renameLayer`, `setLayerComment` | Inverse: previous value. |
+| `setPinnedProperties` | The layer's Pinned tab (`LayerInfo.pinned`): track names in order, repeats and empty names dropped; empty clears. Inverse: the previous list. |
 | `setLayerSwitches` | Patch visible, audio, solo, lock, shy, collapse, quality, fx, motion blur, adjustment, 3D, guide, frame blend, auto-orient, preserve transparency, label. Inverse: each layer's previous value of each patched switch. |
 | `setBlendMode`, `setTrackMatte` | Matte by reference to any layer (AE 2023); no `matte.layer` = the classic positional matte (the layer above, B3z). Inverse: previous values. |
 | `replaceLayerSource` | Inverse: previous source (and size if changed). |

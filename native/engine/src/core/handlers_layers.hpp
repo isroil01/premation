@@ -29,6 +29,7 @@ ResultOf<api::DeleteLayers> handle(const api::DeleteLayers& c, HCtx& x);
 ResultOf<api::ReorderLayers> handle(const api::ReorderLayers& c, HCtx& x);
 ResultOf<api::RenameLayer> handle(const api::RenameLayer& c, HCtx& x);
 ResultOf<api::SetLayerComment> handle(const api::SetLayerComment& c, HCtx& x);
+ResultOf<api::SetPinnedProperties> handle(const api::SetPinnedProperties& c, HCtx& x);
 ResultOf<api::SetBlendMode> handle(const api::SetBlendMode& c, HCtx& x);
 ResultOf<api::SetTrackMatte> handle(const api::SetTrackMatte& c, HCtx& x);
 ResultOf<api::SetParent> handle(const api::SetParent& c, HCtx& x);

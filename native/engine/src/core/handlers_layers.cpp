@@ -563,6 +563,30 @@ ResultOf<api::SetLayerComment> handle(const api::SetLayerComment& c, HCtx& x) {
   return {};
 }
 
+ResultOf<api::SetPinnedProperties> handle(const api::SetPinnedProperties& c, HCtx& x) {
+  const Node& n = require_layer(x.d, c.layer);
+  // The host the reader (readmodel.cpp `info.pinned`) finds first: the component
+  // already carrying the list, else the layer's first component.
+  const Component* host = nullptr;
+  for (const Component& comp : n.components) {
+    if (comp.props.at("__pinnedProps").is_array()) {
+      host = &comp;
+      break;
+    }
+  }
+  if (host == nullptr && !n.components.empty()) host = &n.components.front();
+  if (host == nullptr) fail(ErrorCode::unsupported, "layer '" + c.layer + "' has no component to hold its pinned properties");
+  const std::string hostId = host->id;
+  Json::Array list;
+  std::set<std::string> seen;
+  for (const std::string& p : c.props) {
+    if (!p.empty() && seen.insert(p).second) list.push_back(Json::string(p));
+  }
+  x.label = "Pinned Properties";
+  (void)sg_write_prop(x.d, c.layer, hostId, "__pinnedProps", Json::array(std::move(list)));
+  return {};
+}
+
 ResultOf<api::SetBlendMode> handle(const api::SetBlendMode& c, HCtx& x) {
   (void)require_layers_in_one_comp(x.d, c.layers);
   const std::string mode(api::to_string(c.mode));

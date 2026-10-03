@@ -340,6 +340,11 @@
     "type": "setLayerComment"
   },
   {
+    "id": 217,
+    "kind": "edit",
+    "type": "setPinnedProperties"
+  },
+  {
     "id": 1940,
     "kind": "edit",
     "type": "poseIk3D"
