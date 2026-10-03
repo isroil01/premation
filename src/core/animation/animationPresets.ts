@@ -46,7 +46,7 @@ import { TEXT_PRESETS } from './textPresets';
 import { BEHAVIOR_PRESETS } from './behaviorPresets';
 import { SCENERY_PRESETS } from './sceneryPresets';
 import { FILM_LOOK_PRESETS } from './filmLookPresets';
-import { CAMERA_PRESETS } from './cameraPresets';
+import { CAMERA_PRESETS, PRESET_APPLIERS } from './cameraPresets';
 
 export interface PresetTrack {
   prop: PropPath;
@@ -77,7 +77,7 @@ export interface AnimationPreset {
   tracks: PresetTrack[];
   /**
    * Text animators the preset installs before its tracks run. This is what lets
-   * a per-character preset be DATA rather than a hand-written applyFn — the
+   * a per-character preset be DATA rather than a hand-written applier — the
    * animator rig is just more serialized state, and its `ta.*` prop-paths are
    * ordinary tracks in the list above.
    */
@@ -91,7 +91,7 @@ export interface AnimationPreset {
    * "drift continuously" — and therefore adapts to the composition on its own
    * and never ends. That is a different product from a preset, not a variant of
    * one, and it is why these are declared separately rather than smuggled in
-   * through `applyFn`.
+   * through `applier`.
    *
    * Data, not a callback, for the same reason preset tracks are: it can be
    * inspected, previewed, and round-tripped without executing anything.
@@ -109,8 +109,11 @@ export interface AnimationPreset {
   effects?: Array<{ id: string; type: EffectType; params?: EffectParams }>;
   /** How `keyframes[].t` is measured. Omitted = seconds. */
   timeUnit?: PresetTimeUnit;
-  /** Escape hatch for rigs that genuinely need code. Prefer data. */
-  applyFn?: (nodeId: string, atTime: number, engine?: any) => boolean;
+  /**
+   * Escape hatch for rigs that genuinely need code, by NAME (the code is in
+   * `PRESET_APPLIERS`, run by `applyPreset`). Prefer data.
+   */
+  applier?: 'dollyZoom';
 }
 
 // ── Pure time maths (the tested core) ────────────────────────────────
@@ -924,7 +927,7 @@ export function applyPreset(
     const node = defaultSceneGraph.getNode(nodeId);
     if (!node || readNodeKind(node) !== 'camera') return false;
   }
-  if (preset.applyFn) return preset.applyFn(nodeId, atTime, defaultAnimation);
+  if (preset.applier) return PRESET_APPLIERS[preset.applier](nodeId, atTime, defaultAnimation);
 
   let tracks: ReadonlyArray<PresetTrack> = preset.tracks;
   if (preset.animators && preset.animators.length) {

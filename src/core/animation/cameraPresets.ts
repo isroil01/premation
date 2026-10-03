@@ -27,7 +27,7 @@
  * Orbit and orientation stay `abs`: 8° of yaw is 8° in any comp.
  */
 
-import { defaultAnimation, type AnimationEngine, type Keyframe, type PropPath } from '@motion/animation';
+import { type AnimationEngine, type Keyframe, type PropPath } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { defaultFocalLength } from '@core/scene/camera3d';
@@ -73,7 +73,7 @@ function wiggleKeyframes(amp: number, f1: number, f2: number, phase: number): Ke
 
 /** The camera's current value for `prop`: sampled animation first, then the
  *  base scene prop. A local twin of `nodeBaseValue` rather than an import — the
- *  main module imports THIS one, and the dolly-zoom applyFn runs long after
+ *  main module imports THIS one, and the dolly-zoom applier runs long after
  *  load, so keeping this file's runtime imports one-directional costs ten lines
  *  and removes a cycle. */
 function cameraBaseValue(
@@ -100,7 +100,7 @@ function cameraBaseValue(
  * off the plane shifts in perspective.
  *
  * The one preset in this library that is code, and it is code for exactly the
- * reason `applyFn` exists: the counter-zoom is a PRODUCT of the camera's
+ * reason `applier` exists: the counter-zoom is a PRODUCT of the camera's
  * current focal length and distance, and the track model can only add offsets
  * to them. A static declaration would hold framing only on the default rig
  * (where d0 = f0) and drift on any camera that has been dollied or re-lensed.
@@ -111,7 +111,7 @@ function cameraBaseValue(
  * interpolation, and any interpolant of the form `v0 + w(t)·(v1 − v0)` applied
  * identically to two affinely-related tracks preserves the relation exactly.
  */
-function applyDollyZoom(nodeId: string, atTime: number, engine: AnimationEngine = defaultAnimation): boolean {
+function applyDollyZoom(nodeId: string, atTime: number, engine: AnimationEngine): boolean {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || readNodeKind(node) !== 'camera') return false;
 
@@ -202,9 +202,9 @@ export const CAMERA_PRESETS: ReadonlyArray<AnimationPreset> = [
     requires: 'camera',
     description: 'Dolly in while the lens zooms out — framing holds, the background falls away.',
     // Everything is computed from the camera's live z / focalLength inside the
-    // applyFn (see above) — after applying, both tracks are ordinary keyframes.
+    // applier (see above) — after applying, both tracks are ordinary keyframes.
     tracks: [],
-    applyFn: applyDollyZoom,
+    applier: 'dollyZoom',
   },
   {
     name: 'Handheld',
@@ -225,5 +225,15 @@ export const CAMERA_PRESETS: ReadonlyArray<AnimationPreset> = [
     ],
   },
 ];
+
+/**
+ * The code behind a preset's `applier`, by name. Kept out of the preset data so
+ * listing the library (the panel, the palette) never reaches code that writes
+ * the TypeScript engine's document: only `applyPreset` (the engine's
+ * `applyPreset` command) runs it.
+ */
+export const PRESET_APPLIERS: Readonly<Record<NonNullable<AnimationPreset['applier']>, (nodeId: string, atTime: number, engine: AnimationEngine) => boolean>> = {
+  dollyZoom: applyDollyZoom,
+};
 
 export default CAMERA_PRESETS;

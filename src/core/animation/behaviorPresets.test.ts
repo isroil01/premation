@@ -64,9 +64,9 @@ describe('behaviour presets', () => {
     }
   });
 
-  it('uses declared data rather than an applyFn escape hatch', () => {
+  it('uses declared data rather than an applier escape hatch', () => {
     for (const p of BEHAVIOR_PRESETS) {
-      expect({ preset: p.name, hasApplyFn: !!p.applyFn }).toEqual({ preset: p.name, hasApplyFn: false });
+      expect({ preset: p.name, hasApplyFn: !!p.applier }).toEqual({ preset: p.name, hasApplyFn: false });
     }
   });
 

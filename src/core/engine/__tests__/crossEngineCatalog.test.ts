@@ -184,8 +184,8 @@ function data(): unknown {
     // The blend modes the renderer implements (blendMode.ts `isBlendMode`).
     blendModes: BLEND_MODES.map((b) => b.mode),
     presets: listPresets().map((p) => {
-      const { applyFn, animators, ...rest } = p;
-      return { ...rest, ...(animators ? { animators: noIds(animators) } : {}), ...(applyFn ? { hasApplyFn: true } : {}) };
+      const { applier, animators, ...rest } = p;
+      return { ...rest, ...(animators ? { animators: noIds(animators) } : {}), ...(applier ? { hasApplyFn: true } : {}) };
     }),
     factory: {
       particle: DEFAULT_PARTICLE_CONFIG,
