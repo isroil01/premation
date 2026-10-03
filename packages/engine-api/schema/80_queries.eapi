@@ -225,8 +225,9 @@ struct CaptionCues { cues: CaptionCue[] = 1; }
 /// B4 round 5 — a time through a layer's own time: composition time → the time inside what the layer SHOWS (a placed composition's own axis: its time remap — `timeRemap`, else `precompTime` — sampled at the time, then the layer's start / stretch / retime), or back with `outward` (absent when that has no single answer: a time-remapped composition layer). A layer that shows no composition maps one to one. What opening a precomp at the playhead (and the Composition Navigator) carries the playhead through. `notFound` for no such layer.
 /// Block 3 `keyframeAxis` (inward only): instead, the composition time on the LAYER's OWN keyframe axis — where a key
 /// written at that time is stored (responsive time, the precomp chain, the governing clip's retime, the layer's
-/// stretch / reverse / freeze): what `addPaintStroke` keys and a stroke's in / out points are measured on. `outward`
-/// with it is `invalidArgument`.
+/// stretch / reverse / freeze): what `addPaintStroke` keys and a stroke's in / out points are measured on. With
+/// `outward`, back: a keyframe-axis time → the composition time that shows it (`keyframeToCompTime`: the earliest such
+/// time under a non-monotonic remap).
 query mapLayerTime = 1932 { layer: LayerId = 1; time: Time = 2; outward: bool = 3; keyframeAxis?: bool = 4; } -> MappedTime;
 struct MappedTime { time?: Time = 1; }
 

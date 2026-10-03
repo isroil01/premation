@@ -353,8 +353,10 @@ TEST_CASE("setOverlayGeometry: every frame of the viewport is preceded by its ge
   CHECK(std::isnan(keys[14]));       // the last key has no out-handle
   REQUIRE(path.size() % 4 == 0);
   CHECK(path.size() / 4 <= doc::kOverlayPathPoints);
-  REQUIRE(now.size() == 3);
+  REQUIRE(now.size() == 4);
   CHECK(now[0] == Approx(200));
+  // The frame's time on the keyframe axis: halfway between the two keys' times.
+  CHECK(now[3] == Approx((keys[0] + keys[8]) / 2));
 
   // Unsubscribe: frames carry no geometry.
   sub.layers.clear();

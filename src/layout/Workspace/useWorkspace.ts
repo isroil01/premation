@@ -43,7 +43,6 @@ import {
   motionPathTimeWindow,
 } from '@core/motion/motionPath';
 import { positionTangentContinuous } from '@core/mirror/positionTracks';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
 import { motionPathKeyframeMenuItems, guideContextMenuItems, convertMotionPathVertex } from './viewportPrecisionMenus';
 import { openGuideEditor } from './GuideEditorDialog';
 import { beginViewportGesture, cancelToolGesture, endViewportGesture } from '@core/workspace/viewportGesture';
@@ -2354,12 +2353,14 @@ let mpHover: { nodeId: string; t: number; part: 'point' | 'in' | 'out' } | null 
  * motion-path display preference): all, none (null), or a window of
  * `motionPathWindowSeconds` centred on the playhead on the layer's keyframe axis.
  */
-function motionPathWindowFor(nodeId: string, compTime: number): { min: number; max: number } | null {
+function motionPathWindowFor(path: OverlayLayer): { min: number; max: number } | null {
   const g = useGuidesStore.getState();
   if (g.motionPathShow === 'all') return { min: -Infinity, max: Infinity };
-  // Display read: the drawn window is on the keyframe axis the path is sampled
-  // on (B4's mirror replaces it); nothing is written.
-  return motionPathTimeWindow(g.motionPathShow, g.motionPathWindowSeconds, keyAxisTimeForDisplay(nodeId, compTime, 'x'));
+  // The drawn window is on the keyframe axis the path is sampled on: the
+  // overlay push carries the frame's time on that axis (`pathNow[3]`).
+  const now = path.pathNow[3];
+  if (now === undefined) return { min: -Infinity, max: Infinity };
+  return motionPathTimeWindow(g.motionPathShow, g.motionPathWindowSeconds, now);
 }
 
 const inMotionPathWindow = (t: number, w: { min: number; max: number }): boolean =>
@@ -2383,7 +2384,7 @@ function hitMotionPathKeyframe(
   // drawn in one place and grabbable in another.
   const toS = motionPathProjector(controller, m, nodeId, time);
   // Only what is DRAWN is grabbable — the display window hides the rest.
-  const win = motionPathWindowFor(nodeId, time);
+  const win = motionPathWindowFor(path);
   if (!win) return null;
   const near = (x: number, y: number, z: number): boolean => {
     const s = toS(x, y, z);
@@ -2663,13 +2664,13 @@ function paintMotionPath(
   if (!hasPositionKeys(m, nodeId)) return;
   // A camera's own path, seen through that camera, is a line across the frame.
   if (isLookedThroughNow(nodeId)) return;
-  const win = motionPathWindowFor(nodeId, time);
-  if (!win) return;
   // The engine's motion path for the frame on screen (the overlay geometry push): comp-space
   // points (x, y through the parent at this frame; z raw), keys with their tangent handles,
   // the per-frame dots and the position now.
   const path = motionPathOverlay(nodeId, time);
   if (!path) return;
+  const win = motionPathWindowFor(path);
+  if (!win) return;
   const samples: Array<{ t: number; x: number; y: number; z: number }> = [];
   for (let i = 0; i + 3 < path.path.length; i += 4) {
     const t = path.path[i]!;

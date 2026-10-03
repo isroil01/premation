@@ -3403,8 +3403,9 @@ export interface CaptionCues {
  * B4 round 5 — a time through a layer's own time: composition time → the time inside what the layer SHOWS (a placed composition's own axis: its time remap — `timeRemap`, else `precompTime` — sampled at the time, then the layer's start / stretch / retime), or back with `outward` (absent when that has no single answer: a time-remapped composition layer). A layer that shows no composition maps one to one. What opening a precomp at the playhead (and the Composition Navigator) carries the playhead through. `notFound` for no such layer.
  * Block 3 `keyframeAxis` (inward only): instead, the composition time on the LAYER's OWN keyframe axis — where a key
  * written at that time is stored (responsive time, the precomp chain, the governing clip's retime, the layer's
- * stretch / reverse / freeze): what `addPaintStroke` keys and a stroke's in / out points are measured on. `outward`
- * with it is `invalidArgument`.
+ * stretch / reverse / freeze): what `addPaintStroke` keys and a stroke's in / out points are measured on. With
+ * `outward`, back: a keyframe-axis time → the composition time that shows it (`keyframeToCompTime`: the earliest such
+ * time under a non-monotonic remap).
  */
 export interface MapLayerTime {
   layer: LayerId;
@@ -4343,7 +4344,7 @@ export interface OverlayLayerGeometry {
   textBox: number[];
   /** motionPath: the trajectory at every composition frame of the keyed span (AE's velocity dots): t, x, y, z quadruples as `path`. */
   pathFrames: number[];
-  /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`). */
+  /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`), then that time on the layer's keyframe axis (seconds — the axis `path` / `pathKeys` times are on; block 3: what the viewport's motion-path display window centres on). */
   pathNow: number[];
   /** transform (block 3): the layer's OWN transform at the frame, stored units, animated values winning (what the 2D chain and the 3D compose read): x, y, z, rotation (Z, degrees), scaleX, scaleY (multipliers), anchorX, anchorY, anchorZ. The 2D `matrix` has no anchor term: the drawn content sits at matrix · T(−anchor) — what the viewport's selection box and hit test need. Empty for a layer with no geometry. */
   local: number[];

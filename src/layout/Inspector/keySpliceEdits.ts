@@ -33,7 +33,7 @@ import type { Command, CommandResult, EngineClient, KeyframeInsert, PropRef, Val
 import { engine } from '@core/engine/engineInstance';
 import { reportEngineError } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
-import { keyAxisTimeForDisplay } from '@core/engine/displayTime';
+import { withKeyTimes, type KeyTime } from '@core/engine/memberEdits';
 import { secondsToFlicks } from '@motion/engine-api';
 import { trackRefIn } from '@core/mirror/trackIndex';
 import { documentMirror } from '@stores/documentMirror';
@@ -104,11 +104,11 @@ export async function inOneEntry(
 }
 
 /** The new keys of one splice, deduped on the layer's keyframe axis (first wins), in time order. */
-function uniqueKeys(s: KeySplice): SpliceKey[] {
+function uniqueKeys(s: KeySplice, keyTime: KeyTime): SpliceKey[] {
   const seen = new Set<number>();
   const out: SpliceKey[] = [];
   for (const k of [...s.keys].sort((a, b) => a.seconds - b.seconds)) {
-    const t = keyAxisTimeForDisplay(s.prop.layer, k.seconds, s.axisTrack);
+    const t = keyTime(s.prop.layer, k.seconds);
     if (seen.has(t)) continue;
     seen.add(t);
     out.push(k);
@@ -137,7 +137,8 @@ export function spliceSteps(
     async (earlier) => {
       // The splices may depend on an earlier step (a layer it created), so
       // they are planned here, against the document as it now stands.
-      planned = (typeof splices === 'function' ? splices(earlier) : splices).map((s) => ({ s, keys: uniqueKeys(s) }));
+      const list = typeof splices === 'function' ? splices(earlier) : splices;
+      planned = await withKeyTimes((keyTime) => list.map((s) => ({ s, keys: uniqueKeys(s, keyTime) })));
       addStep = earlier.length;
       // What is there now, and which of it the rule drops.
       doomed = [];

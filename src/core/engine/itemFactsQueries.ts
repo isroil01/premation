@@ -25,7 +25,6 @@ import { leaveAttributesUnavailableReason } from '@core/composition/precompose';
 import { collectDocumentColors } from '@core/paint/documentColors';
 import type { SceneNode } from '@core/types';
 import { graph, requireComp, requireLayer, compItemIds, layerIdsOfComp, isLayer } from './doc';
-import { fail } from './errors';
 import { barsOf } from './model';
 import { checkTime, compFps, flicksToSeconds, secondsToFlicks, framesToFlicks } from './time';
 
@@ -117,8 +116,7 @@ export function mapLayerTimeAnswer(q: MapLayerTime): { time?: number } {
   const t = flicksToSeconds(q.time);
   if (q.keyframeAxis === true) {
     // Block 3: the layer's own keyframe axis (queries.cpp `MapLayerTime`).
-    if (q.outward) fail('invalidArgument', "'keyframeAxis' maps inward only");
-    return { time: secondsToFlicks(compToKeyframeTime(q.layer, t)) };
+    return { time: secondsToFlicks(q.outward ? keyframeToCompTime(q.layer, t) : compToKeyframeTime(q.layer, t)) };
   }
   const r = q.outward ? outerTimeOf(q.layer, t) : innerTimeOf(q.layer, t);
   return r === null || !Number.isFinite(r) ? {} : { time: secondsToFlicks(r) };

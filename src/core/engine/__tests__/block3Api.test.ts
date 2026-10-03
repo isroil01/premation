@@ -84,11 +84,11 @@ describe('updatePaintStroke append', () => {
 });
 
 describe('mapLayerTime keyframeAxis', () => {
-  test("a moved layer's keyframe axis follows its start; outward is refused", async () => {
+  test("a moved layer's keyframe axis follows its start, both ways", async () => {
     await h.run({ type: 'moveLayersInTime', layers: [s.A], delta: 705_600_000, ripple: false });
     const r = await h.query({ type: 'mapLayerTime', layer: s.A, time: 2 * 705_600_000, outward: false, keyframeAxis: true });
     expect(r.time).toBe(705_600_000);
-    const bad = await h.engine.query({ type: 'mapLayerTime', layer: s.A, time: 0, outward: true, keyframeAxis: true });
-    expect(bad.ok).toBe(false);
+    const back = await h.query({ type: 'mapLayerTime', layer: s.A, time: 705_600_000, outward: true, keyframeAxis: true });
+    expect(back.time).toBe(2 * 705_600_000);
   });
 });

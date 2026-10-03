@@ -192,9 +192,10 @@ function motionPathOf(id: string, seconds: number, g: OverlayLayerGeometry): voi
     }
     g.pathKeys.push(...rec);
   });
-  const [nx, ny, nz] = raw(compToKeyframeTime(id, seconds, 'x'));
+  const nowT = compToKeyframeTime(id, seconds, 'x');
+  const [nx, ny, nz] = raw(nowT);
   const [ncx, ncy] = toComp(nx, ny);
-  g.pathNow = [ncx, ncy, nz];
+  g.pathNow = [ncx, ncy, nz, nowT];
 }
 
 function emptyRecord(layer: string): OverlayLayerGeometry {

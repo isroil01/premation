@@ -43,6 +43,8 @@ test('a subscribed layer carries its matrix, box and motion path at the asked ti
   expect(g!.path.length / 4).toBeLessThanOrEqual(128);
   expect(g!.pathFrames.length).toBeGreaterThan(0);
   expect(g!.pathNow[0]).toBeCloseTo(200, 6);
+  // The frame's time on the keyframe axis (the layer starts at 0: the comp time).
+  expect(g!.pathNow[3]).toBeCloseTo(0.5, 9);
   // Kinds not subscribed stay empty.
   expect(g!.textBox).toEqual([]);
   expect(g!.pins).toEqual([]);

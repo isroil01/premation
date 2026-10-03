@@ -206,9 +206,10 @@ void motion_path_of(const PCtx& pc, const std::string& layer, double seconds, ap
   }
 
   // The position at the frame's own time (the playhead marker).
-  const auto now = s.raw(comp_to_keyframe_time(pc.d, pc.view, layer, seconds, "x"));
+  const double nowT = comp_to_keyframe_time(pc.d, pc.view, layer, seconds, "x");
+  const auto now = s.raw(nowT);
   const auto [nx, ny] = s.to_comp(now[0], now[1]);
-  g.path_now = {nx, ny, now[2]};
+  g.path_now = {nx, ny, now[2], nowT};
 }
 
 // ── B4 round 5: the view cameras and the scene3d records (overlayScene3d.ts) ──

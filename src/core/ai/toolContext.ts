@@ -59,7 +59,6 @@ import { activeCompRootId } from '@core/scene/activeComp';
 import { resetSceneWindow } from './sceneWindow';
 import { setRuntimeStyle } from './design';
 import { setEntranceSeed } from './archetypes';
-import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { POLYSTAR_FX_PROP } from '@core/scene/polystar';
 import { nextDeviceNameIn } from '@core/mirror/deviceNames';
@@ -78,7 +77,7 @@ import { layerSubtree } from '@core/mirror/docFacts';
 import { membersOf, numbersOfValue, trackRefIn } from '@core/mirror/trackIndex';
 import { keyTargetFor, keyAddressable, separateDimensionsCommand, apiColorOfHex, effectParamCommand, ENGINE_EASINGS, activePlayheadSeconds } from '@core/engine/trackWrites';
 import { componentOfType, fieldWrite, propRefForTrack, memberWrite, memberWrites } from '@core/engine/propRefs';
-import { apiUnitFactor, keyAxisSeconds } from '@core/engine/props';
+import { apiUnitFactor } from '@core/engine/props';
 import { fpsToRational } from '@core/engine/time';
 import type { SceneNode } from '@core/types';
 import { spreadPlacement } from './propOwner';
@@ -806,9 +805,13 @@ export function createCompFacade(session: AiEngineSession = freeSession()): Comp
 export function createTimeFacade(): TimeFacade {
   // Both directions ride the CANONICAL keyframe axis (what buildSnapshot
   // samples) — the same conversion the engine applies to every keyframe time.
+  const map = async (nodeId: string, seconds: number, outward: boolean): Promise<number> => {
+    const r = await engine().query({ type: 'mapLayerTime', layer: nodeId, time: secondsToFlicks(seconds), outward, keyframeAxis: true });
+    return r.ok && r.value.time !== undefined ? flicksToSeconds(r.value.time) : seconds;
+  };
   return {
-    toLayerTime: async (nodeId, compSeconds) => keyAxisSeconds(nodeId, compSeconds),
-    toCompTime: async (nodeId, layerSeconds) => keyframeToCompTime(nodeId, layerSeconds),
+    toLayerTime: (nodeId, compSeconds) => map(nodeId, compSeconds, false),
+    toCompTime: (nodeId, layerSeconds) => map(nodeId, layerSeconds, true),
   };
 }
 

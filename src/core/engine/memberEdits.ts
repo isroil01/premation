@@ -92,27 +92,38 @@ async function keyTimesOf(asked: ReadonlyMap<string, ReadonlySet<number>>): Prom
 }
 
 /**
- * Run a DETERMINISTIC `build` on the layers' scratch keyframes with the engine's
- * keyframe axis: once to learn which composition times it keys, then — the
- * engine having mapped them — again on a fresh scratch with the answers. The
- * second run's value and scratch are what to send.
+ * Run a DETERMINISTIC `run` with the engine's keyframe axis: once to learn
+ * which (layer, composition time) pairs it maps, then — the engine having
+ * answered them — again with the answers. Resolves to the second run's value.
  */
-export async function runWithKeyTimes<T>(
-  layers: readonly string[],
-  build: (scratch: AnimationEngine, keyTime: KeyTime) => T,
-): Promise<{ value: T; scratch: MemberScratch }> {
-  const first = await scratchMembers(layers);
+export async function withKeyTimes<T>(run: (keyTime: KeyTime) => T): Promise<T> {
   const asked = new Map<string, Set<number>>();
-  build(first.engine, (layer, t) => {
+  run((layer, t) => {
     let set = asked.get(layer);
     if (!set) asked.set(layer, (set = new Set()));
     set.add(t);
     return t;
   });
   const mapped = await keyTimesOf(asked);
-  const scratch = rescratch(first);
-  const value = build(scratch.engine, (layer, t) => mapped.get(layer)?.get(t) ?? t);
-  return { value, scratch };
+  return run((layer, t) => mapped.get(layer)?.get(t) ?? t);
+}
+
+/**
+ * `withKeyTimes` over the layers' scratch keyframes: the second run gets a
+ * fresh scratch; its value and scratch are what to send.
+ */
+export async function runWithKeyTimes<T>(
+  layers: readonly string[],
+  build: (scratch: AnimationEngine, keyTime: KeyTime) => T,
+): Promise<{ value: T; scratch: MemberScratch }> {
+  const first = await scratchMembers(layers);
+  let current = first;
+  let runs = 0;
+  const value = await withKeyTimes((keyTime) => {
+    current = runs++ === 0 ? first : rescratch(first);
+    return build(current.engine, keyTime);
+  });
+  return { value, scratch: current };
 }
 
 /**

@@ -86,7 +86,7 @@ export interface OverlayLayerGeometry {
   textBox: number[];
   /** motionPath: the trajectory at every composition frame of the keyed span (AE's velocity dots): t, x, y, z quadruples as `path`. */
   pathFrames: number[];
-  /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`). */
+  /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`), then that time on the layer's keyframe axis (seconds — the axis `path` / `pathKeys` times are on; block 3: what the viewport's motion-path display window centres on). */
   pathNow: number[];
   /** transform (block 3): the layer's OWN transform at the frame, stored units, animated values winning (what the 2D chain and the 3D compose read): x, y, z, rotation (Z, degrees), scaleX, scaleY (multipliers), anchorX, anchorY, anchorZ. The 2D `matrix` has no anchor term: the drawn content sits at matrix · T(−anchor) — what the viewport's selection box and hit test need. Empty for a layer with no geometry. */
   local: number[];

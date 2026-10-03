@@ -231,7 +231,7 @@ TEST_CASE("mapLayerTime: through a placed composition's start time; one to one e
   CHECK(is_error(h.ask(qry(api::MapLayerTime{"nope", 0, false, std::nullopt})), api::ErrorCode::not_found));
 }
 
-TEST_CASE("mapLayerTime keyframeAxis: the layer's own keyframe axis follows its start; outward is refused", "[block3][items]") {
+TEST_CASE("mapLayerTime keyframeAxis: the layer's own keyframe axis follows its start, both ways", "[block3][items]") {
   Harness h;
   (void)h.hello();
   const auto comp = make_comp(h);
@@ -242,7 +242,8 @@ TEST_CASE("mapLayerTime keyframeAxis: the layer's own keyframe axis follows its 
   api::MapLayerTime q{text, 3 * kSec, false, true};
   CHECK(ask_ok<api::MappedTime>(h, q).time == std::optional<api::Time>(2 * kSec));
   q.outward = true;
-  CHECK(is_error(h.ask(qry(q)), api::ErrorCode::invalid_argument));
+  q.time = 2 * kSec;
+  CHECK(ask_ok<api::MappedTime>(h, q).time == std::optional<api::Time>(3 * kSec));
   q.layer = "nope";
   q.outward = false;
   CHECK(is_error(h.ask(qry(q)), api::ErrorCode::not_found));

@@ -2071,7 +2071,9 @@ from the struct's maximum + 800.
   (or the simulated sink) with the frame: the world 4×4, readGeometry's local
   box and its comp corners, the motion path (≤ 128 trajectory points, the keys
   with their effective tangent handles, the per-frame dots, the position now —
-  t, x, y, z; x / y through the parent at the frame, z raw), a text layer's
+  x, y, z (x / y through the parent at the frame, z raw), then the frame's time
+  on the layer's keyframe axis, which the motion-path display window centres
+  on), a text layer's
   measured box. `rig` (pins / bones) is declared and sent empty in both engines
   (the rig sampler is scene-side). A frame's records span several messages
   under the 4096-byte payload cap (`pack_frame_geometry`: a layer's long arrays
@@ -2341,9 +2343,11 @@ from the struct's maximum + 800.
     the time inside what the layer shows (time remap, then start / stretch /
     retime), or back (`outward`; absent when there is no single answer). The
     Composition Navigator's move onto it is still open (compNavigation reads
-    the TS engine; B4-gap). Block 3 `keyframeAxis` (inward only): the time on
-    the layer's OWN keyframe axis (`compToKeyframeTime`) — where the Paint
-    tool's stroke in / out points and Write On keys are measured.
+    the TS engine; B4-gap). Block 3 `keyframeAxis`: the time on the layer's
+    OWN keyframe axis (`compToKeyframeTime`) — where the Paint tool's stroke
+    in / out points, Write On keys and every scratch-engine keyframe
+    assistant's keys are measured; with `outward`, back
+    (`keyframeToCompTime`: Freeze Frame's held time, the AI time facade).
   - **`getSourceSize {layers}`** (1933 → `SourceSizes`): the intrinsic size
     Fit / Fill / Native Size compute against.
   - **`checkPrecompose {comp, layers}`** (1934 → `PrecomposeCheck`): the
