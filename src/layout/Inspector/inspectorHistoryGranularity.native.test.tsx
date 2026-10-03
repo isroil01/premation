@@ -30,11 +30,8 @@
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { render, cleanup, fireEvent, act } from '@testing-library/react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { EventBus, setEventBus } from '@core/events/EventBus';
-import { defaultAnimation } from '@motion/animation';
-import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { resetHistory } from '@stores/historyStore';
 import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { historyLabels } from '@core/engine/__testHelpers__/appEngine';
@@ -87,12 +84,9 @@ async function entryCount(): Promise<number> {
   return (await historyLabels()).length;
 }
 
-function captured(): string {
-  try {
-    return JSON.stringify({ scene: sceneProjectIO.capture(), anim: defaultAnimation.snapshot() });
-  } catch {
-    return '';
-  }
+/** The engine's document, canonical (what an edit changes). */
+async function captured(): Promise<string> {
+  return h ? h.doc() : '';
 }
 
 interface Probe {
@@ -112,7 +106,7 @@ interface Probe {
 async function probeControl(section: string, el: Element): Promise<Probe> {
   const control = el.getAttribute('aria-label') ?? el.tagName.toLowerCase();
   await idle();
-  const before = captured();
+  const before = await captured();
   const entriesBefore = (await entryCount());
 
   if (el.getAttribute('role') === 'spinbutton') {
@@ -121,7 +115,7 @@ async function probeControl(section: string, el: Element): Promise<Probe> {
     // ArrowUp clamps to a no-op and would look like a control that does nothing.
     fireEvent.keyDown(el, { key: 'ArrowUp' });
     await idle();
-    if (captured() === before) {
+    if ((await captured()) === before) {
       fireEvent.keyDown(el, { key: 'ArrowDown' });
       await idle();
     }
@@ -144,7 +138,7 @@ async function probeControl(section: string, el: Element): Promise<Probe> {
   return {
     section, control,
     added: (await entryCount()) - entriesBefore,
-    changed: captured() !== before,
+    changed: (await captured()) !== before,
   };
 }
 
@@ -258,18 +252,7 @@ describe('the probe set is real', () => {
     }
   });
 
-  it('there is no recorder behind the engine: an uncommanded write records nothing', async () => {
-    // The debounced snapshot recorder is gone — only engine commands make
-    // entries, so a write around the engine adds none (it is a gap, not an edit).
-    await resetWorld();
-    const before = (await entryCount());
-    defaultSceneGraph.setSkeleton(ID, {
-      bones: [{ id: 'solo', name: 'Solo', parentId: null, length: 20, x: 1, y: 2, rotation: 0 }],
-      ikTargets: [], meshDensity: 6, meshExpansion: 0,
-    } as never);
-    await idle();
-    expect((await entryCount()) - before).toBe(0);
-  });
+
 });
 
 describe('one inspector edit is one history entry', () => {

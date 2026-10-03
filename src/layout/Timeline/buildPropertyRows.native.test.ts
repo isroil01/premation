@@ -9,7 +9,8 @@
 
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
 import { effectPropPath, effectDefFor, effectOpacityPath } from '@core/effects/effects';
-import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { documentMirror } from '@stores/documentMirror';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
 import type { Value } from '@motion/engine-api';
@@ -23,6 +24,9 @@ let A = '';
 
 /** The rows over the engine's row projection (`getTimelineRows`, fetched first) and the mirror's keys. */
 const rowsOf = async (nodeId: string) => {
+  // The keys the fixture just wrote land in the mirror first (the timeline draws after them).
+  await settleEdits();
+  await documentMirror().loadTree(nodeId);
   await fetchTimelineRows([nodeId]);
   return buildPropertyRows(nodeId);
 };
