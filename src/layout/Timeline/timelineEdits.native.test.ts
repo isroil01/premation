@@ -6,10 +6,12 @@
  * round trip of the document.
  */
 
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { flicksToSeconds } from '@motion/engine-api';
+import { documentMirror } from '@stores/documentMirror';
+import { timingBarFrames } from '@core/mirror/compFacts';
+import { seekPlayhead } from '@core/timeline/timelineView';
 import { useSelectionStore } from '@stores/selectionStore';
-import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
 import {
   activeCompId,
@@ -34,19 +36,30 @@ let h: Harness;
 const COMP = 'comp_root';
 
 async function layer(kind: 'solid' | 'video', name: string, source?: string): Promise<string> {
-  return (await h.run({ type: 'createLayer', comp: COMP, kind, name, ...(source ? { source } : {}), init: [] })).layer;
+  const id = (await h.run({ type: 'createLayer', comp: COMP, kind, name, ...(source ? { source } : {}), init: [] })).layer;
+  await settleEdits();
+  return id;
 }
 
-const c = () => getTimelineController();
-const bar = (id: string) => c().getLayersForNode(id)[0]!.clip.toJSON();
-const clipId = (id: string) => c().getLayersForNode(id)[0]!.id;
+/** A layer's bar in frames of the 30 fps comp, as the timeline draws it (the mirror's timing). */
+const bar = (id: string) => timingBarFrames(documentMirror().layer(id)!.timing, 30);
+/** The timeline's id for a layer's bar. */
+const clipId = (id: string) => `clip:${id}`;
+const comp = () => documentMirror().comp(COMP)!;
+/** The work area in comp seconds, null when it is the whole composition. */
+const workArea = (): { start: number; end: number } | null => {
+  const st = comp().settings;
+  if (st.workArea.start === 0 && st.workArea.duration === st.duration) return null;
+  return { start: flicksToSeconds(st.workArea.start), end: flicksToSeconds(st.workArea.start + st.workArea.duration) };
+};
+const markers = () => comp().markers.map((m) => ({ ...m, time: flicksToSeconds(m.time) }));
 
 /** The document before a call, and a check that undo/redo round-trip it. */
 async function roundTrip(run: () => Promise<unknown>, label: string): Promise<void> {
   const before = (await h.doc());
   const entries = (await historyLabels()).length;
   await run();
-  await engineIdle();
+  await settleEdits();
   const after = (await h.doc());
   expect(after).not.toBe(before);
   expect((await historyLabels()).length).toBe(entries + 1);
@@ -55,6 +68,7 @@ async function roundTrip(run: () => Promise<unknown>, label: string): Promise<vo
   expect((await h.doc())).toBe(before);
   await h.run({ type: 'redo' });
   expect((await h.doc())).toBe(after);
+  await settleEdits();
 }
 
 beforeEach(async () => {
@@ -108,7 +122,7 @@ describe('bars', () => {
     const V = await layer('video', 'V', f);
     const dur = bar(V).duration; // 4 s of footage
     await trimBar(clipId(V), 'end', 9);
-    await engineIdle();
+    await settleEdits();
     expect(bar(V).duration).toBe(dur);
   });
 
@@ -119,6 +133,7 @@ describe('bars', () => {
       { layer: A, inPoint: 0, outPoint: sec(2), startTime: 0 },
       { layer: B, inPoint: sec(2), outPoint: sec(4), startTime: sec(2) },
     ] });
+    await settleEdits();
     await roundTrip(async () => { await trimBar(clipId(A), 'end', 1, { ripple: true }); }, 'Ripple Trim Layer');
     expect(bar(A).duration).toBe(30);
     expect(bar(B).start).toBe(30);
@@ -128,7 +143,7 @@ describe('bars', () => {
     const { items: [f] } = await h.run({ type: 'importFiles', files: [{ path: 'C:/m/a.mp4', asSequence: false, createComposition: false }] });
     const V = await layer('video', 'V', f);
     await trimBar(clipId(V), 'end', 2);
-    await engineIdle();
+    await settleEdits();
     await roundTrip(() => slipBar(clipId(V), 1), 'Slip Layer');
     expect(bar(V)).toMatchObject({ start: 0, sourceIn: 30, duration: 60 });
   });
@@ -140,6 +155,7 @@ describe('bars', () => {
       { layer: B, inPoint: sec(1), outPoint: sec(2), startTime: sec(1) },
       { layer: C, inPoint: sec(2), outPoint: sec(3), startTime: sec(2) },
     ] });
+    await settleEdits();
     await roundTrip(() => slideBar(clipId(B), 1.5), 'Slide Layer');
     expect(bar(B).start).toBe(45);
     expect(bar(A).start + bar(A).duration).toBe(45);
@@ -152,6 +168,7 @@ describe('bars', () => {
       { layer: A, inPoint: 0, outPoint: sec(1), startTime: 0 },
       { layer: B, inPoint: sec(1), outPoint: sec(2), startTime: sec(1) },
     ] });
+    await settleEdits();
     await roundTrip(() => rollBars(clipId(A), clipId(B), 0.5), 'Roll Edit');
     expect(bar(A).duration).toBe(45);
     expect(bar(B).start).toBe(45);
@@ -161,7 +178,7 @@ describe('bars', () => {
     const [A, B] = [await layer('solid', 'A'), await layer('solid', 'B')];
     const before = (await h.doc());
     const right = await splitLayersAt([A, B], 1, { selectRight: true });
-    await engineIdle();
+    await settleEdits();
     expect(right).toHaveLength(2);
     expect(useSelectionStore.getState().ids).toEqual(right);
     expect((await historyLabels()).at(-1)).toBe('Split Layers');
@@ -176,6 +193,7 @@ describe('bars', () => {
       { layer: A, inPoint: 0, outPoint: sec(1), startTime: 0 },
       { layer: B, inPoint: sec(1), outPoint: sec(2), startTime: sec(1) },
     ] });
+    await settleEdits();
     await roundTrip(() => rippleDeleteLayers([A]), 'Ripple Delete Layer');
     expect(bar(B).start).toBe(0);
   });
@@ -183,7 +201,7 @@ describe('bars', () => {
   it('Alt+PageDown nudges every selected layer in one entry', async () => {
     const [A, B] = [await layer('solid', 'A'), await layer('solid', 'B')];
     expect(nudgeSelectedLayers([A, B], 3)).toBe(true);
-    await engineIdle();
+    await settleEdits();
     expect((await historyLabels()).at(-1)).toBe('Nudge Layers');
     expect([bar(A).start, bar(B).start]).toEqual([3, 3]);
     expect(nudgeSelectedLayers([], 3)).toBe(false);
@@ -193,31 +211,31 @@ describe('bars', () => {
 describe('work area, duration, markers', () => {
   it('drag the band / B / N', async () => {
     await roundTrip(() => setWorkArea(1, 3), 'Work Area');
-    expect(c().getWorkArea()).toEqual({ start: 1, end: 3 });
-    c().timeline.seek(60);
+    expect(workArea()).toEqual({ start: 1, end: 3 });
+    seekPlayhead(2);
     await setWorkAreaIn();
-    expect(c().getWorkArea()).toEqual({ start: 2, end: 3 });
-    c().timeline.seek(120);
+    expect(workArea()).toEqual({ start: 2, end: 3 });
+    seekPlayhead(4);
     await setWorkAreaOut();
-    expect(c().getWorkArea()).toEqual({ start: 2, end: 4 });
+    expect(workArea()).toEqual({ start: 2, end: 4 });
   });
 
   it('the duration field', async () => {
     await roundTrip(() => setCompDuration(4), 'Set Duration');
-    expect(c().timeline.duration).toBe(120);
+    expect(Math.round(flicksToSeconds(comp().settings.duration) * 30)).toBe(120);
   });
 
   it('move / rename / delete a comp marker', async () => {
     const { ids: [m] } = await h.run({ type: 'addMarkers', markers: [{ owner: { comp: COMP }, time: sec(1), duration: 0, name: 'M', comment: '', label: 0 }] });
     await roundTrip(() => editMarker(m!, { time: 2 }), 'Move Marker');
-    expect(c().getMarkers()[0]!.time).toBe(2);
+    expect(markers()[0]!.time).toBe(2);
     await roundTrip(() => editMarker(m!, { label: 'Beat', comment: 'x' }), 'Edit Marker');
-    expect(c().getMarkers()[0]!.label).toBe('Beat');
+    expect(markers()[0]!.name).toBe('Beat');
     // An edit that changes nothing records nothing (the legacy `same` check).
     const entries = (await historyLabels()).length;
     await editMarker(m!, { label: 'Beat' });
     expect((await historyLabels()).length).toBe(entries);
     await roundTrip(() => deleteMarkers([m!]), 'Remove Marker');
-    expect(c().getMarkers()).toHaveLength(0);
+    expect(markers()).toHaveLength(0);
   });
 });
