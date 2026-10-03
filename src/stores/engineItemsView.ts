@@ -39,6 +39,8 @@ export { interpretOf };
 /** What the binders read from the document mirror (DocumentMirror satisfies it). */
 export interface ItemsMirrorView {
   readonly items: ReadonlyMap<string, ItemInfo>;
+  /** Bumps when the mirror refetches the whole document (a project opened, a reload). */
+  readonly generation?: number;
   readonly comps: ReadonlyMap<string, MirrorComp>;
   subscribe(keys: readonly string[], listener: () => void): () => void;
 }
@@ -120,9 +122,21 @@ export function itemsFromMirror(
  */
 export function bindEngineItems(mirror: ItemsMirrorView): () => void {
   let last = '';
+  // Footage that appears in an ordinary edit (not with a whole document — the
+  // first apply, a project opened) was just imported, wherever from: stamp it
+  // so the Assets panel reveals and selects it (the engine stores no import time).
+  let known: Set<string> | null = null;
+  let knownGeneration = mirror.generation;
   const apply = (): void => {
     const s = useAssetStore.getState();
     const next = itemsFromMirror(mirror.items, s);
+    const fresh = known !== null && mirror.generation === knownGeneration;
+    if (fresh) {
+      const now = Date.now();
+      for (const a of next.assets) if (!known!.has(a.id) && a.importedAt === undefined) a.importedAt = now;
+    }
+    known = new Set(next.assets.map((a) => a.id));
+    knownGeneration = mirror.generation;
     const key = JSON.stringify(next);
     // Unchanged (an event for a composition item, a comp-only batch): no store write, no bus traffic.
     if (key === last && key === JSON.stringify({ assets: s.assets, folders: s.folders })) return;

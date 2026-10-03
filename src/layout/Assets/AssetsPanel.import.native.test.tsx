@@ -30,7 +30,6 @@ import { useUIStore } from '@stores/uiStore';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { engine } from '@core/engine/engineInstance';
 import { importBrowserFilesEdit } from './assetEdits';
-import { documentMirror } from '@stores/documentMirror';
 import { historyLabels, setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 
@@ -122,14 +121,11 @@ withAppEngine();
 
 const png = (name = 'a.png'): File => new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
 
-/**
- * An import made elsewhere, straight into the items store (it stamps `importedAt`, which the fake engine
- * ports do not): the mirror refetches, as the engine's resync of a write around it would.
- */
+/** An import made elsewhere (a drop, a menu): the app's engine import of browser files. */
 const importViaStore = (name = 'a.png'): Promise<void> =>
   act(async () => {
-    await useAssetStore.getState().addAssetsBatch([{ file: png(name) }]);
-    documentMirror().reload();
+    await importBrowserFilesEdit([{ file: png(name) }]);
+    await settleEdits();
   });
 
 /** A folder made through the engine (`createFolder`), as the document has it. */
@@ -260,8 +256,8 @@ describe('a fresh import is visible at once', () => {
     const folder = await engineFolder('Footage', null);
     renderPanel();
     await act(async () => {
-      await useAssetStore.getState().addAssetsBatch([{ file: png('deep.png'), folderId: folder.id }]);
-      documentMirror().reload();
+      await importBrowserFilesEdit([{ file: png('deep.png'), folderId: folder.id }]);
+      await settleEdits();
     });
     expect(await tree().findByText('deep.png')).toBeInTheDocument();
   });

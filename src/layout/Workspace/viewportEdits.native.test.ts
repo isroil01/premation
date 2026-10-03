@@ -1,3 +1,4 @@
+import { documentMirror } from '@stores/documentMirror';
 /**
  * The viewport's value writes, masks, motion-path keys and text commit through
  * the engine API (B3). Pinned for each: ONE undo entry with its label, the
@@ -30,6 +31,9 @@ let s: Scene;
 beforeEach(async () => {
   h = await setupAppEngine();
   s = await buildScene(h);
+  // The viewport's write builders compose from the dragged layers' trees (the selection keeps them loaded).
+  await settleEdits();
+  await documentMirror().loadTrees(documentMirror().layerIds());
 });
 
 afterEach(async () => {
