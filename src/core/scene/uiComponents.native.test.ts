@@ -1,20 +1,18 @@
 /**
  * UI component presets — each builds an editable GROUP of primitive layers at
  * the top of the composition (the app pastes it as one entry and selects the
- * group), so the user can move/restyle/keyframe it. Laid into a fragment, a
- * preset gives the same layers as laid into the page replica off-document
- * (the build it replaced).
+ * group), so the user can move/restyle/keyframe it — laid into a fragment
+ * the engine pastes.
  */
 
 import { UI_COMPONENT_PRESETS } from './uiComponents';
-import { legacyFrame, legacySink } from './sceneInsert';
-import { buildLayerFragment } from '@core/engine/offDocument';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { useCompositionStore } from '@stores/compositionStore';
+import type { Command } from '@motion/engine-api';
+import { docView } from '@core/engine/__testHelpers__/docView';
+import { readNodeKind } from './sceneDerive';
 import { FragmentBuilder } from '@/engine-client/fragmentBuilder';
 import { insertFrame } from '@/engine-client/insertFragment';
-import { normalizeFragment } from '@/engine-client/__testHelpers__/fragmentParity';
 
 let h: Harness;
 beforeEach(async () => {
@@ -33,8 +31,8 @@ describe('UI component presets', () => {
   });
 
   it.each(UI_COMPONENT_PRESETS.map((p) => [p.id, p] as const))(
-    'builds "%s" as one top-level group of editable layers (same as the off-document build)',
-    (_id, preset) => {
+    'builds "%s" as one top-level group of editable layers the engine pastes',
+    async (_id, preset) => {
       const b = new FragmentBuilder({ idPrefix: 'ui' });
       const groupId = preset.build(b, insertFrame('comp_root'));
       const built = b.build()!;
@@ -42,10 +40,15 @@ describe('UI component presets', () => {
       expect(b.row(groupId).children.length).toBeGreaterThanOrEqual(2);
       expect(built.layers.length).toBeGreaterThanOrEqual(3);
 
-      const legacy = buildLayerFragment('comp_root', () => preset.build(legacySink(), legacyFrame()));
-      const c = useCompositionStore.getState().comp();
-      const frames = Math.round(c.durationSeconds * c.fps);
-      expect(normalizeFragment(built.fragment, frames)).toEqual(normalizeFragment(legacy!.fragment, frames));
+      const r = await h.client.execute({ type: 'pasteLayers', comp: 'comp_root', fragment: built.fragment, index: 0 } as Command);
+      expect(r.ok ? 'ok' : r.error.message).toBe('ok');
+      const ids = r.ok ? ((r.value as { layers?: string[] }).layers ?? []) : [];
+      expect(ids).toHaveLength(built.layers.length);
+      // One unparented group; every other layer sits under it.
+      const v = await docView();
+      const roots = ids.filter((id) => !ids.includes(v.getNode(id)?.parent ?? ''));
+      expect(roots).toHaveLength(1);
+      expect(readNodeKind(v.getNode(roots[0]!)!)).toBe('group');
     },
   );
 });

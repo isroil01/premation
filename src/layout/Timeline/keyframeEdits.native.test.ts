@@ -8,7 +8,8 @@
 
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
 import { engineIdle } from '@core/engine/engineInstance';
-import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { documentMirror } from '@stores/documentMirror';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { sec, type Harness } from '@core/engine/__testHelpers__/appEngine';
 import { copyKeyframes, clearClipboard } from '@core/animation/keyframeClipboard';
@@ -21,7 +22,7 @@ import {
   pasteKeyframesAt,
   resolveKeyIds,
 } from './keyframeEdits';
-import { rowSelectionId as uiKeyId } from '@core/engine/__testHelpers__/selectionIds';
+import { loadStoredKeys, rowSelectionId as uiKeyId } from '@core/engine/__testHelpers__/selectionIds';
 import { parseSelectionKey } from '@core/mirror/keySelection';
 import { createSelectionNudger } from './keyframeNudge';
 import { applyKeyframeVelocity } from './keyframeVelocity';
@@ -45,6 +46,9 @@ async function keys(path: string, pts: Array<[number, number | { x: number; y: n
       spatialOut: [],
     })),
   });
+  // The diamonds' selection ids are read off the mirror: let the keys and the tree land.
+  await settleEdits();
+  await documentMirror().loadTree(L);
 }
 
 beforeEach(async () => {
@@ -109,6 +113,8 @@ describe('move / delete', () => {
     // Trim the layer to 0.5–1.0 s: the keys at 1 s and 2 s both draw at the
     // clip's last frame. Each must still resolve to its OWN engine id.
     await h.run({ type: 'setLayerTiming', items: [{ layer: L, inPoint: sec(0.5), outPoint: sec(1) }] });
+    await settleEdits();
+    await loadStoredKeys(L);
     const ids = await resolveKeyIds([uiKeyId(L, 'opacity', 1), uiKeyId(L, 'opacity', 2)]);
     expect(ids).not.toBeNull();
     expect(new Set(ids!.values()).size).toBe(2);
