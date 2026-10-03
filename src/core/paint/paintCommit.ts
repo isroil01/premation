@@ -18,9 +18,8 @@
 
 import { secondsToFlicks, type Command } from '@motion/engine-api';
 import { drawToolOptions } from '@motion/workspace';
-import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
 import { usePaintStore } from '@stores/paintStore';
-import { getNodePaint, type PaintMode, type PaintStroke } from './paintStrokes';
+import type { PaintMode, PaintStroke } from './paintStrokes';
 import { cloneOffsetFor, durationRange, smoothSamples, strokeOptionsFrom, writeOnEndKeys } from './paintCapture';
 
 type Pt = { x: number; y: number };
@@ -54,19 +53,27 @@ export type PaintDragPlan =
 
 const refuse = (reason: string): PaintDragPlan => ({ ok: false, reason });
 
+/** What the plan reads of the document (core/engine/paintEdits.ts gathers it from the engine and the mirror). */
+export interface PaintDragContext {
+  /** The drag's comp time on the layer's keyframe axis, seconds (strokes' in / out points and keys live there). */
+  layerT: number;
+  /** The layer's composition frame rate. */
+  fps: number;
+  /** The layer's strokes, stored order. */
+  existing: ReadonlyArray<{ id: string; mode: string }>;
+}
+
 /**
  * Decide what a drag does (AE's rules above) and return the commands. Reads
- * the layer's paint and the Paint settings; the only write is the Clone
- * Stamp's remembered Aligned offset (editor state on `paintStore`).
+ * the Paint settings; the only write is the Clone Stamp's remembered Aligned
+ * offset (editor state on `paintStore`).
  */
-export function planPaintDrag(d: PaintDrag): PaintDragPlan {
+export function planPaintDrag(d: PaintDrag, ctx: PaintDragContext): PaintDragPlan {
   if (d.points.length === 0) return refuse('');
   const s = usePaintStore.getState();
-  const layerT = getRemappedTime(d.nodeId, d.compTime);
-  const fps = getTimelineController().fps || 30;
+  const { layerT, fps, existing } = ctx;
   const points = smoothSamples(d.points, s.smoothing);
   const label = d.mode === 'erase' ? 'Erase' : 'Paint Stroke';
-  const existing = getNodePaint(d.nodeId)?.strokes ?? [];
   const layer = d.nodeId;
 
   const withPen = d.pen.length === points.length && points.length > 0 && d.pen.every((p) => p !== null);
@@ -92,20 +99,11 @@ export function planPaintDrag(d: PaintDrag): PaintDragPlan {
   if (d.continueStroke) {
     const prev = [...existing].reverse().find((x) => x.mode === d.mode);
     if (prev) {
-      // AE joins the previous stroke's end to the new samples. Pen arrays extend
-      // in step; a side that lacks them is padded so they stay parallel.
-      const more = pen as { pressure?: number[]; tiltX?: number[]; tiltY?: number[] };
-      const cat = (a: ReadonlyArray<number> | undefined, b: ReadonlyArray<number> | undefined, fill: number): number[] | null => {
-        if (!a && !b) return null;
-        return [...(a ?? new Array<number>(prev.points.length).fill(fill)), ...(b ?? new Array<number>(points.length).fill(fill))];
-      };
-      const patch = {
-        points: [...prev.points, ...points],
-        pressure: cat(prev.pressure, more.pressure, 1),
-        tiltX: cat(prev.tiltX, more.tiltX, 0),
-        tiltY: cat(prev.tiltY, more.tiltY, 0),
-      };
-      return { ok: true, label, strokeId: prev.id, commands: [{ type: 'updatePaintStroke', layer, stroke: prev.id, patch: JSON.stringify(patch) }] };
+      // AE joins the previous stroke's end to the new samples: `append` — the
+      // engine extends the points and pen arrays in step, padding a side that
+      // lacks them so they stay parallel.
+      const patch = { points, ...pen };
+      return { ok: true, label, strokeId: prev.id, commands: [{ type: 'updatePaintStroke', layer, stroke: prev.id, patch: JSON.stringify(patch), append: true }] };
     }
   }
 

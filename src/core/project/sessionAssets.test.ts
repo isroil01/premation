@@ -21,9 +21,15 @@ jest.mock('@core/services/AssetDatabase', () => ({
   },
 }));
 
+/** The opened document's layers, as the engine reports them (`LayerInfo.source`). */
+let docLayers: Array<{ id: string; source?: string }> = [];
+jest.mock('@core/engine/engineInstance', () => ({
+  engine: () => ({
+    query: async () => ({ ok: true, value: { layers: docLayers }, revision: 1 }),
+  }),
+}));
+
 import { useAssetStore, parkedAmong, type ImportedAsset } from '@stores/assetStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import type { SceneNode } from '@core/types';
 import { referencedAssetIds, rehydrateReferencedAssets, resetSessionAssets } from './sessionAssets';
 
 const ASSIGN_KEY = 'motion-editor.assetFolderAssignments.v1';
@@ -36,18 +42,8 @@ const dbRow = (id: string) => ({
   id, name: `${id}.png`, type: 'image' as const, size: 1, data: new Blob(['x']), metadata: undefined, thumb: undefined,
 });
 
-function resetScene(): void {
-  const ids: string[] = [];
-  defaultSceneGraph.traverse((n) => ids.push(n.id));
-  for (const id of ids) defaultSceneGraph.removeNode(id);
-}
-
-function addImageLayer(id: string, assetId: string): void {
-  defaultSceneGraph.addNode({
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [{ id: `${id}_img`, type: 'Image', props: { assetId, src: 'blob:dead' } }],
-  } as unknown as SceneNode);
+function addLayer(id: string, source: string): void {
+  docLayers.push({ id, source });
 }
 
 let minted = 0;
@@ -61,7 +57,7 @@ beforeEach(() => {
   deleteAsset.mockClear();
   getAllAssets.mockReset();
   localStorage.clear();
-  resetScene();
+  docLayers = [];
   useAssetStore.setState({ assets: [], folders: [{ id: 'f1', name: 'Footage', parentId: null }] });
 });
 
@@ -102,14 +98,12 @@ describe('resetSessionAssets', () => {
 });
 
 describe('rehydrateReferencedAssets', () => {
-  it('finds both reference styles in the scene', () => {
-    addImageLayer('a', 'clip');
-    defaultSceneGraph.addNode({
-      id: 'b', name: 'b', parent: null, children: [], visible: true, locked: false,
-      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-      components: [{ id: 'b_a', type: 'Audio', props: { __assetId: 'song', __src: 'blob:dead' } }],
-    } as unknown as SceneNode);
-    expect([...referencedAssetIds()].sort()).toEqual(['clip', 'song']);
+  it("collects every layer's source item, once", async () => {
+    addLayer('a', 'clip');
+    addLayer('b', 'song');
+    addLayer('c', 'clip');
+    docLayers.push({ id: 'shape' });
+    expect([...(await referencedAssetIds())].sort()).toEqual(['clip', 'song']);
   });
 
   it('brings back ONLY what the opened document references', async () => {
@@ -118,7 +112,7 @@ describe('rehydrateReferencedAssets', () => {
     expect([...parkedAmong(['clip', 'unrelated', 'never-seen'])].sort()).toEqual(['clip', 'unrelated']);
 
     // "Open": the document lands with a dead blob: src and a durable assetId.
-    addImageLayer('layer', 'clip');
+    addLayer('layer', 'clip');
     getAllAssets.mockResolvedValue([dbRow('clip'), dbRow('unrelated')]);
     await rehydrateReferencedAssets();
 
@@ -131,7 +125,7 @@ describe('rehydrateReferencedAssets', () => {
   });
 
   it('does not touch the library at all when nothing was parked', async () => {
-    addImageLayer('layer', 'clip');
+    addLayer('layer', 'clip');
     await rehydrateReferencedAssets();
     expect(getAllAssets).not.toHaveBeenCalled();
   });

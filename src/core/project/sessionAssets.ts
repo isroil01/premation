@@ -15,7 +15,7 @@
  * anything from the library itself.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { engine } from '@core/engine/engineInstance';
 import { useAssetStore, parkedAmong } from '@stores/assetStore';
 
 /** Drop the outgoing project's assets from the session. Library untouched. */
@@ -24,25 +24,14 @@ export function resetSessionAssets(): void {
 }
 
 /**
- * Every asset id the live scene references — the same two prop pairs
- * `rebindAssetSrcs` reconnects (`assetId` on picture layers, `__assetId` on
- * audio layers).
+ * Every item id the open document's layers reference (`LayerInfo.source`: the
+ * same `assetId` / `__assetId` pair `rebindAssetSrcs` reconnects, or a
+ * precomp's composition), asked of the engine — the document it just opened.
  */
-export function referencedAssetIds(): Set<string> {
+export async function referencedAssetIds(): Promise<Set<string>> {
+  const r = await engine().query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
   const ids = new Set<string>();
-  const visit = (id: string): void => {
-    const node = defaultSceneGraph.getNode(id);
-    if (!node) return;
-    for (const c of node.components) {
-      const props = c.props as Record<string, unknown>;
-      for (const key of ['assetId', '__assetId']) {
-        const v = props[key];
-        if (typeof v === 'string' && v) ids.add(v);
-      }
-    }
-    for (const child of defaultSceneGraph.getChildren(id)) visit(child.id);
-  };
-  for (const root of defaultSceneGraph.getRoots()) visit(root.id);
+  if (r.ok) for (const l of r.value.layers) if (l.source) ids.add(l.source);
   return ids;
 }
 
@@ -55,7 +44,7 @@ export function referencedAssetIds(): Set<string> {
  * itself once the fresh object URLs exist.
  */
 export async function rehydrateReferencedAssets(): Promise<void> {
-  const wanted = parkedAmong(referencedAssetIds());
+  const wanted = parkedAmong(await referencedAssetIds());
   if (wanted.size === 0) return;
   await useAssetStore.getState().initialize({ only: wanted });
 }

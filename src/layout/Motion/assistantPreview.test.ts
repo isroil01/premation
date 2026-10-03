@@ -75,13 +75,13 @@ it('re-applies from the ORIGINAL each time, never from the last preview', async 
   expect(track('y')).toHaveLength(6);
 });
 
-it('a member thinned alone keeps the keys its sibling still has (one key per time, ENGINE_API §3.3)', async () => {
+it('a member thinned alone is written as thinned; its sibling keeps every key (setMemberKeyframes)', async () => {
   const preview = beginTrackPreview(NODE, await originals(['x', 'y']), 'The Smoother');
   preview.apply(new Map([['x', preview.original('x').filter((_, i) => i % 2 === 0)]]));
   await preview.commit();
   await engineIdle();
-  // y still keys every 0.1 s, so x does too — at its sampled (unchanged, linear) values.
-  expect(track('x').map((k) => Math.round(k.value as number))).toEqual([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+  expect(track('x').map((k) => Math.round(k.value as number))).toEqual([0, 20, 40, 60, 80, 100]);
+  expect(track('y')).toHaveLength(11);
 });
 
 it('records nothing while previewing and ONE entry on commit', async () => {

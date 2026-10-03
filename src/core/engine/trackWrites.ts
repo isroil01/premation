@@ -10,7 +10,7 @@
  */
 
 import { secondsToFlicks, type Command, type Easing, type MatteMode, type PropRef, type Value } from '@motion/engine-api';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { documentMirror } from '@stores/documentMirror';
 import { getNodeEffects, effectDefFor, parseColorChannels } from '@core/effects/effects';
 import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { useProjectStore } from '@stores/projectStore';
@@ -34,7 +34,7 @@ export interface KeyTarget {
  * AE's Separate Dimensions — the storage is per-dimension either way).
  */
 export function keyTargetFor(nodeId: string, track: string): KeyTarget | null {
-  if (!defaultSceneGraph.getNode(nodeId)) return null;
+  if (!documentMirror().layer(nodeId)) return null;
   const r = propRefForTrack(nodeId, track);
   if (!r || !r.animatable) return null;
   if (r.members.length === 1 && r.members[0] === track && r.valueType === 'scalar') {
