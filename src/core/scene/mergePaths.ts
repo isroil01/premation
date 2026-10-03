@@ -3,7 +3,7 @@
  * across SHAPE LAYERS.
  *
  * Two modes:
- *  1. **Bake** (`mergeSelectedPaths`) — destructive: sources are removed and
+ *  1. **Bake** (`buildMergedPaths`) — destructive: sources are removed and
  *     the result is a static polygonal Geometry. Kept for one-shot cleanup and
  *     tests that pin the bake contract.
  *  2. **Live** (`planLiveMerge`; the engine's `createLiveMerge` is the live path) — AE Shape-Group style: sources stay
@@ -24,7 +24,7 @@ import { shapeOutline } from '@core/scene/pathOps';
 import { resolveCornerRadii, clampCornerRadii, type CornerRadiiProps } from '@core/scene/cornerRadii';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useSelectionStore } from '@stores/selectionStore';
-import { bumpScene } from '@stores/sceneStore';
+import type { FragmentBuilder } from '@/engine-client/fragmentBuilder';
 
 export type MergeOp = 'union' | 'subtract' | 'intersect' | 'exclude';
 
@@ -404,14 +404,12 @@ function cloneStyle(source: SceneNode, newId: string, extraFx?: Record<string, u
   return out;
 }
 
-function collectMergeableSelection(): { polys: Polygon[]; sources: SceneNode[] } {
-  const sel = useSelectionStore.getState();
-  const nodes = sel.ids
-    .map((id) => defaultSceneGraph.getNode(id))
-    .filter((n): n is SceneNode => !!n && !n.locked);
+/** The closed paths among `nodes` (unlocked stored layer nodes) and their world polygons, in order. */
+export function mergeableOf(nodes: ReadonlyArray<SceneNode>): { polys: Polygon[]; sources: SceneNode[] } {
   const polys: Polygon[] = [];
   const sources: SceneNode[] = [];
   for (const n of nodes) {
+    if (n.locked) continue;
     const poly = nodeWorldPolygon(n);
     if (poly) {
       polys.push(poly);
@@ -419,6 +417,13 @@ function collectMergeableSelection(): { polys: Polygon[]; sources: SceneNode[] }
     }
   }
   return { polys, sources };
+}
+
+/** The selection's mergeable layers in the page replica (the live-merge reference only). */
+function collectMergeableSelection(): { polys: Polygon[]; sources: SceneNode[] } {
+  return mergeableOf(useSelectionStore.getState().ids
+    .map((id) => defaultSceneGraph.getNode(id))
+    .filter((n): n is SceneNode => !!n));
 }
 
 /** A live boolean's result layer, planned from the selection (nothing written yet). */
@@ -498,15 +503,19 @@ export function planLiveMerge(op: MergeOp): LiveMergePlan | null {
 }
 
 /**
- * Bake merge — sources are removed; result is a static Geometry. Prefer
- * {@link planLiveMerge} for designed motion where operands animate.
+ * Bake merge — the boolean of `nodes` (the selected layers' STORED nodes, e.g.
+ * a `copyLayers` fragment's rows) laid into `b` as static path layers: one
+ * per island, holes on the same layer. The caller removes the operands
+ * (`sources`) and pastes the fragment in ONE batch (layout/Workspace/
+ * layerMenuEdits.ts `bakeMergePathsEdit`). Prefer the engine's live merge for
+ * designed motion where operands animate. Returns the scratch ids (none when
+ * fewer than two closed paths merge into anything).
  */
-export function mergeSelectedPaths(op: MergeOp): string[] {
-  const { polys, sources } = collectMergeableSelection();
-  if (polys.length < 2) return [];
+export function buildMergedPaths(b: FragmentBuilder, nodes: ReadonlyArray<SceneNode>, op: MergeOp): { ids: string[]; sources: string[] } {
+  const { polys, sources } = mergeableOf(nodes);
+  if (polys.length < 2) return { ids: [], sources: [] };
 
   const result = booleanPolygons(polys, op);
-  const parentId = sources[0]!.parent ?? activeCompRootId();
   const newIds: string[] = [];
 
   // One layer per Polygon (disconnected island). Holes of that polygon stay
@@ -545,13 +554,9 @@ export function mergeSelectedPaths(op: MergeOp): string[] {
         { id: `${id}_g`, type: 'Geometry', props: geomProps },
       ],
     };
-    defaultSceneGraph.addChild(parentId, node);
+    b.addChild(null, node);
     newIds.push(id);
   }
 
-  if (newIds.length === 0) return [];
-  for (const s of sources) defaultSceneGraph.removeNode(s.id);
-  useSelectionStore.getState().set(newIds);
-  bumpScene();
-  return newIds;
+  return newIds.length > 0 ? { ids: newIds, sources: sources.map((s) => s.id) } : { ids: [], sources: [] };
 }

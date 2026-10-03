@@ -15,12 +15,10 @@
 import type { Command, LayerSwitchesPatch, PropRef } from '@motion/engine-api';
 import { reorderSiblings, type StackAction } from '@core/scene/parenting';
 import type { FrameBlend } from '@core/scene/layerTime';
-// The scratch build (offDocument) reads the replica it runs against, not the mirror.
-import { graph as docGraph, compOfLayer as scratchCompOf, layerIdsOfComp as scratchLayerIds } from '@core/engine/doc';
+import type { SceneNode } from '@core/types';
 import { apiParentOf, compOfLayer, isLayer } from '@core/mirror/docFacts';
-import { offDocument } from '@core/engine/offDocument';
-import { encodeFragment } from '@core/engine/handlers/layers';
-import { mergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
+import { buildMergedPaths, type MergeOp } from '@core/scene/mergePaths';
+import { decodeFragmentLayers, FragmentBuilder, type BuiltFragment } from '@/engine-client/fragmentBuilder';
 import { labelIndexOf } from '@core/engine/model';
 import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
@@ -317,44 +315,47 @@ export async function groupSelectedLayersEdit(): Promise<boolean> {
 /**
  * Merge Paths ▸ Bake <op>: the selected paths' boolean as new path layers
  * (one per island, holes on the same layer), the operands removed, the
- * results selected — `mergeSelectedPaths`, run OFF-document (ENGINE_API.md
- * §15.9) and sent as ONE batch: `deleteLayers` of what it removed, then
- * `pasteLayers` of what it built, at its stack slot among the remaining
- * layers and under the same parent. One undo entry. Resolves to the new ids
- * (`[]` when fewer than two paths could be merged or the engine refused).
+ * results selected — `buildMergedPaths` over the selected layers' STORED
+ * nodes (a `copyLayers` fragment, ENGINE_API.md §4.4), laid into a fragment
+ * and sent as ONE batch: `deleteLayers` of the operands, then `pasteLayers`
+ * of the result in front of the first operand's siblings, under the same
+ * parent. One undo entry. Resolves to the new ids (`[]` when fewer than two
+ * paths could be merged or the engine refused).
  */
 export async function bakeMergePathsEdit(op: MergeOp): Promise<string[]> {
   const label = `Merge Paths (${op})`;
-  let plan: { removed: string[]; paste: Command } | null;
+  const m = documentMirror();
+  const selected = useSelectionStore.getState().ids.filter((id) => m.layer(id) && !m.layer(id)!.switches.locked);
+  if (selected.length < 2) return [];
+  const copied = await engine().query({ type: 'copyLayers', layers: selected });
+  if (!copied.ok) return [];
+  let built: BuiltFragment | null;
+  let sources: string[];
   try {
-    plan = offDocument(() => mergeSelectedPaths(op), ({ value: made, changed, before }) => {
-      const comp = made[0] ? scratchCompOf(made[0]) : null;
-      if (!comp) return null;
-      const created = new Set(made);
-      const stack = scratchLayerIds(comp);
-      const tops = stack.filter((id) => created.has(id));
-      const first = stack.indexOf(tops[0]!);
-      const index = stack.slice(0, first).filter((id) => !created.has(id)).length;
-      const parent = docGraph.getNode(tops[0]!)?.parent;
-      const removed = changed
-        .filter((k) => k.startsWith('node:') && before.get(k) !== undefined && !docGraph.getNode(k.slice(5)))
-        .map((k) => k.slice(5));
-      const paste = {
-        type: 'pasteLayers',
-        comp,
-        fragment: encodeFragment(tops),
-        index,
-        ...(parent && parent !== comp ? { parent } : {}),
-      } as Command;
-      return { removed, paste };
-    });
+    const rows = new Map(decodeFragmentLayers(copied.value).map((l) => [l.row.id, l.row]));
+    const nodes = selected.flatMap((id) => (rows.has(id) ? [rows.get(id)! as unknown as SceneNode] : []));
+    const b = new FragmentBuilder({ idPrefix: 'merge' });
+    sources = buildMergedPaths(b, nodes, op).sources;
+    built = b.build();
   } catch (err) {
     reportEngineError(label, { code: 'internal', message: err instanceof Error ? err.message : String(err) });
     return [];
   }
-  if (!plan) return [];
-  const removed = plan.removed.filter((id) => isLayer(id));
-  const cmds: Command[] = removed.length > 0 ? [{ type: 'deleteLayers', layers: removed }, plan.paste] : [plan.paste];
+  if (!built || sources.length === 0) return [];
+  // In front of the first operand's siblings (where a new child lands), counted
+  // among the layers that stay.
+  const first = m.layer(sources[0]!)!;
+  const gone = new Set(sources);
+  const stays = (m.comp(first.comp)?.layers ?? []).filter((id) => !gone.has(id));
+  const index = first.parent ? stays.indexOf(first.parent) + 1 : 0;
+  const paste = {
+    type: 'pasteLayers',
+    comp: first.comp,
+    fragment: built.fragment,
+    index: Math.max(0, index),
+    ...(first.parent ? { parent: first.parent } : {}),
+  } as Command;
+  const cmds: Command[] = [{ type: 'deleteLayers', layers: sources }, paste];
   const res = await edit(label, cmds);
   if (!res.ok) return [];
   const ids = (res.value[res.value.length - 1] as { layers?: string[] } | undefined)?.layers ?? [];

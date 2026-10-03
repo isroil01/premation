@@ -9,13 +9,14 @@ import {
   flattenOutline,
   nodeWorldPolygon,
   booleanPolygons,
-  mergeSelectedPaths,
+  buildMergedPaths,
   planLiveMerge,
   readLiveBoolean,
   isBooleanOperand,
   evaluateLiveBoolean,
 } from './mergePaths';
 import type { SceneNode } from '@core/types';
+import { FragmentBuilder } from '@/engine-client/fragmentBuilder';
 
 function rect(id: string, x: number, y: number, w: number, h: number): SceneNode {
   return {
@@ -119,57 +120,32 @@ describe('booleanPolygons', () => {
   });
 });
 
-describe('mergeSelectedPaths', () => {
-  beforeAll(() => {
-    setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  });
-
+describe('buildMergedPaths (the bake, laid into a fragment)', () => {
   it('unions two rect layers into one merged layer with the base style', () => {
-    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
-    defaultSceneGraph.addChild(rootId, rect('mp_a', 100, 100, 40, 40));
-    defaultSceneGraph.addChild(rootId, rect('mp_b', 120, 100, 40, 40));
-    useSelectionStore.getState().set(['mp_a', 'mp_b']);
-
-    const ids = mergeSelectedPaths('union');
+    const b = new FragmentBuilder();
+    const { ids, sources } = buildMergedPaths(b, [rect('mp_a', 100, 100, 40, 40), rect('mp_b', 120, 100, 40, 40)], 'union');
     expect(ids).toHaveLength(1);
-    expect(defaultSceneGraph.getNode('mp_a')).toBeFalsy();
-    expect(defaultSceneGraph.getNode('mp_b')).toBeFalsy();
-    const merged = defaultSceneGraph.getNode(ids[0]!)!;
-    expect(merged).toBeTruthy();
-    const style = merged.components.find((c) => c.type === 'Style');
-    expect(style?.props.fill).toBe('#ff0000');
-    const geom = merged.components.find((c) => c.type === 'Geometry');
-    expect(Array.isArray(geom?.props.points)).toBe(true);
-    defaultSceneGraph.removeNode(ids[0]!);
-    useSelectionStore.getState().clear();
+    expect(sources).toEqual(['mp_a', 'mp_b']);
+    expect(b.component(ids[0]!, 'Style')?.props.fill).toBe('#ff0000');
+    expect(Array.isArray(b.component(ids[0]!, 'Geometry')?.props.points)).toBe(true);
   });
 
   it('subtracts a contained rect as a hole (one layer, two subpaths), not two fills', () => {
-    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
-    defaultSceneGraph.addChild(rootId, rect('mp_outer', 100, 100, 80, 80));
-    defaultSceneGraph.addChild(rootId, rect('mp_inner', 100, 100, 30, 30));
-    useSelectionStore.getState().set(['mp_outer', 'mp_inner']);
-
-    const ids = mergeSelectedPaths('subtract');
+    const b = new FragmentBuilder();
+    const { ids } = buildMergedPaths(b, [rect('mp_outer', 100, 100, 80, 80), rect('mp_inner', 100, 100, 30, 30)], 'subtract');
     expect(ids).toHaveLength(1);
-    const merged = defaultSceneGraph.getNode(ids[0]!)!;
-    const geom = merged.components.find((c) => c.type === 'Geometry');
-    const runs = geom?.props.subpaths as Array<{ points: unknown[]; open?: boolean }> | undefined;
+    const runs = b.component(ids[0]!, 'Geometry')?.props.subpaths as Array<{ points: unknown[]; open?: boolean }> | undefined;
     expect(runs).toHaveLength(2);
     expect(runs![0]!.open).toBe(false);
     expect(runs![1]!.open).toBe(false);
-    defaultSceneGraph.removeNode(ids[0]!);
-    useSelectionStore.getState().clear();
   });
 
-  it('is a no-op with fewer than two mergeable layers', () => {
-    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
-    defaultSceneGraph.addChild(rootId, rect('mp_c', 0, 0, 10, 10));
-    useSelectionStore.getState().set(['mp_c']);
-    expect(mergeSelectedPaths('union')).toHaveLength(0);
-    expect(defaultSceneGraph.getNode('mp_c')).toBeTruthy();
-    defaultSceneGraph.removeNode('mp_c');
-    useSelectionStore.getState().clear();
+  it('is a no-op with fewer than two mergeable (unlocked, closed) layers', () => {
+    const b = new FragmentBuilder();
+    expect(buildMergedPaths(b, [rect('mp_c', 0, 0, 10, 10)], 'union')).toEqual({ ids: [], sources: [] });
+    const locked = { ...rect('mp_d', 5, 0, 10, 10), locked: true } as SceneNode;
+    expect(buildMergedPaths(b, [rect('mp_c', 0, 0, 10, 10), locked], 'union').ids).toEqual([]);
+    expect(b.size).toBe(0);
   });
 });
 
