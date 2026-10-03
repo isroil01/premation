@@ -223,7 +223,11 @@ struct CaptionCue { layer: LayerId = 1; start: Time = 2; end: Time = 3; text: st
 struct CaptionCues { cues: CaptionCue[] = 1; }
 
 /// B4 round 5 — a time through a layer's own time: composition time → the time inside what the layer SHOWS (a placed composition's own axis: its time remap — `timeRemap`, else `precompTime` — sampled at the time, then the layer's start / stretch / retime), or back with `outward` (absent when that has no single answer: a time-remapped composition layer). A layer that shows no composition maps one to one. What opening a precomp at the playhead (and the Composition Navigator) carries the playhead through. `notFound` for no such layer.
-query mapLayerTime = 1932 { layer: LayerId = 1; time: Time = 2; outward: bool = 3; } -> MappedTime;
+/// Block 3 `keyframeAxis` (inward only): instead, the composition time on the LAYER's OWN keyframe axis — where a key
+/// written at that time is stored (responsive time, the precomp chain, the governing clip's retime, the layer's
+/// stretch / reverse / freeze): what `addPaintStroke` keys and a stroke's in / out points are measured on. `outward`
+/// with it is `invalidArgument`.
+query mapLayerTime = 1932 { layer: LayerId = 1; time: Time = 2; outward: bool = 3; keyframeAxis?: bool = 4; } -> MappedTime;
 struct MappedTime { time?: Time = 1; }
 
 /// B4 round 5 — the INTRINSIC size of what each layer shows (Fit / Fill / Native Size compute against it): a placed composition's frame, footage's probed size (width × its pixel aspect, rounded), else the per-kind default box a new shape / text / image / video layer gets. Layers with none (null, audio, a missing source with no default) are left out; unknown ids skipped.

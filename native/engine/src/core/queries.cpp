@@ -1013,6 +1013,13 @@ struct Q {
   }
   api::QueryResult operator()(const api::MapLayerTime& q) const {
     api::MappedTime out;
+    if (q.keyframe_axis.value_or(false)) {
+      // Block 3: the layer's own keyframe axis (itemFactsQueries.ts `mapLayerTimeAnswer`).
+      if (q.outward) fail(ErrorCode::invalid_argument, "'keyframeAxis' maps inward only");
+      (void)require_layer(d, q.layer);
+      out.time = seconds_to_flicks(comp_to_keyframe_time(d, pc.view, q.layer, flicks_to_seconds(q.time)));
+      return query_result_for<api::MapLayerTime>(std::move(out));
+    }
     out.time = map_layer_time(pc, q.layer, q.time, q.outward);
     return query_result_for<api::MapLayerTime>(std::move(out));
   }

@@ -441,3 +441,59 @@ TEST_CASE("pack_frame_geometry: long paths split under the frame channel's paylo
   CHECK(none[0].last);
   CHECK(none[0].layers.empty());
 }
+
+TEST_CASE("setMemberKeyframes: writes one member apart from its siblings; '[]' removes; undoable", "[block3][members]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp);
+  api::AddKeyframes a;
+  for (const auto& [t, x] : std::vector<std::pair<api::Time, double>>{{0, 100}, {kSec, 300}}) {
+    api::KeyframeInsert k;
+    k.prop = {layer, "transform/position"};
+    k.time = t;
+    k.value = vec2(x, 200);
+    a.keys.push_back(std::move(k));
+  }
+  REQUIRE(is_ok(h.run(cmd(a))));
+  const auto member = [&](const std::string& name) -> std::optional<js::Json> {
+    const auto r = query<api::MemberTracks>(h, qry(api::GetMemberKeyframes{layer, {name}, std::nullopt}));
+    if (r.tracks.empty()) return std::nullopt;
+    return parse_or_fail(r.tracks[0].keyframes);
+  };
+  const std::string yBefore = js::stringify(*member("y"));
+  const std::string xBefore = js::stringify(*member("x"));
+
+  api::SetMemberKeyframes set;
+  set.layer = layer;
+  set.tracks.push_back({"x", R"([{"t":2,"value":5},{"t":0,"value":1,"easing":"easeOut","si":3},{"t":2,"value":7}])"});
+  REQUIRE(is_ok(h.run(cmd(set))));
+  const js::Json x = *member("x");
+  REQUIRE(x.arr().size() == 2);
+  CHECK(x.arr()[0].at("t").num() == Approx(0));
+  CHECK(x.arr()[0].at("value").num() == Approx(1));
+  CHECK(x.arr()[0].at("easing").str() == "easeOut");
+  CHECK(x.arr()[0].at("si").num() == Approx(3));
+  CHECK(x.arr()[1].at("value").num() == Approx(7));
+  CHECK(js::stringify(*member("y")) == yBefore);
+  REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  CHECK(js::stringify(*member("x")) == xBefore);
+
+  set.tracks = {{"x", "[]"}, {"opacity", R"([{"t":0,"value":0,"id":"k1"},{"t":1,"value":100,"id":"k1"}])"}};
+  REQUIRE(is_ok(h.run(cmd(set))));
+  CHECK_FALSE(member("x").has_value());
+  const js::Json o = *member("opacity");
+  REQUIRE(o.arr().size() == 2);
+  CHECK(o.arr()[0].at("id").str() == "k1");
+  CHECK(o.arr()[1].at("id").str() != "k1");
+
+  for (const char* bad : {"nope", "{}", R"([{"t":"a","value":1}])", R"([{"t":0}])"}) {
+    set.tracks = {{"x", bad}};
+    const auto r = h.run(cmd(set));
+    REQUIRE_FALSE(is_ok(r));
+    CHECK(std::get<api::EngineError>(r.outcome.v).code == api::ErrorCode::invalid_argument);
+  }
+  set.layer = "nope";
+  set.tracks.clear();
+  CHECK_FALSE(is_ok(h.run(cmd(set))));
+}

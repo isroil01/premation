@@ -422,6 +422,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `scaleKeyframes` [c] | Alt-drag time scaling around a pivot. Inverse: previous times (+ replaced keys). |
 | `reverseKeyframes` | Time-Reverse Keyframes. Inverse: reverse again (exact). |
 | `pasteKeyframes` | Keys from any property onto `prop` starting at `time`. Inverse: remove them, restore replaced ones. |
+| `setMemberKeyframes` [c] | Block 3 — a layer's stored MEMBER key lists, the inverse of `getMemberKeyframes` (The Smoother / The Wiggler previews: `x` thinned apart from `y`). `'[]'` removes a member's keys; records sort by time, a later one at a time wins; a repeated id keeps its first use. Inverse: the previous lists. |
 
 ### 4.7 Property groups (effects, masks, animators, shapes, styles, strokes, pins)
 
@@ -442,7 +443,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `pasteEffects` | B3z — Edit ▸ Paste of copied effects from a captured snapshot (the source may since have changed or gone), and applying a saved effect preset, onto several layers at a stack index. Returns the new groups. Inverse: remove them. |
 | `removeStroke` | B3z — delete Contents ▸ Stroke N of a shape's stroke stack with its tracks and expressions; the strokes above move down one index with their tracks. Inverse: the stack and tracks exactly. |
 | `addPaintStroke` | B3 — append one PAINT stroke (Effects ▸ Paint ▸ Brush N; `fx.paint`) from a JSON object without an id (the engine mints `pstroke_<n>`), renormalised (`normalizeStroke`); `points` must be a non-empty array of finite {x, y}. `keys` key the new stroke's numeric params (Write On's End, in %) at LAYER seconds, the axis of its `inPoint`/`outPoint`. Returns the id. Inverse: the paint and tracks as they were. |
-| `updatePaintStroke` [c] | B3 — merge a JSON patch into one stroke and renormalise; a member set to null clears that key; `id` cannot be patched. The video switch (`visible`), Shift-continue (joined points + pen arrays). Inverse: the stroke as it was. |
+| `updatePaintStroke` [c] | B3 — merge a JSON patch into one stroke and renormalise; a member set to null clears that key; `id` cannot be patched. The video switch (`visible`), Shift-continue (`append`: the patch's points and pen arrays are joined onto the stroke's, a side lacking a pen array padded — block 3, so the editor never reads a stroke back). Inverse: the stroke as it was. |
 | `removePaintStrokes` | B3 — delete strokes with every track, expression and data track under `paint.<id>.` (Paint panel ▸ delete, Tool Options ▸ Undo last stroke). Inverse: strokes and tracks exactly. |
 | `setPaintOnTransparent` | B3 — AE Paint on Transparent on layers that have strokes (else `notFound`). Inverse: the previous flag. |
 | `setPaintStrokePath` | B3 — drawing with a stroke selected: with the Path animated, a Path key at `time`; else the static points, the old per-point pen input dropped. Inverse: the stroke / track as they were. |
@@ -2340,7 +2341,9 @@ from the struct's maximum + 800.
     the time inside what the layer shows (time remap, then start / stretch /
     retime), or back (`outward`; absent when there is no single answer). The
     Composition Navigator's move onto it is still open (compNavigation reads
-    the TS engine; B4-gap).
+    the TS engine; B4-gap). Block 3 `keyframeAxis` (inward only): the time on
+    the layer's OWN keyframe axis (`compToKeyframeTime`) — where the Paint
+    tool's stroke in / out points and Write On keys are measured.
   - **`getSourceSize {layers}`** (1933 → `SourceSizes`): the intrinsic size
     Fit / Fill / Native Size compute against.
   - **`checkPrecompose {comp, layers}`** (1934 → `PrecomposeCheck`): the

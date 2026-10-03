@@ -145,6 +145,7 @@ export const CASES: Partial<Record<CommandType, Case>> = {
   autoTrace: { cmd: (s) => ({ type: 'autoTrace', layer: s.A, range: { start: 0, duration: sec(1) }, channel: 'alpha', threshold: 0.5, tolerance: 1 }), fails: 'unsupported' },
   setLayerComment: { cmd: (s) => ({ type: 'setLayerComment', layer: s.A, comment: 'check this' }) },
   setPinnedProperties: { cmd: (s) => ({ type: 'setPinnedProperties', layer: s.A, props: ['opacity', 'x'] }) },
+  setMemberKeyframes: { cmd: (s) => ({ type: 'setMemberKeyframes', layer: s.A, tracks: [{ member: 'x', keyframes: JSON.stringify([{ t: 0, value: 10 }, { t: 1, value: 90, easing: 'easeOut' }]) }] }) },
   // ── B3z (WS-T, WS-K, effects, strokes) ──
   clearWorkArea: { cmd: (s) => ({ type: 'clearWorkArea', comp: s.comp }) },
   timeStretchLayers: { cmd: (s) => ({ type: 'timeStretchLayers', layers: [s.B], stretch: 2, hold: 'inPoint' }) },
@@ -406,7 +407,7 @@ const edits = (Object.keys(COMMANDS) as CommandType[]).filter((t) => COMMANDS[t]
 
 test('every edit command in the schema has a case', () => {
   expect(edits.filter((t) => !CASES[t])).toEqual([]);
-  expect(edits.length).toBe(128);
+  expect(edits.length).toBe(129);
 });
 
 describe.each(edits)('%s', (type) => {

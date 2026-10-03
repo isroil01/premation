@@ -67,9 +67,10 @@ export const strokeHandlers: HandlerTable = {
   updatePaintStroke: (cmd) => {
     const layer = cmd.layer;
     const { cfg, index } = paintStrokeOrFail(layer, requireLayer(layer), cmd.stroke);
-    const patch = parsePaintObject(cmd.patch, 'patch', layer);
+    let patch = parsePaintObject(cmd.patch, 'patch', layer);
     if ('id' in patch) fail('invalidArgument', 'a paint stroke\'s id cannot be patched', { layer, path: `paint/${cmd.stroke}` });
     if ('points' in patch) checkPaintPoints(patch.points, 'patch.points', layer);
+    if (cmd.append === true && 'points' in patch) patch = appendedPatch(cfg.strokes[index]!, patch);
     return {
       scope: scopeLayer(newScope(), layer),
       label: 'Edit Paint Stroke',
@@ -148,3 +149,25 @@ export const strokeHandlers: HandlerTable = {
     };
   },
 };
+
+/**
+ * updatePaintStroke `append` (handlers_strokes.cpp `appended_patch`): the
+ * patch's points and pen arrays joined onto the stroke's own; a pen array one
+ * side lacks is padded (pressure 1, tilt 0) so the arrays stay parallel.
+ */
+function appendedPatch(stroke: PaintStroke, patch: Record<string, unknown>): Record<string, unknown> {
+  const own = stroke as unknown as Record<string, unknown>;
+  const had = Array.isArray(own.points) ? own.points.length : 0;
+  const more = (patch.points as unknown[]).length;
+  const out: Record<string, unknown> = { ...patch, points: [...(Array.isArray(own.points) ? own.points : []), ...(patch.points as unknown[])] };
+  for (const [key, fill] of [['pressure', 1], ['tiltX', 0], ['tiltY', 0]] as const) {
+    const a = own[key];
+    const b = patch[key];
+    if (!Array.isArray(a) && !Array.isArray(b)) continue;
+    out[key] = [
+      ...(Array.isArray(a) ? a : new Array<number>(had).fill(fill)),
+      ...(Array.isArray(b) ? b : new Array<number>(more).fill(fill)),
+    ];
+  }
+  return out;
+}

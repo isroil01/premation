@@ -221,14 +221,31 @@ TEST_CASE("mapLayerTime: through a placed composition's start time; one to one e
   st.items = {api::LayerTimingPatch{pre, std::nullopt, std::nullopt, kSec, std::nullopt}};
   REQUIRE(is_ok(h.run(cmd(st))));
   const auto map = [&](const api::LayerId& l, api::Time t, bool outward) {
-    return ask_ok<api::MappedTime>(h, api::MapLayerTime{l, t, outward}).time;
+    return ask_ok<api::MappedTime>(h, api::MapLayerTime{l, t, outward, std::nullopt}).time;
   };
   CHECK(map(pre, 3 * kSec, false) == std::optional<api::Time>(2 * kSec));
   CHECK(map(pre, 2 * kSec, true) == std::optional<api::Time>(3 * kSec));
   CHECK(map(text, 3 * kSec, false) == std::optional<api::Time>(3 * kSec));
   REQUIRE(is_ok(h.run(cmd(api::SetTimeRemap{pre, true}))));
   CHECK_FALSE(map(pre, 2 * kSec, true).has_value());
-  CHECK(is_error(h.ask(qry(api::MapLayerTime{"nope", 0, false})), api::ErrorCode::not_found));
+  CHECK(is_error(h.ask(qry(api::MapLayerTime{"nope", 0, false, std::nullopt})), api::ErrorCode::not_found));
+}
+
+TEST_CASE("mapLayerTime keyframeAxis: the layer's own keyframe axis follows its start; outward is refused", "[block3][items]") {
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto text = make_layer(h, comp, api::LayerKind::text);
+  api::SetLayerTiming st;
+  st.items = {api::LayerTimingPatch{text, std::nullopt, std::nullopt, kSec, std::nullopt}};
+  REQUIRE(is_ok(h.run(cmd(st))));
+  api::MapLayerTime q{text, 3 * kSec, false, true};
+  CHECK(ask_ok<api::MappedTime>(h, q).time == std::optional<api::Time>(2 * kSec));
+  q.outward = true;
+  CHECK(is_error(h.ask(qry(q)), api::ErrorCode::invalid_argument));
+  q.layer = "nope";
+  q.outward = false;
+  CHECK(is_error(h.ask(qry(q)), api::ErrorCode::not_found));
 }
 
 TEST_CASE("checkPrecompose: the Leave All Attributes refusal, message for message", "[b4r5][items]") {

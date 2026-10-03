@@ -700,7 +700,66 @@ export const propertyHandlers: HandlerTable = {
       },
     };
   },
+
+  setMemberKeyframes: (cmd) => {
+    // The inverse of getMemberKeyframes (memberKeysQuery.ts); the C++ twin is
+    // handlers_properties.cpp. Records sort by time, a later one at a time wins.
+    requireLayer(cmd.layer);
+    const lists = cmd.tracks.map((t) => {
+      if (t.member === '') fail('invalidArgument', 'a member track needs a name');
+      let raw: unknown;
+      try {
+        raw = JSON.parse(t.keyframes);
+      } catch {
+        raw = undefined;
+      }
+      if (!Array.isArray(raw)) fail('invalidArgument', `'${t.member}': keyframes are not a JSON array`);
+      const byTime = new Map<number, TsKeyframe>();
+      for (const rec of raw as unknown[]) {
+        const k = storedKeyOf(rec);
+        if (!k) fail('invalidArgument', `'${t.member}': a keyframe needs a finite t and value`);
+        byTime.delete(k.t);
+        byTime.set(k.t, k);
+      }
+      const keys = [...byTime.values()].sort((a, b) => a.t - b.t);
+      const ids = new Set<string>();
+      for (const k of keys) {
+        if (k.id === undefined) continue;
+        if (ids.has(k.id)) delete k.id;
+        else ids.add(k.id);
+      }
+      return { member: t.member, keys };
+    });
+    return {
+      scope: propScope(newScope(), cmd.layer),
+      label: 'Set Keyframes',
+      apply: () => {
+        for (const { member, keys } of lists) defaultAnimation.setTrackKeyframes(cmd.layer, member, keys);
+        return {};
+      },
+    };
+  },
 };
+
+/** One stored key record (anim_json.cpp `key_from_json`): the fields the animation engine stores, typed; null when `t` / `value` are not finite numbers. */
+function storedKeyOf(rec: unknown): TsKeyframe | null {
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return null;
+  const r = rec as Record<string, unknown>;
+  if (typeof r.t !== 'number' || !Number.isFinite(r.t) || typeof r.value !== 'number' || !Number.isFinite(r.value)) return null;
+  const k: TsKeyframe = { t: r.t, value: r.value };
+  if (typeof r.id === 'string') k.id = r.id;
+  if (typeof r.easing === 'string') k.easing = r.easing as TsKeyframe['easing'];
+  if (Array.isArray(r.bezier) && r.bezier.length >= 4 && r.bezier.every((n) => typeof n === 'number')) {
+    k.bezier = r.bezier.slice(0, 4) as [number, number, number, number];
+  }
+  if (typeof r.continuous === 'boolean') k.continuous = r.continuous;
+  if (typeof r.roving === 'boolean') k.roving = r.roving;
+  if (typeof r.spatialInterp === 'string') k.spatialInterp = r.spatialInterp as TsKeyframe['spatialInterp'];
+  if (typeof r.si === 'number') k.si = r.si;
+  if (typeof r.so === 'number') k.so = r.so;
+  if (typeof r.label === 'number') k.label = r.label;
+  return k;
+}
 
 /** A pasted / set key's per-dimension temporal fields as a KeyWrite's `dims`. */
 function dimsWrite(k: Keyframe): Pick<KeyWrite, 'dims'> {
