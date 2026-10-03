@@ -7,7 +7,7 @@
  */
 
 import type { LayerInfo } from '@motion/engine-api';
-import { resolvePropertyMeta, type MetaNodeFacts, type PropertyMeta } from '@core/inspector/propertyMeta';
+import { resolvePropertyMetaWith, type MetaNodeFacts, type PropertyMeta } from '@core/inspector/propertyMeta';
 import { uiKindOf } from './layerKinds';
 import type { MirrorTreeLike } from './trackIndex';
 
@@ -57,5 +57,5 @@ const EMPTY_TREE = {};
 
 /** The registry's metadata for a track on a mirror layer. */
 export function mirrorPropertyMeta(track: string, layer: LayerInfo | undefined, tree: MirrorTreeLike | undefined): PropertyMeta {
-  return resolvePropertyMeta(track, mirrorMetaFacts(layer, tree));
+  return resolvePropertyMetaWith(track, mirrorMetaFacts(layer, tree));
 }

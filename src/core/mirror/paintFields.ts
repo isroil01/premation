@@ -16,7 +16,7 @@
 import type { Value } from '@motion/engine-api';
 import type { ColorStop, FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
-import { resolvePropertyMeta, type PropertyMeta } from '@core/inspector/propertyMeta';
+import { resolvePropertyMetaWith, type PropertyMeta } from '@core/inspector/propertyMeta';
 import { mirrorMetaFacts } from './metaFacts';
 import { fieldValue, jsonField, type MirrorFieldRead } from './layerFields';
 
@@ -112,6 +112,6 @@ export function mirrorLayerSize(m: PaintRead, layer: string): { width: number; h
 export function paintPropertyMeta(m: MirrorFieldRead, layer: string, track: string): PropertyMeta {
   const info = m.layer(layer);
   const facts = mirrorMetaFacts(info, info ? m.tree(layer) : undefined);
-  if (!facts) return resolvePropertyMeta(track);
-  return resolvePropertyMeta(track, { ...facts, strokeAt: (i) => mirrorStrokeAt(m, layer, i) });
+  if (!facts) return resolvePropertyMetaWith(track);
+  return resolvePropertyMetaWith(track, { ...facts, strokeAt: (i) => mirrorStrokeAt(m, layer, i) });
 }
