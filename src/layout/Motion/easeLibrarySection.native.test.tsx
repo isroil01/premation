@@ -21,6 +21,7 @@ import { useCustomEaseStore } from '@stores/customEaseStore';
 import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
+import { documentMirror } from '@stores/documentMirror';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 
 afterEach(() => {
@@ -83,6 +84,9 @@ describe('EaseLibrarySection', () => {
         value: { kind: 'scalar' as const, value: sec * 100 }, easing: 'linear' as const, spatialIn: [], spatialOut: [],
       })),
     });
+    // The rows' selection ids name members on the layer's tree (an open timeline has it loaded).
+    await documentMirror().loadTree(L);
+    await documentMirror().whenIdle();
   });
   afterEach(async () => {
     await h.dispose();

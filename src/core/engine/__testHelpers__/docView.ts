@@ -161,6 +161,11 @@ export class DocView {
     return one ? [one] : [];
   }
 
+  /** The layer's stored time record (the `fx` time: reverse, freeze, frame blending…); empty = the defaults. */
+  getNodeLayerTime(id: string): { reverse?: boolean; freeze?: boolean; frameBlend?: string; [k: string]: unknown } {
+    return (this.props(id, 'fx')?.time as Record<string, unknown> | undefined) ?? {};
+  }
+
   // ── animation ──────────────────────────────────────────────────────────
 
   getTrackKeyframes(id: string, prop: string): ViewKeyframe[] | undefined {

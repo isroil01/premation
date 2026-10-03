@@ -5,7 +5,6 @@
  * document before === after undo) and redone.
  */
 
-import { getNodeLayerTime } from '@core/scene/layerTime';
 import { readNodeMotionBlur } from '@core/effects/motionBlur';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -137,12 +136,12 @@ describe('switch column', () => {
 describe('time verbs', () => {
   test('Time-Reverse reverses the set, one entry', async () => {
     await roundTrip(() => reverseLayersEdit([s.V]), 'Time-Reverse Layer');
-    expect(getNodeLayerTime(s.V).reverse).toBe(true);
+    expect((await docView()).getNodeLayerTime(s.V).reverse).toBe(true);
   });
 
   test('Freeze Frame, one entry; un-freeze is the legacy fallback', async () => {
     await roundTrip(() => freezeLayersEdit([s.V], 1), 'Freeze Frame');
-    expect(getNodeLayerTime(s.V).freeze).toBe(true);
+    expect((await docView()).getNodeLayerTime(s.V).freeze).toBe(true);
     expect(await freezeLayersEdit([s.V], 1)).toBe(false);
   });
 });
