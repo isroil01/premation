@@ -41,10 +41,9 @@
 
 import { render, act } from '@testing-library/react';
 import { PuppetOverlay } from './PuppetOverlay';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { insertFragment } from '@/engine-client/insertFragment';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import { defaultAnimation } from '@motion/animation';
 import { clearRestMeshCache } from '@core/rig/puppet';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
@@ -70,8 +69,30 @@ jest.mock('@core/workspace/WorkspaceController', () => ({
 let h: Awaited<ReturnType<typeof setupAppEngine>>;
 beforeEach(async () => { h = await setupAppEngine({ panels: true }); });
 afterEach(async () => { await h.dispose(); });
-/** A top-level fixture layer of the composition. */
-const addLayer = (n: SceneNode): void => defaultSceneGraph.addChild('comp_root', n);
+type Key = [layer: string, track: string, t: number, value: number];
+const PUPPET = { meshDensity: 6, meshExpansion: 0, pins: [{ id: 'pin1', x: 30, y: 0, rotation: 0, scale: 1 }] };
+
+/**
+ * The fixture layers (parents first; a node's `parent` names another fixture
+ * layer or none) pasted through the engine with their keys, the puppet on `C`,
+ * `C` selected under the Puppet Pin tool; the overlay rendered and settled.
+ */
+async function rigScene(nodes: SceneNode[], keys: Key[] = []): Promise<HTMLElement> {
+  clearRestMeshCache();
+  const ids = await insertFragment('Fixture', (b) => {
+    const map = new Map<string, string>();
+    for (const n of nodes) map.set(n.id, b.addChild(n.parent ? map.get(n.parent)! : 'comp_root', n));
+    for (const [n, track, t, v] of keys) b.setKeyframe(map.get(n)!, track, t, v);
+    return nodes.map((n) => map.get(n.id)!);
+  }, { comp: 'comp_root', noSelect: true });
+  const C = ids![nodes.findIndex((n) => n.id === 'C')]!;
+  await h.run({ type: 'setProperty', prop: { layer: C, path: 'layer/puppet' }, value: { kind: 'json', value: JSON.stringify(PUPPET) } });
+  useSelectionStore.getState().set([C]);
+  useUIStore.getState().setActiveTool('puppet-pin');
+  const { container } = render(<PuppetOverlay />);
+  await settle();
+  return container;
+}
 /** Let the overlay's subscription land and the pushed rig redraw it. */
 const settle = (): Promise<void> => act(async () => { for (let i = 0; i < 6; i++) await settleEdits(); });
 
@@ -108,24 +129,9 @@ function pinDot(container: HTMLElement): { x: number; y: number } | null {
 }
 
 async function setup(parented: boolean): Promise<HTMLElement> {
-  clearRestMeshCache();
-  defaultAnimation.clear?.();
-  for (const id of ['P', 'C']) { try { defaultSceneGraph.removeNode(id); } catch { /* fresh */ } }
-  if (parented) {
-    addLayer(node('P', { x: 100, y: 50, rotation: 90, scaleX: 2, scaleY: 3 }));
-    defaultSceneGraph.addChild('P', node('C', { parent: 'P' }));
-  } else {
-    addLayer(node('C'));
-  }
-  defaultSceneGraph.setPuppet('C', {
-    meshDensity: 6, meshExpansion: 0,
-    pins: [{ id: 'pin1', x: 30, y: 0, rotation: 0, scale: 1 }],
-  });
-  useSelectionStore.getState().set(['C']);
-  useUIStore.getState().setActiveTool('puppet-pin');
-  const { container } = render(<PuppetOverlay />);
-  await settle();
-  return container;
+  return parented
+    ? rigScene([node('P', { x: 100, y: 50, rotation: 90, scaleX: 2, scaleY: 3 }), node('C', { parent: 'P' })])
+    : rigScene([node('C')]);
 }
 
 describe('PuppetOverlay handle position under layer parenting', () => {
@@ -163,20 +169,8 @@ describe('PuppetOverlay handle position under layer parenting', () => {
  *   static props  -> an animated transform is never sampled
  */
 describe('boundary fixtures', () => {
-  const pinAt = async (build: () => void): Promise<{ x: number; y: number } | null> => {
-    clearRestMeshCache();
-    defaultAnimation.clear?.();
-    for (const id of ['P', 'C']) { try { defaultSceneGraph.removeNode(id); } catch { /* fresh */ } }
-    build();
-    defaultSceneGraph.setPuppet('C', {
-      meshDensity: 6, meshExpansion: 0,
-      pins: [{ id: 'pin1', x: 30, y: 0, rotation: 0, scale: 1 }],
-    });
-    useSelectionStore.getState().set(['C']);
-    useUIStore.getState().setActiveTool('puppet-pin');
-    const { container } = render(<PuppetOverlay />);
-    await settle();
-    const d = pinDot(container);
+  const pinAt = async (nodes: SceneNode[], keys: Key[] = []): Promise<{ x: number; y: number } | null> => {
+    const d = pinDot(await rigScene(nodes, keys));
     // Rounded to 6dp: sin(180 degrees) is 1.2e-16 rather than 0, so a rotated
     // rig lands at y = 7.3e-15 and an exact comparison fails on arithmetic
     // rather than on geometry. The x term is exact either way.
@@ -185,7 +179,7 @@ describe('boundary fixtures', () => {
 
   /** IDENTITY: nothing composed at all, so the pin is its own local position. */
   it('BOUNDARY identity: an untransformed unparented layer is a passthrough', async () => {
-    expect(await pinAt(() => addLayer(node('C')))).toEqual({ x: 30, y: 0 });
+    expect(await pinAt([node('C')])).toEqual({ x: 30, y: 0 });
   });
 
   /**
@@ -194,7 +188,7 @@ describe('boundary fixtures', () => {
    *   pin (30,0) -> (-2*30, 0) = (-60, 0)
    */
   it('BOUNDARY 180 degrees: the diagonal terms the 90-degree rig cannot see', async () => {
-    expect(await pinAt(() => addLayer(node('C', { rotation: 180, scaleX: 2, scaleY: 3 }))))
+    expect(await pinAt([node('C', { rotation: 180, scaleX: 2, scaleY: 3 })]))
       .toEqual({ x: -60, y: 0 });
   });
 
@@ -203,7 +197,7 @@ describe('boundary fixtures', () => {
    *   W = rotate(90); pin (30,0) -> (0*30, 1*30) = (0, 30)
    */
   it('BOUNDARY uniform scale: rotation alone', async () => {
-    expect(await pinAt(() => addLayer(node('C', { rotation: 90 }))))
+    expect(await pinAt([node('C', { rotation: 90 })]))
       .toEqual({ x: 0, y: 30 });
   });
 
@@ -212,10 +206,7 @@ describe('boundary fixtures', () => {
    * answer — the fix must not invent a transform where there is none.
    */
   it('BOUNDARY identity parent: composing nothing changes nothing', async () => {
-    expect(await pinAt(() => {
-      addLayer(node('P'));
-      defaultSceneGraph.addChild('P', node('C', { parent: 'P' }));
-    })).toEqual({ x: 30, y: 0 });
+    expect(await pinAt([node('P'), node('C', { parent: 'P' })])).toEqual({ x: 30, y: 0 });
   });
 
   /**
@@ -233,11 +224,7 @@ describe('boundary fixtures', () => {
    * rather than that it has moved.
    */
   it('follows the ANIMATED layer transform, not the static rest pose', async () => {
-    const at0 = await pinAt(() => {
-      addLayer(node('C'));
-      defaultAnimation.setKeyframe('C', 'x', 0, 0);
-      defaultAnimation.setKeyframe('C', 'x', 2, 400);
-    });
+    const at0 = await pinAt([node('C')], [['C', 'x', 0, 0], ['C', 'x', 2, 400]]);
     // At t=0 the animated x is 0, so the pin sits where an unanimated layer
     // would put it — which is what makes the NEXT assertion meaningful.
     expect(at0).toEqual({ x: 30, y: 0 });
@@ -248,10 +235,7 @@ describe('boundary fixtures', () => {
   it('follows the ANIMATED layer transform: an animated x different from the static prop moves the pin', async () => {
     // A layer whose animated value at t=0 differs from its static prop is the
     // case that separates the two readers: static x = 0, animated x = 250.
-    const shifted = await pinAt(() => {
-      addLayer(node('C'));
-      defaultAnimation.setKeyframe('C', 'x', 0, 250);
-    });
+    const shifted = await pinAt([node('C')], [['C', 'x', 0, 250]]);
     expect(shifted).toEqual({ x: 280, y: 0 });
   });
 });
@@ -271,25 +255,13 @@ describe('boundary fixtures', () => {
  */
 describe('3D parenting', () => {
   it('carries a 3D parent through parentWorld3d', async () => {
-    clearRestMeshCache();
-    defaultAnimation.clear?.();
-    for (const id of ['P', 'C']) { try { defaultSceneGraph.removeNode(id); } catch { /* fresh */ } }
-    const p3 = node('P', { x: 200, y: 0 }) as unknown as { components: Array<{ type: string; props: Record<string, unknown> }> };
-    p3.components[0]!.props.is3D = true;
-    p3.components[0]!.props.z = 0;
-    addLayer(p3 as never);
-    const c3 = node('C', { parent: 'P' }) as unknown as { components: Array<{ type: string; props: Record<string, unknown> }> };
-    c3.components[0]!.props.is3D = true;
-    c3.components[0]!.props.z = 0;
-    defaultSceneGraph.addChild('P', c3 as never);
-    defaultSceneGraph.setPuppet('C', {
-      meshDensity: 6, meshExpansion: 0,
-      pins: [{ id: 'pin1', x: 30, y: 0, rotation: 0, scale: 1 }],
-    });
-    useSelectionStore.getState().set(['C']);
-    useUIStore.getState().setActiveTool('puppet-pin');
-    const { container } = render(<PuppetOverlay />);
-    await settle();
+    const threeD = (n: SceneNode): SceneNode => {
+      const t = (n as unknown as { components: Array<{ props: Record<string, unknown> }> }).components[0]!.props;
+      t.is3D = true;
+      t.z = 0;
+      return n;
+    };
+    const container = await rigScene([threeD(node('P', { x: 200, y: 0 })), threeD(node('C', { parent: 'P' }))]);
     const d = pinDot(container)!;
     expect(Math.round(d.x)).toBe(230);
     expect(Math.round(d.y)).toBe(0);
