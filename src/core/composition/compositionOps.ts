@@ -18,7 +18,7 @@ import { insertMedia } from '@core/scene/sceneInsert';
 import { documentMirror, hasDocumentMirror } from '@stores/documentMirror';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import type { ImportedAsset } from '@stores/assetStore';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { flattenComposition } from '@core/scene/sceneDerive';
 import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';

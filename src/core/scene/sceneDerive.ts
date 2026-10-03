@@ -8,7 +8,7 @@
 import type { SceneNode } from '../types';
 import type SceneGraph from './SceneGraph';
 import { renderComponentsOf } from './SceneGraph';
-import { SCENE_KIND_PROP, type SceneKind } from './seedDefaultScene';
+import { SCENE_KIND_PROP, type SceneKind } from './sceneKind';
 
 /**
  * Read a node's kind from whichever component carries the meta prop.

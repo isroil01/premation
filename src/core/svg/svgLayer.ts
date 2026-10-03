@@ -24,7 +24,7 @@
  */
 
 import type { SceneNode } from '../types';
-import { SCENE_KIND_PROP } from '../scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '../scene/sceneKind';
 import { sanitizeSvg, svgToDataUrl, SVG_SANITIZE_POLICY_VERSION, type SvgIntrinsicSize } from './svgSanitize';
 import type { SvgCapabilities } from './svgCapabilities';
 

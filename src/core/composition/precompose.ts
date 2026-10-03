@@ -43,7 +43,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { makeNode } from '@core/scene/sceneInsert';
 import { COMP_REF_PROP } from '@core/scene/compInstance';
 import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { setParentPreservingWorld } from '@core/scene/parenting';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { is3DEnabled } from '@core/scene/threeD';

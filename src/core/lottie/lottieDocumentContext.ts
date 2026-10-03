@@ -17,7 +17,7 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { flattenScene } from '@core/scene/sceneDerive';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { reparentNode } from '@core/scene/parenting';
 import { insertCamera, insertLight, insertAdjustmentLayer, insertParticle } from '@core/scene/sceneInsert';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';

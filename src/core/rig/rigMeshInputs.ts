@@ -23,7 +23,7 @@
  */
 
 import type { SceneNode } from '@core/types';
-import type { SceneKind } from '@core/scene/seedDefaultScene';
+import type { SceneKind } from '@core/scene/sceneKind';
 import { assetUrl } from '@core/api/client';
 import { readNodeSequence, sequenceSrcAt } from '@core/scene/imageSequence';
 import { svgLayerSrc } from '@core/svg/svgLayer';

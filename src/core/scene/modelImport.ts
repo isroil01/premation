@@ -39,7 +39,7 @@ import {
 } from './modelMesh';
 import defaultSceneGraph from './DefaultSceneGraph';
 import { activeCompRootId } from './activeComp';
-import { SCENE_KIND_PROP } from './seedDefaultScene';
+import { SCENE_KIND_PROP } from './sceneKind';
 import { Matrix4Math, type Matrix4 } from '@motion/scene';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';

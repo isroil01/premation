@@ -55,11 +55,9 @@ export interface ModelPrimitiveEntry {
   /**
    * The PBR maps beyond base colour, as this session's object URLs (null where
    * the material carries none). They resolve through the REGISTRY rather than
-   * through layer props on purpose: object URLs die with the session, and the
-   * base-colour one already needs `modelHydrate` to repoint `src` because it
-   * is the layer's image source. These four are read straight out of the
-   * registry by buildSnapshot every frame, so they never go stale and never
-   * add weight to the saved document.
+   * through layer props on purpose: object URLs die with the session, so they
+   * never add weight to the saved document (the engine reads every map from
+   * the stored .glb itself).
    */
   maps: {
     normal: string | null;

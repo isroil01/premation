@@ -60,7 +60,7 @@ import { resetSceneWindow } from './sceneWindow';
 import { setRuntimeStyle } from './design';
 import { setEntranceSeed } from './archetypes';
 import { keyframeToCompTime } from '@core/timeline/TimelineController';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { POLYSTAR_FX_PROP } from '@core/scene/polystar';
 import { nextDeviceNameIn } from '@core/mirror/deviceNames';
 import { useSelectionStore } from '@stores/selectionStore';

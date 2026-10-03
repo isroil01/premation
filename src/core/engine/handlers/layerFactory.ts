@@ -9,7 +9,7 @@ import type { LayerKind } from '@motion/engine-api';
 import type { SceneNode } from '@core/types';
 import type { ImportedAsset } from '@stores/assetStore';
 import type { CompositionSettings } from '@stores/projectStore';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { COMP_REF_PROP } from '@core/scene/compInstance';
 import { DEFAULT_PARTICLE_CONFIG } from '@core/particles/particleSim';
 import { defaultPrimitiveSpec, makePrimitiveComponent } from '@core/scene/primitiveLayer';

@@ -14,7 +14,7 @@
 import type { ProjectDocumentIO } from '@core/project/ProjectManager';
 import type { ProjectFile, SceneNode } from '@core/types';
 import defaultSceneGraph from './DefaultSceneGraph';
-import { SCENE_KIND_PROP } from './seedDefaultScene';
+import { SCENE_KIND_PROP } from './sceneKind';
 
 /** The default composition root every new/empty project needs — layers parent to
  *  it and the Scene panel shows it as "Composition 1". Without this a restored

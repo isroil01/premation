@@ -40,7 +40,7 @@ import { CONTINUOUS_RASTER_PROP, supportsContinuousRaster } from '@core/scene/co
 
 import { activeCompRootId } from '@core/scene/activeComp';
 import { uniqueLayerName } from '@core/scene/layerNames';
-import { SCENE_KIND_PROP, type SceneKind } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP, type SceneKind } from '@core/scene/sceneKind';
 import type { SceneNode } from '@core/types';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useTextEditStore } from '@stores/textEditStore';

@@ -8,7 +8,7 @@ import { useAssetStore } from '@stores/assetStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { precomposeNow } from '@core/composition/precompose';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { readCompRef, COMP_REF_PROP } from '@core/scene/compInstance';
 import { channelsToColor } from '@core/effects/effects';
 import { readStaticPropertyValue, writeStaticPropertyValue } from '@core/inspector/propertyValue';

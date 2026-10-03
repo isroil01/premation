@@ -13,7 +13,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { declareSlot, DEFAULT_SLOT_FIT } from './mediaSlots';
 import { bumpScene } from '@stores/sceneStore';
 import { slugFieldId, uniqueFieldId, isPublicFieldId } from '@core/automation/fieldIds';

@@ -14,7 +14,7 @@
 
 import defaultSceneGraph from './DefaultSceneGraph';
 import { writeTransformProps } from './transformWrite';
-import { SCENE_KIND_PROP, type SceneKind } from './seedDefaultScene';
+import { SCENE_KIND_PROP, type SceneKind } from './sceneKind';
 import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode } from '@core/types';

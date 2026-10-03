@@ -31,7 +31,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import type { TemplateField } from '@core/template/templateTypes';
 import { partLabel } from '@core/mirror/mographFields';
 

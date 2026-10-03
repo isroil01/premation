@@ -16,7 +16,7 @@ import { enclosingCompRootOf } from '@core/scene/parenting';
 import { isPrecomp } from '@core/scene/precomp';
 import { readCompRef, COMP_REF_PROP } from '@core/scene/compInstance';
 import { readNodeKind, readShapeType, isSolidNode } from '@core/scene/sceneDerive';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { useProjectStore } from '@stores/projectStore';
 import { useAssetStore } from '@stores/assetStore';
 import type { SceneNode } from '@core/types';

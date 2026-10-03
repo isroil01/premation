@@ -8,7 +8,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useWorkspaceStore } from '@stores/projectStore';

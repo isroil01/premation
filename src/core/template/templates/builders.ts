@@ -13,7 +13,7 @@
 import type SceneGraph from '@core/scene/SceneGraph';
 import type { SceneNode, Transform } from '@core/types';
 import type { FillPaint } from '@core/paint/fill';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { defaultAnimation } from '@motion/animation';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 

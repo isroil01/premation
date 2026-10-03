@@ -33,7 +33,7 @@ import { apiParentOf, compOfLayer, layerIdsOfComp } from '@core/mirror/docFacts'
 import { FragmentBuilder, type BuiltFragment } from '@/engine-client/fragmentBuilder';
 import { insertFrame } from '@/engine-client/insertFragment';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import type { SceneNode } from '@core/types';
 
 const setProps = (writes: readonly PropertyWrite[]): Command => ({

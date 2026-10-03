@@ -14,7 +14,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { defaultAnimation } from '@motion/animation';
 import { Matrix, type Matrix2D } from '@motion/scene';
-import { SCENE_KIND_PROP } from './seedDefaultScene';
+import { SCENE_KIND_PROP } from './sceneKind';
 import { isPrecomp } from './precomp';
 import { activeCompRootId } from './activeComp';
 import { world2DAt, localTransformAt } from './layerSpace';

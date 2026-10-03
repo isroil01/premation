@@ -12,12 +12,9 @@
 
 import type { Transform } from '../types';
 import defaultSceneGraph from './DefaultSceneGraph';
+import { SCENE_KIND_PROP } from './sceneKind';
 
-/** Scene node "kind" — mirrored into the tree for icon selection. */
-export type SceneKind = 'group' | 'null' | 'shape' | 'text' | 'image' | 'video' | 'svg' | 'audio' | 'camera' | 'light' | 'adjustment' | 'particle' | 'comp';
-
-/** Stored on each node so the UI can pick an icon without guessing. */
-export const SCENE_KIND_PROP = '__kind';
+export { SCENE_KIND_PROP, type SceneKind } from './sceneKind';
 
 function transform(x: number, y: number): Transform {
   return { position: { x, y }, rotation: 0, scale: { x: 1, y: 1 } };

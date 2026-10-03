@@ -22,7 +22,7 @@ import type { SceneNode, ID } from '@core/types';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { shapeOutline } from '@core/scene/pathOps';
 import { resolveCornerRadii, clampCornerRadii, type CornerRadiiProps } from '@core/scene/cornerRadii';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { useSelectionStore } from '@stores/selectionStore';
 import type { FragmentBuilder } from '@/engine-client/fragmentBuilder';
 
