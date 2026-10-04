@@ -5,14 +5,34 @@
  * the commands in handlers/strokes.ts (ENGINE_API.md §4.7).
  */
 
-import { secondsToFlicks, type CommandResult, type EngineResult } from '@motion/engine-api';
-import { getNodePaint } from '@core/paint/paintStrokes';
-import { planPaintDrag, type PaintCommitResult, type PaintDrag } from '@core/paint/paintCommit';
+import { flicksToSeconds, secondsToFlicks, type CommandResult, type EngineResult } from '@motion/engine-api';
+import { planPaintDrag, type PaintCommitResult, type PaintDrag, type PaintDragContext } from '@core/paint/paintCommit';
+import { mirrorPaintStrokes, type MirrorPaintStroke } from '@core/mirror/paintStrokes';
+import { settingsFps } from '@core/mirror/compFacts';
+import { documentMirror } from '@stores/documentMirror';
+import { engine } from './engineInstance';
 import { edit } from './uiEdits';
+
+/** The layer's paint strokes from the document mirror, its property tree fetched first when it is not loaded yet. */
+async function strokesOf(layer: string): Promise<MirrorPaintStroke[]> {
+  const m = documentMirror();
+  if (!m.tree(layer)) await m.whenIdle();
+  return mirrorPaintStrokes(m, layer);
+}
+
+/** What `planPaintDrag` reads of the document: the layer's strokes (mirror), its keyframe-axis time and its comp's rate (engine). */
+async function dragContext(d: PaintDrag): Promise<PaintDragContext> {
+  const m = documentMirror();
+  const info = m.layer(d.nodeId);
+  const fps = settingsFps(info ? m.comp(info.comp)?.settings : undefined);
+  const mapped = await engine().query({ type: 'mapLayerTime', layer: d.nodeId, time: secondsToFlicks(d.compTime), outward: false, keyframeAxis: true });
+  const layerT = mapped.ok && mapped.value.time !== undefined ? flicksToSeconds(mapped.value.time) : d.compTime;
+  return { layerT, fps, existing: await strokesOf(d.nodeId) };
+}
 
 /** A finished Paint / Clone Stamp / Eraser drag. `reason` is set when the drag was refused before sending. */
 export async function commitPaintDrag(d: PaintDrag): Promise<PaintCommitResult> {
-  const plan = planPaintDrag(d);
+  const plan = planPaintDrag(d, await dragContext(d));
   if (!plan.ok) return plan;
   const res = await edit(plan.label, plan.commands);
   // A typed error was already toasted by `edit`.
@@ -41,7 +61,7 @@ export function deletePaintStroke(layer: string, stroke: string): Promise<Engine
 
 /** Tool Options ▸ Undo last stroke: delete the layer's most recent stroke (no strokes: nothing happens). */
 export async function removeLastPaintStroke(layer: string): Promise<void> {
-  const last = getNodePaint(layer)?.strokes.at(-1);
+  const last = (await strokesOf(layer)).at(-1);
   if (!last) return;
   await edit('Remove Last Stroke', { type: 'removePaintStrokes', layer, strokes: [last.id] });
 }

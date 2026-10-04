@@ -5,9 +5,6 @@
  * compile to a CSS `filter` string the Canvas 2D backend applies per layer.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpSceneRevision } from '@stores/sceneStore';
-import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
 import { renderComponentsOf } from '@core/scene/SceneGraph';
 
@@ -4645,34 +4642,6 @@ export function effectHasOpacity(e: Effect): boolean {
 }
 
 /**
- * Set one effect's Compositing Options opacity (0..100), or clear it.
- *
- * 100 CLEARS the field rather than storing it: absent is the state that lets
- * the effect keep its GPU-native path, and an author who drags the slider back
- * to full expects the effect to cost what it did before they touched it. A
- * keyframed opacity is stamped back on per frame by `resolveEffectParams`, so
- * clearing the static value here never disarms an animation.
- */
-export function setEffectOpacity(
-  nodeId: string,
-  effectId: string,
-  pct: number | undefined,
-): void {
-  const clear = pct === undefined || !Number.isFinite(pct) || pct >= 100;
-  writeNodeEffects(
-    nodeId,
-    getNodeEffects(nodeId).map((e) => {
-      if (e.id !== effectId) return e;
-      if (clear) {
-        const { opacity: _drop, ...rest } = e;
-        return rest;
-      }
-      return { ...e, opacity: Math.max(0, Math.min(100, pct)) };
-    }),
-  );
-}
-
-/**
  * Hex → [r, g, b, a], each 0..1 — the channel convention the `_r/_g/_b/_a`
  * keyframe tracks actually store.
  *
@@ -4876,17 +4845,6 @@ export function readNodeFxEnabled(node: SceneNode): boolean {
   return fx?.props.fxEnabled !== false;
 }
 
-export function getNodeFxEnabled(nodeId: string): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeFxEnabled(node) : true;
-}
-
-export function setNodeFxEnabled(nodeId: string, enabled: boolean): void {
-  // Store only the OFF state, so the common case adds nothing to the file.
-  defaultSceneGraph.setFxEnabled(nodeId, enabled ? undefined : false);
-  getEventBus().emit('AnimationChanged', { nodeId });
-}
-
 /**
  * The effects the RENDERER should apply — empty when the layer's `fx` switch is
  * off. Distinct from `readNodeEffects`, which the inspector uses to list the
@@ -4894,122 +4852,6 @@ export function setNodeFxEnabled(nodeId: string, enabled: boolean): void {
  */
 export function readNodeRenderEffects(node: SceneNode): Effect[] {
   return readNodeFxEnabled(node) ? readNodeEffects(node) : [];
-}
-
-export function getNodeEffects(nodeId: string): Effect[] {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeEffects(node) : [];
-}
-
-let seq = 0;
-
-/** Replace a layer's effect stack (bumps the scene revision + notifies). */
-export function writeNodeEffects(nodeId: string, effects: Effect[]): void {
-  // The `fx` component is a computed view over the engine node; store the stack
-  // on the engine (surfaced back as `readNodeEffects`' fx component).
-  defaultSceneGraph.setEffects(nodeId, effects);
-  // Effects change the rendered frame → same signal as an animation edit
-  // (invalidates the cache, marks dirty, records history, re-renders viewport).
-  getEventBus().emit('AnimationChanged', { nodeId });
-  // ...and the scene REVISION, which is what wakes the views that rebuild by
-  // reading the scene during render. `AnimationChanged` reaches the viewport,
-  // the autosave and history — but nothing that draws the timeline, which lists
-  // one row per numeric effect parameter (`propertyTree.effectRows`) and reads
-  // each one's value at render time. Without this an effect scrub moved the
-  // picture while its own timeline row sat at the number it last drew: the same
-  // defect, and the same remedy, as the transform props in `InspectorAPI`.
-  //
-  // Revision only — an effect edit is not a structural scene change, and
-  // announcing one would split a single scrub into two undo steps (the
-  // AnimationChanged above already schedules this edit under the 'anim' key).
-  bumpSceneRevision();
-}
-
-/**
- * `id` lets a caller NAME the effect instead of discovering its generated id.
- *
- * The generated `fx_<n>` is only knowable by reading the return value, and a
- * deterministic emitter cannot read one: `@motion/technique-library` builds a
- * flat `ToolCall[]` with no execution and no feedback, so a technique that wants
- * to keyframe `effect.<id>.<param>` must know the id before the effect exists.
- * Two techniques solved that by inventing one — and because `isAnimatableProp`
- * accepts any `effect.*` path, both wrote tracks onto effects that never
- * existed. The calls succeeded, the keyframes were stored, and nothing rendered.
- *
- * A supplied id already taken on the node falls back to a generated one, so this
- * can never produce two effects sharing an id.
- */
-export function addEffect(nodeId: string, type: EffectType, id?: string): void {
-  const def = DEF.get(type);
-  if (!def) return;
-  const effects = getNodeEffects(nodeId);
-  const taken = new Set(effects.map((e) => e.id));
-  const useId = id && !taken.has(id) ? id : `fx_${(seq += 1)}`;
-  writeNodeEffects(nodeId, [...effects, { id: useId, type, params: newInstanceParamsOf(def) }]);
-}
-
-/** Set one of an effect's parameters. */
-export function updateEffectParam(
-  nodeId: string,
-  effectId: string,
-  key: string,
-  value: EffectParamValue,
-): void {
-  writeNodeEffects(
-    nodeId,
-    getNodeEffects(nodeId).map((e) =>
-      e.id === effectId ? { ...e, params: { ...e.params, [key]: value } } : e,
-    ),
-  );
-}
-
-/**
- * Restore every parameter of one effect to its declared default — AE's `Reset`
- * link in the Effect Controls header.
- *
- * ONE write, not one per parameter. Looping `updateEffectParam` over a def would
- * emit an `AnimationChanged` per key, and history records per edit — resetting
- * Bevel (nine params) would cost nine undo steps to walk back.
- *
- * Deliberately does NOT touch keyframes. A reset in AE restores the value the
- * property rests at; removing the user's animation as a side effect of a control
- * labelled "Reset" is the kind of surprise that costs work. The stopwatch is
- * still the one thing that deletes tracks.
- */
-export function resetEffectParams(nodeId: string, effectId: string): void {
-  const effects = getNodeEffects(nodeId);
-  const target = effects.find((e) => e.id === effectId);
-  const def = target ? DEF.get(target.type) : undefined;
-  if (!target || !def) return;
-  writeNodeEffects(
-    nodeId,
-    // `amount` goes too: it is the legacy scalar `paramsOf` folds in ahead of
-    // the defaults, so leaving it would make a reset effect keep its old look.
-    effects.map((e) =>
-      e.id === effectId
-        ? { id: e.id, type: e.type, params: newInstanceParamsOf(def), enabled: e.enabled, maskId: e.maskId, labelColor: e.labelColor }
-        : e,
-    ),
-  );
-}
-
-/** Set or clear the Effect Controls label colour on one applied effect. */
-export function setEffectLabelColor(
-  nodeId: string,
-  effectId: string,
-  color: string | undefined,
-): void {
-  writeNodeEffects(
-    nodeId,
-    getNodeEffects(nodeId).map((e) => {
-      if (e.id !== effectId) return e;
-      if (color === undefined) {
-        const { labelColor: _drop, ...rest } = e;
-        return rest;
-      }
-      return { ...e, labelColor: color };
-    }),
-  );
 }
 
 /**
@@ -5033,59 +4875,6 @@ export function effectDisplayNames(effects: ReadonlyArray<Effect>): Map<string, 
     out.set(e.id, n === 1 ? label : `${label} ${n}`);
   }
   return out;
-}
-
-/** Set an effect's primary parameter (what the old single-scalar API meant). */
-export function updateEffect(nodeId: string, effectId: string, amount: number): void {
-  const effect = getNodeEffects(nodeId).find((e) => e.id === effectId);
-  const key = effect ? primaryParamKey(effect.type) : undefined;
-  if (!effect || !key) return;
-  updateEffectParam(nodeId, effectId, key, amount);
-}
-
-export function removeEffect(nodeId: string, effectId: string): void {
-  writeNodeEffects(nodeId, getNodeEffects(nodeId).filter((e) => e.id !== effectId));
-}
-
-/** Toggle an effect's enabled state (keeps it in the stack). */
-export function toggleEffect(nodeId: string, effectId: string): void {
-  writeNodeEffects(
-    nodeId,
-    getNodeEffects(nodeId).map((e) => (e.id === effectId ? { ...e, enabled: e.enabled === false } : e)),
-  );
-}
-
-/**
- * AE Compositing Options → Effect Mask: scope where this effect applies.
- *
- * `maskId` undefined / omitted = whole layer. Empty string is treated as unset
- * so a half-written edit cannot force a CPU bake for nothing (see
- * effectScopedMask.test.ts). The referenced path should usually be mode
- * `'none'` so it is geometry without also cutting the layer.
- */
-export function setEffectMaskId(
-  nodeId: string,
-  effectId: string,
-  maskId: string | undefined,
-): void {
-  const nextId = maskId && maskId.length > 0 ? maskId : undefined;
-  writeNodeEffects(
-    nodeId,
-    getNodeEffects(nodeId).map((e) => {
-      if (e.id !== effectId) return e;
-      if (nextId === undefined) {
-        const { maskId: _drop, ...rest } = e;
-        return rest;
-      }
-      return { ...e, maskId: nextId };
-    }),
-  );
-}
-
-/** Move an effect up (-1) or down (+1) in the stack — order changes the look
- *  because filters compose left-to-right. Pure reorder helper is exported too. */
-export function moveEffect(nodeId: string, effectId: string, dir: -1 | 1): void {
-  writeNodeEffects(nodeId, reorderEffects(getNodeEffects(nodeId), effectId, dir));
 }
 
 /** Pure: return a new stack with `effectId` moved by `dir`, clamped at the ends. */
@@ -5116,9 +4905,4 @@ export function moveEffectTo(effects: ReadonlyArray<Effect>, effectId: string, t
   const [moved] = list.splice(from, 1);
   list.splice(clamped > from ? clamped - 1 : clamped, 0, moved!);
   return list;
-}
-
-/** Move an effect to an absolute index on a node's stack (drag reorder). */
-export function dragEffectTo(nodeId: string, effectId: string, to: number): void {
-  writeNodeEffects(nodeId, moveEffectTo(getNodeEffects(nodeId), effectId, to));
 }

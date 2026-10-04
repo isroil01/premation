@@ -27,12 +27,7 @@
  * Orbit and orientation stay `abs`: 8° of yaw is 8° in any comp.
  */
 
-import { type AnimationEngine, type Keyframe, type PropPath } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { defaultFocalLength } from '@core/scene/camera3d';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { presetContextFor } from './presetContext';
+import {  type Keyframe } from '@motion/animation';
 import type { AnimationPreset } from './animationPresets';
 
 const FOLDER = 'Camera';
@@ -69,73 +64,6 @@ function wiggleKeyframes(amp: number, f1: number, f2: number, phase: number): Ke
     out.push(kfb(Number(t.toFixed(2)), Number(v.toFixed(4)), t < T ? SMOOTH : undefined));
   }
   return out;
-}
-
-/** The camera's current value for `prop`: sampled animation first, then the
- *  base scene prop. A local twin of `nodeBaseValue` rather than an import — the
- *  main module imports THIS one, and the dolly-zoom applier runs long after
- *  load, so keeping this file's runtime imports one-directional costs ten lines
- *  and removes a cycle. */
-function cameraBaseValue(
-  nodeId: string,
-  prop: PropPath,
-  atTime: number,
-  engine: AnimationEngine,
-): number | undefined {
-  const sampled = engine.sample(nodeId, prop, atTime);
-  if (sampled !== undefined) return sampled;
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return undefined;
-  for (const c of node.components) {
-    const v = (c.props as Record<string, unknown>)[prop];
-    if (typeof v === 'number') return v;
-  }
-  return undefined;
-}
-
-/**
- * Dolly Zoom (Vertigo): the camera dollies in while the lens counter-zooms so
- * the comp-plane framing holds — for a camera at distance d from the plane,
- * `f = f0 · d / d0` keeps the plane's magnification constant while everything
- * off the plane shifts in perspective.
- *
- * The one preset in this library that is code, and it is code for exactly the
- * reason `applier` exists: the counter-zoom is a PRODUCT of the camera's
- * current focal length and distance, and the track model can only add offsets
- * to them. A static declaration would hold framing only on the default rig
- * (where d0 = f0) and drift on any camera that has been dollied or re-lensed.
- *
- * Sampled at five keyframes, eased by spacing (smoothstep-spaced samples,
- * linear segments). The invariant survives BETWEEN keyframes too: `f` is
- * linear in `d` (`f = (f0/d0)·d`), both tracks share keyframe times and
- * interpolation, and any interpolant of the form `v0 + w(t)·(v1 − v0)` applied
- * identically to two affinely-related tracks preserves the relation exactly.
- */
-function applyDollyZoom(nodeId: string, atTime: number, engine: AnimationEngine): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || readNodeKind(node) !== 'camera') return false;
-
-  const ctx = presetContextFor(nodeId);
-  const f0 = cameraBaseValue(nodeId, 'focalLength', atTime, engine) ?? defaultFocalLength(ctx.compWidth);
-  const z0 = cameraBaseValue(nodeId, 'z', atTime, engine) ?? -f0;
-  // Distance to the comp plane. A camera AT or past the plane has no framing to
-  // hold — clamp rather than divide by zero and write NaN keyframes.
-  const d0 = Math.max(1, -z0);
-
-  const DURATION = 3;
-  const SAMPLES = 5;
-  const SQUEEZE = 0.4; // dolly in to 60% of the starting distance
-
-  runAnimEdit('Apply animation preset', () => {
-    for (let i = 0; i < SAMPLES; i++) {
-      const u = i / (SAMPLES - 1);
-      const s = u * u * (3 - 2 * u); // smoothstep — ease lives in the spacing
-      const d = d0 * (1 - SQUEEZE * s);
-      engine.setKeyframe(nodeId, 'z', atTime + u * DURATION, -d);
-      engine.setKeyframe(nodeId, 'focalLength', atTime + u * DURATION, (f0 * d) / d0);
-    }
-  });
-  return true;
 }
 
 export const CAMERA_PRESETS: ReadonlyArray<AnimationPreset> = [
@@ -225,15 +153,5 @@ export const CAMERA_PRESETS: ReadonlyArray<AnimationPreset> = [
     ],
   },
 ];
-
-/**
- * The code behind a preset's `applier`, by name. Kept out of the preset data so
- * listing the library (the panel, the palette) never reaches code that writes
- * the TypeScript engine's document: only `applyPreset` (the engine's
- * `applyPreset` command) runs it.
- */
-export const PRESET_APPLIERS: Readonly<Record<NonNullable<AnimationPreset['applier']>, (nodeId: string, atTime: number, engine: AnimationEngine) => boolean>> = {
-  dollyZoom: applyDollyZoom,
-};
 
 export default CAMERA_PRESETS;

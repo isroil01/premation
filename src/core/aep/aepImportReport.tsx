@@ -15,7 +15,7 @@ import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { summarizeAepImport, summarizeEngineAepImport, type AepImportResult, type EngineAepImport } from './aepImport';
+import {  summarizeEngineAepImport,  type EngineAepImport } from './aepImport';
 import { track } from '@core/analytics/productEvents';
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -80,31 +80,6 @@ function openReport(fileLabel: string, facts: ReportFacts): void {
         </div>
       </div>
     ),
-  });
-}
-
-/** Report an import: always a toast, plus the detail dialog when something was lost. */
-export function reportAepImport(fileLabel: string, result: AepImportResult): void {
-  const { notify } = useUIStore.getState();
-  const warnings = result.applied.warnings;
-  track('aep_imported', {
-    layers: result.project.comps.reduce((n, c) => n + c.layers.length, 0),
-    warnings: warnings.length,
-  });
-  if (warnings.length === 0) {
-    notify({ level: 'success', message: `Opened ${summarizeAepImport(result)} from “${fileLabel}”`, durationMs: 3200 });
-    return;
-  }
-  notify({
-    level: 'warning',
-    message: `Opened ${summarizeAepImport(result)} — ${plural(warnings.length, 'thing')} did not come across`,
-    durationMs: 4500,
-  });
-  openReport(fileLabel, {
-    summary: summarizeAepImport(result),
-    aeVersion: result.project.aeVersion ?? '',
-    warnings,
-    expressions: result.plan.comps.flatMap((c) => c.layers.flatMap((l) => l.expressions)).length,
   });
 }
 

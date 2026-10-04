@@ -40,10 +40,7 @@
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { render, cleanup } from '@testing-library/react';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import type { SceneNode } from '@core/types';
 
 /**
  * Every inspector component in this directory that takes a `nodeId`.
@@ -95,23 +92,8 @@ function discoverSections(): Array<[string, React.ComponentType<{ nodeId: string
 
 const SECTIONS = discoverSections();
 
-const ID = "hooks_probe_layer";
-
-function textNode(id: string): SceneNode {
-  return {
-    id, name: id, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${id}_t`, type: "Transform", props: { [SCENE_KIND_PROP]: "text", x: 0, y: 0, width: 200, height: 60, opacity: 100 } },
-      { id: `${id}_txt`, type: "Text", props: { content: "Hi", fontSize: 48, fontFamily: "Inter" } },
-      { id: `${id}_s`, type: "Style", props: { opacity: 100, fill: "#ffffff" } },
-    ],
-  } as unknown as SceneNode;
-}
-
 afterEach(() => {
   cleanup();
-  if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
 });
 
 describe("the discovery found real subjects", () => {
@@ -164,28 +146,8 @@ describe.each(SECTIONS)('%s survives its node disappearing mid-session', (_name,
   const propsFor = (nodeId: string): { nodeId: string } =>
     ({ nodeId, ...(EXTRA_PROPS[_name] ?? {}) });
 
-  it('renders with the node present, then again after it is deleted', () => {
-    defaultSceneGraph.addNode(textNode(ID));
-    useSelectionStore.setState({ ids: [ID] } as never);
-
-    const view = render(<Section {...propsFor(ID)} />);
-    // The node goes away while the panel is still mounted and still pointed at it
-    // — exactly what deleting a selected layer does.
-    defaultSceneGraph.removeNode(ID);
-
-    // Before the fix this threw "Rendered fewer hooks than expected".
-    expect(() => view.rerender(<Section {...propsFor(ID)} />)).not.toThrow();
-  });
-
   it('renders for a node id that never existed', () => {
     useSelectionStore.setState({ ids: [] } as never);
     expect(() => render(<Section {...propsFor('no_such_node')} />)).not.toThrow();
-  });
-
-  it('mounting straight onto a missing node, then a real one, is stable', () => {
-    // The reverse order: hook count must not change when the node APPEARS either.
-    const view = render(<Section {...propsFor(ID)} />);
-    defaultSceneGraph.addNode(textNode(ID));
-    expect(() => view.rerender(<Section {...propsFor(ID)} />)).not.toThrow();
   });
 });

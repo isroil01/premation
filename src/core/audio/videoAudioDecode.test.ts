@@ -29,7 +29,6 @@ beforeEach(() => {
   engine.assets.clear();
   engine.loading.clear();
   engine.undecodable.clear();
-  engine.voices.clear();
 
   decodeAudioData = jest.fn(async () => ({
     numberOfChannels: 1,
@@ -77,13 +76,8 @@ describe("a video file's audio track", () => {
     await audioEngine.load('mute', 'blob:silent.mp4');
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // What `sync` does on every single playhead change.
-    for (let i = 0; i < 25; i++) {
-      audioEngine.sync(true, i / 30, [
-        { nodeId: 'v', assetId: 'mute', src: 'blob:silent.mp4', levelDb: 0, startSec: 0, inSec: 0, outSec: 5, muted: false },
-      ]);
-    }
-    await Promise.resolve();
+    // Asked again and again (every panel that shows its waveform).
+    for (let i = 0; i < 25; i++) await audioEngine.load('mute', 'blob:silent.mp4');
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(decodeAudioData).toHaveBeenCalledTimes(1);

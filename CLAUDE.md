@@ -10,8 +10,12 @@ settled and are not re-opened in a code change.
 (`premation-engine`, supervised by Electron main): evaluation, render graph,
 GPU via Dawn, float colour + OCIO, decode, audio, text/vector, effects,
 plugins, export. The migration is phases A–G in `docs/NATIVE_CORE_PLAN.md`.
-Until each step flips, the TypeScript engine below is the reference and the
-fallback.
+The C++ engine owns the document in the app; the page keeps no copy of it
+(it reads the document mirror, `src/stores/documentMirror.ts`). The TypeScript
+engine is deleted (docs/TS_ENGINE_REMOVAL.md); what is left under `src/core` /
+`packages/*` is UI-side document helpers, never a second engine. Tests of app
+behaviour run on `premation-engine-headless` (`*.native.test.*`,
+`src/core/engine/__testHelpers__/appEngine.ts`).
 
 - **UI changes to the document go through the engine API** (plan §2): commands
   with inverses, queries, change events. New UI code must not write the scene
@@ -23,15 +27,14 @@ fallback.
 
 ```
 Electron (electron/)  →  Editor (src/layout, src/components, src/stores, src/hooks)
-                      →  TS engine (src/core, packages/*)  →  GPU (packages/renderer)
-                                    ↘ being replaced by native/ (C++ engine process)
+                      →  engine API (packages/engine-api, src/engine-client,
+                         the document mirror)  →  premation-engine (native/)
 ```
 
 - `src/core/**` and `packages/**` never import `react`, `react-dom`, `zustand`,
   `@/layout/*`, `@/components/*`. Hooks go in `src/hooks`, Zustand stores in
   `src/stores`, components in `src/components` or the layout that owns them.
 - `packages/**` never import from `src/**`.
-- `packages/renderer` never touches the DOM outside its canvas-binding files.
 - Editor state (selection, zoom, panel layout, scroll) never enters the project
   document. If it needs to persist, it goes in `sceneViewStore`/prefs, not the
   scene.
@@ -61,7 +64,7 @@ Electron (electron/)  →  Editor (src/layout, src/components, src/stores, src/h
 ## Native code (`native/`, C++20) — applies once N0 lands
 
 - Clang on every platform (clang-cl on Windows). CMake presets + vcpkg
-  manifest. Both WASM (Emscripten) and N-API builds must pass; one is not done.
+  manifest. The WASM (Emscripten) glue builds and passes its smoke test.
 - ASan/UBSan/TSan suites and `clang-tidy` (cppcoreguidelines, bugprone,
   performance, modernize) are blocking. `-Wall -Wextra -Wpedantic -Werror
   -Wshadow -Wconversion`.
@@ -75,8 +78,8 @@ Electron (electron/)  →  Editor (src/layout, src/components, src/stores, src/h
   N-API addon in Electron main. Native engine code runs in the
   `premation-engine` process; a crash there restarts the engine, never the app.
 - One engine (owner decision, docs/TS_ENGINE_REMOVAL.md): the C++ engine is
-  the default and the only target. Do not add TypeScript fallbacks; the
-  existing TS engine, flags and page fallbacks are being deleted (phase 4).
+  the only engine. Do not add TypeScript fallbacks or a second engine
+  implementation in the page.
 
 ## Repo traps
 

@@ -932,17 +932,15 @@ Value Interp::source_rect(Args a) {
   const bool extents = a[1].is_undefined() ? false : truthy(a[1]);
   std::optional<SourceRect> r;
   if (ctx_.host != nullptr && ctx_.host->has_source_rect_at()) r = ctx_.host->source_rect_at(t, extents);
-  if (!r) {
-    r = SourceRect{.top = 0,
-                   .left = 0,
-                   .width = ctx_.layer_info ? ctx_.layer_info->width : comp_.width,
-                   .height = ctx_.layer_info ? ctx_.layer_info->height : comp_.height};
-  }
+  const SourceRect rect = r.value_or(SourceRect{.top = 0,
+                                                .left = 0,
+                                                .width = ctx_.layer_info ? ctx_.layer_info->width : comp_.width,
+                                                .height = ctx_.layer_info ? ctx_.layer_info->height : comp_.height});
   return plain({
-      {.key = KeyId::k_top, .value = Value::number(r->top)},
-      {.key = KeyId::k_left, .value = Value::number(r->left)},
-      {.key = KeyId::k_width, .value = Value::number(r->width)},
-      {.key = KeyId::k_height, .value = Value::number(r->height)},
+      {.key = KeyId::k_top, .value = Value::number(rect.top)},
+      {.key = KeyId::k_left, .value = Value::number(rect.left)},
+      {.key = KeyId::k_width, .value = Value::number(rect.width)},
+      {.key = KeyId::k_height, .value = Value::number(rect.height)},
   });
 }
 

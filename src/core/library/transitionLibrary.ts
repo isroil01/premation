@@ -26,23 +26,10 @@
  *   • the iris wipe drives an animated ellipse mask on its solid.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { makeNode } from '@core/scene/sceneInsert';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { useSelectionStore } from '@stores/selectionStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { useWorkspaceStore } from '@stores/projectStore';
-import { bumpScene } from '@stores/sceneStore';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { readGeometry } from '@core/workspace/geometry';
-import type { SceneNode } from '@core/types';
-import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
-import { addEffect, getNodeEffects, effectPropPath } from '@core/effects/effects';
-import { setNodeMotionBlur } from '@core/effects/motionBlur';
-import { addMaskPath, setMaskPoints, keyframeMask, ellipseMask, getNodeMask } from '@core/effects/mask';
-import { liveKf, addRoot, addShape, type Ease } from '@core/template/templates/builders';
+import {   effectPropPath } from '@core/effects/effects';
+import {  addRoot, addShape, type Ease } from '@core/template/templates/builders';
 import { mountPreview, type PreviewSpec } from '@core/template/previewController';
-import { previewChoreography } from './insertPreview';
+import type { AnimationEngine } from '@motion/animation';
 
 export type TransitionCategory = 'fade' | 'slide' | 'zoom' | 'whip' | 'glitch' | 'wipe';
 export type TransitionPhase = 'enter' | 'exit';
@@ -650,58 +637,6 @@ export function solidRestTime(id: string, comp: CompBox): number {
   return bestScore <= 0 ? d / 2 : bestT;
 }
 
-// ── Apply against the live scene ───────────────────────────────────
-
-/**
- * The pose a recipe is computed against.
- *
- * `x`/`y` are the values being ANIMATED (the node's own transform props, and
- * therefore what the recipe must restore). `offsetX`/`offsetY` carry the gap
- * between those and where the layer actually appears — which is zero for an
- * ordinary layer and very much not zero for a GROUP.
- *
- * That distinction is the whole point. A group carries no Transform component:
- * it sits at its own origin while its children are laid out in absolute comp
- * coordinates. Reading it the old way gave `x=0, y=0, width=100, height=100`
- * for a motion-graphics element spread across the middle of a 1920×1080 comp,
- * so "slide off to the left" resolved to moving it 90px — a nudge, on screen
- * the whole time — and every zoom/whip scaled the wrong box. Applying a
- * transition to an inserted element therefore just displaced it slightly and
- * left it there, which is the "I applied a transition to my scene component and
- * it broke" report.
- *
- * `readGeometry` already unions a group's descendants into a real box (that is
- * what `offsetX/offsetY/width/height` mean there), so this defers to it and
- * only falls back to the raw props when the node has no drawable geometry.
- */
-function readPose(nodeId: string, comp: CompBox): LayerPose | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const t = node.components.find((c) => c.type === 'Transform');
-  const x = (t?.props.x as number) ?? node.transform.position.x ?? comp.width / 2;
-  const y = (t?.props.y as number) ?? node.transform.position.y ?? comp.height / 2;
-  const scaleX = (t?.props.scaleX as number) ?? node.transform.scale.x ?? 1;
-  const scaleY = (t?.props.scaleY as number) ?? node.transform.scale.y ?? 1;
-  const rotation = (t?.props.rotation as number) ?? node.transform.rotation ?? 0;
-
-  const geo = readGeometry(node);
-  if (geo && geo.width > 0 && geo.height > 0) {
-    return {
-      x, y, scaleX, scaleY, rotation,
-      width: geo.width,
-      height: geo.height,
-      // Scaled, because the offset is content measured in the node's own space.
-      offsetX: geo.offsetX * scaleX,
-      offsetY: geo.offsetY * scaleY,
-    };
-  }
-  return {
-    x, y, scaleX, scaleY, rotation,
-    width: (t?.props.width as number) ?? 100,
-    height: (t?.props.height as number) ?? 100,
-  };
-}
-
 /**
  * Which variant a layer should get, from its timeline clips: a clip edge
  * inside the transition window decides — clip END → exit, clip START →
@@ -717,17 +652,6 @@ export function detectPhase(
     if (c.start >= startFrame && c.start < endFrame) return 'enter';
   }
   return 'enter';
-}
-
-/** Resolve a `@blur` recipe onto a real blur effect's amount track (adds the
- *  effect when the layer has none yet). Returns the track prop path. */
-function ensureBlurTrack(nodeId: string): string | null {
-  let fx = getNodeEffects(nodeId).find((e) => e.type === 'blur');
-  if (!fx) {
-    addEffect(nodeId, 'blur');
-    fx = getNodeEffects(nodeId).find((e) => e.type === 'blur');
-  }
-  return fx ? effectPropPath(fx.id, 'amount') : null;
 }
 
 export interface ApplyTransitionResult {
@@ -756,148 +680,74 @@ export interface ApplyTransitionResult {
  */
 export const TRANSITION_PANEL_PROP = '__transitionPanel';
 
-/** True for a layer this library inserted to cover a cut. */
-function isTransitionPanel(node: SceneNode): boolean {
-  return node.components.some((c) => (c.props as Record<string, unknown>)[TRANSITION_PANEL_PROP] === true);
+// ── Layer mode, planned (block 3: no replica) ─────────────────────
+
+/** What a layer-mode transition reads of the document (transitionInsertEdits.ts answers from the mirror and the engine). */
+export interface TransitionLayerFacts {
+  /** The pose the recipe is computed against; null skips the layer. */
+  pose(nodeId: string): LayerPose | null;
+  /** The layer's bar on its composition's frame grid, and that rate (`detectPhase`). */
+  clips(nodeId: string): { fps: number; clips: ReadonlyArray<{ start: number; end: number }> };
+  /** The layer's effects, stack order (`type` = the effect's registry type). */
+  effects(nodeId: string): ReadonlyArray<{ id: string; type: string }>;
+}
+
+export interface LayerTransitionPlan {
+  result: ApplyTransitionResult | null;
+  /** Blur effects to add first, with the caller-chosen ids the keys already use. */
+  needBlur: Array<{ layer: string; id: string }>;
 }
 
 /**
- * The moving panel a solid-mode transition choreographs: a comp-sized SHAPE
- * layer, NOT an AE-style "solid".
- *
- * This used to call `insertSolid`, and that is why none of the wipes ever
- * wiped. A layer carrying `fx.solid` is, in buildSnapshot's own words, "pinned
- * to comp centre at comp size, REGARDLESS OF ITS TRANSFORM" — the flag exists
- * for backgrounds and matte bases, which should ignore their transform. So
- * every wipe, venetian bar, column and iris faithfully wrote x/y/scale
- * keyframes onto a layer whose x/y/scale the renderer discards. The result was
- * a full-frame block of colour sitting motionless over the composition at every
- * frame — visible, undeniably "there", and doing nothing. Only the two
- * opacity-driven items (dip to black, luma flash) ever worked, because opacity
- * is the one channel a pinned solid still honours.
- *
- * A plain shape sized to the comp looks identical when it is centred and
- * actually moves when it is animated. Returns the new node id, or null.
+ * Layer mode without touching the document: key the recipe onto `targets`'
+ * tracks on `engine` (comp seconds mapped by `keyTime`), resolving `@blur` to
+ * an existing blur effect or one the caller adds with the id returned in
+ * `needBlur`. The motion-blur switch is the caller's too.
  */
-function insertTransitionPanel(color: string, box: CompBox, name: string): string | null {
-  const rootId = activeCompRootId();
-  const node = makeNode('shape', name);
-  const t = node.components.find((c) => c.type === 'Transform');
-  if (!t) return null;
-  const p = t.props as Record<string, unknown>;
-  p[TRANSITION_PANEL_PROP] = true;
-  p.x = box.width / 2;
-  p.y = box.height / 2;
-  p.width = box.width;
-  p.height = box.height;
-  node.transform.position = { x: box.width / 2, y: box.height / 2 };
-  defaultSceneGraph.addChild(rootId, node);
-  defaultSceneGraph.setFill(node.id, { type: 'solid', color });
-  return node.id;
-}
-
-/**
- * Apply a transition at the playhead. With a selection, layer-mode items
- * keyframe every selected content layer (entrance or exit picked from each
- * layer's clip edges); without one (or for solid-only wipes) choreographed
- * colour panels covering the cut are inserted and selected. Returns null for
- * an unknown id.
- */
-export function applyTransitionItem(transId: string): ApplyTransitionResult | null {
+export function planLayerTransition(
+  transId: string,
+  targets: readonly string[],
+  t0: number,
+  box: CompBox,
+  facts: TransitionLayerFacts,
+  engine: AnimationEngine,
+  keyTime: (nodeId: string, compSeconds: number) => number,
+): LayerTransitionPlan {
   const item = getTransitionItem(transId);
-  if (!item) return null;
-  const comp = useCompositionStore.getState();
-  const box: CompBox = { width: comp.width || 1920, height: comp.height || 1080 };
-  const ws = useWorkspaceStore.getState();
-  const t0 = (ws.activeTabId ? ws.tabs[ws.activeTabId]?.time : 0) ?? 0;
-  const controller = getTimelineController();
-
-  if (!item.solidOnly) {
-    // Content layers only — cameras/lights/audio have no visual transition.
-    const targets = useSelectionStore.getState().ids.filter((id) => {
-      const n = defaultSceneGraph.getNode(id);
-      if (!n) return false;
-      // A panel left selected by the PREVIOUS apply is not a target — see
-      // TRANSITION_PANEL_PROP. Without this, transitions stack onto each other
-      // instead of accumulating as separate covers.
-      if (isTransitionPanel(n)) return false;
-      const k = readNodeKind(n);
-      return k !== 'camera' && k !== 'light' && k !== 'audio';
-    });
-    if (targets.length > 0) {
-      const written: string[] = [];
-      const phases: TransitionPhase[] = [];
-      for (const nodeId of targets) {
-        const pose = readPose(nodeId, box);
-        if (!pose) continue;
-        const fps = controller.fpsForNode(nodeId);
-        const phase = detectPhase(
-          controller.getLayersForNode(nodeId),
-          Math.round(t0 * fps),
-          Math.round((t0 + item.duration) * fps),
-        );
-        const recipe = transitionRecipe(transId, pose, box, phase);
-        if (!recipe) continue;
-        let blurTrack: string | null | undefined;
-        for (const kf of recipe) {
-          let prop = kf.prop;
-          if (prop === '@blur') {
-            if (blurTrack === undefined) blurTrack = ensureBlurTrack(nodeId);
-            if (!blurTrack) continue; // no effect stack → drop blur keys, keep the rest
-            prop = blurTrack;
-          }
-          liveKf(nodeId, prop, t0 + kf.t, kf.value, kf.ease);
-        }
-        if (item.motionBlur) setNodeMotionBlur(nodeId, true);
-        written.push(nodeId);
-        phases.push(phase);
-      }
-      if (written.length > 0) {
-        bumpScene();
-        // An entrance settles VISIBLE at the end; an exit settles invisible by
-        // definition, so it rests at its start instead. Resting an exit on its
-        // last frame would leave the user staring at the empty comp they were
-        // trying not to get.
-        const anyEnter = phases.some((p) => p === 'enter');
-        previewChoreography({
-          from: t0,
-          to: t0 + item.duration,
-          restAt: anyEnter ? t0 + item.duration : t0,
-        });
-        return { mode: 'layer', nodeIds: written, phases };
-      }
-    }
-  }
-
-  // Solid mode — insert comp-covering panel(s) and choreograph them over the cut.
-  const count = item.solidCount ?? 1;
-  const solidIds: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const solidId = insertTransitionPanel(item.a, box, count > 1 ? `${item.name} ${i + 1}` : item.name);
-    if (!solidId) continue;
-    let blurTrack: string | null | undefined;
-    for (const kf of panelRecipe(transId, box, i, count)) {
+  const needBlur: LayerTransitionPlan['needBlur'] = [];
+  if (!item || item.solidOnly) return { result: null, needBlur };
+  const written: string[] = [];
+  const phases: TransitionPhase[] = [];
+  for (const nodeId of targets) {
+    const pose = facts.pose(nodeId);
+    if (!pose) continue;
+    const { fps, clips } = facts.clips(nodeId);
+    const phase = detectPhase(clips, Math.round(t0 * fps), Math.round((t0 + item.duration) * fps));
+    const recipe = transitionRecipe(transId, pose, box, phase);
+    if (!recipe) continue;
+    let blurTrack: string | undefined;
+    for (const kf of recipe) {
       let prop = kf.prop;
-      // Same `@blur` resolution as layer mode — without it Blur Through would
-      // silently lose the one channel that makes it Blur Through.
       if (prop === '@blur') {
-        if (blurTrack === undefined) blurTrack = ensureBlurTrack(solidId);
-        if (!blurTrack) continue;
+        if (blurTrack === undefined) {
+          const effects = facts.effects(nodeId);
+          let id = effects.find((e) => e.type === 'blur')?.id;
+          if (!id) {
+            const taken = new Set(effects.map((e) => e.id));
+            id = 'transition_blur';
+            for (let n = 2; taken.has(id); n++) id = `transition_blur_${n}`;
+            needBlur.push({ layer: nodeId, id });
+          }
+          blurTrack = effectPropPath(id, 'amount');
+        }
         prop = blurTrack;
       }
-      liveKf(solidId, prop, t0 + kf.t, kf.value, kf.ease);
+      engine.setKeyframe(nodeId, prop, keyTime(nodeId, t0 + kf.t), kf.value, kf.ease);
     }
-    if (item.irisMask) applyIrisMask(solidId, box, t0, item.duration);
-    solidIds.push(solidId);
+    written.push(nodeId);
+    phases.push(phase);
   }
-  if (solidIds.length === 0) return null;
-  useSelectionStore.getState().set(solidIds);
-  bumpScene();
-  // Rest half-covered — see `solidRestTime`. The midpoint hides the comp behind
-  // a full-frame block; the end leaves nothing on screen at all. Both of those
-  // read as broken, in opposite directions.
-  previewChoreography({ from: t0, to: t0 + item.duration, restAt: t0 + solidRestTime(transId, box) });
-  return { mode: 'solid', nodeIds: solidIds };
+  return { result: written.length > 0 ? { mode: 'layer', nodeIds: written, phases } : null, needBlur };
 }
 
 // ── Animated card preview (isolated; the SAME recipe apply writes) ───
@@ -976,23 +826,4 @@ export function transitionPreviewSpec(item: TransitionItem): PreviewSpec {
  */
 export function createTransitionPlayer(canvas: HTMLCanvasElement, item: TransitionItem): { stop: () => void } {
   return mountPreview(canvas, transitionPreviewSpec(item));
-}
-
-/**
- * Iris: an animated ellipse mask on the solid — tiny at the edges of the
- * window, past-full-frame at the midpoint, so the solid irises in over the
- * outgoing shot and irises out to reveal the incoming one.
- */
-function applyIrisMask(solidId: string, box: CompBox, t0: number, duration: number): void {
-  const small = ellipseMask(12, 12);
-  const bigD = Math.hypot(box.width, box.height) * 1.05;
-  const big = ellipseMask(bigD, bigD);
-  addMaskPath(solidId, small);
-  const paths = getNodeMask(solidId).paths;
-  const pathId = paths[paths.length - 1]?.id;
-  if (!pathId) return;
-  const kt = (sec: number): number => compToKeyframeTime(solidId, sec);
-  keyframeMask(solidId, kt(t0)); // seed the animation with the tiny circle
-  setMaskPoints(solidId, pathId, big.points, kt(t0 + duration / 2));
-  setMaskPoints(solidId, pathId, small.points, kt(t0 + duration));
 }

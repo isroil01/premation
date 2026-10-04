@@ -25,8 +25,6 @@
  */
 
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
 import { renderComponentsOf } from '@core/scene/SceneGraph';
 
 /**
@@ -257,87 +255,6 @@ function iorOf(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? Math.max(1, Math.min(4, v)) : 1.52;
 }
 
-/** Assign (or clear) the height map asset a layer's material displaces by. */
-export function setNodeHeightMap(nodeId: string, assetId: string | undefined): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!t) return;
-  defaultSceneGraph.writeProp(nodeId, t.id, 'heightMapAssetId', assetId || undefined);
-  bumpScene();
-}
-
-/** Displacement amount, px along the normal (0 = off, unstored). */
-export function setNodeDisplacement(nodeId: string, px: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!t) return;
-  const v = Math.max(-2000, Math.min(2000, px));
-  defaultSceneGraph.writeProp(nodeId, t.id, 'displacement', v !== 0 ? v : undefined);
-  bumpScene();
-}
-
-/** Midpoint subdivision rounds before displacing, 0–3. */
-export function setNodeDisplacementSubdivisions(nodeId: string, rounds: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!t) return;
-  const v = Math.max(0, Math.min(3, Math.round(rounds)));
-  defaultSceneGraph.writeProp(nodeId, t.id, 'displacementSubdiv', v !== 0 ? v : undefined);
-  bumpScene();
-}
-
-/** Switch a layer's 3D reflectance model. */
-export function setNodeShadingModel(nodeId: string, shading: 'phong' | 'pbr' | 'toon'): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!node || !t) return;
-  defaultSceneGraph.writeProp(nodeId, t.id, 'shadingModel', shading === 'phong' ? undefined : shading);
-  bumpScene();
-}
-
-/** Cel band count for the toon model, 2–8 (3 is the unstored default). */
-export function setNodeToonBands(nodeId: string, bands: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!t) return;
-  const v = Math.max(2, Math.min(8, Math.round(bands)));
-  defaultSceneGraph.writeProp(nodeId, t.id, 'toonBands', v !== 3 ? v : undefined);
-  bumpScene();
-}
-
-/** Write one of the tri-state shadow switches; `on` is the unstored default. */
-export function setNodeShadowMode(
-  nodeId: string,
-  which: 'castsShadows' | 'acceptsShadows',
-  mode: 'off' | 'on' | 'only',
-): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!t) return;
-  // `false` rather than `'off'` for the off case: that is what the boolean-era
-  // readers persist and what old projects contain, so the two stay one value.
-  const stored = mode === 'on' ? undefined : mode === 'off' ? false : 'only';
-  defaultSceneGraph.writeProp(nodeId, t.id, which, stored);
-  bumpScene();
-}
-
-/** Write a 0–100 material response. `fallback` is the unstored default. */
-export function setNodeMaterialPct(
-  nodeId: string,
-  prop: 'lightTransmission' | 'ambient' | 'diffuse' | 'metal' | 'roughness'
-    | 'reflectionIntensity' | 'reflectionSharpness' | 'reflectionRolloff'
-    | 'transparency' | 'transparencyRolloff',
-  value: number,
-  fallback: number,
-): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!t) return;
-  const v = Math.max(0, Math.min(100, value));
-  defaultSceneGraph.writeProp(nodeId, t.id, prop, v !== fallback ? v : undefined);
-  bumpScene();
-}
-
 /** The unstored default for each 0–100 material response. */
 export const MATERIAL_PCT_DEFAULTS = {
   lightTransmission: 0,
@@ -351,58 +268,6 @@ export const MATERIAL_PCT_DEFAULTS = {
   transparency: 0,
   transparencyRolloff: 0,
 } as const;
-
-/** Index of refraction, 1–4; 1.52 (AE's default) is the unstored default. */
-export function setNodeIor(nodeId: string, ior: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!t) return;
-  const v = Math.max(1, Math.min(4, ior));
-  defaultSceneGraph.writeProp(nodeId, t.id, 'ior', v !== 1.52 ? v : undefined);
-  bumpScene();
-}
-
-export function setNodeSpecular(nodeId: string, specular: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!t) return;
-  const v = Math.max(0, Math.min(100, specular));
-  // Store only non-default values so the common case adds nothing to file.
-  defaultSceneGraph.writeProp(nodeId, t.id, 'specular', v > 0 ? v : undefined);
-  bumpScene();
-}
-
-export function setNodeShininess(nodeId: string, shininess: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!t) return;
-  const v = Math.max(1, shininess);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'shininess', v !== 32 ? v : undefined);
-  bumpScene();
-}
-
-export function setNodeAcceptsLights(nodeId: string, accepts: boolean): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!t) return;
-  // Store only the non-default 'true' so the common case adds nothing to file.
-  defaultSceneGraph.writeProp(nodeId, t.id, 'acceptsLights', accepts ? true : undefined);
-  bumpScene();
-}
-
-export function getNodeCastsShadows(nodeId: string): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeMaterial(node).castsShadows : true;
-}
-
-export function setNodeCastsShadows(nodeId: string, casts: boolean): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Transform');
-  if (!t) return;
-  // Store only the non-default 'false' so the common case adds nothing to file.
-  defaultSceneGraph.writeProp(nodeId, t.id, 'castsShadows', casts ? undefined : false);
-  bumpScene();
-}
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -486,50 +351,6 @@ export function materialParamsOf(m: MaterialOptions): MaterialParams {
     transparencyRolloff: m.transparencyRolloff,
     ior: m.ior,
   };
-}
-
-/** The named-material form of a layer's current surface, or null if unknown. */
-export function readNodeMaterialParams(nodeId: string): MaterialParams | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? materialParamsOf(readNodeMaterial(node)) : null;
-}
-
-/**
- * Write a whole material onto a layer.
- *
- * EVERY axis is written, including the ones equal to the default — a material
- * states a COMPLETE surface, so applying "Plastic" after "Gold" must not leave
- * gold's roughness behind. (The individual setters still store only non-default
- * values, so a default axis clears its prop rather than writing a redundant
- * one; the file stays as small as it was.)
- *
- * Nothing outside Material Options is touched: fill, opacity, strokes, geometry
- * and transform are none of a material's business. That is the difference
- * between this and the Style panel's material PRESETS, which state a colour too
- * — and which silently replaced the layer's colour back when they lived in the
- * Transform panel.
- */
-export function applyMaterialParams(nodeId: string, params: MaterialParams): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node?.components.some((c) => c.type === 'Transform')) return;
-  setNodeShadowMode(nodeId, 'castsShadows', params.castsShadows);
-  setNodeShadowMode(nodeId, 'acceptsShadows', params.acceptsShadows);
-  setNodeAcceptsLights(nodeId, params.acceptsLights);
-  setNodeMaterialPct(nodeId, 'lightTransmission', params.lightTransmission, MATERIAL_PCT_DEFAULTS.lightTransmission);
-  setNodeMaterialPct(nodeId, 'ambient', params.ambient, MATERIAL_PCT_DEFAULTS.ambient);
-  setNodeMaterialPct(nodeId, 'diffuse', params.diffuse, MATERIAL_PCT_DEFAULTS.diffuse);
-  setNodeMaterialPct(nodeId, 'metal', params.metal, MATERIAL_PCT_DEFAULTS.metal);
-  setNodeMaterialPct(nodeId, 'roughness', params.roughness, MATERIAL_PCT_DEFAULTS.roughness);
-  setNodeSpecular(nodeId, params.specular);
-  setNodeShininess(nodeId, params.shininess);
-  setNodeShadingModel(nodeId, params.shading);
-  setNodeToonBands(nodeId, params.toonBands);
-  setNodeMaterialPct(nodeId, 'reflectionIntensity', params.reflectionIntensity, MATERIAL_PCT_DEFAULTS.reflectionIntensity);
-  setNodeMaterialPct(nodeId, 'reflectionSharpness', params.reflectionSharpness, MATERIAL_PCT_DEFAULTS.reflectionSharpness);
-  setNodeMaterialPct(nodeId, 'reflectionRolloff', params.reflectionRolloff, MATERIAL_PCT_DEFAULTS.reflectionRolloff);
-  setNodeMaterialPct(nodeId, 'transparency', params.transparency, MATERIAL_PCT_DEFAULTS.transparency);
-  setNodeMaterialPct(nodeId, 'transparencyRolloff', params.transparencyRolloff, MATERIAL_PCT_DEFAULTS.transparencyRolloff);
-  setNodeIor(nodeId, params.ior);
 }
 
 /**

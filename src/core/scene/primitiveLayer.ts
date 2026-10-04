@@ -38,9 +38,6 @@ import {
 } from '@core/geometry/primitiveMesh';
 import { MESH_VERTEX_FLOATS } from '@core/geometry/extrudeMesh';
 import type { ModelPrimitiveEntry } from './modelMesh';
-import defaultSceneGraph from './DefaultSceneGraph';
-import { writeTransformProps } from './transformWrite';
-import { bumpScene } from '@stores/sceneStore';
 import type { SceneNode } from '@core/types';
 
 /** Component type carried by parametric-primitive layers. */
@@ -296,47 +293,6 @@ export function primitiveEntryFor(node: SceneNode, fill?: string): ModelPrimitiv
   };
 }
 
-// ── Writers (inspector + insert) ──────────────────────────────────────
-
-/** The node's Primitive component id, or null. */
-function primitiveComponentId(node: SceneNode): string | null {
-  return node.components.find((c) => c.type === PRIMITIVE_COMPONENT)?.id ?? null;
-}
-
-/**
- * Write one parameter. Goes through `writeProp` (the undoable scene-graph
- * path), never a mutation of the components view, and re-seeds the layer box
- * so the gizmo keeps hugging the object it now is.
- */
-export function setPrimitiveParam<K extends Exclude<keyof PrimitiveSpec, 'type'>>(
-  nodeId: string,
-  key: K,
-  value: PrimitiveSpec[K],
-): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const cid = primitiveComponentId(node);
-  if (!cid) return;
-  defaultSceneGraph.writeProp(nodeId, cid, key, value);
-  syncPrimitiveLayerBox(nodeId);
-  bumpScene();
-}
-
-/** Switch the shape. Shared parameters carry over; the layer box re-fits. */
-export function setPrimitiveType(nodeId: string, type: PrimitiveMeshType): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const cid = primitiveComponentId(node);
-  if (!cid) return;
-  defaultSceneGraph.writeProp(nodeId, cid, 'type', type);
-  // `primitiveType` on the Transform is the legacy marker other code and the
-  // timeline read; keep the two from disagreeing about what this layer is.
-  const t = node.components.find((c) => c.type === 'Transform');
-  if (t) defaultSceneGraph.writeProp(nodeId, t.id, 'primitiveType', type);
-  syncPrimitiveLayerBox(nodeId);
-  bumpScene();
-}
-
 /**
  * The layer box (width / height) a spec's mesh fits — what
  * `syncPrimitiveLayerBox` writes. Pure over the spec (the mesh bounds; the
@@ -346,29 +302,6 @@ export function setPrimitiveType(nodeId: string, type: PrimitiveMeshType): void 
 export function primitiveLayerBox(spec: PrimitiveSpec): { width: number; height: number } {
   const b = buildCached(spec).bbox;
   return { width: Math.max(1, Math.round(b.maxX - b.minX)), height: Math.max(1, Math.round(b.maxY - b.minY)) };
-}
-
-/**
- * Re-fit the layer's width/height to the mesh's own bounds.
- *
- * The quad never draws for a mesh layer, but width/height are still the
- * layer's BOX: selection, the anchor, snapping and the 3D gizmo all read it.
- * Leaving it at the size of whatever the primitive used to be put the handles
- * a long way from the object.
- */
-export function syncPrimitiveLayerBox(nodeId: string): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const spec = readNodePrimitive(node);
-  if (!spec) return;
-  const box = primitiveLayerBox(spec);
-  // Through the transform router, not writeProp: width/height are animatable,
-  // and a raw write to a tracked property is silently discarded by the
-  // renderer (see transformWrite.ts).
-  writeTransformProps(nodeId, [
-    { prop: 'width', value: box.width },
-    { prop: 'height', value: box.height },
-  ], 'Primitive size');
 }
 
 /** The component to push onto a NEW node (before it enters the graph). */

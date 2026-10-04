@@ -29,9 +29,9 @@ import type { KeyId, NodeId } from '@app-types/common';
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
 import { flicksToSeconds, type Keyframe, type LayerInfo, type PropertyInfo, type TimelineRow } from '@motion/engine-api';
 import { selectionKeyId, timelineTracksOf } from '@core/mirror/keySelection';
-import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
+import { mirrorMetaFacts, mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { trackRefIn, type MirrorTreeLike } from '@core/mirror/trackIndex';
-import { groupForProp, MASK_ANIM_PROP, type TimelineGroupKey } from '@core/timeline/propertyTree';
+import { groupForPropWith, MASK_ANIM_PROP, type TimelineGroupKey } from '@core/timeline/propertyTree';
 import { documentMirror } from '@stores/documentMirror';
 import { timelineRowsNow } from '@stores/timelineRows';
 import type { TimelinePropertyTrack, TimelineKeyframeRef } from './TimelineModel';
@@ -247,6 +247,7 @@ export function buildPropertyRows(nodeId: string, src: PropertyRowSources = mirr
     }
   }
 
-  for (const [prop, a] of animated) out.push({ ...animatedRow(nodeId, prop, a, src), group: groupForProp(prop, nodeId) });
+  const facts = mirrorMetaFacts(src.layer, src.tree);
+  for (const [prop, a] of animated) out.push({ ...animatedRow(nodeId, prop, a, src), group: groupForPropWith(prop, facts) });
   return out;
 }

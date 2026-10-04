@@ -7,7 +7,7 @@
 > proxies, bakes). Electron + React are the UI only and talk to the engine only
 > through `packages/engine-api` (`EngineClient`), reading through the mirror.
 > This supersedes the "TypeScript fallback kept behind a flag" rule of
-> `NATIVE_CORE_PLAN.md` §0 and `CLAUDE.md`; both are updated when phase 4 lands.
+> `NATIVE_CORE_PLAN.md` §0 and `CLAUDE.md`; both were updated 2026-10-04.
 > Work lands on `native-core` only; it is never merged into `main` or `dev`.
 >
 > **Confirmed 2026-09-28:** the C++ engine is the default now (viewport,
@@ -412,12 +412,47 @@ cache). What still references the TypeScript renderer, effects and evaluation
    the C++ binary or go with the behaviour they tested. Then delete the
    evaluation, media, text, audio, paint, svg, scene and animation runtime —
    minus the document helpers the UI keeps (relocated).
+   **Done 2026-10-03 — the app keeps no replica.** Every app reader moved
+   (`scripts/lint/replicaReach.cjs`: 0 reached declarations, `await import()`
+   followed); keyframe assistants run on a scratch `AnimationEngine` seeded
+   from `getMemberKeyframes` and send `setMemberKeyframes`
+   (`core/engine/memberEdits.ts`), comp ↔ keyframe-axis times come from
+   `mapLayerTime keyframeAxis` (both ways) and the overlay push (`pathNow[3]`),
+   paint continues with `updatePaintStroke append`. `engineInstance` creates no
+   LocalEngine when the engine owns the document; `OwnedEngineClient` forwards
+   nothing; `replicaRefresh` / `animEditBridge` are deleted. Undo / redo state,
+   the History panel, per-node inspector revisions and the chrome repaint read
+   the mirror.
+   **Done 2026-10-04 — the TypeScript engine is gone.** `LocalEngine`, its
+   handlers, the page scene graph / animation / timeline singletons and the
+   runtime only they reached are deleted (≈95k lines; what the app reaches
+   was decided by `scripts/lint/replicaReach.cjs`-style reachability from
+   `main.tsx` and the script worker, import side effects included). `engine()`
+   is the C++ engine or, with no engine bridge, an inert client that answers
+   `busy`. Command-log record / replay runs on the engine's `getCommandLog`
+   (`core/automation/commandLog.ts`). Every suite that tested app behaviour
+   runs on `premation-engine-headless` (`*.native.test.*`, the CI engine job);
+   the TS-engine behaviour and parity suites went with the engine.
 4. Sweep: parity generators + the TS harness, `packages/render-tests`' TS side
    (the native golden gate stays), native-bridge + napi, the eslint layering
    and ratchet configs, `EditorTabs`, deps (mp4box, polygon-clipping;
    onnxruntime-web is referenced only by config; fflate stays — recovery,
    portable .motion and the Lottie library use it), CLAUDE.md and
    NATIVE_CORE_PLAN.md (both still call the TS engine a fallback).
+   **Done 2026-10-04.** `packages/render-tests` is native-only (the golden
+   gate and its inspection scripts, which bundle only the engine-api codec);
+   native-bridge and napi were already gone. The block-3 reachability tool
+   (`replicaReach.cjs`) is deleted with its sinks; the engine-writes ratchet
+   reads 0 and the engine-reads ratchet is lowered to 2 (the path verbs'
+   `createSceneGraphPort` reads in `core/workspace/pathCommands.ts`). The
+   types-only `TimelineController.ts`, `IdMap` (TS↔C++ log translation) and
+   the process client's foreign-batch hook (it refreshed the replica) are
+   gone, as is EngineSurface's C3 `'beside'` picture-in-picture mode.
+   `EditorTabs` holds no engine fallback. The deps stay — each has an app
+   importer: mp4box (`core/video/mp4Demuxer.ts`), polygon-clipping (path ops /
+   merge paths), onnxruntime-web (object matte, `scripts/fetchObjectMatte.cjs`
+   and the CSP), fflate (recovery, portable .motion, Lottie library).
+   CLAUDE.md and NATIVE_CORE_PLAN.md say one engine.
 
 **Phase 4 — delete, in dependency order:** flags + fallbacks; JS plugin system;
 renderer + effects; media/text/audio; evaluation; parity generators + TS harness

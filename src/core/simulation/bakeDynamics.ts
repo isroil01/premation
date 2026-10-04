@@ -21,11 +21,6 @@
 
 import type { Keyframe } from '@motion/animation';
 import { smoothTrackKeyframes } from '@core/animation/keyframeAssistants';
-import { physicsPosesAt } from './physicsBodies';
-import type { BodySeed, PhysicsWorld } from './rigidBody';
-import { simulateParticles, type Particle, type ParticleConfig } from '@core/particles/particleSim';
-import { particlesFromSoA } from '@core/particles/statefulParticleSim';
-import { statefulParticleCache } from '@core/particles/statefulParticleCache';
 
 // ── Shared range / track plumbing ─────────────────────────────────────
 
@@ -97,62 +92,6 @@ export function finishBakedTrack(
   }));
 }
 
-// ── Physics: sampling (pure, given seeds) ─────────────────────────────
-
-/**
- * Step the shared solver over the range and read back each target's pose.
- *
- * Pure with respect to the scene: seeds and world come in, tracks come out,
- * with `t` in composition seconds. That is what makes the interesting half
- * testable without a scene graph, a timeline or a store.
- *
- * `rotation` appears only for bodies that opted into spin — `physicsPosesAt`
- * reports an angle only for those, and writing a constant 0 for the rest would
- * turn a rotation-lock into a rotation FREEZE, overwriting whatever the layer's
- * own rotation track was doing.
- */
-export function samplePhysicsTracks(
-  seeds: ReadonlyArray<BodySeed>,
-  world: PhysicsWorld,
-  targetIds: ReadonlyArray<string>,
-  opts: BakeRangeOptions,
-  compKey = 'bake',
-): BakedTrack[] {
-  const fps = opts.fps > 0 ? opts.fps : 30;
-  const frames = bakeFrames({ ...opts, fps });
-  const wanted = new Set(targetIds);
-
-  const samples = new Map<string, { x: Array<{ t: number; value: number }>; y: Array<{ t: number; value: number }>; rotation: Array<{ t: number; value: number }> }>();
-  for (const id of wanted) samples.set(id, { x: [], y: [], rotation: [] });
-
-  for (const frame of frames) {
-    const poses = physicsPosesAt(compKey, seeds, world, fps, frame);
-    const t = frame / fps;
-    for (const id of wanted) {
-      const pose = poses.get(id);
-      if (!pose) continue;
-      const bucket = samples.get(id)!;
-      bucket.x.push({ t, value: pose.x });
-      bucket.y.push({ t, value: pose.y });
-      if (pose.rotation !== undefined) bucket.rotation.push({ t, value: pose.rotation });
-    }
-  }
-
-  const out: BakedTrack[] = [];
-  for (const id of targetIds) {
-    const bucket = samples.get(id);
-    if (!bucket) continue;
-    // x and y are SEPARATE scalar tracks in this engine — there is no combined
-    // position property to write.
-    for (const prop of ['x', 'y', 'rotation'] as const) {
-      const list = bucket[prop];
-      if (list.length === 0) continue;
-      out.push({ nodeId: id, prop, keyframes: finishBakedTrack(list, opts.simplifyTolerance ?? 0) });
-    }
-  }
-  return out;
-}
-
 // ── Particles ─────────────────────────────────────────────────────────
 
 export interface ParticleBakeOptions extends BakeRangeOptions {
@@ -186,63 +125,4 @@ export interface ParticleSampleResult {
   seen: number;
   /** True when `seen` exceeded the cap and the list was trimmed. */
   capped: boolean;
-}
-
-/**
- * All particles alive anywhere in the range, grouped by identity.
- *
- * Identity is `Particle.index` — the birth index, which is why that field
- * exists at all (see its docstring). Grouping by array position instead would
- * re-assign every particle to a different layer the moment one of them died.
- *
- * Which particles survive the cap: the EARLIEST-born ones, so a capped bake is
- * the front of the emission rather than an arbitrary slice. Sorting by index
- * also makes the layer order stable across re-bakes.
- */
-export function sampleParticleLayers(
-  configAt: (frame: number) => ParticleConfig,
-  opts: ParticleBakeOptions,
-  cacheKey = 'bake',
-): ParticleSampleResult {
-  const fps = opts.fps > 0 ? opts.fps : 30;
-  const frames = bakeFrames({ ...opts, fps });
-  const cap = Math.max(1, Math.floor(opts.maxParticles ?? DEFAULT_PARTICLE_BAKE_CAP));
-
-  const byIndex = new Map<number, BakedParticle>();
-  for (const frame of frames) {
-    const cfg = configAt(frame);
-    const t = frame / fps;
-    for (const p of particlesAtFrame(cfg, frame, fps, cacheKey)) {
-      if (p.index === undefined) continue;
-      let rec = byIndex.get(p.index);
-      if (!rec) {
-        // The size at FIRST sighting is the layer's base size, so the layer is
-        // built at the particle's real size and its scale track starts at 1.
-        rec = { index: p.index, baseSize: Math.max(1, p.size), x: [], y: [], scale: [], opacity: [] };
-        byIndex.set(p.index, rec);
-      }
-      rec.x.push({ t, value: p.x });
-      rec.y.push({ t, value: p.y });
-      rec.scale.push({ t, value: p.size / rec.baseSize });
-      rec.opacity.push({ t, value: Math.max(0, Math.min(1, p.opacity)) * 100 });
-    }
-  }
-
-  const all = [...byIndex.values()].sort((a, b) => a.index - b.index);
-  return { particles: all.slice(0, cap), seen: all.length, capped: all.length > cap };
-}
-
-/** The renderer's own two entry points, chosen by sim mode — never a third. */
-function particlesAtFrame(
-  cfg: ParticleConfig,
-  frame: number,
-  fps: number,
-  cacheKey: string,
-): Particle[] {
-  if (cfg.simMode === 'stateful') {
-    const cache = statefulParticleCache(cacheKey, cfg, fps);
-    const state = cache.stateAt(Math.max(0, frame));
-    return particlesFromSoA(state, cfg, { frame, fps });
-  }
-  return simulateParticles(cfg, frame / fps);
 }

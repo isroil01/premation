@@ -27,8 +27,9 @@ import {
   MODEL_COMPONENT,
 } from './modelMesh';
 import type { SceneNode } from '@core/types';
-import { SCENE_KIND_PROP } from './seedDefaultScene';
+
 import { buildMorphTriGlb } from '@/__testHelpers__/buildTestGlb';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 describe('glTF morph parsing', () => {
   it('reads targets, mesh weights and the weights channel', () => {
@@ -161,8 +162,7 @@ describe('morphedMeshFor — morphed vertices', () => {
 /**
  * The panel-facing half: how many sliders a layer gets and what they are
  * called. Counted from the layer's own props rather than the mesh registry,
- * because the inspector renders on a freshly-opened document — before
- * `modelHydrate` has re-parsed any geometry.
+ * which only holds the models imported in this session.
  */
 describe('morph target discovery for the inspector', () => {
   const withProps = (props: Record<string, unknown>, modelProps?: Record<string, unknown>): SceneNode => ({

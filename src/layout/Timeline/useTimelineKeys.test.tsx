@@ -19,6 +19,7 @@ jest.mock('@core/commands/CommandSystem', () => ({
 jest.mock('@stores/historyStore', () => ({
   performUndo: jest.fn(),
   performRedo: jest.fn(),
+  historyView: () => ({ entries: [], index: 0, canUndo: true, canRedo: true }),
 }));
 
 function Host(): null {

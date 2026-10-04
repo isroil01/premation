@@ -9,7 +9,7 @@
  */
 
 import type { LayerInfo, LayerKind } from '@motion/engine-api';
-import type { SceneKind } from '@core/scene/seedDefaultScene';
+import type { SceneKind } from '@core/scene/sceneKind';
 
 const TO_UI: Record<LayerKind, SceneKind> = {
   null: 'null',

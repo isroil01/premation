@@ -468,6 +468,13 @@ export class DocumentMirror {
     return this.tree(layer);
   }
 
+  /** `loadTree` for several layers at once (unknown ids and duplicates are skipped). */
+  async loadTrees(layers: Iterable<string | null | undefined>): Promise<void> {
+    const ids = new Set<string>();
+    for (const l of layers) if (l) ids.add(l);
+    await Promise.all([...ids].map((l) => this.loadTree(l)));
+  }
+
   /** One node of a layer's property tree (loads the tree like `tree`). */
   property(layer: string, path: string): PropertyInfo | undefined {
     return this.tree(layer)?.nodes.get(path);
@@ -636,6 +643,15 @@ export class DocumentMirror {
       else keep.push(w);
     }
     this.revWaiters = keep;
+  }
+
+  /**
+   * A query answered NOW at the mirror's revision when the engine is in
+   * process (its `querySync` fast path), else null — the caller then asks
+   * asynchronously. Never a substitute for subscribing to what you render.
+   */
+  querySync<T extends QueryType>(q: QueryOf<T>): EngineResult<QueryResults[T]> | null {
+    return this.source.querySync?.(q) ?? null;
   }
 
   /** Resolves when no fetch is in flight (tests, and the benchmark's settle step). */

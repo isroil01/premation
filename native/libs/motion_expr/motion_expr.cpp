@@ -188,9 +188,11 @@ motion_status motion_expr_compile(const char* src, size_t len, motion_expr** out
 }
 
 int32_t motion_expr_compile_error(const motion_expr* expr, char* buf, size_t cap) {
-  if (expr == nullptr || !expr->expr.compile_error()) return 0;
+  if (expr == nullptr) return 0;
+  const auto& error = expr->expr.compile_error();
+  if (!error) return 0;
   try {
-    if (buf != nullptr && cap > 0) copy_utf8(ex::utf16_to_utf8(*expr->expr.compile_error()), std::span<char>(buf, cap));
+    if (buf != nullptr && cap > 0) copy_utf8(ex::utf16_to_utf8(*error), std::span<char>(buf, cap));
   } catch (...) {
     if (buf != nullptr && cap > 0) std::span<char>(buf, cap)[0] = '\0';
   }

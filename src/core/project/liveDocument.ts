@@ -15,14 +15,15 @@
  *   saveLiveDocument(p, opts)  `saveProject{path, copy, format}` — the engine
  *                              writes (temp + rename)
  *
- * Flag off (the TypeScript engine owns the document — this release's default)
- * every function is exactly the old page path: `captureDocument()` /
- * `restoreDocument()` synchronously underneath, no engine round trip.
+ * There is one engine (docs/TS_ENGINE_REMOVAL.md): these always go to it —
+ * the page never captures or restores its replica. (`liveDocumentFromEngine`
+ * stays for the callers that still carry a page branch; it answers whether
+ * the session's engine owns the document.)
  *
  * No React (src/core).
  */
 
-import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
+import type { EditorDocument } from '@core/api/cloudDocument';
 import type { EngineClient, ProjectFormat, SaveProjectResult } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { engineOwnsDocumentNow } from '@core/engine/engineOwnership';
@@ -52,23 +53,16 @@ export function liveDocumentFromEngine(): boolean {
 
 /** The document as the owner holds it — what a save would write. */
 export async function liveDocument(): Promise<EditorDocument> {
-  if (!owned()) return captureDocument();
   const r = await client().query({ type: 'exportDocument' });
   if (!r.ok) throw new LiveDocumentError('exportDocument', r.error.code, r.error.message);
   return JSON.parse(new TextDecoder().decode(r.value.document)) as EditorDocument;
 }
 
 /**
- * Replace the live document. With the engine as owner this is ONE undoable
- * entry labelled `label` (the History panel shows it; Undo brings back the
- * previous document). Flag off: the page's `restoreDocument`, as before — the
- * caller keeps whatever history handling it already had.
+ * Replace the live document: ONE undoable entry labelled `label` (the History
+ * panel shows it; Undo brings back the previous document).
  */
 export async function replaceLiveDocument(doc: EditorDocument, label: string): Promise<void> {
-  if (!owned()) {
-    restoreDocument(doc);
-    return;
-  }
   const r = await client().execute({ type: 'restoreDocument', document: new TextEncoder().encode(JSON.stringify(doc)), label });
   if (!r.ok) throw new LiveDocumentError('restoreDocument', r.error.code, r.error.message);
 }

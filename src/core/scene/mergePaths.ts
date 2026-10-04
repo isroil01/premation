@@ -16,14 +16,11 @@
  */
 
 import polygonClipping, { type Polygon, type MultiPolygon, type Pair } from 'polygon-clipping';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
 import type { SceneNode, ID } from '@core/types';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { shapeOutline } from '@core/scene/pathOps';
 import { resolveCornerRadii, clampCornerRadii, type CornerRadiiProps } from '@core/scene/cornerRadii';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { useSelectionStore } from '@stores/selectionStore';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import type { FragmentBuilder } from '@/engine-client/fragmentBuilder';
 
 export type MergeOp = 'union' | 'subtract' | 'intersect' | 'exclude';
@@ -419,13 +416,6 @@ export function mergeableOf(nodes: ReadonlyArray<SceneNode>): { polys: Polygon[]
   return { polys, sources };
 }
 
-/** The selection's mergeable layers in the page replica (the live-merge reference only). */
-function collectMergeableSelection(): { polys: Polygon[]; sources: SceneNode[] } {
-  return mergeableOf(useSelectionStore.getState().ids
-    .map((id) => defaultSceneGraph.getNode(id))
-    .filter((n): n is SceneNode => !!n));
-}
-
 /** A live boolean's result layer, planned from the selection (nothing written yet). */
 export interface LiveMergePlan {
   /** The result layer (a shape storing `booleanOp` + `booleanSources`), not in the document. */
@@ -434,72 +424,6 @@ export interface LiveMergePlan {
   parentId: string;
   /** The operands, in selection order — marked `layer/booleanOperand` and hidden. */
   sourceIds: string[];
-}
-
-/**
- * LIVE merge — sources stay editable/animatable. Plans a result layer that
- * re-evaluates the boolean each frame; the operands are marked as such and
- * hidden from paint. Pure: it reads the selection and the document and writes
- * nothing — the TypeScript reference of the engine's `createLiveMerge` (the
- * result pasted, the operands flagged through the `layer/booleanOperand`
- * property and `setLayerSwitches`). Null when fewer than two closed paths are
- * selected or the boolean is empty.
- */
-export function planLiveMerge(op: MergeOp): LiveMergePlan | null {
-  const { polys, sources } = collectMergeableSelection();
-  if (polys.length < 2) return null;
-
-  // Sanity-check the boolean produces geometry before wiring the live link.
-  const probe = booleanPolygons(polys, op);
-  if (probe.length === 0) return null;
-
-  const parentId = sources[0]!.parent ?? activeCompRootId();
-  const id = `live_merge_${(mergeSeq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
-
-  // Seed result transform from the union bounds of the static probe.
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const polygon of probe) {
-    for (const ring of polygon) {
-      for (const [px, py] of ring) {
-        if (px < minX) minX = px;
-        if (py < minY) minY = py;
-        if (px > maxX) maxX = px;
-        if (py > maxY) maxY = py;
-      }
-    }
-  }
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  const sourceIds = sources.map((s) => s.id);
-
-  const node: SceneNode = {
-    id: id as ID,
-    name: `Boolean (${op})`,
-    parent: null,
-    children: [],
-    transform: { position: { x: cx, y: cy }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true,
-    locked: false,
-    components: [
-      {
-        id: `${id}_t`,
-        type: 'Transform',
-        props: {
-          [SCENE_KIND_PROP]: 'shape',
-          x: cx, y: cy, rotation: 0, scaleX: 1, scaleY: 1, anchorX: 0, anchorY: 0,
-          width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY),
-          shapeType: 'path',
-        },
-      },
-      ...cloneStyle(sources[0]!, id, {
-        [BOOLEAN_OP_PROP]: op,
-        [BOOLEAN_SOURCES_PROP]: sourceIds,
-      }),
-      { id: `${id}_g`, type: 'Geometry', props: { points: [] } },
-    ],
-  };
-
-  return { node, parentId: parentId as string, sourceIds };
 }
 
 /**

@@ -10,6 +10,8 @@
  */
 
 import { getCommandSystem } from '@core/commands/CommandSystem';
+import { getEventBus } from '@core/events/EventBus';
+import { documentMirror } from './documentMirror';
 
 /**
  * Empty the undo stack (the app's history service). A LOAD boundary — open a
@@ -56,17 +58,76 @@ export function setHistoryRoute(route: HistoryRoute | null): void {
  * service steps directly.
  */
 export function performUndo(): Promise<void> {
-  if (!getCommandSystem().getHistory().canUndo()) return Promise.resolve();
+  // The engine refuses an undo with nothing to undo (nothingToUndo): no gate.
   if (historyRoute) return historyRoute.step('undo').then(() => undefined, () => undefined);
+  if (!getCommandSystem().getHistory().canUndo()) return Promise.resolve();
   getCommandSystem().getHistory().undo();
   return Promise.resolve();
 }
 
 export function performRedo(): Promise<void> {
-  if (!getCommandSystem().getHistory().canRedo()) return Promise.resolve();
   if (historyRoute) return historyRoute.step('redo').then(() => undefined, () => undefined);
+  if (!getCommandSystem().getHistory().canRedo()) return Promise.resolve();
   getCommandSystem().getHistory().redo();
   return Promise.resolve();
+}
+
+/** One row of the history list, oldest first. */
+export interface HistoryRow {
+  label: string;
+}
+
+/** The history as the UI shows it: the rows, the applied one (-1 = none) and what can step. */
+export interface HistoryView {
+  entries: readonly HistoryRow[];
+  index: number;
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+const EMPTY_VIEW: HistoryView = { entries: [], index: -1, canUndo: false, canRedo: false };
+
+/**
+ * The history the engine walks (the mirror's `historyChanged`), with an engine
+ * running; else the page history service (headless). Nothing yet = empty.
+ */
+export function historyView(): HistoryView {
+  if (historyRoute) {
+    let h;
+    try {
+      h = documentMirror().history;
+    } catch {
+      h = null;
+    }
+    if (!h) return EMPTY_VIEW;
+    return {
+      entries: h.state.entries.map((e) => ({ label: e.label })),
+      index: h.state.position - 1,
+      canUndo: h.state.canUndo,
+      canRedo: h.state.canRedo,
+    };
+  }
+  try {
+    const s = getCommandSystem().getHistory();
+    return { entries: s.getEntries().map((e) => ({ label: e.label })), index: s.getIndex(), canUndo: s.canUndo(), canRedo: s.canRedo() };
+  } catch {
+    return EMPTY_VIEW;
+  }
+}
+
+/** Told whenever `historyView()` may have changed. Returns the unsubscribe. */
+export function subscribeHistory(listener: () => void): () => void {
+  let offMirror: (() => void) | null = null;
+  try {
+    offMirror = documentMirror().subscribe(['history'], listener);
+  } catch {
+    // No engine registered (headless): the page history's own event only.
+  }
+  const sub = getEventBus().on('UndoStackChanged', listener);
+  return () => {
+    offMirror?.();
+    sub.dispose();
+  };
 }
 
 export function performJumpTo(index: number): Promise<void> {

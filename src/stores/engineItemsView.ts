@@ -19,10 +19,8 @@
  * media layer resolves it like any other path.
  *
  * Only engine → store: every UI write to items already is an engine command
- * (B3, `lint:engine-writes`), so there is nothing to send back. A replica
- * restore (`isRestoringDocument()`) that lands while this is bound is
- * overwritten by the next mirror change, and the mirror's value is applied at
- * bind time.
+ * (B3, `lint:engine-writes`), so there is nothing to send back. The mirror's
+ * value is applied at bind time.
  */
 
 import type { CompSettings, ItemInfo } from '@motion/engine-api';
@@ -30,6 +28,7 @@ import { useAssetStore, replaceProjectItems, type AssetFolder, type ImportedAsse
 import { useProjectStore, type CompositionSettings } from './projectStore';
 import type { MirrorComp } from './documentMirror';
 import { channelsToHex } from '@core/mirror/paintFields';
+import { rateToFps } from '@core/mirror/compFacts';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { interpretOf, itemMediaType, rationalFps } from '@core/mirror/itemAssets';
 
@@ -39,6 +38,8 @@ export { interpretOf };
 /** What the binders read from the document mirror (DocumentMirror satisfies it). */
 export interface ItemsMirrorView {
   readonly items: ReadonlyMap<string, ItemInfo>;
+  /** Bumps when the mirror refetches the whole document (a project opened, a reload). */
+  readonly generation?: number;
   readonly comps: ReadonlyMap<string, MirrorComp>;
   subscribe(keys: readonly string[], listener: () => void): () => void;
 }
@@ -120,9 +121,21 @@ export function itemsFromMirror(
  */
 export function bindEngineItems(mirror: ItemsMirrorView): () => void {
   let last = '';
+  // Footage that appears in an ordinary edit (not with a whole document — the
+  // first apply, a project opened) was just imported, wherever from: stamp it
+  // so the Assets panel reveals and selects it (the engine stores no import time).
+  let known: Set<string> | null = null;
+  let knownGeneration = mirror.generation;
   const apply = (): void => {
     const s = useAssetStore.getState();
     const next = itemsFromMirror(mirror.items, s);
+    const fresh = known !== null && mirror.generation === knownGeneration;
+    if (fresh) {
+      const now = Date.now();
+      for (const a of next.assets) if (!known!.has(a.id) && a.importedAt === undefined) a.importedAt = now;
+    }
+    known = new Set(next.assets.map((a) => a.id));
+    knownGeneration = mirror.generation;
     const key = JSON.stringify(next);
     // Unchanged (an event for a composition item, a comp-only batch): no store write, no bus traffic.
     if (key === last && key === JSON.stringify({ assets: s.assets, folders: s.folders })) return;
@@ -162,7 +175,8 @@ function parseJson(text: string | undefined): unknown {
  * timeline / scene graph, not this record.
  */
 export function compFromInfo(id: string, s: CompSettings, item: ItemInfo | undefined, prev: CompositionSettings | undefined): CompositionSettings {
-  const fps = s.frameRate.den > 0 && s.frameRate.num > 0 ? s.frameRate.num / s.frameRate.den : prev?.fps ?? 30;
+  // The rate as typed (29.97, not 30000/1001): what every other reader of the settings shows.
+  const fps = rateToFps(s.frameRate, prev?.fps ?? 30);
   const next: StoredComp = {
     ...((prev ?? {}) as StoredComp),
     id,

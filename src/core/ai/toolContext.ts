@@ -59,8 +59,7 @@ import { activeCompRootId } from '@core/scene/activeComp';
 import { resetSceneWindow } from './sceneWindow';
 import { setRuntimeStyle } from './design';
 import { setEntranceSeed } from './archetypes';
-import { keyframeToCompTime } from '@core/timeline/TimelineController';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { POLYSTAR_FX_PROP } from '@core/scene/polystar';
 import { nextDeviceNameIn } from '@core/mirror/deviceNames';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -78,7 +77,7 @@ import { layerSubtree } from '@core/mirror/docFacts';
 import { membersOf, numbersOfValue, trackRefIn } from '@core/mirror/trackIndex';
 import { keyTargetFor, keyAddressable, separateDimensionsCommand, apiColorOfHex, effectParamCommand, ENGINE_EASINGS, activePlayheadSeconds } from '@core/engine/trackWrites';
 import { componentOfType, fieldWrite, propRefForTrack, memberWrite, memberWrites } from '@core/engine/propRefs';
-import { apiUnitFactor, keyAxisSeconds } from '@core/engine/props';
+import { apiUnitFactor } from '@core/engine/props';
 import { fpsToRational } from '@core/engine/time';
 import type { SceneNode } from '@core/types';
 import { spreadPlacement } from './propOwner';
@@ -604,6 +603,8 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
     isValidProp: async (_nodeId, prop) => isAnimatableProp(prop),
 
     setKeyframe: async (nodeId, rawProp, t, value, easing) => {
+      // The facade resolves tracks on the layer's tree: load it (a layer this run just made is not yet).
+      await treeOf(nodeId);
       const prop = await effectTrackOf(nodeId, rawProp);
       if (!Number.isFinite(value)) throw new AiEngineError('invalidArgument', `keyframe value for '${prop}' is not a finite number`);
       if (easing !== undefined && !ENGINE_EASINGS.has(easing)) throw new AiEngineError('invalidArgument', `unknown easing '${easing}' for '${prop}'`);
@@ -632,6 +633,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
     },
 
     setPointsKeyframe: async (nodeId, prop, t, points) => {
+      await treeOf(nodeId);
       // A puppet pin's Position (`puppet/pins/<pin>/position`): one vec2 key at
       // comp time t, the pin's data track in the TS engine.
       const r = propRefForTrack(nodeId, prop);
@@ -643,6 +645,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
     },
 
     removeKeyframe: async (nodeId, prop, t) => {
+      await treeOf(nodeId);
       // AE: deleting a property's last key leaves it static at that key's value
       // (G1). A lone member of an unseparated vector has no key of its own to
       // delete — its key is the whole vector's.
@@ -655,6 +658,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
     // Easing and handles patch the engine's key at t — on one member of an
     // unseparated vector, that dimension's own ease (`dim`). No key there: no-op.
     setEasing: async (nodeId, prop, t, easing) => {
+      await treeOf(nodeId);
       if (!ENGINE_EASINGS.has(easing)) throw new AiEngineError('invalidArgument', `unknown easing '${easing}' for '${prop}'`);
       const k = keyRefFor(nodeId, prop);
       if (!k) throw new AiEngineError('unsupported', `set_easing ${prop}: ${LEGACY_GAPS.perMemberKey}`);
@@ -662,6 +666,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
       if (id) await session.apply([{ type: 'updateKeyframes', patches: [{ id, easing: easing as Easing, ...(k.dim !== undefined ? { dim: k.dim } : {}), spatialIn: [], spatialOut: [] }] } as Command]);
     },
     setBezier: async (nodeId, prop, t, bezier) => {
+      await treeOf(nodeId);
       const k = keyRefFor(nodeId, prop);
       if (!k) throw new AiEngineError('unsupported', `set_easing ${prop}: ${LEGACY_GAPS.perMemberKey}`);
       const id = await keyIdAt(session, k.ref, t);
@@ -671,6 +676,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
       }
     },
     setRoving: async (nodeId, prop, t, roving) => {
+      await treeOf(nodeId);
       // Roving is a property of the (spatial) KEY: on merged Position the API
       // key is the whole vector, which is AE's rule (x and y rove together).
       const r = propRefForTrack(nodeId, prop);
@@ -679,6 +685,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
       if (id) await session.apply([{ type: 'updateKeyframes', patches: [{ id, roving, spatialIn: [], spatialOut: [] }] } as Command]);
     },
     setExpression: async (nodeId, prop, src) => {
+      await treeOf(nodeId);
       const r = propRefForTrack(nodeId, prop);
       if (!r || !r.members.includes(prop)) throw new AiEngineError('unsupported', `${LEGACY_GAPS.expression}: ${prop}`);
       // A rewrite keeps the expression's enabled state (a new one is on).
@@ -691,6 +698,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
     getExpressionError: async (nodeId, prop) => (await trackExpressionOf(nodeId, prop))?.error || null,
     isExpressionEnabled: async (nodeId, prop) => (await trackExpressionOf(nodeId, prop))?.enabled ?? false,
     tracks: async (nodeId) => {
+      await treeOf(nodeId);
       // The engine keys a property as a whole: every member of a keyed vector
       // lists the property's keys (stored units, composition seconds).
       const tree = await treeOf(nodeId);
@@ -713,6 +721,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
       return out;
     },
     evaluate: async (nodeId, t) => {
+      await treeOf(nodeId);
       // The animated members' evaluated values at comp time t, asked of the engine.
       const tree = await treeOf(nodeId);
       const paths = [...documentMirror().layerKeyframes(nodeId).keys()].filter((p) => tree?.nodes.has(p));
@@ -731,6 +740,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
       return out;
     },
     applyPreset: async (nodeId, name, atTime) => {
+      await treeOf(nodeId);
       const preset = listPresets().find((p) => p.name === name);
       if (!preset) return false;
       // Composition seconds: the engine writes the preset's keys on the
@@ -806,9 +816,13 @@ export function createCompFacade(session: AiEngineSession = freeSession()): Comp
 export function createTimeFacade(): TimeFacade {
   // Both directions ride the CANONICAL keyframe axis (what buildSnapshot
   // samples) — the same conversion the engine applies to every keyframe time.
+  const map = async (nodeId: string, seconds: number, outward: boolean): Promise<number> => {
+    const r = await engine().query({ type: 'mapLayerTime', layer: nodeId, time: secondsToFlicks(seconds), outward, keyframeAxis: true });
+    return r.ok && r.value.time !== undefined ? flicksToSeconds(r.value.time) : seconds;
+  };
   return {
-    toLayerTime: async (nodeId, compSeconds) => keyAxisSeconds(nodeId, compSeconds),
-    toCompTime: async (nodeId, layerSeconds) => keyframeToCompTime(nodeId, layerSeconds),
+    toLayerTime: (nodeId, compSeconds) => map(nodeId, compSeconds, false),
+    toCompTime: (nodeId, layerSeconds) => map(nodeId, layerSeconds, true),
   };
 }
 

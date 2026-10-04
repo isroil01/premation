@@ -1,0 +1,198 @@
+/**
+ * B3 inspector migration, second slice: the Fill & Stroke preset, Group /
+ * Detach Parts, the Style Presets grid and the Parent & Link JUMP go through
+ * the engine API. Pinned on the app engine (`setupAppEngine`, the real
+ * history): one entry per user action, the document state it lands, and undo
+ * restoring the document exactly.
+ */
+
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { clearHistory, setupAppEngine, historyLabels, settleEdits, storedTrack } from '@core/engine/__testHelpers__/appEngine';
+import { docView } from '@core/engine/__testHelpers__/docView';
+import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
+import type { Harness } from '@core/engine/__testHelpers__/appEngine';
+import { stylePreset } from '@core/style/stylePresets';
+import { useSelectionStore } from '@stores/selectionStore';
+import { applyAppearancePresetEdit, groupSelection, ungroupNode } from './AppearanceSection';
+import { StylePresetsSection, stylePresetCommands } from './StylePresetsSection';
+import { parentLayer } from './inspectorEdits';
+import { edit } from '@core/engine/uiEdits';
+
+jest.useFakeTimers();
+
+let h: Harness;
+let s: Scene;
+beforeEach(async () => {
+  h = await setupAppEngine({ panels: true });
+  s = await buildScene(h);
+  useSelectionStore.getState().set([]);
+  await clearHistory();
+});
+afterEach(async () => {
+  cleanup();
+  await h.dispose();
+});
+
+const idle = async (): Promise<void> => { await act(async () => { await settleEdits(); }); };
+const parentOf = async (id: string): Promise<string | null | undefined> => (await docView()).getNode(id)?.parent;
+/** A track's value at 0 s in stored units, as the engine evaluates it. */
+/** The layer's stored backdrop blur (a style field, not a track). */
+const backdropBlur = async (id: string): Promise<unknown> =>
+  (await docView()).getNode(id)!.components.map((c) => (c.props as Record<string, unknown>).backdropBlur).find((v) => v !== undefined);
+
+const stored = (id: string, prop: string): Promise<number | undefined> => storedTrack(id, prop, 0);
+
+test('a Fill & Stroke preset over the selection is ONE entry: solid fill, stroke patched from the default; undo exact', async () => {
+  const before = (await h.doc());
+  await applyAppearancePresetEdit([s.A, s.B], { fillColor: '#ff0000', 'stroke.enabled': true, 'stroke.width': 7, 'stroke.color': '#00ff00' });
+  expect((await historyLabels())).toEqual(['Apply Fill & Stroke preset']);
+  for (const id of [s.A, s.B]) {
+    expect((await docView()).getNodeFill(id)).toEqual({ type: 'solid', color: '#ff0000' });
+    expect((await docView()).getNodeStroke(id)).toMatchObject({ enabled: true, width: 7, color: '#00ff00' });
+  }
+  await h.run({ type: 'undo' });
+  expect((await h.doc())).toBe(before);
+});
+
+test('an empty preset fill colour removes the primary fill', async () => {
+  await applyAppearancePresetEdit([s.B], { fillColor: '#123456' });
+  await applyAppearancePresetEdit([s.B], { fillColor: '' });
+  // The fill PAINT is gone (`layer/fillPaint` null); the layer falls back to its base colour.
+  const { values: [v] } = await h.query({ type: 'getPropertyValues', props: [{ layer: s.B, path: 'layer/fillPaint' }], time: 0, evaluated: false });
+  expect(v?.value).toEqual({ kind: 'json', value: 'null' });
+  expect((await historyLabels())).toEqual(['Apply Fill & Stroke preset', 'Apply Fill & Stroke preset']);
+});
+
+test('Group Parts on siblings is groupLayers: ONE entry, the group selected; undo exact', async () => {
+  const before = (await h.doc());
+  await groupSelection([s.A, s.B]);
+  const group = (await parentOf(s.A))!;
+  expect(group).not.toBe(s.comp);
+  expect((await parentOf(s.B))).toBe(group);
+  expect((await docView()).getNode(group)?.name).toBe('Group Assembly');
+  expect(useSelectionStore.getState().ids).toEqual([group]);
+  expect((await historyLabels())).toEqual(['Group Layers']);
+  await h.run({ type: 'undo' });
+  expect((await h.doc())).toBe(before);
+});
+
+test('Group Parts across parents moves the nested layers to the root keeping their world pose, then groups — ONE entry; undo exact', async () => {
+  await h.run({ type: 'setParent', layers: [s.A], parent: s.P, keepWorldTransform: true });
+  await h.run({ type: 'setProperty', prop: { layer: s.P, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 300, y: 200 } } });
+  await clearHistory();
+  const world = async (): Promise<number[]> => (await h.query({ type: 'getLayerTransforms', layers: [s.A], time: 0 })).transforms[0]!.matrix;
+  const worldBefore = await world();
+  const before = (await h.doc());
+  await groupSelection([s.A, s.T]);
+  const group = (await parentOf(s.A))!;
+  expect(group).not.toBe(s.P);
+  expect((await parentOf(s.T))).toBe(group);
+  expect((await parentOf(group))).toBe(s.comp);
+  expect((await historyLabels())).toEqual(['Group Layers']);
+  expect(useSelectionStore.getState().ids).toEqual([group]);
+  const worldAfter = await world();
+  worldBefore.forEach((v, i) => expect(worldAfter[i]).toBeCloseTo(v, 3));
+  await h.run({ type: 'undo' });
+  expect((await h.doc())).toBe(before);
+});
+
+test('Detach Parts on a group layer is ungroupLayer: ONE entry, the parts selected; undo exact', async () => {
+  const { layer: group } = await h.run({ type: 'groupLayers', layers: [s.A, s.B], name: 'G' }) as { layer: string };
+  await clearHistory();
+  const before = (await h.doc());
+  await ungroupNode(group, [s.A, s.B]);
+  expect((await docView()).getNode(group)).toBeUndefined();
+  expect((await parentOf(s.A))).toBe(s.comp);
+  expect((await parentOf(s.B))).toBe(s.comp);
+  expect([...useSelectionStore.getState().ids].sort()).toEqual([s.A, s.B].sort());
+  expect((await historyLabels())).toEqual(['Ungroup']);
+  await h.run({ type: 'undo' });
+  expect((await h.doc())).toBe(before);
+});
+
+test('Detach Parts on a parent that is not a group moves its children to the root and deletes it — ONE entry; undo exact', async () => {
+  await h.run({ type: 'setParent', layers: [s.A], parent: s.P, keepWorldTransform: true });
+  await clearHistory();
+  const before = (await h.doc());
+  await ungroupNode(s.P, [s.A]);
+  expect((await docView()).getNode(s.P)).toBeUndefined();
+  expect((await parentOf(s.A))).toBe(s.comp);
+  expect(useSelectionStore.getState().ids).toEqual([s.A]);
+  expect((await historyLabels())).toEqual(['Ungroup']);
+  await h.run({ type: 'undo' });
+  expect((await h.doc())).toBe(before);
+});
+
+test('a style preset the engine addresses whole is ONE entry: fills, strokes, styles, blend, corners; undo exact', async () => {
+  // A style the preset does not state is removed (a preset is a complete look).
+  await h.run({ type: 'addPropertyGroup', layer: s.A, parent: 'styles', matchName: 'style:innerGlow', init: [] });
+  await clearHistory();
+  const before = (await h.doc());
+  const preset = stylePreset('sticker')!;
+  const node = (await docView()).getNode(s.A)!;
+  const plan = stylePresetCommands(s.A, node.components.find((c) => c.type === 'Style'), preset, '#2b7eff', 0);
+  expect(plan.unaddressed).toEqual([]);
+  const res = await edit('Apply Sticker Style', plan.cmds);
+  expect(res.ok).toBe(true);
+  expect((await historyLabels())).toEqual(['Apply Sticker Style']);
+  expect((await docView()).getNodeFills(s.A)).toEqual(preset.fills('#2b7eff'));
+  expect((await docView()).getNodeStrokes(s.A).map((x) => [x.color, x.width])).toEqual(preset.strokes!('#2b7eff').map((x) => [x.color, x.width]));
+  const st = (await docView()).getNodeLayerStyles(s.A);
+  expect(st.innerGlow).toBeUndefined();
+  expect(st.dropShadow).toMatchObject({ enabled: true, color: '#000000', distance: 10, angle: 90, blur: 12 });
+  expect(st.dropShadow!.opacity).toBeCloseTo(0.45);
+  // Left out of the preset = off in the stored object, not the new-style default (on).
+  expect(st.dropShadow!.useGlobalLight).toBeFalsy();
+  expect((await docView()).getNodeBlend(s.A)).toBe('normal');
+  for (const t of ['cornerRadius', 'cornerRadiusTL', 'cornerRadiusTR', 'cornerRadiusBR', 'cornerRadiusBL']) expect(await stored(s.A, t)).toBe(16);
+  await h.run({ type: 'undo' });
+  expect((await h.doc())).toBe(before);
+});
+
+test('Glass sets the backdrop blur and switching away clears it; a 3D layer takes a material preset — each ONE entry, undo exact', async () => {
+  const style = async () => (await docView()).getNode(s.A)!.components.find((c) => c.type === 'Style');
+  const before = (await h.doc());
+  const glass = stylePresetCommands(s.A, (await style()), stylePreset('glass')!, '#2b7eff', 0);
+  expect(glass.unaddressed).not.toContain('backdropBlur');
+  expect((await edit('Apply Glass Style', glass.cmds)).ok).toBe(true);
+  expect(await backdropBlur(s.A)).toBe(stylePreset('glass')!.backdropBlur);
+  const sticker = stylePresetCommands(s.A, (await style()), stylePreset('sticker')!, '#2b7eff', 0);
+  expect((await edit('Apply Sticker Style', sticker.cmds)).ok).toBe(true);
+  expect(await backdropBlur(s.A)).toBeUndefined();
+  await h.run({ type: 'undo' });
+  await h.run({ type: 'undo' });
+  expect((await h.doc())).toBe(before);
+
+  await h.run({ type: 'setLayerSwitches', layers: [s.B], patch: { threeD: true } });
+  const gold = stylePreset('gold')!;
+  const bStyle = (await docView()).getNode(s.B)!.components.find((c) => c.type === 'Style');
+  const plan = stylePresetCommands(s.B, bStyle, gold, '#2b7eff', 0);
+  expect(plan.unaddressed).not.toEqual(expect.arrayContaining(['specular']));
+  expect((await edit('Apply Gold Style', plan.cmds)).ok).toBe(true);
+  expect(await stored(s.B, 'specular')).toBe(gold.specular);
+  expect(await stored(s.B, 'shininess')).toBe(gold.shininess);
+});
+
+test('clicking a style swatch applies it as ONE entry named for the preset', async () => {
+  render(<StylePresetsSection nodeId={s.A} />);
+  fireEvent.click(screen.getByTitle(/^Neon — Hollow shape/));
+  await idle();
+  expect((await historyLabels())).toEqual(['Apply Neon Style']);
+  expect((await docView()).getNodeBlend(s.A)).toBe('screen');
+  expect((await docView()).getNodeLayerStyles(s.A).outerGlow).toMatchObject({ enabled: true, size: 26 });
+});
+
+test('Shift-parent (Parent & Link JUMP) is setParent{jump}: ONE entry, the child lands on the parent anchor; undo exact', async () => {
+  await h.run({ type: 'setProperty', prop: { layer: s.A, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 420, y: 310 } } });
+  await clearHistory();
+  expect(await stored(s.A, 'x')).toBeCloseTo(420);
+  const before = (await h.doc());
+  parentLayer(s.A, s.P, { shiftKey: true });
+  await idle();
+  expect((await parentOf(s.A))).toBe(s.P);
+  expect(await stored(s.A, 'x')).toBeCloseTo(0);
+  expect(await stored(s.A, 'y')).toBeCloseTo(0);
+  expect((await historyLabels())).toEqual(['Parent']);
+  await h.run({ type: 'undo' });
+  expect((await h.doc())).toBe(before);
+});

@@ -20,7 +20,7 @@ import { ColorPicker } from '@components/ColorPicker';
 import { EmptyState } from '@components/EmptyState';
 import { useSwatchStore } from '@stores/swatchStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useMirrorRevision } from '@hooks/useMirror';
+import { useMirrorRevision, useRetainTrees } from '@hooks/useMirror';
 import { solidFill } from '@core/paint/fill';
 import { edit } from '@core/engine/uiEdits';
 import { fieldCommands } from '@layout/Text/textEdits';
@@ -80,6 +80,9 @@ export function SwatchesPanel(): JSX.Element {
     setEditingId(null);
   }, [editingId, draftName, renameSwatch]);
 
+  // Apply resolves each layer's fill property on the mirror's tree: keep the
+  // selection's trees loaded, or the click would find nothing to write.
+  useRetainTrees(selectedIds);
   const canApply = selectedIds.length > 0;
 
   return (

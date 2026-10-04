@@ -92,7 +92,6 @@ import { modifiedRowsOf } from '@layout/Timeline/modifiedRows';
 import { useTimelinePixelsPerSecond, useTimelineRuler, useTimelineTracks } from '@layout/Timeline/useTimelineModel';
 import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
 import { bindAdaptiveResolution } from '@stores/renderQualityStore';
-import { installModelHydration } from '@core/engine/modelUpkeep';
 import { usePropertySelectionStore, propertyKey, distributeScrub } from '@stores/propertySelectionStore';
 import { mirrorMaskShapeKeyed } from '@core/mirror/masks';
 import { EditorLayout } from '@layout/EditorLayout';
@@ -258,11 +257,6 @@ function EditorShellInner(): JSX.Element {
     })),
     [],
   );
-
-  // Imported 3D models: re-parse stored .glb sources into the session mesh
-  // registry after a project opens (and repoint dead texture object URLs) —
-  // engine-side upkeep (core/engine/modelUpkeep.ts), installed with the shell.
-  useEffect(() => installModelHydration(), []);
 
   // Register the default panels exactly once.
   useEffect(() => {

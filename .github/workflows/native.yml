@@ -5,8 +5,8 @@
 # (they were authored on a machine without a C++ toolchain, so the first CI
 # run is the first time they meet the tool; see native/README.md).
 #
-#   build-test   ubuntu / macos / windows: configure preset → build → ctest,
-#                then the N-API addon (cmake-js) + its smoke test; clang-tidy on ubuntu
+#   build-test   ubuntu / macos / windows: configure preset → build → ctest;
+#                clang-tidy on ubuntu
 #   engine       ubuntu / macos / windows: the *-engine presets (premation-engine
 #                with Dawn, Skia, ffmpeg, OCIO) → build → ctest, with a vcpkg
 #                binary cache (.github/actions/build-engine); the engine and what
@@ -27,7 +27,6 @@ on:
     branches: [native-core, dev, main]
     paths:
       - 'native/**'
-      - 'packages/native-bridge/**'
       - 'packages/engine-api/**'
       - '.github/workflows/native.yml'
       - '.github/actions/build-engine/**'
@@ -35,7 +34,6 @@ on:
   pull_request:
     paths:
       - 'native/**'
-      - 'packages/native-bridge/**'
       - 'packages/engine-api/**'
       - '.github/workflows/native.yml'
       - '.github/actions/build-engine/**'
@@ -136,41 +134,6 @@ jobs:
         working-directory: native
         run: run-clang-tidy -p build/${{ matrix.preset }} -quiet '.*/native/libs/.*'
 
-      # ── N-API addon ──────────────────────────────────────────────────────
-      - name: N-API addon (cmake-js)
-        working-directory: native/bindings/napi
-        shell: bash
-        # Two first-run failures shaped this step:
-        #  - Windows: CMake resolved `rc` to node_modules/.bin/rc — the npm
-        #    config-loader package of that name, which npx puts first on PATH —
-        #    instead of a resource compiler, and the compiler probe failed.
-        #    Name LLVM's resource compiler explicitly.
-        #  - Linux: cmake-js downloads Node headers from nodejs.org and the
-        #    runner's connection timed out (ETIMEDOUT). Retry the compile.
-        run: |
-          npm install --no-audit --no-fund
-          compile() {
-            if [ "$RUNNER_OS" = "Windows" ]; then
-              npx cmake-js compile -G Ninja --CDCMAKE_C_COMPILER=clang-cl --CDCMAKE_CXX_COMPILER=clang-cl \
-                "--CDCMAKE_RC_COMPILER=C:/Program Files/LLVM/bin/llvm-rc.exe"
-            else
-              CC=clang CXX=clang++ npx cmake-js compile
-            fi
-          }
-          for attempt in 1 2 3; do
-            if compile; then break; fi
-            if [ "$attempt" = 3 ]; then exit 1; fi
-            echo "cmake-js attempt $attempt failed; retrying in 20 s"; sleep 20
-          done
-          node smoke.cjs
-
-      - name: Upload addon
-        uses: actions/upload-artifact@v4
-        with:
-          name: motion_napi-${{ matrix.os }}
-          path: native/bindings/napi/build/Release/motion_napi.node
-          if-no-files-found: error
-
   # premation-engine itself, on every OS it ships on (and Linux, which it runs
   # on through the route-A copy). The first run per triplet builds Dawn and the
   # rest of the `engine` feature from source; the vcpkg binary cache makes the
@@ -205,6 +168,46 @@ jobs:
           triplet: ${{ matrix.triplet }}
           vcpkg-commit: ${{ env.VCPKG_COMMIT }}
           test: 'true'
+      # The UI suites on the real engine (`*.native.test.*`, docs/TS_ENGINE_REMOVAL.md
+      # block 3): jest boots the engine with --no-gpu (simulated frames; text, fonts and scene on).
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Linux'
+        with:
+          node-version: 22
+          cache: npm
+      - name: UI suites on the engine (jest *.native.test)
+        if: runner.os == 'Linux'
+        # Advisory while the suites are being ported (block 3); blocking once they all pass.
+        continue-on-error: true
+        env:
+          PREMATION_ENGINE_PATH: ${{ github.workspace }}/${{ steps.engine.outputs.engine-dir }}/premation-engine
+        run: |
+          npm ci --ignore-scripts
+          npx jest --testPathPattern '\.native\.test' -w 2
+      # The benchmark ratchet (docs/NATIVE_CORE_PLAN.md §4 T0): `npm run bench:check`
+      # runs the `*.bench.test.ts` set on this engine (panels at 2000 layers, D4
+      # playback, D5 viewport frame time), writes `.artifacts/bench/results.json`
+      # and compares it with `bench/baseline.json` (scripts/bench-check.mjs).
+      # Tolerance 25% rather than the local 15%: a shared runner's clock is
+      # noisier than a laptop. Advisory: the committed baseline still holds the
+      # TypeScript engine's metrics (they report `not run`). Before making it
+      # blocking, download a green run's `bench-results` artifact, copy its
+      # results.json over `.artifacts/bench/results.json` and run
+      # `npm run bench:baseline`, so the baseline carries the runner's machine.
+      - name: Bench ratchet on the engine
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        env:
+          PREMATION_ENGINE_PATH: ${{ github.workspace }}/${{ steps.engine.outputs.engine-dir }}/premation-engine
+        run: npm run bench:check -- --tolerance 25
+      - name: Upload bench results
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: .artifacts/bench/
+          retention-days: 30
+          if-no-files-found: warn
       - name: Upload the engine
         uses: actions/upload-artifact@v4
         with:

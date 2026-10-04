@@ -1,7 +1,6 @@
 /** A standard scene every command test starts from, built through the engine itself. */
 
-import type { Harness } from './harness';
-import { sec } from './harness';
+import { sec, type EngineRunner } from './appEngine';
 
 export interface Scene {
   comp: string;
@@ -22,7 +21,7 @@ export interface Scene {
   posKeys: string[];
 }
 
-export async function buildScene(h: Harness): Promise<Scene> {
+export async function buildScene(h: EngineRunner): Promise<Scene> {
   const comp = 'comp_root';
   const { items: [footage, footage2] } = await h.run({
     type: 'importFiles',

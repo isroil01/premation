@@ -1,19 +1,17 @@
 /**
- * Keep the TypeScript engine's scene revision moving on keyframe edits.
+ * Keep the page's scene revision moving on view-only repaint signals.
  *
- * The TS engine's own consumers — the in-page renderer's snapshot cache, the
- * viewport shell, the timeline tracks the legacy writers still feed — key on
- * the scene revision (`bumpScene`), and an animation edit (`AnimationChanged`)
- * does not bump it by itself. That is upkeep OF the engine, not a UI read: the
- * panels re-render from the document mirror's events (docs/B4_MIRROR.md). It
- * moved here from the editor shell (Providers.tsx) and leaves with the TS
- * engine (D1), like the legacy timeline sync (LocalEngine.attachBus) and
- * `expressionProviders.ts`.
+ * The page-side `AnimationChanged` bus event no longer carries document edits
+ * (the C++ engine owns the document; panels re-render from the document
+ * mirror's events, docs/B4_MIRROR.md). What still emits it is page state that
+ * changes the picture without changing the document — colour management and
+ * the viewer LUT — and consumers keyed on the scene revision (`bumpScene`) must
+ * repaint for those.
  *
  * Media decode / upload repaints arrive on the same event at the source's frame
- * rate and are NOT edits: bumping the scene for each one ran a full scene-graph
- * walk, content re-hash and React reconcile per decoded video frame. The
- * viewport still repaints for them through its own render loop.
+ * rate and are NOT edits: bumping the scene for each one would re-render every
+ * revision consumer per decoded frame. The viewport repaints for them through
+ * its own render loop.
  */
 
 import { getEventBus } from '@core/events/EventBus';

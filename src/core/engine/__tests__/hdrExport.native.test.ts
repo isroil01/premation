@@ -26,8 +26,11 @@ const hasX265 = (() => {
   const r = spawnSync(ffmpeg, ['-hide_banner', '-encoders'], { encoding: 'utf8' });
   return r.status === 0 && /\slibx265\s/.test(r.stdout);
 })();
-const maybe = exe && hasX265 ? describe : describe.skip;
+// The headless test engine is built without the export jobs (it exits 3 on --export).
+const headless = !!exe && /headless/i.test(path.basename(exe));
+const maybe = exe && hasX265 && !headless ? describe : describe.skip;
 if (!exe) console.log('[hdrExport] premation-engine is not built — skipped');
+else if (headless) console.log('[hdrExport] premation-engine-headless has no export — skipped');
 else if (!hasX265) console.log('[hdrExport] no ffmpeg with libx265 — skipped');
 
 jest.setTimeout(180_000);

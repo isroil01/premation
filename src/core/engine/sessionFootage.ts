@@ -8,9 +8,7 @@
  * job sees that path and does not relink again. `http:` stays refused: the
  * page is not a reliable copy of a remote file.
  *
- * With the TypeScript engine as owner this is not called: the page path reads
- * the blob itself, and rewriting `src` would drop the URL it plays. With the
- * engine as owner, the same rewrite runs for every footage item the document
+ * The rewrite runs for every footage item the document
  * mirror says the engine cannot open, so a viewport frame is not waiting on
  * a job.
  */

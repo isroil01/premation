@@ -225,6 +225,8 @@ export function autoOrientModesFor(nodeId: string): ReadonlySet<AutoOrientMode> 
 
 /** Layer ▸ Transform ▸ Auto-Orient: `mode` on every layer that can take it, one entry. */
 export async function setAutoOrientEdit(ids: readonly string[], mode: AutoOrientMode): Promise<void> {
+  // Which modes a layer can take reads its property tree.
+  await documentMirror().loadTrees(ids);
   const cmds: Command[] = [];
   for (const id of ids) {
     const layer = documentMirror().layer(id);
@@ -242,6 +244,8 @@ export async function setAutoOrientEdit(ids: readonly string[], mode: AutoOrient
  * entry; an off-palette label colour is a custom `labelColor` (B3z).
  */
 export async function layerSettingsEdit(nodeId: string, values: LayerSettingsValues): Promise<'ok' | 'gone'> {
+  // The current settings and the size writes resolve on the layer's property tree.
+  await documentMirror().loadTree(nodeId);
   // B4: the layer's current settings from the mirror (what the dialog opened with).
   const current = mirrorLayerSettings(documentMirror(), nodeId);
   if (!current || !isLayer(nodeId)) return 'gone';

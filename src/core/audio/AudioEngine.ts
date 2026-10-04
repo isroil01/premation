@@ -1,25 +1,24 @@
 /**
  * AudioEngine — the app's single Web Audio authority.
  *
- * Owns one AudioContext, decodes imported audio assets into buffers +
- * {@link WaveformPeaks} envelopes, and keeps live playback in sync with the
- * transport: {@link sync} is called whenever the playhead or play-state changes
- * and it starts/stops BufferSources so audio layers play in time with the
- * comp. It also exposes {@link currentLevel} — the amplitude at the playhead —
- * which drives the expression engine's `audio` accessor.
+ * Owns one AudioContext and decodes imported audio assets into buffers +
+ * {@link WaveformPeaks} envelopes (the panels' waveforms, the audio keyframe
+ * bakes) and meters its master bus. PLAYBACK is the engine's (C++ E2: the
+ * engine mixes and plays every layer in time with its transport); the page's
+ * own voice scheduler, which sampled the page replica's level / pan / effect
+ * curves, is gone with it (block 3). {@link currentLevel} answers 0 — the
+ * page plays nothing — for the TypeScript engine's `audio` expression
+ * accessor, which goes with that engine.
  *
  * Deliberately framework-free (no React, no store imports) so it can be driven
  * from a hook and unit-reasoned about. Decoding degrades gracefully when Web
  * Audio is unavailable (SSR / tests) — the rest of the app keeps working.
  */
 
-import { computePeaks, mixToMono, amplitudeAt, type WaveformPeaks } from './waveform';
+import { computePeaks, mixToMono, type WaveformPeaks } from './waveform';
 import { rmsPeak, type Levels } from './audioLevels';
-import { buildParamRamp, buildPanRamp, applyRamp, voicePanner } from './audioParams';
 import { getAudioHardware, applyOutputDevice } from './audioHardware';
-import {
-  connectAudioEffects, hasBackwards, reverseBuffer, backwardsOffset, type AudioEffect,
-} from './audioEffects';
+import type { AudioEffect } from './audioEffects';
 import { fetchAssetSrc } from '@core/assets/local/localBlobSource';
 
 /** One audio layer's transport-relevant state, derived from the scene. */
@@ -83,29 +82,6 @@ interface LoadedAsset {
   wave: WaveformPeaks;
 }
 
-interface ActiveVoice {
-  source: AudioBufferSourceNode;
-  gain: GainNode;
-  /**
-   * Oscillators the effect chain created (an LFO, a tone generator).
-   *
-   * Held on the voice because they share its lifetime exactly: they are started
-   * with it and must be stopped with it. A voice that tracked only its buffer
-   * source would leave them running into a disconnected subgraph on every seek.
-   */
-  sources: AudioScheduledSourceNode[];
-  /** The layer state hash this voice was started for (restart on change). */
-  key: string;
-  /** AudioContext time when the voice started, and the buffer offset it began
-   *  at — together they predict where playback should be, so a transport seek
-   *  or loop-wrap is detected as drift and the voice restarts. */
-  startCtxTime: number;
-  startOffset: number;
-}
-
-/** Max tolerated drift (s) between predicted and wanted playback position
- *  before a voice is restarted — absorbs rAF jitter, catches real seeks. */
-const SEEK_TOLERANCE = 0.25;
 
 const WAVEFORM_BUCKETS = 1024;
 
@@ -139,11 +115,6 @@ class AudioEngine {
    * re-fetched and re-decoded its entire file dozens of times a second.
    */
   private readonly undecodable = new Set<string>();
-  private readonly voices = new Map<string, ActiveVoice>();
-  /** The layer set from the most recent {@link sync} — what `currentLevel`
-   *  samples, so it reflects the scene rather than the decode cache. */
-  private layers: readonly AudioLayerState[] = [];
-  private timeSec = 0;
   private readonly listeners = new Set<() => void>();
 
   // Master metering chain: every voice routes through `master` → destination,
@@ -322,279 +293,13 @@ class AudioEngine {
    * cache outlives the scene), so expressions reacted to sound nobody heard.
    */
   currentLevel(): number {
-    let max = 0;
-    for (const l of this.layers) {
-      if (l.muted) continue;
-      // AUDIO LAYERS ONLY, deliberately.
-      //
-      // This drives the expression engine's `audio` accessor and the Audio
-      // Throb behaviour. Video layers only became voices recently; counting
-      // them here would silently re-key every existing audio-reactive
-      // composition to a louder, different signal the moment footage was added
-      // — a behaviour change to saved projects, arriving without an edit. The
-      // VU meter is a different question and correctly reads the whole master
-      // bus, footage included, because it is metering output rather than
-      // driving animation.
-      //
-      // If per-layer source selection lands, this is the seam it plugs into.
-      if (l.source === 'video') continue;
-      const asset = this.assets.get(l.assetId);
-      if (!asset) continue;
-      const localT = this.timeSec - l.startSec;
-      if (localT < 0) continue;
-      const offset = l.inSec + localT;
-      const outSec = l.outSec > 0 ? l.outSec : asset.wave.duration;
-      if (offset >= outSec) continue;
-      const a = amplitudeAt(asset.wave, offset);
-      if (a > max) max = a;
-    }
-    return max;
-  }
-
-  private voiceKey(l: AudioLayerState): string {
-    // `levelAnimated` is part of the identity: turning keyframes on or off
-    // changes how the voice must be scheduled, not just its value.
-    const rate = l.playbackRate ?? 1;
-    const rev = l.retimeReverse ? 'r' : 'f';
-    // Pan joins the identity for the same reason `levelAnimated` did: a voice
-    // built without a panner cannot grow one, so the pan changing has to be a
-    // rebuild rather than a parameter tweak.
-    const pan = l.panAnimated ? 'a' : (l.pan ?? 0);
-    return `${l.assetId}|${l.levelDb}|${l.levelAnimated ? 'a' : 's'}|${l.startSec}|${l.inSec}|${l.outSec}|${l.muted}|${rate}|${rev}|${pan}`;
-  }
-
-  /** Stable per-voice identity — the clip id when the caller supplies one. */
-  private voiceId(l: AudioLayerState): string {
-    return l.id ?? l.nodeId;
-  }
-
-  /**
-   * Reconcile live playback with the transport. Called on every play/pause,
-   * seek, or scene edit. Starts voices for audible layers when playing (seeking
-   * into each buffer to match the playhead), and stops everything otherwise.
-   */
-  sync(playing: boolean, timeSec: number, layers: readonly AudioLayerState[]): void {
-    this.timeSec = timeSec;
-    this.layers = layers;
-    const ctx = this.context();
-    if (!ctx) return;
-
-    // Ensure every referenced asset is (being) decoded. `load` short-circuits
-    // on both the decoded and the known-undecodable cases, so this stays a map
-    // lookup per layer per frame rather than a re-fetch.
-    for (const l of layers) if (!this.assets.has(l.assetId)) void this.load(l.assetId, l.src);
-
-    if (!playing) {
-      this.stopAll();
-      return;
-    }
-    if (ctx.state === 'suspended') void ctx.resume();
-
-    const wanted = new Map(layers.filter((l) => !l.muted).map((l) => [this.voiceId(l), l] as const));
-
-    // Stop voices whose layer vanished, changed materially, or drifted out of
-    // sync with the playhead (a seek or loop-wrap).
-    for (const [voiceId, voice] of [...this.voices]) {
-      const l = wanted.get(voiceId);
-      if (!l || this.voiceKey(l) !== voice.key) {
-        this.stopVoice(voiceId);
-        continue;
-      }
-      // Past the clip's out-point the voice must stop even though its layer is
-      // unchanged. `source.start(…, duration)` already bounds it, but only for
-      // the span it was scheduled with; a bar trimmed shorter mid-playback (or
-      // a playhead that jumped past the tail) has to be caught here or the
-      // clip keeps sounding after its bar ends.
-      //
-      // With playbackRate (stretch), buffer time advances at `rate` × wall
-      // time: a 200% stretch (rate 0.5) consumes half a second of source per
-      // second of timeline.
-      const rate = Math.max(0.01, l.playbackRate ?? 1);
-      const localT = timeSec - l.startSec;
-      const outSec = l.outSec > 0 ? l.outSec : Infinity;
-      const barLen = Math.max(0, (l.outSec > 0 ? l.outSec : 0) - l.inSec);
-      const wanted0 = l.inSec + localT * rate;
-      if (localT < 0 || (barLen > 0 && localT >= barLen) || wanted0 >= outSec) {
-        this.stopVoice(voiceId);
-        continue;
-      }
-      const predicted = voice.startOffset + (ctx.currentTime - voice.startCtxTime) * rate;
-      if (Math.abs(wanted0 - predicted) > SEEK_TOLERANCE) this.stopVoice(voiceId);
-    }
-
-    // (Re)start voices. A large seek while playing lands here after the stop
-    // above and restarts at the new offset.
-    for (const [voiceId, l] of wanted) {
-      if (this.voices.has(voiceId)) continue;
-      const asset = this.assets.get(l.assetId);
-      if (!asset) continue; // not decoded yet; a later sync will start it
-      const rate = Math.max(0.01, l.playbackRate ?? 1);
-      const localT = timeSec - l.startSec;
-      const outSec = l.outSec > 0 ? l.outSec : asset.buffer.duration;
-      const barLen = Math.max(0, outSec - l.inSec);
-      const offset = l.inSec + localT * rate;
-      if (localT < 0 || localT >= barLen || offset >= outSec) continue;
-      this.startVoice(voiceId, l, asset, offset);
-    }
+    return 0;
   }
 
   /** The decoded buffer for an asset, or undefined until `load` completes.
    *  Used by the offline export mixdown (see audioMixdown). */
   decodedBuffer(assetId: string): AudioBuffer | undefined {
     return this.assets.get(assetId)?.buffer;
-  }
-
-  private startVoice(voiceId: string, l: AudioLayerState, asset: LoadedAsset, offset: number): void {
-    const ctx = this.ctx!;
-    const source = ctx.createBufferSource();
-    // Layer-time reverse OR the Backwards effect — same buffer flip. Decided
-    // before the graph exists.
-    const reversed = l.retimeReverse === true || hasBackwards(l.effects);
-    source.buffer = reversed ? reverseBuffer(ctx, asset.buffer) : asset.buffer;
-    const rate = Math.max(0.01, l.playbackRate ?? 1);
-    if (source.playbackRate) source.playbackRate.value = rate;
-    const gain = ctx.createGain();
-    // Effects sit BEFORE the gain, so the layer's level (and its automation)
-    // has the last word on loudness — a delay's feedback cannot outrun a fade
-    // to silence. Built by the same function the offline mixdown calls; see
-    // audioEffects.ts for why that is one function and not two.
-    const outSec = l.outSec > 0 ? l.outSec : asset.buffer.duration;
-    // Remaining BUFFER seconds; wall duration = remaining / rate.
-    const remaining = Math.max(0, outSec - offset);
-    /*
-      TWO offsets, and they are not interchangeable.
-
-      `clipAt` is a position in the CLIP — what the fade curve and the voice
-      bookkeeping are expressed in, and what the rest of the engine means by
-      "where we are". `readAt` is a position in the BUFFER handed to
-      `source.start`, which is the reversed one when Backwards is on.
-
-      Collapsing them is the silent failure `backwardsOffset` documents: a clip
-      trimmed to 2–4 s of a ten-second file would play 6–8 s backwards, in time,
-      with nothing to indicate it.
-    */
-    const clipAt = Math.max(0, offset);
-    const readAt = reversed
-      ? backwardsOffset(asset.buffer.duration, clipAt, remaining)
-      : clipAt;
-    // Comp time for this buffer offset: invert the rate mapping.
-    const resumeCompSec = l.startSec + (clipAt - l.inSec) / rate;
-    // Wall-clock length of this voice window.
-    const remainingWall = remaining / rate;
-
-    /*
-      Built HERE rather than above, because the chain needs the voice window to
-      schedule keyframed effect parameters — the same window, from the same
-      arithmetic, that the level ramp below uses. Passing it is what makes an
-      animated Dry/Wet a curve instead of a value frozen at the voice's start.
-    */
-    const chain = connectAudioEffects(ctx, source, l.effects, {
-      nodeId: l.nodeId,
-      startCompSec: resumeCompSec,
-      durationSec: remainingWall,
-      whenCtx: ctx.currentTime,
-    });
-    /*
-      The panner is OPTIONAL and sits AFTER the gain.
-
-      After, because a `StereoPannerNode` uses equal-power law: panning hard
-      left leaves the left channel at unity, not +3 dB, so the level still has
-      the last word on loudness exactly as it does over the effect chain.
-
-      Optional, because building one unconditionally would change the graph —
-      and therefore, subtly, the mix — of every project that never touched pan.
-      A centred, unanimated voice connects gain straight to master as before.
-    */
-    const panner = voicePanner(ctx, l);
-    if (panner) {
-      chain.node.connect(gain).connect(panner).connect(this.master ?? ctx.destination);
-    } else {
-      chain.node.connect(gain).connect(this.master ?? ctx.destination);
-    }
-
-    // Gain is SCHEDULED on the param, never assigned per frame — see
-    // audioParams for why (assignment steps once per render quantum and
-    // zippers). An unanimated level yields a single point, so the common case
-    // is still one setValueAtTime.
-    //
-    // The ramp is built from the comp time this voice resumes at, which is
-    // `startSec + (offset - inSec)` — NOT `startSec`. Seeking into the middle
-    // of a fade has to pick the curve up where the playhead is, or the fade
-    // restarts from its beginning every time the transport moves. (Computed
-    // above, because the effect chain schedules its own curves from the same
-    // window.)
-    const ramp = buildParamRamp(l.nodeId, l.levelDb, resumeCompSec, remainingWall, {
-      animated: l.levelAnimated === true,
-    });
-    applyRamp(gain.gain, ramp, ctx.currentTime);
-    if (panner) {
-      applyRamp(
-        panner.pan,
-        buildPanRamp(l.nodeId, l.pan ?? 0, resumeCompSec, remainingWall, {
-          animated: l.panAnimated === true,
-        }),
-        ctx.currentTime,
-      );
-    }
-
-    try {
-      // duration is BUFFER seconds; playbackRate stretches wall time.
-      source.start(ctx.currentTime, readAt, remaining);
-    } catch {
-      return;
-    }
-    /*
-      The chain's own oscillators run for exactly this voice's window.
-
-      Started here rather than inside `connectAudioEffects` because the window
-      is the caller's knowledge, and stopped explicitly because an oscillator
-      with no stop time keeps its whole subgraph reachable for the life of the
-      context — one leaked LFO per seek, on every scrub, for the session.
-    */
-    for (const s of chain.sources) {
-      try {
-        s.start(ctx.currentTime);
-        s.stop(ctx.currentTime + remainingWall);
-      } catch {
-        /* already started — cannot happen for a freshly built chain */
-      }
-    }
-    this.voices.set(voiceId, {
-      source,
-      gain,
-      sources: chain.sources,
-      key: this.voiceKey(l),
-      startCtxTime: ctx.currentTime,
-      startOffset: clipAt,
-    });
-  }
-
-  private stopVoice(voiceId: string): void {
-    const v = this.voices.get(voiceId);
-    if (!v) return;
-    try {
-      v.source.stop();
-    } catch {
-      /* already stopped */
-    }
-    // The chain's oscillators go with it. They carry a scheduled stop already,
-    // so this is about stopping them NOW on a seek rather than leaving an LFO
-    // running into a disconnected subgraph until its window would have ended.
-    for (const s of v.sources ?? []) {
-      try {
-        s.stop();
-      } catch {
-        /* already stopped, or never started */
-      }
-      s.disconnect();
-    }
-    v.source.disconnect();
-    v.gain.disconnect();
-    this.voices.delete(voiceId);
-  }
-
-  private stopAll(): void {
-    for (const voiceId of [...this.voices.keys()]) this.stopVoice(voiceId);
   }
 }
 

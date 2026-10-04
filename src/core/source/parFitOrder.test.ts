@@ -21,7 +21,6 @@ jest.mock('@core/scene/sceneDerive', () => ({
   readNodeKind: (n: SceneNode) =>
     (n.components[0]?.props as Record<string, unknown> | undefined)?.__kind ?? 'shape',
 }));
-jest.mock('@core/scene/compInstance', () => ({ readCompRef: () => null }));
 
 import { footageSourceOf } from './sourceInfo';
 import { computeFit } from './fitCommands';

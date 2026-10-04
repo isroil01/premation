@@ -2312,6 +2312,25 @@ export interface SetKeyframes {
   keys: Keyframe[];
 }
 
+/**
+ * Block 3 — replace a layer's stored MEMBER keyframe lists: the inverse of `getMemberKeyframes`, for the keyframe
+ * assistants that transform one member at a time (The Smoother drops keys from `x` and `y` independently, The
+ * Wiggler re-tangents them). Each list is `getMemberKeyframes`' JSON (`[{t, value, easing?, bezier?, si?, so?,
+ * spatialInterp?, continuous?, roving?, id?, label?}]`, keyframe-axis seconds, stored units); `'[]'` removes the
+ * member's keys. Scalar tracks only. Records sort by time and a later record at the same time wins; a repeated
+ * `id` in one list keeps its first use. Expressions are untouched. Errors: `invalidArgument` (not JSON, a record
+ * without a finite `t` / `value`, an empty member name). Inverse: the previous lists.
+ */
+export interface SetMemberKeyframes {
+  layer: LayerId;
+  tracks: MemberKeyList[];
+}
+
+export interface MemberKeyList {
+  member: string;
+  keyframes: string;
+}
+
 export interface KeyframeIds {
   ids: KeyframeId[];
 }
@@ -2442,11 +2461,15 @@ export interface AddPaintStroke {
  * Merge `patch` (a JSON object) into one stroke and renormalise: a member set to null CLEARS that key (visible,
  * pressure…); `id` cannot be patched; `points`, when given, follows addPaintStroke's rule. Shift-continue sends the
  * joined points + pen arrays, the video switch `{visible: false}` / `{visible: null}`. Inverse: the stroke as it was.
+ * Block 3 `append`: the patch's `points`, `pressure`, `tiltX`, `tiltY` are APPENDED to the stroke's own (AE's
+ * Shift-continue: the editor need not read the stroke back). A pen array only one side has is padded so the arrays
+ * stay parallel to the points (pressure with 1, tilt with 0); neither side having it leaves it absent.
  */
 export interface UpdatePaintStroke {
   layer: LayerId;
   stroke: string;
   patch: string;
+  append?: boolean;
 }
 
 /**
@@ -3376,11 +3399,19 @@ export interface CaptionCues {
   cues: CaptionCue[];
 }
 
-/** B4 round 5 — a time through a layer's own time: composition time → the time inside what the layer SHOWS (a placed composition's own axis: its time remap — `timeRemap`, else `precompTime` — sampled at the time, then the layer's start / stretch / retime), or back with `outward` (absent when that has no single answer: a time-remapped composition layer). A layer that shows no composition maps one to one. What opening a precomp at the playhead (and the Composition Navigator) carries the playhead through. `notFound` for no such layer. */
+/**
+ * B4 round 5 — a time through a layer's own time: composition time → the time inside what the layer SHOWS (a placed composition's own axis: its time remap — `timeRemap`, else `precompTime` — sampled at the time, then the layer's start / stretch / retime), or back with `outward` (absent when that has no single answer: a time-remapped composition layer). A layer that shows no composition maps one to one. What opening a precomp at the playhead (and the Composition Navigator) carries the playhead through. `notFound` for no such layer.
+ * Block 3 `keyframeAxis` (inward only): instead, the composition time on the LAYER's OWN keyframe axis — where a key
+ * written at that time is stored (responsive time, the precomp chain, the governing clip's retime, the layer's
+ * stretch / reverse / freeze): what `addPaintStroke` keys and a stroke's in / out points are measured on. With
+ * `outward`, back: a keyframe-axis time → the composition time that shows it (`keyframeToCompTime`: the earliest such
+ * time under a non-monotonic remap).
+ */
 export interface MapLayerTime {
   layer: LayerId;
   time: Time;
   outward: boolean;
+  keyframeAxis?: boolean;
 }
 
 export interface MappedTime {
@@ -4313,7 +4344,7 @@ export interface OverlayLayerGeometry {
   textBox: number[];
   /** motionPath: the trajectory at every composition frame of the keyed span (AE's velocity dots): t, x, y, z quadruples as `path`. */
   pathFrames: number[];
-  /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`). */
+  /** motionPath: the position at the frame's own time: x, y, z (comp space as `path`), then that time on the layer's keyframe axis (seconds — the axis `path` / `pathKeys` times are on; block 3: what the viewport's motion-path display window centres on). */
   pathNow: number[];
   /** transform (block 3): the layer's OWN transform at the frame, stored units, animated values winning (what the 2D chain and the 3D compose read): x, y, z, rotation (Z, degrees), scaleX, scaleY (multipliers), anchorX, anchorY, anchorZ. The 2D `matrix` has no anchor term: the drawn content sits at matrix · T(−anchor) — what the viewport's selection box and hit test need. Empty for a layer with no geometry. */
   local: number[];
@@ -5034,6 +5065,7 @@ export type Command =
   | ({ type: 'reverseKeyframes' } & ReverseKeyframes)
   | ({ type: 'pasteKeyframes' } & PasteKeyframes)
   | ({ type: 'setKeyframes' } & SetKeyframes)
+  | ({ type: 'setMemberKeyframes' } & SetMemberKeyframes)
   | ({ type: 'addEffect' } & AddEffect)
   | ({ type: 'addMask' } & AddMask)
   | ({ type: 'addPropertyGroup' } & AddPropertyGroup)
@@ -5199,6 +5231,7 @@ export type CommandResult =
   | ({ type: 'reverseKeyframes' } & Empty)
   | ({ type: 'pasteKeyframes' } & KeyframeIds)
   | ({ type: 'setKeyframes' } & KeyframeIds)
+  | ({ type: 'setMemberKeyframes' } & Empty)
   | ({ type: 'addEffect' } & GroupList)
   | ({ type: 'addMask' } & GroupList)
   | ({ type: 'addPropertyGroup' } & GroupList)
@@ -5513,6 +5546,7 @@ export interface CommandArgs {
   reverseKeyframes: ReverseKeyframes;
   pasteKeyframes: PasteKeyframes;
   setKeyframes: SetKeyframes;
+  setMemberKeyframes: SetMemberKeyframes;
   addEffect: AddEffect;
   addMask: AddMask;
   addPropertyGroup: AddPropertyGroup;
@@ -5678,6 +5712,7 @@ export interface CommandResults {
   reverseKeyframes: Empty;
   pasteKeyframes: KeyframeIds;
   setKeyframes: KeyframeIds;
+  setMemberKeyframes: Empty;
   addEffect: GroupList;
   addMask: GroupList;
   addPropertyGroup: GroupList;

@@ -11,33 +11,35 @@ import { useState, useEffect } from 'react';
 import { Icon } from '@components/Icon';
 import { EmptyState } from '@components/EmptyState';
 import { cn } from '@utils/cn';
-import { performJumpTo } from '@stores/historyStore';
+import { historyView, performJumpTo, subscribeHistory } from '@stores/historyStore';
 import { engine } from '@core/engine/engineInstance';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { getEventBus } from '@core/events/EventBus';
 import styles from './HistoryPanel.module.css';
 
-export function HistoryPanel(): JSX.Element {
-  const [entries, setEntries] = useState(() => getCommandSystem().getHistory().getEntries());
-  const [index, setIndex] = useState(() => getCommandSystem().getHistory().getIndex());
-  
-  useEffect(() => {
-    const bus = getEventBus();
-    const handleChanged = () => {
-      const history = getCommandSystem().getHistory();
-      setEntries(history.getEntries());
-      setIndex(history.getIndex());
-    };
-    const sub = bus.on('UndoStackChanged', handleChanged);
-    return () => sub.dispose();
-  }, []);
+/**
+ * Names given to rows this session ("Client v1 look"). The engine's entries
+ * carry their command label only, so a rename is the page's: keyed by the
+ * row and its label, so another entry landing at that row does not inherit it.
+ */
+const renamed = new Map<string, string>();
+const renameKey = (i: number, label: string): string => `${i}\u0000${label}`;
 
-  // Via performJumpTo, not the history service directly — it flushes the
-  // pending debounced snapshot so a jump can't discard an in-flight edit.
+export function HistoryPanel(): JSX.Element {
+  const [view, setView] = useState(historyView);
+  useEffect(() => subscribeHistory(() => setView(historyView())), []);
+  const [, setRenames] = useState(0);
+  const index = view.index;
+  const entries = view.entries.map((e, i) => {
+    const name = renamed.get(renameKey(i, e.label));
+    return { label: name ?? e.label, named: name !== undefined || e.label === 'Snapshot', raw: e.label };
+  });
+
   const jumpTo = (i: number) => performJumpTo(i);
 
   const rename = (i: number, label: string) => {
-    getCommandSystem().getHistory().setLabel(i, label);
+    const raw = entries[i]?.raw;
+    if (raw === undefined) return;
+    renamed.set(renameKey(i, raw), label);
+    setRenames((n) => n + 1);
   };
   // "Snapshot current state": a named entry that changes nothing (B3z `addHistoryCheckpoint`).
   const snapshot = (): void => { void engine().execute({ type: 'addHistoryCheckpoint', label: 'Snapshot' }); };

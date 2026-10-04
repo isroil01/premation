@@ -24,13 +24,10 @@
  * translucent fill approximation.
  */
 
-import { solidFill, linearFill, radialFill, setNodeFills, type FillPaint, type ColorStop } from '@core/paint/fill';
-import { defaultStroke, setNodeStrokes, type Stroke } from '@core/paint/stroke';
-import { setLayerStyles, type LayerStyles } from '@core/effects/layerStyles';
-import { setNodeBlend, type LayerBlendMode } from '@core/effects/blendMode';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
-import { setNodeSpecular, setNodeShininess } from '@core/scene/material';
+import { solidFill, linearFill, radialFill,  type FillPaint, type ColorStop } from '@core/paint/fill';
+import { defaultStroke,  type Stroke } from '@core/paint/stroke';
+import {  type LayerStyles } from '@core/effects/layerStyles';
+import {  type LayerBlendMode } from '@core/effects/blendMode';
 
 export type StylePresetCategory = 'surface' | 'outline' | 'text' | 'depth' | 'material';
 
@@ -266,55 +263,4 @@ export const STYLE_PRESETS: readonly StylePreset[] = [
 
 export function stylePreset(id: string): StylePreset | undefined {
   return STYLE_PRESETS.find((p) => p.id === id);
-}
-
-/**
- * Apply a preset to a node. `accent` lets one preset serve any palette — it is
- * the layer's current fill colour by default, so applying a look keeps the
- * colour the user already chose.
- */
-export function applyStylePreset(nodeId: string, presetId: string, accent?: string): boolean {
-  const preset = stylePreset(presetId);
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!preset || !node) return false;
-
-  const styleComp = node.components.find((c) => c.type === 'Style' || c.type === 'Text');
-  const current = typeof styleComp?.props.fill === 'string' ? (styleComp.props.fill as string) : '#2b7eff';
-  const a = accent ?? (current.startsWith('#') ? current.slice(0, 7) : '#2b7eff');
-
-  // Every axis is written unconditionally, including the ones this preset does
-  // not use. A preset states a COMPLETE look; leaving an axis alone means the
-  // previous preset bleeds through — applying Neon (which blends 'screen') and
-  // then Sticker left Sticker blending 'screen', which is not the look either
-  // preset describes.
-  setNodeFills(nodeId, preset.fills(a));
-  setNodeStrokes(nodeId, preset.strokes ? preset.strokes(a) : []);
-  setLayerStyles(nodeId, preset.styles ? preset.styles(a) : {});
-  setNodeBlend(nodeId, preset.blend ?? 'normal');
-
-  if (styleComp) {
-    if (preset.cornerRadius !== undefined) {
-      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornerRadius', preset.cornerRadius);
-      // Presets state a uniform look — clear any independent corner overrides.
-      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornerRadiusTL', undefined);
-      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornerRadiusTR', undefined);
-      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornerRadiusBR', undefined);
-      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornerRadiusBL', undefined);
-      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornersLinked', true);
-    }
-    if (preset.opacity !== undefined) {
-      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'opacity', preset.opacity);
-    }
-    // Written unconditionally — a preset states a COMPLETE look, so switching
-    // away from Glass must clear the frost rather than leave it behind.
-    defaultSceneGraph.writeProp(nodeId, styleComp.id, 'backdropBlur', preset.backdropBlur);
-  }
-
-  // Material response. Only touched by presets that state one, so applying a
-  // surface look does not flatten a 3D layer's shading.
-  if (preset.specular !== undefined) setNodeSpecular(nodeId, preset.specular);
-  if (preset.shininess !== undefined) setNodeShininess(nodeId, preset.shininess);
-
-  bumpScene();
-  return true;
 }

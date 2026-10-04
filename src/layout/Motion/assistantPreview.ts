@@ -21,17 +21,16 @@
  *     engine restores the document exactly, nothing recorded).
  *
  * The assistants write whole PER-MEMBER keyframe lists (the Smoother drops
- * keys from x and y independently), so each preview is computed off-document
- * from the captured originals and sent as `setKeyframes` for every captured
- * property (core/engine/assistantKeys.ts) — the whole state each time, since a
- * gesture keeps only the latest queued send.
+ * keys from x and y independently), so each preview is sent as
+ * `setMemberKeyframes` for every captured member — the whole state each time,
+ * since a gesture keeps only the latest queued send.
  *
  * Nothing here is React-aware; the dialogs own the state.
  */
 
-import { defaultAnimation, type Keyframe, type PropPath } from '@motion/animation';
+import type { Keyframe, PropPath } from '@motion/animation';
+import type { Command } from '@motion/engine-api';
 import { GestureSession } from '@core/engine/uiEdits';
-import { assistantKeyframeCommands } from '@core/engine/assistantKeys';
 
 export interface TrackPreview {
   /** The props that were captured (those that had keyframes at open). */
@@ -62,7 +61,6 @@ export function beginTrackPreview(
     // A copy: this array IS the revert state.
     if (kfs.length) captured.set(prop, kfs.map((k) => ({ ...k })));
   }
-  const always = new Map([[nodeId, new Set<string>(captured.keys())]]);
   let session: GestureSession | null = null;
 
   return {
@@ -74,13 +72,10 @@ export function beginTrackPreview(
       await g?.cancel();
     },
     apply: (next) => {
-      const { cmds } = assistantKeyframeCommands([nodeId], () => {
-        for (const [prop, kfs] of captured) {
-          defaultAnimation.setTrackKeyframes(nodeId, prop, (next.get(prop) ?? kfs).map((k) => ({ ...k })));
-        }
-      }, { always });
+      const tracks = [...captured].map(([prop, kfs]) => ({ member: prop, keyframes: JSON.stringify(next.get(prop) ?? kfs) }));
+      const cmd: Command = { type: 'setMemberKeyframes', layer: nodeId, tracks };
       session ??= new GestureSession(label);
-      session.send(cmds);
+      session.send([cmd]);
     },
     commit: async () => {
       const g = session;

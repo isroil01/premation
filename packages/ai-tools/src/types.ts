@@ -87,10 +87,9 @@ export interface ToolResult {
 //
 // Every facade below is ASYNC. A tool handler never assumes a write has landed
 // in the same tick, and never reads the document behind the engine's back: a
-// write is a command sent to the engine, a read-back is a query (or, until the
-// B4 mirror, a host read of the mirror the engine keeps current). That is what
-// lets the same handlers drive the TypeScript engine today and the C++ engine
-// process tomorrow — the host swaps the `EngineClient`, not the tools.
+// write is a command sent to the engine, a read-back is a query or a host read
+// of the document mirror the engine keeps current. The host supplies the
+// `EngineClient`; the tools never see what is behind it.
 
 /**
  * The engine session one AI turn (or one script run) writes through.

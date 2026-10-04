@@ -20,7 +20,7 @@ import { apiParentOf, compOfLayer, isLayer } from '@core/mirror/docFacts';
 import { buildMergedPaths, type MergeOp } from '@core/scene/mergePaths';
 import { decodeFragmentLayers, FragmentBuilder, type BuiltFragment } from '@/engine-client/fragmentBuilder';
 import { labelIndexOf } from '@core/engine/model';
-import { engine } from '@core/engine/engineInstance';
+import { engine, engineIdle } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { compTime, propRefForTrack } from '@core/engine/propRefs';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -108,6 +108,8 @@ export async function duplicateSelectedLayersEdit(): Promise<string[]> {
   const ids = useSelectionStore.getState().ids.filter((id) => !!m.layer(id));
   const groups = byComp(ids);
   if (groups.size === 0) return [];
+  // Whether a copy is nudged reads the original's Position off its property tree.
+  await m.loadTrees(ids);
   const label = ids.length === 1 ? 'Duplicate Layer' : 'Duplicate Layers';
   const client = engine();
   const opened = await client.beginGesture(label);
@@ -126,6 +128,9 @@ export async function duplicateSelectedLayersEdit(): Promise<string[]> {
       break;
     }
     const copies = (res.value as { layers?: string[] }).layers ?? [];
+    // The nudge writes through the copies' trees: let the mirror learn of them and load them.
+    await engineIdle();
+    await m.loadTrees(copies);
     copies.forEach((copy, i) => {
       const src = m.layer(layers[i]!);
       if (!src) return;
@@ -441,6 +446,7 @@ export async function set3DEdit(ids: readonly string[], on?: boolean): Promise<v
  * key. One entry.
  */
 export async function addKeyframesAtPlayheadEdit(nodeId: string, label: string, tracks: readonly string[], seconds: number): Promise<void> {
+  await documentMirror().loadTree(nodeId);
   const seen = new Set<string>();
   const props: PropRef[] = [];
   for (const t of tracks) {

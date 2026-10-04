@@ -22,7 +22,6 @@ import {
   fillPlaceholder,
   type ImportedAsset,
 } from '@stores/assetStore';
-import { rebindAssetSrcs } from '@core/scene/assetRebind';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import {
   collectAssetsIntoBundle,
@@ -70,16 +69,16 @@ export async function collectBundleAssetsForSave(path: string, doc: EditorDocume
     // the state this exists to prevent.
     rewriteDocumentSrcs(doc, result.srcById);
 
-    // Then the live library and the live scene, so the session the user is
-    // still in stops holding object URLs it no longer needs — and so a second
-    // save has nothing left to collect.
+    // Then the live library, so the session the user is still in stops
+    // holding object URLs it no longer needs — and so a second save has
+    // nothing left to collect. (Layers are not rewritten: the engine resolves
+    // a layer's media from its item record.)
     useAssetStore.setState((s) => {
       for (const asset of s.assets) {
         const next = result.srcById.get(asset.id);
         if (next) asset.src = next;
       }
     });
-    rebindAssetSrcs(useAssetStore.getState().assets);
 
     return result.collected.length;
   } catch {
@@ -149,8 +148,8 @@ export async function restoreBundleAssets(path: string | null): Promise<number> 
       }
     });
 
-    // Any layer still holding a dead `blob:` now has a live entry to bind to.
-    rebindAssetSrcs(useAssetStore.getState().assets);
+    // Layers are not rebound: the engine resolves a layer's media from its
+    // item record (id / path), never from a layer's stored `blob:` src.
     return missing.length;
   } catch {
     return 0;

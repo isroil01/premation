@@ -7,8 +7,6 @@
  */
 
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
 
 export interface ImageSequence {
   /** Frame source URLs in play order. */
@@ -71,25 +69,4 @@ export function readNodeSequence(node: SceneNode): ImageSequence | null {
 /** The source URL for a sequence at `sourceSec` (honours the loop flag). */
 export function sequenceSrcAt(seq: ImageSequence, sourceSec: number): string {
   return seq.frames[sequenceFrameAt(sourceSec, seq.fps, seq.frames.length, seq.loop)]!;
-}
-
-/** Whether a node is an image-sequence footage layer. */
-export function getNodeHasSequence(nodeId: string): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return !!node && readNodeSequence(node) !== null;
-}
-
-/** Current loop interpretation of a node's sequence (false when none). */
-export function getNodeSequenceLoop(nodeId: string): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return (node && readNodeSequence(node)?.loop) === true;
-}
-
-/** Toggle the loop interpretation on a node's sequence. */
-export function setSequenceLoop(nodeId: string, loop: boolean): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const seq = node && readNodeSequence(node);
-  if (!seq) return;
-  defaultSceneGraph.setImageSequence(nodeId, { ...seq, loop });
-  bumpScene();
 }

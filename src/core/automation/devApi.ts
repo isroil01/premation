@@ -15,6 +15,23 @@
  * Installed by Providers after the engine boots; a no-op without `window`.
  */
 
+/**
+ * The dev/automation handle on `window.__premationAutomation` (B5):
+ *
+ *   const a = window.__premationAutomation;
+ *   const rec = await a.recordSession();            // … edit in the UI, run an AI turn, a script …
+ *   const log = await rec.stop();             // JSON lines (save it; `premation render --commands`)
+ *   await a.replaySession(log);               // the engine, reset to the start document, reproduces the session
+ *   await a.runScript(src, { grant: ['document.read', 'document.write'] });
+ *   await a.runToolTurn('AI: build', [{ name: 'create_layer', args: {…} }, …]);
+ *
+ * `runScript` from here asks no dialog: the `grant` list IS the consent (the
+ * developer typing it is the user). A script that asks for more than was
+ * granted is refused, exactly as a declined prompt would.
+ *
+ * Installed by Providers after the engine boots; a no-op without `window`.
+ */
+
 import { recordSession, replaySession, logFromJsonl, logToJsonl } from './commandLog';
 import { runScript, type RunScriptOptions } from '@core/scripting/scriptHost';
 import type { ScriptPermission } from '@core/scripting/protocol';

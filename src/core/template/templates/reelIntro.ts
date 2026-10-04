@@ -5,12 +5,8 @@
  */
 
 import type SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { useCompositionStore } from '@stores/compositionStore';
-import { bumpScene } from '@stores/sceneStore';
 import type { TemplateDefinition } from '../templateTypes';
-import { addRoot, addShape, addText, addGradientShape, radialFill, liveKf, type SetKf } from './builders';
+import { addRoot, addShape, addText, addGradientShape, radialFill,  type SetKf } from './builders';
 
 const CW = 1080, CH = 1920, CX = CW / 2, CY = CH / 2;
 
@@ -35,15 +31,6 @@ export function animateReelIntro(set: SetKf): void {
   set('tpl_line2', 'y', 0.7, CY + 210, 'easeOut'); set('tpl_line2', 'y', 1.3, CY + 150, 'easeOut');
   set('tpl_line2', 'opacity', 0.7, 0, 'easeOut'); set('tpl_line2', 'opacity', 1.3, 100, 'easeOut');
   set('tpl_handle', 'opacity', 1.4, 0, 'easeOut'); set('tpl_handle', 'opacity', 2, 100, 'easeOut');
-}
-
-export function buildReelIntro(): void {
-  const rootId = activeCompRootId();
-  defaultSceneGraph.clear();
-  layoutReelIntro(defaultSceneGraph, rootId);
-  animateReelIntro(liveKf);
-  useCompositionStore.getState().update({ width: CW, height: CH, fps: 60, durationSeconds: 5, background: '#111827' });
-  bumpScene();
 }
 
 export const reelIntroTemplate: TemplateDefinition = {

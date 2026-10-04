@@ -7,9 +7,10 @@
 import { parseGltf } from '@core/media/gltf';
 import { buildModelLayout, bytesToDataUrl, glbFromModelFiles } from './modelImport';
 import { registerModel, clearModelRegistry, modelKeyForBytes } from './modelMesh';
-import { SCENE_KIND_PROP } from './seedDefaultScene';
+
 import { buildQuadGlb, buildExternalGltfSet } from '@/__testHelpers__/buildTestGlb';
 import { GltfSidecarError } from '@core/media/gltf';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 describe('buildModelLayout', () => {
   afterEach(() => clearModelRegistry());

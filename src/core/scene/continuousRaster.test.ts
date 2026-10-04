@@ -2,13 +2,14 @@
  * The Continuous Rasterization switch: where it is offered and how it persists.
  */
 
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import {
   CONTINUOUS_RASTER_PROP,
   readContinuousRaster,
   supportsContinuousRaster,
 } from './continuousRaster';
 import type { SceneNode } from '@core/types';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 function node(id: string, kind: string, props: Record<string, unknown> = {}): SceneNode {
   return {

@@ -15,8 +15,6 @@
  */
 
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
 import { maskSegments, type MaskPath } from '@core/effects/mask';
 import { arcTable, pointAndTangentAtLength, type ArcTable, type Pt } from '@core/scene/trimPath';
 import type { TextLayout, PlacedGlyph } from './textLayout';
@@ -315,19 +313,6 @@ export function resolveTextPathMask(node: SceneNode, cfg: TextPath): MaskPath | 
   if (!paths || paths.length === 0) return null;
   if (!cfg.pathId) return paths[0]!;
   return paths.find((p) => p.id === cfg.pathId) ?? null;
-}
-
-/** Add / update / clear the text-path config on a layer. */
-export function setTextPath(nodeId: string, cfg: TextPath | null): void {
-  defaultSceneGraph.setTextPath(nodeId, cfg ?? undefined);
-  bumpScene();
-}
-
-export function updateTextPath(nodeId: string, patch: Partial<TextPath>): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const base = readTextPathConfig(node) ?? defaultTextPath();
-  setTextPath(nodeId, { ...base, ...patch });
 }
 
 /** Build the sampler for a node's text path, or null when it isn't usable. */

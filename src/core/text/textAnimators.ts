@@ -35,13 +35,11 @@
  */
 
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
-import { parseExpression, evaluateExpression, defaultAnimation, type NodeAnimSnapshot } from '@motion/animation';
+import { parseExpression, evaluateExpression } from '@motion/animation';
 import { clamp01 } from '@utils/lang';
 import { splitGraphemes } from './graphemes';
 import { mixCssColors } from './cssColor';
-import { isAxisTag, MAX_ANIMATED_AXES } from './fontAxes';
+import { isAxisTag } from './fontAxes';
 import {
   defaultRangeSelector,
   defaultSelector,
@@ -49,7 +47,6 @@ import {
   setExpressionSelectorCompiler,
   unitPositions,
   type RangeBasedOn,
-  type RangeSelectorData,
   type SelectorData,
   type SelectorKind,
   type SelectorShape,
@@ -846,44 +843,6 @@ function resolveSelector(
   return out as unknown as SelectorData;
 }
 
-/** Replace a layer's whole animator stack. Public because applying a preset
- *  installs a serialized rig wholesale rather than one field at a time. */
-export function writeAnimatorData(nodeId: string, animators: TextAnimatorData[]): void {
-  writeAnimators(nodeId, animators.map(normalizeAnimator));
-}
-
-function writeAnimators(nodeId: string, animators: TextAnimatorData[]): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node ? textComponent(node) : undefined;
-  if (!node || !t) return;
-  // Persist through the graph so the rebuilt plain-view keeps the value.
-  defaultSceneGraph.writeProp(nodeId, t.id, '__animators', animators);
-  bumpScene();
-}
-
-/** Add a fresh animator group to a text layer. Returns its index, or -1. */
-export function addTextAnimator(nodeId: string): number {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return -1;
-  const next = [...readAnimatorData(node), defaultAnimator()];
-  writeAnimators(nodeId, next);
-  return next.length - 1;
-}
-
-/** Remove the animator at `index`. */
-export function removeTextAnimator(nodeId: string, index: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const count = readAnimatorData(node).length;
-  if (index < 0 || index >= count) return;
-  // The animator's tracks go with it and every later animator's tracks move
-  // down one slot (ENGINE_API.md §2.5 #8). Tracks are addressed by INDEX
-  // (`ta.<i>.…`), so without this, removing animator 0 handed its keyframes to
-  // the animator that slid into slot 0.
-  rekeyTextAnimatorTracks(nodeId, (i) => (i === index ? null : i > index ? i - 1 : i));
-  writeAnimators(nodeId, readAnimatorData(node).filter((_, i) => i !== index));
-}
-
 /** A `ta.*` track name, decomposed. `sel` null = an animator's own param. */
 interface AnimatorTrackRef {
   anim: number;
@@ -911,178 +870,6 @@ export function parseAnimatorTrack(prop: string): AnimatorTrackRef | null {
 export function animatorTrackName(ref: AnimatorTrackRef): string {
   if (ref.sel === null) return `ta.${ref.anim}.${ref.param}`;
   return selectorPropPath(ref.anim, ref.sel, ref.param as SelectorParam);
-}
-
-/**
- * Move every `ta.*` track, expression and data track of a text layer to the
- * slots `mapAnim` / `mapSel` give (null = drop it). The one place the index
- * addressing is kept consistent when animators or selectors are removed or
- * reordered — the engine API addresses them by id and relies on it.
- */
-export function rekeyTextAnimatorTracks(
-  nodeId: string,
-  mapAnim: (index: number) => number | null,
-  mapSel?: (animIndex: number, selIndex: number) => number | null,
-): void {
-  const snap = defaultAnimation.snapshotNode(nodeId);
-  if (!snap) return;
-  let changed = false;
-  const remap = <V>(section: Record<string, V>): Record<string, V> => {
-    const out: Record<string, V> = {};
-    for (const [prop, v] of Object.entries(section)) {
-      const ref = parseAnimatorTrack(prop);
-      if (!ref) { out[prop] = v; continue; }
-      const anim = mapAnim(ref.anim);
-      const sel = ref.sel === null ? null : mapSel ? mapSel(ref.anim, ref.sel) : ref.sel;
-      if (anim === null || (ref.sel !== null && sel === null)) { changed = true; continue; }
-      const name = animatorTrackName({ anim, sel, param: ref.param });
-      if (name !== prop) changed = true;
-      out[name] = v;
-    }
-    return out;
-  };
-  const next: NodeAnimSnapshot = {
-    tracks: remap(snap.tracks),
-    expressions: remap(snap.expressions),
-    data: Object.fromEntries(
-      Object.entries(remap(snap.data)).map(([prop, t]) => [prop, { ...t, prop }]),
-    ),
-  };
-  if (changed) defaultAnimation.restoreNode(nodeId, next);
-}
-
-/** Patch fields of the animator at `index` (static base values). */
-export function updateAnimator(
-  nodeId: string,
-  index: number,
-  patch: Partial<TextAnimatorData>,
-): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const data = readAnimatorData(node);
-  const cur = data[index];
-  if (!cur) return;
-  const next = data.slice();
-  next[index] = normalizeAnimator({ ...cur, ...patch });
-  writeAnimators(nodeId, next);
-}
-
-/** Add optional properties (at their no-op defaults) to the animator at `index`.
- *  Already-present ones keep their value. */
-export function addAnimatorProperties(nodeId: string, index: number, params: ReadonlyArray<AnimatorParam>): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const cur = node ? readAnimatorData(node)[index] : undefined;
-  if (!cur) return;
-  const patch: Record<string, number> = {};
-  for (const p of params) {
-    const spec = OPTIONAL_ANIMATOR_PROPERTIES.find((o) => o.param === p);
-    if (spec && (cur as unknown as Record<string, unknown>)[p] === undefined) patch[p] = spec.defaultValue;
-  }
-  if (Object.keys(patch).length > 0) updateAnimator(nodeId, index, patch as Partial<TextAnimatorData>);
-}
-
-/** Remove an optional property (or a Font Axis, by `axis<TAG>`) from an animator. */
-export function removeAnimatorProperty(nodeId: string, index: number, param: string): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const data = readAnimatorData(node);
-  const cur = data[index];
-  if (!cur) return;
-  const next = { ...cur } as unknown as Record<string, unknown>;
-  const tag = axisTagOfParam(param);
-  if (tag) {
-    const axes = { ...(cur.axes ?? {}) };
-    delete axes[tag];
-    next.axes = Object.keys(axes).length > 0 ? axes : undefined;
-  } else {
-    delete next[param];
-  }
-  const all = data.slice();
-  all[index] = normalizeAnimator(next as unknown as TextAnimatorData);
-  writeAnimators(nodeId, all);
-}
-
-/** Add a Font Axis property. Refused past MAX_ANIMATED_AXES distinct tags on
- *  the LAYER (AE's limit is per layer, across all of its animators). */
-export function addAnimatorAxis(nodeId: string, index: number, tag: string): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !isAxisTag(tag)) return false;
-  const data = readAnimatorData(node);
-  const cur = data[index];
-  if (!cur) return false;
-  const used = new Set(data.flatMap((a) => Object.keys(a.axes ?? {})));
-  if (!used.has(tag) && used.size >= MAX_ANIMATED_AXES) return false;
-  if (cur.axes && tag in cur.axes) return true;
-  updateAnimator(nodeId, index, { axes: { ...(cur.axes ?? {}), [tag]: 0 } });
-  return true;
-}
-
-/** Append a selector of `kind` to the animator at `index`. */
-export function addSelector(
-  nodeId: string,
-  index: number,
-  kind: SelectorKind = 'range',
-): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const cur = readAnimatorData(node)[index];
-  if (!cur) return;
-  updateAnimator(nodeId, index, {
-    selectors: [...(cur.selectors ?? []), defaultSelector(kind)],
-  });
-}
-
-/** Remove the selector at `selectorIndex`. The last one cannot be removed —
- *  an animator with no selector affects nothing and reads as broken. */
-export function removeSelector(
-  nodeId: string,
-  index: number,
-  selectorIndex: number,
-): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const cur = readAnimatorData(node)[index];
-  if (!cur || (cur.selectors?.length ?? 0) <= 1) return;
-  if (selectorIndex < 0 || selectorIndex >= cur.selectors!.length) return;
-  // Same index-addressing hazard as removeTextAnimator: move later selectors'
-  // tracks down a slot and drop the removed one's.
-  rekeyTextAnimatorTracks(nodeId, (i) => i, (a, s) =>
-    a !== index ? s : s === selectorIndex ? null : s > selectorIndex ? s - 1 : s);
-  updateAnimator(nodeId, index, {
-    selectors: cur.selectors!.filter((_, j) => j !== selectorIndex),
-  });
-}
-
-/** Patch one selector. Changing `kind` rebuilds it from that kind's defaults,
- *  keeping only what both kinds share. */
-export function updateSelector(
-  nodeId: string,
-  index: number,
-  selectorIndex: number,
-  patch: Partial<RangeSelectorData> & Record<string, unknown>,
-): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const cur = readAnimatorData(node)[index];
-  const sel = cur?.selectors?.[selectorIndex];
-  if (!cur || !sel) return;
-  let next: SelectorData;
-  if (patch.kind && patch.kind !== sel.kind) {
-    const fresh = defaultSelector(patch.kind as SelectorKind);
-    next = {
-      ...fresh,
-      id: sel.id,
-      basedOn: sel.basedOn,
-      mode: sel.mode,
-      enabled: sel.enabled,
-      ...patch,
-    } as SelectorData;
-  } else {
-    next = { ...sel, ...patch } as SelectorData;
-  }
-  const selectors = cur.selectors!.slice();
-  selectors[selectorIndex] = next;
-  updateAnimator(nodeId, index, { selectors });
 }
 
 /**

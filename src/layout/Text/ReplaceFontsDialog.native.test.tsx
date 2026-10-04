@@ -1,0 +1,140 @@
+/**
+ * Replace Fonts — the dialog lists what is missing and where, and Replace
+ * writes the substitution to the scene (layer fonts AND rich-text runs) as
+ * ONE undo entry.
+ */
+
+import { render, screen, fireEvent, within, act, cleanup } from '@testing-library/react';
+import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { readRuns } from '@core/text/richText';
+import { collectFontUsage } from '@core/fonts/missingFonts';
+import { RECENT_FONTS_KEY, resetFontPrefsCacheForTest } from '@core/fonts/fontPrefs';
+import { checkMissingFonts } from './missingFontsWatcher';
+import { useUIStore } from '@stores/uiStore';
+import { useModalStore, closeAllModals } from '@stores/modalStore';
+import type { SceneNode } from '@core/types';
+import { ReplaceFontsBody, REPLACE_FONTS_MODAL_ID } from './ReplaceFontsDialog';
+import { clearHistory, historyLabels, setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
+import { docView } from '@core/engine/__testHelpers__/docView';
+import { engineIdle } from '@core/engine/engineInstance';
+import { documentMirror } from '@stores/documentMirror';
+
+class StubResizeObserver {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
+async function allNodes(): Promise<SceneNode[]> {
+  const out: SceneNode[] = [];
+  (await docView()).traverse((n) => { out.push(n); });
+  return out;
+}
+
+const textProps = async (id: string): Promise<Record<string, unknown>> =>
+  (await docView()).getNode(id)!.components.find((c) => c.type === 'Text')!.props as Record<string, unknown>;
+
+beforeAll(() => {
+  (globalThis as { ResizeObserver?: unknown }).ResizeObserver = StubResizeObserver;
+  setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
+});
+
+beforeEach(() => {
+  localStorage.clear();
+  resetFontPrefsCacheForTest();
+});
+
+/** The two text layers every case starts from, on the app's engine: a layer font and a run font of the missing family. */
+async function fontsFixture(h: Awaited<ReturnType<typeof setupAppEngine>>): Promise<{ a: string; b: string }> {
+  const mk = async (name: string): Promise<string> => (await h.run({ type: 'createLayer', comp: 'comp_root', kind: 'text', name, init: [] })).layer;
+  const a = await mk('Title'); // listed first: its spelling of the family is the one reported
+  const b = await mk('Lower third');
+  await h.batch('Setup', [
+    { type: 'setProperty', prop: { layer: a, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Brand Sans' } },
+    { type: 'setProperty', prop: { layer: b, path: 'text/fontFamily' }, value: { kind: 'string', value: 'Inter' } },
+    { type: 'setProperty', prop: { layer: b, path: 'text/styleRuns' }, value: { kind: 'json', value: JSON.stringify([{ start: 0, end: 2, style: { fontFamily: 'brand sans' } }]) } },
+  ]);
+  await clearHistory();
+  await engineIdle();
+  await documentMirror().whenIdle();
+  return { a, b };
+}
+
+afterEach(() => {
+  cleanup();
+  closeAllModals();
+});
+
+describe('ReplaceFontsBody', () => {
+  it('lists the family, a Missing badge and the layers using it; Replace starts disabled', async () => {
+    const h = await setupAppEngine();
+    await fontsFixture(h);
+    const usages = collectFontUsage((await allNodes()));
+    render(<ReplaceFontsBody usages={usages} missingKeys={new Set(['brand sans'])} close={() => {}} />);
+    const row = screen.getByRole('listitem', { name: 'Brand Sans' });
+    expect(within(row).getByText('Missing')).toBeTruthy();
+    expect(within(row).getByText(/2 layers: Title, Lower third/)).toBeTruthy();
+    // Missing families first.
+    expect(screen.getAllByRole('listitem')[0]).toBe(row);
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled();
+    await h.dispose();
+  });
+
+  it('Replace writes layer fonts and run fonts in ONE undo entry (engine: text/fontFamily + text/styleRuns)', async () => {
+    // The document on the app engine: the same two layers, built through the API.
+    const h = await setupAppEngine();
+    const { a, b } = await fontsFixture(h);
+    localStorage.setItem(RECENT_FONTS_KEY, JSON.stringify(['Georgia']));
+    const close = jest.fn();
+    render(<ReplaceFontsBody usages={collectFontUsage((await allNodes()))} missingKeys={new Set(['brand sans'])} close={close} />);
+
+    const row = screen.getByRole('listitem', { name: 'Brand Sans' });
+    await act(async () => { fireEvent.click(within(row).getByRole('button', { name: 'Brand Sans' })); });
+    const recent = await screen.findByRole('listbox', { name: 'Recent fonts' });
+    fireEvent.click(within(recent).getByTitle('Georgia'));
+
+    const replace = screen.getByRole('button', { name: 'Replace' });
+    expect(replace).not.toBeDisabled();
+    await act(async () => { fireEvent.click(replace); await engineIdle(); });
+
+    expect(close).toHaveBeenCalled();
+    expect((await textProps(a)).fontFamily).toBe('Georgia');
+    expect((await textProps(b)).fontFamily).toBe('Inter');
+    expect(readRuns((await docView()).getNode(b)!)[0]!.style.fontFamily).toBe('Georgia');
+    expect(await historyLabels()).toHaveLength(1);
+
+    await act(async () => { await h.run({ type: 'undo' }); });
+    expect((await textProps(a)).fontFamily).toBe('Brand Sans');
+    expect(readRuns((await docView()).getNode(b)!)[0]!.style.fontFamily).toBe('brand sans');
+    await h.dispose();
+  });
+});
+
+describe('the missing-font check', () => {
+  // The check reads the document MIRROR (B4): the fixture is an engine document.
+  let h: Awaited<ReturnType<typeof setupAppEngine>>;
+  beforeEach(async () => {
+    h = await setupAppEngine();
+    await fontsFixture(h);
+  });
+  afterEach(async () => { await h.dispose(); });
+
+  it('shows ONE toast whose action opens Replace Fonts', async () => {
+    const notify = jest.spyOn(useUIStore.getState(), 'notify');
+    const missing = await checkMissingFonts((f) => f.toLowerCase() !== 'brand sans');
+    expect(missing.map((m) => m.family)).toEqual(['Brand Sans']);
+    expect(notify).toHaveBeenCalledTimes(1);
+    const toast = notify.mock.calls[0]![0];
+    expect(toast.message).toBe('1 font missing');
+    toast.action!.onSelect();
+    expect(useModalStore.getState().stack.some((m) => m.id === REPLACE_FONTS_MODAL_ID)).toBe(true);
+    notify.mockRestore();
+  });
+
+  it('says nothing when every font is available', async () => {
+    const notify = jest.spyOn(useUIStore.getState(), 'notify');
+    expect(await checkMissingFonts(() => true)).toEqual([]);
+    expect(notify).not.toHaveBeenCalled();
+    notify.mockRestore();
+  });
+});

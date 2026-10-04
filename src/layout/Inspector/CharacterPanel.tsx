@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorKeys, useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { useMirrorKeys, useMirrorLayer, useMirrorTreeGroups } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { currentRuns, isSourceTextAnimated, maskIdsOf, mirrorParagraphBox, mirrorTextPresetCapture, SOURCE_TEXT_PATH, sourceTextAt, STYLE_RUNS_PATH, textPathOf } from '@layout/Text/textMirror';
 import { useComponentProp, type ComponentPropHandle } from './useComponentProp';
@@ -109,6 +109,9 @@ export interface TextSettingsBodyProps {
  * handlers, fallbacks and range styling below are shared and only the layout
  * at the bottom differs.
  */
+/** The tree groups the Text settings read. */
+const TEXT_TREE_GROUPS = ['text', 'masks'] as const;
+
 export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSettingsBodyProps): JSX.Element {
   const primary = nodeId;
   const selected = useMemo(() => nodeIds ?? (nodeId ? [nodeId] : []), [nodeIds, nodeId]);
@@ -120,7 +123,8 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   // B4: the layer, its tree (style runs, masks, Path Options) and Source Text's keys / value from the mirror;
   // each field below wakes on its own property (useComponentProp).
   const layer = useMirrorLayer(primary);
-  useMirrorTree(primary);
+  // Only the Text group (style runs, Path Options) and the masks a text path follows.
+  useMirrorTreeGroups(primary, TEXT_TREE_GROUPS);
   useMirrorKeys(primary ? [`prop:${primary}|${STYLE_RUNS_PATH}`, `key:${primary}|${SOURCE_TEXT_PATH}`, `value:${primary}|${SOURCE_TEXT_PATH}`] : []);
   const m = documentMirror();
   const isText = uiKindOf(layer) === 'text';

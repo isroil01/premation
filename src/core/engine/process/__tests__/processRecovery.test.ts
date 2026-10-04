@@ -10,7 +10,7 @@
 
 import { ProcessEngineClient, unwrap, type EngineClient, type ProcessEngineNotice } from '@motion/engine-api';
 import { nativeEngineExe, startNativeEngine, type NativeEngine } from '../../__testHelpers__/nativeEngine';
-import { sec } from '../../__testHelpers__/harness';
+import { sec } from '../../__testHelpers__/appEngine';
 
 jest.useFakeTimers();
 

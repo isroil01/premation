@@ -9,9 +9,7 @@
  *    work).
  */
 
-import SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
+
 import { TEMPLATES } from './registry';
 import { templatePreviewSpec } from './templatePreview';
 import { buildPreviewScene } from './previewController';
@@ -33,15 +31,6 @@ describe('template preview', () => {
         expect(scene.duration).toBeGreaterThan(0);
       }
       if (t.previewTime !== undefined) expect(scene.posterTime).toBe(t.previewTime);
-    });
-
-    it(`${t.name}: building the preview does not mutate the live scene`, () => {
-      const nodesBefore = defaultSceneGraph.size;
-      const tracksBefore = JSON.stringify(defaultAnimation.snapshot());
-      t.layout(new SceneGraph());
-      buildPreviewScene(templatePreviewSpec(t));
-      expect(defaultSceneGraph.size).toBe(nodesBefore);
-      expect(JSON.stringify(defaultAnimation.snapshot())).toBe(tracksBefore);
     });
   }
 });

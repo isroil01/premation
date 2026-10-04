@@ -25,11 +25,8 @@ native/
   libs/motion_transform/                             transform.hpp/.cpp, motion_transform.cpp (C ABI)
   tests/                                             Catch2 + the gen_golden*.ts generators and their .inc tables
   bench/                                             Google Benchmark (bench_eval, bench_expr); tests/bench_ts.ts is the TS twin
-  bindings/wasm/, bindings/napi/                     Emscripten glue, node-addon-api addon
+  bindings/wasm/                                     Emscripten glue
 ```
-
-The TypeScript side of the boundary is `packages/native-bridge` (the only
-place that may import a WASM or N-API build; falls back to `@motion/animation`).
 
 ## Rules that CI enforces (from `CLAUDE.md`)
 
@@ -107,7 +104,6 @@ npm run native:test               # ctest --preset <os>
 npm run native:bench              # build/<preset>/bench/motion_bench
 npm run native:tidy               # run-clang-tidy over native/libs
 npm run native:wasm               # configure + build the wasm preset + Node smoke test
-npm run native:napi               # npm install + cmake-js compile in bindings/napi + smoke test
 npm run native:golden             # regenerate tests/golden_bezier.inc from the TypeScript
 ```
 
@@ -123,27 +119,14 @@ Build trees go to `native/build/<preset>/` (git-ignored). The wasm preset
 turns tests and bench off (no vcpkg) and writes
 `build/wasm/bindings/wasm/motion_wasm.{mjs,wasm}`.
 
-### N-API addon
-
-```sh
-cd native/bindings/napi
-npm install
-npx cmake-js compile                      # Linux/macOS: CC=clang CXX=clang++ npx cmake-js compile
-npx cmake-js compile -G Ninja --CDCMAKE_C_COMPILER=clang-cl --CDCMAKE_CXX_COMPILER=clang-cl   # Windows
-node smoke.cjs
-```
-
-For Electron's ABI: `npx cmake-js compile --runtime electron --runtime-version <electron version>`.
-
 ## The golden contract
 
 `tests/gen_golden.ts` RUNS the TypeScript `sampleTrack` over a 3-keyframe
 bezier track and writes `tests/golden_bezier.inc` (X-macros). The Catch2 suite
 checks the C++ against it twice: `[golden]` within 1e-9 relative, and
-`[golden][bits]` with exact `==`. Both N-API and WASM smoke tests run the same
-table through their packed `Float64Array` protocol with exact equality, and
-`packages/native-bridge`'s jest test checks its fallback against the same file.
-Change the sampler on either side → regenerate → all four gates move together.
+`[golden][bits]` with exact `==`. The WASM smoke test runs the same table
+through its packed `Float64Array` protocol with exact equality. Change the
+sampler on either side → regenerate → every gate moves together.
 
 Why exact equality is achievable: the port keeps the TypeScript's operation
 order, uses only `+ - * /`, `fabs` and `floor` (all correctly rounded IEEE

@@ -11,7 +11,7 @@
  */
 
 import { flicksToSeconds, secondsToFlicks, type Keyframe, type LayerInfo, type Value } from '@motion/engine-api';
-import type { SceneKind } from '@core/scene/seedDefaultScene';
+import type { SceneKind } from '@core/scene/sceneKind';
 import { uiKindOf } from './layerKinds';
 import { numbersOfValue, storedNumber, trackRefIn, type MirrorTreeLike, type TrackRef } from './trackIndex';
 

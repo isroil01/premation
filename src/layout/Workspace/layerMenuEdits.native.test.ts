@@ -1,0 +1,239 @@
+/**
+ * The viewport's right-click layer actions through the engine API (B3): one
+ * undo entry each, the legacy helper's rules, exact undo / redo.
+ */
+
+import { reorderSiblings, type StackAction } from '@core/scene/parenting';
+import { is3DEnabled } from '@core/scene/threeD';
+import { LABEL_COLORS } from '@core/scene/labelColor';
+import { readNodeKind } from '@core/scene/sceneDerive';
+import { engineIdle } from '@core/engine/engineInstance';
+import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { docView } from '@core/engine/__testHelpers__/docView';
+import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
+import type { Harness } from '@core/engine/__testHelpers__/appEngine';
+import { useSelectionStore } from '@stores/selectionStore';
+import {
+  addKeyframesAtPlayheadEdit,
+  arrangeLayersEdit,
+  bakeMergePathsEdit,
+  deleteSelectedLayersEdit,
+  duplicateSelectedLayersEdit,
+  freezeFrameEdit,
+  groupSelectedLayersEdit,
+  set3DEdit,
+  setFrameBlendEdit,
+  setLabelColorEdit,
+  setStretchEdit,
+  timeReverseEdit,
+  ungroupSelectedEdit,
+} from './layerMenuEdits';
+
+let h: Harness;
+let s: Scene;
+
+/** The layer's comp-space translation at 0 s (the engine's layer → comp matrix), as `e`/`f`. */
+async function world2DAt(id: string): Promise<{ e: number; f: number }> {
+  const r = await h.query({ type: 'getLayerTransforms', layers: [id], time: 0 });
+  const m = r.transforms[0]!.matrix;
+  return { e: m[12]!, f: m[13]! };
+}
+const COMP = 'comp_root';
+
+beforeEach(async () => {
+  h = await setupAppEngine();
+  s = await buildScene(h);
+  useSelectionStore.getState().clear();
+});
+
+afterEach(async () => {
+  await h.dispose();
+});
+
+async function roundTrip(run: () => Promise<unknown>, label: string): Promise<void> {
+  const before = (await h.doc());
+  const entries = (await historyLabels()).length;
+  await run();
+  await engineIdle();
+  const after = (await h.doc());
+  expect(after).not.toBe(before);
+  expect((await historyLabels()).length).toBe(entries + 1);
+  expect((await historyLabels()).at(-1)).toBe(label);
+  await h.run({ type: 'undo' });
+  expect((await h.doc())).toBe(before);
+  await h.run({ type: 'redo' });
+  expect((await h.doc())).toBe(after);
+}
+
+const node = async (id: string) => (await docView()).getNode(id)!;
+const x = async (id: string): Promise<number> => (await node(id)).components.find((c) => c.type === 'Transform')!.props.x as number;
+
+describe('delete', () => {
+  it('skips locked layers, one entry, clears the selection', async () => {
+    await h.run({ type: 'setLayerSwitches', layers: [s.P], patch: { locked: true } });
+    useSelectionStore.getState().set([s.A, s.P]);
+    await roundTrip(() => deleteSelectedLayersEdit(), 'Delete layer');
+    expect((await docView()).getNode(s.A)).toBeUndefined();
+    expect((await docView()).getNode(s.P)).toBeDefined();
+  });
+});
+
+describe('duplicate', () => {
+  it('"<name> copy", nudged +20 px when Position is static, selected — ONE entry', async () => {
+    useSelectionStore.getState().set([s.A]);
+    const ax = (await x(s.A));
+    let copies: string[] = [];
+    await roundTrip(async () => { copies = await duplicateSelectedLayersEdit(); }, 'Duplicate Layer');
+    // (after redo the copy exists again with the same id)
+    const copy = copies[0]!;
+    expect((await node(copy)).name).toBe('A copy');
+    expect((await x(copy))).toBe(ax + 20);
+    expect(useSelectionStore.getState().ids).toEqual([copy]);
+  });
+
+  it('an animated Position is not nudged (it would be a new key)', async () => {
+    useSelectionStore.getState().set([s.B]);
+    const [copy] = await duplicateSelectedLayersEdit();
+    expect((await docView()).getTrackKeyframes(copy!, 'x')).toHaveLength(2);
+    expect((await docView()).getTrackKeyframes(copy!, 'x')!.map((k) => k.value))
+      .toEqual((await docView()).getTrackKeyframes(s.B, 'x')!.map((k) => k.value));
+  });
+});
+
+describe('arrange', () => {
+  it.each<StackAction>(['front', 'forward', 'backward', 'back'])('%s: the sibling order reorderSiblings computes, one entry', async (action) => {
+    const kids = (await docView()).getChildOrder(COMP);
+    const ids = [s.T, s.P];
+    const expected = reorderSiblings(kids, ids, action);
+    const label = { front: 'Bring to Front', forward: 'Bring Forward', backward: 'Send Backward', back: 'Send to Back' }[action];
+    if (expected.every((id, i) => id === kids[i])) {
+      expect(await arrangeLayersEdit(ids, action)).toBe(false);
+      return;
+    }
+    await roundTrip(() => arrangeLayersEdit(ids, action), label);
+    expect((await docView()).getChildOrder(COMP)).toEqual(expected);
+  });
+
+  it('a non-contiguous Bring Forward moves each layer one step', async () => {
+    const kids = (await docView()).getChildOrder(COMP);
+    const ids = [kids[0]!, kids[2]!];
+    const expected = reorderSiblings(kids, ids, 'forward');
+    await arrangeLayersEdit(ids, 'forward');
+    expect((await docView()).getChildOrder(COMP)).toEqual(expected);
+  });
+});
+
+describe('group / ungroup', () => {
+  it('groups siblings, selects the group; ungroup frees them — one entry each', async () => {
+    useSelectionStore.getState().set([s.A, s.B]);
+    await roundTrip(async () => { expect(await groupSelectedLayersEdit()).toBe(true); }, 'Group Layers');
+    const group = useSelectionStore.getState().ids[0]!;
+    expect((await node(s.A)).parent).toBe(group);
+    await roundTrip(() => ungroupSelectedEdit(), 'Ungroup');
+    expect((await node(s.A)).parent).toBe(COMP);
+  });
+
+  it('a selection across parents is left to the legacy grouping (false)', async () => {
+    useSelectionStore.getState().set([s.A, s.c2layer]);
+    expect(await groupSelectedLayersEdit()).toBe(false);
+  });
+
+  it('a selection across parents of ONE comp: gathered under the first layer’s parent, world pose kept — one entry', async () => {
+    await h.run({ type: 'setProperty', prop: { layer: s.P, path: 'transform/position' }, value: { kind: 'vec2', value: { x: 500, y: 400 } } });
+    await h.run({ type: 'setParent', layers: [s.A], parent: s.P, keepWorldTransform: true });
+    const worldT = (await world2DAt(s.T));
+    const worldA = (await world2DAt(s.A));
+    useSelectionStore.getState().set([s.A, s.T]);
+    await roundTrip(async () => { expect(await groupSelectedLayersEdit()).toBe(true); }, 'Group Layers');
+    const group = useSelectionStore.getState().ids[0]!;
+    expect(readNodeKind((await node(group)))).toBe('group');
+    expect((await node(group)).parent).toBe(s.P);
+    expect((await node(s.A)).parent).toBe(group);
+    expect((await node(s.T)).parent).toBe(group);
+    expect((await world2DAt(s.T)).e).toBeCloseTo(worldT.e, 6);
+    expect((await world2DAt(s.T)).f).toBeCloseTo(worldT.f, 6);
+    expect((await world2DAt(s.A)).e).toBeCloseTo(worldA.e, 6);
+    expect((await world2DAt(s.A)).f).toBeCloseTo(worldA.f, 6);
+  });
+
+  it('a layer and its own parent: the group goes where the parent was, not inside it', async () => {
+    await h.run({ type: 'setParent', layers: [s.A], parent: s.P, keepWorldTransform: true });
+    useSelectionStore.getState().set([s.A, s.P]);
+    await roundTrip(async () => { expect(await groupSelectedLayersEdit()).toBe(true); }, 'Group Layers');
+    const group = useSelectionStore.getState().ids[0]!;
+    expect((await node(group)).parent).toBe(COMP);
+    expect((await node(s.P)).parent).toBe(group);
+    expect((await node(s.A)).parent).toBe(group);
+  });
+});
+
+describe('merge paths (bake)', () => {
+  it('the boolean as a new path layer, the operands removed, the result selected — ONE entry', async () => {
+    const rect = async (name: string): Promise<string> =>
+      (await h.run({ type: 'createLayer', comp: COMP, kind: 'rectangle', name, init: [] })).layer;
+    const r1 = await rect('R1');
+    const r2 = await rect('R2');
+    await h.run({ type: 'setProperty', prop: { layer: r2, path: 'transform/position' }, value: { kind: 'vec2', value: { x: (await x(r1)) + 100, y: 540 } } });
+    useSelectionStore.getState().set([r1, r2]);
+    let made: string[] = [];
+    await roundTrip(async () => { made = await bakeMergePathsEdit('union'); }, 'Merge Paths (union)');
+    expect(made).toHaveLength(1);
+    const merged = (await node(made[0]!));
+    expect(merged.name).toBe('Merged (union)');
+    expect(merged.parent).toBe(COMP);
+    expect(merged.components.some((c) => c.type === 'Geometry')).toBe(true);
+    expect((await docView()).getNode(r1)).toBeUndefined();
+    expect((await docView()).getNode(r2)).toBeUndefined();
+    expect(useSelectionStore.getState().ids).toEqual(made);
+  });
+
+  it('fewer than two mergeable paths: nothing happens, no entry', async () => {
+    useSelectionStore.getState().set([s.A]);
+    const before = (await h.doc());
+    const entries = (await historyLabels()).length;
+    expect(await bakeMergePathsEdit('union')).toEqual([]);
+    expect((await h.doc())).toBe(before);
+    expect((await historyLabels())).toHaveLength(entries);
+  });
+});
+
+describe('switches and keys', () => {
+  it('label colour by palette index', async () => {
+    const c = LABEL_COLORS[2]!.color;
+    await roundTrip(async () => { expect(await setLabelColorEdit([s.A, s.B], c)).toBe(true); }, 'Label Color');
+    expect((await node(s.A)).color).toBe(c);
+  });
+
+  it('a custom (off-palette) label colour is one engine entry too (B3z labelColor)', async () => {
+    await roundTrip(async () => { expect(await setLabelColorEdit([s.A], '#123456')).toBe(true); }, 'Label Color');
+    expect((await node(s.A)).color).toBe('#123456');
+  });
+
+  it('3D: flips each layer that can be 3D', async () => {
+    await roundTrip(() => set3DEdit([s.A]), 'Enable 3D Layer');
+    expect(is3DEnabled((await node(s.A)))).toBe(true);
+  });
+
+  it('Add Keyframe ▸ Position: one key holding the current value', async () => {
+    const before = (await x(s.A));
+    await roundTrip(() => addKeyframesAtPlayheadEdit(s.A, 'Position', ['x', 'y'], 0.5), 'Add Position keyframe');
+    expect((await docView()).getTrackKeyframes(s.A, 'x')).toHaveLength(1);
+    expect((await docView()).getTrackKeyframes(s.A, 'x')![0]!.value).toBeCloseTo(before);
+  });
+});
+
+describe('footage time', () => {
+  it('speed keeps the reversal; reverse; freeze; frame blending — one entry each', async () => {
+    await roundTrip(() => setStretchEdit(s.V, 200, false), 'Time Stretch');
+    expect((await docView()).getNodeLayerTime(s.V).stretch).toBe(200);
+    await roundTrip(() => timeReverseEdit(s.V), 'Time-Reverse Layer');
+    expect((await docView()).getNodeLayerTime(s.V).reverse).toBe(true);
+    await setStretchEdit(s.V, 50, true);
+    expect((await docView()).getNodeLayerTime(s.V).reverse).toBe(true);
+    expect((await docView()).getNodeLayerTime(s.V).stretch).toBe(50);
+    await roundTrip(() => freezeFrameEdit(s.V, 1), 'Freeze Frame');
+    expect((await docView()).getNodeLayerTime(s.V).freeze).toBe(true);
+    await roundTrip(() => setFrameBlendEdit(s.V, 'pixelMotion'), 'Frame Blending');
+    expect((await docView()).getNodeLayerTime(s.V).frameBlend).toBe('pixelMotion');
+  });
+});

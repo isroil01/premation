@@ -6082,6 +6082,52 @@ function decS_SetKeyframes(r: Reader, end: number, o: any): T.SetKeyframes {
   o.keys = l_keys;
   return o;
 }
+function encS_SetMemberKeyframes(w: Writer, v: T.SetMemberKeyframes): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.tracks; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_MemberKeyList(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SetMemberKeyframes(r: Reader, end: number, o: any): T.SetMemberKeyframes {
+  const l_tracks: T.MemberKeyList[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_tracks.push(decS_MemberKeyList(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('SetMemberKeyframes.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.tracks = l_tracks;
+  return o;
+}
+function encS_MemberKeyList(w: Writer, v: T.MemberKeyList): void {
+  w.byte(10); w.str(v.member);
+  w.byte(18); w.str(v.keyframes);
+}
+function decS_MemberKeyList(r: Reader, end: number, o: any): T.MemberKeyList {
+  let h_member = false;
+  let h_keyframes = false;
+  let v_member: string | undefined;
+  let v_keyframes: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_member = r.str(); h_member = true; break;
+      case 18: v_keyframes = r.str(); h_keyframes = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_member) throw new DecodeError('MemberKeyList.member: missing', 'missingField');
+  if (!h_keyframes) throw new DecodeError('MemberKeyList.keyframes: missing', 'missingField');
+  o.member = v_member;
+  o.keyframes = v_keyframes;
+  return o;
+}
 function encS_KeyframeIds(w: Writer, v: T.KeyframeIds): void {
   { const a = v.ids; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
 }
@@ -6516,6 +6562,7 @@ function encS_UpdatePaintStroke(w: Writer, v: T.UpdatePaintStroke): void {
   w.byte(10); w.str(v.layer);
   w.byte(18); w.str(v.stroke);
   w.byte(26); w.str(v.patch);
+  if (v.append !== undefined) { w.byte(32); w.bool(v.append); }
 }
 function decS_UpdatePaintStroke(r: Reader, end: number, o: any): T.UpdatePaintStroke {
   let h_layer = false;
@@ -6524,12 +6571,14 @@ function decS_UpdatePaintStroke(r: Reader, end: number, o: any): T.UpdatePaintSt
   let v_layer: string | undefined;
   let v_stroke: string | undefined;
   let v_patch: string | undefined;
+  let v_append: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_layer = r.str(); h_layer = true; break;
       case 18: v_stroke = r.str(); h_stroke = true; break;
       case 26: v_patch = r.str(); h_patch = true; break;
+      case 32: v_append = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -6540,6 +6589,7 @@ function decS_UpdatePaintStroke(r: Reader, end: number, o: any): T.UpdatePaintSt
   o.layer = v_layer;
   o.stroke = v_stroke;
   o.patch = v_patch;
+  if (v_append !== undefined) o.append = v_append;
   return o;
 }
 function encS_RemovePaintStrokes(w: Writer, v: T.RemovePaintStrokes): void {
@@ -10059,6 +10109,7 @@ function encS_MapLayerTime(w: Writer, v: T.MapLayerTime): void {
   w.byte(10); w.str(v.layer);
   w.byte(16); w.i64(v.time);
   w.byte(24); w.bool(v.outward);
+  if (v.keyframeAxis !== undefined) { w.byte(32); w.bool(v.keyframeAxis); }
 }
 function decS_MapLayerTime(r: Reader, end: number, o: any): T.MapLayerTime {
   let h_layer = false;
@@ -10067,12 +10118,14 @@ function decS_MapLayerTime(r: Reader, end: number, o: any): T.MapLayerTime {
   let v_layer: string | undefined;
   let v_time: number | undefined;
   let v_outward: boolean | undefined;
+  let v_keyframeAxis: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_layer = r.str(); h_layer = true; break;
       case 16: v_time = r.i64(); h_time = true; break;
       case 24: v_outward = r.bool(); h_outward = true; break;
+      case 32: v_keyframeAxis = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -10083,6 +10136,7 @@ function decS_MapLayerTime(r: Reader, end: number, o: any): T.MapLayerTime {
   o.layer = v_layer;
   o.time = v_time;
   o.outward = v_outward;
+  if (v_keyframeAxis !== undefined) o.keyframeAxis = v_keyframeAxis;
   return o;
 }
 function encS_MappedTime(w: Writer, v: T.MappedTime): void {
@@ -16438,6 +16492,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'reverseKeyframes': w.varint(4042); { const s = w.beginLd(); encS_ReverseKeyframes(w, v); w.endLd(s); } return;
     case 'pasteKeyframes': w.varint(4050); { const s = w.beginLd(); encS_PasteKeyframes(w, v); w.endLd(s); } return;
     case 'setKeyframes': w.varint(4162); { const s = w.beginLd(); encS_SetKeyframes(w, v); w.endLd(s); } return;
+    case 'setMemberKeyframes': w.varint(4170); { const s = w.beginLd(); encS_SetMemberKeyframes(w, v); w.endLd(s); } return;
     case 'addEffect': w.varint(4802); { const s = w.beginLd(); encS_AddEffect(w, v); w.endLd(s); } return;
     case 'addMask': w.varint(4810); { const s = w.beginLd(); encS_AddMask(w, v); w.endLd(s); } return;
     case 'addPropertyGroup': w.varint(4818); { const s = w.beginLd(); encS_AddPropertyGroup(w, v); w.endLd(s); } return;
@@ -16608,6 +16663,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 4042: out = decS_ReverseKeyframes(r, r.ldEnd(), { type: 'reverseKeyframes' }) as T.Command; break;
       case 4050: out = decS_PasteKeyframes(r, r.ldEnd(), { type: 'pasteKeyframes' }) as T.Command; break;
       case 4162: out = decS_SetKeyframes(r, r.ldEnd(), { type: 'setKeyframes' }) as T.Command; break;
+      case 4170: out = decS_SetMemberKeyframes(r, r.ldEnd(), { type: 'setMemberKeyframes' }) as T.Command; break;
       case 4802: out = decS_AddEffect(r, r.ldEnd(), { type: 'addEffect' }) as T.Command; break;
       case 4810: out = decS_AddMask(r, r.ldEnd(), { type: 'addMask' }) as T.Command; break;
       case 4818: out = decS_AddPropertyGroup(r, r.ldEnd(), { type: 'addPropertyGroup' }) as T.Command; break;
@@ -16778,6 +16834,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'reverseKeyframes': w.varint(4042); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'pasteKeyframes': w.varint(4050); { const s = w.beginLd(); encS_KeyframeIds(w, v); w.endLd(s); } return;
     case 'setKeyframes': w.varint(4162); { const s = w.beginLd(); encS_KeyframeIds(w, v); w.endLd(s); } return;
+    case 'setMemberKeyframes': w.varint(4170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'addEffect': w.varint(4802); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
     case 'addMask': w.varint(4810); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
     case 'addPropertyGroup': w.varint(4818); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
@@ -16948,6 +17005,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 4042: out = decS_Empty(r, r.ldEnd(), { type: 'reverseKeyframes' }) as T.CommandResult; break;
       case 4050: out = decS_KeyframeIds(r, r.ldEnd(), { type: 'pasteKeyframes' }) as T.CommandResult; break;
       case 4162: out = decS_KeyframeIds(r, r.ldEnd(), { type: 'setKeyframes' }) as T.CommandResult; break;
+      case 4170: out = decS_Empty(r, r.ldEnd(), { type: 'setMemberKeyframes' }) as T.CommandResult; break;
       case 4802: out = decS_GroupList(r, r.ldEnd(), { type: 'addEffect' }) as T.CommandResult; break;
       case 4810: out = decS_GroupList(r, r.ldEnd(), { type: 'addMask' }) as T.CommandResult; break;
       case 4818: out = decS_GroupList(r, r.ldEnd(), { type: 'addPropertyGroup' }) as T.CommandResult; break;
@@ -17550,6 +17608,8 @@ export const codecs = {
   ReverseKeyframes: mk<T.ReverseKeyframes>(encS_ReverseKeyframes, (r, e) => decS_ReverseKeyframes(r, e, {})),
   PasteKeyframes: mk<T.PasteKeyframes>(encS_PasteKeyframes, (r, e) => decS_PasteKeyframes(r, e, {})),
   SetKeyframes: mk<T.SetKeyframes>(encS_SetKeyframes, (r, e) => decS_SetKeyframes(r, e, {})),
+  SetMemberKeyframes: mk<T.SetMemberKeyframes>(encS_SetMemberKeyframes, (r, e) => decS_SetMemberKeyframes(r, e, {})),
+  MemberKeyList: mk<T.MemberKeyList>(encS_MemberKeyList, (r, e) => decS_MemberKeyList(r, e, {})),
   KeyframeIds: mk<T.KeyframeIds>(encS_KeyframeIds, (r, e) => decS_KeyframeIds(r, e, {})),
   AddEffect: mk<T.AddEffect>(encS_AddEffect, (r, e) => decS_AddEffect(r, e, {})),
   AddMask: mk<T.AddMask>(encS_AddMask, (r, e) => decS_AddMask(r, e, {})),

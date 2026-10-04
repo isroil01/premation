@@ -1,14 +1,10 @@
 import {
-  getNodePaint,
   normalizeStroke,
   readNodePaint,
   strokeBounds,
   strokeDisplayNames,
-  updatePaintStroke,
   type PaintStroke,
 } from './paintStrokes';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
 import type { SceneNode } from '@core/types';
 
 describe('normalizeStroke — clone stamp', () => {
@@ -118,31 +114,5 @@ describe('model v2', () => {
       { id: 'd', mode: 'clone' }, { id: 'e', mode: 'paint', name: 'Sky fix' },
     ]);
     expect([...names.values()]).toEqual(['Brush 1', 'Eraser 1', 'Brush 2', 'Clone 1', 'Sky fix']);
-  });
-});
-
-// Add / remove / Path / Paint on Transparent are engine commands now:
-// src/core/engine/__tests__/paintStrokes.test.ts.
-describe('the static-value seam', () => {
-  const ID = 'paint_mut_layer';
-  const makeNode = (): SceneNode => ({
-    id: ID, name: ID, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [{ id: `${ID}_fx`, type: 'fx', props: {} }],
-  } as unknown as SceneNode);
-
-  beforeEach(() => {
-    defaultSceneGraph.clear();
-    defaultAnimation.clear();
-    defaultSceneGraph.addNode(makeNode());
-  });
-
-  test('update merges and an undefined patch key clears', () => {
-    defaultSceneGraph.setPaint(ID, { strokes: [normalizeStroke({ points: [{ x: 0, y: 0 }], spacing: 0.25, pressure: [1] }, 'pstroke_1')] });
-    updatePaintStroke(ID, 'pstroke_1', { opacity: 0.5, pressure: undefined });
-    const s = getNodePaint(ID)!.strokes[0]!;
-    expect(s.opacity).toBe(0.5);
-    expect(s.spacing).toBe(0.25);
-    expect('pressure' in s).toBe(false);
   });
 });

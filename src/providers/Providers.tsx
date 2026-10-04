@@ -45,7 +45,7 @@ import {
 import { panelAssetSelectionIds, selectedPanelAssets, selectedPanelFootage } from '@core/composition/assetSelection';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { baselineHistoryEdit } from '@core/engine/historyBaseline';
-import { performUndo, performRedo } from '@stores/historyStore';
+import { historyView, performUndo, performRedo } from '@stores/historyStore';
 import { openAbout } from '@layout/Help/AboutDialog';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { usePresentationStore } from '@stores/presentationStore';
@@ -59,9 +59,7 @@ import { bootEngine, engine, shutdownEngine } from '@core/engine/engineInstance'
 import { engineOwnsDocumentNow, setEngineOwnsDocument } from '@core/engine/engineOwnership';
 import { processEngineOwnsDocument } from '@core/engine/process/processEngine';
 import { installEngineOwnedSession } from './engineOwnedSession';
-import { commandLogRecordingEnabled } from '@core/automation/commandLog';
 import { installAutomationDevApi } from '@core/automation/devApi';
-import { createAppEnginePorts } from '@core/engine/appPorts';
 import { LoadingScreen } from '@components/LoadingScreen';
 import { isLocalFirst } from '@core/config/flags';
 import { cloudProjectsEnabled } from '@core/config/edition';
@@ -2549,14 +2547,14 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           id: asCommandId(BuiltinCommands.Undo),
           label: 'Undo',
           shortcut: { key: 'z', meta: true },
-          enabled: () => getCommandSystem().getHistory().canUndo(),
+          enabled: () => historyView().canUndo,
           execute: () => performUndo(),
         });
         registry.register({
           id: asCommandId(BuiltinCommands.Redo),
           label: 'Redo',
           shortcut: { key: 'z', meta: true, shift: true },
-          enabled: () => getCommandSystem().getHistory().canRedo(),
+          enabled: () => historyView().canRedo,
           execute: () => performRedo(),
         });
 
@@ -2921,19 +2919,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         try {
           void baselineHistoryEdit('Open');
         } catch { /* ignore */ }
-        // The engine API (NATIVE_CORE_PLAN §5 B3): ONE LocalEngine over the
-        // live document, with the real file/media ports. After the history
-        // baseline (its entries go on the same unified stack) and the default
-        // scene seed; rebuilt on every ProjectLoaded/ProjectUnloaded.
+        // The engine API (NATIVE_CORE_PLAN §5 B3): the C++ engine, which owns
+        // the document. After the history baseline.
         try {
-          bootEngine({
-            ports: createAppEnginePorts(getProjectManager()),
-            projectPath: () => getProjectManager().getState().current?.path,
-            // B5: the command log automation records/replays (dev builds and
-            // VITE_RECORD_COMMAND_LOG=1; see core/automation/commandLog).
-            recordLog: commandLogRecordingEnabled(),
-            ownsDocument: ownsDocument || mirrorsEngine,
-          });
+          bootEngine({ ownsDocument: ownsDocument || mirrorsEngine });
           track(() => { void shutdownEngine(); });
           // B5 automation (record/replay a session, run a script) on window.
           // Not tracked: it holds no resources and always targets the CURRENT
@@ -2960,7 +2949,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
 
         // Dirty tracking, autosave and crash recovery: the engine's session
         // does all three, from the mirror (engineOwnedSession.tsx). Without an
-        // engine host (the headless CLI window) there is nothing to track.
+        // engine host (unit tests) there is nothing to track.
         if (!cancelled && engineOwnsDocumentNow()) {
           try {
             await installEngineOwnedSession(track);
@@ -2972,15 +2961,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         bootTask.end();
       }
 
-      // Live cross-window sync: a detached panel mirrors this window's document,
-      // selection and playhead, and its own edits come back the other way.
-      //
-      // MUST be started here, INSIDE the boot IIFE, not beside it: `Application
-      //.boot` calls `setEventBus(new EventBus)`, so anything that subscribes
-      // before boot resolves is attached to a bus that is then thrown away. That
-      // is why the scene-change subscription silently never fired while the
-      // selection one (a plain zustand store, never replaced) worked fine.
-      if (!cancelled) stopSync = startWindowSync({ engineDocument: engineIsOwner });
+      // Live cross-window sync: a detached panel shares this window's selection
+      // and playhead both ways (the document is the engine's — every window
+      // mirrors it). Started once the boot has settled.
+      if (!cancelled) stopSync = startWindowSync();
 
       if (!cancelled) setReady(true);
     })();

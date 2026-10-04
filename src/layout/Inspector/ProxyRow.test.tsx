@@ -14,8 +14,8 @@
 
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { ProxyRow } from './ProxyRow';
-import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
-import { documentMirror } from '@stores/documentMirror';
+import type { ImportedAsset } from '@stores/assetStore';
+import { useAssetSessionStore } from '@stores/assetSession';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { resolveMediaSrc, type ProxyRecord } from '@core/assets/proxy';
 
@@ -33,13 +33,28 @@ const asset = (over: Partial<ImportedAsset> = {}): ImportedAsset => ({
 });
 
 /**
- * B4 round 5: the row reads the item from the document mirror (ItemInfo) and its proxy job record from the
- * session store the items store publishes — so a fixture written straight into the items store is followed
- * by a mirror refetch (`reload`: synchronous on the in-process engine).
+ * B4 round 5: the row reads the item from the document mirror (`useMirrorItems`, the engine's ItemInfo) and
+ * its proxy JOB record from the asset session store. The fixture is one asset, as both halves.
  */
+let mockItems = new Map<string, unknown>();
+jest.mock('@hooks/useMirror', () => ({
+  ...jest.requireActual('@hooks/useMirror'),
+  useMirrorItems: () => mockItems,
+}));
+
+/** The engine's ItemInfo for a footage asset. */
+const itemOf = (a: ImportedAsset): unknown => ({
+  id: a.id, kind: 'footage', name: a.name, label: 0, comment: '', path: '', missing: false,
+  width: a.metadata?.width ?? 0, height: a.metadata?.height ?? 0, duration: Math.round((a.metadata?.duration ?? 0) * 705_600_000),
+  hasVideo: a.type === 'video', hasAudio: false, hasAlpha: false, proxyPath: '', proxyEnabled: false, tags: [],
+  codec: '', audioChannels: 0, audioSampleRate: 0, colorProfile: '', fileBytes: a.size,
+  mediaType: a.type === 'video' ? 'video' : a.type === 'image' ? 'image' : 'audio',
+  alphaProbed: false, audioProbed: false, mediaUrl: a.src,
+});
+
 const seed = (a: ImportedAsset = asset()): void => {
-  useAssetStore.setState({ assets: [a] } as never);
-  documentMirror().reload();
+  mockItems = new Map([[a.id, itemOf(a)]]);
+  useAssetSessionStore.setState({ byItem: a.proxy ? { [a.id]: { proxy: a.proxy } } : {} });
 };
 
 beforeEach(() => {
@@ -193,8 +208,8 @@ describe('scope', () => {
   });
 
   it('renders nothing for an asset that no longer exists', () => {
-    useAssetStore.setState({ assets: [] } as never);
-    documentMirror().reload();
+    mockItems = new Map();
+    useAssetSessionStore.setState({ byItem: {} });
     const { container } = render(<ProxyRow assetId={ID} />);
     expect(container).toBeEmptyDOMElement();
   });

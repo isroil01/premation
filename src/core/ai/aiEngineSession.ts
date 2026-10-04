@@ -9,11 +9,10 @@
  * failed tool result addressed to the model.
  *
  * `legacy(gap)` records a write that went AROUND the engine (the API cannot
- * express it yet). The transaction then commits the turn as a whole-document
- * snapshot instead of an engine entry. The session also notices an unrecorded
- * one: the engine answers any write it did not make with a `documentReset`
- * `resync` before its next command, and that is counted as a gap too — a
- * forgotten `legacy()` call costs replayability, never correctness.
+ * express it). The transaction reports it in the turn's outcome. The session
+ * also notices an unrecorded one: the engine answers any write it did not
+ * make with a `documentReset` `resync` before its next command, and that is
+ * counted as a gap too.
  */
 
 import type {

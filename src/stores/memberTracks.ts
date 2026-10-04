@@ -62,9 +62,31 @@ export async function fetchMemberTracks(layer: string, members: ReadonlyArray<st
  * (undefined before the first) while it is fetched.
  */
 export function memberTracksNow(layer: string): readonly MemberKeys[] | undefined {
+  return freshOrFetch(layer).tracks;
+}
+
+/**
+ * This revision's answer only (an in-process engine answers at once), else
+ * undefined while it is fetched — for reads where a previous revision's key
+ * times would be WRONG rather than merely old (keySelection `storedKeyIndex`).
+ */
+export function memberTracksFresh(layer: string): readonly MemberKeys[] | undefined {
+  const r = freshOrFetch(layer);
+  return r.fresh ? r.tracks : undefined;
+}
+
+function freshOrFetch(layer: string): { tracks: readonly MemberKeys[] | undefined; fresh: boolean } {
+  const m = documentMirror();
   const e = entries.get(layer);
-  const rev = documentMirror().revision;
-  if (e && e.rev === rev) return e.tracks;
+  const rev = m.revision;
+  if (e && e.rev === rev) return { tracks: e.tracks, fresh: true };
+  const sync = m.querySync({ type: 'getMemberKeyframes', layer, members: [] });
+  if (sync) {
+    const tracks = sync.ok ? sync.value.tracks.map(parse) : [];
+    if (entries.size > MAX_LAYERS) entries.clear();
+    entries.set(layer, { rev, tracks });
+    return { tracks, fresh: true };
+  }
   if (!inFlight.has(layer)) {
     inFlight.add(layer);
     void fetchMemberTracks(layer).then((tracks) => {
@@ -75,7 +97,7 @@ export function memberTracksNow(layer: string): readonly MemberKeys[] | undefine
       for (const l of listeners) l();
     });
   }
-  return e?.tracks;
+  return { tracks: e?.tracks, fresh: false };
 }
 
 /** Subscribe to answers landing (useMemberTracks). */

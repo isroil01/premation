@@ -5,10 +5,9 @@
 
 import type { SceneNode } from '@core/types';
 import { readMeasuredTextStyle } from './measureText';
-import { layoutText, type TextStyle } from './textLayout';
+import { layoutText } from './textLayout';
 import { applyTextPath, pathGlyphBounds } from './textPath';
 import { arcTable } from '@core/scene/trimPath';
-import { readGeometry, textPathExtent } from '@core/workspace/geometry';
 
 const ARC = {
   id: 'arc', mode: 'none', closed: false, feather: 0, opacity: 1, expansion: 0, inverted: false,
@@ -43,28 +42,6 @@ describe('text on a path is point text', () => {
   it('path text without a box measures exactly as it always did; a box off the path still wraps', () => {
     expect(readMeasuredTextStyle(textNode({ boxWidth: 60 }, true))).toEqual(readMeasuredTextStyle(textNode({}, true)));
     expect(readMeasuredTextStyle(textNode({ boxWidth: 60 }, false))!.boxWidth).toBe(60);
-  });
-
-  it('selection geometry ignores the box width on a path (jsdom: the point-text box)', () => {
-    const withBox = readGeometry(textNode({ boxWidth: 600 }, true))!;
-    const without = readGeometry(textNode({}, true))!;
-    expect(withBox.width).toBe(without.width);
-    expect(withBox.height).toBe(without.height);
-    expect(readGeometry(textNode({ boxWidth: 600 }, false))!.width).toBeGreaterThanOrEqual(600);
-  });
-
-  it('the path extent is the glyphs bent onto the path', () => {
-    const measure = (): number => 10;
-    const style: TextStyle = { fontSize: 20 };
-    const laid = layoutText('abcd', style, measure, { boxWidth: 0 });
-    // A straight path from (-100, 0) to (100, 0): 4 glyphs x 10px from its start.
-    const node = textNode({ content: 'abcd' }, true);
-    const ext = textPathExtent(node, undefined, laid)!;
-    const r = Math.hypot(10, 20) / 2;
-    expect(ext.cx).toBeCloseTo((-95 - r + -65 + r) / 2, 6);
-    expect(ext.w).toBeCloseTo(30 + 2 * r, 6);
-    expect(ext.h).toBeCloseTo(2 * r, 6);
-    expect(ext.cy).toBeCloseTo(0, 6);
   });
 
   it('pathGlyphBounds skips blanks and holds for turned glyphs', () => {

@@ -329,6 +329,19 @@ export function sendToolEdit(
 }
 
 /**
+ * A one-shot tool edit whose commands can only be composed once `ready`
+ * settles (the layers' property trees loading over the pipe): ONE entry,
+ * chained with the tool actions' ends so `settleToolEdits` covers it.
+ */
+export function runToolEditWhen(ready: Promise<unknown>, label: string | (() => string), commands: ToolCommands): void {
+  trackEnd((async () => {
+    await ready;
+    const list = resolveCommands(commands);
+    if (list.length > 0) await edit(typeof label === 'function' ? label() : label, list);
+  })());
+}
+
+/**
  * A one-shot tool edit (a key press, a click) as ONE entry — after any tool
  * action still closing, so it never meets that action's open gesture.
  */

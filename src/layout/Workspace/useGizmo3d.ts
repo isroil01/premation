@@ -25,6 +25,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { useCurrentTime } from '@stores/playbackClockStore';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
+import { useRetainTrees } from '@hooks/useMirror';
 import { documentMirror } from '@stores/documentMirror';
 import { canBe3DLayer } from '@core/mirror/layerKinds';
 import { transform3DOf } from '@core/mirror/viewGeometry';
@@ -87,6 +88,8 @@ export interface Gizmo3dViewOptions {
 
 export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, options?: Gizmo3dViewOptions) {
   const selectedIds = useSelectionStore((s) => s.ids);
+  // A drag writes through the selected layers' property trees: keep them loaded.
+  useRetainTrees(selectedIds);
 
   const gizmoState = useGuidesStore((s) => s.gizmo3dState);
   const axisMode = useGuidesStore((s) => s.gizmo3dAxisMode);

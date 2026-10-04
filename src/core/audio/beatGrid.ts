@@ -23,8 +23,8 @@
  * command says what it thinks, rather than silently refusing.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { documentMirror } from '@stores/documentMirror';
+import { firstAudioLayerIn } from '@core/mirror/motionAssist';
 
 /** Below this the grid is shown but described as unreliable. */
 export const LOW_CONFIDENCE = 0.25;
@@ -42,26 +42,15 @@ export interface BeatGrid {
 }
 
 /**
- * The audio layer to analyse: the one given, else the first in the scene.
- *
- * `traverse`, NOT `flattenScene`. On a fresh unsaved project every layer hangs
- * off the VIRTUAL `comp_root`, which is a fallback id with no engine node
- * behind it — so `getRoots()` is empty, and `flattenScene` (which walks roots
- * downwards) returns nothing at all while the layers are plainly there.
- * Measured: a scene with an audio layer and five solids flattened to `[]` and
- * traversed to all six, which made every beat command report itself disabled
- * with the music sitting in the timeline.
+ * The audio layer to analyse: the one given, else the first in the document
+ * (the mirror lists every composition's layers — a roots-downwards walk of the
+ * old scene graph missed the layers of a fresh unsaved project and disabled
+ * every beat command with the music sitting in the timeline).
  */
 export function findAudioLayer(preferredId?: string): string | undefined {
-  if (preferredId) {
-    const node = defaultSceneGraph.getNode(preferredId);
-    if (node && readNodeKind(node) === 'audio') return preferredId;
-  }
-  let found: string | undefined;
-  defaultSceneGraph.traverse((n) => {
-    if (found === undefined && readNodeKind(n) === 'audio') found = n.id;
-  });
-  return found;
+  const m = documentMirror();
+  if (preferredId && m.layer(preferredId)?.kind === 'audio') return preferredId;
+  return firstAudioLayerIn(m);
 }
 
 /**

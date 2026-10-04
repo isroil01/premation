@@ -10,8 +10,6 @@
 # Options
 #   MOTION_BUILD_TESTS   Catch2 suite (needs vcpkg)              default ON
 #   MOTION_BUILD_BENCH   Google Benchmark (needs vcpkg)          default ON
-#   MOTION_BUILD_NAPI    node-addon-api module; normally built by cmake-js from
-#                        bindings/napi instead (see that CMakeLists)   default OFF
 #   MOTION_BUILD_WASM    Emscripten glue; the `wasm` preset turns it on  default OFF
 #   MOTION_BUILD_ENGINE  premation-engine (Dawn); set together with
 #                        VCPKG_MANIFEST_FEATURES=engine — the *-engine presets   default OFF
@@ -32,7 +30,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON) # the static libs end up inside .node / 
 
 option(MOTION_BUILD_TESTS "Build the Catch2 test suite" ON)
 option(MOTION_BUILD_BENCH "Build the Google Benchmark executables" ON)
-option(MOTION_BUILD_NAPI "Build the N-API module from the root build (needs cmake-js variables)" OFF)
 option(MOTION_BUILD_WASM "Build the Emscripten module (needs the Emscripten toolchain)" OFF)
 option(MOTION_BUILD_ENGINE "Build premation-engine (needs the vcpkg `engine` feature: Dawn)" OFF)
 
@@ -59,10 +56,6 @@ endif()
 
 if(MOTION_BUILD_WASM)
   add_subdirectory(bindings/wasm)
-endif()
-
-if(MOTION_BUILD_NAPI)
-  add_subdirectory(bindings/napi)
 endif()
 
 if(MOTION_BUILD_ENGINE)

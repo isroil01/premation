@@ -1,8 +1,6 @@
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useLayoutStore } from '@stores/layoutStore';
-import { requestDocumentSync } from '@core/layout/windowSync';
-import { documentMirror } from '@stores/documentMirror';
 import { PanelHeader } from '@layout/EditorLayout/PanelHeader';
 import { panelDef } from '@layout/EditorLayout/panelDefs';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
@@ -29,26 +27,8 @@ function PopoutContent(): JSX.Element {
     const name = panel?.title ?? panelDef(panelId ?? '')?.title;
     document.title = titleMap[panelId ?? ''] ?? (name ? `${name} — Premation` : 'Detached Window');
 
-    // Ask the editor shell for the live document. `startWindowSync` (mounted by
-    // Providers, above this component) owns the subscriptions that apply it and
-    // keep selection/playhead in step; this window only has to announce itself.
-    //
-    // Retry briefly: the shell answers on its own event loop and this window may
-    // finish booting first. Stops as soon as a document lands.
-    let attempts = 0;
-    requestDocumentSync();
-    const poll = window.setInterval(() => {
-      attempts += 1;
-      // B4: a composition in the document mirror (the synced document reaches it as a reset).
-      const hasContent = documentMirror().compIds.length > 0;
-      if (hasContent || attempts > 10) {
-        window.clearInterval(poll);
-        return;
-      }
-      requestDocumentSync();
-    }, 250);
-
-    return () => window.clearInterval(poll);
+    // The document reaches this window from the engine (windowSync: the page
+    // replica refreshes from `exportDocument`, the mirror follows the engine).
   }, [panelId, panel]);
 
   if (!panelId) {

@@ -406,6 +406,8 @@ export async function replaceFontFamiliesEdit(replacements: ReadonlyMap<string, 
   // B4: every text layer of the project, and its family, from the mirror.
   const m = documentMirror();
   const texts = m.layerIds().filter((id) => uiKindOf(m.layer(id)) === 'text' && isLayer(id));
+  // The families are in each layer's property tree: load the ones no panel holds.
+  await Promise.all(texts.map((id) => m.loadTree(id)));
   const cmds: Command[] = [];
   let layers = 0;
   for (const id of texts) {
@@ -432,8 +434,10 @@ export async function replaceTextEdit(scope: FindScope, find: string, replacemen
   if (!find) return { matches: 0, layers: 0 };
   // B4: scope, text, keyframes (API ids) from the mirror at call time.
   const m = documentMirror();
-  const targets = mirrorTextLayersInScope(m, scope, useSelectionStore.getState().ids, activeCompIdNow())
-    .filter((id) => isLayer(id) && mirrorCountInLayer(m, id, find, opts) > 0);
+  const inScope = mirrorTextLayersInScope(m, scope, useSelectionStore.getState().ids, activeCompIdNow());
+  // The text is in each layer's property tree: load the ones no panel holds.
+  await Promise.all(inScope.map((id) => m.loadTree(id)));
+  const targets = inScope.filter((id) => isLayer(id) && mirrorCountInLayer(m, id, find, opts) > 0);
   if (targets.length === 0) return { matches: 0, layers: 0 };
   const cmds: Command[] = [];
   let matches = 0;

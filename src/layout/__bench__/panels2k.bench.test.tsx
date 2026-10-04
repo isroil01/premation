@@ -24,13 +24,10 @@
 import { Profiler, useMemo, useState } from 'react';
 import { act, cleanup, render } from '@testing-library/react';
 import { unwrap, type Command } from '@motion/engine-api';
-import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
-import type { CommandServices } from '@core/commands/Command';
-import { getEventBus } from '@core/events/EventBus';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { bootEngine, engineIdle, shutdownEngine } from '@core/engine/engineInstance';
+import { engine, engineIdle } from '@core/engine/engineInstance';
 import { GestureSession } from '@core/engine/uiEdits';
-import { fakePorts } from '@core/engine/__testHelpers__/harness';
+import { setupAppEngine, type Harness } from '@core/engine/__testHelpers__/appEngine';
+import { nativeEngineExe } from '@core/engine/__testHelpers__/nativeEngine';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -39,7 +36,6 @@ import { BottomTimeline } from '@layout/BottomTimeline/BottomTimeline';
 import { PropertiesPanel } from '@layout/EditorLayout/PropertiesPanel';
 import { useTimelineRuler, useTimelineTracks } from '@layout/Timeline/useTimelineModel';
 import type { TimelineModel } from '@layout/Timeline';
-import type { EditorDocument } from '@core/api/cloudDocument';
 import { gitCommit, recordBench, type BenchMetricInput } from '@core/perf/bench/benchRecord';
 import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -75,16 +71,17 @@ const stat = (xs: number[]): Timing => {
 };
 
 let layers: string[] = [];
+let h: Harness | null = null;
+const run = !!nativeEngineExe();
+if (!run) console.log('[panels bench] premation-engine is not built — skipped');
+const maybe = run ? test : test.skip;
 const results: Record<string, Timing | number> = {};
 
 beforeAll(async () => {
   (globalThis as { ResizeObserver?: unknown }).ResizeObserver = NoopResizeObserver;
-  await shutdownEngine();
-  setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
-  getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene());
-  const files = new Map<string, EditorDocument>();
-  const e = bootEngine({ ports: fakePorts(files), engineOptions: { verifyScopes: false, recordLog: false } });
-  unwrap(await e.execute({ type: 'newProject' }));
+  if (!run) return;
+  h = await setupAppEngine();
+  const e = engine();
   const comp = 'comp_root';
   const t0 = performance.now();
   const cmds: Command[] = [];
@@ -114,16 +111,16 @@ afterAll(async () => {
     metrics.push({ name: `panels/${N}-layers`, metric: `${k}.mean`, unit: 'ms', value: Number(v.mean.toFixed(3)), samples: v.n });
     metrics.push({ name: `panels/${N}-layers`, metric: `${k}.min`, unit: 'ms', value: Number(v.min.toFixed(3)), samples: v.n });
   }
-  recordBench(metrics);
+  if (run) recordBench(metrics);
   const dir = join(process.cwd(), '.artifacts', 'bench');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'panels.latest.json'), JSON.stringify({ commit: gitCommit(), layers: N, results }, null, 2));
   // eslint-disable-next-line no-console
   console.log(`[panels ${N}] ${JSON.stringify(results, (_k, v) => (typeof v === 'number' ? Number(v.toFixed(2)) : v))}`);
-  await shutdownEngine();
+  await h?.dispose();
 });
 
-test(`inspector + timeline with ${N} layers`, async () => {
+maybe(`inspector + timeline with ${N} layers`, async () => {
   const counts = { timeline: 0, inspector: 0 };
   useSelectionStore.getState().set([layers[0]!]);
   const t0 = performance.now();

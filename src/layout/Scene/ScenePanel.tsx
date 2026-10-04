@@ -54,7 +54,7 @@ import {
 import { getEventBus } from '@core/events/EventBus';
 import type { RenameLayerResult } from '@core/scene/renameLayer';
 import { isLayer } from '@core/mirror/docFacts';
-import { type SceneKind } from '@core/scene/seedDefaultScene';
+import { type SceneKind } from '@core/scene/sceneKind';
 import { KIND_LABEL } from '@core/scene/sceneDerive';
 import { parentLayer } from '@layout/Inspector/inspectorEdits';
 import { moveLayersInTreeEdit, renameLayerEdit } from './sceneEdits';

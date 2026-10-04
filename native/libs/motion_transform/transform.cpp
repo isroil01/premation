@@ -333,7 +333,11 @@ std::optional<Mat4> parent_world_3d(std::span<const Node3D> nodes, std::size_t i
     }
     if (!node.local3d) continue;
     const Mat4 own = compose_node_3d(*node.local3d);
-    acc = acc ? multiply(*acc, own) : own;
+    if (const std::optional<Mat4> prev = acc; prev.has_value()) {
+      acc = multiply(*prev, own);
+    } else {
+      acc = own;
+    }
   }
   return acc;
 }

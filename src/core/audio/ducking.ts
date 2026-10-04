@@ -33,17 +33,7 @@
  * written.
  */
 
-import { defaultAnimation, type Keyframe } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
-import { runAsOneHistoryEntry } from '@core/composition/compositeEdit';
 import type { SceneNode } from '@core/types';
-import { AUDIO_LEVEL_DB_PROP, MIN_LEVEL_DB } from './audioParams';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { readAudioClipTimings, readAudioVoices, readVideoAudioVoices } from './audioScene';
-import { alignSamplesToRange, analyseAudioEnvelope, driverRange } from './audioDriver';
-import { audioVoices, loadNodeMono } from './silenceRemoval';
 
 // ── The curve (pure) ────────────────────────────────────────────────
 
@@ -207,36 +197,6 @@ export function readDucking(node: SceneNode): DuckingRecord | null {
   };
 }
 
-/** Remember (or replace) the ducking on a node. */
-export function writeDucking(nodeId: string, record: DuckingRecord): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const host = node ? duckHost(node) : undefined;
-  if (!node || !host) return;
-  defaultSceneGraph.writeProp(nodeId, host.id, DUCKING_PROP, { ...record });
-  bumpScene();
-}
-
-/** Forget the ducking (does NOT touch the keyframes it wrote). */
-export function forgetDucking(nodeId: string): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const host = node ? duckHost(node) : undefined;
-  if (!node || !host) return;
-  defaultSceneGraph.writeProp(nodeId, host.id, DUCKING_PROP, undefined);
-  bumpScene();
-}
-
-// ── Analysis against the scene ──────────────────────────────────────
-
-/** The music layer's static level, which the baked track is written relative to. */
-export function staticLevelDbOf(nodeId: string): number {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return 0;
-  const kind = readNodeKind(node);
-  const voices =
-    kind === 'audio' ? readAudioVoices(node) : kind === 'video' ? readVideoAudioVoices(node) : [];
-  return voices[0]?.levelDb ?? 0;
-}
-
 export interface DuckEnvelope {
   /** Sidechain detector, 0..1 per frame — what a preview strip draws. */
   sidechain: Float32Array;
@@ -245,47 +205,6 @@ export interface DuckEnvelope {
   start: number;
   end: number;
   fps: number;
-}
-
-/**
- * The voice's envelope and the resulting gain curve over the bake range, with
- * nothing written.
- *
- * `normalize: false` and no attack/release on the ANALYSER: the detector must
- * report absolute level for `thresholdDb` to mean anything, and the ballistics
- * belong to {@link duckLevels} — running them in both places would apply the
- * attack twice and make the numbers in the dialog wrong by a factor nobody
- * could predict.
- */
-export async function computeDuckEnvelope(
-  voiceNodeId: string,
-  params: DuckingParams,
-  range = driverRange(),
-): Promise<DuckEnvelope | null> {
-  const src = await loadNodeMono(voiceNodeId);
-  if (!src) return null;
-  const aligned = alignSamplesToRange(
-    src.samples,
-    src.sampleRate,
-    readAudioClipTimings(voiceNodeId),
-    range.start,
-    range.end,
-  );
-  const sidechain = analyseAudioEnvelope(aligned, src.sampleRate, range.fps, {
-    band: 'full',
-    attackMs: 0,
-    releaseMs: 0,
-    gate: 0,
-    normalize: false,
-  });
-  if (sidechain.length === 0) return null;
-  return {
-    sidechain,
-    gainDb: duckLevels(sidechain, { ...params, fps: range.fps }),
-    start: range.start,
-    end: range.end,
-    fps: range.fps,
-  };
 }
 
 export interface ApplyDuckingResult {
@@ -317,131 +236,4 @@ export interface DuckingPlan {
   keys: Array<{ seconds: number; value: number }>;
   peakDuckDb: number;
   error?: string;
-}
-
-export async function planDucking(
-  musicNodeId: string,
-  voiceNodeId: string,
-  params: DuckingParams,
-): Promise<DuckingPlan> {
-  const record: DuckingRecord = { ...params, voiceNodeId };
-  const none = (error: string): DuckingPlan => ({ record, keys: [], peakDuckDb: 0, error });
-  if (!defaultSceneGraph.getNode(musicNodeId) || !defaultSceneGraph.getNode(voiceNodeId)) return none('That layer is gone.');
-  if (musicNodeId === voiceNodeId) return none('A layer cannot duck under itself.');
-  const range = driverRange();
-  const env = await computeDuckEnvelope(voiceNodeId, params, range);
-  if (!env) return none('That layer’s audio has not decoded (or has no sound in this range).');
-  const base = staticLevelDbOf(musicNodeId);
-  const levels = new Float32Array(env.gainDb.length);
-  let peak = 0;
-  for (let f = 0; f < env.gainDb.length; f++) {
-    const g = env.gainDb[f] ?? 0;
-    if (g < peak) peak = g;
-    levels[f] = Math.max(MIN_LEVEL_DB, base + g);
-  }
-  const keys: Array<{ seconds: number; value: number }> = [];
-  for (const f of thinLevels(levels)) {
-    const compTime = range.start + f / range.fps;
-    if (compTime > range.end + 1e-9) break;
-    keys.push({ seconds: compTime, value: Math.round((levels[f] ?? 0) * 100) / 100 });
-  }
-  if (keys.length === 0) return none('Nothing to write in this range.');
-  return { record, keys, peakDuckDb: Math.round(peak * 10) / 10 };
-}
-
-export async function applyDucking(
-  musicNodeId: string,
-  voiceNodeId: string,
-  params: DuckingParams,
-): Promise<ApplyDuckingResult> {
-  if (!defaultSceneGraph.getNode(musicNodeId) || !defaultSceneGraph.getNode(voiceNodeId)) {
-    return { keyframes: 0, peakDuckDb: 0, error: 'That layer is gone.' };
-  }
-  if (musicNodeId === voiceNodeId) {
-    return { keyframes: 0, peakDuckDb: 0, error: 'A layer cannot duck under itself.' };
-  }
-
-  const range = driverRange();
-  const env = await computeDuckEnvelope(voiceNodeId, params, range);
-  if (!env) {
-    return {
-      keyframes: 0,
-      peakDuckDb: 0,
-      error: 'That layer’s audio has not decoded (or has no sound in this range).',
-    };
-  }
-
-  const base = staticLevelDbOf(musicNodeId);
-  const levels = new Float32Array(env.gainDb.length);
-  let peak = 0;
-  for (let f = 0; f < env.gainDb.length; f++) {
-    const g = env.gainDb[f] ?? 0;
-    if (g < peak) peak = g;
-    // Clamp to the audible floor: below it every value sounds identical, so
-    // letting the track run to −200 dB would just make undoing it by hand hard.
-    levels[f] = Math.max(MIN_LEVEL_DB, base + g);
-  }
-
-  const seen = new Set<number>();
-  const keyframes: Keyframe[] = [];
-  for (const f of thinLevels(levels)) {
-    const compTime = range.start + f / range.fps;
-    if (compTime > range.end + 1e-9) break;
-    // The canonical keyframe axis, so the track survives trimming, sliding and
-    // time-stretching the music layer afterwards.
-    const t = compToKeyframeTime(musicNodeId, compTime, AUDIO_LEVEL_DB_PROP);
-    if (seen.has(t)) continue;
-    seen.add(t);
-    keyframes.push({ t, value: Math.round((levels[f] ?? 0) * 100) / 100, easing: 'linear' });
-  }
-  if (keyframes.length === 0) return { keyframes: 0, peakDuckDb: 0, error: 'Nothing to write in this range.' };
-
-  await runAsOneHistoryEntry('Duck Music', () => {
-    writeDucking(musicNodeId, { ...params, voiceNodeId });
-    defaultAnimation.batch(() => {
-      // An expression on the level would multiply against the baked track and
-      // produce a level that matches neither — the same rule `applyAudioDriver`
-      // follows for the property it bakes.
-      defaultAnimation.setExpression(musicNodeId, AUDIO_LEVEL_DB_PROP, '');
-      defaultAnimation.setKeyframes(musicNodeId, AUDIO_LEVEL_DB_PROP, keyframes);
-    });
-    bumpScene();
-  });
-
-  return { keyframes: keyframes.length, peakDuckDb: Math.round(peak * 10) / 10 };
-}
-
-/**
- * Re-run the ducking already recorded on a layer — after the voice was
- * re-recorded, moved, or had its silences cut out.
- */
-export async function reduck(musicNodeId: string): Promise<ApplyDuckingResult> {
-  const node = defaultSceneGraph.getNode(musicNodeId);
-  const record = node ? readDucking(node) : null;
-  if (!record) return { keyframes: 0, peakDuckDb: 0, error: 'This layer has no ducking to redo.' };
-  return applyDucking(musicNodeId, record.voiceNodeId, record);
-}
-
-/** Forget the ducking AND remove the level track it wrote, in one undo entry. */
-export async function removeDucking(musicNodeId: string): Promise<boolean> {
-  const node = defaultSceneGraph.getNode(musicNodeId);
-  if (!node || !readDucking(node)) return false;
-  await runAsOneHistoryEntry('Remove Ducking', () => {
-    forgetDucking(musicNodeId);
-    defaultAnimation.removeTrack(musicNodeId, AUDIO_LEVEL_DB_PROP);
-    bumpScene();
-  });
-  return true;
-}
-
-/**
- * Layers that could supply a sidechain, or be ducked: anything with sound.
- *
- * Built from the voice list rather than by walking for `kind === 'audio'`,
- * because a video layer's own track is a legitimate sidechain (a piece to
- * camera under a music bed is the common case) and a kind check would miss
- * every one of them.
- */
-export function duckableLayers(): Array<{ id: string; name: string }> {
-  return audioVoices().map((v) => ({ id: v.nodeId, name: v.name }));
 }

@@ -20,11 +20,9 @@ import { act, cleanup, render } from '@testing-library/react';
 import { BottomTimeline } from '@layout/BottomTimeline/BottomTimeline';
 import { TransformSection } from '@layout/Inspector/TransformSection';
 import type { TimelineModel } from './TimelineModel';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import { useProjectStore } from '@stores/projectStore';
 import { setTime, getTime } from '@stores/playbackClockStore';
-import type { SceneNode } from '@core/types';
 
 class NoopResizeObserver {
   observe(): void { /* no layout in jsdom */ }
@@ -65,14 +63,6 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
-  defaultSceneGraph.removeNode?.(NODE);
-  defaultSceneGraph.addNode({
-    id: NODE, name: NODE, parent: null, children: [], visible: true, locked: false,
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    components: [
-      { id: `${NODE}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 100 } },
-    ],
-  } as unknown as SceneNode);
   const ws = useProjectStore.getState();
   ws.actions.setPlaying(false);
   setTime(ws.activeTabId!, 0, 0);
@@ -84,7 +74,6 @@ afterEach(() => {
 });
 
 afterAll(() => {
-  defaultSceneGraph.removeNode?.(NODE);
 });
 
 function mountPanels(): { timeline: { n: number }; inspector: { n: number }; container: HTMLElement } {

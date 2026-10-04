@@ -3,18 +3,12 @@
  * (docs/NATIVE_CORE_PLAN.md §5 Phase F, "The engine owns the document and
  * undo; the UI holds only its mirror").
  *
- * Today's lifecycle (ProjectManager + projectDocumentIO + recovery.ts) moves
- * the document through the UI process: Save calls `captureDocument()` over the
- * TypeScript scene graph, animation engine, timelines and project stores and
- * writes the result; Open parses the file in the page and `restoreDocument()`s
- * it into those stores; autosave captures the same stores into a recovery
- * snapshot. None of that can work once the document lives in
+ * The page never captures, parses or restores the document: it lives in
  * `premation-engine`.
  *
- * This is the lifecycle expressed only in engine API requests, so it runs
- * unchanged over the TypeScript engine (in process, with its file ports) and
- * over the C++ engine process (the app's only engine, whose FilePorts
- * write temp-file + rename):
+ * This is the lifecycle expressed only in engine API requests, and runs on
+ * the C++ engine process (the app's only engine, whose FilePorts write
+ * temp-file + rename):
  *
  *   New            newProject                         (history cleared, documentReset)
  *   Open           openProject{path}                  (the engine reads and migrates the file)

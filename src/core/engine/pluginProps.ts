@@ -33,10 +33,8 @@
 
 import type { Value } from '@motion/engine-api';
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { channelsToColor } from '@core/effects/effects';
 import { fail } from './errors';
-import type { PropBinding } from './props';
 
 /** customLayers.ts COMPONENT_TYPE_PREFIX / CUSTOM_PROP_PREFIX. */
 export const PLUGIN_LAYER_COMPONENT_PREFIX = 'pluginLayer:';
@@ -95,9 +93,6 @@ function parsePanelType(type: string): { slug: string; panel: string } | null {
   return { slug: seg[0]!, panel: seg[1]! };
 }
 
-/** A stored key that is a plugin's own (not the host's `__kind`, `__cid`, …). */
-const ownKey = (k: string): boolean => !k.startsWith('_') && SEG.test(k.split('.')[0]!) && k.split('.').length <= 2;
-
 // ── The static seam (numbers) ─────────────────────────────────────────
 
 /** The component + key a plugin member track's static value lives at, or null. */
@@ -118,105 +113,6 @@ export function readPluginStatic(node: SceneNode, prop: string): number | undefi
   return typeof v === 'number' ? v : undefined;
 }
 
-/** Write it: false when the layer has no such component (nothing is created); null = not a plugin track. */
-export function writePluginStatic(nodeId: string, node: SceneNode, prop: string, value: number): boolean | null {
-  const t = parsePluginTrack(prop);
-  if (!t) return null;
-  const { comp, key } = staticHome(node, t);
-  if (!comp) return false;
-  defaultSceneGraph.writeProp(nodeId, comp.id, key, value);
-  return true;
-}
-
-// ── Bindings ─────────────────────────────────────────────────────────
-
-/** A non-numeric stored value's type. */
-function fieldType(v: unknown): 'bool' | 'string' | 'json' {
-  return typeof v === 'boolean' ? 'bool' : typeof v === 'string' ? 'string' : 'json';
-}
-
-function numericBinding(path: string, name: string, members: string[]): PropBinding {
-  const vt = members.length <= 1 ? 'scalar' : members.length === 2 ? 'vec2' : 'vec3';
-  // `home: []`: the static seam owns the value (a write with no component to
-  // hold it is `notFound` — nothing is invented on the Transform).
-  return { path, name, matchName: members[0]!, valueType: vt, members, animatable: true, unit: '', home: [] };
-}
-
-function fieldBinding(path: string, name: string, component: string, key: string, stored: unknown): PropBinding {
-  return {
-    path, name, matchName: key, valueType: fieldType(stored), members: [], special: 'field',
-    field: { owner: 'plugin', key, groupId: component }, animatable: false, unit: '',
-  };
-}
-
-/**
- * Add the plugin bindings of a layer (props.ts catalogFor, after the latent
- * block): the layer kind's props, then each panel's params — numbers from the
- * stored values AND from animated tracks with no stored value.
- */
-export function addPluginBindings(node: SceneNode, trackNames: readonly string[], add: (b: PropBinding) => void): void {
-  const tracks = trackNames.map((p) => ({ p, t: parsePluginTrack(p) })).filter((x) => x.t !== null) as Array<{ p: string; t: PluginTrack }>;
-  const kind = layerKindComponent(node);
-  if (kind) {
-    const props = kind.props as Record<string, unknown>;
-    const names = new Set<string>();
-    for (const k of Object.keys(props)) if (ownKey(k) && !k.includes('.')) names.add(k);
-    for (const { t } of tracks) if (t.kind === 'layer') names.add(t.name);
-    for (const name of [...names].sort()) {
-      const v = props[name];
-      const path = `plugin/${name}`;
-      if (v === undefined || typeof v === 'number') add(numericBinding(path, name, [`${PLUGIN_LAYER_TRACK_PREFIX}${name}`]));
-      else add(fieldBinding(path, name, kind.type, name, v));
-    }
-  }
-  // Panels: the stored components, plus panels only animated tracks name.
-  const panels = new Map<string, { slug: string; panel: string; comp?: Comp }>();
-  for (const c of node.components) {
-    const p = parsePanelType(c.type);
-    if (p) panels.set(c.type, { ...p, comp: c });
-  }
-  for (const { t } of tracks) {
-    if (t.kind !== 'panel') continue;
-    const type = `${PLUGIN_PANEL_COMPONENT_PREFIX}${t.slug}.${t.panel}`;
-    if (!panels.has(type)) panels.set(type, { slug: t.slug, panel: t.panel });
-  }
-  for (const type of [...panels.keys()].sort()) {
-    const { slug, panel, comp } = panels.get(type)!;
-    const props = (comp?.props ?? {}) as Record<string, unknown>;
-    // name → the axes a number is stored / animated on ('' = a plain scalar).
-    const numeric = new Map<string, Set<string>>();
-    const other = new Map<string, unknown>();
-    for (const [k, v] of Object.entries(props)) {
-      if (!ownKey(k)) continue;
-      const [name, axis] = k.split('.') as [string, string | undefined];
-      if (typeof v === 'number') {
-        if (axis !== undefined && !(AXES as readonly string[]).includes(axis)) continue;
-        if (!numeric.has(name)) numeric.set(name, new Set());
-        numeric.get(name)!.add(axis ?? '');
-      } else if (axis === undefined) {
-        other.set(name, v);
-      }
-    }
-    for (const { t } of tracks) {
-      if (t.kind !== 'panel' || t.slug !== slug || t.panel !== panel || other.has(t.name)) continue;
-      if (!numeric.has(t.name)) numeric.set(t.name, new Set());
-      numeric.get(t.name)!.add(t.axis ?? '');
-    }
-    const base = `plugin/${slug}/${panel}`;
-    const prefix = `${PLUGIN_PANEL_TRACK_PREFIX}${slug}.${panel}.`;
-    for (const name of [...new Set([...numeric.keys(), ...other.keys()])].sort()) {
-      const path = `${base}/${name}`;
-      if (other.has(name)) {
-        add(fieldBinding(path, name, type, name, other.get(name)));
-        continue;
-      }
-      const axes = AXES.filter((a) => numeric.get(name)!.has(a));
-      const members = axes.length > 0 ? axes.map((a) => `${prefix}${name}.${a}`) : [`${prefix}${name}`];
-      add(numericBinding(path, name, members));
-    }
-  }
-}
-
 /** The panel group paths of a layer (`plugin/<slug>/<panel>`, one per stored panel component), sorted. */
 export function pluginPanelGroupPaths(node: SceneNode): string[] {
   const out: string[] = [];
@@ -225,37 +121,6 @@ export function pluginPanelGroupPaths(node: SceneNode): string[] {
     if (p) out.push(`plugin/${p.slug}/${p.panel}`);
   }
   return out.sort();
-}
-
-// ── Fields (non-numeric values) ───────────────────────────────────────
-
-export function readPluginField(node: SceneNode, b: PropBinding): Value {
-  const comp = node.components.find((c) => c.type === b.field!.groupId);
-  const v = (comp?.props as Record<string, unknown> | undefined)?.[b.field!.key];
-  if (b.valueType === 'bool') return { kind: 'bool', value: v === true };
-  if (b.valueType === 'string') return { kind: 'string', value: typeof v === 'string' ? v : '' };
-  return { kind: 'json', value: JSON.stringify(v === undefined ? null : v) };
-}
-
-/** The raw value a plugin field stores for `value` (its own type, or ANY json). */
-function pluginRaw(b: PropBinding, value: Value): unknown {
-  switch (value.kind) {
-    case 'bool': if (b.valueType === 'bool') return value.value; break;
-    case 'string': if (b.valueType === 'string') return value.value; break;
-    case 'json':
-      try { return JSON.parse(value.value) as unknown; } catch { return fail('invalidArgument', 'invalid json', { path: b.path }); }
-    default: break;
-  }
-  return fail('typeMismatch', `'${b.path}' takes a ${b.valueType} (or json), got ${value.kind}`, { path: b.path, detail: JSON.stringify({ expected: b.valueType }) });
-}
-
-export function writePluginField(layerId: string, node: SceneNode, b: PropBinding, value: Value): void {
-  const raw = pluginRaw(b, value);
-  const comp = node.components.find((c) => c.type === b.field!.groupId);
-  if (!comp) fail('notFound', `layer '${layerId}' has no ${b.field!.groupId}`, { layer: layerId, path: b.path });
-  // Stored verbatim — JSON null included (an empty asset slot): deleting the key
-  // would remove the property.
-  defaultSceneGraph.writeProp(layerId, comp.id, b.field!.key, raw);
 }
 
 // ── Panel groups (addPropertyGroup / removePropertyGroups) ───────────

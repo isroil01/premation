@@ -9,8 +9,15 @@
  * or stack them all on one frame.
  */
 
+let docLayers = new Map<string, { id: string; kind: string }>();
+jest.mock('@stores/documentMirror', () => ({
+  documentMirror: () => ({
+    layer: (id: string) => docLayers.get(id),
+    layerIds: () => [...docLayers.keys()],
+  }),
+}));
+
 import { beatsForLayers, everyNthBeat, findAudioLayer } from './beatGrid';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 
 /** A steady grid at 120 BPM (0.5s per beat), starting at `from`. */
 const steady = (count: number, from = 0, interval = 0.5): number[] =>
@@ -96,52 +103,28 @@ describe('everyNthBeat', () => {
 });
 
 describe('findAudioLayer', () => {
-  /** A layer parented to the VIRTUAL `comp_root` — no engine node behind it,
-   *  which is what a fresh unsaved project looks like. */
-  function addLayer(id: string, kind: string): void {
-    defaultSceneGraph.addChild('comp_root', {
-      id,
-      name: id,
-      parent: 'comp_root',
-      children: [],
-      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-      visible: true,
-      locked: false,
-      components: [{ id: `${id}_t`, type: 'Transform', props: { __kind: kind } }],
-    } as never);
+  /** The document's layers as the mirror lists them (every composition's). */
+  function setLayers(layers: Array<[id: string, kind: string]>): void {
+    docLayers = new Map(layers.map(([id, kind]) => [id, { id, kind }]));
   }
 
-  beforeEach(() => {
-    for (const id of ['solid_a', 'music_a', 'music_b']) {
-      if (defaultSceneGraph.getNode(id)) defaultSceneGraph.removeNode?.(id);
-    }
-  });
-
-  it('finds an audio layer hanging off the virtual comp root', () => {
-    // The regression. `getRoots()` is empty for these layers, so a
-    // roots-downwards walk (`flattenScene`) returns NOTHING and the audio is
-    // invisible — which disabled every beat command on a fresh project while
-    // the music sat in the timeline. Only `traverse` sees them.
-    addLayer('solid_a', 'solid');
-    addLayer('music_a', 'audio');
-    expect(defaultSceneGraph.getRoots()).toHaveLength(0);
+  it('finds an audio layer anywhere in the document', () => {
+    setLayers([['solid_a', 'solid'], ['music_a', 'audio']]);
     expect(findAudioLayer()).toBe('music_a');
   });
 
   it('prefers the layer it was pointed at', () => {
-    addLayer('music_a', 'audio');
-    addLayer('music_b', 'audio');
+    setLayers([['music_a', 'audio'], ['music_b', 'audio']]);
     expect(findAudioLayer('music_b')).toBe('music_b');
   });
 
   it('ignores a preference that is not an audio layer', () => {
-    addLayer('solid_a', 'solid');
-    addLayer('music_a', 'audio');
+    setLayers([['solid_a', 'solid'], ['music_a', 'audio']]);
     expect(findAudioLayer('solid_a')).toBe('music_a');
   });
 
-  it('reports nothing when the scene has no audio', () => {
-    addLayer('solid_a', 'solid');
+  it('reports nothing when the document has no audio', () => {
+    setLayers([['solid_a', 'solid']]);
     expect(findAudioLayer()).toBeUndefined();
   });
 });

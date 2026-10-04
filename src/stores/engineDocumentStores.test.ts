@@ -5,7 +5,6 @@
  */
 
 import type { ColorManagementSettings, Command, EngineResult, LibraryMaterial, MotionBlurSettings, Swatch } from '@motion/engine-api';
-import { restoreDocument, captureDocument } from '@core/api/cloudDocument';
 import { bindEngineDocumentStores, type StoreMirrorView } from './engineDocumentStores';
 import { useSwatchStore } from './swatchStore';
 import { useMaterialStore } from './materialStore';
@@ -81,21 +80,6 @@ describe('engine-owned document stores (F2)', () => {
     expect(Object.keys(JSON.parse((guides!.cmd as Extract<Command, { type: 'setGuides' }>).patch) as object)).toEqual(
       expect.arrayContaining(['grid', 'cameraBookmarks', 'userGuides', 'overlayOpacity']),
     );
-    dispose();
-  });
-
-  it('a replica restore (restoreDocument) is never sent; a refused edit falls back to the engine value', async () => {
-    const { mirror, sent, dispose } = setup(() => false);
-    const doc = captureDocument();
-    restoreDocument({ ...doc, swatches: [{ id: 'x', name: 'X', hex: '#123456' }] });
-    await Promise.resolve();
-    expect(sent.filter((s) => s.cmd.type === 'setSwatches')).toEqual([]);
-    mirror.swatches = [];
-    useSwatchStore.getState().addSwatch('#abcdef');
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(sent.filter((s) => s.cmd.type === 'setSwatches')).toHaveLength(1);
-    expect(useSwatchStore.getState().swatches).toEqual([]);  // the engine refused it
     dispose();
   });
 

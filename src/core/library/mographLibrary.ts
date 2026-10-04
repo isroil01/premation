@@ -16,7 +16,7 @@
  */
 
 import type SceneGraph from '@core/scene/SceneGraph';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { insertedClipWindow } from './clipWindow';
 import { partLabel } from '@core/mirror/mographFields';

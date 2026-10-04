@@ -4,34 +4,14 @@
  * path (see snapshotPortability.ts).
  */
 
-interface FakeNode { id: string; components: Array<{ props: Record<string, unknown> }>; children: string[] }
-const nodes = new Map<string, FakeNode>();
-let roots: string[] = [];
-
-jest.mock('@core/scene/DefaultSceneGraph', () => ({
-  __esModule: true,
-  default: {
-    getRoots: () => roots.map((id) => ({ id })),
-    getNode: (id: string) => nodes.get(id),
-    getChildren: (id: string) => (nodes.get(id)?.children ?? []).map((c) => ({ id: c })),
-  },
-}));
-
 import { setLocalFirst } from '@core/config/flags';
 import {
   currentProjectSnapshotIsPortable,
-  sceneMediaRefs,
   snapshotIsPortable,
   uncarriableMedia,
 } from './snapshotPortability';
 
-function node(id: string, props: Record<string, unknown>, children: string[] = []): void {
-  nodes.set(id, { id, components: [{ props }], children });
-}
-
 beforeEach(() => {
-  nodes.clear();
-  roots = [];
   setLocalFirst(false);
 });
 afterAll(() => setLocalFirst(false));
@@ -80,29 +60,13 @@ describe('snapshotIsPortable', () => {
   });
 });
 
-describe('the live scene', () => {
-  it('walks every root subtree and both src pairs', () => {
-    node('root', { name: 'group' }, ['img', 'aud']);
-    node('img', { assetId: 'a1', src: 'blob:1' });
-    node('aud', { __assetId: 'a2', __src: 'blob:2' }, ['deep']);
-    node('deep', { src: 'blob:3' });
-    roots = ['root'];
-    const refs = [...sceneMediaRefs()];
-    expect(refs).toEqual(expect.arrayContaining([
-      { assetId: 'a1', src: 'blob:1' },
-      { assetId: 'a2', src: 'blob:2' },
-      { src: 'blob:3' },
-    ]));
-    expect(refs).toHaveLength(3);
-  });
-
-  it('currentProjectSnapshotIsPortable: the flag, then the footage', () => {
-    node('img', { assetId: 'a1', src: 'blob:1' });
-    roots = ['img'];
-    const library = [{ id: 'a1', src: 'blob:1' }];
-    expect(currentProjectSnapshotIsPortable(library)).toBe(false);
+describe('the live project', () => {
+  it('currentProjectSnapshotIsPortable: the flag, then the footage items', () => {
+    const footage = [{ id: 'a1', src: 'blob:1' }];
+    expect(currentProjectSnapshotIsPortable(footage)).toBe(false);
     setLocalFirst(true);
-    expect(currentProjectSnapshotIsPortable(library)).toBe(true);
-    expect(currentProjectSnapshotIsPortable([])).toBe(false);
+    expect(currentProjectSnapshotIsPortable(footage)).toBe(true);
+    expect(currentProjectSnapshotIsPortable([{ id: 'a2', src: 'motion-blob:abc' }])).toBe(false);
+    expect(currentProjectSnapshotIsPortable([])).toBe(true);
   });
 });

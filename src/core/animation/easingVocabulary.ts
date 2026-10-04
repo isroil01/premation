@@ -37,14 +37,9 @@
  */
 
 import {
-  defaultAnimation,
-  expandKeyframeProp,
-  type AnimationEngine,
   type EasingKind,
 } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import type { EasingPreset } from '@core/animation/keyframeAssistants';
-import type { StoredKeyRef } from '@core/mirror/keySelection';
 
 /**
  * Every kind, with the name the UI shows. A `Record` over the union rather than
@@ -126,41 +121,4 @@ export function easingPresetForKind(kind: EasingKind): EasingPreset | null {
   if (kind === 'linear') return 'Linear';
   if (isHoldKind(kind)) return 'Hold';
   return null;
-}
-
-/**
- * Apply an interpolation KIND to a set of keyframes (by STORED position — a
- * keyframe selection decodes to these through `selectionStoredRefs`,
- * core/mirror/keySelection.ts), as one undo step.
- *
- * The kind counterpart of `applyEasingToKeyframes`, and it reaches the same
- * places that does: a merged "Position" id expands to its x/y/z tracks, and
- * data tracks (puppet pins, gradient stops, mask paths) are written through
- * `setDataEasing` instead of being silently skipped.
- */
-export function applyEasingKindToKeyframes(
-  refs: ReadonlyArray<StoredKeyRef>,
-  kind: EasingKind,
-  engine: AnimationEngine = defaultAnimation,
-): void {
-  if (refs.length === 0) return;
-  runAnimEdit(`Set keyframe easing: ${EASING_KIND_LABEL[kind]}`, () => {
-    for (const ref of refs) {
-      const { nodeId, t } = ref;
-      for (const prop of expandKeyframeProp(ref.prop)) {
-        // Data tracks first: they have no scalar keyframes, so the scalar
-        // lookup below would find nothing and the click would do nothing.
-        const dataTrack = engine.getDataTrack(nodeId, prop);
-        if (dataTrack) {
-          const dk = dataTrack.keyframes.find((k) => Math.abs(k.t - t) < 1e-6);
-          if (dk) engine.setDataEasing(nodeId, prop, dk.t, kind);
-          continue;
-        }
-        const kfs = engine.getTrackKeyframes(nodeId, prop);
-        const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
-        if (!kf) continue;
-        engine.setEasing(nodeId, prop, kf.t, kind);
-      }
-    }
-  });
 }

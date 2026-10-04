@@ -7,11 +7,10 @@
  */
 
 import { secondsToFlicks, type KeyframeInsert } from '@motion/engine-api';
-import { engine, localEngine } from '@core/engine/engineInstance';
-import { insertBuiltLayers } from '@core/engine/offDocument';
-import { makeNode } from '@core/scene/sceneInsert';
-import { MULTICAM_ANGLE_PROP } from '@core/composition/multicam';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { engine } from '@core/engine/engineInstance';
+import { FragmentBuilder } from '@/engine-client/fragmentBuilder';
+import { pasteBuilt } from '@/engine-client/insertFragment';
+import { buildMulticamAngles } from '@/engine-client/multicamFragment';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import type { ImportedAsset } from '@stores/assetStore';
 import { edit } from '@core/engine/uiEdits';
@@ -55,8 +54,8 @@ export async function switchMulticamAngleEdit(
  * ONE history entry (an engine gesture): a composition the size, rate and
  * length of the angles (createMulticamComposition's rules), then every angle
  * as a full-frame footage layer tagged with its angle number
- * (`__multicamAngle`), angle 1 visible and the rest at opacity 0, built
- * off-document and pasted as one fragment. Resolves to the composition id.
+ * (`__multicamAngle`), angle 1 visible and the rest at opacity 0, laid into a
+ * scratch fragment and pasted as one `pasteLayers`. Resolves to the composition id.
  */
 export async function createMulticamEdit(assets: readonly ImportedAsset[], name = 'Multicam'): Promise<string | null> {
   const videos = assets.filter((a) => a.type === 'video' || a.type === 'image');
@@ -89,22 +88,10 @@ export async function createMulticamEdit(assets: readonly ImportedAsset[], name 
     });
     if (!made.ok) return null;
     comp = made.value.item;
-    await localEngine()?.whenIdle();
     const target = comp;
-    const ids = await insertBuiltLayers('New Multicam', target, () => {
-      videos.forEach((asset, i) => {
-        const node = makeNode(asset.type === 'video' ? 'video' : 'image', asset.name);
-        node.transform.position = { x: width / 2, y: height / 2 };
-        for (const c of node.components) {
-          const props = c.props as Record<string, unknown>;
-          if (c.type === 'Transform') {
-            Object.assign(props, { src: asset.src, assetId: asset.id, width, height, x: width / 2, y: height / 2, [MULTICAM_ANGLE_PROP]: i + 1 });
-          }
-          if (c.type === 'Style') props.opacity = i === 0 ? 100 : 0;
-        }
-        defaultSceneGraph.addChild(target, node);
-      });
-    });
+    const b = new FragmentBuilder({ idPrefix: 'mc' });
+    buildMulticamAngles(b, target, videos, width, height);
+    const ids = await pasteBuilt('New Multicam', target, b.build());
     ok = !!ids && ids.length === videos.length;
   } finally {
     await e.execute({ type: 'endGesture', gesture: began.value.gesture, commit: ok });

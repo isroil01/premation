@@ -4,12 +4,8 @@
  */
 
 import type SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { useCompositionStore } from '@stores/compositionStore';
-import { bumpScene } from '@stores/sceneStore';
 import type { TemplateDefinition } from '../templateTypes';
-import { addRoot, addShape, addText, addGradientShape, linearFill, radialFill, liveKf, type SetKf } from './builders';
+import { addRoot, addShape, addText, addGradientShape, linearFill, radialFill,  type SetKf } from './builders';
 
 const CW = 1920, CH = 1080, CX = CW / 2, CY = CH / 2;
 
@@ -37,15 +33,6 @@ export function animateGradientHero(set: SetKf): void {
   set('tpl_cta', 'scaleX', 1, 0.7, 'easeOut'); set('tpl_cta', 'scaleX', 1.5, 1, 'easeOut');
   set('tpl_cta', 'scaleY', 1, 0.7, 'easeOut'); set('tpl_cta', 'scaleY', 1.5, 1, 'easeOut');
   set('tpl_ctaLabel', 'opacity', 1.2, 0, 'easeOut'); set('tpl_ctaLabel', 'opacity', 1.6, 100, 'easeOut');
-}
-
-export function buildGradientHero(): void {
-  const rootId = activeCompRootId();
-  defaultSceneGraph.clear();
-  layoutGradientHero(defaultSceneGraph, rootId);
-  animateGradientHero(liveKf);
-  useCompositionStore.getState().update({ width: CW, height: CH, fps: 60, durationSeconds: 5, background: '#0b1020' });
-  bumpScene();
 }
 
 export const gradientHeroTemplate: TemplateDefinition = {

@@ -45,4 +45,3 @@ export type {
   ProcessEngineNotice,
   ProcessEngineOptions,
 } from './process';
-export { IdMap } from './idMap';

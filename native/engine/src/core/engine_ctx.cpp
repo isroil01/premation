@@ -227,8 +227,25 @@ bool ends_with_ci(std::string_view s, std::string_view suffix) {
 }
 }  // namespace
 
+namespace {
+/// A fake file's length: 4 s, or `N` seconds when its name ends in `_<N>s.<ext>` (`clip_10s.mp4`).
+double fake_duration(const std::string& name) {
+  const std::size_t dot = name.rfind('.');
+  const std::size_t us = name.rfind('_', dot);
+  if (dot == std::string::npos || us == std::string::npos || dot < us + 3 || name[dot - 1] != 's') return 4;
+  double v = 0;
+  for (std::size_t i = us + 1; i + 1 < dot; ++i) {
+    if (name[i] < '0' || name[i] > '9') return 4;
+    v = v * 10 + (name[i] - '0');
+  }
+  return v > 0 ? v : 4;
+}
+}  // namespace
+
 Json FakePorts::import_file(const api::ImportFile& file, const std::string& id) {
   const std::string name = base_name(file.path);
+  // A file named `undecodable…`: the decode failure the import tests need.
+  if (name.find("undecodable") != std::string::npos) fail(api::ErrorCode::io, "cannot decode '" + name + "'");
   const bool audio = ends_with_ci(name, ".wav") || ends_with_ci(name, ".mp3") || ends_with_ci(name, ".aac");
   const bool image = ends_with_ci(name, ".png") || ends_with_ci(name, ".jpg") || ends_with_ci(name, ".jpeg");
   Json a = Json::object();
@@ -240,7 +257,7 @@ Json FakePorts::import_file(const api::ImportFile& file, const std::string& id) 
   Json md = Json::object();
   md.set("width", Json::number(640));
   md.set("height", Json::number(360));
-  md.set("duration", Json::number(image ? 0 : 4));
+  md.set("duration", Json::number(image ? 0 : fake_duration(name)));
   md.set("fps", Json::number(30));
   md.set("hasAudioTrack", Json::boolean(!image));
   a.set("metadata", std::move(md));
@@ -252,6 +269,7 @@ Json FakePorts::import_file(const api::ImportFile& file, const std::string& id) 
 
 Json FakePorts::import_bytes(const api::ImportBytesFile& file, const std::string& id) {
   // harness.ts fakePorts.importBytes, field for field.
+  if (file.name.find("undecodable") != std::string::npos) fail(api::ErrorCode::io, "cannot decode '" + file.name + "'");
   const bool audio = ends_with_ci(file.name, ".wav") || ends_with_ci(file.name, ".mp3") || ends_with_ci(file.name, ".aac") ||
                      file.mime_type.starts_with("audio/");
   const bool image = ends_with_ci(file.name, ".png") || ends_with_ci(file.name, ".jpg") || ends_with_ci(file.name, ".jpeg") ||

@@ -7,35 +7,9 @@
  * came in butt-capped, dashes came in solid and a gradient stroke flattened.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { createLegacyDocumentContext } from '@core/lottie/lottieDocumentContext';
-import { readNodeStroke } from '@core/paint/stroke';
+
+
 import { planLottieImport, type LottieJson } from '../lottieImport';
-import { applyImportPlan } from '../lottieImportApply';
-import type { SceneNode } from '@core/types';
-
-function reset(): void {
-  defaultAnimation.clear();
-  defaultSceneGraph.clear();
-  defaultSceneGraph.addNode({
-    id: 'comp_root',
-    name: 'Composition 1',
-    parent: null,
-    children: [],
-    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-    visible: true,
-    locked: false,
-    components: [{ id: 'comp_root_meta', type: 'group', props: { __kind: 'group' } }],
-  } as unknown as SceneNode);
-}
-
-function findByName(name: string): SceneNode {
-  let hit: SceneNode | null = null;
-  defaultSceneGraph.traverse((n) => { if (!hit && n.name === name) hit = n; });
-  if (!hit) throw new Error(`node "${name}" not found`);
-  return hit;
-}
 
 type Layer = NonNullable<LottieJson['layers']>[number];
 
@@ -63,7 +37,6 @@ const STROKE = {
 };
 
 describe('Lottie st → stroke + tracks', () => {
-  beforeEach(reset);
 
   it('plans cap/join/miter/dashes and the animated width + dash offset as tracks', () => {
     const plan = planLottieImport({ fr: 30, op: 60, w: 400, h: 400, layers: [layerWith(STROKE)] });
@@ -75,17 +48,6 @@ describe('Lottie st → stroke + tracks', () => {
     expect(width.keyframes.map((k) => [k.t, k.value])).toEqual([[0, 2], [1, 20]]);
     expect(width.keyframes[0]!.easing).toBe('bezier');
     expect(st.tracks!.find((t) => t.prop === 'strokeDashOffset')!.keyframes.map((k) => k.value)).toEqual([0, 15]);
-  });
-
-  it('applies the fields onto the node stroke and the tracks onto the animation', () => {
-    const plan = planLottieImport({ fr: 30, op: 60, w: 400, h: 400, layers: [layerWith(STROKE)] });
-    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
-    const node = findByName('line');
-    const s = readNodeStroke(node)!;
-    expect(s).toMatchObject({ color: '#ff0000', opacity: 0.5, cap: 'round', join: 'bevel', miterLimit: 7, dash: [10, 5], dashOffset: 0 });
-    expect(defaultAnimation.sample(node.id, 'strokeWidth', 0)).toBeCloseTo(2);
-    expect(defaultAnimation.sample(node.id, 'strokeWidth', 1)).toBeCloseTo(20);
-    expect(defaultAnimation.sample(node.id, 'strokeDashOffset', 2)).toBeCloseTo(15);
   });
 
   it('animated colour → stroke_r/g/b, animated opacity → a REAL strokeOpacity track', () => {
@@ -134,13 +96,6 @@ describe('Lottie st → stroke + tracks', () => {
     expect(track('strokeGap1')).toBeUndefined();
   });
 
-  it('bm on a stroke becomes its blend mode', () => {
-    const plan = planLottieImport({ fr: 30, op: 60, w: 400, h: 400, layers: [layerWith({ ...STROKE, bm: 1 })] });
-    expect(plan.layers[0]!.stroke!.blendMode).toBe('multiply');
-    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
-    expect(readNodeStroke(findByName('line'))!.blendMode).toBe('multiply');
-  });
-
   it('a plain static stroke plans exactly as before (no extra keys)', () => {
     const plan = planLottieImport({ fr: 30, op: 60, w: 400, h: 400, layers: [layerWith({
       ty: 'st', c: { a: 0, k: [0, 0, 1, 1] }, w: { a: 0, k: 6 }, o: { a: 0, k: 50 },
@@ -149,45 +104,7 @@ describe('Lottie st → stroke + tracks', () => {
   });
 });
 
-describe('Lottie gs → gradient stroke paint', () => {
-  beforeEach(reset);
-
-  it('imports a linear gradient stroke as stroke paint rather than flattening it', () => {
-    const plan = planLottieImport({ fr: 30, op: 60, w: 400, h: 400, layers: [layerWith({
-      ty: 'gs', o: { a: 0, k: 80 }, w: { a: 0, k: 5 }, lc: 1, lj: 1, ml: 4, t: 1,
-      s: { a: 0, k: [0, -25] }, e: { a: 0, k: [0, 25] },
-      g: { p: 2, k: { a: 0, k: [0, 1, 0, 0, 1, 0, 0, 1] } },
-    })] });
-    expect(plan.warnings.some((w) => /gradient/i.test(w))).toBe(false);
-    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
-    const s = readNodeStroke(findByName('line'))!;
-    expect(s.opacity).toBeCloseTo(0.8);
-    expect(s.cap).toBe('butt');
-    expect(s.paint?.type).toBe('linear');
-    if (s.paint?.type !== 'linear') throw new Error('not linear');
-    expect(s.paint.angle).toBeCloseTo(90);
-    expect(s.paint.stops.map((x) => x.color)).toEqual(['#ff0000', '#0000ff']);
-    // The paint opacity is on the stroke, not baked into the ramp as well.
-    expect(s.paint.opacityStops).toBeUndefined();
-  });
-
-  it('keeps AE’s free Start/End points and the radial highlight (h %, a °)', () => {
-    const plan = planLottieImport({ fr: 30, op: 60, w: 400, h: 400, layers: [layerWith({
-      ty: 'gs', o: { a: 0, k: 100 }, w: { a: 0, k: 5 }, t: 2,
-      // The rect is 100 × 50 about the origin: s is its top-left, e its right-middle.
-      s: { a: 0, k: [-50, -25] }, e: { a: 0, k: [50, 0] },
-      h: { a: 0, k: 40 }, a: { a: 0, k: 30 },
-      g: { p: 2, k: { a: 0, k: [0, 1, 1, 1, 1, 0, 0, 0] } },
-    })] });
-    applyImportPlan(plan, createLegacyDocumentContext(), { updateComp: false });
-    const s = readNodeStroke(findByName('line'))!;
-    expect(s.paint?.type).toBe('radial');
-    expect(s.gradient).toEqual({ startX: 0, startY: 0, endX: 1, endY: 0.5, highlightLength: 0.4, highlightAngle: 30 });
-  });
-});
-
 describe('Lottie paint order → fill Composite', () => {
-  beforeEach(reset);
 
   const layerWithItems = (items: unknown[]): Layer => ({
     ...layerWith({}),

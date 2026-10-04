@@ -14,7 +14,7 @@
 
 import type { ComponentDef } from '@stores/componentStore';
 import type { SceneNode, ID } from '@core/types';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { previewDocumentOf, previewStill, type PreviewDocument } from '@core/engine/previewDocument';
 
 /** Long side of the rendered thumbnail, in px (the grid shows it at 48 × 32 CSS px). */

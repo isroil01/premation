@@ -1,62 +1,353 @@
 /**
- * The APP's engine (engineInstance.ts) in a test: the same booted-enough editor
- * the B2 harness builds (CommandSystem, unified history, scene→timeline mirror),
- * but the engine is the session singleton UI code reaches
- * through `engine()` — with `legacyUiRefresh` on, as in the app, plus
- * `verifyScopes`. Returns a `Harness`, so `buildScene` works unchanged.
+ * The APP's engine in a test: the real `premation-engine` (headless, through the
+ * same EngineSupervisor + bridge the app uses, nativeEngine.ts) as the document
+ * owner, reached through `engine()` exactly as UI code reaches it, with the
+ * document mirror over it. One engine process per test file, reset with
+ * `newProject` + `clearHistory` per `setupAppEngine()`; jest.setup.ts stops it.
+ *
+ * Suites that use it are named `*.native.test.ts(x)`: jest skips them when the
+ * engine is not built (jest.config.cjs), the Native workflow runs them.
  */
 
-import { unwrap } from '@motion/engine-api';
-import { CommandSystem, setCommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
+import { configure } from '@testing-library/react';
+import { unwrap, type OverlayLayerGeometry, type OverlayView, type Command, type CommandOf, type CommandResult, type CommandResults, type CommandType, type EngineClient, type EventBatch, type QueryOf, type QueryResults, type QueryType } from '@motion/engine-api';
+import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import type { CommandServices } from '@core/commands/Command';
-import { getEventBus } from '@core/events/EventBus';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { resetSnapshotSharing } from '@core/commands/snapshotSharing';
-import type { EditorDocument } from '@core/api/cloudDocument';
-import { canonicalJson } from '../canonical';
-import { bootEngine, shutdownEngine } from '../engineInstance';
-import type { LocalEngine } from '../LocalEngine';
-import { fakePorts, type Harness } from './harness';
+import { documentMirror, resetDocumentMirror } from '@stores/documentMirror';
+import { bindEngineDocumentStores } from '@stores/engineDocumentStores';
+import { bindEngineComps, bindEngineItems } from '@stores/engineItemsView';
+import { retainSelectionTrees } from '@stores/selectionTrees';
+import { installEngineTransport } from '../engineTransport';
+import { MAIN_VIEWPORT, publishFrameGeometry, setEngineDrivenViewport, subscribeOverlayGeometry } from '@stores/overlayGeometry';
+import { settleToolEdits } from '@core/workspace/viewportGesture';
+import { edit, gestureSessionsSettled } from '../uiEdits';
+import { propRefForTrack } from '../propRefs';
+import { apiUnitFactor } from '../props';
+import { bootEngine, engine, engineIdle, shutdownEngine } from '../engineInstance';
+import { resetEngineOwnership, setEngineOwnsDocument } from '../engineOwnership';
+import { resetProcessEngine } from '../process/processEngine';
+import { nativeEngineIsHeadless, startNativeEngine, type NativeEngine } from './nativeEngine';
 
-let subs: Array<{ dispose(): void }> = [];
+export const S = 705_600_000;
+
+// The suites wait on a real process: under a loaded machine (CI, a parallel
+// run) its answers take longer than jsdom's 1 s default for waitFor / findBy.
+configure({ asyncUtilTimeout: 5000 });
+
+// Captured at import: a suite on fake timers still settles on real time.
+const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+/** Seconds → flicks. */
+export const sec = (s: number): number => Math.round(s * S);
+
+/** What a scene builder needs (buildScene). */
+export interface EngineRunner {
+  run<T extends CommandType>(cmd: CommandOf<T>): Promise<CommandResults[T]>;
+}
+
+export interface AppHarness extends EngineRunner {
+  /** The session's engine (`engine()`). */
+  client: EngineClient;
+  /** Every event batch since setup. */
+  batches: EventBatch[];
+  batch(label: string, cmds: Command[]): Promise<CommandResult[]>;
+  query<T extends QueryType>(q: QueryOf<T>): Promise<QueryResults[T]>;
+  /** The whole document (properties and keyframes), canonical JSON — equal strings, equal documents. */
+  doc(): Promise<string>;
+  dispose(): Promise<void>;
+}
+
+/** Back-compat name for the suites' `let h: Harness`. */
+export type Harness = AppHarness;
+
+let shared: NativeEngine | null = null;
+let starting: Promise<NativeEngine> | null = null;
+
+async function nativeEngine(): Promise<NativeEngine> {
+  if (shared) return shared;
+  // `--test-ports`: the engine's FakePorts — deterministic footage records for
+  // any path, projects kept in memory (what the suites import and save).
+  starting ??= startNativeEngine({ extraArgs: ['--no-gpu', '--test-ports'] }).then((n) => {
+    forwardFrames(n);
+    return (shared = n);
+  });
+  return starting;
+}
+
+/**
+ * What EngineSurface and Electron main's FrameForwarder do for a drawn frame,
+ * minus the pixels: the FrameGeometry parts of a frame are collected until
+ * `last`, published with that frame's FrameReady (the overlay geometry mirror),
+ * and the slot is handed back.
+ */
+function forwardFrames(n: NativeEngine): void {
+  const parts = new Map<number, { generation: number; frame: number; layers: OverlayLayerGeometry[]; views: OverlayView[]; last: boolean }>();
+  n.supervisor.on('frame', (m) => {
+    if (m.type === 'geometry') {
+      let p = parts.get(m.viewport);
+      if (!p || p.generation !== m.generation || p.frame !== m.frame || p.last) {
+        p = { generation: m.generation, frame: m.frame, layers: [], views: [], last: false };
+        parts.set(m.viewport, p);
+      }
+      p.layers.push(...m.layers);
+      p.views.push(...m.views);
+      p.last = m.last;
+      return;
+    }
+    if (m.type !== 'frameReady') return;
+    n.supervisor.releaseSlot(m.generation, m.slot);
+    const p = parts.get(m.viewport);
+    const mine = p && p.last && p.generation === m.generation && p.frame === m.frame;
+    if (mine) parts.delete(m.viewport);
+    publishFrameGeometry(m.viewport, m.time, m.revision, mine ? p.layers : [], mine ? p.views : []);
+  });
+}
+
+/** Open the main viewport the way EngineSurface does, so its frames (and their geometry) flow. */
+async function openMainViewport(client: EngineClient): Promise<void> {
+  setEngineDrivenViewport(MAIN_VIEWPORT, true);
+  unwrap(await client.execute({
+    type: 'setViewport',
+    viewport: MAIN_VIEWPORT,
+    width: 1920,
+    height: 1080,
+    devicePixelRatio: 1,
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+    channel: 'rgb',
+    exposure: 0,
+    transparencyGrid: false,
+    displayTransform: '',
+    layerRenderEffects: true,
+    view: 'active',
+  } as Command));
+}
+
+/** Stop the file's engine process (jest.setup.ts, afterAll). */
+async function stopShared(): Promise<void> {
+  const n = shared;
+  shared = null;
+  starting = null;
+  for (const off of viewsOff) off();
+  viewsOff = [];
+  await shutdownEngine();
+  await resetProcessEngine();
+  resetEngineOwnership();
+  resetDocumentMirror();
+  delete (window as unknown as { motionEditor?: unknown }).motionEditor;
+  if (n) await n.stop();
+}
+(globalThis as { __premationStopNativeEngine?: () => Promise<void> }).__premationStopNativeEngine = stopShared;
 
 // jsdom has no object URLs; New Project revokes the session's asset URLs.
 const U = URL as unknown as { revokeObjectURL?: (u: string) => void; createObjectURL?: (b: unknown) => string };
 U.revokeObjectURL ??= () => {};
 U.createObjectURL ??= () => 'blob:test';
 
-export async function setupAppEngine(): Promise<Harness & { engine: LocalEngine }> {
-  for (const s of subs) s.dispose();
-  await shutdownEngine();
+/** Sort object keys so two snapshots of one document are the same string. */
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v as object).sort()) out[k] = canonical((v as Record<string, unknown>)[k]);
+    return out;
+  }
+  return v;
+}
+
+let batchesOff: (() => void) | null = null;
+/** The page stores the app binds to the mirror (engineOwnedSession.tsx): items, comps, guides / swatches / materials. */
+let viewsOff: Array<() => void> = [];
+
+export interface AppEngineOptions {
+  /**
+   * A suite of PANELS (Inspector sections, overlays): every layer's property
+   * tree is held as soon as the layer exists — what the open panel does in the
+   * app — and each fixture command (`run` / `batch`) lets the mirror catch up
+   * before it returns, so a render right after a fixture sees its layer.
+   * Suites of edits leave it off: an edit must load what it reads itself.
+   */
+  panels?: boolean;
+}
+
+/** Hold the tree of every layer the mirror knows, as layers appear (`panels`). */
+function holdAllTrees(): () => void {
+  const m = documentMirror();
+  const held = new Map<string, () => void>();
+  const sync = (): void => {
+    const ids = new Set(m.layerIds());
+    for (const [id, release] of held) if (!ids.has(id)) { release(); held.delete(id); }
+    for (const id of ids) if (!held.has(id)) held.set(id, m.retainTree(id));
+  };
+  sync();
+  const off = m.subscribe(['layers'], sync);
+  return () => { off(); for (const r of held.values()) r(); held.clear(); };
+}
+
+export async function setupAppEngine(opts: AppEngineOptions = {}): Promise<AppHarness> {
+  // A test that left a gesture open (or a dead engine) poisons the next: start over.
+  if (shared) {
+    // A gesture the last test ended a moment ago closes first.
+    if ((await shared.bridge.status()).state === 'running') await settleEdits();
+    const r = await shared.bridge.status();
+    let stale = r.state !== 'running';
+    if (!stale) {
+      const hist = await engine().query({ type: 'getHistory' });
+      stale = !hist.ok || hist.value.gestureOpen;
+    }
+    if (stale) await stopShared();
+  }
+  const native = await nativeEngine();
+  (window as unknown as { motionEditor?: unknown }).motionEditor = { engine: native.bridge };
   setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
-  resetSnapshotSharing();
-  subs = [
-    getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene()),
-  ];
-  const files = new Map<string, EditorDocument>();
-  const engine = bootEngine({ ports: fakePorts(files), engineOptions: { verifyScopes: true } });
-  const batches: Harness['batches'] = [];
-  engine.subscribe((b) => batches.push(b));
-  const h: Harness & { engine: LocalEngine } = {
-    engine,
+  setEngineOwnsDocument(true);
+  bootEngine({ ownsDocument: true });
+  const client = engine();
+  batchesOff?.();
+  const batches: EventBatch[] = [];
+  batchesOff = client.subscribe((b) => batches.push(b));
+  const h: AppHarness = {
+    client,
     batches,
-    files,
-    run: async (cmd) => unwrap(await engine.execute(cmd)),
-    batch: async (label, cmds) => unwrap(await engine.batch(label, cmds)),
-    query: async (q) => unwrap(await engine.query(q)),
-    doc: () => canonicalJson(),
+    run: async (cmd) => {
+      const r = unwrap(await client.execute(cmd));
+      if (opts.panels) await settleEdits();
+      return r;
+    },
+    batch: async (label, cmds) => {
+      const r = unwrap(await client.batch(label, cmds));
+      if (opts.panels) await settleEdits();
+      return r;
+    },
+    query: async (q) => unwrap(await client.query(q)),
+    doc: async () => {
+      await engineIdle();
+      const d = unwrap(await client.query({ type: 'getDocument', includeProperties: true, includeKeyframes: true }));
+      const { revision: _r, dirty: _d, projectPath: _p, ...rest } = d;
+      return JSON.stringify(canonical(rest));
+    },
     dispose: async () => {
-      await shutdownEngine();
-      for (const s of subs) s.dispose();
-      subs = [];
+      batchesOff?.();
+      batchesOff = null;
+      await engineIdle();
+      // The page stores stop following the engine: a store-only test after this one is on its own.
+      for (const off of viewsOff) off();
+      viewsOff = [];
     },
   };
   await h.run({ type: 'newProject' });
-  getCommandSystem().getHistory().clear();
+  await h.run({ type: 'clearHistory' });
+  await openMainViewport(client);
+  const m = documentMirror().start();
+  for (const off of viewsOff) off();
+  viewsOff = [
+    bindEngineDocumentStores({ mirror: m, send: (label, cmd) => edit(label, cmd) }),
+    bindEngineItems(m),
+    bindEngineComps(m),
+    retainSelectionTrees(),
+    // The playhead reaches the engine (its frames, and their geometry, follow it).
+    installEngineTransport(() => engine(), { seeksSent: 0, seeksCoalesced: 0, playheadEvents: 0, plays: 0, pauses: 0, activeComp: '' }),
+    ...(opts.panels ? [holdAllTrees()] : []),
+  ];
+  await engineIdle();
+  batches.length = 0;
   return h;
 }
 
-/** Labels on the unified history stack, oldest first. */
-export function historyLabels(): string[] {
-  return getCommandSystem().getHistory().getEntries().map((e) => e.label);
+/**
+ * The API property a legacy track name (`x`, `rotation`, `effect.<id>.<key>`)
+ * lives on, and the member index within it — from the mirror, its tree loaded.
+ */
+export async function trackRef(layer: string, track: string): Promise<{ path: string; members: string[]; member?: number }> {
+  await engineIdle();
+  await documentMirror().loadTree(layer);
+  const r = propRefForTrack(layer, track);
+  if (!r) throw new Error(`no property for track '${track}' on ${layer}`);
+  const member = r.members.length > 1 ? r.members.indexOf(track) : undefined;
+  return { path: r.ref.path, members: [...r.members], ...(member !== undefined && member >= 0 ? { member } : {}) };
+}
+
+/** The API property a legacy track name lives on, as a PropRef (the layer's tree loaded first). */
+export async function propRef(layer: string, track: string): Promise<{ layer: string; path: string }> {
+  return { layer, path: (await trackRef(layer, track)).path };
+}
+
+/**
+ * A legacy track's value at `seconds` as the engine evaluates it (keys,
+ * expressions) — its member of a vector property. Undefined when the track has
+ * no numeric value.
+ */
+export async function sampleTrack(layer: string, track: string, seconds: number): Promise<number | undefined> {
+  const r = await trackRef(layer, track);
+  const res = unwrap(await engine().query({ type: 'getPropertyValues', props: [{ layer, path: r.path }], time: sec(seconds), evaluated: true }));
+  const v = res.values[0]?.value as { value?: unknown } | undefined;
+  if (typeof v?.value === 'number') return v.value;
+  if (v?.value && typeof v.value === 'object') {
+    const n = Object.values(v.value as Record<string, unknown>)[r.member ?? 0];
+    return typeof n === 'number' ? n : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * A legacy track's value at `seconds` in its STORED units (Scale as a
+ * multiplier, Opacity 0–1…): what the TS runtime's `readPropertyValue` gave —
+ * the engine's evaluated value over `apiUnitFactor`.
+ */
+export async function storedTrack(layer: string, track: string, seconds = 0): Promise<number | undefined> {
+  const v = await sampleTrack(layer, track, seconds);
+  return v === undefined ? undefined : v / apiUnitFactor(track);
+}
+
+/** Whether the engine has a gesture open (the history's `gestureOpen`). */
+export async function gestureOpen(): Promise<boolean> {
+  return unwrap(await engine().query({ type: 'getHistory' })).gestureOpen;
+}
+
+/**
+ * Everything the UI sent has landed: tool gestures closed (settleToolEdits),
+ * the engine idle, the mirror caught up. Over the pipe a gesture closes a few
+ * round trips after the pointer-up that ended it.
+ */
+export async function settleEdits(): Promise<void> {
+  // A UI action is often `void edit()` behind a few awaits (load the trees,
+  // resolve the keys): give such chains a few macrotask turns to reach the
+  // engine, then wait for it and the mirror.
+  for (let i = 0; i < 4; i++) {
+    await new Promise<void>((r) => { realSetTimeout(r, 0); });
+    await settleToolEdits();
+    await gestureSessionsSettled();
+    await engineIdle();
+    await documentMirror().whenIdle();
+  }
+}
+
+/**
+ * The next frame of the main viewport has landed with its overlay geometry
+ * (or `timeoutMs` passed — a frame the engine had no reason to draw). An
+ * overlay that just subscribed draws from the frame after its subscription.
+ */
+export async function waitForFrame(timeoutMs = 1000): Promise<void> {
+  await settleEdits();
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(done, timeoutMs);
+    const off = subscribeOverlayGeometry(MAIN_VIEWPORT, done);
+    function done(): void {
+      clearTimeout(timer);
+      off();
+      resolve();
+    }
+  });
+}
+
+/** `it` for a test that needs what only the full engine has (text layout, fonts); skipped on the headless build. */
+export const itFullEngine: jest.It = nativeEngineIsHeadless() ? it.skip : it;
+
+/** Empty the engine's undo stack (a test's setup is not part of what it measures). */
+export async function clearHistory(): Promise<void> {
+  unwrap(await engine().execute({ type: 'clearHistory' }));
+}
+
+/** Labels on the engine's undo stack, oldest first. */
+export async function historyLabels(): Promise<string[]> {
+  return unwrap(await engine().query({ type: 'getHistory' })).entries.map((e) => e.label);
 }

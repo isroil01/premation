@@ -28,8 +28,9 @@
 
 import { readSource } from '@/__testHelpers__/readSource';
 import { AUTO_ORIENT_DEAD_KINDS, canAutoOrient } from './autoOrient';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import type { SceneNode } from '@core/types';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 
 function node(kind: string, opts: { transform?: boolean } = {}): SceneNode {

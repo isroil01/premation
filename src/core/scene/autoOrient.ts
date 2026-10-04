@@ -22,9 +22,7 @@
  */
 
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { bumpScene } from '@stores/sceneStore';
 
 export type AutoOrientMode = 'off' | 'path' | 'camera';
 
@@ -87,26 +85,4 @@ export function readNodeAutoOrient(node: SceneNode): boolean {
 /** True when the layer should face the active camera (AE's opt-in billboard). */
 export function isAutoOrientedToCamera(node: SceneNode): boolean {
   return readAutoOrientMode(node) === 'camera';
-}
-
-/** Turn along-path auto-orient on/off for a layer (legacy boolean API). */
-export function setAutoOriented(nodeId: string, on: boolean): void {
-  setAutoOrientMode(nodeId, on ? 'path' : 'off');
-}
-
-export function setAutoOrientMode(nodeId: string, mode: AutoOrientMode): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  if (mode === 'off') {
-    defaultSceneGraph.setAutoOrient(nodeId, undefined);
-  } else {
-    // `path` persists as the legacy boolean, so a project round-trips
-    // identically through readers written before this mode existed.
-    defaultSceneGraph.setAutoOrient(nodeId, true);
-    if (mode === 'camera') {
-      const fx = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === 'fx');
-      if (fx) defaultSceneGraph.writeProp(nodeId, fx.id, 'autoOrient', 'camera');
-    }
-  }
-  bumpScene();
 }

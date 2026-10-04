@@ -15,7 +15,7 @@
  */
 
 import type { TreeNode } from '@components/TreeView';
-import type { SceneKind } from '@core/scene/seedDefaultScene';
+import type { SceneKind } from '@core/scene/sceneKind';
 import type { SearchField } from '@stores/sceneViewStore';
 
 export interface SceneFilter {

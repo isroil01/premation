@@ -14,7 +14,7 @@
  * (engine-client/sceneInsertFragment.test.ts) until the replica goes.
  */
 
-import { SCENE_KIND_PROP, type SceneKind } from './seedDefaultScene';
+import { SCENE_KIND_PROP, type SceneKind } from './sceneKind';
 import type { SceneNode } from '@core/types';
 import type { ImportedAsset } from '@stores/assetStore';
 import {

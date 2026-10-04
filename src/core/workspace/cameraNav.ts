@@ -14,9 +14,6 @@
  * write `guidesStore` view params or the viewport pan/zoom (editor state).
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
-import { activeCompRootId } from '@core/scene/activeComp';
 import { defaultFocalLength } from '@core/scene/camera3d';
 import { type CameraViewMode } from '@core/scene/cameraViewMode';
 import { sendNodeValues } from '@core/workspace/ports';
@@ -70,24 +67,6 @@ export function unifiedNavModeFor(button: number): CameraNavMode | null {
 export interface CameraNavTarget {
   nodeId: string;
   transId: string;
-}
-
-/** True when the ACTIVE COMPOSITION has any Camera layer at all (3D or not). */
-export function sceneHasCamera(): boolean {
-  return flattenComposition(defaultSceneGraph, activeCompRootId())
-    .some((n) => readNodeKind(n) === 'camera');
-}
-
-/**
- * Gentle nudge after a layer is made 3D: without a camera, 3D depth doesn't
- * move — surface the one-step fix. No-op when a camera already exists.
- */
-export function notifyCameraTipIfMissing(
-  notify: (message: string, level: 'info' | 'warning') => void,
-): void {
-  if (!sceneHasCamera()) {
-    notify('Tip: add a Camera (+ camera button in the viewport bar) to move in 3D', 'info');
-  }
 }
 
 /** Idle after which a wheel dolly's burst of ticks becomes one undo entry. */

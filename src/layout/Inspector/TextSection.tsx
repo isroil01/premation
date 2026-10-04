@@ -12,7 +12,7 @@
 import { memo, useCallback } from 'react';
 import type { PresetValues } from '@stores/sectionPresetStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
+import { useMirrorLayer, useMirrorTreeShape } from '@hooks/useMirror';
 import { hasTextLayer, mirrorTextPresetCapture } from '@layout/Text/textMirror';
 import { TextSettingsBody } from './CharacterPanel';
 import { SectionPresetMenu } from './SectionPresetMenu';
@@ -34,10 +34,10 @@ export function hasTextSection(nodeId: string): boolean {
 }
 
 function TextSectionInner({ nodeId }: { nodeId: string }): JSX.Element | null {
-  // B4: wake when the layer's header or property tree changes (the body
-  // subscribes to its own values).
+  // B4: wake when the layer's header or the tree's shape changes (whether it has a
+  // Text group); the body subscribes to its own values, so a Position drag wakes nothing here.
   useMirrorLayer(nodeId);
-  useMirrorTree(nodeId);
+  useMirrorTreeShape(nodeId);
   const nodeIds = useInspectorSelection(nodeId);
   // After every hook: the node can vanish between renders (a deleted layer).
   if (!hasTextSection(nodeId)) return null;

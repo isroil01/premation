@@ -50,7 +50,7 @@ LayerInfo make_layer(std::uint32_t i) {
   l.switches.three_d = i % 7 == 0;
   l.switches.label = i % 16;
   const std::int64_t in = static_cast<std::int64_t>(i) * kFpf;
-  l.timing = LayerTiming{in, in + 10 * kF, in, 1.0, false, RetimeMode::normal};
+  l.timing = LayerTiming{in, in + 10 * kF, in, 1.0, false, RetimeMode::normal, std::nullopt, std::nullopt, std::nullopt};
   l.blend_mode = BlendMode::normal;
   l.matte.mode = MatteMode::none;
   l.has_video = true;
