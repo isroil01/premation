@@ -364,10 +364,17 @@ int run_prepare(const std::string& jobPath) {
   // an EngineMessage{request} on the wire, base64 — main encoded the log's
   // JSON with the generated codec. A refusal is reported, not fatal: the rest
   // of the log still applies, and the report names the first.
+  //
+  // Gesture ids are the recording engine's own counter (a log started
+  // mid-session closes gesture 4, 5, …), and this engine counts from its own.
+  // Gestures never nest, so each recorded endGesture closes the gesture the
+  // last replayed beginGesture opened (src/core/automation/commandLog.ts
+  // replaySession does the same in the app).
   if (job->at("requests").is_array()) {
     std::size_t applied = 0;
     std::size_t refused = 0;
     std::string firstError;
+    std::optional<std::uint32_t> openGesture;
     for (const Json& entry : job->at("requests").arr()) {
       const std::optional<std::vector<std::uint8_t>> bytes = entry.is_string() ? doc::native_unbase64(entry.str()) : std::nullopt;
       api::EngineMessage m;
@@ -377,7 +384,20 @@ int run_prepare(const std::string& jobPath) {
         ok = api::decode(rd, m) == wire::Status::ok && m.kind() == api::EngineMessage::Kind::request;
       }
       if (!ok) return fail_with("The command log holds an entry that is not an engine request (entry " + std::to_string(applied + refused + 1) + ").");
-      const api::Response res = c.submit(std::get<api::Request>(m.v).body);
+      api::RequestBody body = std::move(std::get<api::Request>(m.v).body);
+      bool closesGesture = false;
+      if (auto* cmd = std::get_if<api::Command>(&body.v)) {
+        if (auto* end = std::get_if<api::EndGesture>(&cmd->v)) {
+          if (openGesture) end->gesture = *openGesture;
+          closesGesture = true;
+        }
+      }
+      const api::Response res = c.submit(body);
+      if (closesGesture) {
+        openGesture.reset();
+      } else if (const auto* cr = std::get_if<api::CommandResult>(&res.outcome.v)) {
+        if (const auto* g = std::get_if<api::GestureRef>(&cr->v)) openGesture = g->gesture;
+      }
       ++applied;
       if (auto e = error_of(res)) {
         ++refused;

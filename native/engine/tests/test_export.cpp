@@ -76,6 +76,9 @@ TEST_CASE("the encoder child receives every byte, in order", "[export]") {
 }
 
 TEST_CASE("a missing encoder fails at spawn, a killed one refuses writes", "[export]") {
+  // As the export job does before it spawns (export_job.cpp): on POSIX a write
+  // to the dead child must fail, not raise SIGPIPE and kill this process.
+  ex::ignore_broken_pipes();
   std::string err;
   auto none = ex::ChildProcess::spawn((temp_dir("none") / "no-such-ffmpeg.exe").string(), {}, "", err);
   CHECK_FALSE(none);

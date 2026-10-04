@@ -143,7 +143,9 @@ double clamp_speed_percent(double v) {
 }
 
 /// retimeCommands.ts `retimeBarInfo` (the parts setRetimeMode reads).
-std::optional<BarInfo> retime_bar_info(const HCtx& x, std::string_view node) {
+// Templated over the context: the edit handlers pass HCtx, mapLayerTime a PCtx (both carry d / view / expr / cache).
+template <class X>
+std::optional<BarInfo> retime_bar_info(const X& x, std::string_view node) {
   const auto bars = tl_bars_for_node(x.d, x.view, node);
   if (bars.empty()) return std::nullopt;
   double fps = tl_fps_for_node(x.d, x.view, node);
@@ -187,7 +189,8 @@ bool is_hold(const std::optional<api::Easing>& e) {
   return e && (*e == api::Easing::step || *e == api::Easing::hold);
 }
 
-std::optional<SpeedTable> table_for(const HCtx& x, std::string_view node) {
+template <class X>
+std::optional<SpeedTable> table_for(const X& x, std::string_view node) {
   const auto* track = anim_track(x.d, node, kSpeedProp);
   if (track == nullptr || track->empty()) return std::nullopt;
   std::vector<Key> sorted = *track;
@@ -268,13 +271,15 @@ double cumulative_at(const SpeedTable& t, double xx) {
   return 0;
 }
 
-double speed_advance(const HCtx& x, std::string_view node, double a, double b) {
+template <class X>
+double speed_advance(const X& x, std::string_view node, double a, double b) {
   const auto table = table_for(x, node);
   if (!table) return b - a;
   return cumulative_at(*table, b) - cumulative_at(*table, a);
 }
 
-std::optional<double> retimed_chain_time(const HCtx& x, std::string_view node, double t, const RetimeClip* clip) {
+template <class X>
+std::optional<double> retimed_chain_time(const X& x, std::string_view node, double t, const RetimeClip* clip) {
   if (anim_is_animated(x.d, node, kSpeedProp)) {
     const double off = clip != nullptr ? clip->offsetSec : 0;
     const double uIn = clip != nullptr ? clip->inSec + off : 0;
@@ -286,7 +291,8 @@ std::optional<double> retimed_chain_time(const HCtx& x, std::string_view node, d
   return std::nullopt;
 }
 
-double retimed_source_seconds(const HCtx& x, std::string_view node, double t, const std::optional<BarInfo>& bar) {
+template <class X>
+double retimed_source_seconds(const X& x, std::string_view node, double t, const std::optional<BarInfo>& bar) {
   const double off = bar ? bar->clip.offsetSec : 0;
   const auto chain = retimed_chain_time(x, node, t, bar ? &bar->clip : nullptr);
   return chain.value_or(t) + off;
@@ -419,6 +425,10 @@ void remove_retime_tracks(Document& d, std::string_view node) {
 }
 
 }  // namespace
+
+double layer_source_seconds(const PCtx& pc, std::string_view layer, double t) {
+  return retimed_source_seconds(pc, layer, t, retime_bar_info(pc, layer));
+}
 
 // ── shared helpers ──────────────────────────────────────────────────────────
 

@@ -30,8 +30,14 @@ inline std::optional<Gpu> make_gpu() {
   Gpu g;
   g.instance = wgpu::CreateInstance(&id);
   wgpu::RequestAdapterOptions o{};
+  // The backend the engine itself asks for (gpu.cpp native_backend): with no
+  // driver for it there is no adapter, never Dawn's Null device (which renders nothing).
 #if defined(_WIN32)
   o.backendType = wgpu::BackendType::D3D12;
+#elif defined(__APPLE__)
+  o.backendType = wgpu::BackendType::Metal;
+#else
+  o.backendType = wgpu::BackendType::Vulkan;
 #endif
   o.powerPreference = wgpu::PowerPreference::HighPerformance;
   g.instance.WaitAny(g.instance.RequestAdapter(&o, wgpu::CallbackMode::WaitAnyOnly,
@@ -40,6 +46,9 @@ inline std::optional<Gpu> make_gpu() {
                                                }),
                      UINT64_MAX);
   if (g.adapter == nullptr) return std::nullopt;
+  wgpu::AdapterInfo info{};
+  g.adapter.GetInfo(&info);
+  if (info.backendType == wgpu::BackendType::Null) return std::nullopt;
   const auto features = wanted_device_features(g.adapter);
   wgpu::DeviceDescriptor dd{};
   dd.requiredFeatureCount = features.size();
