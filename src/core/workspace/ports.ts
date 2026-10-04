@@ -40,7 +40,7 @@ import { CONTINUOUS_RASTER_PROP, supportsContinuousRaster } from '@core/scene/co
 
 import { activeCompRootId } from '@core/scene/activeComp';
 import { uniqueLayerName } from '@core/scene/layerNames';
-import { SCENE_KIND_PROP, type SceneKind } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP, type SceneKind } from '@core/scene/sceneKind';
 import type { SceneNode } from '@core/types';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useTextEditStore } from '@stores/textEditStore';
@@ -56,6 +56,7 @@ import {
   currentToolTransaction,
   sendToolEdit,
   runToolEdit,
+  runToolEditWhen,
   settleToolEdits,
   type ToolTransaction,
 } from '@core/workspace/viewportGesture';
@@ -1328,10 +1329,26 @@ function readCutRuns(id: string, layer: LayerInfo): CutSubpath[] | null {
  */
 function cutPaths(payload: CutPathsPayload): void {
   const m = documentMirror();
+  const ids = payload.ids.map((id) => id as string);
+  // The cut seeds from each layer's property tree (its stored outline, a
+  // primitive's corner radii): over the pipe a tree the mirror does not hold
+  // yet arrives later — load them first, then cut, still ONE entry.
+  if (ids.every((id) => !m.layer(id) || m.tree(id) !== undefined)) {
+    const cmds = cutCommands(ids, payload);
+    if (cmds.length > 0) sendToolEdit(knifeLabel(cmds), cmds);
+    return;
+  }
+  let cmds: Command[] = [];
+  runToolEditWhen(m.loadTrees(ids).then(() => { cmds = cutCommands(ids, payload); }), () => knifeLabel(cmds), () => cmds);
+}
+
+const knifeLabel = (cmds: readonly Command[]): string => (cmds.length > 1 ? `Knife (${cmds.length} layers)` : 'Knife');
+
+function cutCommands(ids: readonly string[], payload: CutPathsPayload): Command[] {
+  const m = documentMirror();
   const cmds: Command[] = [];
 
-  for (const rawId of payload.ids) {
-    const id = rawId as string;
+  for (const id of ids) {
     const layer = unlockedLayer(id);
     if (!layer || uiKindOf(layer) !== 'shape') continue;
     // An animated outline wins over stored geometry every frame (the engine
@@ -1359,9 +1376,7 @@ function cutPaths(payload: CutPathsPayload): void {
       runs: cut.map((r) => (maskPointsToPath(r.points as MaskPoint[], !r.open) as PathValue).value),
     });
   }
-
-  if (cmds.length === 0) return;
-  sendToolEdit(cmds.length > 1 ? `Knife (${cmds.length} layers)` : 'Knife', cmds);
+  return cmds;
 }
 
 /**

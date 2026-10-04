@@ -1,5 +1,5 @@
 import type { TreeNode } from '@components/TreeView';
-import type { SceneKind } from '@core/scene/seedDefaultScene';
+
 import {
   EMPTY_SCENE_FILTER,
   countSceneMatches,
@@ -11,6 +11,7 @@ import {
   type SceneFilter,
   type SceneNodeFacts,
 } from './sceneFilters';
+import { type SceneKind } from '@core/scene/sceneKind';
 
 const FACTS: Record<string, SceneNodeFacts> = {
   comp: { kind: 'comp', label: undefined, animated: false, hasEffects: false, name: 'Main' },

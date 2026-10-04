@@ -18,8 +18,6 @@
  * colour.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
 import type { SceneNode } from '@core/types';
 import { EXTRUSION_WALL_GAIN, EXTRUSION_BACK_GAIN } from '@core/scene/extrusion';
 
@@ -73,11 +71,6 @@ export function readNodeFaceMaterials(node: SceneNode): FaceMaterials {
   return raw as FaceMaterials;
 }
 
-export function getNodeFaceMaterials(nodeId: string): FaceMaterials {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeFaceMaterials(node) : {};
-}
-
 /**
  * The colour and gain a given face should draw with.
  *
@@ -110,33 +103,4 @@ export function nextFaceMaterials(
   if (patch === null) delete next[kind];
   else next[kind] = { ...cur[kind], ...patch };
   return Object.keys(next).length === 0 ? null : next;
-}
-
-/** Patch one face kind. Passing `{}` for a kind clears it back to the default. */
-export function setNodeFaceMaterial(
-  nodeId: string,
-  kind: Exclude<FaceKind, 'front'>,
-  patch: FaceMaterial | null,
-): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node ? transformProps(node) : undefined;
-  if (!node || !t) return;
-  const cur = readNodeFaceMaterials(node);
-  const next: FaceMaterials = { ...cur };
-  if (patch === null) delete next[kind];
-  else next[kind] = { ...cur[kind], ...patch };
-  // Store nothing when every kind is default, so an untouched layer adds no
-  // bytes to the file and keeps rendering through the original path.
-  const empty = Object.keys(next).length === 0;
-  defaultSceneGraph.writeProp(nodeId, t.id, 'faceMaterials', empty ? undefined : next);
-  bumpScene();
-}
-
-/** Drop all per-face overrides (back to one colour for the whole object). */
-export function clearNodeFaceMaterials(nodeId: string): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node ? transformProps(node) : undefined;
-  if (!node || !t) return;
-  defaultSceneGraph.writeProp(nodeId, t.id, 'faceMaterials', undefined);
-  bumpScene();
 }

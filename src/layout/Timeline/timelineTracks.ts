@@ -26,7 +26,7 @@ import type { KeyId, NodeId, TrackId } from '@app-types/common';
 import { flicksToSeconds, type Keyframe, type LayerInfo, type Marker, type TimelineRow } from '@motion/engine-api';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { KIND_COLOR, KIND_FILL, KIND_ICON } from '@core/scene/sceneDerive';
-import type { SceneKind } from '@core/scene/seedDefaultScene';
+import type { SceneKind } from '@core/scene/sceneKind';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import type { MirrorTreeLike } from '@core/mirror/trackIndex';
 import type { MirrorComp } from '@stores/documentMirror';

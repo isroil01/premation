@@ -27,8 +27,6 @@
  */
 
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
 import type { RichRun, TextStyle } from './textLayout';
 import { codePointToGraphemeIndex, graphemesAreCodePoints, splitGraphemes } from './graphemes';
 
@@ -316,15 +314,4 @@ export function reindexRuns(
     runs.map((r) => ({ start: map(r.start), end: map(r.end), style: r.style })),
     b.length,
   );
-}
-
-/** Persist runs through the graph so the rebuilt plain-view keeps them.
- *  Always stamps the grapheme index marker. */
-export function writeRuns(nodeId: string, runs: ReadonlyArray<RichRun>): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node ? textComponent(node) : undefined;
-  if (!node || !t) return;
-  defaultSceneGraph.writeProp(nodeId, t.id, RUNS_INDEX_PROP, RUNS_INDEX_GRAPHEME);
-  defaultSceneGraph.writeProp(nodeId, t.id, '__runs', [...runs]);
-  bumpScene();
 }

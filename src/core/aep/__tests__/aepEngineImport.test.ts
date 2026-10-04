@@ -3,8 +3,7 @@
  * core/aep): a real RIFX file on disk (buildAep, the reader's inverse) opened
  * by the real `premation-engine` — comps, layers, the footage it references
  * imported by path through the engine's media probe (an unreadable one listed
- * as missing), one undo entry — and the page's `importAepThroughEngine`
- * answering null on the TypeScript engine (the page importer runs instead).
+ * as missing), one undo entry.
  *
  * The native half is skipped, saying so, when the full engine is not built.
  */
@@ -13,7 +12,6 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ProcessEngineClient, unwrap, type EngineClient } from '@motion/engine-api';
-import { setupEngine } from '@core/engine/__testHelpers__/harness';
 import { nativeEngineExe, startNativeEngine, type NativeEngine } from '@core/engine/__testHelpers__/nativeEngine';
 import { zipBytes } from '@core/export/zip';
 import { aepFile, compItem, folderItem, footageItem, layer } from '../__testHelpers__/buildAep';
@@ -62,17 +60,6 @@ function promo(dir: string): string {
   writeFileSync(out, file);
   return out;
 }
-
-describe('importAepThroughEngine on the TypeScript engine', () => {
-  it('answers null so the page importer runs', async () => {
-    const h = await setupEngine();
-    try {
-      expect(await importAepThroughEngine(h.engine, '/nowhere/Promo.aep')).toBeNull();
-    } finally {
-      await h.dispose();
-    }
-  });
-});
 
 const exe = nativeEngineExe();
 const full = !!exe && !/headless/i.test(exe);

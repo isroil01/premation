@@ -58,7 +58,6 @@
     "native:bench": "node scripts/native.mjs bench",
     "native:tidy": "node scripts/native.mjs tidy",
     "native:wasm": "node scripts/native.mjs wasm",
-    "native:napi": "node scripts/native.mjs napi",
     "native:golden": "node scripts/native.mjs golden",
     "engine-api:gen": "node packages/engine-api/codegen/generate.cjs",
     "engine-api:check": "node packages/engine-api/codegen/generate.cjs --check",

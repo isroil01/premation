@@ -11,7 +11,6 @@ import {
   maskModeStartsFull,
   activeMaskPaths,
   hasActiveMaskPaths,
-  paintMaskMatte,
 } from './mask';
 import type { SceneNode } from '@core/types';
 
@@ -172,37 +171,7 @@ beforeAll(() => {
   }
 });
 
-/** Records the canvas calls that decide the matte, so a jsdom test can assert
- *  the drawing SEQUENCE without a real rasterizer. */
-function recordingCtx(): { ctx: CanvasRenderingContext2D; calls: string[] } {
-  const calls: string[] = [];
-  // State in a closure rather than on the object, so the mock needs no
-  // structural type of its own.
-  const state = { op: 'source-over', alpha: 1, filter: 'none' };
-  const ctx = {
-    set globalCompositeOperation(v: string) { state.op = v; },
-    get globalCompositeOperation() { return state.op; },
-    set globalAlpha(v: number) { state.alpha = v; },
-    get globalAlpha() { return state.alpha; },
-    set filter(v: string) { state.filter = v; },
-    get filter() { return state.filter; },
-    fillStyle: '',
-    save: () => { calls.push('save'); },
-    restore: () => { calls.push('restore'); },
-    fillRect: (x: number, y: number, w: number, h: number) => { calls.push(`fillRect(${x},${y},${w},${h})`); },
-    fill: (_p: unknown, rule: string) => {
-      calls.push(`fill[${state.op},a=${state.alpha},f=${state.filter},${rule}]`);
-    },
-  } as unknown as CanvasRenderingContext2D;
-  return { ctx, calls };
-}
-
 const pathOf = (mode: MaskMode, id: string = mode): MaskPath => ({ ...rectangleMask(100, 100), id, mode });
-const paint = (paths: MaskPath[]): string[] => {
-  const { ctx, calls } = recordingCtx();
-  paintMaskMatte(ctx, { paths }, 100, 100);
-  return calls;
-};
 
 describe('mask mode `none`', () => {
   it('is not treated as a leading subtractive mode', () => {
@@ -225,43 +194,5 @@ describe('mask mode `none`', () => {
     expect(hasActiveMaskPaths({ paths: [pathOf('none'), pathOf('add')] })).toBe(true);
     expect(hasActiveMaskPaths({ paths: [] })).toBe(false);
     expect(hasActiveMaskPaths(undefined)).toBe(false);
-  });
-
-  it('an all-none stack leaves the layer UNMASKED, not invisible', () => {
-    // The failure this guards: filtering none out naively leaves zero paths, the
-    // matte comes out empty, and the layer vanishes — which is the one thing a
-    // mode called "none" must never do.
-    const calls = paint([pathOf('none'), pathOf('none', 'n2')]);
-    expect(calls).toEqual(['fillRect(-50,-50,100,100)']);
-    expect(calls.some((c) => c.startsWith('fill['))).toBe(false);
-  });
-
-  it('does not draw a none path sitting among active ones', () => {
-    const calls = paint([pathOf('add'), pathOf('none'), pathOf('subtract')]);
-    const fills = calls.filter((c) => c.startsWith('fill['));
-    expect(fills).toHaveLength(2);
-    expect(fills[0]).toContain('source-over');
-    expect(fills[1]).toContain('destination-out');
-  });
-
-  it('a LEADING none does not change how the stack starts', () => {
-    // The subtle one. `[none, add]` must start from an empty matte exactly like
-    // `[add]`; if `none` were consulted for maskModeStartsFull it would prefill
-    // the frame and the Add mask would stop cutting anything.
-    expect(paint([pathOf('none'), pathOf('add')])).toEqual(paint([pathOf('add')]));
-  });
-
-  it('a leading none preserves the full-frame start of a following subtract', () => {
-    expect(paint([pathOf('none'), pathOf('subtract')])).toEqual(paint([pathOf('subtract')]));
-    expect(paint([pathOf('subtract')])[0]).toBe('fillRect(-50,-50,100,100)');
-  });
-
-  it('inserting a none path anywhere is a no-op on the matte', () => {
-    const base = [pathOf('add'), pathOf('darken')];
-    const baseline = paint(base);
-    for (let i = 0; i <= base.length; i++) {
-      const withNone = [...base.slice(0, i), pathOf('none'), ...base.slice(i)];
-      expect(paint(withNone)).toEqual(baseline);
-    }
   });
 });

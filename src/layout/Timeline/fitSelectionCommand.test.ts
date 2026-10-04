@@ -2,14 +2,6 @@
  * `timeline.fitSelection` — Shift+; — reads the mounted timeline's tracks
  * and the keyframe selection store, and fits the span they occupy.
  */
-jest.mock('@core/timeline/TimelineController', () => ({
-  getTimelineController: () => ({
-    setPixelsPerSecond: jest.fn(),
-    durationSeconds: 10,
-    getWorkArea: () => null,
-  }),
-}));
-
 import { asTrackId, asKeyId, asNodeId } from '@app-types/common';
 import { getCommandRegistry } from '@core/commands/Command';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';

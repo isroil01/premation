@@ -43,9 +43,6 @@
 
 import { useUIStore } from '@stores/uiStore';
 import { requireEngineJob, startEngineJob } from '@core/engine/engineJobs';
-import { getTimelineController } from '@core/timeline/TimelineController';
-import { bumpScene } from '@stores/sceneStore';
-import { useSelectionStore } from '@stores/selectionStore';
 
 export interface AssembleOptions {
   /** Detector threshold. Undefined keeps `SceneEditOptions`' own default (5). */
@@ -66,95 +63,6 @@ export interface AssembleReport {
   dropped: number;
   /** Whether the bars were re-laid (false when there was nothing to re-lay). */
   sequenced: boolean;
-}
-
-/**
- * The mutating half: split `nodeId`'s clip at `cutsCompSec`, drop the runts and
- * sequence the survivors. Synchronous, so it can run inside one history entry.
- *
- * Pure geometry + scene work — it does no detection and shows no UI, which is
- * what makes it testable without WebCodecs.
- */
-export function applyAssembly(
-  nodeId: string,
-  cutsCompSec: ReadonlyArray<number>,
-  opts: AssembleOptions,
-): { shots: string[]; dropped: number; sequenced: boolean } {
-  const c = getTimelineController();
-  const fps = c.fpsForNode(nodeId) || 30;
-
-  // Where the master sits NOW. The assembly has to end up starting here
-  // whatever the drop pass removes — see the re-anchor below.
-  const anchorFrame = c.getLayersForNode(nodeId)[0]?.start ?? 0;
-
-  // ── Split ────────────────────────────────────────────────────────
-  const shots: string[] = [nodeId];
-  let current = nodeId;
-  for (const sec of [...cutsCompSec].sort((a, b) => a - b)) {
-    const frame = Math.round(sec * fps);
-    const host = c.getLayersForNode(current).find((l) => frame > l.start && frame < l.end);
-    if (!host) continue;
-    const rightLayerId = c.splitClip(host.id, sec);
-    if (!rightLayerId) continue;
-    const rightNodeId = c.timeline.getLayer(rightLayerId)?.sourceId;
-    if (!rightNodeId) continue;
-    shots.push(rightNodeId);
-    current = rightNodeId;
-  }
-
-  // ── Drop the runts ───────────────────────────────────────────────
-  const minKeep = Math.max(0, Math.round(opts.minShotFrames));
-  let dropped = 0;
-  if (minKeep > 0) {
-    // Measured BEFORE any deletion: dropping is not a ripple here (sequencing
-    // below closes the gaps), but re-reading a bar list mid-loop after the
-    // scene changed under it is how a stale id gets deleted twice.
-    const spans = shots.map((id) => ({ id, bar: c.getLayersForNode(id)[0] }));
-    const survivors = spans.filter((s) => s.bar && s.bar.duration >= minKeep);
-    // Never everything. A threshold that would empty the comp is a threshold
-    // the user got wrong, and the useful answer is the un-culled assembly.
-    if (survivors.length > 0) {
-      for (const s of spans) {
-        if (!s.bar || s.bar.duration >= minKeep) continue;
-        if (c.deleteLayerForClip(s.bar.id)) {
-          dropped++;
-          const at = shots.indexOf(s.id);
-          if (at >= 0) shots.splice(at, 1);
-        }
-      }
-    }
-  }
-
-  // ── Re-anchor ────────────────────────────────────────────────────
-  //
-  // Sequencing lays the bars out FROM the first one, which it never moves. So
-  // dropping the opening shots would leave the whole assembly starting wherever
-  // the first survivor happened to fall — three seconds of nothing in front of
-  // a cut that used to begin at zero. Putting the first survivor back on the
-  // master's own start is what makes "drop the runts" mean "and close the hole
-  // they left" rather than "and shift the film".
-  //
-  // Done here rather than inside the loop above because it must also cover the
-  // ONE-survivor case, which `sequenceLayerBars` refuses (it needs a pair) and
-  // which is exactly what an over-eager threshold produces.
-  const firstBar = shots[0] ? c.getLayersForNode(shots[0])[0] : undefined;
-  if (firstBar && firstBar.start !== anchorFrame) {
-    c.setClipStart(firstBar.id, anchorFrame / fps);
-    c.invalidateLayerIndex();
-  }
-
-  // ── Sequence ─────────────────────────────────────────────────────
-  //
-  // Always, when there is more than one shot: with a dissolve it writes the
-  // ramps, and without one it closes the gaps the drop pass left. Splitting
-  // alone leaves the bars contiguous, so a no-drop / no-dissolve run is a
-  // no-op rather than a move.
-  const overlap = Math.max(0, Math.round(opts.dissolveFrames));
-  const sequenced = c.sequenceLayerBars(shots, overlap / fps, { crossfade: overlap > 0 });
-
-  useSelectionStore.getState().set(shots);
-  bumpScene();
-  return { shots, dropped, sequenced };
 }
 
 /**

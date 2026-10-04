@@ -65,6 +65,8 @@ function readSwitch(nodeId: string, sw: TrackSwitch): boolean {
 
 /** Flip one switch on one track row. False when the row is not a layer (nothing sent). */
 export async function toggleTrackSwitchEdit(nodeId: string, sw: TrackSwitch): Promise<boolean> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees([nodeId]);
   if (!isLayer(nodeId)) return false;
   const next = !readSwitch(nodeId, sw);
   const [on, off] = SWITCH_LABEL[sw];
@@ -77,6 +79,8 @@ export async function toggleTrackSwitchEdit(nodeId: string, sw: TrackSwitch): Pr
  * document, an unlit one isolates this layer. One entry.
  */
 export async function soloExclusiveEdit(nodeId: string): Promise<boolean> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees([nodeId]);
   if (!isLayer(nodeId)) return false;
   const only = !readSwitch(nodeId, 'solo');
   const cmds: Command[] = [];
@@ -93,6 +97,8 @@ export async function soloExclusiveEdit(nodeId: string): Promise<boolean> {
 
 /** The clip bar's speaker glyph: AE's audio switch (`audioEnabled`). */
 export async function toggleAudioMuteEdit(nodeId: string): Promise<void> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees([nodeId]);
   const n = documentMirror().layer(nodeId);
   if (!n || !isLayer(nodeId)) return;
   const kind = uiKindOf(n);
@@ -109,6 +115,8 @@ export async function toggleAudioMuteEdit(nodeId: string): Promise<void> {
  * false when the flag has no API switch (nothing sent).
  */
 export async function toggleLayerFlagEdit(nodeId: string, flag: LayerFlag): Promise<boolean> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees([nodeId]);
   const m = documentMirror();
   const node = m.layer(nodeId);
   if (!node || !isLayer(nodeId)) return false;
@@ -163,6 +171,8 @@ export async function toggleLayerFlagEdit(nodeId: string, flag: LayerFlag): Prom
  * layer of the same parent.
  */
 export async function moveLayerAdjacentEdit(fromId: string, anchorId: string, position: 'before' | 'after'): Promise<boolean> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees([fromId]);
   const m = documentMirror();
   const from = m.layer(fromId);
   const anchor = m.layer(anchorId);
@@ -214,6 +224,8 @@ function refAnimated(nodeId: string, r: TrackRef): boolean {
  * property. False when a track is not addressable.
  */
 export async function propertyKeyToggleEdit(nodeId: string, prop: string, seconds: number): Promise<boolean> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees([nodeId]);
   // B4: which of the row's members have a stored track, from the engine (`getMemberKeyframes`: keyed tracks, and
   // expression-only ones with no keys — the latter have no track, so they stay out as before).
   const expanded = expandKeyframeProp(prop);
@@ -240,6 +252,8 @@ export async function propertyKeyToggleEdit(nodeId: string, prop: string, second
  * key at the playhead holding the current value. False when not addressable.
  */
 export async function propertyStopwatchEdit(nodeId: string, props: readonly string[], seconds: number): Promise<boolean> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees([nodeId]);
   const node = documentMirror().layer(nodeId);
   // A composition is not a layer: its tracks are not addressable (false → legacy).
   if (!node) return !isCompItem(nodeId);
@@ -257,6 +271,8 @@ export async function propertyStopwatchEdit(nodeId: string, props: readonly stri
  * first mask's Path stands for all of them. False when the layer has no mask.
  */
 export async function maskShapeStopwatchEdit(nodeId: string, animated: boolean, seconds: number): Promise<boolean> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees([nodeId]);
   // B4: the layer's first mask from its mirror tree (`masks/<id>`).
   const m = documentMirror();
   const first = m.layer(nodeId) ? mirrorMaskIds(m.tree(nodeId))[0] : undefined;
@@ -295,6 +311,8 @@ export function propertyValueCommands(
  * layer does not have are skipped. One entry.
  */
 export async function addKeyframesForSelectionEdit(nodeIds: readonly string[], tracks: readonly string[], seconds: number): Promise<void> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees(nodeIds);
   const keys: Array<{ prop: PropRef; time: number; spatialIn: number[]; spatialOut: number[] }> = [];
   const seen = new Set<string>();
   const time = compTime(seconds);
@@ -335,6 +353,8 @@ export function setKeyRovingEdit(uiId: string, roving: boolean): Promise<void> {
 
 /** "Delete Layer" / "Delete Layer and Close Gap" on a clip bar. False when the bar has no layer. */
 export async function deleteClipLayerEdit(nodeId: string | null | undefined, ripple: boolean): Promise<boolean> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees([nodeId]);
   if (!nodeId || !isLayer(nodeId)) return false;
   const n = documentMirror().layer(nodeId);
   if (!n || n.switches.locked) return true;
@@ -380,6 +400,8 @@ async function sendTransform(label: string, entries: ReadonlyArray<{ nodeId: str
  * One entry for the whole selection. False → legacy.
  */
 export async function centreAnchorEdit(nodeIds: readonly string[], seconds: number): Promise<boolean> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees(nodeIds);
   const entries: Array<{ nodeId: string; values: Record<string, number> }> = [];
   for (const nodeId of nodeIds) {
     const [ax = 0, ay = 0, x = 0, y = 0] = await trackValuesAt(nodeId, ['anchorX', 'anchorY', 'x', 'y'], seconds);
@@ -399,6 +421,8 @@ export function centreInCompEdit(nodeIds: readonly string[], frame: Size, second
 
 /** Fit / Fill / Native Size over the selection (`computeFit` on each layer's intrinsic size). One entry. */
 export async function fitLayersEdit(nodeIds: readonly string[], frame: Size, mode: FitMode, seconds: number): Promise<boolean> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees(nodeIds);
   // B4: each layer's intrinsic SOURCE size from the engine (`getSourceSize`: probed footage × its pixel aspect,
   // a precomp's frame, the per-kind default); layers with none are left out.
   const res = await engine().query({ type: 'getSourceSize', layers: [...nodeIds] });
@@ -435,6 +459,8 @@ async function layerKeys(nodeId: string): Promise<Array<{ ref: PropRef; keys: Ar
  * no keys, false when its tracks are not addressable or the engine refused.
  */
 export async function timeReverseKeyframesEdit(nodeId: string): Promise<boolean | 'none'> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees([nodeId]);
   const raw = await layerKeys(nodeId);
   if (!raw) return false;
   // Member tracks of one property (X / Y of Position) answer the same key set: one set per property.
@@ -449,6 +475,8 @@ export async function timeReverseKeyframesEdit(nodeId: string): Promise<boolean 
 
 /** Easy Ease every key of a layer's animated numeric properties. One entry. */
 export async function easyEaseAllEdit(nodeId: string): Promise<boolean | 'none'> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees([nodeId]);
   const sets = await layerKeys(nodeId);
   if (!sets) return false;
   const ids = sets.flatMap((s) => s.keys.map((k) => k.id));
@@ -478,6 +506,8 @@ export async function staggerKeyframesEdit(
   pattern: StaggerOptions,
   label = 'Sequence layers',
 ): Promise<boolean | 'none'> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees(nodeIds);
   const layers = [...new Set(nodeIds)].filter((id) => isLayer(id));
   const keyed = await Promise.all(layers.map(hasKeys));
   const animated = layers.filter((_, i) => keyed[i]);
@@ -503,6 +533,8 @@ export function staggerAnimationsEdit(nodeIds: readonly string[], intervalSec: n
  * two selected layers with bars.
  */
 export async function sequenceLayerBarsEdit(nodeIds: readonly string[], overlapSeconds: number, crossfade: boolean): Promise<boolean | 'none'> {
+  // Its writes resolve on the layers' property trees (loaded over the pipe).
+  await documentMirror().loadTrees(nodeIds);
   // B4: a layer with a bar (every layer not inside a group), from the mirror.
   const m = documentMirror();
   const layers = nodeIds.filter((id) => isLayer(id) && mirrorHasBar(m, id));
@@ -529,9 +561,10 @@ export async function sequenceLayerBarsEdit(nodeIds: readonly string[], overlapS
  * whether it applied (a refusal is toasted).
  */
 export async function applyAnimationPresetEdit(nodeIds: readonly string[], preset: string, seconds: number): Promise<boolean> {
+  await documentMirror().loadTrees(nodeIds);
   const layers = nodeIds.filter((id) => isLayer(id));
   if (layers.length === 0) return false;
-  const res = await edit('', { type: 'applyPreset', layers, preset, time: compTime(seconds) });
+  const res = await edit(`Apply ${preset}`, { type: 'applyPreset', layers, preset, time: compTime(seconds) });
   return res.ok;
 }
 

@@ -17,9 +17,9 @@ jest.mock('@core/api/client', () => ({
   api: { autosave: jest.fn().mockResolvedValue(undefined) },
 }));
 
-// captureDocument walks live singletons; the test only cares that a save fires.
-jest.mock('@core/api/cloudDocument', () => ({
-  captureDocument: jest.fn().mockReturnValue({ version: '1.1.0' }),
+// The document is the engine's (`liveDocument`); the test only cares that a save fires.
+jest.mock('@core/project/liveDocument', () => ({
+  liveDocument: jest.fn().mockResolvedValue({ version: '1.1.0' }),
 }));
 
 // A document revision reaches autosave as the mirror's `doc` key (B4).

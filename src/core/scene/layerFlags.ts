@@ -28,30 +28,9 @@
  * `toggleLayerFlagsEdit`, one entry for the whole set.
  */
 
-import defaultSceneGraph from './DefaultSceneGraph';
 import { readNodeKind } from './sceneDerive';
-import { canBe3D, is3DEnabled, set3DEnabled } from './threeD';
-import { isGuideLayer, toggleGuideLayer } from './guideLayer';
-import { readNodeFxEnabled, setNodeFxEnabled } from '@core/effects/effects';
-import { readNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
-import { readNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
-import {
-  readNodePreserveTransparency,
-  setNodePreserveTransparency,
-} from '@core/effects/preserveTransparency';
-import {
-  disableLayerMotionBlur,
-  enableLayerMotionBlurWithFeedback,
-  notifyGuideLayerChange,
-  setAdjustmentWithFeedback,
-} from '@core/effects/layerSwitchFeedback';
-import { isPrecomp, setCompCollapse } from './precomp';
-import { readCompCollapse } from './compInstance';
-import { readContinuousRaster, setContinuousRaster, supportsContinuousRaster } from './continuousRaster';
-import { getNodeLayerTime, updateNodeLayerTime } from './layerTime';
-import { nextQuality, readNodeQuality, setNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
-import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
-import { useUIStore } from '@stores/uiStore';
+import {   supportsContinuousRaster } from './continuousRaster';
+import {  readNodeQuality,  type LayerQuality } from '@core/effects/layerQuality';
 import type { SceneNode } from '@core/types';
 
 /** Every switch this module speaks. */
@@ -173,153 +152,9 @@ export function layerFlagDef(flag: LayerFlag): LayerFlagDef {
   return def;
 }
 
-/** Is the flag set on this node? */
-export function readLayerFlag(node: SceneNode, flag: LayerFlag): boolean {
-  switch (flag) {
-    case 'threeD': return is3DEnabled(node);
-    case 'guide': return isGuideLayer(node.id);
-    case 'motionBlur': return readNodeMotionBlur(node) === true;
-    case 'adjustment': return readNodeAdjustment(node) === true;
-    case 'preserveTransparency': return readNodePreserveTransparency(node) === true;
-    // fx is ON unless explicitly turned off — an empty stack still reads as
-    // "effects enabled", which is what the timeline's `!== false` says too.
-    case 'fxEnabled': return readNodeFxEnabled(node) !== false;
-    // View state, stored on the node because that is where the timeline put it.
-    case 'shy': return (node as { shy?: boolean }).shy === true;
-    case 'collapse': {
-      const kind = collapseSwitchKind(node);
-      if (kind === 'collapse') return readCompCollapse(node);
-      if (kind === 'raster') return readContinuousRaster(node);
-      return false;
-    }
-    case 'frameBlend': return getNodeLayerTime(node.id).frameBlend !== 'none';
-    // A cycling switch is "on" when it is off its default, which is what a lit
-    // switch means to a reader scanning the column. `describe` says which of the
-    // three positions it is actually in.
-    case 'quality': return readNodeQuality(node) !== 'best';
-  }
-}
-
 /** How this switch should be drawn and named for this layer. */
 export function describeLayerFlag(node: SceneNode, flag: LayerFlag): LayerFlagFace {
   const def = layerFlagDef(flag);
   if (def.describe) return def.describe(node);
   return { label: def.label, title: def.title, icon: def.icon, glyph: def.glyph };
-}
-
-/**
- * Can this node carry the flag at all?
- *
- * Honest gating, the same rule the timeline's disabled dark-box buttons follow:
- * a switch that cannot change a pixel is refused rather than lit. Only 3D has a
- * kind restriction strong enough to hide the control (`canBe3D` covers groups,
- * nulls, cameras, lights, solids, particles and audio); the rest apply to any
- * layer, and a composition ROOT carries none of them — it is the document, not
- * a layer in it.
- */
-export function layerFlagAvailable(node: SceneNode, flag: LayerFlag): boolean {
-  if (node.parent === null) return false;
-  switch (flag) {
-    case 'threeD': return canBe3D(node);
-    // The sunburst means nothing on a bitmap, a solid or a null.
-    case 'collapse': return collapseSwitchKind(node) !== null;
-    // Frame blending needs source frames to blend between.
-    case 'frameBlend': return readNodeKind(node) === 'video' || isPrecomp(node);
-    // Quality needs pixels to sample, so the chrome-only kinds have none.
-    case 'quality':
-      return !['null', 'camera', 'light', 'audio', 'group'].includes(readNodeKind(node)) || isPrecomp(node);
-    default: return true;
-  }
-}
-
-/**
- * Flip one flag on one node. No history entry and no `bumpScene` — see the
- * header; the panels send engine commands instead (layout/Scene/layerSwitchEdits.ts
- * `toggleLayerFlagsEdit`, anchored, one entry).
- *
- * Returns false when the flag was refused (3D on a kind that cannot project),
- * so a caller toggling a selection can report how many it skipped.
- */
-export function toggleLayerFlag(
-  nodeId: string,
-  flag: LayerFlag,
-  next?: boolean | LayerQuality,
-): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return false;
-
-  // Quality is the one switch whose "next" is not a boolean: it advances
-  // Best → Draft → Wireframe → Best, and a multi-layer toggle passes the
-  // anchor's new POSITION so the whole set lands on the same one.
-  if (flag === 'quality') {
-    if (!layerFlagAvailable(node, 'quality')) return false;
-    const q = typeof next === 'string' ? next : nextQuality(readNodeQuality(node));
-    setNodeQuality(nodeId, q);
-    return true;
-  }
-
-  const on = typeof next === 'boolean' ? next : !readLayerFlag(node, flag);
-
-  switch (flag) {
-    case 'collapse': {
-      const kind = collapseSwitchKind(node);
-      if (!kind) return false;
-      if (kind === 'collapse') setCompCollapse(nodeId, on);
-      else setContinuousRaster(nodeId, on);
-      return true;
-    }
-
-    case 'frameBlend':
-      if (!layerFlagAvailable(node, 'frameBlend')) return false;
-      updateNodeLayerTime(nodeId, { frameBlend: on ? 'mix' : 'none' });
-      return true;
-
-    case 'preserveTransparency':
-      setNodePreserveTransparency(nodeId, on);
-      return true;
-
-    case 'guide':
-      if (isGuideLayer(nodeId) !== on) toggleGuideLayer(nodeId);
-      // Says what a guide layer IS, because nothing on screen changes when you
-      // arm one — it stays visible in the viewer and vanishes only on export.
-      notifyGuideLayerChange(on);
-      return true;
-
-    case 'threeD': {
-      if (!canBe3D(node)) return false;
-      set3DEnabled(nodeId, on);
-      if (on) {
-        notifyCameraTipIfMissing((message, level) =>
-          useUIStore.getState().notify({ level, message, durationMs: 3200 }),
-        );
-      }
-      return true;
-    }
-
-    case 'motionBlur':
-      if (on) enableLayerMotionBlurWithFeedback(nodeId, setNodeMotionBlur);
-      else disableLayerMotionBlur(nodeId, setNodeMotionBlur);
-      return true;
-
-    case 'adjustment':
-      setAdjustmentWithFeedback(nodeId, on, setNodeAdjustment);
-      return true;
-
-    case 'fxEnabled':
-      setNodeFxEnabled(nodeId, on);
-      return true;
-
-    case 'shy':
-      // Timeline-only state with no render meaning, so it is written straight
-      // onto the node rather than into a component the renderer reads.
-      (node as { shy?: boolean }).shy = on;
-      return true;
-  }
-}
-
-/** Kind of the node, for callers that want to explain a refusal. */
-export function layerFlagRefusalReason(node: SceneNode, flag: LayerFlag): string | null {
-  if (layerFlagAvailable(node, flag)) return null;
-  if (node.parent === null) return 'A composition has no layer switches';
-  return `${layerFlagDef(flag).label} isn't available for ${readNodeKind(node)} layers`;
 }

@@ -45,15 +45,6 @@
  * edges instead, so two layers are enough.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
-import { writeTransformProps } from '@core/scene/transformWrite';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { SIZE } from '@core/scene/layerKindSize';
-import { world2DAt, parentWorld2DAt } from '@core/scene/layerSpace';
-import { useProjectStore } from '@stores/projectStore';
-import { Matrix } from '@motion/scene';
-
 export type DistributeMode =
   | 'distribute-left' | 'distribute-h' | 'distribute-right'
   | 'distribute-top'  | 'distribute-v' | 'distribute-bottom'
@@ -69,68 +60,6 @@ export interface Bounds { x: number; y: number; w: number; h: number; cx: number
 /** Fewest layers each distribute mode needs (AE: three against the selection). */
 export function distributeMinimum(alignTo: 'selection' | 'composition'): number {
   return alignTo === 'composition' ? 2 : 3;
-}
-
-/** The playhead in raw comp time — alignment lines up what is on screen NOW. */
-function playheadCompTime(): number {
-  const s = useProjectStore.getState();
-  return s.tabs[s.activeTabId ?? '']?.time ?? 0;
-}
-
-/**
- * The node's box in COMPOSITION space at the playhead.
- *
- * The centre comes from the composed world matrix, so keyframes, expressions
- * and the parent chain are all already in it. The size is the layer's own
- * width/height times its WORLD scale (decomposed from the same matrix) — a
- * layer inside a scaled null is drawn at the null's scale, so aligning it by
- * its unscaled size would leave a visible gap.
- */
-function getBounds(nodeId: string): Bounds | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-
-  let width: number | undefined;
-  let height: number | undefined;
-  for (const c of node.components) {
-    const p = c.props as Record<string, unknown>;
-    if (typeof p.width === 'number') width = p.width;
-    if (typeof p.height === 'number') height = p.height;
-  }
-
-  const kind = readNodeKind(node);
-  const fallback = (SIZE as Record<string, { w: number; h: number } | undefined>)[kind];
-  const m = world2DAt(nodeId, playheadCompTime());
-  const d = Matrix.decompose(m);
-  const sx = Math.abs(d.scale.x);
-  const sy = Math.abs(d.scale.y);
-  const w = (width ?? fallback?.w ?? 100) * sx;
-  const h = (height ?? fallback?.h ?? 100) * sy;
-  const centre = Matrix.transformPoint(m, { x: 0, y: 0 });
-  return { x: centre.x - w / 2, y: centre.y - h / 2, w, h, cx: centre.x, cy: centre.y };
-}
-
-/**
- * Write a node's centre position.
- *
- * Goes through `writeTransformProps` so an aligned layer whose Position is
- * animated gets a KEYFRAME at the current time rather than a base-prop write
- * the renderer ignores. These were two raw `writeProp` calls, which meant
- * aligning any animated layer appeared to do nothing at all.
- */
-function setPos(nodeId: string, x: number, y: number): void {
-  const local = toParentSpace(nodeId, x, y);
-  writeTransformProps(nodeId, [{ prop: 'x', value: local.x }, { prop: 'y', value: local.y }], 'Align');
-}
-
-/**
- * A comp-space centre → the node's PARENT-space `x`/`y`. The alignment maths
- * is in comp space, so the answer has to come back through the parent's
- * inverse — on an unparented layer that is the identity.
- */
-function toParentSpace(nodeId: string, x: number, y: number): { x: number; y: number } {
-  const inv = Matrix.invert(parentWorld2DAt(nodeId, playheadCompTime()));
-  return Matrix.transformPoint(inv, { x, y });
 }
 
 type Ref = 'start' | 'centre' | 'end' | 'space';
@@ -227,29 +156,6 @@ export interface AlignMove {
 }
 
 /**
- * The moves an align / distribute makes, WITHOUT writing them — the pure half
- * of {@link alignNodes}, for callers that send the writes themselves (the
- * inspector sends them to the engine API as one command, B3). Only nodes that
- * actually move are listed.
- */
-export function planAlign(
-  ids: ReadonlyArray<string>,
-  mode: AlignMode,
-  alignTo: 'selection' | 'composition' = 'selection',
-  compWidth: number = 1920,
-  compHeight: number = 1080,
-): AlignMove[] {
-  if (ids.length < 1) return [];
-  const boxes = ids
-    .map((id) => ({ id, b: getBounds(id) }))
-    .filter((v): v is { id: string; b: Bounds } => v.b !== null);
-  return planAlignBoxes(boxes, mode, alignTo, compWidth, compHeight).map((m) => {
-    const p = toParentSpace(m.id, m.cx, m.cy);
-    return { id: m.id, cx: m.cx, cy: m.cy, x: p.x, y: p.y };
-  });
-}
-
-/**
  * The new comp-space box CENTRES an align / distribute gives `boxes` — pure
  * (no scene, no store): the caller measured the boxes and turns each centre
  * into the Position it writes. Only boxes that actually move are listed.
@@ -297,51 +203,4 @@ export function planAlignBoxes(
     }
   }
   return out;
-}
-
-export function alignNodes(
-  ids: string[],
-  mode: AlignMode,
-  alignTo: 'selection' | 'composition' = 'selection',
-  compWidth: number = 1920,
-  compHeight: number = 1080
-): void {
-  if (ids.length < 1) return;
-  const boxes = ids
-    .map((id) => ({ id, b: getBounds(id) }))
-    .filter((v): v is { id: string; b: Bounds } => v.b !== null);
-  if (boxes.length === 0) return;
-
-  if (isDistributeMode(mode)) {
-    const frame = alignTo === 'composition' ? { width: compWidth, height: compHeight } : undefined;
-    const centres = distributeBoxes(boxes.map((v) => v.b), mode, frame);
-    if (!centres) return;
-    centres.forEach((c, i) => {
-      const { id, b } = boxes[i]!;
-      if (Math.abs(c.cx - b.cx) > 1e-6 || Math.abs(c.cy - b.cy) > 1e-6) setPos(id, c.cx, c.cy);
-    });
-    bumpScene();
-    return;
-  }
-
-  const left   = alignTo === 'composition' ? 0 : Math.min(...boxes.map((v) => v.b.x));
-  const top    = alignTo === 'composition' ? 0 : Math.min(...boxes.map((v) => v.b.y));
-  const right  = alignTo === 'composition' ? compWidth : Math.max(...boxes.map((v) => v.b.x + v.b.w));
-  const bottom = alignTo === 'composition' ? compHeight : Math.max(...boxes.map((v) => v.b.y + v.b.h));
-  const cx = (left + right) / 2;
-  const cy = (top + bottom) / 2;
-
-  for (const { id, b } of boxes) {
-    switch (mode) {
-      case 'left':     setPos(id, left + b.w / 2,            b.cy); break;
-      case 'center-h': setPos(id, cx,                        b.cy); break;
-      case 'right':    setPos(id, right - b.w / 2,           b.cy); break;
-      case 'top':      setPos(id, b.cx, top + b.h / 2);             break;
-      case 'middle-v': setPos(id, b.cx, cy);                        break;
-      case 'bottom':   setPos(id, b.cx, bottom - b.h / 2);          break;
-      default: break;
-    }
-  }
-
-  bumpScene();
 }

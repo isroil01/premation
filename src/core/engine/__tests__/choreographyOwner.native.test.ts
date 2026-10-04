@@ -1,7 +1,7 @@
 /**
  * Animate In, Stagger and Animate on Beats with the C++ ENGINE AS THE OWNER
  * (the app's configuration: `bootEngine({ ownsDocument: true })` over the real
- * `premation-engine`, the TypeScript engine as the page's replica).
+ * `premation-engine`; the page keeps no replica).
  *
  * The bug this pins: the choreography commands wrote the page's scene graph
  * and animation stores directly, so only the replica changed — the engine's
@@ -16,20 +16,16 @@
 import { unwrap, type EngineClient } from '@motion/engine-api';
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import type { CommandServices } from '@core/commands/Command';
-import { getEventBus } from '@core/events/EventBus';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { resetSnapshotSharing } from '@core/commands/snapshotSharing';
 import { documentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useChoreographyStore } from '@stores/choreographyStore';
-import type { EditorDocument } from '@core/api/cloudDocument';
 import { planChoreography, writeChoreography, DEFAULT_STAGGER_PARAMS } from '@core/animation/choreography';
 import { choreographyEngineEdit } from '@core/animation/choreographyEdits';
 import { revertChoreography, runChoreography } from '@core/animation/choreographyCommands';
-import { bootEngine, engine, localEngine, ownedEngine, shutdownEngine } from '../engineInstance';
+import { bootEngine, engine, engineIdle, ownedEngine, shutdownEngine } from '../engineInstance';
 import { resetEngineOwnership, setEngineOwnsDocument } from '../engineOwnership';
 import { resetProcessEngine } from '../process/processEngine';
-import { fakePorts } from '../__testHelpers__/harness';
 import { nativeEngineExe, startNativeEngine, type NativeEngine } from '../__testHelpers__/nativeEngine';
 
 jest.setTimeout(180_000);
@@ -71,13 +67,12 @@ async function ownerGroups(layer: string, path: string): Promise<string[]> {
 
 maybe('choreography with the C++ engine as the owner', () => {
   let native: NativeEngine;
-  let subs: Array<{ dispose(): void }> = [];
   let client: EngineClient;
   let layers: string[] = [];
   let text = '';
 
   const settle = async (): Promise<void> => {
-    await localEngine()!.whenIdle();
+    await engineIdle();
     await documentMirror().whenIdle();
   };
 
@@ -87,10 +82,8 @@ maybe('choreography with the C++ engine as the owner', () => {
     await shutdownEngine();
     setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
     resetSnapshotSharing();
-    subs = [getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene())];
     setEngineOwnsDocument(true);
-    const files = new Map<string, EditorDocument>();
-    bootEngine({ ports: fakePorts(files), ownsDocument: true });
+    bootEngine({ ownsDocument: true });
     client = engine();
     expect(client).toBe(ownedEngine());
   });
@@ -98,8 +91,6 @@ maybe('choreography with the C++ engine as the owner', () => {
     await shutdownEngine();
     await resetProcessEngine();
     resetEngineOwnership();
-    for (const s of subs) s.dispose();
-    subs = [];
     delete (window as unknown as { motionEditor?: unknown }).motionEditor;
     await native.stop();
   });
@@ -187,9 +178,9 @@ maybe('choreography with the C++ engine as the owner', () => {
     // The beat grid is the audioAnalysis job's; the timing it hands the
     // planner is start times — given here directly.
     const beats = [0.5, 1, 1.5];
-    const result = await choreographyEngineEdit('Animate in', layers, (installs) => {
-      const plan = planChoreography({ nodeIds: layers, atCompTime: beats[0]!, phase: 'in', startTimes: beats, fps: 30, seed: 9, ...(installs ? { installs } : {}) });
-      return { installs: plan.installs, layers: plan.perLayer.length, keyframes: writeChoreography(plan) };
+    const result = await choreographyEngineEdit('Animate in', layers, (env) => {
+      const plan = planChoreography({ nodeIds: layers, atCompTime: beats[0]!, phase: 'in', startTimes: beats, fps: 30, seed: 9 }, env);
+      return { installs: plan.installs, needs: plan.needs, layers: plan.perLayer.length, keyframes: writeChoreography(plan, env) };
     });
     await settle();
     expect(result?.layers).toBe(3);

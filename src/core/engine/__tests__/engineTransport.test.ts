@@ -47,6 +47,13 @@ class FakeEngine {
   state: 'stopped' | 'playing' = 'stopped';
   frame = 0;
   private seekFrame = 0;
+  /** While set, a seek's reply waits for `releaseSeeks` (its playhead event still goes out). */
+  holdSeeks = false;
+  private heldSeeks: Array<() => void> = [];
+  releaseSeeks(): void {
+    this.holdSeeks = false;
+    for (const r of this.heldSeeks.splice(0)) r();
+  }
   constructor(readonly comp: string) {}
 
   client(): EngineClient {
@@ -54,6 +61,7 @@ class FakeEngine {
       execute: (cmd: Command) => {
         this.log.push(cmd);
         this.apply(cmd);
+        if (this.holdSeeks && cmd.type === 'seek') return new Promise((resolve) => this.heldSeeks.push(() => resolve({ ok: true, value: {} })));
         return Promise.resolve({ ok: true, value: {} });
       },
       subscribe: (fn: Listener) => {
@@ -259,6 +267,24 @@ describe('engine transport (the engine owns the clock)', () => {
     expect(eng.count('play')).toBe(1);
     expect(stats.plays).toBe(1);
     expect(stats.pauses).toBe(1);
+  });
+
+  it('stopped: the echo of an older seek never overwrites a newer page seek (nor is sent back)', async () => {
+    const eng = new FakeEngine(activeTab().comp);
+    install(eng);
+    await flush();
+    // A tab switch seeks to the tab's old time; the mapped time lands while that seek is in flight.
+    eng.holdSeeks = true;
+    seekPlayhead(1);
+    seekPlayhead(2);
+    await flush();
+    // The engine's playhead for the 1 s seek arrived: the page stays at 2 s.
+    expect(frame()).toBe(60);
+    eng.releaseSeeks();
+    await flush();
+    // The queued seek carries 2 s, not the echoed 1 s.
+    expect(eng.frame).toBe(60);
+    expect(frame()).toBe(60);
   });
 
   it('a torn-down transport sends nothing', async () => {

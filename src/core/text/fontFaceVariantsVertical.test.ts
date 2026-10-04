@@ -2,7 +2,7 @@
  * The 'vert' alias probe: an alias counts only when it really turns 「.
  */
 
-import { probeVerticalAlternates, verticalAlternatesFamily, withVerticalAlternates } from './fontFaceVariants';
+import { probeVerticalAlternates,  withVerticalAlternates } from './fontFaceVariants';
 
 /** A context whose 「 ink box is wide (vertical form) in `vertFamily`, tall otherwise. */
 const ctxFor = (vertFamily: string | null, metrics = true) => {
@@ -40,9 +40,5 @@ describe('vertical alternates alias', () => {
   it('fails without ink metrics or a canvas', () => {
     expect(probeVerticalAlternates('alias', 'Yu Gothic', {}, ctxFor('alias', false))).toBe(false);
     expect(probeVerticalAlternates('alias', 'Yu Gothic', {}, null)).toBe(false);
-  });
-
-  it('is null without the FontFace API (jsdom)', () => {
-    expect(verticalAlternatesFamily({ fontFamily: 'Yu Gothic' }, undefined, undefined)).toBeNull();
   });
 });

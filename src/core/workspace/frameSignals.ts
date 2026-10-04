@@ -10,6 +10,7 @@
 
 import { getEventBus } from '@core/events/EventBus';
 import { isMediaDecodeRepaint } from '@core/engine/mediaRepaint';
+import { documentMirror } from '@stores/documentMirror';
 
 export type DocumentFrameChange =
   /** A clip bar moved, trimmed or split (the Timeline's `DocumentChanged`). */
@@ -30,7 +31,15 @@ export function onDocumentFrameChanged(cb: (change: DocumentFrameChange) => void
     bus.on('AnimationChanged', (payload) => cb(isMediaDecodeRepaint(payload) ? 'media' : 'animation')),
     bus.on('NodeUpdated', () => cb('node')),
   ];
+  // Every engine revision (an edit, an undo, a load) — the document the chrome draws over moved.
+  let offMirror: (() => void) | null = null;
+  try {
+    offMirror = documentMirror().subscribe(['doc'], () => cb('node'));
+  } catch {
+    // No engine registered (a bare unit test): the bus signals only.
+  }
   return () => {
+    offMirror?.();
     for (const s of subs) s.dispose();
   };
 }

@@ -1,5 +1,4 @@
-import { BUILTIN_EFFECT_PRESETS, listBuiltinEffectPresets } from './builtinEffectPresets';
-import { applyEffectPreset, listEffectPresets } from './effectClipboard';
+import { BUILTIN_EFFECT_PRESETS } from './builtinEffectPresets';
 import { EFFECT_DEFS } from './effects';
 
 describe('builtin effect presets', () => {
@@ -15,12 +14,5 @@ describe('builtin effect presets', () => {
         expect(types.has(item.effect.type)).toBe(true);
       }
     }
-  });
-
-  it('surfaces builtins through listEffectPresets and applyEffectPreset', () => {
-    const names = listEffectPresets().map((p) => p.name);
-    expect(names).toEqual(expect.arrayContaining(listBuiltinEffectPresets().map((p) => p.name)));
-    // apply looks up builtins, not only localStorage user presets
-    expect(applyEffectPreset('Soft Glow', [])).toBe(true);
   });
 });

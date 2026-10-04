@@ -35,8 +35,7 @@
  * {@link verticalAlternatesFor}.
  */
 
-import { cachedFamilyFaces, cachedLocalFontIndex, type LocalFace } from '@core/fonts/localFontIndex';
-import { collectionFaceIndex, extractCollectionFace, parseVerticalSubstitutions, sfntFromFontBytes, unicodeRangeTest } from './openTypeGsub';
+import { cachedFamilyFaces,  type LocalFace } from '@core/fonts/localFontIndex';
 
 export interface FeatureOptions {
   /** Standard ligatures (liga + clig) OFF. */
@@ -225,27 +224,6 @@ export function withVerticalAlternates(features: string | undefined): string {
 
 const vertProbes = new Map<string, boolean>();
 
-/**
- * The alias family that draws `style` with the font's OWN vertical glyph
- * alternates (`vert`), or null — not loaded yet, no local file (web fonts),
- * or the font has no `vert` substitution for CJK punctuation.
- *
- * That last case matters: a Latin family drawing Japanese reaches the CJK
- * glyphs through FONT FALLBACK, and a face descriptor's feature settings do
- * not follow the fallback — the alias loads fine and changes nothing. So a
- * loaded alias is PROBED once: LEFT CORNER BRACKET (U+300C) is a tall, narrow
- * ink box horizontally and a wide, short one in its vertical form. Only an
- * alias that turns it is reported; everything else takes the Unicode
- * fallback in verticalForms.ts.
- */
-export function verticalAlternatesFamily(
-  style: FaceStyle,
-  variation: string | undefined,
-  features: string | undefined,
-): string | null {
-  return verticalAlternatesFor(style, variation, features)?.family ?? null;
-}
-
 /** A face that draws the font's own vertical alternates, and which characters it turns. */
 export interface VerticalAlternates {
   /** The alias family to draw with. */
@@ -258,39 +236,6 @@ export interface VerticalAlternates {
   has: (codePoint: number) => boolean;
   /** 'gsub' = read from the font's bytes; 'probe' = a `local()` or WOFF2 face that turned 「. */
   source: 'gsub' | 'probe';
-}
-
-/**
- * {@link verticalAlternatesFamily} with the per-character answer.
- *
- *   1. The font's BYTES, when known — bytes registered for the family
- *      ({@link registerFontBytes}), else the installed face's Local Font Access
- *      blob (only if the local font index has already loaded; this never
- *      prompts). The alias face is built FROM THE BYTES (a collection's face
- *      sliced out by PostScript name), which works for web fonts and for
- *      installed faces whose names `local()` cannot resolve, and GSUB `vert`
- *      decides which code points turn (openTypeGsub.ts). WOFF2 bytes have no
- *      readable GSUB here (no Brotli stream in Electron 32), so their face is
- *      ink-probed instead.
- *   2. Otherwise the `local()` candidates, ink-probed (the fast path).
- *
- * Null while a face loads (the epoch bump asks again) and when nothing turns.
- */
-export function verticalAlternatesFor(
-  style: FaceStyle,
-  variation: string | undefined,
-  features: string | undefined,
-): VerticalAlternates | null {
-  const doc = (globalThis as { document?: Document }).document;
-  const FF = (globalThis as { FontFace?: typeof FontFace }).FontFace;
-  if (!doc?.fonts || typeof FF !== 'function') return null;
-  const sources = byteSourcesFor(style);
-  if (sources.length > 0) {
-    const fromBytes = byteVerticalAlternates(style, variation, features, sources, doc, FF);
-    if (fromBytes !== 'failed') return fromBytes;
-  }
-  const family = localVerticalAlternatesFamily(style, variation, features);
-  return family ? { family, has: () => true, source: 'probe' } : null;
 }
 
 // ── Vertical alternates from font BYTES ────────────────────────────────
@@ -365,32 +310,6 @@ export function registerFontBytes(
   };
 }
 
-/** The byte sources for `style`: registered bytes (nearest weight/italic, every unicode-range), else the installed face's blob. */
-function byteSourcesFor(style: FaceStyle): BytesSource[] {
-  const family = style.fontFamily ?? 'Inter';
-  const italic = style.fontStyle === 'italic';
-  const w = Number(style.fontWeight ?? 400);
-  const weight = Number.isFinite(w) ? w : 400;
-  const registered = registeredBytes.get(family.trim().toLowerCase());
-  if (registered && registered.length > 0) {
-    const dist = (s: BytesSource): number => (s.italic === italic ? 0 : 1000) + Math.abs(s.weight - weight);
-    const best = Math.min(...registered.map(dist));
-    return registered.filter((s) => dist(s) === best);
-  }
-  const face = nearestFace(style);
-  if (!face?.postscriptName) return [];
-  const data = cachedLocalFontIndex()?.fonts.find((f) => f.postscriptName === face.postscriptName && typeof f.blob === 'function');
-  const blob = data?.blob;
-  if (!data || !blob) return [];
-  return [{
-    id: `local:${face.postscriptName}`,
-    load: async () => (await blob.call(data)).arrayBuffer(),
-    weight: face.weight,
-    italic: face.italic,
-    postscriptName: face.postscriptName,
-  }];
-}
-
 interface ByteEntry {
   status: 'loading' | 'ready' | 'failed';
   alias: string;
@@ -400,134 +319,6 @@ interface ByteEntry {
 }
 
 const byteEntries = new Map<string, ByteEntry>();
-
-function byteVerticalAlternates(
-  style: FaceStyle,
-  variation: string | undefined,
-  features: string | undefined,
-  sources: BytesSource[],
-  doc: Document,
-  FF: typeof FontFace,
-): VerticalAlternates | null | 'failed' {
-  const italic = style.fontStyle === 'italic';
-  const weightDesc = variation ? '1 1000' : String(sources[0]!.weight);
-  const key = `bytes|${sources.map((s) => s.id).join(',')}|${italic ? 'i' : ''}|${weightDesc}|${variation ?? ''}|${features ?? ''}`;
-  const entry = byteEntries.get(key);
-  if (!entry) {
-    const created: ByteEntry = { status: 'loading', alias: `__pv_${hash(key)}`, codePoints: null };
-    byteEntries.set(key, created);
-    void loadByteFaces(created, sources, italic, weightDesc, variation, features, doc, FF);
-    return null;
-  }
-  if (entry.status === 'loading') return null;
-  if (entry.status === 'failed') return 'failed';
-  const cps = entry.codePoints;
-  if (cps) return cps.size > 0 ? { family: entry.alias, has: (cp) => cps.has(cp), source: 'gsub' } : null;
-  // No GSUB answer (WOFF2): does the byte face turn 「 where the family does not?
-  if (entry.probe === undefined) entry.probe = probeVerticalAlternates(entry.alias, style.fontFamily ?? 'Inter', style);
-  return entry.probe ? { family: entry.alias, has: () => true, source: 'probe' } : null;
-}
-
-async function loadByteFaces(
-  entry: ByteEntry,
-  sources: BytesSource[],
-  italic: boolean,
-  weightDesc: string,
-  variation: string | undefined,
-  features: string | undefined,
-  doc: Document,
-  FF: typeof FontFace,
-): Promise<void> {
-  try {
-    const pending: Array<{ bytes: ArrayBuffer; descriptors: Record<string, string> }> = [];
-    const cps = new Set<number>();
-    let known = true;
-    for (const s of sources) {
-      const raw = await s.load();
-      const sfnt = await sfntFromFontBytes(raw);
-      let faceBytes: ArrayBuffer = raw;
-      let feature: 'vert' | 'vrt2' = 'vert';
-      if (sfnt) {
-        const index = collectionFaceIndex(sfnt, s.postscriptName);
-        // A collection's other faces are unreachable through FontFace: slice this one out.
-        faceBytes = extractCollectionFace(sfnt, index) ?? raw;
-        const subs = parseVerticalSubstitutions(sfnt, index);
-        if (subs) {
-          if (subs.feature === 'vrt2') feature = 'vrt2';
-          const inRange = unicodeRangeTest(s.unicodeRange);
-          for (const cp of subs.codePoints.keys()) if (inRange(cp)) cps.add(cp);
-        } else {
-          known = false;
-        }
-      } else {
-        known = false;
-      }
-      const featureSettings = feature === 'vrt2' ? (features ? `${features}, 'vrt2' 1` : `'vrt2' 1`) : withVerticalAlternates(features);
-      const d: Record<string, string> = { style: italic ? 'italic' : 'normal', weight: weightDesc, featureSettings };
-      if (variation) {
-        d.stretch = '50% 200%';
-        d.variationSettings = variation;
-      }
-      if (s.unicodeRange) d.unicodeRange = s.unicodeRange;
-      pending.push({ bytes: faceBytes, descriptors: d });
-    }
-    if (known && cps.size === 0) {
-      // The font has no vertical alternates at all: nothing to load.
-      entry.codePoints = cps;
-      entry.status = 'ready';
-      return;
-    }
-    const faces = pending.map((p) => new FF(entry.alias, p.bytes, p.descriptors as FontFaceDescriptors));
-    await Promise.all(faces.map((f) => f.load()));
-    for (const f of faces) doc.fonts.add(f);
-    entry.codePoints = known ? cps : null;
-    entry.status = 'ready';
-  } catch {
-    // Unreadable bytes or a face the browser rejects: the local() path decides.
-    entry.status = 'failed';
-  }
-  notifyChanged();
-}
-
-/** The `local()` path: candidate names, each ink-probed. */
-function localVerticalAlternatesFamily(
-  style: FaceStyle,
-  variation: string | undefined,
-  features: string | undefined,
-): string | null {
-  const vert = withVerticalAlternates(features);
-  // Each candidate name is its own face, tried in order; the first that loads
-  // AND turns the bracket wins. A candidate still loading holds the answer
-  // back (null now, the load's epoch bump asks again) rather than skipping to
-  // a less specific name.
-  for (const name of localFaceCandidates(style)) {
-    const alias = aliasFamily(style, variation, vert, name);
-    if (!alias) {
-      const status = entries.get(vertKey(style, variation, vert, name))?.status;
-      if (status === 'failed') continue;
-      return null;
-    }
-    let ok = vertProbes.get(alias);
-    if (ok === undefined) {
-      const plain = variation || features ? variantFamily(style, variation, features) : style.fontFamily ?? 'Inter';
-      // The comparison face is still loading: ask again next time.
-      if (!plain) return null;
-      ok = probeVerticalAlternates(alias, plain, style);
-      vertProbes.set(alias, ok);
-    }
-    if (ok) return alias;
-  }
-  return null;
-}
-
-/** The entry key `aliasFamily` uses for a single-candidate face. */
-function vertKey(style: FaceStyle, variation: string | undefined, features: string, only: string): string {
-  const face = nearestFace(style);
-  const italic = style.fontStyle === 'italic';
-  const weight = Number(style.fontWeight ?? 400);
-  const weightDesc = variation ? '1 1000' : String(face?.weight ?? (Number.isFinite(weight) ? weight : 400));
-  return `${style.fontFamily ?? 'Inter'}|${face?.postscriptName ?? ''}|${italic ? 'i' : ''}|${weightDesc}|${variation ?? ''}|${features}|src:${only}`;
-}
 
 type MeasureContext = { font: string; measureText(t: string): TextMetrics };
 

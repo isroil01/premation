@@ -8,15 +8,6 @@
 
 import { render, screen } from '@testing-library/react';
 import { MulticamViewerBody } from './MulticamViewer';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-
-function clearScene(): void {
-  const ids: string[] = [];
-  defaultSceneGraph.traverse((n) => ids.push(n.id));
-  for (const id of ids) defaultSceneGraph.removeNode(id);
-}
-
-beforeEach(clearScene);
 
 it('shows an empty state when the composition has no angles', () => {
   render(<MulticamViewerBody />);

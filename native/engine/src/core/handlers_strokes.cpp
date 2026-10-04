@@ -166,12 +166,46 @@ ResultOf<api::AddPaintStroke> handle(const api::AddPaintStroke& c, HCtx& x) {
   return out;
 }
 
+namespace {
+
+/// strokes.ts `appendedPatch`: updatePaintStroke `append` — the patch's points and
+/// pen arrays joined onto the stroke's own; a pen array one side lacks is padded
+/// (pressure 1, tilt 0) so the arrays stay parallel to the points.
+Json appended_patch(const Json& stroke, Json patch) {
+  const std::size_t had = stroke.at("points").is_array() ? stroke.at("points").arr().size() : 0;
+  const std::size_t more = patch.at("points").arr().size();
+  Json::Array points = stroke.at("points").is_array() ? stroke.at("points").arr() : Json::Array{};
+  for (const Json& p : patch.at("points").arr()) points.push_back(p);
+  for (const auto& [key, fill] : std::vector<std::pair<std::string, double>>{{"pressure", 1.0}, {"tiltX", 0.0}, {"tiltY", 0.0}}) {
+    const Json& a = stroke.at(key);
+    const Json& b = patch.at(key);
+    if (!a.is_array() && !b.is_array()) continue;
+    Json::Array joined;
+    if (a.is_array()) {
+      joined = a.arr();
+    } else {
+      joined.assign(had, Json::number(fill));
+    }
+    if (b.is_array()) {
+      for (const Json& v : b.arr()) joined.push_back(v);
+    } else {
+      for (std::size_t i = 0; i < more; ++i) joined.push_back(Json::number(fill));
+    }
+    patch.set(key, Json::array(std::move(joined)));
+  }
+  patch.set("points", Json::array(std::move(points)));
+  return patch;
+}
+
+}  // namespace
+
 ResultOf<api::UpdatePaintStroke> handle(const api::UpdatePaintStroke& c, HCtx& x) {
   const std::string& layer = c.layer;
   PaintHit hit = paint_stroke_or_fail(require_layer(x.d, layer), layer, c.stroke);
-  const Json patch = parse_paint_object(c.patch, "patch", layer);
+  Json patch = parse_paint_object(c.patch, "patch", layer);
   if (patch.has("id")) fail(ErrorCode::invalid_argument, "a paint stroke's id cannot be patched", {.layer = layer, .path = "paint/" + c.stroke});
   if (patch.has("points")) check_paint_points(patch.at("points"), "patch.points", layer);
+  if (c.append.value_or(false) && patch.has("points")) patch = appended_patch(hit.strokes.at(hit.index), std::move(patch));
   x.label = "Edit Paint Stroke";
   patch_stroke(x.d, layer, std::move(hit), patch);
   return {};

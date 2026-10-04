@@ -97,16 +97,16 @@ TEST_CASE("paint: addPaintStroke refuses ids, bad points, bad json and unknown p
 TEST_CASE("paint: updatePaintStroke merges, null clears, renormalises", "[paint]") {
   Paint p;
   const auto id = p.add_ok(R"({"points":)" + kPts + R"(,"pressure":[0.5,1]})");
-  REQUIRE(is_ok(p.h.run(cmd(api::UpdatePaintStroke{p.layer, id, R"({"visible":false,"hardness":-3})"}))));
+  REQUIRE(is_ok(p.h.run(cmd(api::UpdatePaintStroke{p.layer, id, R"({"visible":false,"hardness":-3})", std::nullopt}))));
   REQUIRE(p.strokes().at(0).at("visible").is_bool());
   REQUIRE(p.strokes().at(0).at("hardness").num() == 0);
   REQUIRE(p.strokes().at(0).at("pressure").is_array());
-  REQUIRE(is_ok(p.h.run(cmd(api::UpdatePaintStroke{p.layer, id, R"({"visible":null,"pressure":null})"}))));
+  REQUIRE(is_ok(p.h.run(cmd(api::UpdatePaintStroke{p.layer, id, R"({"visible":null,"pressure":null})", std::nullopt}))));
   REQUIRE(p.strokes().at(0).at("visible").is_undefined());
   REQUIRE(p.strokes().at(0).at("pressure").is_undefined());
-  p.refused(cmd(api::UpdatePaintStroke{p.layer, "nope", "{}"}), api::ErrorCode::not_found);
-  p.refused(cmd(api::UpdatePaintStroke{p.layer, id, R"({"id":"y"})"}), api::ErrorCode::invalid_argument);
-  p.refused(cmd(api::UpdatePaintStroke{p.layer, id, R"({"points":null})"}), api::ErrorCode::invalid_argument);
+  p.refused(cmd(api::UpdatePaintStroke{p.layer, "nope", "{}", std::nullopt}), api::ErrorCode::not_found);
+  p.refused(cmd(api::UpdatePaintStroke{p.layer, id, R"({"id":"y"})", std::nullopt}), api::ErrorCode::invalid_argument);
+  p.refused(cmd(api::UpdatePaintStroke{p.layer, id, R"({"points":null})", std::nullopt}), api::ErrorCode::invalid_argument);
 }
 
 TEST_CASE("paint: removePaintStrokes drops the strokes and their tracks; undo is exact", "[paint]") {
@@ -166,4 +166,20 @@ TEST_CASE("paint: the Path — static replace, stopwatch, keyed replace, OFF", "
   p.refused(cmd(api::SetPaintStrokePath{p.layer, id, "[]", 0}), api::ErrorCode::invalid_argument);
   p.refused(cmd(api::SetPaintStrokePath{p.layer, "nope", kPts, 0}), api::ErrorCode::not_found);
   p.refused(cmd(api::SetPaintPathAnimated{p.layer, "nope", true, 0}), api::ErrorCode::not_found);
+}
+
+TEST_CASE("paint: updatePaintStroke append joins points and pads the pen arrays one side lacks", "[paint][block3]") {
+  Paint p;
+  const auto id = p.add_ok(R"({"points":)" + kPts + "}");
+  api::UpdatePaintStroke u{p.layer, id, R"({"points":[{"x":20,"y":0}],"pressure":[0.5]})", true};
+  REQUIRE(is_ok(p.h.run(cmd(u))));
+  const js::Json s = p.strokes().at(0);
+  REQUIRE(s.at("points").arr().size() == 3);
+  REQUIRE(s.at("points").arr().at(2).at("x").num() == 20);
+  REQUIRE(s.at("pressure").arr().size() == 3);
+  REQUIRE(s.at("pressure").arr().at(0).num() == 1);
+  REQUIRE(s.at("pressure").arr().at(2).num() == 0.5);
+  REQUIRE(s.at("tiltX").is_undefined());
+  REQUIRE(is_ok(p.h.run(cmd(api::Undo{}))));
+  REQUIRE(p.strokes().at(0).at("points").arr().size() == 2);
 }

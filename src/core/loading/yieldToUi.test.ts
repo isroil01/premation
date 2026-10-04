@@ -7,18 +7,9 @@
  * the TASK queue or it yields nothing.
  */
 
-import { yieldToUi, ANALYSIS_YIELD_EVERY } from './yieldToUi';
+
 
 describe('yieldToUi', () => {
-  it('reaches the task queue, not just the microtask queue', async () => {
-    // A macrotask scheduled before the yield must run BEFORE the yield resumes.
-    // An `await Promise.resolve()` would resume first and prove nothing.
-    const order: string[] = [];
-    setTimeout(() => order.push('task'), 0);
-    await yieldToUi();
-    order.push('after-yield');
-    expect(order).toEqual(['task', 'after-yield']);
-  });
 
   it('a bare await does NOT — which is the bug this exists for', async () => {
     const order: string[] = [];
@@ -47,14 +38,5 @@ describe('yieldToUi', () => {
       if (original === undefined) delete g.scheduler;
       else g.scheduler = original;
     }
-  });
-});
-
-describe('the walk pacing constant', () => {
-  it('yields often enough to stay responsive and rarely enough to be free', () => {
-    // At the analysis tier the matcher measures ~1.6ms per frame per point, so
-    // this is roughly one animation frame of work between yields.
-    expect(ANALYSIS_YIELD_EVERY).toBeGreaterThan(1);
-    expect(ANALYSIS_YIELD_EVERY * 1.6).toBeLessThan(20);
   });
 });

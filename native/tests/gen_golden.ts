@@ -3,9 +3,9 @@
  *
  * Runs the TypeScript sampler (`packages/animation/src/interpolate.ts`) — the
  * reference implementation the C++ port must match — over a fixed 3-keyframe
- * bezier track and emits `golden_bezier.inc`, an X-macro file that BOTH the
- * Catch2 suite (`native/tests/test_eval.cpp`) and the TypeScript bridge test
- * (`packages/native-bridge/src/bridge.test.ts`) consume. One file, one truth.
+ * bezier track and emits `golden_bezier.inc`, an X-macro file the Catch2
+ * suite (`native/tests/test_eval.cpp`) and the WASM smoke test consume. One
+ * file, one truth.
  *
  * Regenerate (from the repo root, Node ≥ 22.6 strips the types itself; the
  * only import is `import type`, which is erased, so no bundler is needed):
@@ -30,8 +30,7 @@ import { sampleTrack } from '../../packages/animation/src/interpolate.ts';
 import type { Keyframe, PropertyTrack } from '../../packages/animation/src/types.ts';
 
 // ── The packed representation (mirror of include/motion/motion_eval.h) ─────
-// These numbers are the ABI. If they change there, they change here and in
-// packages/native-bridge/src/packed.ts; `abi_pinned.test.ts` checks the mirror.
+// These numbers are the ABI. If they change there, they change here.
 const EASING = {
   linear: 0,
   hold: 1,

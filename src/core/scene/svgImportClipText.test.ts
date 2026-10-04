@@ -10,10 +10,7 @@
  */
 
 import { parseSvgToShapes, type ParsedShape } from '../../utils/svgParser';
-import { measureSvgText, intersectSvgPaths, insertSvgShapeGroup } from './sceneInsert';
-import { seedDefaultScene } from './seedDefaultScene';
-import defaultSceneGraph from './DefaultSceneGraph';
-import type { SceneNode } from '@core/types';
+import { measureSvgText, intersectSvgPaths } from './sceneInsert';
 
 const parse = (svg: string, unsupportedOut?: Set<string>): ParsedShape[] =>
   parseSvgToShapes(svg, {
@@ -36,7 +33,7 @@ const only = (shapes: readonly ParsedShape[]): ParsedShape => {
   return shapes[0]!;
 };
 
-beforeAll(() => { seedDefaultScene(); });
+beforeAll(() => { });
 
 describe('clip-path cuts the geometry', () => {
   const HALF = wrap(`
@@ -108,20 +105,6 @@ describe('<image> becomes an image layer', () => {
     expect(img!.imageHref).toMatch(/^data:image\/png/);
     expect([img!.width, img!.height]).toEqual([40, 30]);
     expect([img!.centerX, img!.centerY]).toEqual([30, 35]);
-  });
-
-  it('inserts as an image node carrying the src', () => {
-    const groupId = insertSvgShapeGroup(DOC, 'photo.svg');
-    const parts = (defaultSceneGraph.getNode(groupId!)?.children ?? [])
-      .map((id) => defaultSceneGraph.getNode(id))
-      .filter((n): n is SceneNode => !!n);
-    const imageNode = parts.find((n) => {
-      const t = n.components.find((c) => c.type === 'Transform');
-      return typeof t?.props.src === 'string';
-    });
-    expect(imageNode).toBeDefined();
-    const t = imageNode!.components.find((c) => c.type === 'Transform')!;
-    expect(String(t.props.src)).toMatch(/^data:image\/png/);
   });
 });
 

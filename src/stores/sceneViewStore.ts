@@ -21,7 +21,7 @@
  */
 
 import { create } from 'zustand';
-import type { SceneKind } from '@core/scene/seedDefaultScene';
+import type { SceneKind } from '@core/scene/sceneKind';
 import type { LayerFlag } from '@core/scene/layerFlags';
 
 const STORAGE_KEY = 'premation.sceneView.v1';

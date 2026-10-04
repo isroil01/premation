@@ -12,7 +12,7 @@
  */
 
 import type { Component, Transform } from '@core/types';
-import { SCENE_KIND_PROP } from './seedDefaultScene';
+import { SCENE_KIND_PROP } from './sceneKind';
 import type { LayerSink } from '@/engine-client/layerSink';
 import type { InsertFrame } from '@/engine-client/insertFragment';
 

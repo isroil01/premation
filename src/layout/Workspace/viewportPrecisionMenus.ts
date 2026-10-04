@@ -28,7 +28,7 @@ const SPATIAL_LABELS: ReadonlyArray<{ mode: SpatialInterp; label: string }> = [
 /**
  * Undoable: one entry per conversion. The conversion arithmetic is the motion
  * path module's, run on a SCRATCH copy of the Position tracks; the changed
- * keys go to the engine as one `updateKeyframes` (see `editPositionKeys`).
+ * keys go to the engine as one `setMemberKeyframes` (see `editPositionKeys`).
  */
 export function applySpatialInterpolation(nodeId: string, t: number, mode: SpatialInterp): Promise<void> {
   const label = SPATIAL_LABELS.find((s) => s.mode === mode)?.label ?? mode;

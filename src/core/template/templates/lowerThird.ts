@@ -4,12 +4,8 @@
  */
 
 import type SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { useCompositionStore } from '@stores/compositionStore';
-import { bumpScene } from '@stores/sceneStore';
 import type { TemplateDefinition } from '../templateTypes';
-import { addRoot, addShape, addText, addGradientShape, linearFill, liveKf, type SetKf } from './builders';
+import { addRoot, addShape, addText, addGradientShape, linearFill,  type SetKf } from './builders';
 
 const CW = 1920, CH = 1080;
 const BAR_X = 540, BAR_Y = CH - 210;
@@ -35,15 +31,6 @@ export function animateLowerThird(set: SetKf): void {
   set('tpl_name', 'opacity', 0.5, 0, 'easeOut'); set('tpl_name', 'opacity', 1, 100, 'easeOut');
   set('tpl_name', 'x', 0.5, BAR_X - 26, 'easeOut'); set('tpl_name', 'x', 1, BAR_X, 'easeOut');
   set('tpl_role', 'opacity', 0.7, 0, 'easeOut'); set('tpl_role', 'opacity', 1.2, 100, 'easeOut');
-}
-
-export function buildLowerThird(): void {
-  const rootId = activeCompRootId();
-  defaultSceneGraph.clear();
-  layoutLowerThird(defaultSceneGraph, rootId);
-  animateLowerThird(liveKf);
-  useCompositionStore.getState().update({ width: CW, height: CH, fps: 60, durationSeconds: 5, background: '#0b1020' });
-  bumpScene();
 }
 
 export const lowerThirdTemplate: TemplateDefinition = {

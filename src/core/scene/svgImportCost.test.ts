@@ -19,9 +19,7 @@
  * six-figure keyframe counts, not to pin an exact number.
  */
 
-import { defaultAnimation } from '@motion/animation';
-import defaultSceneGraph from './DefaultSceneGraph';
-import { insertSvgShapeGroup } from './sceneInsert';
+
 import { parseSvgToShapes, MAX_IMPORT_KEYFRAMES } from '../../utils/svgParser';
 
 /** A CSS spinner with `paths` independently animated parts. */
@@ -82,24 +80,6 @@ describe('animated SVG import cost', () => {
     expect(kf).toBeLessThan(MAX_IMPORT_KEYFRAMES);
     // Was 216,000.
     expect(kf).toBeLessThan(20000);
-  });
-
-  it('writes the tracks onto the layers in bulk, not keyframe by keyframe', () => {
-    const svg = cssSpinner(100);
-    const shapes = parseSvgToShapes(svg, { maxDurationSeconds: 10 });
-    const started = Date.now();
-    const id = insertSvgShapeGroup(svg, 'spinner.svg', { shapes });
-    const elapsed = Date.now() - started;
-    expect(id).not.toBeNull();
-
-    const children = defaultSceneGraph.getNode(id!)?.children ?? [];
-    expect(children.length).toBe(100);
-    const animated = children.filter((c) => defaultAnimation.tracksFor(c).length > 0);
-    expect(animated.length).toBe(100);
-
-    // Generous — a machine under load is still nowhere near the multi-second
-    // stall this replaced.
-    expect(elapsed).toBeLessThan(2000);
   });
 
   it('marks an endless import as looping so playback does not need the copies', () => {

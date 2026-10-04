@@ -20,14 +20,6 @@
  * skipped rather than silently ignored, so the limit is visible.
  */
 
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { writeTemplateField, isMediaField } from './templateFields';
-import type { TemplateField } from './templateTypes';
-import type { DataRow } from './dataTable';
-
-/** Field kinds batch fill can write today. */
-const FILLABLE_KINDS: ReadonlySet<string> = new Set(['text', 'color', 'number']);
-
 export interface FillResult {
   /** Field ids written. */
   filled: string[];
@@ -63,44 +55,4 @@ export function coerceCell(kind: string, cell: string): string | number | null {
     return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(hex) ? hex : null;
   }
   return cell;
-}
-
-/**
- * Apply one row to `fields`, as a single undoable edit.
- *
- * Columns with no matching field id are ignored — a table may legitimately
- * carry an output-name column or notes. Fields with no column keep their
- * authored value.
- */
-export function applyDataRow(
-  fields: ReadonlyArray<TemplateField>,
-  row: DataRow,
-  label = 'Fill from data row',
-): FillResult {
-  const result: FillResult = { filled: [], skippedKind: [], failed: [] };
-
-  // Decide everything BEFORE opening the undo entry, so a row that turns out to
-  // write nothing does not leave an empty step on the stack.
-  const writes: Array<{ field: TemplateField; value: string | number }> = [];
-  for (const field of fields) {
-    const cell = row[field.id];
-    if (cell === undefined) continue;
-    if (isMediaField(field) || !FILLABLE_KINDS.has(field.kind)) {
-      result.skippedKind.push(field.id);
-      continue;
-    }
-    const value = coerceCell(field.kind, cell);
-    if (value === null) { result.failed.push(field.id); continue; }
-    writes.push({ field, value });
-  }
-
-  if (writes.length === 0) return result;
-
-  runAnimEdit(label, () => {
-    for (const w of writes) {
-      if (writeTemplateField(w.field, w.value)) result.filled.push(w.field.id);
-      else result.failed.push(w.field.id);
-    }
-  });
-  return result;
 }

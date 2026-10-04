@@ -38,8 +38,6 @@
  * Checking the renderer rather than the estimate turned an L into an M.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
 import { renderComponentsOf } from '@core/scene/SceneGraph';
 
@@ -187,15 +185,4 @@ export function readNodeBlend(node: SceneNode): LayerBlendMode {
   const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   const m = fx?.props.blendMode;
   return isBlendMode(m) ? m : 'normal';
-}
-
-export function getNodeBlend(nodeId: string): LayerBlendMode {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeBlend(node) : 'normal';
-}
-
-export function setNodeBlend(nodeId: string, mode: LayerBlendMode): void {
-  defaultSceneGraph.setBlendMode(nodeId, mode);
-  // Compositing changed → same refresh signal as an effect/animation edit.
-  getEventBus().emit('AnimationChanged', { nodeId });
 }

@@ -18,12 +18,8 @@ jest.mock('@core/scene/sceneDerive', () => ({
   readNodeKind: (n: SceneNode) =>
     (n.components[0]?.props as Record<string, unknown> | undefined)?.__kind ?? 'shape',
 }));
-jest.mock('@core/scene/compInstance', () => ({
-  readCompRef: (n: SceneNode) =>
-    ((n.components[0]?.props as Record<string, unknown> | undefined)?.__compRef as string) ?? null,
-}));
 
-import { sourceOf, footageSourceOf, applyLoop, interpretationOf } from './sourceInfo';
+import {  footageSourceOf, applyLoop, interpretationOf } from './sourceInfo';
 
 function node(kind: string, props: Record<string, unknown> = {}): SceneNode {
   return {
@@ -31,11 +27,6 @@ function node(kind: string, props: Record<string, unknown> = {}): SceneNode {
     components: [{ id: 'n1_t', type: 'Transform', props: { __kind: kind, ...props } }],
   } as unknown as SceneNode;
 }
-
-const COMPS: Record<string, { width: number; height: number; fps: number; durationSeconds: number }> = {
-  vertical: { width: 1080, height: 1920, fps: 24, durationSeconds: 8 },
-};
-const compLookup = (id: string) => COMPS[id];
 
 beforeEach(() => {
   assets.length = 0;
@@ -94,22 +85,6 @@ describe('footage sources', () => {
     });
     expect(interpretationOf('a1').pulldownPhase).toBeUndefined();
     expect(footageSourceOf(node('video', { assetId: 'a1' }))?.pulldownPhase).toBeUndefined();
-  });
-});
-
-describe('composition sources — the same questions, answered', () => {
-  it('reports its own size, rate and duration', () => {
-    const s = sourceOf(node('comp', { __compRef: 'vertical' }), compLookup);
-    expect(s).toMatchObject({ kind: 'comp', width: 1080, height: 1920, fps: 24, durationSec: 8 });
-  });
-
-  it('returns null rather than guessing when no comp lookup is supplied', () => {
-    // A caller with no project store must not silently report the host's size.
-    expect(sourceOf(node('comp', { __compRef: 'vertical' }))).toBeNull();
-  });
-
-  it('is null for a generative layer', () => {
-    expect(sourceOf(node('shape'), compLookup)).toBeNull();
   });
 });
 

@@ -7,7 +7,7 @@
 import type { Command, EngineClient, Query } from '@motion/engine-api';
 
 type Request = Command | Query;
-import { liveDocument, replaceLiveDocument, saveLiveDocument, setLiveDocumentSource, LiveDocumentError } from './liveDocument';
+import { liveDocument, replaceLiveDocument, saveLiveDocument, setLiveDocumentSource } from './liveDocument';
 
 const mockCaptured = { version: '1.1.0', scene: { version: '1.0.0', nodes: [] }, animation: { tracks: {}, expressions: {} }, from: 'page' };
 const mockRestored: unknown[] = [];
@@ -38,15 +38,14 @@ afterEach(() => {
   mockRestored.length = 0;
 });
 
-describe('liveDocument — flag off: the page path, unchanged', () => {
-  it('captures and restores in the page, no engine request', async () => {
+describe('liveDocument — always the engine', () => {
+  it('reads exportDocument and replaces through restoreDocument even where the page held the document before', async () => {
     const e = fakeEngine();
     setLiveDocumentSource({ engine: () => e.client, owned: () => false });
-    expect(await liveDocument()).toBe(mockCaptured);
+    expect(await liveDocument()).toEqual(ownerDoc);
     await replaceLiveDocument(ownerDoc as never, 'X');
-    expect(mockRestored).toEqual([ownerDoc]);
-    await expect(saveLiveDocument('/p.motion', { copy: true })).rejects.toBeInstanceOf(LiveDocumentError);
-    expect(e.sent).toEqual([]);
+    expect(e.sent.map((r) => r.type)).toEqual(['exportDocument', 'restoreDocument']);
+    expect(mockRestored).toEqual([]);
   });
 });
 

@@ -5,6 +5,7 @@
 #include <limits>
 #include <set>
 
+#include "anim_json.hpp"
 #include "docexpr.hpp"
 #include "fxstate.hpp"
 #include "readmodel.hpp"
@@ -882,6 +883,40 @@ ResultOf<api::SetKeyframes> handle(const api::SetKeyframes& c, HCtx& x) {
   api::KeyframeIds r;
   for (const KeyWrite& w : writes) r.ids.push_back(w.id);
   return r;
+}
+
+ResultOf<api::SetMemberKeyframes> handle(const api::SetMemberKeyframes& c, HCtx& x) {
+  // setMemberKeyframes (properties.ts): the inverse of getMemberKeyframes — the
+  // stored records as given, sorted by time (a later record at one time wins).
+  (void)require_layer(x.d, c.layer);
+  std::vector<std::pair<std::string, std::vector<Key>>> lists;
+  for (const api::MemberKeyList& t : c.tracks) {
+    if (t.member.empty()) fail(ErrorCode::invalid_argument, "a member track needs a name");
+    const std::optional<Json> parsed = js::parse(t.keyframes);
+    if (!parsed || !parsed->is_array()) fail(ErrorCode::invalid_argument, "'" + t.member + "': keyframes are not a JSON array");
+    std::vector<Key> keys;
+    for (const Json& rec : parsed->arr()) {
+      std::optional<Key> k = key_from_json(rec);
+      if (!k || !std::isfinite(k->t) || !std::isfinite(k->value)) {
+        fail(ErrorCode::invalid_argument, "'" + t.member + "': a keyframe needs a finite t and value");
+      }
+      const auto at = std::find_if(keys.begin(), keys.end(), [&](const Key& o) { return o.t == k->t; });
+      if (at != keys.end()) {
+        *at = std::move(*k);
+      } else {
+        keys.push_back(std::move(*k));
+      }
+    }
+    std::stable_sort(keys.begin(), keys.end(), [](const Key& a, const Key& b) { return a.t < b.t; });
+    std::set<std::string> ids;
+    for (Key& k : keys) {
+      if (k.id && !ids.insert(*k.id).second) k.id.reset();
+    }
+    lists.emplace_back(t.member, std::move(keys));
+  }
+  x.label = "Set Keyframes";
+  for (auto& [member, keys] : lists) anim_set_track(x.d, c.layer, member, std::move(keys));
+  return {};
 }
 
 }  // namespace premation::doc

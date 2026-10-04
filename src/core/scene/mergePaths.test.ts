@@ -2,18 +2,13 @@
  * Merge Paths — boolean ops across shape layers (polygon-clipping backed).
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSelectionStore } from '@stores/selectionStore';
-import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+
+
 import {
   flattenOutline,
   nodeWorldPolygon,
   booleanPolygons,
   buildMergedPaths,
-  planLiveMerge,
-  readLiveBoolean,
-  isBooleanOperand,
-  evaluateLiveBoolean,
 } from './mergePaths';
 import type { SceneNode } from '@core/types';
 import { FragmentBuilder } from '@/engine-client/fragmentBuilder';
@@ -146,120 +141,6 @@ describe('buildMergedPaths (the bake, laid into a fragment)', () => {
     const locked = { ...rect('mp_d', 5, 0, 10, 10), locked: true } as SceneNode;
     expect(buildMergedPaths(b, [rect('mp_c', 0, 0, 10, 10), locked], 'union').ids).toEqual([]);
     expect(b.size).toBe(0);
-  });
-});
-
-/** Plan the live merge and put its result in the graph (what the pasted fragment adds). */
-function liveMerge(op: 'union' | 'subtract' | 'intersect' | 'exclude'): string {
-  const plan = planLiveMerge(op)!;
-  expect(plan).not.toBeNull();
-  defaultSceneGraph.addChild(plan.parentId, plan.node);
-  return plan.node.id;
-}
-
-describe('planLiveMerge', () => {
-  beforeAll(() => {
-    setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-  });
-
-  it('plans a live boolean result and writes nothing; the operands are flagged and hidden by commands', () => {
-    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
-    defaultSceneGraph.addChild(rootId, rect('lm_a', 100, 100, 40, 40));
-    defaultSceneGraph.addChild(rootId, rect('lm_b', 120, 100, 40, 40));
-    useSelectionStore.getState().set(['lm_a', 'lm_b']);
-
-    const plan = planLiveMerge('union')!;
-    expect(plan.sourceIds).toEqual(['lm_a', 'lm_b']);
-    expect(plan.parentId).toBe(rootId);
-    // Pure: nothing in the document changed.
-    expect(defaultSceneGraph.getNode(plan.node.id)).toBeUndefined();
-    for (const id of ['lm_a', 'lm_b']) {
-      const n = defaultSceneGraph.getNode(id)!;
-      expect(isBooleanOperand(n)).toBe(false);
-      expect(n.visible).toBe(true);
-    }
-
-    defaultSceneGraph.addChild(plan.parentId, plan.node);
-    const result = defaultSceneGraph.getNode(plan.node.id)!;
-    const live = readLiveBoolean(result);
-    expect(live).toEqual({ op: 'union', sources: ['lm_a', 'lm_b'] });
-
-    const ev = evaluateLiveBoolean(
-      result,
-      (id) => defaultSceneGraph.getNode(id),
-      () => undefined,
-      () => undefined,
-    );
-    expect(ev).not.toBeNull();
-    expect(ev!.points.length).toBeGreaterThanOrEqual(3);
-    expect(ev!.width).toBeGreaterThan(40);
-
-    defaultSceneGraph.removeNode(plan.node.id);
-    defaultSceneGraph.removeNode('lm_a');
-    defaultSceneGraph.removeNode('lm_b');
-    useSelectionStore.getState().clear();
-  });
-
-  it('plans nothing for fewer than two closed paths', () => {
-    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
-    defaultSceneGraph.addChild(rootId, rect('lm_solo', 100, 100, 40, 40));
-    useSelectionStore.getState().set(['lm_solo']);
-    expect(planLiveMerge('union')).toBeNull();
-    defaultSceneGraph.removeNode('lm_solo');
-    useSelectionStore.getState().clear();
-  });
-
-  it('keeps a subtract hole as a second closed subpath', () => {
-    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
-    defaultSceneGraph.addChild(rootId, rect('lm_outer', 100, 100, 80, 80));
-    defaultSceneGraph.addChild(rootId, rect('lm_inner', 100, 100, 24, 24));
-    useSelectionStore.getState().set(['lm_outer', 'lm_inner']);
-    const id = liveMerge('subtract');
-    const result = defaultSceneGraph.getNode(id!)!;
-    const ev = evaluateLiveBoolean(
-      result,
-      (nid) => defaultSceneGraph.getNode(nid),
-      () => undefined,
-      () => undefined,
-    );
-    expect(ev?.subpaths).toHaveLength(2);
-    defaultSceneGraph.removeNode(id!);
-    defaultSceneGraph.removeNode('lm_outer');
-    defaultSceneGraph.removeNode('lm_inner');
-    useSelectionStore.getState().clear();
-  });
-
-  it('re-evaluates when an operand moves (animated-style sample)', () => {
-    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
-    defaultSceneGraph.addChild(rootId, rect('lm_c', 100, 100, 40, 40));
-    defaultSceneGraph.addChild(rootId, rect('lm_d', 120, 100, 40, 40));
-    useSelectionStore.getState().set(['lm_c', 'lm_d']);
-    const id = liveMerge('intersect');
-    const result = defaultSceneGraph.getNode(id!)!;
-
-    const atRest = evaluateLiveBoolean(
-      result,
-      (nid) => defaultSceneGraph.getNode(nid),
-      () => undefined,
-      () => undefined,
-    )!;
-    const moved = evaluateLiveBoolean(
-      result,
-      (nid) => defaultSceneGraph.getNode(nid),
-      (nid) => (prop) => {
-        if (nid === 'lm_d' && prop === 'x') return 200; // pull B far away → no overlap
-        return undefined;
-      },
-      () => undefined,
-    );
-    expect(atRest.width).toBeGreaterThan(0);
-    // No intersection when B is moved away.
-    expect(moved).toBeNull();
-
-    defaultSceneGraph.removeNode(id!);
-    defaultSceneGraph.removeNode('lm_c');
-    defaultSceneGraph.removeNode('lm_d');
-    useSelectionStore.getState().clear();
   });
 });
 

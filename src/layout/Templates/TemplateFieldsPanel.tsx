@@ -20,7 +20,7 @@ import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { customConfirm } from '@components/Modal';
 import { documentMirror } from '@stores/documentMirror';
-import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
+import { activeCompIdNow, useActiveMirrorComp, useRetainTrees } from '@hooks/useMirror';
 import { liveComps } from '@core/mirror/compNames';
 import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
@@ -325,6 +325,8 @@ export function TemplateAuthoringSection(): JSX.Element | null {
 export function ActiveTemplateFields(): JSX.Element {
   const active = useTemplateStore((s) => s.active)!;
   const exit = useTemplateStore((s) => s.exit);
+  // A field edit composes its commands from its layer's property tree: keep them loaded.
+  useRetainTrees(active.fields.map((f) => f.target.nodeId));
 
   // Group fields by their `group` label, preserving first-seen order.
   const groups = useMemo(() => {

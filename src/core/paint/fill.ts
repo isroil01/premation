@@ -17,10 +17,7 @@
  * AppearanceSection and buildSnapshot's fillPaint resolution.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { SceneNode } from '@core/types';
-import { bumpScene } from '@stores/sceneStore';
-import { getEventBus } from '@core/events/EventBus';
 import { clamp01 } from '@utils/lang';
 
 export interface ColorStop {
@@ -204,11 +201,6 @@ export function readNodeFill(node: SceneNode): FillPaint | undefined {
   return undefined;
 }
 
-export function getNodeFill(nodeId: string): FillPaint | undefined {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeFill(node) : undefined;
-}
-
 // ── Multi-fill (fill STACK, drawn bottom→top) ────────────────────────
 
 function rawFills(node: SceneNode): FillPaint[] | null {
@@ -229,37 +221,6 @@ export function readNodeFills(node: SceneNode): FillPaint[] {
   if (arr) return arr;
   const single = readNodeFill(node);
   return single ? [single] : [];
-}
-
-export function getNodeFills(nodeId: string): FillPaint[] {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeFills(node) : [];
-}
-
-/**
- * Replace the whole fill stack. The legacy single-fill slot mirrors fills[0]
- * so older readers (text finalFill, GPU backend, exports) keep working.
- */
-export function setNodeFills(nodeId: string, fills: FillPaint[]): void {
-  defaultSceneGraph.setFills(nodeId, fills.length > 1 ? fills : undefined);
-  defaultSceneGraph.setFill(nodeId, fills[0]);
-  bumpScene();
-  getEventBus().emit('AnimationChanged', { nodeId });
-}
-
-/** Set (or clear, when undefined) the node's PRIMARY fill. When a fill stack
- *  exists this edits its first entry (clearing drops it from the stack), so
- *  the single-fill inspector controls and the gradient gizmo stay truthful. */
-export function setNodeFill(nodeId: string, paint: FillPaint | undefined): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const arr = node ? rawFills(node) : null;
-  if (arr) {
-    setNodeFills(nodeId, paint ? [paint, ...arr.slice(1)] : arr.slice(1));
-    return;
-  }
-  defaultSceneGraph.setFill(nodeId, paint);
-  bumpScene();
-  getEventBus().emit('AnimationChanged', { nodeId });
 }
 
 /**

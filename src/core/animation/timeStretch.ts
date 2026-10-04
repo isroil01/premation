@@ -8,15 +8,7 @@
  * name, so its callers are unchanged.
  */
 
-import { defaultAnimation, type BezierHandles } from '@motion/animation';
-import { getEventBus } from '@core/events/EventBus';
-import { readNodeMaskAnim } from '@core/effects/mask';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { SPEED_PROP } from './retime';
-
-/** Same prop names PrecompControl writes — one track, two surfaces. */
-const REMAP = 'timeRemap';
-const LEGACY_REMAP = 'precompTime';
+import {  type BezierHandles } from '@motion/animation';
 
 /** Clamp a stretch percentage to what `layerTime` stores (1…1000, whole %). */
 export function clampStretch(percent: number): number {
@@ -85,30 +77,6 @@ export function stretchClipGeometry(
 }
 
 
-// ── The stretch value a layer shows ─────────────────────────────────────────
-
-/** Where a non-footage layer keeps its stretch — bookkeeping only (see `stretchValueOf`). */
-const BAKED_STRETCH_KEY = 'bakedStretch';
-
-/**
- * A non-footage layer's current stretch %, signed (−100 = reversed), default
- * 100. Stored on `fx.bakedStretch` — NOT `fx.time.stretch`, which the renderer
- * time-scales by: the bake has already moved the bar, keyframes and markers,
- * so this value only records where the layer stands. It is saved with the
- * scene, restored by undo, and nothing re-applies it on load.
- */
-export function readBakedStretch(nodeId: string): number {
-  const fx = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === 'fx');
-  const v = (fx?.props as Record<string, unknown> | undefined)?.[BAKED_STRETCH_KEY];
-  return typeof v === 'number' && Number.isFinite(v) && v !== 0 ? v : 100;
-}
-
-export function writeBakedStretch(nodeId: string, value: number): void {
-  defaultSceneGraph.setFxKey(nodeId, BAKED_STRETCH_KEY, value === 100 ? undefined : value);
-  getEventBus().emit('AnimationChanged', { nodeId });
-}
-
-
 // ── Time Stretch on layers with no source ───────────────────────────────────
 
 /**
@@ -120,8 +88,6 @@ export function clampSignedStretch(percent: number): number {
   if (!Number.isFinite(percent) || Math.round(percent) === 0) return 100;
   return percent < 0 ? -clampStretch(-percent) : clampStretch(percent);
 }
-
-const REMAP_TRACKS: ReadonlySet<string> = new Set([REMAP, LEGACY_REMAP, SPEED_PROP]);
 
 /** A baked stretch: the new bars, and the affine map every keyframe time takes. */
 export interface StretchBake {
@@ -226,35 +192,5 @@ export function retimeKeys<K extends { t: number }>(keys: ReadonlyArray<K>, scal
     }
     return out as K;
   });
-}
-
-/**
- * Retime every keyframe the layer owns: scalar tracks (transform, effects,
- * masks' feather/opacity/expansion, text animators, …), data tracks (Source
- * Text holds, gradient stops, mask paths) and the whole-mask shape track.
- * Expressions are untouched — they are not keyframes. The time-remap track is
- * skipped: a non-footage layer has none, and it lives on a different axis.
- */
-export function retimeLayerKeyframes(nodeId: string, keyScale: number, keyOffset: number): void {
-  if (keyScale === 1 && keyOffset === 0) return;
-  defaultAnimation.batch(() => {
-    for (const prop of defaultAnimation.getAnimatedPropPaths(nodeId)) {
-      if (REMAP_TRACKS.has(prop)) continue;
-      const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
-      if (!kfs || kfs.length === 0) continue;
-      defaultAnimation.setTrackKeyframes(nodeId, prop, retimeKeys(kfs, keyScale, keyOffset));
-    }
-    for (const prop of defaultAnimation.getDataAnimatedPropPaths(nodeId)) {
-      const track = defaultAnimation.getDataTrack(nodeId, prop);
-      if (!track || track.keyframes.length === 0) continue;
-      defaultAnimation.setDataTrack(nodeId, prop, { ...track, keyframes: retimeKeys(track.keyframes, keyScale, keyOffset) });
-    }
-  });
-  const node = defaultSceneGraph.getNode(nodeId);
-  const maskKeys = node ? readNodeMaskAnim(node) : [];
-  if (maskKeys.length > 0) {
-    defaultSceneGraph.setMaskAnim(nodeId, retimeKeys(maskKeys, keyScale, keyOffset));
-    getEventBus().emit('AnimationChanged', { nodeId });
-  }
 }
 

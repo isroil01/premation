@@ -12,14 +12,13 @@
  * single-file + cloud-autosave path is untouched.
  */
 
-import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
-import { baselineHistoryNow } from '@core/engine/historyBaseline';
-import { recordProjectOpened, recordProjectSaved } from '@core/localIndex/indexWriter';
+import {   type EditorDocument } from '@core/api/cloudDocument';
+import {  recordProjectSaved } from '@core/localIndex/indexWriter';
 import { BundleRepository } from './BundleRepository';
 import { ProjectBundleService } from './ProjectBundleService';
 import type { VersionEntry, VersionKind } from './VersionStore';
 import { detectBundleFs } from './bundleFsEnv';
-import { liveDocument, liveDocumentFromEngine, saveLiveDocument } from '@core/project/liveDocument';
+import { liveDocument, saveLiveDocument } from '@core/project/liveDocument';
 
 let shared: BundleRepository | null = null;
 let sharedService: ProjectBundleService | null = null;
@@ -44,33 +43,6 @@ export function isBundlePath(path: string): boolean {
   return path.endsWith('.motion');
 }
 
-/** Capture the live document and persist it to the bundle at `root`. */
-export async function saveProjectBundle(root: string, repo = getBundleRepository()): Promise<void> {
-  const doc = captureDocument();
-  await repo.save(root, doc);
-  // The index write comes AFTER the disk write and never gates it — see
-  // indexWriter's header. This is the call whose absence left the whole
-  // local index empty from the day it shipped.
-  await recordProjectSaved(root, doc);
-}
-
-/**
- * Load the bundle at `root` into the engines. Returns false (restoring nothing)
- * when there is no bundle there, so the caller can fall back to a single-file
- * open.
- */
-export async function openProjectBundle(root: string, repo = getBundleRepository()): Promise<boolean> {
-  const doc = await repo.load(root);
-  if (!doc) return false;
-  restoreDocument(doc);
-  // The loaded document IS the baseline. Without this, undo's "before" is still
-  // the seeded starter scene from boot, so one Ctrl+Z replaces the project the
-  // user just opened.
-  baselineHistoryNow('Open');
-  await recordProjectOpened(root, doc);
-  return true;
-}
-
 /** True when a bundle already exists at `root`. */
 export async function hasProjectBundle(root: string, repo = getBundleRepository()): Promise<boolean> {
   return repo.has(root);
@@ -83,19 +55,13 @@ export async function saveProjectBundleVersion(
   label?: string,
   svc = getProjectBundleService(),
 ): Promise<void> {
-  if (liveDocumentFromEngine()) {
-    // F2: the engine writes the bundle (chunks, footage, manifest last; dirty
-    // clears) and hands back the document it wrote; the page records only the
-    // version snapshot beside it.
-    await saveLiveDocument(root, { copy: false, format: 'bundle' });
-    const saved = await liveDocument();
-    await svc.snapshotVersion(root, saved, { kind, ...(label != null ? { label } : {}) });
-    await recordProjectSaved(root, saved);
-    return;
-  }
-  const doc = captureDocument();
-  await svc.save(root, doc, { version: { kind, ...(label != null ? { label } : {}) } });
-  await recordProjectSaved(root, doc);
+  // The engine writes the bundle (chunks, footage, manifest last; dirty
+  // clears) and hands back the document it wrote; the page records only the
+  // version snapshot beside it.
+  await saveLiveDocument(root, { copy: false, format: 'bundle' });
+  const saved = await liveDocument();
+  await svc.snapshotVersion(root, saved, { kind, ...(label != null ? { label } : {}) });
+  await recordProjectSaved(root, saved);
 }
 
 /** List a bundle's version history (newest first). */

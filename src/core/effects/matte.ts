@@ -31,8 +31,6 @@
  * least one release; deleting it makes the migration one-way in practice.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
 import { renderComponentsOf } from '@core/scene/SceneGraph';
 
@@ -103,16 +101,6 @@ export function readMatte(v: unknown): TrackMatte | undefined {
 export function readNodeMatte(node: SceneNode): TrackMatte | undefined {
   const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   return readMatte(fx?.props.matte);
-}
-
-export function getNodeMatte(nodeId: string): TrackMatte | undefined {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeMatte(node) : undefined;
-}
-
-export function setNodeMatte(nodeId: string, matte: TrackMatte | undefined): void {
-  defaultSceneGraph.setMatte(nodeId, matte);
-  getEventBus().emit('AnimationChanged', { nodeId });
 }
 
 /** AE's wording for a matte, for triggers and row labels. */

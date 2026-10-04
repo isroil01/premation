@@ -28,12 +28,12 @@
  */
 
 import type { Command, PropertyInit, PropertyWrite, Value } from '@motion/engine-api';
+import { secondsToFlicks } from '@motion/engine-api';
 import { edit } from '@core/engine/uiEdits';
 import { isLayer } from '@core/mirror/docFacts';
 import { maskToBezier } from '@core/engine/props';
 import { compTime, paths, ref, values } from '@core/engine/propRefs';
 import { engine } from '@core/engine/engineInstance';
-import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import {
   effectDefFor,
   effectOpacityPath,
@@ -678,9 +678,12 @@ export function setFreezeFrameEdit(nodeId: string, on: boolean, seconds: number)
   return edit('Freeze Frame', { type: 'freezeFrame', layer: nodeId, time: compTime(seconds), lastFrame: false });
 }
 
-export function setFreezeTimeEdit(nodeId: string, holdSeconds: number): Promise<unknown> {
+export async function setFreezeTimeEdit(nodeId: string, holdSeconds: number): Promise<unknown> {
+  // The held time is on the layer's own axis; freezeFrame takes the comp time that shows it.
+  const held = await engine().query({ type: 'mapLayerTime', layer: nodeId, time: secondsToFlicks(Math.max(0, holdSeconds)), outward: true, keyframeAxis: true });
+  const time = held.ok && held.value.time !== undefined ? held.value.time : compTime(Math.max(0, holdSeconds));
   return edit('Freeze Frame', [
     { type: 'unfreezeLayers', layers: [nodeId] },
-    { type: 'freezeFrame', layer: nodeId, time: compTime(keyframeToCompTime(nodeId, Math.max(0, holdSeconds))), lastFrame: false },
+    { type: 'freezeFrame', layer: nodeId, time, lastFrame: false },
   ]);
 }

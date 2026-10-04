@@ -42,7 +42,7 @@ import { engine, engineIdle } from '@core/engine/engineInstance';
 import { edit, type GestureSession } from '@core/engine/uiEdits';
 import { compTime, propRefForTrack, valueOfNumbers } from '@core/engine/propRefs';
 import { memberKeyIndexAt, memberKeyOf, memberKeysOf, type MemberKey, type StoredTimeOf } from '@core/mirror/memberKeys';
-import { resolveSelectionKey, storedTimeOf } from '@core/mirror/keySelection';
+import { resolveSelectionKey, selectionLayerOf, storedTimeOf } from '@core/mirror/keySelection';
 import { numbersOfValue, type TrackRef as MirrorTrackRef } from '@core/mirror/trackIndex';
 import { documentMirror } from '@stores/documentMirror';
 import { isDataProperty } from './buildPropertyRows';
@@ -130,10 +130,15 @@ async function verifyTargets(found: ReadonlyArray<{ id: string; tgt: Target | nu
   return out;
 }
 
+/** Load the property trees of `layers` the mirror does not hold yet: a key resolves to its member on its layer's tree. */
+const treesOf = (layers: Iterable<string | null | undefined>): Promise<void> => documentMirror().loadTrees(layers);
+
 /** Selection ids → their targets (null when any is gone). */
-function resolveSelection(uiIds: Iterable<string>): Promise<Map<string, Target> | null> {
+async function resolveSelection(uiIds: Iterable<string>): Promise<Map<string, Target> | null> {
+  const ids = [...uiIds];
+  await treesOf(ids.map(selectionLayerOf));
   const found: Array<{ id: string; tgt: Target | null }> = [];
-  for (const id of uiIds) found.push({ id, tgt: selectionTarget(id) });
+  for (const id of ids) found.push({ id, tgt: selectionTarget(id) });
   return verifyTargets(found);
 }
 
@@ -154,6 +159,7 @@ export async function resolveKeyIds(uiIds: Iterable<string>): Promise<Map<string
 
 /** Member keys at stored times → engine keyframe ids (keyed by their `id`). Null when any is gone. */
 export async function resolveKeys(keys: ReadonlyArray<MemberKeyAt>): Promise<Map<string, string> | null> {
+  await treesOf(keys.map((k) => k.nodeId));
   const stored = storedTimes();
   const targets = await verifyTargets(keys.map((k) => ({ id: k.id, tgt: memberTarget(k, stored(k.nodeId)) })));
   return targets ? idsOf(targets) : null;

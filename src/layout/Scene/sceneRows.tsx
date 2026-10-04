@@ -25,7 +25,7 @@ import { assetRecordNow } from '@stores/assetSession';
 import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import type { SceneScope, SearchField } from '@stores/sceneViewStore';
-import type { SceneKind } from '@core/scene/seedDefaultScene';
+import type { SceneKind } from '@core/scene/sceneKind';
 import type { SceneNodeFacts } from './sceneFilters';
 import styles from '@layout/EditorLayout/panels.module.css';
 

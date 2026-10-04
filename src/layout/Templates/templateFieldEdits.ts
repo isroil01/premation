@@ -95,6 +95,8 @@ export async function fillDataRowEdit(
   seconds: number,
 ): Promise<FillResult> {
   const result: FillResult = { filled: [], skippedKind: [], failed: [] };
+  // The field commands resolve on their layers' property trees.
+  await documentMirror().loadTrees(fields.map((f) => f.target.nodeId));
   const cmds: Command[] = [];
   for (const field of fields) {
     const cell = row[field.id];
@@ -129,6 +131,7 @@ export async function fillMediaFieldEdit(field: TemplateField, file: File, secon
   const { imported: [asset] } = await importBrowserFilesEdit([{ file }]);
   if (!asset) return null;
   const nodeId = field.target.nodeId;
+  await documentMirror().loadTree(nodeId);
   const cmds: Command[] = [{ type: 'replaceLayerSource', layer: nodeId, source: asset.id, keepSize: true }];
   const w = asset.metadata?.width;
   const h = asset.metadata?.height;
@@ -163,6 +166,7 @@ export async function propertyValuesAt(layer: string, paths: readonly string[], 
  */
 export async function slotBoxOf(nodeId: string, source: { width: number; height: number } | null, seconds: number): Promise<{ width: number; height: number } | null> {
   if (!source || !(source.width > 0) || !(source.height > 0)) return null;
+  await documentMirror().loadTree(nodeId);
   const slot = await propertyValuesAt(nodeId, ['layer/slotFit', 'layer/slotWidth', 'layer/slotHeight'], seconds);
   const wRef = trackRef(nodeId, 'width');
   const hRef = trackRef(nodeId, 'height');
@@ -189,6 +193,7 @@ export async function slotBoxOf(nodeId: string, source: { width: number; height:
 export async function templateFieldValues(fields: readonly TemplateField[], seconds: number): Promise<Record<string, string | number>> {
   const out: Record<string, string | number> = {};
   const m = documentMirror();
+  await m.loadTrees(fields.map((f) => f.target.nodeId));
   const asks: Array<{ field: TemplateField; ref: PropRef; read: (v: Value) => string | number | undefined }> = [];
   for (const field of fields) {
     const { nodeId, componentType, prop } = field.target;

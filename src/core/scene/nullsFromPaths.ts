@@ -27,7 +27,7 @@ import type { Value } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { compTime } from '@core/engine/propRefs';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import type { FragmentBuilder } from '@/engine-client/fragmentBuilder';
 import { documentMirror } from '@stores/documentMirror';
 

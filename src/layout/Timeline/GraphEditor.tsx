@@ -38,7 +38,8 @@
  *    already accounts for scroll: client - rect.left IS the svg x coordinate.
  */
 
-import { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect, useSyncExternalStore } from 'react';
+import { memberTracksVersion, subscribeMemberTracks } from '@stores/memberTracks';
 import { clampPps, TIMELINE_PPS_MAX } from './zoomAnchor';
 import { Icon } from '@components/Icon';
 import { EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER, type EasingKind } from '@motion/animation';
@@ -468,7 +469,11 @@ export function GraphEditor({
   // B4: the curves are the document MIRROR's keys (and the engine's
   // `sampleProperty` between them); redraw when a selected layer's header,
   // property tree or keyframes change — keeps their trees loaded.
-  const rev = useMirrorLayersWatch(selectedNodeIds);
+  const mirrorRev = useMirrorLayersWatch(selectedNodeIds);
+  // The keys' STORED times come from the engine's member records
+  // (keySelection `storedKeyIndex`): redraw when an answer lands.
+  const memberRev = useSyncExternalStore(subscribeMemberTracks, memberTracksVersion);
+  const rev = `${mirrorRev}|${memberRev}`;
   /** Bumped when an asynchronous curve sample lands (`CurveSampler`). */
   const [samplesTick, setSamplesTick] = useState(0);
   const samplerRef = useRef<CurveSampler | null>(null);

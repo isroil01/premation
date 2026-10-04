@@ -37,8 +37,6 @@
  * insert suite catches it if that is ever "simplified" away.
  */
 
-import { getTimelineController } from '@core/timeline/TimelineController';
-
 /**
  * The shortest window worth creating.
  *
@@ -67,34 +65,4 @@ export function insertedClipWindow(
   const end = Math.round((Math.max(0, startSec) + durationSec + 1 / fps) * fps);
   const head = Math.min(start, Math.max(start, end) - 1);
   return { start: head, duration: Math.max(1, end - head), sourceIn: head, sourceDuration: null };
-}
-
-/**
- * Trim `nodeId`'s clip to `[startSec, startSec + durationSec]`.
- *
- * A no-op when the node has no clip (nothing was seeded, or the caller ran
- * before `syncFromScene`) or when the duration is not a usable length — a
- * library item with no animation at all is a static element, and a static
- * element's bar should stay full-length exactly as a hand-drawn layer's does.
- *
- * Returns true when a window was applied.
- */
-export function setInsertedClipWindow(nodeId: string, startSec: number, durationSec: number): boolean {
-  if (!Number.isFinite(startSec) || !Number.isFinite(durationSec)) return false;
-  if (durationSec < MIN_WINDOW_SEC) return false;
-
-  const controller = getTimelineController();
-  const clip = controller.getLayersForNode(nodeId)[0];
-  if (!clip) return false;
-
-  const start = Math.max(0, startSec);
-  // One frame past the duration — see the header. Without it the item's
-  // settling pose is trimmed off and the insert appears to end mid-move.
-  const fps = controller.fpsForNode(nodeId) || 30;
-  controller.trimClipTo(clip.id, 'end', start + durationSec + 1 / fps);
-  controller.trimClipTo(clip.id, 'start', start);
-  // The index caches layers per track array; a trim mutates the clip in place,
-  // so nothing else invalidates it.
-  controller.invalidateLayerIndex();
-  return true;
 }

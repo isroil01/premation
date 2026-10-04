@@ -14,13 +14,7 @@
  * `pasteLayers`), so Undo takes a freshly created solid away in one press.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { setNodeLabelColor } from '@core/scene/labelColor';
-import { writeTransformProps } from '@core/scene/transformWrite';
-import { insertSolid } from '@core/scene/sceneInsert';
-import { readNodeFill, solidFill } from '@core/paint/fill';
-import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode } from '@core/types';
 
 export type LayerSettingsKind = 'solid' | 'sized' | 'plain';
@@ -65,66 +59,4 @@ export function layerSettingsKind(node: SceneNode): LayerSettingsKind {
   const isAdjustment = kind === 'adjustment' || fx?.adjustment === true;
   if ((kind === 'null' || isAdjustment) && transformSize(node)) return 'sized';
   return 'plain';
-}
-
-/** The dialog's starting values for a layer, or null when it is gone. */
-export function readLayerSettings(nodeId: string): { kind: LayerSettingsKind; values: LayerSettingsValues } | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const kind = layerSettingsKind(node);
-  const values: LayerSettingsValues = { name: node.name ?? '' };
-  if (node.color) values.labelColor = node.color;
-  const size = transformSize(node);
-  if (size && kind !== 'plain') {
-    values.width = size.width;
-    values.height = size.height;
-  }
-  if (kind === 'solid') {
-    const fill = readNodeFill(node);
-    values.color = fill && fill.type === 'solid' ? fill.color : DEFAULT_SOLID_COLOR;
-  }
-  return { kind, values };
-}
-
-/** Writes the values onto a layer the builder just made (a SCRATCH write: the New Solid build runs off-document). */
-function writeSettings(nodeId: string, kind: LayerSettingsKind, values: LayerSettingsValues, label: string): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const name = values.name.trim();
-  // A layer born in this build: nothing can name it yet, so there are no references to repair.
-  if (name && name !== node.name) node.name = name;
-  if ('labelColor' in values && values.labelColor !== node.color) setNodeLabelColor(nodeId, values.labelColor);
-  if (kind !== 'plain') {
-    const w = values.width !== undefined ? sanitizeLayerSize(values.width) : null;
-    const h = values.height !== undefined ? sanitizeLayerSize(values.height) : null;
-    const writes: Array<{ prop: string; value: number }> = [];
-    if (w !== null) writes.push({ prop: 'width', value: w });
-    if (h !== null) writes.push({ prop: 'height', value: h });
-    if (writes.length) writeTransformProps(nodeId, writes, label);
-  }
-  if (kind === 'solid' && values.color) defaultSceneGraph.setFill(nodeId, solidFill(values.color));
-}
-
-/** "Solid N" — one past the number of solids already in the project. */
-export function nextSolidName(): string {
-  let count = 0;
-  defaultSceneGraph.traverse((n) => {
-    if (fxProps(n)?.solid === true) count += 1;
-  });
-  return `Solid ${count + 1}`;
-}
-
-/**
- * Layer ▸ New ▸ Solid, confirmed from Solid Settings: a solid at the comp
- * centre with the dialog's name, size and colour. The builder alone: the UI
- * runs it off-document and inserts the result as one `pasteLayers`
- * (offDocument.ts); applying the dialog to an existing layer is
- * compositionEdits.ts (engine commands).
- */
-export function buildSolidLayer(values: LayerSettingsValues): string | null {
-  insertSolid(values.color ?? DEFAULT_SOLID_COLOR);
-  const id = useSelectionStore.getState().ids[0];
-  if (!id) return null;
-  writeSettings(id, 'solid', values, 'New Solid');
-  return id;
 }

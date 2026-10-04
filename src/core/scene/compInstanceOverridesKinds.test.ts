@@ -185,9 +185,9 @@ describe('the new properties are PROMOTABLE, not just overridable', () => {
     // The colour row cannot use `buildPropertyMenu` (it is shaped for a
     // numeric, keyframeable property), so the entry was extracted rather than
     // rebuilt — a second copy is how the label and the storage key drift.
-    const menu = readSource('core/inspector/propertyMenu.ts');
-    expect(menu).toMatch(/export function essentialPropMenuItems/);
-    expect(menu).toMatch(/items\.push\(\.\.\.essentialPropMenuItems\(nodeId, prop\)\)/);
+    expect(readSource('core/inspector/propertyMenu.ts')).toMatch(/export function essentialPropMenuItems/);
+    // The property-row menu takes it from there, not from a copy.
+    expect(readSource('layout/Inspector/propertyRowMenu.ts')).toMatch(/items\.push\(\.\.\.essentialPropMenuItems\(nodeId, prop\)\)/);
   });
 
   it('the instance inspector edits each kind with the right control', () => {

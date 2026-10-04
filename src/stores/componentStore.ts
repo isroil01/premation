@@ -27,7 +27,7 @@ import { documentMirror } from './documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { useSelectionStore } from './selectionStore';
 import { insertFragment } from '@/engine-client/insertFragment';
-import { engine } from '@core/engine/engineInstance';
+import { engine, engineIdle } from '@core/engine/engineInstance';
 import { reportEngineError } from '@core/engine/uiEdits';
 import { trackWrites } from '@layout/Inspector/inspectorEdits';
 import { getTime } from './playbackClockStore';
@@ -139,6 +139,10 @@ async function pasteComponent(def: ComponentDef & { fragment: StoredFragment }, 
       else reportEngineError(label, grouped.error);
     }
     if (root) {
+      // Position resolves on the mirror's tree of the layer just pasted: let the
+      // mirror catch up to the paste and load it, or the move finds nothing to write.
+      await engineIdle();
+      await documentMirror().loadTree(root);
       const writes = trackWrites(root, { x: at.x, y: at.y }, getTime());
       if (writes.length > 0) {
         const moved = await client.execute({ type: 'setProperties', writes } as Command);

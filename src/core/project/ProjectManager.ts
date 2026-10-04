@@ -111,7 +111,7 @@ export interface ProjectManagerDeps {
    * New / Open / Save / Save As / snapshot / Close are engine requests
    * (core/project/engineDocumentSession.ts) — the page never captures,
    * parses or restores the document, and `io` / `storage` are not used for
-   * them. Unset (the default, the TypeScript engine as owner): unchanged.
+   * them. Unset only where there is no engine host (unit tests).
    */
   engineDocument?: EngineOwnedDocument;
 }
@@ -127,6 +127,8 @@ export interface EngineOwnedDocument {
   /** Collect Files — the engine copies the project and its files into `folder` (engine-api `collectFiles`). */
   collectFiles?(folder: string, onlyUsed: boolean): Promise<{ path: string; bytes: number; missing?: string }>;
   close(): Promise<void>;
+  /** The engine writes its recovery copy now (`force`: even when clean); the stamp, or null when nothing was written. */
+  autosave?(opts: { force?: boolean }): Promise<number | null>;
 }
 
 export class ProjectManager {
@@ -164,6 +166,15 @@ export class ProjectManager {
 
   /** F2: is the document owned by the engine (lifecycle through engine requests)? */
   get engineOwned(): boolean { return this.engineDocument !== null; }
+
+  /**
+   * The Files tab's "Autosave now": the engine writes its recovery copy even
+   * when the document is clean. The stamp, or null when there is no engine
+   * session (or nothing could be written).
+   */
+  async autosaveNow(): Promise<number | null> {
+    return (await this.engineDocument?.autosave?.({ force: true })) ?? null;
+  }
 
   /**
    * F2 / D5: hand the lifecycle to the engine (or back, with null). The app
@@ -398,9 +409,8 @@ export class ProjectManager {
    * File ▸ Dependencies ▸ Collect Files with the ENGINE as owner: the engine
    * writes `<folder>/<folder name>.motion` with every used file inside it; the
    * open project keeps its path and dirty flag. `missing` lists the files it
-   * could not read (one per line). Null when the engine does not own the
-   * document — the TypeScript engine's own `collectFiles` port (appPorts.ts)
-   * serves that case through the engine API.
+   * could not read (one per line). Null when there is no engine document
+   * session (no engine host).
    */
   async collectFilesTo(folder: string, onlyUsed: boolean): Promise<{ path: string; bytes: number; missing: string[] } | null> {
     if (!this.engineDocument?.collectFiles) return null;

@@ -24,8 +24,8 @@ import { useUIStore } from '@stores/uiStore';
 import {
   AUTOSAVE_MAX_SEC,
   AUTOSAVE_MIN_SEC,
-  getAutosaveController,
 } from '@core/persistence/AutosaveController';
+import { getProjectManager } from '@core/services/coreServices';
 import { AUTOSAVE_KEEP_MAX, AUTOSAVE_KEEP_MIN } from '@core/persistence/recovery';
 import styles from './CustomizeDialog.module.css';
 
@@ -190,9 +190,12 @@ export function FilesTab(): JSX.Element {
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => {
-              const at = getAutosaveController().saveNow();
-              if (at !== null) setNow(Date.now());
+            onClick={async () => {
+              const at = await getProjectManager().autosaveNow();
+              if (at !== null) {
+                useUIStore.getState().setLastAutosaveAt(at);
+                setNow(Date.now());
+              }
               else {
                 useUIStore.getState().notify({
                   level: 'warning',

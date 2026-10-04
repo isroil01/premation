@@ -111,11 +111,4 @@ describe('animatable transform props are written through one router', () => {
     expect([...new Set(offenders)].sort()).toEqual([]);
   });
 
-  it('the three previously-broken modules import the router', () => {
-    // Pins the fix itself, not just the absence of the old pattern — deleting
-    // the import and the writes together would otherwise pass silently.
-    for (const f of ['core/scene/anchor.ts', 'core/scene/alignNodes.ts', 'core/source/fitCommands.ts']) {
-      expect(readFileSync(join(SRC, f), 'utf8')).toMatch(/writeTransformProps/);
-    }
-  });
 });

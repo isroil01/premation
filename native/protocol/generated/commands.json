@@ -560,6 +560,11 @@
     "type": "setKeyframes"
   },
   {
+    "id": 521,
+    "kind": "edit",
+    "type": "setMemberKeyframes"
+  },
+  {
     "id": 600,
     "kind": "edit",
     "type": "addEffect"

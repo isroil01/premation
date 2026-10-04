@@ -33,15 +33,8 @@
  * stack's own compiled output and make removal a no-op.
  */
 
-import { defaultAnimation, type ExpressionState } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
-import {
-  convertExpressionToKeyframes,
-  type BakeResult,
-} from '@core/animation/convertExpressionToKeyframes';
+import {  type ExpressionState } from '@motion/animation';
 import type { SceneNode } from '@core/types';
-import { compileModifierStack } from './modifierCompile';
 
 // ── The model ───────────────────────────────────────────────────────
 
@@ -363,89 +356,6 @@ export function readModifierStack(node: SceneNode, prop: string): ModifierStack 
   return readModifierStacks(node)[prop] ?? null;
 }
 
-function writeStacks(nodeId: string, next: Record<string, ModifierStack>): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const host = node ? stackHost(node) : undefined;
-  if (!node || !host) return false;
-  defaultSceneGraph.writeProp(nodeId, host.id, MODIFIERS_PROP, next);
-  bumpScene();
-  return true;
-}
-
-/** The property's current expression state, or null — what `previous` stores. */
-function currentExpressionState(nodeId: string, prop: string): ExpressionState | null {
-  const src = defaultAnimation.getExpressionSrc(nodeId, prop);
-  if (src === undefined || src.trim() === '') return null;
-  return { src, enabled: defaultAnimation.isExpressionEnabled(nodeId, prop) };
-}
-
-// ── Apply / remove / bake ───────────────────────────────────────────
-
-/**
- * Install (or update) the stack on `prop` and attach its compiled expression.
- *
- * ONE undo step covers the expression change; the stack record itself rides on
- * the scene-graph write beside it. The expression is explicitly ENABLED:
- * `setExpression` preserves an existing enabled bit, so a stack landing on a
- * property whose previous expression the user had switched off would otherwise
- * be born switched off and appear to do nothing.
- *
- * `mergeKey` coalesces consecutive edits to the same property's stack, so
- * dragging one parameter is one undo step rather than forty.
- */
-export function applyModifierStack(
-  nodeId: string,
-  prop: string,
-  modifiers: readonly Modifier[],
-): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return false;
-  const stacks = readModifierStacks(node);
-  const existing = stacks[prop];
-  // Captured ONCE — see the module header. Re-capturing here would capture the
-  // stack's own output and make "Remove stack" a no-op.
-  const previous = existing ? existing.previous : currentExpressionState(nodeId, prop);
-  const src = compileModifierStack(modifiers);
-
-  // The expression write and the record write are ONE edit — neither goes
-  // through `runAnimEdit`, which would push an entry of its own. The Inspector
-  // sends them as one engine batch (layout/Inspector/modifierEdits.ts).
-  defaultAnimation.setExpression(nodeId, prop, src);
-  defaultAnimation.setExpressionEnabled(nodeId, prop, true);
-  return writeStacks(nodeId, { ...stacks, [prop]: { modifiers: [...modifiers], previous } });
-}
-
-/**
- * Forget the stack and put the property's previous expression back — including
- * "there wasn't one", which removes the compiled expression entirely.
- */
-export function removeModifierStack(nodeId: string, prop: string): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return false;
-  const stacks = readModifierStacks(node);
-  const existing = stacks[prop];
-  if (!existing) return false;
-
-  defaultAnimation.setExpressionState(nodeId, prop, existing.previous);
-  const next = { ...stacks };
-  delete next[prop];
-  return writeStacks(nodeId, next);
-}
-
-/**
- * Bake the compiled stack to keyframes.
- *
- * Straight through `convertExpressionToKeyframes`, which already owns the hard
- * parts (the layer's extent as the range, the time axis, sample-everything-then-
- * write) and disables the expression rather than deleting it. The stack RECORD
- * is deliberately kept: the rows are still the description of that motion, and
- * a user who bakes and then wants one more octave should find their stack where
- * they left it rather than a bare keyframe track.
- */
-export function bakeModifierStack(nodeId: string, prop: string): BakeResult {
-  return convertExpressionToKeyframes(nodeId, [prop]);
-}
-
 // ── Behaviour recipes ───────────────────────────────────────────────
 
 /**
@@ -515,13 +425,4 @@ export const BEHAVIOR_RECIPES: readonly BehaviorRecipe[] = [
 /** Instantiate a recipe's rows with fresh ids. */
 export function instantiateRecipe(entry: { modifiers: readonly ModifierSpec[] }): Modifier[] {
   return entry.modifiers.map((m) => ({ ...m, id: nextModifierId(m.kind) }) as Modifier);
-}
-
-/** Apply every property stack a recipe defines. Returns the props it touched. */
-export function applyBehaviorRecipe(nodeId: string, recipe: BehaviorRecipe): string[] {
-  const done: string[] = [];
-  for (const entry of recipe.props) {
-    if (applyModifierStack(nodeId, entry.prop, instantiateRecipe(entry))) done.push(entry.prop);
-  }
-  return done;
 }

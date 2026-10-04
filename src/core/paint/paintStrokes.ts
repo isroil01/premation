@@ -36,9 +36,6 @@
  */
 
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getEventBus } from '@core/events/EventBus';
-import { bumpScene } from '@stores/sceneStore';
 import { clamp01 } from '@utils/lang';
 
 export type PaintMode = 'paint' | 'erase' | 'clone';
@@ -231,43 +228,4 @@ export function strokeBounds(stroke: PaintStroke): { x: number; y: number; width
   }
   const r = stroke.size / 2;
   return { x: minX - r, y: minY - r, width: maxX - minX + stroke.size, height: maxY - minY + stroke.size };
-}
-
-
-// ── Reads + the static-value seam ─────────────────────────────────────
-//
-// Document edits go through the engine (B3): addPaintStroke /
-// updatePaintStroke / removePaintStrokes / setPaintOnTransparent /
-// setPaintStrokePath / setPaintPathAnimated — src/core/engine/paintStrokes.ts,
-// sent by @core/engine/paintEdits. `updatePaintStroke` below is only the
-// property registry's static-value write (propertyValue.ts), which the
-// engine's setProperty on `paint/<id>/<param>` runs.
-
-export function getNodePaint(nodeId: string): PaintConfig | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodePaint(node) : null;
-}
-
-function writePaint(nodeId: string, strokes: PaintStroke[], onTransparent: boolean | undefined): void {
-  defaultSceneGraph.setPaint(nodeId, strokes.length > 0 || onTransparent
-    ? { strokes, ...(onTransparent ? { onTransparent: true } : {}) }
-    : { strokes: [] });
-  getEventBus().emit('AnimationChanged', { nodeId });
-  bumpScene();
-}
-
-/** Merge a patch into one stroke (renormalised, so a patch cannot store junk). */
-export function updatePaintStroke(nodeId: string, strokeId: string, patch: Partial<PaintStroke>): void {
-  const cfg = getNodePaint(nodeId);
-  if (!cfg) return;
-  let hit = false;
-  const strokes = cfg.strokes.map((s) => {
-    if (s.id !== strokeId) return s;
-    hit = true;
-    const merged = { ...s, ...patch } as PaintStroke;
-    // `undefined` in a patch CLEARS the key (normalize copies present keys only).
-    for (const [k, v] of Object.entries(patch)) if (v === undefined) delete (merged as unknown as Record<string, unknown>)[k];
-    return normalizeStroke(merged, s.id);
-  });
-  if (hit) writePaint(nodeId, strokes, cfg.onTransparent);
 }

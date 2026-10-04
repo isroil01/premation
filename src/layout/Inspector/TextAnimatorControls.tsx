@@ -60,7 +60,7 @@ import { REGISTERED_AXES, MAX_ANIMATED_AXES, axisLabel } from '@core/text/fontAx
 import { loadFamilyAxes } from '@core/text/fontAxesLoader';
 import { paths } from '@core/engine/propRefs';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorTree } from '@hooks/useMirror';
+import { useMirrorTreeGroups } from '@hooks/useMirror';
 import { hasTextLayer, mirrorAnimators, mirrorTextMoreOptions, storedFontAxes, textField } from '@layout/Text/textMirror';
 import {
   addAnimatorEdit,
@@ -900,9 +900,13 @@ function useAxisTags(nodeId: string, family: string): string[] {
   return [...new Set([...fontTags, ...REGISTERED_AXES.map((a) => a.tag), ...layerTags])];
 }
 
+/** The tree group the animator controls read. */
+const TEXT_GROUP = ['text'] as const;
+
 export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Element | null {
-  // B4: the document mirror — this layer's header and property tree wake the section.
-  useMirrorTree(nodeId);
+  // B4: the document mirror — this layer's header and its Text group (the animators, the
+  // font fields) wake the section; a write elsewhere on the layer does not.
+  useMirrorTreeGroups(nodeId, TEXT_GROUP);
   const time = useActiveWorkspace()?.time ?? 0;
   const m = documentMirror();
   const layer = m.layer(nodeId);

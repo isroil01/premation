@@ -34,7 +34,7 @@
  * from a different CPU the table says so up front — numbers across machines
  * are a hint, not a gate, which is why the CI job starts non-blocking and its
  * baseline should be regenerated from a runner's own artifact before it is
- * flipped (see .github/workflows/ci.yml, job `bench`).
+ * flipped (see .github/workflows/native.yml, the engine job's bench step).
  *
  * Exit 1 on any regression, 0 otherwise.
  */

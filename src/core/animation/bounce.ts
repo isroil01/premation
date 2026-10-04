@@ -26,13 +26,11 @@
  */
 
 import {
-  defaultAnimation,
   EASY_EASE_IN_BEZIER,
   EASY_EASE_OUT_BEZIER,
   type AnimationEngine,
   type Keyframe,
 } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
 import { getEventBus } from '@core/events/EventBus';
 import { nodeBaseValue, type PresetTrack } from '@core/animation/animationPresets';
 
@@ -433,7 +431,7 @@ function writeTracks(nodeId: string, tracks: ReadonlyArray<PresetTrack>, engine:
 export function baseScaleOf(
   nodeId: string,
   atTime: number,
-  engine: AnimationEngine = defaultAnimation,
+  engine: AnimationEngine,
 ): { scaleX: number; scaleY: number } {
   const uniform = nodeBaseValue(nodeId, 'scale', atTime, engine);
   return {
@@ -454,9 +452,9 @@ function travelTrack(tracks: ReadonlyArray<PresetTrack>): PresetTrack | null {
  */
 export function bounceKeyframes(
   nodeId: string,
-  opts: BounceOptions = DEFAULT_BOUNCE,
-  squash: SquashOptions | null = null,
-  engine: AnimationEngine = defaultAnimation,
+  opts: BounceOptions,
+  squash: SquashOptions | null,
+  engine: AnimationEngine,
 ): boolean {
   const tracks = currentTracks(nodeId, engine);
   if (!tracks.length) return false;
@@ -482,7 +480,7 @@ export function bounceKeyframes(
       ),
     );
   }
-  runAnimEdit('Bounce keyframes', () => writeTracks(nodeId, write, engine));
+  writeTracks(nodeId, write, engine);
   return true;
 }
 
@@ -495,10 +493,10 @@ export function bounceKeyframes(
 export function bounceInKeyframes(
   nodeId: string,
   atTime: number,
-  drop: DropInOptions = DEFAULT_DROP_IN,
-  opts: BounceOptions = DEFAULT_BOUNCE,
-  squash: SquashOptions | null = null,
-  engine: AnimationEngine = defaultAnimation,
+  drop: DropInOptions,
+  opts: BounceOptions,
+  squash: SquashOptions | null,
+  engine: AnimationEngine,
 ): boolean {
   if (drop.distance === 0 || drop.duration <= 0) return false;
   const tracks = bounceInTracks(drop, opts, squash, baseScaleOf(nodeId, atTime, engine));
@@ -514,7 +512,7 @@ export function bounceInKeyframes(
     };
   });
 
-  runAnimEdit('Bounce in', () => writeTracks(nodeId, resolved, engine));
+  writeTracks(nodeId, resolved, engine);
   return true;
 }
 
@@ -552,7 +550,6 @@ export interface BounceRequest {
   drop?: DropInOptions;
   bounce?: BounceOptions;
   squash?: SquashOptions | null;
-  engine?: AnimationEngine;
 }
 
 /**
@@ -570,8 +567,7 @@ export interface BounceRequest {
  * keyframes land in the SAME Position row as theirs: nothing on screen
  * distinguishes them, so the caller has to say it in words.
  */
-export function applyBounce(nodeId: string, req: BounceRequest): BounceResult | null {
-  const engine = req.engine ?? defaultAnimation;
+export function applyBounce(nodeId: string, req: BounceRequest, engine: AnimationEngine): BounceResult | null {
   const opts = req.bounce ?? DEFAULT_BOUNCE;
   const squash = req.squash ?? null;
   const mode = req.mode ?? 'auto';

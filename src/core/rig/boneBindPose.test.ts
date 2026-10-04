@@ -13,9 +13,7 @@
  */
 
 import { bindPoseBones, captureBindPose, type SkeletonRig } from './skeletonCommands';
-import { buildRestMesh, coverageMaskFromImageData, type PuppetRig } from './puppet';
-import { getSkeletonBinding, skinRigVertices } from './rigDeform';
-import { computeWorldTransforms, type Bone } from './skeleton';
+import {  type Bone } from './skeleton';
 
 const restBones: Bone[] = [
   { id: 'upper', parentId: null, x: -6, y: 0, rotation: 0, length: 28 },
@@ -61,54 +59,5 @@ describe('bindPoseBones', () => {
       bones: first.bones.map((b) => (b.id === 'fore' ? { ...b, rotation: 0.8 } : b)),
     };
     expect(captureBindPose(posed).bindPose![1]!.rotation).toBe(0);
-  });
-});
-
-describe('a static (non-keyframed) pose drag actually deforms the artwork', () => {
-  // Body block + thin arm, the same character the skinning test rigs.
-  const W = 128;
-  const H = 128;
-  const data = new Uint8ClampedArray(W * H * 4);
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = (y * W + x) * 4;
-      const body = x >= 14 && x < 58 && y >= 24 && y < 104;
-      const arm = x >= 58 && x < 114 && y >= 58 && y < 70;
-      data[i] = 255; data[i + 1] = 255; data[i + 2] = 255;
-      data[i + 3] = body || arm ? 255 : 0;
-    }
-  }
-  const rig: PuppetRig = { pins: [], meshDensity: 26, meshExpansion: 0 };
-  const mesh = buildRestMesh(W, H, 0, rig, undefined, coverageMaskFromImageData({ data, width: W, height: H }));
-
-  /** How far the artwork moves for a rig, binding the way the app binds it. */
-  const maxMove = (skel: SkeletonRig): number => {
-    const binding = getSkeletonBinding(mesh, bindPoseBones(skel), skel.weightPaint);
-    const posed = skinRigVertices(binding, computeWorldTransforms({ bones: skel.bones }), mesh.vertices);
-    let worst = 0;
-    for (let i = 0; i < mesh.vertices.length / 4; i++) {
-      worst = Math.max(
-        worst,
-        Math.hypot(posed[i * 4]! - mesh.vertices[i * 4]!, posed[i * 4 + 1]! - mesh.vertices[i * 4 + 1]!),
-      );
-    }
-    return worst;
-  };
-
-  const dragged = (skel: SkeletonRig): SkeletonRig => ({
-    ...skel,
-    bones: skel.bones.map((b) => (b.id === 'fore' ? { ...b, rotation: Math.PI / 4 } : b)),
-  });
-
-  it('REGRESSION: without a captured bind pose the drag moves nothing', () => {
-    // The bug: the drag writes into `bones`, `bones` is also the bind pose, so
-    // pose · bindInverse is the identity everywhere.
-    expect(maxMove(dragged({ bones: restBones }))).toBeLessThan(1e-6);
-  });
-
-  it('with the bind captured first, the forearm swings', () => {
-    const posed = dragged(captureBindPose({ bones: restBones }));
-    // A 28px forearm rotated 45° carries its tip ~21px.
-    expect(maxMove(posed)).toBeGreaterThan(15);
   });
 });

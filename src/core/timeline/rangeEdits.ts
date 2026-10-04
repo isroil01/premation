@@ -32,10 +32,6 @@
  * classic way a cut lands one frame early on some layers and not others.
  */
 
-import { getTimelineController } from './TimelineController';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { runAsOneHistoryEntry } from '@core/composition/compositeEdit';
-
 /** A half-open span of COMPOSITION seconds. */
 export interface RangeSeconds {
   start: number;
@@ -52,8 +48,6 @@ export interface RangeEditResult {
   /** Bars slid left to close the gap. Always 0 for a lift. */
   rippled: number;
 }
-
-const EMPTY: RangeEditResult = { removedSeconds: 0, splits: 0, deletedClips: 0, rippled: 0 };
 
 /**
  * Whether a bar lies wholly inside `[startF, endF)`.
@@ -74,104 +68,4 @@ export function barIsInsideRange(
 /** Whether a boundary falls strictly inside a bar, i.e. the bar must be split. */
 export function barStraddles(bar: { start: number; end: number }, frame: number): boolean {
   return bar.start < frame && bar.end > frame;
-}
-
-/**
- * Remove a comp-time range.
- *
- * `ripple` is the ONLY difference between Lift and Extract — see the header —
- * so they share one implementation rather than two that drift.
- *
- * `nodeIds`, when non-empty, restricts the edit to those scene nodes. Empty (the
- * default) means every unlocked bar the range crosses, which is what "remove
- * this moment" means: the picture, its separate audio, and the title over it.
- */
-export async function removeRange(
-  range: RangeSeconds,
-  opts: { ripple: boolean; nodeIds?: readonly string[]; label?: string } = { ripple: false },
-): Promise<RangeEditResult> {
-  const controller = getTimelineController();
-  const rootId = activeCompRootId();
-  const fps = controller.fps || 30;
-  const startF = Math.round(range.start * fps);
-  const endF = Math.round(range.end * fps);
-  // Nothing to remove in less than a frame. Rounding UP would eat a frame the
-  // user can see, which is worse than refusing an edit they cannot express.
-  if (endF <= startF) return EMPTY;
-
-  const restrict = opts.nodeIds && opts.nodeIds.length > 0 ? new Set(opts.nodeIds) : null;
-  const cuttable = (sourceId: string | null): boolean =>
-    !restrict || (sourceId !== null && restrict.has(sourceId));
-
-  const label = opts.label ?? (opts.ripple ? 'Extract' : 'Lift');
-
-  return runAsOneHistoryEntry(label, () => {
-    const result: RangeEditResult = {
-      removedSeconds: (endF - startF) / fps,
-      splits: 0,
-      deletedClips: 0,
-      rippled: 0,
-    };
-
-    // Two passes over the boundaries, not one: splitting at the IN point
-    // CREATES the bar that then has to be split at the OUT point, and a single
-    // pass over a snapshot of the list would never see it.
-    for (const edge of [startF, endF]) {
-      for (const layer of [...controller.layersOfComp(rootId)]) {
-        if (layer.locked || !cuttable(layer.sourceId)) continue;
-        if (barStraddles(layer, edge) && controller.splitClip(layer.id, edge / fps)) {
-          result.splits += 1;
-        }
-      }
-    }
-
-    for (const layer of [...controller.layersOfComp(rootId)]) {
-      if (layer.locked || !cuttable(layer.sourceId)) continue;
-      if (barIsInsideRange(layer, startF, endF)) {
-        // Never `rippleDeleteLayer` here: the ripple is applied once, below,
-        // across EVERY bar. Per-layer rippling would slide the same bar twice
-        // when two pieces of it fell inside the range.
-        if (controller.deleteLayerForClip(layer.id, { ripple: false })) result.deletedClips += 1;
-      }
-    }
-
-    if (opts.ripple) {
-      const gap = endF - startF;
-      for (const layer of [...controller.layersOfComp(rootId)]) {
-        // Locked bars stay put — the engine refuses to move them anyway, and
-        // counting them would report a shift that did not happen.
-        if (layer.locked || layer.start < endF) continue;
-        controller.setClipStart(layer.id, Math.max(0, layer.start - gap) / fps);
-        result.rippled += 1;
-      }
-    }
-
-    controller.invalidateLayerIndex();
-    return result;
-  });
-}
-
-/** Remove the range and leave the hole. */
-export function liftRange(range: RangeSeconds, nodeIds?: readonly string[]): Promise<RangeEditResult> {
-  return removeRange(range, { ripple: false, nodeIds, label: 'Lift' });
-}
-
-/** Remove the range and close the hole. */
-export function extractRange(range: RangeSeconds, nodeIds?: readonly string[]): Promise<RangeEditResult> {
-  return removeRange(range, { ripple: true, nodeIds, label: 'Extract' });
-}
-
-/**
- * The range Lift / Extract act on: the work area if there is one, otherwise
- * null.
- *
- * Deliberately NOT "the playhead to the end" as a fallback. A silent fallback
- * to a range the user never set is how a keystroke aimed at two seconds removes
- * the second half of a composition; refusing, and saying why, is the honest
- * answer.
- */
-export function workAreaRange(): RangeSeconds | null {
-  const wa = getTimelineController().getWorkArea();
-  if (!wa || wa.end - wa.start <= 0) return null;
-  return { start: wa.start, end: wa.end };
 }

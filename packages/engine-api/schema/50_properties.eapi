@@ -115,6 +115,15 @@ command pasteKeyframes = 506 { prop: PropRef = 1; time: Time = 2; keys: Keyframe
 /// property's keys keeps that id; any other id (or '') gets a new one. Times must be distinct; at least one key
 /// (the stopwatch, `setAnimated`, removes them all). Expressions are untouched. Returns the ids in input order.
 command setKeyframes = 520 [coalesce] { prop: PropRef = 1; keys: Keyframe[] = 2; } -> KeyframeIds;
+/// Block 3 — replace a layer's stored MEMBER keyframe lists: the inverse of `getMemberKeyframes`, for the keyframe
+/// assistants that transform one member at a time (The Smoother drops keys from `x` and `y` independently, The
+/// Wiggler re-tangents them). Each list is `getMemberKeyframes`' JSON (`[{t, value, easing?, bezier?, si?, so?,
+/// spatialInterp?, continuous?, roving?, id?, label?}]`, keyframe-axis seconds, stored units); `'[]'` removes the
+/// member's keys. Scalar tracks only. Records sort by time and a later record at the same time wins; a repeated
+/// `id` in one list keeps its first use. Expressions are untouched. Errors: `invalidArgument` (not JSON, a record
+/// without a finite `t` / `value`, an empty member name). Inverse: the previous lists.
+command setMemberKeyframes = 521 [coalesce] { layer: LayerId = 1; tracks: MemberKeyList[] = 2; }
+struct MemberKeyList { member: string = 1; keyframes: string = 2; }
 
 struct KeyframeIds { ids: KeyframeId[] = 1; }
 
@@ -168,7 +177,10 @@ command addPaintStroke = 615 { layer: LayerId = 1; stroke: string = 2; keys: Pai
 /// Merge `patch` (a JSON object) into one stroke and renormalise: a member set to null CLEARS that key (visible,
 /// pressure…); `id` cannot be patched; `points`, when given, follows addPaintStroke's rule. Shift-continue sends the
 /// joined points + pen arrays, the video switch `{visible: false}` / `{visible: null}`. Inverse: the stroke as it was.
-command updatePaintStroke = 616 [coalesce] { layer: LayerId = 1; stroke: string = 2; patch: string = 3; }
+/// Block 3 `append`: the patch's `points`, `pressure`, `tiltX`, `tiltY` are APPENDED to the stroke's own (AE's
+/// Shift-continue: the editor need not read the stroke back). A pen array only one side has is padded so the arrays
+/// stay parallel to the points (pressure with 1, tilt with 0); neither side having it leaves it absent.
+command updatePaintStroke = 616 [coalesce] { layer: LayerId = 1; stroke: string = 2; patch: string = 3; append?: bool = 4; }
 /// Delete strokes with every track, expression and data track under `paint.<id>.`. Unknown id: `notFound`.
 /// Inverse: the strokes at their index and their tracks exactly.
 command removePaintStrokes = 617 { layer: LayerId = 1; strokes: string[] = 2; }

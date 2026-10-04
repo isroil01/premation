@@ -195,12 +195,13 @@ export function useComponentProp(
   key: string,
 ): [unknown, (v: unknown) => void, ComponentPropHandle] {
   // B4: the value from the mirror; the row wakes on this property's info only
-  // (plus the layer's header, and its tree while the property is not there yet).
+  // (plus the layer's header, and the tree's SHAPE while the property is not there yet: it
+  // appears with a shape change or the tree's load — a write elsewhere on the layer wakes nothing).
   useRetainTree(nodeId);
   const e = useEngineEdit();
   const m = documentMirror();
   const path = nodeId ? componentPropPath(m.tree(nodeId), key) : null;
-  useMirrorKeys(nodeId ? [`layer:${nodeId}`, path ? `prop:${nodeId}|${path}` : `tree:${nodeId}`] : []);
+  useMirrorKeys(nodeId ? [`layer:${nodeId}`, path ? `prop:${nodeId}|${path}` : `struct:${nodeId}`] : []);
   const compKey = refKey(componentRef);
   const value = nodeId && compKey ? componentPropValue(m, nodeId, key) : undefined;
 

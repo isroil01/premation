@@ -19,8 +19,9 @@
  */
 
 import SceneGraph, { renderComponentsOf, renderTransformOf } from './SceneGraph';
-import { SCENE_KIND_PROP } from './seedDefaultScene';
+
 import type { SceneNode, Component } from '../types';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 function mkNode(id: string, extra: Component[] = []): SceneNode {
   return {

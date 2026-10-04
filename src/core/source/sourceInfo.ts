@@ -25,9 +25,7 @@
  */
 
 import type { SceneNode } from '@core/types';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import { useAssetStore } from '@stores/assetStore';
-import { readCompRef } from '@core/scene/compInstance';
 
 /**
  * Per-FILE reinterpretation. Every field is optional: absent means "believe
@@ -222,46 +220,6 @@ export function footageSourceOf(node: SceneNode): SourceInfo | null {
         ? { fields: i.fields }
         : {}),
   };
-}
-
-/**
- * Source facts for ANY layer that shows something authored elsewhere —
- * composition instance, footage or still. Null for generative layers (shapes,
- * text, nulls), which have no source and no intrinsic size.
- *
- * `compLookup` is required to resolve comp sources; without it a comp instance
- * returns null rather than guessing, which is what keeps a caller that has no
- * project store from silently reporting a comp as the host's size.
- */
-export function sourceOf(node: SceneNode, compLookup?: CompSourceLookup): SourceInfo | null {
-  const kind = readNodeKind(node);
-
-  if (kind === 'comp') {
-    const ref = readCompRef(node);
-    if (!ref || !compLookup) return null;
-    const c = compLookup(ref);
-    if (!c) return null;
-    return {
-      kind: 'comp',
-      id: ref,
-      width: c.width,
-      height: c.height,
-      storedWidth: c.width,
-      storedHeight: c.height,
-      // A composition's intrinsic time is its own duration — the fact that made
-      // comps unbounded on the timeline while footage was bounded.
-      durationSec: c.durationSeconds > 0 ? c.durationSeconds : null,
-      fps: c.fps > 0 ? c.fps : null,
-      par: 1,
-      loopCount: 1,
-      // A composition is rendered by us, into a straight-alpha target. There is
-      // no file convention to reinterpret, so it is straight by construction.
-      alpha: 'straight',
-    };
-  }
-
-  if (kind === 'video' || kind === 'image' || kind === 'svg') return footageSourceOf(node);
-  return null;
 }
 
 /**

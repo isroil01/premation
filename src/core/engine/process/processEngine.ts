@@ -35,14 +35,11 @@ import { isDevBuild } from '@core/config/devBuild';
 export interface AppProcessEngineOptions {
   /** Restart / unavailable notices (a toast). The unavailable notice comes once per outage. */
   onNotice?: (notice: ProcessEngineNotice) => void;
-  /** F2: a batch ANOTHER window caused arrived (this window's page replica refreshes). */
-  onForeignBatch?: () => void;
 }
 
 interface State {
   instance: ProcessEngineClient | null;
   noticeHook: ((n: ProcessEngineNotice) => void) | null;
-  foreignHook: (() => void) | null;
   lastNotice: ProcessEngineNotice | null;
   listeners: Set<() => void>;
 }
@@ -53,7 +50,7 @@ type WindowWithEngine = {
   __premationProcessEngine?: ProcessEngineClient;
 };
 
-const fresh = (): State => ({ instance: null, noticeHook: null, foreignHook: null, lastNotice: null, listeners: new Set() });
+const fresh = (): State => ({ instance: null, noticeHook: null, lastNotice: null, listeners: new Set() });
 let local: State | null = null;
 
 function state(): State {
@@ -81,9 +78,7 @@ export function processEngineBridge(): EngineBridge | null {
  * Is there an engine in this window? The C++ engine is the only engine and
  * always owns the document (docs/TS_ENGINE_REMOVAL.md): main's
  * `engine:status` always answers `enabled: true, ownsDocument: true`. False
- * only where there is no engine host — the jest harness (no bridge) and the
- * headless CLI's hidden window (no handler in that process), which still run
- * on the TypeScript engine until phase 4 deletes them.
+ * only where there is no engine host (a unit test without the native harness).
  */
 export async function processEngineEnabled(): Promise<boolean> {
   const bridge = processEngineBridge();
@@ -107,12 +102,10 @@ export function processEngineOwnsDocument(): Promise<boolean> {
 export function createAppProcessEngine(options: AppProcessEngineOptions = {}): ProcessEngineClient | null {
   const s = state();
   if (options.onNotice) s.noticeHook = options.onNotice;
-  if (options.onForeignBatch) s.foreignHook = options.onForeignBatch;
   if (s.instance) return s.instance;
   const bridge = processEngineBridge();
   if (!bridge) return null;
   s.instance = createProcessEngineClient(bridge, {
-    onForeignBatch: () => state().foreignHook?.(),
     onNotice: (n) => {
       const st = state();
       st.lastNotice = n;

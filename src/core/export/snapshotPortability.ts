@@ -31,11 +31,12 @@
  * offline) — telling the two apart needs a fetch per asset, which is the save's
  * job, not a click handler's.
  *
- * Pure half first (refs + library in, answer out) so it is testable without a
- * scene graph; `sceneMediaRefs` is the live walk that feeds it.
+ * Pure half first (refs + library in, answer out). The live answer takes the
+ * project's footage ITEMS as both: a layer reaches its media through an item
+ * (`LayerInfo.source`, an Inspector picker's item id), so the items are every
+ * media reference the snapshot carries.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isLocalFirst } from '@core/config/flags';
 import { LOCAL_BLOB_SCHEME } from '@core/assets/local/localBlobSource';
 
@@ -50,12 +51,6 @@ export interface LibraryAsset {
   id: string;
   src: string;
 }
-
-/** Every `assetId`/`src` pair a media component can carry — the pairs the bundle collector rewrites. */
-const SRC_PAIRS: ReadonlyArray<readonly [idKey: string, srcKey: string]> = [
-  ['assetId', 'src'],
-  ['__assetId', '__src'],
-];
 
 /** A src only the editor window can read. */
 function isSessionLocal(src: string): boolean {
@@ -104,33 +99,12 @@ export function snapshotIsPortable(input: {
   return uncarriableMedia(input.refs, input.library).length === 0;
 }
 
-/** Every media ref in the live scene, every root's subtree. */
-export function* sceneMediaRefs(): Generator<MediaRef> {
-  const stack = defaultSceneGraph.getRoots().map((r) => r.id);
-  while (stack.length > 0) {
-    const id = stack.pop()!;
-    const node = defaultSceneGraph.getNode(id);
-    if (!node) continue;
-    for (const c of node.components) {
-      const props = c.props as Record<string, unknown>;
-      for (const [idKey, srcKey] of SRC_PAIRS) {
-        const src = props[srcKey];
-        if (typeof src !== 'string') continue;
-        const assetId = props[idKey];
-        yield typeof assetId === 'string' && assetId ? { assetId, src } : { src };
-      }
-    }
-    for (const child of defaultSceneGraph.getChildren(id)) stack.push(child.id);
-  }
-}
-
 /**
- * The live answer: the open project, the given library, the build's flag.
- * The library is an argument (not a store read) for the same reason
- * `rebindAssetSrcs` takes one — core does not reach into the editor's stores.
+ * The live answer: the open project's footage items (id + media URL — the
+ * mirror's `ItemInfo.mediaUrl`), the build's flag. The items are an argument
+ * (not a store read): core does not reach into the editor's stores.
  */
-export function currentProjectSnapshotIsPortable(library: ReadonlyArray<LibraryAsset>): boolean {
-  // The flag first: off local-first the scene walk cannot change the answer.
+export function currentProjectSnapshotIsPortable(footage: ReadonlyArray<LibraryAsset>): boolean {
   if (!isLocalFirst()) return false;
-  return snapshotIsPortable({ localFirst: true, refs: sceneMediaRefs(), library });
+  return snapshotIsPortable({ localFirst: true, refs: footage.map((a) => ({ assetId: a.id, src: a.src })), library: footage });
 }

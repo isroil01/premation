@@ -20,8 +20,6 @@ import polygonClipping from 'polygon-clipping';
 import { trimSegments, trimPolyline, type Pt } from './trimPath';
 import { rectOutline } from '@core/geometry/extrudeMesh';
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
 import { repeaterCopies, defaultRepeater, type Repeater, type RepeaterComposite } from '@core/scene/repeater';
 import { renderComponentsOf } from '@core/scene/SceneGraph';
 
@@ -1706,107 +1704,4 @@ export function applyPathOpChain(
     out = out.map((r) => ({ ...r, pts: applyPathOp(r.pts, r.closed, op, timeSec) }));
   }
   return out;
-}
-
-/** Replace the whole chain. */
-export function setPathOps(nodeId: string, ops: readonly PathOp[]): void {
-  defaultSceneGraph.setPathOps(nodeId, ops.length > 0 ? [...ops] : undefined);
-  bumpScene();
-}
-
-/** Append an operator to the end of the chain. */
-export function addPathOp(nodeId: string, op: PathOp = defaultPathOp()): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  setPathOps(nodeId, [...readPathOps(node), op]);
-}
-
-/**
- * Append a Trim entry and return its id.
- *
- * The id is the point: keyframes are id-scoped (`pathop.<id>.end`), so a caller
- * that wants to animate a draw-on needs it back. Seeds, `sceneInsert` and the
- * AI tools all used to write the fixed `trim.end` path, which worked only while
- * a layer could have exactly one trim in exactly one place.
- */
-export function addTrimOp(nodeId: string, patch: Partial<PathOp> = {}): string {
-  const op: PathOp = { ...defaultTrimOp(), ...patch, type: 'trim' };
-  addPathOp(nodeId, op);
-  return op.id;
-}
-
-/**
- * The node's trim entry id, adding one if it has none.
- *
- * For callers that want "the trim on this layer" without caring whether it is
- * already there — the AI's `set_trim_path` being the case that matters.
- */
-export function ensureTrimOp(nodeId: string): string {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const existing = node ? readTrimOp(node) : null;
-  return existing ? existing.id : addTrimOp(nodeId);
-}
-
-/** Append a Repeater entry and return its id (keyframes are id-scoped). */
-export function addRepeaterOp(nodeId: string, patch: Partial<PathOp> = {}): string {
-  const op: PathOp = { ...defaultRepeaterOp(), ...patch, type: 'repeater' };
-  addPathOp(nodeId, op);
-  return op.id;
-}
-
-/** The node's repeater entry id, adding one if it has none. */
-export function ensureRepeaterOp(nodeId: string): string {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const existing = node ? readRepeaterOp(node) : null;
-  return existing ? existing.id : addRepeaterOp(nodeId);
-}
-
-/**
- * Patch the node's repeater, adding one at the end of the chain if absent, and
- * return its id.
- *
- * The replacement for `repeater.ts`'s `updateRepeater`, for callers that want
- * "set these fields on this layer's repeater" without tracking operator ids —
- * the AI's `set_repeater` and the recipe seeds. Returns the id so an animating
- * caller can build `pathop.<id>.<param>` without a second lookup, which is the
- * whole reason `addTrimOp` returns one too.
- */
-export function updateRepeaterOp(nodeId: string, patch: Partial<PathOp>): string {
-  const opId = ensureRepeaterOp(nodeId);
-  // `type` is pinned so a patch can never retype the repeater into a deformer,
-  // which would reinterpret `copies` as an unrelated operator's parameter.
-  updatePathOp(nodeId, opId, { ...patch, type: 'repeater' });
-  return opId;
-}
-
-export function removePathOp(nodeId: string, opId: string): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  setPathOps(nodeId, readPathOps(node).filter((o) => o.id !== opId));
-}
-
-/** Patch one operator, found by id. */
-export function updatePathOp(nodeId: string, opId: string, patch: Partial<PathOp>): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  setPathOps(
-    nodeId,
-    // `id` is spread first and then re-pinned, so a patch carrying an `id` can
-    // never re-key an operator out from under its own keyframes.
-    readPathOps(node).map((o) => (o.id === opId ? { ...o, ...patch, id: o.id } : o)),
-  );
-}
-
-/** Move an operator to a new index. Keyframes follow it — they are id-scoped. */
-export function reorderPathOp(nodeId: string, opId: string, toIndex: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const ops = readPathOps(node);
-  const from = ops.findIndex((o) => o.id === opId);
-  if (from < 0) return;
-  const next = [...ops];
-  const [moved] = next.splice(from, 1);
-  if (!moved) return;
-  next.splice(Math.max(0, Math.min(next.length, toIndex)), 0, moved);
-  setPathOps(nodeId, next);
 }

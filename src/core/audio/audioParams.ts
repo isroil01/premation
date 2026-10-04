@@ -25,8 +25,6 @@
  * differently, discoverable only by exporting and listening.
  */
 
-import { defaultAnimation } from '@motion/animation';
-
 /** Animatable level track, in decibels. */
 export const AUDIO_LEVEL_DB_PROP = 'audioLevelDb';
 
@@ -115,35 +113,6 @@ export function voicePanner(
   return panner;
 }
 
-/** True when this node has pan keyframes. */
-export function isPanAnimated(nodeId: string): boolean {
-  return defaultAnimation
-    .tracksFor(nodeId)
-    .some((t) => t.prop === AUDIO_PAN_PROP && t.keyframes.length > 0);
-}
-
-/** Pan at a composition time, falling back to the static value. */
-export function samplePan(nodeId: string, compSec: number, staticPan: number): number {
-  const v = defaultAnimation.sample(nodeId, AUDIO_PAN_PROP, compSec);
-  return typeof v === 'number' ? v : staticPan;
-}
-
-/** True when this node has level keyframes (so a constant is not enough). */
-export function isLevelAnimated(nodeId: string): boolean {
-  return defaultAnimation
-    .tracksFor(nodeId)
-    .some((t) => t.prop === AUDIO_LEVEL_DB_PROP && t.keyframes.length > 0);
-}
-
-/**
- * Level in dB for a node at a composition time, falling back to its static
- * value when there are no keyframes.
- */
-export function sampleLevelDb(nodeId: string, compSec: number, staticDb: number): number {
-  const v = defaultAnimation.sample(nodeId, AUDIO_LEVEL_DB_PROP, compSec);
-  return typeof v === 'number' ? v : staticDb;
-}
-
 /**
  * One scheduled point: `offsetSec` after the voice starts, this param value.
  *
@@ -164,54 +133,6 @@ export interface RampPoint {
  *  cost. Between points the audio thread interpolates linearly at sample rate,
  *  so this is the resolution of the CONTROL curve, not of the audio. */
 const RAMP_HZ = 50;
-
-/**
- * Build the gain curve for one voice over `durationSec` of composition time.
- *
- * `startCompSec` is where the voice begins on the comp timeline; offsets in the
- * returned points are relative to the voice's own start, which is what both
- * `AudioBufferSourceNode.start(when)` and the offline scheduler need.
- *
- * A voice whose level is not animated returns exactly one point — a constant —
- * so the common case costs nothing and schedules no ramp at all.
- */
-/**
- * The pan curve for one voice, in `StereoPannerNode` units.
- *
- * Deliberately a sibling of {@link buildParamRamp} rather than a parameter on
- * it: the two map through different functions (dB→gain is exponential, percent
- * →norm is linear), and a shared builder taking a mapper reads worse than two
- * three-line functions that each say what they are.
- */
-export function buildPanRamp(
-  nodeId: string,
-  staticPan: number,
-  startCompSec: number,
-  durationSec: number,
-  opts?: { animated?: boolean; hz?: number },
-): RampPoint[] {
-  return buildRamp(
-    (compSec) => panToNorm(samplePan(nodeId, compSec, staticPan)),
-    startCompSec,
-    durationSec,
-    { animated: opts?.animated ?? isPanAnimated(nodeId), hz: opts?.hz },
-  );
-}
-
-export function buildParamRamp(
-  nodeId: string,
-  staticDb: number,
-  startCompSec: number,
-  durationSec: number,
-  opts?: { animated?: boolean; hz?: number },
-): RampPoint[] {
-  return buildRamp(
-    (compSec) => dbToGain(sampleLevelDb(nodeId, compSec, staticDb)),
-    startCompSec,
-    durationSec,
-    { animated: opts?.animated ?? isLevelAnimated(nodeId), hz: opts?.hz },
-  );
-}
 
 /**
  * The scheduling half of {@link buildParamRamp}, with the level semantics gone.

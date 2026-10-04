@@ -15,7 +15,7 @@ import {
   notify3DPrimitive, notify3DText, notifyAmbientFill, notifyCameraNeeds3D,
   type CameraSeed, type LightSeed, type Primitive3DKind, type ShapeKind,
 } from '@core/scene/layerBuilders';
-import type { SceneKind } from '@core/scene/seedDefaultScene';
+import type { SceneKind } from '@core/scene/sceneKind';
 import type { PrimitiveSpec } from '@core/scene/primitiveLayer';
 import { defaultTextSize } from '@core/scene/textDefaults';
 import { compLayersDeep, fieldValue } from '@core/mirror/layerFields';

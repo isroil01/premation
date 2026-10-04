@@ -8,7 +8,7 @@
 import type { IconName } from '@components/Icon';
 import type { ClipCut } from './clipCuts';
 import { TIMELINE_EXTRA_COLUMNS, extraColumnsWidth } from './timelineColumns';
-import { TIMELINE_GROUP_ORDER, groupForProp, type TimelineGroupKey } from '@core/timeline/propertyTree';
+import { TIMELINE_GROUP_ORDER, groupForPropWith, type TimelineGroupKey } from '@core/timeline/propertyTree';
 import type { TimelineTrack, TimelinePropertyTrack } from './TimelineModel';
 
 /**
@@ -203,6 +203,6 @@ export function getPropertyCategory(prop: TimelinePropertyTrack): { key: string;
 
   // The property tree's own classifier, which reads the prop PATH (effect
   // prefixes, mask paths, text animators) rather than words in the label.
-  const group = groupForProp(prop.prop);
+  const group = groupForPropWith(prop.prop);
   return { key: group, ...GROUP_HEADING[group], order: TIMELINE_GROUP_ORDER[group] };
 }

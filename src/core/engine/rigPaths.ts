@@ -11,8 +11,7 @@ import type { Command, PropRef, Value } from '@motion/engine-api';
 import { RIG_GROUP_MATCH } from './rigSpecs';
 import { compTime } from './propRefs';
 import { edit } from './uiEdits';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { documentMirror } from '@stores/documentMirror';
 import { validateRig, type RigProblem } from '@core/rig/rigPresets';
 import type { SkeletonRig } from '@core/rig/skeletonCommands';
 
@@ -79,8 +78,7 @@ export function rigSet(layer: string, path: string, value: Value): Command {
 export async function applyRigPresetEdit(nodeId: string, preset: SkeletonRig, label = 'Auto-Rig'): Promise<RigProblem[]> {
   const problems = validateRig(preset);
   if (problems.length > 0) return problems;
-  const node = defaultSceneGraph.getNode(nodeId);
-  const kind = node ? readNodeKind(node) : '';
+  const kind = documentMirror().layer(nodeId)?.kind;
   const rig = preset.meshMode === undefined && (kind === 'image' || kind === 'svg') ? { ...preset, meshMode: 'silhouette' as const } : preset;
   await edit(label, rigSet(nodeId, rigPaths.wholeSkeleton, rigValues.json(rig)));
   return [];

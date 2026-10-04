@@ -14,7 +14,7 @@
  * construction).
  */
 
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 import { bezierCorner as corner } from '@motion/workspace';
 import { type SetKf } from '@core/template/templates/builders';
 import type { LayerSink } from '@/engine-client/layerSink';

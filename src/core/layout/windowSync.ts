@@ -1,51 +1,33 @@
 /**
  * windowSync — makes a popped-out panel a LIVE VIEW of the main editor.
  *
- * `syncChannel` already provided the transport (BroadcastChannel in the browser,
- * Electron IPC on the desktop) but nothing ever called `publish`, and
- * PopoutRoute's two subscribers had empty bodies. A pop-out window therefore
- * booted its own realm, ran `seedDefaultScene` into its OWN scene graph, and
- * showed a completely different composition from the one you detached it from —
- * which makes the whole second-monitor workflow useless.
+ * The DOCUMENT is never sent between windows: the C++ engine owns it and every
+ * window is a mirror of that engine (main relays its events to each window;
+ * edits are engine requests).
  *
- * This module wires both directions:
+ * What travels here is EDITOR state, which the engine does not hold:
  *
- *   main  ──doc/selection/time──▶  popout      (main is the source of truth)
- *   main  ◀──doc/selection/time──  popout      (edits made in the pop-out apply back)
- *
- * The document is sent whole (`captureDocument`/`restoreDocument` — the same pair
- * autosave and the cloud use) rather than as a diff. That is heavier per message
- * but it is the only representation guaranteed to round-trip every subsystem, and
- * it cannot drift: a dropped message just means the next one re-syncs everything.
- * Sends are debounced so a drag publishes once when it settles, not per tick.
+ *   main  ──selection/time──▶  popout
+ *   main  ◀──selection/time──  popout
  *
  * Echo control: `syncChannel` drops messages from the sender's own window id, and
- * `applying` suppresses the re-publish that applying a remote document would
- * otherwise trigger through the scene/animation events.
+ * `applying` suppresses the re-publish that applying a remote change would
+ * otherwise trigger through the stores.
  */
 
 import { syncChannel } from './syncChannel';
-import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
-import { getEventBus } from '@core/events/EventBus';
-import { isMediaDecodeRepaint } from '@core/engine/mediaRepaint';
-import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { usePlaybackClockStore, setTime as setClockTime } from '@stores/playbackClockStore';
-import { refreshReplicaFromEngine } from '@core/engine/engineInstance';
 
 /** This window renders a detached panel, not the editor shell. */
 export function isPopoutWindow(): boolean {
   return typeof window !== 'undefined' && window.location.hash.startsWith('#/popout/');
 }
 
-const MSG_DOC = 'doc';
-const MSG_DOC_REQUEST = 'doc-request';
 const MSG_SELECTION = 'selection-update';
 const MSG_TIME = 'time-update';
 
-/** Scene/animation edits settle before we serialize the whole document. */
-const DOC_DEBOUNCE_MS = 120;
 /** The playhead moves 60×/s; a detached view does not need every tick. */
 const TIME_THROTTLE_MS = 60;
 
@@ -54,61 +36,15 @@ interface TimePayload {
   frame: number;
 }
 
-export interface WindowSyncOptions {
-  /**
-   * F2: the C++ engine owns the document. Every window is then a mirror of the
-   * engine (main relays its events to each; edits are engine requests), so the
-   * DOCUMENT is not sent between windows at all — a pop-out's page replica is
-   * filled from the engine's `exportDocument` (engineInstance
-   * `refreshReplicaFromEngine`, then replicaRefresh.ts on every foreign batch).
-   * Selection and the playhead are editor state and still travel here.
-   */
-  engineDocument?: boolean;
-}
-
 /**
  * Start syncing this window with the others. Returns a teardown function.
  * Safe to call in any window; both roles publish and both apply.
  */
-export function startWindowSync(opts: WindowSyncOptions = {}): () => void {
+export function startWindowSync(): () => void {
   if (typeof window === 'undefined') return () => undefined;
-  const engineDocument = opts.engineDocument === true;
 
   /** True while we are writing a remote change into local state. */
   let applying = false;
-  let docTimer: number | null = null;
-  let lastTimeSent = 0;
-  let disposed = false;
-
-  const publishDoc = (): void => {
-    if (applying || disposed || engineDocument) return;
-    try {
-      syncChannel.publish<EditorDocument>(MSG_DOC, captureDocument());
-    } catch {
-      /* a half-built document during boot is not worth breaking the editor for */
-    }
-  };
-
-  const scheduleDoc = (): void => {
-    if (applying || disposed || engineDocument) return;
-    // Nobody to send to: a popout announces itself with a doc-request, and
-    // until one has, capturing the document per edit is pure cost.
-    if (!syncChannel.hasPeers()) return;
-    if (docTimer !== null) window.clearTimeout(docTimer);
-    docTimer = window.setTimeout(() => {
-      docTimer = null;
-      publishDoc();
-    }, DOC_DEBOUNCE_MS);
-  };
-
-  // ── Outbound ────────────────────────────────────────────────────
-  const subs = [
-    getEventBus().on('SceneGraphChanged', scheduleDoc),
-    // Media decode repaints carry no document change — publishing one to
-    // the other window is a whole-document serialize per decoded frame.
-    getEventBus().on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) scheduleDoc(); }),
-    getEventBus().on('NodeUpdated', scheduleDoc),
-  ];
 
   const unsubSelection = useSelectionStore.subscribe((state, prev) => {
     if (applying || state.ids === prev.ids) return;
@@ -117,6 +53,7 @@ export function startWindowSync(opts: WindowSyncOptions = {}): () => void {
 
   // The LIVE clock, not the project store: the tab record there is only a
   // ≤4Hz mirror during playback (see playbackClockStore).
+  let lastTimeSent = 0;
   const unsubTime = usePlaybackClockStore.subscribe((state, prev) => {
     if (applying) return;
     const id = useProjectStore.getState().activeTabId;
@@ -129,33 +66,6 @@ export function startWindowSync(opts: WindowSyncOptions = {}): () => void {
     lastTimeSent = stamp;
     syncChannel.publish<TimePayload>(MSG_TIME, { time: now.time, frame: now.frame });
   });
-
-  // ── Inbound ─────────────────────────────────────────────────────
-  const offDoc = syncChannel.subscribe<EditorDocument>(MSG_DOC, (doc) => {
-    // F2: the engine is the one source; a page document from another window is not.
-    if (!doc || engineDocument) return;
-    applying = true;
-    try {
-      // `applying` stops this window from re-broadcasting a document that
-      // arrived from ANOTHER window (a restore records no undo entry).
-      restoreDocument(doc);
-      bumpScene();
-    } finally {
-      // Release on the next macrotask: restoreDocument's own store writes emit
-      // events synchronously, and those must not be mistaken for local edits.
-      window.setTimeout(() => { applying = false; }, 0);
-    }
-  });
-
-  // A window that just opened has an empty (or seeded) scene and asks for the
-  // current one. Everyone answers; the asker keeps whichever arrives.
-  const offDocRequest = syncChannel.subscribe(MSG_DOC_REQUEST, () => {
-    if (isPopoutWindow()) return; // only the editor shell is authoritative
-    publishDoc();
-  });
-
-  // F2: a pop-out's first document comes from the engine, not the editor window.
-  if (engineDocument && isPopoutWindow()) void refreshReplicaFromEngine();
 
   const offSelection = syncChannel.subscribe<readonly string[]>(MSG_SELECTION, (ids) => {
     if (!Array.isArray(ids)) return;
@@ -179,19 +89,9 @@ export function startWindowSync(opts: WindowSyncOptions = {}): () => void {
   });
 
   return () => {
-    disposed = true;
-    if (docTimer !== null) window.clearTimeout(docTimer);
-    for (const s of subs) s.dispose();
     unsubSelection();
     unsubTime();
-    offDoc();
-    offDocRequest();
     offSelection();
     offTime();
   };
-}
-
-/** Ask the editor shell for the current document (called by a fresh pop-out). */
-export function requestDocumentSync(): void {
-  syncChannel.publish(MSG_DOC_REQUEST, {});
 }

@@ -15,6 +15,9 @@
 #include "core/blocking_queue.hpp"
 #include "core/session.hpp"
 #include "core/simulated_sink.hpp"
+#if defined(PREMATION_ENGINE_HEADLESS)
+#include "scene/rig_overlay.hpp"
+#endif
 #include "io/framed_writer.hpp"
 #include "io/pipe_ffi.hpp"
 #include "os_ffi.hpp"
@@ -293,7 +296,17 @@ int run_engine(const EngineOptions& options) {
     return jobs::probe_media(path, facts, error);
   };
 #endif
+#if defined(PREMATION_ENGINE_HEADLESS)
+  // Tests and CI only (never shipped): no frame builder, but the rig is
+  // GPU- and raster-free (engine_scene_core) — getRigPose and the overlay's
+  // rig answer as in the shipped engine. No media hooks: an image layer's
+  // mesh falls back to its box grid.
+  scene::DocRigQueries headlessRig;
+#endif
   Session session(outbox, *sink, sessionOptions);
+#if defined(PREMATION_ENGINE_HEADLESS)
+  session.set_rig_queries(&headlessRig);
+#endif
 #if defined(PREMATION_HAVE_SCENE)
   session.set_frame_builder(frameBuilder.get());
   session.set_media_clock(mediaClock.get());

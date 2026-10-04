@@ -18,7 +18,7 @@
  * then selects the rigged layer and picks the Puppet Pin tool.
  */
 
-import type { SceneKind } from '@core/scene/seedDefaultScene';
+import type { SceneKind } from '@core/scene/sceneKind';
 import { requireEngineJob, startEngineJob } from '@core/engine/engineJobs';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore, type Tool } from '@stores/uiStore';
