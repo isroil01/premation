@@ -358,6 +358,10 @@ Tol tolerance(const std::string& scene) {
       {"highpass", {1e-5, 115}},
       {"fx_automation", {1e-4, 85}},
       {"chain_order", {1e-5, 115}},
+      // De-esser: a bandpass biquad feeding a compressor — the same libm last
+      // bits as the filters above (glibc 6.9e-6 / 104 dB, measured 2026-10-04;
+      // Windows matches Chromium's libm and is exact).
+      {"de_esser", {2e-5, 95}},
       // Convolution: FFT partitions vs Chromium's ReverbConvolver.
       {"reverb", {1e-5, 115}},
       {"reverb_long", {2e-5, 115}},

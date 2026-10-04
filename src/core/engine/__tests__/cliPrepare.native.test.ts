@@ -88,6 +88,7 @@ maybe('premation-engine --prepare', () => {
     const saveTo = path.join(dir, 'square.motion');
     const out = await runEnginePrepare({ projectPath, comp: 'Main', reframe: { ratio: 1 }, saveTo }, { enginePath: exe, workDir: path.join(dir, 'w3') });
     if (!out.ok && /built without --prepare|exit code 3/.test(out.message)) return;
+    if (!out.ok && /runs no jobs/.test(out.message)) return;  // the headless engine: auto-reframe is a job
     expect(out).toMatchObject({ ok: true, result: { reframed: { width: 360, height: 360 } } });
     if (!out.ok) return;
     expect(out.result.comp).toBe(out.result.reframed?.comp);
@@ -130,6 +131,32 @@ maybe('premation-engine --prepare', () => {
       return r.ok ? (r.value as { layers: Array<{ name: string }> }).layers[0]?.name : null;
     });
     expect(name).toBe('Replayed');
+  });
+
+  it('replays a log recorded mid-session: its gesture ids are the recording engine\'s', async () => {
+    // Recorded after three earlier gestures: the log closes gestures 4 and 5,
+    // while a fresh engine opens its own first gesture. Each recorded
+    // endGesture must close the gesture the replayed beginGesture opened.
+    const rec = (seq: number, value: unknown): string =>
+      JSON.stringify({ request: { seq, body: { kind: 'command', value }, origin: 'ui' }, revisionAfter: seq, documentHash: 0 });
+    const log = [
+      JSON.stringify({ header: { document: JSON.parse(startDocument), ids: {}, revision: 0 } }),
+      rec(1, { type: 'beginGesture', label: 'Rename' }),
+      rec(2, { type: 'renameLayer', layer: textLayer, name: 'First' }),
+      rec(3, { type: 'endGesture', gesture: 4, commit: true }),
+      rec(4, { type: 'beginGesture', label: 'Rename again' }),
+      rec(5, { type: 'renameLayer', layer: textLayer, name: 'Second' }),
+      rec(6, { type: 'endGesture', gesture: 5, commit: true }),
+    ].join('\n');
+    const saveTo = path.join(dir, 'replayed-gestures.motion');
+    const out = await runEnginePrepare({ projectPath, requests: commandLogRequests(log).requests, saveTo }, { enginePath: exe, workDir: path.join(dir, 'w8') });
+    if (!out.ok && /built without --prepare|exit code 3/.test(out.message)) return;
+    expect(out).toMatchObject({ ok: true, result: { replayed: { applied: 7, refused: 0 } } });
+    const name = await readBack(saveTo, async (c) => {
+      const r = await c.query({ type: 'getLayers', layers: [textLayer] } as never);
+      return r.ok ? (r.value as { layers: Array<{ name: string }> }).layers[0]?.name : null;
+    });
+    expect(name).toBe('Second');
   });
 
   it('refuses a composition that is not there, by name', async () => {

@@ -34,10 +34,10 @@ name: CI
 
 on:
   push:
-    branches: [dev, main]
+    branches: [native-core, dev, main]
   pull_request:
-    branches: [dev, main]
-  # Run the checks on demand (e.g. on a branch whose PRs target neither).
+    branches: [native-core, dev, main]
+  # Run the checks on demand.
   workflow_dispatch:
 
 # A newer push to the same branch/PR makes the older run pointless.

@@ -33,6 +33,28 @@ Each new C++ parity test prints WARN and skips while its fixture is missing.
 - Done on p1-freeze-data: the write-on, deform, Pixel Motion, extrusion-faces and alpha-mesh fixtures were generated once and committed as frozen data; the GEN_NATIVE_* branches are gone (see that section).
 - [ ] Per-character 3D text has no fixture (glyph widths depend on fonts): check visually and against the golden 3D text scenes.
 
+## Production readiness round (2026-10-04, after the TS engine's removal)
+
+CI ran the engine's own suites for the first time since 2026-09-28 (the
+engine had not compiled there). Fixed and pushed; what CI cannot show:
+
+- [ ] Real Mac: image footage (PNG / JPEG / WebP / GIF / BMP) renders — stills
+      now decode through Skia's codecs off Windows (`scene/image_decode_ffi.cpp`;
+      vcpkg skia gains `png` / `jpeg` / `webp` on macOS and Linux). TIFF stays
+      Windows-only. Re-save an image in Finder: the layer picks up the change.
+- [ ] Real Mac / Linux: Export ▸ JPEG sequence writes frames (the engine's
+      baseline encoder, 4:4:4; Windows keeps WIC) and they open in Preview / an
+      image viewer.
+- [ ] Real Mac: route C (`[shared]`): the GitHub runner's paravirtual Metal
+      device refuses IOSurface BeginAccess, so the test skips there — this is
+      the only place it runs. Same for VideoToolbox decode (the runner's device
+      refuses H.264 and the engine falls back to software).
+- [ ] Navigating into a retimed precomp / footage layer (Composition
+      navigator, Tab ▸ open precomp at the playhead) lands on the source time —
+      `mapLayerTime` maps footage through start / Speed / Time Remap now.
+- [ ] `premation render --commands <log>` with a log recorded mid-session
+      (`recordSession()` after a few viewport drags) replays with 0 refused.
+
 ## Branch by branch
 
 ### cleanup-dead-code, f2-motion-bundles (verified here)

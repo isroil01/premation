@@ -167,12 +167,13 @@ endif()
 add_executable(premation-engine-headless
   src/main.cpp
   src/engine_process.cpp
+  src/cli_prepare.cpp  # `--prepare` too, so the CLI's replay / template / caption tests run without Dawn
   src/os_ffi.cpp
   src/io/pipe_ffi.cpp
   src/io/framed_writer.cpp
 )
 target_include_directories(premation-engine-headless PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/io)
-target_compile_definitions(premation-engine-headless PRIVATE PREMATION_ENGINE_HEADLESS=1)
+target_compile_definitions(premation-engine-headless PRIVATE PREMATION_ENGINE_HEADLESS=1 PREMATION_HAVE_PREPARE=1)
 target_link_libraries(premation-engine-headless PRIVATE engine_core engine_plugins motion::options)
 if(WIN32)
   target_link_libraries(premation-engine-headless PRIVATE winmm)
@@ -1090,6 +1091,8 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
                                             engine_effect_chain PRIVATE motion::options)
   if(WIN32)
     target_link_libraries(engine_scene PRIVATE windowscodecs ole32)  # WIC: still-image footage (image_decode_ffi.cpp)
+  else()
+    target_link_libraries(engine_scene PRIVATE unofficial::skia::skia)  # Skia's codecs: still-image footage (image_decode_ffi.cpp)
   endif()
   if(TARGET engine_media_gpu)
     target_link_libraries(engine_scene PUBLIC engine_media_gpu)

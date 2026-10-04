@@ -3,7 +3,8 @@
 // channels, straight alpha, no colour conversion; the layer's
 // premultipliedSource flag tells the shader how to read them). ffmpeg in the
 // engine's vcpkg build carries no still-image decoders, so stills go through
-// the OS codec: WIC on Windows (image_decode_ffi.cpp); elsewhere not yet.
+// WIC on Windows and Skia's codecs (PNG / JPEG / WebP / GIF / BMP) on macOS and
+// Linux (image_decode_ffi.cpp). TIFF decodes on Windows only.
 #pragma once
 
 #include <cstdint>

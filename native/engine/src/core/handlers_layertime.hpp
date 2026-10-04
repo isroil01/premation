@@ -16,12 +16,18 @@
 #include <vector>
 
 #include "handlers_common.hpp"
+#include "props.hpp"
 
 namespace premation::doc {
 
 /// layerTime.ts `updateNodeLayerTime(node, patch)`: patch the node's time
 /// config (normalized; cleared back to undefined when identity).
 void update_node_layer_time(Document& d, std::string_view node, const std::function<void(LayerTime&)>& patch);
+
+/// retime.ts `retimedSourceSeconds` over the layer's first bar: the source
+/// seconds a (non-precomp) layer shows at comp seconds `t` — start / sourceIn,
+/// then its Speed % integral or Time Remap. Identity for a layer with no bar.
+double layer_source_seconds(const PCtx& pc, std::string_view layer, double t);
 
 /// retimeCommands.ts `setRetimeMode(ids, mode)` — converts what each layer had.
 void set_retime_mode(HCtx& x, const std::vector<std::string>& ids, api::RetimeMode mode);

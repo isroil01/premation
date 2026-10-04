@@ -59,6 +59,12 @@ async function engineAt(t: number): Promise<{ speed: number | undefined }> {
   return { speed: val && val.kind === 'scalar' ? val.value : undefined };
 }
 
+/** The engine's `mapLayerTime`: comp seconds → the source seconds the layer shows (outward: back). */
+async function engineMapped(t: number, outward = false): Promise<number | undefined> {
+  const r = await h.query({ type: 'mapLayerTime', layer: s.V, time: sec(t), outward });
+  return r.time === undefined ? undefined : r.time / 705_600_000;
+}
+
 async function settled(): Promise<ReturnType<typeof documentMirror>> {
   const m = documentMirror();
   await m.loadTree(s.V);
@@ -92,7 +98,11 @@ test('Speed %: the curve is the engine\'s; the source time is the curve integrat
     expect(mirrorRetimedSourceSeconds(m, s.V, t, bar)).toBeCloseTo(src, 6);
     // The frame shown is the source time on the file's 30 fps grid.
     expect(Math.abs(mirrorSourceFrameAt(m, s.V, t, bar) - src * 30)).toBeLessThan(1);
+    // …and the engine's mapLayerTime answers the same (it once returned comp time unchanged).
+    expect(await engineMapped(t)).toBeCloseTo(src, 6);
   }
+  // Back out through a Speed curve has no single answer.
+  expect(await engineMapped(1, true)).toBeUndefined();
 });
 
 test('the footage budget and Fit to Footage', async () => {
@@ -111,7 +121,18 @@ test('Frame Number: the remap the switch writes keeps the source times', async (
   const m = await settled();
   const bar = mirrorRetimeBar(m, s.V);
   expect(mirrorRetimeSummary(m, s.V)!.mode).toBe('frames');
-  for (const [t, src] of SOURCE_AT) expect(mirrorRetimedSourceSeconds(m, s.V, t, bar)).toBeCloseTo(src, 6);
+  for (const [t, src] of SOURCE_AT) {
+    expect(mirrorRetimedSourceSeconds(m, s.V, t, bar)).toBeCloseTo(src, 6);
+    expect(await engineMapped(t)).toBeCloseTo(src, 6);
+  }
+});
+
+test('mapLayerTime without a retime: the clip offset, both ways', async () => {
+  await h.run({ type: 'setRetime', layer: s.V, mode: 'normal' });
+  await engineIdle();
+  // Starts half a second in, plays the file from 0: source = comp − 0.5.
+  expect(await engineMapped(2)).toBeCloseTo(1.5, 9);
+  expect(await engineMapped(1.5, true)).toBeCloseTo(2, 9);
 });
 
 test('retimeEdits composes from the mirror: the key at the playhead, a preset across the bar', async () => {

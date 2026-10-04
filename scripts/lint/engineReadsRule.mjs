@@ -61,7 +61,9 @@ const SINGLETONS = new Set(['defaultSceneGraph', 'defaultAnimation']);
  * are editor session state; its `comps` records are the document).
  */
 // (`useAssetStore` / `useCompositionStore` are no markers since round 7: mirror projections, see DOC_STORES.)
-const ENGINE_MARKER = /\b(defaultSceneGraph|defaultAnimation|getTimelineController|useSceneStore|useMotionBlurStore|getNode\(|readNodeKind\(|catalogFor\()/;
+// `getNode(` counts as a FREE call only (the deleted TS scene graph's global): `port.getNode(…)` is the
+// viewport's SceneGraphPort, built from the mirror and the overlay push (core/workspace/geometryPort.ts).
+const ENGINE_MARKER = /\b(defaultSceneGraph|defaultAnimation|getTimelineController|useSceneStore|useMotionBlurStore|readNodeKind\(|catalogFor\()|(?<![.\w])getNode\(/;
 const PROJECT_STORE_MARKER = /\buseProjectStore\b/;
 const PROJECT_COMPS_MARKER = /\bcomps\b/;
 

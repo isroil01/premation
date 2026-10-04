@@ -10,6 +10,7 @@
 #include "docio.hpp"
 #include "handlers_common.hpp"
 #include "handlers_items.hpp"
+#include "handlers_layertime.hpp"
 #include "jsmath.hpp"
 #include "ptree.hpp"
 #include "readmodel.hpp"
@@ -201,7 +202,17 @@ std::optional<api::Time> map_layer_time(const PCtx& pc, const std::string& layer
   const Document& d = pc.d;
   const Node& n = require_layer(d, layer);
   const double t = flicks_to_seconds(time);
-  if (!read_comp_ref(n)) return seconds_to_flicks(t);
+  if (!read_comp_ref(n)) {
+    // Footage and every other non-precomp layer: the source seconds shown —
+    // start / sourceIn, then its Speed % or Time Remap (retime.ts).
+    if (!outward) return seconds_to_flicks(layer_source_seconds(pc, layer, t));
+    // Back out: a retime curve can show one source time at many comp times, or at none.
+    if (anim_is_animated(d, layer, "timeSpeed") || anim_is_animated(d, layer, "timeRemap") ||
+        anim_is_animated(d, layer, "precompTime")) {
+      return std::nullopt;
+    }
+    return seconds_to_flicks(t - layer_source_seconds(pc, layer, 0));
+  }
   double r = 0;
   if (outward) {
     // A keyframed time remap can show one inner frame at many times, or at none.

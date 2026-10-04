@@ -1,4 +1,5 @@
-// OS image codecs for still footage (image_decode.hpp). FFI lives here only.
+// Image codecs for still footage (image_decode.hpp). FFI lives here only:
+// WIC on Windows, Skia's codecs elsewhere.
 #include "image_decode.hpp"
 
 #include <algorithm>
@@ -11,6 +12,17 @@
 #include <windows.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+#else
+#include <system_error>
+
+#include "include/codec/SkBmpDecoder.h"
+#include "include/codec/SkCodec.h"
+#include "include/codec/SkGifDecoder.h"
+#include "include/codec/SkJpegDecoder.h"
+#include "include/codec/SkPngDecoder.h"
+#include "include/codec/SkWebpDecoder.h"
+#include "include/core/SkData.h"
+#include "include/core/SkImageInfo.h"
 #endif
 
 namespace premation::scene {
@@ -179,22 +191,72 @@ bool decode_frame(IWICBitmapDecoder* decoder, DecodedImage& out, std::string& er
 #else
 
 FileStamp file_stamp(const std::filesystem::path& p) {
-  (void)p;
-  return {};
+  std::error_code ec;
+  const auto size = std::filesystem::file_size(p, ec);
+  if (ec) return {};
+  const auto when = std::filesystem::last_write_time(p, ec);
+  if (ec) return {};
+  FileStamp s;
+  s.size = static_cast<std::uint64_t>(size);
+  s.modified = static_cast<std::uint64_t>(when.time_since_epoch().count());
+  return s;
 }
 
+namespace {
+
+/// The first frame as straight RGBA8, the file's channels unconverted — what
+/// the WIC path hands over (no colour space on the destination: no conversion).
+bool decode_data(sk_sp<SkData> data, DecodedImage& out, std::string& error) {
+  if (!data || data->size() == 0) {
+    error = "image bytes unusable";
+    return false;
+  }
+  const std::array<SkCodecs::Decoder, 5> decoders = {SkPngDecoder::Decoder(), SkJpegDecoder::Decoder(),
+                                                     SkWebpDecoder::Decoder(), SkGifDecoder::Decoder(),
+                                                     SkBmpDecoder::Decoder()};
+  const std::unique_ptr<SkCodec> codec = SkCodec::MakeFromData(std::move(data), decoders);
+  if (!codec) {
+    error = "unsupported image format";
+    return false;
+  }
+  const SkISize d = codec->dimensions();
+  constexpr int kMaxSide = 32768;
+  if (d.width() <= 0 || d.height() <= 0 || d.width() > kMaxSide || d.height() > kMaxSide) {
+    error = "image size unusable";
+    return false;
+  }
+  const SkImageInfo info = SkImageInfo::Make(d, kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
+  const std::size_t stride = static_cast<std::size_t>(d.width()) * 4U;
+  out.width = static_cast<std::uint32_t>(d.width());
+  out.height = static_cast<std::uint32_t>(d.height());
+  out.rgba.assign(stride * static_cast<std::size_t>(d.height()), 0);
+  const SkCodec::Result r = codec->getPixels(info, out.rgba.data(), stride);
+  // A truncated file keeps the rows that decoded (the rest stays transparent).
+  if (r != SkCodec::kSuccess && r != SkCodec::kIncompleteInput) {
+    error = std::string("decode pixels failed (") + SkCodec::ResultToString(r) + ")";
+    out.rgba.clear();
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
 bool decode_image_file(const std::filesystem::path& p, DecodedImage& out, std::string& error) {
-  (void)p;
-  (void)out;
-  error = "no still-image decoder on this platform yet";
-  return false;
+  sk_sp<SkData> data = SkData::MakeFromFileName(p.string().c_str());
+  if (!data) {
+    error = "open " + p.string() + " failed";
+    return false;
+  }
+  return decode_data(std::move(data), out, error);
 }
 
 bool decode_image_bytes(std::span<const std::uint8_t> bytes, DecodedImage& out, std::string& error) {
-  (void)bytes;
-  (void)out;
-  error = "no still-image decoder on this platform yet";
-  return false;
+  if (bytes.empty()) {
+    error = "image bytes unusable";
+    return false;
+  }
+  return decode_data(SkData::MakeWithCopy(bytes.data(), bytes.size()), out, error);
 }
 
 #endif

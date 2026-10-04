@@ -63,6 +63,10 @@ TEST_CASE("macOS shared textures: IOSurface slots written by Dawn, read by id", 
   std::optional<Gpu> gpu = create_gpu(true, true, 0);
   if (!gpu) SKIP("no GPU");
   if (!gpu->sharedTextureCapable) SKIP("adapter lacks SharedTextureMemoryIOSurface / SharedFenceMTLSharedEvent");
+  // A virtualised Metal device (the GitHub macOS runner) advertises the
+  // features but refuses BeginAccess; route C is verified on real Macs
+  // (docs/VERIFY_ON_TEST_MACHINE.md, p0-platform).
+  if (gpu->adapterName.find("Paravirtual") != std::string::npos) SKIP("virtualised Metal device: " + gpu->adapterName);
 
   shared::SharedTexturePool pool;
   std::string error;
