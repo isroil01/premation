@@ -7,9 +7,10 @@
 > engine as the fallback, so the product kept shipping the whole way.
 > **Superseded 2026-09-28 (`docs/TS_ENGINE_REMOVAL.md`): one engine.** The
 > flags and fallbacks are gone, the C++ engine always owns the document, and
-> since 2026-10-03 the page keeps no replica of it; what is left of the
-> TypeScript engine serves the jest harness and the headless window only and is
-> being deleted.
+> since 2026-10-03 the page keeps no replica of it. **2026-10-04:** the
+> TypeScript engine is deleted; the app and its tests run on the C++ engine
+> only. Where the sections below say "TS engine" or "behind the flag", read
+> it as history.
 
 ---
 

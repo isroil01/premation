@@ -11,11 +11,11 @@ settled and are not re-opened in a code change.
 GPU via Dawn, float colour + OCIO, decode, audio, text/vector, effects,
 plugins, export. The migration is phases A–G in `docs/NATIVE_CORE_PLAN.md`.
 The C++ engine owns the document in the app; the page keeps no copy of it
-(it reads the document mirror, `src/stores/documentMirror.ts`). The remaining
-TypeScript engine (`LocalEngine` and the runtime under `src/core` /
-`packages/*`) serves only the jest harness and the headless CLI window and is
-being deleted (docs/TS_ENGINE_REMOVAL.md). It is neither a reference nor a
-fallback.
+(it reads the document mirror, `src/stores/documentMirror.ts`). The TypeScript
+engine is deleted (docs/TS_ENGINE_REMOVAL.md); what is left under `src/core` /
+`packages/*` is UI-side document helpers, never a second engine. Tests of app
+behaviour run on `premation-engine-headless` (`*.native.test.*`,
+`src/core/engine/__testHelpers__/appEngine.ts`).
 
 - **UI changes to the document go through the engine API** (plan §2): commands
   with inverses, queries, change events. New UI code must not write the scene
@@ -78,8 +78,8 @@ Electron (electron/)  →  Editor (src/layout, src/components, src/stores, src/h
   N-API addon in Electron main. Native engine code runs in the
   `premation-engine` process; a crash there restarts the engine, never the app.
 - One engine (owner decision, docs/TS_ENGINE_REMOVAL.md): the C++ engine is
-  the default and the only target. Do not add TypeScript fallbacks; the
-  existing TS engine, flags and page fallbacks are being deleted (phase 4).
+  the only engine. Do not add TypeScript fallbacks or a second engine
+  implementation in the page.
 
 ## Repo traps
 

@@ -6,11 +6,9 @@
  * The C++ engine runs the analysis jobs itself (tracking, stabilize, scene
  * detection, auto-trace, object matte, audio analysis / ducking / gate,
  * proxies, renders, transcription, auto-reframe). It is the only engine
- * (docs/TS_ENGINE_REMOVAL.md): a `null` here (`unsupported`) now only comes
- * from the jest harness's LocalEngine, and callers report it with
- * {@link requireEngineJob} — there is no page implementation to fall back to.
- * (Phase 4 progress: the callers under src/layout and src/core/workspace still
- * carry their page paths until the UI read migration there lands.)
+ * (docs/TS_ENGINE_REMOVAL.md): a `null` here (`unsupported`) means the engine
+ * did not run it, and callers report it with {@link requireEngineJob} — there
+ * is no page implementation to fall back to.
  *
  * A job with `apply: true` writes its result as ONE undoable history entry
  * (origin engine) when it finishes; with `apply: false` the result is held

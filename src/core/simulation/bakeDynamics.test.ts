@@ -16,8 +16,6 @@
 import {
   bakeFrames,
   finishBakedTrack,
-  
-  
   DEFAULT_PARTICLE_BAKE_CAP,
 } from './bakeDynamics';
 

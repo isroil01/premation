@@ -33,7 +33,6 @@ import {
   setKeyRovingEdit,
   soloExclusiveEdit,
   toggleAudioMuteEdit,
-  
   toggleTrackSwitchEdit,
 } from './appEdits';
 

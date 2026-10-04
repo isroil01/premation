@@ -16,12 +16,9 @@ import {
   PRIMITIVE_COMPONENT,
   clearPrimitiveMeshCache,
   defaultPrimitiveSpec,
-  
   primitiveEntryFor,
   primitiveKey,
   readNodePrimitive,
-  
-  
 } from './primitiveLayer';
 import type { SceneNode } from '@core/types';
 import { SCENE_KIND_PROP } from '@core/scene/sceneKind';

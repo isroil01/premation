@@ -55,7 +55,6 @@ import {
   setFreezeTimeEdit,
   setLayerEffectsEnabledEdit,
   setLayerStyleOnEdit,
-  
   setMaskInvertedEdit,
   setMaskModeEdit,
   setMaskShapeAnimatedEdit,

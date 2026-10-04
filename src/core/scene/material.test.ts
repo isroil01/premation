@@ -1,12 +1,6 @@
 import {
-  
-  
-  
-  
-  
   normalizeMaterialParams,
   DEFAULT_MATERIAL_PARAMS,
-  
 } from './material';
 
 describe('material params — the reusable half', () => {

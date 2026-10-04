@@ -13,11 +13,7 @@
  */
 
 import {
-  
   DEFAULT_PHYSICS_BODY,
-  
-  
-  
 } from './rigidBody';
 
 describe('compatibility — the reason opt-in is safe', () => {

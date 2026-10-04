@@ -7,7 +7,7 @@
 > proxies, bakes). Electron + React are the UI only and talk to the engine only
 > through `packages/engine-api` (`EngineClient`), reading through the mirror.
 > This supersedes the "TypeScript fallback kept behind a flag" rule of
-> `NATIVE_CORE_PLAN.md` §0 and `CLAUDE.md`; both are updated when phase 4 lands.
+> `NATIVE_CORE_PLAN.md` §0 and `CLAUDE.md`; both were updated 2026-10-04.
 > Work lands on `native-core` only; it is never merged into `main` or `dev`.
 >
 > **Confirmed 2026-09-28:** the C++ engine is the default now (viewport,
@@ -439,6 +439,20 @@ cache). What still references the TypeScript renderer, effects and evaluation
    onnxruntime-web is referenced only by config; fflate stays — recovery,
    portable .motion and the Lottie library use it), CLAUDE.md and
    NATIVE_CORE_PLAN.md (both still call the TS engine a fallback).
+   **Done 2026-10-04.** `packages/render-tests` is native-only (the golden
+   gate and its inspection scripts, which bundle only the engine-api codec);
+   native-bridge and napi were already gone. The block-3 reachability tool
+   (`replicaReach.cjs`) is deleted with its sinks; the engine-writes ratchet
+   reads 0 and the engine-reads ratchet is lowered to 2 (the path verbs'
+   `createSceneGraphPort` reads in `core/workspace/pathCommands.ts`). The
+   types-only `TimelineController.ts`, `IdMap` (TS↔C++ log translation) and
+   the process client's foreign-batch hook (it refreshed the replica) are
+   gone, as is EngineSurface's C3 `'beside'` picture-in-picture mode.
+   `EditorTabs` holds no engine fallback. The deps stay — each has an app
+   importer: mp4box (`core/video/mp4Demuxer.ts`), polygon-clipping (path ops /
+   merge paths), onnxruntime-web (object matte, `scripts/fetchObjectMatte.cjs`
+   and the CSP), fflate (recovery, portable .motion, Lottie library).
+   CLAUDE.md and NATIVE_CORE_PLAN.md say one engine.
 
 **Phase 4 — delete, in dependency order:** flags + fallbacks; JS plugin system;
 renderer + effects; media/text/audio; evaluation; parity generators + TS harness

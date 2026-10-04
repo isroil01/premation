@@ -17,8 +17,6 @@ import {
   CONTROL_PREFIX,
   CONTROL_KIND_PREFIX,
   CONTROL_SPECS,
-  
-  
   type ControlKind,
 } from '@core/engine/controlSpecs';
 

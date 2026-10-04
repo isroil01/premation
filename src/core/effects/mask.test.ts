@@ -11,7 +11,6 @@ import {
   maskModeStartsFull,
   activeMaskPaths,
   hasActiveMaskPaths,
-  
 } from './mask';
 import type { SceneNode } from '@core/types';
 

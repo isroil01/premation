@@ -6,25 +6,10 @@
 
 import type {
   LayerInfo,
-  
-  
   TrackMatte,
-  
-  
   ItemInfo,
-  
-  
-  
-  
-  
-  
   Transition,
-  
   Color,
-  
-  
-  
-  
   Interpretation,
   MotionBlurSettings,
   ColorManagementSettings,

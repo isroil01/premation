@@ -22,15 +22,6 @@ import {
   overrideKey,
   overriddenPropsFor,
   parseOverrideKey,
-  
-  
-  
-  
-  
-  
-  
-  
-  
 } from './compInstanceOverrides';
 import { useProjectStore } from '@stores/projectStore';
 import type { SceneNode } from '@core/types';

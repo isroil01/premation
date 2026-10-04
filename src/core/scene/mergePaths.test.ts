@@ -9,10 +9,6 @@ import {
   nodeWorldPolygon,
   booleanPolygons,
   buildMergedPaths,
-  
-  
-  
-  
 } from './mergePaths';
 import type { SceneNode } from '@core/types';
 import { FragmentBuilder } from '@/engine-client/fragmentBuilder';

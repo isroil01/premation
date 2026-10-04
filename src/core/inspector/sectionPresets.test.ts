@@ -19,11 +19,6 @@
 import {
   TEXT_PRESET_PROPS,
   TRANSFORM_PRESET_PROPS,
-  
-  
-  
-  
-  
 } from './sectionPresets';
 
 beforeEach(() => {

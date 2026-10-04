@@ -17,40 +17,24 @@
 import type {
   Value,
   ValueType,
-  
   Easing,
   SpatialInterp,
   PropertyKind,
   BezierPath,
-  
   PathVertexState,
 } from '@motion/engine-api';
 import {
-  
-  
   type MaskPath,
   type MaskPoint,
-  
-  
   type MaskKeyframe,
   type MaskPointEditState,
-  
 } from '@core/effects/mask';
 /** A shape layer's whole-outline keyframe track (AE's Path property). */
 export const SHAPE_PATH_TRACK = 'path.points';
 import type { SceneNode } from '@core/types';
 import { fail } from './errors';
 import {
-  
-  
-  
   rigMemberFactor,
-  
-  
-  
-  
-  
-  
 } from './rigProps';
 
 // ── Bindings ─────────────────────────────────────────────────────────

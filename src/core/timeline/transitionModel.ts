@@ -15,7 +15,7 @@
 
 import type { Keyframe } from '@motion/animation';
 import type { Effect } from '@core/effects/effects';
-import type { ClipBarSnapshot } from './TimelineController';
+import type { ClipGeometry } from '@core/commands/snapshotSharing';
 
 export type TransitionKind = 'crossDissolve' | 'dipToBlack' | 'dipToWhite' | 'wipe';
 
@@ -29,6 +29,13 @@ export type TransitionKind = 'crossDissolve' | 'dipToBlack' | 'dipToWhite' | 'wi
  * they DO with the region.
  */
 export type TransitionAlignment = 'centred' | 'startAtCut' | 'endAtCut';
+
+/** One bar of one node, addressed by its position in the node's bars (sorted by start). */
+export interface ClipBarSnapshot {
+  nodeId: string;
+  index: number;
+  clip: ClipGeometry;
+}
 
 /** Bars, keyframe tracks and effect stacks, copied verbatim. */
 export interface TransitionSnapshot {

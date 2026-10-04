@@ -1,7 +1,6 @@
 import {
   enableLayerMotionBlurWithFeedback,
   disableLayerMotionBlur,
-  
   guideLayerArmedMessage,
   guideLayerDisarmedMessage,
 } from './layerSwitchFeedback';

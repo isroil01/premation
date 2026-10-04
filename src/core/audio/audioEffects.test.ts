@@ -14,11 +14,9 @@
 
 import { readSource } from '@/__testHelpers__/readSource';
 import {
-  
   hasActiveAudioEffects,
   audioEffectPropPath,
   readAudioEffects,
-  
   type AudioEffect,
 } from './audioEffects';
 

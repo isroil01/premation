@@ -21,13 +21,7 @@
 
 import {  type EasingKind } from '@motion/animation';
 import {
-  
-  
-  
   clampSpeedPercent,
-  
-  
-  
   type RetimeClip,
   type RetimeMode,
 } from './retime';

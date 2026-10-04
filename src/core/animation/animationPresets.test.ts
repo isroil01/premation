@@ -2,9 +2,7 @@ import {
   normalizeTracks,
   offsetTracks,
   minTime,
-  
   listPresets,
-  
   resolvePresetUnits,
   reindexAnimatorTracks,
   presetFolder,

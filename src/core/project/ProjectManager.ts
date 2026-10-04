@@ -111,7 +111,7 @@ export interface ProjectManagerDeps {
    * New / Open / Save / Save As / snapshot / Close are engine requests
    * (core/project/engineDocumentSession.ts) — the page never captures,
    * parses or restores the document, and `io` / `storage` are not used for
-   * them. Unset (the default, the TypeScript engine as owner): unchanged.
+   * them. Unset only where there is no engine host (unit tests).
    */
   engineDocument?: EngineOwnedDocument;
 }
@@ -409,9 +409,8 @@ export class ProjectManager {
    * File ▸ Dependencies ▸ Collect Files with the ENGINE as owner: the engine
    * writes `<folder>/<folder name>.motion` with every used file inside it; the
    * open project keeps its path and dirty flag. `missing` lists the files it
-   * could not read (one per line). Null when the engine does not own the
-   * document — the TypeScript engine's own `collectFiles` port (appPorts.ts)
-   * serves that case through the engine API.
+   * could not read (one per line). Null when there is no engine document
+   * session (no engine host).
    */
   async collectFilesTo(folder: string, onlyUsed: boolean): Promise<{ path: string; bytes: number; missing: string[] } | null> {
     if (!this.engineDocument?.collectFiles) return null;

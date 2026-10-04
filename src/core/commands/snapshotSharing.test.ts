@@ -27,19 +27,8 @@
 
 
 import {
-  
-  
-  
-  
   jsonEqual,
-  
-  
-  
   statesEqual,
-  
-  
-  
-  
 } from './snapshotSharing';
 
 jest.useFakeTimers();

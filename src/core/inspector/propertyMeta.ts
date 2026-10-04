@@ -43,7 +43,6 @@ import {
   PAINT_PERCENT_KEYS,
   parsePaintColorPath,
   parsePaintPropPath,
-  
 } from '@core/paint/paintProps';
 
 // ── Types ───────────────────────────────────────────────────────────

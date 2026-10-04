@@ -6,9 +6,6 @@
 
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import {
-  
-  
-  
   sanitizeLayerSize,
 } from './layerSettings';
 

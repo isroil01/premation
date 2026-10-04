@@ -23,8 +23,6 @@ import type { FragmentBuilder } from '@/engine-client/fragmentBuilder';
 import type { InsertFrame } from '@/engine-client/insertFragment';
 import { parseSvgToShapes } from '../../utils/svgParser';
 import {
-  
-  
   SVG_COMPONENT,
   type SvgLayerData,
 } from './svgLayer';

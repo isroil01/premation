@@ -7,14 +7,8 @@
  */
 
 import {
-  
-  
-  
   clampPinRotations,
-  
   type DeformPin,
-  
-  
 } from './puppet';
 import {
   simplifySketch,

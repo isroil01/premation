@@ -2,12 +2,6 @@
 import { useSelectionStore } from '@stores/selectionStore';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import {
-  
-  
-  
-  
-  
-  
   stretchClipGeometry,
   holdFrameFor,
   lastFrameHoldKeys,

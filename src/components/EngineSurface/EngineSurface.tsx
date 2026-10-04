@@ -2,19 +2,11 @@
  * EngineSurface — the C++ engine's frames in the app (NATIVE_CORE_PLAN §5 C3 /
  * D5, docs/VIEWPORT_ROUTE.md route C).
  *
- * Two modes:
- *
- *   'beside'    (C3; the process backend is on, the TypeScript engine owns the
- *               document) a picture-in-picture panel next to today's viewport,
- *               the comp fitted into it. It replaces nothing.
- *   'viewport'  (D5; the engine owns the document, engineOwnership.ts) THE
- *               viewport: it fills the stage in place of the TypeScript canvas,
- *               under the page's overlays, and follows the page's camera —
- *               `setViewport{zoom = view.scale, pan = the comp point at the
- *               stage centre (viewToCamera), CSS size, DPR}` whenever the
- *               workspace's render tick sees the camera or the size change.
- *
- * Both
+ * THE viewport (D5; the engine owns the document, engineOwnership.ts): it
+ * fills the stage under the page's overlays and follows the page's camera —
+ * `setViewport{zoom = view.scale, pan = the comp point at the stage centre
+ * (viewToCamera), CSS size, DPR}` whenever the workspace's render tick sees
+ * the camera or the size change. It also:
  *   - tell the engine the size on mount / resize (ResizeObserver) / a DPR change,
  *     and again after an engine restart; `closeViewport` on unmount;
  *   - receive each finished frame as a VideoFrame over the preload's
@@ -87,7 +79,7 @@ export function copyRouteDpr(cssWidth: number, cssHeight: number, dpr: number): 
   return Math.max(0.25, Math.min(dpr, fit));
 }
 
-export type EngineSurfaceMode = 'beside' | 'viewport';
+export type EngineSurfaceMode = 'viewport';
 
 /** What the real-app harness reads: `window.__premationEngineSurface`. */
 export interface EngineSurfaceStats {
@@ -126,7 +118,7 @@ type Pending = { frame: VideoFrame; meta: EngineFrameMeta; release: () => void }
 const CHANNEL: Record<string, ChannelView> = { rgb: 'rgb', red: 'red', green: 'green', blue: 'blue', alpha: 'alpha' };
 const RESOLUTION: Record<PreviewResolution, EnginePreviewResolution> = { 1: 'full', 2: 'half', 3: 'third', 4: 'quarter' };
 
-export function EngineSurface({ mode = 'beside' }: { mode?: EngineSurfaceMode }): JSX.Element | null {
+export function EngineSurface({ mode = 'viewport' }: { mode?: EngineSurfaceMode }): JSX.Element | null {
   const client = useSyncExternalStore(subscribeProcessEngine, processEngine, () => null);
   const notice = useSyncExternalStore(subscribeProcessEngine, lastProcessEngineNotice, () => null);
   useEffect(() => {
@@ -155,7 +147,6 @@ function noticeText(n: NonNullable<ReturnType<typeof lastProcessEngineNotice>>):
 function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineClient; mode: EngineSurfaceMode; notice: string | null }): JSX.Element {
   const frameBoxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const hudRef = useRef<HTMLSpanElement>(null);
   // Viewport mode: a status line until the first frame lands (never a blank
   // stage with no explanation). One React render when it changes.
   const [firstFrame, setFirstFrame] = useState(false);
@@ -171,7 +162,6 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     const canvas = canvasRef.current;
     const bridge = processEngineBridge();
     if (!box || !canvas || !bridge?.onFrame) return undefined;
-    const isViewport = mode === 'viewport';
 
     const stats: EngineSurfaceStats = {
       mode, route: null, received: 0, drawn: 0, superseded: 0, fps: 0, lastRevision: 0, lastFrame: 0, lastLatencyMs: 0,
@@ -198,9 +188,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     let raf = 0;
     let fpsCount = 0;
     let fpsSince = performance.now();
-    let hudAt = 0;
     let sawFirst = false;
-    const slowTimer = isViewport ? setTimeout(() => { if (!sawFirst && !disposed) setWaitingLong(true); }, 3000) : null;
+    const slowTimer = setTimeout(() => { if (!sawFirst && !disposed) setWaitingLong(true); }, 3000);
     // The WebGPU blit (frameBlit.ts): up asynchronously; the newest frame waits for it.
     const blitter = createFrameBlitter(canvas, () => { if (pending) schedule(); }, fail);
 
@@ -213,13 +202,13 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
      */
     const writeBoard = (w: number, h: number): void => {
       const now = performance.now();
-      if (isViewport && now - boardColorAt > 1000) {
+      if (now - boardColorAt > 1000) {
         boardColorAt = now;
         boardRgb = parseCssRgb(getComputedStyle(canvas).color);
       }
       const cam = applied;
       const size = compSizeRef.current;
-      const rect = isViewport && cam && boardRgb && useGuidesStore.getState().camera3dMode === 'active'
+      const rect = cam && boardRgb && useGuidesStore.getState().camera3dMode === 'active'
         && Math.abs(w / Math.max(1, h) - cam.width / Math.max(1, cam.height)) < 0.02
         ? compUvRect(cam, size.width, size.height)
         : null;
@@ -246,14 +235,12 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         const w = p.frame.displayWidth;
         const h = p.frame.displayHeight;
         writeBoard(w, h);
-        if (isViewport) {
-          // The scopes (frameTap) and a snapshot compare read THIS frame — the
-          // engine's VideoFrame, drawn into a 2D copy now, before `release`
-          // closes it. The tap returns on a size / clock check when nobody listens.
-          const seconds = flicksToSeconds(p.meta.time);
-          publishFrame(p.frame, seconds);
-          if (useCompareStore.getState().pending) useCompareStore.getState().captureFrom(p.frame, seconds, getWorkspaceController().getView());
-        }
+        // The scopes (frameTap) and a snapshot compare read THIS frame — the
+        // engine's VideoFrame, drawn into a 2D copy now, before `release`
+        // closes it. The tap returns on a size / clock check when nobody listens.
+        const seconds = flicksToSeconds(p.meta.time);
+        publishFrame(p.frame, seconds);
+        if (useCompareStore.getState().pending) useCompareStore.getState().captureFrom(p.frame, seconds, getWorkspaceController().getView());
         // The blit releases the slot to the engine once the GPU no longer reads it.
         if (!blitter.draw(p.frame, boardData, p.release)) {
           pending = p;
@@ -261,7 +248,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         }
         const now = performance.now();
         // B4 round 2: the overlays read THIS frame's geometry (the records it carried) from now on.
-        if (isViewport && (p.meta.geometry || p.meta.geometryViews)) {
+        if (p.meta.geometry || p.meta.geometryViews) {
           publishFrameGeometry(p.meta.viewport, p.meta.time, p.meta.revision, p.meta.geometry ?? [], p.meta.geometryViews);
         }
         stats.drawn += 1;
@@ -272,24 +259,17 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         stats.lastDrawnAt = now;
         // The viewport HUD's frame time is the engine's cost of this frame:
         // its build (document → FrameScene) + its render (to GPU completion).
-        if (isViewport) viewportHudStats.report(stats.lastRenderMs + stats.engineBuildMs, false, now);
+        viewportHudStats.report(stats.lastRenderMs + stats.engineBuildMs, false, now);
         if (!sawFirst) {
           sawFirst = true;
-          if (isViewport) {
-            setFirstFrame(true);
-            setWaitingLong(false);
-          }
+          setFirstFrame(true);
+          setWaitingLong(false);
         }
         fpsCount += 1;
         if (now - fpsSince >= 500) {
           stats.fps = (fpsCount * 1000) / (now - fpsSince);
           fpsCount = 0;
           fpsSince = now;
-        }
-        // The readout at most 4× a second (a text write, not a React render).
-        if (hudRef.current && now - hudAt >= 250) {
-          hudAt = now;
-          hudRef.current.textContent = `${stats.fps.toFixed(1)} fps · rev ${stats.lastRevision} · f ${stats.lastFrame} · ${w}×${h}`;
         }
       } catch (e) {
         fail(e);
@@ -332,7 +312,6 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       const height = Math.max(1, Math.round(r.height));
       const pageDpr = window.devicePixelRatio || 1;
       const dpr = stats.route === 'copy' ? copyRouteDpr(width, height, pageDpr) : pageDpr;
-      if (!isViewport) return { width, height, dpr, zoom: 0, panX: 0, panY: 0, view: 'active', customView: null, onion: null };  // fit
       // The viewport's 3D view (View ▸ 3D View): the engine renders the axis
       // and camera views itself; a custom view sends its orbit, resolved to the
       // same camera customViewCamera builds for the page's chrome.
@@ -385,7 +364,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         devicePixelRatio: d.dpr,
         zoom: d.zoom,
         pan: { x: d.panX, y: d.panY },
-        channel: isViewport ? CHANNEL[channel] ?? 'rgb' : 'rgb',
+        channel: CHANNEL[channel] ?? 'rgb',
         exposure: 0,
         transparencyGrid: false,
         displayTransform: '',
@@ -436,17 +415,17 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       vp = id;
       unFrames = subscribeEngineFrames(id, onFrame);
       // B4 round 2: while the engine draws THE viewport, the overlays' geometry is the frames'.
-      if (isViewport) setEngineDrivenViewport(id, true);
+      setEngineDrivenViewport(id, true);
       requestViewport();
     });
-    // Viewport mode: the workspace's render tick runs whenever the camera may
+    // The workspace's render tick runs whenever the camera may
     // have moved (pan, zoom, fit, resize) — compare and send, in that frame.
-    const unRender = isViewport ? getWorkspaceController().onRender(() => sendViewport()) : null;
+    const unRender = getWorkspaceController().onRender(() => sendViewport());
     // The channel and the 3D view both ride on setViewport; `sendViewport` drops a request that changes nothing.
-    const unGuides = isViewport ? useGuidesStore.subscribe((s, prev) => {
+    const unGuides = useGuidesStore.subscribe((s, prev) => {
       if (s.channel !== lastChannel || s.camera3dMode !== prev.camera3dMode || s.customViews !== prev.customViews) sendViewport();
-    }) : null;
-    const unOnion = isViewport ? useOnionSkinStore.subscribe(() => sendViewport()) : null;
+    });
+    const unOnion = useOnionSkinStore.subscribe(() => sendViewport());
     // Preview resolution (Full / Half / Third / Quarter) → the engine's.
     let lastRes: PreviewResolution | null = null;
     const sendResolution = (): void => {
@@ -455,8 +434,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       lastRes = r;
       void client.execute({ type: 'setPreviewQuality', resolution: RESOLUTION[r] ?? 'full', fastPreview: 'off', draft3d: false, motionBlur: true, adaptiveFloor: 'half' });
     };
-    const unQuality = isViewport ? useRenderQualityStore.subscribe(sendResolution) : null;
-    if (isViewport) sendResolution();
+    const unQuality = useRenderQualityStore.subscribe(sendResolution);
+    sendResolution();
 
     // A restarted engine has no viewport until it is told again (the replay
     // restores it too; resending is cheap and makes the surface self-healing).
@@ -466,7 +445,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
           stats.lastViewport = null;
           lastRes = null;
           requestViewport();
-          if (isViewport) sendResolution();
+          sendResolution();
         } else if (e.type === 'renderStatsUpdated') {
           stats.engineBuildMs = e.stats.cpuFrameMs;
         }
@@ -475,12 +454,12 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
 
     return () => {
       disposed = true;
-      if (slowTimer) clearTimeout(slowTimer);
+      clearTimeout(slowTimer);
       unsub();
-      unRender?.();
-      unGuides?.();
-      unOnion?.();
-      unQuality?.();
+      unRender();
+      unGuides();
+      unOnion();
+      unQuality();
       ro.disconnect();
       dprQuery?.removeEventListener('change', onDpr);
       if (raf) cancelAnimationFrame(raf);
@@ -490,35 +469,21 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       pending = null;
       if (vp !== null) {
         void client.execute({ type: 'closeViewport', viewport: vp });
-        if (isViewport) setEngineDrivenViewport(vp, false);
+        setEngineDrivenViewport(vp, false);
       }
       blitter.dispose();
     };
   }, [client, mode]);
 
-  if (mode === 'viewport') {
-    return (
-      <div ref={frameBoxRef} className={styles.viewport} data-engine-surface="viewport" aria-hidden="true">
-        <canvas ref={canvasRef} className={styles.viewportCanvas} />
-        {!firstFrame && (
-          <div className={styles.waiting} role="status">
-            {notice ?? (waitingLong ? 'Waiting for the C++ engine’s first frame…' : '')}
-          </div>
-        )}
-        {firstFrame && notice && <div className={styles.viewportNotice} role="status">{notice}</div>}
-      </div>
-    );
-  }
   return (
-    <div className={styles.surface} data-engine-surface="" aria-hidden="true">
-      <div className={styles.title}>
-        <span className={styles.label}>C++ engine</span>
-        <span ref={hudRef}>waiting for frames</span>
-      </div>
-      <div ref={frameBoxRef} className={styles.frame}>
-        <canvas ref={canvasRef} className={styles.canvas} />
-      </div>
-      {notice && <div className={styles.notice} role="status">{notice}</div>}
+    <div ref={frameBoxRef} className={styles.viewport} data-engine-surface="viewport" aria-hidden="true">
+      <canvas ref={canvasRef} className={styles.viewportCanvas} />
+      {!firstFrame && (
+        <div className={styles.waiting} role="status">
+          {notice ?? (waitingLong ? 'Waiting for the C++ engine’s first frame…' : '')}
+        </div>
+      )}
+      {firstFrame && notice && <div className={styles.viewportNotice} role="status">{notice}</div>}
     </div>
   );
 }

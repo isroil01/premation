@@ -37,18 +37,7 @@
 
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import {
-  
-  
-  
   transitionRegion,
-  
-  
-  
-  
-  
-  
-  
-  
 } from './transitions';
 
 beforeEach(() => {

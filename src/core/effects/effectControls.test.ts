@@ -11,14 +11,7 @@
 
 import {
   EFFECT_DEFS,
-  
-  
   effectDisplayNames,
-  
-  
-  
-  
-  
   type Effect,
 } from './effects';
 

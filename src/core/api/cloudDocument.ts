@@ -23,10 +23,6 @@ import type { TransitionRecord } from '@core/timeline/transitionModel';
 import type { ProjectFile } from '@core/types';
 import type { SerializedTimeline } from '@motion/timeline';
 import {
-  
-  
-  
-  
   type ProjectItemsDocument,
 } from '@stores/assetStore';
 import {   type DocumentExtras } from '@core/project/documentExtras';

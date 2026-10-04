@@ -18,24 +18,16 @@
 import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
 import BEHAVIOR_PRESETS from './behaviorPresets';
 import {
-  
   MODIFIER_KINDS,
   MODIFIER_LABELS,
   MODIFIER_HINTS,
   BEHAVIOR_RECIPES,
-  
-  
-  
   defaultModifier,
   describeModifier,
   instantiateRecipe,
   moveModifier,
   patchModifier,
-  
-  
   removeModifier,
-  
-  
   type OffsetModifier,
 } from './modifierStack';
 

@@ -7,10 +7,6 @@
 
 import {
   defaultStroke,
-  
-  
-  
-  
   normalizeStroke,
 } from './stroke';
 

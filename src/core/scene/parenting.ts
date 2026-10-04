@@ -9,7 +9,6 @@
 
 import type { SceneNode } from '@core/types';
 import {
-  
   type LocalTransform,
 } from './worldTransform';
 

@@ -35,22 +35,12 @@
 
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
 import {
-  
   resolvePropertyMetaWith,
   type MetaNodeFacts,
-  
-  
-  
   GROUP_PLACEHOLDER_PREFIX,
 } from '@core/inspector/propertyMeta';
 import {
-  
-  
-  
-  
-  
   styleKeyFromEffectId,
-  
 } from '@core/effects/layerStyles';
 import { AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP } from '@core/audio/audioParams';
 

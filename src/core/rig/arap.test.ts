@@ -9,7 +9,6 @@
 
 
 import {
-  
   maxExactMeshDensity,
   ARAP_DENSE_MAX,
   ARAP_STIFF_DENSE_MAX,

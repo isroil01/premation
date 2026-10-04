@@ -1,10 +1,8 @@
 import {
-  
   normalizeStroke,
   readNodePaint,
   strokeBounds,
   strokeDisplayNames,
-  
   type PaintStroke,
 } from './paintStrokes';
 import type { SceneNode } from '@core/types';

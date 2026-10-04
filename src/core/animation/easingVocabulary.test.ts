@@ -13,7 +13,6 @@ import {
   EASING_KINDS,
   EASING_KIND_LABEL,
   activeEasingKind,
-  
   easingKindForPreset,
   easingPresetForKind,
   isHoldKind,

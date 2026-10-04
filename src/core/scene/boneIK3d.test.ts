@@ -13,9 +13,6 @@ import { Matrix4Math } from '@motion/scene';
 import {
   axisAngleMatrix,
   matrixToEulerDeg,
-  
-  
-  
 } from './boneIK3d';
 
 const DEG = Math.PI / 180;

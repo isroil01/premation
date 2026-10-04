@@ -66,20 +66,12 @@
  */
 
 import {
-  
-  
-  
-  
   effectPropPath,
 } from '@core/effects/effects';
 import {
-  
-  
-  
   type TransitionRecord,
   type TransitionKind,
   type TransitionAlignment,
-  
 } from './transitionModel';
 export {
   newTransitionId,

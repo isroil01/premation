@@ -6,8 +6,7 @@
  *
  * The bridge carries ENCODED EngineMessages both ways (main is a relay and
  * never decodes a document); this class owns the codec, so it needs nothing
- * from `src/` and is interchangeable with the TypeScript backend
- * (src/core/engine/LocalEngine.ts) behind `EngineClient`.
+ * from `src/`.
  *
  * What it adds over a plain wire client:
  *
@@ -17,8 +16,7 @@
  *    `revision` (the base class's) is the newest revision seen anywhere;
  *    `eventRevision` is what subscribers have been given — kept apart so a
  *    response that overtakes its events can never make them look stale.
- *  - **Crash recovery.** It records a command log exactly as the TS engine
- *    does (`LogRecord` per applied non-query request, ENGINE_API.md §12). When
+ *  - **Crash recovery.** It records a command log (`LogRecord` per applied non-query request, ENGINE_API.md §12). When
  *    the supervisor reports `engine-restarted` the fresh engine is EMPTY; the
  *    log is replayed into it (ids are deterministic in the engine, so the same
  *    requests mint the same ids) before any new request is sent, then
@@ -170,11 +168,6 @@ export interface ProcessEngineOptions {
   onNotice?: (notice: ProcessEngineNotice) => void;
   /** Keep the command log for crash recovery (default true). A host that replays its own log (F2) makes it unused. */
   recordLog?: boolean;
-  /**
-   * F2: a batch another window caused (main's `foreign` mark) was delivered —
-   * this window's page replica missed the request and should refresh.
-   */
-  onForeignBatch?: (batch: EventBatch) => void;
 }
 
 /** Transport commands a crash-recovery replay skips: the clock restarts stopped. */
@@ -213,7 +206,7 @@ export class ProcessEngineClient extends EngineClientBase {
   ) {
     super();
     this.disposers.push(
-      bridge.onEvents((bytes, meta) => this.onEventBytes(bytes, meta?.foreign === true)),
+      bridge.onEvents((bytes) => this.onEventBytes(bytes)),
       bridge.onState((s) => this.onHostState(s)),
       bridge.onRestarted((info) => void this.recover(info)),
       bridge.onUnavailable((info) => this.becomeUnavailable(info.reason)),
@@ -233,7 +226,7 @@ export class ProcessEngineClient extends EngineClientBase {
     return this.mode === 'ready' ? 'process' : 'pending';
   }
 
-  /** The recorded command log (crash recovery; the same format as the TS engine's). */
+  /** The recorded command log (crash recovery). */
   commandLog(): LogRecord[] {
     return this.log.map((r) => deepCopy(r));
   }
@@ -370,7 +363,7 @@ export class ProcessEngineClient extends EngineClientBase {
     this.log.push({ request: deepCopy(req), revisionAfter: res.revision, documentHash: 0 });
   }
 
-  private onEventBytes(bytes: Uint8Array, foreign = false): void {
+  private onEventBytes(bytes: Uint8Array): void {
     let msg: EngineMessage;
     try {
       msg = decodeEngineMessage(new Uint8Array(bytes));
@@ -378,13 +371,7 @@ export class ProcessEngineClient extends EngineClientBase {
       return;  // an undecodable batch is a gap the next batch will reveal
     }
     if (msg.kind !== 'events') return;
-    if (this.onBatch(msg.value) && foreign) {
-      try {
-        this.options.onForeignBatch?.(msg.value);
-      } catch {
-        // the hook's failure is its own
-      }
-    }
+    this.onBatch(msg.value);
   }
 
   /** True when the batch was delivered to subscribers. */

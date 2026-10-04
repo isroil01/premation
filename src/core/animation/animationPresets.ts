@@ -23,18 +23,12 @@ import { documentMirror, hasDocumentMirror } from '@stores/documentMirror';
 import { storedStaticNumber } from '@core/mirror/trackIndex';
 import {    type EffectParams, type EffectType } from '@core/effects/effects';
 import {
-  
-  
   unitPositions,
-  
   type TextAnimatorData,
 } from '@core/text/textAnimators';
 import {
-  
-  
   resolveUnitTime,
   resolveUnitValue,
-  
   type PresetContext,
   type PresetTimeUnit,
   type PresetUnit,

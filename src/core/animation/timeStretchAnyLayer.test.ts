@@ -9,11 +9,9 @@
 
 
 import {
-  
   bakeStretchGeometry,
   clampSignedStretch,
   retimeKeys,
-  
 } from './layerTimeCommands';
 
 describe('the bake maths', () => {

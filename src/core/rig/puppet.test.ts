@@ -1,12 +1,7 @@
 import {
-  
-  
   coverageMaskFromImageData,
-  
   silhouetteFromPathPoints,
   resolvePuppetSilhouette,
-  
-  
 } from './puppet';
 
 /** Build a synthetic RGBA bitmap. `alphaAt(x, y)` returns 0-255 per pixel. */

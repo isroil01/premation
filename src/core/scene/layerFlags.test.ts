@@ -14,12 +14,7 @@
 
 import {
   LAYER_FLAGS,
-  
-  
   layerFlagDef,
-  
-  
-  
 } from './layerFlags';
 
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';

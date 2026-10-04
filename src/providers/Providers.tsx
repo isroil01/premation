@@ -2949,7 +2949,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
 
         // Dirty tracking, autosave and crash recovery: the engine's session
         // does all three, from the mirror (engineOwnedSession.tsx). Without an
-        // engine host (the headless CLI window) there is nothing to track.
+        // engine host (unit tests) there is nothing to track.
         if (!cancelled && engineOwnsDocumentNow()) {
           try {
             await installEngineOwnedSession(track);

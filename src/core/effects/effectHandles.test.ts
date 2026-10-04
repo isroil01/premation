@@ -38,13 +38,10 @@
 import {
   EFFECT_HANDLES,
   collectEffectHandles,
-  
   handleDragValues,
   effectToLayer,
   layerToEffect,
   hasEffectHandles,
-  
-  
 } from './effectHandles';
 
 describe('collecting handles', () => {

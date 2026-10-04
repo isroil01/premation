@@ -9,16 +9,8 @@
 
 
 import {
-  
-  
-  
   clearEffectClipboard,
-  
-  
-  
-  
   listEffectPresets,
-  
 } from './effectClipboard';
 import { listBuiltinEffectPresets } from './builtinEffectPresets';
 
