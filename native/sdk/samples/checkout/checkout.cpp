@@ -13,6 +13,7 @@
 //                   Decay ▸ Debug: Fault
 #include <premation_sdk/premation_sdk.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 

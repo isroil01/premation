@@ -1,5 +1,6 @@
 #include "ptree.hpp"
 
+#include <algorithm>
 #include <set>
 
 #include "anim.hpp"

@@ -5,8 +5,8 @@
 # (they were authored on a machine without a C++ toolchain, so the first CI
 # run is the first time they meet the tool; see native/README.md).
 #
-#   build-test   ubuntu / macos / windows: configure preset → build → ctest,
-#                then the N-API addon (cmake-js) + its smoke test; clang-tidy on ubuntu
+#   build-test   ubuntu / macos / windows: configure preset → build → ctest;
+#                clang-tidy on ubuntu
 #   engine       ubuntu / macos / windows: the *-engine presets (premation-engine
 #                with Dawn, Skia, ffmpeg, OCIO) → build → ctest, with a vcpkg
 #                binary cache (.github/actions/build-engine); the engine and what
