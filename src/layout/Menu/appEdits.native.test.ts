@@ -5,7 +5,6 @@ import { documentMirror } from '@stores/documentMirror';
  */
 
 import { rowSelectionId } from '@core/engine/__testHelpers__/selectionIds';
-import { readLayerFlag } from '@core/scene/layerFlags';
 import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
@@ -34,7 +33,7 @@ import {
   setKeyRovingEdit,
   soloExclusiveEdit,
   toggleAudioMuteEdit,
-  toggleLayerFlagEdit,
+  
   toggleTrackSwitchEdit,
 } from './appEdits';
 
@@ -96,15 +95,6 @@ describe('track switches', () => {
     const before = (await historyLabels()).length;
     await toggleAudioMuteEdit(s.A);
     expect((await historyLabels()).length).toBe(before);
-  });
-
-  it('switch-column flags go through setLayerSwitches', async () => {
-    await roundTrip(() => toggleLayerFlagEdit(s.A, 'fxEnabled'), 'Disable Effects');
-    expect(readLayerFlag((await node(s.A)), 'fxEnabled')).toBe(false);
-    await roundTrip(() => toggleLayerFlagEdit(s.B, 'shy'), 'Enable Shy');
-    await roundTrip(() => toggleLayerFlagEdit(s.B, 'quality'), 'Quality: Draft');
-    await roundTrip(() => toggleLayerFlagEdit(s.A, 'guide'), 'Enable Guide Layer');
-    expect(documentMirror().layer(s.A)!.switches.guide).toBe(true);
   });
 });
 

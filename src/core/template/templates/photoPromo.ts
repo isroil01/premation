@@ -5,12 +5,8 @@
  */
 
 import type SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { useCompositionStore } from '@stores/compositionStore';
-import { bumpScene } from '@stores/sceneStore';
 import type { TemplateDefinition } from '../templateTypes';
-import { addRoot, addShape, addText, addImage, addGradientShape, linearFill, liveKf, type SetKf } from './builders';
+import { addRoot, addShape, addText, addImage, addGradientShape, linearFill,  type SetKf } from './builders';
 
 const CW = 1920, CH = 1080, CY = CH / 2;
 const PHOTO_X = 620, PHOTO = 740;
@@ -38,15 +34,6 @@ export function animatePhotoPromo(set: SetKf): void {
   set('tpl_headline', 'opacity', 0.5, 0, 'easeOut'); set('tpl_headline', 'opacity', 1.1, 100, 'easeOut');
   set('tpl_sub', 'opacity', 0.8, 0, 'easeOut'); set('tpl_sub', 'opacity', 1.4, 100, 'easeOut');
   set('tpl_price', 'opacity', 1.1, 0, 'easeOut'); set('tpl_price', 'opacity', 1.7, 100, 'easeOut');
-}
-
-export function buildPhotoPromo(): void {
-  const rootId = activeCompRootId();
-  defaultSceneGraph.clear();
-  layoutPhotoPromo(defaultSceneGraph, rootId);
-  animatePhotoPromo(liveKf);
-  useCompositionStore.getState().update({ width: CW, height: CH, fps: 60, durationSeconds: 5, background: '#0b1020' });
-  bumpScene();
 }
 
 export const photoPromoTemplate: TemplateDefinition = {

@@ -40,9 +40,7 @@
  */
 
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { renderComponentsOf } from './SceneGraph';
-import { bumpScene } from '@stores/sceneStore';
 
 /** Stored on the instance's fx component, alongside `__compRef`. */
 export const COMP_OVERRIDES_PROP = '__compOverrides';
@@ -132,71 +130,6 @@ export function isValidOverrideValue(prop: string, value: unknown): value is Ove
   return typeof value === 'string';
 }
 
-/**
- * Composition root that owns `nodeId` (walk parents to `parent === null`).
- * Null when the node is missing from the graph.
- */
-export function compositionRootOf(nodeId: string): string | null {
-  let cur: string | null = nodeId;
-  for (let i = 0; i < 64 && cur; i++) {
-    const n = defaultSceneGraph.getNode(cur);
-    if (!n) return null;
-    // `== null` so an ABSENT parent counts as a root the same as an explicit
-    // null one. Testing `=== null` alone let an undefined parent fall through
-    // to the assignment, exit the loop on the next condition check and report
-    // "no root" for a node that is one.
-    if (n.parent == null) return n.id;
-    cur = n.parent;
-  }
-  return null;
-}
-
-/** Every property published on this source composition. Empty when none. */
-export function readEssentialProps(compRootId: string | undefined): ReadonlySet<string> {
-  const out = new Set<string>();
-  if (!compRootId) return out;
-  const node = defaultSceneGraph.getNode(compRootId);
-  if (!node) return out;
-  for (const c of renderComponentsOf(node)) {
-    const bag = (c.props as Record<string, unknown>)[COMP_ESSENTIAL_PROPS];
-    if (!Array.isArray(bag)) continue;
-    for (const k of bag) {
-      if (typeof k !== 'string') continue;
-      const parsed = parseOverrideKey(k);
-      if (parsed && isOverridableProp(parsed.prop)) out.add(k);
-    }
-  }
-  return out;
-}
-
-export function isEssentialProp(compRootId: string, origNodeId: string, prop: string): boolean {
-  return readEssentialProps(compRootId).has(overrideKey(origNodeId, prop));
-}
-
-/**
- * Publish or un-publish one property on the source composition.
- * Stored on the root's first writable component (meta/group), same write path
- * as other document props so undo/dirty tracking sees it.
- */
-export function setEssentialProp(
-  compRootId: string,
-  origNodeId: string,
-  prop: string,
-  promoted: boolean,
-): void {
-  if (!isOverridableProp(prop)) return;
-  if (origNodeId === compRootId) return; // the root itself is not an overridable layer
-  const node = defaultSceneGraph.getNode(compRootId);
-  if (!node || node.components.length === 0) return;
-  const target = node.components[0]!;
-  const next = new Set(readEssentialProps(compRootId));
-  const key = overrideKey(origNodeId, prop);
-  if (promoted) next.add(key);
-  else next.delete(key);
-  defaultSceneGraph.writeProp(compRootId, target.id, COMP_ESSENTIAL_PROPS, [...next].sort());
-  bumpScene();
-}
-
 /** Key for one override: the ORIGINAL node's id, and the property path. */
 export function overrideKey(origNodeId: string, prop: string): string {
   return `${origNodeId}/${prop}`;
@@ -234,49 +167,6 @@ export function readCompOverride(
   prop: string,
 ): OverrideValue | undefined {
   return readCompOverrides(node).get(overrideKey(origNodeId, prop));
-}
-
-/**
- * Set (or, with `value === undefined`, clear) one override.
- *
- * Writes the whole bag back rather than mutating it in place: the props object
- * on a component is shared with the stored document, and an in-place mutation
- * would not be seen by change detection.
- */
-export function setCompOverride(
-  instanceId: string,
-  origNodeId: string,
-  prop: string,
-  value: OverrideValue | undefined,
-): void {
-  const node = defaultSceneGraph.getNode(instanceId);
-  if (!node) return;
-  const fx = node.components.find((c) => c.type === 'fx');
-  if (!fx) return;
-  const next: Record<string, OverrideValue> = {};
-  for (const [k, v] of readCompOverrides(node)) next[k] = v;
-  const key = overrideKey(origNodeId, prop);
-  // Clearing is `undefined`. Anything else that fails validation is dropped
-  // rather than stored — the write path is the last place a bad value can be
-  // stopped before it becomes part of the document.
-  if (value === undefined || !isValidOverrideValue(prop, value)) delete next[key];
-  else next[key] = value;
-  defaultSceneGraph.writeProp(instanceId, fx.id, COMP_OVERRIDES_PROP, next);
-  bumpScene();
-}
-
-/** Drop every override an instance holds for one source layer. */
-export function clearCompOverridesFor(instanceId: string, origNodeId: string): void {
-  const node = defaultSceneGraph.getNode(instanceId);
-  if (!node) return;
-  const fx = node.components.find((c) => c.type === 'fx');
-  if (!fx) return;
-  const next: Record<string, OverrideValue> = {};
-  for (const [k, v] of readCompOverrides(node)) {
-    if (parseOverrideKey(k)?.origNodeId !== origNodeId) next[k] = v;
-  }
-  defaultSceneGraph.writeProp(instanceId, fx.id, COMP_OVERRIDES_PROP, next);
-  bumpScene();
 }
 
 /**

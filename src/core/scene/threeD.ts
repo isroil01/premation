@@ -15,19 +15,9 @@
  */
 
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { renderComponentsOf } from '@core/scene/SceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { bumpScene } from '@stores/sceneStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { defaultAnimation } from '@motion/animation';
 import { type BevelStyle, DEFAULT_BEVEL_STYLE } from '@core/scene/extrusion';
-
-/** A Solid layer — the renderer pins its transform to the comp box while 2D.
- *  Mirrors buildSnapshot's own `isSolid` test so the two cannot drift. */
-function isSolidNode(node: SceneNode): boolean {
-  return node.components.find((c) => c.type === 'fx')?.props.solid === true;
-}
 
 /**
  * Every bevel profile, in menu order. Exported because the inspector's
@@ -176,159 +166,9 @@ export function readNode3D(node: SceneNode): Node3D {
   };
 }
 
-/**
- * Set a layer's extrusion depth (px). Stored only when > 0 so classic flat
- * layers add nothing to file; renders through buildSnapshot's geometry
- * synthesis. Keyframe tracks on 'extrusionDepth' beat this static value.
- */
-export function setNodeExtrusionDepth(nodeId: string, depth: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const t = transformComponent(node);
-  if (!t) return;
-  const v = Math.max(0, Math.min(1000, depth));
-  defaultSceneGraph.writeProp(nodeId, t.id, 'extrusionDepth', v > 0 ? v : undefined);
-  bumpScene();
-}
-
-/**
- * Set a layer's bevel (chamfer) depth (px). Stored only when > 0 so square-edge
- * layers add nothing to file. Clamped to 0–200 here; the renderer clamps again
- * to the geometry-safe max (min(w,h)/2, depth/2). Keyframe tracks on
- * 'bevelDepth' beat this static value.
- */
-export function setNodeBevelDepth(nodeId: string, depth: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const t = transformComponent(node);
-  if (!t) return;
-  const v = Math.max(0, Math.min(200, depth));
-  defaultSceneGraph.writeProp(nodeId, t.id, 'bevelDepth', v > 0 ? v : undefined);
-  bumpScene();
-}
-
-/**
- * Set a layer's Hole Bevel Depth (% of Bevel Depth, 0–100). Stored only when
- * it differs from the default 100 so existing layers add nothing to file.
- * Keyframe tracks on 'holeBevelDepth' beat this static value.
- */
-export function setNodeHoleBevelDepth(nodeId: string, percent: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const t = transformComponent(node);
-  if (!t) return;
-  const v = Math.max(0, Math.min(100, percent));
-  defaultSceneGraph.writeProp(nodeId, t.id, 'holeBevelDepth', v !== DEFAULT_HOLE_BEVEL_DEPTH ? v : undefined);
-  bumpScene();
-}
-
-/**
- * Enable/disable per-character 3D on a TEXT layer (AE's "Enable Per-character
- * 3D"). When on, buildSnapshot emits one 3D plane per glyph instead of a single
- * plane for the whole string, so glyphs intersect, light, and animate in 3D
- * individually. Stored only when true — off costs nothing and renders exactly
- * as a plain 3D text layer.
- */
-export function setNodePerChar3D(nodeId: string, enabled: boolean): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const t = transformComponent(node);
-  if (!t) return;
-  defaultSceneGraph.writeProp(nodeId, t.id, 'perChar3D', enabled ? true : undefined);
-  bumpScene();
-}
-
 /** True when the node is a 3D text layer with per-character 3D enabled. */
 export function isPerChar3D(node: SceneNode): boolean {
   const t = transformComponent(node);
   const props = (t?.props ?? {}) as Record<string, unknown>;
   return props.perChar3D === true;
-}
-
-/**
- * Set a layer's bevel profile. Stored only when non-default (`angular`) so
- * existing layers add nothing to file.
- */
-export function setNodeBevelStyle(nodeId: string, style: BevelStyle): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const t = transformComponent(node);
-  if (!t) return;
-  const valid = BEVEL_STYLES.includes(style) ? style : DEFAULT_BEVEL_STYLE;
-  defaultSceneGraph.writeProp(nodeId, t.id, 'bevelStyle', valid !== DEFAULT_BEVEL_STYLE ? valid : undefined);
-  bumpScene();
-}
-
-/**
- * Turn a layer's 3D on/off. Enabling seeds the depth props at 0 (so the
- * inspector shows Z / X-rotation / Y-rotation rows and nothing moves until
- * edited); disabling removes them and drops any animation tracks on them.
- */
-export function set3DEnabled(nodeId: string, on: boolean): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const t = transformComponent(node);
-  if (!t) return;
-
-  // Solids need their pinned 2D placement written into the transform BEFORE the
-  // 3D switch flips.
-  //
-  // While a solid is 2D the renderer overrides its transform — it draws at
-  // comp-centre, unrotated, unscaled, at comp size (buildSnapshot's
-  // `isSolid && !is3D` branch). Those overrides drop away the instant the layer
-  // becomes 3D, revealing whatever the transform actually holds — and
-  // `insertSolid` never wrote x/y, so it is still `makeNode`'s default
-  // (160, 120) with a top-left anchor. Net effect: making a 1920×1080 background
-  // 3D teleported it so its corner sat at (160, 120). Seeding the values the
-  // renderer was already using makes the switch visually a no-op, which is what
-  // "make this layer 3D" should be.
-  if (on && isSolidNode(node)) {
-    const comp = useCompositionStore.getState();
-    const seed: Record<string, number> = {
-      x: comp.width / 2,
-      y: comp.height / 2,
-      width: comp.width,
-      height: comp.height,
-      anchorX: comp.width / 2,
-      anchorY: comp.height / 2,
-      rotation: 0,
-      scaleX: 1,
-      scaleY: 1,
-    };
-    for (const [prop, value] of Object.entries(seed)) {
-      defaultSceneGraph.writeProp(nodeId, t.id, prop, value);
-    }
-  }
-
-  // A layer switched to 3D from HERE answers lights. `acceptsLights` defaults
-  // false so every saved scene keeps rendering byte-identically (material.ts),
-  // but that default made the out-of-box lighting story a no-op: add a light,
-  // turn on Cast Shadows and a shadow map, and the map is computed, sampled,
-  // and multiplied into nothing — shadow reception rides the shade block, and
-  // no surface had one. Writing the prop explicitly at enable time is the same
-  // pattern as insertLight's castShadows: only layers flipped from here are
-  // affected, scenes saved with bare 3D props keep their look, and a STORED
-  // value — true or false — is the user's choice and is never overwritten.
-  if (on && t.props.acceptsLights === undefined) {
-    defaultSceneGraph.writeProp(nodeId, t.id, 'acceptsLights', true);
-  }
-
-  // The plain-view components are rebuilt on read, so props must be persisted
-  // through the graph's writeProp, not mutated in place.
-  for (const p of THREE_D_PROPS) {
-    defaultSceneGraph.writeProp(nodeId, t.id, p, on ? (typeof t.props[p] === 'number' ? t.props[p] : 0) : undefined);
-  }
-
-  // Turning 3D OFF must also drop the depth ANIMATION, not just the base props.
-  // A leftover `z` track kept feeding a moving depth into the painter sort of a
-  // layer that is nominally 2D again, and re-enabling 3D resurrected an animation
-  // the user thought they had removed. (This is what the doc comment above always
-  // claimed happened.)
-  if (!on) {
-    for (const p of THREE_D_PROPS) {
-      if (defaultAnimation.isAnimated(nodeId, p)) defaultAnimation.removeTrack(nodeId, p);
-    }
-  }
-
-  bumpScene();
 }

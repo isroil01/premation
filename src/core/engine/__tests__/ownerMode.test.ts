@@ -4,10 +4,10 @@
  * `premation-engine` (headless, through the same EngineSupervisor + bridge the
  * app uses). The page keeps no replica (block 3).
  *
- *   - `engine()` is the owner and no TypeScript engine is created;
+ *   - `engine()` is the owner;
  *   - edits, batches, a drag gesture, undo / redo reach the owner and the
  *     mirror follows its revisions;
- *   - a project transition does not create a TypeScript engine.
+ *   - a project transition keeps the owner.
  *
  * Skipped, saying so, when the engine is not built (PREMATION_ENGINE_PATH =
  * <native build>/engine/premation-engine-headless[.exe]).
@@ -17,15 +17,12 @@ import { unwrap, type DocumentSnapshot, type EngineClient } from '@motion/engine
 import { CommandSystem, setCommandSystem } from '@core/commands/CommandSystem';
 import type { CommandServices } from '@core/commands/Command';
 import { getEventBus } from '@core/events/EventBus';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { performUndo, performRedo } from '@stores/historyStore';
 import { resetSnapshotSharing } from '@core/commands/snapshotSharing';
 import { documentMirror } from '@stores/documentMirror';
-import type { EditorDocument } from '@core/api/cloudDocument';
-import { bootEngine, engine, engineIdle, localEngine, ownedEngine, shutdownEngine } from '../engineInstance';
+import { bootEngine, engine, engineIdle, ownedEngine, shutdownEngine } from '../engineInstance';
 import { engineOwnsDocumentNow, resetEngineOwnership, setEngineOwnsDocument } from '../engineOwnership';
 import { resetProcessEngine } from '../process/processEngine';
-import { fakePorts } from '../__testHelpers__/harness';
 import { nativeEngineExe, startNativeEngine, type NativeEngine } from '../__testHelpers__/nativeEngine';
 
 jest.setTimeout(120_000);
@@ -68,17 +65,12 @@ maybe('D5: the C++ engine owns the document, the page keeps no replica', () => {
     await shutdownEngine();
     setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
     resetSnapshotSharing();
-    subs = [
-      getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene()),
-    ];
     setEngineOwnsDocument(true);
-    const files = new Map<string, EditorDocument>();
-    bootEngine({ ports: fakePorts(files), ownsDocument: true });
+    bootEngine({ ownsDocument: true });
     expect(engineOwnsDocumentNow()).toBe(true);
     const owner = ownedEngine();
     expect(owner).not.toBeNull();
     expect(engine()).toBe(owner);
-    expect(localEngine()).toBeNull();
     const settle = async (): Promise<void> => {
       await engineIdle();
       await documentMirror().whenIdle();
@@ -118,11 +110,10 @@ maybe('D5: the C++ engine owns the document, the page keeps no replica', () => {
     expect(documentMirror().revision).toBe(owner!.revision);
     expect(documentMirror().comp(comp)?.settings.name).toBe('Owned');
 
-    // A project transition creates no TypeScript engine.
+    // A project transition keeps the owner.
     getEventBus().emit('ProjectLoaded', { projectId: 'p' });
     unwrap(await engine().execute({ type: 'newProject' }));
     await settle();
-    expect(localEngine()).toBeNull();
     expect(engine()).toBe(owner);
   });
 });

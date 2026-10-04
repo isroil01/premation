@@ -12,9 +12,8 @@
  * single-file + cloud-autosave path is untouched.
  */
 
-import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
-import { baselineHistoryNow } from '@core/engine/historyBaseline';
-import { recordProjectOpened, recordProjectSaved } from '@core/localIndex/indexWriter';
+import {   type EditorDocument } from '@core/api/cloudDocument';
+import {  recordProjectSaved } from '@core/localIndex/indexWriter';
 import { BundleRepository } from './BundleRepository';
 import { ProjectBundleService } from './ProjectBundleService';
 import type { VersionEntry, VersionKind } from './VersionStore';
@@ -42,33 +41,6 @@ export function setBundleRepository(repo: BundleRepository | null): void {
 /** A path that names a `.motion` bundle (directory), by convention. */
 export function isBundlePath(path: string): boolean {
   return path.endsWith('.motion');
-}
-
-/** Capture the live document and persist it to the bundle at `root`. */
-export async function saveProjectBundle(root: string, repo = getBundleRepository()): Promise<void> {
-  const doc = captureDocument();
-  await repo.save(root, doc);
-  // The index write comes AFTER the disk write and never gates it — see
-  // indexWriter's header. This is the call whose absence left the whole
-  // local index empty from the day it shipped.
-  await recordProjectSaved(root, doc);
-}
-
-/**
- * Load the bundle at `root` into the engines. Returns false (restoring nothing)
- * when there is no bundle there, so the caller can fall back to a single-file
- * open.
- */
-export async function openProjectBundle(root: string, repo = getBundleRepository()): Promise<boolean> {
-  const doc = await repo.load(root);
-  if (!doc) return false;
-  restoreDocument(doc);
-  // The loaded document IS the baseline. Without this, undo's "before" is still
-  // the seeded starter scene from boot, so one Ctrl+Z replaces the project the
-  // user just opened.
-  baselineHistoryNow('Open');
-  await recordProjectOpened(root, doc);
-  return true;
 }
 
 /** True when a bundle already exists at `root`. */

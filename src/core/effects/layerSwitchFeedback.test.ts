@@ -1,7 +1,7 @@
 import {
   enableLayerMotionBlurWithFeedback,
   disableLayerMotionBlur,
-  setAdjustmentWithFeedback,
+  
   guideLayerArmedMessage,
   guideLayerDisarmedMessage,
 } from './layerSwitchFeedback';
@@ -72,11 +72,6 @@ describe('layerSwitchFeedback', () => {
     disableLayerMotionBlur('n1', setLayer);
     expect(setLayer).toHaveBeenCalledWith('n1', false);
     expect(setEnabled).not.toHaveBeenCalled();
-  });
-
-  it('explains empty adjustment stacks', () => {
-    setAdjustmentWithFeedback('n1', true, jest.fn());
-    expect(notify.mock.calls.some((c) => /add effects/i.test(c[0].message))).toBe(true);
   });
 
   it('describes guide layers as export-omitted, not viewer-hidden', () => {

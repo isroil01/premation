@@ -3,9 +3,10 @@
  * value over the stored one, and only for the options that have a track.
  */
 
-import { readNodeMaterial, MATERIAL_ANIMATABLE } from './material';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { readNodeMaterial } from './material';
+
 import type { SceneNode } from '@core/types';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 const node = (): SceneNode => ({
   id: 'm', name: 'm', parent: null, children: [], visible: true, locked: false,
@@ -40,14 +41,6 @@ it('clamps an animated value like a stored one', () => {
   const m = readNodeMaterial(node(), new Map([['ambient', 400], ['shininess', 0.2]]));
   expect(m.ambient).toBe(100);
   expect(m.shininess).toBe(1);
-});
-
-it('the registry and the reader agree on which options animate', async () => {
-  const { resolvePropertyMeta } = await import('@core/inspector/propertyMeta');
-  for (const k of MATERIAL_ANIMATABLE) {
-    expect(resolvePropertyMeta(k).group).toBe('material');
-    expect(resolvePropertyMeta(k).keyframeable).not.toBe(false);
-  }
 });
 
 describe('shading model', () => {

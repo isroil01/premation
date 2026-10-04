@@ -38,9 +38,7 @@
  * nothing in the UI to search for.
  */
 
-import { defaultAnimation, type Keyframe } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import {  type Keyframe } from '@motion/animation';
 
 /** Scale props this assistant will act on. */
 export const SCALE_PROPS = ['scaleX', 'scaleY'] as const;
@@ -151,61 +149,4 @@ export interface ExpScaleResult {
   written: Map<string, number>;
   /** Why nothing happened, when nothing did. */
   refusal: ExpScaleRefusal | null;
-}
-
-/**
- * Which scale tracks on `nodeId` this assistant could act on.
- *
- * Exported so the command's `enabled()` and its `execute()` ask the SAME
- * question. Two predicates — one deciding whether the menu item is live and
- * one deciding whether the work happens — is the §2·0 shape, and it shows up
- * as a command that greys itself out for a layer it would happily have
- * handled, or worse the reverse.
- */
-export function eligibleScaleTracks(nodeId: string): Array<{ prop: string; range: ExpScaleRange }> {
-  const out: Array<{ prop: string; range: ExpScaleRange }> = [];
-  for (const track of defaultAnimation.tracksFor(nodeId)) {
-    if (!(SCALE_PROPS as readonly string[]).includes(track.prop)) continue;
-    const range = rangeOfTrack(track.keyframes);
-    if (!range || refuseExponentialScale(range)) continue;
-    out.push({ prop: track.prop, range });
-  }
-  return out;
-}
-
-/**
- * Rewrite a layer's scale tracks as an exponential ramp.
- *
- * Each scale prop is baked INDEPENDENTLY, from its own keyframes. Deriving
- * both axes from one range would be wrong for any non-uniform scale animation
- * — and would look right on the overwhelmingly common uniform one, which is
- * the sort of bug that ships.
- */
-export function applyExponentialScale(nodeId: string): ExpScaleResult {
-  const eligible = eligibleScaleTracks(nodeId);
-  if (eligible.length === 0) {
-    // Say WHICH refusal, so the caller can explain rather than just decline.
-    const scaleTracks = defaultAnimation.tracksFor(nodeId)
-      .filter((t) => (SCALE_PROPS as readonly string[]).includes(t.prop));
-    const ranges = scaleTracks.map((t) => rangeOfTrack(t.keyframes));
-    const firstRange = ranges.find((r) => r !== null) ?? null;
-    return {
-      written: new Map(),
-      refusal: firstRange ? refuseExponentialScale(firstRange) : 'needs-two-keyframes',
-    };
-  }
-
-  const fps = getTimelineController().fps || 30;
-  const written = new Map<string, number>();
-  runAnimEdit('Exponential scale', () => {
-    defaultAnimation.batch(() => {
-      for (const { prop, range } of eligible) {
-        const kfs = planExponentialScale(range, fps);
-        if (kfs.length === 0) continue;
-        defaultAnimation.setKeyframes(nodeId, prop, kfs);
-        written.set(prop, kfs.length);
-      }
-    });
-  });
-  return { written, refusal: null };
 }

@@ -9,7 +9,6 @@
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useUIStore } from '@stores/uiStore';
-import { getNodeEffects } from '@core/effects/effects';
 
 function notify(message: string, level: 'info' | 'warning' | 'success' = 'info'): void {
   useUIStore.getState().notify({ level, message, durationMs: 3200 });
@@ -35,20 +34,6 @@ export function enableLayerMotionBlurWithFeedback(nodeId: string, setLayer: (id:
 /** Disable layer motion blur without touching the composition master. */
 export function disableLayerMotionBlur(nodeId: string, setLayer: (id: string, on: boolean) => void): void {
   setLayer(nodeId, false);
-}
-
-/**
- * Toggle adjustment layer. Empty stacks do not change pixels — say so.
- */
-export function setAdjustmentWithFeedback(
-  nodeId: string,
-  on: boolean,
-  setAdjustment: (id: string, on: boolean) => void,
-): void {
-  setAdjustment(nodeId, on);
-  if (on && getNodeEffects(nodeId).length === 0) {
-    notify('Adjustment layer is on — add effects to grade layers beneath it', 'info');
-  }
 }
 
 /** Copy for guide-layer arming: visible in the viewer, omitted from export. */

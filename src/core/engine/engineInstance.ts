@@ -44,62 +44,67 @@
  * No React here (src/core). The hooks over this live in src/hooks.
  */
 
-import type { EngineClient, EventBatch, EventListener } from '@motion/engine-api';
-import { getEventBus } from '@core/events/EventBus';
-import { LocalEngine, type LocalEngineOptions } from './LocalEngine';
+/**
+ * THE engine of this editor session: the C++ engine (`premation-engine`, D5 /
+ * F2), which owns the document (docs/TS_ENGINE_REMOVAL.md — the TypeScript
+ * engine is gone).
+ *
+ *   engine()                 the EngineClient every UI write goes through
+ *   bootEngine(opts)         boot (Providers, after the history wiring); idempotent
+ *   subscribeEngine(l)       event batches from the session's engine; a boot
+ *                            delivers a synthetic `documentReset` so a mirror refetches
+ *   shutdownEngine()         teardown (Providers unmount, tests)
+ *
+ * `engine()` is an `OwnedEngineClient` over the window's process client. Its
+ * events feed `subscribeEngine` (the mirror) and undo/redo route to it. The
+ * page keeps no copy of the document; the UI reads the mirror. Without an
+ * engine bridge (a jest suite that does not boot the native harness) there is
+ * no engine: `engine()` answers every request `busy`.
+ *
+ * No React here (src/core). The hooks over this live in src/hooks.
+ */
+
+import { EngineClientBase, engineError, type EngineClient, type EventListener, type Request, type Response } from '@motion/engine-api';
 import { createAppProcessEngine } from './process/processEngine';
 import { OwnedEngineClient } from './ownedEngineClient';
 import { setEngineOwnsDocument } from './engineOwnership';
 import { useUIStore } from '@stores/uiStore';
 import { setHistoryRoute } from '@stores/historyStore';
 import { documentMirror, hasDocumentMirror, setAppMirrorSource } from '@stores/documentMirror';
-import type { EnginePorts } from './ports';
 
 export interface BootEngineOptions {
-  ports?: EnginePorts;
-  /** Current project path, if any (engine's `projectPath` / dirty tracking). */
-  projectPath?: () => string | null | undefined;
   /**
-   * Record the command log (§12). Off in the app until B5 turns replay on:
-   * every drag message is deep-copied into it and it is never trimmed.
-   */
-  recordLog?: boolean;
-  /** Extra options for tests. */
-  engineOptions?: Partial<LocalEngineOptions>;
-  /**
-   * D5 / F2: the C++ engine owns the document (the owner flag, decided by main:
-   * `engine:status.ownsDocument`). Needs the process bridge; without one the
-   * TypeScript engine stays the owner and the flag is cleared.
+   * D5 / F2: the C++ engine owns the document (main's `engine:status.ownsDocument`,
+   * or a pop-out mirroring it). Needs the process bridge.
    */
   ownsDocument?: boolean;
 }
 
-let current: LocalEngine | null = null;
-/** The session's engine while the C++ engine owns the document (else null). */
+/** The session's engine (else null). */
 let owned: OwnedEngineClient | null = null;
 let detachOwned: (() => void) | null = null;
-let bootOpts: BootEngineOptions | null = null;
-let busSubs: Array<{ dispose(): void }> = [];
 let generation = 0;
 const listeners = new Set<EventListener>();
-const replacedListeners = new Set<(engine: LocalEngine) => void>();
-let detachCurrent: (() => void) | null = null;
 
-function create(): LocalEngine {
-  const o = bootOpts ?? {};
-  const path = o.projectPath?.() ?? '';
-  const e = new LocalEngine({
-    legacyUiRefresh: true,
-    recordLog: o.recordLog ?? false,
-    ...(o.ports ? { ports: o.ports } : {}),
-    ...(path ? { projectPath: path } : {}),
-    ...o.engineOptions,
-  });
-  detachCurrent = e.subscribe((batch) => fanOut(batch));
-  return e;
+/** No engine (no bridge, not booted): every request answers `busy`, nothing is ever sent. */
+class NoEngineClient extends EngineClientBase {
+  request(request: Request): Promise<Response> {
+    return Promise.resolve({
+      seq: request.seq,
+      revision: this.revision,
+      outcome: { kind: 'error', value: engineError('busy', 'No engine is running.') },
+    });
+  }
+  subscribe(): () => void {
+    return () => {};
+  }
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
 }
+const noEngine = new NoEngineClient();
 
-function fanOut(batch: EventBatch): void {
+function fanOut(batch: Parameters<EventListener>[0]): void {
   for (const l of [...listeners]) {
     try {
       l(batch);
@@ -109,37 +114,14 @@ function fanOut(batch: EventBatch): void {
   }
 }
 
-function install(next: LocalEngine, reason: 'opened' | 'created'): void {
-  const prev = current;
-  current = next;
-  installHistoryRoute();
-  generation += 1;
-  // The document under the old instance is already gone: abandon it (an open
-  // gesture is dropped, not committed onto the new document's history).
-  if (prev) prev.dispose();
-  for (const l of [...replacedListeners]) {
-    try { l(next); } catch { /* isolate */ }
-  }
-  // Every install, the first included: a subscriber that outlived a shutdown
-  // (the document mirror, B4) must refetch from the new instance.
-  fanOut({
-    fromRevision: 0,
-    toRevision: next.documentRevision,
-    events: [{ type: 'documentReset', revision: next.documentRevision, reason }],
-    origin: 'engine',
-  });
-}
-
 /**
- * The app's Undo/Redo/History-panel jump become engine requests (G2): they
- * are in the command log, so a keyboard-undo session replays revision-exact.
- * They go to the session's engine — the owner when the C++ engine owns the
- * document.
+ * The app's Undo/Redo/History-panel jump become engine requests (G2), sent to
+ * the session's engine.
  */
 function installHistoryRoute(): void {
   setHistoryRoute({
-    step: (dir) => (current || owned ? engine().execute({ type: dir }) : Promise.resolve()),
-    jump: (position) => (current || owned ? engine().execute({ type: 'jumpToHistory', position }) : Promise.resolve()),
+    step: (dir) => (owned ? owned.execute({ type: dir }) : Promise.resolve()),
+    jump: (position) => (owned ? owned.execute({ type: 'jumpToHistory', position }) : Promise.resolve()),
   });
 }
 
@@ -158,10 +140,7 @@ function noticeToUser(n: { kind: 'unavailable'; reason: string } | { kind: 'rest
   }
 }
 
-/**
- * D5 / F2: make the C++ engine the owner — the session's only engine. False
- * when there is no engine bridge (the jest harness): a LocalEngine answers there.
- */
+/** Make the C++ engine the session's engine. False when there is no engine bridge. */
 function startOwner(): boolean {
   const pc = createAppProcessEngine({ onNotice: (n) => noticeToUser(n) });
   if (!pc) return false;
@@ -175,143 +154,67 @@ function startOwner(): boolean {
 }
 
 // The document mirror (src/stores/documentMirror.ts) reads the session's
-// engine through the API only: its events, its queries — and, in process, the
-// synchronous query fast path (LocalEngine.querySync).
+// engine through the API only: its events and its queries.
 setAppMirrorSource(() => ({
   subscribe: (listener) => subscribeEngine(listener),
   query: (q) => engine().query(q),
-  querySync: (q) => {
-    const e = engine();
-    return e instanceof LocalEngine ? e.querySync(q) : null;
-  },
+  querySync: () => null,
 }));
 
 /**
- * Boot the session's engine. Call once the app bus exists (after
- * `Application.boot`). Idempotent: a second call re-binds the bus and returns
- * the running engine. With `ownsDocument` and an engine bridge the C++ engine
- * is the session's engine and no LocalEngine is created (a portless one booted
- * earlier by `engine()` is dropped); otherwise a LocalEngine over the live
- * stores, rebuilt on every project transition.
+ * Boot the session's engine. Idempotent: a second call returns the running
+ * engine. Without `ownsDocument` or without an engine bridge there is none
+ * (`engine()` answers `busy`).
  */
 export function bootEngine(opts: BootEngineOptions = {}): EngineClient {
-  bootOpts = opts;
-  for (const s of busSubs) s.dispose();
-  busSubs = [];
   if (owned) return owned;
-  if (opts.ownsDocument) {
-    if (startOwner()) {
-      if (current) {
-        detachCurrent?.();
-        detachCurrent = null;
-        current.dispose();
-        current = null;
-      }
-      return owned!;
-    }
-    setEngineOwnsDocument(false);
-  }
-  const bus = getEventBus();
-  busSubs = [
-    bus.on('ProjectLoaded', () => rebuildEngine('opened')),
-    bus.on('ProjectUnloaded', () => rebuildEngine('created')),
-  ];
-  if (current) {
-    current.attachBus();
-    if (opts.ports) current.attachPorts(opts.ports);
-    return current;
-  }
-  const e = create();
-  install(e, 'opened');
-  return e;
+  if (opts.ownsDocument && startOwner()) return owned!;
+  setEngineOwnsDocument(false);
+  return noEngine;
 }
 
-/**
- * Replace the TypeScript engine with a fresh one over the (already swapped)
- * live document. Not in owner mode (the C++ engine keeps its document).
- */
-export function rebuildEngine(reason: 'opened' | 'created' = 'opened'): LocalEngine {
-  if (owned) throw new Error('rebuildEngine: the C++ engine owns the document');
-  if (current) detachCurrent?.();
-  const e = create();
-  install(e, reason);
-  return e;
-}
-
-/** Tear down (Providers unmount, tests). A gesture still open is committed. */
+/** Tear down (Providers unmount, tests). */
 export async function shutdownEngine(): Promise<void> {
-  for (const s of busSubs) s.dispose();
-  busSubs = [];
-  const e = current;
-  current = null;
   // The owner's process client is the window's (processEngine.ts) and outlives
   // a Providers remount; only this session's view of it goes.
   detachOwned?.();
   detachOwned = null;
   owned = null;
   setHistoryRoute(null);
-  detachCurrent?.();
-  detachCurrent = null;
-  bootOpts = null;
-  if (e) await e.close();
 }
 
-/**
- * The session's EngineClient. Before `bootEngine` (a panel mounted on its own
- * in a test, a surface that renders without Providers) it boots a PORTLESS
- * engine on the current bus: edits work, file/media commands answer
- * `unsupported`. Providers' boot then adopts it and attaches the real ports.
- * When the C++ engine owns the document, the owner (see the file header).
- */
+/** The session's EngineClient: the owner, else the inert `busy` client. */
 export function engine(): EngineClient {
-  if (owned) return owned;
-  if (!current) bootEngine({});
-  return owned ?? current!;
+  return owned ?? noEngine;
 }
 
-/** The owner client while the C++ engine owns the document (diagnostics, the harness). */
+/** The owner client (diagnostics, the harness). */
 export function ownedEngine(): OwnedEngineClient | null {
   return owned;
 }
 
 /**
  * Resolves once every request sent so far has been answered (requests are
- * applied strictly in order). Tests: `fireEvent.click(…); await engineIdle();`.
+ * applied strictly in order) and the mirror has caught up.
+ * Tests: `fireEvent.click(…); await engineIdle();`.
  */
 export async function engineIdle(): Promise<void> {
-  if (owned) {
-    // Requests are applied in order: a query sent now is answered after every
-    // request before it. Then let the mirror reach that revision.
-    const res = await owned.query({ type: 'getItems', items: [] });
-    if (hasDocumentMirror()) await documentMirror().whenAt(res.revision);
-    return;
-  }
-  if (!current) return;
-  await current.whenIdle();
-}
-
-/** The concrete local engine (history state, gesture flag) — tests and diagnostics. */
-export function localEngine(): LocalEngine | null {
-  return current;
+  if (!owned) return;
+  const res = await owned.query({ type: 'getItems', items: [] });
+  if (hasDocumentMirror()) await documentMirror().whenAt(res.revision);
 }
 
 export function hasEngine(): boolean {
-  return current !== null || owned !== null;
+  return owned !== null;
 }
 
-/** Bumped on every rebuild (a gesture begun on an older instance is dead). */
+/** Bumped every time an engine is installed (a gesture begun on an older one is dead). */
 export function engineGeneration(): number {
   return generation;
 }
 
-/** Event batches from the current instance, across rebuilds. */
+/** Event batches from the session's engine. */
 export function subscribeEngine(listener: EventListener): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
-}
-
-/** Told whenever `rebuildEngine`/`bootEngine` installs a new instance. */
-export function onEngineReplaced(listener: (engine: LocalEngine) => void): () => void {
-  replacedListeners.add(listener);
-  return () => replacedListeners.delete(listener);
 }

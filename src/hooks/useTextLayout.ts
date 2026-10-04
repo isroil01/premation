@@ -16,7 +16,9 @@ import { useMirrorKeys, useRetainTree } from './useMirror';
 
 export function useTextLayout(layer: string | null | undefined, overrides?: TextLayoutOverrides): TextLayout | null {
   useRetainTree(layer);
-  const rev = useMirrorKeys(layer ? [`layer:${layer}`, `tree:${layer}`, `keys:${layer}`] : []);
+  // The layout follows the Text group and the masks a text path runs along (and the header,
+  // the tree's shape, the keys) — not every write on the layer: a Position drag re-measures nothing.
+  const rev = useMirrorKeys(layer ? [`layer:${layer}`, `struct:${layer}`, `grp:${layer}|text`, `grp:${layer}|masks`, `keys:${layer}`] : []);
   const [answer, setAnswer] = useState<{ layer: string; layout: TextLayout | null } | null>(null);
   const overrideKey = overrides ? JSON.stringify(overrides) : '';
   useEffect(() => {

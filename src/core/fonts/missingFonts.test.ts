@@ -1,7 +1,8 @@
 import type { SceneNode } from '@core/types';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import { collectFontUsage, findMissingFonts, missingFontsMessage, primaryFamily } from './missingFonts';
 import { makeFontAvailability } from './fontAvailability';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 function node(id: string, kind: string, text: Record<string, unknown> = {}): SceneNode {
   return {

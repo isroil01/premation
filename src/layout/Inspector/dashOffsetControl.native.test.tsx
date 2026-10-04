@@ -17,7 +17,6 @@
 import { render, cleanup, fireEvent, screen, act } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
 import { useSelectionStore } from '@stores/selectionStore';
-import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { readNodeStroke, defaultStroke } from '@core/paint/stroke';
 import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
@@ -69,13 +68,6 @@ afterEach(async () => {
 });
 
 describe('the Dash Offset row', () => {
-  it('is registered under the name the renderer samples', async () => {
-    // `buildSnapshot` folds `a.get('strokeDashOffset')`. If the registry and the
-    // renderer ever disagree the control writes a track nothing reads.
-    const meta = resolvePropertyMeta(PROP, ID);
-    expect(meta.label).toBe('Dash Offset');
-    expect(meta.unit).toBe('px');
-  });
 
   it('appears once the stroke has a dash pattern', async () => {
     await setStroke(DASH);

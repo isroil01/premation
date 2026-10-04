@@ -35,9 +35,7 @@
  * allows.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { SceneNode } from '@core/types';
-import { bumpScene } from '@stores/sceneStore';
 
 export type PolystarType = 'polygon' | 'star';
 
@@ -143,33 +141,6 @@ export function readNodePolystar(node: SceneNode): Polystar | null {
     outerRoundness: num(o.outerRoundness, 0),
     innerRoundness: num(o.innerRoundness, 0),
   };
-}
-
-export function getNodePolystar(nodeId: string): Polystar | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodePolystar(node) : null;
-}
-
-/** Replace (or clear, when undefined) the node's polystar config. */
-export function setNodePolystar(nodeId: string, cfg: Polystar | undefined): void {
-  defaultSceneGraph.setFxKey(nodeId, POLYSTAR_FX_PROP, cfg);
-  bumpScene();
-}
-
-/** Patch the node's polystar. No-op on a layer without one — this edits the
- *  parameter set of an existing polystar, it never converts a layer into one. */
-export function updateNodePolystar(nodeId: string, patch: Partial<Polystar>): void {
-  const current = getNodePolystar(nodeId);
-  if (!current) return;
-  // `starType` is pinned unless the patch names it, and the whole object is
-  // re-validated so a malformed patch cannot store NaN geometry.
-  const next = { ...current, ...patch };
-  setNodePolystar(nodeId, {
-    ...next,
-    points: Math.max(3, Math.round(num(next.points, current.points))),
-    outerRadius: Math.max(0, num(next.outerRadius, current.outerRadius)),
-    innerRadius: Math.max(0, num(next.innerRadius, current.innerRadius)),
-  });
 }
 
 /**

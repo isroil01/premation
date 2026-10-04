@@ -15,7 +15,7 @@
  */
 
 import { commands } from '@motion/workspace';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import type { SceneNode, ID } from '@core/types';
 import { insertFragment } from '@/engine-client/insertFragment';
 import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
@@ -23,6 +23,7 @@ import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { createCommandPort } from './ports';
 import { holdCanvasGeometry, releaseCanvasGeometry } from './__testHelpers__/canvasGeometry';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 const W = 160;
 const H = 120;

@@ -4,12 +4,8 @@
  */
 
 import type SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { useCompositionStore } from '@stores/compositionStore';
-import { bumpScene } from '@stores/sceneStore';
 import type { TemplateDefinition } from '../templateTypes';
-import { addRoot, addShape, addText, addGradientShape, radialFill, liveKf, type SetKf } from './builders';
+import { addRoot, addShape, addText, addGradientShape, radialFill,  type SetKf } from './builders';
 
 const CW = 1920, CH = 1080, CX = CW / 2, CY = CH / 2;
 
@@ -33,15 +29,6 @@ export function animateTitleCard(set: SetKf): void {
   set('tpl_headline', 'y', 0, CY - 4, 'easeOut'); set('tpl_headline', 'y', 0.8, CY - 40, 'easeOut');
   set('tpl_accent', 'scaleX', 0.3, 0, 'easeOut'); set('tpl_accent', 'scaleX', 1.1, 1, 'easeOut');
   set('tpl_subtitle', 'opacity', 0.5, 0, 'easeOut'); set('tpl_subtitle', 'opacity', 1.3, 100, 'easeOut');
-}
-
-export function buildTitleCard(): void {
-  const rootId = activeCompRootId();
-  defaultSceneGraph.clear();
-  layoutTitleCard(defaultSceneGraph, rootId);
-  animateTitleCard(liveKf);
-  useCompositionStore.getState().update({ width: CW, height: CH, fps: 60, durationSeconds: 5, background: '#0e0e1c' });
-  bumpScene();
 }
 
 export const titleCardTemplate: TemplateDefinition = {

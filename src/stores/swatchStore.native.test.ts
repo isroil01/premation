@@ -17,8 +17,9 @@ import {
   DOCUMENT_COLOR_LIMIT,
 } from './swatchStore';
 import { setupAppEngine, settleEdits, type Harness } from '@core/engine/__testHelpers__/appEngine';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import type { SceneNode } from '@core/types';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 /** A node whose `fx` component carries whatever paint the case is about. */
 function paintedNode(id: string, fxProps: Record<string, unknown>, parent: string | null = 'comp_root'): SceneNode {

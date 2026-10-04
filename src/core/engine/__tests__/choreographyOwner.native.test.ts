@@ -20,14 +20,12 @@ import { resetSnapshotSharing } from '@core/commands/snapshotSharing';
 import { documentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useChoreographyStore } from '@stores/choreographyStore';
-import type { EditorDocument } from '@core/api/cloudDocument';
 import { planChoreography, writeChoreography, DEFAULT_STAGGER_PARAMS } from '@core/animation/choreography';
 import { choreographyEngineEdit } from '@core/animation/choreographyEdits';
 import { revertChoreography, runChoreography } from '@core/animation/choreographyCommands';
 import { bootEngine, engine, engineIdle, ownedEngine, shutdownEngine } from '../engineInstance';
 import { resetEngineOwnership, setEngineOwnsDocument } from '../engineOwnership';
 import { resetProcessEngine } from '../process/processEngine';
-import { fakePorts } from '../__testHelpers__/harness';
 import { nativeEngineExe, startNativeEngine, type NativeEngine } from '../__testHelpers__/nativeEngine';
 
 jest.setTimeout(180_000);
@@ -85,8 +83,7 @@ maybe('choreography with the C++ engine as the owner', () => {
     setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
     resetSnapshotSharing();
     setEngineOwnsDocument(true);
-    const files = new Map<string, EditorDocument>();
-    bootEngine({ ports: fakePorts(files), ownsDocument: true });
+    bootEngine({ ownsDocument: true });
     client = engine();
     expect(client).toBe(ownedEngine());
   });

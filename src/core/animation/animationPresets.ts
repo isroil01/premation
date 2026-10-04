@@ -17,38 +17,33 @@
  *     why baking pixels is the one thing not to copy from AE.
  */
 
-import { defaultAnimation, type AnimationEngine, type Keyframe, type PropPath } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
+import {  type AnimationEngine, type Keyframe, type PropPath } from '@motion/animation';
 import { getSettingsManager } from '@core/services/coreServices';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { documentMirror, hasDocumentMirror } from '@stores/documentMirror';
 import { storedStaticNumber } from '@core/mirror/trackIndex';
-import { is3DEnabled, set3DEnabled, THREE_D_PROPS } from '@core/scene/threeD';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { getNodeEffects, writeNodeEffects, type Effect, type EffectParams, type EffectType } from '@core/effects/effects';
+import {    type EffectParams, type EffectType } from '@core/effects/effects';
 import {
-  hasTextComponent,
-  readAnimatorData,
+  
+  
   unitPositions,
-  writeAnimatorData,
+  
   type TextAnimatorData,
 } from '@core/text/textAnimators';
 import {
-  DEFAULT_PRESET_CONTEXT,
-  defaultUnitForProp,
+  
+  
   resolveUnitTime,
   resolveUnitValue,
-  toUnitValue,
+  
   type PresetContext,
   type PresetTimeUnit,
   type PresetUnit,
 } from './presetUnits';
-import { presetContextFor } from './presetContext';
 import { TEXT_PRESETS } from './textPresets';
 import { BEHAVIOR_PRESETS } from './behaviorPresets';
 import { SCENERY_PRESETS } from './sceneryPresets';
 import { FILM_LOOK_PRESETS } from './filmLookPresets';
-import { CAMERA_PRESETS, PRESET_APPLIERS } from './cameraPresets';
+import { CAMERA_PRESETS } from './cameraPresets';
 
 export interface PresetTrack {
   prop: PropPath;
@@ -188,38 +183,6 @@ export function resolvePresetUnits(
   }));
 }
 
-// ── Capture / apply through the engine ───────────────────────────────
-
-/**
- * Capture a node's animated tracks as normalized (t = 0-based) preset tracks,
- * converted OUT of pixels into the units each property should travel in.
- *
- * Capturing in absolute pixels is exactly the trap AE fell into: the preset
- * then only works in the comp it was authored in. Passing `ctx` — the comp the
- * user is saving from — lets the same slide-in replay correctly anywhere.
- */
-export function captureAnimation(
-  nodeId: string,
-  engine: AnimationEngine = defaultAnimation,
-  ctx: PresetContext = DEFAULT_PRESET_CONTEXT,
-): PresetTrack[] {
-  const tracks: PresetTrack[] = [];
-  for (const prop of engine.animatedProps(nodeId)) {
-    const kfs = engine.getTrackKeyframes(nodeId, prop);
-    if (!kfs || !kfs.length) continue;
-    const unit = defaultUnitForProp(prop);
-    tracks.push({
-      prop,
-      unit,
-      keyframes:
-        unit === 'abs'
-          ? kfs
-          : kfs.map((k) => ({ ...k, value: toUnitValue(k.value, unit, ctx) })),
-    });
-  }
-  return normalizeTracks(tracks);
-}
-
 /** The layer's current value for a property: sampled animation first, then the
  *  STATIC value the layer stores for it (stored units; read on the document
  *  mirror — its property tree must be loaded, core/engine/memberEdits.ts). */
@@ -232,41 +195,6 @@ export function nodeBaseValue(
   const sampled = engine.sample(nodeId, prop, atTime);
   if (sampled !== undefined) return sampled;
   return hasDocumentMirror() ? storedStaticNumber(documentMirror().tree(nodeId), prop) : undefined;
-}
-
-/** Apply preset tracks to a node at `atTime`, as one undoable command.
- *  Units resolve against the target comp/layer, then relative tracks resolve
- *  against the layer's current values. */
-export function applyPresetTracks(
-  nodeId: string,
-  tracks: ReadonlyArray<PresetTrack>,
-  atTime: number,
-  engine: AnimationEngine = defaultAnimation,
-  timeUnit?: PresetTimeUnit,
-  ctx: PresetContext = presetContextFor(nodeId),
-): void {
-  const concrete = resolvePresetUnits(tracks, ctx, timeUnit);
-  const resolved = resolveRelativeTracks(concrete, (prop) => nodeBaseValue(nodeId, prop, atTime, engine));
-  const shifted = offsetTracks(resolved, atTime);
-  // 3D presets (z / rotationX / rotationY tracks) need the layer's 3D switch on
-  // to render — flip it automatically so they are one-click on any 2D layer.
-  // Cameras/lights read their depth props directly and don't use the switch.
-  const uses3D = tracks.some((t) => (THREE_D_PROPS as readonly string[]).includes(t.prop));
-  if (uses3D) {
-    const node = defaultSceneGraph.getNode(nodeId);
-    const kind = node ? readNodeKind(node) : null;
-    if (node && kind !== 'camera' && kind !== 'light' && !is3DEnabled(node)) {
-      set3DEnabled(nodeId, true);
-    }
-  }
-  runAnimEdit('Apply animation preset', () => {
-    for (const t of shifted) {
-      for (const k of t.keyframes) {
-        engine.setKeyframe(nodeId, t.prop, k.t, k.value, k.easing);
-        if (k.bezier) engine.setBezier(nodeId, t.prop, k.t, k.bezier);
-      }
-    }
-  });
 }
 
 // ── Built-in presets (position-agnostic so they suit any layer) ──────
@@ -642,121 +570,8 @@ export function presetFolder(p: AnimationPreset): string {
   return p.folder ?? p.category ?? (p.builtin ? 'Uncategorised' : USER_PRESET_FOLDER);
 }
 
-/**
- * Save the selected node's animation as a named user preset — its keyframe
- * tracks AND its text-animator rig.
- *
- * Capturing the animators is what makes a per-character preset saveable at all:
- * the `ta.*` tracks are meaningless without the animator stack they index into,
- * so saving one without the other produced a preset that applied cleanly and
- * did nothing.
- */
-/**
- * A layer's effect stack, in a preset's own id namespace.
- *
- * Ids are renumbered to `fx0`, `fx1`, … and the layer's
- * `effect.<realId>.<param>` tracks are re-pointed to match — the exact inverse
- * of what `installEffects` + `remapEffectTracks` do on apply. Saving the live
- * ids instead would produce a preset whose keyframes address effects that only
- * exist on the machine it was saved on.
- *
- * Returns the tracks alongside the effects because the rewrite has to happen to
- * BOTH or to neither: a preset carrying renumbered effects and un-renumbered
- * tracks animates nothing, silently.
- */
-function captureEffects(
-  nodeId: string,
-  tracks: ReadonlyArray<PresetTrack>,
-): { effects: NonNullable<AnimationPreset['effects']>; tracks: PresetTrack[] } {
-  const stack = getNodeEffects(nodeId);
-  if (stack.length === 0) return { effects: [], tracks: [...tracks] };
-
-  const mapping = new Map<string, string>();
-  const effects = stack.map((e, i) => {
-    const presetId = `fx${i}`;
-    mapping.set(e.id, presetId);
-    return { id: presetId, type: e.type, ...(e.params ? { params: e.params } : {}) };
-  });
-
-  return {
-    effects,
-    tracks: tracks.map((t) => {
-      const m = /^effect\.([^.]+)\.(.*)$/.exec(t.prop);
-      const presetId = m ? mapping.get(m[1]!) : undefined;
-      return presetId ? { ...t, prop: `effect.${presetId}.${m![2]}` as PropPath } : t;
-    }),
-  };
-}
-
-/**
- * The expressions driving this layer, as preset behaviours.
- *
- * Only ENABLED ones. A disabled expression is not driving the property — the
- * keyframes under it are — so carrying it into a preset would make applying
- * that preset behave differently from the layer it was captured from, which is
- * the one thing a preset must never do.
- */
-function captureExpressions(nodeId: string): NonNullable<AnimationPreset['expressions']> {
-  const out: NonNullable<AnimationPreset['expressions']> = [];
-  for (const prop of defaultAnimation.animatedProps(nodeId)) {
-    if (!defaultAnimation.isExpressionEnabled(nodeId, prop)) continue;
-    const expr = defaultAnimation.getExpressionSrc(nodeId, prop);
-    if (typeof expr === 'string' && expr.trim() !== '') out.push({ prop: prop as PropPath, expr });
-  }
-  return out;
-}
-
-/**
- * Save a layer's animation as a user preset.
- *
- * Captures everything the preset FORMAT can carry — keyframes, text animators,
- * effects and expressions — rather than keyframes alone. That was the gap:
- * `AnimationPreset` has had `effects` and `expressions` fields since transitions
- * and behaviours landed, and `applyPreset` installs both, but nothing ever
- * WROTE them. A layer with a glow and a wiggle saved as a preset that replayed
- * the movement and dropped the look, silently, with no error and nothing on
- * screen to explain it — the shape of defect this repo keeps finding, an
- * asymmetric round trip.
- *
- * Returns false when there is genuinely nothing to save, which now includes
- * fewer cases than it used to: a layer whose only authored state is an effect
- * stack is a legitimate preset (AE's are frequently exactly that).
- */
-export function saveCurrentAsPreset(
-  nodeId: string,
-  name: string,
-  folder = USER_PRESET_FOLDER,
-): boolean {
-  const body = capturePresetBody(nodeId);
-  if (!body) return false; // nothing to save
-  saveUserPreset(name, body, folder);
-  return true;
-}
-
 /** What `capturePresetBody` returns: an AnimationPreset without its name and place in the library. */
 export type CapturedPresetBody = Pick<AnimationPreset, 'tracks' | 'animators' | 'requires' | 'effects' | 'expressions'>;
-
-/**
- * A layer's animation as a preset BODY — what the engine's `capturePreset`
- * query answers (ENGINE_API.md §15.12; the C++ twin is `capture_preset` in
- * native/engine/src/core/presets_capture.cpp). Null when there is nothing to
- * save. `ctx` defaults to the active composition (`presetContextFor`); the
- * query passes the layer's OWN composition.
- */
-export function capturePresetBody(nodeId: string, ctx: PresetContext = presetContextFor(nodeId)): CapturedPresetBody | null {
-  const captured = captureAnimation(nodeId, defaultAnimation, ctx);
-  const node = defaultSceneGraph.getNode(nodeId);
-  const animators = node && hasTextComponent(node) ? readAnimatorData(node) : [];
-  const expressions = captureExpressions(nodeId);
-  const { effects, tracks } = captureEffects(nodeId, captured);
-  if (!tracks.length && !animators.length && !effects.length && !expressions.length) return null;
-  return {
-    tracks,
-    ...(animators.length ? { animators, requires: 'text' as const } : {}),
-    ...(effects.length ? { effects } : {}),
-    ...(expressions.length ? { expressions } : {}),
-  };
-}
 
 /**
  * Store a captured preset body in the user's library under `name` (a
@@ -766,27 +581,6 @@ export function capturePresetBody(nodeId: string, ctx: PresetContext = presetCon
 export function saveUserPreset(name: string, body: CapturedPresetBody, folder = USER_PRESET_FOLDER): void {
   const others = readUserPresets().filter((p) => p.name !== name);
   writeUserPresets([...others, { name, folder, ...body, tracks: body.tracks ?? [] }]);
-}
-
-/**
- * Install a preset's text-animator rig, appending to whatever the layer already
- * has. Returns the index the first installed animator landed at, so the
- * preset's `ta.<i>.*` tracks can be re-indexed onto it.
- */
-function installAnimators(nodeId: string, animators: ReadonlyArray<TextAnimatorData>): number {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !hasTextComponent(node)) return -1;
-  const existing = readAnimatorData(node);
-  // Fresh ids per installation: a preset's animators are a shared literal, and
-  // applying the same preset twice would otherwise give one layer two animators
-  // with the same id (which is also the inspector's React key).
-  const stamped = animators.map((a, i) => ({
-    ...a,
-    id: `anim_${Date.now().toString(36)}_${existing.length + i}`,
-    selectors: a.selectors?.map((s, j) => ({ ...s, id: `sel_${Date.now().toString(36)}_${i}_${j}` })),
-  }));
-  writeAnimatorData(nodeId, [...existing, ...stamped]);
-  return existing.length;
 }
 
 /**
@@ -864,31 +658,6 @@ export function fitRevealSweeps(
   });
 }
 
-/**
- * Install a preset's effects onto a layer and re-point its tracks at them.
- *
- * Returns the id mapping so `effect.<presetId>.<param>` tracks can be rewritten
- * to `effect.<realId>.<param>`. Ids must be unique per application: applying the
- * same transition twice, or applying one to a layer that already carries an
- * effect with a colliding id, would otherwise have both keyframe the same
- * effect and silently fight over it.
- */
-function installEffects(
-  nodeId: string,
-  effects: NonNullable<AnimationPreset['effects']>,
-): Map<string, string> {
-  const existing = getNodeEffects(nodeId);
-  const stamp = Date.now().toString(36);
-  const mapping = new Map<string, string>();
-  const added: Effect[] = effects.map((e, i) => {
-    const realId = `pfx_${stamp}_${i}`;
-    mapping.set(e.id, realId);
-    return { id: realId, type: e.type, params: e.params ?? {} };
-  });
-  writeNodeEffects(nodeId, [...existing, ...added]);
-  return mapping;
-}
-
 /** Rewrite `effect.<presetId>.<param>` track paths onto the installed ids. */
 export function remapEffectTracks(
   tracks: ReadonlyArray<PresetTrack>,
@@ -900,65 +669,6 @@ export function remapEffectTracks(
     const real = m ? mapping.get(m[1]!) : undefined;
     return real ? { ...t, prop: `effect.${real}.${m![2]}` as PropPath } : t;
   });
-}
-
-/** The string a text layer is currently showing, for `fitRevealSweeps`. */
-function nodeText(nodeId: string): string | undefined {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node?.components.find((c) => c.type === 'Text');
-  const v = (t?.props as Record<string, unknown> | undefined)?.content;
-  return typeof v === 'string' ? v : undefined;
-}
-
-/** Apply a preset to a node at `atTime` (one undoable command). */
-export function applyPreset(
-  preset: AnimationPreset,
-  nodeId: string,
-  atTime: number,
-): boolean {
-  if (preset.requires === 'camera') {
-    // Refused here, not just greyed in the panel, so every entry point agrees —
-    // drag-drop and the palette land on the same gate. A camera preset on an
-    // ordinary layer would keyframe props the layer never reads AND flip its
-    // 3D switch via the z track (see applyPresetTracks).
-    const node = defaultSceneGraph.getNode(nodeId);
-    if (!node || readNodeKind(node) !== 'camera') return false;
-  }
-  if (preset.applier) return PRESET_APPLIERS[preset.applier](nodeId, atTime, defaultAnimation);
-
-  let tracks: ReadonlyArray<PresetTrack> = preset.tracks;
-  if (preset.animators && preset.animators.length) {
-    const node = defaultSceneGraph.getNode(nodeId);
-    if (!node || !hasTextComponent(node)) return false; // needs a text layer
-    const shift = installAnimators(nodeId, preset.animators);
-    if (shift < 0) return false;
-    // Fit BEFORE re-indexing: fitRevealSweeps looks each animator up by the
-    // preset's own index, which re-indexing is about to change.
-    tracks = reindexAnimatorTracks(fitRevealSweeps(preset, tracks, nodeText(nodeId)), shift);
-  }
-  if (preset.effects && preset.effects.length) {
-    tracks = remapEffectTracks(tracks, installEffects(nodeId, preset.effects));
-  }
-  if (tracks.length) {
-    applyPresetTracks(nodeId, tracks, atTime, defaultAnimation, preset.timeUnit);
-  }
-  if (preset.expressions && preset.expressions.length) {
-    // A behaviour is not anchored to the playhead — it is a rule that holds for
-    // the whole layer, so `atTime` is deliberately unused here.
-    runAnimEdit(`Apply ${preset.name}`, () => {
-      for (const e of preset.expressions!) {
-        defaultAnimation.setExpression(nodeId, e.prop, e.expr);
-      }
-    });
-  }
-  return true;
-}
-
-/** Apply a named preset to a node at `atTime` (one undoable command). */
-export function applyPresetByName(nodeId: string, name: string, atTime: number): boolean {
-  const preset = listPresets().find((p) => p.name === name);
-  if (!preset) return false;
-  return applyPreset(preset, nodeId, atTime);
 }
 
 /** Delete a user preset (built-ins can't be deleted). */

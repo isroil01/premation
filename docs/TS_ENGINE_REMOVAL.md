@@ -422,8 +422,17 @@ cache). What still references the TypeScript renderer, effects and evaluation
    LocalEngine when the engine owns the document; `OwnedEngineClient` forwards
    nothing; `replicaRefresh` / `animEditBridge` are deleted. Undo / redo state,
    the History panel, per-node inspector revisions and the chrome repaint read
-   the mirror. **Still open:** the harness suites (≈340 of 1 097 still boot the
-   LocalEngine or touch its singletons) and, after them, the runtime deletion.
+   the mirror.
+   **Done 2026-10-04 — the TypeScript engine is gone.** `LocalEngine`, its
+   handlers, the page scene graph / animation / timeline singletons and the
+   runtime only they reached are deleted (≈95k lines; what the app reaches
+   was decided by `scripts/lint/replicaReach.cjs`-style reachability from
+   `main.tsx` and the script worker, import side effects included). `engine()`
+   is the C++ engine or, with no engine bridge, an inert client that answers
+   `busy`. Command-log record / replay runs on the engine's `getCommandLog`
+   (`core/automation/commandLog.ts`). Every suite that tested app behaviour
+   runs on `premation-engine-headless` (`*.native.test.*`, the CI engine job);
+   the TS-engine behaviour and parity suites went with the engine.
 4. Sweep: parity generators + the TS harness, `packages/render-tests`' TS side
    (the native golden gate stays), native-bridge + napi, the eslint layering
    and ratchet configs, `EditorTabs`, deps (mp4box, polygon-clipping;

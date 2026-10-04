@@ -9,7 +9,7 @@
  */
 
 import { documentMirror } from '@stores/documentMirror';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import { commands, DirectSelectionTool, type BezierPoint } from '@motion/workspace';
 import { seekPlayhead } from '@core/timeline/timelineView';
 import { insertFragment } from '@/engine-client/insertFragment';
@@ -34,6 +34,7 @@ import {
   toggleRotoBezier,
 } from './pathCommands';
 import { holdCanvasGeometry, releaseCanvasGeometry } from './__testHelpers__/canvasGeometry';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 const corner = (x: number, y: number): MaskPoint => ({ x, y, inX: x, inY: y, outX: x, outY: y });
 const tri = (s: number): MaskPoint[] => [corner(0, -s), corner(s, s), corner(-s, s)];

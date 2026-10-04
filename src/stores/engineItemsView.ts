@@ -19,10 +19,8 @@
  * media layer resolves it like any other path.
  *
  * Only engine → store: every UI write to items already is an engine command
- * (B3, `lint:engine-writes`), so there is nothing to send back. A replica
- * restore (`isRestoringDocument()`) that lands while this is bound is
- * overwritten by the next mirror change, and the mirror's value is applied at
- * bind time.
+ * (B3, `lint:engine-writes`), so there is nothing to send back. The mirror's
+ * value is applied at bind time.
  */
 
 import type { CompSettings, ItemInfo } from '@motion/engine-api';

@@ -5,7 +5,7 @@
  * document before === after undo) and redone.
  */
 
-import { readNodeMotionBlur } from '@core/effects/motionBlur';
+
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
@@ -23,7 +23,7 @@ import {
   renameLayerEdit,
   reverseLayersEdit,
 } from './sceneEdits';
-import { toggleAudioAnchoredEdit, toggleLayerFlagsEdit } from './layerSwitchEdits';
+import { toggleAudioAnchoredEdit } from './layerSwitchEdits';
 
 jest.useFakeTimers();
 
@@ -121,11 +121,6 @@ describe('delete', () => {
 });
 
 describe('switch column', () => {
-  test('a flag over a selection, anchored, one entry', async () => {
-    await roundTrip(() => toggleLayerFlagsEdit([s.A, s.B], 'motionBlur', s.A), 'Enable Motion Blur (2 layers)');
-    expect(readNodeMotionBlur((await node(s.A))!)).toBe(true);
-    expect(readNodeMotionBlur((await node(s.B))!)).toBe(true);
-  });
 
   test('the speaker mutes the anchored set', async () => {
     useSelectionStore.getState().set([s.V]);

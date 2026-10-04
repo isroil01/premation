@@ -8,20 +8,9 @@
  * the app's own clipboard has been consulted.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSelectionStore } from '@stores/selectionStore';
-import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { isSvgLayer } from '@core/svg/svgLayer';
-import { insertSvgDocument } from '@core/scene/sceneInsert';
-import {
-  detectClipboardSvg,
-  extractSvgMarkup,
-  isSvgDocumentText,
-  clearClipboard,
-  copySelection,
-  pasteSelection,
-} from './clipboard';
+
+
+import { detectClipboardSvg, extractSvgMarkup, isSvgDocumentText } from './clipboard';
 
 const RECT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#0af"/></svg>';
 const XML_SVG = `<?xml version="1.0" encoding="UTF-8"?>\n<!-- Generator: Adobe Illustrator -->\n${RECT_SVG}`;
@@ -107,94 +96,5 @@ describe('detectClipboardSvg — flavour priority', () => {
       { type: 'image/svg+xml', text: RECT_SVG },
     ]);
     expect(out).toBe(RECT_SVG);
-  });
-});
-
-describe('insertSvgDocument — the shared importer', () => {
-  it('lands a static SVG string as ONE intact svg layer, like a dropped file', () => {
-    const before = defaultSceneGraph.size;
-    const id = insertSvgDocument(RECT_SVG, 'Pasted SVG');
-    expect(id).not.toBeNull();
-    const node = defaultSceneGraph.getNode(id!)!;
-    expect(readNodeKind(node)).toBe('svg');
-    expect(isSvgLayer(node)).toBe(true);
-    expect(defaultSceneGraph.size).toBe(before + 1);
-    expect(useSelectionStore.getState().ids).toEqual([id]);
-  });
-
-  it('returns null for unreadable markup', () => {
-    expect(insertSvgDocument('<svg><rect', 'broken')).toBeNull();
-  });
-});
-
-describe('pasteSelection — OS SVG route', () => {
-  type Item = { types: string[]; getType: (t: string) => Promise<{ text: () => Promise<string> }> };
-
-  function stubClipboard(items: Item[], readText = ''): void {
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: {
-        read: async () => items,
-        readText: async () => readText,
-      },
-    });
-  }
-
-  function item(flavours: Record<string, string>): Item {
-    return {
-      types: Object.keys(flavours),
-      getType: async (t: string) => ({ text: async () => flavours[t] ?? '' }),
-    };
-  }
-
-  beforeEach(() => {
-    clearClipboard();
-    useSelectionStore.getState().clear();
-    useKeyframeSelectionStore.getState().clear();
-  });
-
-  afterEach(() => {
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
-  });
-
-  it('pastes image/svg+xml from the OS as a layer in the active comp', async () => {
-    stubClipboard([item({ 'image/svg+xml': RECT_SVG })]);
-    const before = defaultSceneGraph.size;
-
-    const kind = await pasteSelection();
-
-    expect(kind).toBe('svg');
-    expect(defaultSceneGraph.size).toBe(before + 1);
-    const [id] = useSelectionStore.getState().ids;
-    expect(readNodeKind(defaultSceneGraph.getNode(id!)!)).toBe('svg');
-  });
-
-  it('falls back to readText for Illustrator-style plain-text SVG', async () => {
-    stubClipboard([], XML_SVG);
-    const before = defaultSceneGraph.size;
-    expect(await pasteSelection()).toBe('svg');
-    expect(defaultSceneGraph.size).toBe(before + 1);
-  });
-
-  it('pastes nothing for ordinary text', async () => {
-    stubClipboard([item({ 'text/plain': 'just some words' })], 'just some words');
-    const before = defaultSceneGraph.size;
-    expect(await pasteSelection()).toBeNull();
-    expect(defaultSceneGraph.size).toBe(before);
-  });
-
-  it('lets the internal layer clipboard win over OS SVG', async () => {
-    const srcId = insertSvgDocument(RECT_SVG, 'source')!;
-    useSelectionStore.getState().set([srcId]);
-    copySelection();
-    stubClipboard([item({ 'image/svg+xml': RECT_SVG })]);
-    const before = defaultSceneGraph.size;
-
-    const kind = await pasteSelection();
-
-    expect(kind).toBe('layers');
-    expect(defaultSceneGraph.size).toBe(before + 1);
-    const [id] = useSelectionStore.getState().ids;
-    expect(defaultSceneGraph.getNode(id!)!.name).toBe('source copy');
   });
 });

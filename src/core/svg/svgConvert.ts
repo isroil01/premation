@@ -13,11 +13,9 @@
  * the untouched source (§13).
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
-import { insertSvgShapeGroup, measureSvgText, intersectSvgPaths } from '@core/scene/sceneInsert';
+import {  measureSvgText, intersectSvgPaths } from '@core/scene/sceneInsert';
 import { buildSvgIconGroup, buildSvgLayer } from '@core/scene/layerBuilders';
 import { mirrorLabelColor } from '@core/mirror/layerLabels';
 import { storedStaticNumber } from '@core/mirror/trackIndex';
@@ -25,8 +23,8 @@ import type { FragmentBuilder } from '@/engine-client/fragmentBuilder';
 import type { InsertFrame } from '@/engine-client/insertFragment';
 import { parseSvgToShapes } from '../../utils/svgParser';
 import {
-  readSvgLayer,
-  stripToRetainedSource,
+  
+  
   SVG_COMPONENT,
   type SvgLayerData,
 } from './svgLayer';
@@ -79,55 +77,6 @@ function applyCarryTo(b: FragmentBuilder, id: string, carry: CarriedTransform): 
   if (carry.scaleX !== undefined) b.setProp(id, 'Transform', 'scaleX', carry.scaleX);
   if (carry.scaleY !== undefined) b.setProp(id, 'Transform', 'scaleY', carry.scaleY);
   if (carry.opacity !== undefined) b.setProp(id, 'Style', 'opacity', carry.opacity);
-}
-
-/** Read the transform/appearance a converted node has to inherit (the page replica — the AI host's legacy convert only). */
-function carryFrom(nodeId: string): CarriedTransform {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return {};
-  const out: CarriedTransform = {
-    name: node.name,
-    visible: node.visible,
-    locked: node.locked,
-    color: node.color,
-  };
-  for (const c of node.components) {
-    const p = c.props as Record<string, unknown>;
-    if (typeof p.x === 'number') out.x = p.x;
-    if (typeof p.y === 'number') out.y = p.y;
-    if (typeof p.rotation === 'number') out.rotation = p.rotation;
-    if (typeof p.scaleX === 'number') out.scaleX = p.scaleX;
-    if (typeof p.scaleY === 'number') out.scaleY = p.scaleY;
-    if (typeof p.opacity === 'number') out.opacity = p.opacity;
-  }
-  return out;
-}
-
-/**
- * Apply a carried transform onto a freshly created node.
- *
- * Every component write goes through `writeProp`: `node.components` is a live
- * view rebuilt from the engine on each read, and its `props` are copies, so
- * assigning to them mutates a throwaway object and is silently lost. The node's
- * own fields (name / visible / locked / color) DO proxy back, so those are
- * assigned directly.
- */
-function applyCarry(nodeId: string, carry: CarriedTransform): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  if (carry.name) node.name = carry.name;
-  if (carry.visible !== undefined) node.visible = carry.visible;
-  if (carry.locked !== undefined) node.locked = carry.locked;
-  if (carry.color !== undefined) node.color = carry.color;
-
-  const write = (type: string, prop: string, value: unknown): void => {
-    const c = node.components.find((k) => k.type === type);
-    if (c) defaultSceneGraph.writeProp(nodeId, c.id, prop, value);
-  };
-  if (carry.rotation !== undefined) write('Transform', 'rotation', carry.rotation);
-  if (carry.scaleX !== undefined) write('Transform', 'scaleX', carry.scaleX);
-  if (carry.scaleY !== undefined) write('Transform', 'scaleY', carry.scaleY);
-  if (carry.opacity !== undefined) write('Style', 'opacity', carry.opacity);
 }
 
 /**
@@ -230,50 +179,6 @@ export function buildSvgShapeGroupInto(
     // The fragment's own row (plain data, not a scene-graph view): replaced whole.
     const row = b.row(groupId);
     row.components = [...row.components, { id: `${groupId}_svgsrc`, type: SVG_COMPONENT, props: retainedSvgProps(data) }];
-  }
-  return { groupId, count: shapes.length, data };
-}
-
-/**
- * The conversion against the PAGE REPLICA (run off-document): what the AI
- * host's convert (core/ai/hostWrites.ts `convertSvgLayer`) still calls until
- * it builds through {@link buildSvgShapeGroupInto} like the editor's verb.
- */
-export function buildSvgShapeGroup(nodeId: string): BuiltSvgShapes | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const data = readSvgLayer(node);
-  if (!data) return null;
-  const carry = carryFrom(nodeId);
-  const shapes = parseSvgToShapes(data.sourceMarkup, {
-    maxDurationSeconds: useCompositionStore.getState().durationSeconds,
-    measureText: measureSvgText,
-    intersectPaths: intersectSvgPaths,
-  });
-  if (shapes.length === 0) return null;
-
-  const groupId = insertSvgShapeGroup(data.sourceMarkup, data.fileName, {
-    x: carry.x,
-    y: carry.y,
-    targetSize: Math.max(data.intrinsicWidth, data.intrinsicHeight),
-    shapes,
-  });
-  if (!groupId) return null;
-
-  applyCarry(groupId, carry);
-
-  // Retain the original on the group so Revert works and a future parser can
-  // re-run against untouched source. Opt-out honoured, though the cost is
-  // negligible next to any raster asset.
-  if (getRetainOriginalSvg()) {
-    const src = node.components.find((c) => c.type === SVG_COMPONENT);
-    if (src) {
-      defaultSceneGraph.addComponent(groupId, {
-        id: `${groupId}_svgsrc`,
-        type: SVG_COMPONENT,
-        props: stripToRetainedSource({ ...(src.props as Record<string, unknown>) }),
-      });
-    }
   }
   return { groupId, count: shapes.length, data };
 }

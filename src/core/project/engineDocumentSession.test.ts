@@ -4,16 +4,14 @@
  * as engine requests, the UI reading path / dirty / history from the document
  * mirror only (engineDocumentSession.ts).
  *
- * The same script runs on both backends:
- *   - the TypeScript engine (in process, the harness's file ports), and
- *   - the C++ engine process `premation-engine[-headless]` through
- *     `ProcessEngineClient` — its real FilePorts writing temp-file + rename in
+ * The script runs on the C++ engine process `premation-engine[-headless]`
+ * through `ProcessEngineClient` — its real FilePorts writing temp-file + rename in
  *     a temp directory (skipped, saying so, when the engine is not built;
  *     PREMATION_ENGINE_PATH picks the Dawn-free headless build).
  * A "crash" is the app going away: the engine and its client are dropped and
  * a fresh engine recovers from the recovery file the old one autosaved.
  *
- * ProjectManager with `engineDocument` (the F2 flag) is exercised on both too:
+ * ProjectManager with `engineDocument` (the F2 flag) is exercised too:
  * it opens, saves, saves as, snapshots and closes through the engine without
  * touching the page's document IO.
  */
@@ -32,9 +30,8 @@ import {
   type QueryType,
 } from '@motion/engine-api';
 import { DocumentMirror, type MirrorSource } from '@stores/documentMirror';
-import { setupEngine, sec, type Harness } from '@core/engine/__testHelpers__/harness';
+import { sec } from '@core/engine/__testHelpers__/appEngine';
 import { nativeEngineExe, startNativeEngine, type NativeEngine } from '@core/engine/__testHelpers__/nativeEngine';
-import type { EditorDocument } from '@core/api/cloudDocument';
 import { EngineDocumentSession, RECOVER_LABEL, type RecoveryFiles, type RecoveryIndex, type RecoveryRecord } from './engineDocumentSession';
 import { ProjectManager, type ProjectDocumentIO } from './ProjectManager';
 import type { FileManager } from '@core/files/FileManager';
@@ -62,61 +59,12 @@ interface Backend {
   dispose(): Promise<void>;
 }
 
-function mirrorOver(client: EngineClient, sync?: Harness): DocumentMirror {
+function mirrorOver(client: EngineClient): DocumentMirror {
   const source: MirrorSource = {
     subscribe: (l) => client.subscribe(l),
     query: <T extends QueryType>(q: QueryOf<T>): Promise<EngineResult<QueryResults[T]>> => client.query(q),
-    ...(sync ? { querySync: <T extends QueryType>(q: QueryOf<T>) => sync.engine.querySync(q) } : {}),
   };
   return new DocumentMirror(source).start();
-}
-
-function tsBackend(): Backend {
-  // The fake port's project files, kept across "crashes" (they are the disk).
-  const disk = new Map<string, EditorDocument>();
-  let h: Harness | null = null;
-  return {
-    name: 'TypeScript engine',
-    file: (n) => `C:/f2/${n}.motion`,
-    files: {
-      readText: async (p) => (disk.has(p) ? JSON.stringify(disk.get(p)) : null),
-      remove: async (p) => {
-        disk.delete(p);
-      },
-    },
-    start: async () => {
-      await h?.dispose();
-      const harness = await setupEngine();
-      h = harness;
-      // The harness's port writes into its own map: share the disk.
-      for (const [k, v] of disk) harness.files.set(k, v);
-      const files = harness.files;
-      const set = files.set.bind(files);
-      const del = files.delete.bind(files);
-      files.set = (k, v) => {
-        disk.set(k, v);
-        return set(k, v);
-      };
-      files.delete = (k) => {
-        disk.delete(k);
-        return del(k);
-      };
-      const mirror = mirrorOver(harness.engine, harness);
-      await mirror.whenIdle();
-      return {
-        client: harness.engine,
-        mirror,
-        stop: async () => {
-          mirror.stop();
-        },
-      };
-    },
-    saved: (p) => disk.get(p) ?? null,
-    dispose: async () => {
-      await h?.dispose();
-      h = null;
-    },
-  };
 }
 
 function processBackend(): Backend {
@@ -175,11 +123,11 @@ async function labels(c: EngineClient): Promise<string[]> {
   return unwrap(await c.query({ type: 'getHistory' })).entries.map((e) => e.label);
 }
 
-const backends: Array<[string, () => Backend]> = [['TypeScript engine', tsBackend]];
-if (nativeEngineExe()) backends.push(['C++ engine process', processBackend]);
-else console.log('[F2 lifecycle] premation-engine is not built — the C++ engine process backend is skipped (PREMATION_ENGINE_PATH=<premation-engine-headless>)');
+const backends: Array<[string, () => Backend]> = [['C++ engine process', processBackend]];
+if (!nativeEngineExe()) console.log('[F2 lifecycle] premation-engine is not built — skipped (PREMATION_ENGINE_PATH=<premation-engine-headless>)');
+const maybe = nativeEngineExe() ? describe : describe.skip;
 
-describe.each(backends)('F2: the document lifecycle through the engine — %s', (_name, make) => {
+maybe.each(backends)('F2: the document lifecycle through the engine — %s', (_name, make) => {
   let backend: Backend;
   let running: Running | null = null;
 

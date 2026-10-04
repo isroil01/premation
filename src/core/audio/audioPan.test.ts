@@ -13,9 +13,8 @@
  */
 
 import {
-  voicePanner, panToNorm, buildPanRamp, AUDIO_PAN_PROP, MIN_PAN, MAX_PAN,
+  voicePanner, panToNorm,   MIN_PAN, MAX_PAN,
 } from './audioParams';
-import { defaultAnimation } from '@motion/animation';
 
 /** A context stub that records how many panners were asked for. */
 function fakeCtx(): BaseAudioContext & { made: number } {
@@ -73,33 +72,5 @@ describe('panToNorm', () => {
     expect(panToNorm(500)).toBe(1);
     expect(panToNorm(-500)).toBe(-1);
     expect(panToNorm(Number.NaN)).toBe(0);
-  });
-});
-
-describe('buildPanRamp', () => {
-  beforeEach(() => defaultAnimation.clear());
-
-  /** The common case must stay ONE point — a constant, not a swept curve. */
-  it('yields a single point for an unanimated pan', () => {
-    const ramp = buildPanRamp('n1', 50, 0, 2, { animated: false });
-    expect(ramp).toHaveLength(1);
-    expect(ramp[0]!.gain).toBeCloseTo(0.5, 6);
-  });
-
-  it('samples the track across the voice window when the pan is keyed', () => {
-    defaultAnimation.setKeyframes('n1', AUDIO_PAN_PROP, [
-      { t: 0, value: -100, easing: 'linear' },
-      { t: 2, value: 100, easing: 'linear' },
-    ]);
-    const ramp = buildPanRamp('n1', 0, 0, 2, { animated: true });
-    expect(ramp.length).toBeGreaterThan(2);
-    expect(ramp[0]!.gain).toBeCloseTo(-1, 2);
-    expect(ramp[ramp.length - 1]!.gain).toBeCloseTo(1, 1);
-    // Already converted into the node's units, not left as percent — the
-    // ramp's contract is "whatever this AudioParam takes".
-    for (const pt of ramp) {
-      expect(pt.gain).toBeGreaterThanOrEqual(-1);
-      expect(pt.gain).toBeLessThanOrEqual(1);
-    }
   });
 });

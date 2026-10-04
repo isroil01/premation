@@ -22,16 +22,14 @@
  *     closing writes synchronously.
  */
 
-import {
-  AutosaveController,
-} from './AutosaveController';
+
 import {
   clearRecovery,
   configureRecoveryForTests,
   persistRecovery,
   readRecovery,
   readRecoveryRing,
-  restoreRecovery,
+  
   whenRecoveryWritesSettled,
   type RecoverySnapshot,
   type RecoveryWorkerLike,
@@ -47,10 +45,9 @@ import {
 import { setCoreServiceRefs } from '@core/services/coreServices';
 import { SettingsManager } from '@core/settings/SettingsManager';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation } from '@motion/animation';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import type { SceneNode } from '@core/types';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 class MemKV implements RecoveryKV {
   readonly map = new Map<string, string>();
@@ -342,56 +339,5 @@ describe('compatibility', () => {
     expect(settings.has('recovery')).toBe(false);
     expect(settings.has('recovery.ring')).toBe(false);
     expect(xOf(readRecovery())).toBe(43);
-  });
-
-  it('a stored snapshot restores into the live engines', () => {
-    const ids: string[] = [];
-    defaultSceneGraph.traverse((n) => ids.push(n.id));
-    for (const id of ids) defaultSceneGraph.removeNode(id);
-    defaultAnimation.clear();
-
-    persistRecovery(snap(1, 30));
-    const t = restoreRecovery(readRecovery()!);
-    expect(t).toBeCloseTo(1.5);
-    const node = defaultSceneGraph.getNode('layer_a');
-    expect((node?.components.find((c) => c.type === 'Transform')?.props as { x?: number }).x).toBe(30);
-    expect(defaultAnimation.sample('layer_a', 'x', 1)).toBeCloseTo(35);
-  });
-});
-
-describe('AutosaveController', () => {
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
-  it('runs the interval tick through the idle queue and writes synchronously on close', () => {
-    jest.useFakeTimers();
-    const ids: string[] = [];
-    defaultSceneGraph.traverse((n) => ids.push(n.id));
-    for (const id of ids) defaultSceneGraph.removeNode(id);
-    defaultAnimation.clear();
-    defaultSceneGraph.addNode(layerNode(1));
-    window.location.hash = '#/editor/proj_auto';
-
-    const ctl = new AutosaveController();
-    let now = 1000;
-    ctl.start({ intervalMs: 60_000, getTime: () => 0, isDirty: () => true, now: () => now });
-    try {
-      jest.advanceTimersByTime(ctl.intervalMs());
-      // Due, but waiting for idle (jsdom has no requestIdleCallback → next task).
-      expect(readRecovery()).toBeNull();
-      jest.advanceTimersByTime(1);
-      expect(readRecovery()).toMatchObject({ projectId: 'proj_auto', savedAt: 1000 });
-
-      defaultSceneGraph.setLocalTransform('layer_a', { x: 77, y: 0, rotation: 0 });
-      now = 2000;
-      window.dispatchEvent(new Event('beforeunload'));
-      const rec = readRecovery()!;
-      expect(rec.savedAt).toBe(2000);
-      const t = rec.doc!.scene.nodes.find((n) => n.id === 'layer_a')!.components.find((c) => c.type === 'Transform')!;
-      expect((t.props as { x: number }).x).toBe(77);
-    } finally {
-      ctl.stop();
-    }
   });
 });

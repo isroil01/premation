@@ -28,7 +28,6 @@
 import { parseGltf, packGltfToGlb, type ParsedGltf } from '@core/media/gltf';
 import { bakeClip, bakeWeightTracks } from './modelAnimation';
 import { MORPH_NAMES_PROP } from './modelMorph';
-import { defaultAnimation } from '@motion/animation';
 import {
   MODEL_COMPONENT,
   modelKeyForBytes,
@@ -37,13 +36,8 @@ import {
   gltfRotationToEulerDeg,
   gltfTranslationToLocal,
 } from './modelMesh';
-import defaultSceneGraph from './DefaultSceneGraph';
-import { activeCompRootId } from './activeComp';
 import { SCENE_KIND_PROP } from './sceneKind';
 import { Matrix4Math, type Matrix4 } from '@motion/scene';
-import { useCompositionStore } from '@stores/compositionStore';
-import { useSelectionStore } from '@stores/selectionStore';
-import { bumpScene } from '@stores/sceneStore';
 import type { SceneNode } from '@core/types';
 import type { LayerSink } from '@/engine-client/layerSink';
 import type { InsertFrame } from '@/engine-client/insertFragment';
@@ -346,31 +340,6 @@ export interface ModelImportResult {
   warning: string | null;
   /** First clip baked onto the layers, if the file carried animations. */
   clip: { name: string; duration: number; extraClips: number } | null;
-}
-
-/**
- * Import a .glb/.gltf straight into the PAGE REPLICA's active composition and
- * select the root — the pre-engine path, kept for the owner-write audit's
- * "called directly" case. The editor lays the model into a fragment
- * ({@link buildGltfModel}, layout/Assets/modelImportEdits.ts).
- */
-export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImportResult {
-  const comp = useCompositionStore.getState();
-  const result = buildGltfModel(
-    {
-      addChild: (parent, node) => defaultSceneGraph.addChild(parent, node as SceneNode),
-      setFxKey: (id, key, value) => defaultSceneGraph.setFxKey(id, key, value),
-      setKeyframe: (id, prop, t, value) => defaultAnimation.setKeyframe(id, prop, t, value),
-      setKeyframes: (id, prop, keys) => defaultAnimation.setTrackKeyframes(id, prop, keys as never),
-      setExpression: (id, prop, src) => defaultAnimation.setExpression(id, prop, src),
-    },
-    { comp: activeCompRootId(), width: comp.width, height: comp.height, durationSeconds: comp.durationSeconds, fps: comp.fps, cursor: null },
-    bytes,
-    fileName,
-  );
-  useSelectionStore.getState().set([result.rootId]);
-  bumpScene();
-  return result;
 }
 
 /**

@@ -12,9 +12,8 @@ import { ToolRegistry } from '@motion/ai-tools';
 import type { ToolContext } from '@motion/ai-tools';
 import { buildAiTools } from './toolHandlers';
 import { createToolContext } from './toolContext';
-import { readCompRef } from '@core/scene/compInstance';
+import { documentMirror } from '@stores/documentMirror';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { isPrecomp } from '@core/scene/precomp';
 import { useProjectStore } from '@stores/projectStore';
 import type { SceneNode } from '@core/types';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
@@ -53,7 +52,7 @@ describe('create_precomp', () => {
 
     const inst = (await compLayerIn('comp_root'))!;
     expect(inst).toBeDefined();
-    const compId = readCompRef(inst)!;
+    const compId = documentMirror().layer(inst.id)!.source!;
     expect(useProjectStore.getState().comps[compId]?.name).toBe('Logo');
     expect((await docView()).getNode(compId)?.parent).toBeNull();
     expect((await docView()).getNode(A)?.parent).toBe(compId);
@@ -74,6 +73,6 @@ describe('create_precomp', () => {
     // Exactly the keys the call named: Enable Time Remapping's out-point key is gone.
     expect((await docView()).getTrackKeyframes(inst.id, 'timeRemap')?.map((k) => k.value)).toEqual([0, 2]);
     // Its precomp flag is what makes it render its comp — never cleared.
-    expect(isPrecomp((await docView()).getNode(inst.id)!)).toBe(true);
+    expect(documentMirror().layer(inst.id)?.kind).toBe('precomp');
   });
 });

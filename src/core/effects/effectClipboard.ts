@@ -13,8 +13,8 @@
  * silently disappears.
  */
 
-import { defaultAnimation, type Keyframe } from '@motion/animation';
-import { getNodeEffects, writeNodeEffects, effectPropPath, type Effect } from './effects';
+import {  type Keyframe } from '@motion/animation';
+import {    type Effect } from './effects';
 import { listBuiltinEffectPresets } from './builtinEffectPresets';
 
 export interface CopiedEffect {
@@ -42,39 +42,6 @@ export function effectClipboardSize(): number {
 }
 
 /**
- * Collect an effect plus every keyframe track belonging to it.
- *
- * Track paths are `effect.<id>.<param>`, so the portable part is everything
- * after the id — that is what gets re-prefixed on paste.
- */
-export function captureEffect(nodeId: string, effect: Effect): CopiedEffect {
-  const prefix = `${effectPropPath(effect.id)}.`;
-  const tracks: Record<string, Keyframe[]> = {};
-  for (const track of defaultAnimation.tracksFor(nodeId)) {
-    if (!track.prop.startsWith(prefix)) continue;
-    const kfs = defaultAnimation.getTrackKeyframes(nodeId, track.prop);
-    if (kfs && kfs.length) tracks[track.prop.slice(prefix.length)] = kfs;
-  }
-  // The legacy single-scalar track is `effect.<id>` with no param suffix.
-  const legacy = defaultAnimation.getTrackKeyframes(nodeId, effectPropPath(effect.id));
-  if (legacy && legacy.length) tracks[''] = legacy;
-  return { effect: structuredClone(effect), tracks };
-}
-
-/** Copy specific effects off a layer (order preserved). */
-export function copyEffects(nodeId: string, effectIds: readonly string[]): void {
-  const wanted = new Set(effectIds);
-  const picked = getNodeEffects(nodeId).filter((e) => wanted.has(e.id));
-  if (picked.length) clipboard = picked.map((e) => ({ ...captureEffect(nodeId, e), sourceNodeId: nodeId }));
-}
-
-/** Copy a layer's ENTIRE effect stack. */
-export function copyAllEffects(nodeId: string): void {
-  const all = getNodeEffects(nodeId);
-  if (all.length) clipboard = all.map((e) => ({ ...captureEffect(nodeId, e), sourceNodeId: nodeId }));
-}
-
-/**
  * Hold `items` as the clipboard — captures the ENGINE made (`copyEffects`,
  * layout/Effects/effectEdits.ts); module state, never the document. An empty
  * list leaves the clipboard as it was.
@@ -86,36 +53,6 @@ export function holdCopiedEffects(items: readonly CopiedEffect[]): void {
 /** What is on the clipboard (read-only view for the paste edit). */
 export function readEffectClipboard(): readonly CopiedEffect[] {
   return clipboard;
-}
-
-let pasteSeq = 0;
-
-/**
- * Paste the clipboard onto each target layer, appending to whatever is already
- * there (AE appends too — a paste that replaced the stack would be a
- * destructive surprise).
- *
- * Returns the number of effects pasted per layer, or 0 when the clipboard is
- * empty.
- */
-export function pasteEffects(targetNodeIds: readonly string[]): number {
-  if (clipboard.length === 0 || targetNodeIds.length === 0) return 0;
-
-  for (const nodeId of targetNodeIds) {
-    const existing = getNodeEffects(nodeId);
-    const added: Effect[] = [];
-    for (const item of clipboard) {
-      // A FRESH id per paste per target — see the file docblock.
-      const id = `fx_paste_${(pasteSeq += 1)}`;
-      added.push({ ...structuredClone(item.effect), id });
-      for (const [suffix, kfs] of Object.entries(item.tracks)) {
-        const prop = suffix === '' ? effectPropPath(id) : `${effectPropPath(id)}.${suffix}`;
-        defaultAnimation.setTrackKeyframes(nodeId, prop, kfs.map((k) => ({ ...k })));
-      }
-    }
-    writeNodeEffects(nodeId, [...existing, ...added]);
-  }
-  return clipboard.length;
 }
 
 /** Forget the clipboard (used by tests; there is no UI for it). */
@@ -161,18 +98,6 @@ export function listEffectPresets(): EffectPreset[] {
 }
 
 /**
- * Save a layer's whole effect stack under `name`, replacing any preset of the
- * same name. Returns false when the layer has no effects to save.
- */
-export function saveEffectPreset(nodeId: string, name: string): boolean {
-  const all = getNodeEffects(nodeId);
-  if (all.length === 0) return false;
-  const items = all.map((e) => captureEffect(nodeId, e));
-  writePresets([...readPresets().filter((p) => p.name !== name), { name, items }]);
-  return true;
-}
-
-/**
  * Store captured effects (the engine's `copyEffects` of a whole stack) as the
  * preset `name`, replacing any of the same name — the editor's library
  * (localStorage), never the document. False when there is nothing to store.
@@ -181,18 +106,6 @@ export function storeEffectPreset(name: string, items: readonly CopiedEffect[]):
   if (items.length === 0) return false;
   const clean = items.map(({ sourceNodeId: _src, ...rest }) => rest);
   writePresets([...readPresets().filter((p) => p.name !== name), { name, items: clean }]);
-  return true;
-}
-
-/** Apply a saved or built-in preset to layers, appending like a paste. Returns
- *  false when the preset is missing. */
-export function applyEffectPreset(name: string, targetNodeIds: readonly string[]): boolean {
-  const preset = listEffectPresets().find((p) => p.name === name);
-  if (!preset) return false;
-  const previous = clipboard;
-  clipboard = preset.items;
-  pasteEffects(targetNodeIds);
-  clipboard = previous;
   return true;
 }
 

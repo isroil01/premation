@@ -42,15 +42,9 @@
  * what both contain and cover want.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
-import { useAssetStore } from '@stores/assetStore';
-import { sourceOf } from '@core/source/sourceInfo';
-import { compSourceOf } from '@core/composition/compSizes';
 import { computeFit, type Size } from '@core/source/fitCommands';
 import type { SlotFit } from './templateTypes';
 import type { SceneNode } from '@core/types';
-import { writeTransformProps } from '@core/scene/transformWrite';
 
 /** Fit policy stored on the placeholder's Transform component. */
 export const SLOT_FIT_PROP = 'slotFit';
@@ -67,31 +61,6 @@ function transformOf(node: SceneNode): { id: string; props: Record<string, unkno
 }
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && v > 0 ? v : undefined);
-
-/**
- * Mark a layer as a media slot, capturing its CURRENT box as the slot rect.
- *
- * Idempotent on the rect: re-declaring a slot does not re-capture, so an author
- * who changes the policy after a fill does not silently adopt the fitted box as
- * the new frame.
- */
-export function declareSlot(nodeId: string, fit: SlotFit = DEFAULT_SLOT_FIT): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node ? transformOf(node) : undefined;
-  if (!node || !t) return false;
-
-  defaultSceneGraph.writeProp(nodeId, t.id, SLOT_FIT_PROP, fit);
-  if (num(t.props[SLOT_W_PROP]) === undefined) {
-    const w = num(t.props.width);
-    const h = num(t.props.height);
-    if (w !== undefined && h !== undefined) {
-      defaultSceneGraph.writeProp(nodeId, t.id, SLOT_W_PROP, w);
-      defaultSceneGraph.writeProp(nodeId, t.id, SLOT_H_PROP, h);
-    }
-  }
-  bumpScene();
-  return true;
-}
 
 /** The authored slot rect, or null when this layer is not a slot. Falls back to
  *  the layer's current box for a slot declared before the rect was captured. */
@@ -151,75 +120,10 @@ export function fittedBoxFor(source: Size, slot: Size, fit: SlotFit): Size {
   return computeFit(source, slot, fit === 'native' ? 'native' : 'contain');
 }
 
-/**
- * The box a slot's layer should take for a source of `source` size (the
- * engine route's half of `fillSlot`: the caller sends the source swap and
- * this size as commands). Null when the node is gone, has no slot rect, or
- * the source size is unknown — the swap then keeps the layer's size.
- */
-export function slotBoxFor(nodeId: string, source: Size | null): Size | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const slot = node ? slotRectOf(node) : null;
-  if (!node || !slot || !source || !(source.width > 0) || !(source.height > 0)) return null;
-  return fittedBoxFor(source, slot, slotFitOf(node) ?? DEFAULT_SLOT_FIT);
-}
-
 export interface FillResult {
   /** The box written to the layer. */
   box: Size;
   fit: SlotFit;
   /** True when the source resolved and a real fit was applied. */
   fitted: boolean;
-}
-
-/**
- * Fill a slot with a source and reframe it.
- *
- * Accepts ANY source the editor understands — video, still, image sequence or a
- * composition — because it asks `sourceOf` for the intrinsic size rather than
- * branching on layer kind. A slot that only accepted one kind would be the same
- * fork removed from `mediaSourceFrames`.
- *
- * Returns null when the node is gone. When the source cannot be resolved yet
- * (metadata still loading, or an unrecognised URL) the `src` is still written
- * and `fitted` is false — the picture updates and the framing can be redone by
- * re-filling, which is better than refusing the fill.
- */
-export function fillSlot(nodeId: string, src: string): FillResult | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node ? transformOf(node) : undefined;
-  if (!node || !t) return null;
-
-  // Source first: `src` alone leaves `assetId` stale, and every reader of the
-  // source boundary resolves by `assetId` (see templateFields.repointAsset).
-  defaultSceneGraph.writeProp(nodeId, t.id, 'src', src);
-  const match = useAssetStore.getState().assets.find((a) => a.src === src);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'assetId', match?.id);
-  defaultSceneGraph.writeProp(nodeId, t.id, '__assetId', match?.id);
-
-  const fit = slotFitOf(node) ?? DEFAULT_SLOT_FIT;
-  const slot = slotRectOf(node);
-  // Re-read: the asset write above changed what `sourceOf` resolves.
-  const filled = defaultSceneGraph.getNode(nodeId);
-  const source = filled ? sourceOf(filled, compSourceOf) : null;
-
-  if (!slot || !source || !(source.width > 0) || !(source.height > 0)) {
-    bumpScene();
-    return { box: slot ?? { width: 0, height: 0 }, fit, fitted: false };
-  }
-
-  const box = fittedBoxFor({ width: source.width, height: source.height }, slot, fit);
-  // Through writeTransformProps: filling a slot on a layer whose size is
-  // animated would otherwise take a base-prop write the renderer ignores, and
-  // the media would keep the previous slot's dimensions.
-  writeTransformProps(
-    nodeId,
-    [
-      { prop: 'width', value: box.width },
-      { prop: 'height', value: box.height },
-    ],
-    'Fill Media Slot',
-  );
-  // x / y / scale / rotation are deliberately untouched — see the file header.
-  return { box, fit, fitted: true };
 }

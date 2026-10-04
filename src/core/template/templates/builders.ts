@@ -14,8 +14,6 @@ import type SceneGraph from '@core/scene/SceneGraph';
 import type { SceneNode, Transform } from '@core/types';
 import type { FillPaint } from '@core/paint/fill';
 import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
-import { defaultAnimation } from '@motion/animation';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
 
 export type Ease = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';
 export type Frame = [number, number, Ease?];
@@ -25,11 +23,6 @@ export type Frame = [number, number, Ease?];
  *  template's choreography is defined ONCE and replayed by both the real apply
  *  and the isolated gallery-card animation. Mirrors animPresets' SetKf. */
 export type SetKf = (id: string, prop: string, timeSec: number, value: number, ease?: Ease) => void;
-
-/** Writes into the LIVE scene's animation engine (seconds → canonical keyframe time). */
-export const liveKf: SetKf = (id, prop, timeSec, value, ease) => {
-  defaultAnimation.setKeyframe(id, prop, compToKeyframeTime(id, timeSec), value, ease ?? 'easeInOut');
-};
 
 /** The largest keyframe time (seconds) a choreography sets — its loop length. */
 export function choreographyDuration(animate: (set: SetKf) => void): number {
@@ -197,10 +190,4 @@ export function addImage(
   } as unknown as SceneNode;
   graph.addChild(parent, node);
   return id;
-}
-
-/** Keyframe a prop on a node in the LIVE scene (seconds → layer time). Only used
- *  by build — thumbnails render the static resting state, no animation. */
-export function kf(id: string, prop: string, frames: Frame[]): void {
-  for (const [t, v, e] of frames) liveKf(id, prop, t, v, e);
 }

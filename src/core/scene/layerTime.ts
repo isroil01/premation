@@ -9,9 +9,7 @@
  * tested; buildSnapshot samples each node's animation at its remapped time.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { renderComponentsOf } from '@core/scene/SceneGraph';
-import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
 
 export type FrameBlend = 'none' | 'mix' | 'pixelMotion';
@@ -93,18 +91,4 @@ export function readNodeLayerTime(node: SceneNode): LayerTime | undefined {
   if (!fx || fx.props.time === undefined) return undefined;
   const cfg = normalize(fx.props.time);
   return isIdentityTime(cfg) && cfg.frameBlend === 'none' ? undefined : cfg;
-}
-
-export function getNodeLayerTime(nodeId: string): LayerTime {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const fx = node?.components.find((c) => c.type === 'fx');
-  return fx && fx.props.time !== undefined ? normalize(fx.props.time) : { ...DEFAULT_LAYER_TIME };
-}
-
-/** Patch a node's time config (clears back to default when identity). */
-export function updateNodeLayerTime(nodeId: string, patch: Partial<LayerTime>): void {
-  const next = normalize({ ...getNodeLayerTime(nodeId), ...patch });
-  const clear = isIdentityTime(next) && next.frameBlend === 'none';
-  defaultSceneGraph.setLayerTime(nodeId, clear ? undefined : next);
-  getEventBus().emit('AnimationChanged', { nodeId });
 }

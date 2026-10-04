@@ -24,7 +24,7 @@
  * 0.000000 both ways and one undo entry per switch.
  */
 
-import { render, cleanup, fireEvent, screen, act } from '@testing-library/react';
+import { render, cleanup, fireEvent, screen, act, waitFor } from '@testing-library/react';
 import { BoneControls } from './BoneControls';
 import { readNodeSkeleton, type SkeletonRig } from '@core/rig/skeletonCommands';
 import { chainModePropPath } from '@core/rig/ikfk';
@@ -107,7 +107,8 @@ describe('the Chain Mode control', () => {
     await switchTo('fk');
     expect((await rigOf()).ikTargets![0]!.ikMode).toBe('fk');
     expect((await historyLabels())).toEqual(['Switch Fore to FK']);
-    expect((screen.getByLabelText('Fore chain mode') as HTMLSelectElement).value).toBe('fk');
+    // The select follows the mirror, a step behind the engine read above.
+    await waitFor(() => expect((screen.getByLabelText('Fore chain mode') as HTMLSelectElement).value).toBe('fk'));
     await act(async () => { await h.run({ type: 'undo' }); });
     expect((await h.doc())).toEqual(before);
   });

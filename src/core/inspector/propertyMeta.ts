@@ -29,7 +29,6 @@
  */
 
 import { EFFECT_DEFS, EFFECT_OPACITY_KEY, effectDefFor, type EffectParamDef } from './effectCatalog';
-import { getNodeEffects } from '@core/effects/effects';
 import {
   LAYER_STYLE_EFFECT_TYPE,
   LAYER_STYLE_LABEL,
@@ -37,9 +36,6 @@ import {
   styleFieldForParam,
 } from '@core/effects/layerStyles';
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { readAnimatorData } from '@core/text/textAnimators';
 import { parseStrokeTrackPath, strokeTrackPath } from '@core/paint/strokeTracks';
 import {
   PAINT_KEY_LABEL,
@@ -47,7 +43,7 @@ import {
   PAINT_PERCENT_KEYS,
   parsePaintColorPath,
   parsePaintPropPath,
-  strokeDisplayNames,
+  
 } from '@core/paint/paintProps';
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -73,36 +69,6 @@ export interface MetaNodeFacts {
 
 /** A node id (read from the scene graph) or ready-made facts. */
 export type MetaNode = string | MetaNodeFacts;
-
-function graphFacts(nodeId: string): MetaNodeFacts {
-  const fxOf = (): Record<string, unknown> | undefined =>
-    defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined;
-  return {
-    nodeId,
-    get kind() {
-      const node = defaultSceneGraph.getNode(nodeId);
-      return node ? readNodeKind(node) : undefined;
-    },
-    effectType: (id) => getNodeEffects(nodeId).find((e) => e.id === id)?.type,
-    pathOpType: (id) => ((fxOf() as { pathOps?: Array<{ id?: string; type?: string }> } | undefined)?.pathOps ?? []).find((o) => o.id === id)?.type,
-    paintStrokeName: (id) => {
-      const strokes = (fxOf()?.paint as { strokes?: Array<{ id: string; mode: 'paint' | 'erase' | 'clone'; name?: string }> } | undefined)?.strokes;
-      return Array.isArray(strokes) ? strokeDisplayNames(strokes).get(id) : undefined;
-    },
-    maskName: (id) => {
-      const paths = (fxOf()?.mask as { paths?: Array<{ id: string; name?: string }> } | undefined)?.paths ?? [];
-      const idx = paths.findIndex((p) => p.id === id);
-      return idx >= 0 ? paths[idx]!.name ?? `Mask ${idx + 1}` : undefined;
-    },
-    animators: () => readAnimatorsForMeta(nodeId),
-    strokeAt: (index) => storedStrokeAt(nodeId, index),
-  };
-}
-
-function factsOf(node: MetaNode | undefined): MetaNodeFacts | undefined {
-  if (node === undefined) return undefined;
-  return typeof node === 'string' ? graphFacts(node) : node;
-}
 
 export type PropertyValueType =
   | 'number'
@@ -1318,19 +1284,6 @@ function resolveTextAnimator(path: string, node?: MetaNodeFacts): PropertyMeta |
   };
 }
 
-/** Animator metadata for labelling. Tolerant by design: the timeline must
- *  render a row even for a node that has gone away mid-update. */
-function readAnimatorsForMeta(
-  nodeId: string,
-): Array<{ name?: string; selectors?: Array<{ kind?: string }> }> {
-  try {
-    const node = defaultSceneGraph.getNode(nodeId);
-    return node ? (readAnimatorData(node) as Array<{ name?: string; selectors?: Array<{ kind?: string }> }>) : [];
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Order matters, and it is not arbitrary.
  *
@@ -1386,18 +1339,6 @@ function resolveStrokeStackParam(path: string, nodeId?: MetaNodeFacts): Property
   return nodeId ? withStrokeUnits(meta, nodeId) : meta;
 }
 
-/** The STORED stroke at `index` of a node's stack, raw — enough to read its units. */
-function storedStrokeAt(
-  nodeId: string,
-  index: number,
-): { taper?: { lengthUnits?: string }; wave?: { units?: string } } | undefined {
-  const fx = defaultSceneGraph.getNode(nodeId)?.components.find((c) => c.type === 'fx')?.props as
-    | { strokes?: unknown; stroke?: unknown }
-    | undefined;
-  const stack = Array.isArray(fx?.strokes) && fx!.strokes.length > 0 ? fx!.strokes : fx?.stroke ? [fx.stroke] : [];
-  return stack[index] as { taper?: { lengthUnits?: string }; wave?: { units?: string } } | undefined;
-}
-
 /**
  * The two stroke parameters whose UNIT belongs to the layer, not the property:
  * a taper length is a percentage or px (AE's Length Units), and a wavelength is
@@ -1418,21 +1359,6 @@ function withStrokeUnits(meta: PropertyMeta, node: MetaNodeFacts): PropertyMeta 
   if (strokeAt(index)?.taper?.lengthUnits !== 'pixels') return meta;
   const { displayScale: _scale, max: _max, ...rest } = meta;
   return { ...rest, type: 'number', unit: 'px', min: 0, step: 1, precision: 1 };
-}
-
-// ── Public API ──────────────────────────────────────────────────────
-
-/**
- * Metadata for an animation prop path. ALWAYS returns an entry — an unknown
- * path gets a title-cased label and neutral numeric metadata, which is still
- * strictly better than the raw path a local table would have missed.
- *
- * `nodeId` is optional and only sharpens paths whose meaning depends on the
- * layer (effect params resolve their effect's definition through it).
- */
-export function resolvePropertyMeta(path: string, node?: MetaNode): PropertyMeta {
-  // Built once per call, not per resolver (a node id reads the graph lazily).
-  return resolvePropertyMetaWith(path, factsOf(node));
 }
 
 /**
@@ -1461,28 +1387,6 @@ export function resolvePropertyMetaWith(path: string, facts?: MetaNodeFacts): Pr
     resettable: false,
     order: ORDER.other,
   };
-}
-
-/** Display label for a prop path. */
-export function propertyLabel(path: string, nodeId?: MetaNode): string {
-  return resolvePropertyMeta(path, nodeId).label;
-}
-
-/** Unit suffix for a prop path (`''` when unitless). */
-export function propertyUnit(path: string, nodeId?: MetaNode): string {
-  return resolvePropertyMeta(path, nodeId).unit;
-}
-
-/** Sort position of a prop path within a layer's property tree. */
-export function propertyOrder(path: string, nodeId?: MetaNode): number {
-  return resolvePropertyMeta(path, nodeId).order;
-}
-
-/** True when the registry describes this path explicitly (not via fallback). */
-export function hasPropertyMeta(path: string, nodeId?: MetaNode): boolean {
-  if (STATIC[path]) return true;
-  const facts = factsOf(nodeId);
-  return RESOLVERS.some((r) => r(path, facts) !== null);
 }
 
 /** Every statically-described path — the registry's own inventory, for tests. */

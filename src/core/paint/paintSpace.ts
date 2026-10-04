@@ -25,23 +25,9 @@
  * exported for tests; `paintSpaceAt` is the live resolver that gathers inputs.
  */
 
-import { Project3D } from '@motion/scene';
-import { defaultAnimation } from '@motion/animation';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { world2DAt } from '@core/scene/layerSpace';
-import { nodeWorldWithParents3d } from '@core/scene/liveWorld3d';
-import { is3DEnabled } from '@core/scene/threeD';
-import { readNodeAnchor } from '@core/scene/anchor';
-import { orthoViewOf } from '@core/scene/cameraViewMode';
-import { getRemappedTime } from '@core/timeline/TimelineController';
-import { currentViewCamera } from '@core/workspace/viewProjection';
-import { useGuidesStore } from '@stores/guidesStore';
-import { layerScaleOf } from './paintCoords';
-
 type Pt = { x: number; y: number };
 
 export { local2D, local3D, localBrushSizeVia } from './paintLocal';
-import { local2D, local3D, localBrushSizeVia } from './paintLocal';
 
 /**
  * Indices of the samples worth keeping: each at least `minDist` from the last
@@ -72,35 +58,4 @@ export interface PaintSpace {
   /** Comp-px brush diameter → local units at `cp`. */
   brushSize: (cp: Pt, compSize: number) => number;
   is3D: boolean;
-}
-
-/** The live mapping for one layer at comp time `time`, or null when it is gone. */
-export function paintSpaceAt(nodeId: string, time: number, comp: { width: number; height: number }): PaintSpace | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return null;
-  const fallbackScale = layerScaleOf(node);
-  const withSize = (toLocal: PaintSpace['toLocal'], is3D: boolean): PaintSpace => ({
-    toLocal,
-    brushSize: (cp, size) => localBrushSizeVia(toLocal, cp, size) ?? size / fallbackScale,
-    is3D,
-  });
-
-  if (is3DEnabled(node)) {
-    const world = nodeWorldWithParents3d(node, time);
-    if (!world) return null;
-    const mode = useGuidesStore.getState().camera3dMode;
-    const ortho = orthoViewOf(mode);
-    const camera = currentViewCamera(comp.width, comp.height, time) ?? Project3D.defaultCamera(comp.width, comp.height);
-    return withSize(
-      (cp) => local3D(world, Project3D.unprojectScreenRay(cp.x, cp.y, camera, ortho, comp.width, comp.height)),
-      true,
-    );
-  }
-
-  const world = world2DAt(nodeId, time);
-  // Animated anchor wins, as in every other transform reader.
-  const av = defaultAnimation.evaluateNode(nodeId, getRemappedTime(nodeId, time));
-  const rest = readNodeAnchor(node);
-  const anchor = { x: av.get('anchorX') ?? rest.x, y: av.get('anchorY') ?? rest.y };
-  return withSize((cp) => local2D(world, anchor, cp), false);
 }

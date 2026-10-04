@@ -11,9 +11,7 @@
  * bumping its own revision — this module never imports a store.
  */
 
-import type { ProjectDocumentIO } from '@core/project/ProjectManager';
 import type { ProjectFile, SceneNode } from '@core/types';
-import defaultSceneGraph from './DefaultSceneGraph';
 import { SCENE_KIND_PROP } from './sceneKind';
 
 /** The default composition root every new/empty project needs — layers parent to
@@ -36,56 +34,3 @@ function defaultComposition(): SceneNode {
 export function emptySceneProject(): ProjectFile {
   return { version: '1.0.0', nodes: [defaultComposition()] };
 }
-
-function clearGraph(): void {
-  const ids: string[] = [];
-  defaultSceneGraph.traverse((n) => ids.push(n.id));
-  for (const id of ids) defaultSceneGraph.removeNode(id);
-}
-
-export const sceneProjectIO: ProjectDocumentIO<ProjectFile> = {
-  createEmpty: emptySceneProject,
-
-  capture: () => {
-    const nodes: SceneNode[] = [];
-    defaultSceneGraph.traverse((n) => {
-      // Convert live AppNodeView into a POJO for serializability
-      nodes.push({
-        id: n.id,
-        name: n.name,
-        children: [...n.children],
-        parent: n.parent,
-        transform: JSON.parse(JSON.stringify(n.transform)),
-        components: JSON.parse(JSON.stringify(n.components)),
-        visible: n.visible,
-        locked: n.locked,
-        solo: n.solo,
-        // Written by the timeline and the Layers panel as plain node state.
-        // Omitted here until now, which put it outside every document snapshot:
-        // shy could not be undone and was lost on save. Conditional so a
-        // document full of un-shy layers does not grow a field per node.
-        ...(n.shy ? { shy: true } : {}),
-        ...(n.color !== undefined ? { color: n.color } : {}),
-      });
-    });
-    return { version: '1.0.0', nodes };
-  },
-
-  restore: (file: ProjectFile) => {
-    clearGraph();
-    const nodes = file.nodes ?? [];
-    // Migrate legacy positional string mattes: if a node has fx.props.matte as a string,
-    // convert to { mode: oldStr, sourceId: prevNode.id } so explicit source resolution works.
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i]!;
-      const fx = node.components?.find((c) => c.type === 'fx');
-      if (fx && typeof fx.props?.matte === 'string' && fx.props.matte !== 'none') {
-        const prevNode = i > 0 ? nodes[i - 1] : undefined;
-        if (prevNode) {
-          fx.props.matte = { mode: fx.props.matte, sourceId: prevNode.id };
-        }
-      }
-    }
-    for (const node of nodes) defaultSceneGraph.addNode(node);
-  },
-};

@@ -45,9 +45,10 @@ import { insertFragment } from '@/engine-client/insertFragment';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { clearRestMeshCache } from '@core/rig/puppet';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import type { SceneNode } from '@core/types';
 import { setupAppEngine, settleEdits } from '@core/engine/__testHelpers__/appEngine';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 jest.mock('@core/workspace/WorkspaceController', () => ({
   getWorkspaceController: () => ({

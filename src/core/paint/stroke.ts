@@ -12,12 +12,7 @@
  * backend by clipping to / out of the fill path.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { SceneNode } from '@core/types';
-import { bumpScene } from '@stores/sceneStore';
-import { getEventBus } from '@core/events/EventBus';
-import { defaultAnimation } from '@motion/animation';
-import { strokeTrackPathsFor } from '@core/paint/strokeTracks';
 import {
   normalizePaintOpOptions,
   type PaintBlendMode,
@@ -270,12 +265,6 @@ export function readNodeStroke(node: SceneNode): Stroke | undefined {
   return s.enabled && s.width > 0 ? s : undefined;
 }
 
-export function getNodeStroke(nodeId: string): Stroke | undefined {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const fx = node?.components.find((c) => c.type === 'fx');
-  return fx && isStroke(fx.props.stroke) ? normalizeStroke(fx.props.stroke) : undefined;
-}
-
 // ── Multi-stroke (stroke STACK, drawn bottom→top) ────────────────────
 
 function rawStrokes(node: SceneNode): Stroke[] | null {
@@ -295,119 +284,7 @@ export function readNodeStrokes(node: SceneNode): Stroke[] {
   return fx && isStroke(fx.props.stroke) ? [normalizeStroke(fx.props.stroke)] : [];
 }
 
-export function getNodeStrokes(nodeId: string): Stroke[] {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeStrokes(node) : [];
-}
-
 /** The renderable subset of the stack (enabled, width > 0). */
 export function readNodeRenderStrokes(node: SceneNode): Stroke[] {
   return readNodeStrokes(node).filter((s) => s.enabled && s.width > 0);
-}
-
-/** Replace the whole stroke stack; the legacy single-stroke slot mirrors
- *  strokes[0] so older readers keep working. */
-export function setNodeStrokes(nodeId: string, strokes: Stroke[]): void {
-  const normalized = strokes.map(normalizeStroke);
-  defaultSceneGraph.setStrokes(nodeId, normalized.length > 1 ? normalized : undefined);
-  defaultSceneGraph.setStroke(nodeId, normalized[0]);
-  bumpScene();
-  getEventBus().emit('AnimationChanged', { nodeId });
-}
-
-/**
- * The ENGINE's stack write (`layer/strokes`, the property seam): exactly
- * `setNodeStrokes`' storage — normalised, the stack kept only when > 1, the
- * single slot mirroring strokes[0] — without the UI refresh (the engine
- * reports its own changes).
- */
-export function storeNodeStrokes(nodeId: string, strokes: ReadonlyArray<unknown>): void {
-  const normalized = strokes.map(normalizeStroke);
-  defaultSceneGraph.setStrokes(nodeId, normalized.length > 1 ? normalized : undefined);
-  defaultSceneGraph.setStroke(nodeId, normalized[0]);
-}
-
-/** Replace the stored stroke at `index` of the stack (engine seam; see storeNodeStrokes). */
-export function storeNodeStrokeAt(nodeId: string, index: number, stroke: Stroke): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const stack = readNodeStrokes(node);
-  if (index < 0 || index >= stack.length) return;
-  const next = [...stack];
-  next[index] = stroke;
-  storeNodeStrokes(nodeId, next);
-}
-
-/** Set (or clear, when undefined) the node's PRIMARY stroke. Routes through
- *  the stack when one exists so single-stroke controls stay truthful. */
-export function setNodeStroke(nodeId: string, stroke: Stroke | undefined): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const arr = node ? rawStrokes(node) : null;
-  if (arr) {
-    setNodeStrokes(nodeId, stroke ? [normalizeStroke(stroke), ...arr.slice(1)] : arr.slice(1));
-    return;
-  }
-  defaultSceneGraph.setStroke(nodeId, stroke);
-  bumpScene();
-  getEventBus().emit('AnimationChanged', { nodeId });
-}
-
-/** Patch the current PRIMARY stroke (creating a default first if none exists). */
-export function updateNodeStroke(nodeId: string, patch: Partial<Stroke>): void {
-  const current = getNodeStroke(nodeId) ?? defaultStroke();
-  setNodeStroke(nodeId, normalizeStroke({ ...current, ...patch }));
-}
-
-// ── Any stroke of the stack, by index ───────────────────────────────
-
-/** The stored stroke at `index` of the stack (normalized, disabled included), or undefined. */
-export function getNodeStrokeAt(nodeId: string, index: number): Stroke | undefined {
-  return index === 0 ? getNodeStroke(nodeId) : getNodeStrokes(nodeId)[index];
-}
-
-/**
- * Patch the stroke at `index`. Index 0 routes through `updateNodeStroke`, so the
- * primary keeps its create-on-first-edit behaviour and the legacy single-stroke
- * slot stays mirrored; a higher index that does not exist is a no-op rather than
- * a silent append.
- */
-export function updateNodeStrokeAt(nodeId: string, index: number, patch: Partial<Stroke>): void {
-  if (index === 0) {
-    updateNodeStroke(nodeId, patch);
-    return;
-  }
-  const stack = getNodeStrokes(nodeId);
-  const current = stack[index];
-  if (!current) return;
-  const next = [...stack];
-  next[index] = normalizeStroke({ ...current, ...patch });
-  setNodeStrokes(nodeId, next);
-}
-
-/**
- * Remove the stroke at `index` AND re-key the tracks of every stroke above it.
- *
- * Stroke tracks are index-scoped (`strokeTracks.ts`), so deleting stroke 2 of 3
- * without this would leave stroke 3's keyframes on `stroke.2.*` — the old
- * stroke 3 would lose its animation and nothing would own stroke 2's leftover
- * tracks. The removed stroke's own tracks are dropped with it.
- */
-export function removeNodeStrokeAt(nodeId: string, index: number): void {
-  const stack = getNodeStrokes(nodeId);
-  if (index < 0 || index >= stack.length) return;
-  const byProp = new Map(defaultAnimation.tracksFor(nodeId).map((t) => [t.prop, t]));
-  defaultAnimation.batch(() => {
-    for (const prop of strokeTrackPathsFor(index)) if (byProp.has(prop)) defaultAnimation.removeTrack(nodeId, prop);
-    for (let j = index + 1; j < stack.length; j++) {
-      const from = strokeTrackPathsFor(j);
-      const to = strokeTrackPathsFor(j - 1);
-      from.forEach((prop, k) => {
-        const track = byProp.get(prop);
-        if (!track) return;
-        defaultAnimation.setKeyframes(nodeId, to[k]!, track.keyframes);
-        defaultAnimation.removeTrack(nodeId, prop);
-      });
-    }
-  });
-  setNodeStrokes(nodeId, stack.filter((_, i) => i !== index));
 }

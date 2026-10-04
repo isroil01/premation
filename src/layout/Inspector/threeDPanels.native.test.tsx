@@ -22,7 +22,7 @@
 
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import type { Command, PropertyInit } from '@motion/engine-api';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import { readNode3D } from '@core/scene/threeD';
 import { MODEL_COMPONENT } from '@core/scene/modelMesh';
 import { clearHistory, setupAppEngine, historyLabels, settleEdits, sampleTrack } from '@core/engine/__testHelpers__/appEngine';
@@ -34,6 +34,7 @@ import { ThreeDControl } from './ThreeDControl';
 import { ModelSection } from './ModelSection';
 import { Ik3DSection, isIk3DTip } from './Ik3DSection';
 import type { SceneNode } from '@core/types';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 jest.useFakeTimers();
 

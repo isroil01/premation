@@ -59,9 +59,7 @@ import { bootEngine, engine, shutdownEngine } from '@core/engine/engineInstance'
 import { engineOwnsDocumentNow, setEngineOwnsDocument } from '@core/engine/engineOwnership';
 import { processEngineOwnsDocument } from '@core/engine/process/processEngine';
 import { installEngineOwnedSession } from './engineOwnedSession';
-import { commandLogRecordingEnabled } from '@core/automation/commandLog';
 import { installAutomationDevApi } from '@core/automation/devApi';
-import { createAppEnginePorts } from '@core/engine/appPorts';
 import { LoadingScreen } from '@components/LoadingScreen';
 import { isLocalFirst } from '@core/config/flags';
 import { cloudProjectsEnabled } from '@core/config/edition';
@@ -2921,19 +2919,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         try {
           void baselineHistoryEdit('Open');
         } catch { /* ignore */ }
-        // The engine API (NATIVE_CORE_PLAN §5 B3): ONE LocalEngine over the
-        // live document, with the real file/media ports. After the history
-        // baseline (its entries go on the same unified stack) and the default
-        // scene seed; rebuilt on every ProjectLoaded/ProjectUnloaded.
+        // The engine API (NATIVE_CORE_PLAN §5 B3): the C++ engine, which owns
+        // the document. After the history baseline.
         try {
-          bootEngine({
-            ports: createAppEnginePorts(getProjectManager()),
-            projectPath: () => getProjectManager().getState().current?.path,
-            // B5: the command log automation records/replays (dev builds and
-            // VITE_RECORD_COMMAND_LOG=1; see core/automation/commandLog).
-            recordLog: commandLogRecordingEnabled(),
-            ownsDocument: ownsDocument || mirrorsEngine,
-          });
+          bootEngine({ ownsDocument: ownsDocument || mirrorsEngine });
           track(() => { void shutdownEngine(); });
           // B5 automation (record/replay a session, run a script) on window.
           // Not tracked: it holds no resources and always targets the CURRENT

@@ -48,9 +48,6 @@
  */
 
 import { fftInPlace } from '@motion/audio';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import type { SceneNode } from '@core/types';
 import { previewEngineJob } from '@core/engine/engineJobs';
 
@@ -418,27 +415,6 @@ export function readAudioDriver(node: SceneNode, prop: string): AudioDriver | nu
   return readAudioDrivers(node)[prop] ?? null;
 }
 
-/** Remember (or replace) a driver on the node. */
-export function writeAudioDriver(nodeId: string, driver: AudioDriver): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const host = node ? driverHost(node) : undefined;
-  if (!node || !host) return;
-  const next = { ...readAudioDrivers(node), [driver.prop]: driver };
-  defaultSceneGraph.writeProp(nodeId, host.id, AUDIO_DRIVER_PROP, next);
-  bumpScene();
-}
-
-/** Forget a driver (does NOT touch the keyframes it wrote). */
-export function forgetAudioDriver(nodeId: string, prop: string): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const host = node ? driverHost(node) : undefined;
-  if (!node || !host) return;
-  const next = { ...readAudioDrivers(node) };
-  delete next[prop];
-  defaultSceneGraph.writeProp(nodeId, host.id, AUDIO_DRIVER_PROP, next);
-  bumpScene();
-}
-
 // ── Expression mode ─────────────────────────────────────────────────
 
 /** Format a number for embedding in expression source (negatives parenthesised). */
@@ -563,17 +539,6 @@ export function alignSamplesToRange(
     }
   }
   return out;
-}
-
-// ── Range and the envelope (the engine's) ───────────────────────────
-
-/** The bake range: the work area when one is set, else the whole comp. */
-export function driverRange(): { start: number; end: number; fps: number } {
-  const controller = getTimelineController();
-  const fps = controller.fps || 30;
-  const wa = controller.getWorkArea();
-  if (wa && wa.end > wa.start) return { start: wa.start, end: wa.end, fps };
-  return { start: 0, end: Math.max(1 / fps, controller.durationSeconds || 0), fps };
 }
 
 export interface DriverEnvelope {

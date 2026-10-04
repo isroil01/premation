@@ -80,7 +80,6 @@ export type {
 // about). Interpreted, never eval'd — the app's CSP refuses `new Function`.
 export { parseExpression, evaluateExpression, ExprSyntaxError, ExprRuntimeError } from './exprLang';
 export { LAYER_ID_PREFIX, isLayerIdRef, resolveLayerRef, layerIdRef } from './AnimationEngine';
-export { mapLayerNameRefs, layerNameRefsIn } from './layerNameRefs';
 export type { ExprNode } from './exprLang';
 
 // ── Keyframe ids (timeline ↔ engine reference encoding) ───────────
@@ -101,7 +100,6 @@ export type { LottieBezier, LottieShapeProp } from './lottiePath';
 
 // ── Engine ────────────────────────────────────────────────────────
 export { AnimationEngine } from './AnimationEngine';
-export { defaultAnimation } from './defaultAnimation';
 export type {
   AnimSnapshot,
   NodeAnimSnapshot,

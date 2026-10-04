@@ -24,6 +24,7 @@ import type { MaskPath } from '@core/effects/mask';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { buildMedia, isSvgAsset, readSvgText } from '@core/scene/layerBuilders';
 import { documentMirror } from '@stores/documentMirror';
+import { engineIdle } from '@core/engine/engineInstance';
 import { buildSvgLayerFragment } from '@/engine-client/svgFragment';
 import { buildSvgShapeGroupInto, mirrorCarry } from '@core/svg/svgConvert';
 import { fetchSvgLayerData } from '@core/svg/svgLayerData';
@@ -179,16 +180,28 @@ export async function patchTextAnimator(session: AiEngineSession, layer: string,
     if (!value) refuse('text_animator', ['color']);
     fields.push({ prop: { layer, path: `${base}/props/color` }, value });
   }
-  const writes = Object.keys(nums).length > 0 ? memberWrites(layer, nums, activePlayheadSeconds()) : [];
+  const writes = Object.keys(nums).length > 0 ? await memberWritesNow(layer, nums) : [];
   if (!writes) refuse('text_animator', Object.keys(nums));
   const all = [...fields, ...writes];
   if (all.length > 0) await session.apply([setProps(all)]);
 }
 
+/**
+ * `memberWrites` over the layer's property tree as the engine has it NOW:
+ * the tree loaded (the turn may touch a layer nobody selected) and the mirror
+ * caught up with what this turn just added (a new operator / animator / style).
+ * Without both, a member of a group added a moment ago is "not addressable".
+ */
+async function memberWritesNow(layer: string, nums: Readonly<Record<string, number>>): Promise<PropertyWrite[] | null> {
+  await documentMirror().loadTree(layer);
+  await engineIdle();
+  return memberWrites(layer, nums, activePlayheadSeconds());
+}
+
 // ── Shape operators (Contents ▸ Trim Paths, Repeater, Zig-Zag, …) ────
 
 /** Numeric params and fields of a path operator as writes (stored units). */
-function pathOpWrites(layer: string, opId: string, patch: Readonly<Record<string, unknown>>, props: ReadonlyMap<string, PropertyInfo>): PropertyWrite[] {
+async function pathOpWrites(layer: string, opId: string, patch: Readonly<Record<string, unknown>>, props: ReadonlyMap<string, PropertyInfo>): Promise<PropertyWrite[]> {
   const nums: Record<string, number> = {};
   const fields: PropertyWrite[] = [];
   const bad: string[] = [];
@@ -201,7 +214,7 @@ function pathOpWrites(layer: string, opId: string, patch: Readonly<Record<string
     else bad.push(key);
   }
   if (bad.length > 0) refuse('path operator', bad);
-  const writes = Object.keys(nums).length > 0 ? memberWrites(layer, nums, activePlayheadSeconds()) : [];
+  const writes = Object.keys(nums).length > 0 ? await memberWritesNow(layer, nums) : [];
   if (!writes) refuse('path operator', Object.keys(nums));
   return [...fields, ...writes];
 }
@@ -215,7 +228,7 @@ export async function addPathOperator(session: AiEngineSession, layer: string, t
   const r = await session.apply([{ type: 'addPropertyGroup', layer, parent: 'contents', matchName: `pathop:${type}`, init: [] } as Command]);
   const opId = ((r[0] as { groups?: string[] }).groups?.[0] ?? '').split('/')[1] ?? '';
   if (!opId) throw new AiEngineError('internal', `adding a ${type} to '${layer}' returned no operator`);
-  const writes = pathOpWrites(layer, opId, patch, await propertiesUnder(session, layer, `contents/${opId}`));
+  const writes = await pathOpWrites(layer, opId, patch, await propertiesUnder(session, layer, `contents/${opId}`));
   if (writes.length > 0) await session.apply([setProps(writes)]);
   return opId;
 }
@@ -223,7 +236,7 @@ export async function addPathOperator(session: AiEngineSession, layer: string, t
 /** `updatePathOp(layer, opId, patch)` as ONE `setProperties` (the operator's type is not patched here). */
 export async function patchPathOperator(session: AiEngineSession, layer: string, opId: string, patch: Readonly<Record<string, unknown>>): Promise<void> {
   if (!(await pathOperators(session, layer)).some((o) => o.id === opId)) throw new AiEngineError('notFound', `'${layer}' has no path operator '${opId}'`);
-  const writes = pathOpWrites(layer, opId, patch, await propertiesUnder(session, layer, `contents/${opId}`));
+  const writes = await pathOpWrites(layer, opId, patch, await propertiesUnder(session, layer, `contents/${opId}`));
   if (writes.length > 0) await session.apply([setProps(writes)]);
 }
 
@@ -274,7 +287,7 @@ export async function patchLayerStyle(session: AiEngineSession, layer: string, s
     } else bad.push(field);
   }
   if (bad.length > 0) refuse(`layer style ${key}`, bad);
-  const writes = Object.keys(nums).length > 0 ? memberWrites(layer, nums, activePlayheadSeconds()) : [];
+  const writes = Object.keys(nums).length > 0 ? await memberWritesNow(layer, nums) : [];
   if (!writes) refuse(`layer style ${key}`, Object.keys(nums));
   const all = [...fields, ...writes];
   if (all.length > 0) await session.apply([setProps(all)]);
@@ -299,7 +312,7 @@ export async function addMaskFromPath(session: AiEngineSession, layer: string, m
   if (mask.opacity !== undefined && mask.opacity !== 1) nums[`mask.${id}.opacity`] = mask.opacity;
   if (mask.expansion) nums[`mask.${id}.expansion`] = mask.expansion;
   if (Object.keys(nums).length > 0) {
-    const writes = memberWrites(layer, nums, activePlayheadSeconds());
+    const writes = await memberWritesNow(layer, nums);
     if (!writes) refuse('create_mask', Object.keys(nums));
     await session.apply([setProps(writes)]);
   }

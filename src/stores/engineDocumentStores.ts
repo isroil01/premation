@@ -35,7 +35,6 @@
  */
 
 import type { ColorManagementSettings, Command, EngineResult, LibraryMaterial, MotionBlurSettings, Swatch } from '@motion/engine-api';
-import { isRestoringDocument } from '@core/api/cloudDocument';
 import { DEFAULT_GUIDES_SETTINGS, useGuidesStore, type GuidesSettings } from './guidesStore';
 import { useSwatchStore, type ProjectSwatch } from './swatchStore';
 import { useMaterialStore, type NamedMaterial } from './materialStore';
@@ -251,7 +250,7 @@ export function bindEngineDocumentStores(o: EngineDocumentStoresOptions): () => 
       fromMirror();
     }));
     disposers.push(b.subscribeStore(() => {
-      if (applying || isRestoringDocument()) return;
+      if (applying) return;
       flush();
     }));
     lastMirror = mirrorKey();

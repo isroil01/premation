@@ -24,7 +24,7 @@ import { readNodeLayerStyles } from '@core/effects/layerStyles';
 
 /** The layer's styles as the engine stores them. */
 const stylesOf = async (id: string) => readNodeLayerStyles((await docView()).getNode(id)!) ?? {};
-import { getNodeMask, rectangleMask } from '@core/effects/mask';
+import {  rectangleMask } from '@core/effects/mask';
 import { useCompositionStore } from '@stores/compositionStore';
 import { EffectStack } from './EffectStack';
 import { LayerStylesControls } from './LayerStylesControls';
@@ -55,7 +55,7 @@ import {
   setFreezeTimeEdit,
   setLayerEffectsEnabledEdit,
   setLayerStyleOnEdit,
-  setMaskVertexFeatherEdit,
+  
   setMaskInvertedEdit,
   setMaskModeEdit,
   setMaskShapeAnimatedEdit,
@@ -370,17 +370,6 @@ test('Effects ▸ Simulation switches the layer\'s Cloner on, one entry', async 
   expect(v!.value).toMatchObject({ kind: 'json' });
   expect(JSON.parse((v!.value as { value: string }).value)).toMatchObject({ enabled: true });
   expect((await historyLabels())).toEqual(['Add Cloner']);
-});
-
-test('per-vertex mask feather is one path write; clearing every vertex removes them', async () => {
-  const pts = async (): Promise<ReturnType<typeof getNodeMask>['paths'][number]['points']> => (await docView()).getNodeMask(s.A).paths[0]!.points;
-  await act(async () => { await setMaskVertexFeatherEdit(s.A, s.mask, [{ index: 1, feather: 12 }], 0); });
-  expect((await pts()).map((p) => p.feather)).toEqual([undefined, 12, undefined, undefined]);
-  await act(async () => { await setMaskVertexFeatherEdit(s.A, s.mask, [{ index: 2, feather: 4 }], 0); });
-  expect((await pts()).map((p) => p.feather)).toEqual([undefined, 12, 4, undefined]);
-  await act(async () => { await setMaskVertexFeatherEdit(s.A, s.mask, [0, 1, 2, 3].map((index) => ({ index, feather: undefined })), 0); });
-  expect((await pts()).every((p) => p.feather === undefined)).toBe(true);
-  expect((await historyLabels())).toEqual(['Mask Vertex Feather', 'Mask Vertex Feather', 'Mask Vertex Feather']);
 });
 
 // ── Masks ─────────────────────────────────────────────────────────────

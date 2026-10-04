@@ -7,14 +7,14 @@
  */
 
 import {
-  buildRestMesh,
-  deform,
-  deformLbs,
+  
+  
+  
   clampPinRotations,
-  overlapDepthField,
+  
   type DeformPin,
-  type PuppetRig,
-  type PuppetSilhouette,
+  
+  
 } from './puppet';
 import {
   simplifySketch,
@@ -27,91 +27,10 @@ import {
 import { applyIk } from './rigDeform';
 import { computeWorldTransforms, boneRoot, boneTip } from './skeleton';
 
-const rig = (extra: Partial<PuppetRig> = {}): PuppetRig => ({
-  meshDensity: 10,
-  meshExpansion: 0,
-  pins: [
-    { id: 'a', name: 'a', x: -40, y: 0 },
-    { id: 'b', name: 'b', x: 40, y: 0 },
-  ],
-  ...extra,
-});
-
 const pins = (over: Partial<DeformPin> = {}): DeformPin[] => [
   { id: 'a', x: -40, y: 0 },
   { id: 'b', x: 40, y: 0, ...over },
 ];
-
-const identical = (a: Float32Array, b: Float32Array): boolean => {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false;
-  return true;
-};
-
-// ── 3B — per-pin scale ──────────────────────────────────────────────
-
-describe('3B — per-pin scale', () => {
-  const mesh = () => buildRestMesh(160, 120, 0, rig());
-
-  it('scale 1 (and absent) is bit-identical to the unscaled path', () => {
-    const m = mesh();
-    const base = deformLbs(pins(), m);
-    expect(identical(deformLbs(pins({ scale: 1 }), m), base)).toBe(true);
-    expect(identical(deformLbs(pins({ scale: undefined }), m), base)).toBe(true);
-  });
-
-  it('scale > 1 pushes geometry away from the pin', () => {
-    const m = mesh();
-    const base = deformLbs(pins(), m);
-    const big = deformLbs(pins({ scale: 1.8 }), m);
-    let moved = 0;
-    for (let i = 0; i < base.length; i += 4) {
-      if (Math.abs(base[i]! - big[i]!) > 0.5) moved++;
-    }
-    expect(moved).toBeGreaterThan(5);
-  });
-
-  it('scale is centred ON the pin — the vertex at the pin does not move', () => {
-    // The pin must sit exactly on a grid vertex for this to be checkable: at
-    // density 10 over 160px the columns are -80,-64,…,48,…, so x=48 is exact.
-    // (A pin BETWEEN vertices is not a fixed point of its own scaling, which is
-    // correct — the nearest vertex is genuinely pushed outward.)
-    const onVertex: PuppetRig = {
-      meshDensity: 10,
-      meshExpansion: 0,
-      pins: [
-        { id: 'a', name: 'a', x: -48, y: 0 },
-        { id: 'b', name: 'b', x: 48, y: 0 },
-      ],
-    };
-    const m = buildRestMesh(160, 120, 0, onVertex);
-    const scaled = deformLbs(
-      [{ id: 'a', x: -48, y: 0 }, { id: 'b', x: 48, y: 0, scale: 2 }],
-      m,
-    );
-    let best = 0;
-    let bestD = Infinity;
-    for (let i = 0; i < m.vertices.length / 4; i++) {
-      const d = Math.hypot(m.vertices[i * 4]! - 48, m.vertices[i * 4 + 1]!);
-      if (d < bestD) { bestD = d; best = i; }
-    }
-    expect(bestD).toBeLessThan(1e-6); // the pin really is on a vertex
-    expect(Math.abs(scaled[best * 4]! - 48)).toBeLessThan(0.5);
-    expect(Math.abs(scaled[best * 4 + 1]!)).toBeLessThan(0.5);
-  });
-
-  it('scale composes with rotation and stays finite through ARAP', () => {
-    const m = mesh();
-    const out = deform(pins({ scale: 1.4, rotation: 30 }), m, 'arap');
-    expect(out.length).toBe(m.vertices.length);
-    for (let i = 0; i < out.length; i++) expect(Number.isFinite(out[i])).toBe(true);
-  });
-
-  it('is deterministic', () => {
-    const m = mesh();
-    expect(identical(deform(pins({ scale: 1.6 }), m, 'arap'), deform(pins({ scale: 1.6 }), m, 'arap'))).toBe(true);
-  });
-});
 
 // ── 3C — Mesh Rotation Refinement ───────────────────────────────────
 
@@ -129,134 +48,6 @@ describe('3C — Mesh Rotation Refinement', () => {
   it('clamps magnitude while preserving sign', () => {
     expect(clampPinRotations(pins({ rotation: 120 }), 45)[1]!.rotation).toBe(45);
     expect(clampPinRotations(pins({ rotation: -120 }), 45)[1]!.rotation).toBe(-45);
-  });
-
-  it('clamping changes the solved mesh', () => {
-    const m = buildRestMesh(160, 120, 0, rig());
-    const free = deform(pins({ rotation: 150 }), m, 'arap');
-    const capped = deform(pins({ rotation: 150 }), m, 'arap', 20);
-    expect(identical(free, capped)).toBe(false);
-  });
-
-  it('an unlimited solve is bit-identical to passing undefined', () => {
-    const m = buildRestMesh(160, 120, 0, rig());
-    expect(identical(deform(pins({ rotation: 60 }), m, 'arap'), deform(pins({ rotation: 60 }), m, 'arap', undefined))).toBe(true);
-  });
-});
-
-// ── 3D — silhouette triangulation ───────────────────────────────────
-
-describe('3D — silhouette-conforming mesh', () => {
-  /** A thin diagonal bar — the case a uniform grid handles worst. */
-  const bar: PuppetSilhouette = {
-    points: [
-      { x: -60, y: -10 }, { x: 40, y: -50 }, { x: 60, y: -30 }, { x: -40, y: 10 },
-    ],
-  };
-
-  it('grid remains the default (mode absent → unchanged behaviour)', () => {
-    const a = buildRestMesh(160, 120, 0, rig(), bar);
-    const b = buildRestMesh(160, 120, 0, rig({ meshMode: 'grid' }), bar);
-    expect(a.vertices.length).toBe(b.vertices.length);
-  });
-
-  it('silhouette mode triangulates the outline instead of a grid', () => {
-    const grid = buildRestMesh(160, 120, 0, rig(), bar);
-    const sil = buildRestMesh(160, 120, 0, rig({ meshMode: 'silhouette' }), bar);
-    expect(sil.vertices.length).toBeGreaterThan(0);
-    expect(sil.triangles.length).toBeGreaterThan(0);
-    // Fewer vertices for the same artwork — none are spent on empty space.
-    expect(sil.vertices.length).toBeLessThan(grid.vertices.length);
-  });
-
-  it('every silhouette vertex lies on the artwork, not the bbox', () => {
-    const sil = buildRestMesh(160, 120, 0, rig({ meshMode: 'silhouette' }), bar);
-    // The grid spans the full padded bbox (±80, ±60); the outline does not.
-    for (let i = 0; i < sil.vertices.length; i += 4) {
-      expect(Math.abs(sil.vertices[i]!)).toBeLessThanOrEqual(60.001);
-      expect(Math.abs(sil.vertices[i + 1]!)).toBeLessThanOrEqual(50.001);
-    }
-  });
-
-  it('still produces normalized pin weights', () => {
-    const sil = buildRestMesh(160, 120, 0, rig({ meshMode: 'silhouette' }), bar);
-    const n = sil.vertices.length / 4;
-    for (let i = 0; i < n; i++) {
-      let sum = 0;
-      for (const p of rig().pins) sum += sil.weights[p.id]![i]!;
-      expect(sum).toBeCloseTo(1, 4);
-    }
-  });
-
-  it('falls back to the grid when the outline is unusable', () => {
-    const degenerate: PuppetSilhouette = { points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }] };
-    const sil = buildRestMesh(160, 120, 0, rig({ meshMode: 'silhouette' }), degenerate);
-    expect(sil.vertices.length).toBe(buildRestMesh(160, 120, 0, rig(), degenerate).vertices.length);
-  });
-
-  it('deforms without NaN', () => {
-    const sil = buildRestMesh(160, 120, 0, rig({ meshMode: 'silhouette' }), bar);
-    const out = deform(pins({ rotation: 25 }), sil, 'arap');
-    for (let i = 0; i < out.length; i++) expect(Number.isFinite(out[i])).toBe(true);
-  });
-});
-
-// ── 3E — overlap depth ──────────────────────────────────────────────
-
-describe('3E — overlap depth field', () => {
-  const mesh = () => buildRestMesh(160, 120, 0, rig());
-
-  it('no overlap pin → null (the mesh composites flat, as before)', () => {
-    expect(overlapDepthField(pins(), mesh())).toBeNull();
-    expect(overlapDepthField(pins({ overlap: 0 }), mesh())).toBeNull();
-  });
-
-  it('produces one signed depth per vertex', () => {
-    const m = mesh();
-    const d = overlapDepthField(pins({ overlap: 50 }), m)!;
-    expect(d).not.toBeNull();
-    expect(d.length).toBe(m.vertices.length / 4);
-  });
-
-  it('depth is highest near the overlap pin it came from', () => {
-    const m = mesh();
-    const d = overlapDepthField(pins({ overlap: 100 }), m)!;
-    const near = (x: number) => {
-      let best = 0, bestD = Infinity;
-      for (let i = 0; i < m.vertices.length / 4; i++) {
-        const dd = Math.hypot(m.vertices[i * 4]! - x, m.vertices[i * 4 + 1]!);
-        if (dd < bestD) { bestD = dd; best = i; }
-      }
-      return d[best]!;
-    };
-    expect(near(40)).toBeGreaterThan(near(-40));
-  });
-
-  it('opposing overlaps put one region in front of the other', () => {
-    const m = mesh();
-    const d = overlapDepthField(
-      [{ id: 'a', x: -40, y: 0, overlap: -80 }, { id: 'b', x: 40, y: 0, overlap: 80 }],
-      m,
-    )!;
-    let min = Infinity, max = -Infinity;
-    for (const v of d) { min = Math.min(min, v); max = Math.max(max, v); }
-    expect(min).toBeLessThan(0);
-    expect(max).toBeGreaterThan(0);
-  });
-
-  it('extent broadens the influence', () => {
-    const m = mesh();
-    const tight = overlapDepthField(pins({ overlap: 100, overlapExtent: 0.3 }), m)!;
-    const broad = overlapDepthField(pins({ overlap: 100, overlapExtent: 3 }), m)!;
-    const sum = (f: Float32Array) => f.reduce((s, v) => s + v, 0);
-    expect(sum(broad)).toBeGreaterThan(sum(tight));
-  });
-
-  it('is deterministic', () => {
-    const m = mesh();
-    const a = overlapDepthField(pins({ overlap: 60 }), m)!;
-    const b = overlapDepthField(pins({ overlap: 60 }), m)!;
-    expect(identical(a, b)).toBe(true);
   });
 });
 

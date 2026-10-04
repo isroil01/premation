@@ -13,17 +13,12 @@
  * expression anywhere can read a slider that lives on a Null controller.
  */
 
-import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene } from '@core/scene/sceneDerive';
-import { bumpScene } from '@stores/sceneStore';
-import { defaultAnimation, type AnimationEngine } from '@motion/animation';
 import {
   CONTROL_PREFIX,
   CONTROL_KIND_PREFIX,
   CONTROL_SPECS,
-  controlSpecOf,
-  nextFreeControlName,
+  
+  
   type ControlKind,
 } from '@core/engine/controlSpecs';
 
@@ -52,67 +47,3 @@ export { CONTROL_PREFIX, CONTROL_KIND_PREFIX, type ControlKind };
 export const CONTROL_COMPONENTS: Record<ControlKind, readonly string[]> = Object.fromEntries(
   CONTROL_SPECS.map((s) => [s.kind, s.components]),
 ) as Record<ControlKind, readonly string[]>;
-
-function transformComponent(node: SceneNode): { id: string; props: Record<string, unknown> } | undefined {
-  return node.components.find((c) => c.type === 'Transform') as
-    | { id: string; props: Record<string, unknown> }
-    | undefined;
-}
-
-/** All controls in the scene: [{ nodeId, name, value }]. */
-export function listControls(): Array<{ nodeId: string; name: string; value: number }> {
-  const out: Array<{ nodeId: string; name: string; value: number }> = [];
-  for (const node of flattenScene(defaultSceneGraph)) {
-    const t = transformComponent(node);
-    if (!t) continue;
-    for (const [key, v] of Object.entries(t.props)) {
-      if (key.startsWith(CONTROL_PREFIX) && typeof v === 'number') {
-        out.push({ nodeId: node.id, name: key.slice(CONTROL_PREFIX.length), value: v });
-      }
-    }
-  }
-  return out;
-}
-
-/** Next free auto-name for a kind ("Slider 1", "Angle 2", …). */
-export function nextControlName(kind: ControlKind = 'slider'): string {
-  return nextFreeControlName(controlSpecOf(kind), listControls().map((c) => c.name));
-}
-
-/**
- * Add a named slider control to a layer (default value 50). The inspector
- * picks it up as a keyframeable row automatically. Returns the name used.
- */
-export function addSliderControl(nodeId: string, name?: string, value = 50): string | null {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const t = node ? transformComponent(node) : undefined;
-  if (!node || !t) return null;
-  const finalName = (name ?? nextControlName()).trim();
-  defaultSceneGraph.writeProp(nodeId, t.id, CONTROL_PREFIX + finalName, value);
-  bumpScene();
-  return finalName;
-}
-
-/**
- * Resolve `ctrl('name')` at time `t`: the control's animated value when it has
- * keyframes, else its static prop value, else 0. Bound into the animation
- * engine at boot (see Providers) the same way the audio provider is.
- */
-const resolving = new Set<string>();
-
-export function controlValue(name: string, t: number, engine: AnimationEngine = defaultAnimation): number {
-  if (resolving.has(name)) return 0; // a control referencing itself resolves to 0
-  const prop = CONTROL_PREFIX + name;
-  resolving.add(name);
-  try {
-    for (const node of flattenScene(defaultSceneGraph)) {
-      const tc = transformComponent(node);
-      const base = tc?.props[prop];
-      if (typeof base !== 'number') continue;
-      return engine.sample(node.id, prop, t) ?? base;
-    }
-    return 0;
-  } finally {
-    resolving.delete(name);
-  }
-}

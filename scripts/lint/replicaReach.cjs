@@ -108,7 +108,9 @@ for (const sf of files) {
       } else if (tf) for (const k of nodes.keys()) if (k.startsWith(`${tf}#`)) nodes.get(owner).edges.add(k);
     }
     if (ts.isIdentifier(n)) {
-      const k = keyOfSymbol(checker.getSymbolAtLocation(n));
+      // `{ name }` names the property: the VALUE it takes is the shorthand's value symbol.
+      const sh = n.parent && ts.isShorthandPropertyAssignment(n.parent) && n.parent.name === n;
+      const k = keyOfSymbol(sh ? checker.getShorthandAssignmentValueSymbol(n.parent) : checker.getSymbolAtLocation(n));
       if (k && k !== owner) nodes.get(owner).edges.add(k);
     }
     if (ts.isTypeNode(n) && !ts.isExpressionWithTypeArguments(n)) return;

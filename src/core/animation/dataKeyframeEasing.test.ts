@@ -7,30 +7,7 @@
  * along; nothing could author them.
  */
 
-import { AnimationEngine, setDataKeyframeEasing } from '@motion/animation';
-import { applyEasingToKeyframes } from './keyframeAssistants';
-
-const PIN = 'puppet.mover.position';
-
-function engineWithPinTrack(): AnimationEngine {
-  const anim = new AnimationEngine();
-  anim.setDataTrack('m', PIN, {
-    nodeId: 'm',
-    prop: PIN,
-    kind: 'points',
-    keyframes: [
-      { t: 0, value: [{ x: 0, y: 0 }] },
-      { t: 2, value: [{ x: 60, y: 0 }] },
-    ],
-  } as never);
-  return anim;
-}
-
-const kfAt = (anim: AnimationEngine, t: number) =>
-  anim.getDataTrack('m', PIN)!.keyframes.find((k) => k.t === t)!;
-
-const pinXAt = (anim: AnimationEngine, t: number) =>
-  (anim.sampleData('m', PIN, t) as Array<{ x: number }>)[0]!.x;
+import {  setDataKeyframeEasing } from '@motion/animation';
 
 describe('setDataKeyframeEasing (pure)', () => {
   const kfs = [
@@ -60,81 +37,5 @@ describe('setDataKeyframeEasing (pure)', () => {
     const before = JSON.stringify(kfs);
     setDataKeyframeEasing(kfs, 0, 'hold');
     expect(JSON.stringify(kfs)).toBe(before);
-  });
-});
-
-describe('Easy Ease reaches a puppet pin keyframe', () => {
-  it('F9 (Ease) writes a bezier curve onto the data keyframe', () => {
-    const anim = engineWithPinTrack();
-    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'Ease', anim);
-    const kf = kfAt(anim, 0);
-    expect(kf.easing).toBe('bezier');
-    expect(kf.bezier).toBeDefined();
-  });
-
-  it('…and the eased curve actually changes the sampled pin position', () => {
-    const linear = engineWithPinTrack();
-    const eased = engineWithPinTrack();
-    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'EaseIn', eased);
-
-    expect(pinXAt(eased, 1)).toBeLessThan(pinXAt(linear, 1) - 1);
-    // Endpoints unchanged.
-    expect(pinXAt(eased, 0)).toBeCloseTo(0, 5);
-    expect(pinXAt(eased, 2)).toBeCloseTo(60, 5);
-  });
-
-  it('Hold freezes the pin until the next keyframe', () => {
-    const anim = engineWithPinTrack();
-    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'Hold', anim);
-    expect(kfAt(anim, 0).easing).toBe('hold');
-    expect(pinXAt(anim, 1.9)).toBeCloseTo(0, 5);
-    expect(pinXAt(anim, 2)).toBeCloseTo(60, 5);
-  });
-
-  it('Linear clears an earlier ease back to a straight segment', () => {
-    const anim = engineWithPinTrack();
-    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'Ease', anim);
-    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'Linear', anim);
-    expect(kfAt(anim, 0).easing).toBe('linear');
-    expect(kfAt(anim, 0).bezier).toBeUndefined();
-    expect(pinXAt(anim, 1)).toBeCloseTo(30, 5);
-  });
-
-  it('leaves the keyframe VALUE untouched', () => {
-    const anim = engineWithPinTrack();
-    applyEasingToKeyframes([{ nodeId: 'm', prop: PIN, t: 0 }], 'EaseOut', anim);
-    expect(kfAt(anim, 0).value).toEqual([{ x: 0, y: 0 }]);
-    expect(kfAt(anim, 2).value).toEqual([{ x: 60, y: 0 }]);
-  });
-
-  it('a scalar selection still eases exactly as before (no regression)', () => {
-    const anim = new AnimationEngine();
-    anim.setKeyframe('m', 'opacity', 0, 0);
-    anim.setKeyframe('m', 'opacity', 2, 100);
-    applyEasingToKeyframes([{ nodeId: 'm', prop: 'opacity', t: 0 }], 'Ease', anim);
-    const kf = anim.getTrackKeyframes('m', 'opacity')!.find((k) => k.t === 0)!;
-    expect(kf.easing).toBe('bezier');
-  });
-
-  it('scalar Hold still stores the step spelling', () => {
-    const anim = new AnimationEngine();
-    anim.setKeyframe('m', 'opacity', 0, 0);
-    anim.setKeyframe('m', 'opacity', 2, 100);
-    applyEasingToKeyframes([{ nodeId: 'm', prop: 'opacity', t: 0 }], 'Hold', anim);
-    const kf = anim.getTrackKeyframes('m', 'opacity')!.find((k) => k.t === 0)!;
-    expect(kf.easing).toBe('step');
-  });
-
-  it('a mixed selection eases both kinds in one action', () => {
-    const anim = engineWithPinTrack();
-    anim.setKeyframe('m', 'opacity', 0, 0);
-    anim.setKeyframe('m', 'opacity', 2, 100);
-    applyEasingToKeyframes(
-      [{ nodeId: 'm', prop: PIN, t: 0 }, { nodeId: 'm', prop: 'opacity', t: 0 }],
-      'Ease',
-      anim,
-    );
-    expect(kfAt(anim, 0).easing).toBe('bezier');
-    expect(anim.getTrackKeyframes('m', 'opacity')!.find((k) => k.t === 0)!.easing).toBe('bezier');
   });
 });

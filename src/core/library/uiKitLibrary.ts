@@ -13,9 +13,6 @@
  */
 
 import { buildImageNode, buildSvgIconGroup } from '@core/scene/layerBuilders';
-import { legacyFrame, legacySink } from '@core/scene/sceneInsert';
-import { bumpScene } from '@stores/sceneStore';
-import { useSelectionStore } from '@stores/selectionStore';
 import type { LayerSink } from '@/engine-client/layerSink';
 import type { InsertFrame } from '@/engine-client/insertFragment';
 
@@ -319,22 +316,6 @@ export function updateUiComponentSvg(itemSvg: string, fill?: string, textContent
     updated = updated.replace(/(<text[^>]*>)([^<]*)(<\/text>)/gi, `$1${textContent}$3`);
   }
   return updated;
-}
-
-/**
- * Insert a UI component as an editable, grouped vector shape layer.
- * On insert, `insertSvgShapeGroup` creates a single master group node (`kind: 'group'`).
- * Moving or dragging the component on canvas selects and moves the
- * ENTIRE UI COMPONENT TOGETHER AS ONE SOLID UNIFIED BODY.
- * Double-clicking or selecting sub-layers in the Scene panel allows customization.
- */
-export function insertUiComponent(id: string, x?: number, y?: number): string | null {
-  const made = buildUiComponent(legacySink(), legacyFrame(), id, x, y);
-  if (made) {
-    useSelectionStore.getState().set([made]);
-    bumpScene();
-  }
-  return made;
 }
 
 /**

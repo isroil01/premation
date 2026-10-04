@@ -18,22 +18,9 @@
  */
 
 import type { EngineClient, Origin } from '@motion/engine-api';
-import { StoreSnapshotCommand, restoreSnapshotState } from '@core/commands/snapshotCommand';
 import { getCommandSystem } from '@core/commands/CommandSystem';
-import { bumpScene } from '@stores/sceneStore';
-import { captureSharedState, statesEqual, type DocState } from '@core/commands/snapshotSharing';
 import { engine } from '@core/engine/engineInstance';
 import { EngineTurnSession } from './aiEngineSession';
-
-/**
- * Scene + animation (+ clip geometry under the unified history), structurally
- * shared with every other history snapshot — so a snapshot entry restores the
- * timeline too, and a long session does not hold a document per step.
- */
-const capture = (): DocState => captureSharedState();
-
-/** The snapshot entry's own restore path: clones, restores every half. */
-const restore = (s: DocState): void => restoreSnapshotState(s);
 
 export interface AiTurnOutcome {
   /**
@@ -99,6 +86,8 @@ export async function beginAiTransaction(label: string, opts: BeginTurnOptions =
   // gesture slot still held (a drag that never finished) leaves nothing to
   // group the turn in, so the turn does not start.
   if (gesture === null) throw new Error('Another edit is still in progress (a drag that has not finished) — finish it, then ask again.');
+  // The document revision the turn starts from: a turn that moved it is an entry.
+  const startRevision = client.revision;
   const session = new EngineTurnSession(client, origin);
   // Watch AFTER the gesture opened: a stale write from before the turn is
   // resynced by beginGesture itself and is not this turn's.
@@ -125,13 +114,11 @@ export async function beginAiTransaction(label: string, opts: BeginTurnOptions =
     await client.batch('', [], { origin });
     try {
       release();
-      const top = (): unknown => history.getEntries()[history.getIndex()];
-      const was = top();
       const res = await client.endGesture(gesture, true, { origin });
       // The gesture closed under the turn (a leaked-gesture recovery) still
       // committed its writes in the engine; say so.
       if (!res.ok) session.legacy(`the turn's gesture was closed by another client (${res.error.code})`);
-      return { kind: res.ok && top() === was ? 'empty' : 'engine', gaps: session.legacyGaps };
+      return { kind: res.ok && client.revision === startRevision ? 'empty' : 'engine', gaps: session.legacyGaps };
     } finally {
       session.dispose();
     }
@@ -176,32 +163,4 @@ export async function beginAiTransaction(label: string, opts: BeginTurnOptions =
 export interface DocumentTransaction {
   commit(): void;
   rollback(): void;
-}
-
-export function beginDocumentTransaction(label: string): DocumentTransaction {
-  const before = capture();
-  let settled = false;
-  const history = getCommandSystem().getHistory();
-  history.suspend();
-  const release = (): void => history.resume();
-
-  return {
-    commit(): void {
-      if (settled) return;
-      settled = true;
-      release();
-      const after = capture();
-      // A read-only run must not litter the undo stack with a no-op entry.
-      if (statesEqual(before, after)) return;
-      history.push(new StoreSnapshotCommand(label, before, after));
-      bumpScene();
-    },
-
-    rollback(): void {
-      if (settled) return;
-      settled = true;
-      release();
-      restore(before);
-    },
-  };
 }

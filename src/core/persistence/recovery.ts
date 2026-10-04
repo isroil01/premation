@@ -14,11 +14,9 @@
  * `recoveryStore.ts`: one new body plus a small index per write.
  */
 
-import { getProjectManager, getSettingsManager } from '@core/services/coreServices';
-import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
-import { baselineHistoryNow } from '@core/engine/historyBaseline';
+import {  getSettingsManager } from '@core/services/coreServices';
+import {   type EditorDocument } from '@core/api/cloudDocument';
 import { type AnimSnapshot } from '@motion/animation';
-import { IMPLIED_LEGACY_VERSION } from '@core/project/migrations';
 import type { ProjectFile } from '@core/types';
 import {
   RecoverySerializer,
@@ -62,66 +60,6 @@ export interface RecoverySnapshot {
  * ring slot instead of looking like a new project each time.
  */
 export const SCRATCH_PROJECT_ID = 'scratch';
-
-/**
- * The cloud project id, read from the route.
- *
- * The app uses a HashRouter, so the route lives in `location.hash` — reading
- * `location.pathname` yielded `/` in dev and the index.html path under
- * Electron's file://, so this never matched and the entire recovery subsystem
- * was inert.
- */
-function routeProjectId(): string | undefined {
-  if (typeof window === 'undefined') return undefined;
-  const from = (s: string): string | undefined => s.match(/\/editor\/([^/?#]+)/)?.[1];
-  const id = from(window.location.hash) ?? from(window.location.pathname);
-  return id && id.trim() !== '' ? id : undefined;
-}
-
-/**
- * Who the document belongs to.
- *
- * Only the cloud route carries an id. The desktop editor runs on plain
- * `/editor` with its project held by the ProjectManager, so keying on the
- * route alone meant a desktop project — new, opened or saved — never produced
- * a single snapshot: the one edition that most needs crash recovery had none.
- */
-function currentIdentity(): Pick<RecoverySnapshot, 'projectId' | 'project'> {
-  const routeId = routeProjectId();
-  if (routeId) return { projectId: routeId };
-  let current: { id: string; name: string; path: string | null } | null = null;
-  try {
-    current = getProjectManager().getState().current;
-  } catch {
-    /* services not booted — no project yet, so this is a scratch scene */
-  }
-  if (current) return { projectId: current.id, project: { name: current.name, path: current.path } };
-  return { projectId: SCRATCH_PROJECT_ID };
-}
-
-/**
- * Snapshot the current editable state.
- *
- * Deliberately NOT deep-cloned. This used to `structuredClone` the document
- * twice (once whole, once more for the legacy `scene` field) — a pair of full
- * copies per tick that bought nothing: `captureDocument` already builds its
- * own objects, and `scene`/`anim` are the document's parts by reference, which
- * serialise identically. Hand the result to `persistRecovery` in the SAME
- * task: that copies it (posting to the worker) or serialises it on the spot,
- * before any later edit can reach the few store values it shares.
- */
-export function captureRecovery(time: number): RecoverySnapshot | null {
-  const doc = captureDocument();
-  return {
-    ...currentIdentity(),
-    savedAt: 0, // stamped at persist time (Date.now lives at the call site)
-    time,
-    doc,
-    // Kept for snapshots read by older builds / readers.
-    scene: doc.scene,
-    anim: doc.animation,
-  };
-}
 
 // ── Keep-N ring + folder copy (Preferences ▸ Files) ──────────────────────
 //
@@ -510,41 +448,4 @@ export function clearRecovery(): void {
   } catch {
     /* app not booted — no settings, so no snapshot to clear */
   }
-}
-
-/** Restore a snapshot into the live engines (non-destructive). Returns the time. */
-export function restoreRecovery(snap: RecoverySnapshot): number {
-  if (snap.doc) {
-    restoreDocument(structuredClone(snap.doc));
-  } else {
-    // Pre-1.1 snapshot: scene + animation only, and no version field — so it is
-    // assembled into a document at the implied legacy version and put through
-    // the same door every other foreign state uses.
-    //
-    // It used to call `defaultAnimation.restore` directly, which was harmless
-    // only while every schema change happened to be additive. Document 1.6.0
-    // changes the SHAPE of `animation.expressions`, and this was the one path
-    // from a persisted snapshot to the engine with no migration in between — an
-    // old snapshot's expressions would have been silently dropped by the
-    // restore that exists to not lose work. Rule 4c asked prospectively: which
-    // guard observes this crossing? None did.
-    restoreDocument({
-      version: IMPLIED_LEGACY_VERSION,
-      scene: structuredClone(snap.scene),
-      animation: snap.anim,
-    });
-  }
-  // A desktop project goes back to its file, so Save doesn't ask where to
-  // write a document that already has a home (or a name, if it was new).
-  if (snap.project) {
-    try {
-      getProjectManager().resume(snap.project.name, snap.project.path);
-    } catch {
-      /* services not booted — the document is restored, only unbound */
-    }
-  }
-  // Recovering IS a load: undo must not be able to step behind it into the
-  // seeded starter scene captured at boot.
-  baselineHistoryNow('Recovered');
-  return snap.time;
 }

@@ -19,9 +19,7 @@
  * content-hash field loses its reader again, this one included.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { renderComponentsOf } from '@core/scene/SceneGraph';
-import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
 
 /**
@@ -40,23 +38,7 @@ export function readNodeQuality(node: SceneNode): LayerQuality {
   return q === 'draft' || q === 'wireframe' ? q : 'best';
 }
 
-export function getNodeQuality(nodeId: string): LayerQuality {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readNodeQuality(node) : 'best';
-}
-
-export function setNodeQuality(nodeId: string, quality: LayerQuality): void {
-  // Store only the non-default values so the common case adds nothing to file.
-  defaultSceneGraph.setLayerQuality(nodeId, quality === 'best' ? undefined : quality);
-  getEventBus().emit('AnimationChanged', { nodeId });
-}
-
 /** AE's switch cycle: Best → Draft → Wireframe → Best. */
 export function nextQuality(q: LayerQuality): LayerQuality {
   return q === 'best' ? 'draft' : q === 'draft' ? 'wireframe' : 'best';
-}
-
-/** Best ↔ Draft — the inspector's two-state switch (Wireframe reads as not-Draft). */
-export function toggleNodeQuality(nodeId: string): void {
-  setNodeQuality(nodeId, getNodeQuality(nodeId) === 'draft' ? 'best' : 'draft');
 }

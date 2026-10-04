@@ -8,7 +8,7 @@
  * `insertBuiltLayers` path.)
  */
 
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import type { SceneNode } from '@core/types';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -18,6 +18,7 @@ import { documentMirror } from '@stores/documentMirror';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { useSelectionStore } from '@stores/selectionStore';
 import { nullsFromPathEdit } from './layerCreateEdits';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 let h: Harness;
 

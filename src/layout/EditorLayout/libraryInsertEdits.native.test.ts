@@ -15,7 +15,6 @@ import { importPathsEdit } from '@layout/Assets/assetEdits';
 import { insertSfxEdit } from './sfxInsertEdits';
 import { applyTransitionEdit } from './transitionInsertEdits';
 import { documentMirror } from '@stores/documentMirror';
-import { readLayerFlag } from '@core/scene/layerFlags';
 
 let h: Harness;
 let scene: Awaited<ReturnType<typeof buildScene>>;
@@ -108,15 +107,5 @@ describe('Transitions', () => {
     expect(blur).toBeDefined();
     const tree = await h.query({ type: 'getKeyframes', props: [{ layer: scene.T, path: `effects/${blur!.id}/amount` }] });
     expect(tree.sets[0]?.keyframes.length).toBe(2);
-  });
-
-  it('layer mode turns motion blur on when the recipe asks', async () => {
-    documentMirror().start();
-    await documentMirror().whenIdle();
-    useSelectionStore.getState().set([scene.T]);
-    await oneEntry('Apply Whip Pan', async () => {
-      expect((await applyTransitionEdit('tr-whip-pan', 'Apply Whip Pan'))?.mode).toBe('layer');
-    });
-    expect(readLayerFlag((await docView()).getNode(scene.T)!, 'motionBlur')).toBe(true);
   });
 });

@@ -13,13 +13,7 @@
  * per-mask opacity and the seven AE combine modes are supported.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
-// Function-level cycle with maskFeather.ts (it builds its outline from
-// maskSegments here) — safe because both sides touch the other only inside
-// function bodies, never at module evaluation.
-import { hasVariableFeather, paintVariableFeatherPath } from './maskFeather';
 import { renderComponentsOf } from '@core/scene/SceneGraph';
 
 /**
@@ -381,81 +375,11 @@ export function hasActiveMaskPaths(mask: LayerMask | undefined): boolean {
   return !!mask && mask.paths.some((p) => p.mode !== 'none');
 }
 
-/**
- * Paint a layer's masks into `g` as a white alpha matte, honouring MODE
- * (Add paints / Subtract erases / Intersect keeps the overlap / Lighten,
- * Darken and Difference blend coverage per-pixel), FEATHER
- * (canvas blur at half the AE diameter) and per-mask OPACITY — the single
- * shared implementation both render backends rasterize through, so the GPU
- * path cannot drift from Canvas2D again (it used to union everything with one
- * even-odd fill, which XOR'd two Add masks and ignored feather/opacity).
- *
- * Expects `g` already cleared, with its transform placing the origin at the
- * layer centre (masks are stored in centred local space). A leading Subtract
- * or Intersect starts from a full frame, as in AE — otherwise it would erase
- * from nothing and the layer would simply vanish.
- */
-export function paintMaskMatte(
-  g: CanvasRenderingContext2D,
-  mask: LayerMask,
-  w: number,
-  h: number,
-): void {
-  // `none` masks are geometry, not coverage — they never reach the canvas.
-  const paths = activeMaskPaths(mask);
-
-  // A stack of only `none` paths must leave the layer UNMASKED, so the matte is
-  // fully opaque. Without this the matte would come out empty and the layer
-  // would vanish — the exact failure a mode called "none" must not cause.
-  //
-  // Callers still gate on `mask.paths.length > 0`, so this pass runs and fills
-  // the frame rather than being skipped. That is one redundant full-frame fill
-  // for an all-`none` stack; correctness first, and `hasActiveMaskPaths` is
-  // ready for when those gates are next touched.
-  if (paths.length === 0) {
-    g.fillStyle = '#fff';
-    g.fillRect(-w / 2, -h / 2, w, h);
-    return;
-  }
-
-  if (maskModeStartsFull(paths[0]!.mode)) {
-    g.fillStyle = '#fff';
-    g.fillRect(-w / 2, -h / 2, w, h);
-  }
-  for (const path of paths) {
-    const p = maskPathToPath2D(path, w, h);
-    if (!p) continue;
-    g.save();
-    g.globalCompositeOperation = maskModeToComposite(path.mode);
-    const op = path.opacity ?? 1;
-    g.globalAlpha = op < 0 ? 0 : op > 1 ? 1 : op;
-    // Variable-width feather (any vertex with its own value) renders through
-    // the distance-field painter — a blur has one radius and cannot vary the
-    // softness along the outline. Falls back to the uniform path when the
-    // scratch context is unavailable, so headless runtimes lose the variation,
-    // not the mask.
-    if (hasVariableFeather(path) && paintVariableFeatherPath(g, path, w, h)) {
-      g.restore();
-      continue;
-    }
-    // Feather is a diameter in AE terms; blur takes a radius.
-    if (path.feather > 0) g.filter = `blur(${path.feather / 2}px)`;
-    g.fillStyle = '#fff';
-    g.fill(p, 'evenodd');
-    g.restore();
-  }
-}
-
 /** Read a node's mask from its `fx` component (undefined when none). */
 export function readNodeMask(node: SceneNode): LayerMask | undefined {
   const fx = renderComponentsOf(node).find((c) => c.type === 'fx');
   const m = fx?.props.mask as LayerMask | undefined;
   return m && Array.isArray(m.paths) && m.paths.length > 0 ? m : undefined;
-}
-
-export function getNodeMask(nodeId: string): LayerMask {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return (node && readNodeMask(node)) ?? { paths: [] };
 }
 
 // ── Animated mask paths (keyframeable mask shapes) ───────────────────
@@ -602,109 +526,5 @@ export function applyMaskPropertyTracks(
     };
   });
   return changed ? { ...mask, paths } : mask;
-}
-
-/**
- * Keyframe the layer's current mask shape at time `t` (replaces same-t kf).
- *
- * Every `t` in this file — here, `updateMaskPath`, `setMaskPoints`,
- * `setMaskPointFeather`, `moveMaskKeyframe` — is on the layer's KEYFRAME axis,
- * the time `buildSnapshot` reads the mask at (`remapOf`). A caller holding the
- * playhead converts with `compToKeyframeTime(nodeId, compTime)` first: comp
- * time lands the keyframe at the wrong moment on any layer whose bar was moved
- * or trimmed — the two axes agree only for an untrimmed bar at 0.
- */
-export function keyframeMask(nodeId: string, t: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const mask = readNodeMaskAt(node, t) ?? readNodeMask(node);
-  if (!mask || mask.paths.length === 0) return;
-  const kfs = readNodeMaskAnim(node).filter((k) => Math.abs(k.t - t) > 1e-4);
-  kfs.push({ t, mask });
-  kfs.sort((a, b) => a.t - b.t);
-  defaultSceneGraph.setMaskAnim(nodeId, kfs);
-  getEventBus().emit('AnimationChanged', { nodeId });
-}
-
-function writeNodeMask(nodeId: string, mask: LayerMask): void {
-  defaultSceneGraph.setMask(nodeId, mask.paths.length > 0 ? mask : undefined);
-  getEventBus().emit('AnimationChanged', { nodeId });
-}
-
-/**
- * Edit whichever mask the RENDERER will actually read, at time `t`.
- *
- * The trap this closes: once a mask is keyframed, `readNodeMaskAt` returns the
- * interpolated shape and ignores the static one — but every mutator wrote the
- * static mask. So on an animated mask, changing mode/feather/opacity/expansion
- * did nothing visible, and there was no way for an edit to ever reach the
- * animation. Now, as in After Effects, editing an animated mask writes a
- * keyframe at the playhead.
- *
- * Callers that have no time (headless, tests) fall back to the static mask,
- * which is correct for a mask that isn't animated.
- */
-function editMaskAt(nodeId: string, t: number | undefined, fn: (mask: LayerMask) => LayerMask): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const anim = readNodeMaskAnim(node);
-
-  if (anim.length > 0 && t !== undefined) {
-    const current = interpolateMask(anim, t) ?? readNodeMask(node) ?? { paths: [] };
-    const kfs = anim.filter((k) => Math.abs(k.t - t) > 1e-4);
-    kfs.push({ t, mask: fn(current) });
-    kfs.sort((a, b) => a.t - b.t);
-    defaultSceneGraph.setMaskAnim(nodeId, kfs);
-    getEventBus().emit('AnimationChanged', { nodeId });
-    return;
-  }
-
-  writeNodeMask(nodeId, fn(getNodeMask(nodeId)));
-}
-
-/**
- * Apply a STRUCTURAL change (adding or removing a whole path) everywhere.
- *
- * `interpolateMask` pairs paths by index, so keyframes must agree on their path
- * count — writing a new path into one keyframe only would make the mask snap
- * between shapes instead of morphing.
- */
-function editEveryMaskState(nodeId: string, fn: (mask: LayerMask) => LayerMask): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-
-  writeNodeMask(nodeId, fn(getNodeMask(nodeId)));
-
-  const anim = readNodeMaskAnim(node);
-  if (anim.length > 0) {
-    defaultSceneGraph.setMaskAnim(nodeId, anim.map((k) => ({ t: k.t, mask: fn(k.mask) })));
-    getEventBus().emit('AnimationChanged', { nodeId });
-  }
-}
-
-export function addMaskPath(nodeId: string, path: MaskPath): void {
-  editEveryMaskState(nodeId, (mask) => ({ paths: [...mask.paths, path] }));
-}
-
-/**
- * Patch one mask path. Pass `t` (the playhead on the layer's keyframe axis —
- * see `keyframeMask`) so edits to an ANIMATED mask land on a keyframe rather
- * than on the static shape nothing renders.
- */
-export function updateMaskPath(nodeId: string, pathId: string, patch: Partial<MaskPath>, t?: number): void {
-  editMaskAt(nodeId, t, (mask) => ({
-    paths: mask.paths.map((p) => (p.id === pathId ? { ...p, ...patch } : p)),
-  }));
-}
-
-/**
- * Move a mask's vertices (the pen/direct-select drag on canvas).
- *
- * `updateMaskPath` was never once called with `points`, so a mask's shape was
- * frozen the moment it was created — and mask path animation, which morphs
- * exactly these points, had no way to be authored.
- */
-export function setMaskPoints(nodeId: string, pathId: string, points: MaskPoint[], t?: number): void {
-  updateMaskPath(nodeId, pathId, { points }, t);
 }
 

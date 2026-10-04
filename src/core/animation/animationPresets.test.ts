@@ -2,9 +2,9 @@ import {
   normalizeTracks,
   offsetTracks,
   minTime,
-  captureAnimation,
+  
   listPresets,
-  saveCurrentAsPreset,
+  
   resolvePresetUnits,
   reindexAnimatorTracks,
   presetFolder,
@@ -15,7 +15,6 @@ import { TEXT_PRESETS } from './textPresets';
 import { CAMERA_PRESETS } from './cameraPresets';
 import { DEFAULT_PRESET_CONTEXT } from './presetUnits';
 import { samplePresetFrame, PREVIEW_CONTEXT } from './presetPreview';
-import { AnimationEngine } from '@motion/animation';
 
 const track = (prop: string, kfs: Array<[number, number]>): PresetTrack => ({
   prop,
@@ -50,37 +49,6 @@ describe('offsetTracks', () => {
     const captured = normalizeTracks([track('x', [[2, 0], [4, 1]])]);
     const applied = offsetTracks(captured, 10);
     expect(applied[0]!.keyframes.map((k) => k.t)).toEqual([10, 12]);
-  });
-});
-
-describe('captureAnimation', () => {
-  test('captures a node’s animated tracks, normalized to t=0 and out of pixels', () => {
-    const a = new AnimationEngine();
-    a.setKeyframe('n', 'x', 1, 0);
-    a.setKeyframe('n', 'x', 3, 200);
-    const tracks = captureAnimation('n', a, { ...DEFAULT_PRESET_CONTEXT, compWidth: 1000 });
-    expect(tracks).toHaveLength(1);
-    expect(tracks[0]!.prop).toBe('x');
-    expect(tracks[0]!.keyframes.map((k) => k.t)).toEqual([0, 2]); // rebased from 1,3
-    // Captured as a FRACTION of the comp it was authored in, not as 200px —
-    // that is what lets it replay correctly in a comp of another size.
-    expect(tracks[0]!.unit).toBe('compW');
-    expect(tracks[0]!.keyframes.map((k) => k.value)).toEqual([0, 0.2]);
-  });
-
-  test('leaves angular and proportional properties absolute', () => {
-    const a = new AnimationEngine();
-    a.setKeyframe('n', 'rotation', 0, 0);
-    a.setKeyframe('n', 'rotation', 1, 90);
-    const tracks = captureAnimation('n', a);
-    // 90° is 90° in any comp; expressing it as a fraction of the width would be
-    // nonsense.
-    expect(tracks[0]!.unit).toBe('abs');
-    expect(tracks[0]!.keyframes.map((k) => k.value)).toEqual([0, 90]);
-  });
-
-  test('an un-animated node captures nothing', () => {
-    expect(captureAnimation('empty', new AnimationEngine())).toEqual([]);
   });
 });
 
@@ -120,15 +88,6 @@ describe('relative units', () => {
   test('duration-relative times scale to the layer', () => {
     const [t] = resolvePresetUnits([track('opacity', [[0, 0], [0.5, 100]])], ctx, 'duration');
     expect(t!.keyframes.map((k) => k.t)).toEqual([0, 2.5]);
-  });
-
-  test('capture → resolve round-trips back to the captured pixels', () => {
-    const a = new AnimationEngine();
-    a.setKeyframe('n', 'y', 0, 0);
-    a.setKeyframe('n', 'y', 1, 540);
-    const captured = captureAnimation('n', a, ctx);
-    const [resolved] = resolvePresetUnits(captured, ctx);
-    expect(resolved!.keyframes.map((k) => k.value)).toEqual([0, 540]);
   });
 });
 
@@ -292,11 +251,6 @@ describe('presets registry', () => {
     const names = listPresets().map((p) => p.name);
     for (const b of BUILTIN_PRESETS) expect(names).toContain(b.name);
   });
-
-  test('saving an un-animated layer fails (nothing to capture)', () => {
-    // Uses the real default engine; a fresh node id has no keyframes.
-    expect(saveCurrentAsPreset('no-such-node-xyz', 'X')).toBe(false);
-  });
 });
 
 describe('3D presets', () => {
@@ -305,30 +259,6 @@ describe('3D presets', () => {
     for (const n of ['Flip In 3D', 'Swing In 3D', 'Depth Push In', '3D Twirl In', 'Cinematic Pan 3D']) {
       expect(names).toContain(n);
     }
-  });
-
-  test('applying a 3D preset auto-enables the layer 3D switch', async () => {
-    const { applyPresetByName } = await import('./animationPresets');
-    const { default: defaultSceneGraph } = await import('@core/scene/DefaultSceneGraph');
-    const { insertShape } = await import('@core/scene/sceneInsert');
-    const { is3DEnabled } = await import('@core/scene/threeD');
-    const { useSelectionStore } = await import('@stores/selectionStore');
-    const { setCommandSystem, CommandSystem } = await import('@core/commands/CommandSystem');
-    // runAnimEdit records onto the command system — boot a minimal one.
-    const dummyServices = {
-      undo: { push: () => {}, undo: () => {}, redo: () => {}, canUndo: () => false, canRedo: () => false },
-      selection: { get: () => [], set: () => {}, clear: () => {} },
-      panels: { open: () => {}, close: () => {}, toggle: () => {}, isOpen: () => false },
-      workspace: { setActive: () => {}, getActive: () => '' },
-      get: () => undefined,
-    } as never;
-    setCommandSystem(new CommandSystem({ services: dummyServices, getState: () => ({}) }));
-    insertShape('rect', 'Preset Test Rect');
-    const nodeId = useSelectionStore.getState().ids[0]!;
-    const node = defaultSceneGraph.getNode(nodeId)!;
-    expect(is3DEnabled(node)).toBe(false);
-    applyPresetByName(nodeId, 'Flip In 3D', 0);
-    expect(is3DEnabled(defaultSceneGraph.getNode(nodeId)!)).toBe(true);
   });
 });
 
@@ -367,71 +297,5 @@ describe('Camera presets', () => {
         last: 0,
       });
     }
-  });
-
-  test('applies to a camera relative to its current z; refuses an ordinary layer', async () => {
-    const { applyPresetByName } = await import('./animationPresets');
-    const { default: defaultSceneGraph } = await import('@core/scene/DefaultSceneGraph');
-    const { insertCamera, insertShape } = await import('@core/scene/sceneInsert');
-    const { useSelectionStore } = await import('@stores/selectionStore');
-    const { defaultAnimation } = await import('@motion/animation');
-    const { setCommandSystem, CommandSystem } = await import('@core/commands/CommandSystem');
-    const dummyServices = {
-      undo: { push: () => {}, undo: () => {}, redo: () => {}, canUndo: () => false, canRedo: () => false },
-      selection: { get: () => [], set: () => {}, clear: () => {} },
-      panels: { open: () => {}, close: () => {}, toggle: () => {}, isOpen: () => false },
-      workspace: { setActive: () => {}, getActive: () => '' },
-      get: () => undefined,
-    } as never;
-    setCommandSystem(new CommandSystem({ services: dummyServices, getState: () => ({}) }));
-
-    // A camera preset on a plain layer is refused, not half-applied.
-    insertShape('rect', 'Camera Preset Rect');
-    const rectId = useSelectionStore.getState().ids[0]!;
-    expect(applyPresetByName(rectId, 'Push In', 0)).toBe(false);
-    expect(defaultAnimation.getTrackKeyframes(rectId, 'z') ?? []).toHaveLength(0);
-
-    insertCamera({ name: 'Preset Test Camera' });
-    const camId = useSelectionStore.getState().ids[0]!;
-    const trans = defaultSceneGraph
-      .getNode(camId)!
-      .components.find((c) => typeof (c.props as Record<string, unknown>).z === 'number')!;
-    const baseZ = (trans.props as Record<string, unknown>).z as number;
-
-    expect(applyPresetByName(camId, 'Push In', 0)).toBe(true);
-    const kfs = defaultAnimation.getTrackKeyframes(camId, 'z')!;
-    expect(kfs).toHaveLength(2);
-    // Relative track: starts exactly where the camera already was…
-    expect(kfs[0]!.value).toBeCloseTo(baseZ, 6);
-    // …and dollies TOWARD the comp plane (z rises toward 0).
-    expect(kfs[1]!.value).toBeGreaterThan(kfs[0]!.value);
-  });
-
-  test('Dolly Zoom counter-zooms the lens so comp-plane framing holds', async () => {
-    const { applyPresetByName } = await import('./animationPresets');
-    const { insertCamera } = await import('@core/scene/sceneInsert');
-    const { useSelectionStore } = await import('@stores/selectionStore');
-    const { defaultAnimation } = await import('@motion/animation');
-
-    insertCamera({ name: 'Vertigo Test Camera' });
-    const camId = useSelectionStore.getState().ids[0]!;
-    expect(applyPresetByName(camId, 'Dolly Zoom (Vertigo)', 1)).toBe(true);
-
-    const zKfs = defaultAnimation.getTrackKeyframes(camId, 'z')!;
-    const fKfs = defaultAnimation.getTrackKeyframes(camId, 'focalLength')!;
-    expect(zKfs.length).toBe(5);
-    expect(fKfs.length).toBe(5);
-    // Both tracks share keyframe times (anchored at the playhead, t=1)…
-    expect(fKfs.map((k) => k.t)).toEqual(zKfs.map((k) => k.t));
-    expect(zKfs[0]!.t).toBe(1);
-    // …and every sample satisfies f = f0 · d / d0, the framing invariant.
-    const d0 = -zKfs[0]!.value;
-    const f0 = fKfs[0]!.value;
-    for (let i = 0; i < zKfs.length; i++) {
-      const d = -zKfs[i]!.value;
-      expect(fKfs[i]!.value).toBeCloseTo((f0 * d) / d0, 6);
-    }
-    // The move actually dollies in.
-    expect(-zKfs[4]!.value).toBeLessThan(d0);
   });
 });

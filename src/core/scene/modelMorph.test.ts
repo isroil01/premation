@@ -27,8 +27,9 @@ import {
   MODEL_COMPONENT,
 } from './modelMesh';
 import type { SceneNode } from '@core/types';
-import { SCENE_KIND_PROP } from './seedDefaultScene';
+
 import { buildMorphTriGlb } from '@/__testHelpers__/buildTestGlb';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 describe('glTF morph parsing', () => {
   it('reads targets, mesh weights and the weights channel', () => {

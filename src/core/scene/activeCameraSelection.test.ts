@@ -14,8 +14,9 @@
 
 import SceneGraph from '@core/scene/SceneGraph';
 import { activeCameraNode } from '@core/scene/camera3d';
-import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+
 import type { SceneNode } from '@core/types';
+import { SCENE_KIND_PROP } from '@core/scene/sceneKind';
 
 function node(
   id: string,

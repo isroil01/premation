@@ -4,12 +4,8 @@
  */
 
 import type SceneGraph from '@core/scene/SceneGraph';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { activeCompRootId } from '@core/scene/activeComp';
-import { useCompositionStore } from '@stores/compositionStore';
-import { bumpScene } from '@stores/sceneStore';
 import type { TemplateDefinition } from '../templateTypes';
-import { addRoot, addText, addGradientShape, linearFill, radialFill, liveKf, type SetKf } from './builders';
+import { addRoot, addText, addGradientShape, linearFill, radialFill,  type SetKf } from './builders';
 
 const CW = 1080, CH = 1080, CX = CW / 2, CY = CH / 2;
 
@@ -31,15 +27,6 @@ export function animateQuoteCard(set: SetKf): void {
   set('tpl_quote', 'opacity', 0.3, 0, 'easeOut'); set('tpl_quote', 'opacity', 1, 100, 'easeOut');
   set('tpl_quote', 'y', 0.3, CY + 60, 'easeOut'); set('tpl_quote', 'y', 1, CY + 20, 'easeOut');
   set('tpl_author', 'opacity', 0.9, 0, 'easeOut'); set('tpl_author', 'opacity', 1.5, 100, 'easeOut');
-}
-
-export function buildQuoteCard(): void {
-  const rootId = activeCompRootId();
-  defaultSceneGraph.clear();
-  layoutQuoteCard(defaultSceneGraph, rootId);
-  animateQuoteCard(liveKf);
-  useCompositionStore.getState().update({ width: CW, height: CH, fps: 60, durationSeconds: 5, background: '#0b1020' });
-  bumpScene();
 }
 
 export const quoteCardTemplate: TemplateDefinition = {

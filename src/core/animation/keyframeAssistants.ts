@@ -18,23 +18,11 @@
  * them in runAnimEdit so undo restores the exact previous keyframes.
  */
 
-import { defaultAnimation, EASY_EASE_BEZIER, EASY_EASE_OUT_BEZIER, EASY_EASE_IN_BEZIER, type AnimationEngine } from '@motion/animation';
-import { expandKeyframeProp, setDataKeyframeEasing } from '@motion/animation';
-import type { BezierHandles, EasingKind, Keyframe, PropPath, PropertyTrack } from '@motion/animation';
+import {  EASY_EASE_BEZIER, EASY_EASE_OUT_BEZIER, EASY_EASE_IN_BEZIER } from '@motion/animation';
+import type { BezierHandles, EasingKind, Keyframe,  PropertyTrack } from '@motion/animation';
 import { sampleTrack, smoothTrackTangents } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import type { StoredKeyRef } from '@core/mirror/keySelection';
-import { staggerOffsets, type StaggerOptions } from './staggerOffsets';
 import type { PresetTrack } from '@core/animation/animationPresets';
 import { easePresetById, type EasePresetId } from '@core/animation/easePresets';
-import {
-  addTextAnimator,
-  updateAnimator,
-  updateSelector,
-  selectorPropPath,
-  hasTextComponent,
-} from '@core/text/textAnimators';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 
 // ── Pure track transforms (the tested core) ──────────────────────────
 
@@ -89,177 +77,6 @@ export function shiftTracks(tracks: ReadonlyArray<PresetTrack>, dt: number): Pre
   }));
 }
 
-// ── Engine actions (one undoable command each) ───────────────────────
-
-function currentTracks(nodeId: string, engine: AnimationEngine): PresetTrack[] {
-  const out: PresetTrack[] = [];
-  for (const prop of engine.animatedProps(nodeId)) {
-    const kfs = engine.getTrackKeyframes(nodeId, prop);
-    if (kfs && kfs.length) out.push({ prop, keyframes: kfs });
-  }
-  return out;
-}
-
-function writeTracks(nodeId: string, tracks: ReadonlyArray<PresetTrack>, engine: AnimationEngine): void {
-  for (const t of tracks) engine.setTrackKeyframes(nodeId, t.prop, [...t.keyframes]);
-}
-
-/** Mirror the layer's animation in time. Returns false when nothing animated. */
-export function timeReverseKeyframes(nodeId: string, engine: AnimationEngine = defaultAnimation): boolean {
-  const tracks = currentTracks(nodeId, engine);
-  if (!tracks.length) return false;
-  const reversed = reverseTracks(tracks);
-  runAnimEdit('Time-reverse keyframes', () => writeTracks(nodeId, reversed, engine));
-  return true;
-}
-
-/** Easy-ease every keyframe on the layer. Returns false when nothing animated. */
-export function easyEaseAll(nodeId: string, engine: AnimationEngine = defaultAnimation): boolean {
-  const tracks = currentTracks(nodeId, engine);
-  if (!tracks.length) return false;
-  const eased = easeTracks(tracks);
-  runAnimEdit('Easy ease all keyframes', () => writeTracks(nodeId, eased, engine));
-  return true;
-}
-
-/**
- * Stagger the selected layers' animations in a chosen PATTERN.
- *
- * Used to be a fixed linear cascade — layer i starts `intervalSec` after layer
- * i-1 — which is one of the several shapes people actually build by hand. A
- * cascade is the right default and stays the default; the others (alternating,
- * fanning out from the middle, a wave, a seeded scatter) were each a manual
- * per-layer drag before, which is exactly the work this assistant exists to
- * remove.
- *
- * The pattern is computed by `staggerOffsets`, the same function the timeline's
- * Ctrl-drag uses on clip BARS, so a "zigzag" means the same shape whichever of
- * the two you reach for.
- *
- * Still one undoable command for the whole set.
- */
-export function sequenceLayers(
-  nodeIds: ReadonlyArray<string>,
-  intervalSec: number,
-  engine: AnimationEngine = defaultAnimation,
-  pattern: Partial<StaggerOptions> = {},
-): boolean {
-  const animated = nodeIds.filter((id) => currentTracks(id, engine).length > 0);
-  if (animated.length < 2) return false;
-  const offsets = staggerOffsets(animated.length, {
-    mode: pattern.mode ?? 'cascade',
-    step: intervalSec,
-    reverse: pattern.reverse ?? false,
-    // Unbalanced by default: the historical behaviour is that the FIRST layer
-    // stays put and the rest trail after it, and a stagger applied to an
-    // existing animation should not move animation that was already timed.
-    balance: pattern.balance ?? false,
-    seed: pattern.seed ?? 1,
-  });
-  const shifted = animated.map((id, i) => ({
-    id,
-    tracks: shiftTracks(currentTracks(id, engine), offsets[i] ?? 0),
-  }));
-  runAnimEdit('Sequence layers', () => {
-    for (const s of shifted) writeTracks(s.id, s.tracks, engine);
-  });
-  return true;
-}
-
-/**
- * Typewriter — one click builds a whole rig on a text layer: adds a text
- * animator (characters hidden by a full-range opacity-0 selector) and
- * keyframes the selector's START 0→100 so characters pop in one at a time.
- */
-export function applyTypewriter(
-  nodeId: string,
-  atTime: number,
-  durationSec = 1.5,
-  engine: AnimationEngine = defaultAnimation,
-): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !hasTextComponent(node)) return false;
-  // Reuse the layer's existing animators; append a dedicated one for the rig.
-  const index = addTextAnimator(nodeId);
-  updateAnimator(nodeId, index, { opacity: 0 });
-  // Hard square edges: a typewriter pops characters on, it does not fade them.
-  updateSelector(nodeId, index, 0, {
-    basedOn: 'characters', shape: 'square', smoothness: 0, start: 0, end: 100,
-  });
-  const path = selectorPropPath(index, 0, 'start');
-  runAnimEdit('Typewriter', () => {
-    engine.setKeyframe(nodeId, path, atTime, 0, 'linear');
-    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'linear');
-  });
-  return true;
-}
-
-export function applyBounceInWords(
-  nodeId: string,
-  atTime: number,
-  durationSec = 1.5,
-  engine: AnimationEngine = defaultAnimation,
-): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !hasTextComponent(node)) return false;
-  const index = addTextAnimator(nodeId);
-  updateAnimator(nodeId, index, { y: -80, opacity: 0, scale: 50, scaleY: 50 });
-  updateSelector(nodeId, index, 0, {
-    basedOn: 'words', shape: 'rampDown', start: 0, end: 100,
-  });
-  const path = selectorPropPath(index, 0, 'offset');
-  runAnimEdit('Bounce In Words', () => {
-    engine.setKeyframe(nodeId, path, atTime, -100, 'bezier');
-    engine.setBezier(nodeId, path, atTime, [0.175, 0.885, 0.32, 1.275]);
-    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'linear');
-  });
-  return true;
-}
-
-export function applySpinFadeCharacters(
-  nodeId: string,
-  atTime: number,
-  durationSec = 1.5,
-  engine: AnimationEngine = defaultAnimation,
-): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !hasTextComponent(node)) return false;
-  const index = addTextAnimator(nodeId);
-  updateAnimator(nodeId, index, { rotation: 90, opacity: 0, scale: 150, scaleY: 150 });
-  updateSelector(nodeId, index, 0, {
-    basedOn: 'characters', shape: 'rampDown', start: 0, end: 100,
-  });
-  const path = selectorPropPath(index, 0, 'offset');
-  runAnimEdit('Spin & Fade Characters', () => {
-    engine.setKeyframe(nodeId, path, atTime, -100, 'bezier');
-    engine.setBezier(nodeId, path, atTime, [0.16, 1, 0.3, 1]);
-    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'linear');
-  });
-  return true;
-}
-
-export function applyTrackingReveal(
-  nodeId: string,
-  atTime: number,
-  durationSec = 1.5,
-  engine: AnimationEngine = defaultAnimation,
-): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || !hasTextComponent(node)) return false;
-  const index = addTextAnimator(nodeId);
-  updateAnimator(nodeId, index, { tracking: 40, opacity: 0 });
-  updateSelector(nodeId, index, 0, {
-    basedOn: 'characters', shape: 'square', start: 0, end: 100,
-  });
-  const path = selectorPropPath(index, 0, 'start');
-  runAnimEdit('Tracking Reveal', () => {
-    engine.setKeyframe(nodeId, path, atTime, 0, 'bezier');
-    engine.setBezier(nodeId, path, atTime, [0.4, 0, 0.2, 1]);
-    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'linear');
-  });
-  return true;
-}
-
 // ── The Smoother ─────────────────────────────────────────────────────
 
 /**
@@ -309,29 +126,6 @@ export function smoothTrackKeyframes(kfs: ReadonlyArray<Keyframe>, tolerance: nu
 
 /** Smoother result summary, for the command's notification. */
 export interface SmootherResult { tracks: number; before: number; after: number }
-
-/** Run The Smoother over every animated scalar track with 3+ keyframes. */
-export function applySmoother(
-  nodeId: string,
-  tolerance: number,
-  engine: AnimationEngine = defaultAnimation,
-): SmootherResult | null {
-  const tracks = currentTracks(nodeId, engine).filter((t) => t.keyframes.length >= 3);
-  if (!tracks.length) return null;
-  const smoothed = tracks.map((t) => ({
-    prop: t.prop,
-    before: t.keyframes.length,
-    keyframes: smoothTrackKeyframes(t.keyframes as Keyframe[], tolerance),
-  }));
-  runAnimEdit('The Smoother', () => {
-    for (const s of smoothed) engine.setTrackKeyframes(nodeId, s.prop, s.keyframes);
-  });
-  return {
-    tracks: smoothed.length,
-    before: smoothed.reduce((a, s) => a + s.before, 0),
-    after: smoothed.reduce((a, s) => a + s.keyframes.length, 0),
-  };
-}
 
 // ── The Wiggler ──────────────────────────────────────────────────────
 
@@ -386,38 +180,6 @@ export function wiggleTrackKeyframes(kfs: ReadonlyArray<Keyframe>, opts: Wiggler
 export interface WigglerResult { tracks: number; added: number }
 
 /**
- * Run The Wiggler over the layer's animated position (x/y). Each axis gets its
- * own seed so the wobble is 2D rather than diagonal — the same lesson the
- * expression engine's `wiggle` carries (per-prop phase).
- */
-export function applyWiggler(
-  nodeId: string,
-  opts: WigglerOptions,
-  engine: AnimationEngine = defaultAnimation,
-): WigglerResult | null {
-  const targets: PropPath[] = (['x', 'y'] as const).filter(
-    (p) => (engine.getTrackKeyframes(nodeId, p)?.length ?? 0) >= 2,
-  );
-  if (!targets.length) return null;
-  const baseSeed = opts.seed ?? 1;
-  const wiggled = targets.map((prop, i) => {
-    const kfs = engine.getTrackKeyframes(nodeId, prop)!;
-    return {
-      prop,
-      before: kfs.length,
-      keyframes: wiggleTrackKeyframes(kfs, { ...opts, seed: baseSeed * 31 + i * 101 }),
-    };
-  });
-  runAnimEdit('The Wiggler', () => {
-    for (const w of wiggled) engine.setTrackKeyframes(nodeId, w.prop, w.keyframes);
-  });
-  return {
-    tracks: wiggled.length,
-    added: wiggled.reduce((a, w) => a + (w.keyframes.length - w.before), 0),
-  };
-}
-
-/**
  * Apply a named easing preset to a set of keyframes, each named by its STORED
  * position (`nodeId`, track, stored `t` — a keyframe selection decodes to these
  * through `selectionStoredRefs`, core/mirror/keySelection.ts).
@@ -455,59 +217,5 @@ export function presetCurve(preset: EasingPreset): { easing: EasingKind; bezier?
       return { easing: 'bezier', bezier: curve?.bezier ?? EASY_EASE_BEZIER };
     }
   }
-}
-
-/**
- * Ease a DATA-track keyframe (points / gradient stops / number / text) at `t`.
- * Returns false when this node+prop is not a data track, so the caller can fall
- * through to the scalar path.
- *
- * Data tracks were unreachable from Easy Ease / F9: this function only ever
- * walked `getTrackKeyframes`, which is the scalar store. The SAMPLER has
- * honoured `easing`/`bezier` on a DataKeyframe all along — nothing could author
- * them. That is why puppet pin motion (a `points` data track) read as linear.
- */
-function easeDataKeyframe(
-  engine: AnimationEngine,
-  nodeId: string,
-  prop: string,
-  t: number,
-  preset: EasingPreset,
-): boolean {
-  const track = engine.getDataTrack(nodeId, prop as PropPath);
-  if (!track) return false;
-  const { easing, bezier } = presetCurve(preset);
-  const keyframes = setDataKeyframeEasing(track.keyframes, t, easing, bezier);
-  if (keyframes === track.keyframes) return false; // no keyframe at that time
-  engine.setDataTrack(nodeId, prop as PropPath, { ...track, keyframes });
-  return true;
-}
-
-export function applyEasingToKeyframes(
-  refs: ReadonlyArray<StoredKeyRef>,
-  preset: EasingPreset,
-  engine: AnimationEngine = defaultAnimation,
-): void {
-  if (!refs.length) return;
-  runAnimEdit(`Set keyframe easing: ${preset}`, () => {
-    for (const ref of refs) {
-      const { nodeId, t } = ref;
-      // A selected Position keyframe is the merged x/y/z row — ease all three.
-      for (const prop of expandKeyframeProp(ref.prop)) {
-        // Data tracks first: a data prop has no scalar keyframes, so the scalar
-        // lookup below would silently `continue` and F9 would do nothing.
-        if (easeDataKeyframe(engine, nodeId, prop, t, preset)) continue;
-
-        const kfs = engine.getTrackKeyframes(nodeId, prop);
-        const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
-        if (!kf) continue;
-        const value = kf.value;
-        const { easing, bezier } = presetCurve(preset);
-        // Scalar tracks spell hold as 'step'; the data sampler accepts either.
-        engine.setKeyframe(nodeId, prop, t, value, easing === 'hold' ? 'step' : easing);
-        if (bezier) engine.setBezier(nodeId, prop, t, bezier);
-      }
-    }
-  });
 }
 

@@ -9,7 +9,6 @@ import { engineIdle } from '@core/engine/engineInstance';
 import { setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
-import { pristineCompToAdopt } from '@core/composition/compositionOps';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -169,47 +168,6 @@ describe('newCompFromFootageEdit', () => {
     expect(d).toMatchObject({ width: 1920, height: 1080, fps: 30, durationSeconds: 10 });
   });
 
-  it('a NEW comp conformed to the clip holding it at full frame — ONE entry, tab + selection', async () => {
-    const [clip] = await importAssets('C:/media/clip.mp4');
-    // A project the user has worked in: nothing pristine to adopt.
-    await h.run({ type: 'setCompositionSettings', comp: 'comp_root', patch: { name: 'Main' } });
-    expect(pristineCompToAdopt()).toBeNull();
-    const before = (await h.doc());
-    const entries = (await historyLabels()).length;
-
-    const made = (await newCompFromFootageEdit(clip!))!;
-    expect(made.comp).not.toBe('comp_root');
-    const settings = useProjectStore.getState().comps[made.comp]!;
-    expect(settings).toMatchObject({ name: 'clip', width: 640, height: 360, fps: 30, durationSeconds: 4 });
-    expect((await docView()).layerIdsOfComp(made.comp)).toEqual([made.layer]);
-    expect((await transform(made.layer))).toMatchObject({ width: 640, height: 360, x: 320, y: 180, assetId: clip!.id });
-    expect(activeComp()).toBe(made.comp);
-    expect(useSelectionStore.getState().ids).toEqual([made.layer]);
-
-    await expectOneUndoableEntry('New Comp from Footage', entries, before);
-  });
-
-  it('a fresh project’s pristine comp is ADOPTED (configured), not stacked beside', async () => {
-    const [clip] = await importAssets('C:/media/clip.mp4');
-    const adopt = pristineCompToAdopt();
-    expect(adopt).not.toBeNull();
-    const comps = Object.keys(useProjectStore.getState().comps).length;
-    const before = (await h.doc());
-    const entries = (await historyLabels()).length;
-
-    const made = (await newCompFromFootageEdit(clip!))!;
-    expect(made.comp).toBe(adopt);
-    expect(Object.keys(useProjectStore.getState().comps)).toHaveLength(comps);
-    expect(useProjectStore.getState().comps[adopt!]).toMatchObject({ name: 'clip', width: 640, height: 360, durationSeconds: 4 });
-    expect(useProjectStore.getState().comps[adopt!]!.pristine).toBeFalsy();
-    expect((await docView()).layerIdsOfComp(adopt!)).toEqual([made.layer]);
-
-    await expectOneUndoableEntry('New Comp from Footage', entries, before);
-    // Undone, the comp is pristine (adoptable) again.
-    await h.run({ type: 'undo' });
-    expect(pristineCompToAdopt()).toBe(adopt);
-  });
-
   it('`follow` commands for the new layer / comp are part of the same entry', async () => {
     const [clip] = await importAssets('C:/media/clip.mp4');
     const entries = (await historyLabels()).length;
@@ -276,23 +234,6 @@ describe('newCompFromClipsEdit', () => {
     expect((await docView()).layerIdsOfComp(made.comp)).toEqual(made.layers);
     await engineIdle();
     expect((await historyLabels()).slice(entries)).toEqual(['New Composition from Clips']);
-  });
-});
-
-describe('newCompFromClipsEdit in a fresh project', () => {
-  it('adopts the pristine comp for the clips (no second comp)', async () => {
-    const assets = await importAssets('C:/media/a.mp4', 'C:/media/b.mp4');
-    const adopt = pristineCompToAdopt();
-    expect(adopt).not.toBeNull();
-    const comps = Object.keys(useProjectStore.getState().comps).length;
-    const before = (await h.doc());
-    const entries = (await historyLabels()).length;
-    const made = (await newCompFromClipsEdit(assets))!;
-    expect(made.comp).toBe(adopt);
-    expect(Object.keys(useProjectStore.getState().comps)).toHaveLength(comps);
-    expect((await docView()).layerIdsOfComp(adopt!)).toHaveLength(2);
-    expect(useProjectStore.getState().comps[adopt!]).toMatchObject({ name: 'a', width: 640, height: 360, durationSeconds: 8 });
-    await expectOneUndoableEntry('New Composition from Clips', entries, before);
   });
 });
 

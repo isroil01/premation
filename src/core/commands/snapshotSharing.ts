@@ -49,8 +49,7 @@
  * edit rewrite history — it simply matters for more entries at once now.
  */
 
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
+import {  type AnimSnapshot } from '@motion/animation';
 import type { ProjectFile, SceneNode } from '@core/types';
 
 /** A clip bar's geometry in FRAMES — the timeline engine's `Clip.toJSON()`. */
@@ -271,82 +270,6 @@ function cachedJson(c: CachedNode): string {
   return c.json;
 }
 
-/**
- * The node row `sceneProjectIO.capture` writes, field for field and in its key
- * order — `snapshotSharing.test.ts` pins the two against each other so a field
- * added there and not here fails a test rather than silently dropping out of
- * undo.
- */
-function rowOf(n: SceneNode): Record<string, unknown> {
-  return {
-    id: n.id,
-    name: n.name,
-    children: n.children,
-    parent: n.parent,
-    transform: n.transform,
-    components: n.components,
-    visible: n.visible,
-    locked: n.locked,
-    solo: n.solo,
-    ...(n.shy ? { shy: true } : {}),
-    ...(n.color !== undefined ? { color: n.color } : {}),
-  };
-}
-
-/**
- * The captured node for a live view whose row serialised to `json`: objects
- * from the parse (the old capture's JSON round trip), primitives read directly
- * (as the old capture copied them).
- */
-function materialize(live: SceneNode, json: string): SceneNode {
-  const p = JSON.parse(json) as { transform: SceneNode['transform']; components: SceneNode['components'] };
-  return {
-    id: live.id,
-    name: live.name,
-    children: [...live.children],
-    parent: live.parent,
-    transform: p.transform,
-    components: p.components,
-    visible: live.visible,
-    locked: live.locked,
-    solo: live.solo,
-    ...(live.shy ? { shy: true } : {}),
-    ...(live.color !== undefined ? { color: live.color } : {}),
-  };
-}
-
-/**
- * `structuredClone(sceneProjectIO.capture())`, sharing every node whose content
- * is unchanged since the last capture.
- */
-export function captureSharedScene(): ProjectFile {
-  const next = new Map<string, CachedNode>();
-  const nodes: SceneNode[] = [];
-  defaultSceneGraph.traverse((n) => {
-    const json = JSON.stringify(rowOf(n));
-    const prev = nodeCache.get(n.id);
-    const node = prev && cachedJson(prev) === json ? prev.node : materialize(n, json);
-    next.set(n.id, { node, json });
-    nodes.push(node);
-  });
-  // Only live ids survive, so a deleted layer's last version is held by the
-  // history entries that need it and by nothing else.
-  nodeCache = next;
-  return { version: '1.0.0', nodes };
-}
-
-/**
- * One node's row exactly as a full capture would write it, as a fresh plain
- * object (JSON round trip), or undefined when the node does not exist. The
- * engine API's scoped inverses capture single nodes through this so the row
- * shape can never drift from `sceneProjectIO.capture` (pinned in the test).
- */
-export function captureNodeRow(id: string): SceneNode | undefined {
-  const n = defaultSceneGraph.getNode(id);
-  if (!n) return undefined;
-  return JSON.parse(JSON.stringify(rowOf(n))) as SceneNode;
-}
-
 function internNode(node: SceneNode): SceneNode {
   if (!node || typeof node !== 'object' || typeof node.id !== 'string') return node;
   const json = JSON.stringify(node);
@@ -484,19 +407,6 @@ function shareClips(cur: ClipsByComp): ClipsByComp {
   const shared = compsChanged || !prev ? out : prev;
   clipCache = shared;
   return shared;
-}
-
-// ── Public surface ────────────────────────────────────────────────────────
-
-/**
- * Capture the editable state (scene + animation, plus every composition's clip
- * geometry) with structural sharing.
- */
-export function captureSharedState(): DocState {
-  const state: DocState = { scene: captureSharedScene(), anim: shareAnim(defaultAnimation.snapshot()) };
-  state.clips = shareClips(clipProvider ? clipProvider.capture() : {});
-  sharedStates.add(state);
-  return state;
 }
 
 /**

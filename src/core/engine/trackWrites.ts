@@ -13,11 +13,9 @@ import { secondsToFlicks, type Command, type Easing, type MatteMode, type PropRe
 import { documentMirror } from '@stores/documentMirror';
 import { effectDefFor, parseColorChannels } from '@core/effects/effects';
 import { mirrorEffectHeaders } from '@core/mirror/effects';
-import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { useProjectStore } from '@stores/projectStore';
-import type { SceneNode } from '@core/types';
 import type { TrackMatte } from '@core/effects/matte';
-import { fieldWrite, memberWrite, propRefForTrack } from './propRefs';
+import {   propRefForTrack } from './propRefs';
 import { apiUnitFactor } from './props';
 
 const POSITION_DIMS = new Set(['x', 'y', 'z']);
@@ -110,32 +108,6 @@ export function effectParamCommand(
   const r = propRefForTrack(nodeId, `effect.${effectId}.${key}_r`) ?? propRefForTrack(nodeId, ref.path);
   if (!r || r.valueType !== 'color') return null;
   return [{ type: 'setProperty', prop: r.ref, value: color, time } as Command];
-}
-
-/**
- * A static write of `prop` on the component `ownerId` (the legacy writers'
- * routing) as ONE `setProperty`, or null when the engine would not land it on
- * that component. A static field (G1: a layer's own fill colour, the Text
- * component's strings / choices) or one numeric member of its property; a
- * write on an ANIMATED property is a key at comp time `seconds` (After
- * Effects' setValue on a keyed property); `time` is ignored when static.
- */
-export function propWriteCommand(node: SceneNode, ownerId: string, prop: string, value: unknown, seconds: number): Command[] | null {
-  const fw = fieldWrite(node.id, ownerId, prop, value, seconds);
-  if (fw) return [{ type: 'setProperty', prop: fw.prop, value: fw.value, ...(fw.time !== undefined ? { time: fw.time } : {}) } as Command];
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  // The engine writes a member onto the FIRST component carrying it as a number
-  // (a text prop the layer has not stored as a number yet: its Text component).
-  const first = node.components.find((c) => typeof (c.props as Record<string, unknown>)[prop] === 'number')
-    ?? (resolvePropertyMeta(prop, node.id).group === 'text' ? node.components.find((c) => c.type === 'Text') : undefined)
-    // A text layer's box (layer/width, layer/height): the Transform, like the legacy writer.
-    ?? ((prop === 'width' || prop === 'height') ? node.components.find((c) => c.type === 'Transform') : undefined);
-  if (!first || first.id !== ownerId) return null;
-  const r = propRefForTrack(node.id, prop);
-  if (!r || !r.members.includes(prop)) return null;
-  const w = memberWrite(node.id, prop, value, seconds);
-  if (!w) return null;
-  return [{ type: 'setProperty', prop: w.prop, value: w.value, ...(w.time !== undefined ? { time: w.time } : {}) } as Command];
 }
 
 /** Easings the API takes by name (the rest keep their legacy writer). */

@@ -86,7 +86,6 @@
  */
 
 import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 
 /** Per-layer switch. Absent = off, which is every existing project. */
@@ -129,47 +128,5 @@ export function readContinuousRaster(node: SceneNode): boolean {
     if ((c.props as Record<string, unknown>)[CONTINUOUS_RASTER_PROP] === true) return true;
   }
   return false;
-}
-
-/**
- * Turn Continuous Rasterization on or off.
- *
- * Written through `setFxKey` with `undefined` for off, exactly like
- * `setCompCollapse`, so an off layer carries NO prop and a document saved before
- * this feature existed is indistinguishable from one that deliberately turned it
- * off. That is what makes the byte-identical guarantee hold across save/load.
- */
-export function setContinuousRaster(nodeId: string, on: boolean): void {
-  defaultSceneGraph.setFxKey(nodeId, CONTINUOUS_RASTER_PROP, on || undefined);
-}
-
-/**
- * Turn Continuous Rasterization on for a NEW vector layer.
- *
- * Soft zoom under camera moves is the #1 tell of "not AE-finished" logo/type
- * work; requiring users to find the switch meant most comps stayed soft.
- *
- * This lives here, next to `supportsContinuousRaster`, rather than privately in
- * `sceneInsert` — where it was, and where the four call sites that used it are
- * every MENU and LIBRARY insert and nothing else. Layers the user DRAWS are
- * built by `makeNodeAt` in `core/workspace/ports`, which never had access to
- * it, so a pen path, a pencil scribble or a drawn ellipse silently opted out of
- * a default the codebase describes as on. Two layers with identical geometry
- * rasterized differently depending on which menu made them, and the drawn one
- * was the soft one — `AppTextureProvider.tierFor` calls exactly that softness
- * "the single most-reported quality complaint".
- *
- * Idempotent, and a no-op for kinds that cannot benefit (see
- * `supportsContinuousRaster`) — so it is safe on every creation path.
- */
-export function enableContinuousRasterByDefault(nodeId: string): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (node && supportsContinuousRaster(node)) setContinuousRaster(nodeId, true);
-}
-
-/** Read the switch for a node id, false when the node is gone. */
-export function nodeHasContinuousRaster(nodeId: string): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  return node ? readContinuousRaster(node) : false;
 }
 
