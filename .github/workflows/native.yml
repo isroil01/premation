@@ -184,6 +184,30 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npx jest --testPathPattern '\.native\.test' -w 2
+      # The benchmark ratchet (docs/NATIVE_CORE_PLAN.md §4 T0): `npm run bench:check`
+      # runs the `*.bench.test.ts` set on this engine (panels at 2000 layers, D4
+      # playback, D5 viewport frame time), writes `.artifacts/bench/results.json`
+      # and compares it with `bench/baseline.json` (scripts/bench-check.mjs).
+      # Tolerance 25% rather than the local 15%: a shared runner's clock is
+      # noisier than a laptop. Advisory: the committed baseline still holds the
+      # TypeScript engine's metrics (they report `not run`). Before making it
+      # blocking, download a green run's `bench-results` artifact, copy its
+      # results.json over `.artifacts/bench/results.json` and run
+      # `npm run bench:baseline`, so the baseline carries the runner's machine.
+      - name: Bench ratchet on the engine
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        env:
+          PREMATION_ENGINE_PATH: ${{ github.workspace }}/${{ steps.engine.outputs.engine-dir }}/premation-engine
+        run: npm run bench:check -- --tolerance 25
+      - name: Upload bench results
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: .artifacts/bench/
+          retention-days: 30
+          if-no-files-found: warn
       - name: Upload the engine
         uses: actions/upload-artifact@v4
         with:
