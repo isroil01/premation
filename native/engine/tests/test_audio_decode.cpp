@@ -207,16 +207,21 @@ TEST_CASE("TransportClock over AudioSystem + NullDevice: the Session's clock sea
   premation::AudioTransportClock clock(sys);
   clock.play(0.5, 1, LoopMode::loop, 0, 3);
   // Lock (~8 callbacks), then media time advances with the device.
+  // Compared against the wall time between the two readings, not the sleep
+  // asked for: a loaded machine oversleeps.
   std::optional<double> a;
+  std::chrono::steady_clock::time_point ta;
   for (int i = 0; i < 400 && !a; ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    a = clock.media_elapsed(std::chrono::steady_clock::now());
+    ta = std::chrono::steady_clock::now();
+    a = clock.media_elapsed(ta);
   }
   REQUIRE(a.has_value());
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
-  const auto b = clock.media_elapsed(std::chrono::steady_clock::now());
+  const auto tb = std::chrono::steady_clock::now();
+  const auto b = clock.media_elapsed(tb);
   REQUIRE(b.has_value());
-  CHECK(*b - *a == Catch::Approx(0.3).margin(0.08));
+  CHECK(*b - *a == Catch::Approx(std::chrono::duration<double>(tb - ta).count()).margin(0.08));
   const auto t = clock.comp_time(std::chrono::steady_clock::now());
   REQUIRE(t.has_value());
   CHECK(*t > 0.5);

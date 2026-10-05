@@ -43,6 +43,7 @@ import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
 import { useCompareStore } from '@stores/compareStore';
 import { publishFrame } from '@core/engine/frameTap';
+import { captureViewportPicture, setViewportPictureRefresh, viewportPictureWanted } from '@core/engine/viewportPicture';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { compUvRect, parseCssRgb } from './pasteboard';
 import { BOARD_FLOATS, createFrameBlitter } from './frameBlit';
@@ -240,6 +241,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         // closes it. The tap returns on a size / clock check when nobody listens.
         const seconds = flicksToSeconds(p.meta.time);
         publishFrame(p.frame, seconds);
+        // The loupe / clone lens copy: a full-size 2D blit, only while one of them is open.
+        if (viewportPictureWanted()) captureViewportPicture(p.frame);
         if (useCompareStore.getState().pending) useCompareStore.getState().captureFrom(p.frame, seconds, getWorkspaceController().getView());
         // The blit releases the slot to the engine once the GPU no longer reads it.
         if (!blitter.draw(p.frame, boardData, p.release)) {
@@ -452,8 +455,13 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       }
     });
 
+    // A lens opening over a still viewport needs the frame again: the same
+    // setViewport makes the engine draw it (a cache hit).
+    setViewportPictureRefresh(() => sendViewport(true));
+
     return () => {
       disposed = true;
+      setViewportPictureRefresh(null);
       clearTimeout(slowTimer);
       unsub();
       unRender();

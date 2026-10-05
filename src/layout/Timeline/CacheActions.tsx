@@ -101,8 +101,8 @@ export function usePreviewCacheStats(): { stats: PreviewCacheStats; refresh: () 
 }
 
 /**
- * The dropdown's rows: cache now (disabled, with the reason, while the engine
- * has no pre-render), purge RAM, and purge disk when the engine has a disk tier.
+ * The dropdown's rows: cache now (disabled, with the reason, while there is
+ * nothing to cache), purge RAM, and purge disk when the engine has a disk tier.
  */
 export function previewCacheMenuItems(stats: PreviewCacheStats, refresh: () => void): DropdownItem[] {
   const hasRam = stats.ramMb > 0;

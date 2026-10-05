@@ -20,6 +20,8 @@ import { useMirrorJson } from '@hooks/useMirrorFields';
 import { applyRigPresetEdit, rigPaths } from '@core/engine/rigPaths';
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
+import { engine } from '@core/engine/engineInstance';
+import type { RigPose } from '@motion/engine-api';
 import { fetchLayerBox } from '@stores/layerBoxes';
 import type { IKTarget, SkeletonRig } from '@core/rig/skeletonCommands';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
@@ -102,22 +104,28 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   // The live pose (the bone tracks at the playhead) and the solved one (FK + the goals in IK
   // mode), resolved by the engine (getRigPose); the stored rig until the answer lands.
   const poseById = new Map((pose?.bones ?? []).map((b) => [b.id, b]));
-  const liveBones: Bone[] = bones.map((b) => {
-    const p = poseById.get(b.id);
-    return p ? { ...b, x: p.x, y: p.y, rotation: p.rotation, scaleX: p.scaleX, scaleY: p.scaleY } : b;
-  });
+  /** The live bones and solving goals of a pose answer — what an IK/FK switch plans from. */
+  const switchInputs = (from: RigPose | undefined): { bones: Bone[]; targets: IkTargetResolved[] } => {
+    const byId = new Map((from?.bones ?? []).map((b) => [b.id, b]));
+    return {
+      bones: bones.map((b) => {
+        const q = byId.get(b.id);
+        return q ? { ...b, x: q.x, y: q.y, rotation: q.rotation, scaleX: q.scaleX, scaleY: q.scaleY } : b;
+      }),
+      targets: (from?.ik ?? [])
+        .filter((g) => g.enabled && g.mode === 'ik')
+        .map((g) => ({
+          boneId: g.bone, x: g.x, y: g.y,
+          ...(g.chainLength !== undefined ? { chainLength: g.chainLength } : {}),
+          ...(g.pole.length === 2 ? { pole: { x: g.pole[0]!, y: g.pole[1]! } } : {}),
+        })),
+    };
+  };
+  const { bones: liveBones, targets: liveTargets } = switchInputs(pose);
   const posedBones: Bone[] = bones.map((b) => {
     const p = poseById.get(b.id);
     return p ? { ...b, x: p.posedX, y: p.posedY, rotation: p.posedRotation, scaleX: p.scaleX, scaleY: p.scaleY } : b;
   });
-  /** The goals that solve (enabled, IK mode at the playhead) — the switch plans from them. */
-  const liveTargets: IkTargetResolved[] = (pose?.ik ?? [])
-    .filter((g) => g.enabled && g.mode === 'ik')
-    .map((g) => ({
-      boneId: g.bone, x: g.x, y: g.y,
-      ...(g.chainLength !== undefined ? { chainLength: g.chainLength } : {}),
-      ...(g.pole.length === 2 ? { pole: { x: g.pole[0]!, y: g.pole[1]! } } : {}),
-    }));
   const posedWorld = computeWorldTransforms({ bones: posedBones });
   /** A goal's chain mode at the playhead (its ikMode track over the stored mode). */
   const chainModeAt = (ik: Pick<IKTarget, 'boneId' | 'ikMode'>): ChainMode =>
@@ -671,12 +679,20 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                       // The mode property (track ikMode.<bone>) is keyframed — read at call time from the mirror.
                       documentMirror().keyframes(nodeId, rigPaths.ikProp(bone.id, 'mode')).length > 0;
                     // A client macro (planChainSwitch): mode + the pose that keeps the limb still, ONE entry.
-                    void edit(
-                      `Switch ${bone.name || bone.id} to ${to.toUpperCase()}`,
-                      chainSwitchCommands(nodeId, bone.id, to, workspaceTime, keyframe, {
-                        bones: liveBones, targets: liveTargets, chainLength: ik?.chainLength,
-                      }),
-                    );
+                    // Planned from the pose the engine holds NOW: the panel's own answer can be one
+                    // edit behind (a second switch right after the first), and a plan from a stale
+                    // pose moves the limb.
+                    void engine()
+                      .query({ type: 'getRigPose', layer: nodeId, time: compTime(workspaceTime), points: [] })
+                      .then((fresh) => {
+                        const from = fresh.ok ? switchInputs(fresh.value) : { bones: liveBones, targets: liveTargets };
+                        return edit(
+                          `Switch ${bone.name || bone.id} to ${to.toUpperCase()}`,
+                          chainSwitchCommands(nodeId, bone.id, to, workspaceTime, keyframe, {
+                            bones: from.bones, targets: from.targets, chainLength: ik?.chainLength,
+                          }),
+                        );
+                      });
                   }}
                   style={selectStyle}
                 >

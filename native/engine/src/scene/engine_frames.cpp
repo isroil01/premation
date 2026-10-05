@@ -240,6 +240,7 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       out->mediaBase = mediaBase_;
       BuildContext ctx = context(d, view, expr, cache);
       ctx.hiddenLayers = viewport.hiddenLayers;  // setViewportHiddenLayers: the text under the in-place editor
+      ctx.focusLayers = viewport.focusLayers;    // setViewportFocus: layers outside the set are dim references
       SnapshotComp sc = with_viewport_view(snapshot_comp_of(d, comp), viewport);
       if (!viewport.layer.empty()) {
         // The Layer panel: the layer alone at its source size, over transparency,

@@ -139,6 +139,7 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
         range: workArea && workArea.duration > 0 ? 'workArea' : 'all',
         audio: previewIncludesAudio(),
         cacheFirst: false,
+        cacheOnly: false,
         ...(currentFlicks() !== null ? { from: currentFlicks()! } : {}),
       });
     } else {

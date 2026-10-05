@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <thread>
 
 namespace premation::audio {
 
@@ -79,7 +80,12 @@ void MasterClock::set_latency_frames(double frames) noexcept { latency_.store(fr
 
 ClockReading MasterClock::read(double t) const noexcept {
   ClockReading r;
-  for (int attempt = 0; attempt < 64; ++attempt) {
+  // The writer is the audio thread; a reader that keeps finding it mid-update
+  // (the thread was preempted inside its few stores) gives its time slice away
+  // rather than report an unlocked clock for one tick. Readers are never the
+  // audio thread.
+  for (int attempt = 0; attempt < 256; ++attempt) {
+    if (attempt >= 16) std::this_thread::yield();
     const std::uint64_t s0 = seq_.load(std::memory_order_acquire);
     if ((s0 & 1U) != 0) continue;
     const double tBase = tBase_.load(std::memory_order_relaxed);

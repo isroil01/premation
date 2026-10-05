@@ -522,7 +522,7 @@ TEST_CASE("MediaSystem: a hardware decoder that fails mid-stream hands the clip 
   }
   const SourceStats st = ms.stats(*id);
   CHECK(st.path == DecodePath::software);
-  if (st.hwFallback.rfind("refused", 0) == 0) {
+  if (st.hwFallback.find(": refused ") != std::string::npos) {  // "<path>: refused <codec> <profile> <format>"
     // The device refused the stream before the injected fault (a virtualised
     // GPU): the fallback ran for that reason instead — every frame above was
     // still delivered from software, which is the behaviour under test.

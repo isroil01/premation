@@ -9,7 +9,7 @@
  * is built by the app engine, every commit is ONE undo entry, undo restores.
  */
 
-import { render, act, fireEvent, cleanup } from '@testing-library/react';
+import { render, act, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { Value } from '@motion/engine-api';
 import { TextEditOverlay, insideKeepZone } from './TextEditOverlay';
 import { ColorPicker } from '@components/ColorPicker';
@@ -395,7 +395,7 @@ describe('TextEditOverlay', () => {
     const { getByRole, unmount } = render(<TextEditOverlay />);
     await act(async () => { useTextEditStore.getState().begin(T); await settleEdits(); });
     let box = getByRole('textbox') as HTMLElement;
-    expect(box.style.overflow).toBe('hidden');
+    await waitFor(() => expect(box.style.overflow).toBe('hidden'));
     expect(parseFloat(box.style.paddingTop)).toBeCloseTo(138, 3);
     expect(box.getAttribute('data-overflow')).toBeNull();
     act(() => useTextEditStore.getState().end());
@@ -407,13 +407,13 @@ describe('TextEditOverlay', () => {
     const again = render(<TextEditOverlay />);
     await act(async () => { useTextEditStore.getState().begin(T); await settleEdits(); });
     box = again.getByRole('textbox') as HTMLElement;
-    expect(parseFloat(box.style.paddingTop || '0')).toBeCloseTo(6, 3);
+    await waitFor(() => expect(parseFloat(box.style.paddingTop || '0')).toBeCloseTo(6, 3));
     await act(async () => {
       box.innerText = 'Hi\nthere';
       fireEvent.input(box);
       await settleEdits();
     });
-    expect(box.getAttribute('data-overflow')).toBe('true');
+    await waitFor(() => expect(box.getAttribute('data-overflow')).toBe('true'));
     expect(parseFloat(box.style.paddingTop || '0')).toBe(0);
     expect((await contentOf(T))).toBe('Hi');
   });

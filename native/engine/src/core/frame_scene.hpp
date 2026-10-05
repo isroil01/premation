@@ -154,6 +154,10 @@ struct ViewportConfig {
   /// text layer being edited in place). Filled per frame by the Session; never
   /// part of a surface's stored config.
   std::vector<std::string> hiddenLayers;
+  /// setViewportFocus: Focus Mode's working set. Non-empty = every layer not in
+  /// it draws as a dim reference. Filled per frame by the Session, like
+  /// `hiddenLayers`.
+  std::vector<std::string> focusLayers;
   /// setViewport `onion`. Absent = off. Playback ignores it (ghosts are for a
   /// still playhead). Not a ring change.
   std::optional<api::OnionSkin> onion;

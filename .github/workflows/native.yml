@@ -177,7 +177,8 @@ jobs:
           cache: npm
       - name: UI suites on the engine (jest *.native.test)
         if: runner.os == 'Linux'
-        # Advisory while the suites are being ported (block 3); blocking once they all pass.
+        # Advisory until one run here is green (they all pass on Windows since 2026-10-05,
+        # when --no-gpu stopped switching the frame builder off); then drop continue-on-error.
         continue-on-error: true
         env:
           PREMATION_ENGINE_PATH: ${{ github.workspace }}/${{ steps.engine.outputs.engine-dir }}/premation-engine

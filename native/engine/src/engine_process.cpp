@@ -200,12 +200,17 @@ int run_engine(const EngineOptions& options) {
 #if defined(PREMATION_HAVE_SCENE)
   // D2w: the viewport draws the engine's own document through the render
   // graph (scene/engine_frames.hpp). PREMATION_ENGINE_SCENE=0 keeps C2's quads.
-  const bool useScene = !options.noGpu && os::env_var("PREMATION_ENGINE_SCENE").value_or("1") != "0";
+  // --no-gpu simulates the FRAMES only: the frame builder still runs, so text
+  // layout, fonts, the rig and the conversions answer as in the shipped engine
+  // (the UI suites and CI run this way). Its frames go to the simulated sink.
+  const bool useScene = os::env_var("PREMATION_ENGINE_SCENE").value_or("1") != "0";
   scene::EngineFramesOptions sceneOptions;
   sceneOptions.fontsManifest = os::env_var("PREMATION_FONTS_MANIFEST").value_or("");
   std::unique_ptr<FrameBuilder> frameBuilder;
   std::unique_ptr<MediaClock> mediaClock;
-  if (useScene) {
+  if (useScene && options.noGpu) {
+    frameBuilder = scene::make_frame_builder(sceneOptions);
+  } else if (useScene) {
     renderOptions.makeDrawer = scene::make_drawer_factory(sceneOptions);
     frameBuilder = scene::make_frame_builder(sceneOptions);
     // E2: the document's sound, and the audio clock pacing playback.
@@ -215,9 +220,8 @@ int run_engine(const EngineOptions& options) {
     frameBuilder->bind_audio(mediaClock.get());
   }
   // convertLayer's text outlines come from the frame builder's fonts
-  // (Session::handler_ctx). Without the scene (--no-gpu, the cross-engine
-  // parity harness) the conversions answer `unsupported` as the TypeScript
-  // engine does, so the replay keeps comparing like with like.
+  // (Session::handler_ctx). Without the scene (PREMATION_ENGINE_SCENE=0) the
+  // conversions answer `unsupported`.
 #endif
 #if defined(PREMATION_ENGINE_HEADLESS)
   // No Dawn in this build: frames are always simulated (as --no-gpu).

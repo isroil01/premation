@@ -62,6 +62,9 @@ struct BuildContext {
   /// the text layer under the in-place editor). Like an off eye switch, for this
   /// frame only. Empty = none.
   std::vector<std::string> hiddenLayers{};
+  /// Focus Mode (setViewportFocus): non-empty = a layer outside this set is a
+  /// dim reference (12 % of its opacity) in the viewport being built.
+  std::vector<std::string> focusLayers{};
   /// The project folder relative media paths resolve against (the texture
   /// feed's mediaBase); empty = none (a relative path is reported).
   std::filesystem::path mediaBase{};

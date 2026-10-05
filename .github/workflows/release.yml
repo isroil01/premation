@@ -379,20 +379,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s globstar nullglob
+          # macOS runs bash 3.2, which has no globstar: `find` there.
           if [ "$RUNNER_OS" = "Windows" ]; then
+            shopt -s globstar nullglob
             for f in premation-engine.exe dxcompiler.dll dxil.dll; do
               ls release/**/win-unpacked/resources/engine/$f >/dev/null || { echo "::error::$f missing from win-unpacked/resources/engine"; exit 1; }
             done
           else
             found=0
-            for app in release/**/*.app; do
+            while IFS= read -r app; do
               found=1
               for f in premation-engine premation-host-bridge.node; do
                 test -f "$app/Contents/Resources/engine/$f" || { echo "::error::$f missing from $app"; exit 1; }
               done
               codesign --verify --strict --verbose=2 "$app/Contents/Resources/engine/premation-engine" || [ "${{ needs.verify.outputs.signMac }}" != "true" ]
-            done
+            done < <(find release -type d -name '*.app' -prune)
             [ "$found" = 1 ] || { echo "::error::no .app produced"; exit 1; }
           fi
           echo "engine present in every package"
@@ -410,8 +411,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          shopt -s globstar nullglob
-          for dmg in release/**/*.dmg; do
+          find release -type f -name '*.dmg' | while IFS= read -r dmg; do
             echo "-- notarizing $dmg"
             xcrun notarytool submit "$dmg" \
               --apple-id "$APPLE_ID" \
@@ -432,14 +432,13 @@ jobs:
         if: ${{ matrix.os == 'macos-latest' && needs.verify.outputs.signMac == 'true' }}
         run: |
           set -euo pipefail
-          shopt -s globstar nullglob
           found=0
-          for dmg in release/**/*.dmg; do
+          while IFS= read -r dmg; do
             found=1
             echo "-- verifying $dmg"
             spctl -a -vvv --type install "$dmg"   # rejects unsigned/improperly signed
             xcrun stapler validate "$dmg"          # rejects a missing ticket
-          done
+          done < <(find release -type f -name '*.dmg')
           [ "$found" = 1 ] || { echo "::error::No .dmg produced"; exit 1; }
 
       - name: Verify Windows artifacts are signed and timestamped

@@ -283,7 +283,7 @@ describeEngine('premation-engine — scripted session over the real pipes', () =
     // Play: 30 frames through the slots.
     const startCount = frames.length;
     const got30 = waitFrame(() => frames.length - startCount >= 30);
-    ok(await run({ type: 'play', rate: 1, range: 'all', audio: false, cacheFirst: false }));
+    ok(await run({ type: 'play', rate: 1, range: 'all', audio: false, cacheFirst: false, cacheOnly: false }));
     await got30;
     const played = frames.slice(startCount);
     const fps = (played.length - 1) / ((played[played.length - 1]!.at - played[0]!.at) / 1000);

@@ -2632,6 +2632,8 @@ export interface Play {
   /** Cache frames first, then play at full rate (RAM preview). */
   cacheFirst: boolean;
   from?: Time;
+  /** With `cacheFirst`: stop once the range is stored instead of playing it, and put the playhead back where it was (Cache Work Area Now). A seek or a pause during the fill ends it with what is stored. */
+  cacheOnly: boolean;
 }
 
 export interface Pause {
@@ -2744,6 +2746,12 @@ export interface SetInteracting {
 
 /** The layers a viewport does not draw — editor state, not document state: the text layer being edited in place (the editor shows its text, so the engine must not draw it underneath). Replaces the viewport's previous set; empty = draw every layer. Hides the layer itself (as its eye switch would) in that viewport's frames only: exports, thumbnails and other viewports draw it. A control: no history, no revision. */
 export interface SetViewportHiddenLayers {
+  viewport: number;
+  layers: LayerId[];
+}
+
+/** Focus Mode — editor state, not document state: the layers the user is working inside. Every other layer of that viewport's frames is drawn as a dim reference (12 % of its opacity); exports, thumbnails and other viewports are untouched. Replaces the viewport's previous set; empty = no focus, every layer draws as authored. A control: no history, no revision. */
+export interface SetViewportFocus {
   viewport: number;
   layers: LayerId[];
 }
@@ -5107,6 +5115,7 @@ export type Command =
   | ({ type: 'purgeCache' } & PurgeCache)
   | ({ type: 'setInteracting' } & SetInteracting)
   | ({ type: 'setViewportHiddenLayers' } & SetViewportHiddenLayers)
+  | ({ type: 'setViewportFocus' } & SetViewportFocus)
   | ({ type: 'setOverlayGeometry' } & SetOverlayGeometry)
   | ({ type: 'startJob' } & StartJob)
   | ({ type: 'cancelJob' } & CancelJob)
@@ -5273,6 +5282,7 @@ export type CommandResult =
   | ({ type: 'purgeCache' } & Empty)
   | ({ type: 'setInteracting' } & Empty)
   | ({ type: 'setViewportHiddenLayers' } & Empty)
+  | ({ type: 'setViewportFocus' } & Empty)
   | ({ type: 'setOverlayGeometry' } & Empty)
   | ({ type: 'startJob' } & JobRef)
   | ({ type: 'cancelJob' } & Empty)
@@ -5588,6 +5598,7 @@ export interface CommandArgs {
   purgeCache: PurgeCache;
   setInteracting: SetInteracting;
   setViewportHiddenLayers: SetViewportHiddenLayers;
+  setViewportFocus: SetViewportFocus;
   setOverlayGeometry: SetOverlayGeometry;
   startJob: StartJob;
   cancelJob: CancelJob;
@@ -5754,6 +5765,7 @@ export interface CommandResults {
   purgeCache: Empty;
   setInteracting: Empty;
   setViewportHiddenLayers: Empty;
+  setViewportFocus: Empty;
   setOverlayGeometry: Empty;
   startJob: JobRef;
   cancelJob: Empty;

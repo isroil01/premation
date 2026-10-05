@@ -392,17 +392,20 @@ cache). What still references the TypeScript renderer, effects and evaluation
 
    Engine gaps this exposed (the page renderer did them; the engine does not
    yet — each is honest in the UI, none is faked):
-   - *Cache Work Area Now* — no engine command pre-renders a span; the command
-     is disabled with its reason. The cache fills from frames the engine draws.
+   - *Cache Work Area Now* — **closed 2026-10-05**: `play { cacheFirst,
+     cacheOnly }` stores the span frame by frame, then stops with the playhead
+     back where it was (a seek or a pause ends the fill with what is stored).
    - `setCacheBudget` is accepted and does nothing (the budget is a share of
      the adapter's VRAM at engine start); there is no disk cache tier, so the
      disk budget, the disk bar and Purge Disk Cache are gone or hidden.
-   - Focus Mode ghosting: the predicate (`core/workspace/snapshotFocus.ts`) is
-     not sent to the engine, so non-focused layers are not dimmed.
-   - The page's content canvas is blank under the engine viewport, so the
-     tracker loupe, the clone-source lens and the AI chat's viewport thumbnail
-     have no pixels to read (they need the engine's frame — the frame tap or a
-     still).
+   - Focus Mode ghosting — **closed 2026-10-05**: `setViewportFocus` carries the
+     working set (`layout/focus/useEngineFocus.ts`); the frame builder draws
+     every other layer of that viewport at 12 % of its opacity.
+   - The page's content canvas is blank under the engine viewport —
+     **closed 2026-10-05**: the tracker loupe and the clone-source lens read a
+     full-size copy of the engine's frame kept only while one of them is open
+     (`core/engine/viewportPicture.ts`); the AI chat's result thumbnail is an
+     engine still (`engineCompStill`).
    - Quality = Wireframe boxes are still painted from the replica's geometry
      (`wireframeOverlay.ts`), until step 3 moves them to the overlay push.
 3. The page replica goes: the remaining `sceneStore` readers move to the

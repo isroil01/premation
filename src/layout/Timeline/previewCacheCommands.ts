@@ -13,15 +13,18 @@
  * filled by every exact frame the engine draws (playback, a scrub, a parked
  * playhead) and evicted least-recently-used at a budget the engine sizes from
  * the graphics adapter. There is no disk tier. What these commands can do is
- * what the engine API offers (`purgeCache`, `getCacheCoverage`):
+ * what the engine API offers (`play { cacheOnly }`, `purgeCache`,
+ * `getCacheCoverage`):
  *
  *   Purge RAM Preview     `purgeCache { kind: 'ram' }` — empties that cache.
  *   Purge Disk Cache      `purgeCache { kind: 'disk' }` — nothing to empty
  *                         today; the command is enabled only when the engine
  *                         reports disk bytes, which it never does yet.
- *   Cache Work Area Now   the engine has NO command that pre-renders a span
- *                         into its cache, so this is disabled and says why. It
- *                         does not start a job that could never finish.
+ *   Cache Work Area Now   `play { cacheFirst, cacheOnly }` — the engine draws
+ *                         every frame of the span into its cache, then stops
+ *                         with the playhead back where it was. The transport
+ *                         reads `caching` meanwhile; Space or a click on the
+ *                         ruler ends the fill with what is stored.
  */
 
 import { asCommandId } from '@app-types/common';
@@ -39,24 +42,22 @@ export const PREVIEW_PURGE_DISK_COMMAND = asCommandId('preview.purgeDisk');
 const MB = 1024 * 1024;
 
 /**
- * Why "Cache Work Area Now" cannot run. One sentence, shown wherever the
- * action is offered (the command's description, the lane button's tooltip, the
- * menu row, the toast).
+ * Why "Cache Work Area Now" cannot run, where it cannot: with no engine
+ * viewport open there is nowhere to store frames. Shown wherever the action is
+ * offered (the lane button's tooltip, the menu row, the toast).
  */
-export const CACHE_WORK_AREA_UNAVAILABLE =
-  'The engine caches frames as it draws them and has no pre-render yet — play the work area once to fill the cache.';
+export const CACHE_WORK_AREA_UNAVAILABLE = 'The preview cache fills from the viewport — open a composition to cache it.';
 
 /** Why "Purge Disk Cache" has nothing to do. */
 export const DISK_CACHE_UNAVAILABLE = 'The engine keeps its preview cache in video memory — there is no disk cache.';
 
 /**
- * Whether the engine can pre-render a span into its frame cache. It cannot:
- * the API has `purgeCache` and `setCacheBudget`, no fill. A function so the
- * button, the menu row and the command ask one place, and so the day the
- * engine grows the command there is one line to change.
+ * Whether the engine can be asked to fill its frame cache now: there is a
+ * composition with frames to store. A function so the button, the menu row
+ * and the command ask one place.
  */
 export function canCacheWorkArea(): boolean {
-  return false;
+  return previewCacheStats().total > 0;
 }
 
 /** Whether the engine reports a disk tier with something in it. */
@@ -74,10 +75,11 @@ function toast(message: string, level: 'info' | 'success' | 'warning' = 'info'):
 }
 
 /**
- * "Cache Work Area Now". Says what is true: either the span is already in the
- * engine's cache, or it is not and the engine cannot be asked to fill it.
- * Callers that offer the action unconditionally (the Preview menu) reach this,
- * so it answers rather than failing silently.
+ * "Cache Work Area Now". Either the span is already in the engine's cache, or
+ * the engine is asked to fill it (`play { cacheFirst, cacheOnly }`): it draws
+ * the span frame by frame, then stops with the playhead where it was. Callers
+ * that offer the action unconditionally (the Preview menu) reach this, so it
+ * answers rather than failing silently.
  */
 export function cacheWorkAreaNow(): void {
   const stats = previewCacheStats();
@@ -89,9 +91,11 @@ export function cacheWorkAreaNow(): void {
     toast(stats.workArea ? 'Work area is already cached' : 'Composition is already cached', 'info');
     return;
   }
-  if (!canCacheWorkArea()) {
-    toast(`${stats.cached} / ${stats.total} frames cached. ${CACHE_WORK_AREA_UNAVAILABLE}`, 'warning');
-  }
+  void engine()
+    .execute({ type: 'play', rate: 1, range: stats.workArea ? 'workArea' : 'all', audio: false, cacheFirst: true, cacheOnly: true })
+    .then((res) => {
+      if (!res.ok) toast(`Could not cache the ${stats.workArea ? 'work area' : 'composition'}: ${res.error.message}`, 'warning');
+    });
 }
 
 export function purgeRamPreview(): void {
@@ -128,9 +132,7 @@ export function buildPreviewCacheCommands(): ReadonlyArray<Command> {
     {
       id: PREVIEW_CACHE_WORK_AREA_COMMAND,
       label: 'Cache Work Area Now',
-      description: canCacheWorkArea()
-        ? 'Pre-render the work area (or the whole composition when none is set) into the preview cache.'
-        : `Unavailable. ${CACHE_WORK_AREA_UNAVAILABLE}`,
+      description: 'Pre-render the work area (or the whole composition when none is set) into the preview cache.',
       icon: 'refresh',
       enabled: canCacheWorkArea,
       execute: () => {

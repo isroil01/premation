@@ -44,6 +44,7 @@ import { runObjectMaskPick } from '@core/tracking/objectMask';
 import { mirrorSourceDisplaySize } from '@core/mirror/sourceSize';
 import { documentMirror } from '@stores/documentMirror';
 import { layerScreenMapping } from './layerScreen';
+import { holdViewportPicture, viewportPicture } from '@core/engine/viewportPicture';
 
 const POINT_R = 5;
 const PICK_R = 12;
@@ -381,28 +382,30 @@ export function TrackPointOverlay(): JSX.Element | null {
   }, [sourceToScreen, screenToSource, points, setPoint, manualVisible, featureHalf, searchHalf]);
 
   /*
-    The loupe's pixels. Drawn from the viewport's content canvas — the frame
-    the user is looking at, magnified 4× with smoothing OFF so individual
-    pixels are visible (that is the tool: a tracker point is placed on a
-    pixel, not on a vibe). The content canvas is WebGPU and its buffer is
-    formally only readable in the task that drew it; in practice drawImage of
-    the last presented frame works, and when it does not the catch leaves the
-    loupe as crosshair-on-black rather than taking the drag down.
+    The loupe's pixels. Drawn from the engine's viewport frame — the frame
+    the user is looking at (viewportPicture: a readable copy held for as long
+    as the loupe is up), magnified 4× with smoothing OFF so individual pixels
+    are visible (that is the tool: a tracker point is placed on a pixel, not
+    on a vibe). Until the first copy arrives the loupe is crosshair-on-black.
   */
+  const loupeOpen = loupe !== null;
+  useEffect(() => (loupeOpen ? holdViewportPicture() : undefined), [loupeOpen]);
   useEffect(() => {
     const out = loupeCanvasRef.current;
     if (!loupe || !out) return;
-    const content = getWorkspaceController().getContentCanvas();
+    const content = viewportPicture();
+    // The viewport's CSS box: the page's content canvas lies exactly under the engine's.
+    const box = getWorkspaceController().getContentCanvas();
     const g = out.getContext('2d');
     if (!g) return;
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#101014';
     g.fillRect(0, 0, out.width, out.height);
-    if (content && content.clientWidth > 0) {
-      // Overlay screen px → content buffer px (the buffer runs at device
-      // resolution and adaptive preview scale; the ratio absorbs both).
-      const bx = content.width / content.clientWidth;
-      const by = content.height / content.clientHeight;
+    if (content && box && box.clientWidth > 0 && box.clientHeight > 0) {
+      // Overlay screen px → frame px (the frame runs at device resolution and
+      // preview scale; the ratio absorbs both).
+      const bx = content.width / box.clientWidth;
+      const by = content.height / box.clientHeight;
       const sw = (out.width / LOUPE_ZOOM) * bx;
       const sh = (out.height / LOUPE_ZOOM) * by;
       try {

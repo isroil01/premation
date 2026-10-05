@@ -85,7 +85,7 @@ export interface EngineClient {
   redo(options?: RequestOptions): Promise<EngineResult<HistoryStep>>;
 
   // ── Transport (§6) ──
-  play(opts?: { rate?: number; range?: PlayRange; custom?: TimeRange; audio?: boolean; cacheFirst?: boolean; from?: number }): Promise<EngineResult<Empty>>;
+  play(opts?: { rate?: number; range?: PlayRange; custom?: TimeRange; audio?: boolean; cacheFirst?: boolean; cacheOnly?: boolean; from?: number }): Promise<EngineResult<Empty>>;
   pause(returnToStart?: boolean): Promise<EngineResult<Empty>>;
   seek(time: number, mode?: SeekMode): Promise<EngineResult<Empty>>;
   step(frames: number): Promise<EngineResult<Empty>>;
@@ -202,13 +202,14 @@ export abstract class EngineClientBase implements EngineClient {
   redo(options?: RequestOptions): Promise<EngineResult<HistoryStep>> {
     return this.execute({ type: 'redo' }, options);
   }
-  play(opts: { rate?: number; range?: PlayRange; custom?: TimeRange; audio?: boolean; cacheFirst?: boolean; from?: number } = {}): Promise<EngineResult<Empty>> {
+  play(opts: { rate?: number; range?: PlayRange; custom?: TimeRange; audio?: boolean; cacheFirst?: boolean; cacheOnly?: boolean; from?: number } = {}): Promise<EngineResult<Empty>> {
     return this.execute({
       type: 'play',
       rate: opts.rate ?? 1,
       range: opts.range ?? 'all',
       audio: opts.audio ?? true,
       cacheFirst: opts.cacheFirst ?? false,
+      cacheOnly: opts.cacheOnly ?? false,
       ...(opts.custom ? { custom: opts.custom } : {}),
       ...(opts.from !== undefined ? { from: opts.from } : {}),
     });

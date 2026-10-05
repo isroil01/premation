@@ -77,7 +77,7 @@ describe('D4 cached playback', () => {
       samples.length = 0;
       await client.execute({
         type: 'play', rate: 1, range: 'custom', custom: { start: 0, duration: secondsToFlicks(1) },
-        audio: false, cacheFirst: true,
+        audio: false, cacheFirst: true, cacheOnly: false,
       });
       const until = Date.now() + 90_000;
       while (phase !== 'stopped' && Date.now() < until) await sleep(50);

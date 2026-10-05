@@ -293,6 +293,10 @@ class Session {
   std::int64_t cacheFrame_ = 0;
   std::uint64_t cacheSeenRendered_ = 0;
   bool cacheInFlight_ = false;
+  /// play{cacheOnly}: the fill stops when the range is stored and the playhead
+  /// returns to `cacheReturn_` (where it was before the fill).
+  bool cacheOnly_ = false;
+  api::Time cacheReturn_ = 0;
   std::uint64_t playheadSkipped_ = 0;
   Clock::time_point lastStats_{};
 
@@ -304,6 +308,9 @@ class Session {
   /// state, kept beside the surface config so a setViewport per pointer move
   /// does not reset it). Absent = every layer draws.
   std::map<std::uint32_t, std::vector<std::string>> hiddenLayers_;
+  /// setViewportFocus: Focus Mode's working set per viewport (editor state,
+  /// beside the surface config like `hiddenLayers_`). Absent = no focus.
+  std::map<std::uint32_t, std::vector<std::string>> focusLayers_;
   [[nodiscard]] bool any_viewport_open() const noexcept { return !surfaces_.empty(); }
   double resolution_ = 1.0;
   bool renderDirty_ = false;

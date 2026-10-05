@@ -62,6 +62,7 @@ import { ctrlDragBrush, penSample } from '@core/paint/paintCapture';
 import { thinSamples, type PaintSpace } from '@core/paint/paintSpace';
 import { paintSpaceFromPush } from './paintSpaceFromPush';
 import { usePaintStore } from '@stores/paintStore';
+import { holdViewportPicture, viewportPicture } from '@core/engine/viewportPicture';
 import { publishProbe, clearProbe } from './useWorkspaceProbe';
 import {
   nodeContextMenuItems,
@@ -362,7 +363,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           : null,
         cloneHover: cloneHoverRef.current,
         cloneCompOffset: cloneCompOffsetRef.current,
-        content: contentCanvasRef.current,
+        content: viewportPicture(),
       });
       paintMotionPath(overlay, controller, timeRef.current, dprRef.current);
       paintRoi(overlay, controller, dprRef.current);
@@ -485,6 +486,29 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     getWorkspaceController().setContentCanvas(contentCanvasRef.current);
     return () => getWorkspaceController().setContentCanvas(null);
   }, [contentCanvasRef, attachTick]);
+
+  // The Clone Source Overlay reads the engine's frame: hold a readable copy of
+  // it while the clone stamp (with its overlay on) is the tool, and only then.
+  useEffect(() => {
+    let release: (() => void) | null = null;
+    const sync = (): void => {
+      const ps = usePaintStore.getState();
+      const want = useUIStore.getState().activeTool === 'paint' && ps.mode === 'clone' && ps.cloneOverlay;
+      if (want && !release) release = holdViewportPicture();
+      else if (!want && release) {
+        release();
+        release = null;
+      }
+    };
+    sync();
+    const offUi = useUIStore.subscribe(sync);
+    const offPaint = usePaintStore.subscribe(sync);
+    return () => {
+      offUi();
+      offPaint();
+      release?.();
+    };
+  }, []);
 
   // ── Channel Filter Effect ──────────────────────────────────────────
   const channel = useGuidesStore((s) => s.channel);
@@ -1711,8 +1735,9 @@ function paintOverlay(
   /**
    * Paint-tool chrome: the Ctrl-drag Diameter/Hardness ring, and the Clone
    * Source Overlay — what the clone stamp would lay down under the pointer,
-   * sampled from the rendered viewport at the source offset (the Aligned
-   * offset once a stroke has fixed it, else the aimed source point).
+   * sampled from the engine's viewport frame (`content`: viewportPicture) at
+   * the source offset (the Aligned offset once a stroke has fixed it, else the
+   * aimed source point).
    */
   paintChrome: {
     brushRing: { at: { x: number; y: number }; px: number; hardness: number } | null;
@@ -1828,7 +1853,7 @@ function paintOverlay(
         }
         ctx.drawImage(content, (at.x - r) * kx, (at.y - r) * ky, 2 * r * kx, 2 * r * ky, hover.x - r, hover.y - r, 2 * r, 2 * r);
       } catch {
-        // A WebGL canvas mid-resize can refuse a read; the lens just skips a frame.
+        // A copy mid-resize can refuse a read; the lens just skips a frame.
       }
       ctx.restore();
       ctx.save();

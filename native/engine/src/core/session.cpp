@@ -933,6 +933,19 @@ struct ControlVisitor {
     s.rate_ = c.rate;
     s.rangeKind_ = c.range;
     if (c.custom) s.customRange_ = *c.custom;
+    s.cacheOnly_ = c.cache_first && c.cache_only;
+    s.cacheReturn_ = s.playing_ ? s.time_ : s.apiTime_;
+    if (s.cacheOnly_) {
+      // Cache Work Area Now: a fill from a stopped transport, never a restart of playback.
+      s.stop_playback();
+      // No viewport: there is nowhere to store frames, and nothing to play either.
+      if (!s.any_viewport_open()) {
+        s.cacheOnly_ = false;
+        s.transportState_ = api::TransportState::stopped;
+        s.emit_transport();
+        return result_for<api::Play>();
+      }
+    }
     if (c.from) s.seek_to(*c.from);
     s.transportState_ = c.cache_first ? api::TransportState::caching : api::TransportState::playing;
     // No viewport: there is nowhere to store frames, so play at once.
@@ -956,7 +969,11 @@ struct ControlVisitor {
   R operator()(const api::Seek& c) const {
     if (!s.active_comp()) fail(ErrorCode::not_found, "no composition to seek");
     s.seek_to(c.time);
-    if (s.transportState_ == api::TransportState::caching) {
+    if (s.transportState_ == api::TransportState::caching && s.cacheOnly_) {
+      // A seek ends a cache-only fill with what is stored: nothing was going to play.
+      s.cacheOnly_ = false;
+      s.stop_playback();
+    } else if (s.transportState_ == api::TransportState::caching) {
       // A seek interrupts the fill; playback continues from here with what is stored.
       s.transportState_ = api::TransportState::playing;
       s.cacheInFlight_ = false;
@@ -1054,6 +1071,7 @@ struct ControlVisitor {
   R operator()(const api::CloseViewport& c) const {
     if (s.viewports_.erase(c.viewport) == 0) fail(ErrorCode::not_found, "no viewport " + std::to_string(c.viewport));
     s.hiddenLayers_.erase(c.viewport);
+    s.focusLayers_.erase(c.viewport);
     if (const auto it = s.surfaces_.find(c.viewport); it != s.surfaces_.end()) {
       ViewportConfig closed = it->second;
       closed.open = false;
@@ -1078,6 +1096,16 @@ struct ControlVisitor {
     }
     if (s.any_viewport_open()) s.request_render();
     return result_for<api::SetViewportHiddenLayers>();
+  }
+  R operator()(const api::SetViewportFocus& c) const {
+    // A viewport's own state, like its hidden layers: replaces the set; empty = no focus.
+    if (c.layers.empty()) {
+      s.focusLayers_.erase(c.viewport);
+    } else {
+      s.focusLayers_.insert_or_assign(c.viewport, c.layers);
+    }
+    if (s.any_viewport_open()) s.request_render();
+    return result_for<api::SetViewportFocus>();
   }
   R operator()(const api::SetOverlayGeometry& c) const {
     // B4 round 2: replace this viewport's subscription (none = unsubscribe); the next frame carries it.
@@ -1389,6 +1417,17 @@ void Session::fill_cache(Clock::time_point now) {
     }
     cacheInFlight_ = false;
   }
+  if (cacheFrame_ > r.last && cacheOnly_) {
+    // The range is stored and that was the whole request: stop where the playhead was.
+    cacheOnly_ = false;
+    stop_playback();
+    seek_to(cacheReturn_);
+    emit_transport();
+    emit_playhead();
+    submit_frame(0);  // from a tick: nothing flushes a render request after it
+    renderDirty_ = false;
+    return;
+  }
   if (cacheFrame_ > r.last) {
     // The range is stored. Play it from the start play() chose, on the clock.
     transportState_ = api::TransportState::playing;
@@ -1637,6 +1676,7 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
   // beside the config, not in it: see `hiddenLayers_`).
   ViewportConfig port = surface;
   if (const auto hidden = hiddenLayers_.find(surface.viewport); hidden != hiddenLayers_.end()) port.hiddenLayers = hidden->second;
+  if (const auto focus = focusLayers_.find(surface.viewport); focus != focusLayers_.end()) port.focusLayers = focus->second;
   // A held viewport (the Layer panel's own ruler) renders at its time, not the clock's.
   const api::Time t = port.time.value_or(time_);
   if (frameBuilder_ != nullptr) {

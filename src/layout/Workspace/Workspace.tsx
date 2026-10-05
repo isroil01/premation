@@ -80,6 +80,8 @@ import { GradientHandleOverlay } from './GradientHandleOverlay';
 import { useGizmo3d } from './useGizmo3d';
 import { useDeviceHandles } from './useDeviceHandles';
 import { useFocusContext } from '@layout/focus/useFocusContext';
+import { useEngineFocus } from '@layout/focus/useEngineFocus';
+import { MAIN_VIEWPORT } from '@stores/overlayGeometry';
 import { useWorkspace } from './useWorkspace';
 import { TransportBar } from './TransportBar';
 import { ViewportHud } from './ViewportHud';
@@ -316,6 +318,7 @@ export function WorkspaceViewport({
   const canvasRef  = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const { focusKey } = useFocusContext();
+  useEngineFocus(MAIN_VIEWPORT);
 
   const { ready, renderError } = useWorkspace({
     contentCanvasRef: canvasRef,

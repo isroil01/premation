@@ -495,7 +495,7 @@ TEST_CASE("session: the clock emits frames at comp fps and drops rather than dri
   const std::size_t base = h.sink.submitted();
   REQUIRE(base >= 1);  // the viewport opening renders the current frame
 
-  REQUIRE(is_ok(h.run(cmd(api::Play{1.0, api::PlayRange::all, {}, false, false, {}}))));
+  REQUIRE(is_ok(h.run(cmd(api::Play{1.0, api::PlayRange::all, {}, false, false, {}, false}))));
   REQUIRE(h.session.playing());
   // 1 s of 1 ms ticks → 30 frames (+ the one play renders at once).
   for (int i = 0; i < 1000; ++i) {
@@ -586,6 +586,56 @@ TEST_CASE("session: cacheFirst stores every frame of the range, then plays it", 
   REQUIRE(h.session.time() == 4 * (kSec / 30));
 }
 
+TEST_CASE("session: cacheOnly stores the range, then stops with the playhead where it was", "[session][transport][d4]") {
+  Harness h(64);
+  (void)h.hello();
+  const auto comp = make_comp(h, 30);
+  (void)make_layer(h, comp);
+  api::SetActiveComposition active;
+  active.comp = comp;
+  REQUIRE(is_ok(h.run(cmd(active))));
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 320;
+  v.height = 180;
+  v.device_pixel_ratio = 1;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  api::Seek seek;
+  seek.time = 2 * (kSec / 30);
+  REQUIRE(is_ok(h.run(cmd(seek))));
+
+  api::Play play;
+  play.rate = 1;
+  play.range = api::PlayRange::custom;
+  play.custom = api::TimeRange{0, 5 * (kSec / 30)};
+  play.cache_first = true;
+  play.cache_only = true;
+  const auto before = h.frames_ready().size();
+  REQUIRE(is_ok(h.run(cmd(play))));
+  for (int i = 0; i < 40; ++i) {
+    h.release_all();
+    h.advance(std::chrono::milliseconds(1));
+  }
+  REQUIRE_FALSE(h.session.playing());
+  const auto ready = h.frames_ready();
+  std::vector<std::int64_t> frames;
+  for (std::size_t i = before; i < ready.size(); ++i) frames.push_back(ready[i].frame);
+  // Frames 0..4 stored in order, then the frame the playhead was on — and nothing played.
+  REQUIRE(frames.size() == 6);
+  for (std::int64_t i = 0; i < 5; ++i) REQUIRE(frames[static_cast<std::size_t>(i)] == i);
+  REQUIRE(frames[5] == 2);
+  REQUIRE(h.session.time() == 2 * (kSec / 30));
+
+  // A seek during the fill ends it: no playback follows.
+  REQUIRE(is_ok(h.run(cmd(play))));
+  h.release_all();
+  h.advance(std::chrono::milliseconds(1));
+  seek.time = 1 * (kSec / 30);
+  REQUIRE(is_ok(h.run(cmd(seek))));
+  REQUIRE_FALSE(h.session.playing());
+  REQUIRE(h.session.time() == 1 * (kSec / 30));
+}
+
 TEST_CASE("session: a full ring drops frames and never blocks; stale releases are ignored", "[session][frames]") {
   Harness h(3);
   (void)h.hello();
@@ -597,7 +647,7 @@ TEST_CASE("session: a full ring drops frames and never blocks; stale releases ar
   v.device_pixel_ratio = 2.0;
   REQUIRE(is_ok(h.run(cmd(v))));
   REQUIRE(h.sink.config().width == 640);
-  REQUIRE(is_ok(h.run(cmd(api::Play{1.0, api::PlayRange::all, {}, false, false, {}}))));
+  REQUIRE(is_ok(h.run(cmd(api::Play{1.0, api::PlayRange::all, {}, false, false, {}, false}))));
   h.advance(std::chrono::seconds(1));  // nobody releases
   for (int i = 0; i < 10; ++i) h.advance(std::chrono::milliseconds(40));
   REQUIRE(h.frames_ready().size() == 3);  // the ring, and not one more
@@ -706,7 +756,7 @@ TEST_CASE("session: the same request stream produces the same bytes", "[session]
     v.height = 450;
     v.device_pixel_ratio = 1.0;
     (void)h.run(cmd(v));
-    (void)h.run(cmd(api::Play{1.0, api::PlayRange::all, {}, false, false, {}}));
+    (void)h.run(cmd(api::Play{1.0, api::PlayRange::all, {}, false, false, {}, false}));
     for (int i = 0; i < 100; ++i) {
       h.release_all();
       h.advance(std::chrono::milliseconds(7));

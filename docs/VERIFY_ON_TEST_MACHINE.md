@@ -5,6 +5,77 @@ build the full engine (Dawn/Skia/ffmpeg) or run the suites in parallel. Each
 item below was written but not run. Check them on a machine that can build
 every preset (the Windows RTX 4060 box, or a Mac with 16 GB+ and Docker off).
 
+## What is still open (2026-10-05) — read this first
+
+The sections below this one are the history of each branch. Many of their
+unticked items name flags and a TypeScript engine that no longer exist
+(`PREMATION_ENGINE`, `PREMATION_ENGINE_OWNER`, `PREMATION_EXPORT_ENGINE`, "both
+engines", "compare with the TS renderer"): those items are closed by the
+engine's own suites, which now run in CI. What a release still needs from a
+real machine is this list.
+
+Verified on the Windows RTX 4060 box, 2026-10-05: `windows-clang-cl-engine`
+builds; ctest 15/15; every `*.native.test.*` suite on the full engine with
+`--no-gpu` (173 suites); the native golden gate (335/345 gated, 420/420 ported
+— the same numbers CI's WARP run gives, so the gate is blocking in CI);
+`npm run bench:check`; tsc; lint.
+
+**Real Mac (nothing has run on one):**
+- [ ] The viewport over route C (`__premationEngineSurface.route === 'shared'`,
+      IOSurface) and over route A with the host bridge removed; 50 resizes leak
+      no IOSurfaces; a popped-out Viewport on both routes.
+- [ ] VideoToolbox decode of H.264 / HEVC / ProRes footage (the CI runner's
+      device refuses and falls back to software).
+- [ ] Text in a system family (`sans-serif`, Helvetica, a variable font) renders
+      with the right face (CoreText); `listFonts` lists the installed fonts.
+- [ ] Image footage (PNG / JPEG / WebP / GIF / BMP) renders; a JPEG sequence
+      export opens in Preview. TIFF stills are Windows-only.
+- [ ] Transcribe (the engine's HTTP goes through the system libcurl).
+- [ ] The signed path, once certificates exist: `codesign --verify` on
+      `Contents/Resources/engine/premation-engine`, notarization of the nested
+      binaries, auto-update (gated on the signature).
+
+**Windows real app (the built installer, not the dev server):**
+- [ ] Rename `premation-engine.exe` away → the "Premation cannot start" dialog,
+      then quit. Kill the engine three times inside a minute → "Engine
+      unavailable": Save Recovery Copy, Try Again (the document comes back),
+      Quit.
+- [ ] Kill the engine once mid-session → one replay, the document and both
+      windows come back, no double replay; after a job applied (Scene Edit
+      Detection, Track Motion Apply) the replay writes its result without
+      re-running the job.
+- [ ] Open a 0.8.x project with JavaScript plugin effects: it opens, one
+      notice, Undo restores, Save drops them.
+- [ ] Undo is one step after each kind of edit (the recorder is gone: an edit
+      that wrote around the engine would have NO undo — none is known,
+      `lint:engine-writes` reads 0).
+- [ ] Export form and Render Queue: H.264, ProRes 16-bit, PNG / JPEG sequence,
+      HDR10; a project the engine cannot render fails with its reason.
+- [ ] Preview ▸ Cache Work Area Now fills the cache bar and leaves the playhead
+      where it was; Space during the fill stops it. Focus Mode (enter a group,
+      isolate a layer) dims the other layers in the viewport and not in an
+      export. The tracker's loupe and the Clone Source Overlay show the
+      viewport's pixels; the AI chat's result card shows the frame.
+- [ ] The IK/FK Chain Mode switch, toggled twice quickly, keeps the limb still.
+
+**CI, after the next push:**
+- [ ] `engine` jobs green on all three OSes (the macOS decode test and the
+      Windows audio-clock test were fixed 2026-10-05).
+- [ ] The release dry run (`workflow_dispatch`) packages macOS (the
+      "Verify the engine shipped" step used `globstar`, which macOS bash 3.2
+      lacks).
+- [ ] The Linux `*.native.test` step: it failed 12 suites because `--no-gpu`
+      also switched the frame builder off (no text layout, no rig); the engine
+      keeps it on now. When it is green, drop its `continue-on-error`.
+- [ ] The bench ratchet on the runner: regenerate `bench/baseline.json` from a
+      green run's `bench-results` artifact (it still lists 41 metrics of the
+      deleted TypeScript engine), then drop its `continue-on-error`.
+- [ ] `clang-format` is still advisory: the tree has never been formatted.
+
+**Performance targets (NATIVE_CORE_PLAN §7)** have not been re-measured since
+the TypeScript engine went: 100 layers with effects at 1080p, 4K ProRes scrub
+latency, export fps against 0.8.5.
+
 ## Status on the Windows RTX 4060 box (2026-09-28)
 
 Built and run there after the `wip-stopped` merges: `windows-clang-cl-engine`

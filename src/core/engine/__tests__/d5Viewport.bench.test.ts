@@ -77,7 +77,7 @@ async function playComp(native: NativeEngine, client: EngineClient, layers: numb
     dropped = 0;
     await client.execute({
       type: 'play', rate: 1, range: 'custom', custom: { start: 0, duration: secondsToFlicks(2) },
-      audio: false, cacheFirst: false,
+      audio: false, cacheFirst: false, cacheOnly: false,
     });
     const until = Date.now() + 60_000;
     while (phase !== 'stopped' && Date.now() < until) await sleep(40);
@@ -168,7 +168,7 @@ describe('D5 engine viewport frame time', () => {
           dropped = 0;
           await client.execute({
             type: 'play', rate: 1, range: 'custom', custom: { start: 0, duration: secondsToFlicks(2) },
-            audio: false, cacheFirst: false,
+            audio: false, cacheFirst: false, cacheOnly: false,
           });
           const until = Date.now() + 60_000;
           while (phase !== 'stopped' && Date.now() < until) await sleep(40);

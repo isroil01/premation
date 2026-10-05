@@ -770,6 +770,11 @@
     "type": "setViewportHiddenLayers"
   },
   {
+    "id": 814,
+    "kind": "control",
+    "type": "setViewportFocus"
+  },
+  {
     "id": 1771,
     "kind": "control",
     "type": "setOverlayGeometry"

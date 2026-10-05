@@ -189,8 +189,7 @@ export function usePreviewMenuItems(): { items: DropdownItem[]; degraded: boolea
       id: 'preview-cache-now',
       label: 'Cache Work Area Now',
       icon: 'refresh',
-      // The engine fills its cache from the frames it draws; it cannot pre-render a
-      // span yet (CACHE_WORK_AREA_UNAVAILABLE, previewCacheCommands.ts).
+      // Enabled while there is a composition to cache (previewCacheCommands.ts).
       disabled: !canCacheWorkArea(),
       onSelect: cacheWorkAreaNow,
     },

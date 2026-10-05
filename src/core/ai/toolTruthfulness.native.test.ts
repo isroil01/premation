@@ -23,7 +23,7 @@ import { readNodePolystar } from '@core/scene/polystar';
 import { applyPathOpChain, readPathOps, resolvePathOps, readTrimOp } from '@core/scene/pathOps';
 import { EFFECT_DEFS, BLUR_MAX_PX } from '@core/effects/effects';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { measureTextNodeBoxes } from '@core/text/measureText';
+import { engine } from '@core/engine/engineInstance';
 import { buildSvgLayerFragment } from '@/engine-client/svgFragment';
 import { insertFragment } from '@/engine-client/insertFragment';
 import { documentMirror } from '@stores/documentMirror';
@@ -401,15 +401,18 @@ describe('add_kinetic_title', () => {
   itFullEngine('sets words with ONE gap between every pair, whatever their lengths', async () => {
     const res = await registry().execute('add_kinetic_title', { text: 'Every frame tells a story', fontSize: 100 }, ctx());
     expect(res.ok).toBe(true);
-    const words = (await docView()).getChildren('comp_root')
-      .map((n) => {
+    // The SAME measurer the renderer sizes the word with: the engine's text layout.
+    const advance = async (id: string): Promise<number> => {
+      const l = await engine().query({ type: 'getTextLayout', layer: id, time: 0 });
+      if (!l.ok) throw new Error(l.error.message);
+      return l.value.box.width;
+    };
+    const words = (await Promise.all((await docView()).getChildren('comp_root')
+      .map(async (n) => {
         const t = n.components.find((c) => c.type === 'Transform')!.props as { x: number };
         const content = String(n.components.find((c) => c.type === 'Text')!.props.content);
-        // The SAME measurer the renderer sizes the word with; the per-character
-        // estimate is only what the recipe falls back to with no canvas at all.
-        const w = measureTextNodeBoxes(n)?.advance ?? content.length * 100 * 0.56;
-        return { x: t.x, content, w };
-      })
+        return { x: t.x, content, w: await advance(n.id) };
+      })))
       .sort((a, b) => a.x - b.x);
     expect(words.map((w) => w.content)).toEqual(['Every', 'frame', 'tells', 'a', 'story']);
 

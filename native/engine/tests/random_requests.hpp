@@ -162,7 +162,7 @@ class RandomTraffic {
       case 13: c.v = api::Redo{}; break;
       case 14: c.v = api::BeginGesture{"g"}; break;
       case 15: c.v = api::EndGesture{static_cast<std::uint32_t>(u(4)), coin()}; break;
-      case 16: c.v = api::Play{coin() ? 1.0 : number(), static_cast<api::PlayRange>(u(3)), {}, false, false, {}}; break;
+      case 16: c.v = api::Play{coin() ? 1.0 : number(), static_cast<api::PlayRange>(u(3)), {}, false, false, {}, false}; break;
       case 17: c.v = api::Pause{coin()}; break;
       case 18: c.v = api::Seek{time(), api::SeekMode::exact}; break;
       case 19: c.v = api::Step{static_cast<std::int32_t>(u(21)) - 10}; break;

@@ -27,12 +27,9 @@ jobs:
   # Windows: the runner has no GPU, but D3D12 always has WARP (Microsoft's
   # conformant software rasterizer), which Dawn takes when nothing else is
   # there; the `chromium` profile the script picks on Windows is the one the
-  # baseline was blessed with (the RTX 4060 box). The build is blocking; the
-  # gate is NOT until its first run on WARP has been reviewed — a software
-  # rasterizer may differ from the blessed GPU at edges (see
-  # docs/VERIFY_ON_TEST_MACHINE.md "platform-plumbing"). To flip it: compare
-  # the uploaded report with a GPU run, adjust the baseline if WARP is only
-  # within tolerance, remove `continue-on-error` from the gate step.
+  # baseline was blessed with (the RTX 4060 box). The build and the gate are
+  # blocking: WARP's first runs (2026-10-04) matched the GPU run frame for
+  # frame (335/345 gated, 420/420 ported).
   native-golden:
     name: native golden · windows · D3D12 (WARP)
     runs-on: windows-latest
@@ -59,7 +56,6 @@ jobs:
 
       - name: Native golden gate
         id: gate
-        continue-on-error: true
         shell: bash
         env:
           NATIVE_SCENE_EXE: ${{ steps.engine.outputs.engine-dir }}/premation-scene.exe

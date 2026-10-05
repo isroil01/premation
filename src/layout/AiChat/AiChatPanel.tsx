@@ -19,11 +19,12 @@ import { useAiProviderStore } from '@stores/aiProviderStore';
 
 import type { GatewayProviderId, AiProviderId } from '@core/api/client';
 import { processImageFile, type PendingImage } from '@core/ai/imageAttachment';
-import { goToStart, isTransportPlaying, pauseTransport, playTransport } from '@core/timeline/timelineView';
+import { goToStart, isTransportPlaying, pauseTransport, playheadSeconds, playTransport } from '@core/timeline/timelineView';
 import { useAiChatContext } from './AiChatContext';
 import { openAiSettings } from '@layout/Settings/openCustomizeDialog';
 import styles from './AiChatPanel.module.css';
-import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { engineCompStill } from '@core/engine/engineStill';
+import { activeCompIdNow } from '@hooks/useMirror';
 
 /** BYOK providers offered in the picker, in display order. */
 const PROVIDER_OPTIONS: { id: GatewayProviderId; label: string }[] = [
@@ -232,19 +233,27 @@ export function AiChatPanel(): JSX.Element {
       setIsPlayingPreview(false);
       return undefined;
     }
+    // The engine's still of the composition at the playhead (the page has no
+    // pixels of its own: the viewport is the engine's). A short wait lets the
+    // transaction's edits land first.
+    let cancelled = false;
+    let url: string | null = null;
     const timer = setTimeout(() => {
-      try {
-        // The viewport's CONTENT canvas, not `document.querySelector('canvas')`
-        // — that returns the first canvas in the DOM, which is the scopes
-        // panel's histogram or a 2/4-up secondary pane whenever one is
-        // mounted, so the thumbnail showed the wrong picture entirely.
-        const cvs = getWorkspaceController().getContentCanvas();
-        if (cvs) setCanvasSnapshot(cvs.toDataURL('image/png'));
-      } catch {
-        /* cross-origin/empty canvas — show the card without a snapshot */
-      }
+      const comp = activeCompIdNow();
+      if (!comp) return;
+      void engineCompStill(comp, playheadSeconds(), 480)
+        .then((blob) => {
+          if (cancelled || !blob) return;
+          url = URL.createObjectURL(blob);
+          setCanvasSnapshot(url);
+        })
+        .catch(() => { /* no still — the card shows without a snapshot */ });
     }, 150);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      if (url) URL.revokeObjectURL(url);
+    };
   }, [hasPendingTx]);
 
   const addFiles = useCallback(async (files: FileList | File[]) => {

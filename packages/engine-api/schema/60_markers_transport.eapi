@@ -78,6 +78,8 @@ command play = 800 [control] {
   /// Cache frames first, then play at full rate (RAM preview).
   cacheFirst: bool = 5;
   from?: Time = 6;
+  /// With `cacheFirst`: stop once the range is stored instead of playing it, and put the playhead back where it was (Cache Work Area Now). A seek or a pause during the fill ends it with what is stored.
+  cacheOnly: bool = 7;
 }
 command pause = 801 [control] { returnToStart: bool = 1; }
 /// Move the playhead. Scrub mode may render at preview quality and plays audio scrub.
@@ -151,6 +153,8 @@ command purgeCache = 811 [control] { kind: PurgeKind = 1; }
 command setInteracting = 812 [control] { interacting: bool = 1; }
 /// The layers a viewport does not draw — editor state, not document state: the text layer being edited in place (the editor shows its text, so the engine must not draw it underneath). Replaces the viewport's previous set; empty = draw every layer. Hides the layer itself (as its eye switch would) in that viewport's frames only: exports, thumbnails and other viewports draw it. A control: no history, no revision.
 command setViewportHiddenLayers = 813 [control] { viewport: u32 = 1; layers: LayerId[] = 2; }
+/// Focus Mode — editor state, not document state: the layers the user is working inside. Every other layer of that viewport's frames is drawn as a dim reference (12 % of its opacity); exports, thumbnails and other viewports are untouched. Replaces the viewport's previous set; empty = no focus, every layer draws as authored. A control: no history, no revision.
+command setViewportFocus = 814 [control] { viewport: u32 = 1; layers: LayerId[] = 2; }
 
 /// B4 — what the overlay geometry push carries for each subscribed layer (FrameGeometry, 95_frames).
 enum OverlayKind { transform = 0; bounds = 1; motionPath = 2; rig = 3; textBox = 4; scene3d = 8; }

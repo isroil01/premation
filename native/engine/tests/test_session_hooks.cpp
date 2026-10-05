@@ -109,7 +109,7 @@ TEST_CASE("session hooks: the transport drives the media clock and the audio clo
   (void)h.hello();
   const auto comp = open_comp(h);
 
-  REQUIRE(is_ok(h.run(cmd(api::Play{1.0, api::PlayRange::all, {}, false, false, {}}))));
+  REQUIRE(is_ok(h.run(cmd(api::Play{1.0, api::PlayRange::all, {}, false, false, {}, false}))));
   REQUIRE(clock.plays.size() == 1);
   CHECK(clock.plays[0].from == 0);
   CHECK(clock.plays[0].rangeStart == 0);
@@ -283,6 +283,45 @@ TEST_CASE("session hooks: setViewportHiddenLayers reaches the frame builder and 
   REQUIRE(is_ok(h.run(cmd(api::CloseViewport{1}))));
   REQUIRE(is_ok(h.run(cmd(v))));
   CHECK(builder.lastViewport.hiddenLayers.empty());
+}
+
+TEST_CASE("session hooks: setViewportFocus reaches the frame builder, per viewport, until cleared", "[session][frames]") {
+  Harness h(64);
+  FakeBuilder builder;
+  h.session.set_frame_builder(&builder);
+  (void)h.hello();
+  (void)open_comp(h);
+  CHECK(builder.lastViewport.focusLayers.empty());
+
+  api::SetViewportFocus focus;
+  focus.viewport = 1;
+  focus.layers = {"group_a", "child_b"};
+  const int before = builder.builds;
+  REQUIRE(is_ok(h.run(cmd(focus))));
+  CHECK(builder.builds > before);  // the viewport redraws with the other layers dimmed
+  REQUIRE(builder.lastViewport.focusLayers.size() == 2);
+
+  // A camera move keeps the set.
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 1.0;
+  v.zoom = 2.0;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  REQUIRE(builder.lastViewport.focusLayers.size() == 2);
+
+  // Empty = no focus.
+  focus.layers.clear();
+  REQUIRE(is_ok(h.run(cmd(focus))));
+  CHECK(builder.lastViewport.focusLayers.empty());
+
+  // Closing the viewport drops its set.
+  focus.layers = {"group_a"};
+  REQUIRE(is_ok(h.run(cmd(focus))));
+  REQUIRE(is_ok(h.run(cmd(api::CloseViewport{1}))));
+  REQUIRE(is_ok(h.run(cmd(v))));
+  CHECK(builder.lastViewport.focusLayers.empty());
 }
 
 TEST_CASE("session hooks: getLayerErrors answers the set last announced (D5)", "[session][frames]") {

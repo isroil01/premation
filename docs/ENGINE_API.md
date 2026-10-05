@@ -612,7 +612,7 @@ UI's business (it may re-select the ids named in the undone entry's events).
 | Command | Semantics |
 |---|---|
 | `setActiveComposition` | Which comp the clock and viewports follow (the active tab). |
-| `play` | Rate (±, up to 4× for J/K/L), range (all / work area / custom), audio on/off, `cacheFirst` (RAM preview: cache then play at full rate), optional start time. Audio is the master clock when enabled; video drops frames rather than drifting (AE-style `min(dt, 1.5 frames)` pacing becomes an engine policy). |
+| `play` | Rate (±, up to 4× for J/K/L), range (all / work area / custom), audio on/off, `cacheFirst` (RAM preview: cache then play at full rate), `cacheOnly` (with `cacheFirst`: stop once the range is stored and put the playhead back — Cache Work Area Now; a seek or a pause ends the fill with what is stored), optional start time. Audio is the master clock when enabled; video drops frames rather than drifting (AE-style `min(dt, 1.5 frames)` pacing becomes an engine policy). |
 | `pause` | Optionally return to the start (numpad 0 vs space). |
 | `seek` [c] | `exact` or `scrub` (preview quality allowed, audio scrub on). Coalesced: only the newest pending seek is rendered. |
 | `step` | ± frames. |
@@ -623,6 +623,7 @@ UI's business (it may re-select the ids named in the undone entry's events).
 | `setCacheBudget`, `purgeCache` | RAM/disk cache sizing and purges. |
 | `setInteracting` | Hint while dragging: the engine may drop to draft until it ends. |
 | `setViewportHiddenLayers` | `{viewport, layers}` — the layers a viewport does not draw (the text layer being edited in place). Replaces the viewport's set; empty = all draw; closing the viewport drops it. View state: no history, no revision; exports, thumbnails and other viewports still draw the layer. |
+| `setViewportFocus` | `{viewport, layers}` — Focus Mode's working set: every other layer of that viewport's frames draws as a dim reference (12 % of its opacity). Replaces the viewport's set; empty = no focus; closing the viewport drops it. View state: no history, no revision; exports, thumbnails and other viewports are untouched. |
 
 The engine reports the clock with ephemeral `playhead` events (at most once per
 displayed frame, and after every seek) and `transportChanged` on state changes;

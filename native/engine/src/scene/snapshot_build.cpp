@@ -1163,7 +1163,12 @@ void Walk::build_node(const doc::Node& n) {
   // A cloner clone's opacity MULTIPLIES the resolved one (cloner_port.cpp).
   const auto cloneOff = wn_.cloneOffsets.find(n.id);
   const CloneOffset* clone = cloneOff != wn_.cloneOffsets.end() ? &cloneOff->second : nullptr;
-  const double baseOpacity = (a.has("opacity") ? *a.get("opacity") / 100 : base.opacity) * (clone != nullptr ? clone->opacity / 100 : 1);
+  // Focus Mode: a layer outside the working set is a dim reference (buildSnapshot GHOST_OPACITY).
+  constexpr double kGhostOpacity = 0.12;
+  const bool ghost = !c_.focusLayers.empty() && !layer_view_of(n) &&
+                     std::ranges::find(c_.focusLayers, n.id) == c_.focusLayers.end();
+  const double baseOpacity = (a.has("opacity") ? *a.get("opacity") / 100 : base.opacity) *
+                             (clone != nullptr ? clone->opacity / 100 : 1) * (ghost ? kGhostOpacity : 1);
   l.effects = effects_of(n, a, layerTimeNow, &l);
 
   const bool isSolid = fx.at("solid").is_bool() && fx.at("solid").b();
