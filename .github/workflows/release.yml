@@ -208,9 +208,34 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  # One draft, created once, BEFORE the platform builds run. electron-builder
+  # looks for an existing draft by tag and attaches to it; when two platform
+  # jobs publish at the same moment and no draft exists yet, each creates its
+  # own — v0.9.0 ended up as two half-releases, Windows in one and macOS in the
+  # other. Creating the draft here, serially, leaves nothing to race for.
+  draft:
+    name: Create the draft release
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or reuse the draft for this tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Draft for $GITHUB_REF_NAME already exists; the builds attach to it."
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft               --title "${GITHUB_REF_NAME#v}" --notes "Release notes: see CHANGELOG.md."
+            echo "Created draft $GITHUB_REF_NAME."
+          fi
+
   build:
     name: Build ${{ matrix.name }}
-    needs: [verify, engine]
+    # `draft` is skipped on a workflow_dispatch rehearsal; `always()` keeps the
+    # builds running then, while a FAILED draft job still stops them.
+    needs: [verify, engine, draft]
+    if: ${{ always() && needs.verify.result == 'success' && needs.engine.result == 'success' && (needs.draft.result == 'success' || needs.draft.result == 'skipped') }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
