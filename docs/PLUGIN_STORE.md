@@ -1,0 +1,169 @@
+# The native plugin store
+
+AE parity step 2 (docs/AE_PARITY_PLAN.md). Owner decisions (2026-10-06):
+plugins are **free only**; the publisher sets each plugin **public or
+private**; plugins **run locally** in `premation-engine`, never on a cloud
+GPU. The editor is `isroil01/premation`; the registry is `isroil01/motion-back`
+(`src/plugins`, `prisma/schema.prisma`). This page is the contract both follow.
+
+## 1. The bundle
+
+A plugin is a folder (docs/PLUGIN_SDK.md §Packaging) holding
+`premation-plugin.json` and one binary per platform it supports:
+
+```json
+{
+  "manifestVersion": 1,
+  "id": "com.example.glow",
+  "name": "Example Glow",
+  "version": "1.2.0",
+  "vendor": "Example",
+  "sdk": { "major": 1, "minor": 0 },
+  "binary": {
+    "windows-x64": "glow.dll",
+    "macos-universal": "libglow.dylib",
+    "linux-x64": "libglow.so"
+  },
+  "effects": [ { "matchName": "com.example.glow", "name": "Glow", "category": "Example" } ]
+}
+```
+
+**Binary keys.** The engine looks up, in order, the most specific key for the
+machine it runs on, then the generic one:
+
+| Machine | Keys tried |
+|---|---|
+| Windows x64 | `windows-x64`, `windows` |
+| macOS arm64 | `macos-arm64`, `macos-universal`, `macos` |
+| macOS x64 | `macos-x64`, `macos-universal`, `macos` |
+| Linux x64 | `linux-x64`, `linux` |
+| Linux arm64 | `linux-arm64`, `linux` |
+
+## 2. The package (`.pplugin`)
+
+`node scripts/pack-plugin.mjs <bundle-folder> [--out x.pplugin] [--key key.json]`
+zips the bundle into a `.pplugin`:
+
+- The zip holds the bundle's files at its root (`premation-plugin.json` at
+  `/premation-plugin.json`), no folders above it. Paths are `/`-separated,
+  relative, with no `..`, no absolute paths, no symlinks.
+- The packer adds an **`integrity`** member to the manifest before zipping:
+  `"integrity": { "files": { "<path>": "<sha256 hex>", ... } }` — every file
+  in the package except the manifest itself. An installer refuses a package
+  whose files do not match it exactly (a file missing, extra, or different).
+- Limits: 2000 files, 128 MB per file, 256 MB per package.
+
+**Signature.** `node scripts/sign-plugin.mjs keygen|sign|verify` (or
+`pack-plugin --key`). The publisher signs the **raw `.pplugin` bytes**:
+ECDSA P-256 with SHA-256, IEEE P1363 (r‖s, 64 bytes), base64; the public key
+is SPKI DER, base64. This is the registry's existing scheme
+(`motion-back/src/plugins/plugin-signature.ts`), unchanged. Because the
+manifest — with its per-file and so per-platform SHA-256s — is inside the
+signed bytes, the signature covers the manifest and every binary.
+
+## 3. Registry (motion-back)
+
+Existing routes keep their meaning; native packages are a second `kind` of
+`PluginVersion`.
+
+- `POST /plugins` (multipart: `file`, `signature`, `publicKey`, `backupKey?`,
+  `visibility?`). The server sniffs the package: a zip whose root holds
+  `premation-plugin.json` is `kind: "native"`; the old JS package is
+  `kind: "js"`. For native it reads the manifest server-side (never from the
+  client), checks `integrity` against the zip, and records:
+  `sdkMajor`, `sdkMinor`, `effects` (match names, names, categories) and
+  `artifacts: [{ platform, file, sha256, size }]` (one per `binary` key).
+  The bytes go to object storage (`StorageService`), not Postgres; the
+  version row keeps the storage key, `size` and `sha256`. Native packages may
+  be up to 256 MB.
+- **Review policy.** Every native version is scanned (`plugin-scan.ts`):
+  binary count, size, unexpected files, effects not owned by the id. A new
+  version of a public native plugin whose publisher is not **verified** is
+  held for review (`pending`). **No native plugin becomes public unless its
+  publisher is verified**: publishing public or switching to `public` without
+  verification answers 403 with `detail.code: "publisher_not_verified"`.
+  Private plugins never need review to install for their owner. (JS
+  packages keep their old rules; the editor no longer runs them.)
+- **Visibility.** `private` means only the owner can see it in browse,
+  detail, updates and download. Toggled with `PATCH /plugins/:id/listing
+  { visibility }`. Enforced in `plugins.service.ts` browse, detail, download
+  and updates (the existing behaviour, kept and tested for native).
+- `GET /plugins?kind=native` filters browse. Summaries and details carry
+  `kind`, `sdk: {major, minor}`, `platforms: string[]`, `effects`.
+- **Download.** `GET /plugins/:id/versions/:version/download` (and the
+  owner's `/plugins/mine/:id/...`) answers, for native,
+  `{ id, version, kind: "native", packageUrl, signature, publisherKey,
+  sha256, size, artifacts }` — `packageUrl` is a short-lived URL to the bytes
+  (no base64 in JSON for a 256 MB file). JS versions keep `package`
+  (base64).
+- `POST /plugins/updates { installed: [{ id, version }] }` answers the newer
+  approved, visible versions.
+- `GET /plugins/revocations` — the signed revocation list, unchanged; the
+  engine refuses a revoked plugin at start (§5).
+- Free only: there is no price, licence key or payout anywhere.
+
+## 4. Editor install (Electron main, `electron/ipc/nativePlugins.ts`)
+
+1. The page asks main to install `{ id, version, owner?: boolean }`. Main
+   fetches the download record with the user's session (so private plugins
+   work for their owner), then the bytes from `packageUrl`.
+2. Verify: size and SHA-256 equal the record; the signature verifies over the
+   bytes with `publisherKey`; and `publisherKey` is the key this machine
+   pinned for the id at first install (a changed key is refused with a clear
+   message unless the registry reports an authorised rotation).
+3. Unzip into `<userData>/native-plugins/.staging/<id>-<random>/`, rejecting
+   unsafe paths, then check every file against the manifest's `integrity`
+   and that the manifest's `id` and `version` equal the request.
+4. Swap atomically: rename the staged folder to `<userData>/native-plugins/<id>`
+   (the previous copy is renamed aside first and removed after). On Windows a
+   loaded DLL cannot be replaced: the new copy waits in `.pending/<id>` and is
+   swapped in at the next engine start (before `--plugins` is scanned).
+5. macOS: remove `com.apple.quarantine` from the installed files (a signed
+   download the user chose to install).
+6. Ask the engine to `rescanPlugins` (§5): the plugin's effects are usable
+   without a restart.
+
+`<userData>/native-plugins/state.json` holds `{ plugins: { <id>: { enabled,
+version, publisherKey, installedAt } }, uninstall: [ids] }`. Uninstall adds
+the id to `uninstall` and disables it now; the folder is deleted at the next
+start (Windows locks loaded DLLs). Enabled/disabled is applied at engine start
+through `setPluginEnabled`.
+
+## 5. Engine
+
+- `rescanPlugins` (command, `70_jobs.eapi`): rescans the plugin folders and
+  answers the plugin list; new bundles load at once. A plugin already loaded
+  stays loaded until the engine restarts (a module cannot be swapped under live
+  instances), so an update or uninstall applies at the next start; the editor
+  says so.
+- `--plugin-disabled <id>` (repeatable): listed `disabled`, not loaded — none
+  of its code runs until `setPluginEnabled` turns it on.
+- `listEffects` carries a plugin effect's buttons (`actions`) and param
+  precision; the editor builds its effect cards from it
+  (`src/core/inspector/pluginEffectDefs.ts`), honours `getEffectUi`
+  (hidden / renamed / disabled params) and runs buttons with
+  `invokeEffectAction`.
+- Export: the export job starts its own plugin host over the same folders,
+  disabled set and revocations (job fields `plugins`, `pluginDisabled`,
+  `pluginRevoked`, written by `electron/engineExport.ts` for the app's export
+  queue and the CLI), so plugin effects render in exports. Server renders
+  are refused before submission when the project uses plugin effects, naming
+  the plugins (`src/layout/Export/cloudRender.ts`).
+- Revocation: Electron fetches the signed list at start (public, no session),
+  verifies it with the operator key pinned in the app, keeps the newest, and
+  hands the engine the installed plugins it hits at every launch
+  (`--revoked <file>`); a listed plugin is reported `revoked` and never
+  loaded. A versioned entry only hits that version.
+
+## 6. Tooling and the SDK artifact
+
+- `scripts/pack-plugin.mjs` / `scripts/sign-plugin.mjs` (also in the SDK at
+  `share/premation-sdk/`): pack (deterministic), keygen, sign, verify,
+  publish. `--only-present` packs a one-OS build.
+- A release attaches `premation-sdk-<platform>.zip` (Windows x64, macOS arm64,
+  macOS x64, Linux x64): headers, `find_package(PremationSdk)` with
+  `premation_add_plugin()`, `bin/premation-plugins`, the samples and the tools
+  (`.github/workflows/release.yml`, `cmake --install … --component sdk`).
+- `examples/plugin-ci/` is a complete plugin repository: an example effect and
+  a workflow that builds three platforms against the SDK, merges them, packs,
+  signs and publishes on a tag.

@@ -1,11 +1,11 @@
 /**
- * "Registry plugins aren't supported in 0.9 yet" — once, on the dashboard.
+ * The plugin store notice — once, on the dashboard.
  *
- * Premation 0.9 removed the JavaScript plugin system and its registry; native
- * SDK plugins still run. Someone who used registry plugins deserves to be told
- * where they went and what still works, and then to be able to close it for
- * good: the × is remembered per user (core/nativePlugins, localStorage) and
- * never touches a project.
+ * Premation 0.9 removed the JavaScript plugin system and its registry; the
+ * store returned for native SDK plugins (docs/PLUGIN_STORE.md). Someone who
+ * used registry plugins deserves to be told what changed, and then to be able
+ * to close it for good: the × is remembered per user (core/nativePlugins,
+ * localStorage) and never touches a project.
  *
  * `onLearnMore` is a prop because the Plugins page is the owning page's to
  * route to; the notice does not reach into the dashboard's tab state.
@@ -18,7 +18,7 @@ import { useRegistryNoticeDismissed } from '@hooks/useNativePlugins';
 import styles from './NativePlugins.module.css';
 
 export const REGISTRY_NOTICE_TEXT =
-  "Plugins from the plugin registry aren't supported in Premation 0.9 yet. Native plugins still work — install them by copying them into your plugins folder.";
+  'The plugin store is back, for native plugins: they are free, run on this computer inside the engine, and install without a restart. Old JavaScript plugins no longer run.';
 
 export function RegistryPluginsNotice({ onLearnMore }: { onLearnMore?: () => void }): JSX.Element | null {
   const dismissed = useRegistryNoticeDismissed();

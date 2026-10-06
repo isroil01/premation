@@ -745,6 +745,57 @@ async function authRequest(path: string, body: unknown): Promise<AuthResult> {
   };
 }
 
+/** A native plugin in the store (motion-back plugins.service browse / detail; docs/PLUGIN_STORE.md §3). */
+export interface StorePluginSummary {
+  id: string;
+  name: string;
+  description: string;
+  homepage?: string | null;
+  latestVersion: string;
+  kind: 'js' | 'native';
+  sdk: { major: number; minor: number } | null;
+  platforms: string[];
+  effects: Array<{ matchName: string; name: string; category: string }>;
+  installs: number;
+  /** SPKI base64 of the key the latest version is signed with. */
+  publisherKey: string;
+  /** SHA-256 of the latest version's package. */
+  sha256: string;
+  updatedAt: string;
+  publisher: { namespace: string; displayName: string; verified: boolean };
+  categories: string[];
+  license: string | null;
+  iconUrl: string | null;
+  visibility?: 'public' | 'private';
+}
+
+export interface StorePluginDetail extends StorePluginSummary {
+  readme?: string | null;
+  versionHistory?: Array<{ version: string; createdAt: string; kind?: 'js' | 'native' }>;
+  blocked?: boolean;
+  blockedReason?: string | null;
+}
+
+export interface StorePluginPage {
+  items: StorePluginSummary[];
+  total: number;
+}
+
+export interface StorePluginUpdate {
+  id: string;
+  latestVersion: string;
+  publisherKey: string;
+  sha256: string;
+  blocked: boolean;
+  blockedReason?: string | null;
+  kind: 'js' | 'native';
+}
+
+export interface PublishPluginResult extends StorePluginSummary {
+  warnings: string[];
+  reviewStatus: 'approved' | 'pending';
+}
+
 export const api = {
   // auth
   register: (email: string, password: string, name?: string) =>
@@ -1295,6 +1346,38 @@ export const api = {
       body: JSON.stringify(body),
     }).then(tap(['renders', 'api-usage'])),
   getAutomationRender: (id: string) => request<AutomationRenderJob>(`/v1/renders/${id}`),
+
+  // ── Plugin store (native plugins, free only; docs/PLUGIN_STORE.md) ──
+  /** Browse native plugins (public ones, plus nothing private: private plugins are only on `myPlugins`). */
+  browseNativePlugins: (params: { q?: string; category?: string; sort?: string; limit?: number; offset?: number } = {}) =>
+    request<StorePluginPage>(`/plugins${query({ kind: 'native', ...params })}`),
+  /** One plugin's public listing. */
+  storePluginDetail: (id: string) => request<StorePluginDetail>(`/plugins/${encodeURIComponent(id)}`),
+  /** What the signed-in user has published, private ones included. */
+  myPlugins: () => request<Array<StorePluginSummary & { visibility: 'public' | 'private' }>>('/plugins/mine/list'),
+  /** The owner's view of one plugin (private ones included). */
+  myPluginDetail: (id: string) => request<StorePluginDetail>(`/plugins/mine/${encodeURIComponent(id)}/detail`),
+  /** Public or private, set by the publisher (public needs a verified publisher). */
+  setPluginVisibility: (id: string, visibility: 'public' | 'private') =>
+    request<StorePluginSummary>(`/plugins/${encodeURIComponent(id)}/listing`, {
+      method: 'PATCH',
+      body: JSON.stringify({ visibility }),
+    }),
+  /** Upload a signed `.pplugin` (pack-plugin.mjs --key writes the signature). */
+  publishPlugin: (file: Blob, signature: string, publicKey: string, visibility: 'public' | 'private') => {
+    const form = new FormData();
+    form.append('file', file, 'plugin.pplugin');
+    form.append('signature', signature);
+    form.append('publicKey', publicKey);
+    form.append('visibility', visibility);
+    return request<PublishPluginResult>('/plugins', { method: 'POST', body: form });
+  },
+  /** Newer versions of what is installed (the installed set goes in the body, not the URL). */
+  checkPluginUpdates: (installed: Array<{ id: string; version: string }>) =>
+    request<StorePluginUpdate[]>('/plugins/updates', { method: 'POST', body: JSON.stringify({ installed }) }),
+  /** The signed-in user's publisher identities (verification decides whether anything can be public). */
+  myPublishers: () =>
+    request<Array<{ id: string; namespace: string; displayName: string; verified: boolean; verifiedDomain: string | null }>>('/publishers/mine'),
 };
 
 /**

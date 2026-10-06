@@ -32,6 +32,11 @@ bool sdk_compatible(std::uint32_t major, std::uint32_t minor, std::string& why) 
 }
 
 std::optional<Manifest> parse_manifest(std::string_view json, std::string_view platform, std::string& error) {
+  const std::string_view one[] = {platform};
+  return parse_manifest(json, std::span<const std::string_view>(one), error);
+}
+
+std::optional<Manifest> parse_manifest(std::string_view json, std::span<const std::string_view> platforms, std::string& error) {
   const auto parsed = js::parse(json);
   if (!parsed || !parsed->is_object()) {
     error = "the manifest is not a JSON object";
@@ -63,10 +68,18 @@ std::optional<Manifest> parse_manifest(std::string_view json, std::string_view p
   m.sdkMajor = static_cast<std::uint32_t>(sdk.at("major").num());
   m.sdkMinor = static_cast<std::uint32_t>(sdk.at("minor").num());
   const js::Json& bin = j.at("binary");
-  if (bin.at(platform).is_string()) m.binary = bin.at(platform).str();
+  for (const std::string_view key : platforms) {
+    if (bin.at(key).is_string() && !bin.at(key).str().empty()) {
+      m.binary = bin.at(key).str();
+      m.binaryKey = std::string(key);
+      break;
+    }
+  }
   if (m.binary.empty() || m.binary.find("..") != std::string::npos || m.binary.find('/') != std::string::npos ||
       m.binary.find('\\') != std::string::npos) {
-    error = "no usable binary for platform '" + std::string(platform) + "' (a file name inside the bundle)";
+    std::string tried;
+    for (const std::string_view key : platforms) tried += (tried.empty() ? "" : ", ") + std::string(key);
+    error = "no usable binary for this platform (tried " + tried + "; a file name inside the bundle)";
     return std::nullopt;
   }
   const js::Json& effects = j.at("effects");

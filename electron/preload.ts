@@ -252,6 +252,13 @@ const bridge = {
   plugins: {
     openNativeFolder: () => ipcRenderer.invoke('plugins:openNativeFolder'),
     nativeFolderPath: () => ipcRenderer.invoke('plugins:nativeFolderPath'),
+    // The plugin store: main downloads, verifies and installs (docs/PLUGIN_STORE.md §4).
+    install: (req: { id: string; version: string; owner?: boolean }) => ipcRenderer.invoke('plugins:install', req),
+    uninstall: (id: string) => ipcRenderer.invoke('plugins:uninstall', id),
+    setEnabled: (req: { id: string; enabled: boolean }) => ipcRenderer.invoke('plugins:setEnabled', req),
+    installed: () => ipcRenderer.invoke('plugins:installed'),
+    /** Which binaries this machine loads (docs/PLUGIN_STORE.md §1): the store greys out the rest. */
+    host: { platform: process.platform, arch: process.arch },
   },
 
   popout: {

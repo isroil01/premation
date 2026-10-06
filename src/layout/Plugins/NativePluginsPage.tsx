@@ -1,60 +1,86 @@
 /**
- * The dashboard's Plugins page (`?tab=plugins`).
+ * The dashboard's Plugins page (`?tab=plugins`): the plugin store, what is
+ * installed, and publishing.
  *
- * What changed in 0.9, what still works, what is installed, and how to install
- * more — by hand, because there is no registry or installer in 0.9: copy the
- * plugin into the plugins folder and restart.
+ * Plugins are native SDK plugins (docs/PLUGIN_SDK.md). They are free, run
+ * locally inside the engine, and install from the store with no restart
+ * (docs/PLUGIN_STORE.md). A plugin copied into the plugins folder by hand
+ * still works: Rescan picks it up.
  */
 
-import { useEffect, useState } from 'react';
-import { nativePluginFolderPath } from '@core/nativePlugins/nativePlugins';
+import { useState } from 'react';
+import { Button } from '@components/Button';
+import { Icon } from '@components/Icon';
+import { Segmented } from '@components/Segmented';
+import { engine } from '@core/engine/engineInstance';
+import { canInstallFromStore, rescanPlugins } from '@core/nativePlugins/pluginStore';
+import { useNativePlugins } from '@hooks/useNativePlugins';
+import { useInstalledPlugins } from '@hooks/usePluginStore';
 import { NativePluginsList, OpenPluginsFolderButton } from './NativePluginsList';
+import { PluginStoreBrowser } from './PluginStore';
+import { PublishPlugins } from './PublishPlugins';
 import styles from './NativePlugins.module.css';
 
+type Section = 'store' | 'installed' | 'publish';
+
+const SECTIONS = [
+  { value: 'store' as const, label: 'Store' },
+  { value: 'installed' as const, label: 'Installed' },
+  { value: 'publish' as const, label: 'Publish' },
+];
+
 export function NativePluginsPage(): JSX.Element {
-  const [folder, setFolder] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void nativePluginFolderPath().then((p) => { if (alive) setFolder(p); });
-    return () => { alive = false; };
-  }, []);
+  const native = useNativePlugins();
+  const store = useInstalledPlugins(native.refresh);
+  const [section, setSection] = useState<Section>(canInstallFromStore() ? 'store' : 'installed');
+  const [rescanNote, setRescanNote] = useState<string | null>(null);
 
   return (
     <div className={styles.page}>
-      <section className={styles.card} aria-labelledby="plugins-about">
-        <h3 id="plugins-about" className={styles.cardTitle}>Plugins in Premation 0.9</h3>
-        <p className={styles.text}>
-          Plugins from the plugin registry aren&apos;t supported in Premation 0.9 yet. Native plugins still
-          work: they run inside the engine, and you install them by copying them into your plugins folder.
-          Premation loads everything in that folder when it starts.
-        </p>
-        {folder ? (
-          <p className={styles.text}>
-            Your plugins folder: <span className={styles.path}>{folder}</span>
-          </p>
-        ) : null}
-        <div className={styles.toolbar}>
-          <OpenPluginsFolderButton size="md" />
-        </div>
-      </section>
+      <div className={styles.toolbar}>
+        <Segmented options={SECTIONS} value={section} onChange={setSection} aria-label="Plugins" />
+      </div>
+      {store.message ? (
+        <span className={store.message.error ? styles.error : styles.message} role={store.message.error ? 'alert' : 'status'}>
+          {store.message.text}
+        </span>
+      ) : null}
 
-      <NativePluginsList />
+      {section === 'store' ? <PluginStoreBrowser store={store} /> : null}
 
-      <section className={styles.card} aria-labelledby="plugins-install">
-        <h3 id="plugins-install" className={styles.cardTitle}>Install a native plugin</h3>
-        <ol className={styles.steps}>
-          <li>
-            <strong>Open the plugins folder</strong> with the button above.
-          </li>
-          <li>
-            <strong>Copy the plugin</strong> (its whole folder or bundle, as its author ships it) into that folder.
-          </li>
-          <li>
-            <strong>Restart Premation.</strong> The plugin appears in the list above. If it failed to load,
-            the reason is shown next to it.
-          </li>
-        </ol>
-      </section>
+      {section === 'installed' ? (
+        <>
+          <NativePluginsList store={store} native={native} />
+          <section className={styles.card} aria-labelledby="plugins-folder">
+            <h3 id="plugins-folder" className={styles.cardTitle}>Plugins folder</h3>
+            <p className={styles.text}>
+              Plugins from the store are installed here. A plugin you got elsewhere can be copied into this folder
+              (its whole bundle folder); Rescan loads it without a restart.
+            </p>
+            <div className={styles.toolbar}>
+              <OpenPluginsFolderButton size="md" />
+              <Button
+                variant="secondary"
+                size="md"
+                leftIcon={<Icon name="refresh" size="sm" />}
+                onClick={() => {
+                  setRescanNote(null);
+                  void rescanPlugins(engine()).then((list) => {
+                    setRescanNote(list ? `${list.length} plugin${list.length === 1 ? '' : 's'} found.` : 'The engine has no plugins folder.');
+                    native.refresh();
+                    store.refresh();
+                  });
+                }}
+              >
+                Rescan
+              </Button>
+              {rescanNote ? <span className={styles.message} role="status">{rescanNote}</span> : null}
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {section === 'publish' ? <PublishPlugins store={store} /> : null}
     </div>
   );
 }

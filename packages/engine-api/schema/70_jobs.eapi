@@ -225,7 +225,9 @@ command setCaptions = 1853 { comp: ItemId = 1; cues: CaptionInput[] = 2; style?:
 
 family "Plugins";
 
-/// Enable/disable an installed plugin for this session (install/uninstall stays in the editor's plugin manager).
+/// Enable/disable an installed plugin for this session (install/uninstall stays in the editor's plugin manager; Electron persists the choice and passes `--plugin-disabled` at the next start).
 command setPluginEnabled = 870 [control] { plugin: string = 1; enabled: bool = 2; }
+/// AE parity 2.7 — rescan the plugin folders (`--plugins`, PREMATION_PLUGIN_PATH) after an install: new bundles load and their effects become available without a restart; plugins already loaded stay loaded until the engine restarts (a loaded module cannot be swapped under live instances). Returns every plugin afterwards, like listPlugins.
+command rescanPlugins = 872 [control] {} -> PluginList;
 /// Store plugin data in the DOCUMENT (AE sequence data / arbitrary-data params). Undoable, saved with the project.
 command setPluginData = 871 { layer: LayerId = 1; group: PropPath = 2; key: string = 3; data: bytes = 4; }

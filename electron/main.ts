@@ -25,14 +25,15 @@ import { shouldStartBackend, startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
 import { registerThumbIpc } from './thumbCache';
 import { registerRevealIpc } from './ipc/reveal';
-import { registerNativePluginIpc } from './ipc/nativePlugins';
+import { pluginLaunchArgs, refreshRevocations, registerNativePluginIpc, registerPluginStoreIpc } from './ipc/nativePlugins';
 import { getKeyForProvider, registerAiKeyIpc, VAULT_PROVIDERS, type VaultProvider } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
 import { registerModelDownloadIpc, abortAllModelDownloads } from './modelDownload';
 import { objectMatteUserDir, registerObjectMatteModelIpc } from './objectMatteModel';
 import { registerMediaKeyIpc } from './mediaKeyVault';
 import { registerAiMediaProxyIpc } from './aiMediaProxy';
-import { registerApiProxyIpc, abortAllApiStreams } from './apiProxy';
+import { registerApiProxyIpc, abortAllApiStreams, sendWithAuth } from './apiProxy';
+import { apiBaseUrl } from './apiBase';
 import { aiEnabled, assertRendererEditionMatches } from './edition';
 import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
 import { checkForUpdatesInteractive, initAutoUpdate, registerUpdaterIpc } from './updater';
@@ -1137,6 +1138,11 @@ app.whenReady().then(() => {
   // The Plugins page / panel's "Open plugins folder" — the same folder the
   // engine loads native SDK plugins from (nativePluginDir below).
   registerNativePluginIpc({ dir: nativePluginDirPath });
+  // The plugin store: install / uninstall / enable, verified in main (docs/PLUGIN_STORE.md §4).
+  registerPluginStoreIpc({ dir: nativePluginDirPath, apiBase: apiBaseUrl, authedFetch: sendWithAuth });
+  // The signed revocation list, refreshed at start (public, no session); the
+  // engine reads the kept copy at every launch (pluginLaunchArgs).
+  void refreshRevocations({ dir: nativePluginDirPath, apiBase: apiBaseUrl, authedFetch: sendWithAuth });
   registerRenderIpc();
   // Desktop export as a main-owned queue, each job in its own
   // `premation-engine --export` process (electron/exportProcess.ts). The queue
@@ -1209,6 +1215,7 @@ app.whenReady().then(() => {
     sharedTexture: sharedTexture as unknown as SharedTextureApi,
     // G1: native SDK plugins load in the engine process from this folder.
     nativePluginDir: ensureDir(nativePluginDirPath()),
+    nativePluginLaunchArgs: () => pluginLaunchArgs({ dir: nativePluginDirPath }),
     nativePluginJournal: path.join(app.getPath('userData'), 'native-plugin-journal.bin'),
     // F2 / D5: where the engine-owned document's autosave writes its recovery copy.
     recoveryPath,

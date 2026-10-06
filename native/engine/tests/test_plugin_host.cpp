@@ -15,6 +15,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <span>
 #include <optional>
 #include <string>
 #include <variant>
@@ -28,6 +30,8 @@
 #include "host.hpp"
 #include "journal.hpp"
 #include "json.hpp"
+#include "manifest.hpp"
+#include "module.hpp"
 #include "native_effects.hpp"
 
 namespace pl = premation::plugins;
@@ -369,4 +373,85 @@ TEST_CASE("plugin host: a hang or an abort ends the process and quarantines the 
     CHECK(run_tool(j + "render com.premation.samples.rings") == 1);
   }
 #endif
+}
+
+// ── AE parity step 2: the store's engine side ───────────────────────────
+
+TEST_CASE("plugin manifest: the most specific binary key for this machine wins", "[plugins][store]") {
+  const std::string json = R"({"manifestVersion":1,"id":"com.x.glow","sdk":{"major":1,"minor":0},
+    "binary":{"macos":"generic.dylib","macos-universal":"uni.dylib","macos-arm64":"arm.dylib","windows":"w.dll","linux-x64":"l.so"},
+    "effects":[{"matchName":"com.x.glow"}]})";
+  std::string err;
+  const std::string_view arm[] = {"macos-arm64", "macos-universal", "macos"};
+  const auto a = pl::parse_manifest(json, std::span<const std::string_view>(arm), err);
+  REQUIRE(a);
+  CHECK(a->binary == "arm.dylib");
+  CHECK(a->binaryKey == "macos-arm64");
+  const std::string_view intel[] = {"macos-x64", "macos-universal", "macos"};
+  const auto b = pl::parse_manifest(json, std::span<const std::string_view>(intel), err);
+  REQUIRE(b);
+  CHECK(b->binary == "uni.dylib");
+  const std::string_view win[] = {"windows-x64", "windows"};
+  CHECK(pl::parse_manifest(json, std::span<const std::string_view>(win), err)->binary == "w.dll");
+  const std::string_view none[] = {"linux-arm64", "linux"};
+  CHECK_FALSE(pl::parse_manifest(json, std::span<const std::string_view>(none), err));
+  CHECK(err.find("linux-arm64") != std::string::npos);
+  // This machine's own list ends with the generic key.
+  CHECK(pl::platform_keys().back() == pl::platform_key());
+}
+
+TEST_CASE("plugin host: a plugin disabled at start is listed but not loaded; enabling loads it", "[plugins][store]") {
+  pl::HostOptions o = options(true);
+  o.disabled = {"com.premation.samples.ripple"};
+  pl::PluginHost host(std::move(o));
+  const auto recs = host.scan();
+  const auto it = std::ranges::find_if(recs, [](const pl::PluginRecord& r) { return r.id == "com.premation.samples.ripple"; });
+  REQUIRE(it != recs.end());
+  CHECK(it->status == pl::PluginStatus::disabled);
+  CHECK(host.effect(kRipple) == nullptr);  // no code of it ran: no effect spec exists
+  REQUIRE(host.set_enabled("com.premation.samples.ripple", true));
+  const auto after = host.plugins();
+  const auto it2 = std::ranges::find_if(after, [](const pl::PluginRecord& r) { return r.id == "com.premation.samples.ripple"; });
+  REQUIRE(it2 != after.end());
+  CHECK(it2->status == pl::PluginStatus::loaded);
+  CHECK(host.effect(kRipple) != nullptr);
+}
+
+TEST_CASE("plugin host: a revoked plugin never loads and cannot be enabled", "[plugins][store]") {
+  const fs::path file = temp_file("revoked.json");
+  {
+    std::ofstream f(file);
+    f << R"({"revoked":[{"id":"com.premation.samples.rings","reason":"malware"}]})";
+  }
+  pl::HostOptions o = options(true);
+  o.revoked = pl::read_revoked_file(file);
+  REQUIRE(o.revoked.size() == 1);
+  pl::PluginHost host(std::move(o));
+  const auto recs = host.scan();
+  const auto it = std::ranges::find_if(recs, [](const pl::PluginRecord& r) { return r.id == "com.premation.samples.rings"; });
+  REQUIRE(it != recs.end());
+  CHECK(it->status == pl::PluginStatus::revoked);
+  CHECK(it->error.find("malware") != std::string::npos);
+  CHECK(host.effect(kRings) == nullptr);
+  CHECK(host.set_enabled("com.premation.samples.rings", true));
+  CHECK(host.effect(kRings) == nullptr);
+  // A bad file is an empty list, not a failure.
+  CHECK(pl::read_revoked_file(temp_file("does-not-exist.json")).empty());
+}
+
+TEST_CASE("plugin host: a rescan loads a bundle installed after start", "[plugins][store]") {
+  const fs::path root = fs::temp_directory_path() / "premation-plugin-test-rescan";
+  std::error_code ec;
+  fs::remove_all(root, ec);
+  fs::create_directories(root);
+  pl::HostOptions o = options(false);
+  o.searchPaths = {root};
+  pl::PluginHost host(std::move(o));
+  CHECK(host.scan().empty());
+  fs::copy(bundles() / "ripple", root / "ripple", fs::copy_options::recursive);
+  const auto recs = host.scan();
+  REQUIRE(recs.size() == 1);
+  CHECK(recs.front().status == pl::PluginStatus::loaded);
+  CHECK(host.effect(kRipple) != nullptr);
+  CHECK(host.scan().size() == 1);  // loaded ones stay; nothing doubles
 }

@@ -123,7 +123,7 @@ function bodyOf(raw: unknown): BodyInit | undefined {
  * problem, it is a genuine authorization failure, and retrying it forever is
  * how a client turns one bad request into a request loop.
  */
-async function sendWithAuth(url: string, init: RequestInit): Promise<Response> {
+export async function sendWithAuth(url: string, init: RequestInit): Promise<Response> {
   await loadSession();
   if (accessTokenExpired() && hasSession()) await refreshSession();
 

@@ -36,7 +36,7 @@ describe('the native plugins list', () => {
     engineAnswers([]);
     render(<NativePluginsList />);
     expect(await screen.findByText('No native plugins installed')).toBeInTheDocument();
-    expect(screen.getByText(/Copy a plugin into the plugins folder/)).toBeInTheDocument();
+    expect(screen.getByText(/Install one from the plugin store/)).toBeInTheDocument();
   });
 
   it('shows the engine error instead of a list', async () => {
@@ -81,18 +81,56 @@ describe('the registry plugins notice', () => {
   it('explains, links to the Plugins page, and stays closed once dismissed', () => {
     const onLearnMore = jest.fn();
     const { unmount } = render(<RegistryPluginsNotice onLearnMore={onLearnMore} />);
-    expect(screen.getByText(/aren't supported in Premation 0\.9 yet/)).toBeInTheDocument();
+    expect(screen.getByText(/The plugin store is back/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Learn more' }));
     expect(onLearnMore).toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss plugins notice' }));
-    expect(screen.queryByText(/aren't supported in Premation 0\.9 yet/)).toBeNull();
+    expect(screen.queryByText(/The plugin store is back/)).toBeNull();
     expect(localStorage.getItem(REGISTRY_NOTICE_KEY)).toBe('1');
     unmount();
 
     // Next session: still dismissed.
     resetRegistryNoticeCacheForTest();
     render(<RegistryPluginsNotice onLearnMore={onLearnMore} />);
-    expect(screen.queryByText(/aren't supported in Premation 0\.9 yet/)).toBeNull();
+    expect(screen.queryByText(/The plugin store is back/)).toBeNull();
+  });
+});
+
+describe('installed plugins with the store', () => {
+  afterEach(() => { delete (window as { motionEditor?: unknown }).motionEditor; });
+
+  it('enables, updates and uninstalls a store-installed plugin through main and the engine', async () => {
+    const execute = jest.fn(async () => ({ ok: true, value: { plugins: [] }, revision: 1 }));
+    jest.mocked(engine).mockReturnValue({
+      query: jest.fn(async () => ({ ok: true, value: { type: 'listPlugins', plugins: [{ ...base, id: 'com.acme.glow', name: 'Acme Glow', version: '1.2.0', status: 'loaded' }] }, revision: 1 })),
+      execute,
+    } as never);
+    const state = { plugins: { 'com.acme.glow': { version: '1.2.0', publisherKey: 'k', enabled: true, installedAt: 1 } }, uninstall: [] as string[] };
+    const bridge = {
+      openNativeFolder: jest.fn(),
+      installed: jest.fn(async () => state),
+      install: jest.fn(async () => ({ ok: true, id: 'com.acme.glow', version: '1.3.0', restartNeeded: true })),
+      uninstall: jest.fn(async () => { state.uninstall = ['com.acme.glow']; return state; }),
+      setEnabled: jest.fn(async () => state),
+      host: { platform: 'linux', arch: 'x64' },
+    };
+    (window as { motionEditor?: unknown }).motionEditor = { plugins: bridge };
+    const { api } = await import('@core/api/client');
+    jest.spyOn(api, 'checkPluginUpdates').mockResolvedValue([{ id: 'com.acme.glow', latestVersion: '1.3.0', publisherKey: 'k', sha256: 'x', blocked: false, kind: 'native' }]);
+
+    render(<NativePluginsPanel />);
+    const update = await screen.findByRole('button', { name: 'Update to 1.3.0' });
+    await act(async () => { fireEvent.click(screen.getByRole('switch', { name: 'Enable Acme Glow' })); });
+    expect(execute).toHaveBeenCalledWith({ type: 'setPluginEnabled', plugin: 'com.acme.glow', enabled: false });
+    expect(bridge.setEnabled).toHaveBeenCalledWith({ id: 'com.acme.glow', enabled: false });
+
+    await act(async () => { fireEvent.click(update); });
+    expect(bridge.install).toHaveBeenCalledWith({ id: 'com.acme.glow', version: '1.3.0' });
+    expect(await screen.findByText(/Restart Premation to use this version/)).toBeInTheDocument();
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Uninstall Acme Glow' })); });
+    expect(bridge.uninstall).toHaveBeenCalledWith('com.acme.glow');
+    expect(await screen.findByText('Removed on restart')).toBeInTheDocument();
   });
 });

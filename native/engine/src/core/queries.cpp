@@ -245,6 +245,7 @@ api::EffectInfo effect_info(const EffectDef& def) {
     for (const auto& o : p.options) pi.choices.push_back(o.label);
     pi.unit = p.unit.value_or("");
     pi.group = p.group.value_or("");
+    if (p.precision) pi.precision = static_cast<std::uint32_t>(std::max(0.0, *p.precision));
     e.params.push_back(std::move(pi));
   }
   e.supports_float = false;
@@ -740,6 +741,7 @@ struct Q {
       e.provider = ne->provider;
       e.gpu = ne->gpu;
       e.supports_float = ne->supportsFloat;
+      for (const auto& [key, label] : ne->actions) e.actions.push_back(api::EffectActionInfo{key, label});
       if (q.category.empty() || e.category == q.category) out.effects.push_back(std::move(e));
     }
     return query_result_for<api::ListEffects>(std::move(out));

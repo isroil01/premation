@@ -65,7 +65,7 @@ import {
   setMaskShapeAnimatedEdit,
   setMaskVertexFeatherEdit,
 } from './effectEdits';
-import { EFFECT_CATEGORY } from './effectCategory';
+import { EFFECT_CATEGORY, PLUGIN_EFFECTS_CATEGORY, effectCategoryOf } from './effectCategory';
 import { effectPreviewFor, EFFECT_PREVIEW_H, EFFECT_PREVIEW_W } from './effectPreviewThumbs';
 import {
   flattenFxGroups,
@@ -263,7 +263,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
     const groups: Record<string, typeof browserDefs> = {};
     for (const cat of EFFECT_CATEGORY_ORDER) groups[cat] = [];
     browserDefs.forEach((d) => {
-      const cat = EFFECT_CATEGORY[d.type];
+      const cat = effectCategoryOf(d);
       if (cat) (groups[cat] ??= []).push(d);
     });
     return groups;
@@ -302,7 +302,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
     groups.push({
       id: cat,
       label: cat,
-      icon: EFFECT_CATEGORY_ICON[cat],
+      icon: cat === PLUGIN_EFFECTS_CATEGORY ? 'plugin' : EFFECT_CATEGORY_ICON[cat],
       defaultOpen: index === 0,
       items: items.map((d) => ({
         kind: 'effect' as const,

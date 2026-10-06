@@ -56,6 +56,12 @@ void* DynamicLibrary::symbol(const char* name) const {
 
 const char* platform_key() noexcept { return "windows"; }
 
+std::span<const std::string_view> platform_keys() noexcept {
+  // x64 only: the engine ships no Windows-on-Arm build.
+  static constexpr std::string_view kKeys[] = {"windows-x64", "windows"};
+  return kKeys;
+}
+
 #else
 
 std::unique_ptr<DynamicLibrary> DynamicLibrary::open(const std::filesystem::path& path, std::string& error) {
@@ -82,6 +88,19 @@ const char* platform_key() noexcept {
 #else
   return "linux";
 #endif
+}
+
+std::span<const std::string_view> platform_keys() noexcept {
+#if defined(__APPLE__) && defined(__aarch64__)
+  static constexpr std::string_view kKeys[] = {"macos-arm64", "macos-universal", "macos"};
+#elif defined(__APPLE__)
+  static constexpr std::string_view kKeys[] = {"macos-x64", "macos-universal", "macos"};
+#elif defined(__aarch64__)
+  static constexpr std::string_view kKeys[] = {"linux-arm64", "linux"};
+#else
+  static constexpr std::string_view kKeys[] = {"linux-x64", "linux"};
+#endif
+  return kKeys;
 }
 
 #endif

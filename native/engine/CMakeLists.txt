@@ -600,6 +600,8 @@ endif()
 # premation-plugins: list / render / crash-check plugins without an editor (tools/premation_plugins.cpp).
 add_executable(premation-plugins tools/premation_plugins.cpp)
 target_link_libraries(premation-plugins PRIVATE engine_plugins motion::options)
+# Part of the SDK release artifact (native/sdk/CMakeLists.txt, `--component sdk`).
+install(TARGETS premation-plugins RUNTIME DESTINATION bin COMPONENT sdk)
 if(MSVC)
   target_compile_definitions(premation-plugins PRIVATE _CRT_SECURE_NO_WARNINGS)  # sscanf / getenv in argument parsing
 endif()

@@ -288,3 +288,14 @@ export const EFFECT_CATEGORY_ORDER: readonly string[] = [
   'Blur & Sharpen', 'Color Correction', 'Stylize', 'Generate',
   'Distort', 'Perspective', 'Channel', 'Keying', 'Time', 'Transition',
 ];
+
+/** The folder plugin effects go in (the browser's last folder). */
+export const PLUGIN_EFFECTS_CATEGORY = 'Plugins';
+
+/**
+ * The folder an effect is listed under: its built-in category, or Plugins for a
+ * native plugin's effect (pluginEffectDefs.ts). Undefined = not listed.
+ */
+export function effectCategoryOf(def: { type: string; provider?: string }): string | undefined {
+  return EFFECT_CATEGORY[def.type] ?? (typeof def.provider === 'string' ? PLUGIN_EFFECTS_CATEGORY : undefined);
+}

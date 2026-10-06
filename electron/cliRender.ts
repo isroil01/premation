@@ -14,6 +14,7 @@
  *  - **Refusals.** Anything that cannot run is a printed line and exit 1.
  */
 
+import { exportPluginJob } from './ipc/nativePlugins';
 import { app } from 'electron';
 import path from 'node:path';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -278,6 +279,8 @@ export async function runCliTask(task: CliTask): Promise<number> {
     ffmpegPath: () => resolveFfmpegBinary({ vars: process.env, resourcesPath: process.resourcesPath ?? '', platform: process.platform, exists: existsSync }),
     workDirFor,
     log: (m: string) => print.event({ event: 'engine', message: `engine: ${m}` }),
+    // The CLI renders with the same installed plugins as the app.
+    plugins: () => exportPluginJob({ dir: () => path.join(app.getPath('userData'), 'native-plugins') }),
   };
   const progress = (f: number): void => {
     const pct = Math.round(Math.max(0, Math.min(1, f)) * 100);

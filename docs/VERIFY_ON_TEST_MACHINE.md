@@ -119,6 +119,44 @@ the WGSL compiled with naga. Everything below did not run.
       one "Missing plugin …" notice, renders the layer unaffected, keeps the
       effect after a save and reopen.
 
+## AE parity step 2 (2026-10-06, docs/PLUGIN_STORE.md) — needs the GPU box and real platforms
+
+Run in the same Linux session: the headless engine's plugin host tests
+(`engine_plugins_tests`, arch keys / `--plugin-disabled` / `--revoked` /
+rescan), `pluginStore.native.test.ts` on the headless engine, the SDK install
+plus `examples/plugin-ci` built against it and loaded, pack → sign →
+`installPackage` → `premation-plugins list`, and the motion-back unit tests
+(branch `ae-parity-plugin-store`). Not run:
+
+- [ ] Build `windows-clang-cl-engine`: `export/export_job.cpp` (the export
+      job's own plugin host and `RenderGlue`) needs Dawn and was not compiled.
+- [ ] Export a comp with a native plugin effect from the Render Queue and with
+      `premation render`: the effect is in the frames; with the plugin disabled
+      in Dashboard ▸ Plugins it passes through and the job names it.
+- [ ] Store install on Windows while the engine has the plugin loaded: the new
+      copy waits in `native-plugins/.pending/<id>`, the editor says it applies
+      at restart, the next start swaps it in. Uninstall removes the folder at
+      the next start.
+- [ ] macOS: an installed plugin loads with no Gatekeeper prompt
+      (`com.apple.quarantine` removed); a `macos-universal` binary loads on
+      arm64 and x64.
+- [ ] Install from the store with no restart: the effect appears in the
+      Effects panel under Plugins, its buttons work (one undo entry each), a
+      hidden / renamed param follows the plugin's `getEffectUi`.
+- [ ] Revocation: add the installed id to the signed list on staging → at the
+      next launch Dashboard ▸ Plugins shows it Revoked and its effects pass
+      through.
+- [ ] Server render of a project with a plugin effect is refused naming the
+      plugin.
+- [ ] motion-back on real Postgres + storage: migration
+      `20261006150000_native_plugin_packages` applies; a 200 MB native package
+      uploads (raw storage, 256 MB limit) and `packageUrl` downloads it within
+      10 minutes; publishing public from an unverified publisher answers 403
+      `publisher_not_verified`.
+- [ ] `.github/workflows/release.yml`: the `premation-sdk-<platform>.zip`
+      artifacts attach to the draft; `examples/plugin-ci` builds against them
+      on all three runners.
+
 ## Status on the Windows RTX 4060 box (2026-09-28)
 
 Built and run there after the `wip-stopped` merges: `windows-clang-cl-engine`

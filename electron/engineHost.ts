@@ -563,6 +563,8 @@ export interface EngineHostOptions {
   supervisor?: Partial<SupervisorOptions>;
   /** G1: the native plugin folder (bundles with premation-plugin.json) the engine scans. */
   nativePluginDir?: string;
+  /** Per-launch plugin arguments (nativePluginStore `engineArgsFor`, after pending installs are applied). */
+  nativePluginLaunchArgs?: () => Promise<readonly string[]>;
   /** G1: the plugin crash journal — a plugin that killed the engine is quarantined at the next start. */
   nativePluginJournal?: string;
   /** F2 / D5: the recovery copy the engine-owned document's autosave writes (reported with ownsDocument). */
@@ -722,6 +724,7 @@ export class EngineHost {
       {
         ...o.supervisor,
         extraArgs: [...(o.supervisor?.extraArgs ?? []), ...nativePluginArgs(o.nativePluginDir, o.nativePluginJournal)],
+        ...(o.nativePluginLaunchArgs ? { launchArgs: o.nativePluginLaunchArgs } : {}),
       },
     );
     const sup = this.supervisor;

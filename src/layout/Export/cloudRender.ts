@@ -16,6 +16,9 @@
  * exists only when it does and the project lives in the cloud.
  */
 
+import { catalogEffect } from '@motion/engine-api';
+import { engine } from '@core/engine/engineInstance';
+import { pluginsUsedByDocument } from '@core/project/missingPluginContent';
 import { api, isAuthenticated, type RenderCapabilities, type RenderCodec, type RenderContainer, type RenderJobDto, type RenderQuality } from '@core/api/client';
 import { cloudProjectsEnabled } from '@core/config/edition';
 import { getCloudProjectId } from '@stores/cloudProjectStore';
@@ -99,6 +102,18 @@ export async function renderOnServer(req: ServerRenderRequest): Promise<void> {
   const projectId = getCloudProjectId();
   if (!projectId) {
     useUIStore.getState().notify({ level: 'warning', message: 'Open a cloud project to render on the server.', durationMs: 4000 });
+    return;
+  }
+  // The server's render worker runs no plugins (they run on this computer
+  // only). Refuse a project that uses plugin effects, naming them, rather than
+  // render it with the effects missing.
+  const usedPlugins = await pluginsUsedByDocument(engine(), (t) => catalogEffect(t) !== undefined);
+  if (usedPlugins && usedPlugins.length > 0) {
+    useUIStore.getState().notify({
+      level: 'warning',
+      message: `This project uses plugin effects (${usedPlugins.join(', ')}), which only render on this computer. Export it here instead of on the server.`,
+      durationMs: 8000,
+    });
     return;
   }
   const ui = useUIStore.getState();

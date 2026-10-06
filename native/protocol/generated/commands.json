@@ -810,6 +810,11 @@
     "type": "setPluginEnabled"
   },
   {
+    "id": 872,
+    "kind": "control",
+    "type": "rescanPlugins"
+  },
+  {
     "id": 871,
     "kind": "edit",
     "type": "setPluginData"

@@ -607,6 +607,7 @@ enum class PluginStatus : std::uint32_t {
   disabled = 1,
   failed = 2,
   quarantined = 3,
+  revoked = 4,
 };
 [[nodiscard]] std::string_view to_string(PluginStatus v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, PluginStatus& out) noexcept;
@@ -1090,6 +1091,7 @@ struct SetContentAwareFill;
 struct CaptionInput;
 struct SetCaptions;
 struct SetPluginEnabled;
+struct RescanPlugins;
 struct SetPluginData;
 struct Command;
 struct GetDocument;
@@ -1174,6 +1176,8 @@ struct PropertyPaths;
 struct PaintStrokeId;
 struct MarkerIds;
 struct JobRef;
+struct PluginInfo;
+struct PluginList;
 struct CommandResult;
 struct ProjectSettings;
 struct Interpretation;
@@ -1230,6 +1234,7 @@ struct CryptomatteLayerInfo;
 struct CryptomatteInfo;
 struct Thumbnail;
 struct EffectParamInfo;
+struct EffectActionInfo;
 struct EffectInfo;
 struct EffectCatalog;
 struct GroupTypeInfo;
@@ -1238,8 +1243,6 @@ struct PresetInfo;
 struct PresetList;
 struct CapturedPreset;
 struct Capabilities;
-struct PluginInfo;
-struct PluginList;
 struct EffectParamUi;
 struct EffectUi;
 struct LayerFace;
@@ -3198,6 +3201,10 @@ struct SetPluginEnabled {
   bool operator==(const SetPluginEnabled&) const = default;
 };
 
+struct RescanPlugins {
+  bool operator==(const RescanPlugins&) const = default;
+};
+
 struct SetPluginData {
   LayerId layer;
   PropPath group;
@@ -3370,9 +3377,10 @@ struct Command {
     set_content_aware_fill = 1852,
     set_captions = 1853,
     set_plugin_enabled = 870,
+    rescan_plugins = 872,
     set_plugin_data = 871,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, SetMotionBlur, SetColorManagement, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, MigrateLegacyPrecomps, SetEssentialProp, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetPinnedProperties, PoseIk3D, BakeIk3D, CreateLiveMerge, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, SetMemberKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, SetViewportHiddenLayers, SetViewportFocus, SetOverlayGeometry, StartJob, CancelJob, ApplyJobResult, SetContentAwareFill, SetCaptions, SetPluginEnabled, SetPluginData> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, SetMotionBlur, SetColorManagement, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, MigrateLegacyPrecomps, SetEssentialProp, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetPinnedProperties, PoseIk3D, BakeIk3D, CreateLiveMerge, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, SetMemberKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, SetViewportHiddenLayers, SetViewportFocus, SetOverlayGeometry, StartJob, CancelJob, ApplyJobResult, SetContentAwareFill, SetCaptions, SetPluginEnabled, RescanPlugins, SetPluginData> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Command&) const = default;
 };
@@ -3930,6 +3938,24 @@ struct JobRef {
   bool operator==(const JobRef&) const = default;
 };
 
+struct PluginInfo {
+  std::string id;
+  std::string name;
+  std::string version;
+  std::string vendor;
+  std::string sdk;
+  PluginStatus status = PluginStatus::loaded;
+  std::string error;
+  std::vector<std::string> effects;
+  bool gpu = false;
+  bool operator==(const PluginInfo&) const = default;
+};
+
+struct PluginList {
+  std::vector<PluginInfo> plugins;
+  bool operator==(const PluginList&) const = default;
+};
+
 struct CommandResult {
   enum class Kind : std::uint32_t {
     undo = 1,
@@ -4094,9 +4120,10 @@ struct CommandResult {
     set_content_aware_fill = 1852,
     set_captions = 1853,
     set_plugin_enabled = 870,
+    rescan_plugins = 872,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ImportProjectResult, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, ItemList, Empty, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, IkResult, IkResult, LayerRef, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, Empty, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, LayerList, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ImportProjectResult, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, ItemList, Empty, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, IkResult, IkResult, LayerRef, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, Empty, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, LayerList, Empty, PluginList, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
 };
@@ -4659,7 +4686,14 @@ struct EffectParamInfo {
   std::vector<std::string> choices;
   std::string unit;
   std::string group;
+  std::optional<std::uint32_t> precision;
   bool operator==(const EffectParamInfo&) const = default;
+};
+
+struct EffectActionInfo {
+  std::string key;
+  std::string label;
+  bool operator==(const EffectActionInfo&) const = default;
 };
 
 struct EffectInfo {
@@ -4671,6 +4705,7 @@ struct EffectInfo {
   std::vector<EffectParamInfo> params;
   bool supports_float = false;
   bool audio = false;
+  std::vector<EffectActionInfo> actions;
   bool operator==(const EffectInfo&) const = default;
 };
 
@@ -4723,24 +4758,6 @@ struct Capabilities {
   std::vector<std::string> expression_engines;
   std::uint32_t cpu_threads = 0;
   bool operator==(const Capabilities&) const = default;
-};
-
-struct PluginInfo {
-  std::string id;
-  std::string name;
-  std::string version;
-  std::string vendor;
-  std::string sdk;
-  PluginStatus status = PluginStatus::loaded;
-  std::string error;
-  std::vector<std::string> effects;
-  bool gpu = false;
-  bool operator==(const PluginInfo&) const = default;
-};
-
-struct PluginList {
-  std::vector<PluginInfo> plugins;
-  bool operator==(const PluginList&) const = default;
 };
 
 struct EffectParamUi {
@@ -6345,6 +6362,8 @@ void encode(wire::Writer& w, const SetCaptions& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetCaptions& out);
 void encode(wire::Writer& w, const SetPluginEnabled& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetPluginEnabled& out);
+void encode(wire::Writer& w, const RescanPlugins& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RescanPlugins& out);
 void encode(wire::Writer& w, const SetPluginData& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetPluginData& out);
 void encode(wire::Writer& w, const Command& v);
@@ -6513,6 +6532,10 @@ void encode(wire::Writer& w, const MarkerIds& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, MarkerIds& out);
 void encode(wire::Writer& w, const JobRef& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, JobRef& out);
+void encode(wire::Writer& w, const PluginInfo& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginInfo& out);
+void encode(wire::Writer& w, const PluginList& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginList& out);
 void encode(wire::Writer& w, const CommandResult& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CommandResult& out);
 void encode(wire::Writer& w, const ProjectSettings& v);
@@ -6625,6 +6648,8 @@ void encode(wire::Writer& w, const Thumbnail& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Thumbnail& out);
 void encode(wire::Writer& w, const EffectParamInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, EffectParamInfo& out);
+void encode(wire::Writer& w, const EffectActionInfo& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, EffectActionInfo& out);
 void encode(wire::Writer& w, const EffectInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, EffectInfo& out);
 void encode(wire::Writer& w, const EffectCatalog& v);
@@ -6641,10 +6666,6 @@ void encode(wire::Writer& w, const CapturedPreset& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CapturedPreset& out);
 void encode(wire::Writer& w, const Capabilities& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Capabilities& out);
-void encode(wire::Writer& w, const PluginInfo& v);
-[[nodiscard]] wire::Status decode(wire::Reader& r, PluginInfo& out);
-void encode(wire::Writer& w, const PluginList& v);
-[[nodiscard]] wire::Status decode(wire::Reader& r, PluginList& out);
 void encode(wire::Writer& w, const EffectParamUi& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, EffectParamUi& out);
 void encode(wire::Writer& w, const EffectUi& v);

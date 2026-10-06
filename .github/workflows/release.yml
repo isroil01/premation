@@ -207,6 +207,67 @@ jobs:
             ${{ steps.engine.outputs.engine-dir }}/*.dll
           if-no-files-found: error
           retention-days: 3
+      # The plugin SDK for this platform (AE parity 2.2, docs/PLUGIN_STORE.md):
+      # headers, the CMake package, premation-plugins, the pack/sign tools.
+      - name: Install the plugin SDK
+        shell: bash
+        run: |
+          cmake --install native/build/${{ matrix.preset }} --component sdk --prefix sdk-out
+          case "${{ matrix.preset }}" in
+            windows-*) name=premation-sdk-windows-x64 ;;
+            macos-clang-engine-x64) name=premation-sdk-macos-x64 ;;
+            *) name=premation-sdk-macos-arm64 ;;
+          esac
+          echo "SDK_NAME=$name" >> "$GITHUB_ENV"
+      - name: Upload the plugin SDK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SDK_NAME }}
+          path: sdk-out/
+          if-no-files-found: error
+          retention-days: 3
+
+  # The Linux SDK: plugin authors build Linux binaries too (the engine itself
+  # ships no Linux app). No Dawn and no tests: the headers, the CMake package
+  # and premation-plugins need neither.
+  sdk-linux:
+    name: Plugin SDK Linux x64
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build premation-plugins and install the SDK
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build clang zlib1g-dev
+          cmake -S native -B build-sdk -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DMOTION_BUILD_TESTS=OFF -DMOTION_BUILD_BENCH=OFF -DMOTION_BUILD_ENGINE=ON
+          cmake --build build-sdk --target premation-plugins
+          cmake --install build-sdk --component sdk --prefix sdk-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: premation-sdk-linux-x64
+          path: sdk-out/
+          if-no-files-found: error
+          retention-days: 3
+
+  # The SDK zips go on the draft beside the installers.
+  sdk-release:
+    name: Attach the plugin SDKs
+    needs: [engine, sdk-linux, draft]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: premation-sdk-*
+          path: sdks
+      - name: Zip and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd sdks
+          for d in premation-sdk-*; do (cd "$d" && zip -qr "../$d.zip" .); done
+          gh release upload "$GITHUB_REF_NAME" premation-sdk-*.zip --repo "$GITHUB_REPOSITORY" --clobber
 
   # One draft, created once, BEFORE the platform builds run. electron-builder
   # looks for an existing draft by tag and attaches to it; when two platform

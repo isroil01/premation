@@ -21,6 +21,17 @@ export type CliTaskRequest =
   | { kind: 'comps'; projectPath: string }
   | { kind: 'captions'; projectPath: string; outPath: string; comp?: string; language?: string };
 
+/** electron/nativePluginStore.ts InstallOutcome. */
+export type NativePluginInstallOutcome =
+  | { ok: true; id: string; version: string; restartNeeded: boolean }
+  | { ok: false; reason: string; code: 'size' | 'hash' | 'signature' | 'key-changed' | 'package' | 'io' | 'revoked' };
+
+/** electron/nativePluginStore.ts PluginStoreState. */
+export interface NativePluginStoreState {
+  plugins: Record<string, { version: string; publisherKey: string; enabled: boolean; installedAt: number; pending?: boolean }>;
+  uninstall: string[];
+}
+
 export interface CliRenderRequest {
   projectPath: string;
   comp?: string;
@@ -533,6 +544,14 @@ export interface MotionEditorApi {
     openNativeFolder?(): Promise<{ ok: boolean; path: string; error?: string }>;
     /** The folder's path, for the install steps. */
     nativeFolderPath?(): Promise<string>;
+    /** Download, verify and install from the plugin store (main does all of it). */
+    install?(req: { id: string; version: string; owner?: boolean }): Promise<NativePluginInstallOutcome>;
+    /** Queue an uninstall: disabled now, removed at the next start. */
+    uninstall?(id: string): Promise<NativePluginStoreState | null>;
+    /** Persist enabled / disabled across launches. */
+    setEnabled?(req: { id: string; enabled: boolean }): Promise<NativePluginStoreState | null>;
+    installed?(): Promise<NativePluginStoreState>;
+    host?: { platform: string; arch: string };
   };
   window?: {
     minimize?(): Promise<void>;

@@ -127,3 +127,27 @@ export async function findMissingPluginContent(client: EngineClient): Promise<Mi
     return null;
   }
 }
+
+/**
+ * The plugins whose effects the document uses (an effect type the built-in
+ * catalog does not know), sorted. The cloud render worker runs no plugins
+ * (AE parity 2.10), so a server render of such a project is refused with
+ * these names. Null when the engine could not be asked.
+ */
+export async function pluginsUsedByDocument(
+  client: Pick<EngineClient, 'query'>,
+  isBuiltin: (type: string) => boolean,
+): Promise<string[] | null> {
+  try {
+    const docRes = await client.query({ type: 'exportDocument' });
+    if (!docRes.ok) return null;
+    const doc = JSON.parse(new TextDecoder().decode(docRes.value.document)) as unknown;
+    const used = new Set<string>();
+    for (const { node } of nodesOf(doc)) {
+      for (const e of effectsOf(node)) if (!isBuiltin(e.type)) used.add(pluginOfType(e.type));
+    }
+    return [...used].sort();
+  } catch {
+    return null;
+  }
+}

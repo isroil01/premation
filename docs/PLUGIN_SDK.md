@@ -205,6 +205,27 @@ plugin is missing keeps the effect untouched: it passes through, is recorded
 on `layerErrors`, and one notice names the missing plugin
 (`src/core/project/missingPluginContent.ts`).
 
+## Distributing a plugin
+
+Plugins are distributed through the plugin store (docs/PLUGIN_STORE.md): free,
+public or private (private installs only for its publisher), and installed by
+the editor with a signature check and no restart.
+
+1. Build against the SDK from a release (`premation-sdk-<platform>.zip`):
+   `find_package(PremationSdk)` and `premation_add_plugin(name SOURCES …
+   MANIFEST premation-plugin.json)` lay the bundle out under
+   `<build>/plugins/<name>/`.
+2. List platform-specific binaries under `binary` with the keys
+   `windows-x64`, `macos-universal` (or `macos-arm64` / `macos-x64`),
+   `linux-x64` (the plain `windows` / `macos` / `linux` keys still work).
+3. `node pack-plugin.mjs <bundle> --key plugin-key.json` (keygen once with
+   `sign-plugin.mjs keygen`, and keep the key: it is the only thing that can
+   ship an update) → `<id>-<version>.pplugin` and its `.sig`.
+4. Publish from the editor (Dashboard ▸ Plugins ▸ Publish) or with
+   `sign-plugin.mjs publish`. Public needs a verified publisher.
+
+`examples/plugin-ci/` does all of this in GitHub Actions for three platforms.
+
 ## Building and testing a plugin
 
 ```sh

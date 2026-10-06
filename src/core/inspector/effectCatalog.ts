@@ -23,6 +23,7 @@ import {
   type CatalogEffectParam,
   type CatalogJson,
 } from '@motion/engine-api';
+import { pluginEffectDefFor } from './pluginEffectDefs';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -73,9 +74,13 @@ export interface Effect {
 /** Every built-in effect, in menu order. */
 export const EFFECT_DEFS: ReadonlyArray<EffectDef> = EFFECT_CATALOG;
 
-/** The definition of a built-in effect type; undefined for an unknown one. */
+/**
+ * The definition of an effect type: a built-in from the catalog, else a loaded
+ * native plugin's (pluginEffectDefs.ts); undefined for an unknown one (a
+ * missing plugin — the card then says so and the engine passes it through).
+ */
 export function effectDefFor(type: EffectType): EffectDef | undefined {
-  return catalogEffect(type);
+  return catalogEffect(type) ?? pluginEffectDefFor(type);
 }
 
 /** Effects that render only as a shader pass (no CSS-filter equivalent). */

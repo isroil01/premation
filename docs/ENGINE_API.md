@@ -472,7 +472,8 @@ on an effect or mask path — one command, one inverse implementation.
 | `applyJobResult` | edit | Apply a finished `apply:false` job. Inverse: that entry. |
 | `setContentAwareFill` | edit | The layer's content-aware fill frames (the Content-Aware Fill job's result): the filled frame nearest the layer's time stands in for its footage; empty `frames` clears it. Inverse: the previous record. |
 | `setCaptions` | edit | Burn-in captions (`premation render --captions`, p4-round3): the comp's top-level caption layers (`__caption` on Text) are replaced by one centred text layer per cue, in/out = the cue; `style` JSON (`fontSizeRatio` 0.05, `fontWeight` 700, `fill` #ffffff, `bottomMarginRatio` 0.1). A cue that does not end after it starts is `invalidArgument`. One journal. The TS engine answers `unsupported`. |
-| `setPluginEnabled` | control | Session enable/disable of a native plugin; re-enabling retries a failed or quarantined one. Persisting it across launches is AE parity step 2.8. |
+| `setPluginEnabled` | control | Session enable/disable of a native plugin; re-enabling retries a failed or quarantined one, and loads one started with `--plugin-disabled`. Electron persists the choice (`state.json`, docs/PLUGIN_STORE.md §4) and passes `--plugin-disabled` at the next start. |
+| `rescanPlugins` | control | Rescan the plugin folders and answer the plugin list; bundles installed since start load at once, already-loaded ones stay loaded until restart (docs/PLUGIN_STORE.md §5). `unsupported` without `--plugins`. |
 | `setPluginData` | edit | Plugin data **in the document** (AE sequence data / arbitrary-data params) — today it is an in-memory LRU. Inverse: previous bytes. |
 
 **Engine jobs (2026-09-27, branch `engine-jobs`). The C++ engine is the only engine; there is no page path.**

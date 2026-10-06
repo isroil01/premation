@@ -216,8 +216,8 @@ const PropertyKind_TO_NUM: Record<string, number> = { 'property': 0, 'group': 1,
 const PropertyKind_FROM_NUM: readonly (T.PropertyKind | undefined)[] = ['property', 'group', 'indexedGroup'];
 function enc_PropertyKind(v: T.PropertyKind): number { const n = PropertyKind_TO_NUM[v]; if (n === undefined) throw new RangeError('PropertyKind: invalid value ' + String(v)); return n; }
 function dec_PropertyKind(n: number): T.PropertyKind { const v = PropertyKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PropertyKind: unknown value ' + n, 'badEnum'); return v; }
-const PluginStatus_TO_NUM: Record<string, number> = { 'loaded': 0, 'disabled': 1, 'failed': 2, 'quarantined': 3 };
-const PluginStatus_FROM_NUM: readonly (T.PluginStatus | undefined)[] = ['loaded', 'disabled', 'failed', 'quarantined'];
+const PluginStatus_TO_NUM: Record<string, number> = { 'loaded': 0, 'disabled': 1, 'failed': 2, 'quarantined': 3, 'revoked': 4 };
+const PluginStatus_FROM_NUM: readonly (T.PluginStatus | undefined)[] = ['loaded', 'disabled', 'failed', 'quarantined', 'revoked'];
 function enc_PluginStatus(v: T.PluginStatus): number { const n = PluginStatus_TO_NUM[v]; if (n === undefined) throw new RangeError('PluginStatus: invalid value ' + String(v)); return n; }
 function dec_PluginStatus(n: number): T.PluginStatus { const v = PluginStatus_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PluginStatus: unknown value ' + n, 'badEnum'); return v; }
 const HitMode_TO_NUM: Record<string, number> = { 'topmost': 0, 'all': 1 };
@@ -8894,6 +8894,19 @@ function decS_SetPluginEnabled(r: Reader, end: number, o: any): T.SetPluginEnabl
   o.enabled = v_enabled;
   return o;
 }
+function encS_RescanPlugins(w: Writer, v: T.RescanPlugins): void {
+  void w; void v;
+}
+function decS_RescanPlugins(r: Reader, end: number, o: any): T.RescanPlugins {
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  return o;
+}
 function encS_SetPluginData(w: Writer, v: T.SetPluginData): void {
   w.byte(10); w.str(v.layer);
   w.byte(18); w.str(v.group);
@@ -11224,6 +11237,7 @@ function encS_EffectParamInfo(w: Writer, v: T.EffectParamInfo): void {
   { const a = v.choices; for (let i = 0; i < a.length; i++) { w.byte(82); w.str(a[i]!); } }
   w.byte(90); w.str(v.unit);
   w.byte(98); w.str(v.group);
+  if (v.precision !== undefined) { w.byte(104); w.u32(v.precision); }
 }
 function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo {
   const l_choices: string[] = [];
@@ -11244,6 +11258,7 @@ function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo
   let v_softMax: number | undefined;
   let v_unit: string | undefined;
   let v_group: string | undefined;
+  let v_precision: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -11259,6 +11274,7 @@ function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo
       case 82: l_choices.push(r.str()); break;
       case 90: v_unit = r.str(); h_unit = true; break;
       case 98: v_group = r.str(); h_group = true; break;
+      case 104: v_precision = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -11281,6 +11297,7 @@ function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo
   o.choices = l_choices;
   o.unit = v_unit;
   o.group = v_group;
+  if (v_precision !== undefined) o.precision = v_precision;
   return o;
 }
 function encS_EffectInfo(w: Writer, v: T.EffectInfo): void {
@@ -11292,9 +11309,11 @@ function encS_EffectInfo(w: Writer, v: T.EffectInfo): void {
   { const a = v.params; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_EffectParamInfo(w, a[i]!); w.endLd(s); } } }
   w.byte(56); w.bool(v.supportsFloat);
   w.byte(64); w.bool(v.audio);
+  { const a = v.actions; for (let i = 0; i < a.length; i++) { w.byte(74); { const s = w.beginLd(); encS_EffectActionInfo(w, a[i]!); w.endLd(s); } } }
 }
 function decS_EffectInfo(r: Reader, end: number, o: any): T.EffectInfo {
   const l_params: T.EffectParamInfo[] = [];
+  const l_actions: T.EffectActionInfo[] = [];
   let h_matchName = false;
   let h_displayName = false;
   let h_category = false;
@@ -11320,6 +11339,7 @@ function decS_EffectInfo(r: Reader, end: number, o: any): T.EffectInfo {
       case 50: l_params.push(decS_EffectParamInfo(r, r.ldEnd(), {})); break;
       case 56: v_supportsFloat = r.bool(); h_supportsFloat = true; break;
       case 64: v_audio = r.bool(); h_audio = true; break;
+      case 74: l_actions.push(decS_EffectActionInfo(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -11339,6 +11359,31 @@ function decS_EffectInfo(r: Reader, end: number, o: any): T.EffectInfo {
   o.params = l_params;
   o.supportsFloat = v_supportsFloat;
   o.audio = v_audio;
+  o.actions = l_actions;
+  return o;
+}
+function encS_EffectActionInfo(w: Writer, v: T.EffectActionInfo): void {
+  w.byte(10); w.str(v.key);
+  w.byte(18); w.str(v.label);
+}
+function decS_EffectActionInfo(r: Reader, end: number, o: any): T.EffectActionInfo {
+  let h_key = false;
+  let h_label = false;
+  let v_key: string | undefined;
+  let v_label: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_key = r.str(); h_key = true; break;
+      case 18: v_label = r.str(); h_label = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_key) throw new DecodeError('EffectActionInfo.key: missing', 'missingField');
+  if (!h_label) throw new DecodeError('EffectActionInfo.label: missing', 'missingField');
+  o.key = v_key;
+  o.label = v_label;
   return o;
 }
 function encS_ListEffects(w: Writer, v: T.ListEffects): void {
@@ -16594,6 +16639,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'applyJobResult': w.varint(6818); { const s = w.beginLd(); encS_ApplyJobResult(w, v); w.endLd(s); } return;
     case 'setPluginEnabled': w.varint(6962); { const s = w.beginLd(); encS_SetPluginEnabled(w, v); w.endLd(s); } return;
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_SetPluginData(w, v); w.endLd(s); } return;
+    case 'rescanPlugins': w.varint(6978); { const s = w.beginLd(); encS_RescanPlugins(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_LiftRange(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_SetOverlayGeometry(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_SetContentAwareFill(w, v); w.endLd(s); } return;
@@ -16766,6 +16812,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 6818: out = decS_ApplyJobResult(r, r.ldEnd(), { type: 'applyJobResult' }) as T.Command; break;
       case 6962: out = decS_SetPluginEnabled(r, r.ldEnd(), { type: 'setPluginEnabled' }) as T.Command; break;
       case 6970: out = decS_SetPluginData(r, r.ldEnd(), { type: 'setPluginData' }) as T.Command; break;
+      case 6978: out = decS_RescanPlugins(r, r.ldEnd(), { type: 'rescanPlugins' }) as T.Command; break;
       case 7770: out = decS_LiftRange(r, r.ldEnd(), { type: 'liftRange' }) as T.Command; break;
       case 14170: out = decS_SetOverlayGeometry(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.Command; break;
       case 14818: out = decS_SetContentAwareFill(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.Command; break;
@@ -16938,6 +16985,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'applyJobResult': w.varint(6818); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
     case 'setPluginEnabled': w.varint(6962); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'rescanPlugins': w.varint(6978); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_TimeRangeEdit(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -17110,6 +17158,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 6818: out = decS_ItemList(r, r.ldEnd(), { type: 'applyJobResult' }) as T.CommandResult; break;
       case 6962: out = decS_Empty(r, r.ldEnd(), { type: 'setPluginEnabled' }) as T.CommandResult; break;
       case 6970: out = decS_Empty(r, r.ldEnd(), { type: 'setPluginData' }) as T.CommandResult; break;
+      case 6978: out = decS_PluginList(r, r.ldEnd(), { type: 'rescanPlugins' }) as T.CommandResult; break;
       case 7770: out = decS_TimeRangeEdit(r, r.ldEnd(), { type: 'liftRange' }) as T.CommandResult; break;
       case 14170: out = decS_Empty(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.CommandResult; break;
       case 14818: out = decS_Empty(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.CommandResult; break;
@@ -17755,6 +17804,7 @@ export const codecs = {
   CaptionInput: mk<T.CaptionInput>(encS_CaptionInput, (r, e) => decS_CaptionInput(r, e, {})),
   SetCaptions: mk<T.SetCaptions>(encS_SetCaptions, (r, e) => decS_SetCaptions(r, e, {})),
   SetPluginEnabled: mk<T.SetPluginEnabled>(encS_SetPluginEnabled, (r, e) => decS_SetPluginEnabled(r, e, {})),
+  RescanPlugins: mk<T.RescanPlugins>(encS_RescanPlugins, (r, e) => decS_RescanPlugins(r, e, {})),
   SetPluginData: mk<T.SetPluginData>(encS_SetPluginData, (r, e) => decS_SetPluginData(r, e, {})),
   ItemInfo: mk<T.ItemInfo>(encS_ItemInfo, (r, e) => decS_ItemInfo(r, e, {})),
   CompInfo: mk<T.CompInfo>(encS_CompInfo, (r, e) => decS_CompInfo(r, e, {})),
@@ -17830,6 +17880,7 @@ export const codecs = {
   CryptomatteInfo: mk<T.CryptomatteInfo>(encS_CryptomatteInfo, (r, e) => decS_CryptomatteInfo(r, e, {})),
   EffectParamInfo: mk<T.EffectParamInfo>(encS_EffectParamInfo, (r, e) => decS_EffectParamInfo(r, e, {})),
   EffectInfo: mk<T.EffectInfo>(encS_EffectInfo, (r, e) => decS_EffectInfo(r, e, {})),
+  EffectActionInfo: mk<T.EffectActionInfo>(encS_EffectActionInfo, (r, e) => decS_EffectActionInfo(r, e, {})),
   ListEffects: mk<T.ListEffects>(encS_ListEffects, (r, e) => decS_ListEffects(r, e, {})),
   ListGroupTypes: mk<T.ListGroupTypes>(encS_ListGroupTypes, (r, e) => decS_ListGroupTypes(r, e, {})),
   ListPresets: mk<T.ListPresets>(encS_ListPresets, (r, e) => decS_ListPresets(r, e, {})),

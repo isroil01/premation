@@ -1,0 +1,14 @@
+{
+  "manifestVersion": 1,
+  "id": "com.example.invert",
+  "name": "Invert (example)",
+  "version": "1.0.0",
+  "vendor": "Example",
+  "sdk": { "major": 1, "minor": 0 },
+  "binary": {
+    "windows-x64": "invert.dll",
+    "macos-universal": "libinvert.dylib",
+    "linux-x64": "libinvert.so"
+  },
+  "effects": [ { "matchName": "com.example.invert", "name": "Invert", "category": "Example" } ]
+}

@@ -57,6 +57,10 @@ struct EngineOptions {
   std::vector<std::string> pluginPaths;
   /// G1: the plugin crash journal (empty = none: a plugin that kills the engine is not remembered).
   std::string pluginJournal;
+  /// Plugins the user disabled (listed, not loaded) — Electron's native-plugins/state.json.
+  std::vector<std::string> pluginDisabled;
+  /// The verified revocation list as a file (`{"revoked":[{"id","reason"}]}`); empty = none.
+  std::string pluginRevoked;
 };
 
 inline constexpr int kExitOk = 0;

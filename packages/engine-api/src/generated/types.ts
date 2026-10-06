@@ -480,12 +480,14 @@ export type PropertyKind =
   | 'indexedGroup';
 export const PropertyKindValues = ['property', 'group', 'indexedGroup'] as const;
 
+/** `revoked`: on the registry's signed revocation list (Electron passes it with `--revoked`); its code never runs. */
 export type PluginStatus =
   | 'loaded'
   | 'disabled'
   | 'failed'
-  | 'quarantined';
-export const PluginStatusValues = ['loaded', 'disabled', 'failed', 'quarantined'] as const;
+  | 'quarantined'
+  | 'revoked';
+export const PluginStatusValues = ['loaded', 'disabled', 'failed', 'quarantined', 'revoked'] as const;
 
 export type HitMode =
   | 'topmost'
@@ -3104,11 +3106,14 @@ export interface SetCaptions {
   style?: string;
 }
 
-/** Enable/disable an installed plugin for this session (install/uninstall stays in the editor's plugin manager). */
+/** Enable/disable an installed plugin for this session (install/uninstall stays in the editor's plugin manager; Electron persists the choice and passes `--plugin-disabled` at the next start). */
 export interface SetPluginEnabled {
   plugin: string;
   enabled: boolean;
 }
+
+/** AE parity 2.7 — rescan the plugin folders (`--plugins`, PREMATION_PLUGIN_PATH) after an install: new bundles load and their effects become available without a restart; plugins already loaded stay loaded until the engine restarts (a loaded module cannot be swapped under live instances). Returns every plugin afterwards, like listPlugins. */
+export interface RescanPlugins {}
 
 /** Store plugin data in the DOCUMENT (AE sequence data / arbitrary-data params). Undoable, saved with the project. */
 export interface SetPluginData {
@@ -3701,6 +3706,8 @@ export interface EffectParamInfo {
   choices: string[];
   unit: string;
   group: string;
+  /** Decimal places for a number field (absent = the editor's default). */
+  precision?: number;
 }
 
 export interface EffectInfo {
@@ -3713,6 +3720,13 @@ export interface EffectInfo {
   params: EffectParamInfo[];
   supportsFloat: boolean;
   audio: boolean;
+  /** AE parity 2.9 — a native plugin effect's buttons (PR_PARAM_BUTTON): invokeEffectAction takes `key` as its action. Empty for builtins. */
+  actions: EffectActionInfo[];
+}
+
+export interface EffectActionInfo {
+  key: string;
+  label: string;
 }
 
 export interface ListEffects {
@@ -5137,6 +5151,7 @@ export type Command =
   | ({ type: 'setContentAwareFill' } & SetContentAwareFill)
   | ({ type: 'setCaptions' } & SetCaptions)
   | ({ type: 'setPluginEnabled' } & SetPluginEnabled)
+  | ({ type: 'rescanPlugins' } & RescanPlugins)
   | ({ type: 'setPluginData' } & SetPluginData);
 export type CommandType = Command['type'];
 
@@ -5304,6 +5319,7 @@ export type CommandResult =
   | ({ type: 'setContentAwareFill' } & Empty)
   | ({ type: 'setCaptions' } & LayerList)
   | ({ type: 'setPluginEnabled' } & Empty)
+  | ({ type: 'rescanPlugins' } & PluginList)
   | ({ type: 'setPluginData' } & Empty);
 export type CommandResultType = CommandResult['type'];
 
@@ -5620,6 +5636,7 @@ export interface CommandArgs {
   setContentAwareFill: SetContentAwareFill;
   setCaptions: SetCaptions;
   setPluginEnabled: SetPluginEnabled;
+  rescanPlugins: RescanPlugins;
   setPluginData: SetPluginData;
 }
 
@@ -5787,6 +5804,7 @@ export interface CommandResults {
   setContentAwareFill: Empty;
   setCaptions: LayerList;
   setPluginEnabled: Empty;
+  rescanPlugins: PluginList;
   setPluginData: Empty;
 }
 

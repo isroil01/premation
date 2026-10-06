@@ -910,6 +910,11 @@ struct ControlVisitor {
     if (!doc::NativeEffects::set_enabled(c.plugin, c.enabled)) fail(ErrorCode::not_found, "no installed plugin '" + c.plugin + "'");
     return result_for<api::SetPluginEnabled>();
   }
+  R operator()(const api::RescanPlugins&) const {
+    std::optional<std::vector<api::PluginInfo>> list = doc::NativeEffects::rescan();
+    if (!list) fail(ErrorCode::unsupported, "this engine was started without a plugin folder (--plugins)");
+    return result_for<api::RescanPlugins>(api::PluginList{std::move(*list)});
+  }
 
   // ── transport (transport.ts semantics, the C2 clock underneath) ──
   R operator()(const api::SetActiveComposition& c) const {

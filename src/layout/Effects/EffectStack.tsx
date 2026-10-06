@@ -90,6 +90,8 @@ import {
   copyEffectsEdit,
 } from './effectEdits';
 import panel from './EffectsPanel.module.css';
+import { MissingPluginCard, PluginEffectActions, usePluginEffectUi } from './PluginEffectParts';
+import { isPluginEffectDef, type PluginEffectDef } from '@core/inspector/pluginEffectDefs';
 import row from '@layout/Inspector/TextAnimatorControls.module.css';
 
 /**
@@ -303,6 +305,38 @@ function CompositingOptions({ nodeId, effect }: { nodeId: string; effect: Effect
       <EffectOpacityRow nodeId={nodeId} effect={effect} />
       <EffectMaskRow nodeId={nodeId} effect={effect} />
     </ParamGroup>
+  );
+}
+
+/**
+ * A native plugin effect's params, as the plugin wants them shown right now
+ * (UPDATE_PARAMS_UI: hidden / renamed / disabled), then its buttons.
+ */
+function PluginEffectBody({ nodeId, effect, def }: { nodeId: string; effect: Effect; def: PluginEffectDef }): JSX.Element {
+  const time = useActiveWorkspace()?.time ?? 0;
+  const ui = usePluginEffectUi(nodeId, effect, time);
+  const shown = def.params
+    .filter((p) => !ui?.get(p.key)?.hidden)
+    .map((p) => {
+      const u = ui?.get(p.key);
+      return u && u.name && u.name !== p.label ? { ...p, label: u.name } : p;
+    });
+  return (
+    <>
+      {splitParamGroups(shown).map((section, si) => {
+        const rows = section.params.map((p) => {
+          const disabled = ui?.get(p.key)?.enabled === false;
+          const r = <EffectParamRow key={p.key} nodeId={nodeId} effect={effect} def={def} param={p} />;
+          return disabled
+            ? <div key={p.key} aria-disabled style={{ opacity: 0.45, pointerEvents: 'none' }}>{r}</div>
+            : r;
+        });
+        return section.group
+          ? <ParamGroup key={`g:${section.group}:${si}`} name={section.group}>{rows}</ParamGroup>
+          : <Fragment key={`u:${si}`}>{rows}</Fragment>;
+      })}
+      <PluginEffectActions nodeId={nodeId} effect={effect} def={def} />
+    </>
   );
 }
 
@@ -752,7 +786,9 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
           no definition to draw a card from.
         */
         const def = effectDefFor(e.type);
-        if (!def) return null;
+        // No definition: a plugin effect whose plugin is missing (or failed to
+        // load). It stays in the document and passes through; say so here.
+        if (!def) return <MissingPluginCard key={e.id} effect={e} name={names.get(e.id)} />;
         const name = names.get(e.id) ?? def.label;
         const off = e.enabled === false;
         const defaultCollapsed = i !== effects.length - 1;
@@ -904,7 +940,9 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
             {/* Accordion Body: Effect Parameters + Compositing Options */}
             {!isCollapsed && !off && (
               <div className={panel.effectParamsBody}>
-                {splitParamGroups(def.params).map((section, si) => {
+                {isPluginEffectDef(def) ? (
+                  <PluginEffectBody nodeId={nodeId} effect={e} def={def} />
+                ) : splitParamGroups(def.params).map((section, si) => {
                   const rows = section.params.map((p) => (
                     <EffectParamRow key={p.key} nodeId={nodeId} effect={e} def={def} param={p} />
                   ));

@@ -1,0 +1,95 @@
+# CI for a Premation native plugin (copy this folder to start a plugin repo).
+#
+# Builds the plugin on Windows, macOS (universal) and Linux against the SDK
+# from a Premation release, merges the three builds into ONE bundle, packs it
+# into a signed `.pplugin` (docs/PLUGIN_STORE.md §2) and, on a tag, publishes
+# it to the Premation plugin store.
+#
+# Secrets:
+#   PREMATION_PLUGIN_KEY    the key file `sign-plugin.mjs keygen` wrote (its JSON)
+#   PREMATION_TOKEN         an access token from your signed-in Premation account
+# Variables:
+#   PREMATION_SDK_VERSION   the Premation release whose SDK to build against (e.g. v0.10.0)
+#   PREMATION_VISIBILITY    public | private (public needs a verified publisher)
+#   PREMATION_API           the store's API base URL (the backend origin + /api)
+
+name: plugin
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - { name: windows-x64, os: windows-latest, sdk: premation-sdk-windows-x64, cmake: '-A x64' }
+          - { name: macos-universal, os: macos-latest, sdk: premation-sdk-macos-arm64, cmake: '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64' }
+          - { name: linux-x64, os: ubuntu-latest, sdk: premation-sdk-linux-x64, cmake: '' }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the SDK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ vars.PREMATION_SDK_VERSION }}" --repo isroil01/premation --pattern "${{ matrix.sdk }}.zip"
+          unzip -q "${{ matrix.sdk }}.zip" -d sdk
+      - name: Build
+        shell: bash
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/sdk" ${{ matrix.cmake }}
+          cmake --build build --config Release
+      - name: Check it loads
+        shell: bash
+        run: ./sdk/bin/premation-plugins --plugins build/plugins list
+        if: matrix.name != 'macos-universal' || runner.arch == 'ARM64'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.name }}
+          path: build/plugins/invert/
+          if-no-files-found: error
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/download-artifact@v4
+        with: { path: parts }
+      - name: Merge the platform builds into one bundle
+        run: |
+          mkdir -p bundle
+          for d in parts/bundle-*; do cp -n "$d"/* bundle/; done
+          ls -l bundle
+      - name: Fetch the SDK tools
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ vars.PREMATION_SDK_VERSION }}" --repo isroil01/premation --pattern "premation-sdk-linux-x64.zip"
+          unzip -q premation-sdk-linux-x64.zip -d sdk
+          (cd sdk/share/premation-sdk && npm init -y >/dev/null && npm install fflate@0.8 >/dev/null)
+      - name: Pack (and sign on a tag)
+        env:
+          KEY: ${{ secrets.PREMATION_PLUGIN_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then printf '%s' "$KEY" > key.json; fi
+          node sdk/share/premation-sdk/pack-plugin.mjs bundle --out plugin.pplugin $( [ -f key.json ] && echo --key key.json )
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pplugin
+          path: plugin.pplugin*
+      - name: Publish to the Premation plugin store
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TOKEN: ${{ secrets.PREMATION_TOKEN }}
+        run: |
+          node sdk/share/premation-sdk/sign-plugin.mjs publish plugin.pplugin --key key.json --token "$TOKEN" \
+            --api "${{ vars.PREMATION_API }}" --visibility "${{ vars.PREMATION_VISIBILITY || 'private' }}"
