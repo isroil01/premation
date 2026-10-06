@@ -47,6 +47,18 @@ export function compUvRect(cam: SurfaceCamera, compWidth: number, compHeight: nu
   return { x0: Math.min(x0, x1), y0: Math.min(y0, y1), x1: Math.max(x0, x1), y1: Math.max(y0, y1) };
 }
 
+/**
+ * `compUvRect` for a camera the engine frames itself (zoom ≤ 0): the comp
+ * contain-fitted and centred in the frame (export_view, no margin).
+ */
+export function fitUvRect(width: number, height: number, compWidth: number, compHeight: number): UvRect | null {
+  if (!(width > 0) || !(height > 0) || !(compWidth > 0) || !(compHeight > 0)) return null;
+  const s = Math.min(width / compWidth, height / compHeight);
+  const mx = (1 - (compWidth * s) / width) / 2;
+  const my = (1 - (compHeight * s) / height) / 2;
+  return { x0: mx, y0: my, x1: 1 - mx, y1: 1 - my };
+}
+
 /** `rgb(r, g, b)` / `rgba(r, g, b, a)` (a computed CSS colour) → 0..1 channels; null if it is not one. */
 export function parseCssRgb(css: string): [number, number, number] | null {
   const m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(css.trim());

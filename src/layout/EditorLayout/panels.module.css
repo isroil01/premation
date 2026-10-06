@@ -32,20 +32,18 @@
   align-items: stretch;
   height: 24px;
   border-radius: var(--radius-sm);
-  background: var(--color-primary);
-  color: var(--color-primary-foreground);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  /* A control, not the screen's primary action: the accent stays with Export. */
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
   overflow: hidden;
   flex: none;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  transition: filter var(--motion-duration-fast) var(--motion-ease-standard),
-              box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+  border: 1px solid var(--color-border-strong);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
   box-sizing: border-box;
 }
 
 .assetImportSplit:hover {
-  filter: brightness(1.08);
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
+  background: var(--color-surface-3);
 }
 
 .assetImportMain {
@@ -82,7 +80,7 @@
 .assetImportDivider {
   width: 1px;
   height: 100%;
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--color-border-strong);
   flex: none;
 }
 
@@ -1609,9 +1607,10 @@
   color: var(--color-text-primary);
 }
 
+/* Selected: a lighter grey row (see Timeline.module.css `.trackHeaderSelected`). */
 .assetRowSelected,
 .assetRowSelected:hover {
-  background: var(--color-primary-subtle);
+  background: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
   color: var(--color-text-primary);
 }
 
@@ -2307,9 +2306,9 @@
 
 .assetCardSelected,
 .assetCardSelected:hover {
-  background: var(--color-primary-subtle);
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 1px var(--color-primary);
+  background: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
+  border-color: var(--color-text-tertiary);
+  box-shadow: none;
 }
 
 .assetCardThumb {
@@ -2487,6 +2486,58 @@
   flex-direction: column;
   max-height: 46%;
   min-height: 0;
+}
+
+/* The details strip at the TOP of the Project panel: the rule moves under it. */
+.assetTopInfo {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 40%;
+  min-height: 0;
+}
+
+/* Open, the details area keeps ONE height whether a file is selected or not
+   (its facts scroll inside it). It used to grow when a file was selected, which
+   pushed the list down under the pointer — so the second click of a
+   double-click landed on a different row and the file never opened. */
+.assetTopInfo:has(> .assetDrawer > .assetDrawerHead[aria-expanded="true"]) {
+  height: 132px;
+}
+
+.assetTopInfo .assetDrawerBody,
+.assetTopInfo .assetDrawerEmpty {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.assetTopInfo .assetDrawer {
+  border-top: none;
+  border-bottom: 1px solid var(--color-border);
+  max-height: none;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+/* At the top of the Project panel the picture sits left of the facts. */
+.assetTopInfo .assetDrawerBody:has(.assetDrawerThumb) {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-items: start;
+}
+
+.assetDrawerThumb {
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: var(--color-surface-0);
+  display: block;
+}
+
+.assetTopInfo .assetDrawerBody:has(.assetDrawerThumb) > :not(.assetDrawerThumb):not(.assetDrawerGrid) {
+  grid-column: 1 / -1;
 }
 
 /* A button: click collapses the drawer. Reset so it reads as a strip. */

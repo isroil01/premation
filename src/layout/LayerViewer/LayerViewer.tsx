@@ -27,14 +27,15 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
-import { Segmented } from '@components/Segmented';
+import { Dropdown, type DropdownItem } from '@components/Dropdown';
+import { ValueField } from '@components/ValueField';
+import { ViewerRulers } from '@components/ViewerRulers/ViewerRulers';
 import { cn } from '@utils/cn';
 import type { MaskMode } from '@core/effects/mask';
 import { secondsToFlicks, type LayerInfo } from '@motion/engine-api';
 import { seekPlayhead } from '@core/timeline/timelineView';
 import { documentMirror, type DocumentMirror } from '@stores/documentMirror';
 import { useRetainTree } from '@hooks/useMirror';
-import { uiKindOf } from '@core/mirror/layerKinds';
 import { mirrorMasksAt } from '@core/mirror/masks';
 import { mirrorHasBar } from '@core/mirror/clipBars';
 import { timingBarFrames } from '@core/mirror/compFacts';
@@ -42,19 +43,28 @@ import { readTrack } from '@core/mirror/selection';
 import { storedNumber, trackRefIn } from '@core/mirror/trackIndex';
 import { trimBar } from '@layout/Timeline/timelineEdits';
 import { deleteMaskEdit, setMaskFlagsEdit } from '@layout/Workspace/viewportEdits';
-import { useLayerViewerStore, type LayerMaskTool } from '@stores/layerViewerStore';
+import { useLayerViewerStore, type LayerAlphaView, type LayerMaskTool } from '@stores/layerViewerStore';
 import { useProjectStore } from '@stores/projectStore';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { useMirrorRevision } from '@hooks/useMirror';
 import { useActiveTabCompSettings } from '@hooks/useMirrorFrame';
 import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { useCurrentTime, setTime } from '@stores/playbackClockStore';
-import { useUIStore, type Tool } from '@stores/uiStore';
-import { openContextMenu } from '@stores/contextMenuStore';
-import { paneViewTransform } from '@layout/Workspace/useSceneRefGeometry';
+import { useUIStore } from '@stores/uiStore';
 import { EnginePaneSurface } from '@components/EngineSurface/EnginePaneSurface';
 import { LayerMaskEditor } from './LayerMaskEditor';
 import { LayerPaintSurface } from './LayerPaintSurface';
+import { LayerPaintSelect } from './LayerPaintSelect';
+import { canOpenLayerComposition } from './openLayer';
+import { openLayerComposition } from '@layout/Composition/compNavigationEdits';
+import { TrackPointOverlay, type TrackPointHost } from '@layout/Workspace/TrackPointOverlay';
+import { EffectHandleOverlay } from '@layout/Workspace/EffectHandleOverlay';
+import { PuppetOverlay } from '@layout/Workspace/PuppetOverlay';
+import { BoneOverlay } from '@layout/Workspace/BoneOverlay';
+import { useTrackerStore } from '@stores/trackerStore';
+import { useSelectionStore } from '@stores/selectionStore';
+import { usePaintStore } from '@stores/paintStore';
+import { useEffectHandleStore } from '@stores/effectHandleStore';
 import styles from './LayerViewer.module.css';
 
 /** HH:MM:SS:FF for a time in seconds. */
@@ -79,18 +89,47 @@ function layerFrame(m: DocumentMirror, id: string, layer: LayerInfo): { width: n
   return { width: Math.max(1, stored('width') || 1), height: Math.max(1, stored('height') || 1) };
 }
 
-const MASK_TOOLS: ReadonlyArray<{ id: LayerMaskTool; label: string; title: string }> = [
-  { id: 'select', label: 'Select', title: 'Select — drag mask points, handles (Alt breaks them) or outlines' },
-  { id: 'rect', label: 'Rectangle', title: 'Rectangle Mask — drag to draw' },
-  { id: 'ellipse', label: 'Ellipse', title: 'Ellipse Mask — drag to draw' },
-  { id: 'pen', label: 'Pen', title: 'Pen — click for corners, drag for curves; click the first point or press Enter to close' },
-];
+/**
+ * The main tool bar's tool → the mask tool it is in the Layer viewer. AE has no
+ * separate tools here: Selection reshapes masks, the shape tools and the Pen
+ * draw them. A tool that is not listed leaves the mask tool as it was.
+ */
+const MASK_TOOL_OF: Readonly<Record<string, LayerMaskTool>> = {
+  select: 'select',
+  'direct-select': 'select',
+  shape: 'rect',
+  'mask-rect': 'rect',
+  ellipse: 'ellipse',
+  'mask-ellipse': 'ellipse',
+  pen: 'pen',
+  'mask-pen': 'pen',
+};
 
-/** The app tools that work IN the Layer panel (AE paints and rotos there). */
-const PAINT_TOOLS: ReadonlyArray<{ id: Tool; label: string; title: string }> = [
-  { id: 'paint', label: 'Paint', title: 'Brush — paint on the layer (Alt-click sets the Clone source in Clone mode)' },
-  { id: 'eraser', label: 'Erase', title: 'Eraser — erase the layer’s paint' },
-  { id: 'roto', label: 'Roto', title: 'Roto Brush — paint over the subject (Alt: background) to cut a matte' },
+/** The Paint panel's stroke durations, as the options line names them. */
+const PAINT_DURATION_LABEL: Readonly<Record<string, string>> = {
+  constant: 'Constant',
+  writeOn: 'Write On',
+  'write-on': 'Write On',
+  single: 'Single Frame',
+  singleFrame: 'Single Frame',
+  'single-frame': 'Single Frame',
+  custom: 'Custom',
+};
+
+/** The tools the bone overlay answers to (BoneOverlay's own `active` test decides the rest). */
+const BONE_TOOLS: ReadonlySet<string> = new Set(['bone']);
+
+/** Fit leaves this much of the stage around the layer. */
+const FIT_MARGIN = 0.9;
+const ZOOM_MIN = 0.02;
+const ZOOM_MAX = 64;
+const ZOOM_STEPS: readonly number[] = [0.25, 0.5, 1, 2, 4];
+
+/** After Effects' matte views of the Layer panel. */
+const ALPHA_VIEWS: ReadonlyArray<{ id: Exclude<LayerAlphaView, 'off'>; label: string }> = [
+  { id: 'alpha', label: 'Alpha' },
+  { id: 'boundary', label: 'Alpha Boundary' },
+  { id: 'overlay', label: 'Alpha Overlay' },
 ];
 
 const MASK_MODES: ReadonlyArray<{ id: MaskMode; label: string }> = [
@@ -110,6 +149,29 @@ export function LayerViewer(): JSX.Element | null {
   const renderOn = useLayerViewerStore((s) => s.render);
   const showMasks = useLayerViewerStore((s) => s.showMasks);
   const showAnchor = useLayerViewerStore((s) => s.showAnchor);
+  const showTracker = useLayerViewerStore((s) => s.showTracker);
+  const alphaView = useLayerViewerStore((s) => s.alphaView);
+  const exposure = useLayerViewerStore((s) => s.exposure);
+  const setExposure = useLayerViewerStore((s) => s.setExposure);
+  const showRulers = useLayerViewerStore((s) => s.showRulers);
+  const setRulers = useLayerViewerStore((s) => s.setRulers);
+  const guides = useLayerViewerStore((s) => s.guides);
+  const setGuides = useLayerViewerStore((s) => s.setGuides);
+  // The Paint tool's kind and the Clone Stamp's switches, for the options line.
+  const paintMode = usePaintStore((s) => s.mode);
+  const paintOpacity = usePaintStore((s) => s.opacity);
+  const paintHardness = usePaintStore((s) => s.hardness);
+  const paintDuration = usePaintStore((s) => s.duration);
+  const cloneAligned = usePaintStore((s) => s.cloneAligned);
+  const cloneLockTime = usePaintStore((s) => s.cloneLockTime);
+  const cloneSourceSet = usePaintStore((s) => s.cloneSource !== null && s.cloneSource.nodeId === nodeId);
+  const setPaint = usePaintStore((s) => s.set);
+  const showEffectPoints = useLayerViewerStore((s) => s.showEffectPoints);
+  // The Tracker's and Effect Controls' own targets: their points are drawn here only for THIS layer.
+  const trackedHere = useTrackerStore((s) => s.armed && s.nodeId !== null && s.nodeId === nodeId);
+  const effectHere = useEffectHandleStore((s) => s.nodeId !== null && s.nodeId === nodeId);
+  // The rig overlays act on the SELECTED layer: only when that is the layer on show.
+  const rigHere = useSelectionStore((s) => s.ids.length > 0 && s.ids[0] === nodeId);
   const maskTool = useLayerViewerStore((s) => s.maskTool);
   const maskSelection = useLayerViewerStore((s) => s.maskSelection);
   const setView = useLayerViewerStore((s) => s.setView);
@@ -117,6 +179,15 @@ export function LayerViewer(): JSX.Element | null {
   const selectMask = useLayerViewerStore((s) => s.selectMask);
   const close = useLayerViewerStore((s) => s.close);
   const activeTool = useUIStore((s) => s.activeTool) as string;
+  // A rig tool picked while this layer is on show but not selected (the
+  // selection was cleared, or sits on another layer): the tool is meant for
+  // THIS layer, so it becomes the selection — otherwise the pins and bones
+  // would silently not respond.
+  // (The mask drawing tools too: Tool Options otherwise says they have no target.)
+  const rigTool = activeTool === 'puppet-pin' || BONE_TOOLS.has(activeTool) || (MASK_TOOL_OF[activeTool] !== undefined && MASK_TOOL_OF[activeTool] !== 'select');
+  useEffect(() => {
+    if (rigTool && nodeId && !rigHere) useSelectionStore.getState().set([nodeId]);
+  }, [rigTool, nodeId, rigHere]);
   const paintToolOn = activeTool === 'paint' || activeTool === 'eraser' || activeTool === 'roto';
   // Re-render on any document change: the layer, its bar, masks and anchor
   // below come from the document mirror (B4).
@@ -206,9 +277,10 @@ export function LayerViewer(): JSX.Element | null {
     () => (node && nodeId ? {
       id: nodeId,
       renderEffects: renderOn,
+      ...(alphaView !== 'off' ? { alphaView } : {}),
       ...(heldLayerTime !== null ? { time: renderCompTime, sourceTime: heldLayerTime } : {}),
     } : undefined),
-    [node, nodeId, renderOn, heldLayerTime, renderCompTime],
+    [node, nodeId, renderOn, alphaView, heldLayerTime, renderCompTime],
   );
 
   // ── Ruler: scrub + In/Out brackets ─────────────────────────────────
@@ -262,15 +334,109 @@ export function LayerViewer(): JSX.Element | null {
     setDrag(null);
   };
 
+  // ── Framing: zoom, pan, Fit ────────────────────────────────────────
+  // One camera, owned here: a zoom and the layer's centre on the stage. The
+  // engine draws the layer centred in its COMPOSITION's frame (snapshot_build's
+  // layer view: x = comp width / 2), whatever size it fits its viewport to — the
+  // source file's pixels, or a placeholder's when the file is missing. Letting
+  // each side "fit" its own idea of the frame put the picture and its outline
+  // in different places; the engine is told where the comp's origin is, and the
+  // overlays where the layer's own frame is, under the same zoom and centre.
+  const layerComp = node ? m.comp(node.comp)?.settings : undefined;
+  const compFrame = { width: layerComp?.width ?? frame.width, height: layerComp?.height ?? frame.height };
+  /** null = Fit. */
+  const [zoom, setZoom] = useState<number | null>(null);
+  /** The layer's centre, in stage pixels from the stage's centre. */
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  useEffect(() => {
+    setZoom(null);
+    setPan({ x: 0, y: 0 });
+  }, [nodeId]);
+  const fitScale = stage.width > 0 && stage.height > 0
+    ? Math.min(stage.width / frame.width, stage.height / frame.height) * FIT_MARGIN
+    : 0;
+  const scale = zoom ?? fitScale;
+  const centreX = stage.width / 2 + (zoom === null ? 0 : pan.x);
+  const centreY = stage.height / 2 + (zoom === null ? 0 : pan.y);
+  // What the engine pane reads when asked (EnginePaneSurface `getView`), and the nudge that asks it.
+  const engineViewRef = useRef({ scale: 0, offsetX: 0, offsetY: 0 });
+  engineViewRef.current = {
+    scale,
+    offsetX: centreX - (scale * compFrame.width) / 2,
+    offsetY: centreY - (scale * compFrame.height) / 2,
+  };
+  const getEngineView = useRef(() => engineViewRef.current).current;
+  const [framingRev, setFramingRev] = useState(0);
+  useEffect(() => {
+    setFramingRev((n) => n + 1);
+  }, [scale, centreX, centreY, compFrame.width, compFrame.height]);
+
+  const zoomAt = (next: number, px: number, py: number): void => {
+    if (scale <= 0) return;
+    const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next));
+    // The point under the pointer stays under it.
+    const cx = px - (px - centreX) * (z / scale);
+    const cy = py - (py - centreY) * (z / scale);
+    setZoom(z);
+    setPan({ x: cx - stage.width / 2, y: cy - stage.height / 2 });
+  };
+  const onWheel = (e: React.WheelEvent<HTMLDivElement>): void => {
+    const r = e.currentTarget.getBoundingClientRect();
+    zoomAt(scale * Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
+  };
+  // Panning: the Hand tool, or the middle button with any tool (as in the
+  // Composition viewer). Taken in the capture phase so the mask and paint
+  // layers over the picture never see the press.
+  const panDrag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const onStagePointerDownCapture = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 1 && !(e.button === 0 && activeTool === 'hand')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    panDrag.current = { x: e.clientX, y: e.clientY, px: centreX - stage.width / 2, py: centreY - stage.height / 2 };
+    if (zoom === null) setZoom(scale);
+  };
+  const onStagePointerMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    const d = panDrag.current;
+    if (!d) return;
+    setPan({ x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) });
+  };
+  const onStagePointerUp = (): void => {
+    panDrag.current = null;
+  };
+
+  // The Tracker's points and an effect's point controls are drawn by their own
+  // overlays (the Composition viewer's), hosted under this viewer's camera:
+  // layer-local px (the layer's centre is the origin) ↔ this stage.
+  const hostOffX = centreX;
+  const hostOffY = centreY;
+  const overlayHost = useMemo<TrackPointHost | null>(() => (scale > 0 ? {
+    mapping: {
+      localToScreen: (lx, ly) => ({ x: hostOffX + scale * lx, y: hostOffY + scale * ly }),
+      screenToLocal: (sx, sy) => ({ x: (sx - hostOffX) / scale, y: (sy - hostOffY) / scale }),
+    },
+    frame: { width: frame.width, height: frame.height },
+    zoom: scale,
+  } : null), [scale, hostOffX, hostOffY, frame.width, frame.height]);
+
+  // The main tool bar's tool drives the masks here, as in After Effects: the
+  // Selection tool reshapes, the shape and pen tools draw. (Brush, Eraser and
+  // Roto Brush are read by LayerPaintSurface from the same tool.)
+  useEffect(() => {
+    const next = MASK_TOOL_OF[activeTool];
+    if (next && next !== maskTool) setMaskTool(next);
+    // A drawing tool with masks hidden would draw into nothing visible.
+    if (next && next !== 'select' && !showMasks) setView({ showMasks: true });
+  }, [activeTool, maskTool, setMaskTool, showMasks, setView]);
+
   if (!nodeId || !node) return null;
 
-  const kind = node.kind === 'precomp' ? 'composition' : uiKindOf(node);
   const shownIn = drag?.kind === 'in' ? drag.value : clip?.inT ?? 0;
   const shownOut = drag?.kind === 'out' ? drag.value : outT;
   const pct = (v: number): string => `${(Math.min(Math.max(v / span, 0), 1) * 100).toFixed(3)}%`;
 
-  // ── Overlay (frame, anchor) in the renderer's own fit ─────────────
-  const view = stage.width > 0 ? paneViewTransform(stage.width, stage.height, frame.width, frame.height) : null;
+  // ── Overlay (frame, anchor): the layer's own frame under the camera above ──
+  const view = scale > 0 ? { scale, offsetX: centreX - (scale * frame.width) / 2, offsetY: centreY - (scale * frame.height) / 2 } : null;
   const map = (x: number, y: number): [number, number] => (view
     ? [view.offsetX + view.scale * (x + frame.width / 2), view.offsetY + view.scale * (y + frame.height / 2)]
     : [0, 0]);
@@ -295,106 +461,172 @@ export function LayerViewer(): JSX.Element | null {
     void deleteMaskEdit(nodeId, pathId);
   };
 
-  const openViewMenu = (e: React.MouseEvent): void => {
-    const r = e.currentTarget.getBoundingClientRect();
-    openContextMenu(r.left, r.bottom + 4, [
-      { id: 'render', label: 'Render (masks and effects)', icon: renderOn ? 'check' : undefined, onSelect: () => setView({ render: !renderOn }) },
-      { id: 'sep', separator: true },
-      { id: 'masks', label: 'Masks', icon: showMasks ? 'check' : undefined, onSelect: () => setView({ showMasks: !showMasks }) },
-      { id: 'anchor', label: 'Anchor Point', icon: showAnchor ? 'check' : undefined, onSelect: () => setView({ showAnchor: !showAnchor }) },
-    ]);
-  };
+  const shown = [showMasks && 'Masks', showAnchor && 'Anchor', showTracker && trackedHere && 'Tracker', showEffectPoints && effectHere && 'Effect'].filter(Boolean);
+  const alphaLabel = ALPHA_VIEWS.find((a) => a.id === alphaView)?.label;
+  const viewLabel = [...(alphaLabel ? [alphaLabel] : []), ...(shown.length === 0 && !alphaLabel ? ['None'] : shown)].join(', ');
+  const viewItems: DropdownItem[] = [
+    { type: 'checkbox', id: 'masks', label: 'Masks', checked: showMasks, onChange: (on) => setView({ showMasks: on }) },
+    { type: 'checkbox', id: 'anchor', label: 'Anchor Point', checked: showAnchor, onChange: (on) => setView({ showAnchor: on }) },
+    { type: 'checkbox', id: 'tracker', label: 'Motion Tracker Points', checked: showTracker, onChange: (on) => setView({ showTracker: on }) },
+    { type: 'checkbox', id: 'effect', label: 'Effect Controls', checked: showEffectPoints, onChange: (on) => setView({ showEffectPoints: on }) },
+    { type: 'separator' },
+    // How the matte reads (Roto Brush, masks): one at a time; picking the
+    // current one again goes back to the layer as it is.
+    ...ALPHA_VIEWS.map((a): DropdownItem => ({
+      type: 'checkbox',
+      id: `alpha-${a.id}`,
+      label: a.label,
+      checked: alphaView === a.id,
+      onChange: (on) => setView({ alphaView: on ? a.id : 'off' }),
+    })),
+    { type: 'separator' },
+    { type: 'checkbox', id: 'rulers', label: 'Rulers and Guides', checked: showRulers, onChange: (on) => setRulers(on) },
+    ...(guides.x.length + guides.y.length > 0
+      ? [{ type: 'item', id: 'clear-guides', label: 'Clear Guides', onSelect: () => setGuides({ x: [], y: [] }) } as DropdownItem]
+      : []),
+    { type: 'separator' },
+    { type: 'checkbox', id: 'render', label: 'Render (masks and effects)', checked: renderOn, onChange: (on) => setView({ render: on }) },
+  ];
+  const zoomItems: DropdownItem[] = [
+    { type: 'checkbox', id: 'fit', label: 'Fit', checked: zoom === null, onChange: () => { setZoom(null); setPan({ x: 0, y: 0 }); } },
+    { type: 'separator' },
+    ...ZOOM_STEPS.map((z): DropdownItem => ({
+      type: 'checkbox',
+      id: `z${z}`,
+      label: `${Math.round(z * 100)} %`,
+      checked: zoom !== null && Math.abs(zoom - z) < 1e-6,
+      onChange: () => zoomAt(z, stage.width / 2, stage.height / 2),
+    })),
+  ];
 
   const hint = activeTool === 'roto'
-    ? 'Paint over the subject · Alt paints background'
+    ? 'Roto Brush: paint over the subject. Alt-drag marks the background.'
     : activeTool === 'paint'
-      ? 'Drag to paint · size and colour from Tool Options'
+      ? 'Brush: drag to paint on the layer. Size and colour are in the tool options.'
       : activeTool === 'eraser'
-        ? 'Drag to erase paint'
-        : maskTool === 'pen'
-          ? 'Click for corners, drag for curves · click the first point or Enter to close'
-          : null;
+        ? 'Eraser: drag to erase the layer’s paint.'
+        : activeTool === 'hand'
+          ? 'Hand: drag to move the view. The wheel zooms.'
+          : maskTool === 'pen'
+            ? 'Pen: click for corners, drag for curves. Click the first point or press Enter to close the mask.'
+            : maskTool === 'rect'
+              ? 'Rectangle: drag to draw a mask.'
+              : maskTool === 'ellipse'
+                ? 'Ellipse: drag to draw a mask.'
+                : null;
+  const options = pickedMask && !paintToolOn;
+  const paintOptions = activeTool === 'paint';
+
+  // A composition layer is ONE picture here: its parts are layers of ITS
+  // composition, and that is where they are selected (as in After Effects).
+  const opensAsComposition = canOpenLayerComposition(nodeId);
 
   return (
     <div className={styles.root} data-testid="layer-viewer">
-      <div className={styles.header}>
-        <Icon name="layers" size="sm" />
-        <span className={styles.title}>Layer: {node.name}</span>
-        <span className={styles.meta}>{kind} · {Math.round(frame.width)}×{Math.round(frame.height)}</span>
-
-        {/* Two groups, one tool: a paint tool on means no mask tool is. */}
-        <Segmented<string>
-          size="sm"
-          aria-label="Mask tools"
-          value={paintToolOn ? '' : maskTool}
-          onChange={(id) => {
-            setMaskTool(id as LayerMaskTool);
-            // Leaving a paint tool hands the pointer back to the masks.
-            if (paintToolOn) useUIStore.getState().setActiveTool('select');
-            // A mask tool with masks hidden would draw into nothing visible.
-            if (!showMasks) setView({ showMasks: true });
-          }}
-          options={MASK_TOOLS.map((t) => ({ value: t.id, label: <span title={t.title}>{t.label}</span> }))}
-        />
-        <Segmented<string>
-          size="sm"
-          aria-label="Paint tools"
-          value={paintToolOn ? activeTool : ''}
-          onChange={(id) => useUIStore.getState().setActiveTool(id as Tool)}
-          options={PAINT_TOOLS.map((t) => ({ value: t.id, label: <span title={t.title}>{t.label}</span> }))}
-        />
-
-        {pickedMask && !paintToolOn ? (
-          <div className={styles.maskControls} aria-label="Picked mask">
-            <select
-              className={styles.modeSelect}
-              aria-label="Mask mode"
-              value={pickedMask.mode}
-              disabled={node.switches.locked}
-              onChange={(e) => editMask('Mask Mode', { mode: e.target.value as MaskMode })}
-            >
-              {MASK_MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-            </select>
-            <label className={styles.renderToggle}>
-              <input
-                type="checkbox"
-                checked={pickedMask.inverted}
+      {opensAsComposition ? (
+        <div className={styles.notice} role="note">
+          <span>This layer is a composition. Its parts cannot be selected here.</span>
+          <Button variant="primary" size="sm" onClick={() => { openLayerComposition(nodeId); }} title="Open the composition this layer shows: each part is its own layer there">
+            Open composition
+          </Button>
+        </div>
+      ) : null}
+      {/* The options line: the picked mask's switches, else what the active
+          tool does here. No second title — the tab names the layer. */}
+      {options || hint || paintOptions ? (
+        <div className={styles.options}>
+          {options && pickedMask ? (
+            <div className={styles.maskControls} aria-label="Selected mask">
+              <span className={styles.optLabel}>Mask</span>
+              <select
+                className={styles.modeSelect}
+                aria-label="Mask mode"
+                value={pickedMask.mode}
                 disabled={node.switches.locked}
-                onChange={(e) => editMask('Invert Mask', { inverted: e.target.checked })}
-              />
-              Inverted
-            </label>
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              icon={<Icon name="trash" size="sm" />}
-              onClick={deleteMask}
-              disabled={node.switches.locked}
-              title="Delete this mask (Delete)"
-            >
-              Delete mask
-            </Button>
-          </div>
-        ) : hint ? (
-          <span className={styles.hintText}>{hint}</span>
+                onChange={(e) => editMask('Mask Mode', { mode: e.target.value as MaskMode })}
+              >
+                {MASK_MODES.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+              </select>
+              <label className={styles.check}>
+                <input
+                  type="checkbox"
+                  checked={pickedMask.inverted}
+                  disabled={node.switches.locked}
+                  onChange={(e) => editMask('Invert Mask', { inverted: e.target.checked })}
+                />
+                Inverted
+              </label>
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                icon={<Icon name="trash" size="sm" />}
+                onClick={deleteMask}
+                disabled={node.switches.locked}
+                title="Delete this mask (Delete)"
+              >
+                Delete mask
+              </Button>
+            </div>
+          ) : paintOptions ? (
+            // The Paint tool: Brush or Clone Stamp, and what matters for each.
+            // Size and colour stay in the tool bar's own options; the Paint and
+            // Brushes panels hold the rest.
+            <div className={styles.maskControls} aria-label="Paint options">
+              <select
+                className={styles.modeSelect}
+                aria-label="Paint tool"
+                value={paintMode === 'clone' ? 'clone' : 'paint'}
+                onChange={(e) => setPaint({ mode: e.target.value as typeof paintMode })}
+              >
+                <option value="paint">Brush</option>
+                <option value="clone">Clone Stamp</option>
+              </select>
+              <span className={styles.optLabel}>Opacity <b className={styles.optValue}>{Math.round(paintOpacity * 100)} %</b></span>
+              <span className={styles.optLabel}>Hardness <b className={styles.optValue}>{Math.round(paintHardness * 100)} %</b></span>
+              <span className={styles.optLabel}>Duration <b className={styles.optText}>{PAINT_DURATION_LABEL[paintDuration] ?? paintDuration}</b></span>
+              {paintMode === 'clone' ? (
+                <>
+                  <label className={styles.check} title="Keep the source at the same offset from the brush between strokes">
+                    <input type="checkbox" checked={cloneAligned} onChange={(e) => setPaint({ cloneAligned: e.target.checked })} />
+                    Aligned
+                  </label>
+                  <label className={styles.check} title="Copy from one fixed frame of the source instead of the current time">
+                    <input type="checkbox" checked={cloneLockTime} onChange={(e) => setPaint({ cloneLockTime: e.target.checked })} />
+                    Lock source time
+                  </label>
+                  <span className={styles.hintText}>{cloneSourceSet ? 'Source set. Alt-click to move it.' : 'Alt-click the layer to set the source.'}</span>
+                </>
+              ) : (
+                <span className={styles.hintText}>Drag to paint on the layer.</span>
+              )}
+            </div>
+          ) : (
+            <span className={styles.hintText}>{hint}</span>
+          )}
+        </div>
+      ) : null}
+
+      <div
+        ref={stageRef}
+        className={cn(styles.stage, activeTool === 'hand' && styles.stageHand)}
+        onWheel={onWheel}
+        onPointerDownCapture={onStagePointerDownCapture}
+        onPointerMove={onStagePointerMove}
+        onPointerUp={onStagePointerUp}
+        onPointerCancel={onStagePointerUp}
+      >
+        {layerView ? (
+          <EnginePaneSurface
+            mode="active"
+            framingRev={framingRev}
+            getView={getEngineView}
+            layer={layerView}
+            className={styles.canvas}
+            // Exposure is how the viewer SHOWS the picture, in stops (×2 per stop); the render is untouched.
+            style={exposure !== 0 ? { filter: `brightness(${Math.pow(2, exposure).toFixed(4)})` } : undefined}
+          />
         ) : null}
-
-        <span className={styles.spacer} />
-        <label className={styles.renderToggle} title="Show the layer with its masks and effects (AE's Render checkbox)">
-          <input type="checkbox" checked={renderOn} onChange={(e) => setView({ render: e.target.checked })} />
-          Render
-        </label>
-        <Button variant="ghost" size="sm" onClick={openViewMenu} aria-haspopup="menu" rightIcon={<Icon name="chevron-down" size="sm" />}>
-          View
-        </Button>
-        <Button variant="ghost" size="sm" iconOnly icon={<Icon name="close" size="sm" />} onClick={close} title="Back to the composition">
-          Close Layer panel
-        </Button>
-      </div>
-
-      <div ref={stageRef} className={styles.stage}>
-        {layerView ? <EnginePaneSurface mode="active" framingRev={0} layer={layerView} className={styles.canvas} /> : null}
         {view ? (
           <svg className={styles.overlay} width={stage.width} height={stage.height} aria-hidden>
             <rect
@@ -424,6 +656,19 @@ export function LayerViewer(): JSX.Element | null {
             maskCompTime={maskCompTime}
           />
         ) : null}
+        {/* Paint strokes under the Selection tool: only the strokes take the
+            pointer, so masks stay editable everywhere else. */}
+        {view && renderOn ? (
+          <LayerPaintSelect
+            nodeId={nodeId}
+            frameWidth={frame.width}
+            frameHeight={frame.height}
+            view={view}
+            stageWidth={stage.width}
+            stageHeight={stage.height}
+            compTime={renderCompTime}
+          />
+        ) : null}
         {view ? (
           <LayerPaintSurface
             nodeId={nodeId}
@@ -435,53 +680,121 @@ export function LayerViewer(): JSX.Element | null {
             compTime={renderCompTime}
           />
         ) : null}
+        {/* An effect's point controls (the effect picked in Effect Controls) and
+            the Tracker's points, on the layer itself. Each draws nothing unless
+            its own panel has this layer as its target. */}
+        {overlayHost && showEffectPoints && effectHere ? (
+          <div className={styles.hosted}><EffectHandleOverlay host={overlayHost} /></div>
+        ) : null}
+        {overlayHost && showTracker && trackedHere ? (
+          <div className={styles.hosted}><TrackPointOverlay host={overlayHost} /></div>
+        ) : null}
+        {view && showRulers ? (
+          <ViewerRulers
+            width={stage.width}
+            height={stage.height}
+            scale={view.scale}
+            originX={view.offsetX}
+            originY={view.offsetY}
+            guides={guides}
+            onGuidesChange={setGuides}
+          />
+        ) : null}
+        {/* Rigging on the layer itself: puppet pins (as in After Effects' Layer
+            panel) and the bone tool. Each overlay draws only while its own tool
+            is active and THIS layer is the selected one, and then takes the
+            pointer over the mask and paint layers beneath it. */}
+        {overlayHost && rigHere && activeTool === 'puppet-pin' ? (
+          <div className={styles.hosted}><PuppetOverlay host={overlayHost} /></div>
+        ) : null}
+        {overlayHost && rigHere && BONE_TOOLS.has(activeTool) ? (
+          <div className={styles.hosted}><BoneOverlay host={overlayHost} /></div>
+        ) : null}
       </div>
 
+      {/* The layer's own time: the whole source, the part the composition uses
+          lit between { and }, and the composition's current time. */}
+      {clip ? (
+        <div
+          ref={rulerRef}
+          className={styles.ruler}
+          role="slider"
+          aria-label="Layer time"
+          aria-valuemin={0}
+          aria-valuemax={Number(span.toFixed(3))}
+          aria-valuenow={Number(layerT.toFixed(3))}
+          onPointerDown={(e) => onRulerDown(e, 'scrub')}
+          onPointerMove={onRulerMove}
+          onPointerUp={onRulerUp}
+          onPointerCancel={onRulerUp}
+        >
+          <div className={styles.range} style={{ left: pct(shownIn), width: `calc(${pct(shownOut)} - ${pct(shownIn)})` }} />
+          <div
+            className={cn(styles.bracket, styles.bracketIn)}
+            style={{ left: pct(shownIn) }}
+            title="Drag to trim the In point"
+            onPointerDown={(e) => onRulerDown(e, 'in')}
+          />
+          <div
+            className={cn(styles.bracket, styles.bracketOut)}
+            style={{ left: pct(shownOut) }}
+            title="Drag to trim the Out point"
+            onPointerDown={(e) => onRulerDown(e, 'out')}
+          />
+          <div className={styles.playhead} style={{ left: pct(layerT) }} />
+        </div>
+      ) : null}
+
       <div className={styles.footer}>
+        <Dropdown
+          placement="top-start"
+          items={zoomItems}
+          trigger={
+            <button type="button" className={styles.select} title="Zoom — the wheel zooms, the middle button or the Hand tool moves the view">
+              <span>{zoom === null ? 'Fit' : `${Math.round(scale * 100)} %`}</span>
+              <Icon name="chevron-down" size="sm" />
+            </button>
+          }
+        />
+        <span className={styles.sep} aria-hidden />
         <span className={styles.timecode} title="Current time, in layer time">{timecode(layerT, fps)}</span>
         {clip ? (
           <>
-            <Button variant="ghost" size="xs" title="Set In point to the current time" onClick={() => commitTrim('start', clampIn(layerT))}>
+            <Button variant="ghost" size="xs" title="Set the In point to the current time" onClick={() => commitTrim('start', clampIn(layerT))}>
               {'{'}
             </Button>
-            <div
-              ref={rulerRef}
-              className={styles.ruler}
-              role="slider"
-              aria-label="Layer time"
-              aria-valuemin={0}
-              aria-valuemax={Number(span.toFixed(3))}
-              aria-valuenow={Number(layerT.toFixed(3))}
-              onPointerDown={(e) => onRulerDown(e, 'scrub')}
-              onPointerMove={onRulerMove}
-              onPointerUp={onRulerUp}
-              onPointerCancel={onRulerUp}
-            >
-              <div className={styles.range} style={{ left: pct(shownIn), width: `calc(${pct(shownOut)} - ${pct(shownIn)})` }} />
-              <div
-                className={cn(styles.bracket, styles.bracketIn)}
-                style={{ left: pct(shownIn) }}
-                title="Drag to trim the In point"
-                onPointerDown={(e) => onRulerDown(e, 'in')}
-              />
-              <div
-                className={cn(styles.bracket, styles.bracketOut)}
-                style={{ left: pct(shownOut) }}
-                title="Drag to trim the Out point"
-                onPointerDown={(e) => onRulerDown(e, 'out')}
-              />
-              <div className={styles.playhead} style={{ left: pct(layerT) }} />
-            </div>
-            <Button variant="ghost" size="xs" title="Set Out point to the current time" onClick={() => commitTrim('end', clampOut(layerT))}>
+            <span className={styles.readout} title="In point">{timecode(shownIn, fps)}</span>
+            <Button variant="ghost" size="xs" title="Set the Out point to the current time" onClick={() => commitTrim('end', clampOut(layerT))}>
               {'}'}
             </Button>
-            <span className={styles.readout}>In {timecode(shownIn, fps)}</span>
-            <span className={styles.readout}>Out {timecode(shownOut, fps)}</span>
-            <span className={styles.readout}>Δ {timecode(shownOut - shownIn, fps)}</span>
+            <span className={styles.readout} title="Out point">{timecode(shownOut, fps)}</span>
+            <span className={styles.readout} title="Duration">Δ {timecode(shownOut - shownIn, fps)}</span>
           </>
         ) : (
           <span className={styles.readout}>This layer has no bar of its own in the timeline (it is inside a group).</span>
         )}
+        <span className={styles.spacer} />
+        <span className={styles.exposure} title="Exposure, in stops: how this viewer shows the picture. It does not change the render. Double-click to reset.">
+          <span className={styles.optLabel}>Exposure</span>
+          <span onDoubleClick={() => setExposure(0)}>
+            <ValueField value={exposure} onChange={setExposure} min={-8} max={8} step={0.05} precision={1} aria-label="Exposure (stops)" />
+          </span>
+        </span>
+        <span className={styles.readout} title="The layer’s own size">{Math.round(frame.width)} × {Math.round(frame.height)}</span>
+        <Dropdown
+          placement="top-end"
+          items={viewItems}
+          trigger={
+            <button type="button" className={styles.select} title="What is drawn over the layer">
+              <span>View: {viewLabel}</span>
+              <Icon name="chevron-down" size="sm" />
+            </button>
+          }
+        />
+        <label className={styles.check} title="Show the layer with its masks and effects. Off shows the untouched source.">
+          <input type="checkbox" checked={renderOn} onChange={(e) => setView({ render: e.target.checked })} />
+          Render
+        </label>
       </div>
     </div>
   );

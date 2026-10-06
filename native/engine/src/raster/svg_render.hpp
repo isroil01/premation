@@ -46,7 +46,23 @@ struct RasterizeOptions {
   /// document in Chromium: the page's web fonts never reach it).
   const FontSet* fonts = nullptr;
   ImageDecoder decodeImage;
+  /// Document time in seconds for SMIL / CSS animation (svg_anim.hpp): the
+  /// layer's source time. A static document ignores it.
+  double time = 0;
 };
+
+/// An SVG document's facts for import (the media probe): its intrinsic size
+/// (rasterizeSvg's rules, without the raster scale) and whether it animates.
+struct SvgFacts {
+  bool ok = false;
+  std::string error;
+  double width = 0;
+  double height = 0;
+  bool animated = false;
+  /// One pass of the animation in seconds (svg_anim.hpp AnimationInfo); 0 = static.
+  double durationSec = 0;
+};
+[[nodiscard]] SvgFacts svg_facts(std::string_view markup);
 
 /// The document text of an SVG `src`: a `data:` URL decoded as
 /// AppTextureProvider.decodeSvgDataUrl does. nullopt: not a data URL / malformed.

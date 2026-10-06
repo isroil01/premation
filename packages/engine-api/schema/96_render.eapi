@@ -324,6 +324,9 @@ struct RenderView {
   viewerLut?: RenderViewerLut = 19;
   /// D3 colour management; absent = today's pipeline.
   colorManagement?: RenderColorManagement = 20;
+  /// The viewer's channel (View ▸ Show Channel, viewport-only): red / green / blue / alpha shown as
+  /// an opaque grey image on the final blit; rgbStraight shows the colour without its alpha. Absent = rgb.
+  channel?: ChannelView = 21;
 }
 
 /// A texture key the scene samples → the content it resolved to when the frame was rendered.

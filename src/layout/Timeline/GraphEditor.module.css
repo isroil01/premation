@@ -149,8 +149,102 @@
   flex-shrink: 0;
 }
 
+/* The curve list (optional) beside the plot. */
+.plotRow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/*
+ * The graph's own list of what it plots: a layer name, then its animated
+ * properties, each with its curve's colour. A row is a solo switch.
+ */
+.curveList {
+  flex: 0 0 240px;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  background: var(--color-panel);
+  border-right: 1px solid var(--color-border-structural);
+}
+
+.curveListLayer {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  background: var(--color-panel-header);
+  border-bottom: 1px solid var(--color-divider);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curveListRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  height: var(--control-height-md);
+  padding: 0 var(--space-3) 0 var(--space-6);
+  border: none;
+  border-bottom: 1px solid var(--color-divider);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.curveListRow:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.curveListRow:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -1px;
+}
+
+.curveListRowOn,
+.curveListRowOn:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
+  color: var(--color-text-primary);
+}
+
+.curveListRowDim {
+  color: var(--color-text-tertiary);
+}
+
+.curveListRowDim .curveListDot {
+  opacity: 0.35;
+}
+
+.curveListDot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+}
+
+.curveListName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curveListNote {
+  margin: 0;
+  padding: var(--space-4) var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.45;
+}
+
 .canvas {
   flex: 1;
+  min-width: 0;
   position: relative;
   overflow-x: auto;
   overflow-y: hidden;

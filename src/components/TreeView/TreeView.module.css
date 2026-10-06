@@ -56,14 +56,14 @@
   box-shadow: var(--shadow-focus-ring);
 }
 
+/* Selected: a lighter grey row, no accent edge (see Timeline.module.css). */
 .row[data-selected] {
-  background: var(--color-primary-subtle);
+  background: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
   color: var(--color-text-primary);
-  border-left-color: var(--color-primary);
 }
 
 .row[data-selected]:hover {
-  background: var(--color-active);
+  background: color-mix(in srgb, var(--color-text-primary) 20%, transparent);
 }
 
 /* A real <button> on rows that disclose, an inert spacer on rows that do not —

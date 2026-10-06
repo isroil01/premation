@@ -38,11 +38,12 @@ import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { useGuidesStore } from '@stores/guidesStore';
 import { isCustomViewId, type CustomViewParams } from '@core/workspace/customViews';
 import { useRenderQualityStore, type PreviewResolution } from '@stores/renderQualityStore';
-import { viewportHudStats } from '@stores/viewportDisplayStore';
+import { useViewportDisplayStore, viewportHudStats } from '@stores/viewportDisplayStore';
 import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
-import { useCompareStore } from '@stores/compareStore';
+import { captureLiveFrame, needsLiveFrame, useCompareStore } from '@stores/compareStore';
 import { publishFrame } from '@core/engine/frameTap';
+import { notePresented } from '@core/engine/presentedFrames';
 import { captureViewportPicture, setViewportPictureRefresh, viewportPictureWanted } from '@core/engine/viewportPicture';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { compUvRect, parseCssRgb } from './pasteboard';
@@ -148,6 +149,7 @@ function noticeText(n: NonNullable<ReturnType<typeof lastProcessEngineNotice>>):
 function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineClient; mode: EngineSurfaceMode; notice: string | null }): JSX.Element {
   const frameBoxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const displayMode = useViewportDisplayStore((s) => s.displayMode);
   // Viewport mode: a status line until the first frame lands (never a blank
   // stage with no explanation). One React render when it changes.
   const [firstFrame, setFirstFrame] = useState(false);
@@ -244,6 +246,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         // The loupe / clone lens copy: a full-size 2D blit, only while one of them is open.
         if (viewportPictureWanted()) captureViewportPicture(p.frame);
         if (useCompareStore.getState().pending) useCompareStore.getState().captureFrom(p.frame, seconds, getWorkspaceController().getView());
+        // Compare ▸ Difference subtracts the snapshot from THIS frame (copied only while it is on screen).
+        if (needsLiveFrame()) captureLiveFrame(p.frame);
         // The blit releases the slot to the engine once the GPU no longer reads it.
         if (!blitter.draw(p.frame, boardData, p.release)) {
           pending = p;
@@ -252,10 +256,13 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         const now = performance.now();
         // B4 round 2: the overlays read THIS frame's geometry (the records it carried) from now on.
         if (p.meta.geometry || p.meta.geometryViews) {
-          publishFrameGeometry(p.meta.viewport, p.meta.time, p.meta.revision, p.meta.geometry ?? [], p.meta.geometryViews);
+          // Filed under the window's LOCAL id: the overlays read viewport 1 in every window (windowViewport.ts).
+          publishFrameGeometry(ENGINE_SURFACE_VIEWPORT, p.meta.time, p.meta.revision, p.meta.geometry ?? [], p.meta.geometryViews);
         }
         stats.drawn += 1;
         stats.lastRevision = p.meta.revision;
+        // The overlays hold a committed edit's preview until this frame shows it.
+        notePresented(ENGINE_SURFACE_VIEWPORT, p.meta.revision);
         stats.lastFrame = p.meta.frame;
         stats.lastLatencyMs = Date.now() - p.meta.renderDoneUs / 1000;
         stats.lastRenderMs = (p.meta.renderDoneUs - p.meta.renderStartUs) / 1000;
@@ -309,8 +316,19 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     // ── viewport: size, camera, channel (one request in flight, latest wins) ──
     let inFlight = false;
     let again = false;
+    /**
+     * The box's size, kept by the ResizeObserver below. `desired` runs on every
+     * workspace render — every played frame — and measuring the box there
+     * forced a synchronous layout per frame (168 ms of a 3 s playback on a
+     * light comp). Null: measure once on the next ask.
+     */
+    let boxSize: { width: number; height: number } | null = null;
     const desired = (): NonNullable<EngineSurfaceStats['lastViewport']> => {
-      const r = box.getBoundingClientRect();
+      if (!boxSize) {
+        const m = box.getBoundingClientRect();
+        boxSize = { width: m.width, height: m.height };
+      }
+      const r = boxSize;
       const width = Math.max(1, Math.round(r.width));
       const height = Math.max(1, Math.round(r.height));
       const pageDpr = window.devicePixelRatio || 1;
@@ -400,7 +418,12 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         sendViewport();
       });
     };
-    const ro = new ResizeObserver(requestViewport);
+    const ro = new ResizeObserver((entries) => {
+      // The border box the observer already measured (no layout of our own); else measure on the next ask.
+      const bb = entries[entries.length - 1]?.borderBoxSize?.[0];
+      boxSize = bb ? { width: bb.inlineSize, height: bb.blockSize } : null;
+      requestViewport();
+    });
     ro.observe(box);
     let dprQuery: MediaQueryList | null = null;
     const watchDpr = (): void => {
@@ -418,7 +441,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       vp = id;
       unFrames = subscribeEngineFrames(id, onFrame);
       // B4 round 2: while the engine draws THE viewport, the overlays' geometry is the frames'.
-      setEngineDrivenViewport(id, true);
+      setEngineDrivenViewport(ENGINE_SURFACE_VIEWPORT, true);
       requestViewport();
     });
     // The workspace's render tick runs whenever the camera may
@@ -429,6 +452,13 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       if (s.channel !== lastChannel || s.camera3dMode !== prev.camera3dMode || s.customViews !== prev.customViews) sendViewport();
     });
     const unOnion = useOnionSkinStore.subscribe(() => sendViewport());
+    // Difference turned on over a still viewport: it needs a live frame, so the engine delivers this one again.
+    let hadLive = needsLiveFrame();
+    const unCompare = useCompareStore.subscribe(() => {
+      const live = needsLiveFrame();
+      if (live && !hadLive) sendViewport(true);
+      hadLive = live;
+    });
     // Preview resolution (Full / Half / Third / Quarter) → the engine's.
     let lastRes: PreviewResolution | null = null;
     const sendResolution = (): void => {
@@ -467,6 +497,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       unRender();
       unGuides();
       unOnion();
+      unCompare();
       unQuality();
       ro.disconnect();
       dprQuery?.removeEventListener('change', onDpr);
@@ -477,7 +508,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       pending = null;
       if (vp !== null) {
         void client.execute({ type: 'closeViewport', viewport: vp });
-        setEngineDrivenViewport(vp, false);
+        setEngineDrivenViewport(ENGINE_SURFACE_VIEWPORT, false);
       }
       blitter.dispose();
     };
@@ -485,7 +516,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
 
   return (
     <div ref={frameBoxRef} className={styles.viewport} data-engine-surface="viewport" aria-hidden="true">
-      <canvas ref={canvasRef} className={styles.viewportCanvas} />
+      {/* Display mode Wireframe / Bounding Box: the outlines alone (the page draws them), not over the shaded picture. */}
+      <canvas ref={canvasRef} className={styles.viewportCanvas} style={displayMode !== 'shaded' ? { visibility: 'hidden' } : undefined} />
       {!firstFrame && (
         <div className={styles.waiting} role="status">
           {notice ?? (waitingLong ? 'Waiting for the C++ engine’s first frame…' : '')}

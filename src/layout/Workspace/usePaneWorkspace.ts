@@ -34,6 +34,7 @@ import { Workspace, modifiersFrom, type PointerInput, type SceneGraphPort } from
 import type { Camera3dMode } from '@stores/guidesStore';
 import type { RenderView } from '@core/workspace/renderView';
 import { createSceneGraphPort, createSelectionPort, createCommandPort } from '@core/workspace/ports';
+import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
 import { paneViewTransform } from './useSceneRefGeometry';
 import { useUIStore } from '@stores/uiStore';
 
@@ -127,8 +128,23 @@ export function usePaneWorkspace({
   const [ws, setWs] = useState<Workspace | null>(null);
   /** True once the user pans or zooms this pane — suppresses the auto-fit. */
   const userFramedRef = useRef(false);
+  /** True once the camera has been framed (fitted, or by the user): until then it is not the pane's view. */
+  const framedRef = useRef(false);
   /** In-flight middle-button pan. */
   const panRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+  /**
+   * The press this pane holds the viewport gesture for, and the pane's box at that press
+   * (read once: the pane does not move under a drag, and reading layout on every move
+   * forced a synchronous layout per pointer event while the pane re-rendered).
+   */
+  const pressRef = useRef<{ pointerId: number; rect: DOMRect } | null>(null);
+  useEffect(() => () => {
+    // Unmounting mid-drag (a layout switch) must not leak an open gesture transaction.
+    if (pressRef.current) {
+      pressRef.current = null;
+      endViewportGesture();
+    }
+  }, []);
   useEffect(() => {
     const w = new Workspace({
       scene,
@@ -145,12 +161,29 @@ export function usePaneWorkspace({
     });
     w.initialize();
     wsRef.current = w;
+    framedRef.current = false;  // a new engine's camera is unframed until the fit effect runs
     setWs(w);
     return () => {
       w.dispose();
       if (wsRef.current === w) wsRef.current = null;
     };
   }, [scene]);
+
+  // Repaint when this pane's camera moves. The renderer redraws on scene/time
+  // changes; panning is neither, so without this the pane would keep showing the
+  // previous framing until something else happened to touch the scene.
+  //
+  // Subscribed BEFORE the fit below (effects run in order): the fit's own camera
+  // change used to land before anyone listened, so the engine kept the pane's
+  // first, unfitted camera (zoom 1 about the pane's centre) — a 2- / 4-up opened
+  // on a giant crop of the comp, and every frame after it, drags included, was
+  // drawn through that camera while the overlays used the fitted one.
+  const [framingRev, setFramingRev] = useState(0);
+  useEffect(() => {
+    if (!ws) return;
+    const sub = ws.events.on('CameraChanged', () => setFramingRev((n) => n + 1));
+    return () => sub.dispose();
+  }, [ws]);
 
   // Mirror the renderer's centred "contain" fit EXACTLY, by reusing the very
   // function that positions the pane's SVG chrome.
@@ -172,6 +205,9 @@ export function usePaneWorkspace({
     if (userFramedRef.current) return;
     ws.camera.zoomTo(paneViewTransform(width, height, compWidth, compHeight).scale);
     ws.camera.centerOn({ x: compWidth / 2, y: compHeight / 2 });
+    framedRef.current = true;
+    // A fit that left the camera where it was emits no change; the engine still needs this framing.
+    setFramingRev((n) => n + 1);
   }, [ws, width, height, compWidth, compHeight]);
 
   // Follow the app's tool selection, but only for tools a pane handles.
@@ -187,26 +223,18 @@ export function usePaneWorkspace({
     ws?.setSnap({ enabled: snapEnabled });
   }, [ws, snapEnabled]);
 
-  // Repaint when this pane's camera moves. The renderer redraws on scene/time
-  // changes; panning is neither, so without this the pane would keep showing the
-  // previous framing until something else happened to touch the scene.
-  const [framingRev, setFramingRev] = useState(0);
-  useEffect(() => {
-    if (!ws) return;
-    const sub = ws.events.on('CameraChanged', () => setFramingRev((n) => n + 1));
-    return () => sub.dispose();
-  }, [ws]);
-
   const getRenderView = useCallback((): RenderView | undefined => {
     const w = wsRef.current;
-    if (!w) return undefined;
+    // Unframed, the camera is not this pane's view yet: the caller's contain fit is (and equals the fit to come).
+    if (!w || (!framedRef.current && !userFramedRef.current)) return undefined;
     const origin = w.camera.worldToScreen({ x: 0, y: 0 });
     return { scale: w.camera.zoom, offsetX: origin.x, offsetY: origin.y };
   }, []);
 
   const handlers = useMemo(() => {
     const toPointer = (e: React.PointerEvent): PointerInput => {
-      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const press = pressRef.current;
+      const r = press && press.pointerId === e.pointerId ? press.rect : (e.currentTarget as HTMLElement).getBoundingClientRect();
       return {
         position: { x: e.clientX - r.left, y: e.clientY - r.top },
         pointerType: e.pointerType === 'pen' || e.pointerType === 'touch' ? e.pointerType : 'mouse',
@@ -239,6 +267,15 @@ export function usePaneWorkspace({
           userFramedRef.current = true;
           return;
         }
+        // ONE viewport gesture per drag, opened as the main viewport opens it. The move
+        // tool's writes are absolute (drag start + running total) and the running total
+        // lives on the gesture's transaction: without one, every move was a one-shot edit
+        // from the layer's last MIRRORED position, so each move the engine had not echoed
+        // yet was lost — the layer fell behind the pointer — and each was its own undo step.
+        // The gesture also raises the drag flag, so no cached frame is shown mid-drag.
+        endViewportGesture();
+        beginViewportGesture();
+        pressRef.current = { pointerId: e.pointerId, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() };
         w.setFocused(true);
         w.feedPointerDown(toPointer(e));
       },
@@ -264,11 +301,23 @@ export function usePaneWorkspace({
           panRef.current = null;
           return;
         }
-        w.feedPointerUp(toPointer(e));
+        const pointer = toPointer(e);
+        // Close the gesture first, as the main viewport does: the drag's writes all
+        // happened on the moves; this records them as one undo entry.
+        if (pressRef.current) {
+          pressRef.current = null;
+          endViewportGesture();
+        }
+        w.feedPointerUp(pointer);
       },
       onPointerCancel: (e: React.PointerEvent): void => {
         panRef.current = null;
-        wsRef.current?.feedPointerCancel(toPointer(e));
+        const pointer = toPointer(e);
+        if (pressRef.current) {
+          pressRef.current = null;
+          endViewportGesture();
+        }
+        wsRef.current?.feedPointerCancel(pointer);
       },
       onWheel: (e: React.WheelEvent): void => {
         const w = wsRef.current;

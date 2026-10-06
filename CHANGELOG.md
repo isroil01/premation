@@ -3,10 +3,27 @@
 Newest first. Each entry is what a person opening the app after an update
 would want to know; the engine-level detail is in `ROADMAP.md`.
 
-## 0.9.0 — 2026-09-30
+## 0.9.0 — 2026-10-06
 
 A new engine. Everything you see, play and export is now drawn by a native
 C++ engine running in its own process, with the editor as its interface.
+Alongside it: a Free plan that stays free, Premation Cloud for hosting, and an
+account you can actually manage from inside the app.
+
+- **Premation Cloud.** The editor is free everywhere; hosting is what is paid
+  for. Free keeps 5 cloud projects and 7 days of history; Premation Cloud
+  ($9/month or $90/year) has no project cap and 90 days of history. Switch
+  between monthly and yearly from Billing (prorated, immediate), cancel from
+  the same screen, and a yearly plan can be refunded in full for 14 days after
+  payment — no email to support.
+- **Your account, in the app.** Settings now has change email (a code goes to
+  the new address), change password — or set one if you signed up with Google
+  — a list of every device signed in with "sign out" per device, and account
+  deletion with a code and a typed confirmation. Account and billing changes
+  each send you an email.
+- **New sign-in screens.** One frame for sign in, create account, the
+  confirmation code (six boxes, paste works, submits on the last digit) and
+  password reset. Google is the only social sign-in.
 
 - **Much faster where it used to hurt.** The viewport renders every benchmark
   composition faster than before and holds full frame rate on all of them —

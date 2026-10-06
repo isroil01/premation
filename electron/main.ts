@@ -14,7 +14,7 @@ import { pathToFileURL } from 'node:url';
 import { readFile, writeFile, mkdir, unlink, readdir, access, rm, copyFile, stat } from 'node:fs/promises';
 import { writeFileAtomic } from './atomicWrite';
 import { initDialogDirs, rememberDir, rememberedDir } from './dialogDirs';
-import { localFileUrlToPath } from './localFileUrl';
+import { localFileCorsOrigin, localFileUrlToPath } from './localFileUrl';
 import { EngineHost, registerEngineIpc, type SharedTextureApi } from './engineHost';
 import { handleEngineUnavailable } from './engineUnavailable';
 import { spawn } from 'node:child_process';
@@ -196,9 +196,12 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('enable-features', 'Vulkan');
 }
 
-// Privileged local-file protocol for assets in Electron
+// Privileged local-file protocol for assets in Electron. `corsEnabled`: the
+// page READS these bytes with fetch (audio decode, waveforms, beat grid) and
+// the page is another origin (the dev server, or `null` from file://) — without
+// it Chromium refuses the request outright, while <video>/<audio> still play.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'local-file', privileges: { bypassCSP: true, secure: true, supportFetchAPI: true, stream: true } }
+  { scheme: 'local-file', privileges: { bypassCSP: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }
 ]);
 
 const PROJECT_FILTERS = [
@@ -825,7 +828,13 @@ function createMainWindow(): BrowserWindow {
   // The C++ engine's shared-texture receiver belongs to the page that installed
   // it: a reload or a renderer crash takes it away until the page says it is
   // back (electron/engineHost.ts — early sends time out).
-  win.webContents.on('did-start-loading', () => engineHost?.pageReset());
+  // A navigation to ANOTHER document, not `did-start-loading`: that one also
+  // fires for a same-document navigation (a route or query change of the hash
+  // router), which keeps the page and its receiver — resetting there dropped
+  // every frame from then on, since the page had nothing to announce again.
+  win.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) engineHost?.pageReset();
+  });
   win.webContents.on('render-process-gone', () => engineHost?.pageReset());
 
   // The renderer draws the bar at first paint, so it reads the chrome off the
@@ -904,7 +913,10 @@ function registerPopoutIpc(): void {
     // with its page, and closing it drops its frames and viewports.
     popoutWindows.add(popoutWin);
     const popoutKey = popoutWin.webContents.id;
-    popoutWin.webContents.on('did-start-loading', () => engineHost?.pageReset(popoutKey));
+    // (Another document only — see the main window's listener above.)
+    popoutWin.webContents.on('did-start-navigation', (details) => {
+      if (details.isMainFrame && !details.isSameDocument) engineHost?.pageReset(popoutKey);
+    });
     popoutWin.webContents.on('render-process-gone', () => engineHost?.pageReset(popoutKey));
     popoutWin.on('closed', () => {
       popoutWindows.delete(popoutWin);
@@ -1051,12 +1063,18 @@ function registerObjectMatteIpc(): void {
 
 /** Resolve `local-file://` URLs (imported media) to real files on disk. */
 function registerLocalFileProtocol(): void {
-  protocol.handle('local-file', (request) => {
+  protocol.handle('local-file', async (request) => {
     // Both `local-file://C:/…` (which Chromium ≥ 130 delivers as
     // `local-file://C/…`) and `local-file:///C:/…` — see localFileUrl.ts.
     const filePath = localFileUrlToPath(request.url);
     if (!filePath) return new Response(null, { status: 400 });
-    return net.fetch(pathToFileURL(filePath).href);
+    // A cross-origin fetch needs the CORS header; the app's own pages only.
+    const allow = localFileCorsOrigin(request.headers.get('origin'), DEV_SERVER_URL);
+    const res = await net.fetch(pathToFileURL(filePath).href);
+    if (allow === null) return res;
+    const headers = new Headers(res.headers);
+    headers.set('Access-Control-Allow-Origin', allow);
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
   });
 }
 

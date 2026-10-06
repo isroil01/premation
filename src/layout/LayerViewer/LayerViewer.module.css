@@ -1,3 +1,9 @@
+/*
+ * The Layer viewer (LayerViewer.tsx) — After Effects' Layer panel as a tab of
+ * the viewer. Top to bottom: a slim options line (only when there is something
+ * to say), the layer on a dark stage, the layer's own time bar, one footer
+ * line. Flat greys; the accent is the current time and its marker.
+ */
 .root {
   position: absolute;
   inset: 0;
@@ -6,63 +12,103 @@
   min-width: 0;
   min-height: 0;
   background: var(--color-panel);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
 }
 
-.header,
-.footer {
+/* A composition layer: say what this viewer cannot do, and offer the one that can. */
+.notice {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-}
-
-.footer {
-  border-top: 1px solid var(--color-border);
-  border-bottom: 0;
-}
-
-.title {
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--control-height-lg);
+  padding: var(--space-1) var(--space-3);
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--color-panel));
+  border-bottom: 1px solid var(--color-divider);
   color: var(--color-text-primary);
-  font-weight: var(--font-weight-medium);
+  flex: none;
+}
+
+/* ── Options line ─────────────────────────────────────────────────── */
+.options {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-divider);
+  flex: none;
   white-space: nowrap;
+  overflow: hidden;
+}
+
+.optLabel {
+  color: var(--color-text-tertiary);
+}
+
+.optValue {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-regular);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary-text);
+}
+
+.optText {
+  font-weight: var(--font-weight-regular);
+  color: var(--color-text-primary);
+}
+
+.hintText {
+  color: var(--color-text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.meta {
-  color: var(--color-text-muted);
-  white-space: nowrap;
-}
-
-.spacer {
-  flex: 1;
-}
-
-.renderToggle {
+.maskControls {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-3);
+}
+
+.modeSelect {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-xs);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
   cursor: pointer;
   white-space: nowrap;
 }
 
-.renderToggle input {
-  accent-color: var(--color-selection);
+.check input {
+  accent-color: var(--color-primary);
 }
 
-/* The transparency grid the layer sits on — a Layer panel shows the layer's
-   own pixels, never a comp background. */
+/* ── Stage ────────────────────────────────────────────────────────── */
+/* The layer alone, on the viewer's dark surround. */
 .stage {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background:
-    repeating-conic-gradient(var(--color-surface-2) 0 25%, var(--color-panel) 0 50%) 0 0 / 16px 16px;
+  background: var(--color-surface-0);
+  touch-action: none;
+}
+
+.stageHand,
+.stageHand * {
+  cursor: grab !important;
 }
 
 .canvas {
@@ -78,9 +124,22 @@
   pointer-events: none;
 }
 
+/* A hosted overlay (tracker points, effect controls): the whole stage, and
+   out of the pointer's way except on its own handles. */
+.hosted {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hosted > * {
+  pointer-events: auto;
+}
+
+/* The layer's own bounds: a hairline, like the composition's edge. */
 .frame {
   fill: none;
-  stroke: var(--color-border);
+  stroke: var(--color-border-strong);
   stroke-width: 1;
 }
 
@@ -92,38 +151,11 @@
 
 .anchor {
   fill: none;
-  stroke: var(--color-selection);
-  stroke-width: 1.5;
+  stroke: var(--color-text-primary);
+  stroke-width: 1;
 }
 
-/* ── Mask tools + editor ─────────────────────────────────────────── */
-
-.header {
-  flex-wrap: wrap;
-  row-gap: var(--space-1);
-}
-
-.maskControls {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.modeSelect {
-  height: var(--control-height-sm, 24px);
-  padding: 0 var(--space-1);
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-sm);
-}
-
-.hintText {
-  color: var(--color-text-muted);
-  white-space: nowrap;
-}
-
+/* ── Mask editor ──────────────────────────────────────────────────── */
 .maskEditor {
   position: absolute;
   inset: 0;
@@ -186,12 +218,47 @@
 }
 
 /* ── Paint + Roto Brush ──────────────────────────────────────────── */
-
 .paintSurface {
   position: absolute;
   inset: 0;
   cursor: crosshair;
   touch-action: none;
+}
+
+/* Paint strokes under the Selection tool (LayerPaintSelect): the SVG is out of
+   the pointer's way; only a stroke's own (invisible, brush-wide) path is hit. */
+.paintSelect {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  outline: none;
+}
+
+.paintHit {
+  fill: none;
+  stroke: transparent;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: stroke;
+  cursor: move;
+}
+
+.paintSelHalo {
+  fill: none;
+  stroke: var(--color-primary);
+  stroke-opacity: 0.45;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.paintSelLine {
+  fill: none;
+  stroke: var(--color-text-primary);
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 
 .paintLive {
@@ -246,11 +313,10 @@
   bottom: var(--space-4);
   transform: translateX(-50%);
   padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-structural);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
   pointer-events: none;
   white-space: nowrap;
 }
@@ -262,31 +328,20 @@
   transform: translate(-50%, -50%);
   max-width: 80%;
   padding: var(--space-4);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--color-surface-2);
   color: var(--color-text-secondary);
   text-align: center;
 }
 
-.timecode {
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-primary);
-  white-space: nowrap;
-}
-
-.readout {
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  color: var(--color-text-muted);
-}
-
+/* ── The layer's time bar ─────────────────────────────────────────── */
+/* The whole source; what the composition uses is lit, between { and }. */
 .ruler {
   position: relative;
-  flex: 1;
-  min-width: 120px;
-  height: 20px;
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-2);
+  flex: none;
+  height: 14px;
+  background: var(--color-panel-header);
+  border-top: 1px solid var(--color-divider);
   cursor: pointer;
   touch-action: none;
 }
@@ -295,36 +350,128 @@
   position: absolute;
   top: 3px;
   bottom: 3px;
-  border-radius: var(--radius-xs, 2px);
-  background: color-mix(in srgb, var(--color-selection) 35%, transparent);
+  background: color-mix(in srgb, var(--color-text-primary) 34%, transparent);
   pointer-events: none;
 }
 
+/* A bracket: the tick, and a foot at each end that says which side is kept. */
 .bracket {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 8px;
-  margin-left: -4px;
+  width: 10px;
+  margin-left: -5px;
   cursor: ew-resize;
 }
 
 .bracket::before {
   content: '';
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 3px;
+  top: 1px;
+  bottom: 1px;
+  left: 4px;
   width: 2px;
-  background: var(--color-selection);
+  background: var(--color-text-primary);
 }
+
+.bracket::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  height: 2px;
+  width: 4px;
+  background: var(--color-text-primary);
+  box-shadow: 0 10px 0 var(--color-text-primary);
+}
+
+.bracketIn::after { left: 6px; }
+.bracketOut::after { left: 0; }
 
 .playhead {
   position: absolute;
-  top: -2px;
-  bottom: -2px;
-  width: 2px;
-  margin-left: -1px;
-  background: var(--color-danger);
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: var(--color-primary);
   pointer-events: none;
+}
+
+.playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 9px;
+  height: 6px;
+  background: var(--color-primary);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+/* ── Footer ───────────────────────────────────────────────────────── */
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: var(--control-height-lg);
+  padding: 0 var(--space-3);
+  border-top: 1px solid var(--color-divider);
+  flex: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.exposure {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+.sep {
+  width: 1px;
+  height: 14px;
+  background: var(--color-border-strong);
+  flex: none;
+}
+
+/* A menu button: the current choice and a chevron (as on the Preview page). */
+.select {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  flex: none;
+}
+
+.select:hover {
+  border-color: var(--color-text-tertiary);
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.timecode {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary-text);
+}
+
+.readout {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
 }

@@ -267,17 +267,24 @@ export function needsLiveFrame(): boolean {
  * Copy the just-drawn content canvas for the difference painter. Must be
  * called in the SAME task as the draw — see the module header.
  */
-export function captureLiveFrame(content: HTMLCanvasElement): void {
-  if (content.width < 1 || content.height < 1) return;
+export function captureLiveFrame(content: HTMLCanvasElement | VideoFrame): void {
+  // The engine's frame (EngineSurface hands over the VideoFrame it is about to blit) or a canvas.
+  const w = 'displayWidth' in content ? content.displayWidth : content.width;
+  const h = 'displayHeight' in content ? content.displayHeight : content.height;
+  if (w < 1 || h < 1) return;
   if (!liveCanvas) liveCanvas = document.createElement('canvas');
-  if (liveCanvas.width !== content.width || liveCanvas.height !== content.height) {
-    liveCanvas.width = content.width;
-    liveCanvas.height = content.height;
+  if (liveCanvas.width !== w || liveCanvas.height !== h) {
+    liveCanvas.width = w;
+    liveCanvas.height = h;
   }
   const ctx = liveCanvas.getContext('2d');
   if (!ctx) return;
   ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-  ctx.drawImage(content, 0, 0);
+  try {
+    ctx.drawImage(content, 0, 0, w, h);
+  } catch {
+    return;  // a closed frame: keep the previous copy
+  }
   for (const fn of [...liveListeners]) fn();
 }
 

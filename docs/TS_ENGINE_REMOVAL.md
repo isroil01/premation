@@ -9,6 +9,8 @@
 > This supersedes the "TypeScript fallback kept behind a flag" rule of
 > `NATIVE_CORE_PLAN.md` §0 and `CLAUDE.md`; both were updated 2026-10-04.
 > Work lands on `native-core` only; it is never merged into `main` or `dev`.
+> Since 2026-10-06 `native-core` is the default branch and releases are tagged
+> from it (RELEASING.md §7).
 >
 > **Confirmed 2026-09-28:** the C++ engine is the default now (viewport,
 > document owner, export — f56f215f) and stays so without waiting for

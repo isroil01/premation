@@ -247,7 +247,8 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
         // through the composition's own camera (useLayerViewerRenderer).
         ctx.layerView = BuildContext::LayerView{
             viewport.layer, viewport.layerRenderEffects,
-            viewport.layerSourceTime ? std::optional<double>(doc::flicks_to_seconds(*viewport.layerSourceTime)) : std::nullopt};
+            viewport.layerSourceTime ? std::optional<double>(doc::flicks_to_seconds(*viewport.layerSourceTime)) : std::nullopt,
+            viewport.layerTransparencyGrid, viewport.layerAlphaView};
         for (const api::LayerSourceSize& z : doc::source_sizes(d, {viewport.layer})) {
           if (z.width > 0 && z.height > 0) {
             sc.width = z.width;
@@ -261,7 +262,12 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       // The comp contain-fitted into the slot, centred, over black — C2's
       // compositor placement (render/compositor.cpp), which the page's
       // overlays are drawn against (docs/VIEWPORT_ROUTE.md).
-      ViewSpec vs = export_view(std::max<double>(1, viewport.width), std::max<double>(1, viewport.height),
+      // Preview resolution (Full / Half / Third / Quarter): the frame is drawn at
+      // that fraction of the viewport's pixels, into a slot of that size
+      // (render_thread rebuild), and the page scales it up to the viewer — fewer
+      // pixels to fill and every raster drawn smaller, for heavy comps.
+      const double res = preview_scale(viewport.resolution);
+      ViewSpec vs = export_view(std::max(1.0, std::round(viewport.width * res)), std::max(1.0, std::round(viewport.height * res)),
                                 std::max(1.0, sc.width), std::max(1.0, sc.height));
       vs.gpuEffects = engine_gpu_effects();  // E4: drawn on the render thread's device
       if (viewport.zoom > 0) {
@@ -270,16 +276,29 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
         const double dpr = viewport.devicePixelRatio > 0 ? viewport.devicePixelRatio : 1.0;
         vs.cssWidth = std::max(1.0, static_cast<double>(viewport.width) / dpr);
         vs.cssHeight = std::max(1.0, static_cast<double>(viewport.height) / dpr);
-        vs.dpr = dpr;
+        vs.dpr = dpr * res;
         vs.zoom = viewport.zoom;
         vs.centerX = viewport.panX;
         vs.centerY = viewport.panY;
       }
       vs.clear = viewport.ghost ? api::Color{0, 0, 0, 0} : api::Color{0, 0, 0, 1};
+      vs.channel = viewport.channel;  // View ▸ Show Channel, on the final blit
       if (viewport.ghost) sc.transparent = true;
       vs.surfaceFormat = api::RenderTextureFormat::rgba8unorm;
       const double seconds = doc::flicks_to_seconds(time);
-      NativeFrame nf = build_native_frame(ctx, comp, seconds, vs, true);
+      // What this viewport changed of the comp reaches the frame: build_native_frame
+      // reads the comp from the document again, and used to drop all of it — a
+      // Layer panel painted the comp's background under its layer, and a 2- / 4-up
+      // layout or a custom view drew every pane through the active camera.
+      CompOverrides ov;
+      if (sc.transparent) ov.transparent = true;
+      ov.camera3dMode = sc.camera3dMode;
+      ov.customViewCamera = sc.customViewCamera;
+      // The Layer panel draws the layer at its own size, centred in the comp's
+      // frame: the comp's clip cut whatever of it falls outside the composition (a
+      // picture wider or taller than the comp) along a straight line.
+      if (!viewport.layer.empty()) vs.clipToComp = false;
+      NativeFrame nf = build_native_frame(ctx, comp, seconds, vs, true, {}, 0, ov);
       // G1: native plugin entries completed from the document (sequence data,
       // times), their checkouts at other times added, disabled instances reported.
       plugins::PluginHost* host = plugins::PluginHost::active();

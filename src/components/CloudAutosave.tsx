@@ -5,6 +5,7 @@ import { clearRecovery } from '@core/persistence/recovery';
 import { useWorkspaceStore } from '@stores/index';
 import { useEntitlementStore, canWriteCloud } from '@stores/entitlementStore';
 import { documentMirror } from '@stores/documentMirror';
+import { tryCoreServices } from '@core/services/coreServices';
 
 /**
  * Autosave component with configurable debounce and exponential backoff.
@@ -27,6 +28,10 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
   const failureCountRef = useRef(0);
 
   useEffect(() => {
+    // A project-limit refusal belongs to the project it was raised on; a
+    // different project starts clean (and gets refused again if it, too, is
+    // past the Free allowance).
+    useEntitlementStore.getState().clearProjectLimit();
     // Arm after initial delay
     armTimerRef.current = setTimeout(() => {
       armedRef.current = true;
@@ -50,7 +55,16 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
       // dirty, because it honestly IS unsaved. The read-only banner explains why
       // and offers export; the local recovery snapshot (elsewhere) still protects
       // the work. The server write guard is the real enforcement.
-      if (!canWriteCloud(useEntitlementStore.getState().access)) return;
+      const entitlement = useEntitlementStore.getState();
+      if (!canWriteCloud(entitlement.access)) return;
+      // Past the Free plan's cloud allowance: the server answers 403
+      // `project_limit` and will keep doing so. Same reasoning as above.
+      if (entitlement.projectLimit) return;
+      // Only once THIS project has opened in the engine: before that (or after a
+      // failed open) the engine holds some other document, and uploading it
+      // would overwrite this project with it.
+      const pm = tryCoreServices()?.project;
+      if (pm && pm.getState().current?.path !== projectId) return;
       if (inFlightRef.current) {
         schedule();
         return;
@@ -61,10 +75,14 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
         // the current React paint completes first and the UI stays responsive.
         await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
         // F2: the owner's document (the engine's exportDocument when it owns it).
+        const exportedAt = documentMirror().revision;
         const doc = await liveDocument();
         await api.autosave(projectId, doc);
+        // The server has it: the engine's copy is saved too (unsaved flag off,
+        // no recovery copy kept) — unless an edit landed after the export.
+        await pm?.markSavedElsewhere(exportedAt);
         const ws = useWorkspaceStore.getState();
-        if (ws.activeTabId) ws.actions.markDirty(ws.activeTabId, false);
+        if (ws.activeTabId && !documentMirror().dirty) ws.actions.markDirty(ws.activeTabId, false);
         clearRecovery();
         // Success — reset backoff.
         failureCountRef.current = 0;

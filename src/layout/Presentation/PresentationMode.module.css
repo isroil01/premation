@@ -1,14 +1,31 @@
+/*
+ * The Preview page (PresentationMode.tsx): a slim top bar, the picture on a
+ * chosen surround, and one playback bar. Flat greys; the accent is the
+ * timecode, the playhead, a lit toggle and Export.
+ */
 .root {
   position: fixed;
   inset: 0;
   z-index: var(--z-index-modal);
   display: flex;
   flex-direction: column;
-  background: var(--color-workspace);
-  animation: present-in var(--motion-duration-slow) var(--motion-ease-standard);
+  background: var(--color-surface-0);
+  animation: present-in var(--motion-duration-base) var(--motion-ease-standard);
 }
 
-/* Auto-hide chrome while playing — fade the bars and hide the cursor. */
+/* Below the app-drawn title bar (32px, TitleBar.module.css), which keeps the
+   window's minimise / maximise / close buttons reachable. */
+.root[data-under-titlebar] {
+  top: 32px;
+}
+
+.root[data-under-titlebar] .topBar {
+  -webkit-app-region: no-drag;
+}
+
+/* While it plays untouched, the bars fade and the pointer goes: only the
+   picture is left. They are faded, not removed, so the picture does not
+   resize (and the engine's viewport with it) each time they come and go. */
 .root[data-hidden] { cursor: none; }
 .root[data-hidden] .topBar,
 .root[data-hidden] .controls {
@@ -18,273 +35,329 @@
 
 /* ── Top bar ─────────────────────────────────────────────────────── */
 .topBar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: var(--space-3);
-  height: 48px;
-  padding: 0 var(--space-5);
+  gap: var(--space-4);
+  height: 36px;
+  padding: 0 var(--space-4);
+  /*
+   * In the desktop app this bar sits where the window's title bar is, so it
+   * has to behave like one. The OS draws its caption buttons over the right
+   * end (Window Controls Overlay): keep our content out from under them — the
+   * same sum TitleBar.module.css uses; it is 0 where there is no overlay.
+   */
+  padding-right: calc(var(--space-4) + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   flex: none;
-  background: rgba(18, 18, 18, 0.88);
-  backdrop-filter: blur(16px);
-  border-bottom: 1px solid var(--color-border);
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-border-structural);
   transition: opacity 180ms ease;
   z-index: 2;
+  /* The empty stretch of the bar moves the window, as a title bar does… */
+  -webkit-app-region: drag;
+}
+
+/* …and everything you can press in it is taken back out of that, or the OS
+   treats a press as the start of a window drag and the click never arrives.
+   (The title bar underneath declares the whole strip draggable; stacking this
+   page above it does not undo that — only `no-drag` does.) */
+.back,
+.select,
+.pill,
+.pillPrimary {
+  -webkit-app-region: no-drag;
+}
+
+/* macOS keeps its traffic lights at the left of that strip. */
+.topBar[data-mac] {
+  padding-left: 84px;
+}
+
+.back {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-height-md);
+  padding: 0 var(--space-3) 0 var(--space-1);
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.back:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
 }
 
 .title {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 30ch;
-}
-
-.badges {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.badge,
-.badgeBtn {
-  height: var(--control-height-row);
-  padding: 0 8px;
-  display: inline-flex;
-  align-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  font-family: var(--font-family-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: var(--font-size-xs);
-  white-space: nowrap;
-}
-
-.badgeBtn {
-  cursor: pointer;
-  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
-}
-.badgeBtn:hover {
-  color: var(--color-text-primary);
-  background: var(--color-surface-3);
-  border-color: var(--color-border-strong);
+  max-width: 40ch;
 }
 
 .topActions {
-  margin-left: auto;
+  justify-self: end;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
-.iconBtn {
-  display: grid;
-  place-items: center;
-  width: var(--control-height-row);
-  height: var(--control-height-row);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
-}
-.iconBtn:hover {
+/* A menu button: the current choice and a chevron. */
+.select {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
   color: var(--color-text-primary);
-  background: var(--color-surface-2);
-  border-color: var(--color-border);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.select:hover {
+  border-color: var(--color-text-tertiary);
+}
+
+.pill,
+.pillPrimary {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pill {
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.pill:hover {
+  border-color: var(--color-text-secondary);
+  background: var(--color-hover);
+}
+
+.pillPrimary {
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  color: var(--color-text-on-accent);
+  font-weight: var(--font-weight-semibold);
+}
+
+.pillPrimary:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.back:focus-visible,
+.select:focus-visible,
+.pill:focus-visible,
+.pillPrimary:focus-visible,
+.tBtn:focus-visible,
+.tBtnActive:focus-visible,
+.play:focus-visible,
+.playOn:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }
 
 /* ── Stage ───────────────────────────────────────────────────────── */
 .stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: grid;
   place-items: center;
-  padding: var(--space-4) var(--space-8);
-  position: relative;
+  overflow: hidden;
 }
+
+/* The surround is the document's concern (black / grey / white are what a
+   design is judged against), so these are the raw palette steps — the same
+   in every theme, not the theme's own surfaces. */
+.root[data-surround="black"] .stage { background: var(--color-slate-1000); }
+.root[data-surround="grey"] .stage { background: var(--color-slate-800); }
+.root[data-surround="white"] .stage { background: var(--color-slate-0); }
 
 .canvas {
-  max-width: 100%;
-  max-height: 100%;
-  border-radius: var(--radius-sm);
-  box-shadow: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
-/* Loading overlay — shown while the backend is mounting, before first paint. */
+/* Title / action safe, over the picture's own rect. */
+.safe {
+  position: relative;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.safeAction,
+.safeTitle {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  mix-blend-mode: difference;
+}
+
+.safeAction { inset: 5%; }
+.safeTitle { inset: 10%; }
+
 .stageLoader {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(4px);
   pointer-events: none;
 }
 
-/* Why the stage is blank, when it is blank. Selectable, because the message
-   names a real cause the user may want to search for or report. */
-.stageError {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  max-width: 34rem;
-  padding: var(--space-5);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-danger);
-  background: var(--color-surface-1);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  line-height: 1.5;
-  text-align: center;
-  pointer-events: auto;
-  user-select: text;
-}
-
-.stageError strong {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-md);
-}
-
 .stageSpinner {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: 3px solid color-mix(in srgb, var(--color-primary) 25%, transparent);
-  border-top-color: var(--color-primary);
-  animation: spin 0.8s linear infinite;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-text-secondary);
+  animation: present-spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* ── Player chrome ───────────────────────────────────────────────── */
+/* ── Playback bar ────────────────────────────────────────────────── */
 .controls {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) 6vw var(--space-4);
   flex: none;
-  background: rgba(18, 18, 18, 0.88);
-  backdrop-filter: blur(16px);
-  border-top: 1px solid var(--color-border);
+  background: var(--color-panel);
+  border-top: 1px solid var(--color-border-structural);
   transition: opacity 180ms ease;
+  z-index: 2;
 }
 
-.scrubRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.time {
-  font-family: var(--font-family-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  flex: none;
-  min-width: 80px;
-}
-.scrubRow .time:last-child {
-  text-align: right;
-}
-
+/* The scrub strip: the whole width is the comp's duration. */
 .scrub {
   position: relative;
-  flex: 1;
   height: 16px;
-  display: flex;
-  align-items: center;
+  background: var(--color-panel-header);
+  border-bottom: 1px solid var(--color-divider);
   cursor: pointer;
   touch-action: none;
-}
-
-.scrubTrack {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--color-surface-3);
 }
 
 .scrubFill {
   position: absolute;
   left: 0;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--color-primary);
-  pointer-events: none;
+  bottom: 0;
+  height: 3px;
+  background: var(--color-text-tertiary);
 }
 
+/* The playhead: a hairline with a cap, like the timeline's. */
 .scrubHandle {
   position: absolute;
-  top: 50%;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
   background: var(--color-primary);
-  border: 2px solid var(--color-surface-0);
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  transition: transform 100ms ease;
 }
-.scrub:hover .scrubHandle {
-  transform: translate(-50%, -50%) scale(1.2);
+
+.scrubHandle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -5px;
+  width: 11px;
+  height: 9px;
+  background: var(--color-primary);
+  clip-path: polygon(0 0, 100% 0, 100% 50%, 50% 100%, 0 50%);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--space-4);
+  height: 36px;
+  padding: 0 var(--space-4);
+}
+
+.times {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  white-space: nowrap;
+}
+
+.timecode {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-lg);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary-text);
+}
+
+.duration {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
 }
 
 .transport {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
+  gap: 2px;
 }
 
-.tBtn {
+.tBtn,
+.tBtnActive,
+.play,
+.playOn {
+  width: var(--control-height-lg);
+  height: var(--control-height-md);
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  flex: none;
-  border-radius: var(--radius-sm);
+  border: none;
+  border-radius: var(--radius-control);
   background: transparent;
-  border: 1px solid transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
-}
-.tBtn:hover {
-  color: var(--color-text-primary);
-  background: var(--color-surface-2);
-}
-.tBtnActive {
-  composes: tBtn;
-  color: var(--color-primary);
-  background: var(--color-surface-2);
-  border-color: var(--color-border);
 }
 
-.play {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  flex: none;
-  border-radius: var(--radius-sm);
-  background: var(--color-primary);
-  color: var(--color-primary-foreground);
-  border: none;
-  cursor: pointer;
-  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
+.tBtn:hover,
+.tBtnActive:hover,
+.play:hover,
+.playOn:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
 }
-.play:hover {
-  background: var(--color-primary-hover);
+
+.play { color: var(--color-text-primary); }
+.playOn,
+.tBtnActive { color: var(--color-primary-text); }
+
+.tSep {
+  width: 1px;
+  height: 14px;
+  margin: 0 var(--space-2);
+  background: var(--color-border-strong);
+}
+
+.facts {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
 }
 
 @keyframes present-in {
@@ -292,8 +365,17 @@
   to { opacity: 1; }
 }
 
+@keyframes present-spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .root { animation: none; }
-  .topBar, .controls, .scrubHandle, .play, .tBtn, .iconBtn, .badgeBtn { transition: none; }
-  .stageSpinner { animation: none; }
+  .stageSpinner { animation-duration: 2s; }
+}
+
+@media (max-width: 760px) {
+  .facts span { display: none; }
+  .title { display: none; }
+  .topBar { grid-template-columns: 1fr auto; }
 }

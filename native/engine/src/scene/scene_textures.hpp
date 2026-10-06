@@ -190,6 +190,8 @@ class SceneTextures final : public rg::ExternalTextureSource {
   std::size_t contentBytes_ = 0;
   std::unordered_map<std::string, std::uint32_t> sources_;  // resolved path → SourceId
   std::unordered_map<std::string, std::string> openErrors_;
+  /// SVG documents seen (svg_ref's document key) → whether they animate.
+  std::unordered_map<std::string, bool> svgAnimated_;
   /// The CPU bakes' kernel pool (bake_chain.hpp SharedPool): one bake at a time
   /// uses it, the others run their kernels inline — the bytes are the same.
   std::unique_ptr<effects::ThreadPool> bakePool_;

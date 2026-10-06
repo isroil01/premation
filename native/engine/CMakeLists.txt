@@ -837,6 +837,7 @@ if(TARGET unofficial::skia::skia AND TARGET harfbuzz::harfbuzz AND TARGET SheenB
     src/raster/text_paint.cpp
     src/raster/raster_source.cpp
     src/raster/svg_raster.cpp       # AppTextureProvider.rasterizeSvg's sizing (D2w)
+    src/raster/svg_anim.cpp         # animated SVG: SMIL + CSS animations at the layer's source time
     src/raster/svg_render_ffi.cpp   # the SVG painter, after Blink's SVG painters (D2w)
   )
   target_link_libraries(engine_raster
@@ -863,7 +864,7 @@ if(MOTION_BUILD_TESTS)
   target_link_libraries(engine_raster_tests PRIVATE engine_raster_core engine_json motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_raster_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(TARGET engine_raster)
-    target_sources(engine_raster_tests PRIVATE tests/test_raster_canvas.cpp)
+    target_sources(engine_raster_tests PRIVATE tests/test_raster_canvas.cpp tests/test_svg_anim.cpp)
     target_link_libraries(engine_raster_tests PRIVATE engine_raster)
     target_compile_definitions(engine_raster_tests PRIVATE
       PREMATION_RASTER_FONTS="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/render-tests/harness/fonts/fonts.json")

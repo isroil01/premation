@@ -101,7 +101,11 @@ export async function confirmDiscardChanges(action: string): Promise<boolean> {
       `${projectSubject()} has unsaved changes.\n\nSave them before you ${lowerFirst(action)}?`,
     );
     if (choice === 'cancel') return false;
-    if (choice === 'discard') return true;
+    if (choice === 'discard') {
+      // Discarded on purpose: the recovery copy must not bring it back at the next start.
+      await tryCoreServices()?.project.discardRecovery?.();
+      return true;
+    }
     await getCommandSystem().execute(asCommandId(SAVE_COMMAND));
     return !hasUnsavedChanges();
   } finally {

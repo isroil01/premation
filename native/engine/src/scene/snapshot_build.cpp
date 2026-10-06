@@ -1959,6 +1959,103 @@ Snapshot Walk::run() {
         l.backdropBlur.reset();
       }
     }
+    // The alpha views (the Layer panel's matte views, AE's Alpha / Alpha
+    // Boundary / Alpha Overlay). Viewer-only, built from what is already here:
+    // the shown layer, a copy of it as the untouched source, flat backdrops and
+    // the Fill / Stroke effects.
+    const std::string& alphaView = c_.layerView->alphaView;
+    if (!alphaView.empty() && !layers_.empty() && layers_.front().width > 0 && layers_.front().height > 0) {
+      const auto effect = [](std::string_view fxId, std::string_view type, Json params) {
+        Json fx = Json::object();
+        fx.set("id", Json::string(std::string(fxId)));
+        fx.set("type", Json::string(std::string(type)));
+        fx.set("enabled", Json::boolean(true));
+        fx.set("params", std::move(params));
+        return fx;
+      };
+      const auto flat = [&](std::string_view suffix, std::string_view color, double opacity) {
+        const RLayer& shown = layers_.back();
+        RLayer r;
+        r.id = id + "::" + std::string(suffix);
+        r.kind = LayerKind::shape;
+        r.primitive = "rect";
+        r.x = shown.x;
+        r.y = shown.y;
+        r.width = shown.width;
+        r.height = shown.height;
+        r.fill = std::string(color);
+        r.opacity = opacity;
+        return r;
+      };
+      // The untouched source: the layer with none of what cuts or changes it.
+      const auto source = [&] {
+        RLayer src = layers_.back();
+        src.id = id + "::alpha-source";
+        src.effects.clear();
+        src.mask = Json();
+        src.paint = Json();
+        src.cornerPin.reset();
+        src.glass.reset();
+        src.backdropBlur.reset();
+        return src;
+      };
+      if (alphaView == "alpha") {
+        // The matte itself: the layer filled white, on black.
+        Json p = Json::object();
+        p.set("color", Json::string("#ffffff"));
+        p.set("opacity", Json::number(100));
+        layers_.back().effects.push_back(effect("alpha-view-fill", "fill", std::move(p)));
+        layers_.insert(layers_.begin(), flat("alpha-black", "#000000", 1));
+      } else if (alphaView == "overlay") {
+        // The source everywhere; outside the matte it sits under a red tint.
+        RLayer src = source();
+        RLayer tint = flat("alpha-tint", "#ff0000", 0.5);
+        layers_.insert(layers_.begin(), std::move(tint));
+        layers_.insert(layers_.begin(), std::move(src));
+      } else if (alphaView == "boundary") {
+        // The source everywhere, and the matte's edge as a line.
+        RLayer src = source();
+        Json p = Json::object();
+        p.set("color", Json::string("#ff00ff"));
+        p.set("opacity", Json::number(100));
+        p.set("width", Json::number(std::max(2.0, layers_.back().width / 480.0)));
+        p.set("position", Json::string("outside"));
+        layers_.back().effects.push_back(effect("alpha-view-edge", "stroke", std::move(p)));
+        layers_.insert(layers_.begin(), std::move(src));
+      }
+    }
+    // The transparency grid: a checkerboard the size of the layer, under it.
+    // A viewer-only backdrop (never in a composition render, an export or a
+    // thumbnail): the layer's own pixels are untouched, and where it is
+    // transparent the grid shows through.
+    // (Not under the Alpha view: that one is on black.)
+    if (c_.layerView->grid && alphaView != "alpha" && !layers_.empty() && layers_.front().width > 0 && layers_.front().height > 0) {
+      const RLayer& shown = layers_.front();
+      RLayer grid;
+      grid.id = id + "::transparency-grid";
+      grid.kind = LayerKind::shape;
+      grid.primitive = "rect";
+      grid.x = shown.x;
+      grid.y = shown.y;
+      grid.width = shown.width;
+      grid.height = shown.height;
+      grid.fill = "#3d3d3d";
+      Json params = Json::object();
+      params.set("width", Json::number(16));
+      params.set("height", Json::number(16));
+      params.set("anchorX", Json::number(0));
+      params.set("anchorY", Json::number(0));
+      params.set("colorA", Json::string("#3d3d3d"));
+      params.set("colorB", Json::string("#2b2b2b"));
+      params.set("opacity", Json::number(100));
+      Json fx = Json::object();
+      fx.set("id", Json::string("transparency-grid"));
+      fx.set("type", Json::string("checkerboard"));
+      fx.set("enabled", Json::boolean(true));
+      fx.set("params", std::move(params));
+      grid.effects.push_back(std::move(fx));
+      layers_.insert(layers_.begin(), std::move(grid));
+    }
   }
   // Landed beams, projected shadows and the 3D depth sort (before the matte pairing, as the TS).
   three_->finish(layers_);

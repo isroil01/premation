@@ -477,7 +477,7 @@
   height: 14px;
   background: var(--color-surface-0);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   cursor: pointer;
   flex-shrink: 0;
@@ -496,9 +496,10 @@
   top: 0;
   bottom: 0;
   min-width: 6px;
-  background: color-mix(in srgb, var(--color-primary) 38%, transparent);
-  border: 1px solid var(--color-primary);
-  border-radius: 999px;
+  /* Neutral: it is a scrollbar over time, not a selection. */
+  background: color-mix(in srgb, var(--color-text-secondary) 30%, transparent);
+  border: 1px solid var(--color-text-tertiary);
+  border-radius: var(--radius-sm);
   cursor: grab;
   box-sizing: border-box;
 }
@@ -662,7 +663,10 @@ button.play:hover {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 26px;
+  /* The row's own control height. It was a literal 26px beside 20px tool
+     buttons and a 20px search field, so Graph Editor and View stood proud of
+     everything else in the row. */
+  height: var(--control-height-sm);
   padding: 0 8px;
   background: var(--color-surface-1);
   border: 1px solid var(--color-border-subtle);
@@ -713,6 +717,43 @@ button.play:hover {
   padding: 0;
   justify-content: center;
   gap: 0;
+}
+
+/* The Graph Editor switch: an icon AND its name (see BottomTimeline.tsx). */
+.graphToggle {
+  composes: toggleBtn;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+}
+
+.graphToggleActive {
+  composes: toggleBtn;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-on-accent);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.graphToggleActive:hover {
+  color: var(--color-text-on-accent);
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+/*
+ * The graph, over the whole timeline body. It brings its own time axis,
+ * playhead and list of curves, so it covers the layer list and the ruler too.
+ */
+.graphOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--color-panel);
+  border-left: 1px solid var(--color-border-structural);
 }
 
 .aeHeaderTools {
@@ -821,6 +862,17 @@ button.play:hover {
    stays fully visible since the SplitPane keeps a 38px minimum. */
 .bodyCollapsed {
   display: none;
+}
+
+/* The Render Queue tab's page: covers the tracks (and an open graph). */
+.queueOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-panel);
 }
 
 /* ── Keyframe interpolation toolbar ──────────────────────────────── */
@@ -1143,4 +1195,22 @@ button.play:hover {
   padding: 0;
   justify-content: center;
   gap: 0;
+}
+
+/*
+ * The panel in use gets the accent outline (see DockPanel.module.css). A
+ * pseudo-element over the panel, so it draws above the picture / the lanes
+ * without taking any room or any pointer events.
+ */
+.root {
+  position: relative;
+}
+
+.root:focus-within::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--color-primary);
+  pointer-events: none;
+  z-index: 50;
 }

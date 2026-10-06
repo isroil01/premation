@@ -115,7 +115,10 @@ ResultOf<api::RestoreDocument> handle(const api::RestoreDocument& c, HCtx& x) {
   scratch.apply(d.capture_all());
   scratch.extras_mut() = d.extras();
   EditorView view;
-  (void)restore_document(scratch, view, doc, d.items().assets);
+  const RestoreResult restored = restore_document(scratch, view, doc, d.items().assets);
+  // Recovering an unsaved session into a fresh project: its files are named by
+  // path only, and are read again where they still are (docio.hpp).
+  (void)relink_missing_footage(scratch, x.ports, {}, restored.missing);
   Parts target = scratch.capture_all();
   // What the version does not have is gone ("present key, empty pointer").
   for (const auto& [id, n] : d.nodes()) {

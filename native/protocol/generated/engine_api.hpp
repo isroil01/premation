@@ -2846,6 +2846,7 @@ struct SetViewport {
   std::optional<Time> time;
   std::optional<Time> layer_source_time;
   std::optional<OnionSkin> onion;
+  std::optional<std::string> layer_alpha_view;
   bool operator==(const SetViewport&) const = default;
 };
 
@@ -5798,6 +5799,7 @@ struct RenderView {
   std::optional<RenderOverlays> overlays;
   std::optional<RenderViewerLut> viewer_lut;
   std::optional<RenderColorManagement> color_management;
+  std::optional<ChannelView> channel;
   bool operator==(const RenderView&) const = default;
 };
 

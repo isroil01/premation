@@ -21,7 +21,6 @@ import { MotionEditorPanel } from '@layout/Motion/MotionEditorPanel';
 import { MotionPresetsPanel } from '@layout/Motion/MotionPresetsPanel';
 import { EffectsPanel } from '@layout/Effects/EffectsPanel';
 import { EffectControlsPanel } from '@layout/Effects/EffectControlsPanel';
-import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
 import { ExportPanel } from '@layout/Export/ExportPanel';
 import { NativePluginsPanel } from '@layout/Plugins/NativePluginsPanel';
 import { SwatchesPanel } from '@layout/Swatches';
@@ -29,7 +28,6 @@ import { ScopesPanel } from '@layout/Scopes';
 // Imported from the barrel deliberately: it also registers the transcript's
 // commands on load. See `layout/Transcript/index.ts`.
 import { TranscriptPanel } from '@layout/Transcript';
-import { SourceMonitorPanel } from '@layout/SourceMonitor/SourceMonitorPanel';
 import { CharacterPanel } from '@layout/Inspector/CharacterPanel';
 import { AlignPanel } from '@layout/Inspector/AlignPanel';
 import { InfoAudioPanel } from '@layout/Inspector/InfoAudioPanel';
@@ -76,7 +74,6 @@ export const PANEL_COMPONENTS: Readonly<Record<string, ComponentType>> = {
   audio: AudioPanel,
   scopes: ScopesPanel,
   preview: PreviewPanel,
-  sourceMonitor: SourceMonitorPanel,
   tracker: TrackerPanel,
   paint: PaintPanel,
   brushes: BrushesPanel,
@@ -85,7 +82,6 @@ export const PANEL_COMPONENTS: Readonly<Record<string, ComponentType>> = {
   effects: EffectsPanel,
   effectControls: EffectControlsPanel,
   history: HistoryPanel,
-  renderQueue: RenderQueuePanel,
   export: ExportPanel,
   plugins: NativePluginsPanel,
   // ── Asset Library (one tab, sections inside) ─────────────────────────

@@ -8,6 +8,7 @@
 //                      (raster/svg_render.hpp) at rasterizeSvg's size
 #pragma once
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -15,6 +16,7 @@
 
 #include "model.hpp"
 #include "raster_source.hpp"
+#include "svg_render.hpp"
 
 namespace premation::scene {
 
@@ -33,7 +35,11 @@ struct SvgLayerSource {
 [[nodiscard]] bool is_svg_src(std::string_view src);
 
 /// `rasterizeSvg(src, fillColor)`: a data URL or a file path. Premultiplied RGBA8.
+/// `time`: the document time an animated SVG is drawn at (seconds).
 [[nodiscard]] raster::RasterOutput rasterize_svg_src(std::string_view src, const std::optional<std::string>& fill,
-                                                     const std::string& filePath);
+                                                     const std::string& filePath, double time = 0);
+
+/// An .svg file's import facts (size, animated) for the media probe; !ok + error when it does not read.
+[[nodiscard]] raster::svg::SvgFacts svg_file_facts(const std::filesystem::path& p);
 
 }  // namespace premation::scene

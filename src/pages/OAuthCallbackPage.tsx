@@ -11,11 +11,13 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@core/api/client';
 import { setSession } from '@core/api/session';
 import { useAuthStore } from '@stores/authStore';
 import { LoadingScreen } from '@components/LoadingScreen';
+import { startSocialAuth } from '@core/auth/startSocialAuth';
+import { AuthShell } from './AuthShell';
 import styles from './AuthPage.module.css';
 
 export function OAuthCallbackPage(): JSX.Element {
@@ -72,17 +74,22 @@ export function OAuthCallbackPage(): JSX.Element {
 
   if (error || !code) {
     return (
-      <div className={styles.container}>
-        <div className={styles.card}>
-          <div className={styles.headerText}>
-            <h1 className={styles.title}>Sign-in didn’t complete</h1>
-            <p className={styles.subtitle}>{error || 'That sign-in link is missing its code.'}</p>
-          </div>
-          <button type="button" className={styles.submitBtn} onClick={() => navigate('/login', { replace: true })}>
-            Back to sign in
-          </button>
+      <AuthShell
+        title="Sign-in did not finish"
+        subtitle="Nothing was changed on your account. Try again, or sign in with your email and password."
+      >
+        <p className={styles.errorAlert} role="alert">
+          {error || 'That sign-in link is missing its code.'}
+        </p>
+        <button type="button" className={styles.primaryBtn} onClick={() => startSocialAuth('google')}>
+          Try Google again
+        </button>
+        <div className={styles.footerLink}>
+          <Link to="/login" replace>
+            Sign in with email instead
+          </Link>
         </div>
-      </div>
+      </AuthShell>
     );
   }
 

@@ -1,8 +1,8 @@
 /**
- * Plan, trial, and email confirmation.
+ * Plan, cloud allowance, and email confirmation.
  *
  * Everything here is server state. The panel renders what `/billing/me` says and
- * decides nothing: not whether the trial is over, not whether the account may
+ * decides nothing: not which allowance applies, not whether the account may
  * write, not what sentence to show. That is deliberate — a client that computed
  * "am I inside my trial?" from a date would be a second implementation of the
  * paywall, and the two would disagree the first time either was edited.
@@ -22,7 +22,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { customConfirm } from '@components/Modal';
+import { customConfirm, DialogFooter } from '@components/Modal';
 import {
   api,
   isAuthenticated,
@@ -31,18 +31,168 @@ import {
   type PlanDto,
 } from '@core/api/client';
 import { billingEnabled } from '@core/config/edition';
+import { t } from '@core/i18n/t';
 import { useEntitlementStore } from '@stores/entitlementStore';
-import { confirmPlanChange, planIntent } from './planIntent';
+import { openModal } from '@stores/modalStore';
+import { cancelDialogCopy, confirmPlanChange, planIntent } from './planIntent';
+import { CloudUsage } from './CloudUsage';
 import styles from './BillingSection.module.css';
 
-/** Reasons the account cannot write, in the order the UI cares about them. */
+/**
+ * Reasons the account cannot write. Today only `unverified`; the trial reasons
+ * come only from servers that predate the permanent Free plan.
+ */
 const BLOCKED_REASONS = new Set(['unverified', 'trial_expired', 'lapsed', 'trial_not_started']);
+
+type BillingInterval = 'month' | 'year';
+
+/** The plan as it reads at the chosen billing period (yearly label when offered). */
+function atInterval(plan: PlanDto, interval: BillingInterval): PlanDto {
+  if (interval !== 'year' || plan.priceCents <= 0 || !plan.yearlyPriceLabel) return plan;
+  return { ...plan, priceLabel: plan.yearlyPriceLabel, interval: 'year' };
+}
+
+/** "$7.50" — cents as dollars, trailing ".00" dropped (the server's own format). */
+function dollars(cents: number): string {
+  return `$${(cents / 100).toFixed(2).replace(/\.00$/, '')}`;
+}
+
+/**
+ * Whole months a yearly plan saves over twelve monthly payments, from the
+ * server's two prices. 0 when there is no yearly price or no saving.
+ */
+export function yearlyMonthsFree(plan: Pick<PlanDto, 'priceCents' | 'yearlyPriceCents'>): number {
+  if (!plan.yearlyPriceCents || plan.priceCents <= 0) return 0;
+  const saved = plan.priceCents * 12 - plan.yearlyPriceCents;
+  return saved > 0 ? Math.round(saved / plan.priceCents) : 0;
+}
+
+/**
+ * The comparison table's rows, built from each plan's served `limits` rather
+ * than from its marketing sentences — so "5" and "Unlimited" line up in one
+ * row instead of appearing as two unrelated features. Null when any plan
+ * lacks `limits` (an older server): the caller falls back to the sentences.
+ */
+function comparisonRows(plans: readonly PlanDto[]): { label: string; cells: (string | boolean)[] }[] | null {
+  if (plans.length < 2 || plans.some((p) => !p.limits)) return null;
+  return [
+    {
+      label: 'Cloud projects',
+      cells: plans.map((p) => (p.limits?.cloudProjects == null ? 'Unlimited' : String(p.limits.cloudProjects))),
+    },
+    {
+      label: 'Version history',
+      cells: plans.map((p) => `${p.limits?.historyDays ?? 0} days`),
+    },
+    { label: 'The full editor — every effect, local projects and export', cells: plans.map(() => true) },
+    { label: 'AI assistant with your own provider key', cells: plans.map(() => true) },
+    {
+      label: 'Past the project limit',
+      cells: plans.map((p) => (p.limits?.cloudProjects == null ? false : 'Read-only, never deleted')),
+    },
+  ];
+}
 
 export function checkoutReturnState(params: URLSearchParams): 'success' | 'cancelled' | null {
   const value = params.get('checkout') ?? params.get('payment') ?? params.get('billing');
   if (value === 'success' || value === 'completed' || value === 'paid') return 'success';
   if (value === 'cancel' || value === 'cancelled' || value === 'canceled') return 'cancelled';
   return null;
+}
+
+/** The file's one date format — the hero's "Member since" and every date beside it. */
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString();
+}
+
+/**
+ * The one-line reading of a live subscription: "Premation Cloud · Yearly ·
+ * renews 12 Mar 2027", or "… · ends …" once a cancellation is scheduled.
+ * `renewsAt`/`endsAt`/`interval` are newer server fields; an older server
+ * falls back to `currentPeriodEnd` and drops the interval. Null without a
+ * subscription to describe.
+ */
+export function currentPlanLine(summary: BillingSummary): string | null {
+  if (!summary.hasSubscription && summary.plan.priceCents <= 0) return null;
+  const ending = Boolean(summary.cancelAtPeriodEnd ?? summary.subscriptionCancelled);
+  const date = (ending ? summary.endsAt : summary.renewsAt) ?? summary.currentPeriodEnd;
+  const interval =
+    summary.interval === 'year'
+      ? t('billing.interval.yearly', 'Yearly')
+      : summary.interval === 'month'
+        ? t('billing.interval.monthly', 'Monthly')
+        : null;
+  const head = interval ? `${summary.plan.name} · ${interval}` : summary.plan.name;
+  if (!date) return head;
+  return ending
+    ? t('billing.planLine.ends', '{plan} · ends {date}', { plan: head, date: fmtDate(date) })
+    : t('billing.planLine.renews', '{plan} · renews {date}', { plan: head, date: fmtDate(date) });
+}
+
+/**
+ * The last payment was refunded and the account is back on Free. The server
+ * says so through `refund.reason`; `endsAt` is the moment access stopped.
+ */
+function isRefunded(summary: BillingSummary): boolean {
+  return summary.refund?.reason === 'already_refunded' && summary.plan.priceCents <= 0;
+}
+
+/** How the person chose to cancel, or `null` for "keep my plan" / dismissed. */
+type CancelChoice = 'refund' | 'period_end' | null;
+
+/**
+ * The cancel dialog. One confirm when there is nothing to refund (with the
+ * sentence saying why); two ways out when the server says the last yearly
+ * payment is refundable: refund now (destructive — access ends at once) or
+ * cancel at the period end. Enter does nothing here on purpose: neither
+ * choice is the safe default.
+ */
+function confirmCancel(summary: BillingSummary): Promise<CancelChoice> {
+  const copy = cancelDialogCopy(summary.refund, summary.endsAt ?? summary.currentPeriodEnd);
+  if (copy.mode === 'confirm') {
+    return customConfirm(copy.title, copy.message, { confirmLabel: copy.confirmLabel, isDanger: true }).then(
+      (ok) => (ok ? 'period_end' : null),
+    );
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (value: CancelChoice, close: () => void): void => {
+      settled = true;
+      close();
+      resolve(value);
+    };
+    openModal({
+      title: copy.title,
+      size: 'sm',
+      persistent: true,
+      onClose: () => {
+        if (!settled) {
+          settled = true;
+          resolve(null);
+        }
+      },
+      render: () => <p className={styles.dialogMessage}>{copy.message}</p>,
+      footer: (close) => (
+        <DialogFooter
+          secondary={
+            <Button variant="ghost" onClick={() => settle(null, close)}>
+              {copy.keepLabel}
+            </Button>
+          }
+          destructive={
+            <Button variant="danger" onClick={() => settle('refund', close)}>
+              {copy.refundLabel}
+            </Button>
+          }
+          primary={
+            <Button variant="secondary" onClick={() => settle('period_end', close)}>
+              {copy.periodEndLabel}
+            </Button>
+          }
+        />
+      ),
+    });
+  });
 }
 
 /** Server-authored `{ code, message }` if there is one, else the raw error. */
@@ -59,6 +209,7 @@ export function BillingSection(): JSX.Element | null {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>('month');
   const handledReturn = useRef(false);
 
   const load = useCallback(async (force = false) => {
@@ -151,7 +302,7 @@ export function BillingSection(): JSX.Element | null {
   };
 
   const applyChange = async (
-    result: { action?: string; url?: string; planId?: string },
+    result: { action?: string; url?: string; planId?: string; interval?: string; amountLabel?: string },
   ): Promise<void> => {
     if (result.url) {
       window.location.href = result.url;
@@ -160,14 +311,65 @@ export function BillingSection(): JSX.Element | null {
     await load(true);
     await useEntitlementStore.getState().refresh({ force: true });
     const messages: Record<string, string> = {
-      upgraded: 'Plan upgraded. The new allowance applies on the next API request.',
+      upgraded: 'Welcome to Premation Cloud. Unlimited cloud projects and the longer history apply now.',
       downgraded: 'Plan switched. The new rate applies on the next invoice.',
       cancelled: 'Cancellation scheduled. You keep paid access until the date shown above.',
       resumed: 'Cancellation stopped. Billing continues on this plan.',
       unchanged: 'You are already on this plan.',
+      interval_changed:
+        result.interval === 'year'
+          ? t('billing.notice.nowYearly', 'Now billed yearly.')
+          : t('billing.notice.nowMonthly', 'Now billed monthly.'),
+      refunded: t('billing.notice.refunded', 'Refunded {amount}. Your access to Premation Cloud has ended.', {
+        amount: result.amountLabel ?? '',
+      }),
     };
     setNotice(messages[result.action ?? ''] ?? 'Your plan is up to date.');
   };
+
+  /**
+   * Cancel, from the standalone button or the Free card's "Switch to Free" —
+   * one dialog either way, branching on the server's refund verdict.
+   */
+  const cancelFlow = (): Promise<void> => {
+    if (!summary) return Promise.resolve();
+    return run('cancel', async () => {
+      const choice = await confirmCancel(summary);
+      if (choice === 'refund') {
+        await applyChange(await api.refundSubscription());
+      } else if (choice === 'period_end') {
+        await applyChange(await api.cancelSubscription());
+      }
+    });
+  };
+
+  /** Monthly ↔ yearly on the live subscription: immediate, prorated. */
+  const switchInterval = (target: 'month' | 'year', paid: PlanDto): Promise<void> =>
+    run('interval', async () => {
+      const yearly = paid.yearlyPriceLabel ?? '';
+      const ok =
+        target === 'year'
+          ? await customConfirm(
+              t('billing.switch.toYearlyTitle', 'Switch to yearly billing?'),
+              t(
+                'billing.switch.toYearlyMessage',
+                '{plan} becomes {price}/year. You are charged the prorated difference now; your renewal date moves to a year from today.',
+                { plan: paid.name, price: yearly },
+              ),
+              { confirmLabel: t('billing.switch.toYearly', 'Switch to yearly') },
+            )
+          : await customConfirm(
+              t('billing.switch.toMonthlyTitle', 'Switch to monthly billing?'),
+              t(
+                'billing.switch.toMonthlyMessage',
+                '{plan} becomes {price}/month. The unused part of your year is credited now; your renewal date moves.',
+                { plan: paid.name, price: paid.priceLabel },
+              ),
+              { confirmLabel: t('billing.switch.toMonthly', 'Switch to monthly') },
+            );
+      if (!ok) return;
+      await applyChange(await api.changeBillingInterval(target));
+    });
 
   const choosePlan = (plan: PlanDto): Promise<void> => {
     if (!summary) return Promise.resolve();
@@ -175,6 +377,7 @@ export function BillingSection(): JSX.Element | null {
       cancelled: Boolean(summary.subscriptionCancelled),
       hasSubscription: summary.hasSubscription,
     });
+    if (intent.kind === 'cancel') return cancelFlow();
     return run(plan.id, async () => {
       const confirm = confirmPlanChange(intent, plan, summary.currentPeriodEnd);
       if (confirm) {
@@ -188,11 +391,7 @@ export function BillingSection(): JSX.Element | null {
         await applyChange(await api.resumeSubscription());
         return;
       }
-      if (intent.kind === 'cancel') {
-        await applyChange(await api.cancelSubscription());
-        return;
-      }
-      await applyChange(await api.startCheckout(plan.id));
+      await applyChange(await api.startCheckout(plan.id, plan.interval === 'year' ? 'year' : 'month'));
     });
   };
 
@@ -228,13 +427,43 @@ export function BillingSection(): JSX.Element | null {
   const isBeta = access?.reason === 'beta';
   const paymentNeedsAttention =
     summary?.subscriptionStatus === 'past_due' || access?.reason === 'grace';
-  const cancellationPending = Boolean(summary?.subscriptionCancelled);
+  // After a refund the server reports the subscription as cancelled with the
+  // account already on Free; that is the Free state, not a pending cancellation.
+  const refunded = summary ? isRefunded(summary) : false;
+  const cancellationPending = Boolean(summary?.subscriptionCancelled) && !refunded;
   const salesOpen = paidSalesOpen(plans);
   // With sales closed, the plan cards are only for someone who already has a
   // subscription (their plan, cancel/resume). Anyone else would be looking at a
   // price they cannot pay.
   const showCatalog =
     salesOpen || Boolean(summary?.hasSubscription) || (summary?.plan.priceCents ?? 0) > 0;
+  // The monthly/yearly switch appears only when the server sells a yearly variant.
+  const yearlyOffered = plans.some((p) => p.priceCents > 0 && Boolean(p.yearlyPriceLabel));
+  const shownPlans = plans.map((p) => atInterval(p, yearlyOffered ? billingInterval : 'month'));
+  const usage = summary?.cloudProjects;
+  const monthsFree = Math.max(0, ...plans.map(yearlyMonthsFree));
+  const rows = comparisonRows(plans);
+  const freeCap = plans.find((p) => p.priceCents === 0)?.limits?.cloudProjects ?? null;
+  // The one paid plan someone on Free can move to, at the period they picked.
+  const upgradeTo =
+    summary && summary.plan.priceCents === 0 && salesOpen
+      ? shownPlans.find((p) => p.priceCents > 0 && p.purchasable !== false)
+      : undefined;
+  const planLine = summary && !refunded ? currentPlanLine(summary) : null;
+  const subscriptionLive =
+    Boolean(summary?.hasSubscription) &&
+    (summary?.subscriptionStatus === 'active' || summary?.subscriptionStatus === 'on_trial');
+  // The plan the subscription bills on, for its prices in the switch dialog.
+  const paidPlan = summary ? plans.find((p) => p.id === summary.plan.id && p.priceCents > 0) : undefined;
+  // Monthly <-> yearly needs a live subscription, a server that reports which
+  // interval it bills on, and a yearly price to move to or from.
+  const switchTarget: 'month' | 'year' | null =
+    subscriptionLive && !cancellationPending && paidPlan?.yearlyPriceLabel && summary?.interval
+      ? summary.interval === 'year'
+        ? 'month'
+        : 'year'
+      : null;
+  const canCancel = subscriptionLive && !cancellationPending && !refunded;
 
   return (
     <div className={styles.section}>
@@ -247,7 +476,7 @@ export function BillingSection(): JSX.Element | null {
             </div>
             <div>
               <div className={styles.planTitleRow}>
-                <h3 className={styles.currentPlanName}>{summary.plan.name} Plan</h3>
+                <h3 className={styles.currentPlanName}>{summary.plan.name}</h3>
                 <span
                   className={
                     paymentNeedsAttention
@@ -261,16 +490,51 @@ export function BillingSection(): JSX.Element | null {
                     ? 'Payment Past Due'
                     : cancellationPending
                       ? 'Cancellation Scheduled'
-                      : access?.reason === 'trial'
-                        ? `Trial (${access.daysRemaining ?? 0}d left)`
-                        : isBeta
-                          ? 'Beta Access'
-                          : 'Active Subscription'}
+                      : isBeta
+                        ? 'Beta Access'
+                        : access?.reason === 'active' || access?.reason === 'grace'
+                          ? 'Active Subscription'
+                          : access?.reason === 'staff'
+                            ? 'Operator'
+                            : 'Free Plan'}
                 </span>
               </div>
               <p className={blocked ? styles.statusBlocked : styles.intro}>
                 {summary.statusMessage}
               </p>
+              {planLine ? <p className={styles.planLine}>{planLine}</p> : null}
+              {refunded ? (
+                <p className={styles.planLine}>
+                  {summary.endsAt
+                    ? t('billing.planLine.refundedOn', 'Refunded on {date} · access to Premation Cloud has ended.', {
+                        date: fmtDate(summary.endsAt),
+                      })
+                    : t('billing.planLine.refunded', 'Refunded · access to Premation Cloud has ended.')}
+                </p>
+              ) : null}
+              {switchTarget || canCancel ? (
+                <div className={styles.heroActions}>
+                  {switchTarget && paidPlan ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy !== null}
+                      onClick={() => void switchInterval(switchTarget, paidPlan)}
+                    >
+                      {busy === 'interval'
+                        ? 'Working…'
+                        : switchTarget === 'year'
+                          ? t('billing.switch.toYearly', 'Switch to yearly')
+                          : t('billing.switch.toMonthly', 'Switch to monthly')}
+                    </Button>
+                  ) : null}
+                  {canCancel ? (
+                    <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void cancelFlow()}>
+                      {busy === 'cancel' ? 'Working…' : t('billing.cancel.button', 'Cancel subscription')}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -310,6 +574,31 @@ export function BillingSection(): JSX.Element | null {
           <p className={styles.intro}>Loading your plan details…</p>
         </div>
       )}
+
+      {/* Cloud allowance: what the plan includes and how much of it is used. */}
+      {summary && usage && !isBeta ? (
+        <div className={styles.usageCard}>
+          <CloudUsage
+            used={usage.used}
+            limit={usage.limit}
+            historyDays={access?.limits?.historyDays}
+            limitsFrom={access?.limitsFrom ?? null}
+            freeLimit={freeCap}
+            action={
+              upgradeTo && (usage.limit !== null ? usage.used >= usage.limit - 1 : Boolean(access?.limitsFrom)) ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={busy !== null}
+                  onClick={() => void choosePlan(upgradeTo)}
+                >
+                  {busy === upgradeTo.id ? 'Working…' : `Upgrade to ${upgradeTo.name}`}
+                </Button>
+              ) : null
+            }
+          />
+        </div>
+      ) : null}
 
       {/* 2. Alerts & Notices */}
       {summary && paymentNeedsAttention ? (
@@ -358,10 +647,7 @@ export function BillingSection(): JSX.Element | null {
         <div className={styles.callout}>
           <Icon name="info" size="sm" className={styles.calloutIcon} />
           <div className={styles.calloutBody}>
-            <strong>
-              Confirm your email to start your{' '}
-              {summary.trialLabel ?? `${summary.trialDays}-day`} trial.
-            </strong>
+            <strong>Confirm your email to save to the cloud.</strong>
             <span>
               Your projects are read-only until then — you can open and export them, but not save.
             </span>
@@ -390,10 +676,10 @@ export function BillingSection(): JSX.Element | null {
         <div className={styles.callout} role="status">
           <Icon name="info" size="sm" className={styles.calloutIcon} />
           <div className={styles.calloutBody}>
-            <strong>Pro subscriptions are paused</strong>
+            <strong>Premation Cloud subscriptions are paused</strong>
             <span>
               {access?.write
-                ? 'New subscriptions are not open right now. Your trial continues as normal, and when it ends your projects stay available read-only and export keeps working.'
+                ? 'New subscriptions are not open right now. Your Free plan keeps working as normal, and export always works.'
                 : 'Your projects stay available read-only, and export keeps working.'}
             </span>
           </div>
@@ -419,13 +705,33 @@ export function BillingSection(): JSX.Element | null {
             </h3>
             <p className={styles.sectionDesc}>
               {salesOpen
-                ? 'Choose the plan that fits your production workflow. Upgrade or downgrade anytime.'
+                ? 'The editor is free. Premation Cloud is the hosting: more cloud projects and longer history. Cancel anytime.'
                 : 'New subscriptions are paused for now. Your subscription, billing portal, cancel and resume work as usual.'}
             </p>
+            {yearlyOffered && salesOpen ? (
+              <div className={styles.actions} role="group" aria-label="Billing period">
+                <Button
+                  variant={billingInterval === 'month' ? 'primary' : 'ghost'}
+                  size="sm"
+                  aria-pressed={billingInterval === 'month'}
+                  onClick={() => setBillingInterval('month')}
+                >
+                  Monthly
+                </Button>
+                <Button
+                  variant={billingInterval === 'year' ? 'primary' : 'ghost'}
+                  size="sm"
+                  aria-pressed={billingInterval === 'year'}
+                  onClick={() => setBillingInterval('year')}
+                >
+                  {monthsFree > 0 ? `Yearly · ${monthsFree} months free` : 'Yearly'}
+                </Button>
+              </div>
+            ) : null}
           </div>
 
           <div className={styles.plans}>
-            {plans.map((p) => {
+            {shownPlans.map((p) => {
               const current = p.id === summary.plan.id;
               const intent = planIntent(summary.plan, p, {
                 cancelled: cancellationPending,
@@ -450,6 +756,11 @@ export function BillingSection(): JSX.Element | null {
                         {p.priceCents > 0 ? `/${p.interval === 'year' ? 'year' : 'month'}` : ' · no card'}
                       </span>
                     </p>
+                    {p.interval === 'year' && p.yearlyPriceCents ? (
+                      <p className={styles.priceSub}>
+                        {dollars(Math.round(p.yearlyPriceCents / 12))}/month, billed yearly
+                      </p>
+                    ) : null}
                   </div>
 
                   {p.description ? <p className={styles.planDescription}>{p.description}</p> : null}
@@ -461,14 +772,6 @@ export function BillingSection(): JSX.Element | null {
                         <span>{f}</span>
                       </li>
                     ))}
-                    <li className={styles.feature}>
-                      <Icon
-                        name={p.apiEnabled ? 'check' : 'close'}
-                        size="sm"
-                        className={p.apiEnabled ? styles.featureTick : styles.featureCross}
-                      />
-                      <span>{p.apiEnabled ? 'Automation API & Webhooks' : 'No Automation API'}</span>
-                    </li>
                   </ul>
 
                   <div className={styles.planFoot}>
@@ -511,50 +814,40 @@ export function BillingSection(): JSX.Element | null {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...new Set(plans.flatMap((plan) => plan.features))].map((feature) => (
-                    <tr key={feature}>
-                      <th scope="row">{feature}</th>
-                      {plans.map((plan) => (
-                        <td key={plan.id} aria-label={plan.features.includes(feature) ? 'Included' : 'Not included'}>
-                          {plan.features.includes(feature) ? (
-                            <Icon name="check" size="sm" className={styles.featureTick} />
-                          ) : (
-                            <span aria-hidden="true">—</span>
-                          )}
-                        </td>
+                  {rows
+                    ? rows.map((row) => (
+                        <tr key={row.label}>
+                          <th scope="row">{row.label}</th>
+                          {row.cells.map((cell, i) => (
+                            <td
+                              key={plans[i]?.id ?? i}
+                              aria-label={cell === true ? 'Included' : cell === false ? 'Not included' : undefined}
+                            >
+                              {cell === true ? (
+                                <Icon name="check" size="sm" className={styles.featureTick} />
+                              ) : cell === false ? (
+                                <span aria-hidden="true">—</span>
+                              ) : (
+                                cell
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      ))
+                    : [...new Set(plans.flatMap((plan) => plan.features))].map((feature) => (
+                        <tr key={feature}>
+                          <th scope="row">{feature}</th>
+                          {plans.map((plan) => (
+                            <td key={plan.id} aria-label={plan.features.includes(feature) ? 'Included' : 'Not included'}>
+                              {plan.features.includes(feature) ? (
+                                <Icon name="check" size="sm" className={styles.featureTick} />
+                              ) : (
+                                <span aria-hidden="true">—</span>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
                       ))}
-                    </tr>
-                  ))}
-                  <tr>
-                    <th scope="row">Automation API</th>
-                    {plans.map((plan) => (
-                      <td key={plan.id}>{plan.apiEnabled ? 'Included' : '—'}</td>
-                    ))}
-                  </tr>
-                  <tr>
-                    <th scope="row">Render minutes / month</th>
-                    {plans.map((plan) => (
-                      <td key={plan.id}>
-                        {plan.monthlyRenderMinutes
-                          ? plan.monthlyRenderMinutes.toLocaleString()
-                          : plan.apiEnabled
-                            ? 'Unlimited'
-                            : '—'}
-                      </td>
-                    ))}
-                  </tr>
-                  <tr>
-                    <th scope="row">API requests / month</th>
-                    {plans.map((plan) => (
-                      <td key={plan.id}>
-                        {plan.monthlyApiRequests
-                          ? plan.monthlyApiRequests.toLocaleString()
-                          : plan.apiEnabled
-                            ? 'Unlimited'
-                            : '—'}
-                      </td>
-                    ))}
-                  </tr>
                 </tbody>
               </table>
             </div>
@@ -574,7 +867,7 @@ export function BillingSection(): JSX.Element | null {
             </div>
             <div className={styles.securityNote}>
               <Icon name="lock" size="sm" />
-              <span>Payments processed securely with Stripe / Lemon Squeezy. Cancel or change plans anytime.</span>
+              <span>Payments processed securely by Lemon Squeezy. Cancel anytime — your projects are never deleted.</span>
             </div>
           </div>
         </>

@@ -59,6 +59,14 @@ export function deletePaintStroke(layer: string, stroke: string): Promise<Engine
   return edit('Delete Paint Stroke', { type: 'removePaintStrokes', layer, strokes: [stroke] });
 }
 
+/** Move a stroke: its own Transform ▸ Position, in the layer's pixels. One undo step. */
+export function movePaintStroke(layer: string, stroke: string, x: number, y: number): Promise<EngineResult<CommandResult[]>> {
+  return edit('Move Paint Stroke', [
+    { type: 'setProperty', prop: { layer, path: `paint/${stroke}/positionX` }, value: { kind: 'scalar', value: x } },
+    { type: 'setProperty', prop: { layer, path: `paint/${stroke}/positionY` }, value: { kind: 'scalar', value: y } },
+  ]);
+}
+
 /** Tool Options ▸ Undo last stroke: delete the layer's most recent stroke (no strokes: nothing happens). */
 export async function removeLastPaintStroke(layer: string): Promise<void> {
   const last = (await strokesOf(layer)).at(-1);

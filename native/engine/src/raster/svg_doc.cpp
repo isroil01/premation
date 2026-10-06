@@ -1796,6 +1796,25 @@ void compute_styles(const Document& doc, std::string_view extraCss, std::vector<
   c.run(extraCss);
 }
 
+std::vector<int> select_nodes(const Document& doc, std::string_view selectorList) {
+  std::vector<Complex> sels;
+  for (const std::string_view one : split_top(selectorList, ',')) {
+    Complex cx;
+    std::string why;
+    // One invalid selector invalidates the list, as in a style rule.
+    if (!parse_complex(one, cx, why) || cx.parts.empty()) return {};
+    sels.push_back(std::move(cx));
+  }
+  std::vector<int> out;
+  for (std::size_t i = 0; i < doc.nodes.size(); ++i) {
+    const Node& n = doc.nodes[i];
+    if (!n.element || n.shadow) continue;
+    const int idx = static_cast<int>(i);
+    if (std::ranges::any_of(sels, [&](const Complex& cx) { return match_from(doc, idx, cx, cx.parts.size() - 1); })) out.push_back(idx);
+  }
+  return out;
+}
+
 // ── data ─────────────────────────────────────────────────────────────────────
 
 std::optional<std::vector<std::uint8_t>> base64_decode(std::string_view s) {

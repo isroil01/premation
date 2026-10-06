@@ -738,14 +738,15 @@ function EditorShellInner(): JSX.Element {
     void toggleAudioMuteEdit(nodeId);
   };
 
-  const handleTrackActivate = (trackId: string): void => {
+  const handleTrackActivate = (trackId: string, alt = false): void => {
     const node = documentMirror().layer(trackId);
     if (!node) return;
     // AE: double-clicking a layer opens it — a comp instance its source comp
     // (with the navigator trail and the playhead carried across), a group its
     // own subtree, footage and solids the Layer panel — per the two "Opening
     // Layers with Double-click" preferences. See openLayer.ts.
-    if (openLayerOnDoubleClick(trackId)) return;
+    // Alt opens "the other way": a footage layer's source file, a composition layer in the Layer viewer.
+    if (openLayerOnDoubleClick(trackId, { alt })) return;
     // A comp instance whose source is gone opens nothing; isolating its empty
     // card would read as a bug.
     if (uiKindOf(node) === 'comp') return;
@@ -860,8 +861,21 @@ function EditorShellInner(): JSX.Element {
    * Reading one axis and writing another is what made a value set at 5s appear
    * to overwrite the keyframe at 1s.
    */
+  /**
+   * The timeline's value fields show what the Properties panel shows: a
+   * property stored as a fraction with `displayScale: 100` in the registry
+   * (Scale, fill / stroke opacities…) reads in percent. The row already drew
+   * the `%` unit over the RAW value, so Scale read "1 %" — and typing 50 there
+   * would have set a scale of 5000 %. Converted here, at the field's boundary,
+   * both ways; everything behind it (the scrub snapshot, the writes) stays raw.
+   */
+  const displayScaleOf = (trackId: string, prop: string): number => {
+    const m = documentMirror();
+    const scale = mirrorPropertyMeta(prop, m.layer(trackId), m.tree(trackId)).displayScale;
+    return typeof scale === 'number' && scale > 0 ? scale : 1;
+  };
   const handlePropertyValue = (trackId: string, prop: string): number =>
-    propertyValueAt(trackId, prop, playheadNow());
+    propertyValueAt(trackId, prop, playheadNow()) * displayScaleOf(trackId, prop);
 
   /**
    * Proportional Scrubbing (AE 26.2).
@@ -929,7 +943,9 @@ function EditorShellInner(): JSX.Element {
     void edit(label, cmds);
   };
 
-  const handlePropertyValueChange = (trackId: string, prop: string, value: number): void => {
+  const handlePropertyValueChange = (trackId: string, prop: string, shown: number): void => {
+    // The field hands back what it showed (see handlePropertyValue).
+    const value = shown / displayScaleOf(trackId, prop);
     const scrub = scrubRef.current;
     if (scrub && scrub.trackId === trackId && scrub.prop === prop) {
       const start = scrub.starts.get(propertyKey({ nodeId: trackId, prop }));

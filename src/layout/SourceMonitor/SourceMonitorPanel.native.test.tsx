@@ -95,7 +95,7 @@ describe('marking in and out', () => {
   });
 });
 
-describe('Insert at playhead', () => {
+describe('Overlay edit (insert at the playhead)', () => {
   it('inserts the MARKED range, trimmed, at the comp playhead', async () => {
     mountWithAsset();
     act(() => { seekPlayhead(1); });
@@ -107,7 +107,7 @@ describe('Insert at playhead', () => {
     fireEvent.keyDown(panel(), { key: 'o' });
 
     await act(async () => {
-      fireEvent.click(screen.getByText('Insert at playhead'));
+      fireEvent.click(screen.getByText('Overlay edit'));
       await Promise.resolve();
     });
 
@@ -126,7 +126,7 @@ describe('Insert at playhead', () => {
   it('with nothing marked it inserts the whole clip rather than refusing', async () => {
     mountWithAsset();
     await act(async () => {
-      fireEvent.click(screen.getByText('Insert at playhead'));
+      fireEvent.click(screen.getByText('Overlay edit'));
       await Promise.resolve();
     });
     await settleEdits();
@@ -183,5 +183,50 @@ describe('with no clip open', () => {
 
     expect(screen.getByText('No clip loaded')).toBeTruthy();
     expect(screen.getByText(/Open a clip from the Assets panel/)).toBeTruthy();
+  });
+});
+
+/*
+ * After Effects' Ripple Insert Edit: the new clip goes in at the playhead, and
+ * the edit is pushed apart to make room — a layer playing there is split, and
+ * everything from that point on moves later by the clip's length.
+ */
+describe('Ripple insert edit', () => {
+  it('splits the layer under the playhead and pushes what follows later by the clip’s length', async () => {
+    mountWithAsset();
+    // A layer covering the comp, to insert into: the whole clip at 0.
+    await act(async () => {
+      fireEvent.click(screen.getByText('Overlay edit'));
+      await Promise.resolve();
+    });
+    await settleEdits();
+    await waitFor(() => expect(documentMirror().comp('comp_root')!.layers.length).toBe(1));
+    const first = documentMirror().comp('comp_root')!.layers[0]!;
+    expect(barOf(first).out).toBeCloseTo(10, 4);
+
+    // Mark 2 s → 5 s (3 s) and ripple it in at 4 s.
+    act(() => { seekPlayhead(4); });
+    act(() => {
+      useSourceMonitorStore.getState().setIn(2);
+      useSourceMonitorStore.getState().setOut(5);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText('Ripple insert edit'));
+      await Promise.resolve();
+    });
+    await settleEdits();
+
+    await waitFor(() => expect(documentMirror().comp('comp_root')!.layers.length).toBe(3));
+    const inserted = [...useSelectionStore.getState().ids][0]!;
+    // The insert itself: [4, 7].
+    expect(barOf(inserted).in).toBeCloseTo(4, 4);
+    expect(barOf(inserted).out).toBeCloseTo(7, 4);
+    // The original keeps its left part, ending where the insert begins…
+    expect(barOf(first).in).toBeCloseTo(0, 4);
+    expect(barOf(first).out).toBeCloseTo(4, 4);
+    // …and its right part is a new layer, moved later by the 3 s that went in.
+    const right = documentMirror().comp('comp_root')!.layers.find((l) => l !== first && l !== inserted)!;
+    expect(barOf(right).in).toBeCloseTo(7, 4);
+    expect(barOf(right).out).toBeCloseTo(13, 4);
   });
 });

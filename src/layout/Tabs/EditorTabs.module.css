@@ -103,6 +103,27 @@
   flex-shrink: 0;
 }
 
+/* The × of an open Layer / Footage tab. */
+.tabClose {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+}
+
+.tabClose:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.tabClose:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -1px;
+}
+
 .tabLabel {
   overflow: hidden;
   text-overflow: ellipsis;

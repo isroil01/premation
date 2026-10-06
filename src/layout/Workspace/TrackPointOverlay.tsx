@@ -43,7 +43,7 @@ import { runAutoTrack } from '@core/tracking/autoTrackCommand';
 import { runObjectMaskPick } from '@core/tracking/objectMask';
 import { mirrorSourceDisplaySize } from '@core/mirror/sourceSize';
 import { documentMirror } from '@stores/documentMirror';
-import { layerScreenMapping } from './layerScreen';
+import { layerScreenMapping, type LayerScreenMapping } from './layerScreen';
 import { holdViewportPicture, viewportPicture } from '@core/engine/viewportPicture';
 
 const POINT_R = 5;
@@ -77,7 +77,22 @@ function confidenceAlpha(confidence: number): number {
 /** The overlay geometry the tracked layer's points map through: its drawn box. */
 const TRACK_KINDS: ReadonlyArray<OverlayKind> = ['bounds', 'transform'];
 
-export function TrackPointOverlay(): JSX.Element | null {
+/**
+ * Another viewer hosting the points: the Layer viewer shows the tracked layer
+ * ALONE, under its own camera, so it supplies the projection (layer-local ↔ its
+ * stage) and the layer's frame instead of the composition viewport's overlay
+ * push. The magnifier is the composition viewport's picture and is not shown
+ * there — the Layer viewer has its own zoom.
+ */
+export interface TrackPointHost {
+  mapping: LayerScreenMapping;
+  /** The layer's own frame (content is centred on the local origin). */
+  frame: { width: number; height: number };
+  /** Stage px per layer px — what the composition viewport's camera zoom is to its overlays. */
+  zoom: number;
+}
+
+export function TrackPointOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Element | null {
   // Frame-coalesced — visual tracking only; the raw rev re-rendered per
   // pointer event during drags and defeated the mapping memo below.
   const sceneTick = useMirrorRevisionFrame();
@@ -104,7 +119,11 @@ export function TrackPointOverlay(): JSX.Element | null {
   /** Live marquee while a picking drag is in flight, in overlay screen px. */
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   /** Magnifier while a point drags: where to draw it, and what it looks at. */
-  const [loupe, setLoupe] = useState<{ screenX: number; screenY: number } | null>(null);
+  const [loupe, setLoupeState] = useState<{ screenX: number; screenY: number } | null>(null);
+  const hosted = host !== undefined;
+  const setLoupe = (next: { screenX: number; screenY: number } | null): void => {
+    if (!hosted || next === null) setLoupeState(next);
+  };
   const loupeCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Armed = the Track Motion section is open — and that alone. This used to
@@ -120,21 +139,28 @@ export function TrackPointOverlay(): JSX.Element | null {
   // here: the Motion Source need not be selected).
   const [geoTick, setGeoTick] = useState(0);
   useEffect(() => {
+    // A host has its own projection: nothing to ask the composition viewport for.
+    if (hosted) return undefined;
     // Re-render once the engine has the subscription: the box exists from then.
     void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', active ? [active] : [], TRACK_KINDS, active ? ['active'] : []).then(() => setGeoTick((t) => t + 1));
     return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', [], TRACK_KINDS); };
-  }, [active]);
-  const box = active ? overlayLayer(MAIN_VIEWPORT, active, secondsToFlicks(time))?.box : undefined;
+  }, [active, hosted]);
+  const pushedBox = active && !hosted ? overlayLayer(MAIN_VIEWPORT, active, secondsToFlicks(time))?.box : undefined;
+  const hostW = host?.frame.width ?? 0;
+  const hostH = host?.frame.height ?? 0;
+  const hostBox = useMemo(() => (hosted ? [-hostW / 2, -hostH / 2, hostW, hostH] : undefined), [hosted, hostW, hostH]);
+  const box = hosted ? hostBox : pushedBox;
   const geom = box && box.length >= 4 ? { width: box[2]!, height: box[3]! } : null;
   // The footage's display size from the mirror (`sourceDisplaySize`'s twin).
   const src = active ? mirrorSourceDisplaySize(documentMirror(), active) : null;
 
   const camera = getWorkspaceController().ws.camera;
-  const mapping = useMemo(
-    () => (active ? layerScreenMapping(active, time, comp, camera) : null),
+  const pushedMapping = useMemo(
+    () => (active && !hosted ? layerScreenMapping(active, time, comp, camera) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton; the geometry tick re-reads the push
-    [active, time, comp.width, comp.height, sceneTick, geoTick],
+    [active, hosted, time, comp.width, comp.height, sceneTick, geoTick],
   );
+  const mapping = host ? host.mapping : pushedMapping;
 
   const sourceToScreen = useMemo(() => {
     if (!mapping || !geom || !src) return null;

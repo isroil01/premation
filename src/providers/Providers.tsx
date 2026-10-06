@@ -17,6 +17,7 @@ import {
 } from '@stores/preferenceStore';
 import { isLayer } from '@core/mirror/docFacts';
 import { useLayoutStore } from '@stores/layoutStore';
+import { toggleRenderQueue } from '@stores/timelinePanelStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { isPickArmed } from '@stores/trackerStore';
 import { pruneKeyframeSelectionToNodes, useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
@@ -85,6 +86,7 @@ import { buildSpeedRampCommands } from './commands/speedRampCommands';
 import { buildLayerTimeCommands } from './commands/layerTimeCommands';
 import { buildExpressionCommands } from './commands/expressionCommands';
 import { buildLayerTransformCommands } from '@core/scene/layerTransformCommands';
+import { buildOpenLayerCommands } from '@layout/LayerViewer/openLayerCommands';
 import { resetTransformEdit } from '@layout/Timeline/resetEdits';
 import { openTimeStretchDialog } from '@layout/Composition/TimeStretchDialog';
 import { openAutoOrientDialog } from '@layout/Composition/AutoOrientDialog';
@@ -505,13 +507,13 @@ function buildToolCommands(): ReadonlyArray<Command> {
   // Every tool used 'crosshair', so the palette/menus showed eleven identical
   // icons — give each tool its actual glyph.
   const TOOL_ICONS: Record<string, import('@components/Icon').IconName> = {
-    select: 'select-arrow',
-    'direct-select': 'mouse-pointer',
+    select: 'mouse-pointer',
+    'direct-select': 'direct-select',
     hand: 'hand',
     zoom: 'zoom-in',
     move: 'move',
     rotate: 'rotate-cw',
-    'pan-behind': 'anchor',
+    'pan-behind': 'pan-behind',
     pen: 'pen',
     brush: 'brush',
     text: 'type',
@@ -529,10 +531,14 @@ function buildToolCommands(): ReadonlyArray<Command> {
     star: 'star',
     'mask-rect': 'mask-square',
     'mask-ellipse': 'mask-circle',
-    'add-vertex': 'plus',
-    'delete-vertex': 'minus',
-    'convert-vertex': 'ease',
-    'mask-feather': 'blur',
+    'add-vertex': 'add-vertex',
+    'delete-vertex': 'delete-vertex',
+    'convert-vertex': 'convert-vertex',
+    'mask-feather': 'mask-feather',
+    'mask-pen': 'mask-pen',
+    paint: 'paint',
+    eraser: 'eraser',
+    knife: 'knife',
   };
   return tools.map(({ tool, label, chord }) => ({
     id: asCommandId(`tool.${tool}`),
@@ -1612,6 +1618,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildLayerTimeCommands({ openTimeStretch: openTimeStretchDialog }),
     ...buildExpressionCommands(),
     ...buildLayerTransformCommands({ openAutoOrient: openAutoOrientDialog, resetTransform: resetTransformEdit }),
+    ...buildOpenLayerCommands(),
     ...buildCameraCommands(),
     ...buildSmartAnimateCommands(),
     ...buildReframeCommands(),
@@ -2687,6 +2694,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // id, and the menu model names each command statically.
           for (const p of [
             { id: 'view.scene', panel: 'scene', label: 'Layers', icon: 'layers' },
+            { id: 'view.library', panel: 'library', label: 'Library', icon: 'component' },
             { id: 'view.character', panel: 'character', label: 'Text', icon: 'type' },
             { id: 'view.align', panel: 'align', label: 'Align', icon: 'align-center' },
             { id: 'view.swatches', panel: 'swatches', label: 'Swatches', icon: 'palette' },
@@ -2814,15 +2822,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             id: asCommandId('view.renderQueue'), label: 'Render Queue', icon: 'queue',
             shortcut: { key: 'F6' },
             enabled: () => true,
-            execute: () => {
-              const ls = useLayoutStore.getState();
-              const panel = ls.panels['renderQueue'];
-              if (!panel) {
-                ls.openPanel('renderQueue');
-              } else {
-                ls.togglePanel('renderQueue');
-              }
-            },
+            // A tab of the timeline panel (timelinePanelStore), not a dock panel.
+            execute: () => toggleRenderQueue(),
           });
           registry.register({
             // The left-sidebar Effect Controls panel — applied effects for the

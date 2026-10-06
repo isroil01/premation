@@ -27,13 +27,13 @@
 
 import { create } from 'zustand';
 import { api, isAuthenticated, paidSalesOpen, type CloudAccess } from '@core/api/client';
-import { onWriteDenied } from '@core/api/transport';
+import { onProjectLimit, onWriteDenied } from '@core/api/transport';
 import { billingEnabled } from '@core/config/edition';
 
 interface EntitlementState {
   /** Null until first loaded, and forever in the local edition. */
   access: CloudAccess | null;
-  /** The server-authored sentence, e.g. "Free trial — 6 days left." */
+  /** The server-authored sentence, e.g. "Confirm your email address to save to the cloud." */
   message: string;
   loading: boolean;
   /**
@@ -43,6 +43,13 @@ interface EntitlementState {
    * When false, nothing may offer "Subscribe"/"Upgrade": checkout would refuse.
    */
   salesOpen: boolean | null;
+  /**
+   * The server's sentence when the OPEN project is past the Free plan's cloud
+   * allowance (403 `project_limit`), else null. Per project, not per account:
+   * the account can still write its other projects, so `access` is untouched.
+   * Cleared whenever a different project opens.
+   */
+  projectLimit: string | null;
 }
 
 interface EntitlementActions {
@@ -57,6 +64,9 @@ interface EntitlementActions {
   noteWriteDenied: (reason?: CloudAccess['reason'], message?: string) => void;
   /** Load the plan catalog (cached for an hour) and record whether paid plans are on sale. */
   refreshSales: () => Promise<void>;
+  /** Record a `project_limit` refusal for the open project. */
+  noteProjectLimit: (message?: string) => void;
+  clearProjectLimit: () => void;
   reset: () => void;
 }
 
@@ -82,6 +92,7 @@ export const useEntitlementStore = create<EntitlementState & EntitlementActions>
   message: '',
   loading: false,
   salesOpen: null,
+  projectLimit: null,
   refresh: async (opts) => {
     // No backend, no entitlement to fetch. Leaving `access` null is correct: the
     // local edition is unrestricted.
@@ -115,7 +126,7 @@ export const useEntitlementStore = create<EntitlementState & EntitlementActions>
         // Preserve whatever we knew; override only the parts a denial proves.
         read: prev?.read ?? true,
         write: false,
-        reason: reason ?? prev?.reason ?? 'trial_expired',
+        reason: reason ?? prev?.reason ?? 'unverified',
         daysRemaining: 0,
         writeEndsAt: prev?.writeEndsAt ?? null,
       },
@@ -134,7 +145,16 @@ export const useEntitlementStore = create<EntitlementState & EntitlementActions>
     }
   },
 
-  reset: () => set({ access: null, message: '', loading: false, salesOpen: null }),
+  noteProjectLimit: (message) =>
+    set({
+      projectLimit:
+        message ||
+        "This project is past the Free plan's cloud allowance, so it is read-only. Upgrade to Premation Cloud, or export it to keep working locally.",
+    }),
+
+  clearProjectLimit: () => set({ projectLimit: null }),
+
+  reset: () => set({ access: null, message: '', loading: false, salesOpen: null, projectLimit: null }),
 }));
 
 /**
@@ -149,4 +169,8 @@ onWriteDenied((detail) => {
     detail.reason as CloudAccess['reason'] | undefined,
     detail.message,
   );
+});
+
+onProjectLimit((detail) => {
+  useEntitlementStore.getState().noteProjectLimit(detail.message);
 });

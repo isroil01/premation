@@ -16,7 +16,7 @@
  * touching the page's document IO.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -35,6 +35,7 @@ import { nativeEngineExe, startNativeEngine, type NativeEngine } from '@core/eng
 import { EngineDocumentSession, RECOVER_LABEL, type RecoveryFiles, type RecoveryIndex, type RecoveryRecord } from './engineDocumentSession';
 import { ProjectManager, type ProjectDocumentIO } from './ProjectManager';
 import type { FileManager } from '@core/files/FileManager';
+import { setLiveDocumentSource } from './liveDocument';
 import type { ProjectService } from '@core/persistence/ProjectService';
 import type { RecentProjects } from '@core/project/RecentProjects';
 
@@ -76,6 +77,9 @@ function processBackend(): Backend {
       readText: async (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null),
       remove: async (p) => {
         if (existsSync(p)) unlinkSync(p);
+      },
+      writeText: async (p, text) => {
+        writeFileSync(p, text, 'utf8');
       },
     },
     start: async () => {
@@ -274,6 +278,113 @@ maybe.each(backends)('F2: the document lifecycle through the engine — %s', (_n
     index.write({ recoveryPath: backend.file('gone'), projectPath: '', savedAt: 1, revision: 1 });
     expect(await s.recover()).toBe(false);
     expect(index.record).toBeNull();
+  }, 120_000);
+
+  it('a cloud project: opened from the fetched text, marked saved after an upload, and its unsent work restored on the next open — never a prompt', async () => {
+    const index = memoryIndex();
+    const recoveryPath = backend.file('recovery');
+    running = await backend.start();
+    let r = running;
+    // A fresh engine has made no document yet: the boot tells a reload from a start by this.
+    expect((await r.client.query({ type: 'getHistory' })).revision).toBe(0);
+    const session = (run: Running): EngineDocumentSession =>
+      new EngineDocumentSession({ engine: () => run.client, mirror: run.mirror, recoveryPath, files: backend.files, index, now: () => 5 });
+    let s = session(r);
+
+    // The server's copy: a document with one comp and one layer.
+    await s.newProject();
+    const comp = unwrap(await r.client.execute({ type: 'createComposition', settings: { name: 'Cloud' }, fromItems: [] })).item;
+    unwrap(await r.client.execute({ type: 'createLayer', comp, kind: 'solid', name: 'Server', init: [] }));
+    const serverText = new TextDecoder().decode(unwrap(await r.client.query({ type: 'exportDocument' })).document);
+    const serverContent = await contentOf(r.client);
+    await s.newProject();
+
+    // Open it the way ProjectLoader does: bound to its local copy, clean, no history.
+    expect(await s.openText('proj 42', serverText)).toEqual({ recovered: false });
+    const local = s.localCopyPath('proj 42');
+    expect(local).toMatch(/cloud-proj_42\.json$/);
+    expect(s.projectPath).toBe(local);
+    expect(s.dirty).toBe(false);
+    expect(await contentOf(r.client)).toEqual(serverContent);
+
+    // An edit, uploaded: markSaved clears dirty and the recovery copy.
+    unwrap(await r.client.execute({ type: 'createLayer', comp, kind: 'solid', name: 'Uploaded', init: [] }));
+    await r.mirror.whenIdle();
+    expect(await s.autosave()).toBe(5);
+    expect(index.record).toMatchObject({ projectPath: local });
+    const uploadedAt = r.mirror.revision;
+    await s.markSaved(uploadedAt + 1);  // an edit after the export: not marked
+    expect(s.dirty).toBe(true);
+    await s.markSaved(uploadedAt);
+    expect(s.dirty).toBe(false);
+    expect(index.record).toBeNull();
+    const uploadedText = new TextDecoder().decode(unwrap(await r.client.query({ type: 'exportDocument' })).document);
+
+    // Another edit that never reaches the server; autosaved; the app dies.
+    unwrap(await r.client.execute({ type: 'createLayer', comp, kind: 'solid', name: 'Unsent', init: [] }));
+    await r.mirror.whenIdle();
+    expect(await s.autosave()).toBe(5);
+    const unsentContent = await contentOf(r.client);
+    await r.stop();
+
+    // Next start: the same project opens from the server's (older) copy and the unsent work comes back on top.
+    running = await backend.start();
+    r = running;
+    s = session(r);
+    expect(await s.openText('proj 42', uploadedText)).toEqual({ recovered: true });
+    expect(await contentOf(r.client)).toEqual(unsentContent);
+    expect(s.dirty).toBe(true);
+    expect(await labels(r.client)).toEqual([RECOVER_LABEL]);
+
+    // A different project's open never takes that copy.
+    await s.autosave();
+    expect(await s.openText('other', serverText)).toEqual({ recovered: false });
+    expect(await contentOf(r.client)).toEqual(serverContent);
+  }, 120_000);
+
+  it('ProjectManager on cloud files: open loads the fetched document into the engine; Save uploads and never hands the engine a cloud id', async () => {
+    const index = memoryIndex();
+    running = await backend.start();
+    const r = running;
+    const s = new EngineDocumentSession({ engine: () => r.client, mirror: r.mirror, recoveryPath: backend.file('recovery'), files: backend.files, index, now: () => 1 });
+    setLiveDocumentSource({ engine: () => r.client, owned: () => true });
+    try {
+      await s.newProject();
+      const comp = unwrap(await r.client.execute({ type: 'createComposition', settings: { name: 'Cloud' }, fromItems: [] })).item;
+      unwrap(await r.client.execute({ type: 'createLayer', comp, kind: 'solid', name: 'On the server', init: [] }));
+      const cloud = new Map<string, string>([['abc-123', new TextDecoder().decode(unwrap(await r.client.query({ type: 'exportDocument' })).document)]]);
+      const serverContent = await contentOf(r.client);
+      await s.newProject();
+
+      const files = {
+        environment: 'api',
+        open: async () => null,
+        chooseSavePath: async () => null,
+        read: async (id: string) => cloud.get(id) ?? null,
+        write: async (id: string, text: string) => {
+          cloud.set(id, text);
+        },
+      } as unknown as FileManager;
+      const recent = { add: () => undefined } as unknown as RecentProjects;
+      const pm = new ProjectManager({ service: {} as ProjectService, files, recent, engineDocument: s, newId: () => 'c1' });
+
+      expect(await pm.openPath('missing')).toBeNull();
+      const ref = await pm.openPath('abc-123');
+      expect(ref?.path).toBe('abc-123');
+      expect(await contentOf(r.client)).toEqual(serverContent);
+      expect(r.mirror.dirty).toBe(false);
+
+      unwrap(await r.client.execute({ type: 'createLayer', comp, kind: 'solid', name: 'Edited', init: [] }));
+      await r.mirror.whenIdle();
+      expect(r.mirror.dirty).toBe(true);
+      expect((await pm.save()).status).toBe('saved');
+      expect(r.mirror.dirty).toBe(false);
+      const uploaded = JSON.parse(cloud.get('abc-123')!) as { scene?: unknown };
+      expect(JSON.stringify(uploaded)).toContain('Edited');
+      expect(existsSync(path.join(process.cwd(), 'abc-123'))).toBe(false);
+    } finally {
+      setLiveDocumentSource(null);
+    }
   }, 120_000);
 
   it('ProjectManager with the F2 flag: open / save / save as / snapshot / close go through the engine, never the page document IO', async () => {

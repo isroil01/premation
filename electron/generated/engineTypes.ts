@@ -2723,6 +2723,8 @@ export interface SetViewport {
    * is stopped. Ignored on a layer view.
    */
   onion?: OnionSkin;
+  /** With `layer`: how the layer's ALPHA is shown (the Layer panel's Roto / matte views, AE's Alpha, Alpha Boundary and Alpha Overlay). Absent or '' = the layer as it is. 'alpha' = the matte itself, white on black. 'boundary' = the untouched source with the matte's edge outlined. 'overlay' = the untouched source with everything OUTSIDE the matte under a red tint. A viewer aid only: never in a composition render or an export. Any other value: `invalidArgument`. */
+  layerAlphaView?: string;
 }
 
 export interface CloseViewport {
@@ -4880,6 +4882,11 @@ export interface RenderView {
   viewerLut?: RenderViewerLut;
   /** D3 colour management; absent = today's pipeline. */
   colorManagement?: RenderColorManagement;
+  /**
+   * The viewer's channel (View ▸ Show Channel, viewport-only): red / green / blue / alpha shown as
+   * an opaque grey image on the final blit; rgbStraight shows the colour without its alpha. Absent = rgb.
+   */
+  channel?: ChannelView;
 }
 
 /** A texture key the scene samples → the content it resolved to when the frame was rendered. */

@@ -308,8 +308,9 @@
   display: flex;
   align-items: center;
   padding: 0 var(--space-2) 0 calc(var(--space-2) + 3px);
-  transition: filter var(--motion-duration-fast) var(--motion-ease-standard), box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  /* Flat: a layer bar is a block of its label colour on the lane, not a card
+     lifted off it. The drop shadow under every bar blurred the lane lines. */
+  transition: filter var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 /* AE-style left-edge label strip on every clip */
@@ -326,7 +327,6 @@
 
 .clip:hover {
   filter: brightness(1.1);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
 }
 
 /*
@@ -338,9 +338,11 @@
  * user-assigned label) and must survive selection intact.
  */
 .clipSelected {
-  outline: 1.5px solid var(--color-selection);
+  /* A light inner edge, not the accent: selection is neutral everywhere in the
+     editor now, and a blue ring on a blue-labelled bar could not be seen. */
+  outline: 1.5px solid rgba(255, 255, 255, 0.7);
   outline-offset: -1.5px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  filter: brightness(1.12);
 }
 
 /* A locked layer's bar: still selectable, never draggable. The cursor is the
@@ -379,7 +381,7 @@
 }
 
 .clipSelected::before {
-  background: var(--color-selection);
+  background: rgba(255, 255, 255, 0.85);
   opacity: 1;
 }
 
@@ -509,13 +511,14 @@
   background: #71717a;
 }
 
-/* Edge handles — blue bracket tabs on in/out */
+/* Edge handles — light bracket tabs on in/out. Neutral: the accent in the
+   ruler belongs to the playhead alone. */
 .workAreaHandle {
   position: absolute;
   top: 0;
   bottom: 0;
   width: 6px;
-  background: var(--color-primary);
+  background: var(--color-text-secondary);
   border-radius: var(--radius-xs);
   cursor: ew-resize;
   transition: transform var(--motion-duration-fast);
@@ -538,9 +541,9 @@
   top: 0;
   z-index: 0;
   pointer-events: none;
-  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
-  border-left: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent);
-  border-right: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent);
+  background: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--color-text-primary) 22%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--color-text-primary) 22%, transparent);
   box-sizing: border-box;
 }
 
@@ -945,20 +948,15 @@
   cursor: not-allowed;
 }
 
+/*
+ * A selected layer is a LIGHTER row with full-strength text — the way a file
+ * list or After Effects marks selection. It was a blue tint with a blue stripe
+ * down its left edge; with the accent now kept for values and the playhead,
+ * a blue row read as "live" rather than "selected".
+ */
 .trackHeaderSelected {
-  background: rgba(41, 136, 255, 0.12);
-}
-
-.trackHeaderSelected::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 2px;
-  bottom: 2px;
-  width: 2.5px;
-  border-radius: 2px;
-  background: var(--color-primary);
-  box-shadow: none;
+  background: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
+  color: var(--color-text-primary);
 }
 
 /* Fixed width, matching `.colHeadLayer` — the pair is what keeps every column
@@ -1508,11 +1506,24 @@
   transform: scale(0.92);
 }
 
+/*
+ * ON is a full-strength glyph on the row — no box. Each lit switch used to be
+ * an accent-tinted, accent-bordered square, so a comp of visible layers was a
+ * column of blue boxes down the left edge and the eye read as the loudest
+ * control on the panel. After Effects draws the glyph and nothing else; the
+ * kinds that carry meaning in their colour (solo, lock, fx, motion blur) keep
+ * it below.
+ */
 .trackAction[data-on] {
   opacity: 1;
-  background: color-mix(in srgb, var(--color-primary) 18%, var(--color-timeline-well));
-  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-timeline-well));
-  color: var(--color-primary);
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-primary);
+}
+
+.trackAction[data-on]:hover {
+  background: var(--color-timeline-well-hover);
+  border-color: var(--color-timeline-well-border-hover);
 }
 
 /* Semantic active-state colors, keyed off data-kind — robust against label
@@ -1687,79 +1698,59 @@
   pointer-events: none;
 }
 
-/* ── Category Accordion sub-row header (Level 1 Indent) ─────────────── */
+/* ── A property group's row (Transform, Contents, Effects…) ───────────
+   As After Effects draws one: a twirl and the group's name on the row's own
+   ground, "Reset" as a link in the value column. No icon, no count chip, no
+   tinted band — a twirled-open layer is a quiet outline, not a stack of
+   headers. */
 .categoryHeader {
   position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding-right: var(--space-2);
+  padding-right: var(--space-3);
   padding-left: 88px;
   border-bottom: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
+  background: var(--color-timeline-header);
   min-width: max-content;
   box-sizing: border-box;
   cursor: pointer;
   user-select: none;
-  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.categoryHeader::before {
-  content: "";
-  position: absolute;
-  left: 54px;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--color-border-subtle);
 }
 
 .categoryHeader:hover {
-  background: var(--color-surface-3);
+  background: var(--color-hover);
 }
 
-.categoryIcon {
-  color: var(--color-primary);
-  display: flex;
-  align-items: center;
-  opacity: 0.9;
+/* The group's icon and its property count are not shown (the DOM keeps them
+   for the pinned copy and for tests that read the count). */
+.categoryIcon,
+.categoryBadge {
+  display: none;
 }
 
 .categoryName {
   font-family: var(--font-family-sans);
   font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  letter-spacing: 0.01em;
+  font-weight: var(--font-weight-regular);
+  color: var(--color-text-primary);
 }
 
-/* AE's "Reset" link on the Transform group row: text, not a chip. */
+/* AE's "Reset" on a group row: a link where the values are, not a chip. */
 .categoryReset {
+  margin-left: auto;
   font-family: var(--font-family-sans);
   font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
+  color: var(--color-primary-text);
   background: none;
   border: none;
   padding: 0 2px;
-  border-radius: var(--radius-full);
   cursor: pointer;
 }
 
 .categoryReset:hover,
 .categoryReset:focus-visible {
-  color: var(--color-accent);
   text-decoration: underline;
-}
-
-.categoryBadge {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  padding: 1px 5px;
-  border-radius: var(--radius-full);
-  background: var(--color-surface-3);
-  color: var(--color-text-tertiary);
-  margin-left: 4px;
 }
 
 /* ── Property sub-row header (Level 2 Indent) ───────────────────── */
@@ -1777,19 +1768,8 @@
   box-sizing: border-box;
 }
 
-.propHeader::before {
-  content: "";
-  position: absolute;
-  left: 96px;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--color-border-subtle);
-  opacity: 0.7;
-}
-
 .propName {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-sans);
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   overflow: hidden;
@@ -1823,10 +1803,14 @@
   min-width: 44px;
   max-width: 80px;
   padding: 1px 4px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-timeline-well));
+  /* At rest a value is an accent NUMBER on the row, the way After Effects
+     shows one — the colour alone says "editable". The well is drawn under the
+     pointer and while typing; drawn always, a twirled-open layer was a column
+     of blue boxes. */
+  border: 1px solid transparent;
   border-radius: 2px;
-  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-timeline-well));
-  color: var(--color-primary);
+  background: transparent;
+  color: var(--color-primary-text);
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
@@ -1835,14 +1819,13 @@
 }
 
 .propValues > *:hover {
-  border-color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 20%, var(--color-timeline-well));
-  color: var(--color-primary-hover);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-timeline-well));
+  background: var(--color-timeline-well);
 }
 
 .propValues > *:focus-within {
   border-color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 16%, var(--color-timeline-well));
+  background: var(--color-timeline-well);
 }
 
 /* ── Header column resizer ─────────────────────────────────────── */
@@ -1894,8 +1877,9 @@
   gap: var(--space-2);
 }
 
+/* The name reads the same animated or not — the stopwatch says which. */
 .propHeaderStatic .propName {
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
 }
 
 .propStopwatch[data-on] {

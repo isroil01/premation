@@ -38,6 +38,7 @@
  *
  * `RENDER_SCOPE_VERBOSE=1` prints the per-component tables.
  */
+import { useLayoutStore } from '@stores/layoutStore';
 import { renderTracker } from '@layout/__testHelpers__/renderTracker';
 import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -110,6 +111,9 @@ async function bootWithSelection(): Promise<{ moved: string }> {
     },
     { timeout: 20000 },
   );
+  // The left sidebar opens on Project (2026-10); this suite measures the layer
+  // tree, so it shows the Layers tab the way a user checking it would.
+  act(() => useLayoutStore.getState().openPanel('scene'));
   // Layers after the boot (its New Project starts the document over).
   await act(async () => {
     for (const [kind, name] of [['shape', 'Drag Shape'], ['shape', 'Other Shape'], ['text', 'Drag Text']] as const) {

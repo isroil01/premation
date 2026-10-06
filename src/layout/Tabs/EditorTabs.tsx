@@ -29,6 +29,8 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useLayerViewerStore } from '@stores/layerViewerStore';
 import { canOpenInLayerPanel, openLayerPanel } from '@layout/LayerViewer/openLayer';
 import { LayerViewer } from '@layout/LayerViewer/LayerViewer';
+import { FootageViewer } from '@layout/Assets/FootageViewer';
+import { useFootageViewerStore } from '@stores/footageViewerStore';
 import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { documentMirror } from '@stores/documentMirror';
@@ -41,6 +43,34 @@ import { openCompositionSettings } from '@layout/Composition/CompositionSettings
 import { deleteCompositionEdit, deleteCompositionWarning } from '@layout/Scene/sceneEdits';
 import { customConfirm } from '@components/Modal';
 import styles from './EditorTabs.module.css';
+
+/**
+ * The × on an open Layer / Footage tab. A span with a button role: the tab is
+ * itself a <button>, and a button inside a button is not valid markup.
+ */
+function TabClose({ label, onClose }: { label: string; onClose: () => void }): JSX.Element {
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      className={styles.tabClose}
+      aria-label={`Close the ${label}`}
+      title={`Close the ${label}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }}
+    >
+      <Icon name="close" size="sm" />
+    </span>
+  );
+}
 
 export interface EditorTabsProps {
   /** The viewport. Rendered once, always, and never unmounted by this component. */
@@ -105,6 +135,14 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
     : singleSelectedLayer
       ? selectedLayerInfo?.name ?? null
       : null;
+  // AE's Footage panel (FootageViewer): open while there is a file to show.
+  // The Layer panel wins if both are somehow up — one viewer tab at a time.
+  const footageOpen = useFootageViewerStore((s) => s.open) && !!footageAsset && !layerViewerOpen;
+  const compActive = !layerViewerOpen && !footageOpen;
+  const closeViewerTabs = (): void => {
+    useLayerViewerStore.getState().close();
+    useFootageViewerStore.getState().close();
+  };
   const viewMode = useWorkspaceViewStore((s) => s.mode);
 
   /**
@@ -134,12 +172,12 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
         <button
           type="button"
           role="tab"
-          aria-selected={!layerViewerOpen}
-          className={cn(styles.tab, !layerViewerOpen && styles.tabActive)}
+          aria-selected={compActive}
+          className={cn(styles.tab, compActive && styles.tabActive)}
           title={`Composition: ${compName || 'none'}${activeDirty ? ' — unsaved changes' : ''}`}
           onClick={() => {
-            // Back to the composition from the Layer panel.
-            useLayerViewerStore.getState().close();
+            // Back to the composition from the Layer or Footage viewer.
+            closeViewerTabs();
           }}
           onContextMenu={(e) => {
             // AE's viewer menu: ONE Composition viewer, switched between the
@@ -169,7 +207,7 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
           }}
         >
           <Icon name="shape" size="sm" />
-          <span className={styles.tabLabel}>Composition {compName ? `(${compName})` : '(none)'}</span>
+          <span className={styles.tabLabel}>{compName ? `Composition: ${compName}` : 'Composition: (none)'}</span>
           {/* The dirty dot. Decorative for AT: the tab's `title` and the
               accessible name below carry it as words. */}
           {activeDirty ? (
@@ -190,15 +228,18 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
         <button
           type="button"
           role="tab"
-          aria-selected={false}
-          className={styles.tab}
+          aria-selected={footageOpen}
+          className={cn(styles.tab, footageOpen && styles.tabActive)}
           disabled={!footageAsset}
           title={
             footageAsset
               ? `Footage: ${footageAsset.name}${footageAsset.type === 'image' ? ' (still)' : footageAsset.type === 'audio' ? ' (audio)' : ''}`
               : 'Footage (none) — double-click a clip in Assets, or select a media layer'
           }
-          onClick={() => { if (footageAsset) openFootagePreview(footageAsset); }}
+          onClick={() => {
+            if (footageOpen) return;
+            if (footageAsset) openFootagePreview(footageAsset);
+          }}
           onContextMenu={(e) => {
             if (!footageAsset) return;
             e.preventDefault();
@@ -207,6 +248,7 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
                 id: 'clear-footage',
                 label: 'Clear Footage Viewer',
                 onSelect: () => {
+                  useFootageViewerStore.getState().close();
                   clearLastFootagePreview();
                   // If the tab is driven by the current layer selection, clear
                   // that too — otherwise Clear would appear to do nothing.
@@ -217,7 +259,8 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
           }}
         >
           <Icon name="media" size="sm" />
-          <span className={styles.tabLabel}>Footage {footageAsset ? `(${footageAsset.name})` : '(none)'}</span>
+          <span className={styles.tabLabel}>{footageAsset ? `Footage: ${footageAsset.name}` : 'Footage: (none)'}</span>
+          {footageOpen && <TabClose label="Footage viewer" onClose={() => useFootageViewerStore.getState().close()} />}
         </button>
 
         {/*
@@ -234,18 +277,19 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
           disabled={!layerViewerOpen && !selectedViewable}
           title={
             layerViewerOpen
-              ? `Layer: ${layerTabName ?? ''} — click to go back to the composition`
+              ? `Layer: ${layerTabName ?? ''}`
               : selectedViewable
                 ? `Open “${layerTabName ?? ''}” in the Layer panel`
                 : 'Layer (none) — select a footage, solid or composition layer'
           }
           onClick={() => {
-            if (layerViewerOpen) { useLayerViewerStore.getState().close(); return; }
+            if (layerViewerOpen) return;
             if (singleSelectedLayer) openLayerPanel(singleSelectedLayer);
           }}
         >
           <Icon name="layers" size="sm" />
-          <span className={styles.tabLabel}>Layer {layerTabName ? `(${layerTabName})` : '(none)'}</span>
+          <span className={styles.tabLabel}>{layerTabName ? `Layer: ${layerTabName}` : 'Layer: (none)'}</span>
+          {layerViewerOpen && <TabClose label="Layer viewer" onClose={() => useLayerViewerStore.getState().close()} />}
         </button>
 
         </div>
@@ -331,8 +375,8 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
           and all three are lost the moment it leaves the tree.
         */}
         <div
-          className={cn(styles.scenePane, layerViewerOpen && styles.sceneHidden)}
-          aria-hidden={layerViewerOpen}
+          className={cn(styles.scenePane, !compActive && styles.sceneHidden)}
+          aria-hidden={!compActive}
           data-testid="scene-pane"
         >
           {scene}
@@ -343,6 +387,14 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
         {layerViewerOpen && (
           <div className={styles.tabPane} role="tabpanel" aria-label="Layer panel" data-testid="layer-pane">
             <LayerViewer />
+          </div>
+        )}
+
+        {/* AE's Footage panel: the source file on its own, likewise over the
+            (still mounted) composition viewer. */}
+        {footageOpen && footageAsset && (
+          <div className={styles.tabPane} role="tabpanel" aria-label="Footage panel" data-testid="footage-pane">
+            <FootageViewer asset={footageAsset} />
           </div>
         )}
       </div>

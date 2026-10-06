@@ -78,6 +78,15 @@ export function captureViewportPicture(frame: VideoFrame): void {
   }
 }
 
+/**
+ * Ask the engine to deliver the frame on screen once more — for a consumer
+ * that reads the NEXT drawn frame (a snapshot, a difference compare) while the
+ * viewport is still and would otherwise draw nothing.
+ */
+export function refreshViewportPicture(): void {
+  refresh?.();
+}
+
 /** `EngineSurface` installs how to ask the engine for the current frame again; null on unmount. */
 export function setViewportPictureRefresh(fn: (() => void) | null): void {
   refresh = fn;

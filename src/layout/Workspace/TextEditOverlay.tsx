@@ -32,6 +32,7 @@ import { useMirrorKeys, useRetainTree } from '@hooks/useMirror';
 import { useTextLayout } from '@hooks/useTextLayout';
 import { componentPropPath, componentPropValue } from '@core/mirror/componentProps';
 import { engine } from '@core/engine/engineInstance';
+import { withEngineViewport } from '@core/engine/windowViewport';
 import { playheadSeconds } from '@core/timeline/timelineView';
 import { currentRuns, isSourceTextAnimated, mirrorParagraphBox, SOURCE_TEXT_PATH, sourceTextOf } from '@layout/Text/textMirror';
 import { reindexRuns } from '@core/text/richText';
@@ -227,8 +228,12 @@ export function TextEditOverlay(): JSX.Element | null {
   // has landed, so the new text is what comes back.
   useEffect(() => {
     if (!nodeId) return undefined;
-    void engine().execute({ type: 'setViewportHiddenLayers', viewport: MAIN_VIEWPORT, layers: [nodeId] });
-    return () => { void engine().execute({ type: 'setViewportHiddenLayers', viewport: MAIN_VIEWPORT, layers: [] }); };
+    // The window's main viewport, by the engine's id for it (windowViewport.ts).
+    const hide = (layers: string[]): void => {
+      withEngineViewport(MAIN_VIEWPORT, (id) => { void engine().execute({ type: 'setViewportHiddenLayers', viewport: id, layers }); });
+    };
+    hide([nodeId]);
+    return () => hide([]);
   }, [nodeId]);
   useLayoutEffect(() => {
     committedRef.current = false;

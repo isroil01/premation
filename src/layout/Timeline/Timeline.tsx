@@ -185,7 +185,7 @@ export interface TimelineProps {
   revealProps?: ReadonlyArray<string> | null;
   onTrackToggleExpand?: (trackId: string) => void;
   /** Double-click a track — enter it (precomp) or isolate it (Focus Mode). */
-  onTrackActivate?: (trackId: string) => void;
+  onTrackActivate?: (trackId: string, alt?: boolean) => void;
   /** Toggle a layer's AUDIO mute from its clip bar's speaker glyph. Distinct
    *  from the track's visibility eye, which mutes the picture. */
   onClipMuteToggle?: (nodeId: string) => void;
@@ -1008,10 +1008,33 @@ function Timeline({
     return next;
   }, [scrollLeft, lanesWidth, pps]);
 
+  /**
+   * The lanes' scroll geometry as playhead-follow reads it, measured once and
+   * kept until a scroll, a resize, a zoom or a duration change — never per
+   * playhead tick. Reading scrollLeft / clientWidth / scrollWidth on every tick
+   * came right after the tick's own writes (the ruler fill's width), so each
+   * played frame forced a synchronous layout.
+   */
+  const lanesGeomRef = useRef<{ scrollLeft: number; clientWidth: number; scrollWidth: number } | null>(null);
+  useEffect(() => {
+    lanesGeomRef.current = null;
+  }, [pps, totalSeconds]);
+  useEffect(() => {
+    const el = lanesRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => {
+      lanesGeomRef.current = null;
+    });
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [lanesRef]);
+
   // ── Horizontal scrolling sync (header follows lanes) ──────────
   const onLanesScroll = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
       const el = e.currentTarget;
+      if (lanesGeomRef.current) lanesGeomRef.current.scrollLeft = el.scrollLeft;
       setScrollLeft(el.scrollLeft);
       setScrollTop(el.scrollTop);
       if (headerRef.current) headerRef.current.scrollTop = el.scrollTop;
@@ -1073,15 +1096,19 @@ function Timeline({
     if (!el || mode === 'off' || dragScrollBusyRef.current) return;
     if (lastFollowedRef.current !== null && Math.abs(lastFollowedRef.current - t) < 1e-6) return;
     lastFollowedRef.current = t;
+    const g = lanesGeomRef.current ?? (lanesGeomRef.current = { scrollLeft: el.scrollLeft, clientWidth: el.clientWidth, scrollWidth: el.scrollWidth });
     const next = followScrollLeft({
       mode,
       playheadX: TIMELINE_LEFT_OFFSET + t * p,
-      scrollLeft: el.scrollLeft,
-      viewportWidth: el.clientWidth,
-      contentWidth: el.scrollWidth,
+      scrollLeft: g.scrollLeft,
+      viewportWidth: g.clientWidth,
+      contentWidth: g.scrollWidth,
       leftOffset: TIMELINE_LEFT_OFFSET,
     });
-    if (next !== null) el.scrollLeft = next;
+    if (next !== null) {
+      el.scrollLeft = next;
+      g.scrollLeft = next;
+    }
     // lanesRef is a stable ref object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1801,7 +1828,7 @@ function Timeline({
     const L = latestRowCallbacks;
     return {
       onToggleExpand: (recursive: boolean) => L.current.toggleExpandRow(id, recursive),
-      onActivate: () => L.current.onTrackActivate?.(id),
+      onActivate: (alt?: boolean) => L.current.onTrackActivate?.(id, alt),
       onClick: (mods: SelectModifiers) => L.current.selectTrack(id, mods),
       onToggleVisible: () => L.current.onTrackToggleVisible?.(id),
       onToggleLock: () => L.current.onTrackToggleLock?.(id),

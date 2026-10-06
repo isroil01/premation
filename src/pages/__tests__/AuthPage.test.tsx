@@ -20,50 +20,61 @@ describe('AuthPage UI & UX', () => {
     });
   });
 
-  it('renders login page with segmented mode tabs, email and password fields', () => {
+  it('renders the sign-in screen with one way to switch to sign-up', () => {
     renderAuthPage('login');
-    expect(screen.getByRole('heading', { name: 'Sign in to Motion' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Sign In' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Create Account' })).toHaveAttribute('aria-selected', 'false');
-    expect(screen.getByLabelText('Email Address')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
+    // The Sign In / Create Account tabs are gone; the link under the form is the switch.
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Create an account' })).toHaveAttribute('href', '/register');
+    expect(screen.getByLabelText('Email')).toBeInTheDocument();
     expect(screen.getByLabelText('Password')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Sign In' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
   });
 
-  it('renders register page with Name field and password rules', () => {
+  it('renders the create-account screen with a Name field', () => {
     renderAuthPage('register', ['/register']);
-    expect(screen.getByRole('heading', { name: 'Create an account' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Create Account' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByLabelText('Full Name')).toBeInTheDocument();
-    expect(screen.getByLabelText('Email Address')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Email')).toBeInTheDocument();
     expect(screen.getByLabelText('Password')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Create Account' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create account' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/login');
   });
 
-  it('toggles password visibility with eye button', () => {
+  it('never offers GitHub: Google is the only provider', () => {
+    renderAuthPage('login');
+    expect(screen.queryByText(/GitHub/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the password rules before anything is typed, on sign-up and on reset', () => {
+    const { unmount } = renderAuthPage('register', ['/register']);
+    expect(screen.getByText('8 or more characters')).toBeInTheDocument();
+    expect(screen.getByText('A letter and a number')).toBeInTheDocument();
+    unmount();
+
+    renderAuthPage('reset', ['/reset-password?token=abc']);
+    expect(screen.getByLabelText('New password')).toBeInTheDocument();
+    expect(screen.getByText('8 or more characters')).toBeInTheDocument();
+  });
+
+  it('does not show the password rules on sign-in', () => {
+    renderAuthPage('login');
+    expect(screen.queryByText('8 or more characters')).not.toBeInTheDocument();
+  });
+
+  it('toggles password visibility with a keyboard-reachable Show button', () => {
     renderAuthPage('login');
     const pwdInput = screen.getByLabelText('Password') as HTMLInputElement;
     expect(pwdInput.type).toBe('password');
 
     const toggleBtn = screen.getByRole('button', { name: /Show password/i });
+    expect(toggleBtn).not.toHaveAttribute('tabindex', '-1');
     fireEvent.click(toggleBtn);
     expect(pwdInput.type).toBe('text');
 
     const hideBtn = screen.getByRole('button', { name: /Hide password/i });
     fireEvent.click(hideBtn);
     expect(pwdInput.type).toBe('password');
-  });
-
-  it('shows password strength rules dynamically as user types on register', () => {
-    renderAuthPage('register', ['/register']);
-    const pwdInput = screen.getByLabelText('Password') as HTMLInputElement;
-
-    fireEvent.change(pwdInput, { target: { value: 'short' } });
-    expect(screen.getByText('8+ characters')).toBeInTheDocument();
-
-    fireEvent.change(pwdInput, { target: { value: 'Secret123!' } });
-    expect(screen.getByText('8+ characters')).toBeInTheDocument();
-    expect(screen.getByText('Letters & numbers')).toBeInTheDocument();
   });
 
   it('displays error alert when store reports an error', () => {

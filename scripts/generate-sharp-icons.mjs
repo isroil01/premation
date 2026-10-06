@@ -258,12 +258,20 @@ function main() {
   const body = namesSrc.slice(namesSrc.indexOf('ICON_NAMES = ['), namesSrc.indexOf('] as const'));
   const names = [...body.matchAll(/'([^']+)'/g)].map((m) => m[1]);
 
-  const unmapped = names.filter((n) => !(n in MAP));
+  // Names drawn by hand in `drawnIcons.ts` never reach this table: Icon.tsx
+  // resolves them first, so a Material path for one would ship and never be
+  // drawn. Their MAP rows stay as the record of what each fell back to.
+  const drawnSrc = readFileSync(join(ICON_DIR, 'drawnIcons.ts'), 'utf8');
+  const drawnNames = new Set([...drawnSrc.matchAll(/^ {2}'?([a-z0-9-]+)'?: '/gm)].map((m) => m[1]));
+  const strangers = [...drawnNames].filter((n) => !names.includes(n));
+  if (strangers.length) throw new Error(`drawnIcons.ts keys not in ICON_NAMES: ${strangers.join(', ')}`);
+
+  const unmapped = names.filter((n) => !(n in MAP) && !drawnNames.has(n));
   const orphaned = Object.keys(MAP).filter((n) => !names.includes(n));
   if (unmapped.length) throw new Error(`ICON_NAMES entries with no mapping: ${unmapped.join(', ')}`);
   if (orphaned.length) throw new Error(`mappings for names not in ICON_NAMES: ${orphaned.join(', ')}`);
 
-  const rows = names.map((name) => {
+  const rows = names.filter((name) => !drawnNames.has(name)).map((name) => {
     const glyph = MAP[name];
     if (glyph === null) {
       const drawn = HAND_DRAWN[name];
@@ -308,7 +316,8 @@ export interface SharpIconPath {
   readonly fill: string;
 }
 
-export const SHARP_ICON_PATHS: Record<IconName, SharpIconPath> = {
+/** Every name except the ones \`drawnIcons.ts\` draws. */
+export const SHARP_ICON_PATHS: Partial<Record<IconName, SharpIconPath>> = {
 ${entries}
 };
 `;

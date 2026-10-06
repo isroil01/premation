@@ -431,7 +431,14 @@ export function startEngineExport(
       return;
     }
     if (exit.error) {
-      finish({ kind: 'fallback', reason: `premation-engine could not start: ${exit.error.message}` });
+      // ENOENT: the engine file is not there. In a development checkout that is a rebuild in
+      // progress (the build moves the running engine aside until the new one links) — say so,
+      // since Render / Retry in the queue runs the job again once the file is back.
+      const missing = (exit.error as NodeJS.ErrnoException).code === 'ENOENT';
+      finish({
+        kind: 'fallback',
+        reason: `premation-engine could not start: ${exit.error.message}${missing ? ' — the engine file is missing (being rebuilt?); render again once it is back' : ''}`,
+      });
       return;
     }
     // An audio-only job ends at its preflight line (export_job.hpp: `audio`

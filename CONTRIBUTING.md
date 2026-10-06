@@ -29,7 +29,7 @@ npm run typecheck && npm test && npm run lint
 ```
 
 All three must be clean, and **CI runs the same three on every push and PR** to
-`dev` and `main` (`.github/workflows/ci.yml`). Tests run in under a minute, so
+`native-core` (`.github/workflows/ci.yml`). Tests run in under a minute, so
 there is no excuse for skipping them.
 
 `lint` allows a fixed number of warnings and zero errors. The warning budget is a
@@ -241,7 +241,7 @@ Terminology and review:
   effect names.
 - AI-assisted translation is fine if the PR says so, and a human who reads the
   language reviews it before it merges.
-- Open the PR against `dev`.
+- Open the PR against `native-core`.
 
 ## Reporting bugs
 
@@ -258,14 +258,16 @@ Do not file security vulnerabilities as public issues — see
 
 ## Branches and releases
 
-**Releases are cut from `main` only.** Nothing is released, tagged or published
-from `dev` or a feature branch.
+**Releases are cut from `native-core` only.** Nothing is released, tagged or
+published from a feature branch. `native-core` is the default branch and the
+one the product is built on; `main` and `dev` are the pre-native-engine
+history and are left untouched.
 
-    feature branch  →  dev  →  main  →  tag  →  release
+    feature branch  →  native-core  →  tag  →  release
 
 `.github/workflows/release.yml` enforces this: a tag that is not an ancestor of
-`main` fails the pipeline before anything is built. That gate exists because a
-tag pushed from `dev` produces a release indistinguishable from a real one — the
+`native-core` fails the pipeline before anything is built. That gate exists because
+a tag pushed from a branch produces a release indistinguishable from a real one — the
 installer works, the update manifest is valid, and installed apps take the
 update. Nothing downstream can catch it, so CI has to.
 

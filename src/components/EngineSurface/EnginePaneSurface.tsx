@@ -22,6 +22,14 @@ import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { copyRouteDpr } from './EngineSurface';
 import { BOARD_FLOATS, createFrameBlitter } from './frameBlit';
 import { allocatePaneViewport, releasePaneViewport, subscribeEngineFrames } from './engineFrameHub';
+import { compUvRect, fitUvRect } from './pasteboard';
+
+/** A colour painted around the composition (the engine clears it to opaque black): 0..1 rgb and the comp's size. */
+export interface PaneSurround {
+  color: readonly [number, number, number];
+  compWidth: number;
+  compHeight: number;
+}
 
 /** The pane's comp → canvas transform: CSS px per comp px and the comp origin on screen (RenderView). */
 export interface PaneView {
@@ -35,6 +43,8 @@ export interface PaneLayerView {
   id: string;
   /** The panel's Render switch: false shows the untouched source. */
   renderEffects: boolean;
+  /** How the layer's alpha is shown (setViewport `layerAlphaView`); absent = the layer as it is. */
+  alphaView?: 'alpha' | 'boundary' | 'overlay';
   /** A held comp time, seconds (the panel's own ruler); absent = the session clock. */
   time?: number;
   /** With `time`: the layer's source time at it, seconds. */
@@ -70,7 +80,7 @@ function sameCustomView(a: CustomViewParams | null, b: CustomViewParams | null):
 function sameLayerView(a: PaneLayerView | null, b: PaneLayerView | null): boolean {
   if (a === b) return true;
   if (a === null || b === null) return false;
-  return a.id === b.id && a.renderEffects === b.renderEffects && a.time === b.time && a.sourceTime === b.sourceTime;
+  return a.id === b.id && a.renderEffects === b.renderEffects && a.alphaView === b.alphaView && a.time === b.time && a.sourceTime === b.sourceTime;
 }
 
 function sameDesired(a: Desired, b: Desired): boolean {
@@ -78,7 +88,7 @@ function sameDesired(a: Desired, b: Desired): boolean {
     && a.panY === b.panY && a.view === b.view && sameCustomView(a.customView, b.customView) && sameLayerView(a.layer, b.layer);
 }
 
-export function EnginePaneSurface({ mode, getView, framingRev, layer, className, style }: {
+export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, className, style }: {
   mode: Camera3dMode;
   /** The pane's live camera (usePaneWorkspace getRenderView, with the contain fit as the fallback); absent = the engine contain-fits the frame. */
   getView?: () => PaneView;
@@ -86,6 +96,8 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, className,
   framingRev: number;
   /** The Layer panel: this layer alone instead of the composition. */
   layer?: PaneLayerView;
+  /** Paint this around the composition (the Preview page's surround); absent = the frame as it is. */
+  surround?: PaneSurround | null;
   className?: string;
   style?: CSSProperties;
 }): JSX.Element | null {
@@ -93,6 +105,8 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, className,
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  const surroundRef = useRef(surround ?? null);
+  surroundRef.current = surround ?? null;
   const getViewRef = useRef(getView);
   getViewRef.current = getView;
   const layerRef = useRef(layer);
@@ -101,7 +115,13 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, className,
   const requestRef = useRef<() => void>(() => {});
   useEffect(() => {
     requestRef.current();
-  }, [mode, framingRev, layer?.id, layer?.renderEffects, layer?.time, layer?.sourceTime]);
+  }, [mode, framingRev, layer?.id, layer?.renderEffects, layer?.alphaView, layer?.time, layer?.sourceTime]);
+  // A new surround needs a frame to be painted around: ask the engine for one (paused, none would come).
+  const refreshRef = useRef<() => void>(() => {});
+  const surroundKey = surround ? `${surround.color.join(',')}|${surround.compWidth}x${surround.compHeight}` : '';
+  useEffect(() => {
+    refreshRef.current();
+  }, [surroundKey]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -120,6 +140,7 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, className,
       const p = pending;
       pending = null;
       if (!p) return;
+      fillBoard();
       try {
         if (!blitter.draw(p.frame, board, p.release)) pending = p;  // GPU not up yet: keep the newest frame
       } catch {
@@ -134,6 +155,26 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, className,
     let inFlight = false;
     let again = false;
     let last: Desired | null = null;
+
+    // The surround's rectangle follows the camera the frames are asked with; worked out
+    // again only when that camera or the surround changes, never per frame.
+    let boardCam: Desired | null = null;
+    let boardSurround: PaneSurround | null = null;
+    function fillBoard(): void {
+      const s = surroundRef.current;
+      if (last === boardCam && s === boardSurround) return;
+      boardCam = last;
+      boardSurround = s;
+      const d = last;
+      const rect = !s || !d ? null
+        : d.zoom > 0 ? compUvRect({ width: d.width, height: d.height, zoom: d.zoom, panX: d.panX, panY: d.panY }, s.compWidth, s.compHeight)
+          : fitUvRect(d.width, d.height, s.compWidth, s.compHeight);
+      if (!s || !rect) {
+        board.fill(0);
+        return;
+      }
+      board.set([rect.x0, rect.y0, rect.x1, rect.y1, s.color[0], s.color[1], s.color[2], 1]);
+    }
     const desired = (): Desired => {
       const r = canvas.getBoundingClientRect();
       const width = Math.max(1, Math.round(r.width));
@@ -173,11 +214,14 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, className,
         pan: { x: d.panX, y: d.panY },
         channel: 'rgb',
         exposure: 0,
-        transparencyGrid: false,
+        // The Layer panel: the engine draws a checkerboard behind the layer's bounds
+        // (frames arrive opaque, so the page cannot composite one under them).
+        transparencyGrid: d.layer !== null,
         displayTransform: '',
         ...(d.layer ? {
           layer: d.layer.id,
           layerRenderEffects: d.layer.renderEffects,
+          ...(d.layer.alphaView ? { layerAlphaView: d.layer.alphaView } : {}),
           ...(d.layer.time !== undefined ? { time: secondsToFlicks(d.layer.time) } : {}),
           ...(d.layer.time !== undefined && d.layer.sourceTime !== undefined ? { layerSourceTime: secondsToFlicks(d.layer.sourceTime) } : {}),
         } : { layerRenderEffects: true }),
@@ -206,6 +250,10 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, className,
       });
     };
     requestRef.current = request;
+    refreshRef.current = () => {
+      last = null;  // the same viewport sent again still renders a frame (session.cpp SetViewport)
+      request();
+    };
     const ro = new ResizeObserver(request);
     ro.observe(canvas);
     // A custom view's orbit lives in the guides store; the mode itself arrives through props.
@@ -250,6 +298,7 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, className,
     return () => {
       disposed = true;
       requestRef.current = () => {};
+      refreshRef.current = () => {};
       unsub();
       unGuides();
       ro.disconnect();

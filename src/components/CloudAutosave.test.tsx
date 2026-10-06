@@ -35,6 +35,12 @@ jest.mock('@stores/documentMirror', () => ({
 }));
 const documentRevision = (): void => { for (const fn of [...mockDocListeners]) fn(); };
 
+// The project manager: absent (no core services) unless a test installs one.
+let mockServices: { project: { getState: () => { current: { path: string } | null }; markSavedElsewhere: jest.Mock } } | null = null;
+jest.mock('@core/services/coreServices', () => ({
+  tryCoreServices: () => mockServices,
+}));
+
 const autosave = api.autosave as jest.Mock;
 
 /** Drain the zero-delay capture timer + the promise chain inside flush(). */
@@ -86,6 +92,30 @@ describe('CloudAutosave arming', () => {
 
     expect(autosave).toHaveBeenCalledTimes(1);
     expect(autosave).toHaveBeenCalledWith('p1', expect.anything());
+  });
+
+  it('never uploads while the engine holds another project (the open has not landed), and marks the engine saved after an upload', async () => {
+    const markSavedElsewhere = jest.fn().mockResolvedValue(undefined);
+    const state = { current: { path: 'some-other-project' } as { path: string } | null };
+    mockServices = { project: { getState: () => state, markSavedElsewhere } };
+    render(<CloudAutosave projectId="p4" />);
+    act(() => {
+      jest.advanceTimersByTime(3000);
+      documentRevision();
+      jest.advanceTimersByTime(1200);
+    });
+    await drainFlush();
+    expect(autosave).not.toHaveBeenCalled();
+
+    state.current = { path: 'p4' };
+    act(() => {
+      documentRevision();
+      jest.advanceTimersByTime(1200);
+    });
+    await drainFlush();
+    expect(autosave).toHaveBeenCalledWith('p4', expect.anything());
+    expect(markSavedElsewhere).toHaveBeenCalledTimes(1);
+    mockServices = null;
   });
 
   it('still saves changes that arrive after arming (the ordinary path)', async () => {

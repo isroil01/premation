@@ -1,159 +1,150 @@
+/**
+ * The dashboard is a desktop app's Home screen (the After Effects / Premiere
+ * pattern): a top bar with the mark, search and the account; a left rail that
+ * opens with the two ways to start work, then navigation; and a content area
+ * of flat lists. Neutral greys throughout — the accent is for the primary
+ * action, selection and progress, and nothing else.
+ *
+ * Density: this page is READ, where the editor's panels are glanced at beside
+ * a viewport. So the type and radius tokens are re-stated one step up, scoped
+ * to `.root` — every rule below (and every section mounted inside: Billing,
+ * API keys, Preferences) keeps using the tokens, and the editor is untouched.
+ * Modals portal outside `.root` and keep the app's own scale.
+ */
 .root {
+  --font-size-micro: 11px;
+  --font-size-xs: 13px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --radius-sm: 3px;
+  --radius-control: 4px;
+  --radius-surface: 6px;
+
   display: flex;
+  flex-direction: column;
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background: var(--color-background);
+  background: var(--color-surface-0);
   color: var(--color-text-primary);
   font-family: var(--font-family-sans);
 }
 
-/* ── 1. Left Sidebar ─────────────────────────────────────────────────────── */
-.sidebar {
-  width: 248px;
-  background: var(--color-surface-2);
-  border-right: 1px solid var(--color-border-structural);
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-3) var(--space-3) var(--space-4);
+/* ── 1. Top bar ──────────────────────────────────────────────────────────── */
+.topBar {
+  height: 44px;
   flex-shrink: 0;
-  min-height: 0;
-}
-
-.sidebarBrand {
   display: flex;
   align-items: center;
-  padding: 8px 10px 16px;
-  flex-shrink: 0;
+  gap: 12px;
+  padding: 0 14px 0 18px;
+  background: var(--color-surface-1);
+  border-bottom: 1px solid var(--color-border-structural);
 }
 
-.sidebarNav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.topBarSpacer {
   flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding-inline: 2px;
 }
 
-.navLink {
+.topSearch {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  width: min(300px, 40vw);
+}
+
+.topSearchIcon {
+  position: absolute;
+  left: 9px;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+.topSearchInput {
+  width: 100%;
+  height: 28px;
+  padding: 0 10px 0 30px;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-control);
-  color: var(--color-text-secondary);
-  font-weight: var(--font-weight-medium);
-  font-size: var(--font-size-xs);
-  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), color 150ms cubic-bezier(0.16, 1, 0.3, 1);
-  text-align: left;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  position: relative;
-}
-
-.navLink:hover {
   color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+  font-size: var(--font-size-xs);
+  outline: none;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.navLink:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 1px;
+.topSearchInput::placeholder {
+  color: var(--color-text-tertiary);
 }
 
-/**
- * Splits the workspace destinations from the account ones (Billing, Developer,
- * Settings). A hairline, not a heading: the grouping only has to be felt.
- */
-.navDivider {
-  height: 1px;
-  margin: 10px 12px;
-  background: var(--color-border-subtle);
-  flex-shrink: 0;
+.topSearchInput:focus,
+.topSearchInput:focus-visible {
+  border-color: var(--color-primary);
+  outline: none;
+  box-shadow: none;
 }
 
 /*
- * Selected, and still readable.
- *
- * This used to put `--color-primary` on the tint: 2.80:1 measured in the
- * running app, which made the page you are ON the hardest label in the
- * sidebar to read. `--color-primary-text` is the same blue tuned to be ink
- * rather than a fill.
+ * The same controls, inside the desktop title bar (32px tall, and outside
+ * `.root`, so the app's own compact scale applies).
  */
-.navLinkActive {
-  color: var(--color-primary-text) !important;
-  background: var(--color-primary-subtle) !important;
-  font-weight: var(--font-weight-semibold);
-}
-
-.navLink:active {
-  transform: scale(0.98);
-}
-
-.navIcon {
-  opacity: 0.85;
-  flex-shrink: 0;
-}
-
-.sidebarFooter {
-  border-top: 1px solid var(--color-divider);
-  padding-top: 12px;
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.accountChip {
+.titleSlot {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
-  padding: 8px 10px;
-  border: none;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 0 10px;
 }
 
-.accountChip:hover {
-  background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+.titleSlot .topSearch {
+  width: min(280px, 32vw);
 }
 
-.accountChip:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 1px;
+.titleSlot .topSearchInput {
+  height: 22px;
 }
 
-.accountAvatar {
+.titleSlot .accountButton {
+  width: 22px;
+  height: 22px;
+}
+
+.accountButton {
   width: 28px;
   height: 28px;
-  border-radius: var(--radius-control);
-  background: var(--color-primary);
-  color: var(--color-text-on-accent);
+  border-radius: var(--radius-full);
+  border: none;
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
   display: grid;
   place-items: center;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
   flex-shrink: 0;
+  transition: background-color 120ms ease;
 }
 
-.accountMeta {
+.accountButton:hover {
+  background: var(--color-border-strong);
+}
+
+.accountButton:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/** The account menu's first row: who is signed in. Not a command. */
+.accountMenuHead {
   display: flex;
   flex-direction: column;
-  min-width: 0;
   gap: 1px;
+  padding: 6px 10px 8px;
+  min-width: 200px;
 }
 
 .accountName {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
   overflow: hidden;
@@ -169,98 +160,209 @@
   white-space: nowrap;
 }
 
-.planLink {
+/* ── 2. Shell: rail + content ────────────────────────────────────────────── */
+.shell {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px;
-  border-radius: var(--radius-control);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-1);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-  transition: border-color 150ms ease, color 150ms ease, background-color 150ms ease;
 }
 
-.planLink:hover {
-  border-color: var(--color-border-strong);
-  color: var(--color-text-primary);
-  background: var(--color-surface-3);
-}
-
-.planLink:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 1px;
-}
-
-/* Kept for any leftover references; upgrade promo card replaced by planLink. */
-.upgradeCardBox,
-.upgradeCardHeader,
-.upgradeCardBadge,
-.upgradeCardTitle,
-.upgradeCardDesc,
-.upgradeCardActionBtn {
-  display: none;
-}
-
-.logoutSidebarBtn {
-  width: 100%;
+.sidebar {
+  width: 224px;
+  background: var(--color-surface-0);
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px 12px 14px;
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+/**
+ * The two ways to start work, before anything else in the rail.
+ *
+ * Pills, and the only pills on the page: the shape is reserved for these two
+ * so they read as the start of the app rather than as two more buttons.
+ */
+.railCta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--radius-control);
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-  transition: background-color 150ms ease, color 150ms ease;
-}
-
-.logoutSidebarBtn:hover {
-  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
-  color: var(--color-danger);
-}
-
-.logoutSidebarBtn:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 1px;
-}
-
-.logoutIcon {
-  opacity: 0.85;
+  padding: 0 8px;
   flex-shrink: 0;
 }
 
-/* ── 2. Main Content Panel ──────────────────────────────────────────────── */
+.ctaPrimary,
+.ctaSecondary {
+  height: 32px;
+  padding: 0 18px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.ctaPrimary {
+  background: var(--color-primary);
+  border: 2px solid var(--color-primary);
+  color: var(--color-text-on-accent);
+}
+
+.ctaPrimary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.ctaSecondary {
+  background: transparent;
+  border: 2px solid var(--color-text-secondary);
+  color: var(--color-text-primary);
+}
+
+.ctaSecondary:hover:not(:disabled) {
+  border-color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.ctaPrimary:disabled,
+.ctaSecondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ctaPrimary:focus-visible,
+.ctaSecondary:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.sidebarNav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.navLink {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-control);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-regular);
+  font-size: var(--font-size-xs);
+  transition: background-color 120ms ease, color 120ms ease;
+  text-align: left;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.navLink:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.navLink:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/** Splits the library destinations from the app's own (Plugins, Preferences). */
+.navDivider {
+  height: 1px;
+  margin: 10px 10px;
+  background: var(--color-divider);
+  flex-shrink: 0;
+}
+
+/*
+ * Selected: a neutral raised fill and full-strength text. No accent tint —
+ * a blue wash on the rail made the selection compete with the primary button
+ * above it, and its label had to be re-inked to stay readable on the tint.
+ */
+.navLinkActive,
+.navLinkActive:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-3);
+  font-weight: var(--font-weight-medium);
+}
+
+.navIcon {
+  flex-shrink: 0;
+}
+
+/** A live count beside a destination — renders in flight, and only then. */
+.navCount {
+  margin-left: auto;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.railFoot {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 10px;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.engineLine {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.engineDot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.engineDotReady {
+  background: var(--color-success);
+}
+
+/* ── 3. Content ──────────────────────────────────────────────────────────── */
 .container {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   height: 100%;
   overflow-y: auto;
   background: var(--color-surface-0);
 }
 
-/* Main Workspace */
 .mainContent {
   flex: 1;
   padding: 28px 32px 40px;
   max-width: 1120px;
   width: 100%;
+  /* Centred in the space beside the rail, on every dashboard page. */
   margin: 0 auto;
 }
 
 .pageTitleRow {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
   margin-bottom: 22px;
 }
 
@@ -269,20 +371,201 @@
 }
 
 .pageTitle {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: -0.02em;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-regular);
+  letter-spacing: -0.01em;
   color: var(--color-text-primary);
-  margin: 0 0 4px;
+  margin: 0;
+  text-wrap: balance;
+}
+
+/** Home's greeting: the one line on the dashboard set large and light. */
+.welcomeTitle {
+  font-size: var(--font-size-3xl);
+  font-weight: 300;
+  letter-spacing: -0.005em;
+  color: var(--color-text-primary);
+  margin: 0 0 24px;
   text-wrap: balance;
 }
 
 .pageSubtitle {
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  margin: 0;
+  margin: 4px 0 0;
   line-height: 1.45;
-  max-width: 52ch;
+  max-width: 64ch;
+}
+
+.pageTools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/**
+ * What changed in this version — one row, closable, remembered per version.
+ * The only place the dashboard announces anything.
+ */
+.newsBanner {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-surface);
+  overflow: hidden;
+  padding-right: 12px;
+  margin-bottom: 28px;
+}
+
+.newsArt {
+  align-self: stretch;
+  width: 148px;
+  min-height: 88px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-2xl);
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+}
+
+.newsBody {
+  flex: 1;
+  min-width: 0;
+  padding: 14px 0;
+}
+
+.newsTitle {
+  margin: 0 0 3px;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.newsText {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+  max-width: 62ch;
+}
+
+.viewToggle {
+  display: flex;
+  gap: 2px;
+}
+
+.viewToggleBtn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.viewToggleBtn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.viewToggleBtn:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.viewToggleBtnActive,
+.viewToggleBtnActive:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+/* Project grid: flat tiles, poster on top. */
+.projectGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.projectTile {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--color-surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.projectTile:hover {
+  background: var(--color-surface-3);
+}
+
+.projectTile:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.projectTileSelected {
+  border-color: var(--color-primary);
+}
+
+.projectTilePoster {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  background: oklch(0.3 0.04 var(--thumb-hue, 250));
+  color: color-mix(in srgb, var(--color-text-inverse) 60%, transparent);
+  overflow: hidden;
+}
+
+/* `contain`, not `cover`: a portrait or square comp shows whole, pillarboxed. */
+.projectTilePoster img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--color-surface-0);
+  display: block;
+}
+
+.projectTileMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px 11px;
+  min-width: 0;
+}
+
+.projectTileName {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectTileFacts {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Action Bar (Filters + Create buttons) */
@@ -299,47 +582,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.searchWrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.inputSearchIcon {
-  position: absolute;
-  left: 8px;
-  color: var(--color-text-tertiary);
-  pointer-events: none;
-}
-
-.projectSearchInput {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  padding: 6px 12px 6px 28px;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
-  width: 240px;
-  outline: none;
-  /*
-   * Colour only. This used to grow 200px → 240px on focus, which animated a
-   * layout property every frame and shoved the format filter sideways the
-   * moment the field was clicked — the neighbour moving is what the eye reads,
-   * not the field arriving. It is simply 240px now, focused or not.
-   */
-  transition:
-    border-color var(--motion-duration-fast) var(--motion-ease-standard),
-    background-color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.projectSearchInput:focus,
-.projectSearchInput:focus-visible {
-  border-color: var(--color-primary);
-  background: var(--color-surface-2);
-  outline: none;
-  box-shadow: none;
 }
 
 /*
@@ -427,8 +669,7 @@
 .btnPrimary:focus-visible,
 .btnSecondary:focus-visible,
 .btnDanger:focus-visible,
-.actionBtn:focus-visible,
-.heroBtnPrimary:focus-visible {
+.actionBtn:focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
 }
@@ -439,13 +680,15 @@
   cursor: not-allowed;
 }
 
-/* Datatable Card */
+/*
+ * Lists.
+ *
+ * No card: a list of files sits on the page, ruled by hairlines, the way a
+ * file browser shows it. The bordered, shadowed box this used to be made
+ * every page a panel inside a panel.
+ */
 .tableCard {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
-  overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  min-width: 0;
 }
 
 .table {
@@ -455,22 +698,27 @@
 }
 
 .table th {
-  background: var(--color-surface-2);
-  border-bottom: 1px solid var(--color-border);
-  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-divider);
+  padding: 0 14px 8px 0;
   font-size: var(--font-size-micro);
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  letter-spacing: 0.05em;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .table td {
-  padding: 10px 16px;
+  padding: 8px 14px 8px 0;
   border-bottom: 1px solid var(--color-divider);
   font-size: var(--font-size-xs);
-  color: var(--color-text-primary);
+  color: var(--color-text-secondary);
   vertical-align: middle;
+}
+
+.table th:first-child,
+.table td:first-child {
+  padding-left: 8px;
 }
 
 .table tbody tr {
@@ -478,11 +726,60 @@
 }
 
 .table tbody tr:hover {
-  background: var(--color-hover);
+  background: var(--color-surface-2);
 }
 
-.rowSelected {
+.rowClickable {
+  cursor: pointer;
+}
+
+/*
+ * The project list holds its columns: a long name truncates inside its own
+ * column, where an auto-laid-out table let it squeeze the others off the edge.
+ */
+.tableFixed {
+  table-layout: fixed;
+}
+
+/** A row's "more" menu. Neutral on hover — `.actionBtn` turns red, for delete. */
+.moreBtn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-control);
+  border: none;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.moreBtn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-3);
+}
+
+.moreBtn:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.rowSelected,
+.rowSelected:hover {
   background: var(--color-primary-subtle) !important;
+}
+
+/* The name column takes the slack; facts keep to their content. */
+.colName {
+  width: 46%;
+}
+
+/* Below this the frame-size column goes: the name must not wrap word by word. */
+@media (max-width: 1100px) {
+  .colOptional {
+    display: none;
+  }
 }
 
 /* Project Cell (Thumbnail + Info) */
@@ -490,6 +787,24 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+}
+
+/* A project past the Free plan's cloud allowance (server-decided per row). */
+.readOnlyTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 28%, transparent);
 }
 
 /**
@@ -506,25 +821,18 @@
  * the opposite of a thumbnail's job.
  */
 .projectThumb {
-  width: 56px;
-  height: 32px;
+  width: 64px;
+  height: 36px;
+  border: none;
+  padding: 0;
   border-radius: var(--radius-sm);
-  background:
-    linear-gradient(
-      135deg,
-      oklch(0.42 0.09 var(--thumb-hue, 250)),
-      oklch(0.28 0.06 calc(var(--thumb-hue, 250) + 40))
-    );
+  background: oklch(0.3 0.04 var(--thumb-hue, 250));
   display: grid;
   place-items: center;
-  color: color-mix(in srgb, var(--color-text-inverse) 72%, transparent);
+  color: color-mix(in srgb, var(--color-text-inverse) 60%, transparent);
   cursor: pointer;
-  transition: box-shadow 140ms ease;
   flex-shrink: 0;
   overflow: hidden;
-  /* An inset hairline instead of a border: a border would eat 2px of a 56px
-     frame and shift the image inside it. */
-  box-shadow: inset 0 0 0 1px var(--color-border-subtle);
 }
 
 .thumbImg {
@@ -533,10 +841,6 @@
   object-fit: cover;
   border-radius: inherit;
   display: block;
-}
-
-.projectThumb:hover {
-  box-shadow: inset 0 0 0 1px var(--color-primary);
 }
 
 .projectThumb:focus-visible {
@@ -549,14 +853,29 @@
 }
 
 .projectName {
-  font-weight: var(--font-weight-medium);
+  display: block;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  font-weight: var(--font-weight-regular);
   color: var(--color-text-primary);
   cursor: pointer;
-  transition: color 120ms ease;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .projectName:hover {
-  color: var(--color-primary-text);
+  text-decoration: underline;
+}
+
+.projectName:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
 }
 
 .projectTime {
@@ -743,23 +1062,25 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px 16px;
-  margin-bottom: 26px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--color-border-subtle);
+  gap: 6px 18px;
+  margin-bottom: 18px;
 }
 
 .overviewSignal {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 5px 11px;
+  padding: 0;
   border: none;
-  border-radius: var(--radius-full);
+  background: transparent;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
   cursor: pointer;
-  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.overviewSignal:hover {
+  text-decoration: underline;
 }
 
 .overviewSignal:focus-visible {
@@ -768,21 +1089,7 @@
 }
 
 .overviewSignalDanger {
-  background: color-mix(in srgb, var(--color-danger) 15%, transparent);
   color: var(--color-danger);
-}
-
-.overviewSignalDanger:hover {
-  background: color-mix(in srgb, var(--color-danger) 24%, transparent);
-}
-
-.overviewSignalBusy {
-  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
-  color: var(--color-warning);
-}
-
-.overviewSignalBusy:hover {
-  background: color-mix(in srgb, var(--color-warning) 24%, transparent);
 }
 
 /** The quiet half: what the library holds, as a sentence. */
@@ -882,7 +1189,9 @@
   .btnSecondary,
   .btnDanger,
   .statCard,
-  .projectSearchInput {
+  .topSearchInput,
+  .ctaPrimary,
+  .ctaSecondary {
     transition: none;
   }
 
@@ -927,8 +1236,8 @@
 }
 
 .emptyStateIcon {
-  opacity: 0.4;
-  color: var(--color-primary);
+  opacity: 0.5;
+  color: var(--color-text-tertiary);
 }
 
 .emptyState h3 {
@@ -982,7 +1291,6 @@
   color: inherit;
   font: inherit;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   transition: border-color 150ms cubic-bezier(0.16, 1, 0.3, 1), background-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -1051,7 +1359,7 @@
 }
 
 .sectionTitle {
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
   margin: 0;
@@ -1084,7 +1392,6 @@
   border-radius: var(--radius-surface);
   overflow: hidden;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   transition: border-color 140ms ease;
 }
 
@@ -1225,11 +1532,12 @@
   outline-offset: -1px;
 }
 
-/* Same story as `.navLinkActive`: the accent is ink here, so it uses the ink token. */
-.segmentActive {
-  background: var(--color-primary-subtle);
-  color: var(--color-primary-text);
-  font-weight: var(--font-weight-semibold);
+/* Same story as `.navLinkActive`: a neutral raised fill, not an accent tint. */
+.segmentActive,
+.segmentActive:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
 }
 
 .assetsGrid {
@@ -1246,7 +1554,6 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   transition: border-color 140ms ease;
 }
 
@@ -1357,9 +1664,8 @@
   width: 100%;
 }
 
-/* Customize, Developer & Billing Wide Panels */
+/* Customize & Billing Wide Panels */
 .customizePanel,
-.developerPanel,
 .billingPanel {
   display: flex;
   flex-direction: column;
@@ -1385,7 +1691,6 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .profileHeaderRow {
@@ -1548,331 +1853,143 @@
   color: var(--color-text-primary);
 }
 
+/*
+ * ── New project ────────────────────────────────────────────────────────────
+ *
+ * A settings dialog: one column of labelled fields, labels right-aligned to
+ * the fields they name, numbers in numeric fields. It replaced two source
+ * cards, a scrolling grid of preset cards and a preview panel that restated
+ * the fields beside it.
+ */
+.setupDialog.setupDialog {
+  width: 640px;
+}
+
 .modalForm {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  max-height: calc(100vh - 160px);
-  overflow-y: auto;
-  padding-right: 2px;
 }
 
-/* ── Source Selection Cards (Blank Canvas vs Video Footage) ── */
-.setupSourceRow {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
-  margin-bottom: 2px;
-}
-
-.setupSourceCard {
+/* Bleeds to the dialog's edges so its rule runs the full width. */
+.setupTabs {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  text-align: left;
-  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
+  gap: 22px;
+  margin: -18px -18px 0;
+  padding: 12px 18px 0;
+  border-bottom: 1px solid var(--color-divider);
 }
 
-.setupSourceCard:hover {
-  background: var(--color-surface-2);
-  border-color: var(--color-border-strong);
-}
-
-.setupSourceCardActive {
-  background: var(--color-surface-2);
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 1px var(--color-primary);
-}
-
-.setupSourceIcon {
-  display: grid;
-  place-items: center;
-  width: var(--control-height-lg);
-  height: var(--control-height-lg);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  flex-shrink: 0;
-}
-
-.setupSourceCardActive .setupSourceIcon {
-  color: var(--color-primary);
-  border-color: var(--color-primary-subtle);
-}
-
-.setupSourceText {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.setupSourceTitle {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-.setupSourceSub {
-  font-size: var(--font-size-micro);
-  color: var(--color-text-tertiary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ── Footage Detected Bar ── */
-.footageDetectedBar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-1));
-  border: 1px solid color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
-  border-radius: var(--radius-sm);
-}
-
-.footageCheckIcon {
-  color: var(--color-primary);
-  flex-shrink: 0;
-}
-
-.footageInfo {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-
-.footageName {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--color-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.footageMeta {
-  font-size: var(--font-size-micro);
-  color: var(--color-text-secondary);
-}
-
-.clearFootageBtn {
-  display: grid;
-  place-items: center;
-  width: var(--control-height-row);
-  height: var(--control-height-row);
-  border: 1px solid transparent;
+.setupTab {
+  border: none;
   background: transparent;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-tertiary);
+  padding: 0 0 9px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
   cursor: pointer;
-  flex-shrink: 0;
 }
 
-.clearFootageBtn:hover {
-  background: var(--color-surface-2);
+.setupTab:hover {
   color: var(--color-text-primary);
-  border-color: var(--color-border);
 }
 
-/* ── Two-Column Layout ── */
-.setupColumns {
+.setupTab:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.setupTabActive {
+  color: var(--color-text-primary);
+  box-shadow: inset 0 -2px 0 var(--color-primary);
+}
+
+.setupGrid {
   display: grid;
-  grid-template-columns: 1fr 280px;
-  gap: var(--space-5);
-  align-items: start;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 12px 14px;
+  align-items: center;
+  padding: 20px 0 6px;
 }
 
-.setupLeftCol {
+.setupLabel {
+  text-align: right;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.setupRule {
+  grid-column: 1 / -1;
+  height: 1px;
+  background: var(--color-divider);
+  margin: 4px 0;
+}
+
+.setupInline {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
   min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
 }
 
-.setupRightCol {
-  position: sticky;
-  top: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.formGroup {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.formLabel {
-  font-size: var(--font-size-micro);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.setupHint {
   color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
 }
 
-.formInput {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  height: var(--control-height-row);
-  padding: 0 var(--space-3);
+.setupCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  user-select: none;
+}
+
+.formInput,
+.formSelect {
+  height: 28px;
+  width: 100%;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  padding: 0 9px;
   color: var(--color-text-primary);
   font-size: var(--font-size-xs);
   outline: none;
   transition: border-color var(--motion-duration-fast);
 }
 
-.formInput:focus {
-  border-color: var(--color-primary);
-}
-
 .formSelect {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  height: var(--control-height-row);
-  padding: 0 var(--space-3);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
-  outline: none;
   cursor: pointer;
-  width: 100%;
 }
 
+.formInput:focus,
 .formSelect:focus {
   border-color: var(--color-primary);
 }
 
-.formRow {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
+.formInputNumber {
+  width: 92px;
+  font-variant-numeric: tabular-nums;
 }
 
-/* ── Presets Category & Cards ── */
-.presetHeaderRow {
+/* The chosen video, as the first row of the "From video file" tab. */
+.setupFile {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin-bottom: 2px;
-}
-
-.categoryPills {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  overflow-x: auto;
-}
-
-.categoryPill {
-  height: 22px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-1);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-micro);
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all var(--motion-duration-fast);
-}
-
-.categoryPill:hover {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-}
-
-.categoryPillActive {
-  background: var(--color-surface-2);
-  border-color: var(--color-primary);
-  color: var(--color-primary-text);
-  font-weight: 600;
-}
-
-.presetCardsGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  max-height: 160px;
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.presetCard {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  text-align: left;
-  transition: all var(--motion-duration-fast);
-}
-
-.presetCard:hover {
-  background: var(--color-surface-2);
-  border-color: var(--color-border-strong);
-}
-
-.presetCardActive {
-  background: var(--color-surface-2);
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 1px var(--color-primary);
-}
-
-.presetCardThumbWrap {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
+  gap: 12px;
+  min-width: 0;
   background: var(--color-surface-0);
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  flex-shrink: 0;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
 }
 
-.aspectThumb {
-  background: var(--color-text-secondary);
-  border-radius: 2px;
-  opacity: 0.6;
-}
-
-.presetCardActive .aspectThumb {
-  background: var(--color-primary);
-  opacity: 1;
-}
-
-.aspectThumbLandscape {
-  width: 18px;
-  height: 10px;
-}
-
-.aspectThumbPortrait {
-  width: 10px;
-  height: 18px;
-}
-
-.aspectThumbSquare {
-  width: 14px;
-  height: 14px;
-}
-
-.presetCardDetails {
+.setupFileText {
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -1880,95 +1997,61 @@
   flex: 1;
 }
 
-.presetCardTitle {
+.setupFileName {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.presetCardDims {
-  font-size: var(--font-size-micro);
+.setupFileMeta {
+  font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
-/* ── Dimension Controls & Swap Button ── */
-.dimensionSection {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
+.setupFileChange {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--color-primary-text);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  white-space: nowrap;
 }
 
-.dimInputGroup {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.setupFileChange:hover {
+  text-decoration: underline;
+}
+
+.setupFileChange:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
 }
 
 .swapDimensionsBtn {
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
-  width: var(--control-height-row);
-  height: var(--control-height-row);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-tertiary);
   cursor: pointer;
-  flex-shrink: 0;
-  margin-bottom: 0;
-  transition: all var(--motion-duration-fast);
+  transition: background-color var(--motion-duration-fast), color var(--motion-duration-fast);
 }
 
 .swapDimensionsBtn:hover {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-  border-color: var(--color-border-strong);
-}
-
-/* ── Duration Chips ── */
-.durationChipsRow {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  overflow-x: auto;
-  margin-top: -2px;
-}
-
-.durationChip {
-  height: 22px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-1);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-micro);
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  transition: all var(--motion-duration-fast);
-}
-
-.durationChip:hover {
-  background: var(--color-surface-2);
+  background: var(--color-hover);
   color: var(--color-text-primary);
 }
 
-.durationChipActive {
-  background: var(--color-surface-2);
-  border-color: var(--color-primary);
-  color: var(--color-primary-text);
-  font-weight: 600;
-}
-
-/* ── Color Swatches & Transparency ── */
-.colorConfigRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
+.swapDimensionsBtn:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }
 
 .swatchGroup {
@@ -1977,254 +2060,61 @@
   gap: 6px;
 }
 
-.colorSwatchBtn {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: transform var(--motion-duration-fast);
-  padding: 0;
-}
-
-.colorSwatchBtn:hover {
-  transform: scale(1.15);
-}
-
-.colorSwatchBtnActive {
-  border-color: var(--color-text-primary);
-  box-shadow: 0 0 0 1px var(--color-border);
-}
-
-.transparentSwitchWrap {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  margin-left: auto;
-  user-select: none;
-}
-
-/* ── Right Column: Live Canvas Preview & Specs ── */
-.previewCard {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-}
-
-.previewCardHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.previewCardTitle {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-.previewAspectTag {
-  font-size: var(--font-size-micro);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-primary-text);
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border);
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-}
-
-.canvasViewportContainer {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 160px;
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 12px;
-  overflow: hidden;
-}
-
-.canvasScaledFrame {
-  max-width: 100%;
-  max-height: 100%;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 3px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  display: grid;
-  place-items: center;
-  transition: all var(--motion-duration-fast);
-}
-
-.canvasFrameTransparent {
-  background-image: linear-gradient(45deg, #1f1f23 25%, transparent 25%),
-    linear-gradient(-45deg, #1f1f23 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #1f1f23 75%),
-    linear-gradient(-45deg, transparent 75%, #1f1f23 75%) !important;
-  background-size: 12px 12px !important;
-  background-position: 0 0, 0 6px, 6px -6px, -6px 0px !important;
-  background-color: #141416 !important;
-}
-
-.canvasOverlayBadge {
-  font-variant-numeric: tabular-nums;
-  font-size: var(--font-size-micro);
-  font-weight: 600;
-  color: #ffffff;
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(4px);
-  padding: 2px 6px;
-  border-radius: 3px;
-  white-space: nowrap;
-}
-
-.specList {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border-subtle);
-}
-
-.specRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.specLabel {
-  font-size: var(--font-size-micro);
-  color: var(--color-text-tertiary);
-}
-
-.specValue {
-  font-size: var(--font-size-micro);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-primary);
-  text-align: right;
+/* The picker would take the row; it is a hex field here, not the main event. */
+.setupColor {
+  flex: 0 1 132px;
+  min-width: 0;
 }
 
 .modalFooter {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  gap: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border);
+  gap: 10px;
+  padding-top: 14px;
   flex-shrink: 0;
 }
 
-/* ── Continue Editing Hero Banner ── */
-.heroBanner {
-  display: grid;
-  grid-template-columns: 148px minmax(0, 1fr);
-  gap: 18px;
-  align-items: stretch;
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-surface);
-  padding: 16px;
-  margin-bottom: 20px;
+.setupNote {
+  margin-right: auto;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
 }
 
-.heroThumb {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-0);
-  padding: 0;
-  overflow: hidden;
-  cursor: pointer;
-  min-height: 92px;
-  display: grid;
-  place-items: center;
-  color: var(--color-primary);
-  transition: border-color 150ms ease;
-}
-
-.heroThumb:hover {
-  border-color: var(--color-primary);
-}
-
-.heroThumb:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 2px;
-}
-
-.heroThumbImg {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.heroThumbIcon {
-  opacity: 0.7;
-}
-
-.heroBody {
+/* At the Free plan's cloud project cap: said before Create, not after it fails. */
+.setupLimitNote {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+
+.setupLimitNote > span {
+  flex: 1;
   min-width: 0;
 }
 
-.heroEyeline {
-  margin: 0 0 6px;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-tertiary);
+.setupLimitNote > svg {
+  flex-shrink: 0;
+  color: var(--color-warning);
 }
 
-.heroTitle {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-  margin: 0 0 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+@media (max-width: 620px) {
+  .setupGrid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
 
-.heroSubtitle {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  margin: 0 0 14px;
-  line-height: 1.4;
-}
-
-.heroActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.heroBtnPrimary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: var(--radius-control);
-  background: var(--color-primary);
-  color: var(--color-text-on-accent);
-  border: none;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-  transition: background-color 150ms ease;
-}
-
-.heroBtnPrimary:hover {
-  background: var(--color-primary-hover);
+  .setupLabel {
+    text-align: left;
+    margin-top: 8px;
+  }
 }
 
 .selectionBar {
@@ -2255,44 +2145,6 @@
   font-weight: var(--font-weight-semibold);
 }
 
-/**
- * The switch between the installed list and the publisher workspace.
- *
- * Its own row above the host rather than inside it: `PluginsList` and
- * `PublisherWorkspace` each own their header, and a control that belongs to
- * neither cannot live inside either without one of them having to know about
- * the other.
- */
-.pluginsViewSwitch {
-  display: flex;
-  margin-bottom: 12px;
-}
-
-.pluginsPanelHost {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-surface);
-  overflow: hidden;
-  min-height: 420px;
-  /**
-   * A real height, not just a floor.
-   *
-   * The publisher workspace is a two-pane split whose rail and detail scroll
-   * independently, and `min-height` alone gives them nothing to be a
-   * percentage of — both panes grow instead, the page scrolls as one, and the
-   * save bar that is supposed to be pinned to the pane scrolls away with it.
-   */
-  height: clamp(420px, calc(100vh - 220px), 900px);
-  display: flex;
-  flex-direction: column;
-}
-
-/* Both views fill the host and manage their own scrolling. */
-.pluginsPanelHost > * {
-  flex: 1;
-  min-height: 0;
-}
-
 .colorRow {
   display: flex;
   align-items: center;
@@ -2301,8 +2153,8 @@
 }
 
 .colorSwatchBtn {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   border-radius: var(--radius-control);
   border: 1px solid var(--color-border);
   cursor: pointer;
@@ -2434,94 +2286,70 @@
 /* Responsive Breakpoints */
 @media (max-width: 1024px) {
   .mainContent {
-    padding: 20px 16px 32px;
+    padding: 22px 20px 32px 12px;
   }
 
-  .heroBanner {
-    grid-template-columns: 120px minmax(0, 1fr);
+  .sidebar {
+    width: 200px;
   }
 }
 
-@media (max-width: 840px) {
-  .root {
+@media (max-width: 760px) {
+  .shell {
     flex-direction: column;
   }
+
   .sidebar {
     width: 100%;
-    height: auto;
-    border-right: none;
-    border-bottom: 1px solid var(--color-border-subtle);
-    padding: 10px 12px;
     flex-direction: row;
     align-items: center;
-    justify-content: space-between;
-    gap: 10px;
+    gap: 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-divider);
     overflow-x: auto;
   }
-  .sidebarBrand {
-    padding: 0 4px 0 0;
+
+  .railCta {
+    flex-direction: row;
+    padding: 0;
   }
+
   .sidebarNav {
     flex-direction: row;
-    gap: 4px;
-    flex: 1;
     overflow-x: auto;
     overflow-y: hidden;
   }
+
   .navDivider {
     width: 1px;
     height: auto;
     margin: 4px;
     align-self: stretch;
-    flex: 0 0 auto;
   }
-  .sidebarFooter {
-    border-top: none;
-    padding-top: 0;
-    margin-top: 0;
-    flex-direction: row;
-    align-items: center;
-  }
-  .accountChip,
-  .planLink {
+
+  .railFoot {
     display: none;
   }
-  .container {
-    height: calc(100% - 54px);
+
+  .mainContent {
+    padding: 18px 14px 28px;
   }
-  .pageTitleRow {
-    flex-direction: column;
-    align-items: stretch;
+
+  .newsArt {
+    display: none;
   }
+
+  .newsBanner {
+    padding-left: 14px;
+  }
+
   .actionBar {
     flex-direction: column;
     align-items: stretch;
     gap: 10px;
   }
-  .statsGrid {
-    grid-template-columns: 1fr;
-  }
-  .heroBanner {
-    grid-template-columns: 1fr;
-  }
-  .heroThumb {
-    min-height: 140px;
-  }
+
   .startFromGrid {
     grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 560px) {
-  .projectSearchInput,
-  .projectSearchInput:focus {
-    width: 100%;
-  }
-  .filterGroup {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .searchWrapper {
-    width: 100%;
   }
 }

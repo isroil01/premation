@@ -541,23 +541,27 @@ std::future<WorkingPixels> RenderThread::read_pixels(std::uint32_t viewport, Pix
 }
 
 void RenderThread::rebuild(Port& port, const ViewportConfig& config, bool shared, bool copy) {
+  // The slots hold frames at the preview resolution (engine_frames build draws at dpr × it);
+  // the page scales them up to the viewer.
+  const std::uint32_t W = preview_pixels(config.width, config.resolution);
+  const std::uint32_t H = preview_pixels(config.height, config.resolution);
   auto next = std::make_unique<SlotSet>();
   next->generation = ++generation_;
-  next->width = config.width;
-  next->height = config.height;
+  next->width = W;
+  next->height = H;
   api::FrameSlots announce;
   announce.generation = next->generation;
   announce.viewport = config.viewport;
-  announce.width = config.width;
-  announce.height = config.height;
+  announce.width = W;
+  announce.height = H;
   std::uint32_t count = 0;
-  if (config.open && config.width > 0 && config.height > 0) {
+  if (config.open && W > 0 && H > 0) {
     count = options_.slots;
 #if defined(PREMATION_SHARED_TEXTURE)
     if (shared) {
       auto pool = std::make_unique<shared::SharedTexturePool>();
       std::string error;
-      if (pool->init(*gpu_, config.width, config.height, count, options_.hostPid, error)) {
+      if (pool->init(*gpu_, W, H, count, options_.hostPid, error)) {
         next->shared = true;
         for (auto& s : pool->slots()) {
           next->views.push_back(s.view);
@@ -583,7 +587,7 @@ void RenderThread::rebuild(Port& port, const ViewportConfig& config, bool shared
     if (!next->shared) {
       for (std::uint32_t i = 0; i < count; ++i) {
         wgpu::TextureDescriptor td{};
-        td.size = {config.width, config.height, 1};
+        td.size = {W, H, 1};
         td.format = wgpu::TextureFormat::RGBA8Unorm;
         // CopyDst: a frame-cache hit is copied in; CopySrc: a drawn frame is copied out to the cache.
         td.usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst;
@@ -596,10 +600,10 @@ void RenderThread::rebuild(Port& port, const ViewportConfig& config, bool shared
         // Route A: one read-back buffer per slot, so a slot's copy never waits
         // for another slot's map.
         next->copy = true;
-        next->readbackRow = (config.width * 4U + 255U) & ~255U;
+        next->readbackRow = (W * 4U + 255U) & ~255U;
         for (std::uint32_t i = 0; i < count; ++i) {
           wgpu::BufferDescriptor bd{};
-          bd.size = std::uint64_t{next->readbackRow} * config.height;
+          bd.size = std::uint64_t{next->readbackRow} * H;
           bd.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
           next->readback.push_back(gpu_->device.CreateBuffer(&bd));
         }
@@ -616,8 +620,8 @@ void RenderThread::rebuild(Port& port, const ViewportConfig& config, bool shared
   PREMATION_LOG(info, "slots")
       .kv("viewport", config.viewport)
       .kv("generation", port.slots->generation)
-      .kv("width", config.width)
-      .kv("height", config.height)
+      .kv("width", W)
+      .kv("height", H)
       .kv("count", count)
       .kv("shared", port.slots->shared)
       .kv("copy", port.slots->copy);
@@ -630,7 +634,7 @@ void RenderThread::collect_retired(SteadyClock::time_point now) {
   std::erase_if(retired_, [now](const std::unique_ptr<SlotSet>& s) { return now - s->retiredAt >= kRetireGrace; });
 }
 
-void RenderThread::render(Port& port, RenderJob& job, std::uint32_t slot, const ViewportConfig& config) {
+void RenderThread::render(Port& port, RenderJob& job, std::uint32_t slot, const ViewportConfig& /*config*/) {
   SlotSet& set = *port.slots;
   FrameRing& ring = *port.ring;
   const double startUs = os::epoch_us();
@@ -676,7 +680,8 @@ void RenderThread::render(Port& port, RenderJob& job, std::uint32_t slot, const 
   if (!drawn) {
     // C2's quads (a built frame that failed to draw has none: the slot clears to black).
     wgpu::CommandEncoder enc = gpu_->device.CreateCommandEncoder();
-    compositor_->encode(enc, job.scene, set.views[slot], set.width, set.height, config.resolution);
+    // The slot is already at the preview resolution (rebuild): no second reduction.
+    compositor_->encode(enc, job.scene, set.views[slot], set.width, set.height, 1.0);
     const wgpu::CommandBuffer cb = enc.Finish();
     gpu_->queue.Submit(1, &cb);
   }

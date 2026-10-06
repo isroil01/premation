@@ -26,6 +26,19 @@ struct RestoreResult {
 /// (LocalEngine.reconcileItems keeps the ones the document lists).
 RestoreResult restore_document(Document& d, EditorView& v, const Json& doc, const std::vector<Json>& sessionAssets);
 
+class Ports;
+/// After a load: the footage the session did not hold (`missing`, placeholders
+/// with an empty `src`) is read again from the path the document recorded,
+/// when that file is still there — its record gets a live `src`, its size and
+/// its probed facts back, keeping what the document says about it (name,
+/// folder, interpretation, label, tags, comment). A saved project names its
+/// files by PATH only, so without this every reopened project listed all of
+/// its footage as missing (no thumbnail, no size, nothing to preview) although
+/// the layers, which carry their own source, still drew. Returns the ids that
+/// are still missing. Not journaled: it is part of the load, like the restore.
+[[nodiscard]] std::vector<std::string> relink_missing_footage(Document& d, Ports& ports, std::string_view bundleRoot,
+                                                              const std::vector<std::string>& missing);
+
 /// `migrateDocument(doc)` (src/core/project/migrations): the document at the
 /// current version (1.9.0). Throws EngineFail(io) for a newer document.
 [[nodiscard]] Json migrate_document(Json doc);

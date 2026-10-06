@@ -60,6 +60,36 @@ export function Dropdown({ trigger, items: itemsProp, placement = 'bottom-start'
     };
   };
 
+  /**
+   * One row, at any depth: a submenu's own items go through here too, so a
+   * third level (Overlays ▸ Motion Path Dots ▸ Small, in the toolbar's
+   * overflow) opens like the second — it used to render without its submenu.
+   */
+  const renderItem = (item: DropdownItem, at: string): JSX.Element => {
+    if (item.type === 'separator') return <MenuSeparator key={`sep_${at}`} />;
+    if (item.type === 'label') return <MenuLabel key={`label_${at}`}>{item.label}</MenuLabel>;
+    if (item.type === 'custom') return <MenuCustomRow key={item.id} id={item.id}>{item.render}</MenuCustomRow>;
+    if (item.type === 'checkbox') {
+      return (
+        <MenuCheckbox key={item.id} id={item.id} label={item.label} checked={item.checked} onChange={item.onChange} disabled={item.disabled} />
+      );
+    }
+    return (
+      <MenuItem
+        key={item.id}
+        id={item.id}
+        label={item.label}
+        icon={item.icon}
+        shortcut={item.shortcut}
+        disabled={item.disabled}
+        danger={item.danger}
+        onSelect={handleSelect(item.onSelect)}
+      >
+        {item.submenu ? item.submenu.map((sub, i) => renderItem(sub, `${at}_${i}`)) : undefined}
+      </MenuItem>
+    );
+  };
+
   return (
     <Popover
       trigger={trigger}
@@ -73,54 +103,7 @@ export function Dropdown({ trigger, items: itemsProp, placement = 'bottom-start'
       onOpenChange={setOpen}
     >
       <Menu noScroll={noScroll}>
-        {items.map((item, idx) => {
-          if (item.type === 'separator') return <MenuSeparator key={`sep_${idx}`} />;
-          if (item.type === 'label') return <MenuLabel key={`label_${idx}`}>{item.label}</MenuLabel>;
-          if (item.type === 'custom') return <MenuCustomRow key={item.id} id={item.id}>{item.render}</MenuCustomRow>;
-          if (item.type === 'checkbox') {
-            return (
-              <MenuCheckbox
-                key={item.id}
-                id={item.id}
-                label={item.label}
-                checked={item.checked}
-                onChange={item.onChange}
-                disabled={item.disabled}
-              />
-            );
-          }
-          if (item.submenu) {
-            return (
-              <MenuItem key={item.id} id={item.id} label={item.label} icon={item.icon} shortcut={item.shortcut} disabled={item.disabled} danger={item.danger} onSelect={handleSelect(item.onSelect)}>
-                {item.submenu.map((sub, subIdx) => {
-                  if (sub.type === 'separator') return <MenuSeparator key={`sep_${item.id}_${subIdx}`} />;
-                  if (sub.type === 'label') return <MenuLabel key={`label_${item.id}_${subIdx}`}>{sub.label}</MenuLabel>;
-                  if (sub.type === 'custom') return <MenuCustomRow key={sub.id} id={sub.id}>{sub.render}</MenuCustomRow>;
-                  if (sub.type === 'checkbox') {
-                    return (
-                      <MenuCheckbox key={sub.id} id={sub.id} label={sub.label} checked={sub.checked} onChange={sub.onChange} disabled={sub.disabled} />
-                    );
-                  }
-                  return (
-                    <MenuItem key={sub.id} id={sub.id} label={sub.label} icon={sub.icon} shortcut={sub.shortcut} disabled={sub.disabled} danger={sub.danger} onSelect={handleSelect(sub.onSelect)} />
-                  );
-                })}
-              </MenuItem>
-            );
-          }
-          return (
-            <MenuItem
-              key={item.id}
-              id={item.id}
-              label={item.label}
-              icon={item.icon}
-              shortcut={item.shortcut}
-              disabled={item.disabled}
-              danger={item.danger}
-              onSelect={handleSelect(item.onSelect)}
-            />
-          );
-        })}
+        {items.map((item, idx) => renderItem(item, `${idx}`))}
       </Menu>
     </Popover>
   );

@@ -346,6 +346,17 @@ export const APP_MENU: MenuGroupModel[] = [
         ],
       },
       { separator: true },
+      // AE's three "open" commands: the layer alone, its source file, its composition.
+      {
+        label: 'Open',
+        labelKey: 'menu.sub.open',
+        children: [
+          { commandId: 'layer.openLayer', label: 'Open Layer' },
+          { commandId: 'layer.openLayerSource', label: 'Open Layer Source' },
+          { commandId: 'layer.openComposition', label: 'Open Composition' },
+        ],
+      },
+      { separator: true },
       {
         /**
          * AE's Layer ▸ Transform, in AE's order. Fit, Fill, Native Size and both
@@ -821,6 +832,7 @@ export const APP_MENU: MenuGroupModel[] = [
           { commandId: 'view.motion', label: 'Graph Panel' },
           { commandId: 'view.info', label: 'Info' },
           { commandId: 'view.scene', label: 'Layers' },
+          { commandId: 'view.library', label: 'Library' },
           { commandId: 'view.presets', label: 'Presets' },
           { commandId: 'view.preview', label: 'Preview' },
           { commandId: 'view.rig', label: 'Rigging' },

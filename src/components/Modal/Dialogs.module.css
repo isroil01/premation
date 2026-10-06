@@ -34,3 +34,9 @@
 .titleIconDanger {
   color: var(--color-danger);
 }
+
+/* No icon in the title row (see "The dialog frame" in Modal.module.css).
+   `!important` because Icon sizes itself with an inline `display`. */
+.titleIcon {
+  display: none !important;
+}

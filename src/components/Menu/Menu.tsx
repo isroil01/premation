@@ -247,7 +247,9 @@ export function MenuItem({
   const onClick = (modifiers: MenuSelectModifiers = NO_MODIFIERS): void => {
     if (disabled) return;
     if (children) {
-      setSubOpen((s) => !s);
+      // Open, never toggle: the pointer-enter that comes with the click has
+      // already opened it, so a toggle shut the submenu the user clicked to see.
+      openSub();
       return;
     }
     onSelect?.(modifiers);

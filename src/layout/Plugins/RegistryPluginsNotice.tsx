@@ -8,7 +8,7 @@
  * never touches a project.
  *
  * `onLearnMore` is a prop because the Plugins page is the owning page's to
- * route to (see ApiKeysSection's `onViewPlans` for why).
+ * route to; the notice does not reach into the dashboard's tab state.
  */
 
 import { Button } from '@components/Button';

@@ -126,6 +126,8 @@ export interface SessionRecord {
   lastUsedAt: string;
   createdAt: string;
   expiresAt: string;
+  /** The session this request was made with. Newer servers only. */
+  current?: boolean;
 }
 
 /**
@@ -170,6 +172,14 @@ export interface AccountRecord {
   assetCount: number;
   projectCount: number;
   createdAt: string;
+  /**
+   * Whether the account chose a password. Provider sign-ups did not, so they
+   * are offered "set a password" instead of "change password", and prove
+   * themselves by email code instead of by password.
+   */
+  hasPassword: boolean;
+  /** An address change waiting for its code, or null. */
+  pendingEmail: string | null;
 }
 
 /**
@@ -242,6 +252,12 @@ export interface ProjectSummary {
   tags: string[];
   createdAt: string;
   updatedAt: string;
+  /**
+   * Past the Free plan's cloud allowance: opens and exports, refuses saves.
+   * Decided server-side per row (the same rule the write path enforces).
+   * Absent from older servers and from single-project reads.
+   */
+  readOnly?: boolean;
 }
 
 export interface ProjectRecord extends ProjectSummary {
@@ -306,26 +322,6 @@ export interface RenderCapabilities {
   alpha: RenderCodec[];
   qualities: RenderQuality[];
   sources: { frames: boolean; document: boolean };
-}
-
-/** API key row for the dashboard. The secret is never returned after creation. */
-export interface ApiKeySummary {
-  id: string;
-  name: string;
-  /** Visible prefix, e.g. `pm_live_ab12`. */
-  prefix: string;
-  createdAt: string;
-  lastUsedAt: string | null;
-  requestCount: number;
-  revokedAt: string | null;
-  /** Present on newer API-key contracts. Older servers omit both fields. */
-  scopes?: string[];
-  expiresAt?: string | null;
-}
-
-/** One-time response when a key is minted. Store `secret` now; it is not shown again. */
-export interface CreatedApiKey extends ApiKeySummary {
-  secret: string;
 }
 
 export interface AutomationTemplateInput {
@@ -413,25 +409,6 @@ export interface AutomationRenderJob {
   createdAt?: string;
 }
 
-export interface ApiUsageSummary {
-  period: string;
-  renderJobs: number;
-  renderDurationMs: number;
-  renderedMinutes: number;
-  reservedRenderMinutes?: number;
-  apiRequests: number;
-  assetProcessingBytes: number;
-  /** Optional until the backend exposes key allowances alongside usage. */
-  activeApiKeys?: number;
-  limits: {
-    apiEnabled: boolean;
-    monthlyRenderMinutes: number | null;
-    monthlyApiRequests: number | null;
-    maxActiveApiKeys?: number | null;
-    maxUploadBytes?: number | null;
-  };
-}
-
 /**
  * What `GET /render?status=` accepts. `'active'` is queued-or-running — the
  * question a queue view actually asks, answered by the server's `total` rather
@@ -461,7 +438,13 @@ export interface PlanDto {
   name: string;
   priceCents: number;
   priceLabel: string;
+  /** Cents per year when the plan can be billed annually. */
+  yearlyPriceCents?: number;
+  /** "$90" — present only when the server sells a yearly variant. */
+  yearlyPriceLabel?: string | null;
   currency: 'usd';
+  /** The plan's cloud allowance as numbers. Optional: older servers omit it. */
+  limits?: CloudLimits;
   features: string[];
   interval?: string;
   description?: string;
@@ -502,12 +485,22 @@ export type EntitlementReason =
   | 'beta'
   | 'active'
   | 'grace'
-  | 'trial'
+  /** The permanent Free plan (write: true, within its cloud allowance). */
+  | 'free'
   | 'unverified'
-  | 'trial_not_started'
-  | 'trial_expired'
+  /** Was paying; now on the Free allowance again (write: true). */
   | 'lapsed'
-  | 'staff';
+  | 'staff'
+  /** Sent only by servers from before the Free plan (2026-10-05). */
+  | 'trial'
+  | 'trial_not_started'
+  | 'trial_expired';
+
+/** A plan's cloud allowance. `cloudProjects: null` = no cap. */
+export interface CloudLimits {
+  cloudProjects: number | null;
+  historyDays: number;
+}
 
 /**
  * What this account may do with the cloud, decided server-side.
@@ -526,6 +519,12 @@ export interface CloudAccess {
   /** Whole days until write access ends. Null when not on a clock. */
   daysRemaining: number | null;
   writeEndsAt: string | null;
+  /** Whose allowance applies. Optional: older servers do not send it. */
+  plan?: 'free' | 'pro';
+  /** The allowance in force right now. Optional: older servers do not send it. */
+  limits?: CloudLimits;
+  /** The Free allowance is not enforced until this moment (launch grace). */
+  limitsFrom?: string | null;
 }
 
 export interface BillingSummary {
@@ -534,14 +533,8 @@ export interface BillingSummary {
   /** The sentence to show. Server-authored so every surface agrees. */
   statusMessage: string;
   emailVerified: boolean;
-  trialEndsAt: string | null;
-  trialDays: number;
-  /**
-   * The trial length in words ("5 months"), phrased server-side next to the
-   * constant so the editor never renders "150-day". Optional: a desktop build
-   * can be talking to a server that predates the field.
-   */
-  trialLabel?: string;
+  /** Live cloud projects against the cap (`limit: null` = uncapped). Newer servers only. */
+  cloudProjects?: { used: number; limit: number | null };
   /** Raw Lemon Squeezy status: active | past_due | cancelled | … */
   subscriptionStatus: string | null;
   currentPeriodEnd: string | null;
@@ -557,13 +550,50 @@ export interface BillingSummary {
    * older servers do not send it. Existing subscriptions are unaffected either way.
    */
   proSalesOpen?: boolean;
+  /** Which variant the live subscription bills on. Null without a subscription. */
+  interval?: 'month' | 'year' | null;
+  variantId?: string | null;
+  /** Lemon Squeezy's split of the period end: renews while renewing, ends once cancelled. */
+  renewsAt?: string | null;
+  endsAt?: string | null;
+  cancelAtPeriodEnd?: boolean;
+  lastPaidAt?: string | null;
+  lastPaidLabel?: string | null;
+  /**
+   * Whether the last payment can be refunded from here. Yearly plans only,
+   * inside the server's window; the server decides, the panel renders.
+   */
+  refund?: BillingRefundState;
+}
+
+export interface BillingRefundState {
+  eligible: boolean;
+  deadline: string | null;
+  amountLabel: string | null;
+  reason:
+    | 'not_yearly'
+    | 'window_passed'
+    | 'already_refunded'
+    | 'no_payment'
+    | 'no_subscription'
+    | null;
 }
 
 export interface BillingChangeResult {
-  action: 'checkout' | 'upgraded' | 'downgraded' | 'cancelled' | 'resumed' | 'unchanged';
+  action:
+    | 'checkout'
+    | 'upgraded'
+    | 'downgraded'
+    | 'cancelled'
+    | 'resumed'
+    | 'unchanged'
+    | 'interval_changed'
+    | 'refunded';
   url?: string;
   planId?: string;
   already?: boolean;
+  interval?: 'month' | 'year';
+  amountLabel?: string;
 }
 
 export interface AiConversationSummary {
@@ -764,6 +794,50 @@ export const api = {
   /** Sign out everywhere, including here. */
   revokeAllSessions: () =>
     request<{ revoked: number }>('/auth/sessions', { method: 'DELETE' }),
+  /** Sign out one device by its session record id. */
+  revokeSession: (id: string) =>
+    request<{ revoked: number }>(`/auth/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // account — the signed-in user's own identity. Every route is authenticated;
+  // the ones that end with a new session go through `authRequest` so the
+  // desktop main process adopts the tokens (see resetPassword below).
+  updateProfile: (name: string) =>
+    request<AccountRecord>('/account/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }).then(tap(['account'])),
+  /** Start moving the account to a new address: a code goes to the NEW one. */
+  requestEmailChange: (newEmail: string, password?: string) =>
+    request<{ pendingEmail: string; sent: true }>('/account/email/change', {
+      method: 'POST',
+      body: JSON.stringify(password ? { newEmail, password } : { newEmail }),
+    }).then(tap(['account'])),
+  confirmEmailChange: (code: string) =>
+    request<{ email: string }>('/account/email/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }).then(tap(['account', 'billing'])),
+  resendEmailChange: () =>
+    request<{ sent: true }>('/account/email/resend', { method: 'POST' }),
+  cancelEmailChange: () =>
+    request<{ ok: true }>('/account/email/cancel', { method: 'POST' }).then(tap(['account'])),
+  /** Change the password. Every other session ends; this one is re-issued. */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    authRequest('/account/password/change', { currentPassword, newPassword }).then(
+      tap(['account']),
+    ),
+  /** Give a provider-only account a password. Same session rotation as a change. */
+  setPassword: (newPassword: string) =>
+    authRequest('/account/password/set', { newPassword }).then(tap(['account'])),
+  /** Step one of deleting the account: a code goes to the account email. */
+  requestAccountDeletion: () =>
+    request<{ sent: true }>('/account/delete/request', { method: 'POST' }),
+  /** Step two. The password is required when the account has one. */
+  confirmAccountDeletion: (code: string, password?: string) =>
+    request<{ deleted: true }>('/account/delete/confirm', {
+      method: 'POST',
+      body: JSON.stringify(password ? { code, password } : { code }),
+    }),
   /**
    * The account. Cached, because it is requested on boot, on every return to
    * the dashboard, and by the account panel — and because it costs the server
@@ -931,10 +1005,10 @@ export const api = {
       tags: ['billing', 'account'],
       force: opts?.force,
     }),
-  startCheckout: (plan: string) =>
+  startCheckout: (plan: string, interval: 'month' | 'year' = 'month') =>
     request<BillingChangeResult>('/billing/checkout', {
       method: 'POST',
-      body: JSON.stringify({ plan }),
+      body: JSON.stringify(interval === 'year' ? { plan, interval } : { plan }),
     }).then(tap(['billing', 'account'])),
   /**
    * A fresh link to Lemon Squeezy's customer portal.
@@ -949,6 +1023,20 @@ export const api = {
     ),
   resumeSubscription: () =>
     request<BillingChangeResult>('/billing/resume', { method: 'POST' }).then(
+      tap(['billing', 'account']),
+    ),
+  /** Move the live subscription between monthly and yearly. Prorated, applied now. */
+  changeBillingInterval: (interval: 'month' | 'year') =>
+    request<BillingChangeResult>('/billing/change-interval', {
+      method: 'POST',
+      body: JSON.stringify({ interval }),
+    }).then(tap(['billing', 'account'])),
+  /**
+   * Refund the last yearly payment and end access now. The server decides
+   * eligibility (`BillingSummary.refund`); this only asks.
+   */
+  refundSubscription: () =>
+    request<BillingChangeResult>('/billing/refund', { method: 'POST' }).then(
       tap(['billing', 'account']),
     ),
   /**
@@ -1169,28 +1257,7 @@ export const api = {
   cancelRender: (id: string) =>
     request<RenderJobDto>(`/render/${id}/cancel`, { method: 'POST' }).then(tap(['renders'])),
 
-  // ── Automation API (JWT from the editor; n8n uses API keys on the same paths) ─
-  listApiKeys: (opts?: { force?: boolean; limit?: number; offset?: number }) =>
-    cachedGet<Paginated<ApiKeySummary>>(
-      `/v1/keys${query({ limit: opts?.limit ?? 50, offset: opts?.offset ?? 0 })}`,
-      {
-        tags: ['api-keys'],
-        force: opts?.force,
-      },
-    ).then(asKeyPage),
-  createApiKey: (name: string, opts?: { scopes?: string[]; expiresAt?: string | null }) =>
-    request<CreatedApiKey>('/v1/keys', {
-      method: 'POST',
-      body: JSON.stringify({
-        name,
-        // Omitted (not null) when unset: the server applies its default grant.
-        ...(opts?.scopes?.length ? { scopes: opts.scopes } : {}),
-        ...(opts?.expiresAt ? { expiresAt: opts.expiresAt } : {}),
-      }),
-    }).then(tap(['api-keys'])),
-  revokeApiKey: (id: string) =>
-    request<{ revoked: boolean }>(`/v1/keys/${id}`, { method: 'DELETE' }).then(tap(['api-keys'])),
-
+  // ── Automation API (JWT from the editor) ─────────────────────────────────
   listAutomationTemplates: (params: PageQuery = {}) =>
     cachedGet<Paginated<AutomationTemplateSummary>>(`/v1/templates${query({ ...params })}`, {
       tags: ['automation-templates'],
@@ -1228,21 +1295,7 @@ export const api = {
       body: JSON.stringify(body),
     }).then(tap(['renders', 'api-usage'])),
   getAutomationRender: (id: string) => request<AutomationRenderJob>(`/v1/renders/${id}`),
-
-  getApiUsage: () => cachedGet<ApiUsageSummary>('/v1/usage', { tags: ['api-usage'] }),
 };
-
-function asKeyPage(raw: Paginated<ApiKeySummary> | ApiKeySummary[]): Paginated<ApiKeySummary> {
-  if (Array.isArray(raw)) {
-    return { items: raw, total: raw.length, limit: raw.length, offset: 0 };
-  }
-  return {
-    items: Array.isArray(raw.items) ? raw.items : [],
-    total: raw.total ?? 0,
-    limit: raw.limit ?? 50,
-    offset: raw.offset ?? 0,
-  };
-}
 
 /**
  * Invalidate after a successful write, then pass the result straight through.

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <optional>
 #include <cstdint>
 #include <future>
@@ -124,6 +125,8 @@ struct ViewportConfig {
   /// Preview resolution (full 1, half 0.5, third, quarter): the comp is
   /// rendered at this fraction and scaled up into the slot.
   double resolution = 1.0;
+  /// setViewport `channel` (View ▸ Show Channel): applied on the final blit.
+  api::ChannelView channel = api::ChannelView::rgb;
   bool open = false;
   /// D5: the page's view of the comp — screen CSS px per comp px, and the comp
   /// point at the viewport's centre (snapshotToFrameScene viewToCamera). zoom ≤ 0
@@ -145,6 +148,12 @@ struct ViewportConfig {
   std::string layer;
   /// setViewport `layerRenderEffects`: false shows the untouched source.
   bool layerRenderEffects = true;
+  /// setViewport `transparencyGrid`, with `layer`: a checkerboard behind the
+  /// layer's own bounds, so what is transparent in it reads as transparent
+  /// (frames reach the host opaque — it cannot draw one under them).
+  bool layerTransparencyGrid = false;
+  /// setViewport `layerAlphaView`, with `layer`: '' (the layer as it is), 'alpha', 'boundary' or 'overlay'.
+  std::string layerAlphaView;
   /// setViewport `time`: a held comp time this viewport renders at (the Layer
   /// panel's own ruler); absent = the session clock.
   std::optional<api::Time> time;
@@ -173,6 +182,17 @@ struct ViewportConfig {
 /// baked into each job by the frame builder, so a hand-tool drag or a wheel
 /// zoom — a setViewport per pointer move — must not re-create the shared
 /// textures (and drop every frame in flight) 60 times a second.
+/// The preview resolution as a pixel scale (0.1 … 1); anything unset or odd is full.
+[[nodiscard]] inline double preview_scale(double resolution) {
+  return resolution > 0 && resolution < 1 ? std::max(0.1, resolution) : 1.0;
+}
+
+/// The slot size a viewport's frames are drawn into: its physical size at the preview resolution.
+[[nodiscard]] inline std::uint32_t preview_pixels(std::uint32_t physical, double resolution) {
+  const double scaled = std::round(static_cast<double>(physical) * preview_scale(resolution));
+  return physical == 0 ? 0U : static_cast<std::uint32_t>(std::max(1.0, scaled));
+}
+
 [[nodiscard]] inline bool ring_config_changed(const ViewportConfig& a, const ViewportConfig& b) {
   return a.viewport != b.viewport || a.width != b.width || a.height != b.height || a.open != b.open ||
          a.resolution != b.resolution;

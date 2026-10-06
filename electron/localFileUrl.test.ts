@@ -3,7 +3,20 @@
  * `protocol.handle('local-file', …)` (probed with net.fetch), not guesses.
  */
 
-import { localFileUrlToPath } from './localFileUrl';
+import { localFileCorsOrigin, localFileUrlToPath } from './localFileUrl';
+
+describe('localFileCorsOrigin', () => {
+  const dev = 'http://localhost:5173';
+  it('lets the app’s own pages read the bytes (dev server, packaged file:// page)', () => {
+    expect(localFileCorsOrigin('http://localhost:5173', dev)).toBe('http://localhost:5173');
+    expect(localFileCorsOrigin('null', dev)).toBe('null');
+  });
+  it('gives any other origin, and a same-origin load, no header', () => {
+    expect(localFileCorsOrigin('https://example.com', dev)).toBeNull();
+    expect(localFileCorsOrigin('http://localhost:5199', dev)).toBeNull();
+    expect(localFileCorsOrigin(null, dev)).toBeNull();
+  });
+});
 
 describe('localFileUrlToPath', () => {
   it('recovers the drive Chromium moved into the host (local-file://C:/… → local-file://C/…)', () => {

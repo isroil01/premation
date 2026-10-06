@@ -16,28 +16,20 @@
  * (Discard) with its own confirmation, because it is a separate decision.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Icon } from '@components/Icon';
-import { EmptyState } from '@components/EmptyState';
-import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
-import { documentMirror } from '@stores/documentMirror';
-import { activeCompIdNow, useActiveMirrorComp } from '@hooks/useMirror';
-import { settingsDurationSeconds, settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
-import { channelsToHex } from '@core/mirror/paintFields';
+import { Button } from '@components/Button';
 import {
   canChooseOutputDir,
   useRenderQueueStore,
-  outputExtFor,
   type OutputFormat,
   type RenderJob,
 } from '@stores/renderQueueStore';
 import { canEncodeLocally } from '@core/export/renderSpec';
-import { OutputModuleDialog, type OutputSettings } from './OutputModuleDialog';
 import { customConfirm } from '@components/Modal/Dialogs';
 import { useExportQueueStore } from '@stores/exportQueueStore';
-import { isFinishedStatus, isLiveStatus } from '@core/export/exportSupervisorClient';
-import { ExportQueueList } from '@layout/Export/ExportQueueList';
-import { addToRenderQueue } from '@layout/Export/supervisorQueue';
+import { describeProgress, isFinishedStatus, isLiveStatus, type ExportJobRecord } from '@core/export/exportSupervisorClient';
+import { SUPERVISOR_RESTART_NOTE, orderForDisplay } from '@layout/Export/ExportQueueList';
 import styles from './RenderQueuePanel.module.css';
 
 const FORMAT_LABEL: Record<OutputFormat, string> = {
@@ -78,13 +70,6 @@ function statusLabel(s: RenderJob['status']): string {
 }
 
 export function RenderQueuePanel(): JSX.Element {
-  // B4: the active composition's settings from the document mirror.
-  const compSettings = useActiveMirrorComp()?.settings;
-  const compName = compSettings?.name;
-  const compW = compSettings?.width ?? 1920;
-  const compH = compSettings?.height ?? 1080;
-  const compFps = settingsFps(compSettings);
-  const compDur = settingsDurationSeconds(compSettings);
   // Scoped selectors: subscribing to the WHOLE store (no selector) re-rendered
   // the entire panel on every per-frame progress tick. Actions are stable refs,
   // so selecting them never triggers a render; only `jobs`/`isRunning` do.
@@ -108,8 +93,6 @@ export function RenderQueuePanel(): JSX.Element {
   // pause/resume — an interrupted one restarts) and a different owner.
   const backgroundJobs = useExportQueueStore((s) => s.jobs);
 
-  const [showDialog, setShowDialog] = useState(false);
-
   /*
     Read back what the last session left, the first time anyone opens the queue.
 
@@ -126,6 +109,12 @@ export function RenderQueuePanel(): JSX.Element {
   useEffect(() => {
     void restoreFromLastSession();
   }, [restoreFromLastSession]);
+
+  // Main's background renders: subscribe to its queue while the panel is open.
+  const connectBackground = useExportQueueStore((s) => s.connect);
+  useEffect(() => {
+    void connectBackground();
+  }, [connectBackground]);
 
   /**
    * Whether a stopped render can come back at all.
@@ -180,323 +169,249 @@ export function RenderQueuePanel(): JSX.Element {
     })();
   };
 
-  const handleAddJob = (settings: OutputSettings) => {
-    setShowDialog(false);
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const ext = outputExtFor(settings.format);
-    // The active comp at click time, from the document mirror (B4).
-    const compId = activeCompIdNow() ?? DEFAULT_COMPOSITION.id;
-    const now = documentMirror().comp(compId)?.settings;
-    const comp = {
-      id: compId,
-      background: now ? channelsToHex(now.background) : DEFAULT_COMPOSITION.background,
-      width: now?.width ?? DEFAULT_COMPOSITION.width,
-      height: now?.height ?? DEFAULT_COMPOSITION.height,
-    };
-
-    // Sanitized like the Export dialog's fileStem: a comp named "Hero / v2"
-    // otherwise put a path separator into the output filename, which
-    // path.join then treated as a directory.
-    const stem = (compName ?? 'output').trim().replace(/[<>:"/\\|?*]+/g, '-') || 'output';
-    // Capture the range at queue time — same contract as the Export dialog:
-    // a queued job renders what was queued, not the live global work area.
-    const wa = settingsSetWorkArea(now);
-    const range = wa ?? { start: 0, end: settings.durationSec };
-    // Main's queue on desktop, this window's queue otherwise (web/hosted,
-    // `exportInProcess`, HDR, a project the snapshot cannot carry) — the same
-    // decision the Export dialog's Add to Queue makes.
-    addToRenderQueue({
-      compositionName: compName ?? 'Comp 1',
-      // Bind the job to the comp it was queued FROM (see RenderJob.compositionId).
-      compositionId: comp.id,
-      background: comp.background,
-      outputPath: `${stem}_${ts}.${ext}`,
-      format: settings.format,
-      width: settings.width,
-      height: settings.height,
-      // The composition's real size — the output size above is what the user
-      // typed and may be smaller or larger than the comp.
-      compWidth: comp.width,
-      compHeight: comp.height,
-      fps: settings.fps,
-      durationSec: settings.durationSec,
-      rangeStartSec: range.start,
-      rangeEndSec: range.end,
-      transparent: settings.transparent,
-      quality: settings.quality,
-      ...(settings.proresProfile ? { proresProfile: settings.proresProfile } : {}),
-      ...(settings.bitDepth === 16 ? { bitDepth: 16 as const } : {}),
-    });
+  // Both lists count: every export now renders on main's queue, so counting only the
+  // in-window jobs said "0 done" beside a list of finished renders, and left Clear done
+  // and Render disabled with nothing they would act on in the window's own list.
+  const bgDone = backgroundJobs.filter((j) => j.status === 'completed').length;
+  const bgFailed = backgroundJobs.filter((j) => j.status === 'failed');
+  const doneCount = jobs.filter((j) => j.status === 'done').length + bgDone;
+  const queuedCount = jobs.filter((j) => j.status === 'queued').length + backgroundJobs.filter((j) => j.status === 'queued').length;
+  const failedCount = jobs.filter((j) => j.status === 'failed').length + bgFailed.length;
+  const clearDone = (): void => {
+    clearFinished();
+    const bg = useExportQueueStore.getState();
+    for (const j of backgroundJobs) if (j.status === 'completed') void bg.remove(j.id);
   };
-
-  const doneCount = jobs.filter((j) => j.status === 'done').length;
-  const queuedCount = jobs.filter((j) => j.status === 'queued').length;
+  /** Render: the window's queue, and the background renders that failed (after a fix — the engine back, a folder made writable — they run again). */
+  const renderAll = (): void => {
+    startAll();
+    const bg = useExportQueueStore.getState();
+    for (const j of bgFailed) void bg.retry(j.id);
+  };
   // Half-rendered jobs holding a staging dir. They change what the main button
   // means (Resume All, not Render All) and are what Discard would destroy.
   const resumableCount = jobs.filter((j) => j.status === 'paused' || j.status === 'stopped').length;
   const backgroundLive = backgroundJobs.filter((j) => !isFinishedStatus(j.status)).length;
 
-  return (
-    <div className={styles.root}>
-      {showDialog && (
-        <OutputModuleDialog 
-          initialWidth={compW}
-          initialHeight={compH}
-          initialFps={compFps}
-          initialDuration={compDur}
-          onConfirm={handleAddJob}
-          onCancel={() => setShowDialog(false)}
-        />
-      )}
-      {/* ── Toolbar ──────────────────────────────────────────────── */}
-      <div className={styles.toolbar}>
-        <button type="button" className={styles.toolbarBtn} onClick={() => setShowDialog(true)} title="Add current composition to queue" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <Icon name="plus" size="sm" />
-          <span>Add Comp</span>
-        </button>
+  const bgRunning = backgroundJobs.some((j) => isLiveStatus(j.status));
+  const anyRunning = isRunning || bgRunning;
+  const total = jobs.length + backgroundJobs.length;
+  // The item being rendered right now, for the progress line at the top.
+  const activeBg = backgroundJobs.find((j) => j.status === 'rendering' || j.status === 'encoding' || j.status === 'preparing');
+  const activeLocal = jobs.find((j) => j.status === 'rendering');
+  const activeFraction = activeLocal ? activeLocal.progress : activeBg ? activeBg.progress.fraction : 0;
+  const summary = total === 0
+    ? 'Nothing queued'
+    : [
+        `${total} item${total === 1 ? '' : 's'}`,
+        `${queuedCount} queued`,
+        resumableCount > 0 ? `${resumableCount} paused` : '',
+        `${doneCount} done`,
+        failedCount > 0 ? `${failedCount} failed` : '',
+        backgroundJobs.length > 0 ? `${backgroundLive} in background` : '',
+      ].filter(Boolean).join(' · ');
 
+  return (
+    <div className={styles.root} data-render-queue="">
+      {/* ── Top line: where the queue stands, and the verbs for all of it ── */}
+      <div className={styles.top}>
+        <span className={styles.summary}>
+          {anyRunning ? <span className={styles.running}>Rendering · </span> : null}
+          {summary}
+        </span>
+        <div className={styles.topBar} aria-hidden>
+          <div className={styles.topBarFill} style={{ transform: `scaleX(${anyRunning ? activeFraction : 0})` }} />
+        </div>
         {canChooseOutputDir() && (
-          <button
-            type="button"
-            className={styles.toolbarBtn}
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => void chooseOutputDir()}
             title={outputDir ? `Renders are written to ${outputDir}` : 'Choose where renders are written'}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
           >
-            <Icon name="folder" size="sm" style={{ color: '#f5b041' }} />
-            <span>{outputDir ? (outputDir.split(/[\\/]/).pop() || outputDir) : 'Output folder…'}</span>
-          </button>
+            {outputDir ? (outputDir.split(/[\\/]/).pop() || outputDir) : 'Output folder…'}
+          </Button>
         )}
-
-        <span className={styles.spacer} />
-
+        {(isRunning || resumableCount > 0) && (
+          <Button variant="secondary" size="sm" onClick={confirmDiscard} title="Throw away the frames already rendered — jobs restart from the beginning">
+            Discard
+          </Button>
+        )}
+        <Button variant="secondary" size="sm" onClick={clearDone} disabled={doneCount === 0} title="Remove finished items from the list">
+          Clear done
+        </Button>
         {/*
-          The badge describes whichever queue is actually working. "Stopped"
-          only means something for in-window jobs (it is the Render All
-          runner's state), so with none of those it is not shown — a finished
-          background render next to a "Stopped" badge read as a failure.
+          "Stop (keep progress)" — the label is the promise: stopping keeps the
+          sink, so Render continues where it left off. Losing the work is
+          Discard, and it asks.
         */}
-        {isRunning || backgroundJobs.some((j) => isLiveStatus(j.status)) ? (
-          <span className={styles.statusBadgeRunning}>● Running</span>
-        ) : jobs.length > 0 ? (
-          <span className={styles.statusBadge}>Stopped</span>
-        ) : null}
-
-        {/*
-          "Stop (keep progress)" — the label is the promise.
-
-          This used to be a plain "Stop" that disposed the sink: ffmpeg killed,
-          staging dir deleted, every job back at frame 0. It now stops feeding
-          frames and leaves the sink open, so Render All continues where it
-          left off. Losing the work is the button next to it, and it asks.
-        */}
-        <button
-          type="button"
-          className={styles.toolbarBtnPrimary}
-          onClick={isRunning ? confirmStop : startAll}
-          disabled={jobs.length === 0}
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={isRunning ? confirmStop : renderAll}
+          disabled={jobs.length === 0 && bgFailed.length === 0}
           title={
             isRunning
               ? 'Stop rendering — the current job keeps its rendered frames and resumes here'
               : resumableCount > 0
                 ? 'Resume stopped jobs, then render the rest of the queue'
-                : 'Render all queued'
+                : bgFailed.length > 0
+                  ? 'Render all queued, and run the failed renders again'
+                  : 'Render all queued'
           }
         >
-          <Icon name={isRunning ? 'stop' : 'play'} size="sm" />
-          {isRunning ? 'Stop (keep progress)' : resumableCount > 0 ? 'Resume All' : 'Render All'}
-        </button>
-
-        {(isRunning || resumableCount > 0) && (
-          <button
-            type="button"
-            className={styles.toolbarBtnDanger}
-            onClick={confirmDiscard}
-            title="Throw away the frames already rendered — jobs restart from the beginning"
-          >
-            <Icon name="trash" size="sm" /> Discard
-          </button>
-        )}
-
-        <button type="button" className={styles.toolbarBtnDanger} onClick={clearFinished} disabled={doneCount === 0}>
-          <Icon name="close" size="sm" /> Clear Done
-        </button>
+          {isRunning ? 'Stop (keep progress)' : resumableCount > 0 ? 'Resume' : 'Render'}
+        </Button>
       </div>
 
-      {/* ── Job list ─────────────────────────────────────────────── */}
-      <div className={styles.jobList}>
-        {/* Background renders first: they are already running (main's queue
-            starts what it holds), while the in-window jobs below wait for
-            Render All. */}
-        <ExportQueueList priorityControls />
+      {/* ── The table: one row per item, as After Effects lists them ── */}
+      <div className={styles.table} role="table" aria-label="Render queue">
+        <div className={`${styles.row} ${styles.head}`} role="row">
+          <span role="columnheader">#</span>
+          <span role="columnheader">Composition</span>
+          <span role="columnheader">Status</span>
+          <span role="columnheader">Output module</span>
+          <span role="columnheader">Output to</span>
+          <span role="columnheader">Render time</span>
+          <span role="columnheader" aria-label="Actions" />
+        </div>
 
-        {jobs.length === 0 && backgroundJobs.length === 0 && (
-          <EmptyState
-            icon="queue"
-            title="Nothing queued"
-            message="Queue a composition and it renders here — the queue keeps going while you keep working."
-            action={{ label: 'Add the current composition', onClick: () => setShowDialog(true) }}
-          />
-        )}
-
-        {jobs.map((job, idx) => (
-          <div
-            key={job.id}
-            className={job.status === 'rendering' ? styles.jobCardRendering : styles.jobCard}
-          >
-            <div className={styles.cardHeader}>
-              <div className={styles.cardHeaderLeft}>
-                <span className={styles.jobIndex}>#{idx + 1}</span>
-                <span className={styles.compName}>{job.compositionName}</span>
-              </div>
-              <div className={styles.cardHeaderRight}>
-                <span className={styles.formatBadge}>{FORMAT_LABEL[job.format] ?? job.format}</span>
-                {/* Pause / Resume, per job — the control the queue never had.
-                    Pausing keeps this job's staged frames and its encoder; the
-                    Resume next to it feeds the SAME sink from that frame. */}
-                {job.status === 'rendering' && (
-                  <button
-                    type="button"
-                    className={styles.removeBtn}
-                    title="Pause this render — keeps the frames already rendered"
-                    onClick={() => pauseJob(job.id)}
-                  >
-                    <Icon name="pause" size="sm" />
-                  </button>
-                )}
-                {(job.status === 'paused' || job.status === 'stopped') && (
-                  <>
-                    <button
-                      type="button"
-                      className={styles.removeBtn}
-                      title={`Resume this render${job.resumeFrame != null ? ` at frame ${job.resumeFrame}` : ''}`}
-                      onClick={() => resumeJob(job.id)}
-                    >
-                      <Icon name="play" size="sm" />
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.removeBtn}
-                      title="Discard this job's rendered frames — it restarts from the beginning"
-                      onClick={() => discardJobProgress(job.id)}
-                    >
-                      <Icon name="trash" size="sm" />
-                    </button>
-                  </>
-                )}
-                <button
-                  type="button"
-                  className={styles.removeBtn}
-                  title="Duplicate this job"
-                  onClick={() => duplicateJob(job.id)}
-                >
-                  <Icon name="copy" size="sm" />
-                </button>
-                {(job.status === 'queued' || job.status === 'paused' || job.status === 'stopped') && (
-                  <button
-                    type="button"
-                    className={styles.removeBtn}
-                    title="Skip this job — leave it in the list but don't render it"
-                    onClick={() => skipJob(job.id)}
-                  >
-                    <Icon name="skip-forward" size="sm" />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className={styles.removeBtn}
-                  title={job.status === 'rendering' ? 'Stop the queue before removing a rendering job' : 'Remove job'}
-                  disabled={job.status === 'rendering'}
-                  onClick={() => removeJob(job.id)}
-                >
-                  <Icon name="close" size="sm" />
-                </button>
-              </div>
+        <div className={styles.rows}>
+          {total === 0 && (
+            <div className={styles.empty}>
+              <b>Nothing queued</b>
+              <span>Add a composition with Export ▸ Add to Render Queue. It renders here while you keep working.</span>
             </div>
+          )}
 
-            <div className={styles.cardBody}>
-              <span className={styles.outputPath} title={job.outputPath}>{job.outputPath}</span>
-              <span className={styles.jobSpec}>
-                {job.width}×{job.height}
-                {job.compWidth && job.compWidth !== job.width ? ` (comp ${job.compWidth}×${job.compHeight})` : ''}
-                {' · '}{job.fps} fps
-                {' · '}
-                {(job.rangeStartSec !== undefined && job.rangeEndSec !== undefined
-                  ? job.rangeEndSec - job.rangeStartSec
-                  : job.durationSec
-                ).toFixed(2)}s
-                {job.transparent ? ' · alpha' : ''}
-                {job.quality && job.quality !== 'high' ? ` · ${job.quality}` : ''}
-              </span>
+          {/* Background renders first: main's queue is already running what it
+              holds, while the in-window jobs below wait for Render. */}
+          {backgroundJobs.length > 0 && <p className={styles.note}>{SUPERVISOR_RESTART_NOTE}</p>}
+          {orderForDisplay(backgroundJobs).map((job, idx) => (
+            <BackgroundRow key={job.id} job={job} index={idx + 1} />
+          ))}
 
-              <div className={styles.statusProgressRow}>
-                <span
-                  className={`${styles.statusChip} ${statusClass(job.status)}`}
-                  title={
-                    job.resumeFrame != null && (job.status === 'paused' || job.status === 'stopped')
-                      ? `${job.resumeFrame} frames already rendered — resumes at frame ${job.resumeFrame}`
-                      : undefined
-                  }
-                >
-                  {statusLabel(job.status)}
-                  {job.resumeFrame != null && (job.status === 'paused' || job.status === 'stopped')
-                    ? ` · frame ${job.resumeFrame}`
-                    : ''}
-                </span>
-                
-                <div className={styles.progressCell}>
-                  <div className={styles.progressHeader}>
-                    <span className={styles.progressLabel}>{Math.round(job.progress * 100)}%</span>
-                    <span className={styles.elapsedLabel}>
-                      {job.elapsedMs != null ? `${(job.elapsedMs / 1000).toFixed(1)}s` : '—'}
-                    </span>
-                  </div>
-                  <div className={styles.progressBar}>
-                    <div
-                      className={
-                        job.status === 'paused' || job.status === 'stopped'
-                          ? `${styles.progressFill} ${styles.progressFillPaused}`
-                          : styles.progressFill
-                      }
-                      style={{ width: `${job.progress * 100}%` }}
-                    />
-                  </div>
+          {jobs.map((job, idx) => {
+            const resumable = job.status === 'paused' || job.status === 'stopped';
+            const seconds = job.rangeStartSec !== undefined && job.rangeEndSec !== undefined ? job.rangeEndSec - job.rangeStartSec : job.durationSec;
+            const outputModule = [
+              FORMAT_LABEL[job.format] ?? job.format,
+              `${job.width}×${job.height}`,
+              `${job.fps} fps`,
+              job.transparent ? 'alpha' : '',
+              job.quality && job.quality !== 'high' ? job.quality : '',
+            ].filter(Boolean).join(' · ');
+            const showProgress = job.status === 'rendering' || (resumable && job.progress > 0);
+            return (
+              <div key={job.id} className={styles.item} data-status={job.status}>
+                <div className={styles.row} role="row">
+                  <span role="cell" className={styles.num}>{backgroundJobs.length + idx + 1}</span>
+                  <span role="cell" className={styles.name} title={job.compositionName}>{job.compositionName}</span>
+                  <span
+                    role="cell"
+                    className={`${styles.status} ${statusClass(job.status)}`}
+                    title={job.resumeFrame != null && resumable ? `${job.resumeFrame} frames already rendered — resumes at frame ${job.resumeFrame}` : undefined}
+                  >
+                    {statusLabel(job.status)}
+                    {showProgress ? ` · ${Math.round(job.progress * 100)} %` : ''}
+                    {job.resumeFrame != null && resumable ? ` · frame ${job.resumeFrame}` : ''}
+                  </span>
+                  <span role="cell" className={styles.setting} title={`${outputModule} · ${seconds.toFixed(2)} s`}>{outputModule}</span>
+                  <span role="cell" className={styles.setting} title={job.outputPath}>{job.outputPath}</span>
+                  <span role="cell" className={styles.time}>{job.elapsedMs != null ? `${(job.elapsedMs / 1000).toFixed(1)} s` : '—'}</span>
+                  <span role="cell" className={styles.actions}>
+                    {job.status === 'rendering' && (
+                      <Button variant="ghost" size="sm" iconOnly icon={<Icon name="pause" size="sm" />} title="Pause this render — keeps the frames already rendered" onClick={() => pauseJob(job.id)}>Pause</Button>
+                    )}
+                    {resumable && (
+                      <>
+                        <Button variant="ghost" size="sm" iconOnly icon={<Icon name="play" size="sm" />} title={`Resume this render${job.resumeFrame != null ? ` at frame ${job.resumeFrame}` : ''}`} onClick={() => resumeJob(job.id)}>Resume</Button>
+                        <Button variant="ghost" size="sm" iconOnly icon={<Icon name="trash" size="sm" />} title="Discard this job's rendered frames — it restarts from the beginning" onClick={() => discardJobProgress(job.id)}>Discard progress</Button>
+                      </>
+                    )}
+                    <Button variant="ghost" size="sm" iconOnly icon={<Icon name="copy" size="sm" />} title="Duplicate this job" onClick={() => duplicateJob(job.id)}>Duplicate</Button>
+                    {(job.status === 'queued' || resumable) && (
+                      <Button variant="ghost" size="sm" iconOnly icon={<Icon name="skip-forward" size="sm" />} title="Skip this job — leave it in the list but don't render it" onClick={() => skipJob(job.id)}>Skip</Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      icon={<Icon name="close" size="sm" />}
+                      title={job.status === 'rendering' ? 'Stop the queue before removing a rendering job' : 'Remove job'}
+                      disabled={job.status === 'rendering'}
+                      onClick={() => removeJob(job.id)}
+                    >
+                      Remove
+                    </Button>
+                  </span>
                 </div>
+                {showProgress && (
+                  <div className={styles.progress} aria-hidden>
+                    <div className={resumable ? `${styles.progressFill} ${styles.progressFillPaused}` : styles.progressFill} style={{ transform: `scaleX(${job.progress})` }} />
+                  </div>
+                )}
+                {/* Something to know before this job runs (a composition that is
+                    not in the open project). A warning: the job is still queued. */}
+                {job.attention && <div className={styles.attention} title={job.attention}><Icon name="warning" size="sm" /><span>{job.attention}</span></div>}
+                {/* Why it failed, in the row — "Failed" alone is not actionable. */}
+                {job.error && <div className={styles.error} title={job.error}><Icon name="warning" size="sm" /><span>{job.error}</span></div>}
               </div>
-
-              {/* Something to know before this job runs — a restore that found
-                  last session's frames gone, or a composition that is not in
-                  the open project. Warning, not danger: the job is still queued
-                  and Render All still takes it (or refuses it, and says so). */}
-              {job.attention && (
-                <div className={styles.jobAttention} title={job.attention}>
-                  <Icon name="warning" size="sm" />
-                  <span>{job.attention}</span>
-                </div>
-              )}
-
-              {/* A failed job used to show the word "Failed" and nothing else —
-                  the reason was captured on the job and never rendered, so every
-                  failure looked identical and none of them were actionable. */}
-              {job.error && (
-                <div className={styles.jobError} title={job.error}>
-                  <Icon name="warning" size="sm" />
-                  <span>{job.error}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
+            );
+          })}
+        </div>
       </div>
+    </div>
+  );
+}
 
-      {/* ── Footer ───────────────────────────────────────────────── */}
-      <div className={styles.footer}>
-        <Icon name="queue" size="sm" />
-        {jobs.length} job{jobs.length !== 1 ? 's' : ''} · {queuedCount} queued
-        {resumableCount > 0 ? ` · ${resumableCount} paused` : ''} · {doneCount} done
-        {backgroundJobs.length > 0 ? ` · ${backgroundLive} in background` : ''}
-        {isRunning && <span style={{ color: 'var(--color-primary)' }}> · Rendering…</span>}
+/** One of main's background renders (the desktop's export supervisor), as a table row. */
+function BackgroundRow({ job, index }: { job: ExportJobRecord; index: number }): JSX.Element {
+  const cancel = useExportQueueStore((s) => s.cancel);
+  const retry = useExportQueueStore((s) => s.retry);
+  const remove = useExportQueueStore((s) => s.remove);
+  const setPriority = useExportQueueStore((s) => s.setPriority);
+  const live = !isFinishedStatus(job.status);
+  const waiting = job.status === 'queued';
+  const pct = Math.round(job.progress.fraction * 100);
+  const file = job.spec.outPath.split(/[\\/]/).pop() || job.spec.outPath;
+  const tone = job.status === 'failed' ? styles.statusFailed : job.status === 'completed' ? styles.statusDone : live && !waiting ? styles.statusRendering : '';
+  return (
+    <div className={styles.item} data-status={job.status}>
+      <div className={styles.row} role="row">
+        <span role="cell" className={styles.num}>{index}</span>
+        <span role="cell" className={styles.name} title={job.spec.label}>{job.spec.label}</span>
+        <span role="cell" className={`${styles.status} ${tone ?? ''}`} title={describeProgress(job)}>
+          {describeProgress(job)}
+          {job.priority !== 0 ? ` · priority ${job.priority > 0 ? '+' : ''}${job.priority}` : ''}
+        </span>
+        <span role="cell" className={styles.setting}>{job.spec.format.toUpperCase()}</span>
+        <span role="cell" className={styles.setting} title={job.spec.outPath}>{file}</span>
+        <span role="cell" className={styles.time}>{live && !waiting ? `${pct} %` : '—'}</span>
+        <span role="cell" className={styles.actions}>
+          {live && waiting && (
+            <>
+              <Button variant="ghost" size="sm" iconOnly icon={<Icon name="chevron-up" size="sm" />} title="Raise priority — runs before lower-priority waiting renders" onClick={() => void setPriority(job.id, job.priority + 1)}>Raise priority</Button>
+              <Button variant="ghost" size="sm" iconOnly icon={<Icon name="chevron-down" size="sm" />} title="Lower priority — runs after higher-priority waiting renders" onClick={() => void setPriority(job.id, job.priority - 1)}>Lower priority</Button>
+            </>
+          )}
+          {live ? (
+            <Button variant="ghost" size="sm" iconOnly icon={<Icon name="close" size="sm" />} title="Stop this export — nothing is written" onClick={() => void cancel(job.id)}>Cancel</Button>
+          ) : (
+            <>
+              {job.status !== 'completed' && (
+                <Button variant="ghost" size="sm" iconOnly icon={<Icon name="loop" size="sm" />} title="Render this export again, from the first frame" onClick={() => void retry(job.id)}>Retry</Button>
+              )}
+              <Button variant="ghost" size="sm" iconOnly icon={<Icon name="close" size="sm" />} title="Remove from the list" onClick={() => void remove(job.id)}>Remove</Button>
+            </>
+          )}
+        </span>
       </div>
+      {live && !waiting && (
+        <div className={styles.progress} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label={`Export ${job.spec.label}`}>
+          <div className={styles.progressFill} style={{ transform: `scaleX(${job.progress.fraction})` }} />
+        </div>
+      )}
     </div>
   );
 }

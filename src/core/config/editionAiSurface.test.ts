@@ -44,7 +44,7 @@ describe('both editions offer the AI surface when aiEnabled', () => {
 
     it('resolves the panel by id for layout titles', () => {
       setEdition('local');
-      expect(panelDef('ai')?.title).toBe('AI');
+      expect(panelDef('ai')?.title).toBe('Assistant');
     });
   });
 
@@ -56,7 +56,7 @@ describe('both editions offer the AI surface when aiEnabled', () => {
     });
 
     it('keeps ai listed in the default preset source', () => {
-      expect(BUILTIN_WORKSPACES.find((w) => w.id === 'default')?.panelOrder?.leftSidebar)
+      expect(BUILTIN_WORKSPACES.find((w) => w.id === 'default')?.panelOrder?.rightInspector)
         .toContain('ai');
     });
   });

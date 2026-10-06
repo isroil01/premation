@@ -27,6 +27,8 @@ struct RasterOutput {
   std::vector<std::uint8_t> rgba;  // premultiplied RGBA8
   /// Features of the spec the C++ painters do not draw yet (each once).
   std::vector<std::string> unsupported;
+  /// An SVG that animates (SMIL / CSS): its picture depends on the time it was drawn at.
+  bool animated = false;
   /// Where the time went (ms, this thread): painting the content, the bake
   /// (mask matte + effect chain), the read-back of the pixels.
   double contentMs = 0;

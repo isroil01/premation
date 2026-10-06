@@ -82,7 +82,6 @@ import { documentMirror } from '@stores/documentMirror';
 import { useMirrorStructRevision } from '@hooks/useMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
-import { openSourceMonitor } from '@stores/sourceMonitorStore';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { useUIStore } from '@stores/uiStore';
 import { getEventBus } from '@core/events/EventBus';
@@ -253,13 +252,14 @@ export function AssetsPanel(): JSX.Element {
       const chosen = await pick();
       if (!chosen || chosen.length === 0) return;
       const folder = currentFolderRef.current;
-      const { imported, failed } = await importPathsEdit(
+      const { imported, failed, reasons } = await importPathsEdit(
         chosen,
         folder && documentMirror().item(folder)?.kind === 'folder' ? folder : null,
       );
       if (failed.length > 0) {
-        const names = failed.map((p) => p.replace(/^.*[\\/]/, ''));
-        useUIStore.getState().notify({ level: 'error', message: `Could not import ${names.join(', ')}.`, durationMs: 5000 });
+        // Each file with its reason: "Could not import clip.r3d: this file type or codec cannot be read."
+        const lines = failed.map((p) => `${p.replace(/^.*[\\/]/, '')}: ${reasons?.[p] ?? 'the file could not be read'}`);
+        useUIStore.getState().notify({ level: 'error', message: `Could not import ${lines.join('; ')}.`, durationMs: 7000 });
       }
       announceImport(imported);
     })();
@@ -693,9 +693,9 @@ export function AssetsPanel(): JSX.Element {
       },
       {
         id: 'open-source-monitor',
-        label: 'Open in Source Monitor',
+        label: 'Open in Footage Viewer',
         disabled: many || asset.type === 'image',
-        onSelect: () => { openSourceMonitor(asset); },
+        onSelect: () => { openFootagePreview(asset); },
       },
       {
         id: 'preview',
@@ -1202,7 +1202,8 @@ export function AssetsPanel(): JSX.Element {
           </span>
         )}
         <span className={styles.assetRowType}>{visual.label}</span>
-        <span className={styles.assetRowSize}>{formatBytes(asset.size)}</span>
+        {/* Unknown in a window that did not import the file: a dash, not "0 B". */}
+        <span className={styles.assetRowSize}>{asset.size > 0 ? formatBytes(asset.size) : '—'}</span>
       </div>
     );
   };
@@ -1299,6 +1300,18 @@ export function AssetsPanel(): JSX.Element {
         <MediaBrowser />
       ) : (
         <div className={styles.assetShell}>
+          {/* What is selected, first — where After Effects' Project panel puts it. */}
+          <div className={styles.assetTopInfo}>
+          <AssetDrawer
+            asset={singleSelectedAsset}
+            selectionCount={selectedAssetIds.size}
+            open={drawerOpen}
+            onToggle={() => setDrawerOpen(!drawerOpen)}
+            usedBy={usedBy}
+            onSelectLayer={(id) => useSelectionStore.getState().set([id])}
+            onSetTags={setTags}
+          />
+          </div>
           <div className={styles.assetSearchRow}>
             <SearchField
               placeholder="Search assets…"
@@ -1529,7 +1542,7 @@ export function AssetsPanel(): JSX.Element {
                     </p>
                     <Button
                       size="sm"
-                      variant="primary"
+                      variant="secondary"
                       icon={<Icon name="upload" size="sm" />}
                       onClick={openImportFiles}
                     >
@@ -1571,16 +1584,6 @@ export function AssetsPanel(): JSX.Element {
           </div>
 
           <div className={styles.assetBottomSection}>
-            <AssetDrawer
-              asset={singleSelectedAsset}
-              selectionCount={selectedAssetIds.size}
-              open={drawerOpen}
-              onToggle={() => setDrawerOpen(!drawerOpen)}
-              usedBy={usedBy}
-              onSelectLayer={(id) => useSelectionStore.getState().set([id])}
-              onSetTags={setTags}
-            />
-
             {/* AE Project Bottom Action Dock */}
             <div className={styles.assetBottomDock}>
               <button

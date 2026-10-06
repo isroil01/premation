@@ -1,24 +1,12 @@
 /**
  * The welcome step's own pieces.
  *
- * Everything shared with the sign-in screens — the card, the grid backdrop, the
- * primary button, the error alert — comes from `AuthPage.module.css`, because
- * this screen is the last panel of that flow and a second card that is almost
- * the same card is how two screens start drifting apart. Only the radio list
+ * Everything shared with the sign-in screens — the frame, the primary button,
+ * the error alert — comes from `AuthShell` and `AuthPage.module.css`, because
+ * this screen is the last panel of that flow and a second frame that is almost
+ * the same frame is how two screens start drifting apart. Only the radio list
  * lives here; nothing else on the platform looks like it.
  */
-
-/**
- * Wider than the sign-in card.
- *
- * The options are full sentences ("ChatGPT, Claude or another AI assistant"),
- * and at 420px the longest of them wrap onto a second line. A list where some
- * rows are one line and some are two reads as a list with structure it does not
- * have, and the eye spends its first pass working out what the grouping means.
- */
-.card {
-  max-width: 520px;
-}
 
 /* A fieldset for the grouping semantics, with none of its chrome. */
 .fieldset {
@@ -33,7 +21,7 @@
 
 .legend {
   padding: 0;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
 }
@@ -41,7 +29,7 @@
 .options {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 5px;
 }
 
 /**
@@ -55,10 +43,11 @@
 .option {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3);
+  gap: 10px;
+  /* Eight rows have to fit beside the heading and the button without scrolling. */
+  padding: 7px 10px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
+  border-radius: 8px;
   background: var(--color-surface-0);
   cursor: pointer;
   transition:
@@ -144,7 +133,7 @@
 }
 
 .optionLabel {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-md);
   color: var(--color-text-primary);
   line-height: 1.4;
 }

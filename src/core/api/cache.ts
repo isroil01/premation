@@ -38,7 +38,6 @@ export type CacheTag =
   | 'renders'
   | 'billing'
   | 'conversations'
-  | 'api-keys'
   | 'api-usage'
   | 'automation-templates'
   | 'animation-templates'
@@ -61,7 +60,6 @@ const ALL_TAGS = [
   'renders',
   'billing',
   'conversations',
-  'api-keys',
   'api-usage',
   'automation-templates',
   'animation-templates',

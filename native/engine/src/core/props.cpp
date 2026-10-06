@@ -1622,6 +1622,29 @@ std::string string_of(const Json& v) {
   return stringify(v);
 }
 
+/// A paint stroke's un-keyed Path: its stored points as a polyline path value (handles on their vertex). The
+/// viewers read it to show and pick the stroke; none when the stroke (or its points) is not there.
+api::Value paint_path_static(const Node& n, std::string_view strokeId) {
+  const Json& strokes = n.fx().at("paint").at("strokes");
+  if (!strokes.is_array()) return v_none();
+  for (const Json& st : strokes.arr()) {
+    if (!st.is_object() || !st.at("id").is_string() || st.at("id").str() != strokeId) continue;
+    const Json& pts = st.at("points");
+    if (!pts.is_array()) return v_none();
+    api::BezierPath p;
+    for (const Json& pt : pts.arr()) {
+      if (!pt.is_object() || !pt.at("x").is_number() || !pt.at("y").is_number()) continue;
+      p.vertices.push_back(pt.at("x").num());
+      p.vertices.push_back(pt.at("y").num());
+      p.in_tangents.insert(p.in_tangents.end(), {0.0, 0.0});
+      p.out_tangents.insert(p.out_tangents.end(), {0.0, 0.0});
+    }
+    if (p.vertices.empty()) return v_none();
+    return v_path(std::move(p));
+  }
+  return v_none();
+}
+
 }  // namespace
 
 api::Value read_static(const Document& d, std::string_view layer, const PropBinding& b) {
@@ -1692,7 +1715,12 @@ api::Value read_static(const Document& d, std::string_view layer, const PropBind
     for (const auto& m : b.members) ch.push_back(read_static_property_value(d, layer, m).value_or(0));
     return vector_value(ValueType::color, ch);
   }
-  if (b.dataTrack) return v_none();
+  if (b.dataTrack) {
+    if (const auto paintPath = parse_prefixed_id_rest(*b.dataTrack, "paint."); paintPath && paintPath->rest == "path") {
+      return paint_path_static(n, paintPath->id);
+    }
+    return v_none();
+  }
   std::vector<double> nums;
   const std::vector<double> defs = b.defaultValue ? numbers_of_default(*b.defaultValue) : std::vector<double>{};
   for (std::size_t i = 0; i < b.members.size(); ++i) {
@@ -2690,6 +2718,10 @@ std::optional<api::Value> value_at(const PCtx& c, std::string_view layer, const 
     }
     if (v->is_string()) return v_string(v->str());
     if (v->is_number()) return v_scalar(v->num());
+    // A whole-outline track with no special reader (a paint stroke's keyed Path): the points at `t`.
+    if (v->is_array() && !v->arr().empty() && v->arr()[0].is_object() && v->arr()[0].at("x").is_number()) {
+      return data_value_to_api(b, *v, node_of(d, layer));
+    }
     return std::nullopt;
   }
   if (b.members.empty()) return read_static(d, layer, b);

@@ -9819,6 +9819,7 @@ void encode(wire::Writer& w, const SetViewport& v) {
   if (v.time.has_value()) { w.varint(128U); w.svarint(*v.time); }
   if (v.layer_source_time.has_value()) { w.varint(136U); w.svarint(*v.layer_source_time); }
   if (v.onion.has_value()) { w.varint(146U); { const std::size_t s = w.begin_ld(); encode(w, *v.onion); w.end_ld(s); } }
+  if (v.layer_alpha_view.has_value()) { w.varint(154U); w.str(*v.layer_alpha_view); }
 }
 
 Status decode(wire::Reader& r, SetViewport& out) {
@@ -9932,6 +9933,12 @@ Status decode(wire::Reader& r, SetViewport& out) {
         OnionSkin e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.onion = std::move(e);
+        break;
+      }
+      case 154U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.layer_alpha_view = std::move(e);
         break;
       }
       default:
@@ -28305,6 +28312,7 @@ void encode(wire::Writer& w, const RenderView& v) {
   if (v.overlays.has_value()) { w.varint(146U); { const std::size_t s = w.begin_ld(); encode(w, *v.overlays); w.end_ld(s); } }
   if (v.viewer_lut.has_value()) { w.varint(154U); { const std::size_t s = w.begin_ld(); encode(w, *v.viewer_lut); w.end_ld(s); } }
   if (v.color_management.has_value()) { w.varint(162U); { const std::size_t s = w.begin_ld(); encode(w, *v.color_management); w.end_ld(s); } }
+  if (v.channel.has_value()) { w.varint(168U); w.varint(static_cast<std::uint32_t>(*v.channel)); }
 }
 
 Status decode(wire::Reader& r, RenderView& out) {
@@ -28430,6 +28438,12 @@ Status decode(wire::Reader& r, RenderView& out) {
         RenderColorManagement e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.color_management = std::move(e);
+        break;
+      }
+      case 168U: {
+        ChannelView e = ChannelView::rgb;
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; }
+        out.channel = std::move(e);
         break;
       }
       default:

@@ -32,3 +32,14 @@
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
 }
+
+/* The way out sits beside the action, at the right; a note keeps the left
+   (see "The dialog frame" in Modal.module.css). */
+.start {
+  justify-content: flex-end;
+}
+
+.note {
+  order: -1;
+  margin-right: auto;
+}

@@ -25,6 +25,8 @@ struct ViewSpec {
   api::RenderTextureFormat surfaceFormat = api::RenderTextureFormat::bgra8unorm;
   /// An export frame's output module colour space (RenderSettings.outputColorSpace); '' = the viewer.
   std::string outputColorSpace;
+  /// The viewer's channel (View ▸ Show Channel); exports leave it rgb.
+  api::ChannelView channel = api::ChannelView::rgb;
   /// E4: the frame is drawn on a GPU device, so a layer the TypeScript bakes on
   /// the CPU runs its stack on the render graph's chain when it can
   /// (effects_port.hpp gpu_effect_route). Off = the TypeScript's bake rule,
@@ -61,6 +63,10 @@ struct CompOverrides {
   bool forExport = false;
   /// The job's alpha choice (`req.transparent ?? comp.transparent`); nullopt = the comp's.
   std::optional<bool> transparent;
+  /// A viewport's 3D view (with_viewport_view: a camera view or a custom view's
+  /// camera); nullopt = the comp's own active camera.
+  std::optional<std::string> camera3dMode;
+  std::optional<motion::xf::Camera> customViewCamera;
 };
 
 /// The file half of build_native_frame: `snap` flattened (build_frame_scene)

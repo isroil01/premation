@@ -28,6 +28,8 @@ import { DEFAULT_COMPOSITION, compKeyFor } from '@stores/compositionStore';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { MAIN_VIEWPORT, overlayLayer, requestOverlayLayers, subscribeOverlayGeometry, type OverlayLayer } from '@stores/overlayGeometry';
+import { presentedRevision, subscribePresented } from '@core/engine/presentedFrames';
+import { engine } from '@core/engine/engineInstance';
 import { documentMirror } from '@stores/documentMirror';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { isPaintableLayer } from '@core/mirror/layerKinds';
@@ -225,7 +227,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
    *  the first stroke after aiming. */
   const cloneHoverRef = useRef<{ x: number; y: number } | null>(null);
   const cloneCompOffsetRef = useRef<{ x: number; y: number } | null>(null);
-  const creationDragRef = useRef<{ start: { x: number; y: number }; current: { x: number; y: number }; tool: Tool } | null>(null);
+  const creationDragRef = useRef<CreationDrag | null>(null);
   /** Type tool: the text layer a press landed on, edited on release. */
   const typeEditRef = useRef<string | null>(null);
   /**
@@ -356,8 +358,68 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     // numbers the HUD shows, TS path or engine path). Read-only use.
     (window as unknown as { __premationViewportHud?: typeof viewportHudStats }).__premationViewportHud = viewportHudStats;
 
+    // A drawing preview whose edit was just sent stays on screen until the
+    // engine SHOWS the result (see `HeldPreview`). The pieces are kept by
+    // reference — a released drag's objects are dropped, never mutated again —
+    // so holding one allocates nothing per paint.
+    let held: HeldPreview | null = null;
+    let lastCreation: CreationDrag | null = null;
+    let lastPending: WorkspaceOverlay['pendingPath'] | null = null;
+    let lastStroke: Array<{ x: number; y: number }> | null = null;
+    let gestureRevision = 0;
+    let holdTimer = 0;
+    const releaseHeld = (): void => {
+      held = null;
+      window.clearTimeout(holdTimer);
+    };
+    const offPresented = subscribePresented(MAIN_VIEWPORT, () => {
+      if (held) controller.requestRender();
+    });
+    // Chrome drawn here that the workspace package never hears about repaints on its own change.
+    const offChrome = useGuidesStore.subscribe((s, prev) => {
+      if (s.proportionalGrid !== prev.proportionalGrid || s.proportionalColumns !== prev.proportionalColumns
+        || s.proportionalRows !== prev.proportionalRows || s.gridColor !== prev.gridColor || s.gridStyle !== prev.gridStyle) {
+        controller.requestRender();
+      }
+    });
+    const offDisplayMode = useViewportDisplayStore.subscribe((s, prev) => {
+      if (s.displayMode !== prev.displayMode) controller.requestRender();
+    });
     const paintChrome = (): void => {
-      paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller, paintDragRef.current?.screen ?? null, timeRef.current, creationDragRef.current, paintDragRef.current?.mode ?? 'paint', {
+      const ov = controller.ws.overlay();
+      const creation = creationDragRef.current;
+      const stroke = paintDragRef.current?.screen ?? null;
+      const pending = ov.pendingPath && ov.pendingPath.length > 0 ? ov.pendingPath : null;
+      const drawing = creation !== null || stroke !== null || pending !== null;
+      const wasDrawing = lastCreation !== null || lastStroke !== null || lastPending !== null;
+      if (drawing) {
+        // Nothing is committed while a preview is being dragged out: the revision now is the one before its edit.
+        if (!wasDrawing) gestureRevision = engine().revision;
+        releaseHeld();
+      } else if (wasDrawing) {
+        held = { creation: lastCreation, pendingPath: lastPending, stroke: lastStroke, from: gestureRevision, target: null, since: performance.now() };
+        window.clearTimeout(holdTimer);
+        // Re-check when no edit can have been meant (a cancelled or too-small drag) and at the cap.
+        holdTimer = window.setTimeout(() => controller.requestRender(), HOLD_NO_EDIT_MS + 20);
+      }
+      lastCreation = creation;
+      lastPending = pending;
+      lastStroke = stroke;
+      if (held) {
+        const now = performance.now();
+        const seen = engine().revision;
+        if (held.target === null && seen > held.from) held.target = seen;
+        const shown = held.target !== null && presentedRevision(MAIN_VIEWPORT) >= held.target;
+        const noEdit = held.target === null && now - held.since > HOLD_NO_EDIT_MS;
+        if (shown || noEdit || now - held.since > HOLD_MAX_MS) {
+          releaseHeld();
+        } else if (held.target !== null) {
+          window.clearTimeout(holdTimer);
+          holdTimer = window.setTimeout(() => controller.requestRender(), HOLD_MAX_MS);
+        }
+      }
+      const shownOverlay = held?.pendingPath ? { ...ov, pendingPath: held.pendingPath } : ov;
+      paintOverlay(overlay, shownOverlay, dprRef.current, guideDragRef.current, controller, stroke ?? held?.stroke ?? null, timeRef.current, creation ?? held?.creation ?? null, paintDragRef.current?.mode ?? 'paint', {
         brushRing: brushSizeDragRef.current
           ? { at: brushSizeDragRef.current.at, px: drawToolOptions.brushSize * (controller.getView().scale || 1), hardness: usePaintStore.getState().hardness }
           : null,
@@ -474,6 +536,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // which — under the old single-slot onRender — silently unsubscribed
       // every other listener (both canvas overlays) as a side effect.
       disposeRender();
+      offPresented();
+      offChrome();
+      offDisplayMode();
+      window.clearTimeout(holdTimer);
     };
   }, [contentCanvasRef, overlayCanvasRef, stageRef, attachTick]);
 
@@ -1712,6 +1778,30 @@ function refAlpha(base: number): number {
   return base * clampOverlayOpacity(useGuidesStore.getState().overlayOpacity);
 }
 
+/** A shape / mask drag being dragged out (overlay px) and the tool drawing it. */
+type CreationDrag = { start: { x: number; y: number }; current: { x: number; y: number }; tool: Tool };
+
+/**
+ * A drawing preview whose edit was just sent — a shape dragged out, a pen path
+ * closed, a brush stroke released — painted until the engine SHOWS the result:
+ * the first frame at or after the edit's revision. Dropping it on release left
+ * the canvas without the new object until that frame arrived, a frame or two
+ * later: the blink on every release. No edit within `HOLD_NO_EDIT_MS` (a
+ * cancelled or too-small drag): it goes then; never longer than `HOLD_MAX_MS`.
+ */
+interface HeldPreview {
+  creation: CreationDrag | null;
+  pendingPath: WorkspaceOverlay['pendingPath'] | null;
+  stroke: Array<{ x: number; y: number }> | null;
+  /** The client's revision before the gesture's edit. */
+  from: number;
+  /** The revision the edit landed at, once the client has seen it. */
+  target: number | null;
+  since: number;
+}
+const HOLD_NO_EDIT_MS = 250;
+const HOLD_MAX_MS = 1500;
+
 function paintOverlay(
   canvas: HTMLCanvasElement,
   overlay: WorkspaceOverlay,
@@ -1722,7 +1812,7 @@ function paintOverlay(
   // Kept for call-site positional compatibility; the playhead-sampled camera
   // and light guides that used it now live in the 3D gizmo overlay.
   _time = 0,
-  creationDrag: { start: { x: number; y: number }; current: { x: number; y: number }; tool: Tool } | null = null,
+  creationDrag: CreationDrag | null = null,
   /**
    * The in-flight stroke's mode, captured when it started.
    *
@@ -1755,6 +1845,9 @@ function paintOverlay(
   const cssH = canvas.height / dpr;
 
   const guidesState = useGuidesStore.getState();
+  if ((guidesState.grid || guidesState.proportionalGrid) && controller) {
+    paintGrid(ctx, controller, guidesState);
+  }
   if (guidesState.safeArea && controller) {
     paintSafeArea(ctx, controller);
   }
@@ -2306,39 +2399,10 @@ function paintOverlay(
     paintRulers(ctx, controller, cssW, cssH);
   }
 
-  // Drag measurement badge (the 2D twin of the 3D gizmo's HUD): Δx/Δy while
-  // moving, W×H or scale % while resizing, degrees while rotating. Drawn last
-  // so nothing paints over the numbers, offset below-right of the pointer so
-  // the artwork being manipulated stays visible.
-  if (overlay.dragHud && overlay.dragHud.lines.length > 0) {
-    const hud = overlay.dragHud;
-    ctx.save();
-    ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
-    const padX = 6;
-    const lineH = 15;
-    let textW = 0;
-    for (const line of hud.lines) textW = Math.max(textW, ctx.measureText(line).width);
-    const w = Math.ceil(textW) + padX * 2;
-    const h = hud.lines.length * lineH + 6;
-    // Keep the badge on-canvas when the pointer runs against an edge.
-    const bx = Math.min(Math.max(4, hud.anchor.x + 14), cssW - w - 4);
-    const by = Math.min(Math.max(4, hud.anchor.y + 16), cssH - h - 4);
-    ctx.beginPath();
-    // node-canvas (jsdom tests) predates roundRect; square corners there.
-    if (typeof ctx.roundRect === 'function') ctx.roundRect(bx, by, w, h, 4);
-    else ctx.rect(bx, by, w, h);
-    ctx.fillStyle = 'rgba(20, 22, 26, 0.92)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    ctx.textBaseline = 'middle';
-    hud.lines.forEach((line, i) => {
-      ctx.fillText(line, bx + padX, by + 3 + lineH * i + lineH / 2);
-    });
-    ctx.restore();
-  }
+  // No measurement badge at the pointer while dragging (owner decision): the
+  // numbers are in the Properties panel and the Info readout, and a box
+  // following the cursor covered the artwork being moved. `overlay.dragHud` is
+  // still published by the tools; nothing paints it here.
 }
 
 /**
@@ -2964,6 +3028,87 @@ function paintDisplayMode(
 
 // AE's per-layer Quality = WIREFRAME is painted by `wireframeQualityOverlay.ts`,
 // shared with the 2-up/4-up panes and Presentation Mode (useViewportRenderer).
+
+/**
+ * View ▸ Show Grid and Show Proportional Grid, drawn over the composition.
+ *
+ * The standard grid is in COMPOSITION pixels (AE "Gridline every"), its
+ * subdivisions fainter, in the grid's own colour and style (lines, dashed, dots
+ * at the intersections). The proportional grid splits the comp into columns ×
+ * rows whatever its size. Both stop at the comp's edge, thin out instead of
+ * drawing a wash when zoomed far out, and follow the overlay-opacity setting.
+ * The renderer that used to draw them was the TypeScript one; nothing drew
+ * them after it went.
+ */
+function paintGrid(ctx: CanvasRenderingContext2D, controller: WorkspaceController, g: ReturnType<typeof useGuidesStore.getState>): void {
+  const comp = compSize();
+  if (comp.w <= 0 || comp.h <= 0) return;
+  const p0 = controller.ws.worldToScreen({ x: 0, y: 0 });
+  const p1 = controller.ws.worldToScreen({ x: comp.w, y: comp.h });
+  if (!Number.isFinite(p0.x) || !Number.isFinite(p0.y) || !Number.isFinite(p1.x) || !Number.isFinite(p1.y)) return;
+  const w = p1.x - p0.x;
+  const h = p1.y - p0.y;
+  if (w <= 0 || h <= 0) return;
+  const k = w / comp.w;  // screen px per comp px
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(p0.x, p0.y, w, h);
+  ctx.clip();
+  ctx.lineWidth = 1;
+  const lines = (stepComp: number, alpha: number, dash: number[]): void => {
+    const step = stepComp * k;
+    if (!(step >= 4)) return;  // closer than 4 px on screen: a wash, not a grid
+    ctx.globalAlpha = refAlpha(alpha);
+    ctx.setLineDash(dash);
+    ctx.beginPath();
+    for (let x = p0.x; x <= p1.x + 0.5; x += step) {
+      ctx.moveTo(Math.round(x) + 0.5, p0.y);
+      ctx.lineTo(Math.round(x) + 0.5, p1.y);
+    }
+    for (let y = p0.y; y <= p1.y + 0.5; y += step) {
+      ctx.moveTo(p0.x, Math.round(y) + 0.5);
+      ctx.lineTo(p1.x, Math.round(y) + 0.5);
+    }
+    ctx.stroke();
+  };
+  if (g.grid) {
+    ctx.strokeStyle = g.gridColor;
+    ctx.fillStyle = g.gridColor;
+    const spacing = Math.max(1, g.gridSpacing);
+    if (g.gridStyle === 'dots') {
+      const step = spacing * k;
+      if (step >= 4) {
+        ctx.globalAlpha = refAlpha(1);
+        const r = 1.25;
+        for (let x = p0.x; x <= p1.x + 0.5; x += step) {
+          for (let y = p0.y; y <= p1.y + 0.5; y += step) ctx.fillRect(Math.round(x) - r, Math.round(y) - r, r * 2, r * 2);
+        }
+      }
+    } else {
+      const dash = g.gridStyle === 'dashed' ? [4, 4] : [];
+      if (g.gridSubdivisions > 1) lines(spacing / g.gridSubdivisions, 0.45, dash);
+      lines(spacing, 1, dash);
+    }
+  }
+  if (g.proportionalGrid) {
+    ctx.strokeStyle = themeGuides().ACCENT;
+    ctx.globalAlpha = refAlpha(0.5);
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    for (let c = 1; c < g.proportionalColumns; c++) {
+      const x = Math.round(p0.x + (w * c) / g.proportionalColumns) + 0.5;
+      ctx.moveTo(x, p0.y);
+      ctx.lineTo(x, p1.y);
+    }
+    for (let r = 1; r < g.proportionalRows; r++) {
+      const y = Math.round(p0.y + (h * r) / g.proportionalRows) + 0.5;
+      ctx.moveTo(p0.x, y);
+      ctx.lineTo(p1.x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
 
 function paintSafeArea(ctx: CanvasRenderingContext2D, controller: WorkspaceController): void {
   try {

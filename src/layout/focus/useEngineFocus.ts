@@ -8,6 +8,7 @@ import { useEffect, useRef } from 'react';
 import { useFocusStore, focusActiveSet } from '@stores/focusStore';
 import { documentMirror } from '@stores/documentMirror';
 import { engine } from '@core/engine/engineInstance';
+import { withEngineViewport } from '@core/engine/windowViewport';
 
 export function useEngineFocus(viewport: number): void {
   const path = useFocusStore((s) => s.path);
@@ -22,7 +23,8 @@ export function useEngineFocus(viewport: number): void {
       const key = layers.join(',');
       if (key === sent.current) return;
       sent.current = key;
-      void engine().execute({ type: 'setViewportFocus', viewport, layers });
+      // `viewport` is the window's local id (windowViewport.ts).
+      withEngineViewport(viewport, (id) => { void engine().execute({ type: 'setViewportFocus', viewport: id, layers }); });
     };
     sync();
     // A layer created inside the focused group joins the working set.
@@ -36,7 +38,7 @@ export function useEngineFocus(viewport: number): void {
     () => () => {
       if (!sent.current) return;
       sent.current = '';
-      void engine().execute({ type: 'setViewportFocus', viewport, layers: [] });
+      withEngineViewport(viewport, (id) => { void engine().execute({ type: 'setViewportFocus', viewport: id, layers: [] }); });
     },
     [viewport],
   );

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <functional>
 #include <set>
 
@@ -16,6 +17,7 @@
 #include "engine_ctx.hpp"
 #include "fail.hpp"
 #include "fxstate.hpp"
+#include "jobs/job_inputs.hpp"
 #include "jsmath.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
@@ -1505,6 +1507,49 @@ RestoreResult restore_document(Document& d, EditorView& v, const Json& input, co
   nd.transitions_mut() = truthy(doc.at("transitions")) ? doc.at("transitions") : d.transitions();
   d = std::move(nd);
   return result;
+}
+
+std::vector<std::string> relink_missing_footage(Document& d, Ports& ports, std::string_view bundleRoot,
+                                                const std::vector<std::string>& missing) {
+  if (missing.empty() || !ports.has_import()) return missing;
+  std::vector<std::string> still;
+  Items& items = d.items_mut();
+  for (const std::string& id : missing) {
+    const auto it = std::find_if(items.assets.begin(), items.assets.end(), [&id](const Json& a) {
+      return a.at("id").is_string() && a.at("id").str() == id;
+    });
+    if (it == items.assets.end() || !it->at("path").is_string() || it->at("path").str().empty()) {
+      still.push_back(id);
+      continue;
+    }
+    // The recorded path as a file: absolute as saved, or inside the project's bundle.
+    const std::string file = jobs::resolve_footage_path(it->at("path").str(), bundleRoot);
+    std::error_code ec;
+    if (file.empty() || !std::filesystem::is_regular_file(std::filesystem::path(std::u8string(file.begin(), file.end())), ec)) {
+      still.push_back(id);
+      continue;
+    }
+    std::optional<Json> probed;
+    try {
+      api::ImportFile f;
+      f.path = file;
+      probed = ports.import_file(f, id);
+    } catch (const EngineFail&) {
+      // Unreadable (a codec this build cannot open, a locked file): it stays a placeholder.
+    }
+    if (!probed) {
+      still.push_back(id);
+      continue;
+    }
+    // The probe's facts and live source under what the document says about the item.
+    Json next = *probed;
+    for (const char* key : {"name", "folderId", "interpret", "label", "tags", "comment", "path"}) {
+      if (!nullish(it->at(key))) next.set(key, it->at(key));
+    }
+    next.set("id", Json::string(id));
+    *it = std::move(next);
+  }
+  return still;
 }
 
 }  // namespace premation::doc

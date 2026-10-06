@@ -342,20 +342,25 @@ export class Workspace implements InputSink {
   // ── Grid / guides / snapping (public API) ────────────────────────
   setGrid(patch: Partial<GridState>): void {
     this.grid.setState(patch);
+    this.dragSnapCache = null;  // the grid lines are snap targets
     this.events.emit('GridChanged', { grid: this.grid.getState() });
     this.renderer.markDirty();
   }
 
   addGuide(axis: GuideAxis, worldPosition: number): Guide {
+    this.dragSnapCache = null;
     return this.guides.add(axis, worldPosition);
   }
 
   removeGuide(id: string): boolean {
+    this.dragSnapCache = null;
     return this.guides.remove(id);
   }
 
   setSnap(patch: Partial<SnapSettings>): void {
     this.snap.setSettings(patch);
+    // Turning a snap kind on or off changes the targets: never answer from the old ones.
+    this.dragSnapCache = null;
   }
 
   /**
@@ -437,6 +442,8 @@ export class Workspace implements InputSink {
 
   // ── InputSink: hover + tool routing + reconcile ──────────────────
   onPointerDown(e: PointerInput): void {
+    // A new gesture: other layers may be moving now (and others still); never reuse the last drag's snap targets.
+    this.dragSnapCache = null;
     this.tools.onPointerDown(e);
     this.reconcile();
   }

@@ -1,3 +1,5 @@
+import { t } from '@core/i18n/t';
+
 export interface PlanIntentPlan {
   id: string;
   name: string;
@@ -92,6 +94,86 @@ export function confirmPlanChange(
     default:
       return null;
   }
+}
+
+/** The server's verdict on refunding the last payment (`BillingSummary.refund`). */
+export interface RefundState {
+  eligible: boolean;
+  deadline: string | null;
+  amountLabel: string | null;
+  reason: string | null;
+}
+
+export type CancelDialogCopy =
+  | {
+      /** Yearly inside the window: refund now, or keep access to the period end. */
+      mode: 'choice';
+      title: string;
+      message: string;
+      refundLabel: string;
+      periodEndLabel: string;
+      keepLabel: string;
+    }
+  | {
+      /** One confirm, with the sentence that says why there is no refund. */
+      mode: 'confirm';
+      title: string;
+      message: string;
+      confirmLabel: string;
+    };
+
+/**
+ * What the cancel dialog says, from the server's refund verdict. The window,
+ * the amount and the eligibility are all the server's; this only picks the
+ * sentence — so the dialog can never promise a refund the server will refuse.
+ */
+export function cancelDialogCopy(
+  refund: RefundState | undefined,
+  periodEnd: string | null,
+): CancelDialogCopy {
+  const date = periodEnd ? new Date(periodEnd).toLocaleDateString() : t('billing.cancel.periodEndFallback', 'the end of the current period');
+  const title = t('billing.cancel.title', 'Cancel subscription?');
+  if (refund?.eligible) {
+    const amount = refund.amountLabel ?? '';
+    const deadline = refund.deadline ? new Date(refund.deadline).toLocaleDateString() : date;
+    return {
+      mode: 'choice',
+      title,
+      message: t(
+        'billing.cancel.refundAvailable',
+        'Refund available until {deadline}. Refund now and your access to Premation Cloud ends immediately, or cancel at the period end and keep access until {date}. Your projects are never deleted.',
+        { deadline, date },
+      ),
+      refundLabel: t('billing.cancel.refundNow', 'Cancel and refund {amount} — access ends now', { amount }),
+      periodEndLabel: t('billing.cancel.atPeriodEnd', 'Cancel at period end — keep access until {date}', { date }),
+      keepLabel: t('billing.cancel.keepPlan', 'Keep my plan'),
+    };
+  }
+  let message: string;
+  switch (refund?.reason) {
+    case 'not_yearly':
+      message = t('billing.cancel.notYearly', 'Monthly plans are not refunded. You keep access until {date}.', { date });
+      break;
+    case 'window_passed': {
+      const deadline = refund?.deadline ? new Date(refund.deadline).toLocaleDateString() : '';
+      message = t(
+        'billing.cancel.windowPassed',
+        'The 14-day refund window ended on {deadline}. You keep access until {date}.',
+        { deadline, date },
+      );
+      break;
+    }
+    case 'already_refunded':
+      message = t('billing.cancel.alreadyRefunded', 'This payment was already refunded.');
+      break;
+    default:
+      message = t(
+        'billing.cancel.plain',
+        "You'll keep paid access until {date}, then the account moves to Free. API keys stop working after that date.",
+        { date },
+      );
+  }
+  return { mode: 'confirm', title, message, confirmLabel: t('billing.cancel.confirm', 'Cancel subscription') };
 }
 
 function shortInterval(interval: string): string {

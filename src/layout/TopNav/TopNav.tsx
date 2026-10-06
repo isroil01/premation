@@ -113,15 +113,15 @@ const PEN_TOOLS: ToolDef[] = [
   { id: 'brush',    icon: 'brush',      label: 'Brush Tool (pressure ink)' },
   // Split out of the Brush, which used to turn into this on its own whenever
   // the pointer happened to land on the selected layer.
-  { id: 'paint',    icon: 'brush',      label: 'Paint Tool (paints onto the selected layer)' },
+  { id: 'paint',    icon: 'paint',      label: 'Paint Tool (paints onto the selected layer)' },
   { id: 'eraser',   icon: 'eraser',     label: 'Eraser Tool (erases paint on the selected layer)' },
   { id: 'curvature',icon: 'curvature',  label: 'Curvature Pen' },
   // AE's Pen flyout. The Pen does all three on its own (over a segment it
   // adds, over a vertex it converts); these do one thing wherever they land.
-  { id: 'add-vertex',     icon: 'plus',   label: 'Add Vertex Tool' },
-  { id: 'delete-vertex',  icon: 'minus',  label: 'Delete Vertex Tool' },
-  { id: 'convert-vertex', icon: 'ease',   label: 'Convert Vertex Tool' },
-  { id: 'mask-feather',   icon: 'blur',   label: 'Mask Feather Tool (variable feather points)' },
+  { id: 'add-vertex',     icon: 'add-vertex',     label: 'Add Vertex Tool' },
+  { id: 'delete-vertex',  icon: 'delete-vertex',  label: 'Delete Vertex Tool' },
+  { id: 'convert-vertex', icon: 'convert-vertex', label: 'Convert Vertex Tool' },
+  { id: 'mask-feather',   icon: 'mask-feather',   label: 'Mask Feather Tool (variable feather points)' },
 ];
 
 /**
@@ -146,7 +146,7 @@ const PEN_TOOLS: ToolDef[] = [
  */
 const KNIFE_FLYOUT = {
   tool: 'knife' as Tool,
-  icon: 'scissors' as IconName,
+  icon: 'knife' as IconName,
   label: 'Knife Tool — drag across a shape to cut its path',
 };
 
@@ -866,6 +866,16 @@ export function TopNav(): JSX.Element {
             )}
           </div>
 
+          {/*
+            The active tool's options, in the tool row itself — where After
+            Effects puts them. They used to be a second row under this one that
+            was kept (empty) even for a tool with no options, so the viewport
+            would not jump when a tool with options was picked; that reserved a
+            blank band across the whole window most of the time. Inline, there
+            is no second row to reserve and nothing below moves.
+          */}
+          <ToolOptionsBar inline />
+
           {/* Centre: project / comp / workspace. On Windows / Linux the title
               bar carries these; the macOS toolbar and the web build have
               nowhere else to put them. */}
@@ -897,7 +907,6 @@ export function TopNav(): JSX.Element {
           </div>
 
           <div className={styles.right}>
-            {!mac && <span className={styles.toolHint}>{activeTool}</span>}
             {/* macOS: the actions the Windows / Linux title bar holds, in the
                 same order. No gear — Settings… is in the app menu (⌘,). */}
             {mac && (
@@ -935,7 +944,6 @@ export function TopNav(): JSX.Element {
           </div>
         </div>
       </div>
-      <ToolOptionsBar />
     </div>
   );
 }

@@ -47,7 +47,7 @@ describe('ReadOnlyBanner', () => {
     });
     renderBanner();
     expect(screen.queryByRole('button', { name: 'Subscribe' })).not.toBeInTheDocument();
-    expect(screen.getByText(/Pro subscriptions are paused/)).toBeInTheDocument();
+    expect(screen.getByText(/Premation Cloud subscriptions are paused/)).toBeInTheDocument();
     expect(screen.getByText(/export keeps working/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Export .motion' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'View plan' })).toBeInTheDocument();
@@ -59,5 +59,40 @@ describe('ReadOnlyBanner', () => {
     useEntitlementStore.setState({ access: trialEnded, message: sentence, salesOpen: false });
     renderBanner();
     expect(screen.getByText(sentence)).toBeInTheDocument();
+  });
+});
+
+describe('ReadOnlyBanner — project past the Free allowance', () => {
+  afterEach(() => useEntitlementStore.getState().reset());
+
+  const freeAccess = {
+    read: true,
+    write: true,
+    reason: 'free' as const,
+    daysRemaining: null,
+    writeEndsAt: null,
+  };
+  const sentence =
+    "This project is past the Free plan's 5 cloud projects, so it is read-only. Upgrade to Premation Cloud, or use Save As to keep working on it as a local file.";
+
+  it('stays hidden for a free account whose open project is inside the allowance', () => {
+    useEntitlementStore.setState({ access: freeAccess, projectLimit: null, salesOpen: true });
+    renderBanner();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('says why and offers Upgrade and export when the open project is past it', () => {
+    useEntitlementStore.setState({ access: freeAccess, projectLimit: sentence, salesOpen: true });
+    renderBanner();
+    expect(screen.getByText(sentence)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Upgrade' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Export .motion' })).toBeInTheDocument();
+  });
+
+  it('does not point at a closed checkout while sales are paused', () => {
+    useEntitlementStore.setState({ access: freeAccess, projectLimit: sentence, salesOpen: false });
+    renderBanner();
+    expect(screen.queryByRole('button', { name: 'Upgrade' })).not.toBeInTheDocument();
+    expect(screen.getByText(/subscriptions are paused/)).toBeInTheDocument();
   });
 });

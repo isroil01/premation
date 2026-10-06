@@ -6,7 +6,7 @@
  *   • AI Engine — provider keys and model configuration (when AI edition is active)
  */
 
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { cn } from '@utils/cn';
 import { Button } from '@components/Button';
 import { Input } from '@components/Input';
@@ -60,7 +60,24 @@ interface Row {
   label: string;
   chord: KeyChord | undefined;
   overridden: boolean;
+  /** `getCommandCategory`, computed once per row rather than per render. */
+  category: { key: string; label: string };
+  /** Lower-cased label + id + chord: what the search box matches against. */
+  haystack: string;
 }
+
+/** Rows rendered on the first paint of the Shortcuts tab (about two screens). */
+const FIRST_PAINT_ROWS = 40;
+
+const CATEGORIES = [
+  { id: 'all', label: 'All Commands' },
+  { id: 'tools', label: 'Tools' },
+  { id: 'timeline', label: 'Timeline' },
+  { id: 'edit', label: 'Edit' },
+  { id: 'layer', label: 'Layers' },
+  { id: 'view', label: 'View' },
+  { id: 'file', label: 'File' },
+] as const;
 
 function getCommandCategory(id: string, label: string): { key: string; label: string } {
   const lowerId = id.toLowerCase();
@@ -100,31 +117,158 @@ function renderChordKeys(chord: KeyChord | undefined): JSX.Element {
   );
 }
 
+interface ShortcutRowProps {
+  row: Row;
+  recording: boolean;
+  /** Label of the command this row's last recording clashed with, if any. */
+  conflictWith: string | null;
+  onRecord: (id: string) => void;
+  onReset: (id: string) => void;
+  onDisable: (id: string) => void;
+}
+
+/**
+ * One command. Memoised: recording or rebinding one shortcut re-renders that
+ * row, not all ~260 of them (each with three or four icons).
+ */
+const ShortcutRow = memo(function ShortcutRow({
+  row: r,
+  recording: isRec,
+  conflictWith,
+  onRecord,
+  onReset,
+  onDisable,
+}: ShortcutRowProps): JSX.Element {
+  return (
+    <div className={cn(styles.shortcutRow, isRec && styles.shortcutRowRecording)}>
+      <div className={styles.colCommand}>
+        <span className={styles.commandLabel}>{r.label}</span>
+        {conflictWith !== null ? (
+          <span className={styles.conflictBadge}>
+            <Icon name="warning" size="sm" />
+            <span>Conflict with “{conflictWith}”</span>
+          </span>
+        ) : null}
+      </div>
+
+      <div className={styles.colCategory}>
+        <span className={styles.categoryTag}>{r.category.label}</span>
+      </div>
+
+      <div className={styles.colKey}>
+        {isRec ? (
+          <div className={cn(styles.shortcutChip, styles.shortcutRecording)}>
+            <span className={styles.recordingPulse} />
+            <span className={styles.recordingText}>Press keys now…</span>
+            <span className={styles.escBadge}>Esc to cancel</span>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className={cn(
+              styles.shortcutChip,
+              r.overridden && styles.shortcutOverridden,
+              !r.chord && styles.shortcutEmpty,
+            )}
+            onClick={() => onRecord(r.id)}
+            title="Click to assign or rebind shortcut"
+          >
+            {renderChordKeys(r.chord)}
+          </button>
+        )}
+      </div>
+
+      <div className={styles.colActions}>
+        <button
+          type="button"
+          className={styles.rowActionBtn}
+          title={r.chord ? 'Edit shortcut' : 'Add shortcut'}
+          aria-label={r.chord ? 'Edit shortcut' : 'Add shortcut'}
+          onClick={() => onRecord(r.id)}
+        >
+          <Icon name={r.chord ? 'pencil' : 'plus'} size="sm" />
+        </button>
+
+        {r.overridden ? (
+          <button
+            type="button"
+            className={styles.rowActionBtn}
+            title="Reset to default binding"
+            aria-label="Reset to default binding"
+            onClick={() => onReset(r.id)}
+          >
+            <Icon name="refresh" size="sm" />
+          </button>
+        ) : null}
+
+        {r.chord ? (
+          <button
+            type="button"
+            className={cn(styles.rowActionBtn, styles.rowActionDelete)}
+            title="Delete shortcut"
+            aria-label="Delete shortcut"
+            onClick={() => onDisable(r.id)}
+          >
+            <Icon name="trash" size="sm" />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+});
+
 /** Exported so its empty state can be asserted without opening the modal. */
 export function ShortcutsTab(): JSX.Element {
-  ensureCommandsRegistered();
-  const [, force] = useState(0);
+  // Bumped after every rebind/reset; the one input the rows depend on that is
+  // not React state (the overrides live in persisted settings).
+  const [version, setVersion] = useState(0);
   const [recording, setRecording] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ id: string; withId: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('all');
+  // Typing stays responsive: the list filters at a lower priority than the input.
+  const deferredQuery = useDeferredValue(searchQuery);
 
-  const overrides = getShortcutOverrides();
-  const commands = getCommandRegistry().all();
+  // Registration and the registry snapshot happen once per mount, not on every
+  // render (the registry is static outside the editor).
+  const commands = useMemo(() => {
+    ensureCommandsRegistered();
+    return getCommandRegistry().all();
+  }, []);
+
   const rows: Row[] = useMemo(() => {
-    return commands
-      .filter((c) => Boolean(c.label))
-      .map((c) => ({
-        id: c.id as unknown as string,
+    // Re-read only when an edit bumped `version`: this parses persisted
+    // settings, and it used to run — and rebuild every row — on each keystroke.
+    void version;
+    const overrides = getShortcutOverrides();
+    const out: Row[] = [];
+    for (const c of commands) {
+      if (!c.label) continue;
+      const id = c.id as unknown as string;
+      const chord = resolveChord(id, c.shortcut, overrides);
+      out.push({
+        id,
         label: c.label,
-        chord: resolveChord(c.id as unknown as string, c.shortcut, overrides),
-        overridden: (c.id as unknown as string) in overrides,
-      }));
-  }, [commands, overrides]);
+        chord,
+        overridden: id in overrides,
+        category: getCommandCategory(id, c.label),
+        haystack: `${c.label}\n${id}\n${chord ? formatChord(chord) : ''}`.toLowerCase(),
+      });
+    }
+    return out;
+  }, [commands, version]);
 
+  const labels = useMemo(() => new Map(rows.map((r) => [r.id, r.label] as const)), [rows]);
+
+  // Read by the key listener at the moment a chord is recorded, so the
+  // callbacks below stay stable and the memoised rows are not re-rendered.
   const resolved = useMemo(() => rows.map((r) => ({ commandId: r.id, chord: r.chord })), [rows]);
+  const resolvedRef = useRef(resolved);
+  resolvedRef.current = resolved;
 
-  const beginRecord = (id: string): void => {
+  const bump = useCallback(() => setVersion((n) => n + 1), []);
+
+  const beginRecord = useCallback((id: string): void => {
     setConflict(null);
     setRecording(id);
     const onKey = (e: KeyboardEvent): void => {
@@ -135,62 +279,52 @@ export function ShortcutsTab(): JSX.Element {
       setRecording(null);
       if (e.key === 'Escape') return;
       const chord = chordFromEvent(e);
-      const clash = findChordConflict(chord, id, resolved);
+      const clash = findChordConflict(chord, id, resolvedRef.current);
       if (clash) {
         setConflict({ id, withId: clash });
         return;
       }
       setShortcutOverride(id, chord);
       getShortcutManager().applyOverrides();
-      force((n) => n + 1);
+      bump();
     };
     window.addEventListener('keydown', onKey, true);
-  };
+  }, [bump]);
 
-  const disable = (id: string): void => {
+  const disable = useCallback((id: string): void => {
     setShortcutOverride(id, null);
     getShortcutManager().applyOverrides();
-    force((n) => n + 1);
-  };
+    bump();
+  }, [bump]);
 
-  const reset = (id: string): void => {
+  const reset = useCallback((id: string): void => {
     clearShortcutOverride(id);
     getShortcutManager().applyOverrides();
-    force((n) => n + 1);
-  };
+    bump();
+  }, [bump]);
 
   const resetAll = (): void => {
     clearAllShortcutOverrides();
     getShortcutManager().applyOverrides();
     setConflict(null);
-    force((n) => n + 1);
+    bump();
   };
 
-  const labelFor = (id: string): string =>
-    getCommandRegistry().all().find((c) => (c.id as unknown as string) === id)?.label ?? id;
+  const filteredRows = useMemo(() => {
+    const q = deferredQuery.toLowerCase().trim();
+    return rows.filter(
+      (r) => (activeCategory === 'all' || r.category.key === activeCategory) && (!q || r.haystack.includes(q)),
+    );
+  }, [rows, deferredQuery, activeCategory]);
 
-  const CATEGORIES = [
-    { id: 'all', label: 'All Commands' },
-    { id: 'tools', label: 'Tools' },
-    { id: 'timeline', label: 'Timeline' },
-    { id: 'edit', label: 'Edit' },
-    { id: 'layer', label: 'Layers' },
-    { id: 'view', label: 'View' },
-    { id: 'file', label: 'File' },
-  ];
-
-  const filteredRows = rows.filter((r) => {
-    const cat = getCommandCategory(r.id, r.label);
-    const matchesCat = activeCategory === 'all' || cat.key === activeCategory;
-    const q = searchQuery.toLowerCase().trim();
-    if (!q) return matchesCat;
-    const chordStr = r.chord ? formatChord(r.chord).toLowerCase() : '';
-    const matchesSearch =
-      r.label.toLowerCase().includes(q) ||
-      r.id.toLowerCase().includes(q) ||
-      chordStr.includes(q);
-    return matchesCat && matchesSearch;
-  });
+  // First screenful now, the rest right after: opening Preferences paints a
+  // page of rows immediately instead of blocking on all ~260, and the rest
+  // mount in a transition the browser can interrupt.
+  const [allRows, setAllRows] = useState(false);
+  useEffect(() => {
+    startTransition(() => setAllRows(true));
+  }, []);
+  const shownRows = allRows ? filteredRows : filteredRows.slice(0, FIRST_PAINT_ROWS);
 
   return (
     <div className={styles.tabBody}>
@@ -247,88 +381,17 @@ export function ShortcutsTab(): JSX.Element {
               }
             />
           ) : (
-            filteredRows.map((r) => {
-              const cat = getCommandCategory(r.id, r.label);
-              const isRec = recording === r.id;
-              const hasConflict = conflict?.id === r.id;
-
-              return (
-                <div key={r.id} className={cn(styles.shortcutRow, isRec && styles.shortcutRowRecording)}>
-                  <div className={styles.colCommand}>
-                    <span className={styles.commandLabel}>{r.label}</span>
-                    {hasConflict ? (
-                      <span className={styles.conflictBadge}>
-                        <Icon name="warning" size="sm" />
-                        <span>Conflict with “{labelFor(conflict.withId)}”</span>
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <div className={styles.colCategory}>
-                    <span className={styles.categoryTag}>{cat.label}</span>
-                  </div>
-
-                  <div className={styles.colKey}>
-                    {isRec ? (
-                      <div className={cn(styles.shortcutChip, styles.shortcutRecording)}>
-                        <span className={styles.recordingPulse} />
-                        <span className={styles.recordingText}>Press keys now…</span>
-                        <span className={styles.escBadge}>Esc to cancel</span>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className={cn(
-                          styles.shortcutChip,
-                          r.overridden && styles.shortcutOverridden,
-                          !r.chord && styles.shortcutEmpty,
-                        )}
-                        onClick={() => beginRecord(r.id)}
-                        title="Click to assign or rebind shortcut"
-                      >
-                        {renderChordKeys(r.chord)}
-                      </button>
-                    )}
-                  </div>
-
-                  <div className={styles.colActions}>
-                    <button
-                      type="button"
-                      className={styles.rowActionBtn}
-                      title={r.chord ? 'Edit shortcut' : 'Add shortcut'}
-                      aria-label={r.chord ? 'Edit shortcut' : 'Add shortcut'}
-                      onClick={() => beginRecord(r.id)}
-                    >
-                      <Icon name={r.chord ? 'pencil' : 'plus'} size="sm" />
-                    </button>
-
-                    {r.overridden ? (
-                      <button
-                        type="button"
-                        className={styles.rowActionBtn}
-                        title="Reset to default binding"
-                        aria-label="Reset to default binding"
-                        onClick={() => reset(r.id)}
-                      >
-                        <Icon name="refresh" size="sm" />
-                      </button>
-                    ) : null}
-
-                    {r.chord ? (
-                      <button
-                        type="button"
-                        className={cn(styles.rowActionBtn, styles.rowActionDelete)}
-                        title="Delete shortcut"
-                        aria-label="Delete shortcut"
-                        onClick={() => disable(r.id)}
-                      >
-                        <Icon name="trash" size="sm" />
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })
+            shownRows.map((r) => (
+              <ShortcutRow
+                key={r.id}
+                row={r}
+                recording={recording === r.id}
+                conflictWith={conflict?.id === r.id ? (labels.get(conflict.withId) ?? conflict.withId) : null}
+                onRecord={beginRecord}
+                onReset={reset}
+                onDisable={disable}
+              />
+            ))
           )}
         </div>
       </div>

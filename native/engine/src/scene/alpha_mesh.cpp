@@ -20,6 +20,9 @@ using mesh::Pt2;
 
 constexpr std::size_t kMaxVertices = 65535;  // MAX_VERTICES
 constexpr std::size_t kMaxPoints = 2600;     // MAX_POINTS
+/// The share of a region its kept triangles must cover (a triangulation that
+/// falls short would leave part of the picture undrawn).
+constexpr double kMinRegionCoverage = 0.97;
 constexpr double kMaskThreshold = 128;       // MASK_THRESHOLD
 constexpr double kMiterLimit = 3;            // MITER_LIMIT
 constexpr double kEdgeProbeInset = 0.05;     // EDGE_PROBE_INSET
@@ -313,16 +316,31 @@ std::optional<std::vector<std::int32_t>> delaunay(const std::vector<double>& px,
 struct Triangulated {
   std::vector<Pt2> pts;
   std::vector<std::int32_t> tris;
+  /// The area the kept triangles cover (layer px²).
+  double keptArea = 0;
 };
 struct OverBudget {};
 
+/// The region's own area: its outline less its holes.
+double region_area(const AlphaRegion& region) {
+  double a = std::abs(mesh::signed_area(region.outer));
+  for (const auto& h : region.holes) a -= std::abs(mesh::signed_area(h));
+  return std::max(0.0, a);
+}
+
 /// triangulateRegion: boundary + hex lattice, Delaunay, clipped back to the region.
-std::variant<std::monostate, OverBudget, Triangulated> triangulate_region(const AlphaRegion& region, double spacing) {
+/// The boundary is sampled every `edge` px (≤ `spacing`, the lattice's): an
+/// unconstrained Delaunay keeps the outline's own edges only where it is sampled
+/// finely against the region's narrowest gaps. Sampled at the lattice spacing, the
+/// triangles across a notch (the gap between an arm and the body) were rejected
+/// and nothing took their place — a straight-edged piece of the picture went
+/// undrawn. `keptArea` lets the caller see a region that still came out short.
+std::variant<std::monostate, OverBudget, Triangulated> triangulate_region(const AlphaRegion& region, double spacing, double edge) {
   std::vector<const std::vector<Pt2>*> rings{&region.outer};
   for (const auto& h : region.holes) rings.push_back(&h);
   std::vector<Pt2> pts;
   for (const auto* r : rings) {
-    const std::vector<Pt2> rs = resample_ring(*r, spacing);
+    const std::vector<Pt2> rs = resample_ring(*r, edge);
     pts.insert(pts.end(), rs.begin(), rs.end());
   }
   if (pts.size() < 3) return std::monostate{};
@@ -377,13 +395,15 @@ std::variant<std::monostate, OverBudget, Triangulated> triangulate_region(const 
     const Pt2 a = pts[static_cast<std::size_t>((*idx)[t])];
     const Pt2 b = pts[static_cast<std::size_t>((*idx)[t + 1])];
     const Pt2 c = pts[static_cast<std::size_t>((*idx)[t + 2])];
-    if (std::abs(cross2(a.x, a.y, b.x, b.y, c.x, c.y)) / 2 < minTriArea) continue;
+    const double area = std::abs(cross2(a.x, a.y, b.x, b.y, c.x, c.y)) / 2;
+    if (area < minTriArea) continue;
     const Pt2 centroid{(a.x + b.x + c.x) / 3, (a.y + b.y + c.y) / 3};
     if (!inside_region(centroid, region)) continue;
     if (!inside_region(edge_probe(a, b, centroid), region)) continue;
     if (!inside_region(edge_probe(b, c, centroid), region)) continue;
     if (!inside_region(edge_probe(c, a, centroid), region)) continue;
     out.tris.insert(out.tris.end(), {(*idx)[t], (*idx)[t + 1], (*idx)[t + 2]});
+    out.keptArea += area;
   }
   if (out.tris.size() < 3) return std::monostate{};
   out.pts = std::move(pts);
@@ -543,13 +563,25 @@ std::optional<AlphaMeshGeometry> build_alpha_outline_geometry(double width, doub
   const std::vector<AlphaRegion> regions = alpha_outline_regions(mask, width, height, expansion);
   if (regions.empty()) return std::nullopt;
   const double base = density_to_spacing(width, height, density);
+  // The outline is sampled against the mask's own cells (the narrowest gap it can
+  // hold is about one), never coarser than the lattice.
+  const double cell = std::min(width / std::max(1, mask.cols), height / std::max(1, mask.rows));
   for (int attempt = 0; attempt < 4; ++attempt) {
     const double spacing = base * mjs::pow(1.6, attempt);
+    const double edge = std::min(spacing, std::max(1.0, cell * 0.75));
     std::vector<Pt2> verts;
     std::vector<std::int32_t> tris;
     bool ok = true;
     for (const AlphaRegion& region : regions) {
-      auto r = triangulate_region(region, spacing);
+      auto r = triangulate_region(region, spacing, edge);
+      // A region whose triangles do not cover it would drop that part of the
+      // picture: once more with the outline sampled twice as finely, then the
+      // whole mesh falls back to the covered grid (resolve_rest_mesh).
+      const double need = region_area(region) * kMinRegionCoverage;
+      if (const auto* tr0 = std::get_if<Triangulated>(&r); tr0 != nullptr && tr0->keptArea < need) {
+        r = triangulate_region(region, spacing, edge * 0.5);
+        if (const auto* tr1 = std::get_if<Triangulated>(&r); tr1 != nullptr && tr1->keptArea < need) return std::nullopt;
+      }
       if (std::holds_alternative<OverBudget>(r)) {
         ok = false;
         break;

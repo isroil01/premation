@@ -34,6 +34,9 @@
 namespace premation::scene {
 namespace {
 
+/// An animated SVG's samples per second of source time (svg_ref).
+constexpr double kSvgSamplesPerSecond = 60;
+
 std::uint64_t fnv1a(std::string_view s, std::uint64_t h = 0xcbf29ce484222325ULL) {
   for (const char c : s) {
     h ^= static_cast<std::uint8_t>(c);
@@ -477,7 +480,9 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   }
   std::filesystem::path p = file_url_path(r.src);
   if (p.is_relative() && !opts_.mediaBase.empty()) p = opts_.mediaBase / p;
-  if (is_still_image_path(p)) return baked_still(image_ref(r, p, stats));
+  // An animated GIF / WebP imported as footage that moves (the probe's `video`)
+  // is decoded frame by frame like any video; as a still, its first frame.
+  if (is_still_image_path(p) && !r.video) return baked_still(image_ref(r, p, stats));
 #if defined(PREMATION_HAVE_MEDIA)
   if (media_ == nullptr) return {};
   const std::string key = p.lexically_normal().string();
@@ -890,40 +895,52 @@ std::string SceneTextures::svg_ref(const TextureRequest& r, PrepareStats& stats)
   if (!r.src.starts_with("data:")) {
     std::filesystem::path p = file_url_path(r.src);
     if (p.is_relative() && !opts_.mediaBase.empty()) p = opts_.mediaBase / p;
-    path = p.lexically_normal().string();
+    const std::u8string u8 = p.lexically_normal().u8string();
+    path.assign(u8.begin(), u8.end());
     const FileStamp st = file_stamp(p);
     std::array<char, 48> tail{};
     std::snprintf(tail.data(), tail.size(), "|%llu|%llu", static_cast<unsigned long long>(st.size),  // NOLINT(cppcoreguidelines-pro-type-vararg)
                   static_cast<unsigned long long>(st.modified));
     h = fnv1a(tail.data(), fnv1a(path, h));
   }
-  std::string hash = "img:svg:" + hex64(h);
-  if (const auto oe = openErrors_.find(hash); oe != openErrors_.end()) {
+  const std::string doc = "img:svg:" + hex64(h);
+  if (const auto oe = openErrors_.find(doc); oe != openErrors_.end()) {
     stats.unsupported.emplace_back(r.key, "SVG did not render: " + oe->second);
     return {};
   }
-  if (const std::shared_ptr<const RasterEntry> hit = find(hash)) {
-    ++stats.rasterHits;
-    for (const std::string& u : hit->unsupported) stats.unsupported.emplace_back(r.key, "SVG: " + u);
-    return hash;
+  // An animated SVG (SMIL / CSS) is drawn at the layer's source time, sampled
+  // 60 times a second, each sample its own entry; a static one is one entry.
+  const long long frame = std::llround(std::max(0.0, r.sourceTime) * kSvgSamplesPerSecond);
+  const double time = static_cast<double>(frame) / kSvgSamplesPerSecond;
+  const auto keyFor = [&doc, frame](bool animated) { return animated ? doc + "@" + std::to_string(frame) : doc; };
+  const auto known = svgAnimated_.find(doc);
+  if (known != svgAnimated_.end()) {
+    const std::string key = keyFor(known->second);
+    if (const std::shared_ptr<const RasterEntry> hit = find(key)) {
+      ++stats.rasterHits;
+      for (const std::string& u : hit->unsupported) stats.unsupported.emplace_back(r.key, "SVG: " + u);
+      return key;
+    }
   }
   const auto t0 = std::chrono::steady_clock::now();
-  raster::RasterOutput out = rasterize_svg_src(r.src, r.fill, path);
+  raster::RasterOutput out = rasterize_svg_src(r.src, r.fill, path, time);
   stats.rasterMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   ++stats.rasterMisses;
   if (!out.ok) {
-    openErrors_.emplace(hash, out.error);
+    openErrors_.emplace(doc, out.error);
     stats.unsupported.emplace_back(r.key, "SVG did not render: " + out.error);
     return {};
   }
+  svgAnimated_[doc] = out.animated;
   for (const std::string& u : out.unsupported) stats.unsupported.emplace_back(r.key, "SVG: " + u);
   auto e = std::make_shared<RasterEntry>();
   e->width = out.width;
   e->height = out.height;
   e->rgba = std::move(out.rgba);
   e->unsupported = std::move(out.unsupported);
-  insert(hash, std::move(e));
-  return hash;
+  std::string key = keyFor(out.animated);
+  insert(key, std::move(e));
+  return key;
 }
 
 }  // namespace premation::scene

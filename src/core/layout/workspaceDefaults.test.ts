@@ -25,10 +25,10 @@ const permanent = (region: RegionId): string[] =>
   PANEL_DEFS.filter((d) => d.region === region && !d.onDemand).map((d) => d.id);
 
 describe('the permanent panel sets', () => {
-  it('are Layers, Assets, Library, AI on the left and Properties, Effects, Presets, Plugins, Audio on the right', () => {
-    expect(permanent('leftSidebar')).toEqual(['scene', 'assets', 'library', 'ai']);
-    expect(permanent('rightInspector')).toEqual(['properties', 'effects', 'presets', 'plugins', 'audio']);
-    expect(PANEL_DEFS.find((d) => d.id === 'assets')?.title).toBe('Assets');
+  it('are Project, Effect Controls, Layers on the left and Properties, Preview, Effects, Presets, Plugins, Align, Audio, Assistant on the right', () => {
+    expect(permanent('leftSidebar')).toEqual(['assets', 'effectControls', 'scene']);
+    expect(permanent('rightInspector')).toEqual(['properties', 'preview', 'effects', 'presets', 'plugins', 'align', 'audio', 'ai']);
+    expect(PANEL_DEFS.find((d) => d.id === 'assets')?.title).toBe('Project');
   });
 
   it('Default lists exactly those, in rail order', () => {

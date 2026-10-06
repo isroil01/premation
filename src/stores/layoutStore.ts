@@ -21,12 +21,19 @@ import { clamp } from '@utils/lang';
 const PANEL_ORDER_SETTINGS_KEY = 'layout.panelOrder';
 
 /**
- * Width of a collapsed sidebar: exactly the dock rail (`--dock-rail-width` in
- * tokens/spacing.css), so collapsing hides the content pane and moves no icon.
- * EditorLayout sizes the collapsed pane with this; `setRegionSize` treats any
- * drag past it as the user pulling the sidebar open again.
+ * Width of a closed sidebar: a thin EDGE with a grip (`--dock-rail-width` in
+ * tokens/spacing.css — the two must agree). A closed sidebar is hidden, the
+ * way After Effects closes a panel group; it used to stay as a 56px icon rail,
+ * which read as a second, different sidebar. EditorLayout sizes the closed
+ * pane with this.
  */
-export const COLLAPSED_SIDEBAR_SIZE = 56;
+export const COLLAPSED_SIDEBAR_SIZE = 8;
+/**
+ * How far the divider of a closed sidebar must be dragged before it opens
+ * again. Well past the edge's own width, so resting the pointer on the edge —
+ * or a one-pixel wobble while clicking it — is not a drag-open.
+ */
+const SIDEBAR_DRAG_OPEN_THRESHOLD = 40;
 const LAYOUT_PERSIST_KEY = 'motion-editor.layout.v1';
 
 /**
@@ -35,8 +42,15 @@ const LAYOUT_PERSIST_KEY = 'motion-editor.layout.v1';
  *
  * 3: Effects, Presets and Plugins moved to permanent right-inspector tabs.
  * 4: Layers hosts Compositions and is permanent on the left sidebar; Project renamed to Assets.
+ * 5: The inspector is a stack of bars; Preview and Align are permanent in it. Assets is
+ *    Project again, first on the left, and lists the compositions above the media.
+ * 6: The left group is Project + Effect Controls; Layers and Library are on demand; the
+ *    assistant is the last bar on the right.
+ * 7: Layers is permanent on the left again (it is where the compositions are listed).
+ * 8: The Render Queue is a tab of the timeline panel (timelinePanelStore), no longer a dock
+ *    panel — a saved order that still lists it is dropped.
  */
-export const LAYOUT_SCHEMA_VERSION = 4;
+export const LAYOUT_SCHEMA_VERSION = 8;
 
 // ── Persistence helpers ───────────────────────────────────────────
 export interface PersistedLayout {
@@ -518,7 +532,7 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       set((s) => {
         const r = s.regions[region];
         if (!r) return;
-        const collapsedThreshold = region === 'bottomTimeline' ? 60 : COLLAPSED_SIDEBAR_SIZE;
+        const collapsedThreshold = region === 'bottomTimeline' ? 60 : SIDEBAR_DRAG_OPEN_THRESHOLD;
         if (r.collapsed && size > collapsedThreshold) {
           r.collapsed = false;
         }

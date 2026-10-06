@@ -91,8 +91,13 @@
      `COLLAPSED_SIDEBAR_SIZE` in stores/layoutStore.ts; the two must agree or a
      collapsed sidebar clips its own rail. 56 fits a 28px (lg control) icon
      over a one-line micro label such as "Properties" (2026-09-15; was 36 when
-     the rail was icons only). */
-  --dock-rail-width: 56px;
+     the rail was icons only). Icons only again since 2026-10: the rail is now
+     just the COLLAPSED sidebar — open, panels are named tabs and bars — and
+     each icon has its name in a tooltip. */
+  /* 8px since 2026-10: a closed sidebar is HIDDEN behind a thin edge with a
+     grip (DockPanel `.edge`), not an icon rail. Matches COLLAPSED_SIDEBAR_SIZE
+     in layoutStore. */
+  --dock-rail-width: 8px;
 
   /* Layout-specific (composed) */
   --space-panel-padding:    var(--space-6);

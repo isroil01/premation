@@ -20,7 +20,12 @@ import type { TimelineTrack, TimelinePropertyTrack } from './TimelineModel';
  * down the panel.
  */
 export const RULER_HEIGHT_DEFAULT = 26;
-export const TRACK_HEIGHT_DEFAULT = 36;
+/**
+ * A layer row. 26, not 36: a row holds 22px controls and one line of text, so
+ * at 36 nine layers filled the panel and a real comp was mostly scrolling. The
+ * row-height grip still takes it up to 64 for anyone who wants bigger bars.
+ */
+export const TRACK_HEIGHT_DEFAULT = 26;
 /**
  * Left margin of the lanes, px — time 0 sits this far in so the 0s tick and
  * the playhead head stand clear of the header border. Module-level and

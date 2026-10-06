@@ -103,6 +103,30 @@
   color: var(--color-text-primary);
 }
 
+/* "Premation Cloud · Yearly · renews 12 Mar 2027" under the status sentence. */
+.planLine {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  line-height: 1.45;
+  margin: 6px 0 0;
+}
+
+/* Switch interval / Cancel subscription, below the plan line. */
+.heroActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+/* The cancel dialog's one paragraph (same voice as the stock confirm). */
+.dialogMessage {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
 .statusHeroMeta {
   display: flex;
   align-items: center;
@@ -292,6 +316,21 @@
 .priceInterval {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
+}
+
+.priceSub {
+  margin: 4px 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The cloud allowance card, between the plan hero and the notices. */
+.usageCard {
+  padding: 16px 22px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
 }
 
 .planDescription {

@@ -74,6 +74,7 @@ import { resolveSelectionKey, storedTimeOf, trackSelectionId } from '@core/mirro
 import { isDataProperty } from './buildPropertyRows';
 import { CurveSampler, samplerPropKey } from './graphSamples';
 import { clamp } from '@utils/lang';
+import { cn } from '@utils/cn';
 import { ValueField } from '@components/ValueField';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayersWatch } from '@hooks/useMirror';
@@ -136,6 +137,19 @@ export interface GraphEditorProps {
   frameRate?: number;
   height?: number;
   onScrub?: (t: number) => void;
+  /**
+   * `selectedNodeIds` is the comp's layers, not a selection — nothing is
+   * selected and the host passed everything so the graph is not blank. Only
+   * changes what the empty state says.
+   */
+  showingAllLayers?: boolean;
+  /**
+   * Draw the graph's own list of curves down its left edge — layer by layer,
+   * each curve with its colour, click to solo. For a host where the graph
+   * covers the timeline's layer list (the bottom timeline does), so there is
+   * still something to pick curves from. Replaces the toolbar's legend chips.
+   */
+  showCurveList?: boolean;
   /**
    * The timeline's property search string, verbatim.
    *
@@ -263,6 +277,9 @@ interface DragState {
 }
 
 /** Fixed multi-curve series palette (data-viz, not chrome) — shared across themes. */
+/** Width of the curve list (`showCurveList`), px — `.curveList` in the sheet matches. */
+const CURVE_LIST_WIDTH = 240;
+
 const COLORS = ['#2988ff', '#ff6b6b', '#4cdf8e', '#ffd770', '#bf8cff', '#ff8cde'];
 const GRAPH_HEIGHT_DEFAULT = 200;
 const HANDLE_RADIUS = 4.5;
@@ -465,6 +482,8 @@ export function GraphEditor({
   height: propsHeight,
   onScrub,
   propertyFilter,
+  showingAllLayers = false,
+  showCurveList = false,
 }: GraphEditorProps): JSX.Element {
   // B4: the curves are the document MIRROR's keys (and the engine's
   // `sampleProperty` between them); redraw when a selected layer's header,
@@ -524,7 +543,7 @@ export function GraphEditor({
   const { ref: containerRef, size } = useResizeObserver<HTMLDivElement>();
 
   const height = propsHeight ?? (size.height > 0 ? size.height : GRAPH_HEIGHT_DEFAULT);
-  const viewportW = size.width > 0 ? size.width : 800;
+  const viewportW = Math.max(120, (size.width > 0 ? size.width : 800) - (showCurveList ? CURVE_LIST_WIDTH : 0));
 
   // Clear focus when selected nodes change. Solo follows the visible tracks.
   useEffect(() => {
@@ -2135,7 +2154,11 @@ export function GraphEditor({
         )}
 
         {allTracks.length === 0 && (
-          <span className={styles.hint}>Select a layer with keyframes to view curves</span>
+          <span className={styles.hint}>
+            {showingAllLayers
+              ? 'Nothing is animated yet — switch back to the layer bars and click a property’s stopwatch to add a keyframe'
+              : 'The selected layer has no keyframes — deselect it to see every animated layer'}
+          </span>
         )}
         {/* Something IS animated but nothing is plotted — say which gate ate it,
             or the panel reads as broken. */}
@@ -2143,7 +2166,7 @@ export function GraphEditor({
           <span className={styles.hint}>No animated property matches the timeline filter</span>
         )}
 
-        {tracks.map(({ nodeId, prop, color }) => {
+        {!showCurveList && tracks.map(({ nodeId, prop, color }) => {
           const key = trackKey(nodeId, prop);
           const soloed = !soloKeys || soloKeys.has(key);
           return (
@@ -2170,6 +2193,40 @@ export function GraphEditor({
           looking at. Every field is a `ValueField`, so each is scrubbable and
           typeable with the same gestures as the inspector's. */}
       {selectedKfData ? <KeyframeNumericStrip kf={selectedKfData} /> : null}
+
+      <div className={styles.plotRow}>
+      {showCurveList && (
+        <div className={styles.curveList} role="list" aria-label="Curves">
+          {tracks.length === 0 ? (
+            <p className={styles.curveListNote}>Animated properties are listed here.</p>
+          ) : (
+            tracks.map((t, i) => {
+              const key = trackKey(t.nodeId, t.prop);
+              const soloed = !!soloKeys && soloKeys.has(key);
+              const dimmed = !!soloKeys && !soloKeys.has(key);
+              // "Position" names both of its curves; the member tells them apart.
+              const member = /[/.]([a-z])$/i.exec(t.prop)?.[1]?.toUpperCase();
+              return (
+                <div key={key} role="listitem">
+                  {(i === 0 || tracks[i - 1]?.nodeId !== t.nodeId) && (
+                    <div className={styles.curveListLayer} title={t.layerName}>{t.layerName}</div>
+                  )}
+                  <button
+                    type="button"
+                    className={cn(styles.curveListRow, soloed && styles.curveListRowOn, dimmed && styles.curveListRowDim)}
+                    aria-pressed={soloed}
+                    title="Click to show only this curve · Shift-click to add or remove it · click again to show all"
+                    onClick={(e) => toggleSolo(key, e.shiftKey)}
+                  >
+                    <span className={styles.curveListDot} style={{ background: t.color }} />
+                    <span className={styles.curveListName}>{t.label}{member ? ` ${member}` : ''}</span>
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
 
       {/* ── SVG graph canvas ───────────────────────────────────── */}
       <div ref={canvasRef} className={styles.canvas} onScroll={onCanvasScroll}>
@@ -2416,6 +2473,7 @@ export function GraphEditor({
             <polygon className={styles.playheadCap} points={`${playheadX - 5},0 ${playheadX + 5},0 ${playheadX},8`} />
           </g>
         </svg>
+      </div>
       </div>
     </div>
   );

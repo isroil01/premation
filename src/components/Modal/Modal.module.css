@@ -158,3 +158,98 @@
   border-radius: 0;
 }
 
+
+/* ── The dialog frame (2026-10) ──────────────────────────────────────
+   One frame for every dialog in the app — editor and dashboard: a raised grey
+   sheet, a plain title row, the body, and the actions as pills at the bottom
+   right with no band behind them. It started on the dashboard; the editor's
+   dialogs (Export, Composition Settings, …) take it at the editor's own
+   compact text size. */
+.dialog {
+  background: var(--color-surface-2);
+  border-radius: var(--radius-surface);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+}
+
+.dialog.fullscreen {
+  border-radius: 0;
+}
+
+.header {
+  align-items: center;
+  border-bottom-color: var(--color-divider);
+}
+
+.footer {
+  border-top: none;
+  background: transparent;
+  padding-bottom: var(--space-4);
+}
+
+/* The actions (the `Button` component, never an icon-only one) are pills. */
+.footer button[data-variant]:not([data-icon-only]),
+.body :global([data-dialog-actions]) button[data-variant]:not([data-icon-only]) {
+  min-height: var(--control-height-lg);
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-full);
+  font-weight: var(--font-weight-semibold);
+}
+
+.footer button[data-variant="ghost"],
+.footer button[data-variant="secondary"],
+.body :global([data-dialog-actions]) button[data-variant="secondary"] {
+  background: transparent;
+  border: 2px solid var(--color-border-strong);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.footer button[data-variant="ghost"]:hover,
+.footer button[data-variant="secondary"]:hover,
+.body :global([data-dialog-actions]) button[data-variant="secondary"]:hover {
+  border-color: var(--color-text-secondary);
+  background: var(--color-hover);
+}
+
+/* ── Dashboard surface ───────────────────────────────────────────────
+   The dashboard reads at a larger scale than the editor (see
+   DashboardPage.module.css) and sets `data-surface="dashboard"` on <html>
+   while it is mounted. Dialogs portal outside the page, so the scale is
+   restated here, scoped to that attribute, with the roomier measurements that
+   go with it. The frame itself is the shared one above. */
+:global(html[data-surface="dashboard"]) .dialog {
+  --font-size-micro: 11px;
+  --font-size-xs: 13px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --radius-sm: 3px;
+  --radius-control: 4px;
+}
+
+:global(html[data-surface="dashboard"]) .dialog.sm { width: 400px; }
+:global(html[data-surface="dashboard"]) .dialog.md { width: 520px; }
+
+:global(html[data-surface="dashboard"]) .header {
+  min-height: 42px;
+  padding: 0 var(--space-2) 0 18px;
+}
+
+/* The title row says what the dialog is; the body says the rest. */
+:global(html[data-surface="dashboard"]) .description {
+  display: none;
+}
+
+:global(html[data-surface="dashboard"]) .body {
+  padding: 18px;
+}
+
+:global(html[data-surface="dashboard"]) .footer {
+  padding: 0 18px 16px;
+}
+
+:global(html[data-surface="dashboard"]) .footer button[data-variant]:not([data-icon-only]),
+:global(html[data-surface="dashboard"]) .body :global([data-dialog-actions]) button[data-variant]:not([data-icon-only]) {
+  height: 32px;
+  padding: 0 18px;
+  font-size: var(--font-size-xs);
+}

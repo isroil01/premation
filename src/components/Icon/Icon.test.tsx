@@ -19,10 +19,17 @@
 import { render } from '@testing-library/react';
 
 import { Icon, ICON_NAMES, type IconName, type IconWeight } from './Icon';
+import { DRAWN_ICONS } from './drawnIcons';
 import { SHARP_ICON_PATHS } from './sharpIconPaths';
 
+/**
+ * The geometry a name resolves to: the path data for a glyph from the set, the
+ * whole inner markup for a hand-drawn one (which may be circles and rects with
+ * no `d` at all).
+ */
 function pathOf(name: IconName, weight?: IconWeight): string {
   const { container } = render(<Icon name={name} weight={weight} />);
+  if (name in DRAWN_ICONS) return container.querySelector('svg')?.innerHTML ?? '';
   const path = container.querySelector('path');
   return path?.getAttribute('d') ?? '';
 }
@@ -49,11 +56,26 @@ describe('the icon vocabulary resolves to geometry', () => {
     expect(pathOf('export', 'light')).toBe(pathOf('export', 'regular'));
   });
 
+  it('draws a hand-drawn name from drawnIcons, on its own grid', () => {
+    // The drawn family is resolved FIRST. If that order flips, every tool icon
+    // silently becomes the fallback square.
+    const { container } = render(<Icon name="pen" />);
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 18 18');
+    expect(svg?.getAttribute('stroke')).toBe('currentColor');
+    expect(svg?.children.length).toBeGreaterThan(0);
+  });
+
   it('has a path for exactly the declared names, no more and no fewer', () => {
     // Guards the generator's two halves against drifting apart: a name added to
     // `iconNames.ts` without a mapping, or a mapping left behind after a name
     // was removed. The script itself throws on both, but only if someone runs it.
-    expect(Object.keys(SHARP_ICON_PATHS).sort()).toEqual([...ICON_NAMES].sort());
+    // The two tables partition the vocabulary: a name in both would ship a
+    // Material path that is never drawn.
+    const drawn = Object.keys(DRAWN_ICONS);
+    const fromSet = Object.keys(SHARP_ICON_PATHS);
+    expect(fromSet.filter((n) => drawn.includes(n))).toEqual([]);
+    expect([...fromSet, ...drawn].sort()).toEqual([...ICON_NAMES].sort());
   });
 
   it('draws the AI wordmark rather than a glyph from the set', () => {

@@ -16,6 +16,12 @@
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* Off the editor route the bar keeps its own surface but drops the divider
+   under it. The editor keeps its divider. */
+.seamless {
+  border-bottom-color: transparent;
+}
+
 .dragRegion {
   position: absolute;
   top: 0;
@@ -120,6 +126,19 @@
   /* The controls are never the thing that gives way. */
   flex: none;
   -webkit-app-region: no-drag;
+}
+
+/* Where a non-editor page puts its own controls (routeSlot.ts). Empty, it
+   takes no room. */
+.routeSlot {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.routeSlot:empty {
+  display: none;
 }
 
 .editorControls {

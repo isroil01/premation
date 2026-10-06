@@ -51,6 +51,10 @@ export interface AuthUser {
    * RequireAuth can route on it synchronously.
    */
   needsSignupSource?: boolean;
+  /** Whether the account chose a password (provider sign-ups have none). Only /auth/me says. */
+  hasPassword?: boolean;
+  /** An address change waiting for its code. Only /auth/me says. */
+  pendingEmail?: string | null;
 }
 
 interface AuthState {

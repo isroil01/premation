@@ -129,6 +129,16 @@ export interface EngineOwnedDocument {
   close(): Promise<void>;
   /** The engine writes its recovery copy now (`force`: even when clean); the stamp, or null when nothing was written. */
   autosave?(opts: { force?: boolean }): Promise<number | null>;
+  /**
+   * Open a document the page fetched (a cloud project: `key` is its id) — the
+   * engine cannot read a cloud id as a file. `recovered`: a recovery copy of it
+   * that never reached the server was put back on top.
+   */
+  openText?(key: string, text: string): Promise<{ recovered: boolean }>;
+  /** Saved where the engine does not write (the cloud): the engine's copy is saved too (dirty clears). */
+  markSaved?(revision?: number): Promise<void>;
+  /** Forget the recovery copy (the user chose Don't Save). */
+  discardRecovery?(): Promise<void>;
 }
 
 export class ProjectManager {
@@ -220,7 +230,13 @@ export class ProjectManager {
     return this.load(picked.contents, picked.name, picked.path);
   }
 
+  /** A cloud project (the API file adapter): `path` is its id, not a file the engine can read. */
+  private get cloudFiles(): boolean {
+    return this.deps.files.environment === 'api';
+  }
+
   async openPath(path: string): Promise<ProjectRef | null> {
+    if (this.engineDocument?.openText && this.cloudFiles) return this.openCloudInEngine(path);
     if (this.engineDocument) return this.openInEngine(path, projectNameFromFilePath(path));
     let file: VersionedDocument | null;
     try {
@@ -317,6 +333,62 @@ export class ProjectManager {
     this.deps.logger?.info(`Opened project "${name}"`);
     getEventBus().emit('ProjectLoaded', { projectId: ref.id });
     return ref;
+  }
+
+  /**
+   * A cloud project into the engine: the file adapter fetches the document
+   * (`path` is the project id) and the engine opens it from a local copy
+   * (EngineOwnedDocument.openText). Null when it could not be fetched or opened.
+   */
+  private async openCloudInEngine(id: string): Promise<ProjectRef | null> {
+    let text: string | null;
+    try {
+      text = await this.deps.files.read(id);
+    } catch (err) {
+      this.deps.logger?.error('Failed to open project', err);
+      return null;
+    }
+    if (text == null) {
+      this.deps.logger?.warn(`Project not found: ${id}`);
+      return null;
+    }
+    try {
+      await this.engineDocument!.openText!(id, text);
+    } catch (err) {
+      this.deps.logger?.error('Failed to open project', err);
+      return null;
+    }
+    this.deps.editorView?.recall(id);
+    const ref: ProjectRef = { id: this.deps.newId(), name: projectNameFromFilePath(id), path: id };
+    this.state = { current: ref };
+    this.emit();
+    this.recordRecent(ref);
+    this.deps.logger?.info(`Opened cloud project ${id}`);
+    getEventBus().emit('ProjectLoaded', { projectId: ref.id });
+    return ref;
+  }
+
+  /**
+   * The document reached the server (cloud autosave): the engine's copy is
+   * marked saved, so the unsaved flag clears and no recovery copy is kept for
+   * work the server already has. `revision`: the document revision the upload
+   * was exported at — a later edit is left unsaved.
+   */
+  async markSavedElsewhere(revision?: number): Promise<void> {
+    try {
+      await this.engineDocument?.markSaved?.(revision);
+    } catch (err) {
+      this.deps.logger?.warn('Could not mark the document saved', err);
+    }
+  }
+
+  /** The user chose Don't Save: the recovery copy must not bring the discarded work back. */
+  async discardRecovery(): Promise<void> {
+    try {
+      await this.engineDocument?.discardRecovery?.();
+    } catch (err) {
+      this.deps.logger?.warn('Could not discard the recovery copy', err);
+    }
   }
 
   /** Restore a parsed document into the engines and become the current project. */
@@ -445,7 +517,13 @@ export class ProjectManager {
 
   private async writeTo(ref: ProjectRef, path: string): Promise<SaveOutcome> {
     try {
-      if (this.engineDocument) {
+      if (this.engineDocument && this.cloudFiles && this.engineDocument.markSaved) {
+        // A cloud project: the document goes to the server (`path` is its id —
+        // never a file for the engine to write), then the engine's copy is saved.
+        const { liveDocument } = await import('./liveDocument');
+        await this.deps.files.write(path, JSON.stringify(await liveDocument()));
+        await this.engineDocument.markSaved();
+      } else if (this.engineDocument) {
         // F2: the engine serializes and writes (temp file + rename); dirty clears there.
         await this.engineDocument.save(path);
       } else {

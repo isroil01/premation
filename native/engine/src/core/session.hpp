@@ -177,7 +177,8 @@ class Session {
   /// New Project (`createEmpty` + loadDocument). `emit` false at construction (before Welcome).
   void load_new_project(api::ResetReason reason, bool emit = true);
   /// loadDocument(doc, {resetWorkspace: true}) for a project file.
-  void load_document(const doc::Json& file, api::ResetReason reason);
+  /// `footageRoot`: the bundle the document's relative footage paths are read from (empty: none).
+  void load_document(const doc::Json& file, api::ResetReason reason, std::string_view footageRoot = {});
   /// The document's state after a load: history, ids, caches, revision, reset event.
   void after_load(api::ResetReason reason, bool emit);
   [[nodiscard]] doc::Json capture_document() const;

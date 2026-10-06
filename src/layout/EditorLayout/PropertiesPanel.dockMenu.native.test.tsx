@@ -49,8 +49,10 @@ function renderDock(): ReturnType<typeof render> {
   );
 }
 
+// Every bar of the inspector stack carries a ≡ (2026-10); Properties is the
+// first panel, so its menu is the first one.
 function openHeaderMenu(): void {
-  fireEvent.click(screen.getByRole('button', { name: 'Panel options' }));
+  fireEvent.click(screen.getAllByRole('button', { name: 'Panel options' })[0]!);
 }
 
 let loopWarnings: string[] = [];
@@ -138,11 +140,16 @@ describe('PropertiesPanel in a DockPanel with a layer selected', () => {
     expect(loopWarnings).toEqual([]);
   });
 
-  it('takes its rows back out when another panel becomes active', () => {
+  // The inspector is a stack (2026-10): opening another panel leaves Properties
+  // open above it, and each open panel has its OWN options menu. What must
+  // still hold is that one panel's rows never show up in another panel's menu.
+  it('keeps its rows out of another open panel\x27s menu', () => {
     renderDock();
     act(() => useLayoutStore.getState().openPanel(OTHER));
     expect(screen.getByText('other panel')).toBeInTheDocument();
-    openHeaderMenu();
+    const menus = screen.getAllByRole('button', { name: 'Panel options' });
+    expect(menus).toHaveLength(2);
+    fireEvent.click(menus[1]!);
     expect(screen.queryByText(LANES_ROW)).not.toBeInTheDocument();
     expect(loopWarnings).toEqual([]);
   });

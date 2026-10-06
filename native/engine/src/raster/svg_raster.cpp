@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cmath>
 
+#include "svg_anim.hpp"
 #include "svg_render.hpp"
 
 namespace premation::raster::svg {
@@ -130,6 +131,81 @@ std::optional<std::string> svg_markup_from_data_url(std::string_view src) {
   return out;
 }
 
+namespace {
+
+/// The root's size as rasterizeSvg reads it: width / height, the viewBox
+/// backfilling a missing one, 512 × 512 when neither says.
+struct Intrinsic {
+  double w = 0;
+  double h = 0;
+  double vbW = 0;
+  bool vbAttr = false;
+};
+
+Intrinsic intrinsic_size(const Node& svg) {
+  const auto parse_len = [&svg](std::string_view a) {
+    const std::string* v = svg.attr(a);
+    if (v == nullptr || v->empty()) return 0.0;
+    const double n = js_parse_float(*v);
+    return std::isfinite(n) && n > 0 ? n : 0.0;
+  };
+  Intrinsic s;
+  s.w = parse_len("width");
+  s.h = parse_len("height");
+  const std::string* vbAttr = svg.attr("viewBox");
+  s.vbAttr = vbAttr != nullptr && !vbAttr->empty();
+  const auto vb = js_split_ws_comma(vbAttr != nullptr ? std::string_view(*vbAttr) : std::string_view());
+  const auto vbn = [&vb](std::size_t i) {
+    const double v = js_number(vb[i]);
+    return v > 0 ? v : 0.0;  // NaN > 0 is false
+  };
+  s.vbW = vb.size() == 4 ? vbn(2) : 0.0;
+  const double vbH = vb.size() == 4 ? vbn(3) : 0.0;
+  if ((s.w == 0 || s.h == 0) && s.vbW != 0 && vbH != 0) {
+    if (s.w != 0 && s.h == 0) s.h = (s.w * vbH) / s.vbW;
+    else if (s.h != 0 && s.w == 0) s.w = (s.h * s.vbW) / vbH;
+    else {
+      s.w = s.vbW;
+      s.h = vbH;
+    }
+  }
+  if (s.w == 0 || s.h == 0) {
+    s.w = 512;
+    s.h = 512;
+  }
+  return s;
+}
+
+}  // namespace
+
+SvgFacts svg_facts(std::string_view markup) {
+  SvgFacts f;
+  Document doc;
+  std::string error;
+  if (!parse_xml(markup, doc, error)) {
+    f.error = "SVG did not parse: " + error;
+    return f;
+  }
+  const Node& svg = doc.nodes[static_cast<std::size_t>(doc.root)];
+  if (!svg.svgNs || svg.name != "svg") {
+    f.error = "the root is not an <svg> element";
+    return f;
+  }
+  const Intrinsic s = intrinsic_size(svg);
+  f.width = s.w;
+  f.height = s.h;
+  const AnimationInfo ai = animation_info(doc);
+  f.animated = ai.animated;
+  f.durationSec = ai.durationSec;
+  f.ok = true;
+  return f;
+}
+
+namespace {
+/// An animated SVG is drawn again for every frame: a smaller long edge keeps that affordable.
+constexpr double kSvgAnimatedTargetLong = 1280;
+}  // namespace
+
 RasterOutput rasterize_svg(std::string_view markup, const RasterizeOptions& opts) {
   RasterOutput out;
   Document doc;
@@ -143,46 +219,25 @@ RasterOutput rasterize_svg(std::string_view markup, const RasterizeOptions& opts
     out.error = "SVG image: the root is not an <svg> element";
     return out;
   }
-  const auto parse_len = [&svg](std::string_view a) {
-    const std::string* v = svg.attr(a);
-    if (v == nullptr || v->empty()) return 0.0;
-    const double n = js_parse_float(*v);
-    return std::isfinite(n) && n > 0 ? n : 0.0;
-  };
-  double w = parse_len("width");
-  double h = parse_len("height");
-  const std::string* vbAttr = svg.attr("viewBox");
-  const auto vb = js_split_ws_comma(vbAttr != nullptr ? std::string_view(*vbAttr) : std::string_view());
-  const auto vbn = [&vb](std::size_t i) {
-    const double v = js_number(vb[i]);
-    return v > 0 ? v : 0.0;  // NaN > 0 is false
-  };
-  const double vbW = vb.size() == 4 ? vbn(2) : 0.0;
-  const double vbH = vb.size() == 4 ? vbn(3) : 0.0;
-  if ((w == 0 || h == 0) && vbW != 0 && vbH != 0) {
-    if (w != 0 && h == 0) h = (w * vbH) / vbW;
-    else if (h != 0 && w == 0) w = (h * vbW) / vbH;
-    else {
-      w = vbW;
-      h = vbH;
-    }
-  }
-  if (w == 0 || h == 0) {
-    w = 512;
-    h = 512;
-  }
+  const AnimationInfo anim = animation_info(doc);
+  out.animated = anim.animated;
+  const Intrinsic s = intrinsic_size(svg);
+  const double w = s.w;
+  const double h = s.h;
   const double longEdge = std::max(w, h);
-  const double targetLong = std::min(kRasterMax, std::max(longEdge, kSvgTargetLong));
+  const double targetLong = std::min(kRasterMax, anim.animated ? kSvgAnimatedTargetLong : std::max(longEdge, kSvgTargetLong));
   const double scale = targetLong / longEdge;
   const double rw = std::max(1.0, std::min(kRasterMax, js_round(w * scale)));
   const double rh = std::max(1.0, std::min(kRasterMax, js_round(h * scale)));
   svg.set_attr("width", fmt(rw));
   svg.set_attr("height", fmt(rh));
-  if ((vbAttr == nullptr || vbAttr->empty()) && vbW == 0) svg.set_attr("viewBox", "0 0 " + fmt(w) + " " + fmt(h));
+  if (!s.vbAttr && s.vbW == 0) svg.set_attr("viewBox", "0 0 " + fmt(w) + " " + fmt(h));
 
   std::string extra;
+  // The document at the layer's source time (svg_anim.hpp); the layer's recolour still wins after it.
+  if (anim.animated) apply_animations(doc, opts.time, extra, out.unsupported);
   if (opts.fillColor && !opts.fillColor->empty() && *opts.fillColor != "none" && *opts.fillColor != "transparent") {
-    extra = "path, circle, rect, polygon, polyline, ellipse, text { fill: " + *opts.fillColor + " !important; }";
+    extra += "path, circle, rect, polygon, polyline, ellipse, text { fill: " + *opts.fillColor + " !important; }";
   }
   expand_uses(doc);
   std::vector<Style> styles;

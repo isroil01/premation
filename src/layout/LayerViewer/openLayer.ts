@@ -18,6 +18,7 @@
 import type { LayerInfo } from '@motion/engine-api';
 import { openLayerComposition } from '@layout/Composition/compNavigationEdits';
 import { documentMirror } from '@stores/documentMirror';
+import { mirrorNestedTarget } from '@core/mirror/compNetwork';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { useLayerViewerStore } from '@stores/layerViewerStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -55,6 +56,31 @@ export function canOpenInLayerPanel(node: Pick<SceneNode, 'id'> | string | undef
 export function openLayerPanel(nodeId: string): boolean {
   if (!canOpenInLayerPanel(nodeId)) return false;
   useLayerViewerStore.getState().open(nodeId);
+  return true;
+}
+
+/** Whether the layer shows a composition (or is a group) that can be opened as one. */
+export function canOpenLayerComposition(nodeId: string): boolean {
+  return mirrorNestedTarget(documentMirror(), nodeId) !== null;
+}
+
+/** The footage item a layer plays, as the Footage viewer takes it; null for a solid, a comp, text… */
+function layerSourceAsset(nodeId: string): ReturnType<typeof assetRecordNow> | null {
+  const node = documentMirror().layer(nodeId);
+  if (!node || isCompLayer(node) || !node.source) return null;
+  return assetRecordNow(node.source) ?? null;
+}
+
+/** Whether the layer has a source file the Footage viewer can show (Layer ▸ Open Layer Source). */
+export function canOpenLayerSource(nodeId: string): boolean {
+  return !!layerSourceAsset(nodeId);
+}
+
+/** Show the layer's source file in the Footage viewer. False when it has none. */
+export function openLayerSource(nodeId: string): boolean {
+  const asset = layerSourceAsset(nodeId);
+  if (!asset) return false;
+  openFootagePreview(asset);
   return true;
 }
 

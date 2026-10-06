@@ -52,11 +52,18 @@ export interface MirrorView {
   whenIdle(): Promise<void>;
 }
 
-/** Files the page reads or removes itself: only the recovery document. */
+/** Files the page reads or writes itself: the recovery document and a cloud project's local copy. */
 export interface RecoveryFiles {
   /** The file's UTF-8 text, or null when it does not exist. */
   readText(path: string): Promise<string | null>;
   remove(path: string): Promise<void>;
+  /** Write UTF-8 text (a cloud project's local copy, `openText`). Absent: such a document opens unbound. */
+  writeText?(path: string, text: string): Promise<void>;
+}
+
+/** A cloud project's local copy (`localCopyPath`): `cloud-<id>.json` beside the recovery file. */
+export function isCloudLocalCopy(path: string): boolean {
+  return /[\\/]cloud-[^\\/]+\.json$/i.test(path);
 }
 
 /** Which unsaved session a recovery file holds. */
@@ -137,6 +144,59 @@ export class EngineDocumentSession {
     await this.upgradeLegacyPrecomps();
     await this.dropPluginContent();
     return r;
+  }
+
+  /**
+   * Where the local copy of a document the page fetched (a cloud project, by
+   * its id) lives: beside the recovery file, one per project. '' when there is
+   * no recovery folder.
+   */
+  localCopyPath(key: string): string {
+    const slash = Math.max(this.o.recoveryPath.lastIndexOf('/'), this.o.recoveryPath.lastIndexOf('\\'));
+    if (slash <= 0) return '';
+    return `${this.o.recoveryPath.slice(0, slash)}/cloud-${key.replace(/[^A-Za-z0-9_-]/g, '_')}.json`;
+  }
+
+  /**
+   * Open a document the page fetched rather than a file the engine can read
+   * (a cloud project). It is written to its local copy and opened from there,
+   * so the engine is bound to a file: `markSaved` can clear the dirty flag
+   * after an upload, and autosave's recovery record names the project it
+   * belongs to. A recovery copy of THIS document — left by a session that
+   * ended before its last upload reached the server — goes back on top as one
+   * undoable entry, with no prompt. `recovered` says whether that happened.
+   */
+  async openText(key: string, text: string): Promise<{ recovered: boolean }> {
+    const path = this.localCopyPath(key);
+    if (!path || !this.o.files.writeText) {
+      await this.run('newProject', this.o.engine().execute({ type: 'newProject' }));
+      await this.run('restoreDocument', this.o.engine().execute({ type: 'restoreDocument', document: new TextEncoder().encode(text), label: 'Open' }));
+      return { recovered: false };
+    }
+    const rec = this.o.index.read();
+    const leftover = rec && rec.projectPath === path ? await this.o.files.readText(rec.recoveryPath) : null;
+    await this.o.files.writeText(path, text);
+    await this.open(path);
+    if (leftover === null) return { recovered: false };
+    await this.run('restoreDocument', this.o.engine().execute({ type: 'restoreDocument', document: new TextEncoder().encode(leftover), label: RECOVER_LABEL }));
+    this.o.notify?.('Restored changes from your last session that had not been saved to the cloud yet. Edit ▸ Undo goes back to the cloud version.');
+    return { recovered: true };
+  }
+
+  /**
+   * The document was saved where the engine does not write (the cloud): the
+   * bound local copy is rewritten, so the engine's dirty flag clears and the
+   * recovery copy goes. `revision`: only when the document is still at it —
+   * an edit made after the upload's export is not marked saved.
+   */
+  async markSaved(revision?: number): Promise<void> {
+    await this.o.mirror.whenIdle();
+    if (revision !== undefined && this.o.mirror.revision !== revision) return;
+    if (!this.projectPath) {
+      await this.dropRecovery();
+      return;
+    }
+    await this.save();
   }
 
   /** Save (to the bound file, or to `path` = Save As). Clears dirty and the recovery copy. */

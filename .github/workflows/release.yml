@@ -10,9 +10,11 @@
 # `releaseType: draft`).
 #
 # ── RELEASE POLICY, enforced below rather than documented ────────────────────
-#  1. Releases come from `main` ONLY. A tag that is not an ancestor of `main`
-#     fails the pipeline. No release from `dev` or a feature branch.
-#  2. Flow: feature branch → dev → main → tag → release.
+#  1. Releases come from `native-core` ONLY (the branch the product is built
+#     on since 2026-09-22; `main` and `dev` are the pre-native-engine history
+#     and are left as they are). A tag that is not an ancestor of `native-core`
+#     fails the pipeline. No release from a feature branch.
+#  2. Flow: feature branch → native-core → tag → release.
 #  3. Artifacts are built from the TAGGED COMMIT, never a working tree.
 #  4. Signing is CONDITIONAL, and the path taken is always stated in the output:
 #       secrets present -> sign, notarize, staple, verify. A build that FAILS
@@ -52,27 +54,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history: the ancestry check needs `main`, and a shallow clone
+          # Full history: the ancestry check needs `native-core`, and a shallow clone
           # would make every tag look unreachable from it.
           fetch-depth: 0
 
-      # ── POLICY GATE 1: the tag must be on `main` ──
+      # ── POLICY GATE 1: the tag must be on `native-core` ──
       #
-      # A tag pushed from `dev` or a feature branch builds and publishes exactly
-      # as convincingly as a real release — the installer is real, the update
+      # A tag pushed from a feature branch builds and publishes exactly as
+      # convincingly as a real release — the installer is real, the update
       # manifest is real, and users get it. Nothing downstream can tell the
       # difference, so this is the only place that can refuse.
-      - name: Tag must be an ancestor of main
+      - name: Tag must be an ancestor of native-core
         if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_BRANCH: native-core
         run: |
-          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of main."
-            echo "::error::Releases are cut from main only. Flow: feature -> dev -> main -> tag."
-            echo "::error::Merge to main first, then tag the merge commit."
+          git fetch --no-tags origin "+refs/heads/$RELEASE_BRANCH:refs/remotes/origin/$RELEASE_BRANCH"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$RELEASE_BRANCH"; then
+            echo "::error::Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of $RELEASE_BRANCH."
+            echo "::error::Releases are cut from $RELEASE_BRANCH only. Flow: feature -> $RELEASE_BRANCH -> tag."
+            echo "::error::Merge to $RELEASE_BRANCH first, then tag the merge commit."
             exit 1
           fi
-          echo "OK: $GITHUB_REF_NAME is on main."
+          echo "OK: $GITHUB_REF_NAME is on $RELEASE_BRANCH."
 
       - uses: actions/setup-node@v4
         with:

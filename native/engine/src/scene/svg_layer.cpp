@@ -81,8 +81,31 @@ bool is_svg_src(std::string_view src) {
   return lower(path).ends_with(".svg");
 }
 
+namespace {
+
+/// A file's bytes as text; nullopt when it does not open.
+std::optional<std::string> read_text(const std::filesystem::path& p) {
+  std::ifstream in(p, std::ios::binary);
+  if (!in) return std::nullopt;
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  return ss.str();
+}
+
+}  // namespace
+
+raster::svg::SvgFacts svg_file_facts(const std::filesystem::path& p) {
+  const auto markup = read_text(p);
+  if (!markup) {
+    raster::svg::SvgFacts f;
+    f.error = "the SVG file did not open";
+    return f;
+  }
+  return raster::svg::svg_facts(*markup);
+}
+
 raster::RasterOutput rasterize_svg_src(std::string_view src, const std::optional<std::string>& fill,
-                                       const std::string& filePath) {
+                                       const std::string& filePath, double time) {
   raster::RasterOutput out;
   std::string markup;
   if (src.starts_with("data:")) {
@@ -93,17 +116,17 @@ raster::RasterOutput rasterize_svg_src(std::string_view src, const std::optional
     }
     markup = std::move(*m);
   } else {
-    std::ifstream in(filePath, std::ios::binary);
-    if (!in) {
+    // The path as UTF-8 (a non-ASCII folder name must not break the open on Windows).
+    auto m = read_text(std::filesystem::path(std::u8string(filePath.begin(), filePath.end())));
+    if (!m) {
       out.error = "SVG file did not open: " + filePath;
       return out;
     }
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    markup = ss.str();
+    markup = std::move(*m);
   }
   raster::svg::RasterizeOptions opts;
   opts.fillColor = fill;
+  opts.time = time;
   opts.decodeImage = [](std::span<const std::uint8_t> bytes, raster::svg::Bitmap& bm) {
     DecodedImage img;
     std::string err;

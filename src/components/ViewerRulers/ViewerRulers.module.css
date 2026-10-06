@@ -1,0 +1,127 @@
+/*
+ * Rulers and guides over a viewer's stage (ViewerRulers.tsx). The layer does
+ * not take the pointer: only the two ruler bands and the guides themselves do.
+ */
+.root {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  user-select: none;
+}
+
+.rulerX,
+.rulerY,
+.corner {
+  position: absolute;
+  background: var(--color-panel-header);
+  pointer-events: auto;
+}
+
+.rulerX {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 16px;
+  border-bottom: 1px solid var(--color-divider);
+  cursor: row-resize;
+}
+
+.rulerY {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  border-right: 1px solid var(--color-divider);
+  cursor: col-resize;
+}
+
+.corner {
+  left: 0;
+  top: 0;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+  border-right: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-divider);
+}
+
+/* A tick: a hairline at the value, its number just after it. */
+.tickX {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  padding-left: 3px;
+  border-left: 1px solid var(--color-border-strong);
+  line-height: 15px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.tickY {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--color-border-strong);
+  pointer-events: none;
+}
+
+/* The number runs down the ruler from its tick. */
+.tickY > span {
+  display: block;
+  padding-top: 3px;
+  line-height: 15px;
+  writing-mode: vertical-rl;
+  white-space: nowrap;
+}
+
+/* A guide: a 1px line with a wider grab area around it. */
+.guideX,
+.guideY {
+  position: absolute;
+  pointer-events: auto;
+}
+
+.guideX {
+  top: 16px;
+  bottom: 0;
+  width: 7px;
+  margin-left: -3px;
+  cursor: col-resize;
+}
+
+.guideY {
+  left: 16px;
+  right: 0;
+  height: 7px;
+  margin-top: -3px;
+  cursor: row-resize;
+}
+
+.guideX::before,
+.guideY::before {
+  content: '';
+  position: absolute;
+  background: var(--color-primary);
+}
+
+.guideX::before { left: 3px; top: 0; bottom: 0; width: 1px; }
+.guideY::before { top: 3px; left: 0; right: 0; height: 1px; }
+
+.guideLive {
+  pointer-events: none;
+}
+
+.readout {
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  padding: 0 4px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-structural);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}

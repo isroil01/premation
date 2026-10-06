@@ -7477,6 +7477,7 @@ function encS_SetViewport(w: Writer, v: T.SetViewport): void {
   if (v.time !== undefined) { w.varint(128); w.i64(v.time); }
   if (v.layerSourceTime !== undefined) { w.varint(136); w.i64(v.layerSourceTime); }
   if (v.onion !== undefined) { w.varint(146); { const s = w.beginLd(); encS_OnionSkin(w, v.onion); w.endLd(s); } }
+  if (v.layerAlphaView !== undefined) { w.varint(154); w.str(v.layerAlphaView); }
 }
 function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   let h_viewport = false;
@@ -7508,6 +7509,7 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   let v_time: number | undefined;
   let v_layerSourceTime: number | undefined;
   let v_onion: T.OnionSkin | undefined;
+  let v_layerAlphaView: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7529,6 +7531,7 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
       case 128: v_time = r.i64(); break;
       case 136: v_layerSourceTime = r.i64(); break;
       case 146: v_onion = decS_OnionSkin(r, r.ldEnd(), {}); break;
+      case 154: v_layerAlphaView = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -7562,6 +7565,7 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   if (v_time !== undefined) o.time = v_time;
   if (v_layerSourceTime !== undefined) o.layerSourceTime = v_layerSourceTime;
   if (v_onion !== undefined) o.onion = v_onion;
+  if (v_layerAlphaView !== undefined) o.layerAlphaView = v_layerAlphaView;
   return o;
 }
 function encS_CloseViewport(w: Writer, v: T.CloseViewport): void {
@@ -15851,6 +15855,7 @@ function encS_RenderView(w: Writer, v: T.RenderView): void {
   if (v.overlays !== undefined) { w.varint(146); { const s = w.beginLd(); encS_RenderOverlays(w, v.overlays); w.endLd(s); } }
   if (v.viewerLut !== undefined) { w.varint(154); { const s = w.beginLd(); encS_RenderViewerLut(w, v.viewerLut); w.endLd(s); } }
   if (v.colorManagement !== undefined) { w.varint(162); { const s = w.beginLd(); encS_RenderColorManagement(w, v.colorManagement); w.endLd(s); } }
+  if (v.channel !== undefined) { w.varint(168); w.varint(enc_ChannelView(v.channel)); }
 }
 function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   let h_cssWidth = false;
@@ -15888,6 +15893,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   let v_overlays: T.RenderOverlays | undefined;
   let v_viewerLut: T.RenderViewerLut | undefined;
   let v_colorManagement: T.RenderColorManagement | undefined;
+  let v_channel: T.ChannelView | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -15911,6 +15917,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
       case 146: v_overlays = decS_RenderOverlays(r, r.ldEnd(), {}); break;
       case 154: v_viewerLut = decS_RenderViewerLut(r, r.ldEnd(), {}); break;
       case 162: v_colorManagement = decS_RenderColorManagement(r, r.ldEnd(), {}); break;
+      case 168: v_channel = dec_ChannelView(r.varint()); break;
       default: r.skip(key);
     }
   }
@@ -15950,6 +15957,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   if (v_overlays !== undefined) o.overlays = v_overlays;
   if (v_viewerLut !== undefined) o.viewerLut = v_viewerLut;
   if (v_colorManagement !== undefined) o.colorManagement = v_colorManagement;
+  if (v_channel !== undefined) o.channel = v_channel;
   return o;
 }
 function encS_RenderTextureRef(w: Writer, v: T.RenderTextureRef): void {

@@ -51,6 +51,7 @@ import {
   saveCameraBookmark,
 } from '@core/workspace/cameraBookmarks';
 import { useCompareStore, canCompare, COMPARE_MODE_LABEL, type CompareMode } from '@stores/compareStore';
+import { refreshViewportPicture } from '@core/engine/viewportPicture';
 import { usePreviewBehaviorStore } from '@stores/previewBehaviorStore';
 import { isTransportPlaying, playTransport, seekPlayhead } from '@core/timeline/timelineView';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
@@ -299,6 +300,8 @@ export function buildViewportCommands(): ReadonlyArray<Command> {
       execute: () => {
         useCompareStore.getState().requestCapture();
         getWorkspaceController().requestRender();
+        // The capture is taken from the next drawn frame: a still viewport draws none unless asked.
+        refreshViewportPicture();
       },
     },
     {

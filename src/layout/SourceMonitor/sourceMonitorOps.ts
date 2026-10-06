@@ -179,6 +179,29 @@ export function overwriteCommands(keepNodeId: string, startF: number, endF: numb
 }
 
 /**
+ * After Effects' Ripple Insert Edit, for the room the new clip needs: every
+ * other layer that is playing at `atF` is split there, and everything from
+ * that point on — the split-off right halves and the layers that start later —
+ * moves later by the clip's length, so the insert pushes the edit apart instead
+ * of covering it. `splitLayers` then `insertGap` (which shifts the layers that
+ * start at or after the time): the right halves start exactly at `atF`, so the
+ * gap takes them with it.
+ */
+export function rippleInsertCommands(keepNodeId: string, atF: number, durationF: number): Command[] {
+  const comp = activeCompIdNow();
+  if (!comp || durationF <= 0) return [];
+  const { fps, bars } = activeCompBars();
+  const f = (frame: number): number => framesToFlicks(frame, fps);
+  const spanning = bars
+    .filter(({ layer, bar }) => layer !== keepNodeId && bar.start < atF && bar.start + bar.duration > atF)
+    .map(({ layer }) => layer);
+  const commands: Command[] = [];
+  if (spanning.length > 0) commands.push({ type: 'splitLayers', layers: spanning, time: f(atF) });
+  commands.push({ type: 'insertGap', comp, time: f(atF), duration: f(durationF) });
+  return commands;
+}
+
+/**
  * Trim whatever lands under `[startSeconds, endSeconds)` (every layer but
  * `keepNodeId`) as one undo entry. Returns how many clips were left alone.
  */
@@ -210,7 +233,7 @@ export async function insertFromSource(
   asset: ImportedAsset,
   range: SourceRange,
   placement: Placement,
-  opts: { overwrite?: boolean } = {},
+  opts: { overwrite?: boolean; ripple?: boolean } = {},
 ): Promise<string | null> {
   // Captured BEFORE the (async) insert: the transport may be running, and the
   // clip must land where the playhead was when the user pressed the button —
@@ -222,7 +245,7 @@ export async function insertFromSource(
   let nodeId: string | null = null;
   let covered = 0;
   const inserted = await insertMediaEdit([asset], {
-    label: opts.overwrite ? 'Overwrite from Source' : 'Insert from Source',
+    label: opts.ripple ? 'Ripple Insert Edit' : opts.overwrite ? 'Overwrite from Source' : 'Insert from Source',
     // The router selects what it created — the one layer the range applies to. The paste
     // seeded its bar (`syncFromScene`), so the range is computed on the real clip.
     follow: (selected) => {
@@ -230,8 +253,13 @@ export async function insertFromSource(
       if (!nodeId) return [];
       const placed = sourceRangeEdit(nodeId, range, at);
       if (!placed) return [];
-      const commands: Command[] = [placed.command];
-      if (opts.overwrite) {
+      // Ripple: make the room FIRST (the new layer still sits at its seeded
+      // start, so the gap either leaves it alone or moves it — and its own
+      // absolute timing, set last, puts it at the insert point either way).
+      const commands: Command[] = opts.ripple
+        ? [...rippleInsertCommands(nodeId, placed.bar.start, placed.bar.duration), placed.command]
+        : [placed.command];
+      if (opts.overwrite && !opts.ripple) {
         const o = overwriteCommands(nodeId, placed.bar.start, placed.bar.start + placed.bar.duration);
         commands.push(...o.commands);
         covered = o.covered;

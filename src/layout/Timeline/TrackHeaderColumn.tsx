@@ -121,7 +121,8 @@ export const TrackHeader = memo(function TrackHeader({
   onRowFocus: () => void;
   /** `recursive` is Alt+click: the layer and everything under it. */
   onToggleExpand: (recursive: boolean) => void;
-  onActivate: () => void;
+  /** Double-click / F2. `alt`: Alt was held (After Effects' "open the other way"). */
+  onActivate: (alt?: boolean) => void;
   /** The click's modifiers — Shift spans, Ctrl/Cmd toggles. Resolved by the
    *  Timeline, which is the only thing that knows the row ORDER a span runs
    *  along. A boolean here could not express the difference. */
@@ -249,7 +250,7 @@ export const TrackHeader = memo(function TrackHeader({
       data-ghost={track.ghosted || undefined}
       data-locked={locked || undefined}
       onClick={(e) => onClick({ shift: e.shiftKey, meta: e.ctrlKey || e.metaKey })}
-      onDoubleClick={onActivate}
+      onDoubleClick={(e) => onActivate(e.altKey)}
       onFocus={onRowFocus}
       onKeyDown={(e) => {
         // Enter, Space and the arrows belong to the LISTBOX, which handles

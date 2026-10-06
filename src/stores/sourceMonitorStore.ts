@@ -30,7 +30,6 @@
  */
 
 import { create } from 'zustand';
-import { useLayoutStore } from '@stores/layoutStore';
 import type { ImportedAsset } from '@stores/assetStore';
 
 export interface SourceMonitorState {
@@ -179,8 +178,10 @@ export const SOURCE_MONITOR_PANEL_ID = 'sourceMonitor';
  * `setDuration` re-clamps whatever was marked in the meantime.
  */
 export function openSourceMonitor(asset: Pick<ImportedAsset, 'id' | 'metadata'>): void {
+  // Loads the clip only. The monitor is the body of the viewer's Footage tab
+  // now (layout/Assets/FootageViewer), not a dock panel — bringing that tab
+  // forward is `openFootagePreview`, which the UI calls.
   useSourceMonitorStore.getState().open(asset.id, asset.metadata?.duration);
-  useLayoutStore.getState().openPanel(SOURCE_MONITOR_PANEL_ID);
 }
 
 /** The range currently marked in the monitor, or null. Convenience for callers

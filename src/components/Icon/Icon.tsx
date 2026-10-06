@@ -1,5 +1,10 @@
 /**
- * Icon system — Material Symbols Sharp, weight 700.
+ * Icon system — Material Symbols Sharp, weight 700, plus a hand-drawn family
+ * for the tools.
+ *
+ * TWO SOURCES, ONE API. The tool, 3D-scene and chrome glyphs are drawn by hand
+ * in `drawnIcons.ts` (why: see that file) and are resolved first; every other
+ * name comes from the Material table described below.
  *
  * The app-wide API is unchanged (`<Icon name="play" size="md" />`) and the
  * `IconName` union is stable, so every call site keeps working.
@@ -16,7 +21,7 @@
  * one.
  *
  * WHY PATHS AND NOT COMPONENTS. The set is a devDependency, not a runtime one.
- * `scripts/generate-sharp-icons.mjs` extracts the 171 paths this app uses into
+ * `scripts/generate-sharp-icons.mjs` extracts the paths this app uses into
  * `sharpIconPaths.ts`, so nothing ships but the glyphs actually drawn — where
  * before an icon PACKAGE was in the bundle, and each of its components carried
  * all six of its weight variants to draw one.
@@ -25,10 +30,11 @@
  * tune and nothing to go blurry: at 13px a filled contour is still a contour.
  */
 
-import { memo, useEffect, useState, type CSSProperties } from 'react';
+import { memo, useSyncExternalStore, type CSSProperties } from 'react';
 
 import { usePreferenceStore } from '@stores/preferenceStore';
 
+import { DRAWN_ICONS, DRAWN_ICON_VIEWBOX } from './drawnIcons';
 import { ICON_NAMES, type IconName } from './iconNames';
 import { SHARP_ICON_PATHS, SHARP_ICON_VIEWBOX } from './sharpIconPaths';
 
@@ -102,19 +108,41 @@ const ICON_SIZE_COMPACT = {
 
 export type IconSizeName = keyof typeof ICON_SIZE;
 
+/**
+ * One `(max-width: 1366px)` query for every icon on screen.
+ *
+ * This was a `useState` + `useEffect` per icon: each of the ~900 icons on the
+ * Preferences ▸ Shortcuts page created its own MediaQueryList and listener, and
+ * on a ≤1366px laptop re-rendered itself once after mount to switch ladders —
+ * so the page mounted twice. A shared external store reads the answer during
+ * the first render and keeps a single listener for the whole app.
+ */
+const COMPACT_QUERY = '(max-width: 1366px)';
+let compactMql: MediaQueryList | null | undefined;
+
+function compactQuery(): MediaQueryList | null {
+  if (compactMql === undefined) {
+    compactMql =
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia(COMPACT_QUERY)
+        : null;
+  }
+  return compactMql;
+}
+
+function subscribeCompact(onChange: () => void): () => void {
+  const mq = compactQuery();
+  if (!mq || typeof mq.addEventListener !== 'function') return () => {};
+  mq.addEventListener('change', onChange);
+  return () => mq.removeEventListener('change', onChange);
+}
+
+const compactSnapshot = (): boolean => compactQuery()?.matches ?? false;
+// SSR / no matchMedia: the desktop ladder.
+const compactServerSnapshot = (): boolean => false;
+
 function useCompactChrome(): boolean {
-  // Default false so SSR / jsdom (and first paint) stay on the desktop ladder;
-  // the media query only tightens after mount on real narrow viewports.
-  const [compact, setCompact] = useState(false);
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    const mq = window.matchMedia('(max-width: 1366px)');
-    const onChange = () => setCompact(mq.matches);
-    onChange();
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
-  return compact;
+  return useSyncExternalStore(subscribeCompact, compactSnapshot, compactServerSnapshot);
 }
 
 export interface IconProps {
@@ -187,7 +215,34 @@ function IconInner({
     );
   }
 
-  const glyph = SHARP_ICON_PATHS[name] ?? SHARP_ICON_PATHS.square;
+  const glyph = SHARP_ICON_PATHS[name];
+  // A hand-drawn name — or one neither table knows, which draws the square
+  // rather than nothing.
+  if (!glyph) {
+    return (
+      <span
+        className={className}
+        style={mergedStyle}
+        onClick={onClick}
+        aria-label={ariaLabel ?? title}
+        aria-hidden={(ariaLabel ?? title) ? undefined : true}
+      >
+        <svg
+          width={computedSize}
+          height={computedSize}
+          viewBox={DRAWN_ICON_VIEWBOX}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          xmlns="http://www.w3.org/2000/svg"
+          // Authored markup from drawnIcons.ts, never input.
+          dangerouslySetInnerHTML={{ __html: DRAWN_ICONS[name] ?? DRAWN_ICONS.square ?? '' }}
+        />
+      </span>
+    );
+  }
   return (
     <span
       className={className}

@@ -13,9 +13,11 @@
  *                 engine's dirtyChanged), not the TypeScript bus traffic.
  *   autosave      every 60 s, `session.autosave()` — the engine writes a
  *                 recovery copy when the MIRROR says dirty.
- *   recovery      at boot, the engine's recovery record (not recovery.ts's
- *                 snapshot) is offered; Restore = `session.recover()` (one
- *                 undoable "Recover Unsaved Work" entry, still bound to its file).
+ *   recovery      never a prompt. A reload / re-entry keeps the document the
+ *                 engine still holds; after a crash the engine's recovery copy
+ *                 comes back on its own (`session.recover()`, one undoable
+ *                 "Recover Unsaved Work" entry, still bound to its file); a
+ *                 cloud project's copy comes back when that project opens.
  *   transport     play / pause / seek / the active comp go to the engine, whose
  *                 playhead drives the timeline (core/engine/engineTransport.ts).
  *   doc stores    guides / swatches / materials follow the mirror, and a user
@@ -25,7 +27,7 @@
  * every panel reads the document mirror.
  */
 
-import { EngineDocumentSession, type RecoveryFiles, type RecoveryIndex, type RecoveryRecord } from '@core/project/engineDocumentSession';
+import { EngineDocumentSession, isCloudLocalCopy, type RecoveryFiles, type RecoveryIndex, type RecoveryRecord } from '@core/project/engineDocumentSession';
 import { engine } from '@core/engine/engineInstance';
 import { processEngine, processEngineBridge } from '@core/engine/process/processEngine';
 import { installEngineTransport, type EngineTransportStats } from '@core/engine/engineTransport';
@@ -41,9 +43,7 @@ import { edit } from '@core/engine/uiEdits';
 import { engineCanReadFootage, materializeUnreadableFootage } from '@core/engine/sessionFootage';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
-import { openModal } from '@stores/modalStore';
 import { bumpScene } from '@stores/sceneStore';
-import { Button } from '@components/Button';
 
 const RECOVERY_KEY = 'premation.engineRecovery.v1';
 const AUTOSAVE_MS = 60_000;
@@ -118,7 +118,33 @@ const preloadRecoveryFiles: RecoveryFiles = {
     const file = (window as unknown as { motionEditor?: { file?: { write(p: string, c: string): Promise<void> } } }).motionEditor?.file;
     await file?.write(path, '');
   },
+  async writeText(path: string, text: string): Promise<void> {
+    const file = (window as unknown as { motionEditor?: { file?: { write(p: string, c: string): Promise<void> } } }).motionEditor?.file;
+    if (!file) throw new Error('no file channel');
+    await file.write(path, text);
+  },
 };
+
+/** The cloud project the route opens (`#/editor/<id>`), or null (the local editor). */
+function cloudProjectInRoute(): string | null {
+  const m = /#\/editor\/([^/?#]+)/.exec(typeof window !== 'undefined' ? window.location.hash : '');
+  return m ? decodeURIComponent(m[1]!) : null;
+}
+
+/**
+ * The engine already holds a document this app run made: the page reloaded,
+ * or the editor was entered again from the dashboard. The engine process
+ * outlives the page, so that document IS the user's work — newer than any
+ * recovery copy. A fresh engine is at revision 0 until the first command.
+ */
+async function engineHoldsDocument(): Promise<boolean> {
+  try {
+    const r = await engine().query({ type: 'getHistory' });
+    return r.revision > 0;
+  } catch {
+    return false;
+  }
+}
 
 /** Keep the active tab's unsaved flag equal to the engine's (mirror.dirty). */
 function syncDirtyFromMirror(): void {
@@ -131,7 +157,8 @@ function syncDirtyFromMirror(): void {
 
 /**
  * Install the engine-owned session. Resolves once the first document is in
- * place (a fresh `newProject`, or the user's answer to the recovery prompt).
+ * place (the engine's live one, a restored session, or a fresh `newProject`;
+ * on a cloud route ProjectLoader opens the project right after).
  * `track` receives every teardown.
  */
 export async function installEngineOwnedSession(track: (dispose: () => void) => void): Promise<void> {
@@ -193,13 +220,24 @@ export async function installEngineOwnedSession(track: (dispose: () => void) => 
     track(() => clearInterval(timer));
   }
 
-  // The first document.
+  // The first document. Never a prompt: the user's work is simply there.
   await processEngine()?.whenReady();
-  const pending = recoveryPath ? session.pendingRecovery() : null;
-  if (pending) {
-    offerRecovery(session, pending);
+  // A cloud project (#/editor/<id>): ProjectLoader opens it from the server
+  // right after boot, and that open puts back a recovery copy of THIS project
+  // if one never reached the server (EngineDocumentSession.openText).
+  if (cloudProjectInRoute()) {
+    bumpScene();
     return;
   }
+  // The engine still holds this run's document (reload, editor re-entered): keep it.
+  if (await engineHoldsDocument()) {
+    adoptLiveDocument();
+    return;
+  }
+  // A fresh engine after a crash or a kill: the unsaved work comes back on its own.
+  // A cloud project's leftovers wait for that project's open.
+  const pending = recoveryPath ? session.pendingRecovery() : null;
+  if (pending && !isCloudLocalCopy(pending.projectPath) && (await restoreSilently(session, pending))) return;
   try {
     await session.newProject();
   } catch (err) {
@@ -208,60 +246,33 @@ export async function installEngineOwnedSession(track: (dispose: () => void) => 
   bumpScene();
 }
 
-function offerRecovery(session: EngineDocumentSession, rec: RecoveryRecord): void {
-  const mins = Math.max(1, Math.round((Date.now() - rec.savedAt) / 60_000));
-  const startFresh = async (): Promise<void> => {
-    await session.discardRecovery();
-    try {
-      await session.newProject();
-    } catch (err) {
-      console.error('[engine] could not start a new project in the engine', err);
-    }
-    bumpScene();
-  };
-  openModal({
-    id: 'recovery-modal',
-    title: 'Recover unsaved work?',
-    size: 'sm',
-    render: () => (
-      <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-md)', lineHeight: 1.6 }}>
-        Premation found unsaved changes from your last session
-        (about {mins} min ago{rec.projectPath ? `, in “${projectNameFromFilePath(rec.projectPath)}”` : ''}).
-        Restore them, or discard and start fresh.
-      </div>
-    ),
-    footer: (close) => (
-      <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'flex-end' }}>
-        <Button variant="ghost" size="sm" onClick={() => { close(); void startFresh(); }}>Discard</Button>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => {
-            close();
-            void (async () => {
-              let ok = false;
-              try {
-                ok = await session.recover();
-              } catch (err) {
-                console.error('[engine] recovery failed', err);
-              }
-              if (!ok) {
-                notify('The unsaved session could not be restored', 'warning');
-                await startFresh();
-                return;
-              }
-              // Bound to its file again: Save writes back to it (no ProjectLoaded, no recent entry).
-              const path = rec.projectPath || null;
-              getProjectManager().resume(path ? projectNameFromFilePath(path) : 'Untitled', path);
-              bumpScene();
-              syncDirtyFromMirror();
-              notify('Session recovered', 'success');
-            })();
-          }}
-        >
-          Restore
-        </Button>
-      </div>
-    ),
-  });
+/** Bind the page to the document the engine already holds (the page's own state did not survive a reload). */
+function adoptLiveDocument(): void {
+  const m = documentMirror();
+  const pm = getProjectManager();
+  if (!pm.getState().current && (m.projectPath || m.dirty)) {
+    // A cloud project's local copy is not a file to save to from the local editor.
+    const path = m.projectPath && !isCloudLocalCopy(m.projectPath) ? m.projectPath : null;
+    pm.resume(path ? projectNameFromFilePath(path) : 'Untitled', path);
+  }
+  syncDirtyFromMirror();
+  bumpScene();
+}
+
+/** Put the unsaved session back (one undoable entry), say so once, and bind it to its file. False: nothing came back. */
+async function restoreSilently(session: EngineDocumentSession, rec: RecoveryRecord): Promise<boolean> {
+  let ok = false;
+  try {
+    ok = await session.recover();
+  } catch (err) {
+    console.error('[engine] recovery failed', err);
+  }
+  if (!ok) return false;
+  // Bound to its file again: Save writes back to it (no ProjectLoaded, no recent entry).
+  const path = rec.projectPath || null;
+  getProjectManager().resume(path ? projectNameFromFilePath(path) : 'Untitled', path);
+  bumpScene();
+  syncDirtyFromMirror();
+  notify('Restored your unsaved changes from the last session. Edit ▸ Undo goes back to the saved version.', 'info');
+  return true;
 }

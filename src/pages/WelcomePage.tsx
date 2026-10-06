@@ -35,6 +35,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { api, type SignupSource } from '@core/api/client';
 import { useAuthStore } from '@stores/authStore';
 import { Icon, type IconName } from '@components/Icon';
+import { AuthShell } from './AuthShell';
 import styles from './AuthPage.module.css';
 import welcome from './WelcomePage.module.css';
 
@@ -109,93 +110,86 @@ export function WelcomePage(): JSX.Element {
   const firstName = user.name?.trim().split(/\s+/)[0];
 
   return (
-    <div className={styles.container}>
-      <div className={`${styles.card} ${welcome.card}`}>
-        <div className={styles.headerText}>
-          <h1 className={styles.title}>{firstName ? `Welcome, ${firstName}` : 'Welcome'}</h1>
-          <p className={styles.subtitle}>
-            Your email is confirmed. One question before you start — it is the only way we
-            find out which of these is worth doing more of.
-          </p>
-        </div>
+    <AuthShell
+      title={firstName ? `Welcome, ${firstName}` : 'Welcome'}
+      subtitle="Your email is confirmed. One question before you start."
+    >
+      <form className={styles.form} onSubmit={(e) => void onSubmit(e)}>
+        <fieldset className={welcome.fieldset}>
+          <legend className={welcome.legend}>How did you hear about Premation?</legend>
 
-        <form className={styles.form} onSubmit={(e) => void onSubmit(e)}>
-          <fieldset className={welcome.fieldset}>
-            <legend className={welcome.legend}>How did you hear about Premation?</legend>
-
-            <div className={welcome.options}>
-              {OPTIONS.map((opt) => {
-                const active = choice === opt.value;
-                return (
-                  <label
-                    key={opt.value}
-                    className={active ? `${welcome.option} ${welcome.optionActive}` : welcome.option}
-                  >
-                    <input
-                      type="radio"
-                      name="signupSource"
-                      value={opt.value}
-                      className={welcome.radio}
-                      checked={active}
-                      disabled={submitting}
-                      onChange={() => {
-                        setChoice(opt.value);
-                        // Leaving stale prose behind would let it travel with a
-                        // preset answer the moment the user changed their mind,
-                        // which is exactly what the server refuses.
-                        if (opt.value !== 'other') setOther('');
-                      }}
-                    />
-                    <span className={welcome.optionMark} aria-hidden>
-                      <span className={welcome.optionDot} />
-                    </span>
-                    <Icon name={opt.icon} size="sm" className={welcome.optionIcon} aria-hidden />
-                    <span className={welcome.optionLabel}>{opt.label}</span>
-                  </label>
-                );
-              })}
-            </div>
-
-            {needsText && (
-              <div className={welcome.otherField}>
-                <label className={styles.label} htmlFor="signup-source-other">
-                  Where was that?
+          <div className={welcome.options}>
+            {OPTIONS.map((opt) => {
+              const active = choice === opt.value;
+              return (
+                <label
+                  key={opt.value}
+                  className={active ? `${welcome.option} ${welcome.optionActive}` : welcome.option}
+                >
+                  <input
+                    type="radio"
+                    name="signupSource"
+                    value={opt.value}
+                    className={welcome.radio}
+                    checked={active}
+                    disabled={submitting}
+                    onChange={() => {
+                      setChoice(opt.value);
+                      // Leaving stale prose behind would let it travel with a
+                      // preset answer the moment the user changed their mind,
+                      // which is exactly what the server refuses.
+                      if (opt.value !== 'other') setOther('');
+                    }}
+                  />
+                  <span className={welcome.optionMark} aria-hidden>
+                    <span className={welcome.optionDot} />
+                  </span>
+                  <Icon name={opt.icon} size="sm" className={welcome.optionIcon} aria-hidden />
+                  <span className={welcome.optionLabel}>{opt.label}</span>
                 </label>
-                <input
-                  id="signup-source-other"
-                  type="text"
-                  className={`${styles.input} ${styles.inputNoIcon}`}
-                  placeholder="A podcast, a conference, a course…"
-                  value={other}
-                  maxLength={OTHER_MAX}
-                  disabled={submitting}
-                  // The field appears because the option was chosen, so the
-                  // caret belongs in it — otherwise the next keystroke goes to
-                  // the radio group and moves the selection the user just made.
-                  autoFocus
-                  onChange={(e) => setOther(e.target.value)}
-                />
-                <p className={welcome.otherHint}>
-                  Free text. It is read by us to find the option this list is missing —
-                  nothing here is ever shown publicly.
-                </p>
-              </div>
-            )}
-          </fieldset>
+              );
+            })}
+          </div>
 
-          {error && (
-            <div className={styles.errorAlert} role="alert">
-              <Icon name="warning" size="sm" aria-hidden />
-              <span>{error}</span>
+          {needsText && (
+            <div className={welcome.otherField}>
+              <label className={styles.label} htmlFor="signup-source-other">
+                Where was that?
+              </label>
+              <input
+                id="signup-source-other"
+                type="text"
+                className={styles.input}
+                placeholder="A podcast, a conference, a course…"
+                value={other}
+                maxLength={OTHER_MAX}
+                disabled={submitting}
+                // The field appears because the option was chosen, so the
+                // caret belongs in it — otherwise the next keystroke goes to
+                // the radio group and moves the selection the user just made.
+                autoFocus
+                onChange={(e) => setOther(e.target.value)}
+              />
+              <p className={welcome.otherHint}>
+                Free text. It is read by us to find the option this list is missing —
+                nothing here is ever shown publicly.
+              </p>
             </div>
           )}
+        </fieldset>
 
-          <button type="submit" className={styles.primaryBtn} disabled={!ready || submitting}>
-            {submitting ? 'Saving…' : 'Continue'}
-          </button>
-        </form>
-      </div>
-    </div>
+        {error && (
+          <div className={styles.errorAlert} role="alert">
+            <Icon name="warning" size="sm" aria-hidden />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <button type="submit" className={styles.primaryBtn} disabled={!ready || submitting}>
+          {submitting ? 'Saving…' : 'Continue'}
+        </button>
+      </form>
+    </AuthShell>
   );
 }
 

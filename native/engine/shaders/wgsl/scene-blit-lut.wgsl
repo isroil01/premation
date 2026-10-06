@@ -155,5 +155,14 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     }
     rgb = mix(rgb, graded, intensity);
   }
+  // View ▸ Show Channel (RenderView.channel → cr1.x): 1–3 red / green / blue and
+  // 4 alpha, each as an opaque grey image; 5 the colour without its alpha.
+  let ch = obj.cr1.x;
+  if (ch > 0.5) {
+    if (ch > 4.5) { return vec4<f32>(rgb, 1.0); }
+    var v = c.a;
+    if (ch < 1.5) { v = rgb.r * c.a; } else if (ch < 2.5) { v = rgb.g * c.a; } else if (ch < 3.5) { v = rgb.b * c.a; }
+    return vec4<f32>(v, v, v, 1.0);
+  }
   return vec4<f32>(rgb * c.a, c.a);
 }

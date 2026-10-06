@@ -1,25 +1,30 @@
 import { useCallback, useEffect, useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@stores/authStore';
 import { useProjectLibrary, type OrientationFilter } from '@stores/projectLibraryStore';
-import { Icon } from '@components/Icon';
+import { Icon, type IconName } from '@components/Icon';
 import { Logo } from '@components/Logo';
 import { Checkbox } from '@components/Checkbox';
 import { Pagination } from '@components/Pagination';
 import { Modal, customConfirm } from '@components/Modal';
 import { Button } from '@components/Button';
+import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { useUIStore } from '@stores/uiStore';
 import { setPendingFootage } from '@core/project/pendingFootage';
 import { AiSettingsSection } from '@layout/Settings/AiSettingsSection';
-import { ApiKeysSection } from '@layout/Settings/ApiKeysSection';
 import { NativePluginsPage } from '@layout/Plugins/NativePluginsPage';
 import { RegistryPluginsNotice } from '@layout/Plugins/RegistryPluginsNotice';
 import { BillingSection } from '@layout/Settings/BillingSection';
+import { AccountSection } from '@layout/Settings/AccountSection';
+import { PlanCard } from '@layout/Settings/PlanCard';
 import { billingEnabled } from '@core/config/edition';
+import { hasDesktopChrome } from '@core/config/uiPlatform';
+import { TITLE_BAR_ROUTE_SLOT_ID } from '@layout/TitleBar/routeSlot';
 import { ColorPicker } from '@components/ColorPicker';
 import { cn } from '@utils/cn';
 import {
-  SIZE_PRESETS, SIZE_GROUPS, FPS_PRESETS, DURATION_PRESETS,
+  SIZE_PRESETS, SIZE_GROUPS, FPS_PRESETS,
   MIN_DIMENSION, MAX_DIMENSION, MIN_DURATION, MAX_DURATION,
   clampDimension, clampFps, clampDuration, describeSize, describeDuration,
   aspectRatioLabel,
@@ -27,7 +32,7 @@ import {
 import { purgeStoredAssets, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
 import { useMirrorAssetRecords, useMirrorFolders } from '@hooks/useAssetRecords';
 import { edit } from '@core/engine/uiEdits';
-import { engine } from '@core/engine/engineInstance';
+import { engine, hasEngine } from '@core/engine/engineInstance';
 import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
 import { createFolderEdit, createFolderTreeEdit, importBrowserFilesEdit, renameItemEdit } from '@layout/Assets/assetEdits';
 import type { CompositionSettings } from '@stores/compositionStore';
@@ -38,12 +43,15 @@ import {
   type RenderJobDto,
   type TrashedProject,
 } from '@core/api/client';
+import { projectLimitDetail } from '@core/api/transport';
 import { usePagedList } from '@hooks/usePagedList';
 import { useProSalesOpen } from '@hooks/useProSalesOpen';
 import { clearRecovery } from '@core/persistence/recovery';
 import { emptySceneProject } from '@core/scene/sceneProjectIO';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import { DashboardCustomizeTab } from './DashboardCustomizeTab';
+import { APP_VERSION } from '@layout/Help/whatsNew';
+import { openWhatsNew } from '@layout/Help/WhatsNewDialog';
 import { ReviewPrompt } from '@layout/Reviews/ReviewPrompt';
 import { useReviewPromptStore } from '@stores/reviewPromptStore';
 import styles from './DashboardPage.module.css';
@@ -61,6 +69,24 @@ import styles from './DashboardPage.module.css';
  * FNV-1a, because it has to spread short similar ids (`p1`, `p2`) across the
  * wheel; summing char codes would put them next to each other.
  */
+/**
+ * "Read-only" on a project past the Free plan's cloud allowance.
+ *
+ * The server sets `readOnly` per row (the same rule that refuses its saves), so
+ * the user learns it here rather than from a failed save after opening it.
+ */
+function ReadOnlyTag(): JSX.Element {
+  return (
+    <span
+      className={styles.readOnlyTag}
+      title="Past your plan's cloud project limit. It opens and exports, but does not save to the cloud."
+    >
+      <Icon name="lock" size="sm" />
+      Read-only
+    </span>
+  );
+}
+
 function thumbHue(id: string): number {
   let hash = 0x811c9dc5;
   for (let i = 0; i < id.length; i++) {
@@ -83,11 +109,68 @@ function timeAgo(iso: string): string {
 }
 
 /**
+ * When a project was last touched, the way a file browser says it: relative
+ * while that is the useful answer, a date once it is not.
+ */
+function lastEditedLabel(iso: string): string {
+  const d = Date.parse(iso);
+  if (Number.isNaN(d)) return '';
+  const minutes = Math.round((Date.now() - d) / 60000);
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  const date = new Date(d);
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }),
+  });
+}
+
+/** A comp length as timecode — h:mm:ss:ff at the comp's own frame rate. */
+function timecodeOf(seconds: number, fps: number): string {
+  const rate = Math.max(1, Math.round(fps));
+  const frames = Math.max(0, Math.round(seconds * fps));
+  const ff = frames % rate;
+  const total = Math.floor(frames / rate);
+  const two = (n: number): string => String(n).padStart(2, '0');
+  return `${Math.floor(total / 3600)}:${two(Math.floor(total / 60) % 60)}:${two(total % 60)}:${two(ff)}`;
+}
+
+/** "0.9" from "0.9.0" — how a release is named in prose. */
+const RELEASE_LABEL = APP_VERSION.split('.').slice(0, 2).join('.');
+
+type ProjectView = 'list' | 'grid';
+const PROJECT_VIEW_KEY = 'premation.dashboard.projectView';
+const NEWS_SEEN_KEY = 'premation.dashboard.newsSeen';
+
+/** A per-machine convenience; a blocked or empty store just means the default. */
+function readPref(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writePref(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* private window / blocked storage: the choice lasts for this session only */
+  }
+}
+
+/**
  * Dashboard destinations.
  *
- * `billing` and `developer` used to be CARDS inside `settings`, which made that
- * page a scroll of four unrelated concerns — account, subscription, assistant,
- * API keys — and left two first-class surfaces with no address of their own.
+ * `billing` used to be a CARD inside `settings`, which made that page a scroll
+ * of unrelated concerns — account, subscription, assistant — and left a
+ * first-class surface with no address of its own.
  * "Show me my plan" was a link to a scroll POSITION
  * (`?tab=settings&section=billing`, followed by a `scrollIntoView`), which is
  * what a missing page looks like while something still has to link to it.
@@ -100,12 +183,11 @@ type TabType =
   | 'trash'
   | 'customize'
   | 'billing'
-  | 'developer'
   | 'plugins'
   | 'settings';
 
 const TABS: readonly TabType[] = [
-  'home', 'projects', 'assets', 'renders', 'trash', 'customize', 'billing', 'developer', 'plugins', 'settings',
+  'home', 'projects', 'assets', 'renders', 'trash', 'customize', 'billing', 'plugins', 'settings',
 ];
 
 /**
@@ -123,6 +205,27 @@ function isTab(value: string | null): value is TabType {
 
 type Orientation = 'landscape' | 'portrait' | 'square';
 
+interface NavItem {
+  tab: TabType;
+  label: string;
+  icon: IconName;
+}
+
+/** The library: what you came here to open, import, export or recover. */
+const NAV_LIBRARY: readonly NavItem[] = [
+  { tab: 'home', label: 'Home', icon: 'home' },
+  { tab: 'projects', label: 'Projects', icon: 'folder' },
+  { tab: 'assets', label: 'Assets', icon: 'image' },
+  { tab: 'renders', label: 'Render queue', icon: 'queue' },
+  { tab: 'trash', label: 'Trash', icon: 'trash' },
+];
+
+/** The app's own setup. Account pages are in the account menu, top right. */
+const NAV_APP: readonly NavItem[] = [
+  { tab: 'plugins', label: 'Plugins', icon: 'plugin' },
+  { tab: 'customize', label: 'Preferences', icon: 'sliders-h' },
+];
+
 /**
  * Render statuses, as a person would say them.
  *
@@ -138,24 +241,18 @@ const RENDER_STATUS_LABEL: Record<RenderJobDto['status'], string> = {
   canceled: 'Cancelled',
 };
 
+const VIDEO_ACCEPT = 'video/*,.mp4,.mov,.webm,.m4v,.mxf,.avi,.mts,.m2ts,.mpg,.wmv,.mkv';
+
 /** Rows per page for the queue and the trash — both are read, not browsed. */
 const TABLE_PAGE_SIZE = 20;
 /** Cards per page in the asset grid. */
 const ASSET_PAGE_SIZE = 24;
 
 /**
- * A project's shape, from its real comp size.
- *
- * This replaces a "Category" badge that was computed as `revision % 3` —
- * meaning a project was a "Social Video" or a "Cinematic Intro" depending on
- * how many times it had been saved. Orientation is the axis that actually
- * distinguishes a reel from a YouTube cut, and it comes from the document.
+ * The format filter's labels. Orientation is the axis that actually
+ * distinguishes a reel from a YouTube cut, and it comes from the comp's own
+ * size (the server filters on it — see projectLibraryStore).
  */
-function orientationOf(p: { width: number; height: number }): Orientation {
-  if (p.width === p.height) return 'square';
-  return p.width > p.height ? 'landscape' : 'portrait';
-}
-
 const ORIENTATION_LABEL: Record<Orientation, string> = {
   landscape: 'Landscape',
   portrait: 'Portrait',
@@ -254,10 +351,50 @@ export function DashboardPage(): JSX.Element {
   const [assetsBusy, setAssetsBusy] = useState(false);
   const [assetPage, setAssetPage] = useState({ limit: ASSET_PAGE_SIZE, offset: 0 });
   const [dataError, setDataError] = useState('');
+  // An action's error belongs to the page it happened on. This was one string
+  // shown by Assets, Renders and Trash alike and never cleared, so a failure on
+  // one page sat on top of the other two until a reload.
+  useEffect(() => {
+    setDataError('');
+  }, [activeTab]);
+  // Dialogs portal outside this page; the attribute carries the dashboard's
+  // scale and dialog frame to them (Modal.module.css), and only while the
+  // dashboard is mounted — the editor's dialogs never see it.
+  useEffect(() => {
+    document.documentElement.dataset.surface = 'dashboard';
+    return () => {
+      delete document.documentElement.dataset.surface;
+    };
+  }, []);
+
+  // The title bar mounts above the routes, so its slot exists by the time this
+  // effect runs; null in the browser build, which has no title bar.
+  const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setTitleSlot(hasDesktopChrome() ? document.getElementById(TITLE_BAR_ROUTE_SLOT_ID) : null);
+  }, []);
+  /** The Home numbers could not be loaded — so Home states none, rather than zeroes. */
+  const [overviewFailed, setOverviewFailed] = useState(false);
+  const [projectView, setProjectView] = useState<ProjectView>(() =>
+    readPref(PROJECT_VIEW_KEY) === 'grid' ? 'grid' : 'list',
+  );
+  const chooseProjectView = (view: ProjectView): void => {
+    setProjectView(view);
+    writePref(PROJECT_VIEW_KEY, view);
+  };
+  // The release banner is shown until closed, once per version.
+  const [newsOpen, setNewsOpen] = useState(() => readPref(NEWS_SEEN_KEY) !== APP_VERSION);
+  const dismissNews = (): void => {
+    setNewsOpen(false);
+    writePref(NEWS_SEEN_KEY, APP_VERSION);
+  };
   /** Plan + credits, from /auth/me. The UI must not guess these. */
   const [account, setAccount] = useState<AccountRecord | null>(null);
   // Pro sales can be closed server-side; the sidebar then stops saying "View plans".
   const salesOpen = useProSalesOpen();
+  /** The cloud project cap in force (null = none, incl. the beta and the launch grace). */
+  const projectCap =
+    account && account.access.reason !== 'beta' ? (account.access.limits?.cloudProjects ?? null) : null;
 
   /**
    * The render queue and the trash, a page at a time.
@@ -314,20 +451,21 @@ export function DashboardPage(): JSX.Element {
         api.listRenders({ limit: 1, status: 'failed' }),
       ]);
       setAccount(me);
+      setOverviewFailed(false);
       setOverview({
         projects: newest.total,
         activeRenders: active.total,
         failedRenders: failed.total,
         recent: newest.items[0] ?? null,
       });
-    } catch (err) {
-      setDataError(err instanceof Error ? err.message : 'Could not load your library.');
+    } catch {
+      setOverviewFailed(true);
     }
   }, []);
 
   // Workspace Setup Modal State
   const [setupModalOpen, setSetupModalOpen] = useState(false);
-  const [setupTitle, setSetupTitle] = useState('New Video Composition');
+  const [setupTitle, setSetupTitle] = useState('Untitled project');
   const [setupWidth, setSetupWidth] = useState(1920);
   const [setupHeight, setSetupHeight] = useState(1080);
   const [setupFps, setSetupFps] = useState(30);
@@ -342,27 +480,66 @@ export function DashboardPage(): JSX.Element {
   // `pendingFootage` to the editor, which imports it and drops it in at full
   // frame.
   const [setupFootage, setSetupFootage] = useState<File | null>(null);
-  const [presetCategory, setPresetCategory] = useState<string>('All');
+  /** Which way in the dialog is showing: a blank comp, or one matched to a video. */
+  const [setupTab, setSetupTab] = useState<'blank' | 'video'>('blank');
+  /** The preset the size came from; 'custom' once a dimension is typed. */
+  const [setupPresetId, setSetupPresetId] = useState<string>('custom');
+  /**
+   * Lock aspect ratio. The ratio is HELD, not re-derived from the two fields on
+   * each keystroke: typing "1920" passes through 1, 19 and 192, and a ratio
+   * read back from those would be whatever the clamp left behind.
+   */
+  const [lockAspect, setLockAspect] = useState(true);
+  const [lockedRatio, setLockedRatio] = useState(1920 / 1080);
 
-  const swapDimensions = (): void => {
-    setSetupWidth(setupHeight);
-    setSetupHeight(setupWidth);
+  const setSize = (width: number, height: number): void => {
+    setSetupWidth(width);
+    setSetupHeight(height);
+    if (width > 0 && height > 0) setLockedRatio(width / height);
   };
 
-  const filteredPresets = useMemo(() => {
-    if (presetCategory === 'All') return SIZE_PRESETS;
-    return SIZE_PRESETS.filter((p) => p.group === presetCategory);
-  }, [presetCategory]);
+  const swapDimensions = (): void => {
+    setSetupPresetId('custom');
+    setSize(setupHeight, setupWidth);
+  };
+
+  const changeWidth = (width: number): void => {
+    setSetupPresetId('custom');
+    setSetupWidth(width);
+    if (lockAspect && width > 0) setSetupHeight(Math.round(width / lockedRatio));
+    else if (width > 0 && setupHeight > 0) setLockedRatio(width / setupHeight);
+  };
+
+  const changeHeight = (height: number): void => {
+    setSetupPresetId('custom');
+    setSetupHeight(height);
+    if (lockAspect && height > 0) setSetupWidth(Math.round(height * lockedRatio));
+    else if (height > 0 && setupWidth > 0) setLockedRatio(setupWidth / height);
+  };
+
+  const pickSetupVideo = (): void => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = VIDEO_ACCEPT;
+    input.onchange = () => {
+      const f = input.files?.[0];
+      if (f) chooseSetupFootage(f);
+    };
+    input.click();
+  };
 
   const chooseSetupFootage = (file: File): void => {
     setSetupFootage(file);
+    setSetupTab('video');
+    setSetupPresetId('custom');
     setSetupTitle(file.name.replace(/\.[a-z0-9]+$/i, '') || file.name);
     const url = URL.createObjectURL(file);
     const v = document.createElement('video');
     v.preload = 'metadata';
     v.onloadedmetadata = () => {
-      if (v.videoWidth > 0) setSetupWidth(clampDimension(v.videoWidth));
-      if (v.videoHeight > 0) setSetupHeight(clampDimension(v.videoHeight));
+      if (v.videoWidth > 0 && v.videoHeight > 0) {
+        setSize(clampDimension(v.videoWidth), clampDimension(v.videoHeight));
+      }
       if (Number.isFinite(v.duration) && v.duration > 0) setSetupDuration(clampDuration(v.duration));
       URL.revokeObjectURL(url);
     };
@@ -419,22 +596,32 @@ export function DashboardPage(): JSX.Element {
   // instead of three surfaces that each created projects slightly differently.
   // The modal's size presets cover what the launchpad offered.
 
-  // The newest project in the LIBRARY, not the newest on this page: sorting the
-  // loaded rows meant "pick up where you left off" pointed at whatever was on
-  // page 3 of a filtered search.
-  const mostRecentProject = overview.recent;
-
   const onCreate = () => {
-    setSetupTitle('Untitled composition');
-    setSetupWidth(1920);
-    setSetupHeight(1080);
+    setSetupTitle('Untitled project');
+    setSize(1920, 1080);
+    setSetupTab('blank');
+    setSetupPresetId(SIZE_PRESETS.find((p) => p.width === 1920 && p.height === 1080)?.id ?? 'custom');
+    setLockAspect(true);
     setSetupFps(30);
     setSetupDuration(10);
     setSetupBg('#101014');
     setSetupTransparent(false);
     setSetupFootage(null);
-    setPresetCategory('All');
     setSetupModalOpen(true);
+  };
+
+  /** The second way in: pick a video, and the dialog opens already matched to it. */
+  const onCreateFromVideo = (): void => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = VIDEO_ACCEPT;
+    input.onchange = () => {
+      const f = input.files?.[0];
+      if (!f) return;
+      onCreate();
+      chooseSetupFootage(f);
+    };
+    input.click();
   };
 
   const onLaunchWorkspace = async (e: React.FormEvent) => {
@@ -442,7 +629,7 @@ export function DashboardPage(): JSX.Element {
     setCreating(true);
     try {
       clearRecovery();
-      const compName = setupTitle.trim() || 'Untitled composition';
+      const compName = setupTitle.trim() || 'Untitled project';
       // Clamp to valid ranges so a half-typed value (onChange fires before the
       // onBlur clamp) can never produce an out-of-range comp the backend rejects.
       const width = clampDimension(setupWidth);
@@ -490,7 +677,10 @@ export function DashboardPage(): JSX.Element {
         err instanceof Error && err.message
           ? err.message
           : 'Could not create the composition. Check your connection and try again.';
-      useUIStore.getState().notify({ level: 'error', message, durationMs: 5000 });
+      // Past the Free plan's cloud allowance the server's sentence carries the
+      // way out (upgrade, or a local project) — give it time to be read.
+      const limited = projectLimitDetail(403, (err as { body?: unknown }).body) !== null;
+      useUIStore.getState().notify({ level: 'error', message, durationMs: limited ? 10000 : 5000 });
       setCreating(false);
     }
   };
@@ -696,12 +886,30 @@ export function DashboardPage(): JSX.Element {
     }
   }
 
-  const subfoldersInView = folders.filter((f) => f.parentId === currentFolderId);
-  const visibleAssetsInView = storeAssets.filter((a) => {
-    const matchesType = assetTypeFilter === 'all' || a.type === assetTypeFilter;
-    const inFolder = (a.folderId ?? null) === currentFolderId;
-    return matchesType && inFolder;
-  });
+  const subfoldersInView = useMemo(
+    () => folders.filter((f) => f.parentId === currentFolderId),
+    [folders, currentFolderId],
+  );
+  const visibleAssetsInView = useMemo(
+    () =>
+      storeAssets.filter((a) => {
+        const matchesType = assetTypeFilter === 'all' || a.type === assetTypeFilter;
+        const inFolder = (a.folderId ?? null) === currentFolderId;
+        return matchesType && inFolder;
+      }),
+    [storeAssets, assetTypeFilter, currentFolderId],
+  );
+  /**
+   * Items directly inside each folder (assets + subfolders), in one pass.
+   * Each folder card used to scan the whole library for its own count, on
+   * every render of the page — folders × assets work per keystroke anywhere.
+   */
+  const folderItemCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const a of storeAssets) if (a.folderId) counts.set(a.folderId, (counts.get(a.folderId) ?? 0) + 1);
+    for (const f of folders) if (f.parentId) counts.set(f.parentId, (counts.get(f.parentId) ?? 0) + 1);
+    return counts;
+  }, [storeAssets, folders]);
 
   /**
    * One page of the folder's contents, folders first.
@@ -728,105 +936,72 @@ export function DashboardPage(): JSX.Element {
       case 'home':
         return (
           <>
-            {mostRecentProject && (
-              <div className={styles.heroBanner}>
+            {/*
+              One closable row for the release. This is the only place the
+              dashboard announces anything.
+            */}
+            {newsOpen && (
+              <div className={styles.newsBanner}>
+                <div className={styles.newsArt} aria-hidden>{RELEASE_LABEL}</div>
+                <div className={styles.newsBody}>
+                  <h2 className={styles.newsTitle}>New in {RELEASE_LABEL}: the native engine</h2>
+                  <p className={styles.newsText}>
+                    Playback, rendering and export now run in a new GPU engine. Your existing projects open as before.
+                  </p>
+                </div>
+                <button type="button" className={styles.btnSecondary} onClick={openWhatsNew}>
+                  See what’s new
+                </button>
                 <button
                   type="button"
-                  className={styles.heroThumb}
-                  onClick={() => navigate(`/editor/${mostRecentProject.id}`)}
-                  aria-label={`Open ${mostRecentProject.name}`}
+                  className={styles.actionBtn}
+                  onClick={dismissNews}
+                  title="Dismiss"
+                  aria-label="Dismiss"
                 >
-                  {mostRecentProject.thumbnailUrl ? (
-                    <img src={mostRecentProject.thumbnailUrl} alt="" className={styles.heroThumbImg} />
-                  ) : (
-                    <Icon name="video" size="lg" className={styles.heroThumbIcon} />
-                  )}
+                  <Icon name="close" size="sm" />
                 </button>
-                <div className={styles.heroBody}>
-                  <p className={styles.heroEyeline}>Continue editing</p>
-                  <h2 className={styles.heroTitle}>{mostRecentProject.name}</h2>
-                  <p className={styles.heroSubtitle}>
-                    Edited {timeAgo(mostRecentProject.updatedAt)} · {describeSize(mostRecentProject.width, mostRecentProject.height)} · {mostRecentProject.fps} fps · {mostRecentProject.layerCount} {mostRecentProject.layerCount === 1 ? 'layer' : 'layers'}
-                  </p>
-                  <div className={styles.heroActions}>
-                    <button
-                      type="button"
-                      className={styles.heroBtnPrimary}
-                      onClick={() => navigate(`/editor/${mostRecentProject.id}`)}
-                    >
-                      <Icon name="play" size="md" />
-                      <span>Resume</span>
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.btnSecondary}
-                      onClick={() => openTab('projects')}
-                    >
-                      <span>All projects</span>
-                    </button>
-                  </div>
-                </div>
               </div>
             )}
 
             {/*
-              What is happening, not how many things exist.
-
-              This was three bordered cards — Projects / Active renders /
-              Storage — each a big number over a small label, each a link to a
-              tab already one click away in the sidebar. That is the
-              hero-metric template: furniture that looks like a dashboard
-              without telling you anything you would act on.
-
-              What replaces it says only what is true right now. Renders in
-              flight and renders that failed are states you do something about;
-              when there are none of either, the strip is a quiet line about the
-              library rather than three boxes of zeroes.
+              What is happening, not how many things exist: renders in flight
+              and renders that failed are states you act on. When there are
+              none of either, the strip is not there at all.
             */}
-            <div className={styles.overviewStrip}>
-              {overview.failedRenders > 0 && (
-                <button
-                  type="button"
-                  className={`${styles.overviewSignal} ${styles.overviewSignalDanger}`}
-                  onClick={() => openTab('renders')}
-                >
-                  <Icon name="warning" size="sm" />
-                  <span>
+            {(overview.failedRenders > 0 || overview.activeRenders > 0) && !overviewFailed && (
+              <div className={styles.overviewStrip}>
+                {overview.failedRenders > 0 && (
+                  <button
+                    type="button"
+                    className={`${styles.overviewSignal} ${styles.overviewSignalDanger}`}
+                    onClick={() => openTab('renders')}
+                  >
                     {overview.failedRenders === 1
                       ? '1 render failed'
                       : `${overview.failedRenders.toLocaleString()} renders failed`}
-                  </span>
-                </button>
-              )}
-
-              {overview.activeRenders > 0 && (
-                <button
-                  type="button"
-                  className={`${styles.overviewSignal} ${styles.overviewSignalBusy}`}
-                  onClick={() => openTab('renders')}
-                >
-                  <span className={styles.pulseDot} />
-                  <span>
+                  </button>
+                )}
+                {overview.activeRenders > 0 && (
+                  <button
+                    type="button"
+                    className={styles.overviewSignal}
+                    onClick={() => openTab('renders')}
+                  >
                     {overview.activeRenders === 1
                       ? '1 render in progress'
                       : `${overview.activeRenders.toLocaleString()} renders in progress`}
-                  </span>
-                </button>
-              )}
-
-              <span className={styles.overviewFacts}>
-                {overview.projects.toLocaleString()} {overview.projects === 1 ? 'project' : 'projects'}
-                {account ? ` · ${formatBytes(account.storageBytes)} stored` : ''}
-                {account && account.assetCount > 0
-                  ? ` · ${account.assetCount.toLocaleString()} ${account.assetCount === 1 ? 'asset' : 'assets'}`
-                  : ''}
-              </span>
-            </div>
+                  </button>
+                )}
+              </div>
+            )}
 
             <div className={styles.sectionHeaderRow}>
-              <h2 className={styles.sectionTitle}>Recent compositions</h2>
+              <h2 className={styles.sectionTitle}>Recent</h2>
               <button type="button" className={styles.sectionLink} onClick={() => openTab('projects')}>
-                View all
+                {overviewFailed || overview.projects <= 6
+                  ? 'All projects'
+                  : `All ${overview.projects.toLocaleString()} projects`}
               </button>
             </div>
             {/*
@@ -835,7 +1010,7 @@ export function DashboardPage(): JSX.Element {
               by a banner and three boxes, and "View all" led to what you were
               already looking at.
             */}
-            {renderProjectsTable({ max: 5 })}
+            {renderProjectsTable({ max: 6 })}
           </>
         );
 
@@ -982,8 +1157,7 @@ export function DashboardPage(): JSX.Element {
               <div className={styles.assetsGrid}>
                 {/* Render folders first */}
                 {pagedFolders.map((folder) => {
-                  const count = storeAssets.filter((a) => a.folderId === folder.id).length
-                    + folders.filter((f) => f.parentId === folder.id).length;
+                  const count = folderItemCounts.get(folder.id) ?? 0;
                   return (
                     <div
                       key={folder.id}
@@ -1034,11 +1208,22 @@ export function DashboardPage(): JSX.Element {
                 {/* Render assets */}
                 {pagedAssets.map((asset) => {
                   const visual = getAssetVisualInfo(asset);
+                  // The small preview, as the editor's Assets panel uses: the
+                  // full-res original made every tile download and decode the
+                  // whole file. Video gets its server poster when there is one.
+                  const preview = asset.thumbSrc ?? (asset.type === 'image' ? asset.src : undefined);
                   return (
                     <div key={asset.id} className={styles.assetCard}>
                       <div className={styles.assetPreview}>
-                        {asset.type === 'image' && asset.src ? (
-                          <img src={asset.src} alt="" className={styles.assetPreviewImg} />
+                        {preview ? (
+                          <img
+                            src={preview}
+                            alt=""
+                            className={styles.assetPreviewImg}
+                            loading="lazy"
+                            decoding="async"
+                            draggable={false}
+                          />
                         ) : (
                           <Icon
                             name={visual.icon}
@@ -1395,13 +1580,6 @@ export function DashboardPage(): JSX.Element {
           </div>
         );
 
-      case 'developer':
-        return (
-          <div className={styles.developerPanel}>
-            <ApiKeysSection onViewPlans={() => openTab('billing')} />
-          </div>
-        );
-
       case 'plugins':
         return <NativePluginsPage />;
 
@@ -1415,8 +1593,11 @@ export function DashboardPage(): JSX.Element {
       case 'settings':
         return (
           <div className={styles.settingsPanel}>
-            {/* Account & Workspace Profile Card */}
-            <div className={styles.settingsCard}>
+            {/*
+              Account: the profile header, then name / email / password /
+              devices / deletion — every write there re-reads /auth/me.
+            */}
+            <div className={styles.settingsCard} id="account-settings">
               <div className={styles.profileHeaderRow}>
                 <div className={styles.profileAvatarLarge}>
                   <Icon name="user" size="lg" />
@@ -1426,21 +1607,41 @@ export function DashboardPage(): JSX.Element {
                     {user?.name || user?.email?.split('@')[0] || 'Account'}
                   </div>
                   <div className={styles.profileEmailText}>{user?.email}</div>
-                  <div className={styles.profileNodeBadge}>
-                    {account ? `${account.plan.charAt(0).toUpperCase()}${account.plan.slice(1)} plan · member since ${new Date(account.createdAt).toLocaleDateString()}` : '—'}
-                  </div>
+                  {account && (
+                    <div className={styles.profileNodeBadge}>
+                      {`${account.plan === 'pro' ? 'Premation Cloud' : 'Free plan'} · member since ${new Date(account.createdAt).toLocaleDateString()}`}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className={styles.storageBarSection}>
-                <div className={styles.storageBarHeader}>
-                  <span>Cloud Workspace Storage</span>
-                  <span className={styles.monoValue}>
-                    {formatBytes(account?.storageBytes ?? 0)} across {account?.assetCount ?? 0} {account?.assetCount === 1 ? 'asset' : 'assets'}
-                  </span>
+              {/* Stated once the account has answered — never as "0 B across 0 assets". */}
+              {account && (
+                <div className={styles.storageBarSection}>
+                  <div className={styles.storageBarHeader}>
+                    <span>Storage</span>
+                    <span className={styles.monoValue}>
+                      {formatBytes(account.storageBytes)} across {account.assetCount} {account.assetCount === 1 ? 'asset' : 'assets'}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {account && (
+                <AccountSection
+                  account={account}
+                  onAccountChanged={refreshOverview}
+                  onOpenBilling={() => openTab('billing')}
+                />
+              )}
             </div>
+
+            {/* The plan and its cloud allowance; checkout itself stays on Billing. */}
+            {account && billingEnabled() && (
+              <div className={styles.settingsCard} id="plan-settings">
+                <PlanCard account={account} onOpenBilling={() => openTab('billing')} />
+              </div>
+            )}
 
             {/* Assistant — how the AI is powered */}
             <div className={styles.settingsCard} id="ai-settings">
@@ -1452,19 +1653,14 @@ export function DashboardPage(): JSX.Element {
               Editor preferences live on their own first-class Customize page.
             */}
             <div className={styles.settingsCard}>
-              <h3 className={styles.settingsLabel}>Editor Preferences</h3>
-              <p className={styles.optionDesc} style={{ marginBottom: 'var(--space-4)' }}>
+              <h3 className={styles.settingsLabel}>Editor preferences</h3>
+              <p className={styles.optionDesc} style={{ marginBottom: 'var(--space-3)' }}>
                 Appearance, interface scale, panel layout, editing behaviour and keyboard
-                shortcuts can all be tailored to your workflow on the dedicated Customize page.
+                shortcuts are on the Preferences page.
               </p>
               <div className={styles.settingsRow}>
-                <Button
-                  variant="primary"
-                  onClick={() => openTab('customize')}
-                  style={{ width: '100%', justifyContent: 'center' }}
-                >
-                  <Icon name="sliders-h" size="md" style={{ marginRight: 8 }} />
-                  Customize Editor
+                <Button variant="secondary" onClick={() => openTab('customize')}>
+                  Open Preferences
                 </Button>
               </div>
             </div>
@@ -1488,6 +1684,9 @@ export function DashboardPage(): JSX.Element {
     const rows = max === undefined ? projects : projects.slice(0, max);
     /** Empty because of a search or a format filter, rather than empty full stop. */
     const isFiltered = searchQuery.trim().length > 0 || orientation !== 'all';
+    /** Bulk selection belongs to the full list; Home's shortlist is for opening. */
+    const selectable = max === undefined;
+    const asGrid = max === undefined && projectView === 'grid';
     return (
       <div className={styles.tableCard}>
         {/*
@@ -1575,108 +1774,131 @@ export function DashboardPage(): JSX.Element {
           </div>
         )}
 
-        {status === 'ready' && projects.length > 0 && (
-          <table className={styles.table}>
+        {status === 'ready' && projects.length > 0 && (asGrid ? (
+          <div className={styles.projectGrid}>
+            {rows.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={styles.projectTile}
+                onClick={() => navigate(`/editor/${p.id}`)}
+              >
+                <span
+                  className={styles.projectTilePoster}
+                  style={{ '--thumb-hue': thumbHue(p.id) } as React.CSSProperties}
+                >
+                  {p.thumbnailUrl
+                    ? <img src={p.thumbnailUrl} alt="" />
+                    : <Icon name="video" size="lg" />}
+                </span>
+                <span className={styles.projectTileMeta}>
+                  <span className={styles.projectTileName}>{p.name}</span>
+                  <span className={styles.projectTileFacts}>
+                    {p.width} × {p.height} · {lastEditedLabel(p.updatedAt)}
+                    {p.readOnly ? <ReadOnlyTag /> : null}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <table className={`${styles.table} ${styles.tableFixed}`}>
             <thead>
               <tr>
-                <th style={{ width: '40px', textAlign: 'center' }}>
-                  <Checkbox
-                    checked={selectedIds.size === projects.length && projects.length > 0}
-                    indeterminate={selectedIds.size > 0 && selectedIds.size < projects.length}
-                    onChange={toggleSelectAll}
-                    title="Select every project on this page"
-                  />
-                </th>
-                <th>Project</th>
-                <th>Format</th>
-                <th>Resolution</th>
-                <th>Length</th>
-                <th style={{ width: '60px', textAlign: 'center' }}>Actions</th>
+                {selectable && (
+                  <th style={{ width: '36px' }}>
+                    <Checkbox
+                      checked={selectedIds.size === projects.length && projects.length > 0}
+                      indeterminate={selectedIds.size > 0 && selectedIds.size < projects.length}
+                      onChange={toggleSelectAll}
+                      title="Select every project on this page"
+                    />
+                  </th>
+                )}
+                <th className={styles.colName}>Name</th>
+                <th>Last edited</th>
+                <th className={styles.colOptional}>Frame size</th>
+                <th>Duration</th>
+                <th style={{ width: '44px' }} aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
               {rows.map((p) => {
-                const isSelected = selectedIds.has(p.id);
-                const orientation = orientationOf(p);
-                const thumb = p.thumbnailUrl;
-
+                const isSelected = selectable && selectedIds.has(p.id);
+                const open = (): void => navigate(`/editor/${p.id}`);
+                const menu: DropdownItem[] = [
+                  { type: 'item', id: 'open', label: 'Open', onSelect: open },
+                  { type: 'separator' },
+                  { type: 'item', id: 'trash', label: 'Move to Trash', danger: true, onSelect: () => { void onDelete(p.id, p.name); } },
+                ];
                 return (
-                  <tr key={p.id} className={isSelected ? styles.rowSelected : ''}>
-                    <td style={{ textAlign: 'center' }}>
-                      <Checkbox
-                        checked={isSelected}
-                        onChange={() => toggleSelectOne(p.id)}
-                      />
-                    </td>
+                  /*
+                    The whole row opens the project, the way a file list does;
+                    the name is the same action as a real button, so it is
+                    reachable by keyboard. The checkbox and the menu keep their
+                    own clicks.
+                  */
+                  <tr
+                    key={p.id}
+                    className={`${styles.rowClickable} ${isSelected ? styles.rowSelected : ''}`}
+                    onClick={open}
+                  >
+                    {selectable && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <Checkbox checked={isSelected} onChange={() => toggleSelectOne(p.id)} />
+                      </td>
+                    )}
                     <td>
                       <div className={styles.projectCell}>
-                        <button
-                          type="button"
+                        <span
                           className={styles.projectThumb}
                           style={{ '--thumb-hue': thumbHue(p.id) } as React.CSSProperties}
-                          onClick={() => navigate(`/editor/${p.id}`)}
-                          aria-label={`Open ${p.name}`}
+                          aria-hidden
                         >
-                          {thumb ? (
-                            <img src={thumb} alt="" className={styles.thumbImg} />
+                          {p.thumbnailUrl ? (
+                            <img src={p.thumbnailUrl} alt="" className={styles.thumbImg} />
                           ) : (
                             <Icon name="video" size="sm" className={styles.thumbIcon} />
                           )}
+                        </span>
+                        <button
+                          type="button"
+                          className={styles.projectName}
+                          title={p.name}
+                          onClick={(e) => { e.stopPropagation(); open(); }}
+                        >
+                          {p.name}
                         </button>
-                        <div>
-                          <div
-                            className={styles.projectName}
-                            onClick={() => navigate(`/editor/${p.id}`)}
+                        {p.readOnly ? <ReadOnlyTag /> : null}
+                      </div>
+                    </td>
+                    <td className={styles.monoCell}>{lastEditedLabel(p.updatedAt)}</td>
+                    <td className={`${styles.monoCell} ${styles.colOptional}`}>
+                      {p.width} × {p.height}, {p.fps} fps
+                    </td>
+                    <td className={styles.monoCell}>{timecodeOf(p.durationSeconds, p.fps)}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <Dropdown
+                        placement="bottom-end"
+                        items={menu}
+                        trigger={
+                          <button
+                            type="button"
+                            className={styles.moreBtn}
+                            title="More"
+                            aria-label={`Actions for ${p.name}`}
                           >
-                            {p.name}
-                          </div>
-                          <div className={styles.projectTime}>
-                            Edited {timeAgo(p.updatedAt)} · {p.layerCount} {p.layerCount === 1 ? 'layer' : 'layers'} · rev {p.revision}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={styles.categoryBadge}>{ORIENTATION_LABEL[orientation]}</span>
-                    </td>
-                    <td className={styles.monoCell}>{describeSize(p.width, p.height)}</td>
-                    <td className={styles.monoCell}>
-                      {describeDuration(p.durationSeconds)} · {p.fps} fps
-                    </td>
-                    <td>
-                      {/*
-                        Open is the thing you came here to do, and it had no
-                        control at all — only the name and the thumbnail were
-                        clickable, neither of which looks clickable, while the
-                        one button in the row deleted the project. The verb the
-                        column is for now appears in it, and the destructive
-                        one stays a quiet icon beside it.
-                      */}
-                      <div className={styles.rowActions}>
-                        <button
-                          type="button"
-                          className={styles.rowActionOpen}
-                          onClick={() => navigate(`/editor/${p.id}`)}
-                        >
-                          Open
-                        </button>
-                        <button
-                          type="button"
-                          className={styles.actionBtn}
-                          onClick={() => onDelete(p.id, p.name)}
-                          title={`Move ${p.name} to trash`}
-                          aria-label={`Move ${p.name} to trash`}
-                        >
-                          <Icon name="trash" size="md" />
-                        </button>
-                      </div>
+                            <Icon name="more-horizontal" size="md" />
+                          </button>
+                        }
+                      />
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        )}
+        ))}
 
         {/*
           No pager on the shortlist: Home shows the newest five and links to the
@@ -1703,12 +1925,12 @@ export function DashboardPage(): JSX.Element {
       case 'home':
         return {
           title: 'Home',
-          desc: 'Pick up recent work and see what’s happening across your library.',
+          desc: '',
         };
       case 'projects':
         return {
           title: 'Projects',
-          desc: 'Search, open, and manage every composition in your library.',
+          desc: '',
         };
       case 'trash':
         return {
@@ -1730,11 +1952,6 @@ export function DashboardPage(): JSX.Element {
           title: 'Billing',
           desc: 'Your plan, what’s included, and how to change or cancel.',
         };
-      case 'developer':
-        return {
-          title: 'Developer',
-          desc: 'API keys and usage for rendering templates from scripts, n8n, or CI.',
-        };
       case 'plugins':
         return {
           title: 'Plugins',
@@ -1742,586 +1959,488 @@ export function DashboardPage(): JSX.Element {
         };
       case 'customize':
         return {
-          title: 'Customize Editor',
+          title: 'Preferences',
           desc: 'Workspaces, keyboard shortcuts, appearance, audio hardware, and editor behaviors.',
         };
       case 'settings':
         return {
           title: 'Settings',
-          desc: 'Account details, assistant setup, and a link to editor preferences.',
+          desc: 'Your account, plan, storage and the AI assistant.',
         };
     }
   }, [activeTab]);
 
   const displayName = user?.name || user?.email?.split('@')[0] || 'Account';
   const displayInitial = displayName.trim().charAt(0).toUpperCase() || '?';
+  const firstName = user?.name?.trim().split(/\s+/)[0] ?? '';
+
+  const navButton = (item: NavItem): JSX.Element => (
+    <button
+      key={item.tab}
+      type="button"
+      className={`${styles.navLink} ${activeTab === item.tab ? styles.navLinkActive : ''}`}
+      aria-current={activeTab === item.tab ? 'page' : undefined}
+      onClick={() => openTab(item.tab)}
+    >
+      <Icon name={item.icon} size="md" className={styles.navIcon} />
+      <span>{item.label}</span>
+      {item.tab === 'renders' && overview.activeRenders > 0 && (
+        <span className={styles.navCount} title="Renders in progress">{overview.activeRenders}</span>
+      )}
+    </button>
+  );
+
+  /*
+    The account's own pages live behind the account, where a desktop app keeps
+    them, instead of as three more rows in the rail. Their addresses are
+    unchanged (`?tab=settings`, `?tab=billing`).
+  */
+  const accountMenu: DropdownItem[] = [
+    {
+      type: 'custom',
+      id: 'who',
+      render: (
+        <div className={styles.accountMenuHead}>
+          <span className={styles.accountName}>{displayName}</span>
+          {user?.email ? <span className={styles.accountEmail}>{user.email}</span> : null}
+        </div>
+      ),
+    },
+    { type: 'separator' },
+    { type: 'item', id: 'settings', label: 'Settings', onSelect: () => openTab('settings') },
+    ...(billingEnabled()
+      ? [{
+          type: 'item' as const,
+          id: 'billing',
+          label: account?.plan && account.plan !== 'free' ? 'Manage plan' : salesOpen ? 'View plans' : 'Your plan',
+          onSelect: () => openTab('billing'),
+        }]
+      : []),
+    { type: 'separator' },
+    { type: 'item', id: 'signout', label: 'Sign out', onSelect: () => { void logout(); } },
+  ];
+
+  /*
+    One search for the dashboard. It searches projects — the query is the
+    server's — so typing from any page lands on the list it filters.
+  */
+  const topControls = (
+    <>
+      <div className={styles.topSearch}>
+        <Icon name="search" size="sm" className={styles.topSearchIcon} />
+        <input
+          type="search"
+          placeholder="Search projects"
+          className={styles.topSearchInput}
+          value={searchQuery}
+          onChange={(e) => {
+            setSearchQuery(e.target.value);
+            if (activeTab !== 'projects') openTab('projects');
+          }}
+          aria-label="Search projects"
+        />
+      </div>
+      <Dropdown
+        placement="bottom-end"
+        items={accountMenu}
+        trigger={
+          <button type="button" className={styles.accountButton} title="Account" aria-label="Account">
+            {displayInitial}
+          </button>
+        }
+      />
+    </>
+  );
 
   return (
     <div className={styles.root}>
+      {/*
+        In the desktop app these controls live in the window's title bar — one
+        bar, the way a desktop app has it. The browser build has no title bar,
+        so it draws its own, with the brand.
+      */}
+      {titleSlot ? createPortal(<div className={styles.titleSlot}>{topControls}</div>, titleSlot) : (
+        !hasDesktopChrome() && (
+          <header className={styles.topBar}>
+            <Logo variant="lockup" size={22} />
+            <div className={styles.topBarSpacer} />
+            {topControls}
+          </header>
+        )
+      )}
+
+      <div className={styles.shell}>
       <aside className={styles.sidebar}>
-        <div className={styles.sidebarBrand}>
-          <Logo variant="lockup" size={26} />
+        <div className={styles.railCta}>
+          <button type="button" className={styles.ctaPrimary} onClick={onCreate} disabled={creating}>
+            New project
+          </button>
+          <button type="button" className={styles.ctaSecondary} onClick={onCreateFromVideo} disabled={creating}>
+            New from video
+          </button>
         </div>
+
         <nav className={styles.sidebarNav} aria-label="Dashboard">
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'home' ? styles.navLinkActive : ''}`}
-            aria-current={activeTab === 'home' ? 'page' : undefined}
-            onClick={() => openTab('home')}
-          >
-            <Icon name="home" size="md" className={styles.navIcon} />
-            <span>Home</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'projects' ? styles.navLinkActive : ''}`}
-            aria-current={activeTab === 'projects' ? 'page' : undefined}
-            onClick={() => openTab('projects')}
-          >
-            <Icon name="folder" size="md" className={styles.navIcon} />
-            <span>Projects</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'assets' ? styles.navLinkActive : ''}`}
-            aria-current={activeTab === 'assets' ? 'page' : undefined}
-            onClick={() => openTab('assets')}
-          >
-            <Icon name="image" size="md" className={styles.navIcon} />
-            <span>Assets</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'renders' ? styles.navLinkActive : ''}`}
-            aria-current={activeTab === 'renders' ? 'page' : undefined}
-            onClick={() => openTab('renders')}
-          >
-            <Icon name="queue" size="md" className={styles.navIcon} />
-            <span>Render queue</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'trash' ? styles.navLinkActive : ''}`}
-            aria-current={activeTab === 'trash' ? 'page' : undefined}
-            onClick={() => openTab('trash')}
-          >
-            <Icon name="trash" size="md" className={styles.navIcon} />
-            <span>Trash</span>
-          </button>
-
+          {NAV_LIBRARY.map((item) => navButton(item))}
           <div className={styles.navDivider} role="separator" />
-
-          {billingEnabled() && (
-            <button
-              type="button"
-              className={`${styles.navLink} ${activeTab === 'billing' ? styles.navLinkActive : ''}`}
-              aria-current={activeTab === 'billing' ? 'page' : undefined}
-              onClick={() => openTab('billing')}
-            >
-              <Icon name="sparkles" size="md" className={styles.navIcon} />
-              <span>Billing</span>
-            </button>
-          )}
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'developer' ? styles.navLinkActive : ''}`}
-            aria-current={activeTab === 'developer' ? 'page' : undefined}
-            onClick={() => openTab('developer')}
-          >
-            <Icon name="code" size="md" className={styles.navIcon} />
-            <span>Developer</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'plugins' ? styles.navLinkActive : ''}`}
-            aria-current={activeTab === 'plugins' ? 'page' : undefined}
-            onClick={() => openTab('plugins')}
-          >
-            <Icon name="plugin" size="md" className={styles.navIcon} />
-            <span>Plugins</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'customize' ? styles.navLinkActive : ''}`}
-            aria-current={activeTab === 'customize' ? 'page' : undefined}
-            onClick={() => openTab('customize')}
-          >
-            <Icon name="sliders-h" size="md" className={styles.navIcon} />
-            <span>Customize</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'settings' ? styles.navLinkActive : ''}`}
-            aria-current={activeTab === 'settings' ? 'page' : undefined}
-            onClick={() => openTab('settings')}
-          >
-            <Icon name="settings" size="md" className={styles.navIcon} />
-            <span>Settings</span>
-          </button>
+          {NAV_APP.map((item) => navButton(item))}
         </nav>
 
-        <div className={styles.sidebarFooter}>
-          <button
-            type="button"
-            className={styles.accountChip}
-            onClick={() => openTab('settings')}
-            title="Open settings"
-          >
-            <span className={styles.accountAvatar} aria-hidden>{displayInitial}</span>
-            <span className={styles.accountMeta}>
-              <span className={styles.accountName}>{displayName}</span>
-              {user?.email ? <span className={styles.accountEmail}>{user.email}</span> : null}
+        <div className={styles.railFoot}>
+          {hasEngine() && (
+            <span className={styles.engineLine}>
+              <span className={`${styles.engineDot} ${styles.engineDotReady}`} aria-hidden />
+              Engine ready
             </span>
-          </button>
-
-          {billingEnabled() && (
-            <button
-              type="button"
-              className={styles.planLink}
-              onClick={() => openTab('billing')}
-            >
-              <Icon name="sparkles" size="sm" />
-              <span>
-                {account?.plan && account.plan !== 'free'
-                  ? 'Manage plan'
-                  : salesOpen
-                    ? 'View plans'
-                    : 'Your plan'}
-              </span>
-            </button>
           )}
-
-          <button
-            type="button"
-            className={styles.logoutSidebarBtn}
-            onClick={logout}
-            title="Sign out"
-          >
-            <Icon name="lock" size="md" className={styles.logoutIcon} />
-            <span>Log out</span>
-          </button>
+          <span>Version {APP_VERSION}</span>
         </div>
       </aside>
 
       <div className={styles.container}>
         <main className={styles.mainContent}>
-          <div className={`${styles.pageTitleRow} ${activeTab === 'settings' ? styles.settingsTitleRow : ''}`}>
-            <div className={styles.pageTitleBlock}>
-              <h1 className={styles.pageTitle}>{headerDetails.title}</h1>
-              <p className={styles.pageSubtitle}>{headerDetails.desc}</p>
-            </div>
-            {(activeTab === 'home' || activeTab === 'projects') && (
-              <button
-                type="button"
-                className={styles.btnPrimary}
-                onClick={onCreate}
-                disabled={creating}
-              >
-                <Icon name="plus" size="md" />
-                <span>{creating ? 'Creating…' : 'Create project'}</span>
-              </button>
-            )}
-          </div>
-
-          {activeTab === 'projects' && (
-            <div className={styles.actionBar}>
-              <div className={styles.filterGroup}>
-                <div className={styles.searchWrapper}>
-                  <Icon name="search" size="md" className={styles.inputSearchIcon} />
-                  <input
-                    type="search"
-                    placeholder="Search projects…"
-                    className={styles.projectSearchInput}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    aria-label="Search projects"
-                  />
-                </div>
-
-                {/*
-                  Four mutually exclusive options, all of them short: a
-                  segmented control shows the whole choice and the current
-                  answer at once, where the dropdown showed one word and hid the
-                  rest behind a native OS popup that ignores the dark theme.
-                */}
-                <div className={styles.segmentedGroup} role="group" aria-label="Filter by format">
-                  {(['all', 'landscape', 'portrait', 'square'] as const).map((value) => (
+          {activeTab === 'home' ? (
+            <h1 className={styles.welcomeTitle}>
+              Welcome to Premation{firstName ? `, ${firstName}` : ''}
+            </h1>
+          ) : (
+            <div className={styles.pageTitleRow}>
+              <div className={styles.pageTitleBlock}>
+                <h1 className={styles.pageTitle}>{headerDetails.title}</h1>
+                {headerDetails.desc ? <p className={styles.pageSubtitle}>{headerDetails.desc}</p> : null}
+              </div>
+              {activeTab === 'projects' && (
+                <div className={styles.pageTools}>
+                  {selectedIds.size > 0 && (
                     <button
-                      key={value}
                       type="button"
-                      className={`${styles.segment} ${orientation === value ? styles.segmentActive : ''}`}
-                      aria-pressed={orientation === value}
-                      onClick={() => {
-                        if (orientation === value) return;
-                        setSelectedIds(new Set());
-                        void load({ orientation: value as OrientationFilter });
+                      className={styles.btnDanger}
+                      onClick={async () => {
+                        if (await customConfirm('Move to Trash', `Move ${selectedIds.size} projects to the trash? You can restore them for 30 days.`, { confirmLabel: 'Move to Trash' })) {
+                          await removeMany(selectedIds);
+                          setSelectedIds(new Set());
+                          void refreshOverview();
+                        }
                       }}
                     >
-                      {value === 'all' ? 'All' : ORIENTATION_LABEL[value]}
+                      <Icon name="trash" size="md" />
+                      <span>Move to Trash ({selectedIds.size})</span>
                     </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className={styles.actionButtons}>
-                {selectedIds.size > 0 && (
-                  <button
-                    type="button"
-                    className={styles.btnDanger}
-                    onClick={async () => {
-                      if (await customConfirm('Move to Trash', `Move ${selectedIds.size} projects to the trash? You can restore them for 30 days.`, { confirmLabel: 'Move to Trash' })) {
-                        await removeMany(selectedIds);
+                  )}
+                  <div className={styles.segmentedGroup} role="group" aria-label="Filter by format">
+                    {(['all', 'landscape', 'portrait', 'square'] as const).map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`${styles.segment} ${orientation === value ? styles.segmentActive : ''}`}
+                        aria-pressed={orientation === value}
+                        onClick={() => {
+                          if (orientation === value) return;
+                          setSelectedIds(new Set());
+                          void load({ orientation: value as OrientationFilter });
+                        }}
+                      >
+                        {value === 'all' ? 'All' : ORIENTATION_LABEL[value]}
+                      </button>
+                    ))}
+                  </div>
+                  <div className={styles.viewToggle} role="group" aria-label="View">
+                    <button
+                      type="button"
+                      className={`${styles.viewToggleBtn} ${projectView === 'list' ? styles.viewToggleBtnActive : ''}`}
+                      aria-pressed={projectView === 'list'}
+                      title="List view"
+                      aria-label="List view"
+                      onClick={() => chooseProjectView('list')}
+                    >
+                      <Icon name="menu" size="md" />
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.viewToggleBtn} ${projectView === 'grid' ? styles.viewToggleBtnActive : ''}`}
+                      aria-pressed={projectView === 'grid'}
+                      title="Grid view"
+                      aria-label="Grid view"
+                      onClick={() => {
                         setSelectedIds(new Set());
-                        void refreshOverview();
-                      }
-                    }}
-                  >
-                    <Icon name="trash" size="md" />
-                    <span>Move to trash ({selectedIds.size})</span>
-                  </button>
-                )}
-              </div>
+                        chooseProjectView('grid');
+                      }}
+                    >
+                      <Icon name="grid" size="md" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {/* Once per user: registry plugins are gone in 0.9, native ones still work. */}
-          {activeTab !== 'plugins' && <RegistryPluginsNotice onLearnMore={() => openTab('plugins')} />}
+          {activeTab === 'home' && <RegistryPluginsNotice onLearnMore={() => openTab('plugins')} />}
 
           {renderTabContent()}
         </main>
       </div>
+      </div>
 
-      {/* Workspace Setup Popup Modal */}
+      {/* New project — a settings dialog (see the sheet's "New project" note). */}
       <Modal
         open={setupModalOpen}
         onClose={() => !creating && setSetupModalOpen(false)}
-        title="Create New Project"
-        description="Set up your composition canvas dimensions, frame rate & timeline length"
-        size="lg"
+        title="New project"
+        size="md"
+        className={styles.setupDialog}
         persistent={creating}
       >
         <form className={styles.modalForm} onSubmit={onLaunchWorkspace}>
-          {/* Source Selector: Blank Composition vs Import Video */}
-          <div className={styles.setupSourceRow}>
+          <div className={styles.setupTabs} role="tablist" aria-label="Start from">
             <button
               type="button"
-              className={cn(styles.setupSourceCard, !setupFootage && styles.setupSourceCardActive)}
-              onClick={() => setSetupFootage(null)}
+              role="tab"
+              aria-selected={setupTab === 'blank'}
+              className={cn(styles.setupTab, setupTab === 'blank' && styles.setupTabActive)}
+              onClick={() => { setSetupTab('blank'); setSetupFootage(null); }}
             >
-              <div className={styles.setupSourceIcon}>
-                <Icon name="plus" size="md" />
-              </div>
-              <div className={styles.setupSourceText}>
-                <span className={styles.setupSourceTitle}>Blank Composition</span>
-                <span className={styles.setupSourceSub}>Start with customized canvas and presets</span>
-              </div>
+              Blank
             </button>
-
             <button
               type="button"
-              className={cn(styles.setupSourceCard, setupFootage && styles.setupSourceCardActive)}
-              onClick={() => {
-                const input = document.createElement('input');
-                input.type = 'file';
-                input.accept = 'video/*,.mp4,.mov,.webm,.m4v,.mxf,.avi,.mts,.m2ts,.mpg,.wmv,.mkv';
-                input.onchange = () => {
-                  const f = input.files?.[0];
-                  if (f) chooseSetupFootage(f);
-                };
-                input.click();
-              }}
+              role="tab"
+              aria-selected={setupTab === 'video'}
+              className={cn(styles.setupTab, setupTab === 'video' && styles.setupTabActive)}
+              onClick={() => { setSetupTab('video'); if (!setupFootage) pickSetupVideo(); }}
             >
-              <div className={styles.setupSourceIcon}>
-                <Icon name="media" size="md" />
-              </div>
-              <div className={styles.setupSourceText}>
-                <span className={styles.setupSourceTitle}>
-                  {setupFootage ? 'Change Video Clip…' : 'Import Video Footage…'}
-                </span>
-                <span className={styles.setupSourceSub}>Auto-match dimensions & length from video</span>
-              </div>
+              From video file
             </button>
           </div>
 
-          {setupFootage && (
-            <div className={styles.footageDetectedBar}>
-              <Icon name="check" size="sm" className={styles.footageCheckIcon} />
-              <div className={styles.footageInfo}>
-                <span className={styles.footageName}>{setupFootage.name}</span>
-                <span className={styles.footageMeta}>
-                  Detected: {setupWidth}×{setupHeight} px · {describeDuration(setupDuration)} · Will be placed at full frame
-                </span>
+          <div className={styles.setupGrid}>
+            {setupTab === 'video' && (
+              <div className={styles.setupFile}>
+                <div className={styles.setupFileText}>
+                  {setupFootage ? (
+                    <>
+                      <span className={styles.setupFileName} title={setupFootage.name}>{setupFootage.name}</span>
+                      <span className={styles.setupFileMeta}>
+                        {setupWidth} × {setupHeight} · {describeDuration(setupDuration)} · placed at full frame
+                      </span>
+                    </>
+                  ) : (
+                    <span className={styles.setupFileMeta}>
+                      No file chosen. The project takes its size and length from the video.
+                    </span>
+                  )}
+                </div>
+                <button type="button" className={styles.setupFileChange} onClick={pickSetupVideo}>
+                  {setupFootage ? 'Choose another…' : 'Choose a video file…'}
+                </button>
               </div>
+            )}
+
+            <label className={styles.setupLabel} htmlFor="setup-name">Project name</label>
+            <input
+              id="setup-name"
+              type="text"
+              className={styles.formInput}
+              value={setupTitle}
+              onChange={(e) => setSetupTitle(e.target.value)}
+              required
+            />
+
+            <div className={styles.setupRule} />
+
+            {setupTab === 'blank' && (
+              <>
+                <label className={styles.setupLabel} htmlFor="setup-preset">Preset</label>
+                <select
+                  id="setup-preset"
+                  className={styles.formSelect}
+                  value={setupPresetId}
+                  onChange={(e) => {
+                    const preset = SIZE_PRESETS.find((p) => p.id === e.target.value);
+                    setSetupPresetId(preset ? preset.id : 'custom');
+                    if (preset) setSize(preset.width, preset.height);
+                  }}
+                >
+                  <option value="custom">Custom</option>
+                  {SIZE_GROUPS.map((group) => (
+                    <optgroup key={group} label={group}>
+                      {SIZE_PRESETS.filter((p) => p.group === group).map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label} · {p.width} × {p.height}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </>
+            )}
+
+            <label className={styles.setupLabel} htmlFor="setup-width">Width</label>
+            <div className={styles.setupInline}>
+              <input
+                id="setup-width"
+                type="number"
+                className={cn(styles.formInput, styles.formInputNumber)}
+                value={setupWidth}
+                onChange={(e) => changeWidth(Number(e.target.value))}
+                onBlur={() => setSize(clampDimension(setupWidth), clampDimension(setupHeight))}
+                min={MIN_DIMENSION}
+                max={MAX_DIMENSION}
+                required
+              />
+              <span>px</span>
               <button
                 type="button"
-                className={styles.clearFootageBtn}
-                onClick={() => setSetupFootage(null)}
-                title="Remove footage and use blank composition"
+                className={styles.swapDimensionsBtn}
+                onClick={swapDimensions}
+                title="Swap width and height"
+                aria-label="Swap width and height"
               >
-                <Icon name="close" size="sm" />
+                <Icon name="refresh" size="sm" />
               </button>
+            </div>
+
+            <label className={styles.setupLabel} htmlFor="setup-height">Height</label>
+            <div className={styles.setupInline}>
+              <input
+                id="setup-height"
+                type="number"
+                className={cn(styles.formInput, styles.formInputNumber)}
+                value={setupHeight}
+                onChange={(e) => changeHeight(Number(e.target.value))}
+                onBlur={() => setSize(clampDimension(setupWidth), clampDimension(setupHeight))}
+                min={MIN_DIMENSION}
+                max={MAX_DIMENSION}
+                required
+              />
+              <span>px</span>
+              <label className={styles.setupCheck}>
+                <Checkbox
+                  checked={lockAspect}
+                  onChange={(e) => {
+                    setLockAspect(e.target.checked);
+                    if (e.target.checked && setupWidth > 0 && setupHeight > 0) setLockedRatio(setupWidth / setupHeight);
+                  }}
+                />
+                <span>Lock aspect ratio to {aspectRatioLabel(setupWidth, setupHeight)}</span>
+              </label>
+            </div>
+
+            <label className={styles.setupLabel} htmlFor="setup-fps">Frame rate</label>
+            <div className={styles.setupInline}>
+              <select
+                id="setup-fps"
+                className={styles.formSelect}
+                style={{ width: 'auto', minWidth: 200 }}
+                value={setupFps}
+                onChange={(e) => setSetupFps(Number(e.target.value))}
+              >
+                {FPS_PRESETS.map((f) => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </select>
+              {setupTab === 'video' && <span className={styles.setupHint}>The editor reads the exact rate on import.</span>}
+            </div>
+
+            <label className={styles.setupLabel} htmlFor="setup-duration">Duration</label>
+            <div className={styles.setupInline}>
+              <input
+                id="setup-duration"
+                type="number"
+                className={cn(styles.formInput, styles.formInputNumber)}
+                value={setupDuration}
+                step="0.1"
+                min={MIN_DURATION}
+                max={MAX_DURATION}
+                onChange={(e) => setSetupDuration(Number(e.target.value))}
+                onBlur={(e) => setSetupDuration(clampDuration(Number(e.target.value)))}
+                required
+              />
+              <span>seconds</span>
+              <span className={styles.setupHint}>
+                {timecodeOf(setupDuration, setupFps)} · {Math.round(setupDuration * setupFps)} frames
+              </span>
+            </div>
+
+            <span className={styles.setupLabel}>Background colour</span>
+            <div className={styles.setupInline}>
+              <div className={styles.swatchGroup}>
+                {[
+                  { name: 'Dark slate', hex: '#101014' },
+                  { name: 'Black', hex: '#000000' },
+                  { name: 'White', hex: '#ffffff' },
+                  { name: 'Chroma green', hex: '#00ff00' },
+                ].map((sw) => (
+                  <button
+                    key={sw.hex}
+                    type="button"
+                    className={cn(
+                      styles.colorSwatchBtn,
+                      !setupTransparent && setupBg.toLowerCase() === sw.hex.toLowerCase() && styles.colorSwatchBtnActive
+                    )}
+                    style={{ background: sw.hex }}
+                    title={sw.name}
+                    aria-label={sw.name}
+                    onClick={() => { setSetupBg(sw.hex); setSetupTransparent(false); }}
+                  />
+                ))}
+              </div>
+              <div className={styles.setupColor}>
+                <ColorPicker
+                  value={setupBg}
+                  onChange={(c) => { setSetupBg(c); setSetupTransparent(false); }}
+                  aria-label="Background colour"
+                />
+              </div>
+              <label className={styles.setupCheck}>
+                <Checkbox
+                  checked={setupTransparent}
+                  onChange={(e) => setSetupTransparent(e.target.checked)}
+                />
+                <span>Transparent</span>
+              </label>
+            </div>
+          </div>
+
+          {/*
+            Said before Create, not after it fails: at the cap the server refuses
+            the create with `project_limit`. Create stays enabled — the count
+            here is a cached /auth/me, and the server is the one that decides.
+          */}
+          {projectCap !== null && account && account.projectCount >= projectCap && (
+            <div className={styles.setupLimitNote} role="status">
+              <Icon name="info" size="sm" />
+              <span>
+                You are using all {projectCap} cloud projects on the Free plan. Move one to the
+                Trash to make room{salesOpen ? ', or upgrade for unlimited projects' : ''}.
+              </span>
+              {salesOpen && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setSetupModalOpen(false);
+                    openTab('billing');
+                  }}
+                >
+                  View plans
+                </Button>
+              )}
             </div>
           )}
 
-          {/* Two-Column Studio Layout */}
-          <div className={styles.setupColumns}>
-            {/* Left Column: Form Controls */}
-            <div className={styles.setupLeftCol}>
-              {/* Project Name */}
-              <div className={styles.formGroup}>
-                <label className={styles.formLabel}>Project Name</label>
-                <input
-                  type="text"
-                  className={styles.formInput}
-                  value={setupTitle}
-                  onChange={(e) => setSetupTitle(e.target.value)}
-                  placeholder="e.g. Cinematic Motion Graphics Promo"
-                  required
-                />
-              </div>
-
-              {/* Preset Category Segmented Tabs & Preset Cards Grid */}
-              <div className={styles.formGroup}>
-                <div className={styles.presetHeaderRow}>
-                  <label className={styles.formLabel}>Format Presets</label>
-                  <div className={styles.categoryPills}>
-                    {['All', ...SIZE_GROUPS].map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        className={cn(styles.categoryPill, presetCategory === cat && styles.categoryPillActive)}
-                        onClick={() => setPresetCategory(cat)}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className={styles.presetCardsGrid}>
-                  {filteredPresets.map((p) => {
-                    const isSelected = setupWidth === p.width && setupHeight === p.height;
-                    const isPortrait = p.height > p.width;
-                    const isSquare = p.height === p.width;
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        className={cn(styles.presetCard, isSelected && styles.presetCardActive)}
-                        onClick={() => { setSetupWidth(p.width); setSetupHeight(p.height); }}
-                        title={`${p.label} (${p.width}×${p.height})`}
-                      >
-                        <div className={styles.presetCardThumbWrap}>
-                          <div
-                            className={cn(
-                              styles.aspectThumb,
-                              isPortrait ? styles.aspectThumbPortrait : isSquare ? styles.aspectThumbSquare : styles.aspectThumbLandscape
-                            )}
-                          />
-                        </div>
-                        <div className={styles.presetCardDetails}>
-                          <span className={styles.presetCardTitle}>{p.label}</span>
-                          <span className={styles.presetCardDims}>
-                            {p.width} × {p.height} · {aspectRatioLabel(p.width, p.height)}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Dimensions Row (Width, Height, Swap Button) */}
-              <div className={styles.dimensionSection}>
-                <div className={styles.dimInputGroup}>
-                  <label className={styles.formLabel}>Width (px)</label>
-                  <input
-                    type="number"
-                    className={styles.formInput}
-                    value={setupWidth}
-                    onChange={(e) => setSetupWidth(Number(e.target.value))}
-                    onBlur={(e) => setSetupWidth(clampDimension(Number(e.target.value)))}
-                    min={MIN_DIMENSION}
-                    max={MAX_DIMENSION}
-                    required
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  className={styles.swapDimensionsBtn}
-                  onClick={swapDimensions}
-                  title="Swap width and height (Rotate Landscape / Portrait)"
-                >
-                  <Icon name="refresh" size="sm" />
-                </button>
-
-                <div className={styles.dimInputGroup}>
-                  <label className={styles.formLabel}>Height (px)</label>
-                  <input
-                    type="number"
-                    className={styles.formInput}
-                    value={setupHeight}
-                    onChange={(e) => setSetupHeight(Number(e.target.value))}
-                    onBlur={(e) => setSetupHeight(clampDimension(Number(e.target.value)))}
-                    min={MIN_DIMENSION}
-                    max={MAX_DIMENSION}
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* Frame Rate & Duration */}
-              <div className={styles.formRow}>
-                <div className={styles.formGroup}>
-                  <label className={styles.formLabel}>Frame Rate</label>
-                  <select
-                    className={styles.formSelect}
-                    value={setupFps}
-                    onChange={(e) => setSetupFps(Number(e.target.value))}
-                  >
-                    {FPS_PRESETS.map((f) => (
-                      <option key={f.value} value={f.value}>{f.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className={styles.formGroup}>
-                  <label className={styles.formLabel}>Duration (seconds)</label>
-                  <input
-                    type="number"
-                    className={styles.formInput}
-                    value={setupDuration}
-                    step="0.1"
-                    min={MIN_DURATION}
-                    max={MAX_DURATION}
-                    onChange={(e) => setSetupDuration(Number(e.target.value))}
-                    onBlur={(e) => setSetupDuration(clampDuration(Number(e.target.value)))}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className={styles.durationChipsRow}>
-                {DURATION_PRESETS.map((d) => (
-                  <button
-                    key={d.seconds}
-                    type="button"
-                    className={cn(styles.durationChip, setupDuration === d.seconds && styles.durationChipActive)}
-                    onClick={() => setSetupDuration(d.seconds)}
-                  >
-                    {d.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Canvas Background Color & Transparency */}
-              <div className={styles.formGroup}>
-                <label className={styles.formLabel}>Canvas Background</label>
-                <div className={styles.colorConfigRow}>
-                  <div className={styles.swatchGroup}>
-                    {[
-                      { name: 'Dark Slate', hex: '#101014' },
-                      { name: 'Pure Black', hex: '#000000' },
-                      { name: 'Pure White', hex: '#ffffff' },
-                      { name: 'Chroma Green', hex: '#00ff00' },
-                    ].map((sw) => (
-                      <button
-                        key={sw.hex}
-                        type="button"
-                        className={cn(
-                          styles.colorSwatchBtn,
-                          !setupTransparent && setupBg.toLowerCase() === sw.hex.toLowerCase() && styles.colorSwatchBtnActive
-                        )}
-                        style={{ background: sw.hex }}
-                        title={sw.name}
-                        onClick={() => { setSetupBg(sw.hex); setSetupTransparent(false); }}
-                      />
-                    ))}
-                  </div>
-
-                  <ColorPicker
-                    value={setupBg}
-                    onChange={(c) => { setSetupBg(c); setSetupTransparent(false); }}
-                    aria-label="Canvas background color"
-                  />
-
-                  <label className={styles.transparentSwitchWrap}>
-                    <Checkbox
-                      checked={setupTransparent}
-                      onChange={(e) => setSetupTransparent(e.target.checked)}
-                    />
-                    <span>Transparent</span>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            {/* Right Column: Live Interactive Canvas Preview & Specs */}
-            <div className={styles.setupRightCol}>
-              <div className={styles.previewCard}>
-                <div className={styles.previewCardHeader}>
-                  <span className={styles.previewCardTitle}>Canvas Preview</span>
-                  <span className={styles.previewAspectTag}>{aspectRatioLabel(setupWidth, setupHeight)}</span>
-                </div>
-
-                <div className={styles.canvasViewportContainer}>
-                  <div
-                    className={cn(styles.canvasScaledFrame, setupTransparent && styles.canvasFrameTransparent)}
-                    style={{
-                      aspectRatio: `${setupWidth} / ${setupHeight}`,
-                      backgroundColor: setupTransparent ? 'transparent' : setupBg,
-                    }}
-                  >
-                    <div className={styles.canvasOverlayBadge}>
-                      {setupWidth} × {setupHeight}
-                    </div>
-                  </div>
-                </div>
-
-                <div className={styles.specList}>
-                  <div className={styles.specRow}>
-                    <span className={styles.specLabel}>Resolution</span>
-                    <span className={styles.specValue}>{setupWidth} × {setupHeight} px</span>
-                  </div>
-                  <div className={styles.specRow}>
-                    <span className={styles.specLabel}>Aspect Ratio</span>
-                    <span className={styles.specValue}>{aspectRatioLabel(setupWidth, setupHeight)} ({setupWidth > setupHeight ? 'Landscape' : setupWidth < setupHeight ? 'Portrait' : 'Square'})</span>
-                  </div>
-                  <div className={styles.specRow}>
-                    <span className={styles.specLabel}>Frame Rate</span>
-                    <span className={styles.specValue}>{setupFps} fps</span>
-                  </div>
-                  <div className={styles.specRow}>
-                    <span className={styles.specLabel}>Total Frames</span>
-                    <span className={styles.specValue}>{Math.round(setupDuration * setupFps)} frames</span>
-                  </div>
-                  <div className={styles.specRow}>
-                    <span className={styles.specLabel}>Timeline Length</span>
-                    <span className={styles.specValue}>{describeDuration(setupDuration)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Modal Footer */}
-          <div className={styles.modalFooter}>
-            <Button
-              variant="secondary"
-              onClick={() => setSetupModalOpen(false)}
-              disabled={creating}
-            >
+          <div className={styles.modalFooter} data-dialog-actions>
+            <span className={styles.setupNote}>You can change these later in composition settings.</span>
+            <Button variant="secondary" onClick={() => setSetupModalOpen(false)} disabled={creating}>
               Cancel
             </Button>
             <Button
               variant="primary"
               type="submit"
-              disabled={creating}
+              disabled={creating || (setupTab === 'video' && !setupFootage)}
               loading={creating}
-              leftIcon={<Icon name="check" size="md" />}
             >
-              Create & Launch Editor
+              Create
             </Button>
           </div>
         </form>

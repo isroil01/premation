@@ -223,6 +223,20 @@ export function PropertiesPanel(): JSX.Element {
     return () => setCustomMenuItems([]);
   }, [setCustomMenuItems, menuItems]);
 
+  // The bar reads "Properties: <layer>" — or "<n> layers" — while a layer is
+  // selected, so the stack says what the panel is showing without opening it.
+  const setTitleDetail = dockHeader?.setTitleDetail;
+  const titleDetail = !hasLayer
+    ? null
+    : liveCount > 1
+      ? `${liveCount} layers`
+      : mirror.layer(primary!)?.name || null;
+  useEffect(() => {
+    if (!setTitleDetail) return;
+    setTitleDetail(titleDetail);
+    return () => setTitleDetail(null);
+  }, [setTitleDetail, titleDetail]);
+
   const searchButton = (
     <button
       type="button"

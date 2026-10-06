@@ -1,0 +1,121 @@
+/*
+ * The Footage viewer (FootageViewer.tsx): a facts line, then the file — the
+ * source monitor for video / audio, a picture on a transparency grid for a
+ * still. Same flat ground as the Composition viewer.
+ */
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--color-panel);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+}
+
+/* One line of facts about the file. */
+.info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-divider);
+  flex: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.name {
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.facts {
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Zoom, exposure, rulers: pushed to the right end of the facts line. */
+.view {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+  flex: none;
+}
+
+.viewLabel {
+  color: var(--color-text-tertiary);
+}
+
+.exposure {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.select {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.select:hover {
+  border-color: var(--color-text-tertiary);
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ── A still ───────────────────────────────────────────────────────── */
+/* The picture itself is on the shared stage (FootageStage); this one only
+   holds the "cannot be shown" message. */
+.stage {
+  display: grid;
+  place-items: center;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-5);
+  background: var(--color-surface-0);
+}
+
+.dead {
+  max-width: 44ch;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-divider);
+  flex: none;
+}

@@ -684,10 +684,11 @@ void Session::after_load(api::ResetReason reason, bool emit) {
   emit_status();
 }
 
-void Session::load_document(const doc::Json& file, api::ResetReason reason) {
+void Session::load_document(const doc::Json& file, api::ResetReason reason, std::string_view footageRoot) {
   const std::vector<doc::Json> session = doc_.items().assets;
   const doc::RestoreResult r = doc::restore_document(doc_, view_, file, session);
-  lastMissing_ = r.missing;
+  // The files the document names by path are read again where they still are (docio.hpp).
+  lastMissing_ = doc::relink_missing_footage(doc_, *ports_, footageRoot.empty() ? std::string_view(bundleRoot_) : footageRoot, r.missing);
   after_load(reason, true);
   request_render();
 }
@@ -833,7 +834,7 @@ struct ControlVisitor {
     no_gesture_for(s, "close the gesture first");
     if (!s.ports_->has_projects()) fail(ErrorCode::unsupported, "no project file port is attached to this engine");
     doc::Ports::Opened opened = s.ports_->open_project(c.path);
-    s.load_document(opened.doc, api::ResetReason::opened);
+    s.load_document(opened.doc, api::ResetReason::opened, opened.footageRoot);
     // F2: a portable `.motion` is a copy — the project stays untitled (Save
     // asks where), its footage in the staging bundle it was unpacked into.
     s.projectPath_ = opened.portable ? std::string() : c.path;
@@ -1033,6 +1034,8 @@ struct ControlVisitor {
     v.panX = std::isfinite(c.pan.x) ? c.pan.x : 0.0;
     v.panY = std::isfinite(c.pan.y) ? c.pan.y : 0.0;
     v.devicePixelRatio = dpr;
+    // View ▸ Show Channel: applied on the final blit (RenderView.channel).
+    v.channel = c.channel;
     // The pane's 3D view: '' = the composition's camera; a custom view carries its own orbit.
     v.view = c.view && !c.view->empty() ? *c.view : std::string("active");
     if (v.view == "custom" && c.custom_view) {
@@ -1048,6 +1051,14 @@ struct ControlVisitor {
       if (s.doc_.node(*c.layer) == nullptr) fail(ErrorCode::not_found, "no layer " + *c.layer, {.layer = *c.layer});
       v.layer = *c.layer;
       v.layerRenderEffects = c.layer_render_effects;
+      v.layerTransparencyGrid = c.transparency_grid;
+      if (c.layer_alpha_view && !c.layer_alpha_view->empty()) {
+        const std::string& av = *c.layer_alpha_view;
+        if (av != "alpha" && av != "boundary" && av != "overlay") {
+          fail(ErrorCode::invalid_argument, "layerAlphaView '" + av + "' is not alpha, boundary or overlay", {.layer = *c.layer});
+        }
+        v.layerAlphaView = av;
+      }
     }
     if (c.time && *c.time >= 0) v.time = *c.time;
     if (c.layer_source_time && v.time) v.layerSourceTime = *c.layer_source_time;
@@ -1545,7 +1556,18 @@ void Session::tick(Clock::time_point now) {
   // AUDIO clock paces — frames follow the samples the device consumed, so
   // picture and sound never drift. Until the clock locks, the wall clock does.
   if (mediaClock_ != nullptr && revision_ != audioRevision_) sync_audio();
-  const std::optional<double> media = mediaClock_ != nullptr ? mediaClock_->media_elapsed(now) : std::nullopt;
+  std::optional<double> media = mediaClock_ != nullptr ? mediaClock_->media_elapsed(now) : std::nullopt;
+  // A play or a seek restarts the audio clock, but until the restart reaches the speaker
+  // (one output latency) the device reports the segment it is still sounding: the OLD one,
+  // its elapsed counted from the old Play. Taken, that jumped the playhead ahead by
+  // everything played before and then held it there (k <= lastK_) until the new clock
+  // caught up — Go to Start mid-play froze the picture and the timer for as long as it
+  // had played. The restarted clock never runs ahead of the wall time since the restart
+  // (1 % covers any device drift), so a reading that does is stale: the wall clock paces.
+  if (media) {
+    const double wall = std::chrono::duration<double>(now - playBase_).count() * std::abs(rate_);
+    if (*media > (wall * 1.01) + 0.1) media.reset();
+  }
   std::int64_t k = 0;
   if (media) {
     mediaPaced_ = true;

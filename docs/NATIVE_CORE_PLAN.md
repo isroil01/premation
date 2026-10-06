@@ -1783,6 +1783,7 @@ and C1 may change the viewport route.
 3. **Target and scope:** After Effects level, everything in this plan.
 4. **Plugins:** an After Effects-style native SDK (G1); the JavaScript/WGSL
    plugin system is not ported (G2).
-5. **Delivery:** all phases are built without stopping; local commits only on
-   `native-core`; no push and no release until the full product is ready.
+5. **Delivery:** all phases are built without stopping on `native-core`, which
+   is the default branch and the only branch releases are tagged from
+   (decided 2026-10-06; `main`/`dev` are frozen pre-native history).
 6. Still open, decided by measurement: the viewport route (C1).

@@ -30,7 +30,7 @@
  * keeps Space from ALSO starting the comp playing behind the panel.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { EmptyState } from '@components/EmptyState';
 import { cn } from '@utils/cn';
@@ -42,6 +42,9 @@ import { factsOf, useExactStepper } from '@layout/Assets/footagePreviewHooks';
 import { insertFromSource, newCompFromRange } from './sourceMonitorOps';
 import type { ImportedAsset } from '@stores/assetStore';
 import { threePointSummary } from '@core/timeline/transportController';
+import { audioEngine } from '@core/audio/AudioEngine';
+import { waveformPath } from '@core/audio/waveform';
+import { FootageStage } from '@layout/Assets/FootageStage';
 import styles from './SourceMonitorPanel.module.css';
 
 /**
@@ -70,6 +73,39 @@ const REVERSE_TICK_MS = 1000 / 30;
 function displayFps(asset: ImportedAsset | null): number {
   const fps = asset?.metadata?.fps;
   return fps && fps > 0 ? fps : 30;
+}
+
+/** The waveform's own drawing box; the SVG stretches it to the stage. */
+const WAVE_W = 1000;
+const WAVE_H = 160;
+
+/**
+ * An audio file's picture: its waveform, with the part already played lit.
+ * Decoded once per asset by the shared AudioEngine (the same envelope the
+ * inspector and the timeline draw); until it is ready the stage says so.
+ */
+function AudioWave({ asset, progress }: { asset: ImportedAsset; progress: number }): JSX.Element {
+  const [, setLoaded] = useState(0);
+  useEffect(() => audioEngine.onChange(() => setLoaded((n) => n + 1)), []);
+  useEffect(() => {
+    if (asset.src) void audioEngine.load(asset.id, asset.src);
+  }, [asset.id, asset.src]);
+  const wave = audioEngine.getWaveform(asset.id);
+  const path = useMemo(() => (wave ? waveformPath(wave.peaks, WAVE_W, WAVE_H) : ''), [wave]);
+  if (!path) {
+    // A decode that failed stays failed (the engine remembers it): say so, not "reading" forever.
+    return audioEngine.decodeState(asset.id) === 'silent'
+      ? <div className={styles.dead}>No waveform: the audio in this file could not be read.</div>
+      : <div className={styles.dead}>Reading the waveform…</div>;
+  }
+  const played = Math.max(0, Math.min(1, progress)) * WAVE_W;
+  return (
+    <svg className={styles.wave} viewBox={`0 0 ${WAVE_W} ${WAVE_H}`} preserveAspectRatio="none" role="img" aria-label={`Waveform of ${asset.name}`}>
+      <path className={styles.waveRest} d={path} />
+      <clipPath id="source-wave-played"><rect x={0} y={0} width={played} height={WAVE_H} /></clipPath>
+      <path className={styles.wavePlayed} d={path} clipPath="url(#source-wave-played)" />
+    </svg>
+  );
 }
 
 export function SourceMonitorPanel(): JSX.Element {
@@ -121,6 +157,11 @@ function SourceMonitorBody({
   /** −4…4. 0 is stopped; negatives are reverse. */
   const [shuttle, setShuttle] = useState(0);
   const [busy, setBusy] = useState(false);
+  // The clip's own size: what the import measured, else what the element reports.
+  const [measured, setMeasured] = useState<{ src: string; width: number; height: number } | null>(null);
+  const natural = asset.metadata?.width && asset.metadata.height
+    ? { width: asset.metadata.width, height: asset.metadata.height }
+    : measured && measured.src === asset.src ? measured : null;
   const audioRef = useRef<HTMLAudioElement>(null);
   const scrubRef = useRef<HTMLDivElement>(null);
   const stepper = useExactStepper(asset);
@@ -286,32 +327,42 @@ function SourceMonitorBody({
         )}
       </div>
 
+      {isVideo && !failed ? (
+        // The picture under the Footage viewer's camera: zoom, exposure, guides.
+        <FootageStage natural={natural}>
+          {/* Both mounted, one shown — same reason as the dialog: unmounting
+              the <video> would forget the point the stepper resumes from. */}
+          <video
+            ref={stepper.videoRef}
+            className={styles.media}
+            style={inFrames ? { display: 'none' } : undefined}
+            src={asset.src}
+            onLoadedMetadata={(e) => {
+              const el = e.currentTarget;
+              if (el.videoWidth > 0 && el.videoHeight > 0) setMeasured({ src: asset.src, width: el.videoWidth, height: el.videoHeight });
+            }}
+            onError={() => setFailed(true)}
+          />
+          <canvas
+            ref={stepper.canvasRef}
+            className={styles.media}
+            style={inFrames ? undefined : { display: 'none' }}
+          />
+        </FootageStage>
+      ) : (
       <div className={styles.stage}>
         {failed ? (
           <div className={styles.dead}>Preview unavailable — the source may need relinking.</div>
-        ) : isVideo ? (
-          <>
-            {/* Both mounted, one shown — same reason as the dialog: unmounting
-                the <video> would forget the point the stepper resumes from. */}
-            <video
-              ref={stepper.videoRef}
-              className={styles.media}
-              style={inFrames ? { display: 'none' } : undefined}
-              src={asset.src}
-              onError={() => setFailed(true)}
-            />
-            <canvas
-              ref={stepper.canvasRef}
-              className={styles.media}
-              style={inFrames ? undefined : { display: 'none' }}
-            />
-          </>
         ) : asset.type === 'audio' ? (
-          <audio ref={audioRef} className={styles.audio} src={asset.src} onError={() => setFailed(true)} />
+          <>
+            <audio ref={audioRef} className={styles.audio} src={asset.src} onError={() => setFailed(true)} />
+            <AudioWave asset={asset} progress={duration > 0 ? time / duration : 0} />
+          </>
         ) : (
           <img className={styles.media} src={asset.src} alt={asset.name} onError={() => setFailed(true)} />
         )}
       </div>
+      )}
 
       {/* ── Scrub bar with in/out brackets ───────────────────────────── */}
       <div
@@ -449,9 +500,18 @@ function SourceMonitorBody({
           className={cn(styles.action, styles.actionPrimary)}
           disabled={!range || busy}
           onClick={() => range && run(() => insertFromSource(asset, range, { at: 'playhead' }))}
-          title="Insert the marked range with its clip starting at the comp playhead"
+          title="Overlay edit: a new layer on top, starting at the current time. Nothing else moves"
         >
-          Insert at playhead
+          Overlay edit
+        </button>
+        <button
+          type="button"
+          className={styles.action}
+          disabled={!range || busy}
+          onClick={() => range && run(() => insertFromSource(asset, range, { at: 'playhead' }, { ripple: true }))}
+          title="Ripple insert edit: a new layer at the current time; every other layer is split there and pushed later to make room"
+        >
+          Ripple insert edit
         </button>
         <button
           type="button"
@@ -460,7 +520,7 @@ function SourceMonitorBody({
           onClick={() => range && run(() => insertFromSource(asset, range, { at: 'playhead' }, { overwrite: true }))}
           title="Insert at the playhead and trim the clips it lands on"
         >
-          Overwrite at playhead
+          Overwrite
         </button>
         <button
           type="button"
@@ -469,7 +529,7 @@ function SourceMonitorBody({
           onClick={() => range && run(() => insertFromSource(asset, range, { at: 'end' }))}
           title="Append the marked range after everything already in the comp"
         >
-          Add to comp end
+          Add to end
         </button>
         {asset.type !== 'audio' && (
           <button

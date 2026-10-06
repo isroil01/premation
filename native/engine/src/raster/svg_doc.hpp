@@ -191,6 +191,10 @@ struct Style {
 void compute_styles(const Document& doc, std::string_view extraCss, std::vector<Style>& styles,
                     std::vector<std::string>& unsupported);
 
+/// The elements a CSS selector list matches, in tree order (the cascade's own
+/// matcher). Empty when the list does not parse.
+[[nodiscard]] std::vector<int> select_nodes(const Document& doc, std::string_view selectorList);
+
 /// base64 → bytes (whitespace ignored). nullopt on invalid input.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> base64_decode(std::string_view s);
 /// A `data:` URL's payload (base64 or percent-encoded). nullopt if not a data URL.

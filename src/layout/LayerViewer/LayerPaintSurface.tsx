@@ -28,7 +28,7 @@ import { documentMirror } from '@stores/documentMirror';
 import { isPaintableLayer } from '@core/mirror/layerKinds';
 import { commitPaintDrag } from '@core/engine/paintEdits';
 import { ctrlDragBrush, penSample } from '@core/paint/paintCapture';
-import { segmentStrokesToMask } from '@core/workspace/rotoBrushTool';
+import { isRotoFrozen, segmentStrokesToMask } from '@core/workspace/rotoBrushTool';
 import { drawToolOptions } from '@motion/workspace';
 import { useUIStore } from '@stores/uiStore';
 import { usePaintStore } from '@stores/paintStore';
@@ -173,6 +173,11 @@ export function LayerPaintSurface({
       return;
     }
     if (rotoBusy || !rotoable) return;
+    // A frozen matte takes no strokes (Tool Options ▸ Freeze).
+    if (isRotoFrozen(nodeId)) {
+      useRotoBrushStore.getState().setStatus('Roto Brush is frozen on this layer. Unfreeze it to change the matte.');
+      return;
+    }
     svgRef.current?.setPointerCapture?.(e.pointerId);
     rotoDown.current = true;
     // Alt flips THIS stroke to background, as in the comp viewer.

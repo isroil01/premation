@@ -19,6 +19,7 @@
 
 import { flicksToSeconds, type OverlayKind, type OverlayLayerGeometry, type OverlayRequest, type OverlayRig, type OverlayRigOptions, type OverlayView } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
+import { engineViewport, engineViewportNow } from '@core/engine/windowViewport';
 import { documentMirror } from './documentMirror';
 
 /**
@@ -208,8 +209,12 @@ function subscribeOverlayGroups(viewport: number, groups: ReadonlyArray<OverlayR
   computed.delete(viewport);
   // Records computed between the send and the engine taking it were for the old
   // subscription: drop them once it has landed (a control moves no revision).
-  const landed = engine()
-    .execute({ type: 'setOverlayGeometry', viewport, layers: [], kinds: [], groups: groups.map((g) => ({ layers: [...g.layers], kinds: [...g.kinds] })), views: [...views], ...(rig ? { rig: { ...rig } } : {}) })
+  // `viewport` is this window's local id; the engine's is base + local (windowViewport.ts).
+  const send = (id: number): Promise<unknown> =>
+    engine().execute({ type: 'setOverlayGeometry', viewport: id, layers: [], kinds: [], groups: groups.map((g) => ({ layers: [...g.layers], kinds: [...g.kinds] })), views: [...views], ...(rig ? { rig: { ...rig } } : {}) });
+  // In the editor window the id is known and the command goes out in this tick, as it always did.
+  const known = engineViewportNow(viewport);
+  const landed = (known !== null ? send(known) : engineViewport(viewport).then(send))
     .then(() => {
       if (subscribed.get(viewport) === key) computed.delete(viewport);
     });

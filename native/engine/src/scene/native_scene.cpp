@@ -96,6 +96,7 @@ NativeFrame native_frame_of(const doc::Document& d, Snapshot snap, const ViewSpe
   v.float32_textures = true;
   v.surface_format = view.surfaceFormat;
   v.viewer_lut_active = false;
+  if (view.channel != api::ChannelView::rgb) v.channel = view.channel;
   f.scene = std::move(fb.scene);
   // The 1×1 white every textured draw may fall back to (frameSceneExport's `texture:white`).
   {
@@ -123,6 +124,8 @@ NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, dou
   SnapshotComp sc = snapshot_comp_of(c.d, comp);
   if (overrides.forExport) sc.forExport = true;
   if (overrides.transparent) sc.transparent = *overrides.transparent;
+  if (overrides.camera3dMode) sc.camera3dMode = *overrides.camera3dMode;
+  if (overrides.customViewCamera) sc.customViewCamera = overrides.customViewCamera;
   std::optional<MotionBlurCfg> mb;
   if (motionBlur) mb = motion_blur_of(c.d, comp);
   Snapshot snap = build_snapshot(c, sc, t, mb);

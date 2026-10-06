@@ -24,9 +24,64 @@ import { requireEngineJob, runEngineJob, startEngineJob } from '@core/engine/eng
 import { documentMirror } from '@stores/documentMirror';
 import { mirrorMaskHeaders } from '@core/mirror/effects';
 import type { RotoStroke } from '@stores/rotoBrushStore';
+import { edit } from '@core/engine/uiEdits';
+import { paths } from '@core/engine/propRefs';
 
 /** The name every path this tool writes carries, so a re-segment replaces it. */
 export const ROTO_PATH_NAME = 'Roto Brush';
+
+/**
+ * The name a FROZEN matte carries. After Effects' Freeze locks the Roto Brush
+ * result so nothing recomputes it. Here the matte is a mask the tool finds by
+ * name and REPLACES on every new stroke — which would throw away a propagated
+ * matte (a path key per frame). Freezing renames it, so the tool no longer
+ * owns it, and the tool refuses to segment or propagate on that layer until it
+ * is unfrozen. The state is the document's own (the mask's name): it is saved
+ * with the project and undo takes it back.
+ */
+export const ROTO_FROZEN_NAME = 'Roto Brush (Frozen)';
+
+const FROZEN_MESSAGE = 'Roto Brush is frozen on this layer. Unfreeze it to change the matte.';
+
+/** The layer's roto mattes by state (mask ids). */
+export function rotoMattes(nodeId: string): { live: string[]; frozen: string[] } {
+  const out = { live: [] as string[], frozen: [] as string[] };
+  for (const m of mirrorMaskHeaders(documentMirror().tree(nodeId))) {
+    if (m.name === ROTO_PATH_NAME) out.live.push(m.id);
+    else if (m.name === ROTO_FROZEN_NAME) out.frozen.push(m.id);
+  }
+  return out;
+}
+
+export function isRotoFrozen(nodeId: string): boolean {
+  return rotoMattes(nodeId).frozen.length > 0;
+}
+
+/**
+ * The engine edit that freezes / unfreezes the layer's Roto Brush matte: a
+ * label and the commands, so the UI sends them itself (B3: UI code sends
+ * engine commands rather than calling a helper that writes for it). Empty
+ * `commands` when there is nothing to change.
+ */
+export function rotoFreezeEdit(
+  nodeId: string,
+  frozen: boolean,
+): { label: string; commands: Extract<Parameters<typeof edit>[1], readonly unknown[]> } {
+  const mattes = rotoMattes(nodeId);
+  const ids = frozen ? mattes.live : mattes.frozen;
+  const name = frozen ? ROTO_FROZEN_NAME : ROTO_PATH_NAME;
+  return {
+    label: frozen ? 'Freeze Roto Brush' : 'Unfreeze Roto Brush',
+    commands: ids.map((id) => ({ type: 'renamePropertyGroup' as const, group: { layer: nodeId, path: paths.maskGroup(id) }, name })),
+  };
+}
+
+/** Freeze / unfreeze as one undo step. False when there was nothing to change. */
+export async function setRotoFrozen(nodeId: string, frozen: boolean): Promise<boolean> {
+  const e = rotoFreezeEdit(nodeId, frozen);
+  if (e.commands.length === 0) return false;
+  return (await edit(e.label, e.commands)).ok;
+}
 
 export interface RotoPrompts {
   fg: Array<{ x: number; y: number }>;
@@ -86,6 +141,7 @@ export async function segmentStrokesToMask(
   timeSec: number,
   opts: SegmentStrokesOptions = {},
 ): Promise<string | null> {
+  if (isRotoFrozen(nodeId)) throw new Error(FROZEN_MESSAGE);
   if (!strokes.some((s) => s.kind === 'fg' && s.points.length > 0)) return null;
   const size = await layerSize(nodeId);
   if (!size) return null;
@@ -129,6 +185,7 @@ export async function propagateRotoForward(
   featherPx: number,
   onProgress?: (f: number) => boolean | void,
 ): Promise<RotoBrushResult> {
+  if (isRotoFrozen(nodeId)) throw new Error(FROZEN_MESSAGE);
   const size = await layerSize(nodeId);
   if (!size) throw new Error('Layer has no sized video source.');
   const fg = strokes.find((s) => s.kind === 'fg' && s.points.length > 0);

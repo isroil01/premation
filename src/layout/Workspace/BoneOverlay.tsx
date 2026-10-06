@@ -7,6 +7,7 @@ import { useActiveCompSize } from '@hooks/useMirrorFrame';
 import { useMirrorJson } from '@hooks/useMirrorFields';
 import { documentMirror } from '@stores/documentMirror';
 import { layerScreenMapping } from './layerScreen';
+import type { TrackPointHost } from './TrackPointOverlay';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { bumpScene } from '@stores/sceneStore';
 import { edit } from '@core/engine/uiEdits';
@@ -137,7 +138,12 @@ function controllerPath(shape: RigController['shape'], cx: number, cy: number, r
   }
 }
 
-export function BoneOverlay(): JSX.Element | null {
+/**
+ * `host`: another viewer drawing the skeleton under its own camera — the Layer
+ * viewer. The rig still comes from the engine's frame; only the projection
+ * (and the zoom the brush and pick radii are sized by) is the host's.
+ */
+export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Element | null {
   const activeTool = useUIStore((s) => s.activeTool);
   const boneRigMode = useUIStore((s) => s.boneRigMode);
   const boneWeightMode = useUIStore((s) => s.boneWeightMode);
@@ -320,7 +326,8 @@ export function BoneOverlay(): JSX.Element | null {
   // This pair was byte-identical to Puppet's and built on `worldMatrix(geom)`,
   // which composes only THIS node's transform — so bones and IK handles drew at
   // the unparented position on any parented layer (F23).
-  const mapping = layerScreenMapping(nodeId, time, comp, camera);
+  const mapping = host ? host.mapping : layerScreenMapping(nodeId, time, comp, camera);
+  const viewZoom = host ? host.zoom : camera.zoom;
   const localToScreen = (lx: number, ly: number) =>
     mapping ? mapping.localToScreen(lx, ly) : { x: lx, y: ly };
   const screenToLocal = (sx: number, sy: number) =>
@@ -369,7 +376,7 @@ export function BoneOverlay(): JSX.Element | null {
 
   /** Nearest rest-pose joint, with the parent a new branch should attach to. */
   const nearestJoint = (point: { x: number; y: number }, radiusPx = 12): JointAnchor | null => {
-    const radius = radiusPx / (camera.zoom || 1);
+    const radius = radiusPx / (viewZoom || 1);
     let best: JointAnchor | null = null;
     let bestDistance = radius;
     for (const bone of bones) {
@@ -704,7 +711,7 @@ export function BoneOverlay(): JSX.Element | null {
         : emptyWeightPaint(numVerts));
     // Brush radius is authored in SCREEN px; convert so the felt size is
     // constant regardless of zoom.
-    const worldRadius = brushRadius / (camera.zoom || 1);
+    const worldRadius = brushRadius / (viewZoom || 1);
     paintScratchRef.current = paintWeights(
       base,
       selectedBoneId,

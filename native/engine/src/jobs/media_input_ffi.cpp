@@ -19,6 +19,7 @@ extern "C" {
 
 #include "audio_decode.hpp"
 #include "scene/image_decode.hpp"
+#include "scene/svg_layer.hpp"
 
 namespace premation::jobs {
 namespace {
@@ -349,7 +350,57 @@ std::unique_ptr<FrameSource> open_frames(const std::string& path, std::uint32_t 
   return f;
 }
 
+namespace {
+
+std::string lower_ext(const std::filesystem::path& p) {
+  std::string ext = p.extension().string();
+  for (char& c : ext) c = c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+  return ext;
+}
+
+/// An SVG is read by the engine's own SVG renderer (scene/svg_layer.hpp), not a
+/// codec: its size from the document, an image like any still. An animated
+/// one plays from its layer's own time (scene_textures svg_ref).
+bool probe_svg(const std::string& path, js::Json& facts, std::string& error) {
+  const raster::svg::SvgFacts f = scene::svg_file_facts(fs_path(path));
+  if (!f.ok) {
+    error = "'" + path + "' is not a readable SVG: " + f.error;
+    return false;
+  }
+  facts = js::Json::object();
+  facts.set("type", js::Json::string("image"));
+  js::Json md = js::Json::object();
+  md.set("width", js::Json::number(std::max(1.0, std::round(f.width))));
+  md.set("height", js::Json::number(std::max(1.0, std::round(f.height))));
+  md.set("duration", js::Json::number(0));
+  facts.set("metadata", std::move(md));
+  return true;
+}
+
+/// An animated GIF / WebP: the OS still codec reads only the first frame, so
+/// ffmpeg is asked first; with more than one frame it is footage that moves.
+bool probe_animated_still(const std::string& path, js::Json& facts) {
+  FfmpegFrames anim;
+  std::string ignored;
+  if (!anim.open(path, 1, ignored) || anim.frame_count() <= 1) return false;
+  facts = js::Json::object();
+  facts.set("type", js::Json::string("video"));
+  js::Json md = js::Json::object();
+  md.set("width", js::Json::number(anim.source_width()));
+  md.set("height", js::Json::number(anim.source_height()));
+  md.set("fps", js::Json::number(anim.fps()));
+  md.set("duration", js::Json::number(static_cast<double>(anim.frame_count()) / anim.fps()));
+  md.set("hasAudioTrack", js::Json::boolean(false));
+  facts.set("metadata", std::move(md));
+  return true;
+}
+
+}  // namespace
+
 bool probe_media(const std::string& path, js::Json& facts, std::string& error) {
+  const std::string ext = lower_ext(fs_path(path));
+  if (ext == ".svg") return probe_svg(path, facts, error);
+  if ((ext == ".gif" || ext == ".webp") && probe_animated_still(path, facts)) return true;
   audio::AudioStreamInfo sound;
   std::string soundError;
   const bool probedSound = audio::probe_audio(path, sound, soundError) && sound.hasAudio;

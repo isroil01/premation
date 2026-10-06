@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useLayoutStore } from '@stores/layoutStore';
-import { PanelHeader } from '@layout/EditorLayout/PanelHeader';
 import { panelDef } from '@layout/EditorLayout/panelDefs';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
 import { WorkspaceViewport } from '@layout/Workspace';
@@ -38,7 +37,7 @@ function PopoutContent(): JSX.Element {
   // Handle special full-screen popout types: Viewport, Timeline, Presentation Mode
   if (panelId === 'viewport') {
     return (
-      <div style={{ width: '100vw', height: '100vh', background: '#121213', overflow: 'hidden' }}>
+      <div style={{ width: '100%', height: '100%', background: '#121213', overflow: 'hidden' }}>
         <WorkspaceViewport />
       </div>
     );
@@ -46,7 +45,7 @@ function PopoutContent(): JSX.Element {
 
   if (panelId === 'timeline') {
     return (
-      <div style={{ width: '100vw', height: '100vh', background: '#121213', overflow: 'hidden' }}>
+      <div style={{ width: '100%', height: '100%', background: '#121213', overflow: 'hidden' }}>
         <PopoutTimeline />
       </div>
     );
@@ -62,16 +61,16 @@ function PopoutContent(): JSX.Element {
   return (
     <div
       style={{
-        width: '100vw',
-        height: '100vh',
+        width: '100%',
+        height: '100%',
         background: 'var(--color-surface-1, #121213)',
-        color: '#ffffff',
+        color: 'var(--color-text-primary)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
       }}
     >
-      <PanelHeader panelId={panelId} title={panel?.title ?? panelDef(panelId)?.title ?? panelId} icon={panel?.icon ?? panelDef(panelId)?.icon} closable={false} isPopout />
+      {/* No header row: the window's title bar names the panel (TitleBar). */}
       <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
         {renderContent ? renderContent() : <div style={{ padding: 20 }}>Panel Content ({panelId})</div>}
       </div>

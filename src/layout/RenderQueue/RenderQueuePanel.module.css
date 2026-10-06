@@ -1,357 +1,230 @@
+/*
+ * The Render Queue: a tab of the timeline panel (BottomTimeline), drawn as
+ * After Effects draws it — a status line with the queue's verbs, then a table
+ * with one row per item. Flat greys; the accent marks what is live (the item
+ * rendering, its progress, the settings you can read as values).
+ */
 .root {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
   background: var(--color-panel);
   font-family: var(--font-family-sans);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-}
-
-/* ── Toolbar ──────────────────────────────────────────────────────── */
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--color-toolbar);
-  border-bottom: 1px solid var(--color-border-strong);
-  flex-shrink: 0;
-  min-height: 32px;
-}
-
-.toolbarBtn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-border-strong);
-  border-radius: 4px;
-  color: var(--color-text-primary);
   font-size: var(--font-size-xs);
-  font-weight: 500;
-  cursor: pointer;
-  letter-spacing: 0.02em;
-  user-select: none;
-  transition: background 0.1s, border-color 0.1s;
-}
-.toolbarBtn:hover {
-  background: var(--color-surface-3);
   color: var(--color-text-primary);
-}
-.toolbarBtnPrimary {
-  composes: toolbarBtn;
-  background: var(--color-primary);
-  border-color: var(--color-primary-active);
-  color: var(--color-primary-foreground);
-}
-.toolbarBtnPrimary:hover {
-  background: var(--color-primary-hover);
-}
-.toolbarBtnDanger {
-  composes: toolbarBtn;
-  background: transparent;
-  border-color: var(--color-border-strong);
-  color: var(--color-danger);
-}
-.toolbarBtnDanger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
-}
-.toolbarBtnDanger:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+  container-type: inline-size;
 }
 
-.spacer { flex: 1; }
-
-.statusBadge {
-  padding: 2px 8px;
-  font-size: var(--font-size-micro);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-border-strong);
-  color: var(--color-text-tertiary);
-}
-.statusBadgeRunning {
-  composes: statusBadge;
-  background: var(--color-primary-subtle);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-/* ── Job Cards ─────────────────────────────────────────────────────── */
-.jobList {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--color-surface-0);
-}
-
-.emptyState {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 140px;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-  text-align: center;
-  padding: 20px;
-}
-.emptyIcon { opacity: 0.25; }
-
-.jobCard {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-strong);
-  border-radius: 4px;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  transition: border-color 0.15s, background 0.15s;
-}
-
-.jobCard:hover {
-  border-color: var(--color-border-strong);
-  background: var(--color-surface-raised);
-}
-
-.jobCardRendering {
-  composes: jobCard;
-  border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
-  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
-}
-
-.cardHeader {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.cardHeaderLeft {
+/* ── Top line ─────────────────────────────────────────────────────── */
+.top {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
+  min-height: var(--control-height-lg);
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--color-border-structural);
+  flex: none;
 }
 
-.jobIndex {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
-  font-weight: 600;
-}
-
-.compName {
-  color: var(--color-text-primary);
-  font-weight: 500;
-  font-size: var(--font-size-sm);
-}
-
-.cardHeaderRight {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.formatBadge {
-  font-size: var(--font-size-micro);
-  color: var(--color-text-tertiary);
-  background: var(--color-surface-raised);
-  padding: 1px 4px;
-  border-radius: 2px;
-  text-transform: uppercase;
-}
-
-.removeBtn {
-  background: none;
-  border: none;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  padding: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 2px;
-}
-.removeBtn:hover {
-  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
-  color: var(--color-danger);
-}
-
-.cardBody {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.outputPath {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
-  word-break: break-all;
-  line-height: 1.2;
-}
-
-/* The render parameters, so two jobs on the same comp are distinguishable. */
-.jobSpec {
-  color: var(--color-text-tertiary);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-micro);
-  line-height: 1.2;
-}
-
-.statusProgressRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* Why a job failed. Wraps rather than truncates: these messages are the only
-   thing the user has to act on (ffmpeg missing, nothing rendered, out of memory). */
-.jobError {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
-  border: 1px solid var(--color-danger);
+.summary {
   color: var(--color-text-secondary);
-  font-size: var(--font-size-micro);
-  line-height: 1.35;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
-/* Something to know before the job runs (frames from last session gone, comp
-   not in the open project). Same shape as .jobError, warning-tinted: the job
-   still runs, or still can once the right project is open. */
-.jobAttention {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-warning) 60%, transparent);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-micro);
-  line-height: 1.35;
+.running {
+  color: var(--color-primary-text);
 }
 
-/* ── Status chip ─────────────────────────────────────────────────── */
-.statusChip {
-  font-size: var(--font-size-micro);
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  border: 1px solid transparent;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-}
-.statusQueued   { color: var(--color-text-tertiary); border-color: var(--color-border-strong); background: var(--color-surface-1); }
-.statusRendering{ color: var(--color-primary); border-color: color-mix(in srgb, var(--color-primary) 30%, transparent); background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
-.statusDone     { color: var(--color-success); border-color: color-mix(in srgb, var(--color-success) 30%, transparent); background: color-mix(in srgb, var(--color-success) 10%, transparent); }
-.statusFailed   { color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 30%, transparent); background: color-mix(in srgb, var(--color-danger) 10%, transparent); }
-.statusSkipped  { color: var(--color-text-muted); border-color: var(--color-border-strong); }
-/* Paused/stopped: work in hand, not work lost — warning, not danger. */
-.statusPaused   { color: var(--color-warning); border-color: color-mix(in srgb, var(--color-warning) 30%, transparent); background: color-mix(in srgb, var(--color-warning) 10%, transparent); }
-
-/* ── Progress bar ────────────────────────────────────────────────── */
-.progressCell {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.progressHeader {
-  display: flex;
-  justify-content: space-between;
-  font-size: var(--font-size-micro);
-  color: var(--color-text-muted);
-}
-
-.progressBar {
-  height: 6px;
+.topBar {
+  flex: 1 1 0;
+  min-width: 24px;
+  height: 4px;
   background: var(--color-surface-0);
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-border-subtle);
   overflow: hidden;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* Scaled, not resized: progress ticks never lay the row out again. */
+.topBarFill {
+  width: 100%;
+  height: 100%;
+  background: var(--color-primary);
+  transform-origin: left center;
+  transition: transform 0.2s linear;
+}
+
+/* ── Table ────────────────────────────────────────────────────────── */
+.table {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 34px minmax(120px, 1.1fr) minmax(140px, 1.3fr) minmax(140px, 1.4fr) minmax(140px, 1.5fr) 92px 132px;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: var(--control-height-row);
+  padding: 0 var(--space-3);
+}
+
+.row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.head {
+  flex: none;
+  background: var(--color-panel-header);
+  border-bottom: 1px solid var(--color-divider);
+  color: var(--color-text-tertiary);
+}
+
+.rows {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.item {
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.item:hover {
+  background: var(--color-hover);
+}
+
+/* The item rendering now: the lighter selection grey, as a selected row. */
+.item[data-status='rendering'],
+.item[data-status='encoding'],
+.item[data-status='preparing'] {
+  background: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+}
+
+.item[data-status='done'] .name,
+.item[data-status='completed'] .name,
+.item[data-status='skipped'] .name,
+.item[data-status='cancelled'] .name,
+.item[data-status='done'] .setting,
+.item[data-status='completed'] .setting,
+.item[data-status='skipped'] .setting,
+.item[data-status='cancelled'] .setting {
+  color: var(--color-text-tertiary);
+}
+
+.num {
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.name {
+  color: var(--color-text-primary);
+}
+
+.status {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.statusQueued { color: var(--color-text-secondary); }
+.statusRendering { color: var(--color-primary-text); }
+.statusPaused { color: var(--color-warning); }
+.statusDone { color: var(--color-success); }
+.statusFailed { color: var(--color-danger); }
+.statusSkipped { color: var(--color-text-tertiary); }
+
+/* A setting of the item (output module, output file): a value, in the accent. */
+.setting {
+  color: var(--color-primary-text);
+}
+
+.time {
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  overflow: visible !important;
+}
+
+/* The row's own progress, a hairline under it. */
+.progress {
+  height: 2px;
+  background: var(--color-surface-0);
+  overflow: hidden;
 }
 
 .progressFill {
+  width: 100%;
   height: 100%;
-  background: linear-gradient(
-    90deg,
-    var(--color-primary) 0%,
-    var(--color-primary-hover) 50%,
-    var(--color-primary) 100%
-  );
-  background-size: 200% 100%;
-  border-radius: var(--radius-full);
-  transition: width 0.1s linear;
-  animation: shimmer 1.5s infinite linear;
+  background: var(--color-primary);
+  transform-origin: left center;
+  transition: transform 0.2s linear;
 }
 
-/*
- * A paused job's bar must not shimmer: the shimmer is the only thing on the
- * card that says "this is moving", and a bar still crawling under a job that
- * has stopped is the same lie the old "Pause" button told.
- */
 .progressFillPaused {
-  animation: none;
-  background: color-mix(in srgb, var(--color-warning) 70%, var(--color-surface-3));
+  background: var(--color-warning);
 }
 
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
-/* ── Footer ─────────────────────────────────────────────────────── */
-.footer {
+.attention,
+.error {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: var(--color-statusbar);
-  border-top: 1px solid var(--color-border-strong);
-  font-size: var(--font-size-micro);
-  color: var(--color-text-muted);
-  flex-shrink: 0;
-}
-
-/*
- * ── Restored from the last session ──────────────────────────────
- *
- * A notice, not an alert. These jobs are good news — their frames survived —
- * but they appeared without anyone adding them this session, so the strip has
- * to be visible enough that the queue does not look like it invented work.
- * Warning-tinted rather than danger-tinted: nothing is wrong, something is
- * waiting.
- */
-.resumeBanner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface-2));
-  border-bottom: 1px solid var(--color-border-strong);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-micro);
-  flex-shrink: 0;
-}
-
-.resumeBannerText {
-  flex: 1;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-2) calc(34px + var(--space-3) * 2);
   min-width: 0;
-  line-height: 1.4;
+}
+
+.attention { color: var(--color-warning); }
+.error { color: var(--color-danger); }
+
+.attention span,
+.error span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-divider);
+}
+
+/* Empty: one quiet line in the middle, no button. */
+.empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  padding: var(--space-8) var(--space-5);
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.empty b {
+  font-weight: var(--font-weight-regular);
+  color: var(--color-text-secondary);
+}
+
+/* Narrow (a small window): the module and time columns give way first. */
+@container (max-width: 760px) {
+  .row {
+    grid-template-columns: 28px minmax(90px, 1fr) minmax(110px, 1.2fr) minmax(110px, 1.3fr) 132px;
+  }
+  .row > span:nth-child(4),
+  .row > span:nth-child(6) {
+    display: none;
+  }
 }

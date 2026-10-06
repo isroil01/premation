@@ -123,14 +123,17 @@ TEST_CASE("session hooks: the transport drives the media clock and the audio clo
   h.advance(std::chrono::milliseconds(100));
   CHECK(h.session.time() == 3 * (kSec / 30));
 
-  // Locked: the AUDIO clock decides the frame, whatever the wall clock says.
-  clock.elapsed = 1.0;
+  // Locked: the AUDIO clock decides the frame, whatever the wall clock says — here
+  // 50 ms behind it (the output latency): frame 28, where the wall clock says 30.
+  // (A reading AHEAD of the wall time since the play is not this play's: see the
+  // seek section below.)
+  clock.elapsed = 0.95;
   h.release_all();
-  h.advance(std::chrono::milliseconds(1));
-  CHECK(h.session.time() == 30 * (kSec / 30));
+  h.advance(std::chrono::milliseconds(900));
+  CHECK(h.session.time() == 28 * (kSec / 30));
   h.release_all();
   h.advance(std::chrono::seconds(5));  // the wall clock ran ahead; the audio did not
-  CHECK(h.session.time() == 30 * (kSec / 30));
+  CHECK(h.session.time() == 28 * (kSec / 30));
   // The next deadline is predicted from the audio clock (one frame on), never a spin.
   const auto dl = h.session.next_deadline();
   REQUIRE(dl.has_value());
@@ -153,6 +156,25 @@ TEST_CASE("session hooks: the transport drives the media clock and the audio clo
     REQUIRE(is_ok(h.run(cmd(api::Seek{2 * kSec, api::SeekMode::exact}))));
     REQUIRE(clock.plays.size() == 2);
     CHECK(clock.plays[1].from == 2.0);
+  }
+  SECTION("Go to Start mid-play: the old clock's elapsed is not taken (no jump ahead, no freeze)") {
+    // Until the restart reaches the speaker the device still reports the segment it is
+    // sounding — the OLD play's elapsed (1.5 s here). Taken, the playhead jumped to frame
+    // 45 and then held there until the new clock caught up: a frozen picture and timer.
+    REQUIRE(is_ok(h.run(cmd(api::Seek{0, api::SeekMode::exact}))));
+    REQUIRE(clock.plays.size() == 2);
+    h.release_all();
+    h.advance(std::chrono::milliseconds(100));
+    CHECK(h.session.time() == 3 * (kSec / 30));  // the wall clock paces from the seek
+    // The restart is heard: the new clock's own elapsed (behind the wall by the latency).
+    clock.elapsed = 0.15;
+    h.release_all();
+    h.advance(std::chrono::milliseconds(60));
+    CHECK(h.session.time() == 4 * (kSec / 30));
+    clock.elapsed = 0.5;
+    h.release_all();
+    h.advance(std::chrono::milliseconds(400));
+    CHECK(h.session.time() == 15 * (kSec / 30));
   }
   SECTION("pause stops the audio clock") {
     REQUIRE(is_ok(h.run(cmd(api::Pause{false}))));

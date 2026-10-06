@@ -145,6 +145,37 @@ export function onWriteDenied(listener: WriteDeniedListener | null): void {
 }
 
 /**
+ * Notified when the server refuses a write with `code: 'project_limit'` — the
+ * project is past the Free plan's cloud allowance (or a create would be). The
+ * ACCOUNT can still write; this one project cannot. Same callback shape and
+ * reason for indirection as `onWriteDenied`.
+ */
+type ProjectLimitListener = (detail: { message?: string; limit?: number }) => void;
+let projectLimitListener: ProjectLimitListener | null = null;
+
+export function onProjectLimit(listener: ProjectLimitListener | null): void {
+  projectLimitListener = listener;
+}
+
+/** The typed `project_limit` 403 body, flat or nested under `message`. */
+export function projectLimitDetail(
+  status: number,
+  body: unknown,
+): { message?: string; limit?: number } | null {
+  if (status !== 403 || !body || typeof body !== 'object') return null;
+  const flat = body as { code?: string; limit?: number; message?: unknown };
+  const nested = flat.message && typeof flat.message === 'object'
+    ? (flat.message as { code?: string; limit?: number; message?: string })
+    : null;
+  const code = flat.code ?? nested?.code;
+  if (code !== 'project_limit') return null;
+  return {
+    message: nested?.message ?? (typeof flat.message === 'string' ? flat.message : undefined),
+    limit: flat.limit ?? nested?.limit,
+  };
+}
+
+/**
  * The server's typed 403 body, whether the code sits at the top or nested.
  *
  * Exported for tests: NestJS is inconsistent about where a thrown `{ code, … }`
@@ -202,6 +233,8 @@ async function toError(res: Response): Promise<ApiError> {
   // for the next poll to notice.
   const denied = readOnlyDetail(res.status, body);
   if (denied) writeDeniedListener?.(denied);
+  const limited = projectLimitDetail(res.status, body);
+  if (limited) projectLimitListener?.(limited);
 
   return err;
 }

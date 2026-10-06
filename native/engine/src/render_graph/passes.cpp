@@ -69,21 +69,35 @@ class EffectPass final : public RenderPass {
     const api::RenderViewerLut* lutMeta =
         ctx.file.view.viewer_lut_active && ctx.file.view.viewer_lut ? &*ctx.file.view.viewer_lut : nullptr;
     const TexRef lutTex = lutMeta != nullptr && ctx.texture_ready(kViewerLutKey) ? ctx.texture(kViewerLutKey) : TexRef{};
+    // View ▸ Show Channel: scene-blit-lut's cr1.x (1–3 red / green / blue, 4 alpha, 5 colour without alpha).
+    const api::ChannelView channel = ctx.file.view.channel.value_or(api::ChannelView::rgb);
+    const double channelCode = channel == api::ChannelView::red     ? 1
+                               : channel == api::ChannelView::green ? 2
+                               : channel == api::ChannelView::blue  ? 3
+                               : channel == api::ChannelView::alpha ? 4
+                               : channel == api::ChannelView::rgb_straight ? 5
+                                                                          : 0;
+    const bool lut = lutMeta != nullptr && lutTex;
     cmds_.clear();
     if (ctx.colorSystem != nullptr && ctx.colorSystem->active()) {
       // D3: working → display/output through the OCIO program, then the viewer LUT.
       ctx.colorSystem->emit_display(ctx, cmds_, src->tex(), lutTex, lutMeta);
-    } else if (lutMeta != nullptr && lutTex) {
-      // emitSceneBlit with a viewer LUT: scene-blit-lut, packSceneBlitLut.
+    } else if (lut || channelCode != 0) {
+      // emitSceneBlit with a viewer LUT (scene-blit-lut, packSceneBlitLut) and/or a channel view.
       ColorTransform ct;
-      ct.m = {lutMeta->is1d ? -static_cast<double>(lutMeta->size) : static_cast<double>(lutMeta->size),
-              lutMeta->intensity, lutMeta->domain_min, 0, 1, 0, 0, 0, 1};
-      ct.offset = {lutMeta->domain_max, 0, 0};
+      ct.m = {0, 0, 0, 0, 1, 0, 0, 0, 1};  // size 0: no grade
+      if (lut) {
+        ct.m = {lutMeta->is1d ? -static_cast<double>(lutMeta->size) : static_cast<double>(lutMeta->size),
+                lutMeta->intensity, lutMeta->domain_min, 0, 1, 0, 0, 0, 1};
+        ct.offset = {lutMeta->domain_max, 0, 0};
+      }
+      ct.m[3] = channelCode;
       DrawItem& it = cmds_.add(Mat::SCENE_BLIT_LUT_MATERIAL, Blend::none,
                                pack_textured(ctx.packer(), screen_mvp(), {0, 0, 1, 1}, Color::white(), 1, ct, false));
       it.texture = src->tex();
       it.sampler = ctx.linear_clamp();
-      it.mask = lutTex;
+      // Without a LUT the shader never samples it; the binding still needs a float texture.
+      it.mask = lut ? lutTex : src->tex();
     } else {
       // emitSceneBlit: REPLACE (blend none), linear → display encode in the shader.
       DrawItem& it = cmds_.add(Mat::SCENE_BLIT_MATERIAL, Blend::none,

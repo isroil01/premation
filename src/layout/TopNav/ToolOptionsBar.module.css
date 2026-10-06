@@ -19,6 +19,32 @@
   display: none;
 }
 
+/*
+ * The same options as a run INSIDE the tool row (TopNav): no strip of its own.
+ * It takes what the tools leave and scrolls sideways if a tool has more
+ * options than there is room for; empty, it takes no room at all.
+ */
+.barInline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding-left: var(--space-3);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.barInline::-webkit-scrollbar {
+  display: none;
+}
+
+.barInline:empty {
+  display: none;
+}
+
 .opt {
   display: inline-flex;
   align-items: center;

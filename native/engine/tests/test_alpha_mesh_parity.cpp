@@ -5,11 +5,13 @@
 // float. PARITY_REBLESS=1 writes the C++ answers instead (parity_rebless.hpp).
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "alpha_mesh.hpp"
+#include "extrude_mesh.hpp"
 #include "json.hpp"
 #include "native_effects.hpp"
 #include "parity_rebless.hpp"
@@ -108,4 +110,63 @@ TEST_CASE("alpha mesh parity: coverage, outline and rest mesh equal the editor's
     CHECK(fx.answer(*rest_json, "triangles", json_numbers(rest->triangles)));
   }
   REQUIRE(fx.finish());
+}
+
+namespace {
+
+/// The area the triangles of a vertex list (x, y, u, v per vertex) cover.
+double triangles_area(const std::vector<double>& v, const std::vector<double>& tris) {
+  double a = 0;
+  for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+    const auto at = [&](std::size_t k, std::size_t c) { return v[(static_cast<std::size_t>(tris[t + k]) * 4) + c]; };
+    a += std::abs(((at(1, 0) - at(0, 0)) * (at(2, 1) - at(0, 1))) - ((at(2, 0) - at(0, 0)) * (at(1, 1) - at(0, 1)))) / 2;
+  }
+  return a;
+}
+
+}  // namespace
+
+TEST_CASE("alpha mesh: the outline mesh covers every traced region — no part of the picture is left out", "[scene][rig][alphamesh]") {
+  // The puppet bug: triangles bridging a narrow gap (an arm beside the body) were
+  // rejected and nothing replaced them, so a straight-edged piece of the picture
+  // went undrawn. The mesh must now cover its regions, or fall back to the grid.
+  premation::test::JsonFixture fx("alpha_mesh_parity.json");
+  REQUIRE(fx.ok());
+  std::map<std::string, sc::rig::CoverageMask, std::less<>> masks;
+  for (auto& m : fx.root().find_mut("masks")->obj_mut()) {
+    const auto rgba = premation::doc::native_unbase64(m.value.at("rgba").str());
+    REQUIRE(rgba.has_value());
+    masks.emplace(m.key, sc::rig::coverage_mask_from_image_data(*rgba, static_cast<int>(m.value.at("w").num()),
+                                                                static_cast<int>(m.value.at("h").num())));
+  }
+  for (Json& c : fx.root().find_mut("cases")->arr_mut()) {
+    const std::string image = c.at("image").str();
+    INFO(image);
+    const double lw = c.at("lw").num();
+    const double lh = c.at("lh").num();
+    const Json rig = c.at("rig");
+    const double density = rig.at("meshDensity").is_number() ? rig.at("meshDensity").num() : 22;
+    const double expansion = rig.at("meshExpansion").is_number() ? rig.at("meshExpansion").num() : 0;
+    const sc::rig::CoverageMask& mask = masks.at(image);
+    double regionArea = 0;
+    for (const sc::rig::AlphaRegion& r : sc::rig::alpha_outline_regions(mask, lw, lh, expansion)) {
+      regionArea += std::abs(sc::mesh::signed_area(r.outer));
+      for (const auto& h : r.holes) regionArea -= std::abs(sc::mesh::signed_area(h));
+    }
+    const auto geom = sc::rig::build_alpha_outline_geometry(lw, lh, c.at("pad").num(), density, expansion, mask);
+    if (!geom || regionArea <= 0) continue;  // the grid fallback covers the box
+    const std::vector<double> verts(geom->vertices.begin(), geom->vertices.end());
+    const std::vector<double> tris(geom->triangles.begin(), geom->triangles.end());
+    const double covered = triangles_area(verts, tris) / regionArea;
+    // What the frozen TypeScript-era answer covered, for the record.
+    const Json& old = c.at("geom");
+    if (old.is_object()) {
+      std::vector<double> ov;
+      std::vector<double> ot;
+      for (const Json& n : old.at("vertices").arr()) ov.push_back(n.num());
+      for (const Json& n : old.at("triangles").arr()) ot.push_back(n.num());
+      WARN(image << ": the mesh covers " << covered * 100 << "% of its region (the earlier mesh " << triangles_area(ov, ot) / regionArea * 100 << "%)");
+    }
+    CHECK(covered >= 0.97);
+  }
 }

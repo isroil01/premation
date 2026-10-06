@@ -124,9 +124,31 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
   // ── play / pause ──
   /** Set between a page-initiated pause and its position seek (see syncPlaying). */
   let holdUntilSeek = false;
+  /**
+   * Page play / pause commands the engine has not answered yet. While any is, the
+   * page's flag is the authority: a `transportChanged` is from before the engine took
+   * the request (`setLoop`, sent just ahead of `play`, answers `stopped` — applied, it
+   * flipped the button to Play and back on every click).
+   */
+  let transportInFlight = 0;
+  const settleTransport = (): void => {
+    transportInFlight = Math.max(0, transportInFlight - 1);
+  };
+  /** Apply the engine's play state to the page's flag (no echo back). */
+  const applyPlaying = (playing: boolean): void => {
+    const tab = activeTab();
+    if (!tab || tab.playing === playing) return;
+    applying = true;
+    try {
+      useProjectStore.getState().actions.setPlaying(playing);
+    } finally {
+      applying = false;
+    }
+  };
   const syncPlaying = (playing: boolean): void => {
     if (playing === enginePlaying) return;
     enginePlaying = playing;
+    transportInFlight += 1;
     if (playing) {
       st.plays += 1;
       const looping = isTransportLooping();
@@ -141,7 +163,13 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
         cacheFirst: false,
         cacheOnly: false,
         ...(currentFlicks() !== null ? { from: currentFlicks()! } : {}),
-      });
+      }).then((r) => {
+        settleTransport();
+        // Refused (no composition yet, say): nothing plays, so the button must not say it does.
+        if (r.ok || disposed || transportInFlight > 0 || !enginePlaying) return;
+        enginePlaying = false;
+        applyPlaying(false);
+      }, settleTransport);
     } else {
       st.pauses += 1;
       // The engine's transport reports its last SEEK time once stopped (the
@@ -150,7 +178,7 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
       // followed the engine's playhead events — is sent back as a seek, and
       // the stopped-state playhead events in between are not applied.
       holdUntilSeek = true;
-      void client().execute({ type: 'pause', returnToStart: false });
+      void client().execute({ type: 'pause', returnToStart: false }).then(settleTransport, settleTransport);
       const t = currentFlicks();
       if (t !== null) {
         st.seeksSent += 1;
@@ -167,10 +195,10 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
       if (e.type === 'playhead') {
         const tab = activeTab();
         if (!tab || e.comp !== tab.comp || holdUntilSeek) continue;
-        // Stopped, the page's playhead is the authority: while a page seek is in flight or
-        // queued, an event echoes an OLDER seek — applied, it would overwrite the newer
-        // position (and the queued seek would then send that stale time back).
-        if (!enginePlaying && (seekInFlight || seekPending)) continue;
+        // While a page seek is in flight or queued, an event is from before the engine took
+        // it (an older seek, or — playing — the frame before Go to Start): applied, it would
+        // overwrite the newer position, and a queued seek would then send that stale time back.
+        if (seekInFlight || seekPending) continue;
         st.playheadEvents += 1;
         applying = true;
         try {
@@ -186,20 +214,15 @@ export function installEngineTransport(client: () => EngineClient, stats?: Engin
       } else if (e.type === 'transportChanged') {
         const tab = activeTab();
         if (!tab || (e.comp && e.comp !== tab.comp)) continue;
+        if (transportInFlight > 0) continue;
         const playing = e.state === 'playing' || e.state === 'caching';
         enginePlaying = playing;
-        if (tab.playing !== playing) {
-          applying = true;
-          try {
-            useProjectStore.getState().actions.setPlaying(playing);
-          } finally {
-            applying = false;
-          }
-        }
+        applyPlaying(playing);
       } else if (e.type === 'documentReset') {
         // A new / opened / recovered document (or an engine restart): the
         // engine's active comp and playhead start over.
         sentComp = '';
+        transportInFlight = 0;
         void Promise.resolve().then(() => syncComp(true));
       }
     }

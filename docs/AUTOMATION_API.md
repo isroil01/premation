@@ -145,7 +145,7 @@ interface ApiUsageSummary {
 | Check | Where |
 |-------|-------|
 | Plan includes API | `limits.apiEnabled === true` on billing plan (`PlanDto.apiEnabled`) |
-| UI gate | Dashboard → **Developer / API** tab (`ApiKeysSection.tsx`) |
+| UI gate | None in 0.9 — the Dashboard **Developer** tab (`ApiKeysSection.tsx`) was removed for this release; see git history to restore it |
 | Server enforcement | 403 when plan lacks API or quotas exceeded |
 
 ---
@@ -174,7 +174,10 @@ interface ApiUsageSummary {
 
 ### Phase C — Create API key
 
-1. Open Dashboard → **Developer / API**.
+> Not available from the editor in 0.9: the Developer tab is removed. Keys can
+> only be minted against `/v1/keys` directly until it comes back.
+
+1. Open Dashboard → **Developer / API** (pre-0.9).
 2. Confirm `GET /v1/usage` shows `apiEnabled: true`.
 3. Create key: `POST /v1/keys` with name, optional scopes, optional expiry.
 4. **Copy the secret immediately** — shown once only (`CreatedApiKey.secret`).

@@ -306,14 +306,16 @@ without one retroactively invalidates every build the day the cert lapses.
 
 ## 7. Release policy — enforced, not just documented
 
-1. **Releases are cut from `main` only.** No release, tag or published artifact
-   from `dev` or a feature branch.
-2. **Flow:** feature branch → `dev` → `main` → tag → release.
+1. **Releases are cut from `native-core` only.** No release, tag or published
+   artifact from a feature branch. `main` and `dev` hold the pre-native-engine
+   history (0.8.x) and are not merged into or released from; the product
+   continues on `native-core`, which is also the repository's default branch.
+2. **Flow:** feature branch → `native-core` → tag → release.
 3. **Artifacts are built from the tagged commit**, never from a working tree.
-4. **A release tag that is not an ancestor of `main` fails the pipeline.**
+4. **A release tag that is not an ancestor of `native-core` fails the pipeline.**
 
 Gate 1 in `.github/workflows/release.yml` enforces (1) and (4) with
-`git merge-base --is-ancestor`. This matters because a tag pushed from `dev`
+`git merge-base --is-ancestor`. This matters because a tag pushed from a branch
 builds and publishes exactly as convincingly as a real release — same installer,
 same update manifest, same users — and nothing downstream can tell the
 difference. CI is the only place that can refuse.
@@ -323,7 +325,7 @@ difference. CI is the only place that can refuse.
 - [ ] `VITE_BACKEND_ORIGIN` set as a repo variable, pointing at the deployed backend
 - [ ] `npm run release:patch` (never edit the version by hand)
 - [ ] `git push --follow-tags`
-- [ ] Tag is on `main` (the workflow refuses otherwise)
+- [ ] Tag is on `native-core` (the workflow refuses otherwise)
 - [ ] Workflow green on both platforms (the `engine` job included)
 - [ ] The installed app starts the C++ engine on each platform (`await motionEditor.engine.status()` in the dev tools: `state: 'running'`)
 - [ ] macOS artifact verified with `spctl` and `stapler validate` on a clean machine, downloaded via a browser

@@ -39,6 +39,9 @@ export interface SurfContext {
 
 // `board`: the comp rect in UV (x0, y0, x1, y1) and the pasteboard colour
 // (rgb; a = 1 paints it outside the rect, 0 shows the frame as it is) — pasteboard.ts.
+// (The engine's frames arrive OPAQUE — measured: alpha is 1 everywhere, a
+// transparent layer view included — so a transparency grid cannot be composited
+// here; the engine draws it, setViewport `transparencyGrid`.)
 export const WGSL = /* wgsl */ `
 struct Board { rect: vec4f, color: vec4f };
 @group(0) @binding(0) var samp: sampler;

@@ -1,4 +1,4 @@
-import { readOnlyDetail } from './transport';
+import { projectLimitDetail, readOnlyDetail } from './transport';
 
 /**
  * The read-only 403 detector. A regression here is INVISIBLE in the paywall — the
@@ -44,5 +44,32 @@ describe('readOnlyDetail', () => {
 
   it('returns the code with no extras when reason and message are absent', () => {
     expect(readOnlyDetail(403, { code: 'read_only' })).toEqual({ reason: undefined, message: undefined });
+  });
+});
+
+describe('projectLimitDetail', () => {
+  const nested = {
+    statusCode: 403,
+    message: { code: 'project_limit', limit: 5, message: 'This project is past the Free plan.' },
+  };
+
+  it('reads the nested NestJS shape', () => {
+    expect(projectLimitDetail(403, nested)).toEqual({ message: 'This project is past the Free plan.', limit: 5 });
+  });
+
+  it('reads the flat shape', () => {
+    expect(projectLimitDetail(403, { code: 'project_limit', limit: 5, message: 'Past the cap.' })).toEqual({
+      message: 'Past the cap.',
+      limit: 5,
+    });
+  });
+
+  it('is not a read-only (account) refusal, and read_only is not a project limit', () => {
+    expect(readOnlyDetail(403, nested)).toBeNull();
+    expect(projectLimitDetail(403, { message: { code: 'read_only', reason: 'unverified' } })).toBeNull();
+  });
+
+  it('ignores anything that is not a 403', () => {
+    expect(projectLimitDetail(409, nested)).toBeNull();
   });
 });

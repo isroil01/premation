@@ -6,6 +6,7 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize } from '@hooks/useMirrorFrame';
 import { useMirrorJson } from '@hooks/useMirrorFields';
 import { layerScreenMapping } from './layerScreen';
+import type { TrackPointHost } from './TrackPointOverlay';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { pinColor, pinHasTransformGizmo, type PinKind, type PuppetRig } from '@core/rig/puppet';
 import { SketchRecorder, DEFAULT_SKETCH_TOLERANCE } from '@core/rig/puppetSketch';
@@ -64,7 +65,12 @@ function puppetLatticePath(
   return d;
 }
 
-export function PuppetOverlay(): JSX.Element | null {
+/**
+ * `host`: another viewer drawing the pins under its own camera — the Layer
+ * viewer, where After Effects also lets you place puppet pins. The rig still
+ * comes from the engine's frame; only the projection is the host's.
+ */
+export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Element | null {
   const activeTool = useUIStore((s) => s.activeTool);
   const puppetPinKind = useUIStore((s) => s.puppetPinKind);
   const selectedNodeId = useSelectionStore((s) => s.ids[0]);
@@ -190,7 +196,7 @@ export function PuppetOverlay(): JSX.Element | null {
   // parented layer the pins drew at the unparented position while the artwork
   // rendered at the parented one (F23). `layerScreenMapping` goes through
   // `layerSpaceAt`, which walks the chain and handles 3D.
-  const mapping = layerScreenMapping(nodeId, time, comp, camera);
+  const mapping = host ? host.mapping : layerScreenMapping(nodeId, time, comp, camera);
   const localToScreen = (lx: number, ly: number) =>
     mapping ? mapping.localToScreen(lx, ly) : { x: lx, y: ly };
   const screenToLocal = (sx: number, sy: number) =>

@@ -19,6 +19,7 @@ import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useEffectHandleStore } from '@stores/effectHandleStore';
 import { EffectHandleOverlay } from './EffectHandleOverlay';
+import { MAIN_VIEWPORT, overlayLayer } from '@stores/overlayGeometry';
 
 jest.mock('@core/workspace/WorkspaceController', () => ({
   getWorkspaceController: () => ({
@@ -134,4 +135,45 @@ test('a press that misses every handle writes nothing', async () => {
   await dragBy(svg, [4000, 4000], [[4030, 4020]]);
   expect((await h.doc())).toEqual(before);
   expect((await historyLabels())).toEqual([]);
+});
+
+/*
+ * Hosted by another viewer (the Layer viewer, which shows the layer ALONE under
+ * its own camera): the overlay draws through the host's projection instead of
+ * the composition viewport's, and a drag there writes the same params.
+ */
+describe('hosted by the Layer viewer', () => {
+  // The layer's centre at (300, 200) on the host's stage, at 2× — nothing like the mocked 1:1 camera.
+  const host = (frame: { width: number; height: number }) => ({
+    mapping: {
+      localToScreen: (lx: number, ly: number) => ({ x: 300 + 2 * lx, y: 200 + 2 * ly }),
+      screenToLocal: (sx: number, sy: number) => ({ x: (sx - 300) / 2, y: (sy - 200) / 2 }),
+    },
+    frame,
+    zoom: 2,
+  });
+
+  test('handles are drawn through the host projection, and a drag writes in layer units', async () => {
+    // Where the composition viewport draws the handle (1:1, layer at the origin) = its layer-local position.
+    const plain = await renderOverlay();
+    const [lx, ly] = handleAt(plain.container);
+    const box = overlayLayer(MAIN_VIEWPORT, ID, 0)?.box;
+    plain.unmount();
+    expect(box && box.length >= 4).toBe(true);
+    const frame = { width: box![2]!, height: box![3]! };
+
+    const r = render(<EffectHandleOverlay host={host(frame)} />);
+    await act(async () => { await settleEdits(); });
+    await waitFor(() => expect(r.container.querySelector('[aria-label="Bulge Centre handle"]')).not.toBeNull());
+    const [hx, hy] = handleAt(r.container);
+    expect(hx).toBeCloseTo(300 + 2 * lx, 4);
+    expect(hy).toBeCloseTo(200 + 2 * ly, 4);
+
+    // 40 stage px at 2× is 20 layer px.
+    const start = await centre();
+    await dragBy(await svgOf(r.container), [hx, hy], [[40, 20]]);
+    expect((await centre()).x).toBeCloseTo(start.x + 20, 6);
+    expect((await centre()).y).toBeCloseTo(start.y + 10, 6);
+    expect(await historyLabels()).toEqual(['Move Bulge Centre']);
+  });
 });

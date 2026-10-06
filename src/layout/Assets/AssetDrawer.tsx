@@ -46,6 +46,8 @@ export function AssetDrawer({ asset, selectionCount, open, onToggle, usedBy, onS
   const visual = asset ? getAssetVisualInfo(asset) : null;
   const label = asset?.label ? LABEL_COLORS.find((c) => c.id === asset.label) : undefined;
   const path = asset ? assetDiskPath(asset) : null;
+  // The item's picture, beside its facts — a still's own pixels, a video's poster.
+  const thumb = asset ? asset.thumbSrc ?? (asset.type === 'image' ? asset.src : undefined) : undefined;
 
   const commitTags = (): void => {
     if (!asset) return;
@@ -72,6 +74,7 @@ export function AssetDrawer({ asset, selectionCount, open, onToggle, usedBy, onS
       {open && (
         asset ? (
           <div className={styles.assetDrawerBody}>
+            {thumb ? <img src={thumb} alt="" className={styles.assetDrawerThumb} /> : null}
             <dl className={styles.assetDrawerGrid}>
               {m.width && m.height ? (
                 <>

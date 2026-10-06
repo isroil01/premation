@@ -44,3 +44,19 @@ export function localFileUrlToPath(url: string, platform: NodeJS.Platform = proc
   if (parsed.hostname) return null;
   return path.posix.normalize(pathname);
 }
+
+/**
+ * The `Access-Control-Allow-Origin` a `local-file://` response carries, or null
+ * for none. The page reads these bytes with fetch (audio decode, waveforms)
+ * from another origin — the dev server, or `null` from the packaged file://
+ * page — so it needs the header; any other origin gets none.
+ */
+export function localFileCorsOrigin(requestOrigin: string | null, devServerUrl: string): string | null {
+  if (requestOrigin === null) return null;
+  if (requestOrigin === 'null') return 'null';
+  try {
+    return requestOrigin === new URL(devServerUrl).origin ? requestOrigin : null;
+  } catch {
+    return null;
+  }
+}

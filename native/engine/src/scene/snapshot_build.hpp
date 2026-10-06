@@ -56,6 +56,12 @@ struct BuildContext {
     std::string id;
     bool render = true;
     std::optional<double> sourceTime;
+    /// A checkerboard behind the layer's bounds (setViewport `transparencyGrid`).
+    bool grid = false;
+    /// How the layer's alpha is shown (setViewport `layerAlphaView`): '' = as
+    /// it is, 'alpha' = the matte white on black, 'boundary' = the source with
+    /// the matte's edge outlined, 'overlay' = the source, red outside the matte.
+    std::string alphaView{};
   };
   std::optional<LayerView> layerView{};
   /// Layers the viewport being built does not draw (setViewportHiddenLayers:

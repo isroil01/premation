@@ -39,6 +39,7 @@ import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { effectPropPath } from '@core/inspector/effectCatalog';
 import { layerScreenMapping } from './layerScreen';
+import type { TrackPointHost } from './TrackPointOverlay';
 import {
   collectEffectHandles,
   hitTestEffectHandle,
@@ -60,7 +61,13 @@ const TANGENT_R = 3.5;
 /** The overlay geometry the handles map through: the layer's drawn box. */
 const HANDLE_KINDS: ReadonlyArray<OverlayKind> = ['bounds', 'transform'];
 
-export function EffectHandleOverlay(): JSX.Element | null {
+/**
+ * `host`: another viewer drawing the handles under its own camera — the Layer
+ * viewer, which shows the layer alone (see TrackPointHost). It supplies the
+ * layer-local ↔ stage projection and the layer's frame; the composition
+ * viewport's overlay push is not asked for.
+ */
+export function EffectHandleOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Element | null {
   // Frame-coalesced: a drag bumps the revision per pointer event, and this
   // overlay only needs to track it visually. Also the memo key below — the raw
   // rev changed per event, so the memos never hit during a drag.
@@ -79,17 +86,27 @@ export function EffectHandleOverlay(): JSX.Element | null {
   // geometry push (asked for here, whatever else subscribes the layer).
   const tree = useMirrorTree(nodeId);
   const [geoTick, setGeoTick] = useState(0);
+  const hosted = host !== undefined;
   useEffect(() => {
+    if (hosted) return undefined;
     // Re-render once the engine has the subscription: the box exists from then.
     void requestOverlayLayers(MAIN_VIEWPORT, 'effectHandles', nodeId ? [nodeId] : [], HANDLE_KINDS, nodeId ? ['active'] : []).then(() => setGeoTick((t) => t + 1));
     return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'effectHandles', [], HANDLE_KINDS); };
-  }, [nodeId]);
+  }, [nodeId, hosted]);
   const node = nodeId ? documentMirror().layer(nodeId) ?? null : null;
   const effect = node && activeEffect
     ? mirrorEffects(tree).find((e) => e.id === activeEffect) ?? null
     : null;
-  const box = nodeId ? overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(time))?.box : undefined;
-  const geom = box && box.length >= 4 ? { width: box[2]!, height: box[3]! } : null;
+  const box = nodeId && !hosted ? overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(time))?.box : undefined;
+  const hostW = host?.frame.width ?? 0;
+  const hostH = host?.frame.height ?? 0;
+  const geom = useMemo(
+    () => (hosted
+      ? (hostW > 0 && hostH > 0 ? { width: hostW, height: hostH } : null)
+      : box && box.length >= 4 ? { width: box[2]!, height: box[3]! } : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the pushed box is read by value
+    [hosted, hostW, hostH, box?.[2], box?.[3]],
+  );
 
   /**
    * Handles at their LIVE positions — animated values folded in, so a handle on
@@ -119,11 +136,12 @@ export function EffectHandleOverlay(): JSX.Element | null {
    * effect-space half-box offset, which is genuinely its own concern — the rig
    * overlays work in layer-local coordinates directly.
    */
-  const mapping = useMemo(
-    () => (nodeId ? layerScreenMapping(nodeId, time, comp, camera) : null),
+  const pushedMapping = useMemo(
+    () => (nodeId && !hosted ? layerScreenMapping(nodeId, time, comp, camera) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton; the geometry tick re-reads the push
-    [nodeId, time, comp.width, comp.height, sceneTick, geoTick],
+    [nodeId, hosted, time, comp.width, comp.height, sceneTick, geoTick],
   );
+  const mapping = host ? host.mapping : pushedMapping;
 
   const toScreen = useMemo(() => {
     if (!mapping || !geom) return null;

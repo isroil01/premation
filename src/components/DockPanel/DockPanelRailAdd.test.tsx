@@ -58,8 +58,8 @@ describe('the rail', () => {
     act(() => useLayoutStore.getState().openPanel('effectControls'));
     render(<TooltipProvider><DockPanel region="leftSidebar" renderers={{}} /></TooltipProvider>);
     const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['Layers', 'Assets', 'Library', 'AI', 'Controls']);
-    // The accessible name stays the full title.
+    expect(tabs.map((t) => t.textContent)).toEqual(tabs.map((t) => t.getAttribute('aria-label')));
+    expect(tabs.map((t) => t.textContent)).toEqual(['Project', 'Effect Controls', 'Layers']);
     expect(screen.getByRole('tab', { name: 'Effect Controls' })).toBeInTheDocument();
   });
 
@@ -68,10 +68,13 @@ describe('the rail', () => {
     render(<TooltipProvider><DockPanel region="rightInspector" renderers={{}} /></TooltipProvider>);
     expect(screen.getAllByRole('tab').map((t) => t.getAttribute('aria-label'))).toEqual([
       'Properties',
+      'Preview',
       'Effects',
       'Presets',
       'Plugins',
+      'Align',
       'Audio',
+      'Assistant',
     ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open an inspector panel' }));
@@ -80,7 +83,7 @@ describe('the rail', () => {
 
     act(() => { fireEvent.click(screen.getByText('Scopes')); });
     const s = useLayoutStore.getState();
-    expect(s.panelOrder.rightInspector).toEqual(['properties', 'effects', 'presets', 'plugins', 'audio', 'scopes']);
+    expect(s.panelOrder.rightInspector).toEqual(['properties', 'preview', 'effects', 'presets', 'plugins', 'align', 'audio', 'ai', 'scopes']);
     expect(s.activePanelByRegion.rightInspector).toBe('scopes');
   });
 });

@@ -142,6 +142,8 @@ command setViewport = 808 [control, coalesce] {
   /// (transparent, tinted, farthest first) over the live frame while playback
   /// is stopped. Ignored on a layer view.
   onion?: OnionSkin = 18;
+  /// With `layer`: how the layer's ALPHA is shown (the Layer panel's Roto / matte views, AE's Alpha, Alpha Boundary and Alpha Overlay). Absent or '' = the layer as it is. 'alpha' = the matte itself, white on black. 'boundary' = the untouched source with the matte's edge outlined. 'overlay' = the untouched source with everything OUTSIDE the matte under a red tint. A viewer aid only: never in a composition render or an export. Any other value: `invalidArgument`.
+  layerAlphaView?: string = 19;
 }
 command closeViewport = 809 [control] { viewport: u32 = 1; }
 command setCacheBudget = 810 [control] { ramMegabytes: u64 = 1; diskMegabytes: u64 = 2; diskPath: string = 3; }

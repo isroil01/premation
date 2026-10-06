@@ -318,3 +318,277 @@
   flex: 1 1 auto;
   min-height: var(--space-2);
 }
+
+/*
+ * A closed sidebar: the whole pane is one thin button, with a short grip line
+ * so it reads as something you can pull. It lights on hover and focus.
+ */
+/* Above the splitter beside it: the splitter's grab area reaches 5px into its
+   neighbours, which is most of a closed sidebar's 8px — without this every
+   click on the edge landed on the splitter and did nothing. */
+.collapsed {
+  z-index: 21; /* the splitter is 20 */
+}
+
+.edge {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: var(--color-panel);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.edge:hover,
+.edge:focus-visible {
+  background: var(--color-surface-3);
+  outline: none;
+}
+
+.edge:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--color-focus-ring);
+}
+
+.edgeGrip {
+  width: 2px;
+  height: 12%;
+  min-height: var(--control-height-lg);
+  border-radius: 1px;
+  background: var(--color-text-tertiary);
+}
+
+.edge:hover .edgeGrip,
+.edge:focus-visible .edgeGrip {
+  background: var(--color-text-primary);
+}
+
+/* ── Open chromes (the After Effects direction) ────────────────────────
+ *
+ * The rail above is now the COLLAPSED sidebar only. Open, the left sidebar is
+ * a tab strip over its active panel and the right inspector is a stack of
+ * bars — see DockPanel.tsx. Both follow the approved design sheet: a darker
+ * tab bar, the active tab on the panel's own surface with its ≡ beside the
+ * name, and a near-black gap between stacked panels instead of a border.
+ */
+.tabsRoot,
+.stackRoot {
+  flex-direction: column;
+}
+
+/* Left: tab strip */
+.strip {
+  display: flex;
+  align-items: stretch;
+  height: var(--bar-height-panel);
+  min-height: var(--bar-height-panel);
+  background: var(--color-surface-0);
+  flex: none;
+  user-select: none;
+}
+
+.stripTabs {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.stripTabs::-webkit-scrollbar {
+  display: none;
+}
+
+.stripSlot {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+/* The active tab takes the panel's own surface, so it reads as its top edge. */
+.stripSlotActive {
+  background: var(--color-panel);
+  padding-right: var(--space-2);
+}
+
+.stripTab {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 var(--space-4);
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.stripTab:hover {
+  color: var(--color-text-primary);
+}
+
+.stripTab:focus-visible,
+.barTab:focus-visible,
+.menuBtn:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -1px;
+}
+
+.stripTabActive {
+  color: var(--color-text-primary);
+  padding-right: var(--space-2);
+}
+
+/* The ≡ panel menu: beside the active tab's name, at the right of every bar. */
+.menuBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  flex: none;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.menuBtn:hover {
+  color: var(--color-text-primary);
+}
+
+.strip .headerActions {
+  flex: none;
+  padding: 0 var(--space-2);
+}
+
+.stripAdd {
+  display: flex;
+  align-items: center;
+  flex: none;
+  padding-right: var(--space-2);
+}
+
+/* Right: stack of bars. The gap between panels is the frame showing through. */
+.stackRoot {
+  background: var(--color-border-structural);
+  gap: 2px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  height: var(--bar-height-panel);
+  min-height: var(--bar-height-panel);
+  flex: none;
+  background: var(--color-panel);
+  user-select: none;
+}
+
+/* An open panel and its bar are one object: no gap between them. */
+.barActive {
+  margin-bottom: -2px;
+}
+
+.barTab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.barTab:hover {
+  color: var(--color-text-primary);
+}
+
+.barActive .barTab {
+  color: var(--color-text-primary);
+}
+
+/* The twirl: a small filled triangle, the way a disclosure reads in a pro tool. */
+.barTwirl {
+  width: 10px;
+  flex: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+  line-height: 1;
+  transform: scale(0.8);
+}
+
+.tabLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The panel's subject after its title ("Properties: Logo") — quieter than the title. */
+.tabDetail {
+  color: var(--color-text-secondary);
+}
+
+.bar .headerActions {
+  flex: none;
+  padding-right: var(--space-2);
+}
+
+/* Open panels share the height the bars leave, equally. */
+.stackRoot > .content {
+  flex: 1 1 0;
+  min-height: 96px;
+  background: var(--color-panel);
+}
+
+.barAdd {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: var(--bar-height-panel);
+  padding: 0 var(--space-2);
+  background: var(--color-panel);
+}
+
+/*
+ * The panel in use. After Effects outlines the panel that has focus; here it
+ * is whichever dock holds keyboard focus. Inset, so the outline never changes
+ * a panel's size or covers the splitter beside it.
+ */
+.tabsRoot:focus-within,
+.stackRoot:focus-within {
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+.tabsRoot:focus-within .stripTabActive {
+  color: var(--color-primary-text);
+}
+
+/* Where a dragged panel will land: before this tab / above this bar. */
+.dropBefore {
+  box-shadow: inset 2px 0 0 var(--color-primary);
+}
+
+.dropAbove {
+  box-shadow: inset 0 2px 0 var(--color-primary);
+}

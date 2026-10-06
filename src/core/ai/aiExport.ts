@@ -13,7 +13,7 @@ import {
   useRenderQueueStore,
   type OutputFormat,
 } from '@stores/renderQueueStore';
-import { useLayoutStore } from '@stores/layoutStore';
+import { showRenderQueue } from '@stores/timelinePanelStore';
 
 export interface AiExportRequest {
   format?: 'mp4' | 'webm' | 'gif';
@@ -61,7 +61,7 @@ export function queueCompositionVideo(req: AiExportRequest = {}): AiExportResult
     quality: req.quality ?? 'high',
   });
 
-  useLayoutStore.getState().openPanel('renderQueue');
+  showRenderQueue();
 
   let started = false;
   if (req.mode === 'immediate' || (req.start !== false && useRenderQueueStore.getState().outputDir)) {

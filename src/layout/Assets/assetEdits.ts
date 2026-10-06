@@ -49,6 +49,21 @@ export interface ImportPathsResult {
   imported: ImportedAsset[];
   /** Paths that could not be read or decoded. */
   failed: string[];
+  /** Why, by failed path / name, in words for the user (`importFailureReason`). */
+  reasons?: Record<string, string>;
+}
+
+/**
+ * The engine's import refusal in words for the user. The engine's message names
+ * the file and the decoder ("could not import '<path>': no decoder for '<path>'"),
+ * which says nothing to someone who just picked a file.
+ */
+export function importFailureReason(message: string | undefined): string {
+  const m = (message ?? '').toLowerCase();
+  if (/no decoder|has no picture|not a readable svg|unsupported|invalid data/.test(m)) return 'this file type or codec cannot be read';
+  if (/cannot open|could not read|did not open|no such file|not found/.test(m)) return 'the file could not be opened';
+  if (/out of memory/.test(m)) return 'the file is too large to open';
+  return 'the file could not be read';
 }
 
 /**
@@ -66,7 +81,7 @@ export async function importPathsEdit(paths: readonly string[], folder: string |
     const ids = (all.value[0] as { items?: string[] } | undefined)?.items ?? [];
     return { imported: await importedAssets(ids), failed: [] };
   }
-  if (paths.length === 1) return { imported: [], failed: [...paths] };
+  if (paths.length === 1) return { imported: [], failed: [...paths], reasons: { [paths[0]!]: importFailureReason(all.error.message) } };
 
   const client = engine();
   const opened = await client.beginGesture(label);
@@ -76,16 +91,20 @@ export async function importPathsEdit(paths: readonly string[], folder: string |
   }
   const imported: ImportedAsset[] = [];
   const failed: string[] = [];
+  const reasons: Record<string, string> = {};
   for (const path of paths) {
     const res = await client.execute({ type: 'importFiles', files: [file(path)] });
     const id = res.ok ? (res.value as { items?: string[] }).items?.[0] : undefined;
     const asset = id ? (await importedAssets([id]))[0] : undefined;
     if (asset) imported.push(asset);
-    else failed.push(path);
+    else {
+      failed.push(path);
+      reasons[path] = importFailureReason(res.ok ? undefined : res.error.message);
+    }
   }
   const closed = await client.endGesture(opened.value.gesture, imported.length > 0);
   if (!closed.ok) reportEngineError(label, closed.error);
-  return { imported, failed };
+  return { imported, failed, reasons };
 }
 
 // ── Import (browser Files) ────────────────────────────────────────────
@@ -135,8 +154,10 @@ export async function importBrowserFilesEdit(items: readonly BrowserFileImport[]
     return { imported: await importedAssets(ids), failed: [], failedFiles: [] };
   }
   if (items.length === 1) {
-    reportEngineError(name, all.error);
-    return { imported: [], failed: [items[0]!.file.name], failedFiles: [items[0]!.file] };
+    const only = items[0]!.file.name;
+    const reason = importFailureReason(all.error.message);
+    useUIStore.getState().notify({ level: 'warning', message: `Could not import “${only}”: ${reason}.`, durationMs: 6000 });
+    return { imported: [], failed: [only], failedFiles: [items[0]!.file], reasons: { [only]: reason } };
   }
 
   const client = engine();
@@ -147,23 +168,27 @@ export async function importBrowserFilesEdit(items: readonly BrowserFileImport[]
   }
   const imported: ImportedAsset[] = [];
   const failedFiles: File[] = [];
+  const reasons: Record<string, string> = {};
   for (const item of items) {
     const res = await client.execute({ type: 'importBytes', files: [await bytesFileOf(item)] });
     const id = res.ok ? (res.value as { items?: string[] }).items?.[0] : undefined;
     const asset = id ? (await importedAssets([id]))[0] : undefined;
     if (asset) imported.push(asset);
-    else failedFiles.push(item.file);
+    else {
+      failedFiles.push(item.file);
+      reasons[item.file.name] = importFailureReason(res.ok ? undefined : res.error.message);
+    }
   }
   const closed = await client.endGesture(opened.value.gesture, imported.length > 0);
   if (!closed.ok) reportEngineError(name, closed.error);
   if (failedFiles.length > 0) {
     useUIStore.getState().notify({
       level: 'warning',
-      message: `Could not import ${failedFiles.map((f) => `“${f.name}”`).join(', ')}`,
+      message: `Could not import ${failedFiles.map((f) => `“${f.name}” (${reasons[f.name]})`).join(', ')}`,
       durationMs: 6000,
     });
   }
-  return { imported, failed: failedFiles.map((f) => f.name), failedFiles };
+  return { imported, failed: failedFiles.map((f) => f.name), failedFiles, reasons };
 }
 
 // ── Folders ───────────────────────────────────────────────────────────

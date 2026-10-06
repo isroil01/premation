@@ -25,6 +25,9 @@ export const ICON_NAMES = [
   'select-all', 'deselect', 'mouse-pointer', 'pen', 'type', 'type-vertical', 'square', 'circle',
   'mask-square', 'mask-circle', 'mask-pen',
   'pencil', 'line', 'star', 'polygon', 'curvature',
+  // Tools that used to borrow a glyph meaning something else (a bare plus,
+  // scissors, the Brush). Drawn in drawnIcons.ts.
+  'paint', 'add-vertex', 'delete-vertex', 'convert-vertex', 'mask-feather', 'knife',
   'copy', 'group', 'ungroup', 'trash',
   'folder', 'folder-open', 'folder-plus', 'upload', 'file', 'image', 'video', 'audio', 'audio-off', 'media', 'shape', 'layers',
   'component', 'zap',

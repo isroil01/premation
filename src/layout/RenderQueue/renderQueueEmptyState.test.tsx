@@ -15,7 +15,7 @@
 // the queue.
 jest.mock('@core/export/exportManager', () => ({ downloadBlob: jest.fn() }));
 
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { RenderQueuePanel } from './RenderQueuePanel';
 import { useRenderQueueStore } from '@stores/renderQueueStore';
 import { resetExportQueueForTest, useExportQueueStore } from '@stores/exportQueueStore';
@@ -27,17 +27,14 @@ beforeEach(() => {
   }
 });
 
-it('shows an empty state, with the add action, when nothing is queued', () => {
+it('shows a quiet empty state that says where items come from, with no add dialog of its own', () => {
   render(<RenderQueuePanel />);
 
-  expect(screen.getByText('Nothing queued')).toBeTruthy();
-
-  const add = screen.getByRole('button', { name: /add the current composition/i });
-  fireEvent.click(add);
-
-  // The output-module dialog is the panel's own "Add Comp" surface — if the
-  // action were inert this would find nothing.
-  expect(screen.getAllByText(/output/i).length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Nothing queued').length).toBeGreaterThan(0);
+  expect(screen.getByText(/Add to Render Queue/)).toBeTruthy();
+  // Items are queued from Export; the panel has no "Add Comp" button and no
+  // output-module popup inside it any more (owner decision, 2026-10).
+  expect(screen.queryByRole('button', { name: /add/i })).toBeNull();
 });
 
 /*
@@ -64,12 +61,40 @@ describe('background (supervisor) jobs', () => {
   it('lists them instead of the empty state, with frame/fps/ETA and the restart note', () => {
     useExportQueueStore.setState({ jobs: [bg(), bg({ id: 'exp-2', status: 'queued', progress: { fraction: 0, frame: 0, totalFrames: 48, fps: null, etaSec: null } })] });
     render(<RenderQueuePanel />);
-    expect(screen.queryByText('Nothing queued')).toBeNull();
+    expect(screen.queryByText(/Add to Render Queue/)).toBeNull();
     expect(screen.getByText(/Frame 24 \/ 48 · 12\.0 fps · 0:02 left/)).toBeTruthy();
     expect(screen.getByText(/interrupted render starts again/i)).toBeTruthy();
     // Priority up/down on the waiting one only.
     expect(screen.getAllByRole('button', { name: /raise priority/i })).toHaveLength(1);
     expect(screen.getByText(/2 in background/)).toBeTruthy();
+  });
+
+  it('counts them in the summary, clears the finished ones, and Render runs the failed ones again', () => {
+    const retry = jest.fn(async () => {});
+    const remove = jest.fn(async () => {});
+    useExportQueueStore.setState({
+      jobs: [
+        bg({ id: 'done-1', status: 'completed' }),
+        bg({ id: 'done-2', status: 'completed' }),
+        bg({ id: 'bad-1', status: 'failed', error: 'premation-engine could not start: spawn premation-engine.exe ENOENT' }),
+        bg({ id: 'wait-1', status: 'queued' }),
+      ],
+      retry,
+      remove,
+    });
+    render(<RenderQueuePanel />);
+    // Before: "4 items · 0 queued · 0 done" — only the in-window list was counted.
+    expect(screen.getByText(/4 items · 1 queued · 2 done · 1 failed · 1 in background/)).toBeTruthy();
+
+    const clear = screen.getByRole('button', { name: /^Clear done$/ });
+    expect((clear as HTMLButtonElement).disabled).toBe(false);
+    clear.click();
+    expect(remove.mock.calls.map((c) => (c as unknown[])[0]).sort()).toEqual(['done-1', 'done-2']);
+
+    const renderBtn = screen.getByRole('button', { name: /^Render$/ });
+    expect((renderBtn as HTMLButtonElement).disabled).toBe(false);
+    renderBtn.click();
+    expect(retry.mock.calls.map((c) => (c as unknown[])[0])).toEqual(['bad-1']);
   });
 
   it('shows in-window (legacy) jobs alongside them', () => {

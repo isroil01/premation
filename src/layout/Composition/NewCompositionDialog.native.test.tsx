@@ -19,70 +19,68 @@ describe('NewCompositionDialog', () => {
     useProjectStore.getState().actions.replaceComps({});
   });
 
-  it('opens modal with size "lg" and title "New Composition"', async () => {
+  it('opens modal with size "md" and title "New Composition"', async () => {
     openNewCompositionDialog();
     const stack = useModalStore.getState().stack;
     expect(stack.length).toBe(1);
     expect(stack[0]?.title).toBe('New Composition');
-    expect(stack[0]?.size).toBe('lg');
+    expect(stack[0]?.size).toBe('md');
   });
 
-  it('renders initial state with smart default comp name, preview, and popular presets', async () => {
+  // The dialog is a settings form (2026-10): one preset menu and labelled
+  // fields, with the size read back beside them.
+  const presetMenu = (): HTMLSelectElement => screen.getByRole('combobox', { name: 'Preset' }) as HTMLSelectElement;
+
+  /** Type a number into a ValueField the way a user does: Enter, type, leave. */
+  const typeInto = (label: string, from: string, to: string): void => {
+    fireEvent.keyDown(screen.getByRole('spinbutton', { name: label }), { key: 'Enter' });
+    const input = screen.getByDisplayValue(from);
+    fireEvent.change(input, { target: { value: to } });
+    fireEvent.blur(input);
+  };
+
+  it('renders initial state with smart default comp name, the size read back, and the presets', async () => {
     const close = jest.fn();
     render(<NewComposition close={close} />);
 
-    // Default name
     const nameInput = screen.getByLabelText(/composition name/i);
     expect(nameInput).toHaveValue('Comp 1');
 
-    // Visual preview info
     expect(screen.getByText('1920 × 1080 px')).toBeInTheDocument();
     expect(screen.getByText('Landscape')).toBeInTheDocument();
-    expect(screen.getAllByText('16:9').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/30 fps/)).toBeInTheDocument();
+    expect(screen.getByText('16:9')).toBeInTheDocument();
+    expect(screen.getByText(/300 frames at 30 fps/)).toBeInTheDocument();
 
-    // Preset cards
-    expect(screen.getByText('YouTube 1080p')).toBeInTheDocument();
-    expect(screen.getByText('Instagram Reel / Story')).toBeInTheDocument();
+    // The preset menu names the matching preset and offers the rest.
+    expect(presetMenu().value).toBe('yt_1080');
+    const names = Array.from(presetMenu().options).map((o) => o.textContent ?? '');
+    expect(names.some((n) => n.startsWith('YouTube 1080p'))).toBe(true);
+    expect(names.some((n) => n.startsWith('Instagram Reel / Story'))).toBe(true);
   });
 
-  it('switches preset categories and selects a preset correctly', async () => {
+  it('picks a preset from the menu', async () => {
     const close = jest.fn();
     render(<NewComposition close={close} />);
 
-    // Switch to Social tab
-    const socialTab = screen.getByRole('tab', { name: /social/i });
-    fireEvent.click(socialTab);
+    fireEvent.change(presetMenu(), { target: { value: 'ig_reel' } });
 
-    // Social presets should be visible
-    const reelBtn = screen.getByText('Instagram Reel / Story');
-    expect(reelBtn).toBeInTheDocument();
-
-    // Click reel preset (1080x1920)
-    fireEvent.click(reelBtn);
-
-    // Check preview updates
     expect(screen.getByText('1080 × 1920 px')).toBeInTheDocument();
     expect(screen.getByText('Portrait')).toBeInTheDocument();
-    expect(screen.getAllByText('9:16').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('9:16')).toBeInTheDocument();
   });
 
   it('flips orientation with the swap button', async () => {
     const close = jest.fn();
     render(<NewComposition close={close} />);
 
-    // Initially 1920 x 1080 (Landscape)
     expect(screen.getByText('Landscape')).toBeInTheDocument();
 
-    // Click swap button
     const swapBtn = screen.getByLabelText(/swap width and height/i);
     fireEvent.click(swapBtn);
 
-    // Now 1080 x 1920 (Portrait)
     expect(screen.getByText('1080 × 1920 px')).toBeInTheDocument();
     expect(screen.getByText('Portrait')).toBeInTheDocument();
 
-    // Click swap button again
     fireEvent.click(swapBtn);
     expect(screen.getByText('1920 × 1080 px')).toBeInTheDocument();
     expect(screen.getByText('Landscape')).toBeInTheDocument();
@@ -93,55 +91,42 @@ describe('NewCompositionDialog', () => {
     render(<NewComposition close={close} />);
 
     // Lock aspect ratio (initially 1920 / 1080 = 16:9)
-    const lockBtn = screen.getByLabelText(/lock aspect ratio/i);
-    fireEvent.click(lockBtn);
+    fireEvent.click(screen.getByLabelText(/lock aspect ratio/i));
     expect(screen.getByLabelText(/unlock aspect ratio/i)).toBeInTheDocument();
 
-    // Enter edit mode on Width spinbutton
-    const widthSpin = screen.getByRole('spinbutton', { name: 'Width' });
-    fireEvent.keyDown(widthSpin, { key: 'Enter' });
-
-    // Now width input is present
-    const widthInput = screen.getByDisplayValue('1920');
-    fireEvent.change(widthInput, { target: { value: '1280' } });
-    fireEvent.blur(widthInput);
+    typeInto('Width', '1920', '1280');
 
     // Height should proportionally scale to 720 (1280 / (1920/1080) = 720)
     expect(screen.getByText('1280 × 720 px')).toBeInTheDocument();
   });
 
-  it('updates FPS and duration via quick chips', async () => {
+  it('reads the frame rate and duration back as frames and timecode', async () => {
     const close = jest.fn();
     render(<NewComposition close={close} />);
 
-    // Click 60 fps chip
-    const fps60Chip = screen.getByRole('button', { name: '60' });
-    fireEvent.click(fps60Chip);
-    expect(screen.getByText(/60 fps/)).toBeInTheDocument();
+    typeInto('Frame rate', '30', '60');
+    expect(screen.getByText(/600 frames at 60 fps/)).toBeInTheDocument();
 
-    // Click 30s duration chip
-    const dur30Chip = screen.getByRole('button', { name: '30s' });
-    fireEvent.click(dur30Chip);
+    typeInto('Duration', '10', '30');
     expect(screen.getByText(/00:30:00/)).toBeInTheDocument();
+    expect(screen.getByText(/1800 frames at 60 fps/)).toBeInTheDocument();
   });
 
   it('supports background color swatches and transparent switch', async () => {
     const close = jest.fn();
     render(<NewComposition close={close} />);
 
-    // Select Deep Black swatch
     const blackSwatch = screen.getByLabelText('Deep Black');
+    expect(blackSwatch).toHaveAttribute('aria-pressed', 'false');
     fireEvent.click(blackSwatch);
+    expect(blackSwatch).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText('Studio Dark')).toHaveAttribute('aria-pressed', 'false');
 
-    const canvasFrame = screen.getByTestId('canvas-preview-frame');
-    expect(canvasFrame).toHaveStyle({ backgroundColor: '#000000' });
-
-    // Toggle Transparent switch
+    // Transparent: no colour is in use, so no swatch reads as chosen.
     const transSwitch = screen.getByRole('switch', { name: /transparent/i });
     fireEvent.click(transSwitch);
-
-    expect(canvasFrame).toHaveAttribute('data-transparent', 'true');
-    expect(canvasFrame).toHaveStyle({ backgroundColor: 'transparent' });
+    expect(transSwitch).toBeChecked();
+    expect(blackSwatch).toHaveAttribute('aria-pressed', 'false');
   });
 
   describe('through the engine', () => {
@@ -158,7 +143,7 @@ describe('NewCompositionDialog', () => {
       render(<NewComposition close={close} />);
       fireEvent.change(screen.getByLabelText(/composition name/i), { target: { value: 'Promo' } });
       await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /create composition/i }));
+        fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
         await engineIdle();
       });
       return close;

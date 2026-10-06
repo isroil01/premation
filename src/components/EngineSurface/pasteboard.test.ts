@@ -2,7 +2,7 @@
  * The pasteboard rect: where the comp lands in an engine frame, from the
  * camera the frame was drawn with (the engine's view: CSS size/2 + (p − pan)·zoom).
  */
-import { compUvRect, parseCssRgb } from './pasteboard';
+import { compUvRect, fitUvRect, parseCssRgb } from './pasteboard';
 
 describe('compUvRect', () => {
   it('a fitted 1920×1080 comp in a 574×269 CSS viewport at DPR 2.18 (the real-app numbers)', () => {
@@ -36,5 +36,23 @@ describe('parseCssRgb', () => {
     expect(parseCssRgb('rgb(33, 33, 35)')).toEqual([33 / 255, 33 / 255, 35 / 255]);
     expect(parseCssRgb('rgba(32, 32, 32, 1)')).toEqual([32 / 255, 32 / 255, 32 / 255]);
     expect(parseCssRgb('color(srgb 1 0 0)')).toBeNull();
+  });
+});
+
+describe('fitUvRect', () => {
+  it('the engine contain fit (zoom 0): a 16:9 comp in a wider Preview stage is pillarboxed', () => {
+    const r = fitUvRect(1600, 800, 1920, 1080)!;
+    const w = (1920 * 800) / 1080;
+    expect(r.y0).toBeCloseTo(0, 9);
+    expect(r.y1).toBeCloseTo(1, 9);
+    expect(r.x0).toBeCloseTo((1600 - w) / 2 / 1600, 9);
+    expect(r.x1).toBeCloseTo(1 - (1600 - w) / 2 / 1600, 9);
+  });
+
+  it('a taller stage letterboxes; a degenerate size has no rect', () => {
+    const r = fitUvRect(800, 800, 1920, 1080)!;
+    expect(r.x0).toBeCloseTo(0, 9);
+    expect(r.y0).toBeCloseTo((1 - 1080 / 1920) / 2, 9);
+    expect(fitUvRect(0, 800, 1920, 1080)).toBeNull();
   });
 });

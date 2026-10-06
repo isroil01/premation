@@ -23,11 +23,10 @@ describe('Effect Controls panel wiring', () => {
     expect(def).toBeDefined();
     expect(def!.region).toBe('leftSidebar');
     expect(def!.title).toBe('Effect Controls');
-    // On demand since the 2026-09-15 rail consolidation (F3 / Window menu /
-    // `revealEffectControls` open it), and closable like every on-demand
-    // panel — a panel you summon is a panel you can dismiss. The wiring this
+    // Permanent again since 2026-10 — the left group is Project + Effect
+    // Controls, as in After Effects — and still closable. The wiring this
     // file guards is the region and the openers, not permanence.
-    expect(def!.onDemand).toBe(true);
+    expect(def!.onDemand).toBeUndefined();
     expect(def!.closable).toBe(true);
   });
 

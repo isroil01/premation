@@ -26,7 +26,9 @@ import { Icon } from '@components/Icon';
 import { Badge } from '@components/Badge';
 import { useViewportDisplayStore } from '@stores/viewportDisplayStore';
 import { useRotoBrushStore } from '@stores/rotoBrushStore';
-import { propagateRotoForward } from '@core/workspace/rotoBrushTool';
+import { propagateRotoForward, rotoFreezeEdit, rotoMattes } from '@core/workspace/rotoBrushTool';
+import { edit } from '@core/engine/uiEdits';
+import { useMirrorTree } from '@hooks/useMirror';
 import { playheadSeconds } from '@core/timeline/timelineView';
 import { settingsDurationSeconds, settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
@@ -53,7 +55,16 @@ function Row({ label, children }: { label: string; children: React.ReactNode }):
   );
 }
 
-export function ToolOptionsBar(): JSX.Element | null {
+export interface ToolOptionsBarProps {
+  /**
+   * Draw as a run inside the tool row (no strip of its own: no height, fill or
+   * rule) — see TopNav. Without it, the standalone strip under a toolbar.
+   */
+  inline?: boolean;
+}
+
+export function ToolOptionsBar({ inline = false }: ToolOptionsBarProps = {}): JSX.Element | null {
+  const barClass = inline ? styles.barInline : styles.bar;
   const activeTool = useUIStore((s) => s.activeTool);
   // Snap-to-pixel is a VIEWPORT mode, not a tool option, which is exactly
   // why its indicator belongs on the tool bar: it changes what every drag in
@@ -332,9 +343,9 @@ export function ToolOptionsBar(): JSX.Element | null {
   // ~6 % (0.477 ↔ 0.505 at 1920×1080 in a 998 px stage). A shape drawn at one
   // zoom then showed at the other — larger or smaller than the drag that made
   // it. AE's tool options never move the Composition panel either.
-  if (!content && !snapToPixel) return <div className={styles.bar} aria-hidden="true" data-tool-options-empty="" />;
+  if (!content && !snapToPixel) return <div className={barClass} aria-hidden="true" data-tool-options-empty="" />;
   return (
-    <div className={styles.bar} role="toolbar" aria-label="Tool options">
+    <div className={barClass} role="toolbar" aria-label="Tool options">
       {content}
       {/* ── VIEWPORT-SNAP-BADGE (unique anchor) ─────────────────────────
           Pushed to the far end so it never moves as tool options change
@@ -374,7 +385,12 @@ function RotoOptions(): JSX.Element {
   const progress = useRotoBrushStore((s) => s.progress);
   const nodeId = useRotoBrushStore((s) => s.nodeId);
 
-  const canPropagate = !!nodeId && strokes.some((s) => s.kind === 'fg') && !busy;
+  // Re-read on every document change: frozen is the matte mask's own name.
+  const rotoTree = useMirrorTree(nodeId);
+  const mattes = nodeId && rotoTree ? rotoMattes(nodeId) : { live: [], frozen: [] };
+  const frozen = mattes.frozen.length > 0;
+  const canFreeze = !!nodeId && !busy && (frozen || mattes.live.length > 0);
+  const canPropagate = !!nodeId && strokes.some((s) => s.kind === 'fg') && !busy && !frozen;
 
   const propagate = (): void => {
     if (!nodeId) return;
@@ -436,6 +452,23 @@ function RotoOptions(): JSX.Element {
       >
         <Icon name="skip-forward" size="sm" />
         {busy ? `Propagating ${Math.round(progress * 100)}%` : 'Propagate Forward'}
+      </button>
+      <button
+        type="button"
+        className={frozen ? styles.kindActive : styles.kind}
+        disabled={!canFreeze}
+        aria-pressed={frozen}
+        title={frozen
+          ? 'The matte is frozen: strokes and Propagate cannot change it. Click to unfreeze.'
+          : 'Freeze the matte so a new stroke or Propagate cannot replace it'}
+        onClick={() => {
+          if (!nodeId) return;
+          const e = rotoFreezeEdit(nodeId, !frozen);
+          if (e.commands.length) void edit(e.label, e.commands);
+        }}
+      >
+        <Icon name={frozen ? 'lock' : 'unlock'} size="sm" />
+        {frozen ? 'Frozen' : 'Freeze'}
       </button>
     </>
   );

@@ -49,6 +49,8 @@ class FakeEngine {
   private seekFrame = 0;
   /** While set, a seek's reply waits for `releaseSeeks` (its playhead event still goes out). */
   holdSeeks = false;
+  /** While set, `play` is refused (no composition yet, say) and nothing changes. */
+  refusePlay = false;
   private heldSeeks: Array<() => void> = [];
   releaseSeeks(): void {
     this.holdSeeks = false;
@@ -60,6 +62,7 @@ class FakeEngine {
     return {
       execute: (cmd: Command) => {
         this.log.push(cmd);
+        if (this.refusePlay && cmd.type === 'play') return Promise.resolve({ ok: false, error: { code: 'notFound', message: 'no composition to play' } });
         this.apply(cmd);
         if (this.holdSeeks && cmd.type === 'seek') return new Promise((resolve) => this.heldSeeks.push(() => resolve({ ok: true, value: {} })));
         return Promise.resolve({ ok: true, value: {} });
@@ -103,6 +106,10 @@ class FakeEngine {
       this.seekFrame = Math.round(c.time * FPS / FLICKS);
       this.frame = this.seekFrame;
       this.emit([this.playhead(this.frame)]);
+    } else if (c.type === 'setLoop') {
+      // The engine answers every setLoop with its transport state — still `stopped` when it
+      // arrives just ahead of a play (session.cpp SetLoop: emit_transport, emit_playhead).
+      this.emit([this.transport(), this.playhead(this.state === 'playing' ? this.frame : this.seekFrame)]);
     }
   }
 
@@ -285,6 +292,57 @@ describe('engine transport (the engine owns the clock)', () => {
     // The queued seek carries 2 s, not the echoed 1 s.
     expect(eng.frame).toBe(60);
     expect(frame()).toBe(60);
+  });
+
+  it('a Play click never flickers back to Play: the stale "stopped" setLoop answers is not applied', async () => {
+    const eng = new FakeEngine(activeTab().comp);
+    install(eng);
+    await flush();
+    const seen: boolean[] = [];
+    const unsub = useProjectStore.subscribe((s) => { seen.push(s.tabs[s.activeTabId!]?.playing === true); });
+    setPlaying(true);
+    await flush();
+    unsub();
+    expect(eng.state).toBe('playing');
+    expect(playing()).toBe(true);
+    // Before the fix the flag went true → false (setLoop's `stopped`) → true (play's `playing`).
+    expect(seen).not.toContain(false);
+  });
+
+  it('a refused play puts the button back', async () => {
+    const eng = new FakeEngine(activeTab().comp);
+    eng.refusePlay = true;
+    install(eng);
+    await flush();
+    setPlaying(true);
+    await flush();
+    expect(playing()).toBe(false);
+    expect(eng.count('pause')).toBe(0);
+  });
+
+  it('playing: Go to Start is not dragged back by a playhead from before the engine took the seek', async () => {
+    const eng = new FakeEngine(activeTab().comp);
+    install(eng);
+    await flush();
+    setPlaying(true);
+    await flush();
+    eng.tick(40);
+    await flush();
+    expect(frame()).toBe(40);
+    eng.holdSeeks = true;
+    seekPlayhead(0);
+    // The engine's clock ran on until it got to the seek: one more tick from the old position.
+    (eng as unknown as { emit(e: unknown[]): void }).emit([
+      { type: 'playhead', comp: activeTab().comp, time: (41 * FLICKS) / FPS, frame: 41, droppedFrames: 0 },
+    ]);
+    await flush();
+    expect(frame()).toBe(0);
+    eng.releaseSeeks();
+    await flush();
+    eng.tick(5);
+    await flush();
+    expect(frame()).toBe(5);
+    expect(playing()).toBe(true);
   });
 
   it('a torn-down transport sends nothing', async () => {

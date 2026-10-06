@@ -337,6 +337,37 @@ function buildItems({ query, closePalette, recent, context, docs, now }: BuildIn
   return items;
 }
 
+/** The search mode a prefix selects, as the field's tag names it. */
+const MODE_LABEL: Record<string, string> = {
+  commands: 'Commands',
+  layers: 'Layers',
+  comps: 'Compositions',
+  compositions: 'Compositions',
+  timecode: 'Time',
+  effects: 'Effects',
+  presets: 'Presets',
+  docs: 'Help',
+};
+
+/**
+ * A result's label with the typed text underlined where it appears verbatim.
+ * The ranking is fuzzy, so a result may match without containing the term as
+ * one run — then the label is shown as it is.
+ */
+function markMatch(label: string, term: string): React.ReactNode {
+  const t = term.trim();
+  if (!t) return label;
+  const at = label.toLowerCase().indexOf(t.toLowerCase());
+  if (at < 0) return label;
+  return (
+    <>
+      {label.slice(0, at)}
+      <u className={styles.match}>{label.slice(at, at + t.length)}</u>
+      {label.slice(at + t.length)}
+    </>
+  );
+}
+
 export function CommandPalette(): JSX.Element | null {
   const open = useCommandPaletteStore((s) => s.open);
   const initialQuery = useCommandPaletteStore((s) => s.initialQuery);
@@ -432,6 +463,9 @@ export function CommandPalette(): JSX.Element | null {
   let lastHeader: string | null = null;
   const helpLoading = wantDocs && !docs;
 
+  // What the field currently asks for — for the mode tag, the underline and the empty line.
+  const { mode, term } = parseQuery(query);
+
   return (
     <Dialog.Root
       open={open}
@@ -459,7 +493,7 @@ export function CommandPalette(): JSX.Element | null {
                 className={styles.input}
                 value={query}
                 spellCheck={false}
-                placeholder="Search commands, layers, effects, presets… (? for docs)"
+                placeholder="Search commands, layers, effects and presets"
                 onChange={(e) => {
                   setQuery(e.currentTarget.value);
                   setActive(0);
@@ -467,12 +501,20 @@ export function CommandPalette(): JSX.Element | null {
                 onKeyDown={onKeyDown}
                 aria-label="Command palette search"
               />
+              {/* Which kind of thing a prefix has narrowed the search to. */}
+              {mode !== 'all' ? <span className={styles.modeTag}>{MODE_LABEL[mode] ?? mode}</span> : null}
             </div>
 
             <div className={styles.list} ref={listRef} role="listbox">
               {items.length === 0 ? (
                 <div className={styles.empty}>
-                  {helpLoading ? 'Loading documentation…' : wantDocs ? 'No matching doc section' : 'No results'}
+                  {helpLoading
+                    ? 'Loading documentation…'
+                    : wantDocs
+                      ? 'No matching doc section'
+                      : term
+                        ? `Nothing matches “${term}”. Check the spelling, or type > to search commands only.`
+                        : 'No results'}
                 </div>
               ) : (
                 items.map((item, i) => {
@@ -498,7 +540,7 @@ export function CommandPalette(): JSX.Element | null {
                           className={styles.rowIcon}
                           style={item.color ? { color: item.color } : undefined}
                         />
-                        <span className={styles.rowLabel}>{item.label}</span>
+                        <span className={styles.rowLabel}>{markMatch(item.label, term)}</span>
                         {item.chord ? <Kbd size="sm" chord={item.chord} className={styles.rowChord} /> : null}
                         {item.hint ? <span className={styles.rowHint}>{item.hint}</span> : null}
                       </button>
@@ -509,17 +551,12 @@ export function CommandPalette(): JSX.Element | null {
             </div>
 
             <div className={styles.footer}>
-              <span><kbd className={styles.kbd}>↑↓</kbd> navigate</span>
-              <span><kbd className={styles.kbd}>↵</kbd> run</span>
-              <span><kbd className={styles.kbd}>esc</kbd> close</span>
+              {/* One quiet line. The prefixes are a legend, not seven keycaps. */}
+              <span>↑ ↓ move</span>
+              <span>Enter run</span>
+              <span>Esc close</span>
               <span className={styles.modeHints}>
-                <kbd className={styles.kbd}>&gt;</kbd> commands
-                <kbd className={styles.kbd}>@</kbd> layers
-                <kbd className={styles.kbd}>#</kbd> comps
-                <kbd className={styles.kbd}>:</kbd> time
-                <kbd className={styles.kbd}>+</kbd> effects
-                <kbd className={styles.kbd}>*</kbd> presets
-                <kbd className={styles.kbd}>?</kbd> docs
+                &gt; commands · @ layers · # comps · : time · + effects · * presets · ? help
               </span>
             </div>
           </Dialog.Content>

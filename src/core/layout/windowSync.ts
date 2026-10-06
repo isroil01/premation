@@ -27,6 +27,8 @@ export function isPopoutWindow(): boolean {
 
 const MSG_SELECTION = 'selection-update';
 const MSG_TIME = 'time-update';
+/** A window that just opened asks the others where things stand. */
+const MSG_HELLO = 'sync-hello';
 
 /** The playhead moves 60×/s; a detached view does not need every tick. */
 const TIME_THROTTLE_MS = 60;
@@ -88,10 +90,23 @@ export function startWindowSync(): () => void {
     }
   });
 
+  // A pop-out opens knowing nothing: selection and time only travel when they
+  // CHANGE, so a Properties pop-out opened on a selected layer said "Select a
+  // layer". It asks; the editor window (the one that holds the truth) answers.
+  const offHello = syncChannel.subscribe<null>(MSG_HELLO, () => {
+    if (isPopoutWindow()) return;
+    syncChannel.publish<readonly string[]>(MSG_SELECTION, [...useSelectionStore.getState().ids]);
+    const id = useProjectStore.getState().activeTabId;
+    const clock = id ? usePlaybackClockStore.getState().clocks[id] : undefined;
+    if (clock) syncChannel.publish<TimePayload>(MSG_TIME, { time: clock.time, frame: clock.frame });
+  });
+  if (isPopoutWindow()) syncChannel.publish<null>(MSG_HELLO, null);
+
   return () => {
     unsubSelection();
     unsubTime();
     offSelection();
     offTime();
+    offHello();
   };
 }

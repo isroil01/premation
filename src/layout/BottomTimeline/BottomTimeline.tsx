@@ -30,6 +30,8 @@ import { LiveTimecode } from '@layout/Timeline/LiveTimecode';
 import { useLivePlayhead } from '@layout/Timeline/useLivePlayhead';
 import type { GraphEditorProps } from '@layout/Timeline/GraphEditor';
 import { useLayoutStore } from '@stores/layoutStore';
+import { useTimelinePanelStore } from '@stores/timelinePanelStore';
+import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
 import { useSelectionStore } from '@stores/selectionStore';
 import { usePropertySelectionStore } from '@stores/propertySelectionStore';
 import { useUIStore } from '@stores/uiStore';
@@ -153,6 +155,9 @@ function navPlayheadLeft(time: number, duration: number): string {
  * than inheriting the panel's throttled display time. `live` is false for an
  * embed with no tab, which keeps the model's time.
  */
+/** With nothing selected, how many of the comp's layers the graph looks at. */
+const GRAPH_ALL_LAYERS_CAP = 60;
+
 function GraphEditorAtPlayhead({
   live,
   fallbackTime,
@@ -176,6 +181,9 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const isCollapsed = useLayoutStore(
     (s) => s.regions.bottomTimeline.collapsed || s.regions.bottomTimeline.size <= 60,
   );
+  // The panel's other tab: the Render Queue takes the body, as in After Effects.
+  const showQueue = useTimelinePanelStore((s) => s.view === 'renderQueue');
+  const setPanelView = useTimelinePanelStore((s) => s.setView);
   const selectedIds = useSelectionStore((s) => s.ids);
   const focusPath = useFocusStore((s) => s.path);
   const jumpToFocus = useFocusStore((s) => s.jumpTo);
@@ -203,6 +211,17 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   // Horizontal scroll mirror from Timeline → GraphEditor for pixel-alignment
   const [scrollLeft, setScrollLeft] = useState(0);
 
+  /*
+    What the graph plots. A selection, when there is one; otherwise the comp's
+    layers — the graph keeps only those with keyframes — so opening it on an
+    animated comp shows its motion at once. Capped: each id loads that layer's
+    property tree, and a 2,000-layer comp must not load them all to draw a
+    panel nobody asked to fill.
+  */
+  const graphNodeIds = useMemo(
+    () => (selectedIds.length > 0 ? selectedIds : props.model.tracks.slice(0, GRAPH_ALL_LAYERS_CAP).map((t) => t.id)),
+    [selectedIds, props.model.tracks],
+  );
   const fps = props.model.frameRate;
   // The displayed timecode of frame 0, from the active comp's mirror record (B4).
   const startFrame = settingsStartFrame(useActiveMirrorComp()?.settings);
@@ -488,9 +507,10 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   tab off the corner it should start in. */}
               <button
                 type="button"
-                className={styles.tab}
-                onClick={() => useLayoutStore.getState().openPanel('renderQueue')}
-                title="Open Render Queue"
+                className={cn(styles.tab, showQueue && styles.tabActive)}
+                aria-pressed={showQueue}
+                onClick={() => setPanelView('renderQueue')}
+                title="Render Queue (F6)"
               >
                 <Icon name="queue" size="sm" />
                 <span>Render Queue</span>
@@ -510,13 +530,15 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   if (!tab) return null;
                   // The name from the mirror (B4): the composition's, or — a group opened as a tab — the layer's.
                   const mirror = documentMirror();
+                  // The mirror first: it is the engine's name in every window (a pop-out's
+                  // local comps store still holds its seeded "Main Comp").
                   const label =
-                    comps[tab.compositionId]?.name
-                    ?? mirror.comp(tab.compositionId)?.settings.name
+                    mirror.comp(tab.compositionId)?.settings.name
+                    ?? comps[tab.compositionId]?.name
                     ?? mirror.layer(tab.compositionId)?.name
                     ?? tab.title
                     ?? tab.compositionId;
-                  const isActive = tid === activeTabId && focusPath.length === 0;
+                  const isActive = !showQueue && tid === activeTabId && focusPath.length === 0;
                   const openCompTabMenu = (e: React.MouseEvent): void => {
                     e.preventDefault();
                     const compId = tab.compositionId;
@@ -563,6 +585,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                         type="button"
                         className={cn(styles.tab, isActive && styles.tabActive)}
                         onClick={() => {
+                          setPanelView('timeline');
                           setActiveTab(tid);
                           jumpToFocus(-1);
                         }}
@@ -604,8 +627,11 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                     <span className={styles.tabChevron}>&gt;</span>
                     <button
                       type="button"
-                      className={cn(styles.tab, focusPath.length - 1 === idx && styles.tabActive)}
-                      onClick={() => jumpToFocus(idx)}
+                      className={cn(styles.tab, !showQueue && focusPath.length - 1 === idx && styles.tabActive)}
+                      onClick={() => {
+                        setPanelView('timeline');
+                        jumpToFocus(idx);
+                      }}
                     >
                       {name}
                     </button>
@@ -642,7 +668,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
         height) are rows of the View menu; the edit tools and the chips were a
         second header row inside <Timeline> and are not any more.
       */}
-      {!isCollapsed && (
+      {!isCollapsed && !showQueue && (
         <div
           ref={toolbarRef}
           className={styles.subHeaderRow}
@@ -732,16 +758,23 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
             />
 
             <div className={styles.timelineSwitchesGroup}>
+              {/*
+                The Graph Editor switch, with its NAME. It was a lone curve
+                glyph among a dozen icon toggles — the one mode switch on the
+                panel, and the hardest control on it to find. Named, and lit
+                while the graph is showing, it reads as what it is: the lanes
+                and the curves are two views of the same layers.
+              */}
               <button
                 type="button"
-                className={graphEditorOpen ? styles.toggleIconActive : styles.toggleIcon}
-                title="Toggle Graph Editor (Shift+F3)"
+                className={graphEditorOpen ? styles.graphToggleActive : styles.graphToggle}
+                title={graphEditorOpen ? 'Back to the layer bars (Shift+F3)' : 'Show curves instead of layer bars (Shift+F3)'}
                 aria-label="Toggle Graph Editor"
                 aria-pressed={graphEditorOpen}
                 onClick={() => setGraphEditorOpen(!graphEditorOpen)}
               >
-                {/* A curve, because that is what the graph editor shows. */}
                 <Icon name="graph-value" size="sm" />
+                <span>Graph Editor</span>
               </button>
 
               {moreShed ? (
@@ -834,7 +867,18 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
       )}
 
       <div className={cn(styles.body, isCollapsed && styles.bodyCollapsed)}>
-        <div style={{ display: graphEditorOpen ? 'none' : 'flex', flex: 1, flexDirection: 'column', minHeight: 0, height: '100%' }}>
+        {/*
+          The timeline stays mounted AND visible under the graph. The Graph
+          Editor used to replace the whole body, layer list included — so with
+          nothing selected it was an empty grid with no way to select anything
+          short of leaving it. It covers the body again (owner's choice,
+          2026-10: the widest graph), but is never blank or a dead end now:
+          with nothing selected it plots every animated layer, and it carries
+          its own list of curves to pick from (`showCurveList`).
+        */}
+        {/* Its own stacking context: the timeline's sticky headers and playhead
+            (z-index up to 61) stay UNDER the graph and the Render Queue. */}
+        <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0, height: '100%', isolation: 'isolate' }}>
           <Timeline
             {...timelineModelProps}
             searchQuery={searchQuery}
@@ -849,12 +893,15 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
           />
         </div>
 
-        {/* Graph Editor panel — full height view replacing track rows below the header toolbar when toggled */}
+        {/* Graph Editor — over the whole timeline body, with its own curve list. */}
         {graphEditorOpen && (
+          <div className={styles.graphOverlay}>
           <GraphEditorAtPlayhead
             live={!!ws}
             fallbackTime={playheadTime}
-            selectedNodeIds={selectedIds}
+            selectedNodeIds={graphNodeIds}
+            showingAllLayers={selectedIds.length === 0}
+            showCurveList
             propertyFilter={searchQuery}
             duration={props.model.duration}
             pixelsPerSecond={pps}
@@ -867,6 +914,15 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
             frameRate={fps}
             onScrub={props.onScrub}
           />
+          </div>
+        )}
+
+        {/* The Render Queue tab: over the body, the timeline kept mounted under
+            it so coming back is instant and nothing it holds is lost. */}
+        {showQueue && (
+          <div className={styles.queueOverlay}>
+            <RenderQueuePanel />
+          </div>
         )}
       </div>
 

@@ -80,22 +80,26 @@ export interface PanelDef {
  */
 export const PANEL_DEFS: readonly PanelDef[] = [
   // ── Left sidebar ─────────────────────────────────────────────────
-  // The Layers panel: hosts document compositions and the layer hierarchy tree.
-  { id: 'scene',       title: 'Layers',    icon: 'layers',      region: 'leftSidebar', weight: 10,  closable: true },
   /**
-   * The Assets panel: imported files, media browser, and asset management.
-   * Dedicated to imported assets (images, video, audio).
+   * The Project panel (id `assets` — ids never change): the project's imported
+   * media, with the selected item's details on top. It is the first tab because
+   * it is where a session starts. The compositions are listed in Layers.
    */
-  { id: 'assets',      title: 'Assets',    icon: 'folder',      region: 'leftSidebar', weight: 8,   closable: false },
-  { id: 'library',     title: 'Library',   icon: 'component',   region: 'leftSidebar', weight: 6,   closable: false },
-  // Both editions — see PANEL_AVAILABILITY / `aiEnabled()`. Local runs BYOK;
-  // server runs through the hosted gateway.
-  { id: 'ai',          title: 'AI',        icon: 'ai',          region: 'leftSidebar', weight: 4,   closable: false },
-  // AE's Effect Controls: the applied-effect stack for the selected layer. On
-  // demand like AE's own — F3, Window ▸ Effect Controls, and every "edit this
-  // effect" route (`revealEffectControls`, the Properties panel) open it.
-  // `stopwatch` is the glyph AE uses on every animatable parameter in it.
-  { id: 'effectControls', title: 'Effect Controls', shortTitle: 'Controls', icon: 'stopwatch', region: 'leftSidebar', weight: 9, closable: true, onDemand: true },
+  { id: 'assets',      title: 'Project',   icon: 'folder',      region: 'leftSidebar', weight: 11,  closable: false },
+  // AE's Effect Controls: the applied-effect stack for the selected layer —
+  // the second tab of the left group, as in After Effects (2026-10; it was on
+  // demand while the left rail held five panels). F3, Window ▸ Effect Controls
+  // and every "edit this effect" route (`revealEffectControls`, the Properties
+  // panel) still bring it forward. `stopwatch` is the glyph AE uses on every
+  // animatable parameter in it.
+  { id: 'effectControls', title: 'Effect Controls', shortTitle: 'Controls', icon: 'stopwatch', region: 'leftSidebar', weight: 9, closable: true },
+  // Layers: the project's compositions and the layer hierarchy tree. Permanent:
+  // it is the one place the compositions are listed (the Project panel carried
+  // a second copy of that list for a few days in 2026-10; one list is enough).
+  { id: 'scene',       title: 'Layers',    icon: 'layers',      region: 'leftSidebar', weight: 8.5, closable: true },
+  // ── Left sidebar, on demand (Window ▸ Panels, the tab strip's "+") ──
+  // The built-in library (templates, transitions, sound effects).
+  { id: 'library',     title: 'Library',   icon: 'component',   region: 'leftSidebar', weight: 6,   closable: true, onDemand: true },
   /**
    * Text-based editing: the composition's spoken words, as chips you can seek
    * to, select in runs and DELETE — which cuts that time out of every layer and
@@ -119,7 +123,13 @@ export const PANEL_DEFS: readonly PanelDef[] = [
    * (a curve graph, an effect stack, a rig, a render queue) rather than
    * properties of the current selection.
    */
+  // Preview (transport + playback settings) and Align are permanent since the
+  // inspector became a STACK of bars (2026-10): a closed panel now costs one
+  // 24px bar, where on the rail it cost an icon slot, so the two panels every
+  // After Effects layout carries no longer have to be asked for.
+  // Properties stays FIRST: with no saved layout the first panel is the open one.
   { id: 'properties',  title: 'Properties', icon: 'sliders-h',  region: 'rightInspector', weight: 5,    closable: false },
+  { id: 'preview',     title: 'Preview',   icon: 'play',        region: 'rightInspector', weight: 4.9,  closable: true },
   { id: 'effects',     title: 'Effects',   icon: 'magic-wand',  region: 'rightInspector', weight: 4.8,  closable: true },
   { id: 'presets',     title: 'Presets',   icon: 'zap',         region: 'rightInspector', weight: 4.7,  closable: true },
   /**
@@ -137,12 +147,17 @@ export const PANEL_DEFS: readonly PanelDef[] = [
    * used to be a separate "Info & Audio" tab beside it (`InfoReadout`). Two
    * tabs that both drew a master meter was one too many.
    */
+  { id: 'align',       title: 'Align',     icon: 'align-center', region: 'rightInspector', weight: 4.55, closable: true },
   { id: 'audio',       title: 'Audio',     icon: 'audio',       region: 'rightInspector', weight: 4.48, closable: false },
+  // The assistant, as the last bar of the stack. Both editions — see
+  // PANEL_AVAILABILITY / `aiEnabled()`: local runs BYOK, server runs through
+  // the hosted gateway. It was a left tab titled "AI" until the left group
+  // became Project + Effect Controls.
+  { id: 'ai',          title: 'Assistant', icon: 'ai',          region: 'rightInspector', weight: 4.45, closable: false },
   // ── Right inspector, on demand (Window ▸ Panels, the rail's "+") ─────
   // Each of these is a specialist surface; the workspaces that need one open
   // it (Color → Scopes, Animation → Graph + Rigging).
   { id: 'character',   title: 'Text',      icon: 'type',        region: 'rightInspector', weight: 4.4,  closable: true, onDemand: true },
-  { id: 'align',       title: 'Align',     icon: 'align-center', region: 'rightInspector', weight: 4.3, closable: true, onDemand: true },
   // The project palette. The swatches are document state and the colour picker
   // offers them wherever a colour is edited, so the panel is the bulk editor.
   { id: 'swatches',    title: 'Swatches',  icon: 'palette',     region: 'rightInspector', weight: 4.25, closable: true, onDemand: true },
@@ -153,7 +168,6 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   // workspaces lead with it. `waves` is the one unclaimed glyph that reads as a
   // signal trace; `graph-value` / `graph-speed` are the Graph panel's.
   { id: 'scopes',      title: 'Scopes',    icon: 'waves',       region: 'rightInspector', weight: 4.15, closable: true, onDemand: true },
-  { id: 'preview',     title: 'Preview',   icon: 'play',        region: 'rightInspector', weight: 4.1,  closable: true, onDemand: true },
   /**
    * The SOURCE viewer — one clip, before it is in the edit, with in/out points
    * and the four verbs that put the marked range into a comp. Every route that
@@ -164,7 +178,6 @@ export const PANEL_DEFS: readonly PanelDef[] = [
    * `tv` because a monitor is what this is: `video` and `image` name media
    * KINDS, and `play` is the Preview panel's.
    */
-  { id: 'sourceMonitor', title: 'Source',  icon: 'tv',          region: 'rightInspector', weight: 4.05, closable: true, onDemand: true },
   { id: 'tracker',     title: 'Tracker',   icon: 'crosshair',   region: 'rightInspector', weight: 4.0,  closable: true, onDemand: true },
   { id: 'rig',         title: 'Rigging',   icon: 'bone',        region: 'rightInspector', weight: 3.5,  closable: true, onDemand: true },
   // The graph + EXPRESSION editor. On demand beside the timeline's own Graph
@@ -179,7 +192,6 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   // `closable: true` like every other on-demand panel. It was the one exception,
   // so PanelHeader drew no ✕ and the only way to dismiss it was F6 or the Window
   // menu — for a panel that opens on demand and is empty most of the time.
-  { id: 'renderQueue', title: 'Render',    icon: 'queue',       region: 'rightInspector', weight: 0.7, closable: true, onDemand: true },
   // The Export dialog's form, DOCKED — so a render can be queued while the
   // timeline is still the thing on screen. Same form component and the same
   // shared choices as the top-bar dialog (`exportFormStore`); the dialog stays

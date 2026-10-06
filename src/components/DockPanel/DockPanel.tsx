@@ -1,5 +1,18 @@
 /**
- * DockPanel — a region's panels as a vertical ICON RAIL beside one content pane.
+ * DockPanel — a region's panels, in the chrome that region calls for.
+ *
+ * ## Three chromes (2026-10, the After Effects direction)
+ *
+ *   • LEFT sidebar, open  → a TAB STRIP across the top (Project · Effect
+ *     Controls…), the active panel under it. Names, not icons.
+ *   • RIGHT inspector, open → a STACK of bars, one per panel, each a click
+ *     away and each showing its name; the active panel's body opens under its
+ *     own bar. This keeps what the rail was built for (below): no panel is
+ *     ever hidden behind an overflow menu.
+ *   • Either side, CLOSED → hidden behind a thin edge with a grip (2026-10;
+ *     it was an icon rail). Click the edge, or open any panel, to bring it back.
+ *
+ * The rail's history, which is why the right side is a stack and not tabs:
  *
  * ## Why a rail and not a tab strip
  *
@@ -33,13 +46,12 @@
  * Reordering is still drag-and-drop along the rail.
  */
 
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode, type DragEvent } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type DragEvent } from 'react';
 import { useLayoutStore } from '@stores/layoutStore';
 import type { RegionId } from '@stores/layoutStore';
 import type { IconName } from '@components/Icon';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { Icon } from '@components/Icon';
-import { Tooltip } from '@components/Tooltip';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { cn } from '@utils/cn';
 import { panelDef, availablePanelDefs } from '@layout/EditorLayout/panelDefs';
@@ -48,6 +60,12 @@ import styles from './DockPanel.module.css';
 export interface DockPanelHeaderContextValue {
   target: HTMLDivElement | null;
   setCustomMenuItems?: (items: DropdownItem[]) => void;
+  /**
+   * What the panel is showing, printed after its title — "Properties: Logo",
+   * the way After Effects names the subject in the panel's tab. `null` clears
+   * it. Display only: the panel's accessible name stays its title.
+   */
+  setTitleDetail?: (detail: string | null) => void;
 }
 
 export const DockPanelHeaderContext = createContext<DockPanelHeaderContextValue | null>(null);
@@ -206,8 +224,19 @@ export function DockPanel({
   const panelVerbs = (item: TabDescriptor): Array<{ id: string; label: string; icon: IconName; onSelect: () => void }> => [
     ...(isSplit ? [{ id: 'move-pane', label: paneLabel, icon: 'layout' as IconName, onSelect: () => moveTo(item.id, paneDest) }] : []),
     { id: 'move-side', label: otherSideLabel, icon: (isLeft ? 'panel-right' : 'panel-left') as IconName, onSelect: () => moveTo(item.id, otherSide) },
-    { id: 'popout', label: 'Undock into Window', icon: 'pop-out', onSelect: () => spawnPopout(item.id) },
-    ...(item.closable ? [{ id: 'close', label: `Close “${item.label}”`, icon: 'close' as IconName, onSelect: () => closePanel(item.id) }] : []),
+    { id: 'popout', label: 'Undock Panel', icon: 'pop-out', onSelect: () => spawnPopout(item.id) },
+    ...(item.closable ? [{ id: 'close', label: 'Close Panel', icon: 'close' as IconName, onSelect: () => closePanel(item.id) }] : []),
+    // The other panels of THIS group that can be closed (a permanent panel has no Close).
+    ...(allItems.some((other) => other.id !== item.id && other.closable)
+      ? [{
+          id: 'close-others',
+          label: 'Close Other Panels in Group',
+          icon: 'close' as IconName,
+          onSelect: () => {
+            for (const other of allItems) if (other.id !== item.id && other.closable) closePanel(other.id);
+          },
+        }]
+      : []),
   ];
 
   /** This side's closed panels as menu rows — the ⋯ menu's "Open Panel" block and the rail's "+". */
@@ -220,14 +249,15 @@ export function DockPanel({
     [regionKey, allPanelOrder],
   );
 
-  const menuItems: DropdownItem[] = useMemo(() => {
+  /** The ≡ menu for one panel: its own rows, its verbs, then the sidebar's. */
+  const buildMenu = (forItem: TabDescriptor | undefined, custom: ReadonlyArray<DropdownItem>): DropdownItem[] => {
     const items: DropdownItem[] = [];
-    if (activeItem) {
-      items.push({ type: 'label', label: activeItem.label });
-      if (customMenuItems.length > 0) {
-        items.push(...customMenuItems, { type: 'separator' });
+    if (forItem) {
+      items.push({ type: 'label', label: forItem.label });
+      if (custom.length > 0) {
+        items.push(...custom, { type: 'separator' });
       }
-      for (const v of panelVerbs(activeItem)) {
+      for (const v of panelVerbs(forItem)) {
         items.push({ type: 'item', id: v.id, label: v.label, icon: v.icon, onSelect: v.onSelect });
       }
     }
@@ -238,7 +268,7 @@ export function DockPanel({
       {
         type: 'item',
         id: 'toggle-collapse',
-        label: 'Collapse to Rail',
+        label: isLeft ? 'Hide Left Panels' : 'Hide Right Panels',
         icon: (side === 'left' ? 'chevron-left' : 'chevron-right') as IconName,
         onSelect: () => useLayoutStore.getState().setCollapsed(regionKey, true),
       },
@@ -259,14 +289,69 @@ export function DockPanel({
       items.push({ type: 'separator' }, { type: 'label', label: 'Open Panel' }, ...openItems);
     }
     return items;
-    // `panelVerbs` is a closure over the same inputs listed here.
+  };
+
+  const menuItems: DropdownItem[] = useMemo(
+    () => buildMenu(activeItem, customMenuItems),
+    // `buildMenu` is a closure over the same inputs listed here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allItems, activeItem, onToggleSplit, isSplit, isTop, isLeft, side, regionKey, paneDest, paneLabel, otherSide, otherSideLabel, customMenuItems, openItems]);
+    [allItems, activeItem, onToggleSplit, isSplit, isTop, isLeft, side, regionKey, paneDest, paneLabel, otherSide, otherSideLabel, customMenuItems, openItems],
+  );
+
+  /*
+    The stack's open sections (right inspector). Several can be open at once,
+    the way a column of panels works in After Effects; the store's ACTIVE panel
+    is simply the one last opened, and a panel made active from elsewhere (a
+    command, a double-click on a layer) opens itself here.
+  */
+  const [expanded, setExpanded] = useState<ReadonlyArray<string>>(() => readExpanded(region));
+  // The tab or bar a dragged panel is over (see `dropHandlers`). Up here with
+  // the other hooks: everything below the empty-region guard must be hook-free.
+  const [dropOn, setDropOn] = useState<string | null>(null);
+  const lastActive = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!effectiveActiveId || lastActive.current === effectiveActiveId) return;
+    lastActive.current = effectiveActiveId;
+    setExpanded((prev) => (prev.includes(effectiveActiveId) ? prev : [...prev, effectiveActiveId]));
+  }, [effectiveActiveId]);
+  useEffect(() => {
+    writeExpanded(region, expanded);
+  }, [region, expanded]);
+  const toggleSection = (id: string): void => {
+    if (expanded.includes(id)) {
+      setExpanded(expanded.filter((x) => x !== id));
+      return;
+    }
+    setExpanded([...expanded, id]);
+    lastActive.current = id;
+    openPanel(id);
+  };
 
   // All hooks must run before this guard — bail out only once they have.
   if (allItems.length === 0) return null;
 
   const activeRenderer = effectiveActiveId ? renderers[effectiveActiveId] : undefined;
+
+  /**
+   * Where a dragged panel would land: the tab or bar under the pointer shows
+   * an accent edge, so a drop — within this sidebar or from the other one —
+   * is never a guess.
+   */
+  const dropHandlers = (id: string): {
+    onDragOver: (e: DragEvent<HTMLDivElement>) => void;
+    onDragLeave: () => void;
+    onDrop: (e: DragEvent<HTMLDivElement>) => void;
+  } => ({
+    onDragOver: (e) => {
+      onDragOver(e);
+      if (dropOn !== id) setDropOn(id);
+    },
+    onDragLeave: () => setDropOn((cur) => (cur === id ? null : cur)),
+    onDrop: (e) => {
+      setDropOn(null);
+      onDrop(id)(e);
+    },
+  });
 
   /** Drag handlers — plain HTML5 DnD for rail reordering. */
   const onDragStart = (id: string) => (e: DragEvent<HTMLDivElement>) => {
@@ -301,7 +386,6 @@ export function DockPanel({
     openContextMenu(e.clientX, e.clientY, entries);
   };
 
-  const tooltipSide = side === 'right' ? 'left' : 'right';
   // Only the LAST rail in a region carries the add button: a split region
   // stacks two DockPanels, and one "+" per side is clean and unambiguous.
   const showRailAdd = !isSplit || splitPosition === 'bottom';
@@ -319,8 +403,12 @@ export function DockPanel({
    * not want fourteen panels to flash past.
    */
   const onRailKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    // Only this tablist's OWN tabs: in the stack chrome the panel body sits
+    // inside the same element, and a body may carry tabs (and Enter/Space
+    // targets) of its own that must not be walked or swallowed here.
+    if (!(e.target instanceof HTMLElement) || !e.target.hasAttribute('data-dock-tab')) return;
     const tabs = Array.from(
-      e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+      e.currentTarget.querySelectorAll<HTMLButtonElement>('[data-dock-tab]'),
     );
     if (tabs.length === 0) return;
     const current = tabs.findIndex((t) => t === document.activeElement);
@@ -358,117 +446,269 @@ export function DockPanel({
     target.focus();
   };
 
-  const rail = (
-    <div
-      className={styles.rail}
-      role="tablist"
-      aria-orientation="vertical"
-      aria-label={isLeft ? 'Sidebar panels' : 'Inspector panels'}
-      onDragOver={onDragOver}
-      onDrop={onDrop(null)}
-      onKeyDown={onRailKeyDown}
-    >
-      {allItems.map((item) => {
-        const isActive = item.id === effectiveActiveId && !isCollapsed;
-        return (
-          <div
-            key={item.id}
-            draggable
-            onDragStart={onDragStart(item.id)}
-            onDragOver={onDragOver}
-            onDrop={onDrop(item.id)}
-            className={styles.railSlot}
-            onContextMenu={onRailContextMenu(item)}
-          >
-            <Tooltip label={item.label} placement={tooltipSide}>
-              <button
-                type="button"
-                role="tab"
-                tabIndex={isActive ? 0 : -1}
-                aria-selected={isActive}
-                aria-label={item.label}
-                className={cn(styles.railTab, isActive && styles.railTabActive)}
-                onClick={() => {
-                  openPanel(item.id);
-                  if (isCollapsed) useLayoutStore.getState().setCollapsed(regionKey, false);
-                }}
-              >
-                <Icon name={item.icon ?? 'layers'} size="md" />
-                <span className={styles.railLabel} aria-hidden="true">{item.railLabel}</span>
-              </button>
-            </Tooltip>
-          </div>
-        );
-      })}
-      {/* Positioned directly under the tabs: visible, intuitive and accessible */}
-      {showRailAdd && openItems.length > 0 && (
-        <div className={styles.railAddSlot}>
-          <div className={styles.railDivider} aria-hidden />
-          <Tooltip label={isLeft ? 'Open a sidebar panel' : 'Open an inspector panel'} placement={tooltipSide}>
-            <div className={styles.railAddWrap}>
-              <Dropdown
-                placement={side === 'right' ? 'left-start' : 'right-start'}
-                offset={{ x: 6, y: 0 }}
-                noScroll
-                trigger={
-                  <button
-                    type="button"
-                    className={styles.railAdd}
-                    aria-label={isLeft ? 'Open a sidebar panel' : 'Open an inspector panel'}
-                    title="Open panel"
-                  >
-                    <Icon name="plus" size="md" />
-                  </button>
-                }
-                items={[{ type: 'label', label: 'Open Panel' }, ...openItems]}
-              />
-            </div>
-          </Tooltip>
-        </div>
-      )}
-      <div className={styles.railSpacer} />
+  // Closed: the sidebar is hidden. What stays is a thin edge with a grip — one
+  // click (or Enter) brings the panels back, as do Window ▸ Panels and every
+  // command that opens a panel (`openPanel` reopens its sidebar).
+  if (isCollapsed) {
+    const showLabel = isLeft ? 'Show the left panels' : 'Show the right panels';
+    return (
+      <div className={cn(styles.root, styles.collapsed, className)}>
+        <button
+          type="button"
+          className={styles.edge}
+          aria-label={showLabel}
+          title={showLabel}
+          onClick={() => useLayoutStore.getState().setCollapsed(regionKey, false)}
+        >
+          <span className={styles.edgeGrip} aria-hidden />
+        </button>
+      </div>
+    );
+  }
+
+  /** The ≡ panel menu, for the tab strip's active tab. */
+  const panelMenu = (
+    <Dropdown
+      placement={side === 'right' ? 'bottom-end' : 'bottom-start'}
+      offset={{ x: 0, y: 4 }}
+      noScroll
+      trigger={
+        <button type="button" className={styles.menuBtn} aria-label="Panel options" title="Panel options">
+          <Icon name="menu" size="sm" />
+        </button>
+      }
+      items={menuItems}
+    />
+  );
+
+  /** The active panel's own header controls (a search toggle, a view switch). */
+  const headerActions = (
+    <div className={styles.headerActions}>
+      <div ref={setHeaderActionsEl} className={styles.customActions} />
+      {headerExtras}
     </div>
   );
 
-  return (
-    <div className={cn(styles.root, side === 'left' && styles.railLeft, isCollapsed && styles.collapsed, className)}>
-      {!isCollapsed && (
-        <div className={styles.pane}>
-          <div className={styles.header}>
-            <span className={styles.title} title={activeItem?.label}>{activeItem?.label ?? ''}</span>
-            <div className={styles.headerActions}>
-              <div ref={setHeaderActionsEl} className={styles.customActions} />
-              {headerExtras}
-              <Dropdown
-                placement={side === 'right' ? 'bottom-end' : 'bottom-start'}
-                offset={{ x: 0, y: 4 }}
-                noScroll
-                trigger={
-                  <button type="button" className={styles.actionBtn} aria-label="Panel options" title="Panel options">
-                    <Icon name="more-horizontal" size="sm" />
-                  </button>
-                }
-                items={menuItems}
-              />
-              {activeItem?.closable && (
-                <button
-                  type="button"
-                  className={styles.actionBtn}
-                  aria-label={`Close ${activeItem.label}`}
-                  title={`Close ${activeItem.label}`}
-                  onClick={() => closePanel(activeItem.id)}
+  const addLabel = isLeft ? 'Open a sidebar panel' : 'Open an inspector panel';
+  const addButton = showRailAdd && openItems.length > 0 ? (
+    <Dropdown
+      placement={side === 'right' ? 'bottom-end' : 'bottom-start'}
+      offset={{ x: 0, y: 4 }}
+      noScroll
+      trigger={
+        <button type="button" className={styles.actionBtn} aria-label={addLabel} title="Open panel">
+          <Icon name="plus" size="sm" />
+        </button>
+      }
+      items={[{ type: 'label', label: 'Open Panel' }, ...openItems]}
+    />
+  ) : null;
+
+  const body = (
+    <DockPanelHeaderContext.Provider value={headerContextValue}>
+      <div className={styles.content}>{activeRenderer ? activeRenderer() : null}</div>
+    </DockPanelHeaderContext.Provider>
+  );
+
+  const tabButton = (item: TabDescriptor, isActive: boolean, className: string, lead?: ReactNode): JSX.Element => (
+    <button
+      type="button"
+      role="tab"
+      data-dock-tab=""
+      tabIndex={isActive ? 0 : -1}
+      aria-selected={isActive}
+      aria-label={item.label}
+      title={item.label}
+      className={className}
+      onClick={() => openPanel(item.id)}
+    >
+      {lead}
+      <span className={styles.tabLabel}>{item.label}</span>
+    </button>
+  );
+
+  // LEFT, open: a tab strip over the active panel.
+  if (isLeft) {
+    return (
+      <div className={cn(styles.root, styles.tabsRoot, className)}>
+        <div className={styles.strip}>
+          <div
+            className={styles.stripTabs}
+            role="tablist"
+            aria-orientation="horizontal"
+            aria-label="Sidebar panels"
+            onDragOver={onDragOver}
+            onDrop={onDrop(null)}
+            onKeyDown={onRailKeyDown}
+          >
+            {allItems.map((item) => {
+              const isActive = item.id === effectiveActiveId;
+              return (
+                <div
+                  key={item.id}
+                  draggable
+                  onDragStart={onDragStart(item.id)}
+                  {...dropHandlers(item.id)}
+                  className={cn(styles.stripSlot, isActive && styles.stripSlotActive, dropOn === item.id && styles.dropBefore)}
+                  onContextMenu={onRailContextMenu(item)}
                 >
-                  <Icon name="close" size="sm" />
-                </button>
-              )}
-            </div>
+                  {tabButton(item, isActive, cn(styles.stripTab, isActive && styles.stripTabActive))}
+                  {isActive && panelMenu}
+                </div>
+              );
+            })}
           </div>
-          <DockPanelHeaderContext.Provider value={headerContextValue}>
-            <div className={styles.content}>{activeRenderer ? activeRenderer() : null}</div>
-          </DockPanelHeaderContext.Provider>
+          {headerActions}
+          {addButton && <div className={styles.stripAdd}>{addButton}</div>}
         </div>
-      )}
-      {rail}
+        {body}
+      </div>
+    );
+  }
+
+  // RIGHT, open: a stack of bars; every open panel sits under its own bar.
+  const openIds = allItems.filter((i) => expanded.includes(i.id)).map((i) => i.id);
+  return (
+    <div
+      className={cn(styles.root, styles.stackRoot, className)}
+      role="tablist"
+      aria-orientation="vertical"
+      aria-label="Inspector panels"
+      onKeyDown={onRailKeyDown}
+    >
+      {allItems.map((item) => (
+        <StackSection
+          key={item.id}
+          item={item}
+          open={openIds.includes(item.id)}
+          inTabOrder={item.id === effectiveActiveId}
+          side={side}
+          renderer={renderers[item.id]}
+          headerExtras={headerExtras}
+          buildMenu={buildMenu}
+          onToggle={() => toggleSection(item.id)}
+          onDragStart={onDragStart(item.id)}
+          dropTarget={dropOn === item.id}
+          {...dropHandlers(item.id)}
+          onContextMenu={onRailContextMenu(item)}
+        />
+      ))}
+      {addButton && <div className={styles.barAdd}>{addButton}</div>}
     </div>
+  );
+}
+
+const EXPANDED_KEY = 'premation.dock.expanded.';
+
+/** Which sections were open last time — a per-machine convenience, never document state. */
+function readExpanded(region: RegionId): ReadonlyArray<string> {
+  try {
+    const raw = window.localStorage.getItem(EXPANDED_KEY + region);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeExpanded(region: RegionId, ids: ReadonlyArray<string>): void {
+  try {
+    window.localStorage.setItem(EXPANDED_KEY + region, JSON.stringify(ids));
+  } catch {
+    /* blocked storage: the open set lasts for this session only */
+  }
+}
+
+interface StackSectionProps {
+  item: TabDescriptor;
+  open: boolean;
+  /** The roving tabindex: only the store's active panel's bar is a Tab stop. */
+  inTabOrder: boolean;
+  side: 'left' | 'right';
+  renderer: (() => ReactNode) | undefined;
+  headerExtras: ReactNode;
+  buildMenu: (item: TabDescriptor, custom: ReadonlyArray<DropdownItem>) => DropdownItem[];
+  onToggle: () => void;
+  onDragStart: (e: DragEvent<HTMLDivElement>) => void;
+  onDragOver: (e: DragEvent<HTMLDivElement>) => void;
+  onDragLeave: () => void;
+  onDrop: (e: DragEvent<HTMLDivElement>) => void;
+  /** A dragged panel is over this bar and would land above it. */
+  dropTarget: boolean;
+  onContextMenu: (e: React.MouseEvent) => void;
+}
+
+/**
+ * One panel of the stack: its bar and, when open, its body.
+ *
+ * Its own component because each open panel needs its OWN header slot and its
+ * own ≡-menu rows (DockPanelHeaderContext) — with one shared slot, two open
+ * panels would write their header controls into the same element.
+ */
+function StackSection({
+  item, open, inTabOrder, side, renderer, headerExtras, buildMenu,
+  onToggle, onDragStart, onDragOver, onDragLeave, onDrop, dropTarget, onContextMenu,
+}: StackSectionProps): JSX.Element {
+  const [headerEl, setHeaderEl] = useState<HTMLDivElement | null>(null);
+  const [custom, setCustom] = useState<DropdownItem[]>(NO_ITEMS);
+  const [detail, setDetail] = useState<string | null>(null);
+  const ctx = useMemo(
+    () => ({ target: headerEl, setCustomMenuItems: setCustom, setTitleDetail: setDetail }),
+    [headerEl],
+  );
+  return (
+    <>
+      <div
+        draggable
+        onDragStart={onDragStart}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        className={cn(styles.bar, open && styles.barActive, dropTarget && styles.dropAbove)}
+        onContextMenu={onContextMenu}
+      >
+        <button
+          type="button"
+          role="tab"
+          data-dock-tab=""
+          tabIndex={inTabOrder ? 0 : -1}
+          aria-selected={open}
+          aria-label={item.label}
+          title={item.label}
+          className={styles.barTab}
+          onClick={onToggle}
+        >
+          <span className={styles.barTwirl} aria-hidden>{open ? '▼' : '▶'}</span>
+          <span className={styles.tabLabel}>
+            {item.label}
+            {open && detail ? <span className={styles.tabDetail}>: {detail}</span> : null}
+          </span>
+        </button>
+        <div className={styles.headerActions}>
+          {open && (
+            <>
+              <div ref={setHeaderEl} className={styles.customActions} />
+              {headerExtras}
+            </>
+          )}
+          <Dropdown
+            placement={side === 'right' ? 'bottom-end' : 'bottom-start'}
+            offset={{ x: 0, y: 4 }}
+            noScroll
+            trigger={
+              <button type="button" className={styles.menuBtn} aria-label="Panel options" title="Panel options">
+                <Icon name="menu" size="sm" />
+              </button>
+            }
+            items={() => buildMenu(item, open ? custom : NO_ITEMS)}
+          />
+        </div>
+      </div>
+      {open && (
+        <DockPanelHeaderContext.Provider value={ctx}>
+          <div className={styles.content}>{renderer ? renderer() : null}</div>
+        </DockPanelHeaderContext.Provider>
+      )}
+    </>
   );
 }

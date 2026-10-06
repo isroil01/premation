@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Logo } from '@components/Logo';
+import { TITLE_BAR_ROUTE_SLOT_ID } from './routeSlot';
+import { panelDef } from '@layout/EditorLayout/panelDefs';
 import { AppMenuBar } from '@layout/Menu';
 import { ProjectStatus } from '@layout/ProjectStatus/ProjectStatus';
 import { useNativeMenuSync } from '@layout/Menu/useNativeMenuSync';
@@ -81,9 +83,19 @@ function WindowsCaptionButtons(): JSX.Element {
  *
  * `PREMATION_UI_PLATFORM` switches between them in development (`.env.local`).
  */
+/** A pop-out window's name: the panel it holds (the title bar is its only header). */
+const POPOUT_TITLES: Readonly<Record<string, string>> = { viewport: 'Composition', timeline: 'Timeline', presentation: 'Preview' };
+function popoutTitle(pathname: string): string | null {
+  const m = new RegExp('^/popout/([^/]+)').exec(pathname);
+  if (!m) return null;
+  const id = decodeURIComponent(m[1] ?? '');
+  return POPOUT_TITLES[id] ?? panelDef(id)?.title ?? id;
+}
+
 export function TitleBar(): JSX.Element | null {
   const location = useLocation();
   const isEditor = location.pathname.startsWith('/editor');
+  const popout = popoutTitle(location.pathname);
   useTitleBarOverlaySync();
 
   if (!hasDesktopChrome()) return null;
@@ -92,13 +104,15 @@ export function TitleBar(): JSX.Element | null {
   if (platform === 'mac') {
     if (isEditor) return <NativeMenuSync />;
     return (
-      <div className={`${styles.titleBar} ${styles.mac}`} data-platform="mac">
+      <div className={`${styles.titleBar} ${styles.mac} ${styles.seamless}`} data-platform="mac">
         <div className={styles.dragRegion} />
         <div className={styles.left}>
           <MacWindowControls />
         </div>
-        <div className={`${styles.center} ${styles.macTitle}`}>Premation</div>
+        <div className={`${styles.center} ${styles.macTitle}`}>{popout ?? 'Premation'}</div>
         <div className={styles.right}>
+          {/* The page's own controls (see routeSlot.ts). Never on the editor route. */}
+          <div id={TITLE_BAR_ROUTE_SLOT_ID} className={styles.routeSlot} />
           <UpdateButton />
         </div>
       </div>
@@ -107,7 +121,7 @@ export function TitleBar(): JSX.Element | null {
 
   const controls = getWindowControls();
   return (
-    <div className={styles.titleBar} data-platform={platform} data-controls={controls}>
+    <div className={`${styles.titleBar} ${isEditor ? '' : styles.seamless}`} data-platform={platform} data-controls={controls}>
       <div className={styles.dragRegion} />
       <div className={styles.left}>
         <Logo variant="mark" size={18} className={styles.appIconBadge} />
@@ -128,10 +142,13 @@ export function TitleBar(): JSX.Element | null {
           <ProjectStatus />
         </div>
       )}
+      {popout && <div className={`${styles.center} ${styles.macTitle}`}>{popout}</div>}
       <div className={styles.right}>
         {/* First in the cluster, and far from Export: a pending update is the
             one thing here the user has not already gone looking for. Renders
             nothing when nothing is pending, which is almost always. */}
+        {/* The page's own controls (see routeSlot.ts). Never on the editor route. */}
+        {!isEditor && <div id={TITLE_BAR_ROUTE_SLOT_ID} className={styles.routeSlot} />}
         <UpdateButton />
         {isEditor && <EditorChromeActions />}
         {controls === 'drawn' && <WindowsCaptionButtons />}

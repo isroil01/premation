@@ -26,7 +26,7 @@ import { usePlaybackClockStore } from '@stores/playbackClockStore';
 import { useActiveCompRecord } from '@hooks/useActiveCompRecord';
 import { useUIStore } from '@stores/uiStore';
 import { outputExtFor, type OutputFormat } from '@stores/renderQueueStore';
-import { useLayoutStore } from '@stores/layoutStore';
+import { showRenderQueue } from '@stores/timelinePanelStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompSettingsNow, useActiveTabCompSettings } from '@hooks/useMirrorFrame';
@@ -348,7 +348,7 @@ export function useExportModel(duration: number, fps: number): ExportModel {
       ...(format === 'mp4' ? { videoEncoder: usePreferenceStore.getState().exportVideoEncoder } : {}),
       ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
     });
-    useLayoutStore.getState().openPanel('renderQueue');
+    showRenderQueue();
     useUIStore.getState().notify({
       level: 'success',
       message: 'Added to Render Queue (F6) — it renders in the background',
