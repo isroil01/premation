@@ -51,17 +51,25 @@ beforeEach(() => {
 });
 
 describe('runAutoTrack', () => {
-  it('stores the samples, the plan and the window sizes it sent', async () => {
-    done([[sample(0), sample(1), sample(2)]]);
+  it('stores the samples and the plan the engine measured (AE parity 3.6)', async () => {
+    job({
+      status: 'done',
+      result: {
+        status: 'completed', sourceWidth: 1920, sourceHeight: 1080, tracks: [[sample(0), sample(1), sample(2)]],
+        plan: { x: 604, y: 297, featureHalf: 8, searchHalf: 19, motionPerFrame: 4.5, strength: 0.02, distinctness: 0.8, companion: null },
+      },
+    });
     await runAutoTrack({ nodeId: 'video_1', hint: { x: 600, y: 300 }, radius: 8 });
 
+    const req = startEngineJob.mock.calls[0]![0] as { value: { autoFeature?: boolean } };
+    expect(req.value.autoFeature).toBe(true);
     const s = useTrackerStore.getState();
     expect(s.tracking).toBe(false);
     expect(s.result?.tracks[0]).toHaveLength(3);
     expect(s.result?.tracks[0]![0]).toEqual({ compTime: 0, x: 100, y: 50, confidence: 0.9, coasted: false });
     expect(s.featureHalf).toBe(8);
     expect(s.searchHalf).toBe(19);
-    expect(s.points[0]).toEqual({ x: 600, y: 300 });
+    expect(s.autoPlan).toMatchObject({ x: 604, y: 297, motionPerFrame: 4.5, distinctness: 0.8 });
   });
 
   it('sends one position point at the click, tracked both ways', async () => {

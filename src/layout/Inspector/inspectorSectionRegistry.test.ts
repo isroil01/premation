@@ -53,7 +53,6 @@ const EMBEDDED: Readonly<Record<string, string>> = {
   // Mounted by a panel other than the inspector accordion.
   ClonerSection: 'EffectControlsPanel — attached from Effects ▸ Simulation',
   PhysicsSection: 'EffectControlsPanel — attached from Effects ▸ Simulation',
-  TrackMotionSection: 'TrackerPanel — dedicated dock panel',
   // Not scoped to the selected layer at all, so it cannot be a registry entry:
   // this belongs to the applied mograph, not to a node.
   MographParamsSection: 'PropertiesPanel — the inspector extras strip below the accordion',

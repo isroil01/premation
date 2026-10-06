@@ -128,7 +128,7 @@ registry, this section is expected to drift, so re-check before quoting it.
 - 2D and 3D layers in one space, with cameras and lights (parenting included)
 - Masks, track mattes, blend modes, layer styles
 - Shape layers, paths, trim paths, repeaters, path operations
-- **206 effects** ([`src/core/effects/effects.ts`](src/core/effects/effects.ts))
+- **208 effects** ([`src/core/effects/effects.ts`](src/core/effects/effects.ts))
 
 **Animation**
 - Keyframes with full easing control and one graph editor, shared by the timeline

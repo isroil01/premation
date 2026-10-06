@@ -19,6 +19,7 @@
 #include "handlers_common.hpp"
 #include "handlers_comps.hpp"
 #include "handlers_layers.hpp"
+#include "handlers_misc.hpp"
 #include "item_facts.hpp"
 #include "handlers_native.hpp"
 #include "layer_geometry.hpp"
@@ -1024,6 +1025,14 @@ struct Q {
     }
     out.time = map_layer_time(pc, q.layer, q.time, q.outward);
     return query_result_for<api::MapLayerTime>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetCameraSolve& q) const {
+    api::CameraSolveAnswer out;
+    out.solve = camera_solve_of(d, pc.view, q.layer);
+    return query_result_for<api::GetCameraSolve>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetLayerTrackers& q) const {
+    return query_result_for<api::GetLayerTrackers>(layer_trackers(d, pc.view, q.layer));
   }
   api::QueryResult operator()(const api::GetSourceSize& q) const {
     return query_result_for<api::GetSourceSize>(api::SourceSizes{source_sizes(d, q.layers)});

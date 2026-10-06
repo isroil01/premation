@@ -36,6 +36,8 @@ class EngineJobKinds final : public JobKinds {
           else if constexpr (std::is_same_v<T, api::ParticleBakeJob>) return prepare_particle_bake(s, ctx);
           else if constexpr (std::is_same_v<T, api::RigLogoJob>) return prepare_rig_logo(s, ctx);
           else if constexpr (std::is_same_v<T, api::TranscribeJob>) return prepare_transcribe(s, ctx);
+          else if constexpr (std::is_same_v<T, api::CameraTrackJob>) return prepare_camera_track(s, ctx);
+          else if constexpr (std::is_same_v<T, api::FaceTrackJob>) return prepare_face_track(s, ctx);
           else doc::fail(api::ErrorCode::unsupported, "this engine does not run that job kind");
         },
         spec.v);
@@ -70,6 +72,7 @@ std::string ffmpeg_executable() {
 void register_child_works() {
   static const bool once = [] {
     register_object_matte_child();
+    register_face_track_child();
     return true;
   }();
   (void)once;

@@ -207,6 +207,9 @@ export type EffectType =
   | 'extract'
   | 'spill-suppressor'
   | 'matte-choker'
+  // AE parity 3.2 — the matte follows the picture's own edges (hair), decontaminated.
+  | 'refine-soft-matte'
+  | 'refine-hard-matte'
   // Channel — these treat the four channels as data rather than as a picture.
   | 'alpha-levels'
   | 'solid-composite'
@@ -733,6 +736,19 @@ function scalar(
  * blurs, so the bound stops here rather than at AE's 1000+.
  */
 export const BLUR_MAX_PX = 250;
+
+/** Refine Soft / Hard Matte's controls (AE parity 3.2; catalog/effects.json is the source). */
+function refineMatteParams(edgeRadius: number, smooth: number, contrast: number): EffectParamDef[] {
+  return [
+    { key: 'edgeRadius', label: 'Edge Radius', type: 'number', unit: 'px', min: 0, max: 100, precision: 0, default: edgeRadius },
+    { key: 'smooth', label: 'Smooth', type: 'number', unit: 'px', min: 0, max: 100, precision: 1, default: smooth },
+    { key: 'feather', label: 'Feather', type: 'number', unit: 'px', min: 0, max: 100, precision: 1, default: 0 },
+    { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: 0, max: 100, precision: 0, default: contrast },
+    { key: 'shiftEdge', label: 'Shift Edge', type: 'number', unit: '%', min: -100, max: 100, precision: 0, default: 0 },
+    { key: 'decontaminateEdges', label: 'Decontaminate Edge Colors', type: 'checkbox', default: true },
+    { key: 'decontaminationAmount', label: 'Decontamination Amount', type: 'number', unit: '%', min: 0, max: 100, precision: 0, default: 100 },
+  ];
+}
 
 export const EFFECT_DEFS: EffectDef[] = [
   scalar('blur', 'Blur', 'px', 0, BLUR_MAX_PX, 6, (a) => `blur(${a}px)`),
@@ -3364,6 +3380,19 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'softness', label: 'Gray Level Softness', type: 'number', unit: 'px', min: 0, max: 50, precision: 0, default: 2 },
       { key: 'iterations', label: 'Iterations', type: 'number', min: 1, max: 5, precision: 0, default: 1 },
     ],
+    css: () => '',
+  },
+
+  {
+    type: 'refine-soft-matte',
+    label: 'Refine Soft Matte',
+    params: refineMatteParams(10, 4, 0),
+    css: () => '',
+  },
+  {
+    type: 'refine-hard-matte',
+    label: 'Refine Hard Matte',
+    params: refineMatteParams(3, 1, 50),
     css: () => '',
   },
 

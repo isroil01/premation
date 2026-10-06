@@ -61,7 +61,7 @@ rediscovered in git history and believed a second time.
 
 | Registry | Count | Source of truth |
 |---|---|---|
-| Effects | 206 | `src/core/effects/effects.ts` → `EffectType` |
+| Effects | 208 | `src/core/effects/effects.ts` → `EffectType` |
 | Blend modes | 38 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 9 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
@@ -70,7 +70,7 @@ rediscovered in git history and believed a second time.
 | Canvas tools | 23 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 18 | `renderSpec.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` / `DataExportFormat` |
-| Stores | 79 | `src/stores/*.ts` |
+| Stores | 81 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        79 Zustand stores
+                          ├── src/stores/*        81 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components
@@ -991,8 +991,8 @@ output.
 
 ### Tier 2 — ceilings on visual density
 
-**Effect breadth: 206 effects vs AE's 400+.** The raw count misleads in both
-directions — nobody uses 400, and the 206 effects present are properly
+**Effect breadth: 208 effects vs AE's 400+.** The raw count misleads in both
+directions — nobody uses 400, and the 208 effects present are properly
 parameterised (Levels, Curves, Channel Mixer, Keylight with
 despill/choke/softness). What matters is the missing *classes*, not the delta:
 no 3D Stroke, no Form/Plexus, no Element 3D. The dense, expensive-looking AE
@@ -1005,7 +1005,7 @@ written against this document inherited. And the missing *classes* named "no
 volumetric light rays (Shine)" and "no optical-flare system worth the name":
 `light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
 registry def, a Canvas2D reference, a Generate entry, and (as of 2026-08-14) a
-GPU shader. The count is now phrased as "206 effects" rather than as a bare
+GPU shader. The count is now phrased as "208 effects" rather than as a bare
 figure specifically so that `docPropagatedCounts.test.ts` can check it.
 
 **Variable-width mask feather LANDED** (2026-08-20). `MaskPoint` gained an
@@ -2217,7 +2217,7 @@ needing a 39-entry allow-list is one that gets silenced the first time it fires.
 The cost of the narrowness is that an oblique phrasing still escapes, and §4's
 did — "Effect breadth: 73 vs AE's 400+" puts no noun after the number. That was
 rewritten into the checkable form rather than the regex being widened to chase
-it. Prose stating a count should say "206 effects".
+it. Prose stating a count should say "208 effects".
 
 Ledger table ROWS in this section are exempt, structurally rather than by a list
 of phrases: quoting a superseded number is what a corrections ledger is for, and
@@ -2822,7 +2822,7 @@ drawn under the sprites at their projected positions.
 
 ### Built 2026-09-15 — AE's stroke-like paint effects
 
-Two effects, `EffectType` 204 → **206 effects**, and two upgrades — all four
+Two effects, `EffectType` 204 → **206**, and two upgrades — all four
 lay a round brush along the layer's MASKS, which `buildSnapshot` now resolves
 per frame as the whole stack (`maskPathsMeta` / `maskPathsXY`, mask order,
 closed flag, mode, inversion; `packMaskPaths` in `strokePaint.ts`), so tracked
@@ -2891,7 +2891,7 @@ Quality (4/6/8 octaves).
 
 ### Built 2026-09-07 — effects round seven, and a miscount inside the counter
 
-Eighteen effects, taking `EffectType` from 183 to 201 (Deep Glow and Energy Beam, 2026-09-08, make it **203**; Plexus, 2026-09-09, **204**; Stroke and Scribble, 2026-09-15, **206 effects**). Fifteen ship
+Eighteen effects, taking `EffectType` from 183 to 201 (Deep Glow and Energy Beam, 2026-09-08, make it **203**; Plexus, 2026-09-09, **204**; Stroke and Scribble, 2026-09-15, **206**; Refine Soft / Hard Matte, 2026-10-06, **208 effects**). Fifteen ship
 as a GPU shader in both dialects plus a retained Canvas2D kernel, which is the
 shape every port since round six has held; three ship as per-channel transfer
 tables and no shader at all.

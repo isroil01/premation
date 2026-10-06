@@ -34,6 +34,7 @@ import { InfoAudioPanel } from '@layout/Inspector/InfoAudioPanel';
 import { AudioPanel } from '@layout/Inspector/AudioPanel';
 import { PreviewPanel } from '@layout/Inspector/PreviewPanel';
 import { TrackerPanel } from '@layout/Inspector/TrackerPanel';
+import { ContentAwareFillPanel } from '@layout/ContentAwareFill/ContentAwareFillPanel';
 // The barrel, deliberately: it registers Ctrl+8 / Ctrl+9 and the paint keys on load.
 import { PaintPanel, BrushesPanel } from '@layout/Paint';
 import { ScenePanel } from '@layout/Scene/ScenePanel';
@@ -75,6 +76,7 @@ export const PANEL_COMPONENTS: Readonly<Record<string, ComponentType>> = {
   scopes: ScopesPanel,
   preview: PreviewPanel,
   tracker: TrackerPanel,
+  contentAwareFill: ContentAwareFillPanel,
   paint: PaintPanel,
   brushes: BrushesPanel,
   rig: RigPanel,

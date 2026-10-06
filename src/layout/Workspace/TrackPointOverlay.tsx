@@ -36,6 +36,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { secondsToFlicks, type OverlayKind } from '@motion/engine-api';
 import { MAIN_VIEWPORT, overlayLayer, requestOverlayLayers } from '@stores/overlayGeometry';
 import { useTrackerStore } from '@stores/trackerStore';
+import { useCameraTrackStore } from '@stores/cameraTrackStore';
+import { projectTrackPoints } from '@core/tracking/cameraTrack';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
@@ -414,6 +416,77 @@ export function TrackPointOverlay({ host }: { host?: TrackPointHost } = {}): JSX
     are visible (that is the tool: a tracker point is placed on a pixel, not
     on a vibe). Until the first copy arrives the loupe is crosshair-on-black.
   */
+  // ── 3D Camera Tracker track points (AE parity 3.5) ─────────────────────
+  // The solve's points at the playhead, projected onto the footage; click
+  // selects, Shift-click toggles, a drag selects an area.
+  const camSolve = useCameraTrackStore((st) => (st.layer === nodeId ? st.solve : null));
+  const camSelected = useCameraTrackStore((st) => st.selected);
+  const camPts = useMemo(
+    () => (mode === 'camera' && camSolve && sourceToScreen
+      ? projectTrackPoints(camSolve, time).map((p) => ({ ...p, sc: sourceToScreen(p.x, p.y) }))
+      : []),
+    [mode, camSolve, sourceToScreen, time],
+  );
+  const [camMarquee, setCamMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number; add: boolean } | null>(null);
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || mode !== 'camera' || camPts.length === 0) return undefined;
+    const local = (e: PointerEvent): { x: number; y: number } => {
+      const r = svg.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+    let start: { x: number; y: number; add: boolean } | null = null;
+    const onDown = (e: PointerEvent): void => {
+      const p = local(e);
+      e.stopPropagation();
+      e.preventDefault();
+      let best = -1;
+      let bestD = 9;
+      for (const c of camPts) {
+        const d = Math.hypot(c.sc.x - p.x, c.sc.y - p.y);
+        if (d < bestD) {
+          bestD = d;
+          best = c.index;
+        }
+      }
+      if (best >= 0) {
+        useCameraTrackStore.getState().pick(best, e.shiftKey);
+        return;
+      }
+      start = { ...p, add: e.shiftKey };
+      try { svg.setPointerCapture(e.pointerId); } catch { /* uncaptured is fine */ }
+    };
+    const onMove = (e: PointerEvent): void => {
+      if (!start) return;
+      const p = local(e);
+      setCamMarquee({ x0: start.x, y0: start.y, x1: p.x, y1: p.y, add: start.add });
+    };
+    const onUp = (e: PointerEvent): void => {
+      if (!start) return;
+      const p = local(e);
+      const x0 = Math.min(start.x, p.x);
+      const x1 = Math.max(start.x, p.x);
+      const y0 = Math.min(start.y, p.y);
+      const y1 = Math.max(start.y, p.y);
+      const inside = camPts.filter((c) => c.sc.x >= x0 && c.sc.x <= x1 && c.sc.y >= y0 && c.sc.y <= y1).map((c) => c.index);
+      if (x1 - x0 > 3 || y1 - y0 > 3) useCameraTrackStore.getState().selectMany(inside, start.add);
+      else if (!start.add) useCameraTrackStore.getState().clearSelection();
+      start = null;
+      setCamMarquee(null);
+      if (svg.hasPointerCapture(e.pointerId)) svg.releasePointerCapture(e.pointerId);
+    };
+    svg.addEventListener('pointerdown', onDown);
+    svg.addEventListener('pointermove', onMove);
+    svg.addEventListener('pointerup', onUp);
+    svg.addEventListener('pointercancel', onUp);
+    return () => {
+      svg.removeEventListener('pointerdown', onDown);
+      svg.removeEventListener('pointermove', onMove);
+      svg.removeEventListener('pointerup', onUp);
+      svg.removeEventListener('pointercancel', onUp);
+    };
+  }, [mode, camPts]);
+
   const loupeOpen = loupe !== null;
   useEffect(() => (loupeOpen ? holdViewportPicture() : undefined), [loupeOpen]);
   useEffect(() => {
@@ -463,7 +536,8 @@ export function TrackPointOverlay({ host }: { host?: TrackPointHost } = {}): JSX
   // While picking there may be no point yet — the surface still has to be
   // there to receive the click.
   const picking = autoPhase === 'picking';
-  if (!active || !geom || !src || !sourceToScreen || (points.length === 0 && !picking)) return null;
+  const cameraMode = mode === 'camera' && camSolve !== null;
+  if (!active || !geom || !src || !sourceToScreen || (points.length === 0 && !picking && !cameraMode)) return null;
 
   const screenPts = points.map((p) => sourceToScreen(p.x, p.y));
   const boxCornerPts = (centre: { x: number; y: number }, half: number): Array<{ x: number; y: number }> => [
@@ -527,7 +601,7 @@ export function TrackPointOverlay({ host }: { host?: TrackPointHost } = {}): JSX
         height: '100%',
         // Armed for a pick, the surface takes the click; otherwise only the
         // per-point hit circles are interactive.
-        pointerEvents: picking ? 'all' : 'none',
+        pointerEvents: picking || cameraMode ? 'all' : 'none',
         ...(picking ? { cursor: 'crosshair' } : {}),
       }}
     >
@@ -597,6 +671,51 @@ export function TrackPointOverlay({ host }: { host?: TrackPointHost } = {}): JSX
           fill="none"
           stroke="rgba(255, 209, 102, 0.6)"
           strokeDasharray="6 4"
+          strokeWidth={1}
+        />
+      )}
+      {mode === 'planar' && screenPts.length >= 4 && (
+        // The tracked region (amber) and, with Surface Adjust, the insert's surface (blue).
+        <>
+          <polygon
+            points={screenPts.slice(0, 4).map((p) => `${p.x},${p.y}`).join(' ')}
+            fill="rgba(255, 209, 102, 0.06)"
+            stroke="rgba(255, 209, 102, 0.75)"
+            strokeWidth={1.25}
+          />
+          {screenPts.length >= 8 && (
+            <polygon
+              points={screenPts.slice(4, 8).map((p) => `${p.x},${p.y}`).join(' ')}
+              fill="none"
+              stroke="rgba(110, 168, 255, 0.9)"
+              strokeDasharray="5 3"
+              strokeWidth={1.25}
+            />
+          )}
+        </>
+      )}
+      {camPts.map((c) => {
+        // Green when it fits the solve well, amber, then red; selected ones larger and filled.
+        const sel = camSelected.includes(c.index);
+        const colour = c.error < 1 ? '#66d984' : c.error < 2 ? '#ffd166' : '#ff6b6b';
+        const r = sel ? 4.5 : 2.5;
+        return (
+          <g key={`cam-${c.index}`} aria-label={sel ? `Track point ${c.index + 1}, selected` : undefined}>
+            <line x1={c.sc.x - r} y1={c.sc.y - r} x2={c.sc.x + r} y2={c.sc.y + r} stroke={colour} strokeWidth={sel ? 2 : 1.25} />
+            <line x1={c.sc.x - r} y1={c.sc.y + r} x2={c.sc.x + r} y2={c.sc.y - r} stroke={colour} strokeWidth={sel ? 2 : 1.25} />
+            {sel && <circle cx={c.sc.x} cy={c.sc.y} r={r + 3} fill="none" stroke="#ffffff" strokeWidth={1} />}
+          </g>
+        );
+      })}
+      {camMarquee && (
+        <rect
+          x={Math.min(camMarquee.x0, camMarquee.x1)}
+          y={Math.min(camMarquee.y0, camMarquee.y1)}
+          width={Math.abs(camMarquee.x1 - camMarquee.x0)}
+          height={Math.abs(camMarquee.y1 - camMarquee.y0)}
+          fill="rgba(102, 217, 132, 0.08)"
+          stroke="#ffffff"
+          strokeDasharray="4 3"
           strokeWidth={1}
         />
       )}
@@ -693,9 +812,9 @@ export function TrackPointOverlay({ host }: { host?: TrackPointHost } = {}): JSX
           <circle cx={s.x} cy={s.y} r={POINT_R} fill="#ffd166" stroke="#101014" strokeWidth={1} />
           <line x1={s.x - POINT_R} y1={s.y} x2={s.x + POINT_R} y2={s.y} stroke="#101014" strokeWidth={1} />
           <line x1={s.x} y1={s.y - POINT_R} x2={s.x} y2={s.y + POINT_R} stroke="#101014" strokeWidth={1} />
-          {(mode === 'corner' || mode === 'transform') && (
-            <text x={s.x + 8} y={s.y - 8} fontSize={10} fill="#ffd166" style={{ userSelect: 'none' }}>
-              {mode === 'corner' ? CORNER_LABELS[i] : i === 0 ? 'A' : 'B'}
+          {(mode === 'corner' || mode === 'transform' || mode === 'planar') && (
+            <text x={s.x + 8} y={s.y - 8} fontSize={10} fill={mode === 'planar' && i >= 4 ? '#6ea8ff' : '#ffd166'} style={{ userSelect: 'none' }}>
+              {mode === 'transform' ? (i === 0 ? 'A' : 'B') : `${mode === 'planar' && i >= 4 ? 'S·' : ''}${CORNER_LABELS[i % 4]}`}
             </text>
           )}
         </g>

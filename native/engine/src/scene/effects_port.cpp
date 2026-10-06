@@ -191,6 +191,8 @@ bool effects_need_cpu_bake(const std::vector<Json>& effects) {
     if (!effect_enabled(e)) return false;
     const std::string t = type_of(e);
     if (is_canvas2d_only(t)) return true;
+    // AE parity 3.2: the refine-matte effects run in the CPU bake only (a guided filter over the whole layer).
+    if (t == "refine-soft-matte" || t == "refine-hard-matte") return true;
     if (e.at("maskId").is_string() && !e.at("maskId").str().empty()) return true;
     const bool hasOpacity = e.at("opacity").is_number() && std::isfinite(e.at("opacity").num());
     if (hasOpacity && !gpu_blends_effect_opacity(t)) return true;

@@ -109,6 +109,12 @@ void extract_matte(RgbaView img, double channel, double black, double white, dou
 void spill_suppressor(RgbaView img, const Rgb& key, double amount, bool preserve_luma, ThreadPool* pool);
 /// `matteChokerData(src, w, h, spread, choke, softness, iterations)`.
 void matte_choker(RgbaView img, double spread, double choke, double softness, double iterations, ThreadPool* pool);
+/// Refine Soft Matte / Refine Hard Matte (AE parity 3.2): the alpha follows the
+/// picture's own edges within `edgeRadius` px (guided filter, `hard` = a tight
+/// regularisation for crisp edges), then Smooth (px), Contrast (%), Shift Edge
+/// (−100…100 %), Feather (px), and the edge colours decontaminated by `decontaminate` (0…100 %).
+void refine_matte(RgbaView img, double edgeRadius, double smooth, double contrast, double shiftEdge, double feather, double decontaminate,
+                  bool hard, ThreadPool* pool);
 
 // ── stylize.ts / colorEffects.ts ────────────────────────────────────────────
 /// `mosaicData(src, w, h, hBlocks, vBlocks, sharpColors)`.

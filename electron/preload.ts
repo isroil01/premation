@@ -123,6 +123,18 @@ const bridge = {
   // The user's Object Matte model: main downloads it into <userData> where the
   // engine reads it (electron/objectMatteModel.ts). No credential attached; it
   // runs only on an explicit Install press.
+  // Face Tracking's landmark model (electron/faceModel.ts), downloaded on first use.
+  faceModel: {
+    status: () => ipcRenderer.invoke('faceModel:status'),
+    install: (request: { url: string; requestId: string }) => ipcRenderer.invoke('faceModel:install', request),
+    remove: () => ipcRenderer.invoke('faceModel:remove'),
+    cancelDownload: (requestId: string) => ipcRenderer.invoke('objectMatte:cancelDownload', requestId),
+    onDownloadProgress: (handler: (event: unknown) => void) => {
+      const listener = (_e: unknown, payload: unknown): void => handler(payload);
+      ipcRenderer.on('faceModel:downloadProgress', listener);
+      return () => ipcRenderer.removeListener('faceModel:downloadProgress', listener);
+    },
+  },
   objectMatte: {
     status: () => ipcRenderer.invoke('objectMatte:status'),
     install: (request: { encoderUrl: string; decoderUrl: string; requestId: string }) =>

@@ -18,7 +18,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isPickArmed, useTrackerStore } from './trackerStore';
+import { isPickArmed, pointCountFor, samplesAt, spliceResult, useTrackerStore } from './trackerStore';
 
 beforeEach(() => {
   useTrackerStore.getState().clear();
@@ -72,5 +72,48 @@ describe('the Escape/Deselect stand-down', () => {
     const binding = src.slice(start, src.indexOf('execute:', start));
     expect(binding).toContain("shortcut: { key: 'Escape' }");
     expect(binding).toContain('isPickArmed()');
+  });
+});
+
+describe('tracker workflow (AE parity 3.6)', () => {
+  const smp = (t: number, x: number) => ({ compTime: t, x, y: 0, confidence: 0.9, coasted: false });
+  const result = (xs: Array<[number, number]>) => ({ tracks: [xs.map(([t, x]) => smp(t, x))], sourceWidth: 100, sourceHeight: 100, status: 'completed' as const });
+
+  it('splices a forward walk after the origin and a backward one before it', () => {
+    const held = result([[0, 0], [1, 1], [2, 2], [3, 3]]);
+    const fwd = spliceResult(held, result([[2, 20], [3, 30]]), 'forward', 2);
+    expect(fwd.tracks[0]!.map((s) => s.x)).toEqual([0, 1, 20, 30]);
+    const back = spliceResult(held, result([[0, -10], [1, -11]]), 'backward', 1);
+    expect(back.tracks[0]!.map((s) => s.x)).toEqual([-10, -11, 2, 3]);
+    expect(spliceResult(held, result([[5, 5]]), 'both', 1).tracks[0]!.map((s) => s.x)).toEqual([5]);
+  });
+
+  it('a handle dragged with a track held corrects that frame and keeps the track', () => {
+    const st = useTrackerStore.getState();
+    st.clear();
+    st.activate('v');
+    st.setMode('stabilize', 100, 100);
+    st.finishTracking(result([[0, 0], [0.5, 5], [1, 10]]), null);
+    st.syncToTime(0.5);
+    expect(useTrackerStore.getState().points[0]).toEqual({ x: 5, y: 0 });
+    useTrackerStore.getState().setPoint(0, 7, 3);
+    const s = useTrackerStore.getState();
+    expect(s.result?.tracks[0]![1]).toMatchObject({ x: 7, y: 3, confidence: 1, coasted: false });
+    expect(s.corrections).toEqual([0.5]);
+    expect(samplesAt(s.result!, 1)).toEqual([{ x: 10, y: 0 }]);
+  });
+
+  it('stabilize with rotation adds the second point; turning it off removes it', () => {
+    const st = useTrackerStore.getState();
+    st.clear();
+    st.activate('v');
+    st.setMode('stabilize', 100, 100);
+    st.seedPoints(100, 100);
+    expect(useTrackerStore.getState().points).toHaveLength(1);
+    st.setStabilize(true, false, 100, 100);
+    expect(useTrackerStore.getState().points).toHaveLength(2);
+    expect(pointCountFor('stabilize', true)).toBe(2);
+    st.setStabilize(false, false, 100, 100);
+    expect(useTrackerStore.getState().points).toHaveLength(1);
   });
 });

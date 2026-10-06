@@ -1517,6 +1517,22 @@ void Walk::build_node(const doc::Node& n) {
     }
     if (best->at("dataUrl").is_string()) l.contentAwareFillSrc = best->at("dataUrl").str();
   }
+  // A per-frame soft matte (AE parity 3.2, setLayerMatte): each frame is the
+  // layer's cut-out picture, so the nearest one stands in for the footage the
+  // same way — and over a fill, since it was cut from the footage itself.
+  if (fx.at("alphaMatte").is_object() && fx.at("alphaMatte").at("frames").is_array() && !fx.at("alphaMatte").at("frames").arr().empty()) {
+    const Json::Array& frames = fx.at("alphaMatte").at("frames").arr();
+    const Json* best = &frames.front();
+    double bestD = std::abs(best->at("t").num() - layerTimeNow);
+    for (const Json& fr : frames) {
+      const double dd = std::abs(fr.at("t").num() - layerTimeNow);
+      if (dd < bestD) {
+        best = &fr;
+        bestD = dd;
+      }
+    }
+    if (best->at("src").is_string()) l.contentAwareFillSrc = best->at("src").str();
+  }
   l.sourceTime = retimed_source_at(n.id, t_);  // its own Speed % / Time Remap (retime_port.cpp)
   if (layerKind == LayerKind::video) {
     // Frame blending: the source frames bracketing the (retimed) source time, on

@@ -100,4 +100,23 @@ struct Cell {
 /// `stabilizingCorrections(pairs, sigmaFrames)`: pairs.size() + 1 corrections.
 [[nodiscard]] std::vector<Sim> stabilizing_corrections(std::span<const std::optional<Sim>> pairs, double sigmaFrames);
 
+/// Warp Stabilizer framing (AE parity 3.6). `stabilizeOnly` leaves the moving
+/// borders visible; `stabilizeCrop` scales every frame by the one factor that
+/// hides the borders on the worst frame; `cropAutoScale` scales each frame by
+/// just enough to hide its own borders, smoothed so the zoom does not pump.
+enum class Framing : std::uint8_t { stabilizeOnly, stabilizeCrop, cropAutoScale };
+
+/// The correction as it is APPLIED (the keys `method` writes): rotation and
+/// scale about the frame centre kept or dropped, the centre moved where the
+/// full correction moves it.
+[[nodiscard]] Sim applied_correction(const Sim& corr, double cx, double cy, bool rotation, bool scale) noexcept;
+
+/// The least zoom about the frame centre (≥ 1) after which `applied` leaves
+/// no border inside the `w`×`h` frame.
+[[nodiscard]] double border_free_scale(const Sim& applied, double w, double h) noexcept;
+
+/// The framing zoom per frame (1 for stabilizeOnly), each capped at `maxScale` (e.g. 1.5).
+[[nodiscard]] std::vector<double> framing_scales(std::span<const Sim> applied, double w, double h, Framing framing, double maxScale,
+                                                 double sigmaFrames);
+
 }  // namespace premation::jobs::stabilize

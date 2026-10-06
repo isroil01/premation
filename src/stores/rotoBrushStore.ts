@@ -21,6 +21,21 @@ export interface RotoStroke {
   kind: RotoStrokeKind;
   /** Layer-local px, centre-origin (the mask path's own space). */
   points: Array<{ x: number; y: number }>;
+  /** Composition seconds of the frame it was painted on (AE parity 3.1: a
+   *  stroke on another frame is a correction for that frame). */
+  time?: number;
+}
+
+/** How the matte is carried through the shot. */
+export type RotoEngine = 'objectMatte' | 'classic';
+
+/** Object Matte refinement (AE parity 3.2), the job's MatteRefine. */
+export interface RotoRefine {
+  edgeRadius: number;
+  decontaminate: number;  // 0…100 %
+  motionBlur: boolean;
+  choke: number;          // −100…100 %
+  reduceChatter: number;  // 0…100 %
 }
 
 interface RotoBrushStore {
@@ -41,12 +56,16 @@ interface RotoBrushStore {
   /** 0…1 while propagating forward. */
   progress: number;
   status: string | null;
+  engine: RotoEngine;
+  refine: RotoRefine;
 
+  setEngine: (e: RotoEngine) => void;
+  setRefine: (patch: Partial<RotoRefine>) => void;
   setNode: (nodeId: string | null) => void;
   setKind: (k: RotoStrokeKind) => void;
   setSize: (px: number) => void;
   setFeather: (px: number) => void;
-  begin: (kind: RotoStrokeKind, p: { x: number; y: number }) => void;
+  begin: (kind: RotoStrokeKind, p: { x: number; y: number }, time?: number) => void;
   extend: (p: { x: number; y: number }) => void;
   /** Commit the live stroke. Returns it (null when there was none). */
   end: () => RotoStroke | null;
@@ -72,13 +91,17 @@ export const useRotoBrushStore = create<RotoBrushStore>((set, get) => ({
   busy: false,
   progress: 0,
   status: null,
+  engine: 'objectMatte',
+  refine: { edgeRadius: 6, decontaminate: 50, motionBlur: false, choke: 0, reduceChatter: 30 },
 
+  setEngine: (engine) => set({ engine }),
+  setRefine: (patch) => set((s) => ({ refine: { ...s.refine, ...patch } })),
   setNode: (nodeId) =>
     set((s) => (s.nodeId === nodeId ? s : { nodeId, strokes: [], live: null, maskPathId: null, status: null })),
   setKind: (kind) => set({ kind }),
   setSize: (px) => set({ size: Math.max(2, Math.min(200, Math.round(px))) }),
   setFeather: (px) => set({ featherPx: Math.max(0, Math.min(64, Math.round(px))) }),
-  begin: (kind, p) => set({ live: { id: `roto_${++seq}`, kind, points: [p] } }),
+  begin: (kind, p, time) => set({ live: { id: `roto_${++seq}`, kind, points: [p], ...(time !== undefined ? { time } : {}) } }),
   extend: (p) =>
     set((s) => {
       if (!s.live) return s;

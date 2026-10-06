@@ -157,6 +157,62 @@ plus `examples/plugin-ci` built against it and loaded, pack → sign →
       artifacts attach to the draft; `examples/plugin-ci` builds against them
       on all three runners.
 
+## AE parity step 3 (2026-10-06) — needs the GPU box, ONNX Runtime and real footage
+
+Run in the Linux session: the headless engine and its suites (engine_jobs_tests:
+multi-scale fill, Bézier holes, fill modes, lighting, reference frames;
+feature picking and Warp Stabilizer framing; the camera solver on synthetic
+shots incl. the focal search; the planar tracker with an excluded occluder;
+the matte maths; face crop / smoothing; the refine-matte kernels' blessed
+fixture rows), `trackingRecords.native.test.ts`, tsc, lint and jest. The job
+kinds that decode footage (`kind_*`) and `face_ort_ffi.cpp` were COMPILED
+against ffmpeg headers but never linked or run (no engine_scene / ONNX Runtime
+here). Not run:
+
+- [ ] Build `windows-clang-cl-engine` with the vcpkg `engine` feature (ONNX
+      Runtime) and run engine_jobs_tests; the snapshot change (`alphaMatte`
+      frames stand in for footage, `scene/snapshot_build.cpp`) only compiled
+      against the stub-free scene here — run the golden render tests.
+- [ ] GPU execution providers (`ort_providers_ffi.hpp`): DirectML on Windows,
+      Core ML on macOS (headers present only where the runtime package has
+      them); `PREMATION_ORT_PROVIDER=cpu` forces the CPU. Time a 1080p Object
+      Matte frame on each.
+- [ ] Content-Aware Fill panel on real footage: Object / Surface / Edge Blend
+      over a 10 s shot (windows of 48 frames chain without a seam), lighting
+      correction on a shot with a brightness ramp, a painted reference frame
+      ("Create Reference Frame", paint, "Add Reference…").
+- [ ] Tracker: ◀1 ◀◀ ◀▶ ▶▶ 1▶ walks; drag a handle on a weak frame (the
+      confidence graph's shaded sample) and track on — the walk splices; the
+      track is saved on the layer (reopen the project, select the layer);
+      attach offset; Full resolution; apply to an effect point (Lens Flare
+      centre on another layer); Stabilize with Rotation + Scale (two points);
+      Warp Stabilizer framing Stabilize, Crop / Crop, Auto-scale.
+- [ ] One-click track on real footage shows the measured badge and ring; a
+      flat wall answers "Nothing trackable here".
+- [ ] Planar tracker (Mocha class) on a screen replacement: region over the
+      screen, an exclusion mask over a passing hand, Surface Adjust to the
+      screen's corners, apply to a precomp's Corner Pin; both directions.
+- [ ] 3D Camera Tracker on a handheld dolly shot: Analyze, the solved lens
+      against the known one, track points stay on the footage while scrubbing,
+      Set Ground Plane and Origin on floor points, Create Text / Solid / Null /
+      Shadow Catcher on selected points — they sit on the surface through the
+      shot; a pure pan answers the parallax message.
+- [ ] Face Tracking: install a MediaPipe Face Mesh ONNX export in Settings ▸
+      Face Tracking Model (no default URL is shipped — pick and verify the
+      official one), draw a mask round a face, Outline Only and Detailed
+      Features both ways; the masks and nulls follow; a face turned away ends
+      the walk with the earlier frames kept.
+- [ ] Object Matte (Roto tool, now on the toolbar): strokes at the playhead,
+      Propagate ◀ ◀▶ ▶ with SlimSAM; a correction stroke on a later frame
+      re-seeds from there; Edge radius on hair, Decontaminate on a green
+      edge, Motion Blur on a fast pan; the stored cut-out replaces the
+      footage (`setLayerMatte`) and the "Object Matte" outline keys follow.
+- [ ] Refine Soft Matte / Refine Hard Matte after Keylight: hair keeps detail,
+      edge colour loses the screen's tint (CPU bake path — check the frame
+      time at 1080p).
+- [ ] Animation ▸ Tracking menu items and Properties ▸ Track Motion open the
+      right mode for the selected footage.
+
 ## Status on the Windows RTX 4060 box (2026-09-28)
 
 Built and run there after the `wip-stopped` merges: `windows-clang-cl-engine`

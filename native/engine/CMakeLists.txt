@@ -1230,6 +1230,11 @@ add_library(engine_jobs_core STATIC
   src/jobs/encode_args.cpp
   src/jobs/media_input.cpp
   src/jobs/tracking.cpp
+  src/jobs/track_feature.cpp
+  src/jobs/camera_track.cpp
+  src/jobs/planar_track.cpp
+  src/jobs/face_mesh.cpp
+  src/jobs/matte_refine.cpp
   src/jobs/stabilize.cpp
   src/jobs/track_apply.cpp
   src/jobs/track_plans.cpp
@@ -1240,6 +1245,7 @@ add_library(engine_jobs_core STATIC
   src/jobs/sam_pipeline.cpp
   src/jobs/roto_matte.cpp
   src/jobs/content_aware.cpp
+  src/jobs/content_aware_fill.cpp
   src/jobs/reframe_path.cpp
   src/jobs/saliency.cpp
   src/jobs/reframe_analyse.cpp
@@ -1273,6 +1279,9 @@ if(FFMPEG_FOUND AND TARGET engine_audio)
     src/jobs/child_export.cpp
     src/jobs/kind_object_matte.cpp
     src/jobs/sam_ort_ffi.cpp
+    src/jobs/kind_camera_track.cpp
+    src/jobs/kind_face_track.cpp
+    src/jobs/face_ort_ffi.cpp
   )
   target_include_directories(engine_jobs SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
   target_link_directories(engine_jobs PUBLIC ${FFMPEG_LIBRARY_DIRS})
@@ -1319,7 +1328,7 @@ else()
 endif()
 
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_jobs_tests tests/test_jobs_audio.cpp tests/test_jobs_trace.cpp tests/test_jobs_tracking.cpp
+  add_executable(engine_jobs_tests tests/test_jobs_audio.cpp tests/test_jobs_trace.cpp tests/test_jobs_tracking.cpp tests/test_track_feature.cpp tests/test_camera_track.cpp tests/test_planar_track.cpp tests/test_matte_refine.cpp tests/test_face_mesh.cpp
                                  tests/test_jobs_round2.cpp tests/test_roto_matte.cpp tests/test_content_aware.cpp
                                  tests/test_reframe_path.cpp tests/test_saliency.cpp
                                  tests/test_reframe_analyse.cpp tests/test_job_retime.cpp

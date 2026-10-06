@@ -74,6 +74,7 @@ import { Ik3DSection, isIk3DTip } from './Ik3DSection';
 import { LightSection } from './LightSection';
 import { MaterialSection, MaterialPresetAction, hasMaterialSection } from './MaterialSection';
 import { MediaSection } from './MediaSection';
+import { TrackMotionSection } from './TrackMotionSection';
 import { ModelSection } from './ModelSection';
 import { MotionToolsSection, hasMotionToolsSection } from './MotionToolsSection';
 import { ParticleSection } from './ParticleSection';
@@ -273,6 +274,20 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     keywords: 'source trim speed fit crop volume',
     appliesTo: (id) => kindOf(id) === 'image' || kindOf(id) === 'video',
     Component: MediaSection,
+  },
+  {
+    // AE parity 3.8: Track Motion in Properties, as AE's Tracker is reached from
+    // the layer. The same section the Tracker panel shows; mounted only while
+    // open, because mounting arms the viewport's track overlay.
+    id: 'trackMotion',
+    title: 'Track Motion',
+    icon: 'crosshair',
+    category: 'layer',
+    defaultOpen: false,
+    keywords: 'tracker track stabilize warp stabilizer planar mocha camera solve face roto object matte content-aware fill',
+    appliesTo: (id) => kindOf(id) === 'image' || kindOf(id) === 'video',
+    Component: TrackMotionSection,
+    mountOnOpen: true,
   },
   {
     id: 'precomp',

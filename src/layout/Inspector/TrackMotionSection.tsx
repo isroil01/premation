@@ -30,11 +30,16 @@
  * the renderer will actually show (see trackVideoLayer.ts).
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { flicksToSeconds, type LayerInfo } from '@motion/engine-api';
 import { Button } from '@components/Button';
 import { documentMirror } from '@stores/documentMirror';
-import { useTrackerStore } from '@stores/trackerStore';
+import { useTrackerStore, type TrackerResult } from '@stores/trackerStore';
+import { engine } from '@core/engine/engineInstance';
+import { edit } from '@core/engine/uiEdits';
+import { loadTracker, trackerDataOf } from '@core/tracking/trackerPersistence';
+import { loadCameraSolve } from '@core/tracking/cameraTrack';
+import { useCameraTrackStore } from '@stores/cameraTrackStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import {
   compFps,
@@ -117,6 +122,47 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
   }, [nodeId, src?.width, src?.height, mode]);
   useEffect(() => () => store.getState().disarm(), []);
 
+  // The track saved on this layer (AE parity 3.6): restored when the layer is
+  // opened with nothing held, saved (one "Save Tracker" entry, debounced)
+  // whenever a walk or a correction changes it.
+  const savedRef = useRef<TrackerResult | null>(null);
+  useEffect(() => {
+    let alive = true;
+    savedRef.current = null;
+    void loadTracker(engine(), nodeId).then((saved) => {
+      if (!alive || !saved || store.getState().nodeId !== nodeId || store.getState().result) return;
+      savedRef.current = saved.result;
+      store.getState().restore(saved);
+    });
+    return () => { alive = false; };
+  }, [nodeId, store]);
+  useEffect(() => {
+    if (!result || tracking || result === savedRef.current) return;
+    const timer = setTimeout(() => {
+      const st = store.getState();
+      if (st.nodeId !== nodeId || st.result !== result) return;
+      savedRef.current = result;
+      void edit('Save Tracker', {
+        type: 'setLayerTrackers',
+        layer: nodeId,
+        trackers: [trackerDataOf({ mode: st.mode, points: st.points, attach: st.attach, featureHalf: st.featureHalf, searchHalf: st.searchHalf, result })],
+      }, { quiet: true });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [result, tracking, nodeId, store]);
+
+  // The camera solve stored on this layer, for the viewer's track points (AE parity 3.5).
+  useEffect(() => {
+    if (mode !== 'camera') return undefined;
+    let alive = true;
+    void loadCameraSolve(engine(), nodeId).then((solve) => { if (alive) useCameraTrackStore.getState().setSolve(nodeId, solve); });
+    return () => { alive = false; };
+  }, [mode, nodeId]);
+
+  // With a track held, the handles follow its samples at the playhead, so a
+  // handle dragged on a bad frame corrects THAT frame (trackerStore.setPoint).
+  useEffect(() => { store.getState().syncToTime(time); }, [time, result, store]);
+
   // Escape leaves the pick without tracking.
   //
   // stopIMMEDIATEPropagation, and in the capture phase: the app's own Escape
@@ -167,7 +213,7 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
     : [];
   const attachValue = attachId ?? attachCandidates[0]?.id ?? '';
 
-  const canTrack = mode === 'mask' ? maskPoints > 0 : mode === 'smooth' ? true : points.length > 0;
+  const canTrack = mode === 'mask' || mode === 'face' ? maskPoints > 0 : mode === 'smooth' || mode === 'camera' ? true : points.length > 0;
   const applyLabel =
     mode === 'follow'
       ? 'Apply as position keyframes'

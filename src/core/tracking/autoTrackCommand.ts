@@ -9,8 +9,10 @@
  *
  * The walk is the engine's `trackMotion` job (C++ engine; the page tracker
  * that ran on the TypeScript engine is gone — docs/TS_ENGINE_REMOVAL.md
- * phase 4): one point at the click (or the frame centre), tracked OUTWARD
- * from the playhead in both directions. No React.
+ * phase 4) with `autoFeature` (AE parity 3.6): the engine picks the feature
+ * nearest the click (Shi-Tomasi strength × distinctness), sizes both windows
+ * from its measured motion, adds a companion feature for rotation / scale,
+ * and tracks OUTWARD from the playhead in both directions. No React.
  */
 
 import { flicksToSeconds, secondsToFlicks } from '@motion/engine-api';
@@ -42,6 +44,12 @@ interface TrackSummary {
   sourceWidth: number;
   sourceHeight: number;
   tracks: EngineSample[][];
+  /** autoFeature's measurements (source display px). */
+  plan?: {
+    x: number; y: number; featureHalf: number; searchHalf: number;
+    motionPerFrame: number | null; strength: number; distinctness: number;
+    companion: { x: number; y: number } | null;
+  };
 }
 
 /**
@@ -69,8 +77,9 @@ export async function runAutoTrack(opts: AutoTrackCommandOptions): Promise<void>
       const s = size.ok ? size.value.sizes[0] : undefined;
       point = { x: (s?.width ?? 0) / 2, y: (s?.height ?? 0) / 2 };
     }
-    const featureHalf = Math.max(4, Math.round(opts.radius ?? store.getState().featureHalf));
-    const searchHalf = Math.max(featureHalf + 4, Math.round(featureHalf * 2.4));
+    // A marquee's half-size bounds where the engine looks; a click searches
+    // its default neighbourhood. The windows come back measured.
+    const radius = opts.radius !== undefined ? Math.max(8, Math.round(opts.radius)) : 0;
     // The whole layer, tracked outward from the playhead.
     const layer = documentMirror().layer(opts.nodeId);
     const layerEnd = layer ? flicksToSeconds(layer.timing.outPoint) : time + 10;
@@ -83,10 +92,12 @@ export async function runAutoTrack(opts: AutoTrackCommandOptions): Promise<void>
           layer: opts.nodeId,
           kind: 'position',
           points: [{
-            feature: { x: point.x, y: point.y, width: 2 * featureHalf + 1, height: 2 * featureHalf + 1 },
-            search: { x: point.x, y: point.y, width: 2 * searchHalf + 1, height: 2 * searchHalf + 1 },
+            feature: { x: point.x, y: point.y, width: radius > 0 ? 2 * radius + 1 : 0, height: radius > 0 ? 2 * radius + 1 : 0 },
+            search: { x: point.x, y: point.y, width: 0, height: 0 },
             attach: { x: 0, y: 0 },
           }],
+          autoFeature: true,
+          excludeMasks: [],
           range: { start: secondsToFlicks(start), duration: secondsToFlicks(Math.max(1 / fps, layerEnd - start)) },
           direction: 'both',
           origin: secondsToFlicks(time),
@@ -110,13 +121,18 @@ export async function runAutoTrack(opts: AutoTrackCommandOptions): Promise<void>
       return;
     }
     const tracks = res.tracks.map((t) => t.map(([compTime, x, y, confidence, coasted]) => ({ compTime, x, y, confidence, coasted: coasted === 1 })));
-    const plan: AutoPlanSummary = { x: point.x, y: point.y, featureHalf, searchHalf, motionPerFrame: null, strength: null, distinctness: null };
+    const measured = res.plan;
+    const featureHalf = Math.max(3, Math.round(measured?.featureHalf ?? store.getState().featureHalf));
+    const searchHalf = Math.max(featureHalf + 4, Math.round(measured?.searchHalf ?? featureHalf * 2.4));
+    const plan: AutoPlanSummary = measured
+      ? { x: measured.x, y: measured.y, featureHalf, searchHalf, motionPerFrame: measured.motionPerFrame, strength: measured.strength, distinctness: measured.distinctness }
+      : { x: point.x, y: point.y, featureHalf, searchHalf, motionPerFrame: null, strength: null, distinctness: null };
     store.getState().setAutoPlan(plan);
     // One click produces ONE feature, so the panel has to be in a one-point mode.
     if (pointCountFor(store.getState().mode) !== 1) {
       store.getState().setMode('follow', res.sourceWidth, res.sourceHeight);
     }
-    store.getState().setPoint(0, point.x, point.y);
+    store.getState().setPoint(0, plan.x, plan.y);
     store.getState().setSizes(featureHalf, searchHalf);
 
     const primary = tracks[0] ?? [];

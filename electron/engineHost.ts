@@ -573,6 +573,8 @@ export interface EngineHostOptions {
   sessionFootageDir?: string;
   /** The user's installed Object Matte model folder (<userData>/models/object-matte; objectMatteModel.ts). */
   samUserDir?: string;
+  /** The face landmark model folder (<userData>/models/face-landmarks; faceModel.ts). */
+  faceUserDir?: string;
   log?(line: string): void;
   /**
    * The user's speech-provider key for a transcribe job ('openai' …), from
@@ -711,6 +713,7 @@ export class EngineHost {
               ...(o.sessionFootageDir ? { PREMATION_SESSION_FOOTAGE: o.sessionFootageDir } : {}),
               // The model the user installed wins when both its files are there (read per job).
               ...(o.samUserDir ? { PREMATION_SAM_USER_DIR: o.samUserDir } : {}),
+              ...(o.faceUserDir ? { PREMATION_FACE_USER_DIR: o.faceUserDir } : {}),
               PREMATION_SAM_DIR: process.env.PREMATION_SAM_DIR
                 ?? (o.isPackaged ? path.join(o.resourcesPath, 'models', 'object-matte') : path.join(o.appPath, 'dist', 'models', 'object-matte')),
             },

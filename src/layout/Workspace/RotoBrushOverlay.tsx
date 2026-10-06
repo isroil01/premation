@@ -40,7 +40,7 @@ import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame
 import { useCurrentTime } from '@stores/playbackClockStore';
 import { useRotoBrushStore, type RotoStroke } from '@stores/rotoBrushStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { segmentStrokesToMask } from '@core/workspace/rotoBrushTool';
+import { segmentStrokesToMask, strokesAt } from '@core/workspace/rotoBrushTool';
 import { secondsToFlicks } from '@motion/engine-api';
 import { MAIN_VIEWPORT, overlayLayer } from '@stores/overlayGeometry';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
@@ -98,7 +98,9 @@ export function RotoBrushOverlay(): JSX.Element | null {
     // background stroke only means anything relative to the foreground ones.
     store.setBusy(true);
     store.setStatus('Segmenting…');
-    void segmentStrokesToMask(nodeId, useRotoBrushStore.getState().strokes, time, {
+    // Only this frame's strokes segment it: a stroke on another frame is that
+    // frame's correction (it re-seeds propagation there).
+    void segmentStrokesToMask(nodeId, strokesAt(useRotoBrushStore.getState().strokes, time), time, {
       featherPx: store.featherPx,
       replacePathId: store.maskPathId,
     })
@@ -230,7 +232,7 @@ export function RotoBrushOverlay(): JSX.Element | null {
         paintingRef.current = true;
         // Alt flips the meaning of THIS stroke without changing the tool's
         // default — the same "temporary opposite" Alt has everywhere else.
-        useRotoBrushStore.getState().begin(e.altKey ? 'bg' : 'fg', p);
+        useRotoBrushStore.getState().begin(e.altKey ? 'bg' : 'fg', p, time);
       }}
       onPointerMove={(e) => {
         if (!paintingRef.current) return;

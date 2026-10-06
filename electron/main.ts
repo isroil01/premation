@@ -30,6 +30,7 @@ import { getKeyForProvider, registerAiKeyIpc, VAULT_PROVIDERS, type VaultProvide
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
 import { registerModelDownloadIpc, abortAllModelDownloads } from './modelDownload';
 import { objectMatteUserDir, registerObjectMatteModelIpc } from './objectMatteModel';
+import { faceModelUserDir, registerFaceModelIpc } from './faceModel';
 import { registerMediaKeyIpc } from './mediaKeyVault';
 import { registerAiMediaProxyIpc } from './aiMediaProxy';
 import { registerApiProxyIpc, abortAllApiStreams, sendWithAuth } from './apiProxy';
@@ -1160,6 +1161,8 @@ app.whenReady().then(() => {
   // it (objectMatteModel.ts); the cancel channel is modelDownload.ts. Ungated:
   // it attaches no credential and runs only on an explicit press.
   registerObjectMatteModelIpc(() => app.getPath('userData'));
+  // Face Tracking's landmark model, downloaded on first use (faceModel.ts).
+  registerFaceModelIpc(() => app.getPath('userData'));
   registerModelDownloadIpc();
   // The account session, and every authenticated call that uses it.
   //
@@ -1223,6 +1226,7 @@ app.whenReady().then(() => {
     // folder file:sessionFootageDir hands the page).
     sessionFootageDir: ensureDir(path.join(app.getPath('userData'), 'session-footage')),
     samUserDir: objectMatteUserDir(app.getPath('userData')),
+    faceUserDir: faceModelUserDir(app.getPath('userData')),
     // The transcribe job's key: main's keystore → the startJob, per job (never logged, never to a page).
     transcribeCredential: async (provider) =>
       (VAULT_PROVIDERS as readonly string[]).includes(provider) ? getKeyForProvider(provider as VaultProvider) : null,

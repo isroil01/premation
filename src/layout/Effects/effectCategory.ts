@@ -205,6 +205,8 @@ export const EFFECT_CATEGORY: Record<EffectType, string> = {
   extract: 'Keying',
   'spill-suppressor': 'Keying',
   'matte-choker': 'Keying',
+  'refine-soft-matte': 'Keying',
+  'refine-hard-matte': 'Keying',
   'alpha-levels': 'Keying',
   'solid-composite': 'Keying',
   'channel-combiner': 'Keying',

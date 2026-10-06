@@ -83,6 +83,15 @@ class Planner {
 
   [[nodiscard]] std::optional<Plan> follow(const std::string& target, const Track& samples, bool camera) const;
   [[nodiscard]] std::optional<Plan> stabilize(const Track& samples) const;
+  /// AE parity 3.6: two points stabilize position AND rotation (and scale):
+  /// each frame the video layer is moved by the similarity that takes the
+  /// pair back to where it was on the first frame.
+  [[nodiscard]] std::optional<Plan> stabilize_transform(const std::vector<Track>& tracks, bool wantScale) const;
+  /// AE parity 3.6: a point track onto any 2D point param of an effect
+  /// (`<param>X` / `<param>Y`, layer px from the layer's centre).
+  [[nodiscard]] std::optional<Plan> effect_point(const std::string& target, const std::string& effectId,
+                                                 const std::string& effectType, const std::string& param,
+                                                 const Track& samples) const;
   [[nodiscard]] std::optional<Plan> transform(const std::string& target, const std::vector<Track>& tracks, bool wantScale) const;
   [[nodiscard]] std::optional<Plan> camera_track(const std::string& target, const std::vector<Track>& tracks) const;
   /// `effectId` '' = the target's first Corner Pin (added by send_plan when it has none).

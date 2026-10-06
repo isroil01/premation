@@ -1,6 +1,6 @@
 // ONNX Runtime FFI for the SAM pair (sam_ort.hpp) — the only file that sees
-// the ORT C++ API. CPU execution provider (the TS asked for webgpu → wasm;
-// the engine's CPU path computes the same graph). Ort::Exception never leaves
+// the ORT C++ API. A GPU execution provider when the runtime has one
+// (ort_providers_ffi.hpp, AE parity 3.1), else the CPU. Ort::Exception never leaves
 // this file: every call returns false with the message.
 //
 // Built without the runtime (no onnxruntime headers on the include path),
@@ -24,6 +24,8 @@
 #endif
 
 #ifdef PREMATION_SAM_ORT
+#include "ort_providers_ffi.hpp"
+
 #include <array>
 #include <exception>
 #include <filesystem>
@@ -128,9 +130,8 @@ class OrtModels final : public Models {
 
  private:
   static Ort::SessionOptions make_options() {
-    Ort::SessionOptions o;
-    o.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-    return o;
+    std::string provider;
+    return ort::session_options(provider);
   }
 
   // Declaration order is construction order: the Env outlives the sessions.

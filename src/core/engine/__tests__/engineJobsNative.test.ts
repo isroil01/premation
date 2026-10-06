@@ -267,7 +267,7 @@ maybe('engine jobs on the real engine', () => {
 
     // The roto mask is the hole: fill it from the frames around it.
     const fill = unwrap(await client.execute({
-      type: 'startJob', job: { kind: 'contentAwareFill', value: { layer, range: { start: 0, duration: secondsToFlicks(3 / 30) }, outputFolder: path.join(tmp, 'fill') } }, apply: true,
+      type: 'startJob', job: { kind: 'contentAwareFill', value: { layer, range: { start: 0, duration: secondsToFlicks(3 / 30) }, outputFolder: path.join(tmp, 'fill'), references: [] } }, apply: true,
     }));
     const fillDone = await waitJob(client, fill.job);
     expect(fillDone.error).toBeUndefined();

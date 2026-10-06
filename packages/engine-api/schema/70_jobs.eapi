@@ -13,7 +13,8 @@
 
 family "Jobs";
 
-enum TrackKind { position = 0; positionRotation = 1; positionRotationScale = 2; perspectiveCorner = 3; mask = 4; planar = 5; }
+/// `planarRegion` (AE parity 3.4, Mocha class): `points` 0–3 are a region of a flat surface (TL, TR, BR, BL), tracked as one homography per frame from every feature inside it (exclusions: `excludeMasks`); `points` 4–7, when given, are the SURFACE whose corners the result follows (else the region's). The result is four tracks (the surface corners), applied as a corner pin.
+enum TrackKind { position = 0; positionRotation = 1; positionRotationScale = 2; perspectiveCorner = 3; mask = 4; planar = 5; planarRegion = 6; }
 enum TrackDirection { forward = 0; backward = 1; both = 2; }
 
 struct TrackPointSpec {
@@ -30,7 +31,7 @@ struct TrackMotionJob {
   points: TrackPointSpec[] = 3;
   range: TimeRange = 4;
   direction: TrackDirection = 5;
-  /// Where to apply: a layer's transform, an effect point, a mask. Absent = keep as tracker data only.
+  /// Where to apply: a layer's transform, an effect point (`effects/<id>/<param>`: the effect's `<param>X` / `<param>Y`, layer px from the layer's centre, kind `position`), a mask. Absent = keep as tracker data only.
   applyTo?: PropRef = 6;
   /// The time the points' positions are given at (layer pixels on that frame). Default: `range.start` for `forward`, the range's last frame for `backward`, the playhead clamped into the range for `both` (tracked outward from there, autoTrack.ts).
   origin?: Time = 706;
@@ -40,13 +41,18 @@ struct TrackMotionJob {
   maxCoastFrames?: u32 = 708;
   /// Long edge the footage is decoded at for the analysis (the TS analysis tier; default 960, 0 = full size). Points, sizes and the result stay in layer pixels.
   analysisMaxEdge?: u32 = 709;
-  /// Stabilize Motion (trackerStore mode `stabilize`, applyTrack.ts planStabilize): point 0's inverse motion written as position keys on the TRACKED layer; `applyTo` is not read. Kind `position` only.
+  /// Stabilize Motion (trackerStore mode `stabilize`, applyTrack.ts planStabilize): point 0's inverse motion written as position keys on the TRACKED layer; `applyTo` is not read. Kind `position`; `positionRotation` / `positionRotationScale` (two points) also stabilize rotation / scale (AE parity 3.6).
   stabilize: bool = 710;
   /// Kind `planar` (the corner mode's "Dense grid", planarFit.ts densifyQuad): the quad TL, TR, BR, BL (+ any points after it, kept) gains a `planarGrid`×`planarGrid` lattice of features inside it (default 5, 1…16) and the corner pin is the RANSAC plane over all of them.
   planarGrid?: u32 = 1710;
+  /// One-click feature picking (AE parity 3.6, autoFeature.ts restored in the engine): `points[0]`'s feature centre is only a hint (its size, when given, the search radius). At the origin frame the engine picks the trackable feature nearest it (Shi-Tomasi strength × distinctness × proximity), sizes the feature window to the smallest that resolves it and the search window from the feature's own corroborated motion, and adds a companion feature on the same surface as point 1 (rotation / scale). The summary's `plan` reports the measurements; a region with nothing trackable fails `invalidArgument`.
+  autoFeature?: bool = 1720;
+  /// Kind `planarRegion`: masks of the layer (ids) whose area is never tracked (an occluder, a reflection), followed as they animate.
+  excludeMasks: string[] = 1721;
 }
 
 /// `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%).
+enum StabilizeFraming { stabilizeOnly = 0; stabilizeCrop = 1; cropAutoScale = 2; }
 struct StabilizeJob {
   layer: LayerId = 1;
   range: TimeRange = 2;
@@ -54,6 +60,9 @@ struct StabilizeJob {
   method: string = 4;
   /// Long edge the footage is decoded at (the TS analysis tier; default 960, 0 = full size). The flow itself runs at most 480 px wide, as smoothStabilize.ts.
   analysisMaxEdge?: u32 = 704;
+  /// Framing (similarity variant): `stabilizeOnly` (default) keeps the moving borders; `stabilizeCrop` zooms every frame by the one factor the worst frame needs; `cropAutoScale` zooms each frame just enough, eased. Capped at `maxScale` % (default 150).
+  framing?: StabilizeFraming = 1705;
+  maxScale?: f64 = 1706;
   /// smoothStabilize.ts `variant`: `similarity` (default — position / rotation / scale keys per `method`), `subspace` (a 4×4 grid of local similarities → Mesh Warp keys on the layer, subspaceWarp.ts), `rolling-shutter` (the subspace grid with the rows' readout shear repaired).
   variant?: string = 1704;
 }
@@ -102,7 +111,31 @@ struct ObjectMatteJob {
   feather?: f64 = 709;
   /// Masks of `layer` (their ids, `masks/<id>`) removed in the same history entry as the new one is added — a re-segment replacing the tool's previous outline.
   replaceMasks: string[] = 710;
+  /// AE parity 3.1 — video. Absent: one frame at `range.start` (the outline as before). Set: the subject is followed through `range` from `origin` (default `range.start`) forward, backward or both ways: each frame is segmented from prompts carried from the previous frame (the box and inner points of its matte, the flow-warped user prompts) plus every correction stroke on that frame.
+  direction?: TrackDirection = 711;
+  /// Correction strokes on any frame (layer px): foreground or background points at `time`. They re-seed propagation from that frame.
+  strokes: ObjectMatteStroke[] = 712;
+  /// Video: also store the soft alpha matte of every frame (PNG next to the project, attached with setLayerMatte) — default true. The mask path is written either way.
+  matte?: bool = 713;
+  /// Video: matte refinement (refine edge, decontaminate, motion blur, feather, choke, reduce chatter).
+  refine?: MatteRefine = 714;
+  /// Where the matte PNGs go; empty = next to the project, `Object Matte/<layer>/`.
+  outputFolder?: string = 715;
+  /// Video: the frame `prompts` / `box` are given at (default `range.start`).
+  origin?: Time = 716;
 }
+/// A correction stroke on one frame (AE parity 3.1).
+struct ObjectMatteStroke { time: Time = 1; points: Vec2[] = 2; background: bool = 3; }
+/// Matte refinement (AE parity 3.2; AE's Refine Edge / Refine Soft Matte): `edgeRadius` px of the band refined against the picture (hair), `decontaminate` 0–1 (edge colour from the background removed), `motionBlur` (matte blurred along the motion, `shutterAngle` degrees, default 180), `feather` px, `choke` −100…100 %, `reduceChatter` 0–100 % (temporal smoothing of the edge).
+struct MatteRefine { edgeRadius: f64 = 1; decontaminate: f64 = 2; motionBlur: bool = 3; shutterAngle: f64 = 4; feather: f64 = 5; choke: f64 = 6; reduceChatter: f64 = 7; }
+/// AE parity 3.3: `outline` follows the face's outline as one mask; `detailed` adds masks for the eyes, brows and mouth and nulls for the eyes, pupils, nose tip, mouth corners and chin.
+enum FaceTrackMode { outline = 0; detailed = 1; }
+/// Face tracking (AE parity 3.3): the face inside the layer's mask `mask` (its id; absent = the first mask) at `origin` (default: range start for forward, end for backward, the playhead for both), followed with a face landmark model (468 points) through `range`. `landmarkModel` empty = the model the user installed (PREMATION_FACE_USER_DIR) else the bundled one.
+struct FaceTrackJob { layer: LayerId = 1; range: TimeRange = 2; direction: TrackDirection = 3; mode: FaceTrackMode = 4; mask?: string = 5; landmarkModel: string = 6; origin?: Time = 7; }
+/// AE parity 3.5. `solve`: features found and tracked across `range` automatically, the camera and the scene's points solved (the focal length too unless `focalLength`, source px, is given); a "3D Tracker Camera" is keyed and the solve is stored on the layer (getCameraSolve) for the viewer's track points. `groundPlane`: the stored solve re-oriented so the plane through `points` (indices into the solve's points, ≥ 3) is the ground and their centre the origin; the camera re-keyed. `createLayers`: a layer of kind `create` placed on the plane through `points` (one point: a null / text at it), 3D, facing the camera side.
+enum CameraTrackAction { solve = 0; groundPlane = 1; createLayers = 2; }
+enum TrackPointLayer { text = 0; solid = 1; null = 2; shadowCatcher = 3; }
+struct CameraTrackJob { layer: LayerId = 1; range: TimeRange = 2; action?: CameraTrackAction = 3; focalLength?: f64 = 4; analysisMaxEdge?: u32 = 5; maxFeatures?: u32 = 6; points: u32[] = 7; create?: TrackPointLayer = 8; }
 /// Transcription (captions/transcribe.ts transcribeCompositionDetailed): `comp`'s sound over `range` (absent = the whole composition) mixed down by a child engine (the export's offline mix: levels, trims, mutes), 16 kHz mono, sent to the user's speech provider; the summary is `{"cues":[{start,end,text}],"words":[…],"language":S}` in composition seconds, cues de-overlapped. Nothing is written (`createCaptions` must be false — the caption commands build layers from the cues). `layer` is not read yet (a single layer's sound is not isolated; send '').
 /// `provider` names the key (`openai`; the others have no timed speech API and are refused). `credential` is filled by Electron MAIN from its keystore as the request passes through it — a page never has the key, and a value the page sends is replaced. The engine keeps it only for the one request to the provider: it is never persisted, logged, or returned (the engine's own log and getJobs drop it).
 struct TranscribeJob {
@@ -169,12 +202,42 @@ struct TrackApplyJob {
   sourceWidth: f64 = 5;
   sourceHeight: f64 = 6;
   nullMode?: TrackApplyMode = 7;
+  /// `follow` onto an effect point of `target`: `effects/<id>/<param>` (AE parity 3.6).
+  targetPath?: string = 8;
+  /// `stabilize` with two tracks: also stabilize rotation, and scale (AE parity 3.6).
+  stabilizeRotation?: bool = 9;
+  stabilizeScale?: bool = 10;
 }
+
+/// A tracker saved on its layer (AE parity 3.6; AE's Motion Trackers group): the point setup and the analysed samples, so a track survives selecting another layer, saving and reopening. Samples are stored on the layer's own time axis and answered in composition time.
+struct TrackerPointData { feature: Rect = 1; search: Rect = 2; attach: Vec2 = 3; samples: TrackSampleRow[] = 4; }
+struct TrackerData { name: string = 1; mode: string = 2; kind: TrackKind = 3; sourceWidth: f64 = 4; sourceHeight: f64 = 5; points: TrackerPointData[] = 6; }
+struct LayerTrackers { trackers: TrackerData[] = 1; }
+/// Replace the layer's saved trackers (empty clears them). Inverse: the previous list.
+command setLayerTrackers = 1945 { layer: LayerId = 1; trackers: TrackerData[] = 2; }
+/// The layer's saved trackers, sample times in composition time.
+query getLayerTrackers = 1090 { layer: LayerId = 1; } -> LayerTrackers;
+
+/// A camera solve stored on its footage layer (AE parity 3.5). `frames`: per solved frame the solve camera (world→camera `rotation`, row-major 3×3, and `center`) in the solve's own space; `points` the solved scene points there, `pointErrors` their reprojection error (px). World (composition) = `worldOrigin` + `worldScale` · `worldRotation` · (p − `worldCentroid`). `focal` is in source px.
+struct CameraSolveFrame { time: Time = 1; rotation: f64[] = 2; center: Vec3 = 3; }
+struct CameraSolveData { camera: LayerId = 1; focal: f64 = 2; sourceWidth: f64 = 3; sourceHeight: f64 = 4; frames: CameraSolveFrame[] = 5; points: Vec3[] = 6; pointErrors: f64[] = 7; worldOrigin: Vec3 = 8; worldScale: f64 = 9; worldRotation: f64[] = 10; worldCentroid: Vec3 = 11; }
+struct CameraSolveAnswer { solve?: CameraSolveData = 1; }
+/// Store (or, without `solve`, clear) the layer's camera solve. Inverse: the previous one.
+command setCameraSolve = 1946 { layer: LayerId = 1; solve?: CameraSolveData = 2; }
+query getCameraSolve = 1091 { layer: LayerId = 1; } -> CameraSolveAnswer;
+
+/// A per-frame soft matte on a layer (AE parity 3.2; the video object matte job's result): each frame is the layer's CUT-OUT picture (straight RGBA: the refined, decontaminated subject over transparency), and the frame nearest the layer's time stands in for its footage, as Content-Aware Fill frames do. Empty `frames` clears it. Inverse: the previous record.
+command setLayerMatte = 1947 { layer: LayerId = 1; frames: ContentAwareFillFrame[] = 2; }
 /// Roto Brush (rotoBrush.ts runRotoBrush): a GrabCut-class matte from the `seed` click (layer pixels at `range.start`, colour `tolerance` default 36), propagated frame to frame by block flow with a colour re-seed, as ONE "Roto Brush" mask with a path key per frame of the range (feather `feather` px, default 2).
 /// Roto Brush propagation. The starting matte is `startMask` at `range.start` (the tool's SAM outline, a mask id of `layer`), else GrabCut from every foreground prompt. Every prompt (layer px, top-left origin) rides the flow from frame to frame and re-seeds the matte; background prompts keep their region out of the re-seed. `seed` is the prompt used when `prompts` is empty. The result is ONE "Roto Brush" mask with a path key per frame; `replaceMasks` and every other "Roto Brush" mask on the layer are removed in the same history entry.
 struct RotoBrushJob { layer: LayerId = 1; range: TimeRange = 2; seed: Vec2 = 3; tolerance?: f64 = 4; feather?: f64 = 5; prompts: Vec2[] = 6; backgroundPrompts: Vec2[] = 7; startMask?: string = 8; replaceMasks: string[] = 9; }
 /// Content-Aware Fill (contentAwareFillVideo.ts runContentAwareFill): the layer's masks at each frame of the range are the hole, filled by PatchMatch then carried by flow both ways; the filled frames are PNGs written to `outputFolder` (default: next to the project, `Content-Aware Fill/`) and attached with setContentAwareFill (the renderer shows the nearest filled frame over the footage).
-struct ContentAwareFillJob { layer: LayerId = 1; range: TimeRange = 2; outputFolder: string = 3; }
+/// AE parity 3.7. `object`: synthesis (multi-scale PatchMatch) plus temporal propagation; `surface`: propagation, the rest a smooth membrane (no synthesis); `edgeBlend`: each frame a membrane from the hole's edge (no temporal).
+enum ContentAwareFillMode { object = 0; surface = 1; edgeBlend = 2; }
+/// Lighting correction strength: the boundary mismatch spread across the hole.
+enum ContentAwareLighting { off = 0; subtle = 1; moderate = 2; strong = 3; }
+/// The hole is the layer's masks as Béziers (mode `none` skipped, `subtract` cut out, `inverted` honoured), grown by `expansion` px. `references`: clean plates (PNG) painted for frames; each fills its frame and anchors propagation. `createReference`: fill only the frame at `range.start`, write `reference_<frame>.png` and apply nothing (the summary's `files` names it) — paint it, then pass it back in `references`. Any range: frames are filled in windows, each anchored on the previous window's last frame.
+struct ContentAwareFillJob { layer: LayerId = 1; range: TimeRange = 2; outputFolder: string = 3; mode?: ContentAwareFillMode = 4; lighting?: ContentAwareLighting = 5; references: ContentAwareFillFrame[] = 6; expansion?: f64 = 7; createReference?: bool = 8; }
 /// Auto-reframe (autoReframe.ts autoReframeComposition): `comp` rendered small (160 px wide, 12 frames/s) by a child engine, saliency + shot cuts per frame (saliency.ts, sceneEditDetect.ts), a dead-zone / lag camera path (reframePath.ts); a NEW composition `width`×`height` holding `comp` as a precomp layer scaled to cover, with the pan keyed on its separated position. The source is untouched.
 struct AutoReframeJob { comp: ItemId = 1; width: u32 = 2; height: u32 = 3; name?: string = 4; deadZone?: f64 = 5; lagSeconds?: f64 = 6; }
 /// Bake Physics to Keyframes (bakeDynamics.ts bakePhysicsToKeyframes): the composition's rigid bodies stepped by the renderer's own solver (every body, so collisions match the viewport; the world is the engine's: gravity 0 / 1800, the comp rectangle as walls, 4 passes), sampled at each frame of `range` (every `everyNFrames`th, the last frame always) and written onto the `layers` that carry an enabled DYNAMIC body — position, and rotation for a body that spins — as linear keys with the last one held, Douglas-Peucker thinned by `simplifyTolerance` (value units; 0 = every sample). Their physics is switched off in the same entry. Refused (invalidArgument) when none of `layers` has an enabled dynamic body.
@@ -204,6 +267,8 @@ union JobSpec {
   rigLogo: RigLogoJob = 1715;
   physicsBake: PhysicsBakeJob = 1716;
   particleBake: ParticleBakeJob = 1717;
+  cameraTrack: CameraTrackJob = 1718;
+  faceTrack: FaceTrackJob = 1719;
 }
 
 command startJob = 850 [control] { job: JobSpec = 1; apply: bool = 2; } -> JobRef;

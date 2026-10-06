@@ -171,6 +171,9 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   setViewportHiddenLayers: { id: 813, kind: 'control', coalesce: false, family: "Transport", result: "Empty", doc: "The layers a viewport does not draw — editor state, not document state: the text layer being edited in place (the editor shows its text, so the engine must not draw it underneath). Replaces the viewport's previous set; empty = draw every layer. Hides the layer itself (as its eye switch would) in that viewport's frames only: exports, thumbnails and other viewports draw it. A control: no history, no revision." },
   setViewportFocus: { id: 814, kind: 'control', coalesce: false, family: "Transport", result: "Empty", doc: "Focus Mode — editor state, not document state: the layers the user is working inside. Every other layer of that viewport's frames is drawn as a dim reference (12 % of its opacity); exports, thumbnails and other viewports are untouched. Replaces the viewport's previous set; empty = no focus, every layer draws as authored. A control: no history, no revision." },
   setOverlayGeometry: { id: 1771, kind: 'control', coalesce: false, family: "Transport", result: "Empty", doc: "B4 — subscribe a viewport's overlays to FRAME-SYNCHRONOUS geometry (docs/TS_ENGINE_REMOVAL.md \"Gaps\"): from its next frame on, every FrameReady of `viewport` is preceded on the frame channel by FrameGeometry messages for `layers`, evaluated at that frame's own time and revision — the world matrices, drawn boxes, motion paths and text boxes the selection outline, gizmos and motion path draw, instead of a query per played frame. Replaces the viewport's previous subscription; no layers or no kinds = unsubscribe. Layers that do not exist are skipped. A control: no history, no revision. B4 round 5: `groups` — per-overlay layer × kind requests; a layer gets the union of the kinds of every group naming it (and `kinds` when `layers` names it). `views` — the view modes (`active`, `camera:<id>`, an ortho view, a custom view id) whose resolved VIEW CAMERA each frame carries (FrameGeometry.views). The subscription is empty only when layers × kinds, every group and `views` are. B4 round 5: `rig` — what the `rig` kind resolves beyond the pose (OverlayRig): the focus pin's motion path, the focus bone's weights, and the puppet tool's pinless authoring mesh." },
+  setLayerTrackers: { id: 1945, kind: 'edit', coalesce: false, family: "Jobs", result: "Empty", doc: "Replace the layer's saved trackers (empty clears them). Inverse: the previous list." },
+  setCameraSolve: { id: 1946, kind: 'edit', coalesce: false, family: "Jobs", result: "Empty", doc: "Store (or, without `solve`, clear) the layer's camera solve. Inverse: the previous one." },
+  setLayerMatte: { id: 1947, kind: 'edit', coalesce: false, family: "Jobs", result: "Empty", doc: "A per-frame soft matte on a layer (AE parity 3.2; the video object matte job's result): each frame is the layer's CUT-OUT picture (straight RGBA: the refined, decontaminated subject over transparency), and the frame nearest the layer's time stands in for its footage, as Content-Aware Fill frames do. Empty `frames` clears it. Inverse: the previous record." },
   startJob: { id: 850, kind: 'control', coalesce: false, family: "Jobs", result: "JobRef", doc: "" },
   cancelJob: { id: 851, kind: 'control', coalesce: false, family: "Jobs", result: "Empty", doc: "" },
   applyJobResult: { id: 852, kind: 'edit', coalesce: false, family: "Jobs", result: "ItemList", doc: "Apply a finished job's result (when started with apply=false). One history entry." },
@@ -182,6 +185,8 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
 };
 
 export const QUERIES: Readonly<Record<QueryType, QueryInfo>> = {
+  getLayerTrackers: { id: 1090, family: "Jobs", result: "LayerTrackers", doc: "The layer's saved trackers, sample times in composition time." },
+  getCameraSolve: { id: 1091, family: "Jobs", result: "CameraSolveAnswer", doc: "" },
   getDocument: { id: 1000, family: "Model", result: "DocumentSnapshot", doc: "" },
   exportDocument: { id: 1088, family: "Model", result: "ExportedDocument", doc: "F2 — the whole project document at the answer's revision, exactly as saveProject writes it (cloud upload, versions, templates and export read it here instead of capturing a copy in the page). Byte order of keys is the engine's; parse it, do not compare bytes across engines." },
   getComposition: { id: 1001, family: "Model", result: "CompositionDetails", doc: "" },
@@ -273,4 +278,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":81,"structs":499,"unions":11,"commands":164,"queries":52,"events":33} as const;
+export const SCHEMA_COUNTS = {"enums":87,"structs":514,"unions":11,"commands":167,"queries":54,"events":33} as const;

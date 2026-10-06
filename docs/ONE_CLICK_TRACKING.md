@@ -2,17 +2,16 @@
 
 Point at something in the shot. Get keyframes.
 
-> **Status (2026-10-06).** The analysis this page describes — the Shi-Tomasi
-> feature picker, the distinctness check, measured feature/search windows and
-> the companion feature — lived in the TypeScript engine, which is deleted
-> (docs/TS_ENGINE_REMOVAL.md). Today a click runs the engine's `trackMotion`
-> job (`src/core/tracking/autoTrackCommand.ts`) on the clicked point with
-> fixed-ratio boxes, both ways from the playhead. Nothing is measured about the
-> feature, so the panel shows no good/fair/poor badge and the canvas draws no
-> verdict ring. AE parity step 3.6 (docs/AE_PARITY_PLAN.md) restores the
-> picker in the engine. The files named below (`autoFeature.ts`,
-> `autoTrack.ts`, `reverseFrameWalk.ts`) no longer exist; the design notes are
-> kept as the specification for that port.
+> **Status (2026-10-06, AE parity step 3.6).** The analysis this page
+> describes runs in the engine again: the `trackMotion` job's `autoFeature`
+> (`native/engine/src/jobs/track_feature.{hpp,cpp}`, the port of
+> `autoFeature.ts` / `autoTrack.ts` from 5ed830eb^) picks the Shi-Tomasi
+> feature nearest the click, measures its distinctness, sizes the feature
+> window and the search window from its corroborated motion, and adds the
+> companion feature; the summary's `plan` carries the measurements, so the
+> panel's good/fair/poor badge and the canvas verdict ring are earned again.
+> The TypeScript files named below no longer exist; the C++ keeps their
+> constants and their reasons.
 
 Everything a tracker normally asks you to decide before it will run — which
 feature, how big the feature box, how big the search box, which direction — is

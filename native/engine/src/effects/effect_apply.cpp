@@ -971,6 +971,13 @@ void matte_choker_fx(const Value& p, PixelPass& pass) {
   run(pass, "matte-choker",
       Args()("spread", n(p, "spread"))("choke", n(p, "choke"))("softness", n(p, "softness"))("iterations", n(p, "iterations")));
 }
+void refine_matte_fx(const char* type, const Value& p, PixelPass& pass) {
+  run(pass, type,
+      Args()("edgeRadius", n(p, "edgeRadius"))("smooth", n(p, "smooth"))("contrast", n(p, "contrast"))("shiftEdge", n(p, "shiftEdge"))(
+          "feather", n(p, "feather"))("decontaminate", flag(p, "decontaminateEdges", true) ? n(p, "decontaminationAmount") : 0));
+}
+void refine_soft_matte_fx(const Value& p, PixelPass& pass) { refine_matte_fx("refine-soft-matte", p, pass); }
+void refine_hard_matte_fx(const Value& p, PixelPass& pass) { refine_matte_fx("refine-hard-matte", p, pass); }
 void alpha_levels_fx(const Value& p, PixelPass& pass) {
   run(pass, "alpha-levels",
       Args()("inBlack", n(p, "inBlack"))("inWhite", n(p, "inWhite"))("gamma", n(p, "gamma"))("outBlack", n(p, "outBlack"))(
@@ -1173,7 +1180,7 @@ void bubbles_fx(const Value& p, PixelPass& pass) {
           "evolution", n(p, "evolution"))("seed", n(p, "seed")));
 }
 
-constexpr std::array<std::pair<std::string_view, Adapter>, 139> kAdapters{{
+constexpr std::array<std::pair<std::string_view, Adapter>, 141> kAdapters{{
     {"venetian-blinds", venetian_blinds},
     {"gradient-wipe", gradient_wipe},
     {"card-wipe", card_wipe},
@@ -1257,6 +1264,8 @@ constexpr std::array<std::pair<std::string_view, Adapter>, 139> kAdapters{{
     {"extract", extract_fx},
     {"spill-suppressor", spill_fx},
     {"matte-choker", matte_choker_fx},
+    {"refine-soft-matte", refine_soft_matte_fx},
+    {"refine-hard-matte", refine_hard_matte_fx},
     {"alpha-levels", alpha_levels_fx},
     {"solid-composite", solid_composite_fx},
     {"channel-combiner", channel_combiner_fx},

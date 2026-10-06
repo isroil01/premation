@@ -128,6 +128,7 @@ import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
 import { openSolidSettings } from '@layout/Composition/LayerSettingsDialog';
 import { openCameraDialog, openLightDialog } from '@layout/Workspace/SceneInsertDialogs';
 import { runSceneEditDetection, type SceneEditMode } from '@core/tracking/sceneEditCommand';
+import { buildTrackingCommands } from '@layout/Inspector/trackMotion/trackingCommands';
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { compHas3DContent } from '@core/mirror/compLayers';
 import { componentPropValue } from '@core/mirror/componentProps';
@@ -503,6 +504,8 @@ function buildToolCommands(): ReadonlyArray<Command> {
     { tool: 'delete-vertex', label: 'Delete Vertex Tool' },
     { tool: 'convert-vertex', label: 'Convert Vertex Tool' },
     { tool: 'mask-feather', label: 'Mask Feather Tool' },
+    // Alt+W stays the viewport command's (viewportCommands.ts); this makes the toolbar button rebindable.
+    { tool: 'roto', label: 'Roto Brush & Object Matte Tool' },
   ];
   // Every tool used 'crosshair', so the palette/menus showed eleven identical
   // icons — give each tool its actual glyph.
@@ -1608,6 +1611,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildMergePathCommands(),
     ...buildPrimitive3DCommands(),
     ...buildSceneEditCommands(),
+    ...buildTrackingCommands(),
     ...buildWorkspaceCommands(),
     ...buildProjectCommands(),
     ...buildRigPresetCommands(),
@@ -2703,6 +2707,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             { id: 'view.preview', panel: 'preview', label: 'Preview', icon: 'play' },
             { id: 'view.sourceMonitor', panel: 'sourceMonitor', label: 'Source Monitor', icon: 'tv' },
             { id: 'view.tracker', panel: 'tracker', label: 'Tracker', icon: 'crosshair' },
+            { id: 'view.contentAwareFill', panel: 'contentAwareFill', label: 'Content-Aware Fill', icon: 'magic-wand' },
             { id: 'view.rig', panel: 'rig', label: 'Rigging', icon: 'bone' },
             { id: 'view.effects', panel: 'effects', label: 'Effects', icon: 'magic-wand' },
             { id: 'view.motion', panel: 'motion', label: 'Graph Panel', icon: 'graph-value' },

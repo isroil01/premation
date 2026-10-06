@@ -36,10 +36,13 @@ void set_ffmpeg_executable(std::string path);
 [[nodiscard]] PreparedJob prepare_physics_bake(const api::PhysicsBakeJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_particle_bake(const api::ParticleBakeJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_track_apply(const api::TrackApplyJob& spec, const JobDocContext& ctx);
+[[nodiscard]] PreparedJob prepare_camera_track(const api::CameraTrackJob& spec, const JobDocContext& ctx);
+[[nodiscard]] PreparedJob prepare_face_track(const api::FaceTrackJob& spec, const JobDocContext& ctx);
 /// Transcription through the user's speech provider (kind_transcribe.cpp); the key arrives in the spec from Electron main.
 [[nodiscard]] PreparedJob prepare_transcribe(const api::TranscribeJob& spec, const JobDocContext& ctx);
 
 /// The child-process work of the kinds that load a model (child_job.hpp).
 void register_object_matte_child();
+void register_face_track_child();
 
 }  // namespace premation::jobs

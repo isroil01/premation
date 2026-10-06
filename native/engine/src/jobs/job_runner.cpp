@@ -176,6 +176,8 @@ std::string job_kind_name(const api::JobSpec& spec) {
     case api::JobSpec::Kind::physics_bake: return "physicsBake";
     case api::JobSpec::Kind::particle_bake: return "particleBake";
     case api::JobSpec::Kind::rig_logo: return "rigLogo";
+    case api::JobSpec::Kind::camera_track: return "cameraTrack";
+    case api::JobSpec::Kind::face_track: return "faceTrack";
   }
   return "job";
 }

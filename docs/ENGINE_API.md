@@ -474,6 +474,9 @@ on an effect or mask path — one command, one inverse implementation.
 | `setCaptions` | edit | Burn-in captions (`premation render --captions`, p4-round3): the comp's top-level caption layers (`__caption` on Text) are replaced by one centred text layer per cue, in/out = the cue; `style` JSON (`fontSizeRatio` 0.05, `fontWeight` 700, `fill` #ffffff, `bottomMarginRatio` 0.1). A cue that does not end after it starts is `invalidArgument`. One journal. The TS engine answers `unsupported`. |
 | `setPluginEnabled` | control | Session enable/disable of a native plugin; re-enabling retries a failed or quarantined one, and loads one started with `--plugin-disabled`. Electron persists the choice (`state.json`, docs/PLUGIN_STORE.md §4) and passes `--plugin-disabled` at the next start. |
 | `rescanPlugins` | control | Rescan the plugin folders and answer the plugin list; bundles installed since start load at once, already-loaded ones stay loaded until restart (docs/PLUGIN_STORE.md §5). `unsupported` without `--plugins`. |
+| `setLayerTrackers` | edit | AE parity 3.6: the layer's saved trackers (`fx.trackers`: point setup, attach points, analysed samples on the layer's own time axis); empty clears them. Inverse: the previous list. Read with `getLayerTrackers`. |
+| `setCameraSolve` | edit | AE parity 3.5: the footage layer's camera solve (`fx.cameraSolve`: solve-space camera per frame, scene points and their errors, the world mapping); absent `solve` clears it. Written by the `cameraTrack` job; read with `getCameraSolve`. |
+| `setLayerMatte` | edit | AE parity 3.2: per-frame cut-out pictures (`fx.alphaMatte`) — the video Object Matte's soft, refined, decontaminated subject — the nearest standing in for the footage as Content-Aware Fill frames do. Empty clears it. |
 | `setPluginData` | edit | Plugin data **in the document** (AE sequence data / arbitrary-data params) — today it is an in-memory LRU. Inverse: previous bytes. |
 
 **Engine jobs (2026-09-27, branch `engine-jobs`). The C++ engine is the only engine; there is no page path.**
@@ -2416,6 +2419,11 @@ from the struct's maximum + 800.
   (`layout/Inspector/bakeEdits.ts`). `dynamicsBakeNative.test` holds them to
   the TypeScript reference samplers on seeded cases. The C++ particle carries
   its birth index (`Particle.index`) for the bake's grouping.
+- **`getLayerTrackers {layer}`** (1090 → `LayerTrackers`): the trackers saved
+  on the layer (AE parity 3.6), sample times in composition time.
+- **`getCameraSolve {layer}`** (1091 → `CameraSolveAnswer`): the stored camera
+  solve, or none (AE parity 3.5); the viewer projects its points onto the
+  footage per frame.
 - **`getLayerFaces {layer, time}`** (1936 → `LayerFaces`): face picking's
   geometry (facePicking.ts `projectedFaces` before its projection) — an
   extruded 3D layer's faces in WORLD px from the frame builder's snapshot: the

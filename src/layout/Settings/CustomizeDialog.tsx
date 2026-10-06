@@ -41,6 +41,7 @@ import { AiSettingsSection } from './AiSettingsSection';
 import { ExportSettingsSection } from './ExportSettingsSection';
 import { UpdatesControl } from './UpdatesControl';
 import { ObjectMatteControl } from './ObjectMatteControl';
+import { FaceModelControl } from './FaceModelControl';
 import { FilesTab } from './FilesTab';
 import { AudioHardwareSection } from './AudioHardwareSection';
 import { LanguageSetting } from './LanguageSetting';
@@ -1020,6 +1021,16 @@ export function AppearanceTab(): JSX.Element {
             </div>
             <div className={styles.settingRight}>
               <ObjectMatteControl />
+            </div>
+          </div>
+
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Face Tracking Model</span>
+              <span className={styles.settingDesc}>Face landmarks for the Tracker’s Face tracking (downloaded once, kept on this computer).</span>
+            </div>
+            <div className={styles.settingRight}>
+              <FaceModelControl />
             </div>
           </div>
 

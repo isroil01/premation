@@ -12,12 +12,15 @@
 // Pure over a FrameSource (media_input.hpp): no ffmpeg, no document.
 #pragma once
 
+#include <array>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "job_api.hpp"
+#include "planar_track.hpp"
 #include "job_inputs.hpp"
 #include "media_input.hpp"
 #include "track_frames.hpp"
@@ -54,6 +57,22 @@ struct WalkResult {
   double sourceWidth = 0;
   double sourceHeight = 0;
 };
+
+/// The planar tracker's walk (AE parity 3.4): `region` and `surface` are
+/// quads in source display px at the origin; `excludeAt` the exclusion
+/// polygons at a comp frame, source display px.
+struct PlanarWalk {
+  std::array<tracking::Pt, 4> region{};
+  std::array<tracking::Pt, 4> surface{};
+  std::function<planar::Polys(std::int64_t compFrame)> excludeAt;
+  double featureHalf = 7;
+  double searchHalf = 20;
+};
+
+/// The surface's four corners, one track each (TL, TR, BR, BL), ridden by the
+/// region's homography; `status` lost / partial when the plane was lost.
+[[nodiscard]] std::optional<WalkResult> walk_planar(FrameSource& src, const WalkSpec& spec, const PlanarWalk& planar,
+                                                    JobControl& control);
 
 /// Walk `spec` over `src` (opened at the analysis size). nullopt when cancelled.
 /// Throws EngineFail (a decode error, a range the clip does not advance over).

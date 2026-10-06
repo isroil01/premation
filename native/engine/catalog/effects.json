@@ -8171,6 +8171,150 @@
     ]
   },
   {
+    "type": "refine-soft-matte",
+    "label": "Refine Soft Matte",
+    "params": [
+      {
+        "key": "edgeRadius",
+        "label": "Edge Radius",
+        "type": "number",
+        "unit": "px",
+        "min": 0,
+        "max": 100,
+        "precision": 0,
+        "default": 10
+      },
+      {
+        "key": "smooth",
+        "label": "Smooth",
+        "type": "number",
+        "unit": "px",
+        "min": 0,
+        "max": 100,
+        "precision": 1,
+        "default": 4
+      },
+      {
+        "key": "feather",
+        "label": "Feather",
+        "type": "number",
+        "unit": "px",
+        "min": 0,
+        "max": 100,
+        "precision": 1,
+        "default": 0
+      },
+      {
+        "key": "contrast",
+        "label": "Contrast",
+        "type": "number",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "precision": 0,
+        "default": 0
+      },
+      {
+        "key": "shiftEdge",
+        "label": "Shift Edge",
+        "type": "number",
+        "unit": "%",
+        "min": -100,
+        "max": 100,
+        "precision": 0,
+        "default": 0
+      },
+      {
+        "key": "decontaminateEdges",
+        "label": "Decontaminate Edge Colors",
+        "type": "checkbox",
+        "default": true
+      },
+      {
+        "key": "decontaminationAmount",
+        "label": "Decontamination Amount",
+        "type": "number",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "precision": 0,
+        "default": 100
+      }
+    ]
+  },
+  {
+    "type": "refine-hard-matte",
+    "label": "Refine Hard Matte",
+    "params": [
+      {
+        "key": "edgeRadius",
+        "label": "Edge Radius",
+        "type": "number",
+        "unit": "px",
+        "min": 0,
+        "max": 100,
+        "precision": 0,
+        "default": 3
+      },
+      {
+        "key": "smooth",
+        "label": "Smooth",
+        "type": "number",
+        "unit": "px",
+        "min": 0,
+        "max": 100,
+        "precision": 1,
+        "default": 1
+      },
+      {
+        "key": "feather",
+        "label": "Feather",
+        "type": "number",
+        "unit": "px",
+        "min": 0,
+        "max": 100,
+        "precision": 1,
+        "default": 0
+      },
+      {
+        "key": "contrast",
+        "label": "Contrast",
+        "type": "number",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "precision": 0,
+        "default": 50
+      },
+      {
+        "key": "shiftEdge",
+        "label": "Shift Edge",
+        "type": "number",
+        "unit": "%",
+        "min": -100,
+        "max": 100,
+        "precision": 0,
+        "default": 0
+      },
+      {
+        "key": "decontaminateEdges",
+        "label": "Decontaminate Edge Colors",
+        "type": "checkbox",
+        "default": true
+      },
+      {
+        "key": "decontaminationAmount",
+        "label": "Decontamination Amount",
+        "type": "number",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "precision": 0,
+        "default": 100
+      }
+    ]
+  },
+  {
     "type": "alpha-levels",
     "label": "Alpha Levels",
     "params": [

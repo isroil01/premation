@@ -174,6 +174,9 @@ const MASK_TOOLS: ToolDef[] = [
 
 const BONE_TOOL: ToolDef = { id: 'bone', icon: 'bone', label: 'Bone Tool' };
 
+/** AE parity 3.1: Roto Brush & Object Matte on the toolbar (it was reachable only by Alt+W). */
+const ROTO_TOOL: ToolDef = { id: 'roto', icon: 'magic-wand', label: 'Roto Brush & Object Matte Tool' };
+
 /** "Selection Tool (V)" — the ACCESSIBLE name, chord read live from the registry. */
 const withShortcut = (t: ToolDef): string => toolLabelWithShortcut(t.label, t.id);
 
@@ -660,6 +663,18 @@ export function TopNav(): JSX.Element {
                       active={isMaskActive}
                       items={flyoutItems(MASK_TOOLS, setTool)}
                     />
+                  )}
+                  {!hideMask && (
+                    <button
+                      type="button"
+                      className={activeTool === ROTO_TOOL.id ? styles.toolActive : styles.tool}
+                      title={withShortcut(ROTO_TOOL)}
+                      aria-label={withShortcut(ROTO_TOOL)}
+                      aria-pressed={activeTool === ROTO_TOOL.id}
+                      onClick={() => setTool(ROTO_TOOL.id)}
+                    >
+                      <Icon name={ROTO_TOOL.icon} size="md" />
+                    </button>
                   )}
 
                   {!hidePuppet && (

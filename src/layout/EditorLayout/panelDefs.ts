@@ -179,6 +179,9 @@ export const PANEL_DEFS: readonly PanelDef[] = [
    * KINDS, and `play` is the Preview panel's.
    */
   { id: 'tracker',     title: 'Tracker',   icon: 'crosshair',   region: 'rightInspector', weight: 4.0,  closable: true, onDemand: true },
+  // AE's Content-Aware Fill panel (AE parity 3.7): its own panel, as in AE, so
+  // the fill's options are not buried in the Tracker.
+  { id: 'contentAwareFill', title: 'Content-Aware Fill', icon: 'magic-wand', region: 'rightInspector', weight: 3.9, closable: true, onDemand: true },
   { id: 'rig',         title: 'Rigging',   icon: 'bone',        region: 'rightInspector', weight: 3.5,  closable: true, onDemand: true },
   // The graph + EXPRESSION editor. On demand beside the timeline's own Graph
   // Editor (Shift+G); the Animation and Motion Design workspaces open it.

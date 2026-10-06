@@ -382,6 +382,14 @@ export interface MotionEditorApi {
    * runs only when the user presses Install. Progress arrives on
    * `onDownloadProgress`, correlated by the caller-minted `requestId`.
    */
+  /** Face Tracking's landmark model in <userData>/models/face-landmarks (electron/faceModel.ts). */
+  faceModel?: {
+    status(): Promise<{ url: string; bytes: number; installedAt: number } | null>;
+    install(request: { url: string; requestId: string }): Promise<{ ok: true; model: { url: string; bytes: number; installedAt: number } } | { ok: false; message: string }>;
+    remove(): Promise<boolean>;
+    cancelDownload(requestId: string): Promise<boolean>;
+    onDownloadProgress(handler: (event: unknown) => void): () => void;
+  };
   objectMatte?: {
     status?(): Promise<{ encoderUrl: string; decoderUrl: string; bytes: number; installedAt: number } | null>;
     install?(request: { encoderUrl: string; decoderUrl: string; requestId: string }): Promise<

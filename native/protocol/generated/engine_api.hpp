@@ -561,6 +561,7 @@ enum class TrackKind : std::uint32_t {
   perspective_corner = 3,
   mask = 4,
   planar = 5,
+  planar_region = 6,
 };
 [[nodiscard]] std::string_view to_string(TrackKind v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, TrackKind& out) noexcept;
@@ -572,6 +573,38 @@ enum class TrackDirection : std::uint32_t {
 };
 [[nodiscard]] std::string_view to_string(TrackDirection v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, TrackDirection& out) noexcept;
+
+enum class StabilizeFraming : std::uint32_t {
+  stabilize_only = 0,
+  stabilize_crop = 1,
+  crop_auto_scale = 2,
+};
+[[nodiscard]] std::string_view to_string(StabilizeFraming v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, StabilizeFraming& out) noexcept;
+
+enum class FaceTrackMode : std::uint32_t {
+  outline = 0,
+  detailed = 1,
+};
+[[nodiscard]] std::string_view to_string(FaceTrackMode v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, FaceTrackMode& out) noexcept;
+
+enum class CameraTrackAction : std::uint32_t {
+  solve = 0,
+  ground_plane = 1,
+  create_layers = 2,
+};
+[[nodiscard]] std::string_view to_string(CameraTrackAction v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, CameraTrackAction& out) noexcept;
+
+enum class TrackPointLayer : std::uint32_t {
+  text = 0,
+  solid = 1,
+  null = 2,
+  shadow_catcher = 3,
+};
+[[nodiscard]] std::string_view to_string(TrackPointLayer v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, TrackPointLayer& out) noexcept;
 
 enum class TrackApplyMode : std::uint32_t {
   follow = 0,
@@ -585,6 +618,23 @@ enum class TrackApplyMode : std::uint32_t {
 };
 [[nodiscard]] std::string_view to_string(TrackApplyMode v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, TrackApplyMode& out) noexcept;
+
+enum class ContentAwareFillMode : std::uint32_t {
+  object = 0,
+  surface = 1,
+  edge_blend = 2,
+};
+[[nodiscard]] std::string_view to_string(ContentAwareFillMode v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, ContentAwareFillMode& out) noexcept;
+
+enum class ContentAwareLighting : std::uint32_t {
+  off = 0,
+  subtle = 1,
+  moderate = 2,
+  strong = 3,
+};
+[[nodiscard]] std::string_view to_string(ContentAwareLighting v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, ContentAwareLighting& out) noexcept;
 
 enum class SvgRole : std::uint32_t {
   none = 0,
@@ -1060,11 +1110,22 @@ struct SetViewportFocus;
 struct OverlayRequest;
 struct OverlayRigOptions;
 struct SetOverlayGeometry;
+struct TrackSampleRow;
+struct TrackerPointData;
+struct TrackerData;
+struct SetLayerTrackers;
+struct CameraSolveFrame;
+struct CameraSolveData;
+struct SetCameraSolve;
+struct ContentAwareFillFrame;
+struct SetLayerMatte;
 struct TrackPointSpec;
 struct TrackMotionJob;
 struct StabilizeJob;
 struct AutoTraceJob;
 struct SceneDetectJob;
+struct ObjectMatteStroke;
+struct MatteRefine;
 struct ObjectMatteJob;
 struct TranscribeJob;
 struct AudioAnalysisJob;
@@ -1073,7 +1134,6 @@ struct PrerenderJob;
 struct ProxyJob;
 struct AudioDuckJob;
 struct AudioGateJob;
-struct TrackSampleRow;
 struct TrackSeries;
 struct TrackApplyJob;
 struct RotoBrushJob;
@@ -1082,11 +1142,12 @@ struct AutoReframeJob;
 struct RigLogoJob;
 struct PhysicsBakeJob;
 struct ParticleBakeJob;
+struct CameraTrackJob;
+struct FaceTrackJob;
 struct JobSpec;
 struct StartJob;
 struct CancelJob;
 struct ApplyJobResult;
-struct ContentAwareFillFrame;
 struct SetContentAwareFill;
 struct CaptionInput;
 struct SetCaptions;
@@ -1094,6 +1155,8 @@ struct SetPluginEnabled;
 struct RescanPlugins;
 struct SetPluginData;
 struct Command;
+struct GetLayerTrackers;
+struct GetCameraSolve;
 struct GetDocument;
 struct ExportDocument;
 struct GetComposition;
@@ -1179,6 +1242,8 @@ struct JobRef;
 struct PluginInfo;
 struct PluginList;
 struct CommandResult;
+struct LayerTrackers;
+struct CameraSolveAnswer;
 struct ProjectSettings;
 struct Interpretation;
 struct ItemInfo;
@@ -2910,6 +2975,79 @@ struct SetOverlayGeometry {
   bool operator==(const SetOverlayGeometry&) const = default;
 };
 
+struct TrackSampleRow {
+  Time time = 0;
+  double x = 0.0;
+  double y = 0.0;
+  double confidence = 0.0;
+  bool coasted = false;
+  bool operator==(const TrackSampleRow&) const = default;
+};
+
+struct TrackerPointData {
+  Rect feature;
+  Rect search;
+  Vec2 attach;
+  std::vector<TrackSampleRow> samples;
+  bool operator==(const TrackerPointData&) const = default;
+};
+
+struct TrackerData {
+  std::string name;
+  std::string mode;
+  TrackKind kind = TrackKind::position;
+  double source_width = 0.0;
+  double source_height = 0.0;
+  std::vector<TrackerPointData> points;
+  bool operator==(const TrackerData&) const = default;
+};
+
+struct SetLayerTrackers {
+  LayerId layer;
+  std::vector<TrackerData> trackers;
+  bool operator==(const SetLayerTrackers&) const = default;
+};
+
+struct CameraSolveFrame {
+  Time time = 0;
+  std::vector<double> rotation;
+  Vec3 center;
+  bool operator==(const CameraSolveFrame&) const = default;
+};
+
+struct CameraSolveData {
+  LayerId camera;
+  double focal = 0.0;
+  double source_width = 0.0;
+  double source_height = 0.0;
+  std::vector<CameraSolveFrame> frames;
+  std::vector<Vec3> points;
+  std::vector<double> point_errors;
+  Vec3 world_origin;
+  double world_scale = 0.0;
+  std::vector<double> world_rotation;
+  Vec3 world_centroid;
+  bool operator==(const CameraSolveData&) const = default;
+};
+
+struct SetCameraSolve {
+  LayerId layer;
+  std::optional<CameraSolveData> solve;
+  bool operator==(const SetCameraSolve&) const = default;
+};
+
+struct ContentAwareFillFrame {
+  Time time = 0;
+  std::string src;
+  bool operator==(const ContentAwareFillFrame&) const = default;
+};
+
+struct SetLayerMatte {
+  LayerId layer;
+  std::vector<ContentAwareFillFrame> frames;
+  bool operator==(const SetLayerMatte&) const = default;
+};
+
 struct TrackPointSpec {
   Rect feature;
   Rect search;
@@ -2930,6 +3068,8 @@ struct TrackMotionJob {
   std::optional<std::uint32_t> analysis_max_edge;
   bool stabilize = false;
   std::optional<std::uint32_t> planar_grid;
+  std::optional<bool> auto_feature;
+  std::vector<std::string> exclude_masks;
   bool operator==(const TrackMotionJob&) const = default;
 };
 
@@ -2939,6 +3079,8 @@ struct StabilizeJob {
   double smoothness = 0.0;
   std::string method;
   std::optional<std::uint32_t> analysis_max_edge;
+  std::optional<StabilizeFraming> framing;
+  std::optional<double> max_scale;
   std::optional<std::string> variant;
   bool operator==(const StabilizeJob&) const = default;
 };
@@ -2968,6 +3110,24 @@ struct SceneDetectJob {
   bool operator==(const SceneDetectJob&) const = default;
 };
 
+struct ObjectMatteStroke {
+  Time time = 0;
+  std::vector<Vec2> points;
+  bool background = false;
+  bool operator==(const ObjectMatteStroke&) const = default;
+};
+
+struct MatteRefine {
+  double edge_radius = 0.0;
+  double decontaminate = 0.0;
+  bool motion_blur = false;
+  double shutter_angle = 0.0;
+  double feather = 0.0;
+  double choke = 0.0;
+  double reduce_chatter = 0.0;
+  bool operator==(const MatteRefine&) const = default;
+};
+
 struct ObjectMatteJob {
   LayerId layer;
   TimeRange range;
@@ -2980,6 +3140,12 @@ struct ObjectMatteJob {
   std::optional<MaskMode> mask_mode;
   std::optional<double> feather;
   std::vector<std::string> replace_masks;
+  std::optional<TrackDirection> direction;
+  std::vector<ObjectMatteStroke> strokes;
+  std::optional<bool> matte;
+  std::optional<MatteRefine> refine;
+  std::optional<std::string> output_folder;
+  std::optional<Time> origin;
   bool operator==(const ObjectMatteJob&) const = default;
 };
 
@@ -3048,15 +3214,6 @@ struct AudioGateJob {
   bool operator==(const AudioGateJob&) const = default;
 };
 
-struct TrackSampleRow {
-  Time time = 0;
-  double x = 0.0;
-  double y = 0.0;
-  double confidence = 0.0;
-  bool coasted = false;
-  bool operator==(const TrackSampleRow&) const = default;
-};
-
 struct TrackSeries {
   std::vector<TrackSampleRow> samples;
   bool operator==(const TrackSeries&) const = default;
@@ -3070,6 +3227,9 @@ struct TrackApplyJob {
   double source_width = 0.0;
   double source_height = 0.0;
   std::optional<TrackApplyMode> null_mode;
+  std::optional<std::string> target_path;
+  std::optional<bool> stabilize_rotation;
+  std::optional<bool> stabilize_scale;
   bool operator==(const TrackApplyJob&) const = default;
 };
 
@@ -3090,6 +3250,11 @@ struct ContentAwareFillJob {
   LayerId layer;
   TimeRange range;
   std::string output_folder;
+  std::optional<ContentAwareFillMode> mode;
+  std::optional<ContentAwareLighting> lighting;
+  std::vector<ContentAwareFillFrame> references;
+  std::optional<double> expansion;
+  std::optional<bool> create_reference;
   bool operator==(const ContentAwareFillJob&) const = default;
 };
 
@@ -3126,6 +3291,29 @@ struct ParticleBakeJob {
   bool operator==(const ParticleBakeJob&) const = default;
 };
 
+struct CameraTrackJob {
+  LayerId layer;
+  TimeRange range;
+  std::optional<CameraTrackAction> action;
+  std::optional<double> focal_length;
+  std::optional<std::uint32_t> analysis_max_edge;
+  std::optional<std::uint32_t> max_features;
+  std::vector<std::uint32_t> points;
+  std::optional<TrackPointLayer> create;
+  bool operator==(const CameraTrackJob&) const = default;
+};
+
+struct FaceTrackJob {
+  LayerId layer;
+  TimeRange range;
+  TrackDirection direction = TrackDirection::forward;
+  FaceTrackMode mode = FaceTrackMode::outline;
+  std::optional<std::string> mask;
+  std::string landmark_model;
+  std::optional<Time> origin;
+  bool operator==(const FaceTrackJob&) const = default;
+};
+
 struct JobSpec {
   enum class Kind : std::uint32_t {
     track_motion = 1,
@@ -3147,8 +3335,10 @@ struct JobSpec {
     rig_logo = 1715,
     physics_bake = 1716,
     particle_bake = 1717,
+    camera_track = 1718,
+    face_track = 1719,
   };
-  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob, ProxyJob, AudioDuckJob, AudioGateJob, TrackApplyJob, RotoBrushJob, ContentAwareFillJob, AutoReframeJob, RigLogoJob, PhysicsBakeJob, ParticleBakeJob> v;
+  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob, ProxyJob, AudioDuckJob, AudioGateJob, TrackApplyJob, RotoBrushJob, ContentAwareFillJob, AutoReframeJob, RigLogoJob, PhysicsBakeJob, ParticleBakeJob, CameraTrackJob, FaceTrackJob> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const JobSpec&) const = default;
 };
@@ -3167,12 +3357,6 @@ struct CancelJob {
 struct ApplyJobResult {
   JobId job;
   bool operator==(const ApplyJobResult&) const = default;
-};
-
-struct ContentAwareFillFrame {
-  Time time = 0;
-  std::string src;
-  bool operator==(const ContentAwareFillFrame&) const = default;
 };
 
 struct SetContentAwareFill {
@@ -3371,6 +3555,9 @@ struct Command {
     set_viewport_hidden_layers = 813,
     set_viewport_focus = 814,
     set_overlay_geometry = 1771,
+    set_layer_trackers = 1945,
+    set_camera_solve = 1946,
+    set_layer_matte = 1947,
     start_job = 850,
     cancel_job = 851,
     apply_job_result = 852,
@@ -3380,9 +3567,19 @@ struct Command {
     rescan_plugins = 872,
     set_plugin_data = 871,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, SetMotionBlur, SetColorManagement, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, MigrateLegacyPrecomps, SetEssentialProp, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetPinnedProperties, PoseIk3D, BakeIk3D, CreateLiveMerge, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, SetMemberKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, SetViewportHiddenLayers, SetViewportFocus, SetOverlayGeometry, StartJob, CancelJob, ApplyJobResult, SetContentAwareFill, SetCaptions, SetPluginEnabled, RescanPlugins, SetPluginData> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, SetMotionBlur, SetColorManagement, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, MigrateLegacyPrecomps, SetEssentialProp, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetPinnedProperties, PoseIk3D, BakeIk3D, CreateLiveMerge, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, SetMemberKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, SetViewportHiddenLayers, SetViewportFocus, SetOverlayGeometry, SetLayerTrackers, SetCameraSolve, SetLayerMatte, StartJob, CancelJob, ApplyJobResult, SetContentAwareFill, SetCaptions, SetPluginEnabled, RescanPlugins, SetPluginData> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Command&) const = default;
+};
+
+struct GetLayerTrackers {
+  LayerId layer;
+  bool operator==(const GetLayerTrackers&) const = default;
+};
+
+struct GetCameraSolve {
+  LayerId layer;
+  bool operator==(const GetCameraSolve&) const = default;
 };
 
 struct GetDocument {
@@ -3707,6 +3904,8 @@ struct GetCacheCoverage {
 
 struct Query {
   enum class Kind : std::uint32_t {
+    get_layer_trackers = 1090,
+    get_camera_solve = 1091,
     get_document = 1000,
     export_document = 1088,
     get_composition = 1001,
@@ -3760,7 +3959,7 @@ struct Query {
     get_command_log = 1085,
     get_cache_coverage = 1089,
   };
-  std::variant<GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetTimelineRows, GetRigPose, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, RenderDocumentStill, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, GetLayerFaces, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog, GetCacheCoverage> v;
+  std::variant<GetLayerTrackers, GetCameraSolve, GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetTimelineRows, GetRigPose, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, RenderDocumentStill, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, GetLayerFaces, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog, GetCacheCoverage> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const Query&) const = default;
 };
@@ -4114,6 +4313,9 @@ struct CommandResult {
     set_viewport_hidden_layers = 813,
     set_viewport_focus = 814,
     set_overlay_geometry = 1771,
+    set_layer_trackers = 1945,
+    set_camera_solve = 1946,
+    set_layer_matte = 1947,
     start_job = 850,
     cancel_job = 851,
     apply_job_result = 852,
@@ -4123,9 +4325,19 @@ struct CommandResult {
     rescan_plugins = 872,
     set_plugin_data = 871,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ImportProjectResult, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, ItemList, Empty, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, IkResult, IkResult, LayerRef, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, Empty, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, LayerList, Empty, PluginList, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ImportProjectResult, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, ItemList, Empty, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, LayerList, LayerList, LayerList, GroupList, Empty, Empty, IkResult, IkResult, LayerRef, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, Empty, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, LayerList, Empty, PluginList, Empty> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const CommandResult&) const = default;
+};
+
+struct LayerTrackers {
+  std::vector<TrackerData> trackers;
+  bool operator==(const LayerTrackers&) const = default;
+};
+
+struct CameraSolveAnswer {
+  std::optional<CameraSolveData> solve;
+  bool operator==(const CameraSolveAnswer&) const = default;
 };
 
 struct ProjectSettings {
@@ -4978,6 +5190,8 @@ struct CacheCoverage {
 
 struct QueryResult {
   enum class Kind : std::uint32_t {
+    get_layer_trackers = 1090,
+    get_camera_solve = 1091,
     get_document = 1000,
     export_document = 1088,
     get_composition = 1001,
@@ -5031,7 +5245,7 @@ struct QueryResult {
     get_command_log = 1085,
     get_cache_coverage = 1089,
   };
-  std::variant<DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, TimelineRowSets, RigPose, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, LayerFaces, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog, CacheCoverage> v;
+  std::variant<LayerTrackers, CameraSolveAnswer, DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, TimelineRowSets, RigPose, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, LayerFaces, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog, CacheCoverage> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const QueryResult&) const = default;
 };
@@ -6300,6 +6514,24 @@ void encode(wire::Writer& w, const OverlayRigOptions& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, OverlayRigOptions& out);
 void encode(wire::Writer& w, const SetOverlayGeometry& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetOverlayGeometry& out);
+void encode(wire::Writer& w, const TrackSampleRow& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, TrackSampleRow& out);
+void encode(wire::Writer& w, const TrackerPointData& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, TrackerPointData& out);
+void encode(wire::Writer& w, const TrackerData& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, TrackerData& out);
+void encode(wire::Writer& w, const SetLayerTrackers& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetLayerTrackers& out);
+void encode(wire::Writer& w, const CameraSolveFrame& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CameraSolveFrame& out);
+void encode(wire::Writer& w, const CameraSolveData& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CameraSolveData& out);
+void encode(wire::Writer& w, const SetCameraSolve& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetCameraSolve& out);
+void encode(wire::Writer& w, const ContentAwareFillFrame& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ContentAwareFillFrame& out);
+void encode(wire::Writer& w, const SetLayerMatte& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetLayerMatte& out);
 void encode(wire::Writer& w, const TrackPointSpec& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, TrackPointSpec& out);
 void encode(wire::Writer& w, const TrackMotionJob& v);
@@ -6310,6 +6542,10 @@ void encode(wire::Writer& w, const AutoTraceJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, AutoTraceJob& out);
 void encode(wire::Writer& w, const SceneDetectJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SceneDetectJob& out);
+void encode(wire::Writer& w, const ObjectMatteStroke& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ObjectMatteStroke& out);
+void encode(wire::Writer& w, const MatteRefine& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, MatteRefine& out);
 void encode(wire::Writer& w, const ObjectMatteJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ObjectMatteJob& out);
 void encode(wire::Writer& w, const TranscribeJob& v);
@@ -6326,8 +6562,6 @@ void encode(wire::Writer& w, const AudioDuckJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, AudioDuckJob& out);
 void encode(wire::Writer& w, const AudioGateJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, AudioGateJob& out);
-void encode(wire::Writer& w, const TrackSampleRow& v);
-[[nodiscard]] wire::Status decode(wire::Reader& r, TrackSampleRow& out);
 void encode(wire::Writer& w, const TrackSeries& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, TrackSeries& out);
 void encode(wire::Writer& w, const TrackApplyJob& v);
@@ -6344,6 +6578,10 @@ void encode(wire::Writer& w, const PhysicsBakeJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PhysicsBakeJob& out);
 void encode(wire::Writer& w, const ParticleBakeJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ParticleBakeJob& out);
+void encode(wire::Writer& w, const CameraTrackJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CameraTrackJob& out);
+void encode(wire::Writer& w, const FaceTrackJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, FaceTrackJob& out);
 void encode(wire::Writer& w, const JobSpec& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, JobSpec& out);
 void encode(wire::Writer& w, const StartJob& v);
@@ -6352,8 +6590,6 @@ void encode(wire::Writer& w, const CancelJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CancelJob& out);
 void encode(wire::Writer& w, const ApplyJobResult& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ApplyJobResult& out);
-void encode(wire::Writer& w, const ContentAwareFillFrame& v);
-[[nodiscard]] wire::Status decode(wire::Reader& r, ContentAwareFillFrame& out);
 void encode(wire::Writer& w, const SetContentAwareFill& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetContentAwareFill& out);
 void encode(wire::Writer& w, const CaptionInput& v);
@@ -6368,6 +6604,10 @@ void encode(wire::Writer& w, const SetPluginData& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetPluginData& out);
 void encode(wire::Writer& w, const Command& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Command& out);
+void encode(wire::Writer& w, const GetLayerTrackers& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetLayerTrackers& out);
+void encode(wire::Writer& w, const GetCameraSolve& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetCameraSolve& out);
 void encode(wire::Writer& w, const GetDocument& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetDocument& out);
 void encode(wire::Writer& w, const ExportDocument& v);
@@ -6538,6 +6778,10 @@ void encode(wire::Writer& w, const PluginList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginList& out);
 void encode(wire::Writer& w, const CommandResult& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CommandResult& out);
+void encode(wire::Writer& w, const LayerTrackers& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, LayerTrackers& out);
+void encode(wire::Writer& w, const CameraSolveAnswer& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, CameraSolveAnswer& out);
 void encode(wire::Writer& w, const ProjectSettings& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ProjectSettings& out);
 void encode(wire::Writer& w, const Interpretation& v);
