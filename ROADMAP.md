@@ -215,9 +215,13 @@ storage layer.
 - **Audio.** Waveform display, audio layers, offline mixdown, dB automation,
   per-clip effects and the `audio` expression all exist (`src/core/audio/`).
   What does not: a mixing console — buses, sends, and live metering.
-- **Plugin ecosystem.** The sandbox, permission model and signing all ship. What
-  is missing is discovery outside the hosted registry, and more host API surface
-  for plugin authors.
+- **Plugin ecosystem.** Plugins are native SDK plugins (`native/sdk`,
+  docs/PLUGIN_SDK.md) that run locally in `premation-engine`; the JS/WGSL
+  plugin system and its marketplace were removed with the TypeScript engine.
+  What is missing is distribution — a store to browse, install, update and
+  publish (public or private) native plugins, free only for now — and the
+  editor surfaces that use plugin effects. That is AE parity step 2
+  (docs/AE_PARITY_PLAN.md).
 - **Collaboration.** Real-time multiplayer would need a substantial
   re-architecture. Not planned, not refused.
 - **Advanced 3D.** Almost all of what this entry listed as open closed on

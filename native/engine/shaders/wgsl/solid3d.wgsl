@@ -503,5 +503,8 @@ fn shapeAlpha(local : vec2<f32>) -> f32 {
 fn fs(@location(0) local : vec2<f32>, @location(1) world : vec3<f32>) -> @location(0) vec4<f32> {
   let a = obj.color.a * shapeAlpha(local) * shadeAlpha3d(world);
   let rgb = shade3d(world, obj.color.rgb);
+  // A transparent texel must not write depth: it would hide the 3D layers
+  // behind it (AE parity 1.4). Last, after every texture sample.
+  if (a < 0.00392156862745098) { discard; }
   return vec4<f32>(rgb * a, a);
 }

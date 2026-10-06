@@ -91,7 +91,7 @@ struct ObjectMatteJob {
   range: TimeRange = 2;
   prompts: Vec2[] = 3;
   backgroundPrompts: Vec2[] = 703;
-  /// The SAM encoder / decoder ONNX files (the page's bundled `models/object-matte/*` or the user's install). Empty = the engine's default search (PREMATION_SAM_DIR).
+  /// The SAM encoder / decoder ONNX files. Empty (what the page sends) = the engine's default search: the model the user installed (PREMATION_SAM_USER_DIR, set by Electron main to <userData>/models/object-matte) when both files are there, else the bundled pair (PREMATION_SAM_DIR).
   encoderModel: string = 704;
   decoderModel: string = 705;
   /// A drawn box prompt in layer pixels at `range.start` (objectMask.ts marquee). It wins over `prompts` / `backgroundPrompts` when both arrive: its centre is the foreground point, and nothing outside it (plus an 8% + 4 px margin) is kept.
@@ -171,7 +171,8 @@ struct TrackApplyJob {
   nullMode?: TrackApplyMode = 7;
 }
 /// Roto Brush (rotoBrush.ts runRotoBrush): a GrabCut-class matte from the `seed` click (layer pixels at `range.start`, colour `tolerance` default 36), propagated frame to frame by block flow with a colour re-seed, as ONE "Roto Brush" mask with a path key per frame of the range (feather `feather` px, default 2).
-struct RotoBrushJob { layer: LayerId = 1; range: TimeRange = 2; seed: Vec2 = 3; tolerance?: f64 = 4; feather?: f64 = 5; }
+/// Roto Brush propagation. The starting matte is `startMask` at `range.start` (the tool's SAM outline, a mask id of `layer`), else GrabCut from every foreground prompt. Every prompt (layer px, top-left origin) rides the flow from frame to frame and re-seeds the matte; background prompts keep their region out of the re-seed. `seed` is the prompt used when `prompts` is empty. The result is ONE "Roto Brush" mask with a path key per frame; `replaceMasks` and every other "Roto Brush" mask on the layer are removed in the same history entry.
+struct RotoBrushJob { layer: LayerId = 1; range: TimeRange = 2; seed: Vec2 = 3; tolerance?: f64 = 4; feather?: f64 = 5; prompts: Vec2[] = 6; backgroundPrompts: Vec2[] = 7; startMask?: string = 8; replaceMasks: string[] = 9; }
 /// Content-Aware Fill (contentAwareFillVideo.ts runContentAwareFill): the layer's masks at each frame of the range are the hole, filled by PatchMatch then carried by flow both ways; the filled frames are PNGs written to `outputFolder` (default: next to the project, `Content-Aware Fill/`) and attached with setContentAwareFill (the renderer shows the nearest filled frame over the footage).
 struct ContentAwareFillJob { layer: LayerId = 1; range: TimeRange = 2; outputFolder: string = 3; }
 /// Auto-reframe (autoReframe.ts autoReframeComposition): `comp` rendered small (160 px wide, 12 frames/s) by a child engine, saliency + shot cuts per frame (saliency.ts, sceneEditDetect.ts), a dead-zone / lag camera path (reframePath.ts); a NEW composition `width`×`height` holding `comp` as a precomp layer scaled to cover, with the pan keyed on its separated position. The source is untouched.

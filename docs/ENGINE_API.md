@@ -472,10 +472,10 @@ on an effect or mask path — one command, one inverse implementation.
 | `applyJobResult` | edit | Apply a finished `apply:false` job. Inverse: that entry. |
 | `setContentAwareFill` | edit | The layer's content-aware fill frames (the Content-Aware Fill job's result): the filled frame nearest the layer's time stands in for its footage; empty `frames` clears it. Inverse: the previous record. |
 | `setCaptions` | edit | Burn-in captions (`premation render --captions`, p4-round3): the comp's top-level caption layers (`__caption` on Text) are replaced by one centred text layer per cue, in/out = the cue; `style` JSON (`fontSizeRatio` 0.05, `fontWeight` 700, `fill` #ffffff, `bottomMarginRatio` 0.1). A cue that does not end after it starts is `invalidArgument`. One journal. The TS engine answers `unsupported`. |
-| `setPluginEnabled` | control | Session enable/disable (installation stays in the editor's plugin manager). |
+| `setPluginEnabled` | control | Session enable/disable of a native plugin; re-enabling retries a failed or quarantined one. Persisting it across launches is AE parity step 2.8. |
 | `setPluginData` | edit | Plugin data **in the document** (AE sequence data / arbitrary-data params) — today it is an in-memory LRU. Inverse: previous bytes. |
 
-**Engine jobs (2026-09-27, branch `engine-jobs`; C++ engine only — the TypeScript engine answers `startJob` `unsupported` and the UI then runs its page path).**
+**Engine jobs (2026-09-27, branch `engine-jobs`). The C++ engine is the only engine; there is no page path.**
 The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 `engine_core`: `jobs/job_runner`, `core/session_jobs.cpp`):
 
@@ -510,7 +510,7 @@ The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 | `proxy` | assets/proxy.ts (rule + ffmpeg args) | `setProxy` of the file written temp + rename under `Proxies/` ("Create Proxy") | `{path, width, height}` |
 | `render` | engineExport.ts + ffmpegEncodeArgs.ts | nothing (files delivered to each item's output path) | `{outputs}` |
 | `prerender` | — | `importFiles` of the rendered files ("Pre-render") | `{outputs}` |
-| `rotoBrush` | rotoBrush.ts | one "Roto Brush" mask, a path key per frame ("Roto Brush") | `{frames, keyframes}` |
+| `rotoBrush` | rotoBrush.ts | starts from `startMask` (the tool's SAM outline) or GrabCut from every prompt; every prompt rides the flow and re-seeds; one "Roto Brush" mask with a path key per frame, replacing the layer's previous "Roto Brush" masks in the same entry; the path is the matte's traced outline (a simple polygon, ≤ 128 points) ("Roto Brush") | `{frames, keyframes}` |
 | `contentAwareFill` | contentAwareFillVideo.ts | PNGs under `Content-Aware Fill/` + `setContentAwareFill` | `{frames, filledPixels}` |
 | `physicsBake` | bakeDynamics.ts (samplePhysicsTracks) over rigid_body.cpp | every enabled body of the composition seeds the renderer's solver (flatten order, authored pose; world gravity 0 / 1800, comp walls, 4 passes); each requested DYNAMIC body's position (and rotation for a spinning body) keyed per sampled frame, linear with the last key held, Douglas-Peucker thinned by `simplifyTolerance`; `layer/physics` set `enabled:false` ("Bake physics to keyframes") | `{layers, frames, tracks, keyframes}` |
 | `particleBake` | bakeDynamics.ts (sampleParticleLayers) over particle_port.cpp (`particles_at_frame`, birth index) | a "<emitter> Baked" null parented to the emitter; one ellipse / rectangle per particle (earliest born, `maxParticles` default 200) at its first-seen size in the start colour, keyed x / y / scale / opacity (a zero hold one frame outside its life); the emitter hidden ("Bake particles to layers"). The config is resolved per frame on the core thread (`JobDocContext.layerValues`: the emitter's `particle.<key>` tracks) | `{containerId, layerIds, seen, capped, particles, keyframes}` |

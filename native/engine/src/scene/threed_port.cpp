@@ -1196,6 +1196,16 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
         extrude::Options eo;
         eo.bevel = meshBevel;
         eo.cornerRadius = ellipse ? 0 : layer.cornerRadius;
+        if (!ellipse && layer.cornerRadii) eo.cornerRadii = layer.cornerRadii;  // keep independent corners
+        if (!ellipse && layer.cornerRadiusScale) {
+          // The same layer-px radius the front quad draws (extrusion_mesh.cpp).
+          const auto& cs = *layer.cornerRadiusScale;
+          const double k = std::sqrt(std::max(1e-6, cs[0]) * std::max(1e-6, cs[1]));
+          eo.cornerRadius /= k;
+          if (eo.cornerRadii) {
+            for (double& v : *eo.cornerRadii) v /= k;
+          }
+        }
         const bool gradientWalls = layer.fillPaint.is_object() && layer.fillPaint.at("type").is_string() && layer.fillPaint.at("type").str() != "solid";
         eo.wallSegments = gradientWalls ? extrude::kGradientWallSegments : 1;
         const extrude::Geometry geom = extrude::extrusion_geometry(layerW, layerH, s.extrusionDepth, ellipse, extrude::kEllipseWallSegments, eo);

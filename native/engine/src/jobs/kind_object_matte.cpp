@@ -5,7 +5,8 @@
 //
 //   prepare (core)   the layer's file, the source time under range.start, the
 //                    prompts, the model files (the spec's, else
-//                    $PREMATION_SAM_DIR/{vision_encoder,prompt_encoder_mask_decoder}_quantized.onnx).
+//                    $PREMATION_SAM_USER_DIR/… when the user installed a model there,
+//                    else $PREMATION_SAM_DIR/{vision_encoder,prompt_encoder_mask_decoder}_quantized.onnx).
 //   work (worker)    run_child("objectMatte", …): the model runs in a child
 //                    engine process, so a runtime crash fails the job only.
 //   child            decode the frame, preprocess, encode, decode the prompts,
@@ -122,7 +123,7 @@ class ObjectMatteResult final : public JobResult {
   mutable std::string mask_;
 };
 
-/// The model file: the spec's, else `$PREMATION_SAM_DIR/<file>`; '' when neither.
+/// The model file: the spec's, else `<dir>/<file>` (the user's or the bundled folder); '' when neither.
 std::string model_path(const std::string& given, const std::optional<std::string>& dir, const char* file) {
   if (!given.empty()) return given;
   if (!dir || dir->empty()) return {};
@@ -221,8 +222,18 @@ void register_object_matte_child() { register_child_work("objectMatte", object_m
 PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocContext& ctx) {
   const FootageLayer fl = footage_layer(ctx, spec.layer, Need::picture);
 
-  const std::optional<std::string> dir =
-      spec.encoder_model.empty() || spec.decoder_model.empty() ? os::env_var("PREMATION_SAM_DIR") : std::nullopt;
+  // The model the user installed (Settings ▸ Object Matte, written by Electron
+  // main into $PREMATION_SAM_USER_DIR) wins over the bundled pair
+  // ($PREMATION_SAM_DIR) — read per job, so an install applies at once.
+  std::optional<std::string> dir;
+  if (spec.encoder_model.empty() || spec.decoder_model.empty()) {
+    if (const std::optional<std::string> user = os::env_var("PREMATION_SAM_USER_DIR"); user && !user->empty()) {
+      std::error_code ec;
+      const std::filesystem::path u(*user);
+      if (std::filesystem::is_regular_file(u / kEncoderFile, ec) && std::filesystem::is_regular_file(u / kDecoderFile, ec)) dir = user;
+    }
+    if (!dir) dir = os::env_var("PREMATION_SAM_DIR");
+  }
   const std::string encoder = model_path(spec.encoder_model, dir, kEncoderFile);
   const std::string decoder = model_path(spec.decoder_model, dir, kDecoderFile);
   if (encoder.empty() || decoder.empty()) {

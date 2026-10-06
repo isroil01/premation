@@ -454,9 +454,19 @@ std::optional<ExtrusionOutline> extrusion_outline_for(const RLayer& layer, doubl
 
   // Rect-shaped content.
   std::array<double, 4> r{layer.cornerRadius, layer.cornerRadius, layer.cornerRadius, layer.cornerRadius};
+  if (layer.cornerRadii) r = *layer.cornerRadii;
+  // The front quad draws the radius divided by the layer's scale
+  // (cornerRadiusScale: the radius is authored in world px, not layer px), so
+  // the walls must use the same layer-px radius or the two disagree at any
+  // scale but 1. A non-uniform scale gives the face elliptical corners; the
+  // walls' circular arcs take the geometric mean.
+  if (layer.cornerRadiusScale) {
+    const auto& cs = *layer.cornerRadiusScale;
+    const double k = std::sqrt(std::max(1e-6, cs[0]) * std::max(1e-6, cs[1]));
+    for (double& v : r) v /= k;
+  }
   std::string rk;
-  if (layer.cornerRadii) {
-    r = *layer.cornerRadii;
+  if (layer.cornerRadii || layer.cornerRadiusScale) {
     for (std::size_t i = 0; i < 4; ++i) rk += (i != 0 ? "," : "") + num(jm::round(r[i] * 10) / 10);
   } else {
     rk = num(jm::round(layer.cornerRadius * 10) / 10);

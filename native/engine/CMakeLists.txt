@@ -860,7 +860,7 @@ else()
 endif()
 if(MOTION_BUILD_TESTS)
   add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp tests/test_paint_raster.cpp
-                 tests/test_svg_doc.cpp tests/test_font_catalog.cpp)
+                 tests/test_svg_doc.cpp tests/test_font_catalog.cpp tests/test_mask_feather.cpp)
   target_link_libraries(engine_raster_tests PRIVATE engine_raster_core engine_json motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_raster_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(TARGET engine_raster)

@@ -3,6 +3,22 @@
 The standing description of the 3D model, for anyone wondering why a 3D scene
 behaves the way it does.
 
+> **Status (2026-10-06).** The renderer is the C++ engine. Where this page
+> names TypeScript files (`buildSnapshot.ts`, `FrameScene.ts`,
+> `lightShading.ts`, `builtin.ts` and their tests), read their C++ successors:
+> `native/engine/src/scene/snapshot_build.cpp`, `scene/threed_port.cpp`,
+> `scene/frame_build.cpp`, `render_graph/threed.cpp` and
+> `shaders/wgsl/{solid3d,textured3d}.wgsl`. Corrected by AE parity step 1:
+> a 3D layer's corner radius is divided by the layer's own world scale, not its
+> projected size (it no longer shrinks near the camera), and the extruded
+> walls and the face-plane fallback use the same radius as the front face,
+> per-corner radii included; a fully transparent texel discards instead of
+> writing depth, and shadow / SSAO casters are cut out by their alpha, so a
+> cut-out PNG no longer hides or shadows what is behind it with its whole
+> quad; the 3D gizmo sits at a parented layer's world position, its Local axes
+> follow the parent chain and Orientation, and a drag writes parent-space
+> values. What is still open is docs/AE_PARITY_PLAN.md step 4.
+
 Target: **After Effects' Classic 3D renderer**. Flat planes in 3D space, lit and
 shadowed, with a working camera. Extrusion, bevels and a per-layer physical
 (Cook-Torrance/GGX) shading model exist here as extensions beyond Classic 3D.

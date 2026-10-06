@@ -5,6 +5,7 @@
 // C++ answers instead (parity_rebless.hpp).
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <string>
@@ -58,4 +59,30 @@ TEST_CASE("extrusion faces parity: the fallback body equals the editor's", "[sce
     CHECK(fx.answer(b, "out", Json::number(ex::clamp_bevel(b.at("w").num(), b.at("h").num(), b.at("d").num(), req))));
   }
   REQUIRE(fx.finish());
+}
+
+TEST_CASE("extrusion faces: per-corner radii survive the fallback", "[scene][extrusion]") {
+  // Equal per-corner radii trace exactly the uniform outline.
+  ex::Options uniform;
+  uniform.cornerRadius = 12;
+  ex::Options perCorner;
+  perCorner.cornerRadii = std::array<double, 4>{12, 12, 12, 12};
+  const ex::Geometry a = ex::extrusion_geometry(200, 100, 30, false, ex::kEllipseWallSegments, uniform);
+  const ex::Geometry b = ex::extrusion_geometry(200, 100, 30, false, ex::kEllipseWallSegments, perCorner);
+  REQUIRE(a.faces.size() == b.faces.size());
+  for (std::size_t i = 0; i < a.faces.size(); ++i) CHECK(a.faces[i].m == b.faces[i].m);
+
+  // Only the bottom-right corner rounded: one arc of walls, three sharp corners.
+  ex::Options one;
+  one.cornerRadii = std::array<double, 4>{0, 0, 20, 0};
+  const ex::Geometry g = ex::extrusion_geometry(200, 100, 30, false, ex::kEllipseWallSegments, one);
+  // back + 3 straight-corner points + (segments + 1) arc points → as many walls as outline edges.
+  const std::size_t outline = 3 + (ex::kRoundedCornerSegments + 1);
+  CHECK(g.faces.size() == 1 + outline);
+  // TL and TR stay sharp: the top wall runs the full 200 px width.
+  bool sharp = false;
+  for (const ex::Face& f : g.faces) {
+    if (!f.back && std::abs(f.w - 200) < 1e-6 && std::abs(f.m[13] + 50) < 1e-6) sharp = true;
+  }
+  CHECK(sharp);
 }

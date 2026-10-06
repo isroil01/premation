@@ -365,24 +365,19 @@ export interface MotionEditorApi {
     openBundleDir?(): Promise<string | null>;
   };
   /**
-   * Bundled Object Matte model files. Allowlisted names only — the main
-   * process maps a known filename to a path inside its own dist/, and answers
-   * null for anything else or for a build that shipped without the files.
+   * The user's Object Matte model, installed by MAIN into
+   * <userData>/models/object-matte where the engine's objectMatte job reads it
+   * (electron/objectMatteModel.ts). https-only, size-capped, no credentials;
+   * runs only when the user presses Install. Progress arrives on
+   * `onDownloadProgress`, correlated by the caller-minted `requestId`.
    */
   objectMatte?: {
-    read?(name: string): Promise<Uint8Array | null>;
-    /** file:// URL of an allowlisted asset the renderer must import() (the
-     *  ORT glue module) — null when the build shipped without it. */
-    url?(name: string): Promise<string | null>;
-    /**
-     * Fetch a user-chosen model URL from the MAIN process, where the page CSP
-     * does not apply. https-only, size-capped, no credentials attached; runs
-     * only when the user presses Install. Progress arrives on
-     * `onDownloadProgress` correlated by the caller-minted `requestId`.
-     */
-    download?(request: { url: string; requestId: string }): Promise<
-      { ok: true; bytes: Uint8Array } | { ok: false; message: string }
+    status?(): Promise<{ encoderUrl: string; decoderUrl: string; bytes: number; installedAt: number } | null>;
+    install?(request: { encoderUrl: string; decoderUrl: string; requestId: string }): Promise<
+      | { ok: true; model: { encoderUrl: string; decoderUrl: string; bytes: number; installedAt: number } }
+      | { ok: false; message: string }
     >;
+    remove?(): Promise<boolean>;
     cancelDownload?(requestId: string): Promise<boolean>;
     /** Progress pushes for every in-flight download; filter by requestId. */
     onDownloadProgress?(handler: (event: unknown) => void): () => void;

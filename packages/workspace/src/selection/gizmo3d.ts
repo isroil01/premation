@@ -10,7 +10,7 @@
  * Supports Local, World, and View coordinate spaces.
  */
 
-import { Project3D, Matrix4Math, type Camera3D, type OrthoView, type Vec3 } from '@motion/scene';
+import { Project3D, Matrix4Math, type Camera3D, type Matrix4, type OrthoView, type Vec3 } from '@motion/scene';
 
 export type GizmoHandleType =
   | 'pos_x'
@@ -32,6 +32,19 @@ export interface Gizmo3DConfig {
   gizmoState: 'universal' | 'position' | 'scale' | 'rotation';
   axisMode: 'local' | 'world' | 'view';
   gizmoLengthPx: number; // Length of gizmo axis vectors in px on screen (~90px)
+  /** The layer's frame for the Local axes (parent chain + Orientation). */
+  frame?: GizmoLocalFrame;
+}
+
+/**
+ * What a layer's LOCAL axes sit in besides its own X/Y/Z Rotation: the parent
+ * chain's world matrix (column-major 4×4; empty = no parent) and the layer's
+ * Orientation (degrees). Without them a parented or oriented layer's Local
+ * gizmo pointed along the wrong axes.
+ */
+export interface GizmoLocalFrame {
+  parent?: readonly number[];
+  orientation?: { x: number; y: number; z: number };
 }
 
 export interface RenderedGizmoAxis {
@@ -162,6 +175,7 @@ export function getGizmoBasis(
   axisMode: 'local' | 'world' | 'view',
   nodeRotation: { rotX: number; rotY: number; rotZ: number },
   cam: Camera3D,
+  frame?: GizmoLocalFrame,
 ): { x: Vec3; y: Vec3; z: Vec3 } {
   if (!cam) cam = Project3D.defaultCamera(1920, 1080);
 
@@ -186,22 +200,30 @@ export function getGizmoBasis(
     };
   }
 
-  // Local space basis: apply layer's rotations (rotX, rotY, rotZ) to identity basis
-  const rx = nodeRotation.rotX * DEG;
-  const ry = nodeRotation.rotY * DEG;
-  const rz = nodeRotation.rotZ * DEG;
-
-  const M = Matrix4Math.compose({
+  // Local space basis: the parent chain's rotation, then Orientation, then the
+  // layer's X/Y/Z Rotation (AE's order), applied to the identity basis.
+  const rot = (x: number, y: number, z: number) => Matrix4Math.compose({
     position: { x: 0, y: 0, z: 0 },
-    rotation: { x: rx, y: ry, z: rz },
+    rotation: { x: x * DEG, y: y * DEG, z: z * DEG },
     scale: { x: 1, y: 1, z: 1 },
     anchor: { x: 0, y: 0, z: 0 },
   });
+  let M = rot(nodeRotation.rotX, nodeRotation.rotY, nodeRotation.rotZ);
+  const o = frame?.orientation;
+  if (o && (o.x !== 0 || o.y !== 0 || o.z !== 0)) M = Matrix4Math.multiply(rot(o.x, o.y, o.z), M);
+  const parent = frame?.parent && frame.parent.length === 16 ? (frame.parent as Matrix4) : null;
+  // The parent's scale is not an axis direction: normalise each axis.
+  const axis = (v: Vec3): Vec3 => {
+    const d = Matrix4Math.transformVector(M, v);
+    const w = parent ? Matrix4Math.transformVector(parent, d) : d;
+    const len = Math.hypot(w.x, w.y, w.z);
+    return len > 1e-12 ? { x: w.x / len, y: w.y / len, z: w.z / len } : d;
+  };
 
   return {
-    x: Matrix4Math.transformVector(M, { x: 1, y: 0, z: 0 }),
-    y: Matrix4Math.transformVector(M, { x: 0, y: 1, z: 0 }),
-    z: Matrix4Math.transformVector(M, { x: 0, y: 0, z: 1 }),
+    x: axis({ x: 1, y: 0, z: 0 }),
+    y: axis({ x: 0, y: 1, z: 0 }),
+    z: axis({ x: 0, y: 0, z: 1 }),
   };
 }
 
@@ -226,7 +248,7 @@ export function buildRenderedGizmo3D(
   const centerProj = project(position3D);
   const centerScreen = { x: centerProj.x, y: centerProj.y };
 
-  const basis = getGizmoBasis(config.axisMode, nodeRotation, cam);
+  const basis = getGizmoBasis(config.axisMode, nodeRotation, cam, config.frame);
 
   // Screen-constant arm length, computed PER AXIS.
   //

@@ -399,6 +399,10 @@ export function trackMotionActions(ctx: TrackMotionContext) {
             seed: { x: points[0]?.x ?? src.width / 2, y: points[0]?.y ?? src.height / 2 },
             tolerance: 40,
             feather: 2,
+            // Every placed point seeds the matte (not only the first).
+            prompts: points.map((p) => ({ x: p.x, y: p.y })),
+            backgroundPrompts: [],
+            replaceMasks: [],
           },
         },
         {
@@ -483,7 +487,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
     }
   };
 
-  /** The roto foothold: the engine's SAM segment of the real frame (the synthetic page GrabCut is gone). */
+  /** Seed Matte: the engine's SAM segment of the real frame (the same job as Segment). */
   const onSeedMatte = (): void => {
     void onSegmentSam();
   };

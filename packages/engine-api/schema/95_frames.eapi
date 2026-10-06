@@ -177,7 +177,7 @@ struct OverlayScene3D {
   position: f64[] = 7;
   /// light: radius, cone, coneFeather, and the aim in degrees (lightAngle + the layer's world Z rotation) — what buildLightGizmo takes.
   light: f64[] = 8;
-  /// layer: the local transform sampled at the frame (sampleTransform3DAtPlayhead): x, y, z, rotationX, rotationY, rotation, scaleX, scaleY, scaleZ (stored units).
+  /// layer: the local transform sampled at the frame (sampleTransform3DAtPlayhead): x, y, z, rotationX, rotationY, rotation, scaleX, scaleY, scaleZ, orientationX, orientationY, orientationZ (stored units; position in the parent's space — `parent` lifts it to the world).
   local: f64[] = 9;
   /// layer: the extrusion depth (animated winning, ≥ 0).
   extrusion: f64 = 10;

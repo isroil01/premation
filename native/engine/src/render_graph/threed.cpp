@@ -441,6 +441,20 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
   const SamplerRef shadowSampler = ctx.dev.sampler("sampler:shadow-map", wgpu::FilterMode::Nearest, wgpu::AddressMode::ClampToEdge);
   TexRef aoTex = fallback(ctx, "texture:ssao-none", 255, 255);
   const SamplerRef aoSampler = ctx.dev.sampler("sampler:ssao", wgpu::FilterMode::Linear, wgpu::AddressMode::ClampToEdge);
+  // Caster coverage (shadow-depth-alpha.wgsl): a textured quad's own texture, a
+  // shaped solid's white texture + its SDF; a plain rectangle needs none.
+  const SamplerRef cutoutSampler = ctx.dev.sampler("sampler:shadow-cutout", wgpu::FilterMode::Linear, wgpu::AddressMode::ClampToEdge);
+  const auto cutout_texture = [&](const api::Renderable& r) -> TexRef {
+    if (r.texture_key) return texFor(r.texture_key);
+    if (r.sdf) return ctx.texture("texture:white");
+    return TexRef{};
+  };
+  const auto pack_cutout = [](Packer& p, const api::Renderable& r) {
+    const Rect uv = r.uv_rect ? rect_of(*r.uv_rect) : Rect{0, 0, 1, 1};
+    const SolidShape sh = r.texture_key ? SolidShape{} : solid_shape(r.sdf);
+    const double alpha = r.color ? r.color->a : 1.0;
+    p.rect(uv).vec4(sh.kind, sh.radiusPx, sh.width, sh.height).vec4(std::max(0.0, r.opacity) * alpha, 0, 0, 0);
+  };
   const auto bind_scene = [&](DrawItem& it) {
     it.bind(7, envTex);
     it.bind(8, envSampler);
@@ -485,6 +499,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
           p.mat4(mvp).mat4(mat4_of(model));
           p.vec4(camera->axis[0], camera->axis[1], camera->axis[2], camera->invFar);
           p.vec4(camera->origin[0], camera->origin[1], camera->origin[2], 0);
+          if (m == Mat::SHADOW_DEPTH_ALPHA_MATERIAL) pack_cutout(p, *r);
           return sc.add(m, Blend::none, p.span());
         };
         if (r->extruded_mesh) {
@@ -500,6 +515,14 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
             it.firstIndex = range.first;
             it.indexCount = range.count;
           }
+          continue;
+        }
+        // The quad cut out by its own coverage (texture alpha / SDF shape), so
+        // a transparent texel neither casts nor occludes (AE parity 1.4).
+        if (const TexRef cut = cutout_texture(*r)) {
+          DrawItem& it = caster(Mat::SHADOW_DEPTH_ALPHA_MATERIAL);
+          it.texture = cut;
+          it.sampler = cutoutSampler;
           continue;
         }
         caster(Mat::SHADOW_DEPTH_MATERIAL);
@@ -577,6 +600,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
         const auto caster = [&](Mat m) -> DrawItem& {
           Packer pk = ctx.packer();
           pk.mat4(mvp).mat4(mat4_of(model)).vec4(axis[0], axis[1], axis[2], invFar).vec4(origin[0], origin[1], origin[2], 0);
+          if (m == Mat::SHADOW_DEPTH_ALPHA_MATERIAL) pack_cutout(pk, *r);
           return dc.add(m, Blend::none, pk.span());
         };
         if (r->extruded_mesh) {
@@ -592,6 +616,14 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
             it.firstIndex = range.first;
             it.indexCount = range.count;
           }
+          continue;
+        }
+        // The quad cut out by its own coverage (texture alpha / SDF shape), so
+        // a transparent texel neither casts nor occludes (AE parity 1.4).
+        if (const TexRef cut = cutout_texture(*r)) {
+          DrawItem& it = caster(Mat::SHADOW_DEPTH_ALPHA_MATERIAL);
+          it.texture = cut;
+          it.sampler = cutoutSampler;
           continue;
         }
         caster(Mat::SHADOW_DEPTH_MATERIAL);

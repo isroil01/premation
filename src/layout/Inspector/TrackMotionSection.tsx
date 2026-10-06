@@ -47,7 +47,6 @@ import {
   useMirrorTree,
 } from '@hooks/useMirror';
 import { canParentTo, footageDisplaySize, maskVertexCount, siblingSourceIds } from '@core/mirror/tracking';
-import { webCodecsAvailable } from '@core/video/exactVideoSource';
 import { qualityOf } from './trackMotion/trackMotionCopy';
 import { trackMotionActions, type StabVariant, type TrackComp, type TrackMotionContext } from './trackMotion/trackMotionActions';
 import { AdvancedTracking } from './trackMotion/AdvancedTracking';
@@ -149,10 +148,6 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
   }, [siblingInfos, layer]);
 
   if (!layer || !src) return null;
-
-  if (!webCodecsAvailable()) {
-    return <p className={styles.cardHint}>Tracking needs WebCodecs, which this runtime does not have.</p>;
-  }
 
   const endCompTime = Math.max(time, durationSeconds - 1 / fps);
 

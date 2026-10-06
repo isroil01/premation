@@ -29,9 +29,11 @@ afterEach(async () => {
 
 test('Motion Source offers the active comp\'s footage layers and follows a rename', async () => {
   render(<TrackerPanel />);
-  const options = (): string[] => screen.getAllByRole('option').map((o) => o.textContent?.trim() ?? '');
+  // The Track Motion section below renders its own selects; read the source one.
+  const source = (): HTMLSelectElement => screen.getByRole('combobox', { name: 'Motion Source' }) as HTMLSelectElement;
+  const options = (): string[] => Array.from(source().options).map((o) => o.textContent?.trim() ?? '');
   expect(options()).toEqual(['V']);
-  expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe(s.V);
+  expect(source().value).toBe(s.V);
 
   await act(async () => {
     await h.run({ type: 'renameLayer', layer: s.V, name: 'Clip' });

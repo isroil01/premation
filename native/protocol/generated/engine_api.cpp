@@ -11256,6 +11256,10 @@ void encode(wire::Writer& w, const RotoBrushJob& v) {
   w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, v.seed); w.end_ld(s); }
   if (v.tolerance.has_value()) { w.varint(33U); w.f64(*v.tolerance); }
   if (v.feather.has_value()) { w.varint(41U); w.f64(*v.feather); }
+  for (const auto& e : v.prompts) { w.varint(50U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  for (const auto& e : v.background_prompts) { w.varint(58U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  if (v.start_mask.has_value()) { w.varint(66U); w.str(*v.start_mask); }
+  for (const auto& e : v.replace_masks) { w.varint(74U); w.str(e); }
 }
 
 Status decode(wire::Reader& r, RotoBrushJob& out) {
@@ -11291,6 +11295,27 @@ Status decode(wire::Reader& r, RotoBrushJob& out) {
         double e = 0.0;
         if (!r.f64(e)) return Status::truncated;
         out.feather = std::move(e);
+        break;
+      }
+      case 50U: {
+        auto& e = out.prompts.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 58U: {
+        auto& e = out.background_prompts.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 66U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.start_mask = std::move(e);
+        break;
+      }
+      case 74U: {
+        auto& e = out.replace_masks.emplace_back();
+        if (!r.str(e)) return Status::truncated;
         break;
       }
       default:

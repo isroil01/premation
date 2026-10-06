@@ -5,6 +5,7 @@
 // pictures straight RGBA8, rows top-down. Pure.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -29,7 +30,11 @@ struct Pt {
 
 /// `floodMatte(rgba, w, h, seeds)`.
 [[nodiscard]] Matte flood_matte(std::span<const std::uint8_t> rgba, int w, int h, const std::vector<Seed>& seeds);
-/// `matteToPath`: the boundary texel centres in raster order, decimated to ≤ 128.
+/// The most vertices `matte_to_path` writes (mask UX).
+inline constexpr std::size_t kMaxPathPoints = 128;
+/// The matte's outline: its largest outer contour walked in order (trace_bitmap,
+/// threshold 128), in pixel-edge coordinates, at most kMaxPathPoints vertices.
+/// A simple polygon. Empty when the matte holds less than a few pixels.
 [[nodiscard]] std::vector<Pt> matte_to_path(const Matte& mask, int w, int h);
 [[nodiscard]] Matte morph_dilate(const Matte& mask, int w, int h, double radius);
 [[nodiscard]] Matte morph_erode(const Matte& mask, int w, int h, double radius);
@@ -55,10 +60,29 @@ struct GrabCutOptions {
 // ── rotoBrush.ts ────────────────────────────────────────────────────────
 /// `blurMask`: a box blur re-thresholded at 128.
 [[nodiscard]] Matte blur_mask(const Matte& mask, int w, int h, double radius);
-/// `refineFrameMatte(rgba, mask, w, h, feather, seed)`: GrabCut on the seed fused with the propagated matte, refined.
+/// `refineFrameMatte(rgba, mask, w, h, feather, seeds)`: GrabCut on the seeds fused with the propagated matte, refined.
 [[nodiscard]] Matte refine_frame_matte(std::span<const std::uint8_t> rgba, const Matte& mask, int w, int h, double feather,
-                                       const Seed& seed);
+                                       const std::vector<Seed>& seeds);
 /// `warpMatte(mask, w, h, flow, scaleX, scaleY)`: the matte carried by a forward flow.
 [[nodiscard]] Matte warp_matte(const Matte& mask, int w, int h, const scene::pixmo::FlowField& flow, double scaleX, double scaleY);
+
+// ── Propagation from every stroke ───────────────────────────────────────
+/// Every seed moved by the forward flow (the same displacement warp_matte
+/// carries the matte by), clamped to the picture.
+void advect_seeds(std::vector<Seed>& seeds, const scene::pixmo::FlowField& flow, int w, int h);
+/// The pixel-centre fill of a closed polygon (picture pixels): 255 inside.
+[[nodiscard]] Matte fill_polygon(const std::vector<Pt>& poly, int w, int h);
+
+struct Reseed {
+  /// Pixels to add to the carried matte.
+  Matte add;
+  /// The foreground seeds it used: those inside the carried matte, else its centroid.
+  std::vector<Seed> seeds;
+};
+/// A frame's colour re-seed: a flood from every foreground seed that still sits
+/// inside the carried matte (its centroid when none does), less the floods of
+/// the background seeds, so a background stroke keeps its region out.
+[[nodiscard]] Reseed reseed_matte(std::span<const std::uint8_t> rgba, const Matte& carried, int w, int h,
+                                  const std::vector<Seed>& fg, const std::vector<Seed>& bg, double tolerance);
 
 }  // namespace premation::jobs::roto

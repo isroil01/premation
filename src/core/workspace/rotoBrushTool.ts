@@ -10,7 +10,8 @@
  *               points as foreground / background prompts — written as the
  *               tool's "Roto Brush" Add mask, replacing the tool's previous
  *               outline in the same history entry.
- *   propagate   the `rotoBrush` job, seeded at the first foreground point.
+ *   propagate   the `rotoBrush` job, started from the tool's SAM outline and
+ *               re-seeded from every stroke's points as they ride the flow.
  *
  * ## Spaces
  *
@@ -173,8 +174,8 @@ export async function segmentStrokesToMask(
 }
 
 /**
- * Propagate the matte forward from `fromSec` to `toSec` in the engine,
- * seeded at the first foreground stroke's first point (layer px).
+ * Propagate the matte forward from `fromSec` to `toSec` in the engine, from
+ * the tool's current outline and every stroke (layer px).
  */
 export async function propagateRotoForward(
   nodeId: string,
@@ -188,10 +189,12 @@ export async function propagateRotoForward(
   if (isRotoFrozen(nodeId)) throw new Error(FROZEN_MESSAGE);
   const size = await layerSize(nodeId);
   if (!size) throw new Error('Layer has no sized video source.');
-  const fg = strokes.find((s) => s.kind === 'fg' && s.points.length > 0);
-  const p0 = fg?.points[0];
-  if (!p0) throw new Error('Paint a foreground stroke first.');
-  const seed = { x: p0.x + size.width / 2, y: p0.y + size.height / 2 };
+  const prompts = strokesToPrompts(strokes, size);
+  const seed = prompts.fg[0];
+  if (!seed) throw new Error('Paint a foreground stroke first.');
+  // Start from the tool's SAM outline when there is one (the matte the user
+  // saw), and replace it: the propagated mask keys that frame too.
+  const live = rotoMattes(nodeId).live;
   const startF = Math.round(fromSec * fps);
   const endF = Math.round(toSec * fps);
   let cancel: (() => void) | null = null;
@@ -206,6 +209,10 @@ export async function propagateRotoForward(
         },
         seed,
         feather: featherPx,
+        prompts: prompts.fg,
+        backgroundPrompts: prompts.bg,
+        ...(live.length > 0 ? { startMask: live[live.length - 1] } : {}),
+        replaceMasks: live,
       },
     },
     {

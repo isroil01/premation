@@ -569,6 +569,8 @@ export interface EngineHostOptions {
   recoveryPath?: string;
   /** Where the engine caches imported bytes / session footage as files (<userData>/session-footage). */
   sessionFootageDir?: string;
+  /** The user's installed Object Matte model folder (<userData>/models/object-matte; objectMatteModel.ts). */
+  samUserDir?: string;
   log?(line: string): void;
   /**
    * The user's speech-provider key for a transcribe job ('openai' …), from
@@ -705,6 +707,8 @@ export class EngineHost {
               // importBytes caches bytes as files here (the page's session-footage
               // cache, file:sessionFootageDir): the engine never holds a blob: URL.
               ...(o.sessionFootageDir ? { PREMATION_SESSION_FOOTAGE: o.sessionFootageDir } : {}),
+              // The model the user installed wins when both its files are there (read per job).
+              ...(o.samUserDir ? { PREMATION_SAM_USER_DIR: o.samUserDir } : {}),
               PREMATION_SAM_DIR: process.env.PREMATION_SAM_DIR
                 ?? (o.isPackaged ? path.join(o.resourcesPath, 'models', 'object-matte') : path.join(o.appPath, 'dist', 'models', 'object-matte')),
             },

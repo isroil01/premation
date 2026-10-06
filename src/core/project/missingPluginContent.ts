@@ -1,31 +1,32 @@
 /**
- * Projects that still carry JavaScript-plugin content (docs/TS_ENGINE_REMOVAL.md
- * phase 4, G2: the JS/WGSL plugin system is not ported — accepted loss).
+ * Effects and layers whose plugin is not here (docs/AE_PARITY_PLAN.md step 1.2).
  *
- * Such a project must still OPEN — the C++ engine reads it and draws those
- * effects as passthrough — but the content is dead weight the user cannot
- * edit or render. So after an open (or a recovery restore) the effects of
- * JavaScript plugins and the layers of their layer kinds are dropped as ONE
- * undoable history entry, and the caller shows ONE notice saying so. Undo
- * brings them back for the session; saving drops them from the file.
+ * A project can name an effect type the engine does not know: a native SDK
+ * plugin that is not installed (or failed to load) on this machine, or an old
+ * JavaScript/WGSL plugin (docs/TS_ENGINE_REMOVAL.md G2). That content is the
+ * user's data and is NEVER deleted: the engine keeps it in the document,
+ * renders the effect as a pass-through and records it on the frame's
+ * `layerErrors`; a save writes it back unchanged, so installing the plugin
+ * brings it back. After an open (or a recovery restore) the caller shows ONE
+ * notice naming the missing plugins.
  *
- * What counts as JavaScript-plugin content, decided from the engine's own
- * answers (never from a list in the page):
- *  - an effect whose type the engine does not know (`listEffects`: built-ins
- *    and loaded native SDK plugins) and that does not belong to a native SDK
- *    plugin the engine found, loaded or not (`listPlugins`: an uninstalled or
- *    failed NATIVE plugin's effects are kept for when it comes back);
- *  - a layer provided by a plugin layer kind (`LayerInfo.generator`, which
- *    only JavaScript plugins ever set).
+ * What counts as missing, decided from the engine's own answers (never from a
+ * list in the page):
+ *  - an effect whose type is neither a built-in nor a loaded native plugin's
+ *    (`listEffects`), nor one a native plugin the engine found declares
+ *    (`listPlugins`, loaded or not);
+ *  - a layer provided by a plugin layer kind (`LayerInfo.generator`).
  *
- * Never throws: a query that fails leaves the document as it opened.
+ * Read-only and never throws: a query that fails reports nothing.
  */
 
-import type { Command, EngineClient } from '@motion/engine-api';
+import type { EngineClient } from '@motion/engine-api';
 
-export interface RemovedPluginContent {
+export interface MissingPluginContent {
   effects: number;
   layers: number;
+  /** The plugins the content belongs to (an effect type's namespace), sorted. */
+  plugins: string[];
   /** The one notice to show. */
   message: string;
 }
@@ -65,11 +66,17 @@ function belongsToNativePlugin(type: string, nativeIds: ReadonlySet<string>): bo
   return false;
 }
 
+/** `com.vendor.pack.effect` → `com.vendor.pack`; a type with no namespace names itself. */
+export function pluginOfType(type: string): string {
+  const dot = type.lastIndexOf('.');
+  return dot > 0 ? type.slice(0, dot) : type;
+}
+
 /**
- * Drop the JavaScript-plugin content of the engine's document as one history
- * entry. Null when there is none (or the engine could not be asked).
+ * The engine document's content whose plugin is missing. Null when there is
+ * none (or the engine could not be asked). Changes nothing.
  */
-export async function dropRemovedPluginContent(client: EngineClient): Promise<RemovedPluginContent | null> {
+export async function findMissingPluginContent(client: EngineClient): Promise<MissingPluginContent | null> {
   try {
     const [effectsRes, pluginsRes, docRes, layersRes] = await Promise.all([
       client.query({ type: 'listEffects', category: '' }),
@@ -83,8 +90,8 @@ export async function dropRemovedPluginContent(client: EngineClient): Promise<Re
     const nativeIds = new Set(nativePlugins.map((p) => p.id));
     for (const p of nativePlugins) for (const m of p.effects) known.add(m);
     const layerIds = new Set(layersRes.value.layers.map((l) => l.id));
-    const pluginLayers = layersRes.value.layers.filter((l) => l.generator !== '').map((l) => l.id);
-    const dropped = new Set(pluginLayers);
+    const pluginLayers = layersRes.value.layers.filter((l) => l.generator !== '');
+    const plugins = new Set<string>(pluginLayers.map((l) => pluginOfType(l.generator)));
 
     let doc: unknown;
     try {
@@ -92,30 +99,29 @@ export async function dropRemovedPluginContent(client: EngineClient): Promise<Re
     } catch {
       return null;
     }
-    const groups: Array<{ layer: string; path: string }> = [];
+    let effects = 0;
     for (const { id, node } of nodesOf(doc)) {
-      if (!layerIds.has(id) || dropped.has(id)) continue;
+      if (!layerIds.has(id)) continue;
       for (const e of effectsOf(node)) {
         if (known.has(e.type) || belongsToNativePlugin(e.type, nativeIds)) continue;
-        groups.push({ layer: id, path: `effects/${e.id}` });
+        effects += 1;
+        plugins.add(pluginOfType(e.type));
       }
     }
-    if (groups.length === 0 && pluginLayers.length === 0) return null;
+    if (effects === 0 && pluginLayers.length === 0) return null;
 
-    const commands: Command[] = [];
-    if (groups.length > 0) commands.push({ type: 'removePropertyGroups', groups });
-    if (pluginLayers.length > 0) commands.push({ type: 'deleteLayers', layers: pluginLayers });
-    const res = await client.batch('Remove JavaScript Plugin Content', commands);
-    if (!res.ok) return null;
+    const names = [...plugins].sort();
     const parts = [
-      groups.length > 0 ? `${groups.length} effect${groups.length === 1 ? '' : 's'}` : '',
+      effects > 0 ? `${effects} effect${effects === 1 ? '' : 's'}` : '',
       pluginLayers.length > 0 ? `${pluginLayers.length} layer${pluginLayers.length === 1 ? '' : 's'}` : '',
     ].filter(Boolean);
+    const shown = names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
     return {
-      effects: groups.length,
+      effects,
       layers: pluginLayers.length,
-      message: `This project used ${parts.join(' and ')} from JavaScript plugins, which Premation no longer runs. `
-        + 'They were removed (Undo brings them back until you save).',
+      plugins: names,
+      message: `Missing plugin${names.length === 1 ? '' : 's'} ${shown}. `
+        + `${parts.join(' and ')} ${effects + pluginLayers.length === 1 ? 'is' : 'are'} kept in the project and pass through until the plugin is installed.`,
     };
   } catch {
     return null;

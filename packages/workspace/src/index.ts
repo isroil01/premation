@@ -127,7 +127,7 @@ export {
   oppositePivot,
 } from './selection/transform';
 export * as Gizmo3D from './selection/gizmo3d';
-export type { GizmoHandleType, RenderedGizmo3D, RenderedGizmoAxis, RenderedGizmoArc, RenderedGizmoPlane } from './selection/gizmo3d';
+export type { GizmoHandleType, GizmoLocalFrame, RenderedGizmo3D, RenderedGizmoAxis, RenderedGizmoArc, RenderedGizmoPlane } from './selection/gizmo3d';
 export * as SceneGizmos from './selection/sceneGizmos';
 export type { GizmoSegment, GizmoSegmentKind, SceneGizmo } from './selection/sceneGizmos';
 export * as DimensionalGuides from './selection/dimensionalGuides';

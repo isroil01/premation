@@ -2,6 +2,18 @@
 
 Point at something in the shot. Get keyframes.
 
+> **Status (2026-10-06).** The analysis this page describes — the Shi-Tomasi
+> feature picker, the distinctness check, measured feature/search windows and
+> the companion feature — lived in the TypeScript engine, which is deleted
+> (docs/TS_ENGINE_REMOVAL.md). Today a click runs the engine's `trackMotion`
+> job (`src/core/tracking/autoTrackCommand.ts`) on the clicked point with
+> fixed-ratio boxes, both ways from the playhead. Nothing is measured about the
+> feature, so the panel shows no good/fair/poor badge and the canvas draws no
+> verdict ring. AE parity step 3.6 (docs/AE_PARITY_PLAN.md) restores the
+> picker in the engine. The files named below (`autoFeature.ts`,
+> `autoTrack.ts`, `reverseFrameWalk.ts`) no longer exist; the design notes are
+> kept as the specification for that port.
+
 Everything a tracker normally asks you to decide before it will run — which
 feature, how big the feature box, how big the search box, which direction — is
 measured from the footage instead. The controls that answer questions the
@@ -20,9 +32,9 @@ track) are still there, one disclosure down in the Track Motion panel.
    feature. Or choose a layer and press **Apply**.
 
 The path is drawn on the canvas as it stands: green dots are measured samples
-(fading with match confidence), amber dots are frames the tracker *predicted*
-through an occlusion, and the dashed ring around the chosen feature carries the
-same good/fair/poor verdict the panel's pill shows.
+(fading with match confidence) and amber dots are frames the tracker *predicted*
+through an occlusion. (The good/fair/poor verdict ring and pill return with the
+feature picker; see the status note above.)
 
 ## What gets measured, and why
 

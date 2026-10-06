@@ -5,7 +5,9 @@
 #include <cmath>
 #include <cstdlib>
 
+#include "content_aware.hpp"
 #include "jsmath.hpp"
+#include "sam_pipeline.hpp"
 #include "stabilize.hpp"
 
 namespace premation::jobs::roto {
@@ -81,25 +83,16 @@ Matte flood_matte(std::span<const std::uint8_t> rgba, int w, int h, const std::v
 }
 
 std::vector<Pt> matte_to_path(const Matte& mask, int w, int h) {
+  // The outline walked in order (trace_bitmap's contour), not the boundary
+  // texels in scanline order: those zigzag between the left and right edges
+  // of every row and make a self-intersecting path.
   std::vector<Pt> pts;
-  for (int y = 0; y < h; ++y) {
-    for (int x = 0; x < w; ++x) {
-      const size_t i = uz(y) * uz(w) + uz(x);
-      if (mask[i] == 0) continue;
-      const bool leftEmpty = x == 0 || mask[i - 1] == 0;
-      const bool rightEmpty = x == w - 1 || mask[i + 1] == 0;
-      const bool topEmpty = y == 0 || mask[i - uz(w)] == 0;
-      const bool botEmpty = y == h - 1 || mask[i + uz(w)] == 0;
-      if (!(leftEmpty || rightEmpty || topEmpty || botEmpty)) continue;
-      pts.push_back(Pt{x + 0.5, y + 0.5});
-    }
-  }
-  // Decimate to ≤ 128 vertices for mask UX.
-  if (pts.size() <= 128) return pts;
-  const size_t step = (pts.size() + 127) / 128;
-  std::vector<Pt> out;
-  for (size_t i = 0; i < pts.size(); i += step) out.push_back(pts[i]);
-  return out;
+  if (w <= 0 || h <= 0 || mask.size() < uz(w) * uz(h)) return pts;
+  const std::vector<trace::TracePoint> contour =
+      sam::matte_contour(mask, static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h), kMaxPathPoints);
+  pts.reserve(contour.size());
+  for (const trace::TracePoint& p : contour) pts.push_back(Pt{p.x, p.y});
+  return pts;
 }
 
 Matte morph_dilate(const Matte& mask, int w, int h, double radius) {
@@ -329,13 +322,14 @@ Matte blur_mask(const Matte& mask, int w, int h, double radius) {
   return out;
 }
 
-Matte refine_frame_matte(std::span<const std::uint8_t> rgba, const Matte& mask, int w, int h, double feather, const Seed& seed) {
+Matte refine_frame_matte(std::span<const std::uint8_t> rgba, const Matte& mask, int w, int h, double feather,
+                         const std::vector<Seed>& seeds) {
   // GrabCut on the propagated region as the FG prior, intersected so it cannot jump to a new object.
   GrabCutOptions o;
   o.unknownRadius = 6;
   o.iterations = 3;
   o.featherPx = feather;
-  const Matte gc = grab_cut_matte(rgba, w, h, {seed}, o);
+  const Matte gc = grab_cut_matte(rgba, w, h, seeds, o);
   Matte fused(mask.size(), 0);
   bool any = false;
   for (size_t i = 0; i < mask.size(); ++i) {
@@ -358,6 +352,69 @@ Matte warp_matte(const Matte& mask, int w, int h, const scene::pixmo::FlowField&
     }
   }
   return out;
+}
+
+void advect_seeds(std::vector<Seed>& seeds, const scene::pixmo::FlowField& flow, int w, int h) {
+  if (flow.cols <= 0 || flow.rows <= 0) return;
+  for (Seed& s : seeds) {
+    const stabilize::XY d = stabilize::sample_flow(flow, s.x, s.y);
+    s.x = std::max(0.0, std::min(static_cast<double>(w - 1), s.x + d.x));
+    s.y = std::max(0.0, std::min(static_cast<double>(h - 1), s.y + d.y));
+  }
+}
+
+Matte fill_polygon(const std::vector<Pt>& poly, int w, int h) {
+  Matte out(uz(w) * uz(h), 0);
+  if (poly.size() < 3 || w <= 0 || h <= 0) return out;
+  caf::Poly p;
+  p.points.reserve(poly.size());
+  for (const Pt& pt : poly) p.points.emplace_back(pt.x, pt.y);
+  caf::raster_hole(out, w, h, std::span<const caf::Poly>(&p, 1));
+  return out;
+}
+
+Reseed reseed_matte(std::span<const std::uint8_t> rgba, const Matte& carried, int w, int h, const std::vector<Seed>& fg,
+                    const std::vector<Seed>& bg, double tolerance) {
+  Reseed r;
+  const size_t n = uz(w) * uz(h);
+  r.add.assign(n, 0);
+  if (carried.size() < n || rgba.size() < n * 4) return r;
+  auto inside = [&](const Seed& s) {
+    const int x = std::max(0, std::min(w - 1, ri(s.x)));
+    const int y = std::max(0, std::min(h - 1, ri(s.y)));
+    return carried[uz(y) * uz(w) + uz(x)] != 0;
+  };
+  for (const Seed& s : fg) {
+    if (inside(s)) r.seeds.push_back(Seed{s.x, s.y, tolerance});
+  }
+  if (r.seeds.empty()) {
+    // No stroke survived the flow: the carried matte's centroid (rotoBrush.ts).
+    double cx = 0;
+    double cy = 0;
+    int k = 0;
+    for (int y = 0; y < h; y += 4) {
+      for (int x = 0; x < w; x += 4) {
+        if (carried[uz(y) * uz(w) + uz(x)] != 0) {
+          cx += x;
+          cy += y;
+          ++k;
+        }
+      }
+    }
+    if (k == 0) return r;
+    r.seeds.push_back(Seed{cx / k, cy / k, tolerance});
+  }
+  r.add = flood_matte(rgba, w, h, r.seeds);
+  if (!bg.empty()) {
+    std::vector<Seed> back;
+    back.reserve(bg.size());
+    for (const Seed& s : bg) back.push_back(Seed{s.x, s.y, tolerance});
+    const Matte out = flood_matte(rgba, w, h, back);
+    for (size_t i = 0; i < n; ++i) {
+      if (out[i] != 0) r.add[i] = 0;
+    }
+  }
+  return r;
 }
 
 }  // namespace premation::jobs::roto

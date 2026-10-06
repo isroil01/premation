@@ -1653,8 +1653,17 @@ void Walk::build_node(const doc::Node& n) {
   {
     const bool rounded = resolvedCornerRadius > 0 || has_independent_corner_radii(radii);
     if (rounded) l.cornerRadii = radii;
-    const double csx = std::abs(sx);
-    const double csy = std::abs(sy);
+    // A 3D layer's sx / sy are its PROJECTED size (perspective included), so
+    // dividing the radius by them made it shrink near the camera and grow far
+    // from it. The layer's own world scale (the world matrix's X / Y axes,
+    // column-major, no projection) is what the radius is authored against.
+    double csx = std::abs(sx);
+    double csy = std::abs(sy);
+    if (is3d && l.world3d) {
+      const auto& w3 = *l.world3d;
+      csx = std::sqrt(w3[0] * w3[0] + w3[1] * w3[1] + w3[2] * w3[2]);
+      csy = std::sqrt(w3[4] * w3[4] + w3[5] * w3[5] + w3[6] * w3[6]);
+    }
     if (rounded && (csx != 1 || csy != 1) && csx > 1e-6 && csy > 1e-6) l.cornerRadiusScale = std::array<double, 2>{csx, csy};
   }
   if (layerKind == LayerKind::text) text_fields(l, n, base, a);

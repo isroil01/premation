@@ -603,5 +603,8 @@ fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>) -> @location(
   let lutB = textureSample(lutTex, smp, vec2<f32>(lutIn.b, 0.5)).b;
   let graded = srgbToLinearRgb(vec3<f32>(lutR, lutG, lutB));
   let lit = shade3d(world, graded);
+  // A transparent texel must not write depth: it would hide the 3D layers
+  // behind it (AE parity 1.4). Last, after every texture sample.
+  if (c.a < 0.00392156862745098) { discard; }
   return vec4<f32>(lit * c.a, c.a);
 }

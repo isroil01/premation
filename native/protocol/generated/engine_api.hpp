@@ -3076,6 +3076,10 @@ struct RotoBrushJob {
   Vec2 seed;
   std::optional<double> tolerance;
   std::optional<double> feather;
+  std::vector<Vec2> prompts;
+  std::vector<Vec2> background_prompts;
+  std::optional<std::string> start_mask;
+  std::vector<std::string> replace_masks;
   bool operator==(const RotoBrushJob&) const = default;
 };
 

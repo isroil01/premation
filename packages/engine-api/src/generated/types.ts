@@ -2866,7 +2866,7 @@ export interface ObjectMatteJob {
   range: TimeRange;
   prompts: Vec2[];
   backgroundPrompts: Vec2[];
-  /** The SAM encoder / decoder ONNX files (the page's bundled `models/object-matte/*` or the user's install). Empty = the engine's default search (PREMATION_SAM_DIR). */
+  /** The SAM encoder / decoder ONNX files. Empty (what the page sends) = the engine's default search: the model the user installed (PREMATION_SAM_USER_DIR, set by Electron main to <userData>/models/object-matte) when both files are there, else the bundled pair (PREMATION_SAM_DIR). */
   encoderModel: string;
   decoderModel: string;
   /** A drawn box prompt in layer pixels at `range.start` (objectMask.ts marquee). It wins over `prompts` / `backgroundPrompts` when both arrive: its centre is the foreground point, and nothing outside it (plus an 8% + 4 px margin) is kept. */
@@ -2982,13 +2982,20 @@ export interface TrackApplyJob {
   nullMode?: TrackApplyMode;
 }
 
-/** Roto Brush (rotoBrush.ts runRotoBrush): a GrabCut-class matte from the `seed` click (layer pixels at `range.start`, colour `tolerance` default 36), propagated frame to frame by block flow with a colour re-seed, as ONE "Roto Brush" mask with a path key per frame of the range (feather `feather` px, default 2). */
+/**
+ * Roto Brush (rotoBrush.ts runRotoBrush): a GrabCut-class matte from the `seed` click (layer pixels at `range.start`, colour `tolerance` default 36), propagated frame to frame by block flow with a colour re-seed, as ONE "Roto Brush" mask with a path key per frame of the range (feather `feather` px, default 2).
+ * Roto Brush propagation. The starting matte is `startMask` at `range.start` (the tool's SAM outline, a mask id of `layer`), else GrabCut from every foreground prompt. Every prompt (layer px, top-left origin) rides the flow from frame to frame and re-seeds the matte; background prompts keep their region out of the re-seed. `seed` is the prompt used when `prompts` is empty. The result is ONE "Roto Brush" mask with a path key per frame; `replaceMasks` and every other "Roto Brush" mask on the layer are removed in the same history entry.
+ */
 export interface RotoBrushJob {
   layer: LayerId;
   range: TimeRange;
   seed: Vec2;
   tolerance?: number;
   feather?: number;
+  prompts: Vec2[];
+  backgroundPrompts: Vec2[];
+  startMask?: string;
+  replaceMasks: string[];
 }
 
 /** Content-Aware Fill (contentAwareFillVideo.ts runContentAwareFill): the layer's masks at each frame of the range are the hole, filled by PatchMatch then carried by flow both ways; the filled frames are PNGs written to `outputFolder` (default: next to the project, `Content-Aware Fill/`) and attached with setContentAwareFill (the renderer shows the nearest filled frame over the footage). */
@@ -4453,7 +4460,7 @@ export interface OverlayScene3D {
   position: number[];
   /** light: radius, cone, coneFeather, and the aim in degrees (lightAngle + the layer's world Z rotation) — what buildLightGizmo takes. */
   light: number[];
-  /** layer: the local transform sampled at the frame (sampleTransform3DAtPlayhead): x, y, z, rotationX, rotationY, rotation, scaleX, scaleY, scaleZ (stored units). */
+  /** layer: the local transform sampled at the frame (sampleTransform3DAtPlayhead): x, y, z, rotationX, rotationY, rotation, scaleX, scaleY, scaleZ, orientationX, orientationY, orientationZ (stored units; position in the parent's space — `parent` lifts it to the world). */
   local: number[];
   /** layer: the extrusion depth (animated winning, ≥ 0). */
   extrusion: number;

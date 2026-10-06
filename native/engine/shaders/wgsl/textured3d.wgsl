@@ -597,5 +597,8 @@ fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>) -> @location(
   let v = vec4<f32>(ws, 1.0);
   let graded = vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v));
   let lit = shade3d(world, graded);
+  // A transparent texel must not write depth: it would hide the 3D layers
+  // behind it (AE parity 1.4). Last, after every texture sample.
+  if (c.a < 0.00392156862745098) { discard; }
   return vec4<f32>(lit * c.a, c.a);
 }

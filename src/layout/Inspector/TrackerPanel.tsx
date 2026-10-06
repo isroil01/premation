@@ -44,6 +44,7 @@ export function TrackerPanel(): JSX.Element {
       <div className={styles.col} style={{ marginBottom: 'var(--space-2)' }}>
         <span className={styles.sectionTitle}>Motion Source</span>
         <select
+          aria-label="Motion Source"
           value={activeSourceId}
           onChange={(e) => setChosenSourceId(e.target.value)}
           className={styles.fontSelect}

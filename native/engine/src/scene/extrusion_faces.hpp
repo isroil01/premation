@@ -11,6 +11,8 @@
 // (extrusionFacesCrossEngine.test.ts).
 #pragma once
 
+#include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -43,6 +45,8 @@ struct Geometry {
 struct Options {
   double bevel = 0;
   double cornerRadius = 0;
+  /// Per-corner radii TL, TR, BR, BL; when set they win over `cornerRadius`.
+  std::optional<std::array<double, 4>> cornerRadii;
   double wallSegments = 1;
 };
 

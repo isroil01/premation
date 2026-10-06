@@ -195,11 +195,15 @@ it and clears the quarantine.
 | `setPluginEnabled` | enable / disable for this session; re-enabling retries a failed or quarantined plugin |
 | `setPluginData` | write a plugin's document data (arbitrary-data params) |
 
-The TypeScript engine hosts no native plugins: `listPlugins` is empty and
-`invokeEffectAction` is `unsupported`. The editor's surfaces (the Effects
-panel, the Inspector's effect cards, a plugin manager) use these queries
-once `engine()` is the C++ engine (plan D5). Until then native plugins run
-where the C++ engine renders: the engine viewport and `premation-plugins`.
+The C++ engine is the only engine (the TypeScript one is deleted), so these
+queries always answer from `premation-engine`. Native plugins render in the
+engine viewport and in `premation-plugins` today. The editor surfaces that
+expose them — installing from the plugin store, the Effects panel and Add
+menu, the Properties effect cards built from `EffectInfo.params`, and export
+with plugins — are AE parity step 2 (docs/AE_PARITY_PLAN.md). A project whose
+plugin is missing keeps the effect untouched: it passes through, is recorded
+on `layerErrors`, and one notice names the missing plugin
+(`src/core/project/missingPluginContent.ts`).
 
 ## Building and testing a plugin
 

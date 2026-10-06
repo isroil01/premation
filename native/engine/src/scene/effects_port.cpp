@@ -223,10 +223,10 @@ const char* effect_unported_reason(const Json& e) {
   if (is_temporal(t)) return nullptr;  // handled by the snapshot's time plumbing (or reported there)
   if (is_color_effect(t)) return nullptr;
   if (is_native_effect(t)) return nullptr;  // G1: native SDK plugins render in the chain (scene_native_fx.cpp)
-  // A JS / WGSL plugin effect: its shader, passes and params live in the page's
-  // plugin registry (registerEffects), not in the document — decision G2 keeps
-  // that system out of the engine (the native SDK, G1, is the engine's).
-  if (doc::registry().effect(t) == nullptr) return "plugin effects (JS/WGSL plugin system, not ported: G2)";
+  // An effect type the engine does not know: a native plugin that is not
+  // installed (or failed to load), or an old JS / WGSL plugin (G2). The effect
+  // stays in the document untouched and passes its input through.
+  if (doc::registry().effect(t) == nullptr) return "missing plugin — the effect passes through until it is installed";
   // A baked layer's chain runs in the raster (bake_chain.cpp): what it cannot
   // draw is reported there, per effect, with the raster.
   if (is_canvas2d_only(t)) return nullptr;
@@ -773,7 +773,7 @@ const char* gpu_effect_route_blocker(const RLayer& l) {
     const std::string t = type_of(e);
     if (is_canvas2d_only(t) && !gpu_draws_canvas_effect(l, e) && !gpu_overlay_effect(l, e)) return "a Canvas2D-only effect";
     if (is_temporal(t)) continue;  // the snapshot's time plumbing, baked or not
-    if (!is_native_effect(t) && doc::registry().effect(t) == nullptr) return "a plugin effect (G2)";
+    if (!is_native_effect(t) && doc::registry().effect(t) == nullptr) return "a missing plugin's effect";
     if (t != "beam-path" && !gpu_overlay_effect(l, e) && !(is_canvas2d_only(t) && gpu_draws_canvas_effect(l, e))) {
       const Json& pm = e.at("params").at("pathMaskId");
       if (pm.is_string() && !pm.str().empty()) return "a path-following effect";

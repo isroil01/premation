@@ -180,6 +180,7 @@
     "solid3d",
     "shadow-depth",
     "shadow-depth-mesh",
+    "shadow-depth-alpha",
     "ssao",
     "ssao-blur",
     "textured",
@@ -5830,6 +5831,38 @@
           ]
         }
       ]
+    },
+    {
+      "name": "SHADOW_DEPTH_ALPHA_MATERIAL",
+      "shader": "shadow-depth-alpha",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ],
+      "depth": {
+        "test": true,
+        "write": true
+      }
     },
     {
       "name": "SHADOW_DEPTH_MATERIAL",

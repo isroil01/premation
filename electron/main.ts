@@ -29,6 +29,7 @@ import { registerNativePluginIpc } from './ipc/nativePlugins';
 import { getKeyForProvider, registerAiKeyIpc, VAULT_PROVIDERS, type VaultProvider } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
 import { registerModelDownloadIpc, abortAllModelDownloads } from './modelDownload';
+import { objectMatteUserDir, registerObjectMatteModelIpc } from './objectMatteModel';
 import { registerMediaKeyIpc } from './mediaKeyVault';
 import { registerAiMediaProxyIpc } from './aiMediaProxy';
 import { registerApiProxyIpc, abortAllApiStreams } from './apiProxy';
@@ -1009,58 +1010,6 @@ function registerEditionReportIpc(): void {
   });
 }
 
-/**
- * The bundled Object Matte model files (dist/models/**, placed there by
- * scripts/fetchObjectMatte.cjs and shipped inside app.asar).
- *
- * The packaged renderer runs from file://, where `fetch` reaches nothing local,
- * so the bytes come over IPC instead. A fixed name→path allowlist rather than a
- * path parameter: this channel reads three known files out of our own bundle
- * and must never become a general file read (that is `file:readBytes`, which
- * takes a user-picked path through a dialog).
- */
-const OBJECT_MATTE_FILES: Readonly<Record<string, string>> = {
-  'vision_encoder_quantized.onnx': path.join('models', 'object-matte', 'vision_encoder_quantized.onnx'),
-  'prompt_encoder_mask_decoder_quantized.onnx': path.join('models', 'object-matte', 'prompt_encoder_mask_decoder_quantized.onnx'),
-  'ort-wasm-simd-threaded.jsep.wasm': path.join('models', 'ort', 'ort-wasm-simd-threaded.jsep.wasm'),
-  'ort-wasm-simd-threaded.jsep.mjs': path.join('models', 'ort', 'ort-wasm-simd-threaded.jsep.mjs'),
-};
-
-function objectMatteAbsPath(name: unknown): string | null {
-  const rel = typeof name === 'string' ? OBJECT_MATTE_FILES[name] : undefined;
-  // Same root the window loads from (`../dist/index.html`).
-  return rel ? path.join(__dirname, '..', 'dist', rel) : null;
-}
-
-function registerObjectMatteIpc(): void {
-  handle('objectMatte:read', async (_event, name: unknown) => {
-    const abs = objectMatteAbsPath(name);
-    if (!abs) return null;
-    try {
-      // fs is asar-aware, so this reads straight out of the archive when packaged.
-      return await readFile(abs);
-    } catch {
-      // A build that never ran the fetch script — the renderer falls back to
-      // classical GrabCut, exactly as when the files are absent over http.
-      return null;
-    }
-  });
-
-  // The ORT glue is a MODULE: the renderer must `import()` it, so it needs a
-  // URL, not bytes. Answered only for files that exist — an import that would
-  // 404 is better refused here, where the fallback is graceful.
-  handle('objectMatte:url', async (_event, name: unknown) => {
-    const abs = objectMatteAbsPath(name);
-    if (!abs) return null;
-    try {
-      await access(abs);
-      return pathToFileURL(abs).href;
-    } catch {
-      return null;
-    }
-  });
-}
-
 /** Resolve `local-file://` URLs (imported media) to real files on disk. */
 function registerLocalFileProtocol(): void {
   protocol.handle('local-file', async (request) => {
@@ -1200,12 +1149,11 @@ app.whenReady().then(() => {
   const supervisorLoaded = exportSupervisor.load();
   registerPopoutIpc();
   registerOAuthIpc();
-  // Bundled neural segmentation model — read-only, allowlisted, no gate: the
-  // files ship in every edition and reading our own bundle spends nothing.
-  registerObjectMatteIpc();
-  // The custom-model download (Settings ▸ Object Matte ▸ Install). In main
-  // because the page CSP names no model host — see electron/modelDownload.ts.
-  // Ungated: it attaches no credential and runs only on an explicit press.
+  // The user's Object Matte model (Settings ▸ Object Matte ▸ Install): main
+  // downloads it into <userData>/models/object-matte, where the engine reads
+  // it (objectMatteModel.ts); the cancel channel is modelDownload.ts. Ungated:
+  // it attaches no credential and runs only on an explicit press.
+  registerObjectMatteModelIpc(() => app.getPath('userData'));
   registerModelDownloadIpc();
   // The account session, and every authenticated call that uses it.
   //
@@ -1267,6 +1215,7 @@ app.whenReady().then(() => {
     // Imported bytes and session blob: footage become files here (the same
     // folder file:sessionFootageDir hands the page).
     sessionFootageDir: ensureDir(path.join(app.getPath('userData'), 'session-footage')),
+    samUserDir: objectMatteUserDir(app.getPath('userData')),
     // The transcribe job's key: main's keystore → the startJob, per job (never logged, never to a page).
     transcribeCredential: async (provider) =>
       (VAULT_PROVIDERS as readonly string[]).includes(provider) ? getKeyForProvider(provider as VaultProvider) : null,

@@ -4,9 +4,6 @@ import { AppRouter } from './routes/AppRouter';
 import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import { TooltipProvider } from '@components/Tooltip';
 import { setLocalFirst } from '@core/config/flags';
-import { tryRegisterSamOnnxFromUrl } from '@core/tracking/samOnnxLoader';
-import { restoreSamModelAtBoot, useSamModelStore } from '@stores/samModelStore';
-import { registerBundledSamAtBoot } from '@core/tracking/samBundled';
 import { parseEdition, setEdition } from '@core/config/edition';
 import { purgeLegacyLocalAiKeys } from '@core/api/purgeLocalKeys';
 import { configureUiPlatform } from '@core/config/uiPlatform';
@@ -62,39 +59,6 @@ setLocalFirst(
     import.meta.env.VITE_LOCAL_FIRST === '1' ||
     import.meta.env.VITE_LOCAL_FIRST === 'true',
 );
-
-// Object Matte — neural, one-click subject selection. The segmenter and its
-// registration hook have been in the tree since the tracking column shipped;
-// what they were missing was a model. Point `VITE_SAM_MODEL_URL` at a hosted
-// SAM-class ONNX decoder and it is registered at boot; clicks in the Roto tool
-// then prefer it, with GrabCut as the fallback the user already had. Absent,
-// nothing changes — the loader is a dynamic import and costs nothing unused.
-{
-  const samUrl = import.meta.env.VITE_SAM_MODEL_URL as string | undefined;
-  if (samUrl) {
-    void tryRegisterSamOnnxFromUrl(samUrl).then((r) => {
-      if (r.status === 'ok') console.info('[sam] neural segmenter ready');
-      else console.warn(`[sam] ${r.status}: ${r.reason}`);
-    });
-  } else {
-    /*
-      No build-time URL. Precedence: a model the user installed through
-      Settings ▸ Object Matte (IndexedDB cache) wins — it was an explicit
-      choice — then the encoder/decoder pair bundled with the app
-      (samBundled.ts). Neither path touches the network; a checkout without
-      the bundled files (fetch script never run) lands on GrabCut exactly as
-      before. Sequential on purpose: registering the bundle first would create
-      sessions the cached model immediately replaces.
-    */
-    void (async () => {
-      await restoreSamModelAtBoot();
-      if (useSamModelStore.getState().status.kind !== 'ready') {
-        const ok = await registerBundledSamAtBoot();
-        if (ok) console.info('[sam] bundled neural segmenter ready');
-      }
-    })();
-  }
-}
 
 /**
  * Apply the async document-font stylesheet.

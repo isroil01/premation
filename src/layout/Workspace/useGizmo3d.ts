@@ -28,7 +28,7 @@ import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame
 import { useRetainTrees } from '@hooks/useMirror';
 import { documentMirror } from '@stores/documentMirror';
 import { canBe3DLayer } from '@core/mirror/layerKinds';
-import { transform3DOf } from '@core/mirror/viewGeometry';
+import { gizmoFrameOf, toParentSpace, transform3DOf, type GizmoFrame } from '@core/mirror/viewGeometry';
 import type { Gizmo3DNodeUpdate, Transform3DValues } from '@core/workspace/ports';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
@@ -59,6 +59,9 @@ export interface DragState3D {
   initialNodeStates?: Array<{
     id: string;
     pos: Vec3;
+    /** The layer's world position at grab time; a move adds the delta here, then maps it into `parent`'s space. */
+    world: Vec3;
+    parent: readonly number[];
     rot: { rotX: number; rotY: number; rotZ: number };
     scale: { scaleX: number; scaleY: number; scaleZ: number };
   }>;
@@ -171,8 +174,8 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
       const layer = mirror.layer(id);
       return canBe3DLayer(layer) && layer?.switches.threeD === true;
     })
-    .map((id) => ({ id, tv: transform3DOf(recordOf(id)) }))
-    .filter((n): n is { id: string; tv: Transform3DValues } => n.tv !== null);
+    .map((id) => ({ id, tv: transform3DOf(recordOf(id)), frame: gizmoFrameOf(recordOf(id)) }))
+    .filter((n): n is { id: string; tv: Transform3DValues; frame: GizmoFrame } => n.tv !== null && n.frame !== null);
 
   const is3D = selected3DNodes.length > 0;
   const singleId = selectedIds.length === 1 ? selectedIds[0] : (selected3DNodes[0]?.id ?? null);
@@ -182,14 +185,15 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   let firstRot = { rotX: 0, rotY: 0, rotZ: 0 };
   let firstScale = { scaleX: 1, scaleY: 1, scaleZ: 1 };
 
-  selected3DNodes.forEach(({ tv }, idx) => {
+  selected3DNodes.forEach(({ tv, frame }, idx) => {
     // SAMPLED at the frame (animated tracks win) — the renderer draws the
     // sampled value, so anchoring the gizmo on static base props desynced it
-    // off any keyframed layer (Bug: gizmo/object desync).
+    // off any keyframed layer (Bug: gizmo/object desync). The WORLD position:
+    // a parented layer's local x/y/z is in its parent's space.
 
-    sumX += tv.x;
-    sumY += tv.y;
-    sumZ += tv.z;
+    sumX += frame.world.x;
+    sumY += frame.world.y;
+    sumZ += frame.world.z;
 
     if (idx === 0) {
       firstRot = { rotX: tv.rotationX, rotY: tv.rotationY, rotZ: tv.rotation };
@@ -206,6 +210,11 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
 
   const nodeRotation = firstRot;
   const nodeScale = firstScale;
+  // The first layer's frame (parent chain + Orientation) orients the Local axes.
+  const firstFrame = selected3DNodes[0]?.frame;
+  const localFrame = firstFrame ? { parent: firstFrame.parent, orientation: firstFrame.orientation } : undefined;
+  const localFrameRef = useRef(localFrame);
+  localFrameRef.current = localFrame;
 
   // Camera / ortho axis / scene gizmos come from the SHARED resolver, which the
   // read-only inspection panes use too — one resolution path, so the panes and
@@ -265,7 +274,7 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
       nodeRotation,
       camera,
       orthoView,
-      { gizmoState, axisMode, gizmoLengthPx: 85 / viewScale },
+      { gizmoState, axisMode, gizmoLengthPx: 85 / viewScale, frame: localFrame },
       compWidth,
       compHeight,
     );
@@ -344,7 +353,7 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
       if (dragState && dragState.active) {
         // Drag in progress — calculate updated 3D transform
         const ray = Project3D.unprojectScreenRay(compPt.x, compPt.y, camera, orthoView, compWidth, compHeight);
-        const basis = Gizmo3D.getGizmoBasis(axisMode, dragState.startRot3D, camera);
+        const basis = Gizmo3D.getGizmoBasis(axisMode, dragState.startRot3D, camera, localFrameRef.current);
 
         let newPos = { ...dragState.startPos3D };
         const newRot = { ...dragState.startRot3D };
@@ -483,8 +492,9 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         const updates: Gizmo3DNodeUpdate[] = (dragState.initialNodeStates ?? []).map((st) => ({
           id: st.id,
           values: {
+            // The move is a WORLD delta; a parented layer stores parent-space values.
             ...(isPosHandle
-              ? { x: st.pos.x + deltaX, y: st.pos.y + deltaY, z: st.pos.z + deltaZ }
+              ? toParentSpace(st.parent, { x: st.world.x + deltaX, y: st.world.y + deltaY, z: st.world.z + deltaZ })
               : {}),
             ...(isRotHandle && handle === 'rot_x' ? { rotationX: st.rot.rotX + deltaRotX } : {}),
             ...(isRotHandle && handle === 'rot_y' ? { rotationY: st.rot.rotY + deltaRotY } : {}),
@@ -568,12 +578,14 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         // Nodes are re-fetched at event time so the anchor is never a stale
         // render-closure value.
         const initialNodeStates = selected3DNodes
-          .map((n) => ({ id: n.id, tv: transform3DOf(recordOfRef.current(n.id)) }))
-          .filter((n): n is { id: string; tv: Transform3DValues } => n.tv !== null)
-          .map(({ id, tv }) => {
+          .map((n) => ({ id: n.id, tv: transform3DOf(recordOfRef.current(n.id)), frame: gizmoFrameOf(recordOfRef.current(n.id)) }))
+          .filter((n): n is { id: string; tv: Transform3DValues; frame: GizmoFrame } => n.tv !== null && n.frame !== null)
+          .map(({ id, tv, frame }) => {
             return {
               id,
               pos: { x: tv.x, y: tv.y, z: tv.z },
+              world: frame.world,
+              parent: frame.parent,
               rot: { rotX: tv.rotationX, rotY: tv.rotationY, rotZ: tv.rotation },
               scale: { scaleX: tv.scaleX, scaleY: tv.scaleY, scaleZ: tv.scaleZ },
             };
@@ -595,9 +607,9 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         // Fresh centroid + first-node rot/scale (mirrors the render-path math).
         const n = initialNodeStates.length;
         const startPos: Vec3 = {
-          x: initialNodeStates.reduce((a, s) => a + s.pos.x, 0) / n,
-          y: initialNodeStates.reduce((a, s) => a + s.pos.y, 0) / n,
-          z: initialNodeStates.reduce((a, s) => a + s.pos.z, 0) / n,
+          x: initialNodeStates.reduce((a, s) => a + s.world.x, 0) / n,
+          y: initialNodeStates.reduce((a, s) => a + s.world.y, 0) / n,
+          z: initialNodeStates.reduce((a, s) => a + s.world.z, 0) / n,
         };
         const first = initialNodeStates[0]!;
         const startRot = { ...first.rot };
@@ -695,6 +707,7 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
     position3D,
     nodeRotation,
     nodeScale,
+    localFrame,
     camera,
     orthoView,
     compWidth,

@@ -190,7 +190,7 @@ export function AdvancedTracking({
           Roto Brush (propagate)
         </Button>
         <Button size="sm" variant="secondary" onClick={onSeedMatte} disabled={tracking} fullWidth>
-          Seed Matte (GrabCut)
+          Seed Matte
         </Button>
         <Button
           size="sm"
@@ -198,7 +198,7 @@ export function AdvancedTracking({
           onClick={onSegmentSam}
           disabled={tracking}
           fullWidth
-          title="SAM-class segment from track point (or two points as a box). Writes an Add mask. Register ONNX via registerSamOnnxSession for neural."
+          title="Segments the object under the track point (or the box between two points) with the SAM model in the engine, and writes an Add mask."
         >
           Segment (SAM-class)
         </Button>

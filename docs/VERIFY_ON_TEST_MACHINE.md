@@ -76,6 +76,49 @@ builds; ctest 15/15; every `*.native.test.*` suite on the full engine with
 the TypeScript engine went: 100 layers with effects at 1080p, 4K ProRes scrub
 latency, export fps against 0.8.5.
 
+## AE parity step 1 (2026-10-06, docs/AE_PARITY_PLAN.md) — needs the GPU box
+
+Written in a Linux cloud session with no GPU, no Dawn and no Skia: the
+headless engine, its native tests, `tsc`, lint and the jest suites ran there;
+the WGSL compiled with naga. Everything below did not run.
+
+- [ ] Build `windows-clang-cl-engine`: `render_graph/threed.cpp` (the
+      alpha-tested shadow / SSAO casters, `SHADOW_DEPTH_ALPHA_MATERIAL`),
+      `scene/snapshot_build.cpp`, `scene/threed_port.cpp`,
+      `scene/extrusion_mesh.cpp` and `jobs/kind_roto_brush.cpp` compiled only
+      against stubs or not at all.
+- [ ] Golden render tests (`packages/render-tests`, the native gate): the
+      `discard` added to `solid3d` / `textured3d*` / `masked-textured3d*`, the
+      new `shadow-depth-alpha` caster, the 3D corner-radius scale and the
+      variable mask feather all change pixels. Expect diffs only in scenes with
+      3D rounded rects, transparent 3D layers with shadows / SSAO, and
+      per-vertex feathered masks; rebless those after looking at them.
+- [ ] 3D corner radius: a 3D rounded rect pushed from z = 0 to z = −1500 and
+      to z = +600 keeps the same radius relative to its size; an extruded one's
+      walls meet the front face's rounded corners; a per-corner-radius
+      extrusion under a spatial effect (the face-plane fallback) keeps its
+      corners.
+- [ ] Alpha in 3D: a PNG with transparent corners in front of another 3D layer
+      no longer hides it in the corners; with a shadow-mapped light it casts
+      its silhouette, not a rectangle; with SSAO on, no dark square around it.
+- [ ] Variable mask feather: a mask with per-vertex feather draws a ramp that
+      widens and narrows along the outline (it used to draw a hard edge and
+      list "variable (per-vertex) mask feather" in layerErrors).
+- [ ] Roto Brush on real footage: paint strokes, propagate 60 frames — the mask
+      follows the outline with no zigzag spikes, the timeline shows ONE
+      "Roto Brush" mask (the SAM outline is replaced, not duplicated), and a
+      background stroke keeps its region out across the shot.
+- [ ] Object Matte model: Settings ▸ Object Matte ▸ Install writes the pair to
+      `<userData>/models/object-matte/`; the next Roto click uses it (rename
+      the bundled `resources/models/object-matte` away to prove it); Remove
+      falls back to the bundled pair with no restart.
+- [ ] 3D gizmo on a layer parented to a rotated, scaled null: the gizmo sits on
+      the layer, Local axes follow the parent and the layer's Orientation, and
+      a drag moves the layer under the cursor along the chosen axis.
+- [ ] A project with an effect from a plugin that is not installed opens with
+      one "Missing plugin …" notice, renders the layer unaffected, keeps the
+      effect after a save and reopen.
+
 ## Status on the Windows RTX 4060 box (2026-09-28)
 
 Built and run there after the `wip-stopped` merges: `windows-clang-cl-engine`

@@ -533,7 +533,11 @@ std::optional<api::OverlayScene3D> scene3d_of(const PCtx& pc, const std::string&
                value(av, "rotation").value_or(geo ? geo->rotation : 0),
                value(av, "scaleX") ? *value(av, "scaleX") : sc2 ? *sc2 : geo ? geo->scale_x : 1,
                value(av, "scaleY") ? *value(av, "scaleY") : sc2 ? *sc2 : geo ? geo->scale_y : 1,
-               *scaleZ};
+               *scaleZ,
+               // Orientation (degrees): the gizmo's local basis is Orientation then X/Y/Z Rotation.
+               value(av, "orientationX").value_or(transform_prop(*n, "orientationX")),
+               value(av, "orientationY").value_or(transform_prop(*n, "orientationY")),
+               value(av, "orientationZ").value_or(transform_prop(*n, "orientationZ"))};
   rec.extrusion = std::max(0.0, value(av, "extrusionDepth").value_or(std::max(0.0, transform_prop(*n, "extrusionDepth"))));
   return rec;
 }

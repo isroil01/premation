@@ -110,7 +110,7 @@ export async function runAutoTrack(opts: AutoTrackCommandOptions): Promise<void>
       return;
     }
     const tracks = res.tracks.map((t) => t.map(([compTime, x, y, confidence, coasted]) => ({ compTime, x, y, confidence, coasted: coasted === 1 })));
-    const plan: AutoPlanSummary = { x: point.x, y: point.y, featureHalf, searchHalf, motionPerFrame: null, strength: 1, distinctness: 1 };
+    const plan: AutoPlanSummary = { x: point.x, y: point.y, featureHalf, searchHalf, motionPerFrame: null, strength: null, distinctness: null };
     store.getState().setAutoPlan(plan);
     // One click produces ONE feature, so the panel has to be in a one-point mode.
     if (pointCountFor(store.getState().mode) !== 1) {

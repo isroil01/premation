@@ -613,7 +613,7 @@ export function TrackPointOverlay({ host }: { host?: TrackPointHost } = {}): JSX
           strokeWidth={1}
         />
       )}
-      {points[0] && autoPlan && (
+      {points[0] && autoPlan && autoPlan.distinctness !== null && (
         // The analysis's verdict, on the footage rather than only in the
         // panel: the ring around the chosen feature carries its distinctness,
         // so an ambiguous pick is visible exactly where the user is looking.

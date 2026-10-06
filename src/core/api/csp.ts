@@ -116,10 +116,8 @@ export function buildAppCsp(options: CspOptions = {}): string {
     `media-src ${mediaSrc.join(' ')}`,
     `style-src 'self' 'unsafe-inline' ${GOOGLE_FONTS_CSS}`,
     `font-src 'self' ${GOOGLE_FONTS_FILES}`,
-    // 'wasm-unsafe-eval' admits WebAssembly COMPILATION and nothing about JS —
-    // it is not 'unsafe-eval'. Without it `script-src 'self'` refuses
-    // WebAssembly.instantiate, which is how the Object Matte segmenter
-    // (onnxruntime-web) runs; every model load would fail with a CSP error.
-    "script-src 'self' 'wasm-unsafe-eval'",
+    // No 'wasm-unsafe-eval': the page compiles no WebAssembly. The Object
+    // Matte segmenter that needed it (onnxruntime-web) now runs in the engine.
+    "script-src 'self'",
   ].join('; ');
 }

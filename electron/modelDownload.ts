@@ -22,7 +22,6 @@
  * that host's prerogative.
  */
 
-import { type IpcMainInvokeEvent } from 'electron';
 import { handle } from './ipcGuard';
 
 /** Mirrors the renderer-side cap in samModelInstall.ts — a wrong URL must not
@@ -139,33 +138,24 @@ export async function downloadModelBytes(
   return { ok: true, bytes: out };
 }
 
+/**
+ * Claim `requestId` for one download: an AbortController the cancel channel
+ * can reach, and `done()` to release it. Null when the id is already running
+ * (a reused id would let one call's Cancel abort another).
+ */
+export function registerDownloadCancel(requestId: string): { signal: AbortSignal; done: () => void } | null {
+  if (!SAFE_REQUEST_ID.test(requestId) || inFlight.has(requestId)) return null;
+  const controller = new AbortController();
+  inFlight.set(requestId, controller);
+  return { signal: controller.signal, done: () => void inFlight.delete(requestId) };
+}
+
+/**
+ * The cancel channel. The download itself is `objectMatte:install`
+ * (objectMatteModel.ts): main fetches the model and saves it where the engine
+ * reads it; the bytes never go to the renderer.
+ */
 export function registerModelDownloadIpc(): void {
-  handle('objectMatte:download', async (event: IpcMainInvokeEvent, request: unknown): Promise<ModelDownloadResult> => {
-    const { url, requestId } = (request ?? {}) as { url?: unknown; requestId?: unknown };
-    const refusal = checkModelUrl(url);
-    if (refusal) return { ok: false, message: refusal };
-    if (typeof requestId !== 'string' || !SAFE_REQUEST_ID.test(requestId)) {
-      return { ok: false, message: 'Bad download request.' };
-    }
-
-    // One id, one download. A reused id would let a second call's Cancel abort
-    // the first — refuse rather than guess which one was meant.
-    if (inFlight.has(requestId)) return { ok: false, message: 'That download is already running.' };
-    const controller = new AbortController();
-    inFlight.set(requestId, controller);
-    const sender = event.sender;
-    try {
-      return await downloadModelBytes(url as string, controller.signal, (receivedBytes, totalBytes) => {
-        // A closed window destroys its WebContents; sending to it throws.
-        if (!sender.isDestroyed()) {
-          sender.send('objectMatte:downloadProgress', { requestId, receivedBytes, totalBytes } satisfies ModelDownloadProgress);
-        }
-      });
-    } finally {
-      inFlight.delete(requestId);
-    }
-  });
-
   handle('objectMatte:cancelDownload', (_event, requestId: unknown): boolean => {
     if (typeof requestId !== 'string') return false;
     const controller = inFlight.get(requestId);

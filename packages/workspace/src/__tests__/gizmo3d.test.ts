@@ -12,10 +12,11 @@ import {
   viewportToComp,
   compToViewport,
   buildGroundGridLines,
+  getGizmoBasis,
   type Gizmo3DConfig,
 } from '../selection/gizmo3d';
 import { buildDimensionalGuideData, type DimensionalGuideState } from '../selection/dimensionalGuides';
-import { Project3D } from '@motion/scene';
+import { Matrix4Math, Project3D } from '@motion/scene';
 
 const W = 1920;
 const H = 1080;
@@ -353,5 +354,38 @@ describe('gizmo3d handle reachability (one-side-only regressions)', () => {
       expect(axis!.screenLen).toBeGreaterThan(70);
       expect(axis!.screenLen).toBeLessThan(100);
     }
+  });
+});
+
+describe('getGizmoBasis — Local axes in the parent chain and Orientation', () => {
+  const close = (v: { x: number; y: number; z: number }, x: number, y: number, z: number) => {
+    expect(v.x).toBeCloseTo(x, 6);
+    expect(v.y).toBeCloseTo(y, 6);
+    expect(v.z).toBeCloseTo(z, 6);
+  };
+
+  it('a parent rotated 90° about Z turns the local X axis onto world Y (scale ignored)', () => {
+    const parent = Matrix4Math.compose({
+      position: { x: 300, y: 200, z: 0 },
+      rotation: { x: 0, y: 0, z: Math.PI / 2 },
+      scale: { x: 2, y: 2, z: 2 },
+      anchor: { x: 0, y: 0, z: 0 },
+    });
+    const b = getGizmoBasis('local', NO_ROT, cam, { parent: Array.from(parent) });
+    close(b.x, 0, 1, 0);
+    close(b.y, -1, 0, 0);
+    close(b.z, 0, 0, 1);
+  });
+
+  it('Orientation turns the axes like the X/Y/Z rotation would', () => {
+    const viaOrientation = getGizmoBasis('local', NO_ROT, cam, { orientation: { x: 0, y: 90, z: 0 } });
+    const viaRotation = getGizmoBasis('local', { rotX: 0, rotY: 90, rotZ: 0 }, cam);
+    close(viaOrientation.x, viaRotation.x.x, viaRotation.x.y, viaRotation.x.z);
+    close(viaOrientation.z, viaRotation.z.x, viaRotation.z.y, viaRotation.z.z);
+  });
+
+  it('World mode ignores the frame', () => {
+    const b = getGizmoBasis('world', NO_ROT, cam, { orientation: { x: 30, y: 40, z: 50 } });
+    close(b.x, 1, 0, 0);
   });
 });

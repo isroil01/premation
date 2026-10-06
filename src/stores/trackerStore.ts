@@ -57,10 +57,15 @@ export interface AutoPlanSummary {
   searchHalf: number;
   /** Measured px/frame at the feature; null when it could not be measured. */
   motionPerFrame: number | null;
-  /** Shi-Tomasi corner strength — how well-defined the feature is. */
-  strength: number;
-  /** 0..1; low means look-alikes nearby (see autoFeature.distinctnessAt). */
-  distinctness: number;
+  /** Shi-Tomasi corner strength — how well-defined the feature is; null = not measured. */
+  strength: number | null;
+  /**
+   * 0..1; low means look-alikes nearby (see autoFeature.distinctnessAt); null
+   * = not measured. The engine's one-click track does not measure it yet
+   * (AE parity step 3 restores the feature picker), so the panel shows no
+   * quality badge rather than a made-up one.
+   */
+  distinctness: number | null;
 }
 
 export function pointCountFor(mode: TrackerMode): number {

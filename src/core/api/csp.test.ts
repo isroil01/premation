@@ -22,7 +22,7 @@ describe('app CSP', () => {
     expect(d('connect-src')).toContain("'self'");
     expect(d('connect-src')).toContain('http://localhost:*');
     expect(d('connect-src')).toContain('ws://localhost:*');
-    expect(d('script-src')).toEqual(["'self'", "'wasm-unsafe-eval'"]);
+    expect(d('script-src')).toEqual(["'self'"]);
     expect(d('default-src')).toEqual(["'self'"]);
   });
 

@@ -15,6 +15,7 @@ import {
   Gizmo3D,
   DimensionalGuides,
   type GizmoHandleType,
+  type GizmoLocalFrame,
   type RenderedGizmo3D,
   type SceneGizmo,
 } from '@motion/workspace';
@@ -32,6 +33,8 @@ export interface Gizmo3dOverlayProps {
   showGizmo: boolean;
   position3D: Vec3;
   nodeRotation: { rotX: number; rotY: number; rotZ: number };
+  /** The layer's parent chain + Orientation, for the Local axes (useGizmo3d). */
+  localFrame?: GizmoLocalFrame;
   nodeScale: { scaleX: number; scaleY: number; scaleZ: number };
   camera: Camera3D;
   orthoView: OrthoView | null;
@@ -63,6 +66,7 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
   showGizmo,
   position3D,
   nodeRotation,
+  localFrame,
   camera,
   orthoView,
   compWidth,
@@ -99,7 +103,7 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
     nodeRotation,
     camera,
     orthoView,
-    { gizmoState, axisMode, gizmoLengthPx: 85 / s },
+    { gizmoState, axisMode, gizmoLengthPx: 85 / s, frame: localFrame },
     compWidth,
     compHeight,
   );

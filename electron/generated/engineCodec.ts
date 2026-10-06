@@ -8484,8 +8484,15 @@ function encS_RotoBrushJob(w: Writer, v: T.RotoBrushJob): void {
   w.byte(26); { const s = w.beginLd(); encS_Vec2(w, v.seed); w.endLd(s); }
   if (v.tolerance !== undefined) { w.byte(33); w.f64(v.tolerance); }
   if (v.feather !== undefined) { w.byte(41); w.f64(v.feather); }
+  { const a = v.prompts; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_Vec2(w, a[i]!); w.endLd(s); } } }
+  { const a = v.backgroundPrompts; for (let i = 0; i < a.length; i++) { w.byte(58); { const s = w.beginLd(); encS_Vec2(w, a[i]!); w.endLd(s); } } }
+  if (v.startMask !== undefined) { w.byte(66); w.str(v.startMask); }
+  { const a = v.replaceMasks; for (let i = 0; i < a.length; i++) { w.byte(74); w.str(a[i]!); } }
 }
 function decS_RotoBrushJob(r: Reader, end: number, o: any): T.RotoBrushJob {
+  const l_prompts: T.Vec2[] = [];
+  const l_backgroundPrompts: T.Vec2[] = [];
+  const l_replaceMasks: string[] = [];
   let h_layer = false;
   let h_range = false;
   let h_seed = false;
@@ -8494,6 +8501,7 @@ function decS_RotoBrushJob(r: Reader, end: number, o: any): T.RotoBrushJob {
   let v_seed: T.Vec2 | undefined;
   let v_tolerance: number | undefined;
   let v_feather: number | undefined;
+  let v_startMask: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -8502,6 +8510,10 @@ function decS_RotoBrushJob(r: Reader, end: number, o: any): T.RotoBrushJob {
       case 26: v_seed = decS_Vec2(r, r.ldEnd(), {}); h_seed = true; break;
       case 33: v_tolerance = r.f64(); break;
       case 41: v_feather = r.f64(); break;
+      case 50: l_prompts.push(decS_Vec2(r, r.ldEnd(), {})); break;
+      case 58: l_backgroundPrompts.push(decS_Vec2(r, r.ldEnd(), {})); break;
+      case 66: v_startMask = r.str(); break;
+      case 74: l_replaceMasks.push(r.str()); break;
       default: r.skip(key);
     }
   }
@@ -8514,6 +8526,10 @@ function decS_RotoBrushJob(r: Reader, end: number, o: any): T.RotoBrushJob {
   o.seed = v_seed;
   if (v_tolerance !== undefined) o.tolerance = v_tolerance;
   if (v_feather !== undefined) o.feather = v_feather;
+  o.prompts = l_prompts;
+  o.backgroundPrompts = l_backgroundPrompts;
+  if (v_startMask !== undefined) o.startMask = v_startMask;
+  o.replaceMasks = l_replaceMasks;
   return o;
 }
 function encS_ContentAwareFillJob(w: Writer, v: T.ContentAwareFillJob): void {
