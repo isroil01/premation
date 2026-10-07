@@ -814,7 +814,7 @@ TEST_CASE("session: applyPreset keys land at the composition time on an offset l
   const auto comp = make_comp(h);
   const auto layer = make_layer(h, comp);
   REQUIRE(is_ok(h.run(cmd(api::MoveLayersInTime{{layer}, kSec, false}))));
-  REQUIRE(is_ok(h.run(cmd(api::ApplyPreset{{layer}, "Fade In", 2 * kSec}))));
+  REQUIRE(is_ok(h.run(cmd(api::ApplyPreset{{layer}, "Fade In", 2 * kSec, {}}))));
   REQUIRE(key_times(h, layer, "transform/opacity") == std::vector<api::Time>{2 * kSec, 2 * kSec + kSec / 2});
 }
 
