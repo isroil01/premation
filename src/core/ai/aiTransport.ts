@@ -222,6 +222,23 @@ async function* streamViaShell(req: TransportRequest, signal: AbortSignal): Chun
   }
 }
 
+/** A stand-in transport: provider-native text for a request, as the real ones yield it. */
+export type TransportOverride = (req: TransportRequest, signal: AbortSignal) => ChunkStream;
+
+let override: TransportOverride | null = null;
+
+/**
+ * Replace the transport for every model call until reset with `null`.
+ *
+ * The seam the author-mode tests and the eval harness use: a scripted
+ * transport replays provider bytes (or records them from a real provider), so
+ * a whole run — parsing, chunking, truncation, critique, revision — is
+ * exercised without a gateway, a shell or a key. Never set in the app.
+ */
+export function setTransportOverride(fn: TransportOverride | null): void {
+  override = fn;
+}
+
 /**
  * The transport for this build.
  *
@@ -229,6 +246,7 @@ async function* streamViaShell(req: TransportRequest, signal: AbortSignal): Chun
  * and a build with a backend that somehow lacks a shell bridge still works.
  */
 export function streamProviderBytes(req: TransportRequest, signal: AbortSignal): ChunkStream {
+  if (override) return override(req, signal);
   if (aiRunsThroughBackend()) return streamViaBackend(req, signal);
   if (!localAiAvailable()) {
     // A browser build of the local edition — no Electron bridge at all. Say the

@@ -21,9 +21,10 @@ import type { GatewayProviderId } from '@core/api/client';
 import { classifyPrompt } from './pipeline';
 import { runBackendDirector } from './DirectorRunner';
 import { runCasterPipeline } from './CasterRunner';
+import { runAuthorPipeline } from './author/AuthorRunner';
 import { exportCompositionVideo } from './aiExport';
 import type { Direction as CasterDirection } from '@motion/caster';
-import { casterEnabled } from '@core/config/flags';
+import { authorModeDefault, casterEnabled } from '@core/config/flags';
 import { streamProviderBytes, AiTransportError } from './aiTransport';
 import { deriveStyleFromBrief, setRuntimeStyle } from './design';
 import { buildExemplarBlock } from './exemplars';
@@ -53,7 +54,7 @@ const LOOP_ABORT = 5;
  * Readable from the console as `window.__aiPathFailures` for diagnosis.
  */
 export interface AiPathFailure {
-  path: 'backend-director' | 'generative-path' | 'caster';
+  path: 'backend-director' | 'generative-path' | 'caster' | 'author';
   message: string;
   at: number;
 }
@@ -321,6 +322,13 @@ export interface RunAgentOptions {
    */
   direction?: CasterDirection;
   /**
+   * Which generative path to try first: `author` (the model writes the
+   * composition) or `library` (the caster picks from the libraries). Omitted =
+   * `authorModeDefault()`. Author falls back to the caster on failure; the
+   * caster is never skipped because author mode was chosen.
+   */
+  mode?: 'library' | 'author';
+  /**
    * How many alternatives the caster should emit for the user to choose between.
    *
    * Emit is pure and seeded, so this multiplies the CHEAP half of a run: three
@@ -405,6 +413,51 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
         maxCritiques = MAX_CRITIQUES_GENERATIVE;
         let backendRan = false;
 
+        // ── Author mode ───────────────────────────────────────────────────
+        // The model writes the whole composition against the engine's own
+        // vocabulary, renders it, critiques it per beat and revises the beats
+        // that fail — so by the time it returns, the work HAS been looked at.
+        // On any failure the caster below runs exactly as before.
+        if ((opts.mode ?? authorModeDefault()) === 'author') {
+          try {
+            const authored = await runAuthorPipeline(
+              {
+                provider, dialect, model, prompt, signal, events,
+                ...(opts.images?.length ? { images: opts.images } : {}),
+                ...(opts.direction ? { direction: opts.direction } : {}),
+              },
+              ctx, reg, writeNames, tally,
+            );
+            if (authored.ok) {
+              backendRan = true;
+              planExecuted = true;
+              // The author pipeline already rendered and critiqued its work;
+              // the polish pass below gets its one seeded look and no more.
+              maxCritiques = 1;
+              toolCallCount += authored.toolCallCount;
+              changes.push(...authored.changes);
+              const beats = authored.script?.beats.length ?? 0;
+              planSummary =
+                `Authored "${authored.script?.title || 'the piece'}" in ${beats} beat${beats === 1 ? '' : 's'} ` +
+                `(${authored.toolCallCount} steps` +
+                (authored.rounds ? `, ${authored.rounds} revision pass${authored.rounds === 1 ? '' : 'es'}` : '') + ').';
+              for (const p of authored.problems) recordPathFailure('author', p);
+              if (authored.problems.length) {
+                const NL = String.fromCharCode(10);
+                const shown = authored.problems.slice(0, 3).map((p) => `• ${p}`);
+                const more = authored.problems.length - shown.length;
+                planSummary += NL + NL + 'Notes from the build:' + NL + shown.join(NL) + (more > 0 ? NL + `• …and ${more} more.` : '');
+              }
+              if (authored.critique) casterCritique = authored.critique;
+            } else {
+              recordPathFailure('author', `author run produced nothing usable (${authored.problems.join('; ') || 'no detail'}); falling back to the caster`);
+            }
+          } catch (err) {
+            if (signal.aborted) throw err;
+            recordPathFailure('author', err);
+          }
+        }
+
         // ── The caster ────────────────────────────────────────────────────
         // Three model calls, and none of them authors a keyframe: the brief
         // picks a look and the beats, the cast picks a layout and a technique
@@ -414,7 +467,7 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
         // Tried FIRST, and the director is kept as the fallback rather than
         // deleted — until the caster has carried real traffic, a path that has
         // shipped is worth more than a path that has passed tests.
-        if (casterEnabled()) {
+        if (!backendRan && casterEnabled()) {
           try {
             const cast = await runCasterPipeline(
               {

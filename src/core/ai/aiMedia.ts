@@ -9,12 +9,17 @@ import { api, isAuthenticated } from '@core/api/client';
 import { aiRunsThroughBackend } from '@core/config/edition';
 import type { AiMediaResult } from '@app-types/motionEditor';
 import { AiTransportError } from './aiTransport';
+import { PREVIEW_VIDEO_MODEL } from '@motion/ai-tools';
+import { previewVideoBytes } from './aiMediaMock';
 
 export type MediaProviderId = 'fal' | 'elevenlabs' | 'tripo';
 
 export interface GenerateVideoRequest {
   prompt: string;
   durationSec?: number;
+  /** A `VIDEO_MODELS` id; the preview model never leaves this process. */
+  model?: string;
+  aspect?: 'landscape' | 'portrait' | 'square';
 }
 
 export interface GenerateSpeechRequest {
@@ -70,6 +75,8 @@ async function viaShell(kind: 'video' | 'speech' | 'model3d', req: unknown): Pro
 }
 
 export async function generateVideoBytes(req: GenerateVideoRequest): Promise<AiMediaResult> {
+  // The free preview is answered here, in every edition: no key, no network.
+  if (req.model === PREVIEW_VIDEO_MODEL) return previewVideoBytes(req);
   if (aiRunsThroughBackend()) return viaBackend('/ai/video', req);
   if (!localMediaAvailable()) {
     throw new AiTransportError(

@@ -184,6 +184,24 @@ export async function renderFilmstrip(timesSec: number[]): Promise<AiImage | nul
   }
 }
 
+/**
+ * A filmstrip of one time window — a beat — at `cells` evenly spaced frames,
+ * the last one a frame short of the window's end (the end itself belongs to
+ * the next beat).
+ *
+ * The whole-piece strip spends its cells around keyframe events, so a quiet
+ * beat between two busy ones gets one cell or none. A critic asked to judge
+ * beat 3 needs to SEE beat 3, which is what this gives it.
+ */
+export async function renderFilmstripWindow(startSec: number, endSec: number, cells = 8): Promise<AiImage | null> {
+  if (!(endSec > startSec)) return null;
+  const fps = useCompositionStore.getState().comp().fps || 30;
+  const last = Math.max(startSec, endSec - 1 / fps);
+  const n = Math.max(3, Math.min(STRIP_MAX, Math.round(cells)));
+  const times = Array.from({ length: n }, (_, i) => startSec + ((last - startSec) * i) / (n - 1));
+  return renderFilmstrip(times);
+}
+
 // ── Velocity graphs ───────────────────────────────────────────────────
 
 export interface VelocityTrack {

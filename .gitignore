@@ -87,3 +87,6 @@ src/__scratch__/
 # Bundled Object Matte model + ORT wasm runtime — staged by
 # scripts/fetchObjectMatte.cjs, ~40 MB of weights that do not belong in git.
 public/models/
+
+# AI eval artifacts (scripts/ai-eval, src/core/ai/author/eval)
+.ai-eval/

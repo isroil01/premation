@@ -62,8 +62,6 @@ const IMAGE_ENDPOINTS = {
   gemini: 'https://generativelanguage.googleapis.com/v1beta/models',
 } as const;
 
-/** Stable Imagen model — not renderer-chosen, so the path concat stays closed. */
-const GEMINI_IMAGE_MODEL = 'imagen-3.0-generate-002';
 
 /** Anthropic requires an explicit API version; omitting it is a 400. */
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -219,15 +217,18 @@ export {
   parseGeminiImageBody,
 } from './aiImageHelpers';
 import {
-  openaiImageSize,
+  IMAGE_MODEL_LADDER,
   geminiAspectRatio,
+  openaiImageBody,
   parseOpenAiImageBody,
   parseGeminiImageBody,
+  stepDownImageModel,
 } from './aiImageHelpers';
 
-function imageUrlFor(provider: 'openai' | 'gemini', key: string): string {
+/** The endpoint for one ladder model. `model` is always a ladder constant, never renderer input. */
+function imageUrlFor(provider: 'openai' | 'gemini', key: string, model: string): string {
   if (provider === 'openai') return IMAGE_ENDPOINTS.openai;
-  return `${IMAGE_ENDPOINTS.gemini}/${GEMINI_IMAGE_MODEL}:predict?key=${encodeURIComponent(key)}`;
+  return `${IMAGE_ENDPOINTS.gemini}/${model}:predict?key=${encodeURIComponent(key)}`;
 }
 
 /**
@@ -275,59 +276,58 @@ async function generateImage(
     };
   }
 
-  const url = imageUrlFor(provider, key);
   const headers = headersFor(provider, key);
-  const body =
-    provider === 'openai'
-      ? {
-          model: 'dall-e-3',
-          prompt: trimmed,
-          n: 1,
-          size: openaiImageSize(w, h),
-          response_format: 'b64_json',
-        }
-      : {
-          instances: [{ prompt: trimmed }],
-          parameters: { sampleCount: 1, aspectRatio: geminiAspectRatio(w, h) },
-        };
+  const ladder = IMAGE_MODEL_LADDER[provider];
+  let last: ImageResult = { ok: false, code: 'provider_error', message: `${provider} returned no image.` };
 
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      redirect: 'error',
-    });
-  } catch {
-    return {
-      ok: false,
-      code: 'network',
-      message: `Could not reach ${provider}. Check your connection and try again.`,
-    };
-  }
+  for (const [rung, model] of ladder.entries()) {
+    const body =
+      provider === 'openai'
+        ? openaiImageBody(model, trimmed, w, h)
+        : { instances: [{ prompt: trimmed }], parameters: { sampleCount: 1, aspectRatio: geminiAspectRatio(w, h) } };
 
-  const text = await res.text().catch(() => '');
-  if (!res.ok) {
-    return {
-      ok: false,
-      code: codeForStatus(res.status),
-      message: text.slice(0, 400) || `${provider} refused the image request (${res.status}).`,
-    };
-  }
+    let res: Response;
+    try {
+      res = await fetch(imageUrlFor(provider, key, model), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        redirect: 'error',
+      });
+    } catch {
+      return {
+        ok: false,
+        code: 'network',
+        message: `Could not reach ${provider}. Check your connection and try again.`,
+      };
+    }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text) as unknown;
-  } catch {
-    return { ok: false, code: 'provider_error', message: `${provider} returned a non-JSON image response.` };
-  }
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      last = {
+        ok: false,
+        code: codeForStatus(res.status),
+        message: text.slice(0, 400) || `${provider} refused the image request (${res.status}).`,
+      };
+      // This key cannot use this model: the next one down, if there is one.
+      if (rung < ladder.length - 1 && stepDownImageModel(res.status, text)) continue;
+      return last;
+    }
 
-  const image = provider === 'openai' ? parseOpenAiImageBody(parsed) : parseGeminiImageBody(parsed);
-  if (!image) {
-    return { ok: false, code: 'provider_error', message: `${provider} returned no image bytes.` };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      return { ok: false, code: 'provider_error', message: `${provider} returned a non-JSON image response.` };
+    }
+
+    const image = provider === 'openai' ? parseOpenAiImageBody(parsed) : parseGeminiImageBody(parsed);
+    if (!image) {
+      return { ok: false, code: 'provider_error', message: `${provider} returned no image bytes.` };
+    }
+    return { ok: true, base64: image.base64, mime: image.mime };
   }
-  return { ok: true, base64: image.base64, mime: image.mime };
+  return last;
 }
 
 export function registerAiProxyIpc(): void {

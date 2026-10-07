@@ -28,6 +28,7 @@
  */
 
 import type { AiToolDef } from '../types';
+import { PREVIEW_VIDEO_MODEL, VIDEO_MODELS } from '../videoModels';
 import { ALIAS_PROP } from './write';
 
 // ── Timing & structure ────────────────────────────────────────────────
@@ -450,8 +451,25 @@ export const generateVideoDef: AiToolDef = {
     required: ['prompt'],
     properties: {
       id: ALIAS_PROP,
-      prompt: { type: 'string', description: 'What to depict and how it should look. 8–2000 characters.' },
-      durationSec: { type: 'number', description: 'Clip length in seconds (3–10). Defaults to 5.' },
+      prompt: { type: 'string', description: 'What to depict and how it should look — subject, light, camera. No text in the clip. 8–2000 characters.' },
+      durationSec: { type: 'number', description: 'Clip length in seconds. Snapped to a length the model makes (the reply says which).' },
+      aspect: { type: 'string', enum: ['landscape', 'portrait', 'square'], description: 'Frame shape of the clip. Match the slot it fills.' },
+      startSec: {
+        type: 'number',
+        minimum: 0,
+        description: 'Composition seconds the clip starts playing. Its layer exists from here for the clip\'s length. Omit to start at 0.',
+      },
+      model: {
+        type: 'string',
+        enum: VIDEO_MODELS.map((m) => m.id),
+        description: `Which model makes it. Omit for the user's default. ${PREVIEW_VIDEO_MODEL} is a free placeholder clip.`,
+      },
+      fit: {
+        type: 'string',
+        enum: ['contain', 'cover'],
+        default: 'contain',
+        description: 'contain = the whole clip visible inside the frame; cover = it fills the frame, edges cropped (a background plate).',
+      },
       x: { type: 'number', description: 'Centre X in comp px.' },
       y: { type: 'number', description: 'Centre Y in comp px.' },
     },

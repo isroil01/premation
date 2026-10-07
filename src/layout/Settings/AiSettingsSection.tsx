@@ -41,6 +41,8 @@ import {
   supportsMediaProviderLocally,
 } from '@core/ai/mediaKeyStore';
 import { useAiProviderStore } from '@stores/aiProviderStore';
+import { useAiMediaPrefsStore } from '@stores/aiMediaPrefsStore';
+import { VIDEO_MODELS } from '@motion/ai-tools';
 import styles from './AiSettingsSection.module.css';
 
 interface ProviderMeta {
@@ -118,6 +120,8 @@ function classifyKey(key: string): AiProviderId | null {
 
 export function AiSettingsSection(): JSX.Element {
   const [drafts, setDrafts] = useState<Partial<Record<AiProviderId, string>>>({});
+  const videoModelId = useAiMediaPrefsStore((s) => s.videoModel);
+  const setVideoModelId = useAiMediaPrefsStore((s) => s.setVideoModel);
   const [mediaDrafts, setMediaDrafts] = useState<Partial<Record<MediaProviderId, string>>>({});
   const [busy, setBusy] = useState<AiProviderId | MediaProviderId | null>(null);
   const [error, setError] = useState<string>('');
@@ -465,6 +469,31 @@ export function AiSettingsSection(): JSX.Element {
             </div>
           );
         })}
+
+        {/* What generate_video uses when a call names no model. Free preview
+            by default: footage costs money per clip, so spending starts only
+            when someone picks a paid model here. */}
+        <div className={styles.row}>
+          <div className={styles.rowInfo}>
+            <span className={styles.rowLabel}>Default video model</span>
+            <span className={styles.hint}>
+              {VIDEO_MODELS.find((m) => m.id === videoModelId)?.note ?? ''}
+              {VIDEO_MODELS.find((m) => m.id === videoModelId)?.paid && !(mediaStatus.fal ?? EMPTY).present ? ' Needs a fal.ai key.' : ''}
+            </span>
+          </div>
+          <div className={styles.rowRight}>
+            <select
+              className={styles.select}
+              aria-label="Default video model"
+              value={videoModelId}
+              onChange={(e) => setVideoModelId(e.target.value)}
+            >
+              {VIDEO_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
 
         <p className={styles.links}>
           Get a media key: {MEDIA_PROVIDERS.map((p, i) => (

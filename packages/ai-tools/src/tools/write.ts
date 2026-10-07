@@ -206,6 +206,35 @@ export const updateLayerDef: AiToolDef = {
       scaleX: { type: 'number' },
       scaleY: { type: 'number' },
       opacity: { type: 'number', minimum: 0, maximum: 100 },
+      // ── Transform extras ──
+      // All four are tracks of the layer's Transform the engine addresses as
+      // numbers (STATIC_PROPERTY_META), so they set like x / y. A handler that
+      // finds the catalog does not address one on this layer refuses it.
+      anchorX: {
+        type: 'number',
+        description:
+          'Anchor point X, layer-local px from the layer centre. Rotation and scale pivot here: put it ' +
+          'on the left edge (−width/2) for a bar that grows to the right, or on the baseline for type ' +
+          'that scales up from the line it sits on.',
+      },
+      anchorY: { type: 'number', description: 'Anchor point Y, layer-local px from the layer centre.' },
+      skew: { type: 'number', description: 'Skew, degrees. A slant that settles to 0 reads as speed.' },
+      skewAxis: { type: 'number', description: 'Direction the skew acts along, degrees.' },
+      fillOpacity: {
+        type: 'number',
+        minimum: 0,
+        maximum: 100,
+        description: 'Opacity of the FILL only, 0..100 — the stroke and effects keep theirs. 0 with a stroke is an outline.',
+      },
+      // ── Stroke (the layer's first stroke, Contents ▸ Stroke 1) ──
+      stroke: {
+        type: 'string',
+        description:
+          'Stroke colour, hex. Shape and solid layers only. Adds a stroke when the layer has none. ' +
+          'Combine with set_trim_path for a line that draws itself on.',
+      },
+      strokeWidth: { type: 'number', minimum: 0, description: 'Stroke width in layer px. 0 draws no stroke.' },
+      strokeOpacity: { type: 'number', minimum: 0, maximum: 100, description: 'Opacity of the stroke only, 0..100.' },
       cornerRadius: {
         type: 'number',
         minimum: 0,
@@ -401,6 +430,47 @@ export const setExpressionDef: AiToolDef = {
       nodeId: { type: 'string' },
       prop: { type: 'string', description: PROP_HINT },
       expression: { type: 'string', description: 'e.g. wiggle(2, 30)  or  value + Math.sin(time * 4) * 10' },
+    },
+  },
+};
+
+/**
+ * Layer bars — when a layer exists on the timeline at all.
+ *
+ * Without this every authored layer spans the whole comp, so a "scene" was
+ * only ever an opacity fade over layers that are still there, still
+ * evaluated, and still under every later scene. A beat that owns its time
+ * needs its layers to start and end with it.
+ */
+export const setLayerTimingDef: AiToolDef = {
+  name: 'set_layer_timing',
+  kind: 'write',
+  description:
+    'Set when layers exist on the timeline (their bars). Times are COMPOSITION seconds. ' +
+    'inSec / outSec are where the bar starts and ends; outside them the layer does not render. ' +
+    'startSec is where the layer\'s own time 0 (a clip\'s first frame) sits — omit it for shapes ' +
+    'and text. Batch every layer of a beat into ONE call. Keyframes keep their composition times.',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['items'],
+    properties: {
+      items: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 200,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['nodeId'],
+          properties: {
+            nodeId: { type: 'string' },
+            startSec: { type: 'number', description: 'Composition seconds at which the layer\'s source time 0 plays.' },
+            inSec: { type: 'number', minimum: 0, description: 'Composition seconds the bar starts.' },
+            outSec: { type: 'number', minimum: 0, description: 'Composition seconds the bar ends. Must be after inSec.' },
+          },
+        },
+      },
     },
   },
 };
@@ -849,6 +919,24 @@ export const mergePathsDef: AiToolDef = {
   },
 };
 
+/**
+ * A caller-supplied handle for a shape operator the engine has not minted yet.
+ *
+ * The engine names operators itself (`addPropertyGroup` returns the id), so a
+ * batch emitted up front cannot spell `pathop.<opId>.end` for a trim it creates
+ * in the same batch. With `id` the handler binds `handle → real op id` in the
+ * run's alias map, and the registry rewrites `pathop.<handle>.…` in every later
+ * `prop` (and `opId`) before a handler sees it — the `add_effect { id }` fix,
+ * for operators.
+ */
+export const OP_ALIAS_PROP = {
+  type: 'string',
+  description:
+    'Optional handle for the operator this call creates, so LATER calls in the same batch can keyframe ' +
+    '"pathop.<handle>.<param>" (or pass it as opId) before the engine has assigned the real id. ' +
+    'Unique within the run.',
+} as const;
+
 export const setTrimPathDef: AiToolDef = {
   name: 'set_trim_path',
   kind: 'write',
@@ -863,6 +951,7 @@ export const setTrimPathDef: AiToolDef = {
     required: ['nodeId'],
     properties: {
       nodeId: { type: 'string', description: 'ID of the shape layer.' },
+      id: OP_ALIAS_PROP,
       start: { type: 'number', minimum: 0, maximum: 100, description: 'Trim start percentage (0..100).' },
       end: { type: 'number', minimum: 0, maximum: 100, description: 'Trim end percentage (0..100).' },
       offset: {
@@ -906,6 +995,7 @@ export const addRepeaterDef: AiToolDef = {
     required: ['nodeId'],
     properties: {
       nodeId: { type: 'string', description: 'ID of the shape layer.' },
+      id: OP_ALIAS_PROP,
       opId: { type: 'string', description: 'Update THIS existing repeater (an opId a previous add_repeater returned) instead of appending a new one. Only the fields you pass change.' },
       copies: { type: 'number', minimum: 1, maximum: 100, description: 'Number of copies, including the original.' },
       positionX: { type: 'number', description: 'X offset per copy, in px.' },
@@ -942,6 +1032,7 @@ export const addPathOperatorDef: AiToolDef = {
     required: ['nodeId', 'op'],
     properties: {
       nodeId: { type: 'string', description: 'ID of the shape layer.' },
+      id: OP_ALIAS_PROP,
       op: {
         type: 'string',
         enum: ['zigzag', 'pucker', 'puckerBloat', 'twist', 'roundCorners', 'offset', 'roughen', 'wiggleTransform'],
@@ -1052,6 +1143,7 @@ export const WRITE_TOOL_DEFS: readonly AiToolDef[] = [
   removeKeyframesDef,
   setEasingDef,
   setExpressionDef,
+  setLayerTimingDef,
   addEffectDef,
   updateEffectDef,
   textAnimatorDef,

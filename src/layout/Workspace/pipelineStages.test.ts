@@ -12,7 +12,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PIPELINE_STAGE_LABELS, __testables } from './useAiChat';
+import { PIPELINE_STAGE_LABELS, PIPELINE_STAGE_LABELS_BY_MODE, __testables } from './useAiChat';
 
 const { matchStageIndex } = __testables;
 
@@ -52,7 +52,7 @@ describe('generative-run progress stages', () => {
   it('advances monotonically in the order the runner emits them', () => {
     // 'Casting layouts' and 'Casting motion' come from one branch, so the
     // sequence is non-decreasing rather than strictly increasing.
-    const indices = labels.map(matchStageIndex);
+    const indices = labels.map((l) => matchStageIndex(l));
     for (let i = 1; i < indices.length; i++) {
       expect(indices[i]).toBeGreaterThanOrEqual(indices[i - 1]!);
     }
@@ -62,5 +62,32 @@ describe('generative-run progress stages', () => {
     for (const l of ['Reading the scene…', 'Thinking…', 'Connecting to Director Service…']) {
       expect(matchStageIndex(l)).toBe(-1);
     }
+  });
+});
+
+describe('author-run progress stages', () => {
+  const labels = emittedLabels('../../core/ai/author/AuthorRunner.ts');
+  const stages = PIPELINE_STAGE_LABELS_BY_MODE.author;
+
+  it('finds the runner labels at all', () => {
+    expect(labels.length).toBeGreaterThanOrEqual(stages.length);
+  });
+
+  it('maps every label the author runner emits onto an author stage', () => {
+    expect(labels.filter((l) => matchStageIndex(l, 'author') === -1)).toEqual([]);
+  });
+
+  it('reaches every author stage', () => {
+    const reached = new Set(labels.map((l) => matchStageIndex(l, 'author')));
+    expect(stages.filter((_, i) => !reached.has(i))).toEqual([]);
+  });
+
+  it('keeps the two modes apart: no author label lands on the caster list or the reverse', () => {
+    for (const l of labels) expect(matchStageIndex(l, 'library')).toBe(-1);
+    for (const l of emittedLabels('../../core/ai/CasterRunner.ts')) expect(matchStageIndex(l, 'author')).toBe(-1);
+  });
+
+  it('library mode still shows the caster list', () => {
+    expect(PIPELINE_STAGE_LABELS_BY_MODE.library).toBe(PIPELINE_STAGE_LABELS);
   });
 });

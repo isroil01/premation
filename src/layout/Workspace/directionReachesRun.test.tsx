@@ -55,6 +55,7 @@ jest.mock('@core/ai/CasterRunner', () => ({
 import { useAiChat } from './useAiChat';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
+import { authorModeDefault } from '@core/config/flags';
 
 /** A provider that reports ready, so `submit` does not stop at the key gate. */
 function connectProvider(): void {
@@ -146,6 +147,26 @@ describe('composer direction reaches the very next run', () => {
     await waitFor(() => expect(calls).toHaveLength(1));
 
     expect(calls[0]!.direction).toBeUndefined();
+  });
+
+  it('sends the mode the user chose, and the default when they chose none', async () => {
+    const { result } = renderHook(() => useAiChat());
+
+    await act(async () => { await result.current.submit('a teaser'); });
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]!.mode).toBe(authorModeDefault());
+
+    act(() => { result.current.setDirection({ mode: 'library' }); });
+    await act(async () => { await result.current.submit('a teaser'); });
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1]!.mode).toBe('library');
+    // The mode is not look direction: it never leaks into the caster's payload.
+    expect(calls[1]!.direction).toBeUndefined();
+
+    act(() => { result.current.setDirection({ mode: 'author' }); });
+    await act(async () => { await result.current.submit('a teaser'); });
+    await waitFor(() => expect(calls).toHaveLength(3));
+    expect(calls[2]!.mode).toBe('author');
   });
 
   it('binds the run to the project that is open NOW', async () => {

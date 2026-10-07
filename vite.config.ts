@@ -70,6 +70,7 @@ export default defineConfig(({ mode }) => ({
       '@motion/technique-library': path.resolve(__dirname, 'packages/technique-library/src/index.ts'),
       '@motion/product-motion': path.resolve(__dirname, 'packages/product-motion/src/index.ts'),
       '@motion/caster': path.resolve(__dirname, 'packages/caster/src/index.ts'),
+      '@motion/author': path.resolve(__dirname, 'packages/author/src/index.ts'),
       '@motion/audio': path.resolve(__dirname, 'packages/audio/src/index.ts'),
       '@motion/engine-api': path.resolve(__dirname, 'packages/engine-api/src/index.ts'),
     },

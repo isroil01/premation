@@ -7,13 +7,11 @@
 
 import { handle } from './ipcGuard';
 import { getMediaKeyForProvider } from './mediaKeyVault';
+import { falQueueUrl, falVideoRequest, type FalAspect } from './falVideoModels';
 
 /** Complete URLs — never built from renderer input. */
 const ENDPOINTS = {
-  fal: {
-    submit: 'https://queue.fal.run/fal-ai/minimax/video-01-live',
-    status: 'https://queue.fal.run/fal-ai/minimax/video-01-live/requests',
-  },
+  // Video models are a table of their own (falVideoModels.ts): one URL per allowlisted model.
   elevenlabs: {
     tts: 'https://api.elevenlabs.io/v1/text-to-speech',
   },
@@ -59,27 +57,34 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-async function pollFalVideo(key: string, requestId: string, maxMs = 180_000): Promise<MediaResult> {
+/**
+ * Poll a queued fal request to completion and download the clip.
+ *
+ * The status and result URLs come from the submit response (fal nests them
+ * under the model's app id, which a nested model path does not spell), and
+ * are only followed on fal's queue host.
+ */
+async function pollFalVideo(key: string, statusUrl: string, responseUrl: string, maxMs = 300_000): Promise<MediaResult> {
   const deadline = Date.now() + maxMs;
-  while (Date.now() < deadline) {
-    const res = await fetch(`${ENDPOINTS.fal.status}/${encodeURIComponent(requestId)}`, {
-      headers: { authorization: `Key ${key}` },
-      redirect: 'error',
-    });
+  const get = async (url: string): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; result: MediaResult }> => {
+    const res = await fetch(url, { headers: { authorization: `Key ${key}` }, redirect: 'error' });
     const text = await res.text().catch(() => '');
-    if (!res.ok) {
-      return { ok: false, code: codeForStatus(res.status), message: text.slice(0, 400) || 'Video generation failed.' };
-    }
-    let body: Record<string, unknown>;
+    if (!res.ok) return { ok: false, result: { ok: false, code: codeForStatus(res.status), message: text.slice(0, 400) || 'Video generation failed.' } };
     try {
-      body = JSON.parse(text) as Record<string, unknown>;
+      return { ok: true, body: JSON.parse(text) as Record<string, unknown> };
     } catch {
-      return { ok: false, code: 'provider_error', message: 'Invalid response while polling video generation.' };
+      return { ok: false, result: { ok: false, code: 'provider_error', message: 'Invalid response while polling video generation.' } };
     }
-    const status = body.status;
+  };
+  while (Date.now() < deadline) {
+    const st = await get(statusUrl);
+    if (!st.ok) return st.result;
+    const status = st.body.status;
     if (status === 'COMPLETED') {
-      const video = (body.response as { video?: { url?: string } } | undefined)?.video?.url
-        ?? (body.video as { url?: string } | undefined)?.url;
+      const done = await get(responseUrl);
+      if (!done.ok) return done.result;
+      const video = (done.body.video as { url?: string } | undefined)?.url
+        ?? (done.body.response as { video?: { url?: string } } | undefined)?.video?.url;
       if (typeof video !== 'string' || !video) {
         return { ok: false, code: 'provider_error', message: 'Video completed but no download URL was returned.' };
       }
@@ -87,30 +92,33 @@ async function pollFalVideo(key: string, requestId: string, maxMs = 180_000): Pr
       if (!dl.ok) return dl;
       return { ok: true, base64: toBase64(dl.bytes), mime: dl.mime || 'video/mp4', extension: 'mp4' };
     }
-    if (status === 'FAILED') {
-      return { ok: false, code: 'provider_error', message: String(body.error ?? 'Video generation failed.') };
+    if (status === 'FAILED' || status === 'ERROR') {
+      return { ok: false, code: 'provider_error', message: String(st.body.error ?? 'Video generation failed.') };
     }
     await sleep(2500);
   }
   return { ok: false, code: 'timeout', message: 'Video generation timed out. Try a shorter clip or try again.' };
 }
 
-export async function generateVideoFal(prompt: string, durationSec = 5): Promise<MediaResult> {
+export async function generateVideoFal(prompt: string, durationSec = 5, model?: string, aspect?: FalAspect): Promise<MediaResult> {
   const trimmed = prompt.trim();
   if (trimmed.length < 8 || trimmed.length > 2000) {
     return { ok: false, code: 'bad_request', message: 'Video prompts must be between 8 and 2000 characters.' };
+  }
+  const request = falVideoRequest(model, trimmed, durationSec, aspect);
+  if (!request) {
+    return { ok: false, code: 'bad_request', message: `'${String(model)}' is not a video model this app can call.` };
   }
   const key = await getMediaKeyForProvider('fal');
   if (!key) {
     return { ok: false, code: 'no_key', message: 'No fal.ai API key is connected. Add one in Settings → Assistant → Media.' };
   }
-  const dur = Math.max(3, Math.min(10, Math.round(durationSec)));
   let res: Response;
   try {
-    res = await fetch(ENDPOINTS.fal.submit, {
+    res = await fetch(request.url, {
       method: 'POST',
       headers: { authorization: `Key ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ prompt: trimmed, duration: String(dur) }),
+      body: JSON.stringify(request.body),
       redirect: 'error',
     });
   } catch {
@@ -127,10 +135,12 @@ export async function generateVideoFal(prompt: string, durationSec = 5): Promise
     return { ok: false, code: 'provider_error', message: 'fal.ai returned a non-JSON response.' };
   }
   const requestId = typeof body.request_id === 'string' ? body.request_id : undefined;
-  if (!requestId) {
+  const statusUrl = falQueueUrl(body.status_url) ?? (requestId ? `${request.url}/requests/${encodeURIComponent(requestId)}/status` : null);
+  const responseUrl = falQueueUrl(body.response_url) ?? (requestId ? `${request.url}/requests/${encodeURIComponent(requestId)}` : null);
+  if (!statusUrl || !responseUrl) {
     return { ok: false, code: 'provider_error', message: 'fal.ai did not return a request id.' };
   }
-  return pollFalVideo(key, requestId);
+  return pollFalVideo(key, statusUrl, responseUrl);
 }
 
 export async function generateSpeechElevenLabs(text: string, voiceId?: string): Promise<MediaResult> {
@@ -234,11 +244,16 @@ export async function generate3dTripo(prompt: string): Promise<MediaResult> {
 
 export function registerAiMediaProxyIpc(): void {
   handle('ai:video', async (_event, request: unknown): Promise<MediaResult> => {
-    const { prompt, durationSec } = (request ?? {}) as { prompt?: unknown; durationSec?: unknown };
+    const { prompt, durationSec, model, aspect } = (request ?? {}) as { prompt?: unknown; durationSec?: unknown; model?: unknown; aspect?: unknown };
     if (typeof prompt !== 'string') {
       return { ok: false, code: 'bad_request', message: 'A text prompt is required.' };
     }
-    return generateVideoFal(prompt, typeof durationSec === 'number' ? durationSec : 5);
+    return generateVideoFal(
+      prompt,
+      typeof durationSec === 'number' ? durationSec : 5,
+      typeof model === 'string' ? model : undefined,
+      aspect === 'landscape' || aspect === 'portrait' || aspect === 'square' ? aspect : undefined,
+    );
   });
 
   handle('ai:speech', async (_event, request: unknown): Promise<MediaResult> => {
