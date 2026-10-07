@@ -146,6 +146,12 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  /* After Effects' density inside Properties (2026-10-07): 22px property rows
+     and 24px section headers, the row and twirl metrics of AE's timeline.
+     Scoped here, so the rest of the chrome keeps the shared scale (and the
+     1366px compact scale still steps both down by 2px). */
+  --control-height-row: var(--control-height-sm);
+  --bar-height-panel: var(--control-height-md);
 }
 
 /*

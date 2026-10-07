@@ -88,10 +88,12 @@ it('balances controls across the left and right sides of the centered play butto
   const leftButtons = buttons.slice(0, playIdx);
   const rightButtons = buttons.slice(playIdx + 1);
 
-  // Left has 9 buttons before the transport cluster (layout, split, trim-in, trim-out, snapshot, compare, loop, marker, auto-key)
-  // plus 2 transport navigation buttons (go-to-start, prev-frame) = 11 buttons to the left of Play.
-  expect(leftButtons).toHaveLength(11);
+  // Left has 10 buttons before the transport cluster (AE's 3D View popup, layout, split, trim-in, trim-out,
+  // snapshot, compare, loop, marker, auto-key) plus 2 transport navigation buttons (go-to-start, prev-frame)
+  // = 12 buttons to the left of Play.
+  expect(leftButtons).toHaveLength(12);
   expect(leftButtons.map((btn) => btn.getAttribute('aria-label'))).toEqual([
+    expect.stringMatching(/^3D View:/),
     expect.stringMatching(/^Viewport layout:/),
     'Split Layer at Playhead',
     'Trim In-Point to Playhead',

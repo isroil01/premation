@@ -94,7 +94,8 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
     // Default is what a fresh session looks like, so the two must agree.
     panelOrder: {
       leftSidebar: ['assets', 'effectControls', 'scene'],
-      rightInspector: ['properties', 'preview', 'effects', 'presets', 'plugins', 'align', 'audio', 'ai'],
+      // AE's Default right column.
+      rightInspector: ['properties', 'info', 'audio', 'preview', 'effects', 'align', 'character'],
       centerWorkspace: [],
       bottomTimeline: [],
     },

@@ -2685,7 +2685,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           for (const p of [
             { id: 'view.scene', panel: 'scene', label: 'Layers', icon: 'layers' },
             { id: 'view.library', panel: 'library', label: 'Library', icon: 'component' },
-            { id: 'view.character', panel: 'character', label: 'Text', icon: 'type' },
+            { id: 'view.character', panel: 'character', label: 'Character', icon: 'type' },
             { id: 'view.align', panel: 'align', label: 'Align', icon: 'align-center' },
             { id: 'view.swatches', panel: 'swatches', label: 'Swatches', icon: 'palette' },
             { id: 'view.info', panel: 'info', label: 'Info', icon: 'info' },
@@ -2695,9 +2695,11 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             { id: 'view.tracker', panel: 'tracker', label: 'Tracker', icon: 'crosshair' },
             { id: 'view.contentAwareFill', panel: 'contentAwareFill', label: 'Content-Aware Fill', icon: 'magic-wand' },
             { id: 'view.rig', panel: 'rig', label: 'Rigging', icon: 'bone' },
-            { id: 'view.effects', panel: 'effects', label: 'Effects', icon: 'magic-wand' },
+            { id: 'view.effects', panel: 'effects', label: 'Effects & Presets', icon: 'magic-wand' },
             { id: 'view.motion', panel: 'motion', label: 'Graph Panel', icon: 'graph-value' },
-            { id: 'view.presets', panel: 'presets', label: 'Presets', icon: 'zap' },
+            { id: 'view.presets', panel: 'presets', label: 'Animation Presets', icon: 'zap' },
+            { id: 'view.plugins', panel: 'plugins', label: 'Plugins', icon: 'plugin' },
+            { id: 'view.ai', panel: 'ai', label: 'Assistant', icon: 'ai' },
           ] as const) {
             registry.register({
               id: asCommandId(p.id), label: p.label, icon: p.icon,

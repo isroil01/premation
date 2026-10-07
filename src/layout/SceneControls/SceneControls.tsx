@@ -10,7 +10,12 @@
  *    "New layer" dropdown, the single home for creating layers.
  *  - "CPU fallback" badge → ViewportTools, in the timeline's tool row.
  *
- * FOUR MENUS, NOT THIRTEEN BUTTONS. This used to spend thirteen slots of the
+ * AE'S TOOLBAR (2026-10-07): the camera tools and the gizmo modes are each one
+ * flyout, as AE's are; the axis space is AE's three Local / World / View
+ * buttons; Draft 3D and the 3D Ground Plane are AE's two toggle buttons. The
+ * rest of the view options stay in one checkbox menu.
+ *
+ * Earlier note — FOUR MENUS, NOT THIRTEEN BUTTONS. This used to spend thirteen slots of the
  * toolbar on three- and four-way choices where only ONE member of each is in
  * effect at a time: three camera tools, four gizmo modes, three axis spaces.
  * Twelve of those thirteen glyphs were therefore drawing a state you are not
@@ -99,13 +104,12 @@ export function SceneControls(): JSX.Element {
 
   const armedCamera = CAMERA_TOOLS.find((t) => t.id === cameraTool);
   const gizmo = GIZMO_MODES.find((g) => g.id === gizmo3dState) ?? GIZMO_MODES[0]!;
-  const axis = AXIS_MODES.find((a) => a.id === gizmo3dAxisMode) ?? AXIS_MODES[0]!;
   const focusPlaneVisibility = useFocusPlaneStore((s) => s.visibility);
   const setFocusPlaneVisibility = useFocusPlaneStore((s) => s.setVisibility);
   const focusPlaneOn = focusPlaneVisibility !== 'off';
   // The focus plane defaults ON, so it does not count toward lighting the
   // trigger — a button that is lit in a fresh project is saying nothing.
-  const viewOnCount = [draft3d, groundGridVisible, layerBoxesVisible].filter(Boolean).length;
+  const viewOnCount = [layerBoxesVisible, deviceWireframesAll].filter(Boolean).length;
 
   const cameraItems: DropdownItem[] = [
     ...CAMERA_TOOLS.map((t) => ({
@@ -188,53 +192,56 @@ export function SceneControls(): JSX.Element {
         }
       />
 
-      {/* Axis space for the gizmo above — AE's Local/World/View. */}
-      <Dropdown
-        placement="bottom-start"
-        items={AXIS_MODES.map((a) => ({
-          type: 'item' as const,
-          id: `axis-${a.id}`,
-          label: a.label,
-          icon: a.icon,
-          onSelect: () => setGizmo3dAxisMode(a.id),
-        }))}
-        trigger={
+      {/* Axis space for the gizmo above — AE's Local / World / View Axis Mode,
+          three buttons side by side as in AE's toolbar (exactly one is lit). */}
+      <div className={styles.axisModes} role="radiogroup" aria-label="Axis space">
+        {AXIS_MODES.map((a) => (
           <button
+            key={a.id}
             type="button"
-            className={styles.trigger}
-            aria-label="Axis space"
-            title={`Axis space — ${axis.label}`}
+            role="radio"
+            aria-checked={gizmo3dAxisMode === a.id}
+            className={gizmo3dAxisMode === a.id ? styles.triggerActive : styles.trigger}
+            aria-label={a.label}
+            title={a.label}
+            onClick={() => setGizmo3dAxisMode(a.id)}
           >
-            <Icon name={axis.icon} size="md" />
-            <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
+            <Icon name={a.icon} size="md" />
           </button>
-        }
-      />
+        ))}
+      </div>
 
       <div className={styles.divider} />
 
+      {/* AE's Draft 3D and 3D Ground Plane toggles, as their own buttons. */}
+      <button
+        type="button"
+        className={draft3d ? styles.triggerActive : styles.trigger}
+        aria-label="Draft 3D"
+        aria-pressed={draft3d}
+        title="Draft 3D — fast preview, skips heavy lights & shadows"
+        onClick={() => toggleDraft3d()}
+      >
+        <Icon name="draft-3d" size="md" />
+      </button>
+      <button
+        type="button"
+        className={groundGridVisible ? styles.triggerActive : styles.trigger}
+        aria-label="3D ground plane"
+        aria-pressed={groundGridVisible}
+        title="3D ground plane"
+        onClick={() => toggleGroundGridVisible()}
+      >
+        <Icon name="ground-grid" size="md" />
+      </button>
+
       {/*
-        Reference geometry and draft shading. Checkboxes rather than a choice:
-        any combination of the three can be on, and wanting to know which way is
-        up is not the same as wanting an outline around every layer.
+        Reference geometry. Checkboxes rather than a choice:
+        any combination can be on.
       */}
       <Dropdown
         placement="bottom-start"
         items={[
-          {
-            type: 'checkbox',
-            id: 'view-draft-3d',
-            label: 'Draft 3D — fast preview, skips heavy lights & shadows',
-            checked: draft3d,
-            onChange: () => toggleDraft3d(),
-          },
-          {
-            type: 'checkbox',
-            id: 'view-ground-grid',
-            label: '3D ground plane',
-            checked: groundGridVisible,
-            onChange: () => toggleGroundGridVisible(),
-          },
           {
             type: 'checkbox',
             id: 'view-layer-boxes',
@@ -274,7 +281,7 @@ export function SceneControls(): JSX.Element {
             type="button"
             className={viewOnCount > 0 ? styles.triggerActive : styles.trigger}
             aria-label="3D view options"
-            title="3D view — draft shading, ground plane, layer bounding boxes, focus plane"
+            title="3D view — layer bounding boxes, camera & light wireframes, focus plane"
           >
             <Icon name="cube" size="md" />
             <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />

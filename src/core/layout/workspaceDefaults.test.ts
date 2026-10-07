@@ -25,9 +25,9 @@ const permanent = (region: RegionId): string[] =>
   PANEL_DEFS.filter((d) => d.region === region && !d.onDemand).map((d) => d.id);
 
 describe('the permanent panel sets', () => {
-  it('are Project, Effect Controls, Layers on the left and Properties, Preview, Effects, Presets, Plugins, Align, Audio, Assistant on the right', () => {
+  it('are Project, Effect Controls, Layers on the left and the AE Default column (Properties, Info, Audio, Preview, Effects & Presets, Align, Character) on the right', () => {
     expect(permanent('leftSidebar')).toEqual(['assets', 'effectControls', 'scene']);
-    expect(permanent('rightInspector')).toEqual(['properties', 'preview', 'effects', 'presets', 'plugins', 'align', 'audio', 'ai']);
+    expect(permanent('rightInspector')).toEqual(['properties', 'info', 'audio', 'preview', 'effects', 'align', 'character']);
     expect(PANEL_DEFS.find((d) => d.id === 'assets')?.title).toBe('Project');
   });
 

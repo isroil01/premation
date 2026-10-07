@@ -254,6 +254,8 @@ export interface ViewportDisplayModel {
   /** The view on screen — a camera view whose camera is gone reads 'active'. */
   camera3dMode: Camera3dMode;
   layoutItems: DropdownItem[];
+  /** The 3D view choices (Active Camera, each camera, the ortho and custom views). */
+  viewItems: DropdownItem[];
   channel: ViewChannel;
   channelItems: DropdownItem[];
   resolution: PreviewResolution;
@@ -294,8 +296,10 @@ export function useViewportDisplayModel(): ViewportDisplayModel {
       checked: viewLayout === n,
       onChange: () => setViewLayout(n),
     })),
-    { type: 'separator' },
-    { type: 'label', label: '3D view' },
+  ];
+  // AE's 3D View popup — its own menu beside the layout, as in AE's
+  // Composition panel footer ("Active Camera ▾" then "1 View ▾").
+  const viewItems: DropdownItem[] = [
     { type: 'checkbox', id: 'vd-cam-active', label: 'Active Camera', checked: camera3dMode === 'active', onChange: () => setCamera3dMode('active') },
     ...cameraViews.map<DropdownItem>((c) => ({
       type: 'checkbox',
@@ -497,6 +501,7 @@ export function useViewportDisplayModel(): ViewportDisplayModel {
     viewLayout,
     camera3dMode,
     layoutItems,
+    viewItems,
     channel,
     channelItems,
     resolution,
@@ -524,7 +529,10 @@ export function useViewportDisplayModel(): ViewportDisplayModel {
 export function displayOverflowItems(m: ViewportDisplayModel, level: number): DropdownItem[] {
   const shed = (g: DisplayGroup): boolean => isDisplayShed(g, level);
   const overflow: DropdownItem[] = [];
-  if (shed('layout')) overflow.push({ type: 'item', id: 'vd-of-layout', icon: LAYOUT_ICON[m.viewLayout], label: `Layout: ${LAYOUT_LABEL[m.viewLayout]}`, submenu: m.layoutItems });
+  if (shed('layout')) {
+    overflow.push({ type: 'item', id: 'vd-of-3dview', icon: 'cube', label: `3D View: ${cameraViewLabel(m.camera3dMode)}`, submenu: m.viewItems });
+    overflow.push({ type: 'item', id: 'vd-of-layout', icon: LAYOUT_ICON[m.viewLayout], label: `Layout: ${LAYOUT_LABEL[m.viewLayout]}`, submenu: m.layoutItems });
+  }
   if (shed('channel')) overflow.push({ type: 'item', id: 'vd-of-channel', icon: CHANNEL_ICON[m.channel], label: `Channel: ${CHANNEL_LABEL[m.channel]}`, submenu: m.channelItems });
   if (shed('resolution')) overflow.push({ type: 'item', id: 'vd-of-resolution', label: `Resolution: ${RESOLUTION_LABELS[m.resolution]}`, submenu: m.resolutionItems });
   if (shed('preview')) overflow.push({ type: 'item', id: 'vd-of-preview', icon: 'tv', label: 'Preview', submenu: m.previewItems });
@@ -593,11 +601,18 @@ export function ViewportDisplayControlsView({
       data-viewport-display={section !== 'all' ? section : ''}
     >
       {showLayout && (
-        <Dropdown
-          placement="top-start"
-          trigger={<Trigger icon={LAYOUT_ICON[m.viewLayout]} label={`Viewport layout: ${LAYOUT_LABEL[m.viewLayout]}${m.camera3dMode !== 'active' ? ` · ${cameraViewLabel(m.camera3dMode)}` : ''}`} active={m.viewLayout !== '1' || m.camera3dMode !== 'active'} chevron />}
-          items={m.layoutItems}
-        />
+        <>
+          <Dropdown
+            placement="top-start"
+            trigger={<Trigger text={cameraViewLabel(m.camera3dMode)} label={`3D View: ${cameraViewLabel(m.camera3dMode)}`} active={m.camera3dMode !== 'active'} chevron />}
+            items={m.viewItems}
+          />
+          <Dropdown
+            placement="top-start"
+            trigger={<Trigger icon={LAYOUT_ICON[m.viewLayout]} label={`Viewport layout: ${LAYOUT_LABEL[m.viewLayout]}`} active={m.viewLayout !== '1'} chevron />}
+            items={m.layoutItems}
+          />
+        </>
       )}
 
       {showCompare && (

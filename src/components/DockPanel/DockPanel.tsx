@@ -706,7 +706,7 @@ function StackSection({
       </div>
       {open && (
         <DockPanelHeaderContext.Provider value={ctx}>
-          <div className={styles.content}>{renderer ? renderer() : null}</div>
+          <div className={styles.content} data-stack-panel={item.id}>{renderer ? renderer() : null}</div>
         </DockPanelHeaderContext.Provider>
       )}
     </>

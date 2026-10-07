@@ -49,8 +49,10 @@ const LAYOUT_PERSIST_KEY = 'motion-editor.layout.v1';
  * 7: Layers is permanent on the left again (it is where the compositions are listed).
  * 8: The Render Queue is a tab of the timeline panel (timelinePanelStore), no longer a dock
  *    panel — a saved order that still lists it is dropped.
+ * 9: The right stack is After Effects' Default: Properties, Info, Audio, Preview, Effects &
+ *    Presets, Align, Character. Plugins, Assistant and Animation Presets are on demand.
  */
-export const LAYOUT_SCHEMA_VERSION = 8;
+export const LAYOUT_SCHEMA_VERSION = 9;
 
 // ── Persistence helpers ───────────────────────────────────────────
 export interface PersistedLayout {

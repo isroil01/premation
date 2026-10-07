@@ -68,13 +68,12 @@ describe('the rail', () => {
     render(<TooltipProvider><DockPanel region="rightInspector" renderers={{}} /></TooltipProvider>);
     expect(screen.getAllByRole('tab').map((t) => t.getAttribute('aria-label'))).toEqual([
       'Properties',
-      'Preview',
-      'Effects',
-      'Presets',
-      'Plugins',
-      'Align',
+      'Info',
       'Audio',
-      'Assistant',
+      'Preview',
+      'Effects & Presets',
+      'Align',
+      'Character',
     ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open an inspector panel' }));
@@ -83,7 +82,7 @@ describe('the rail', () => {
 
     act(() => { fireEvent.click(screen.getByText('Scopes')); });
     const s = useLayoutStore.getState();
-    expect(s.panelOrder.rightInspector).toEqual(['properties', 'preview', 'effects', 'presets', 'plugins', 'align', 'audio', 'ai', 'scopes']);
+    expect(s.panelOrder.rightInspector).toEqual(['properties', 'info', 'audio', 'preview', 'effects', 'align', 'character', 'scopes']);
     expect(s.activePanelByRegion.rightInspector).toBe('scopes');
   });
 });

@@ -17,11 +17,11 @@
  * reusable object here, applied to any number of selected layers in one undo
  * step, and it never touches a layer's colour, geometry or transform.
  *
- * The preview is a CSS-shaded sphere, NOT an engine render. It is an
- * approximation and says so: it exists to tell Rough apart from Polished and
- * Toon apart from Phong at a glance, which no numeric row can do. Rendering it
- * through the real pipeline would mean a WebGL context per thumbnail in a panel
- * that repaints on every scrub.
+ * The rows follow AE's Material Options order (2026-10-07). The saved
+ * materials (ours, not AE's) sit last. Their thumbnails are CSS-shaded spheres,
+ * NOT engine renders: an approximation that tells Rough from Polished and Toon
+ * from Phong at a glance. Rendering them through the real pipeline would mean a
+ * WebGL context per thumbnail in a panel that repaints on every scrub.
  */
 
 import { useState, useCallback } from 'react';
@@ -170,6 +170,7 @@ function layerFill(nodeId: string): string {
  */
 function MaterialRow({
   label,
+  name,
   value,
   min = 0,
   max = 100,
@@ -180,6 +181,8 @@ function MaterialRow({
   field,
 }: {
   label: string;
+  /** Accessible name when it differs from the visible (AE) label. */
+  name?: string;
   value: number;
   min?: number;
   max?: number;
@@ -227,7 +230,7 @@ function MaterialRow({
         step={step}
         value={value}
         onChange={(ev) => write(Number(ev.currentTarget.value))}
-        aria-label={`${label} slider`}
+        aria-label={`${name ?? label} slider`}
       />
       <span className={s.value}>
         <ValueField
@@ -238,7 +241,7 @@ function MaterialRow({
           unit={unit}
           onChange={write}
           {...e.scrub(`Set ${label}`, on)}
-          aria-label={label}
+          aria-label={name ?? label}
         />
       </span>
     </div>
@@ -403,8 +406,255 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
 
   return (
     <div className={s.stack}>
+      {/* AE's Material Options, in AE's order: the shadow and light switches,
+          then the surface response, reflection and transparency. Shading,
+          Bands, Displacement and the per-side colours are ours, placed where
+          they read with their neighbours. No sub-headings: the order is the
+          grouping, as in AE's timeline. */}
+      <div className={s.row}>
+        <span className={s.label}>Casts Shadows</span>
+        <select
+          className={s.select}
+          value={material.castsShadowsMode}
+          // `material/castsShadows` (0 Off / 1 On / 2 Only; keyed at the playhead when animated).
+          onChange={(e) => { void edit('Set Casts Shadows', scalarValueCommands('castsShadows', [{ nodeId, value: shadowModeValue(e.currentTarget.value as 'off' | 'on' | 'only') }], { seconds: getTime() })); }}
+          aria-label="Casts shadows"
+        >
+          <option value="off">Off</option>
+          <option value="on">On</option>
+          <option value="only">Only</option>
+        </select>
+      </div>
+      <MaterialRow
+        label="Light Transmission"
+        value={material.lightTransmission}
+        engineProp={{ nodeId, prop: 'lightTransmission' }}
+      />
+      <div className={s.row}>
+        <span className={s.label}>Accepts Shadows</span>
+        <select
+          className={s.select}
+          value={material.acceptsShadowsMode}
+          // `material/acceptsShadows` (0 Off / 1 On / 2 Only).
+          onChange={(e) => { void edit('Set Accepts Shadows', scalarValueCommands('acceptsShadows', [{ nodeId, value: shadowModeValue(e.currentTarget.value as 'off' | 'on' | 'only') }], { seconds: getTime() })); }}
+          aria-label="Accepts shadows"
+        >
+          <option value="off">Off</option>
+          <option value="on">On</option>
+          <option value="only">Only</option>
+        </select>
+      </div>
+      {material.shadowOnly && (
+        <p className={s.hint}>
+          “Only” hides the layer itself — it stays in the scene purely as a
+          shadow caster or catcher.
+        </p>
+      )}
+      <span className={s.row}>
+        <span className={s.label}>Accepts Lights</span>
+        <Switch
+          checked={material.acceptsLights}
+          // `material/acceptsLights` (0 / 1; keyed at the playhead when animated).
+          onChange={(e) => {
+            void edit('Set Accepts Lights', scalarValueCommands('acceptsLights', [{ nodeId, value: e.currentTarget.checked ? 1 : 0 }], { seconds: getTime() }));
+          }}
+          aria-label="Accepts lights"
+        />
+      </span>
+      {!material.acceptsLights && (
+        <p className={s.hint}>
+          Accepts Lights is off: scene lights do not shade this layer, and
+          nothing below changes the picture until it is on.
+        </p>
+      )}
+      {material.shading !== 'toon' && (
+        <span className={s.row}>
+          <span className={s.label}>Reflect Layers</span>
+          <Switch
+            checked={reflectsLayers}
+            disabled={!hasPath(nodeId, 'material/reflectsLayers')}
+            onChange={(ev) => {
+              void edit('Set Reflect Layers', fieldCommands([nodeId], 'material/reflectsLayers', values.bool(ev.currentTarget.checked)));
+            }}
+            aria-label="Reflect layers"
+          />
+        </span>
+      )}
+      <span className={s.row}>
+        <span className={s.label}>Shading</span>
+        <select
+          className={s.select}
+          value={material.shading}
+          // `material/shading` (a layer field): one edit.
+          onChange={(e) => {
+            const v = e.currentTarget.value === 'pbr' ? 'pbr' : e.currentTarget.value === 'toon' ? 'toon' : 'phong';
+            void edit('Set Shading', fieldCommands([nodeId], 'material/shading', values.choice(v)));
+          }}
+          aria-label="Shading model"
+        >
+          <option value="phong">Phong</option>
+          <option value="pbr">Physical (PBR)</option>
+          <option value="toon">Toon (Cel)</option>
+        </select>
+      </span>
+
+      <MaterialRow
+        label="Ambient"
+        value={material.ambient}
+        engineProp={{ nodeId, prop: 'ambient' }}
+      />
+      <MaterialRow
+        label="Diffuse"
+        value={material.diffuse}
+        engineProp={{ nodeId, prop: 'diffuse' }}
+      />
+      <MaterialRow
+        label="Specular Intensity"
+        name="Specular"
+        value={material.specular}
+        engineProp={{ nodeId, prop: 'specular' }}
+      />
+      {/* The rows that only mean something under the chosen model. Phong has no
+          roughness — it is the microfacet model's term — so showing it there is
+          offering a knob the shader never reads. */}
+      {material.shading !== 'pbr' && (
+        <MaterialRow
+          label="Specular Shininess"
+          name="Shininess"
+          value={material.shininess}
+          min={1}
+          max={128}
+          unit=""
+          engineProp={{ nodeId, prop: 'shininess' }}
+        />
+      )}
+      {material.shading === 'pbr' && (
+        <MaterialRow
+          label="Roughness"
+          value={material.roughness}
+          engineProp={{ nodeId, prop: 'roughness' }}
+        />
+      )}
+      {/* Phong reads metal too — it tints the highlight — so the row stays. */}
+      <MaterialRow
+        label="Metal"
+        value={material.metal}
+        engineProp={{ nodeId, prop: 'metal' }}
+      />
+      {material.shading === 'toon' && (
+        <MaterialRow
+          label="Bands"
+          value={material.toonBands}
+          min={2}
+          max={8}
+          unit=""
+          field={{ nodeId, path: 'material/toonBands' }}
+        />
+      )}
+      {material.shading === 'toon' && material.specular === 0 && (
+        <p className={s.hint}>
+          Metal tints the specular highlight — raise Specular Intensity to see it.
+        </p>
+      )}
+
+      {/* Reflections (AE Advanced 3D): the environment light's prefiltered map
+          and, with Reflect Layers on, the other 3D layers. Toon never reflects. */}
+      {material.shading !== 'toon' && (
+        <>
+          <MaterialRow
+            label="Reflection Intensity"
+            value={material.reflectionIntensity}
+            engineProp={{ nodeId, prop: 'reflectionIntensity' }}
+          />
+          <MaterialRow
+            label="Reflection Sharpness"
+            value={material.reflectionSharpness}
+            engineProp={{ nodeId, prop: 'reflectionSharpness' }}
+          />
+          <MaterialRow
+            label="Reflection Rolloff"
+            value={material.reflectionRolloff}
+            engineProp={{ nodeId, prop: 'reflectionRolloff' }}
+          />
+        </>
+      )}
+
+      {/* Transparency (AE Advanced 3D): view-dependent alpha at the shading
+          stage; IOR only shapes the Fresnel falloff. */}
+      <MaterialRow
+        label="Transparency"
+        value={material.transparency}
+        engineProp={{ nodeId, prop: 'transparency' }}
+      />
+      <MaterialRow
+        label="Transparency Rolloff"
+        value={material.transparencyRolloff}
+        engineProp={{ nodeId, prop: 'transparencyRolloff' }}
+      />
+      <MaterialRow
+        label="Index of Refraction"
+        value={material.ior}
+        min={1}
+        max={4}
+        step={0.01}
+        unit=""
+        engineProp={{ nodeId, prop: 'ior' }}
+      />
+      {material.transparency > 0 && !material.acceptsLights && (
+        <p className={s.hint}>
+          Transparency applies at the shading stage — turn Accepts Lights on
+          (with at least one light in the comp) for it to render.
+        </p>
+      )}
+
+      {/* Displacement (AE 26.2): a height map's luma pushes the mesh along its
+          normals — 50 % grey is flat, white rises, black sinks. */}
+      <div className={s.row}>
+        <span className={s.label}>Height Map</span>
+        <select
+          className={s.select}
+          value={material.heightMapAssetId ?? ''}
+          // `material/heightMap` (a layer field: the item id, '' = none).
+          onChange={(e) => { void edit('Set Height Map', fieldCommands([nodeId], 'material/heightMap', values.string(e.target.value))); }}
+          aria-label="Height map asset"
+        >
+          <option value="">None</option>
+          {/* B4: the project's still images (`ItemInfo.mediaType`), from the mirror at render. */}
+          {[...documentMirror().items.values()].filter((a) => a.kind === 'footage' && a.mediaType === 'image').map((a) => (
+            <option key={a.id} value={a.id}>{a.name}</option>
+          ))}
+        </select>
+      </div>
+      {(material.heightMapAssetId || material.heightMapSrc) && (
+        <>
+          <MaterialRow
+            label="Displacement"
+            value={material.displacement}
+            min={-200}
+            max={200}
+            unit="px"
+            engineProp={{ nodeId, prop: 'displacement' }}
+          />
+          <MaterialRow
+            label="Subdivide"
+            value={material.displacementSubdivisions}
+            min={0}
+            max={3}
+            unit=""
+            field={{ nodeId, path: 'material/displacementSubdivisions' }}
+          />
+        </>
+      )}
+
+      {/* ── Per-face overrides ──────────────────────────────────── */}
+      {/* Renders nothing at all until the layer is extruded, which is when the
+          side / bevel / back faces start to exist. */}
+      <FaceMaterialsSection nodeId={nodeId} />
+
+      {/* Saved materials: ours, not AE's, so last — below everything AE has. */}
+      <div className={s.divider} />
       <span className={s.groupHeader}>
-        Material Library
+        Saved Materials
         <Button
           size="xs"
           variant="ghost"
@@ -450,302 +700,6 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
           />
         ))}
       </div>
-      <p className={s.hint}>
-        {targets.length > 1
-          ? `Applying paints all ${targets.length} selected layers — colour, geometry and transform are left alone.`
-          : 'Applying writes Material Options only — the layer keeps its colour, geometry and transform.'}
-      </p>
-
-      <div className={s.divider} />
-
-      {/* ── Surface ─────────────────────────────────────────────── */}
-      <span className={s.groupHeader}>Surface</span>
-      <div className={s.previewRow}>
-        <span
-          className={s.preview}
-          style={{ background: materialSphereCss(params, fill) }}
-          title="Approximate preview — the renderer is the truth"
-          aria-hidden="true"
-          data-testid="material-preview"
-        />
-        <span className={s.previewMeta}>
-          <span className={s.row}>
-            <span className={s.label}>Shading</span>
-            <select
-              className={s.select}
-              value={material.shading}
-              // `material/shading` (a layer field): one edit.
-              onChange={(e) => {
-                const v = e.currentTarget.value === 'pbr' ? 'pbr' : e.currentTarget.value === 'toon' ? 'toon' : 'phong';
-                void edit('Set Shading', fieldCommands([nodeId], 'material/shading', values.choice(v)));
-              }}
-              aria-label="Shading model"
-            >
-              <option value="phong">Phong</option>
-              <option value="pbr">Physical (PBR)</option>
-              <option value="toon">Toon (Cel)</option>
-            </select>
-          </span>
-          <span className={s.row}>
-            <span className={s.label}>Accepts Lights</span>
-            <Switch
-              checked={material.acceptsLights}
-              // `material/acceptsLights` (0 / 1; keyed at the playhead when animated).
-              onChange={(e) => {
-                void edit('Set Accepts Lights', scalarValueCommands('acceptsLights', [{ nodeId, value: e.currentTarget.checked ? 1 : 0 }], { seconds: getTime() }));
-              }}
-              aria-label="Accepts lights"
-            />
-          </span>
-        </span>
-      </div>
-      {!material.acceptsLights && (
-        <p className={s.hint}>
-          Accepts Lights is off, so scene lights wash over this layer instead of
-          shading it — these responses are stored and animate, but nothing below
-          changes the picture until it is on. Shadow-map shadows also land only
-          on lit surfaces: with this off, Accepts Shadows cannot darken this
-          layer.
-        </p>
-      )}
-
-      <MaterialRow
-        label="Ambient"
-        value={material.ambient}
-        engineProp={{ nodeId, prop: 'ambient' }}
-      />
-      <MaterialRow
-        label="Diffuse"
-        value={material.diffuse}
-        engineProp={{ nodeId, prop: 'diffuse' }}
-      />
-      <MaterialRow
-        label="Specular"
-        value={material.specular}
-        engineProp={{ nodeId, prop: 'specular' }}
-      />
-      {/* The rows that only mean something under the chosen model. Phong has no
-          roughness and no metalness — they are the microfacet model's terms —
-          so showing them there is offering a knob the shader never reads. */}
-      {material.shading !== 'pbr' && (
-        <MaterialRow
-          label="Shininess"
-          value={material.shininess}
-          min={1}
-          max={128}
-          unit=""
-          engineProp={{ nodeId, prop: 'shininess' }}
-        />
-      )}
-      {material.shading === 'pbr' && (
-        <MaterialRow
-          label="Roughness"
-          value={material.roughness}
-          engineProp={{ nodeId, prop: 'roughness' }}
-        />
-      )}
-      {/* Phong reads metal too — it tints the highlight — so the row stays. */}
-      {(
-        <MaterialRow
-          label="Metal"
-          value={material.metal}
-          engineProp={{ nodeId, prop: 'metal' }}
-        />
-      )}
-      {material.shading === 'toon' && (
-        <MaterialRow
-          label="Bands"
-          value={material.toonBands}
-          min={2}
-          max={8}
-          unit=""
-          field={{ nodeId, path: 'material/toonBands' }}
-        />
-      )}
-      {material.shading === 'toon' && material.specular === 0 && (
-        <p className={s.hint}>
-          Metal tints the specular highlight — raise Specular to see it.
-        </p>
-      )}
-
-      <div className={s.divider} />
-
-      {/* ── Reflections (AE Advanced 3D) ────────── */}
-      {/* Intensity / Sharpness / Rolloff shape the ENVIRONMENT reflection (the
-          environment light's prefiltered HDR map) and, with Reflect Layers on,
-          the planar reflection of the other 3D layers (AE parity 4.8). */}
-      <span className={s.groupHeader}>Reflections</span>
-      {material.shading === 'toon' ? (
-        <p className={s.hint}>
-          Toon shading never reflects — a mirrored room in the highlight would
-          undo the cel banding. Switch to Phong or Physical to use these.
-        </p>
-      ) : (
-        <>
-          <MaterialRow
-            label="Reflection Intensity"
-            value={material.reflectionIntensity}
-            engineProp={{ nodeId, prop: 'reflectionIntensity' }}
-          />
-          <MaterialRow
-            label="Reflection Sharpness"
-            value={material.reflectionSharpness}
-            engineProp={{ nodeId, prop: 'reflectionSharpness' }}
-          />
-          <MaterialRow
-            label="Reflection Rolloff"
-            value={material.reflectionRolloff}
-            engineProp={{ nodeId, prop: 'reflectionRolloff' }}
-          />
-          <span className={s.row}>
-            <span className={s.label}>Reflect Layers</span>
-            <Switch
-              checked={reflectsLayers}
-              disabled={!hasPath(nodeId, 'material/reflectsLayers')}
-              onChange={(ev) => {
-                void edit('Set Reflect Layers', fieldCommands([nodeId], 'material/reflectsLayers', values.bool(ev.currentTarget.checked)));
-              }}
-              aria-label="Reflect layers"
-            />
-          </span>
-          <p className={s.hint}>
-            Reflections mirror the comp&rsquo;s Environment light; Reflect Layers also
-            mirrors the other 3D layers (a floor or a glossy wall). Like Specular,
-            they render on lit surfaces (Accepts Lights on).
-          </p>
-        </>
-      )}
-
-      <div className={s.divider} />
-
-      {/* ── Transparency (AE Advanced 3D) ────────────────────────── */}
-      {/* View-dependent alpha at the shading stage — distinct from Opacity
-          because Rolloff makes it angle-dependent (glass). No refraction is
-          rendered; IOR only shapes the Fresnel falloff. */}
-      <span className={s.groupHeader}>Transparency</span>
-      <MaterialRow
-        label="Transparency"
-        value={material.transparency}
-        engineProp={{ nodeId, prop: 'transparency' }}
-      />
-      <MaterialRow
-        label="Transparency Rolloff"
-        value={material.transparencyRolloff}
-        engineProp={{ nodeId, prop: 'transparencyRolloff' }}
-      />
-      <MaterialRow
-        label="Index of Refraction"
-        value={material.ior}
-        min={1}
-        max={4}
-        step={0.01}
-        unit=""
-        engineProp={{ nodeId, prop: 'ior' }}
-      />
-      {material.transparency > 0 && !material.acceptsLights && (
-        <p className={s.hint}>
-          Transparency applies at the shading stage — turn Accepts Lights on
-          (with at least one light in the comp) for it to render.
-        </p>
-      )}
-
-      <div className={s.divider} />
-
-      {/* ── Displacement (AE 26.2) ───────────────────────────────── */}
-      {/* A height map's luma pushes the mesh along its normals: 50 % grey is
-          flat, white rises, black sinks. Applies to extrusions, primitives
-          and imported models alike (heightDisplacement.ts). The asset list is
-          read once per render rather than subscribed — it changes on import,
-          which re-renders the inspector anyway. */}
-      <span className={s.groupHeader}>Displacement</span>
-      <div className={s.row}>
-        <span className={s.label}>Height Map</span>
-        <select
-          className={s.select}
-          value={material.heightMapAssetId ?? ''}
-          // `material/heightMap` (a layer field: the item id, '' = none).
-          onChange={(e) => { void edit('Set Height Map', fieldCommands([nodeId], 'material/heightMap', values.string(e.target.value))); }}
-          aria-label="Height map asset"
-        >
-          <option value="">None</option>
-          {/* B4: the project's still images (`ItemInfo.mediaType`), from the mirror at render. */}
-          {[...documentMirror().items.values()].filter((a) => a.kind === 'footage' && a.mediaType === 'image').map((a) => (
-            <option key={a.id} value={a.id}>{a.name}</option>
-          ))}
-        </select>
-      </div>
-      {(material.heightMapAssetId || material.heightMapSrc) && (
-        <>
-          <MaterialRow
-            label="Displacement"
-            value={material.displacement}
-            min={-200}
-            max={200}
-            unit="px"
-            engineProp={{ nodeId, prop: 'displacement' }}
-          />
-          <MaterialRow
-            label="Subdivide"
-            value={material.displacementSubdivisions}
-            min={0}
-            max={3}
-            unit=""
-            field={{ nodeId, path: 'material/displacementSubdivisions' }}
-          />
-        </>
-      )}
-
-      <div className={s.divider} />
-
-      {/* ── Shadows ─────────────────────────────────────────────── */}
-      <span className={s.groupHeader}>Shadows</span>
-      {/* Tri-states, not switches: `Only` is what shadow-catcher setups are
-          built from — a layer that throws or catches a shadow without
-          rendering itself — and a boolean cannot express it. */}
-      <div className={s.row}>
-        <span className={s.label}>Casts Shadows</span>
-        <select
-          className={s.select}
-          value={material.castsShadowsMode}
-          // `material/castsShadows` (0 Off / 1 On / 2 Only; keyed at the playhead when animated).
-          onChange={(e) => { void edit('Set Casts Shadows', scalarValueCommands('castsShadows', [{ nodeId, value: shadowModeValue(e.currentTarget.value as 'off' | 'on' | 'only') }], { seconds: getTime() })); }}
-          aria-label="Casts shadows"
-        >
-          <option value="off">Off</option>
-          <option value="on">On</option>
-          <option value="only">Only</option>
-        </select>
-      </div>
-      <div className={s.row}>
-        <span className={s.label}>Accepts Shadows</span>
-        <select
-          className={s.select}
-          value={material.acceptsShadowsMode}
-          // `material/acceptsShadows` (0 Off / 1 On / 2 Only).
-          onChange={(e) => { void edit('Set Accepts Shadows', scalarValueCommands('acceptsShadows', [{ nodeId, value: shadowModeValue(e.currentTarget.value as 'off' | 'on' | 'only') }], { seconds: getTime() })); }}
-          aria-label="Accepts shadows"
-        >
-          <option value="off">Off</option>
-          <option value="on">On</option>
-          <option value="only">Only</option>
-        </select>
-      </div>
-      {material.shadowOnly && (
-        <p className={s.hint}>
-          “Only” hides the layer itself — it stays in the scene purely as a
-          shadow caster or catcher.
-        </p>
-      )}
-      <MaterialRow
-        label="Light Transmission"
-        value={material.lightTransmission}
-        engineProp={{ nodeId, prop: 'lightTransmission' }}
-      />
-
-      {/* ── Per-face overrides ──────────────────────────────────── */}
-      {/* Renders nothing at all until the layer is extruded, which is when the
-          side / bevel / back faces start to exist. */}
-      <FaceMaterialsSection nodeId={nodeId} />
     </div>
   );
 }

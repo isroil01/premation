@@ -1,6 +1,8 @@
 /**
- * TransformSection — position, scale, size, rotation, opacity, anchor and a
- * collapsed "More" (skew, fill opacity, 3D), as a compact property list.
+ * TransformSection — anchor, position, scale, size, (3D: orientation, X / Y
+ * rotation), rotation, opacity and a collapsed "More" (skew, fill opacity), in
+ * After Effects' Transform order. The 3D switch and extrusion are the Geometry
+ * Options section (AE parity, 2026-10-07).
  *
  * Every numeric row reads the property across the WHOLE selection, shows `—`
  * where the layers disagree, writes every layer on a typed value, offsets every
@@ -46,9 +48,8 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import { MultiPropertyRow } from './MultiPropertyRow';
 import { MultiPropertyPairRow, type PairFieldSpec } from './MultiPropertyPairRow';
 import { SectionPresetMenu } from './SectionPresetMenu';
-import { ThreeDControl } from './ThreeDControl';
 import { useInspectorSelection } from './inspectorSelection';
-import { canBe3DLayer, inspectorKindOf, useActiveCompSize } from './inspectorMirror';
+import { inspectorKindOf, useActiveCompSize } from './inspectorMirror';
 import { edit } from '@core/engine/uiEdits';
 import { applyPresetValues, trackWrites } from './inspectorEdits';
 import {
@@ -245,7 +246,6 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
   // them, all editable and keyframeable, and all did nothing — six dead rows
   // above the Camera / Light settings that do the real work.
   const isDevice = isCamera || isLight;
-  const threeDEligible = kind !== 'group' && kind !== 'null' && canBe3DLayer(nodeId);
 
   const anyAnimated = (props: string[]): boolean => props.some((p) => isTrackAnimated(m, nodeId, p));
 
@@ -352,8 +352,8 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
   );
 
   // Closed by default — unless something in it is live, so an animated skew
-  // or a 3D layer's controls are never hidden on first sight.
-  const moreOpen = moreRemembered ?? (is3D || anyAnimated(['skew', 'skewAxis', 'fillOpacity']));
+  // is never hidden on first sight.
+  const moreOpen = moreRemembered ?? anyAnimated(['skew', 'skewAxis', 'fillOpacity']);
   const toggleMore = (): void => {
     setPref('inspectorSections', { ...usePreferenceStore.getState().inspectorSections, [MORE_KEY]: !moreOpen });
   };
@@ -364,6 +364,17 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
     <PropertyRowLayoutContext.Provider value="inspector">
       <div className={styles.section}>
         <div className={styles.rows}>
+          {!isDevice && (
+            <MultiPropertyPairRow
+              nodeId={nodeId}
+              label="Anchor"
+              srLabel="Anchor Point"
+              props={[field('anchorX', 'X', ancX), field('anchorY', 'Y', ancY), ...(is3D ? [field('anchorZ', 'Z')] : [])]}
+              trailing={unitToggle('anchor', 'Anchor Point', 'layer')}
+              after={anchorPresets}
+            />
+          )}
+
           <MultiPropertyPairRow
             nodeId={nodeId}
             label="Position"
@@ -388,20 +399,23 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
             />
           )}
 
+          {/* AE's 3D layer order: Orientation, X / Y / Z Rotation. The 3D
+              switch itself and the extrusion live in Geometry Options. */}
+          {is3D && !isDevice && (
+            <>
+              <MultiPropertyPairRow
+                nodeId={nodeId}
+                label="Orientation"
+                props={[field('orientationX', 'X'), field('orientationY', 'Y'), field('orientationZ', 'Z')]}
+              />
+              {row('rotationX')}
+              {row('rotationY')}
+            </>
+          )}
+
           {row('rotation')}
 
           {hasOpacity && !isDevice && row('opacity')}
-
-          {!isDevice && (
-            <MultiPropertyPairRow
-              nodeId={nodeId}
-              label="Anchor"
-              srLabel="Anchor Point"
-              props={[field('anchorX', 'X', ancX), field('anchorY', 'Y', ancY), ...(is3D ? [field('anchorZ', 'Z')] : [])]}
-              trailing={unitToggle('anchor', 'Anchor Point', 'layer')}
-              after={anchorPresets}
-            />
-          )}
 
           {!isDevice && (<button
             type="button"
@@ -417,21 +431,6 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
               {row('skew')}
               {row('skewAxis')}
               {hasFillOpacity && row('fillOpacity')}
-              {threeDEligible && (
-                <ThreeDControl nodeId={nodeId}>
-                  {is3D && (
-                    <>
-                      {row('rotationX')}
-                      {row('rotationY')}
-                      <MultiPropertyPairRow
-                        nodeId={nodeId}
-                        label="Orientation"
-                        props={[field('orientationX', 'X'), field('orientationY', 'Y'), field('orientationZ', 'Z')]}
-                      />
-                    </>
-                  )}
-                </ThreeDControl>
-              )}
             </div>
           )}
         </div>

@@ -554,11 +554,25 @@
   padding-right: var(--space-2);
 }
 
-/* Open panels share the height the bars leave, equally. */
+/* Open panels share the height the bars leave — Properties weighted three
+   to one, so opening Preview or Align beside it no longer halves the
+   inspector (After Effects keeps Properties tall the same way). Every share
+   stays a definite height, which the panels' own scrolling lists rely on. */
 .stackRoot > .content {
   flex: 1 1 0;
   min-height: 96px;
   background: var(--color-panel);
+}
+
+.stackRoot > .content[data-stack-panel='properties'] {
+  flex-grow: 3;
+}
+
+/* The stack's bars at AE's density: 24px (22 on compact screens). */
+.stackRoot > .bar,
+.stackRoot > .barAdd {
+  height: var(--control-height-md);
+  min-height: var(--control-height-md);
 }
 
 .barAdd {
