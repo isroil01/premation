@@ -23,6 +23,11 @@ using TexFor = std::function<TexRef(const std::optional<std::string>&)>;
 void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> group, std::string_view out,
                      const ById& byId, const TexFor& texFor, MapLayerSource& maps);
 
+/// AE parity 4.4: the environment as the comp's backdrop (a visible sky), drawn
+/// into `out` before the first layer. A no-op without a perspective 3D camera or
+/// an environment that asks for it.
+void render_sky(PassContext& ctx, std::string_view out, const TexFor& texFor);
+
 /// Whether the 3D path can render this frame's 3D features (shadow maps, SSAO,
 /// camera DOF gather are not ported yet). Appends reasons.
 void unported_3d(const api::RenderFrameFile& f, std::vector<std::string>& reasons);

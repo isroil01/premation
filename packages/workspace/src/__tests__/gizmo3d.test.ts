@@ -106,10 +106,39 @@ describe('buildRenderedGizmo3D', () => {
 
     const rot = build('rotation');
     expect(rot.axes).toHaveLength(0);
-    expect(rot.arcs.map((a) => a.type).sort()).toEqual(['rot_x', 'rot_y', 'rot_z']);
+    // The view-facing outer ring rides with the axis rings (AE parity 4.6).
+    expect(rot.arcs.map((a) => a.type).sort()).toEqual(['rot_outer', 'rot_x', 'rot_y', 'rot_z']);
+    expect(rot.trackball).not.toBeNull();
+    expect(rot.scaleHandles).toHaveLength(0);
 
     const scl = build('scale');
     expect(scl.axes.map((a) => a.type).sort()).toEqual(['scale_x', 'scale_y', 'scale_z']);
+    expect(scl.scaleHandles).toHaveLength(0);
+  });
+
+  it('universal carries a scale cube on every visible arm, pointing along it (AE parity 4.6)', () => {
+    const u = build('universal');
+    // Front view: Z points at the camera, so only X and Y have an arm to sit on.
+    expect(u.scaleHandles.map((h) => h.type).sort()).toEqual(['scale_x', 'scale_y']);
+    const sx = u.scaleHandles.find((h) => h.type === 'scale_x')!;
+    expect(sx.screenDir.x).toBeCloseTo(1, 5);
+    expect(sx.screenDir.y).toBeCloseTo(0, 5);
+    expect(sx.screenDist).toBeGreaterThan(30);
+    // The cube is hit as its own handle, not as the arrow it sits on.
+    expect(hitTestGizmo3D(sx.screen, u, 10)).toBe('scale_x');
+  });
+});
+
+describe('trackball and view ring (AE parity 4.6)', () => {
+  it('the outer ring is grabbed on its circle; inside it, off every other handle, is the free trackball', () => {
+    const g = build('rotation');
+    const tb = g.trackball!;
+    expect(hitTestGizmo3D({ x: tb.centerScreen.x, y: tb.centerScreen.y - tb.radius }, g, 6)).toBe('rot_outer');
+    // Between the centre and a ring, away from the axis rings' lines.
+    const r = tb.radius * 0.45;
+    expect(hitTestGizmo3D({ x: tb.centerScreen.x + r * Math.SQRT1_2, y: tb.centerScreen.y + r * Math.SQRT1_2 }, g, 4)).toBe('rot_free');
+    // Outside the ring: nothing.
+    expect(hitTestGizmo3D({ x: tb.centerScreen.x + tb.radius * 1.5, y: tb.centerScreen.y }, g, 4)).toBeNull();
   });
 });
 

@@ -62,6 +62,13 @@ struct Material {
   std::optional<TextureRef> emissiveTexture;
   std::array<double, 3> emissiveFactor{0, 0, 0};
   double emissiveStrength = 1;
+  /// AE parity 4.7: alphaMode (OPAQUE | MASK | BLEND) + alphaCutoff, and the
+  /// KHR_materials_* the import maps onto Material Options.
+  std::string alphaMode = "OPAQUE";
+  double alphaCutoff = 0.5;
+  bool unlit = false;
+  double transmission = 0;
+  double ior = 1.5;
 };
 
 struct Image {
@@ -76,6 +83,8 @@ struct Primitive {
   std::vector<std::uint32_t> indices;
   std::optional<double> material;  ///< may name no material (then the spec default)
   std::optional<std::vector<float>> joints, weights;
+  /// COLOR_0 as rgba per vertex (a VEC3 stream gets alpha 1) — AE parity 4.7.
+  std::optional<std::vector<float>> colors;
   struct Target {
     std::optional<std::vector<float>> positions, normals;
   };
@@ -138,6 +147,11 @@ struct Entry {
   };
   std::vector<MorphTarget> morphTargetData;
   std::vector<double> morphDefaults;
+  /// AE parity 4.7: per-vertex colours (rgba, linear; empty = none) and the
+  /// material's alpha mode — `opaque` / `mask:<cutoff>` / `blend` — the base
+  /// texture's alpha is read through (image_src's suffix).
+  std::vector<float> colors;
+  std::string alphaMode = "opaque";
 };
 
 /// ModelSkin: joint node indices + inverse binds conjugated into compositor space (F·B·F).
@@ -174,6 +188,11 @@ void clear_models();
 
 /// The texture source a model image is fed from: `gltf:<modelKey>#<image>`.
 [[nodiscard]] std::string image_src(std::string_view modelKey, std::size_t image);
+/// The same with the material's alpha mode (Entry::alphaMode): `@opaque` drops
+/// the texture's alpha, `@mask:<cutoff>` thresholds it, blend keeps it (no suffix).
+[[nodiscard]] std::string image_src(std::string_view modelKey, std::size_t image, std::string_view alphaMode);
+/// The alpha-mode suffix of a `gltf:` source ('' = none).
+[[nodiscard]] std::string image_src_alpha(std::string_view src);
 /// Parse `gltf:<modelKey>#<image>`.
 [[nodiscard]] std::optional<std::pair<std::string, std::size_t>> parse_image_src(std::string_view src);
 

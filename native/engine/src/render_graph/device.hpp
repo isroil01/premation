@@ -71,6 +71,13 @@ struct Attachment {
   RenderTarget* target = nullptr;  // nullptr = surface
   bool clear = false;
   double clear_r = 0, clear_g = 0, clear_b = 0, clear_a = 0;
+  /// AE parity 4.2: the depth buffer comes from this target (same size and
+  /// sample count) instead of `target`'s own — a layer drawn offscreen still
+  /// tests against its 3D run. nullptr = `target`'s.
+  const RenderTarget* depthFrom = nullptr;
+  /// Keep the depth buffer's contents (a 3D run continued after an offscreen
+  /// step) instead of clearing it.
+  bool loadDepth = false;
 };
 
 /// One draw (DrawItem). Uniforms are an index range into the command buffer's float store.
@@ -93,6 +100,11 @@ struct DrawItem {
   };
   std::array<Extra, 16> extra{};
   std::uint8_t extraCount = 0;
+  /// Depth writes for this draw: kDepthWriteMaterial = the material's own
+  /// state, 0 = test without writing (AE parity 4.2: motion-blur samples, sky,
+  /// shadow catcher), 1 = write.
+  static constexpr std::uint8_t kDepthWriteMaterial = 2;
+  std::uint8_t depthWrite = kDepthWriteMaterial;
   void bind(std::uint32_t binding, const TexRef& t) { extra.at(extraCount++) = {binding, t, {}}; }
   void bind(std::uint32_t binding, const SamplerRef& s) { extra.at(extraCount++) = {binding, {}, s}; }
   // Custom geometry (deformed mesh): vertex + index buffers.
@@ -128,6 +140,10 @@ class Commands {
   }
   /// The last item added (to attach a texture after the fact).
   DrawItem& last() noexcept { return items_.back(); }
+  /// Set the depth-write override of every item from `first` on.
+  void set_depth_write(std::size_t first, std::uint8_t depthWrite) noexcept {
+    for (std::size_t i = first; i < items_.size(); ++i) items_[i].depthWrite = depthWrite;
+  }
   [[nodiscard]] std::size_t size() const noexcept { return items_.size(); }
   [[nodiscard]] bool empty() const noexcept { return items_.empty(); }
   [[nodiscard]] const std::vector<DrawItem>& items() const noexcept { return items_; }
@@ -233,7 +249,8 @@ class Device {
     wgpu::BindGroupLayout layout;
     std::uint64_t id = 0;
   };
-  const Pipeline& pipeline(Mat material, Blend blend, wgpu::TextureFormat format, std::uint32_t samples);
+  const Pipeline& pipeline(Mat material, Blend blend, wgpu::TextureFormat format, std::uint32_t samples,
+                           std::uint8_t depthWrite = DrawItem::kDepthWriteMaterial);
   wgpu::BindGroup make_bind_group(const Pipeline& p, const MaterialDesc& m, const DrawItem& it, const wgpu::Buffer& uniforms,
                                   std::uint64_t size);
   /// Fill levels 1… of `tex` from level 0 (side draws, kMipWgsl).

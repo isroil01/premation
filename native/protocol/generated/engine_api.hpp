@@ -281,6 +281,7 @@ enum class MediaType : std::uint32_t {
   image = 1,
   video = 2,
   audio = 3,
+  model = 4,
 };
 [[nodiscard]] std::string_view to_string(MediaType v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, MediaType& out) noexcept;
@@ -867,6 +868,21 @@ enum class RenderGuideAxis : std::uint32_t {
 [[nodiscard]] std::string_view to_string(RenderGuideAxis v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, RenderGuideAxis& out) noexcept;
 
+enum class RenderMeshSurface : std::uint32_t {
+  layer = 0,
+  uv = 1,
+};
+[[nodiscard]] std::string_view to_string(RenderMeshSurface v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderMeshSurface& out) noexcept;
+
+enum class RenderFogMode : std::uint32_t {
+  linear = 0,
+  exponential = 1,
+  exponential2 = 2,
+};
+[[nodiscard]] std::string_view to_string(RenderFogMode v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, RenderFogMode& out) noexcept;
+
 enum class RenderColorSpace : std::uint32_t {
   srgb = 0,
   rec709 = 1,
@@ -1144,6 +1160,7 @@ struct PhysicsBakeJob;
 struct ParticleBakeJob;
 struct CameraTrackJob;
 struct FaceTrackJob;
+struct ModelImportJob;
 struct JobSpec;
 struct StartJob;
 struct CancelJob;
@@ -1409,6 +1426,8 @@ struct RenderDof;
 struct RenderCamera3D;
 struct RenderLight3D;
 struct RenderEnvMap;
+struct RenderFog;
+struct RenderShadowCatcher;
 struct RenderSsao;
 struct RenderPrecompFrame;
 struct Renderable;
@@ -3314,6 +3333,13 @@ struct FaceTrackJob {
   bool operator==(const FaceTrackJob&) const = default;
 };
 
+struct ModelImportJob {
+  std::vector<std::string> files;
+  std::string output_folder;
+  std::optional<std::string> name;
+  bool operator==(const ModelImportJob&) const = default;
+};
+
 struct JobSpec {
   enum class Kind : std::uint32_t {
     track_motion = 1,
@@ -3337,8 +3363,9 @@ struct JobSpec {
     particle_bake = 1717,
     camera_track = 1718,
     face_track = 1719,
+    model_import = 1720,
   };
-  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob, ProxyJob, AudioDuckJob, AudioGateJob, TrackApplyJob, RotoBrushJob, ContentAwareFillJob, AutoReframeJob, RigLogoJob, PhysicsBakeJob, ParticleBakeJob, CameraTrackJob, FaceTrackJob> v;
+  std::variant<TrackMotionJob, StabilizeJob, AutoTraceJob, SceneDetectJob, ObjectMatteJob, TranscribeJob, AudioAnalysisJob, RenderJob, PrerenderJob, ProxyJob, AudioDuckJob, AudioGateJob, TrackApplyJob, RotoBrushJob, ContentAwareFillJob, AutoReframeJob, RigLogoJob, PhysicsBakeJob, ParticleBakeJob, CameraTrackJob, FaceTrackJob, ModelImportJob> v;
   [[nodiscard]] Kind kind() const noexcept;
   bool operator==(const JobSpec&) const = default;
 };
@@ -5744,6 +5771,7 @@ struct RenderGlass {
 struct RenderMotionSample {
   std::vector<double> model_matrix;
   double opacity = 0.0;
+  std::vector<double> model3d;
   bool operator==(const RenderMotionSample&) const = default;
 };
 
@@ -5814,6 +5842,10 @@ struct RenderExtrudedMesh {
   RenderIndexFormat index_format = RenderIndexFormat::uint16;
   std::vector<RenderMeshRange> ranges;
   std::optional<RenderPbrMaps> pbr;
+  RenderMeshSurface surface = RenderMeshSurface::layer;
+  double surface_width = 0.0;
+  double surface_height = 0.0;
+  std::vector<std::uint8_t> colors;
   bool operator==(const RenderExtrudedMesh&) const = default;
 };
 
@@ -5834,6 +5866,7 @@ struct RenderShade3D {
   std::optional<double> transparency_rolloff;
   std::optional<double> ior;
   std::optional<bool> accepts_shadows;
+  std::optional<bool> layer_reflections;
   bool operator==(const RenderShade3D&) const = default;
 };
 
@@ -5901,7 +5934,33 @@ struct RenderEnvMap {
   std::vector<std::uint8_t> data;
   double intensity = 0.0;
   double rotation_deg = 0.0;
+  RenderTextureFormat format = RenderTextureFormat::rgba8unorm;
+  std::vector<double> sh;
+  bool visible_sky = false;
+  double sky_blur = 0.0;
+  double sky_intensity = 0.0;
+  std::optional<std::string> texture_key;
+  std::vector<double> shadow_dir;
+  double shadow_darkness = 0.0;
+  double shadow_softness = 0.0;
   bool operator==(const RenderEnvMap&) const = default;
+};
+
+struct RenderFog {
+  RenderFogMode mode = RenderFogMode::linear;
+  Color color;
+  double start = 0.0;
+  double end = 0.0;
+  double density = 0.0;
+  double max_opacity = 0.0;
+  bool operator==(const RenderFog&) const = default;
+};
+
+struct RenderShadowCatcher {
+  double y = 0.0;
+  double opacity = 0.0;
+  double size = 0.0;
+  bool operator==(const RenderShadowCatcher&) const = default;
 };
 
 struct RenderSsao {
@@ -5918,6 +5977,7 @@ struct RenderPrecompFrame {
   std::optional<RenderEnvMap> env_map;
   std::optional<double> flat_width;
   std::optional<double> flat_height;
+  std::optional<RenderFog> fog;
   bool operator==(const RenderPrecompFrame&) const = default;
 };
 
@@ -5971,6 +6031,8 @@ struct RenderFrameScene {
   std::vector<RenderLight3D> lights3d;
   std::optional<RenderEnvMap> env_map;
   std::optional<RenderSsao> ssao;
+  std::optional<RenderFog> fog;
+  std::optional<RenderShadowCatcher> shadow_catcher;
   bool operator==(const RenderFrameScene&) const = default;
 };
 
@@ -6582,6 +6644,8 @@ void encode(wire::Writer& w, const CameraTrackJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CameraTrackJob& out);
 void encode(wire::Writer& w, const FaceTrackJob& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, FaceTrackJob& out);
+void encode(wire::Writer& w, const ModelImportJob& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, ModelImportJob& out);
 void encode(wire::Writer& w, const JobSpec& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, JobSpec& out);
 void encode(wire::Writer& w, const StartJob& v);
@@ -7112,6 +7176,10 @@ void encode(wire::Writer& w, const RenderLight3D& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderLight3D& out);
 void encode(wire::Writer& w, const RenderEnvMap& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderEnvMap& out);
+void encode(wire::Writer& w, const RenderFog& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderFog& out);
+void encode(wire::Writer& w, const RenderShadowCatcher& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderShadowCatcher& out);
 void encode(wire::Writer& w, const RenderSsao& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderSsao& out);
 void encode(wire::Writer& w, const RenderPrecompFrame& v);

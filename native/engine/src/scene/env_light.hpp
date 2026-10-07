@@ -46,6 +46,9 @@ struct EnvSpecularMap {
   std::uint32_t levels = 0;
   double scale = 0;
   std::vector<std::uint8_t> data;
+  /// AE parity 4.4: linear IEEE half floats (rgba16float, scale 1) instead of
+  /// the sqrt-encoded RGBA8.
+  bool half = false;
 };
 
 /// `environmentSpecularMap(sky)` for a preset sky (unknown → 'studio'); nullopt
@@ -76,7 +79,16 @@ struct EnvPixels {
 [[nodiscard]] std::string env_atlas_key(std::string_view content);
 /// `buildEnvSpecularAtlas(base, id)`.
 [[nodiscard]] EnvSpecularMap build_env_specular_atlas(const EnvPixels& base, std::string id);
+/// AE parity 4.4: the HDR reflection atlas — linear half floats at
+/// kEnvHdrWidth × kEnvHdrHeight per band, the same five roughness bands.
+[[nodiscard]] EnvSpecularMap build_env_hdr_atlas(const EnvPixels& base, std::string id);
+/// The HDR atlas of a preset sky (unknown → 'studio'); nullopt for an asset: sky. Memoised.
+[[nodiscard]] std::optional<EnvSpecularMap> environment_hdr_map(std::string_view sky);
+/// IEEE binary16 bits of `v` (round to nearest even; overflow → infinity).
+[[nodiscard]] std::uint16_t float_to_half(float v) noexcept;
 inline constexpr int kEnvSpecWidth = 256;   ///< ENV_SPEC_WIDTH (= ENV_PROJECT_MAX_WIDTH)
 inline constexpr int kEnvSpecHeight = 128;  ///< ENV_SPEC_HEIGHT (= ENV_PROJECT_MAX_HEIGHT)
+inline constexpr int kEnvHdrWidth = 512;    ///< AE parity 4.4: the HDR atlas band size
+inline constexpr int kEnvHdrHeight = 256;
 
 }  // namespace premation::scene

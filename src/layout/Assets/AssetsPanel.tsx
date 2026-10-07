@@ -40,12 +40,12 @@
  * the verbs that put a clip into the edit: add, add at playhead, new comp from
  * footage, assemble, interpret, source monitor, and replace-a-layer's-source.
  *
- * 3D models take their own door on purpose. A `.glb`/`.gltf` does not become a
- * library asset; it becomes a LAYER TREE (nulls + mesh layers) — see
- * `core/scene/modelImport`. A `.gltf` additionally references sidecar files
- * (.bin, textures) by name, so a selection holding one is imported WHOLE
- * through `importModelFiles`, which picks the model out and resolves the rest
- * against it. `handleFileChange` routes all of that, and the Import menu's
+ * 3D models take their own door on purpose. A model (.glb, .gltf, .obj, .fbx,
+ * .usda, .usdz) becomes a LAYER TREE (nulls + mesh layers) — see
+ * `core/scene/modelImport` — over a converted .glb project item. A `.gltf` /
+ * `.obj` references sidecar files (.bin, .mtl, textures) by name, so a
+ * selection holding a model is imported WHOLE through `importModelSelection`,
+ * which picks the model out and resolves the rest against it. `handleFileChange` routes all of that, and the Import menu's
  * "Import 3D Model…" hands it the same selection with a model-shaped
  * `accept` — one routing, two entry points.
  *
@@ -64,7 +64,7 @@
  * the Layers, Assets and Inspector panels all draw from.
  */
 
-import { importModelEdit } from './modelImportEdits';
+import { importModelSelection, modelImportMessage } from './modelImportEdits';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Panel } from '@components/Panel';
 import { Button } from '@components/Button';
@@ -368,9 +368,29 @@ export function AssetsPanel(): JSX.Element {
     /^(video|image|audio)\//.test(f.type)
     || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|svg|webp|exr|dpx|psd|dng|cr2|cr3|nef|arw|mp3|wav|m4a|aac|ogg|mxf|avi|wmv|flv|mts|m2ts|mpg|mpeg|vob|ts|mkv|r3d|braw)$/i.test(f.name);
 
+  /** One model selection through the importer, as a job with progress and its outcome toast. */
+  const runModelImport = async (files: File[]): Promise<void> => {
+    const jobId = 'model-import';
+    useUIStore.getState().startJob({ id: jobId, label: 'Importing 3D model…' });
+    try {
+      const outcome = await importModelSelection(files, (fraction, message) => {
+        useUIStore.getState().updateJob(jobId, { progress: fraction, ...(message ? { label: message } : {}) });
+      });
+      const { message } = modelImportMessage(outcome);
+      useUIStore.getState().finishJob(jobId, { status: 'done', message });
+    } catch (err) {
+      useUIStore.getState().finishJob(jobId, { status: 'failed', message: `3D import failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  };
+
   /** OS files dropped on the panel: import to the current folder, never insert. */
   const handleOsDrop = async (files: FileList): Promise<void> => {
-    const media = Array.from(files).filter(isMediaFile);
+    const all = Array.from(files);
+    if (all.some((f) => /\.(glb|gltf|obj|fbx|usda|usdz|usd)$/i.test(f.name))) {
+      await runModelImport(all);
+      return;
+    }
+    const media = all.filter(isMediaFile);
     if (media.length === 0) {
       useUIStore.getState().notify({ level: 'info', message: 'Drop video, image or audio files.', durationMs: 2600 });
       return;
@@ -385,65 +405,18 @@ export function AssetsPanel(): JSX.Element {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     const items: Array<{ file: File; folderId: string | null }> = [];
-    // A `.gltf` references sidecar files (.bin, textures) by name, so a
-    // selection holding one is a MODEL drop as a whole: every file goes to the
+    // A model selection is a MODEL drop as a whole (AE parity 4.7): a .gltf /
+    // .obj names its sidecars (.bin, .mtl, textures), so every file goes to the
     // importer, which picks the model out and resolves the rest against it.
     const all = Array.from(files);
-    const gltfDrop = all.some((f) => /\.gltf$/i.test(f.name));
-    if (gltfDrop) {
-      try {
-        const { buildModelFiles } = await import('@core/scene/modelImport');
-        const sources = await Promise.all(all.map(async (f) => ({
-          name: f.name,
-          path: f.webkitRelativePath || undefined,
-          bytes: await f.arrayBuffer(),
-        })));
-        const result = await importModelEdit(`Import ${all.find((f) => /\.gltf$/i.test(f.name))?.name ?? 'model'}`, (b, f) => buildModelFiles(b, f, sources));
-        if (!result) throw new Error('the engine did not take the model');
-        const modelName = all.find((f) => /\.gltf$/i.test(f.name))?.name ?? 'model';
-        useUIStore.getState().notify({
-          level: result.warning ? 'warning' : 'success',
-          message: result.warning ?? `Imported “${modelName}” — ${result.layerCount} layer${result.layerCount === 1 ? '' : 's'}`,
-          durationMs: result.warning ? 6000 : 3200,
-        });
-      } catch (err) {
-        useUIStore.getState().notify({
-          level: 'error',
-          message: `3D import failed: ${err instanceof Error ? err.message : String(err)}`,
-          durationMs: 6000,
-        });
-      }
+    if (all.some((f) => /\.(glb|gltf|obj|fbx|usda|usdz|usd)$/i.test(f.name))) {
+      await runModelImport(all);
       e.target.value = '';
       return;
     }
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (!file) continue;
-      // 3D models take their own door: they become a LAYER TREE (nulls +
-      // mesh layers) rather than a library asset — see modelImport.ts.
-      if (/\.(glb|gltf)$/i.test(file.name)) {
-        try {
-          const { buildGltfModel } = await import('@core/scene/modelImport');
-          const bytes = await file.arrayBuffer();
-          const result = await importModelEdit(`Import ${file.name}`, (b, f) => buildGltfModel(b, f, bytes, file.name));
-          if (!result) throw new Error('the engine did not take the model');
-          const clipNote = result.clip
-            ? ` · clip “${result.clip.name}” baked as keyframes (${result.clip.duration.toFixed(1)}s${result.clip.extraClips > 0 ? `, ${result.clip.extraClips} more clip${result.clip.extraClips === 1 ? '' : 's'} in file` : ''})`
-            : '';
-          useUIStore.getState().notify({
-            level: result.warning ? 'warning' : 'success',
-            message: result.warning ?? `Imported “${file.name}” — ${result.layerCount} layer${result.layerCount === 1 ? '' : 's'}${clipNote}`,
-            durationMs: result.warning || result.clip ? 6000 : 3200,
-          });
-        } catch (err) {
-          useUIStore.getState().notify({
-            level: 'error',
-            message: `3D import failed: ${err instanceof Error ? err.message : String(err)}`,
-            durationMs: 6000,
-          });
-        }
-        continue;
-      }
       items.push({ file, folderId: currentFolderId });
     }
     const { imported } = await importBrowserFilesEdit(items);
@@ -1400,7 +1373,7 @@ export function AssetsPanel(): JSX.Element {
             ref={fileInputRef}
             className={styles.fileInput}
             multiple
-            accept="image/*,video/*,audio/*,.exr,.dpx,.psd,.dng,.cr2,.cr3,.nef,.arw,.mxf,.mkv,.avi,.mts,.m2ts,.r3d,.braw,.glb,.gltf"
+            accept="image/*,video/*,audio/*,.exr,.dpx,.psd,.dng,.cr2,.cr3,.nef,.arw,.mxf,.mkv,.avi,.mts,.m2ts,.r3d,.braw,.glb,.gltf,.obj,.fbx,.usda,.usdz"
             onChange={handleFileChange}
           />
           <input
@@ -1419,7 +1392,7 @@ export function AssetsPanel(): JSX.Element {
             ref={modelInputRef}
             className={styles.fileInput}
             multiple
-            accept=".glb,.gltf,.bin,image/png,image/jpeg,image/webp,image/ktx2"
+            accept=".glb,.gltf,.bin,.obj,.mtl,.fbx,.usda,.usdz,.usd,image/png,image/jpeg,image/webp,image/ktx2,.tga"
             onChange={handleFileChange}
           />
 

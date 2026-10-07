@@ -214,13 +214,17 @@ export type ItemKind =
   | 'placeholder';
 export const ItemKindValues = ['folder', 'composition', 'footage', 'solid', 'placeholder'] as const;
 
-/** B4 — what a footage item's file holds (ItemInfo.mediaType). */
+/**
+ * B4 — what a footage item's file holds (ItemInfo.mediaType).
+ * `model` (AE parity 4.7): a 3D model file (.glb) stored as a project asset; Model components reference it by item id.
+ */
 export type MediaType =
   | 'none'
   | 'image'
   | 'video'
-  | 'audio';
-export const MediaTypeValues = ['none', 'image', 'video', 'audio'] as const;
+  | 'audio'
+  | 'model';
+export const MediaTypeValues = ['none', 'image', 'video', 'audio', 'model'] as const;
 
 export type AlphaMode =
   | 'auto'
@@ -694,6 +698,22 @@ export type RenderGuideAxis =
   | 'x'
   | 'y';
 export const RenderGuideAxisValues = ['x', 'y'] as const;
+
+/**
+ * AE parity 4.1: where a mesh's effect chain runs — the layer's own box (an extrusion's caps) or the mesh's UV space
+ * (a primitive / model surface).
+ */
+export type RenderMeshSurface =
+  | 'layer'
+  | 'uv';
+export const RenderMeshSurfaceValues = ['layer', 'uv'] as const;
+
+/** AE parity 4.8: how fog thickens with distance from the camera. */
+export type RenderFogMode =
+  | 'linear'
+  | 'exponential'
+  | 'exponential2';
+export const RenderFogModeValues = ['linear', 'exponential', 'exponential2'] as const;
 
 /**
  * D3: a colour space by what After Effects offers (Project Settings ▸ Working Space, Interpret Footage ▸ Color, the
@@ -3055,6 +3075,19 @@ export interface RenderJob {
   items: RenderItemId[];
 }
 
+/**
+ * AE parity 4.7 — normalize a 3D model for import: a .glb / .gltf (with its sidecars, Draco / meshopt / quantized
+ * geometry, KTX2 textures), .obj (+ .mtl), .fbx, .usda or .usdz becomes ONE plain glTF 2.0 binary written (temp file
+ * + rename) into `outputFolder` as `<name>.glb`. `files[0]` is the model; the rest are the files it references,
+ * matched by relative path then by name. No document change: the result JSON is `{glb, name, warnings[]}` and the
+ * editor imports the .glb as a project asset (importFiles).
+ */
+export interface ModelImportJob {
+  files: string[];
+  outputFolder: string;
+  name?: string;
+}
+
 /** Pre-render (Pre-render / proxy creation) of compositions to files. */
 export interface PrerenderJob {
   comps: ItemId[];
@@ -3249,7 +3282,8 @@ export type JobSpec =
   | { kind: 'physicsBake'; value: PhysicsBakeJob }
   | { kind: 'particleBake'; value: ParticleBakeJob }
   | { kind: 'cameraTrack'; value: CameraTrackJob }
-  | { kind: 'faceTrack'; value: FaceTrackJob };
+  | { kind: 'faceTrack'; value: FaceTrackJob }
+  | { kind: 'modelImport'; value: ModelImportJob };
 export type JobSpecKind = JobSpec['kind'];
 
 export interface StartJob {
@@ -4779,6 +4813,11 @@ export interface RenderGlass {
 export interface RenderMotionSample {
   modelMatrix: number[];
   opacity: number;
+  /**
+   * AE parity 4.2: a 3D layer's sample as its own column-major 4×4 model (empty = a 2D sample), so motion blur stays
+   * on the depth-tested path.
+   */
+  model3d: number[];
 }
 
 export interface RenderAdjustment {
@@ -4847,6 +4886,16 @@ export interface RenderExtrudedMesh {
   indexFormat: RenderIndexFormat;
   ranges: RenderMeshRange[];
   pbr?: RenderPbrMaps;
+  /** AE parity 4.1: the space the renderable's effect chain runs in before it textures the mesh. */
+  surface: RenderMeshSurface;
+  /** The layer box (layer px) of a `layer` surface: the effect chain's canvas, centred on the mesh origin. */
+  surfaceWidth: number;
+  surfaceHeight: number;
+  /**
+   * AE parity 4.7: per-vertex colours (glTF COLOR_0), f32 LE rgba per vertex (linear), multiplied into the base
+   * colour; empty = white.
+   */
+  colors: Uint8Array;
 }
 
 export interface RenderShade3D {
@@ -4867,6 +4916,11 @@ export interface RenderShade3D {
   transparencyRolloff?: number;
   ior?: number;
   acceptsShadows?: boolean;
+  /**
+   * AE parity 4.8: this surface mirrors the other 3D layers of its run (planar reflection, scaled by
+   * reflectionIntensity / sharpness / rolloff).
+   */
+  layerReflections?: boolean;
 }
 
 export interface RenderThreeD {
@@ -4929,10 +4983,49 @@ export interface RenderEnvMap {
   height: number;
   levels: number;
   scale: number;
-  /** RGBA8. */
+  /** RGBA8 (sqrt-encoded) or, when `format` is rgba16float, linear half floats. */
   data: Uint8Array;
   intensity: number;
   rotationDeg: number;
+  /** AE parity 4.4 — image-based lighting that does not use light slots. */
+  format: RenderTextureFormat;
+  /**
+   * Irradiance as 9 SH coefficients × rgb (27 numbers, linear, already scaled by the light's intensity); empty =
+   * no diffuse IBL (the probe's derived light rig carries it).
+   */
+  sh: number[];
+  /** Draw the environment behind the 3D scene (a visible sky), at this blur 0..1 and gain. */
+  visibleSky: boolean;
+  skyBlur: number;
+  skyIntensity: number;
+  /** A live layer texture (a comp or video layer, equirectangular) in place of `data`: the animated environment. */
+  textureKey?: string;
+  /** Environment shadows: the probe's dominant direction (unit, light travel) casts a mapped shadow at this darkness. */
+  shadowDir: number[];
+  shadowDarkness: number;
+  shadowSoftness: number;
+}
+
+/** AE parity 4.8: distance fog / atmosphere over the 3D scene. */
+export interface RenderFog {
+  mode: RenderFogMode;
+  color: Color;
+  /** Linear: where fog starts and is complete (px from the camera). Exponential: density per 1000 px. */
+  start: number;
+  end: number;
+  density: number;
+  /** 0..1 — the most fog can hide (atmosphere that never fully whites out). */
+  maxOpacity: number;
+}
+
+/** AE parity 4.3: an invisible floor at the comp's ground level that only catches shadows. */
+export interface RenderShadowCatcher {
+  /** World y of the floor plane. */
+  y: number;
+  /** 0..1. */
+  opacity: number;
+  /** Half-extent of the catcher plane (px). */
+  size: number;
 }
 
 export interface RenderSsao {
@@ -4950,6 +5043,7 @@ export interface RenderPrecompFrame {
   /** A 3D composition card: children are in the comp's own pixels. */
   flatWidth?: number;
   flatHeight?: number;
+  fog?: RenderFog;
 }
 
 /** FrameScene `Renderable`. */
@@ -5005,6 +5099,8 @@ export interface RenderFrameScene {
   lights3d: RenderLight3D[];
   envMap?: RenderEnvMap;
   ssao?: RenderSsao;
+  fog?: RenderFog;
+  shadowCatcher?: RenderShadowCatcher;
 }
 
 /** One user guide (OverlayPass). */

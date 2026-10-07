@@ -47,6 +47,11 @@ enum RenderDisplayTransform { srgb = 0; aces = 1; pq = 2; hlg = 3; }
 enum RenderSsaoQuality { half = 0; full = 1; }
 enum RenderGridStyle { lines = 0; dashed = 1; dots = 2; }
 enum RenderGuideAxis { x = 0; y = 1; }
+/// AE parity 4.1: where a mesh's effect chain runs — the layer's own box (an extrusion's caps) or the mesh's UV space
+/// (a primitive / model surface).
+enum RenderMeshSurface { layer = 0; uv = 1; }
+/// AE parity 4.8: how fog thickens with distance from the camera.
+enum RenderFogMode { linear = 0; exponential = 1; exponential2 = 2; }
 /// D3: a colour space by what After Effects offers (Project Settings ▸ Working Space, Interpret Footage ▸ Color, the
 /// display, the output module). Resolved to an OCIO colour space by the C++ engine (render_graph/color).
 ///   srgb          sRGB-encoded Rec.709 primaries (IEC 61966-2-1)    linearSrgb     linear Rec.709 primaries
@@ -87,7 +92,12 @@ struct RenderGlass {
   rimAngle: f64 = 10; specularAngle: f64 = 11; specularIntensity: f64 = 12; specularFalloff: f64 = 13; grain: f64 = 14;
 }
 
-struct RenderMotionSample { modelMatrix: f64[] = 1; opacity: f64 = 2; }
+struct RenderMotionSample {
+  modelMatrix: f64[] = 1; opacity: f64 = 2;
+  /// AE parity 4.2: a 3D layer's sample as its own column-major 4×4 model (empty = a 2D sample), so motion blur stays
+  /// on the depth-tested path.
+  model3d: f64[] = 3;
+}
 struct RenderAdjustment { colorMatrix?: RenderColorMatrix = 1; lutTextureKey?: string = 2; }
 struct RenderMatte { mode: RenderMatteMode = 1; inverted: bool = 2; sourceId: string = 3; }
 
@@ -136,6 +146,14 @@ struct RenderExtrudedMesh {
   indexFormat: RenderIndexFormat = 4;
   ranges: RenderMeshRange[] = 5;
   pbr?: RenderPbrMaps = 6;
+  /// AE parity 4.1: the space the renderable's effect chain runs in before it textures the mesh.
+  surface: RenderMeshSurface = 7;
+  /// The layer box (layer px) of a `layer` surface: the effect chain's canvas, centred on the mesh origin.
+  surfaceWidth: f64 = 8;
+  surfaceHeight: f64 = 9;
+  /// AE parity 4.7: per-vertex colours (glTF COLOR_0), f32 LE rgba per vertex (linear), multiplied into the base
+  /// colour; empty = white.
+  colors: bytes = 10;
 }
 
 struct RenderShade3D {
@@ -145,6 +163,9 @@ struct RenderShade3D {
   oneSided?: bool = 7; ambient?: f64 = 8; diffuse?: f64 = 9;
   reflectionIntensity?: f64 = 10; reflectionSharpness?: f64 = 11; reflectionRolloff?: f64 = 12;
   transparency?: f64 = 13; transparencyRolloff?: f64 = 14; ior?: f64 = 15; acceptsShadows?: bool = 16;
+  /// AE parity 4.8: this surface mirrors the other 3D layers of its run (planar reflection, scaled by
+  /// reflectionIntensity / sharpness / rolloff).
+  layerReflections?: bool = 17;
 }
 
 struct RenderThreeD {
@@ -180,9 +201,44 @@ struct RenderLight3D {
 
 struct RenderEnvMap {
   id: string = 1; width: u32 = 2; height: u32 = 3; levels: u32 = 4; scale: f64 = 5;
-  /// RGBA8.
+  /// RGBA8 (sqrt-encoded) or, when `format` is rgba16float, linear half floats.
   data: bytes = 6;
   intensity: f64 = 7; rotationDeg: f64 = 8;
+  /// AE parity 4.4 — image-based lighting that does not use light slots.
+  format: RenderTextureFormat = 9;
+  /// Irradiance as 9 SH coefficients × rgb (27 numbers, linear, already scaled by the light's intensity); empty =
+  /// no diffuse IBL (the probe's derived light rig carries it).
+  sh: f64[] = 10;
+  /// Draw the environment behind the 3D scene (a visible sky), at this blur 0..1 and gain.
+  visibleSky: bool = 11;
+  skyBlur: f64 = 12;
+  skyIntensity: f64 = 13;
+  /// A live layer texture (a comp or video layer, equirectangular) in place of `data`: the animated environment.
+  textureKey?: string = 14;
+  /// Environment shadows: the probe's dominant direction (unit, light travel) casts a mapped shadow at this darkness.
+  shadowDir: f64[] = 15;
+  shadowDarkness: f64 = 16;
+  shadowSoftness: f64 = 17;
+}
+
+/// AE parity 4.8: distance fog / atmosphere over the 3D scene.
+struct RenderFog {
+  mode: RenderFogMode = 1;
+  color: Color = 2;
+  /// Linear: where fog starts and is complete (px from the camera). Exponential: density per 1000 px.
+  start: f64 = 3; end: f64 = 4; density: f64 = 5;
+  /// 0..1 — the most fog can hide (atmosphere that never fully whites out).
+  maxOpacity: f64 = 6;
+}
+
+/// AE parity 4.3: an invisible floor at the comp's ground level that only catches shadows.
+struct RenderShadowCatcher {
+  /// World y of the floor plane.
+  y: f64 = 1;
+  /// 0..1.
+  opacity: f64 = 2;
+  /// Half-extent of the catcher plane (px).
+  size: f64 = 3;
 }
 
 struct RenderSsao { enabled: bool = 1; radius: f64 = 2; intensity: f64 = 3; quality: RenderSsaoQuality = 4; }
@@ -195,6 +251,7 @@ struct RenderPrecompFrame {
   /// A 3D composition card: children are in the comp's own pixels.
   flatWidth?: f64 = 4;
   flatHeight?: f64 = 5;
+  fog?: RenderFog = 6;
 }
 
 /// FrameScene `Renderable`.
@@ -250,6 +307,8 @@ struct RenderFrameScene {
   lights3d: RenderLight3D[] = 9;
   envMap?: RenderEnvMap = 10;
   ssao?: RenderSsao = 11;
+  fog?: RenderFog = 12;
+  shadowCatcher?: RenderShadowCatcher = 13;
 }
 
 /// One user guide (OverlayPass).

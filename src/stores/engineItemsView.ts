@@ -203,7 +203,7 @@ export function compFromInfo(id: string, s: CompSettings, item: ItemInfo | undef
   if (s.pristine === true) next.pristine = true;
   else delete next.pristine;
   const world = parseJson(s.world);
-  for (const k of ['defaultEnvPreset', 'groundLevel', 'showSkyBackdrop', 'ssao'] as const) delete next[k];
+  for (const k of ['defaultEnvPreset', 'groundLevel', 'showSkyBackdrop', 'ssao', 'fog', 'groundShadows'] as const) delete next[k];
   if (world && typeof world === 'object') Object.assign(next, world);
   if (item) {
     if (item.parent) next.folderId = item.parent;

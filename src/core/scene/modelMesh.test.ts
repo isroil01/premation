@@ -40,6 +40,7 @@ function parsedWith(positions: number[], opts: { uvs?: number[]; material?: numb
         normalTexture: null, normalScale: 1, metallicRoughnessTexture: null,
         occlusionTexture: null, occlusionStrength: 1,
         emissiveTexture: null, emissiveFactor: [0, 0, 0], emissiveStrength: 1,
+        alphaMode: 'OPAQUE', alphaCutoff: 0.5,
       },
     ],
     images: [],

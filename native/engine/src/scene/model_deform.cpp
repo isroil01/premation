@@ -50,9 +50,9 @@ bool is_model_source(const doc::Node& n, std::string_view modelKey) {
   for (const doc::Component& c : n.components) {
     if (c.type != "Model") continue;
     const Json& p = c.props;
-    if (p.at("modelKey").is_string() && p.at("glbData").is_string() && p.at("glbData").str().starts_with("data:")) {
-      return p.at("modelKey").str() == modelKey;
-    }
+    const bool hasFile = (p.at("glbData").is_string() && p.at("glbData").str().starts_with("data:")) ||
+                         (p.at("modelAsset").is_string() && !p.at("modelAsset").str().empty());  // AE parity 4.7
+    if (p.at("modelKey").is_string() && hasFile) return p.at("modelKey").str() == modelKey;
   }
   return false;
 }

@@ -19,6 +19,9 @@ inline constexpr std::string_view kMatteTarget = "matte-target";
 inline constexpr std::string_view kBackdropHalf1 = "backdrop-half1";
 inline constexpr std::string_view kBackdropHalf2 = "backdrop-half2";
 inline constexpr std::string_view kDofTarget = "dof-target";
+/// AE parity 4.2: a 3D-run layer drawn offscreen against the run's depth (and its matte source).
+inline constexpr std::string_view kLayer3DTarget = "layer3d-target";
+inline constexpr std::string_view kLayer3DMatteTarget = "layer3d-matte";
 inline constexpr std::string_view kPluginOrigin = "plugin-origin";
 inline constexpr std::string_view kGeneratorTarget = "generator-target";
 inline constexpr std::string_view kFxHist = "fx-hist";

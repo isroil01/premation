@@ -184,6 +184,12 @@ struct AudioGateJob { layer: LayerId = 1; params: string = 2; }
 /// A low-resolution editing proxy for a footage item (assets/proxy.ts): transcoded by ffmpeg into `outputFolder` (default: next to the project, `Proxies/`), then attached with setProxy. `maxEdge` default 960.
 struct ProxyJob { item: ItemId = 1; outputFolder: string = 2; maxEdge?: u32 = 3; }
 struct RenderJob { items: RenderItemId[] = 1; }
+/// AE parity 4.7 — normalize a 3D model for import: a .glb / .gltf (with its sidecars, Draco / meshopt / quantized
+/// geometry, KTX2 textures), .obj (+ .mtl), .fbx, .usda or .usdz becomes ONE plain glTF 2.0 binary written (temp file
+/// + rename) into `outputFolder` as `<name>.glb`. `files[0]` is the model; the rest are the files it references,
+/// matched by relative path then by name. No document change: the result JSON is `{glb, name, warnings[]}` and the
+/// editor imports the .glb as a project asset (importFiles).
+struct ModelImportJob { files: string[] = 1; outputFolder: string = 2; name?: string = 3; }
 /// Pre-render (Pre-render / proxy creation) of compositions to files.
 struct PrerenderJob { comps: ItemId[] = 1; outputFolder: string = 2; format: string = 3; }
 
@@ -269,6 +275,7 @@ union JobSpec {
   particleBake: ParticleBakeJob = 1717;
   cameraTrack: CameraTrackJob = 1718;
   faceTrack: FaceTrackJob = 1719;
+  modelImport: ModelImportJob = 1720;
 }
 
 command startJob = 850 [control] { job: JobSpec = 1; apply: bool = 2; } -> JobRef;

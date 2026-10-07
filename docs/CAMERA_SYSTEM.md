@@ -372,25 +372,31 @@ camera. Time remap retimes the layer's own animation, never the camera's clock.
 
 ### 8.2 Where the models genuinely differ
 
-Updated 2026-10-06 for the C++ engine (the TypeScript engine and its file
-paths are gone; docs/AE_PARITY_PLAN.md step 4 tracks what is left).
+Updated 2026-10-07 for AE parity step 4 (docs/AE_PARITY_PLAN.md; what still
+needs the GPU box is in docs/VERIFY_ON_TEST_MACHINE.md).
 
 - **3D is layers plus real geometry.** Layers are oriented planes; extrusions,
-  curved primitives and imported glTF/GLB models are meshes with PBR materials,
-  lit by scene lights and an image-based Environment Light (an SH probe plus
-  split-sum reflections). What AE 26 has and this app does not yet: styles and
-  effects on mesh geometry, full HDRI lighting with a visible sky, an animated
-  environment from a comp, and OBJ / FBX / USD import (parity step 4).
+  curved primitives and imported models (glTF / GLB, OBJ, FBX, USDA / USDZ —
+  normalized to one GLB project item by the `modelImport` job) are meshes with
+  PBR materials, vertex colours and glTF alpha modes, and keep their layer
+  styles and effects. They are lit by scene lights and an image-based
+  Environment Light: band-2 SH irradiance plus a float prefiltered specular
+  atlas from an HDR / EXR sky, drawn as a visible sky on request, or live
+  from a comp / video layer (an animated environment) — without using a light
+  slot. Fog and layer-to-layer reflections (Reflect Layers) are in.
 - **Depth of field is per-pixel on the depth-tested path, per layer elsewhere**
   (§7): 3D depth groups gather from the real depth buffer (`dof-gather`) like
   AE's circle-of-confusion over scene depth; layers that fall off the depth
   path still resolve per-pixel CoC across their own quad only.
-- **Shadows are shadow maps on the depth path**, opt-in per light, PCF
-  filtered, up to two mapped lights per 3D run (`render_graph/threed.cpp`);
-  casters are cut out by their own alpha. Shading is per-fragment Lambert plus
-  Blinn-Phong or PBR (`solid3d.wgsl` / `textured3d.wgsl` `shade3d`). Floors
-  that receive shadows, more mapped lights and casters across runs are parity
-  step 4.3.
+- **Shadows are shadow maps on the depth path**: every shadow-casting light
+  is mapped (up to four float shadow maps per 3D run, PCF filtered,
+  `render_graph/threed.cpp`), casters from every run of the composition cast,
+  floors receive, an environment light casts from its key direction, and
+  Ground Shadows adds a shadow catcher under the scene. Casters are cut out
+  by their own alpha. Shading is per-fragment Lambert plus Blinn-Phong or PBR
+  (`solid3d.wgsl` / `textured3d.wgsl` `shade3d`). Motion blur, advanced blend
+  modes, mattes and glass keep a layer on the depth path (drawn offscreen
+  against the run's depth, then composited).
 - **Camera tracking & planar 3D solve.** The engine's tracking jobs
   (`native/engine/src/jobs`: point, planar, mask, stabilize, camera solve) key a
   one-node camera from tracked planes. A full 3D camera tracker with automatic

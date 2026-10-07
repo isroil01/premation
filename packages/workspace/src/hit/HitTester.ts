@@ -5,7 +5,8 @@
  * `WorkspaceNode.hitTestLocal`, falling back to the AABB).
  *
  * Hit priority: topmost first (highest zIndex, tie-broken by later document
- * order). Locked and hidden nodes are skipped unless explicitly included.
+ * order) — except within a run of 3D layers adjacent in stacking order, which
+ * the renderer composites by depth: those come nearest-first (`pickDepth`). Locked and hidden nodes are skipped unless explicitly included.
  */
 
 import type { Vec2 } from '../math/Vec2';
@@ -132,7 +133,7 @@ export class HitTester {
       if (!this.precisePointHit(node, worldPoint, tolerance, edgeTol)) continue;
       hits.push({ node, rank: 0 });
     }
-    this.sortTopmost(hits);
+    this.sortTopmost(hits, worldPoint);
     return hits;
   }
 
@@ -205,8 +206,23 @@ export class HitTester {
     return node.hitTestLocal(local);
   }
 
-  private sortTopmost(hits: HitResult[]): void {
+  private sortTopmost(hits: HitResult[], worldPoint?: Vec2): void {
     hits.sort((a, b) => b.node.zIndex - a.node.zIndex);
+    if (!worldPoint) return;
+    // Consecutive 3D hits form one depth-tested run: nearest first. A layer
+    // without a depth at the point keeps its stacking position at the run's end.
+    let i = 0;
+    while (i < hits.length) {
+      if (!hits[i]!.node.pickDepth) { i++; continue; }
+      let j = i;
+      while (j < hits.length && hits[j]!.node.pickDepth) j++;
+      if (j - i > 1) {
+        const run = hits.slice(i, j).map((h, k) => ({ h, k, d: h.node.pickDepth!(worldPoint) }));
+        run.sort((x, y) => (x.d === null ? (y.d === null ? x.k - y.k : 1) : y.d === null ? -1 : x.d - y.d || x.k - y.k));
+        for (let k = 0; k < run.length; k++) hits[i + k] = run[k]!.h;
+      }
+      i = j;
+    }
   }
 }
 

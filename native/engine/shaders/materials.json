@@ -217,7 +217,9 @@
     "style-fill",
     "fx-effect-scope",
     "vegas-gpu",
-    "stamp-field"
+    "stamp-field",
+    "sky",
+    "shadow-catcher"
   ],
   "materials": [
     {
@@ -3784,6 +3786,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "depth": {
@@ -3876,6 +3899,27 @@
         {
           "binding": 14,
           "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
           "stages": [
             "fragment"
           ]
@@ -4093,6 +4137,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "buffers": [
@@ -4114,6 +4179,17 @@
               "shaderLocation": 2,
               "offsetBytes": 24,
               "format": "float32x2"
+            }
+          ]
+        },
+        {
+          "strideBytes": 16,
+          "stepMode": "vertex",
+          "attributes": [
+            {
+              "shaderLocation": 3,
+              "offsetBytes": 0,
+              "format": "float32x4"
             }
           ]
         }
@@ -4232,6 +4308,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "buffers": [
@@ -4253,6 +4350,17 @@
               "shaderLocation": 2,
               "offsetBytes": 24,
               "format": "float32x2"
+            }
+          ]
+        },
+        {
+          "strideBytes": 16,
+          "stepMode": "vertex",
+          "attributes": [
+            {
+              "shaderLocation": 3,
+              "offsetBytes": 0,
+              "format": "float32x4"
             }
           ]
         }
@@ -4329,6 +4437,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "buffers": [
@@ -4350,6 +4479,17 @@
               "shaderLocation": 2,
               "offsetBytes": 24,
               "format": "float32x2"
+            }
+          ]
+        },
+        {
+          "strideBytes": 16,
+          "stepMode": "vertex",
+          "attributes": [
+            {
+              "shaderLocation": 3,
+              "offsetBytes": 0,
+              "format": "float32x4"
             }
           ]
         }
@@ -4440,6 +4580,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "buffers": [
@@ -4461,6 +4622,17 @@
               "shaderLocation": 2,
               "offsetBytes": 24,
               "format": "float32x2"
+            }
+          ]
+        },
+        {
+          "strideBytes": 16,
+          "stepMode": "vertex",
+          "attributes": [
+            {
+              "shaderLocation": 3,
+              "offsetBytes": 0,
+              "format": "float32x4"
             }
           ]
         }
@@ -4558,6 +4730,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "buffers": [
@@ -4579,6 +4772,17 @@
               "shaderLocation": 2,
               "offsetBytes": 24,
               "format": "float32x2"
+            }
+          ]
+        },
+        {
+          "strideBytes": 16,
+          "stepMode": "vertex",
+          "attributes": [
+            {
+              "shaderLocation": 3,
+              "offsetBytes": 0,
+              "format": "float32x4"
             }
           ]
         }
@@ -4676,6 +4880,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "buffers": [
@@ -4697,6 +4922,17 @@
               "shaderLocation": 2,
               "offsetBytes": 24,
               "format": "float32x2"
+            }
+          ]
+        },
+        {
+          "strideBytes": 16,
+          "stepMode": "vertex",
+          "attributes": [
+            {
+              "shaderLocation": 3,
+              "offsetBytes": 0,
+              "format": "float32x4"
             }
           ]
         }
@@ -4787,6 +5023,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "buffers": [
@@ -4808,6 +5065,17 @@
               "shaderLocation": 2,
               "offsetBytes": 24,
               "format": "float32x2"
+            }
+          ]
+        },
+        {
+          "strideBytes": 16,
+          "stepMode": "vertex",
+          "attributes": [
+            {
+              "shaderLocation": 3,
+              "offsetBytes": 0,
+              "format": "float32x4"
             }
           ]
         }
@@ -6235,6 +6503,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "depth": {
@@ -6722,6 +7011,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "depth": {
@@ -6807,6 +7117,27 @@
         {
           "binding": 14,
           "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
           "stages": [
             "fragment"
           ]
@@ -6901,6 +7232,27 @@
         },
         {
           "binding": 15,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
           "type": "texture",
           "stages": [
             "fragment"
@@ -7000,6 +7352,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "depth": {
@@ -7088,6 +7461,27 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ],
       "depth": {
@@ -7173,6 +7567,27 @@
         {
           "binding": 14,
           "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 18,
+          "type": "texture",
           "stages": [
             "fragment"
           ]
@@ -8066,6 +8481,87 @@
           ]
         }
       ]
+    },
+    {
+      "name": "SKY_MATERIAL",
+      "shader": "sky",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SHADOW_CATCHER_MATERIAL",
+      "shader": "shadow-catcher",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 9,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 10,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 13,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 16,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 17,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ],
+      "depth": {
+        "test": true,
+        "write": false
+      }
     }
   ]
 }

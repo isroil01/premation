@@ -253,6 +253,10 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     std::vector<const api::Renderable*> list;
     list.reserve(ctx.file.scene.renderables.size());
     for (const auto& r : ctx.file.scene.renderables) list.push_back(&r);
+    // AE parity 4.4: a visible environment is the backdrop under every layer.
+    if (ctx.target(ctx.activeColorTarget) != nullptr) {
+      render_sky(ctx, ctx.activeColorTarget, [this, &ctx](const std::optional<std::string>& k) { return tex_for(ctx, k); });
+    }
     render_list(ctx, list, ctx.activeColorTarget, 0);
     return true;
   }
@@ -260,6 +264,8 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
  private:
   /// Offscreen textures of isolated precomps rendered this frame, by `precomp:<id>` key.
   std::unordered_map<std::string, TexRef> precompTex_;
+  /// AE parity 4.2: images of 3D-run layers drawn by render_3d_group, during composite_special_3d.
+  const std::unordered_map<std::string, TexRef>* predrawn_ = nullptr;
   /// Renderables synthesized this frame (reparented precomp children, prepared containers).
   std::vector<std::unique_ptr<std::vector<api::Renderable>>> owned_;
 
@@ -314,6 +320,11 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
   /// layerIntoTarget: content (+ motion-blur accumulation) into `dest`, then its effect chain, settled in `dest`.
   TexRef layer_into_target(PassContext& ctx, const api::Renderable& r, double opacity, std::string_view dest,
                            const ListState& st) {
+    // AE parity 4.2: a 3D-run layer arrives already drawn in 3D (perspective,
+    // its effects, its motion samples, occluded by the run).
+    if (predrawn_ != nullptr) {
+      if (const auto it = predrawn_->find(r.id); it != predrawn_->end()) return it->second;
+    }
     Commands cmds;
     if (r.motion_samples.size() > 1) {
       const auto n = static_cast<double>(r.motion_samples.size());
@@ -347,6 +358,18 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
   }
 
  public:
+  bool composite_special_3d(PassContext& ctx, const api::Renderable& r, const std::unordered_map<std::string, TexRef>& predrawn,
+                            std::string_view out, const ById& byId) override {
+    ListState st;
+    st.out = std::string(out);
+    st.byId = byId;
+    predrawn_ = &predrawn;
+    process(ctx, r, st);
+    flush(ctx, st);
+    predrawn_ = nullptr;
+    return true;
+  }
+
   /// displacementMapTexture: render a referenced layer into MATTE_TARGET.
   TexRef map_layer(PassContext& ctx, const ById& byId, std::string_view mapLayerId, std::string_view selfId) override {
     if (mapLayerId.empty() || mapLayerId == selfId) return {};
@@ -440,7 +463,10 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     // precompScope: a sealed comp instance with its own 3D frame replaces the
     // camera, lights and environment wholesale (SSAO off) for its subtree.
     const Scope3D saved = ctx.scope;
-    if (pre.camera3d) ctx.scope = Scope3D{&*pre.camera3d, &pre.lights3d, pre.env_map ? &*pre.env_map : nullptr, false};
+    if (pre.camera3d) {
+      ctx.scope = Scope3D{&*pre.camera3d, &pre.lights3d, pre.env_map ? &*pre.env_map : nullptr, false,
+                          pre.fog ? &*pre.fog : nullptr, nullptr, &r.precomp_children};
+    }
     render_list(ctx, children, std::string(targetName), slot + 1);
     ctx.scope = saved;
     RenderTarget* pt = ctx.target(targetName);
@@ -491,7 +517,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       if (!flat && invert(mat3_of(r.model_matrix), inv)) {
         for (const auto& s : r.motion_samples) {
           const Mat3 m = mul(mat3_of(s.model_matrix), mul(inv, fullModel));
-          prepared.motion_samples.push_back({std::vector<double>(m.m.begin(), m.m.end()), s.opacity});
+          prepared.motion_samples.push_back({std::vector<double>(m.m.begin(), m.m.end()), s.opacity, {}});
         }
       } else if (flat) {
         prepared.motion_samples = r.motion_samples;

@@ -38,6 +38,8 @@ void set_ffmpeg_executable(std::string path);
 [[nodiscard]] PreparedJob prepare_track_apply(const api::TrackApplyJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_camera_track(const api::CameraTrackJob& spec, const JobDocContext& ctx);
 [[nodiscard]] PreparedJob prepare_face_track(const api::FaceTrackJob& spec, const JobDocContext& ctx);
+/// AE parity 4.7 (kind_model_import.cpp).
+[[nodiscard]] PreparedJob prepare_model_import(const api::ModelImportJob& spec, const JobDocContext& ctx);
 /// Transcription through the user's speech provider (kind_transcribe.cpp); the key arrives in the spec from Electron main.
 [[nodiscard]] PreparedJob prepare_transcribe(const api::TranscribeJob& spec, const JobDocContext& ctx);
 

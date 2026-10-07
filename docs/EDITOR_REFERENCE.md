@@ -596,6 +596,48 @@ derivatives. An external `.gltf` now imports **with its sidecar files**, and
 refuses by NAMING the ones it could not find rather than importing a hole.
 **File ▸ Import 3D Model** is the explicit entry point beside the drop target.
 
+**AE parity step 4** (2026-10-07, docs/AE_PARITY_PLAN.md §4; GPU items in
+docs/VERIFY_ON_TEST_MACHINE.md):
+- *Styles and effects on every 3D surface* — extrusions, primitives and glTF
+  meshes keep their layer styles and effects (uv surface effects follow the
+  mesh's UVs); motion blur, advanced blend modes, track mattes and glass no
+  longer push a layer off the depth path (it is drawn offscreen against the
+  run's depth and composited in place).
+- *Shadows*: every shadow-casting light is mapped (four float shadow maps),
+  casters in other runs cast, floors receive, the environment light's key
+  direction casts; **Comp Settings ▸ Ground Shadows** draws a shadow catcher
+  under the scene. The per-light "shadow map" switch is gone (automatic).
+- *Environment*: an HDR / EXR sky lights through band-2 SH and a float
+  prefiltered atlas without taking a light slot; **Show environment** draws
+  it as the backdrop (**Background blur**); **Source layer** makes a comp or
+  video layer the live, animated environment.
+- *Materials on meshes*: transparency, IOR, reflection and Phong metal on
+  models and primitives; a comp with no lights lights models with the
+  default rig.
+- *Fog* (**Comp Settings ▸ Fog**: linear / exponential / exponential², colour,
+  start / end or density, max opacity) and **Material ▸ Reflect Layers**
+  (a floor mirrors the layers above it, two reflectors per frame).
+- *Model import*: **File ▸ Import 3D Model** and the Assets panel take .glb,
+  .gltf (+ .bin / textures; Draco, meshopt, KTX2, KHR_mesh_quantization,
+  KHR_materials_*), .obj (+ .mtl), .fbx and .usda / .usdz. In the desktop
+  app the engine's `modelImport` job writes one plain .glb into `Models/`
+  beside the project, the .glb becomes a `model` project item and the layer
+  tree references it (`modelAsset`) — no data: URL in the document. Without
+  disk paths (browser build) a glTF still packs into the document; the other
+  formats need the desktop app. Vertex colours and alphaMode render.
+- *Gizmo*: one gizmo for several 3D layers (each moves by the same world
+  delta, turns in place, scales by the same factors); Universal mode has a
+  scale cube on each arm (axis-projected: drag along the arm as drawn);
+  rotation modes add a white view-facing ring (turns about the view axis)
+  and a free trackball inside it; **Shift** snaps to 10 px / 15° / 10 %;
+  type a number while dragging (px, degrees or percent), **Enter** commits,
+  **Esc** cancels; **Shift+Alt+1…4** = Universal / Position / Rotation /
+  Scale; the Rotate tool (**W**) shows the rotation gizmo; **Pan Behind
+  (Y)** drags the anchor point in 3D while the layer stays put. Clicking
+  where 3D layers overlap selects the nearer one (depth-aware picking). The
+  **view cube** is bigger, has all six faces, a home button, and drags to
+  orbit.
+
 **The 3D gizmo and the DOF focus plane work in every pane** (2026-09-01/02) —
 2-up and 4-up secondary views are no longer view-only. The focus plane is drawn
 in the viewport at focus distance with in-focus bands and a centre handle that

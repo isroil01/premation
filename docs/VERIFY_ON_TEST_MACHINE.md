@@ -213,6 +213,64 @@ here). Not run:
 - [ ] Animation ▸ Tracking menu items and Properties ▸ Track Motion open the
       right mode for the selected footage.
 
+## AE parity step 4 (2026-10-07) — needs the GPU box and real models
+
+Run in the Linux session: the headless engine and ctest (13 suites; the D1 and
+undo parity fixtures re-blessed ONLY for the four new catalog fields —
+`material/reflectsLayers`, `light/environmentVisible`, `light/environmentBlur`,
+`light/environmentLayer` — so their known gaps stay at 9 and 227, the same as
+before this step), engine_model_tests (OBJ + MTL, meshopt + quantized glTF,
+.gltf sidecars, FBX through ufbx, USDA, USDZ, the job's file work), the glTF
+parity fixture (one answer changed on purpose: OPAQUE ignores base-colour
+alpha), tsc, lint (495 warnings, the baseline) and jest (the 4 known
+graphEditorTools.native failures). The render-graph code (`threed.cpp`,
+`composition_pass.cpp`, `device.cpp`) only passed `clang++ -fsyntax-only`
+against Dawn's generated headers, and the WGSL only `naga --validate` —
+nothing was drawn. `kind_model_import.cpp` (the job wrapper) only passed
+`-fsyntax-only`; its work (`import_model_files`) is tested. Not run:
+
+- [ ] Golden render tests (`packages/render-tests`) on the GPU box — every lit
+      3D shader changed (4 shadow slots, env SH, fog, layer reflections,
+      vertex colours); re-bless only what the items below explain.
+- [ ] 4.1 Styles and effects on extrusions, primitives and glTF meshes: a
+      Drop Shadow + Gaussian Blur on an extruded text, a Fill on a primitive
+      cube, Glow on a model (uv surface effects follow the mesh's UVs).
+- [ ] 4.2 A 3D layer with motion blur, an advanced blend mode (Overlay), a
+      track matte and a glass material each stays depth-tested with the
+      layers around it (no pop to 2D order).
+- [ ] 4.3 Shadows: a floor plane receives shadows; four shadow-casting lights
+      at once; casters in another 3D run still cast; an environment light with
+      Cast Shadows on throws its key-direction shadow; Ground Shadows (Comp
+      Settings) under a model.
+- [ ] 4.4 Environment: an .hdr / .exr environment lights a chrome sphere
+      without using a light slot; Show environment draws the sky (Background
+      blur); Source layer = a comp or a video layer animates the lighting and
+      reflections while playing.
+- [ ] 4.5 Mesh materials: transparency + IOR on a glass model, Reflection
+      Intensity on a chrome primitive, Phong metal; a comp with no lights shows
+      a model lit by the default rig, not flat.
+- [ ] 4.6 Gizmo: several 3D layers selected move / rotate / scale together;
+      the outer white ring turns about the view axis and dragging inside it
+      tumbles freely (trackball); Universal mode's per-axis scale cubes;
+      Shift = 10 px / 15° / 10 % increments; typing `45` while rotating then
+      Enter; Esc mid-drag restores the layer (one undo entry or none);
+      Shift+Alt+1…4 switch the gizmo; the Rotate tool (W) shows the rotation
+      gizmo; Pan Behind (Y) moves the anchor and the layer stays put (also on
+      a parented, oriented layer); clicking where two 3D layers overlap
+      selects the nearer one; the view cube is draggable to orbit (one undo
+      entry for a scene camera) and all six faces snap.
+- [ ] 4.7 Model import (desktop app): import an .obj + .mtl + textures, an
+      .fbx, a .usdz, a Draco + KTX2 .glb (vcpkg `draco` / `ktx` present: the
+      configure log names them; absent: the job refuses with the message
+      naming the alternative) — each lands as a `model` item in the Project
+      panel (`Models/<name>.glb` beside a saved project, temp folder for an
+      untitled one) and a layer tree that references it (`modelAsset`, no
+      data: URL in the saved file). Vertex colours, alphaMode MASK / BLEND,
+      and KHR_materials_unlit / transmission / ior render.
+- [ ] 4.8 Fog (Comp Settings ▸ Fog: linear / exponential / exponential²) fades
+      3D layers with distance, also inside a collapsed precomp; Reflect Layers
+      on a floor shows the layers above it mirrored.
+
 ## Status on the Windows RTX 4060 box (2026-09-28)
 
 Built and run there after the `wip-stopped` merges: `windows-clang-cl-engine`

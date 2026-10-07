@@ -25,6 +25,7 @@ export interface MemoryNodeInit {
   locked?: boolean;
   zIndex?: number;
   hitTestLocal?: (localPoint: Vec2) => boolean;
+  pickDepth?: (worldPoint: Vec2) => number | null;
 }
 
 /** A mutable Scene Graph backed by a Map, emitting on structural change. */
@@ -47,6 +48,7 @@ export class MemoryScene implements SceneGraphPort {
       locked: init.locked ?? false,
       zIndex: init.zIndex ?? this.nodes.size,
       ...(init.hitTestLocal ? { hitTestLocal: init.hitTestLocal } : {}),
+      ...(init.pickDepth ? { pickDepth: init.pickDepth } : {}),
     };
     this.nodes.set(node.id, node);
     if (notify) this.emit();

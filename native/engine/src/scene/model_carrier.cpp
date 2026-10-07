@@ -1,6 +1,9 @@
 #include "model_carrier.hpp"
 
+#include <algorithm>
 #include <bit>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 namespace premation::scene {
@@ -23,6 +26,9 @@ void model_entry_to_api(const gltf::Entry& e, api::RenderExtrudedMesh& out) {
     std::memcpy(out.indices.data(), e.indices.data(), out.indices.size());
   }
   out.ranges.clear();
+  // AE parity 4.7: COLOR_0 rides beside the vertices (slot 1 of the mesh materials).
+  out.colors.resize(e.colors.size() * sizeof(float));
+  if (!e.colors.empty()) std::memcpy(out.colors.data(), e.colors.data(), out.colors.size());
 }
 
 void model_pbr_maps(const gltf::Entry& e, std::string_view modelKey, const std::string& layerId, ExtrudedMeshData& data) {
@@ -72,7 +78,17 @@ bool model_image_pixels(std::string_view src, DecodedImage& out, std::string& wh
     why = "model " + ref->first + " has no image " + std::to_string(ref->second);
     return false;
   }
-  return decode_image_bytes(model->parsed->images[ref->second].bytes, out, why);
+  if (!decode_image_bytes(model->parsed->images[ref->second].bytes, out, why)) return false;
+  // AE parity 4.7: the material's alpha mode — OPAQUE drops the alpha, MASK thresholds it.
+  const std::string alpha = gltf::image_src_alpha(src);
+  if (alpha == "opaque") {
+    for (std::size_t i = 3; i < out.rgba.size(); i += 4) out.rgba[i] = 255;
+  } else if (alpha.starts_with("mask:")) {
+    const double cutoff = std::strtod(alpha.c_str() + 5, nullptr);
+    const auto t = static_cast<int>(std::lround(std::clamp(cutoff, 0.0, 1.0) * 255));
+    for (std::size_t i = 3; i < out.rgba.size(); i += 4) out.rgba[i] = out.rgba[i] >= t ? 255 : 0;
+  }
+  return true;
 }
 
 }  // namespace premation::scene

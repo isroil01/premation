@@ -99,6 +99,10 @@ export interface GltfMaterial {
   emissiveFactor: [number, number, number];
   /** KHR_materials_emissive_strength multiplier (default 1). */
   emissiveStrength: number;
+  /** How alpha is read (spec default OPAQUE: the factor's and texture's alpha ignored). */
+  alphaMode: 'OPAQUE' | 'MASK' | 'BLEND';
+  /** MASK threshold (spec default 0.5). */
+  alphaCutoff: number;
 }
 
 export interface GltfImage {
@@ -395,6 +399,8 @@ interface GltfJson {
     occlusionTexture?: GltfJsonTextureInfo & { strength?: number };
     emissiveTexture?: GltfJsonTextureInfo;
     emissiveFactor?: number[];
+    alphaMode?: string;
+    alphaCutoff?: number;
     extensions?: {
       KHR_materials_emissive_strength?: { emissiveStrength?: number };
     };
@@ -490,13 +496,26 @@ function decodeDataUri(uri: string): Uint8Array {
  * accessors have no plain bufferView, so they read as zeros (every triangle a
  * point) and the import "succeeded" with nothing to draw.
  */
-const SUPPORTED_REQUIRED_EXTENSIONS = new Set(['KHR_texture_transform', 'KHR_materials_emissive_strength']);
+const SUPPORTED_REQUIRED_EXTENSIONS = new Set([
+  'KHR_texture_transform',
+  'KHR_materials_emissive_strength',
+  // Quantized attributes are normalized integers `readComponent` already reads.
+  'KHR_mesh_quantization',
+  // Material extensions change shading, not how bytes are read; the engine
+  // reads them from the stored .glb (gltf_model.cpp, AE parity 4.7).
+  'KHR_materials_unlit',
+  'KHR_materials_transmission',
+  'KHR_materials_ior',
+  'KHR_materials_specular',
+  'KHR_materials_clearcoat',
+  'KHR_materials_sheen',
+  'KHR_materials_volume',
+]);
 
 const EXTENSION_HINTS: Record<string, string> = {
   KHR_draco_mesh_compression: 'Draco-compressed',
   EXT_meshopt_compression: 'meshopt-compressed',
   KHR_meshopt_compression: 'meshopt-compressed',
-  KHR_mesh_quantization: 'quantized',
   KHR_texture_basisu: 'KTX2/Basis-texture',
 };
 
@@ -505,8 +524,8 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
   if (unsupported.length > 0) {
     const kinds = unsupported.map((e) => EXTENSION_HINTS[e] ?? e).join(', ');
     throw new Error(
-      `This model needs ${unsupported.join(', ')} (${kinds}), which is not supported yet. `
-      + 'Re-export it without compression (e.g. Blender ▸ glTF ▸ uncheck Compression).',
+      `This model needs ${unsupported.join(', ')} (${kinds}), which only the desktop app's model importer decodes. `
+      + 'Import the file from disk in the desktop app, or re-export it without compression (e.g. Blender ▸ glTF ▸ uncheck Compression).',
     );
   }
   // Buffers: GLB BIN chunk, or embedded data: URIs. External files refused.
@@ -663,6 +682,8 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
         typeof m.extensions?.KHR_materials_emissive_strength?.emissiveStrength === 'number'
           ? m.extensions.KHR_materials_emissive_strength.emissiveStrength
           : 1,
+      alphaMode: m.alphaMode === 'MASK' || m.alphaMode === 'BLEND' ? m.alphaMode : 'OPAQUE',
+      alphaCutoff: typeof m.alphaCutoff === 'number' ? m.alphaCutoff : 0.5,
     };
   });
 

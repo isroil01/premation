@@ -195,7 +195,16 @@ export function primitiveToEntry(
     }
     skinData = { joints, weights };
   }
-  const f = material?.baseColorFactor ?? [1, 1, 1, 1];
+  const f0 = material?.baseColorFactor ?? [1, 1, 1, 1];
+  // The alpha mode, as the engine reads it (gltf_model.cpp primitive_to_entry):
+  // OPAQUE ignores alpha, MASK keeps what passes the cutoff (a textured MASK
+  // thresholds the picture, so the fill keeps 1), BLEND keeps it as it is.
+  const mode = material?.alphaMode ?? 'OPAQUE';
+  const textured = material?.baseColorImage !== null && material?.baseColorImage !== undefined;
+  const fillAlpha = mode === 'BLEND' ? (f0[3] ?? 1)
+    : mode === 'MASK' ? (textured || (f0[3] ?? 1) >= (material?.alphaCutoff ?? 0.5) ? 1 : 0)
+    : 1;
+  const f: [number, number, number, number] = [f0[0] ?? 1, f0[1] ?? 1, f0[2] ?? 1, fillAlpha];
   const hex = (v: number): string => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
   const textureUrl = material?.baseColorImage !== null && material?.baseColorImage !== undefined
     ? textureUrls[material.baseColorImage] ?? null

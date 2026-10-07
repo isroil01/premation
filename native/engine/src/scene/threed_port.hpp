@@ -97,11 +97,16 @@ class Scene3D {
   /// shade3d (Accepts Lights).
   void shade(const Layer3D& s, RLayer& l);
 
-  /// The 3D layer's motion-blur matrix at (layer time ti, comp time tc), or null
+  /// One motion-blur sample of a 3D layer: the projected affine and (AE parity
+  /// 4.2) the world matrix the depth path draws.
+  struct MotionPose {
+    std::array<double, 6> matrix{};
+    std::array<double, 16> world{};
+  };
+  /// The 3D layer's motion-blur pose at (layer time ti, comp time tc), or null
   /// for a 2D layer. Also answers the camera half of the motion gate.
-  [[nodiscard]] std::function<std::array<double, 6>(double, double)> matrix_at(const doc::Node& n, const Values& a,
-                                                                               double baseX, double baseY,
-                                                                               double baseRot, const Layer3D& s);
+  [[nodiscard]] std::function<MotionPose(double, double)> matrix_at(const doc::Node& n, const Values& a, double baseX,
+                                                                    double baseY, double baseRot, const Layer3D& s);
   [[nodiscard]] bool camera_animated() const noexcept { return cameraAnimated_; }
 
   /// A temporal ghost's matrix / world3d at comp time `ti` (buildSnapshot's ghost
@@ -209,6 +214,15 @@ class Scene3D {
     double intensity = 0;
     double rotationDeg = 0;
     std::string nodeId;
+    // AE parity 4.4: image-based diffuse (the probe's SH × intensity), the
+    // visible sky, a live layer source and the environment's key shadow.
+    std::array<float, 27> sh{};
+    double lightGain = 0;
+    bool visible = false;
+    double skyBlur = 0;
+    std::string layerId;
+    bool shadows = false;
+    double shadowDarkness = 0, shadowSoftness = 1;
   };
   std::optional<EnvReflect> envReflect_;
 

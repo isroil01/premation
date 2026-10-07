@@ -521,6 +521,20 @@ The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 | `autoReframe` | autoReframe.ts (saliency, reframePath) | a NEW composition holding the source as a precomp, the pan keyed on separated position ("Auto-reframe"); the source comp is rendered small by a child `--export` (PNG frames read through the OS still codec) | `{samples, cuts, keyframes, comp, layer}` |
 | `rigLogo` | scene/rigLogo.ts | one image / shape layer holding nothing: two puppet pins, "Anchor" (bottom centre) and "Wave" (top centre); anything else: the selection drawn alone together (`isolateLayers`) on a transparent comp by a child `--export`, cropped to its pixels + 4 px, `importBytes` (`derived`), an image layer "<name> (Rigged)" where it drew above the topmost selected layer, then the pins ("Rig Logo for Animation") | `{mode: 'self' \| 'rasterize', layer, item?, width?, height?}` |
 | `transcribe` | captions/transcribe.ts + electron/aiProxy.ts transcribeAudio | nothing (the caption commands build layers from the cues; `createCaptions` must be false). 2026-09-28: `comp`'s sound over `range` mixed by a child `--export` (`audioOnly`: the export's offline mix, no picture preflight), 16 kHz mono WAV, POSTed to OpenAI whisper-1 (`verbose_json`, segment + word timings) over the OS HTTP stack (WinHTTP / libcurl, no redirects). The key: `credential`, written into the request by Electron MAIN from its keystore as it passes (engineHost `transcribeCredential`); the page never has it, main logs the request without it, the engine drops it from its log and never persists or returns it. Errors carry aiProxy's code in `detail` (`{"code":"no_key" / "auth" / "rate_limit" / "network" / "silent" / "empty" …}`) | `{cues:[{start,end,text}], words:[…], language}` (composition seconds, cues de-overlapped) |
+| `modelImport` | — (AE parity 4.7; model_convert.hpp) | nothing — the editor imports the written .glb (`importFiles`, a `model` item) and lays its layers out referencing it | `{glb, name, warnings}` |
+
+`modelImport` (1720, `ModelImportJob {files, outputFolder, name?}`): `files[0]`
+is the model (.glb, .gltf, .obj, .fbx, .usda, .usdz), the rest its sidecars
+(.bin, .mtl, textures) resolved by relative path then bare name. The engine
+normalizes it into ONE plain glTF 2.0 binary (meshopt / Draco geometry and
+quantized attributes decoded to floats, KTX2 textures transcoded to PNG,
+sidecars embedded; OBJ / FBX / USD converted — model_convert.hpp) written
+temp + rename as `<outputFolder>/<name>.glb` under a free name (never over an
+earlier import). `outputFolder` '' = `Models/` beside the project, or the
+temp folder for an untitled one; `name` absent = the model's stem. Refusals:
+not a model extension / a binary USD crate / Draco or KTX2 in a build without
+the vcpkg codec (`invalidArgument`, the message names the alternative); a
+file that cannot be read or written (`io`). No document change.
 
 The `autoTrace` COMMAND (§4.4) is this job run synchronously: the same
 prepare / work / result, applied inside the command's journal, answering the
@@ -1962,8 +1976,11 @@ field); both engines report them from the same stored keys.
   = reversed); absent = none. Footage and precomps keep reporting their live
   rate in `stretch`.
 - **`ItemInfo.mediaType`** (124, enum `MediaType {none, image, video,
-  audio}`): what a footage item's file holds (`none` for compositions,
-  folders, solids, placeholders). **`ItemInfo.alphaProbed` / `audioProbed`**
+  audio, model}`): what a footage item's file holds (`none` for compositions,
+  folders, solids, placeholders; `model` — AE parity 4.7 — a .glb / .gltf
+  imported by path, recorded without a decode probe; an imported model's root
+  layer names it as its `Model` component's `modelAsset`, so the document
+  carries the item id instead of a data: URL, and `layersUsingItem` counts it). **`ItemInfo.alphaProbed` / `audioProbed`**
   (125 / 126): the import probe answered alpha / an audio stream — `hasAlpha`
   / `hasAudio` false with these false means "never probed", not "no".
 - **`CompSettings.essentialProps`** (125): the Essential Properties the

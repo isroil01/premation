@@ -253,6 +253,8 @@ export function bytesToDataUrl(bytes: Uint8Array, mime = 'model/gltf-binary'): s
 
 /** Files that match this take the 3D-model door rather than the asset library. */
 export const MODEL_FILE_PATTERN = /\.(glb|gltf)$/i;
+/** Every model the engine's importer converts (modelImport job): glTF plus OBJ, FBX and USD. */
+export const ANY_MODEL_FILE_PATTERN = /\.(glb|gltf|obj|fbx|usda|usdz|usd)$/i;
 
 /** One file the user handed the importer (the model, or one of its sidecars). */
 export interface ModelSourceFile {
@@ -349,7 +351,13 @@ export interface ModelImportResult {
  * with an actionable message on a file the parser refuses (external .bin,
  * glTF 1.0, …).
  */
-export function buildGltfModel(sink: LayerSink, frame: InsertFrame, bytes: ArrayBuffer, fileName: string): ModelImportResult {
+export function buildGltfModel(
+  sink: LayerSink,
+  frame: InsertFrame,
+  bytes: ArrayBuffer,
+  fileName: string,
+  source?: { modelAsset: string },
+): ModelImportResult {
   const u8 = new Uint8Array(bytes);
   const modelKey = modelKeyForBytes(u8);
   registerModel(modelKey, bytes);
@@ -359,7 +367,7 @@ export function buildGltfModel(sink: LayerSink, frame: InsertFrame, bytes: Array
   const layout = buildModelLayout(parsed, modelKey, { width: comp.width, height: comp.height });
 
   const rootId = freshId('null');
-  const baseName = fileName.replace(/\.(glb|gltf)$/i, '') || '3D Model';
+  const baseName = fileName.replace(/\.(glb|gltf|obj|fbx|usda|usdz|usd)$/i, '') || '3D Model';
   const root: SceneNode = {
     id: rootId,
     name: baseName,
@@ -373,7 +381,9 @@ export function buildGltfModel(sink: LayerSink, frame: InsertFrame, bytes: Array
       {
         id: `${rootId}_model`,
         type: MODEL_COMPONENT,
-        props: { modelKey, glbData: bytesToDataUrl(u8) },
+        // AE parity 4.7: a converted model is a project item (the .glb on disk,
+        // `modelAsset`), not ~1.33x its size as a data: URL in the document.
+        props: source ? { modelKey, modelAsset: source.modelAsset } : { modelKey, glbData: bytesToDataUrl(u8) },
       },
     ],
   } as unknown as SceneNode;

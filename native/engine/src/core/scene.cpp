@@ -472,7 +472,17 @@ std::vector<std::string> layers_using_item(const Document& d, std::string_view i
   for (const auto& [id, n] : d.nodes()) {
     if (!n->parent) continue;
     const auto src = layer_source_of(*n);
-    if (src && *src == item) out.push_back(id);
+    if (src && *src == item) {
+      out.push_back(id);
+      continue;
+    }
+    // AE parity 4.7: an imported model's root holds its .glb as a project item.
+    for (const Component& c : n->components) {
+      if (c.type == "Model" && c.props.at("modelAsset").is_string() && c.props.at("modelAsset").str() == item) {
+        out.push_back(id);
+        break;
+      }
+    }
   }
   return out;
 }

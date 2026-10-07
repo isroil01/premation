@@ -30,10 +30,14 @@ import { activeCompIdNow } from '@hooks/useMirror';
 import { compRecordFromSettings, settingsFps } from '@core/mirror/compFacts';
 import {
   resolveSsao,
+  resolveFog,
+  resolveGroundShadows,
   resolvePixelAspect,
   DEFAULT_PIXEL_ASPECT,
   type CompositionSettings as CompRecord,
   type SsaoSettings,
+  type FogSettings,
+  type GroundShadowSettings,
 } from '@stores/projectStore';
 import { saveCompositionSettingsEdit } from './compositionEdits';
 import { useGuidesStore, type GridStyle } from '@stores/guidesStore';
@@ -241,6 +245,11 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
   const showSkyBackdrop = s.showSkyBackdrop === true;
   const ssao = resolveSsao(s);
   const patchSsao = (patch: Partial<SsaoSettings>): void => update({ ssao: { ...ssao, ...patch } });
+  const fog = resolveFog(s);
+  const patchFog = (patch: Partial<FogSettings>): void => update({ fog: { ...fog, ...patch } });
+  const groundShadows = resolveGroundShadows(s);
+  const patchGroundShadows = (patch: Partial<GroundShadowSettings>): void =>
+    update({ groundShadows: { ...groundShadows, ...patch } });
 
   // Background paint
   const bgPaint: FillPaint = s.backgroundPaint ?? solidFill(s.background);
@@ -1049,21 +1058,100 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
             </div>
 
             <div className={styles.section}>
+              <div className={styles.label}>Ground Shadows</div>
+              <p className={styles.hint}>
+                An invisible floor at the ground level catches the shadows of shadow-casting lights.
+              </p>
+              <div className={styles.colorCardRow}>
+                <span className={styles.colorCardLabel}>Catch shadows on the ground</span>
+                <Switch
+                  checked={groundShadows.enabled}
+                  onChange={(e) => patchGroundShadows({ enabled: e.target.checked })}
+                  aria-label="Ground shadows"
+                />
+              </div>
+              <div className={styles.field} style={{ maxWidth: 200 }}>
+                <span className={styles.fieldLabel}>Shadow opacity</span>
+                <ValueField
+                  value={groundShadows.opacity}
+                  onChange={(v) => patchGroundShadows({ opacity: v })}
+                  min={0}
+                  max={100}
+                  step={1}
+                  unit="%"
+                  disabled={!groundShadows.enabled}
+                  aria-label="Ground shadow opacity"
+                />
+              </div>
+            </div>
+
+            <div className={styles.section}>
+              <div className={styles.label}>Fog</div>
+              <p className={styles.hint}>
+                Distance fog over the 3D layers, thickening away from the camera.
+              </p>
+              <div className={styles.colorCardRow}>
+                <span className={styles.colorCardLabel}>Enable fog</span>
+                <Switch checked={fog.enabled} onChange={(e) => patchFog({ enabled: e.target.checked })} aria-label="Enable fog" />
+              </div>
+              <div className={styles.field}>
+                <span className={styles.fieldLabel}>Falloff</span>
+                <select
+                  className={styles.selectInput}
+                  value={fog.mode}
+                  disabled={!fog.enabled}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    patchFog({ mode: v === 'exponential' || v === 'exponential2' ? v : 'linear' });
+                  }}
+                  aria-label="Fog falloff"
+                >
+                  <option value="linear">Linear (start to end)</option>
+                  <option value="exponential">Exponential</option>
+                  <option value="exponential2">Exponential squared</option>
+                </select>
+              </div>
+              <div className={styles.row}>
+                <div className={styles.field}>
+                  <span className={styles.fieldLabel}>Start</span>
+                  <ValueField value={fog.start} onChange={(v) => patchFog({ start: v })} min={0} step={50} unit="px" disabled={!fog.enabled} aria-label="Fog start" />
+                </div>
+                {fog.mode === 'linear' ? (
+                  <div className={styles.field}>
+                    <span className={styles.fieldLabel}>End</span>
+                    <ValueField value={fog.end} onChange={(v) => patchFog({ end: v })} min={1} step={50} unit="px" disabled={!fog.enabled} aria-label="Fog end" />
+                  </div>
+                ) : (
+                  <div className={styles.field}>
+                    <span className={styles.fieldLabel}>Density</span>
+                    <ValueField value={fog.density} onChange={(v) => patchFog({ density: v })} min={0} step={0.05} disabled={!fog.enabled} aria-label="Fog density" />
+                  </div>
+                )}
+              </div>
+              <div className={styles.row}>
+                <div className={styles.field}>
+                  <span className={styles.fieldLabel}>Color</span>
+                  <ColorPicker value={fog.color} onChange={(v) => patchFog({ color: v })} aria-label="Fog color" />
+                </div>
+                <div className={styles.field}>
+                  <span className={styles.fieldLabel}>Max opacity</span>
+                  <ValueField value={fog.maxOpacity} onChange={(v) => patchFog({ maxOpacity: v })} min={0} max={100} step={1} unit="%" disabled={!fog.enabled} aria-label="Fog maximum opacity" />
+                </div>
+              </div>
+            </div>
+
+            <div className={styles.section}>
               <div className={styles.label}>Backdrop Sky</div>
-              <div
-                className={styles.colorCardRow}
-                title="Backdrop quad rendering is not yet available"
-              >
+              <div className={styles.colorCardRow}>
                 <span className={styles.colorCardLabel}>Show sky as backdrop</span>
                 <Switch
                   checked={showSkyBackdrop}
-                  disabled
                   onChange={(e) => update({ showSkyBackdrop: e.target.checked })}
                   aria-label="Show sky as backdrop"
                 />
               </div>
               <p className={styles.hint}>
-                Environment light is currently an irradiance probe, not a rendered background quad.
+                The environment light&apos;s sky is drawn behind every layer, rotated with it. Needs an environment light.
               </p>
             </div>
           </>

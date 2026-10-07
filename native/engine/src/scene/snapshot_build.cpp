@@ -317,7 +317,7 @@ class Walk final : public Scene3DHost {
   /// `matrixAt` (3D layers): the projected affine per sample (threed_port `matrix_at`).
   /// `quadAt`: a 3D comp card's perspective quad per sample (MotionSample.quad).
   void motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
-                      const std::function<std::array<double, 6>(double, double)>& matrixAt = {},
+                      const std::function<Scene3D::MotionPose(double, double)>& matrixAt = {},
                       const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt = {});
   void text_fields(RLayer& l, const doc::Node& n, const Base& base, const Values& a);
   void attach_precomps(std::vector<RLayer>& list);
@@ -745,7 +745,7 @@ RLayer Walk::precomp_container(const doc::Node& group, std::optional<NestedComp>
             l, group, gb, group.id,
             [&](double ti, double tc) {
               const auto& k = cardOf(ti, tc);
-              return k ? k->matrix : c.matrix;
+              return Scene3D::MotionPose{k ? k->matrix : c.matrix, {}};  // a card: no world matrix (flat quad)
             },
             [&](double ti, double tc) -> std::optional<std::array<double, 8>> {
               const auto& k = cardOf(ti, tc);
@@ -784,7 +784,7 @@ void Walk::attach_precomps(std::vector<RLayer>& list) {
 }
 
 void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
-                          const std::function<std::array<double, 6>(double, double)>& matrixAt,
+                          const std::function<Scene3D::MotionPose(double, double)>& matrixAt,
                           const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt) {
   if (!mb_) return;
   // Force Motion Blur (forceMotionBlur.ts readForceMotionBlur) overrides the two opt-ins.
@@ -821,8 +821,8 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
     // 3D: PROJECTED travel at the box corners (motionBlur.ts affineTravelPx).
     const double ta = probe.front();
     const double tb = probe.back();
-    const std::array<double, 6> ma = matrixAt(remap(id, ta, true), ta);
-    const std::array<double, 6> mb = matrixAt(remap(id, tb, true), tb);
+    const std::array<double, 6> ma = matrixAt(remap(id, ta, true), ta).matrix;
+    const std::array<double, 6> mb = matrixAt(remap(id, tb, true), tb).matrix;
     const double hw = std::max(0.0, base.width.value_or(0)) / 2;
     const double hh = std::max(0.0, base.height.value_or(0)) / 2;
     const std::array<std::array<double, 2>, 5> corners = {{{0, 0}, {-hw, -hh}, {hw, -hh}, {hw, hh}, {-hw, hh}}};
@@ -873,7 +873,11 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
     s.scaleX = sc ? *sc : sample("scaleX", ti).value_or(base.scaleX);
     s.scaleY = sc ? *sc : sample("scaleY", ti).value_or(base.scaleY);
     s.opacity = op ? *op / 100 : base.opacity;
-    if (matrixAt) s.matrix = matrixAt(ti, tc);
+    if (matrixAt) {
+      const Scene3D::MotionPose pose = matrixAt(ti, tc);
+      s.matrix = pose.matrix;
+      if (pose.world[15] != 0) s.world3d = pose.world;  // all zeros = no world matrix
+    }
     if (quadAt) s.quad = quadAt(ti, tc);
     out.push_back(s);
   }

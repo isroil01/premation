@@ -43,6 +43,12 @@ struct LightProps {
   js::Json envPreset;  ///< EnvironmentSky (a preset id or `asset:<id>`)
   double envRotation = 0;
   double envReflections = 100;
+  /// AE parity 4.4: show the environment as the comp's backdrop (a visible
+  /// sky), its blur 0..100, and a layer (comp / footage, equirectangular) that
+  /// drives the environment live in place of the sky image.
+  bool envVisible = false;
+  double envSkyBlur = 0;
+  std::string envLayer;
 };
 
 /// light.ts `readNodeLight(node)`.
@@ -68,6 +74,10 @@ struct SceneLight {
   std::optional<double> shadowSoftness;
   std::optional<double> shadowDarkness;
   double x = 0, y = 0, z = 0;
+  /// AE parity 4.4: part of an environment probe's derived rig — lights the
+  /// CPU's per-quad shading but is not shipped to the GPU, whose image-based
+  /// diffuse (RenderEnvMap.sh) replaces it without using light slots.
+  bool fromEnv = false;
 };
 
 /// `{...lt}` of a light layer as a SceneLight (every optional key present).

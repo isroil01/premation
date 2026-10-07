@@ -314,7 +314,8 @@ wgpu::ShaderModule& Device::shader(std::string_view name) {
   return shaders_.emplace(label, device_.CreateShaderModule(&desc)).first->second;
 }
 
-const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::TextureFormat format, std::uint32_t samples) {
+const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::TextureFormat format, std::uint32_t samples,
+                                         std::uint8_t depthWrite) {
   key_.assign("pipeline:");
   append_u64(key_, static_cast<std::uint64_t>(material));
   key_ += ':';
@@ -323,6 +324,10 @@ const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::Textur
   append_u64(key_, static_cast<std::uint64_t>(format));
   key_ += ':';
   append_u64(key_, samples);
+  if (depthWrite != DrawItem::kDepthWriteMaterial) {
+    key_ += ":dw";
+    append_u64(key_, depthWrite);
+  }
   return pipelines_.acquire(
       key_, frame_,
       [&] {
@@ -415,7 +420,8 @@ const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::Textur
         wgpu::DepthStencilState ds{};
         if (m.hasDepth && m.depthTest) {
           ds.format = wgpu::TextureFormat::Depth24Plus;
-          ds.depthWriteEnabled = m.depthWrite ? wgpu::OptionalBool::True : wgpu::OptionalBool::False;
+          const bool write = depthWrite == DrawItem::kDepthWriteMaterial ? m.depthWrite : depthWrite != 0;
+          ds.depthWriteEnabled = write ? wgpu::OptionalBool::True : wgpu::OptionalBool::False;
           ds.depthCompare = wgpu::CompareFunction::LessEqual;
           desc.depthStencil = &ds;
         }
@@ -473,10 +479,11 @@ wgpu::RenderPassEncoder Device::begin_pass(const Attachment& att, std::uint32_t 
   rp.colorAttachmentCount = 1;
   rp.colorAttachments = &ca;
   wgpu::RenderPassDepthStencilAttachment da{};
-  if (depth && t != nullptr && t->depthView != nullptr) {
-    da.view = t->depthView;
+  const RenderTarget* dt = att.depthFrom != nullptr ? att.depthFrom : t;
+  if (depth && t != nullptr && dt->depthView != nullptr) {
+    da.view = dt->depthView;
     da.depthClearValue = 1.0F;
-    da.depthLoadOp = wgpu::LoadOp::Clear;
+    da.depthLoadOp = att.loadDepth ? wgpu::LoadOp::Load : wgpu::LoadOp::Clear;
     da.depthStoreOp = wgpu::StoreOp::Store;
     rp.depthStencilAttachment = &da;
   }
@@ -490,7 +497,7 @@ void Device::execute(wgpu::RenderPassEncoder& pass, const Commands& cmds, wgpu::
                      std::uint32_t samples) {
   std::uint64_t boundPipeline = 0;
   for (const DrawItem& it : cmds.items()) {
-    const Pipeline& p = pipeline(it.material, it.blend, format, samples);
+    const Pipeline& p = pipeline(it.material, it.blend, format, samples, it.depthWrite);
     if (p.id != boundPipeline) {
       pass.SetPipeline(p.pipeline);
       boundPipeline = p.id;

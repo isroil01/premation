@@ -80,8 +80,8 @@ const ItemKind_TO_NUM: Record<string, number> = { 'folder': 0, 'composition': 1,
 const ItemKind_FROM_NUM: readonly (T.ItemKind | undefined)[] = ['folder', 'composition', 'footage', 'solid', 'placeholder'];
 function enc_ItemKind(v: T.ItemKind): number { const n = ItemKind_TO_NUM[v]; if (n === undefined) throw new RangeError('ItemKind: invalid value ' + String(v)); return n; }
 function dec_ItemKind(n: number): T.ItemKind { const v = ItemKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('ItemKind: unknown value ' + n, 'badEnum'); return v; }
-const MediaType_TO_NUM: Record<string, number> = { 'none': 0, 'image': 1, 'video': 2, 'audio': 3 };
-const MediaType_FROM_NUM: readonly (T.MediaType | undefined)[] = ['none', 'image', 'video', 'audio'];
+const MediaType_TO_NUM: Record<string, number> = { 'none': 0, 'image': 1, 'video': 2, 'audio': 3, 'model': 4 };
+const MediaType_FROM_NUM: readonly (T.MediaType | undefined)[] = ['none', 'image', 'video', 'audio', 'model'];
 function enc_MediaType(v: T.MediaType): number { const n = MediaType_TO_NUM[v]; if (n === undefined) throw new RangeError('MediaType: invalid value ' + String(v)); return n; }
 function dec_MediaType(n: number): T.MediaType { const v = MediaType_FROM_NUM[n]; if (v === undefined) throw new DecodeError('MediaType: unknown value ' + n, 'badEnum'); return v; }
 const AlphaMode_TO_NUM: Record<string, number> = { 'auto': 0, 'ignore': 1, 'straight': 2, 'premultiplied': 3 };
@@ -340,6 +340,14 @@ const RenderGuideAxis_TO_NUM: Record<string, number> = { 'x': 0, 'y': 1 };
 const RenderGuideAxis_FROM_NUM: readonly (T.RenderGuideAxis | undefined)[] = ['x', 'y'];
 function enc_RenderGuideAxis(v: T.RenderGuideAxis): number { const n = RenderGuideAxis_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderGuideAxis: invalid value ' + String(v)); return n; }
 function dec_RenderGuideAxis(n: number): T.RenderGuideAxis { const v = RenderGuideAxis_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderGuideAxis: unknown value ' + n, 'badEnum'); return v; }
+const RenderMeshSurface_TO_NUM: Record<string, number> = { 'layer': 0, 'uv': 1 };
+const RenderMeshSurface_FROM_NUM: readonly (T.RenderMeshSurface | undefined)[] = ['layer', 'uv'];
+function enc_RenderMeshSurface(v: T.RenderMeshSurface): number { const n = RenderMeshSurface_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderMeshSurface: invalid value ' + String(v)); return n; }
+function dec_RenderMeshSurface(n: number): T.RenderMeshSurface { const v = RenderMeshSurface_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderMeshSurface: unknown value ' + n, 'badEnum'); return v; }
+const RenderFogMode_TO_NUM: Record<string, number> = { 'linear': 0, 'exponential': 1, 'exponential2': 2 };
+const RenderFogMode_FROM_NUM: readonly (T.RenderFogMode | undefined)[] = ['linear', 'exponential', 'exponential2'];
+function enc_RenderFogMode(v: T.RenderFogMode): number { const n = RenderFogMode_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderFogMode: invalid value ' + String(v)); return n; }
+function dec_RenderFogMode(n: number): T.RenderFogMode { const v = RenderFogMode_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderFogMode: unknown value ' + n, 'badEnum'); return v; }
 const RenderColorSpace_TO_NUM: Record<string, number> = { 'srgb': 0, 'rec709': 1, 'linearSrgb': 2, 'acesCg': 3, 'rec2020': 4, 'linearRec2020': 5, 'aces2065': 6 };
 const RenderColorSpace_FROM_NUM: readonly (T.RenderColorSpace | undefined)[] = ['srgb', 'rec709', 'linearSrgb', 'acesCg', 'rec2020', 'linearRec2020', 'aces2065'];
 function enc_RenderColorSpace(v: T.RenderColorSpace): number { const n = RenderColorSpace_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderColorSpace: invalid value ' + String(v)); return n; }
@@ -8588,6 +8596,32 @@ function decS_RenderJob(r: Reader, end: number, o: any): T.RenderJob {
   o.items = l_items;
   return o;
 }
+function encS_ModelImportJob(w: Writer, v: T.ModelImportJob): void {
+  { const a = v.files; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(18); w.str(v.outputFolder);
+  if (v.name !== undefined) { w.byte(26); w.str(v.name); }
+}
+function decS_ModelImportJob(r: Reader, end: number, o: any): T.ModelImportJob {
+  const l_files: string[] = [];
+  let h_outputFolder = false;
+  let v_outputFolder: string | undefined;
+  let v_name: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_files.push(r.str()); break;
+      case 18: v_outputFolder = r.str(); h_outputFolder = true; break;
+      case 26: v_name = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_outputFolder) throw new DecodeError('ModelImportJob.outputFolder: missing', 'missingField');
+  o.files = l_files;
+  o.outputFolder = v_outputFolder;
+  if (v_name !== undefined) o.name = v_name;
+  return o;
+}
 function encS_PrerenderJob(w: Writer, v: T.PrerenderJob): void {
   { const a = v.comps; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
   w.byte(18); w.str(v.outputFolder);
@@ -15310,9 +15344,11 @@ function decS_RenderGlass(r: Reader, end: number, o: any): T.RenderGlass {
 function encS_RenderMotionSample(w: Writer, v: T.RenderMotionSample): void {
   { const a = v.modelMatrix; if (a.length) { w.byte(10); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   w.byte(17); w.f64(v.opacity);
+  { const a = v.model3d; if (a.length) { w.byte(26); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
 }
 function decS_RenderMotionSample(r: Reader, end: number, o: any): T.RenderMotionSample {
   const l_modelMatrix: number[] = [];
+  const l_model3d: number[] = [];
   let h_opacity = false;
   let v_opacity: number | undefined;
   while (r.pos < end) {
@@ -15320,6 +15356,7 @@ function decS_RenderMotionSample(r: Reader, end: number, o: any): T.RenderMotion
     switch (key) {
       case 10: { const e = r.ldEnd(); while (r.pos < e) l_modelMatrix.push(r.f64()); r.expectAt(e); break; }
       case 17: v_opacity = r.f64(); h_opacity = true; break;
+      case 26: { const e = r.ldEnd(); while (r.pos < e) l_model3d.push(r.f64()); r.expectAt(e); break; }
       default: r.skip(key);
     }
   }
@@ -15327,6 +15364,7 @@ function decS_RenderMotionSample(r: Reader, end: number, o: any): T.RenderMotion
   if (!h_opacity) throw new DecodeError('RenderMotionSample.opacity: missing', 'missingField');
   o.modelMatrix = l_modelMatrix;
   o.opacity = v_opacity;
+  o.model3d = l_model3d;
   return o;
 }
 function encS_RenderAdjustment(w: Writer, v: T.RenderAdjustment): void {
@@ -15596,6 +15634,10 @@ function encS_RenderExtrudedMesh(w: Writer, v: T.RenderExtrudedMesh): void {
   w.byte(32); w.varint(enc_RenderIndexFormat(v.indexFormat));
   { const a = v.ranges; for (let i = 0; i < a.length; i++) { w.byte(42); { const s = w.beginLd(); encS_RenderMeshRange(w, a[i]!); w.endLd(s); } } }
   if (v.pbr !== undefined) { w.byte(50); { const s = w.beginLd(); encS_RenderPbrMaps(w, v.pbr); w.endLd(s); } }
+  w.byte(56); w.varint(enc_RenderMeshSurface(v.surface));
+  w.byte(65); w.f64(v.surfaceWidth);
+  w.byte(73); w.f64(v.surfaceHeight);
+  w.byte(82); w.bytes(v.colors);
 }
 function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrudedMesh {
   const l_ranges: T.RenderMeshRange[] = [];
@@ -15603,11 +15645,19 @@ function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrud
   let h_vertices = false;
   let h_indices = false;
   let h_indexFormat = false;
+  let h_surface = false;
+  let h_surfaceWidth = false;
+  let h_surfaceHeight = false;
+  let h_colors = false;
   let v_key: string | undefined;
   let v_vertices: Uint8Array | undefined;
   let v_indices: Uint8Array | undefined;
   let v_indexFormat: T.RenderIndexFormat | undefined;
   let v_pbr: T.RenderPbrMaps | undefined;
+  let v_surface: T.RenderMeshSurface | undefined;
+  let v_surfaceWidth: number | undefined;
+  let v_surfaceHeight: number | undefined;
+  let v_colors: Uint8Array | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -15617,6 +15667,10 @@ function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrud
       case 32: v_indexFormat = dec_RenderIndexFormat(r.varint()); h_indexFormat = true; break;
       case 42: l_ranges.push(decS_RenderMeshRange(r, r.ldEnd(), {})); break;
       case 50: v_pbr = decS_RenderPbrMaps(r, r.ldEnd(), {}); break;
+      case 56: v_surface = dec_RenderMeshSurface(r.varint()); h_surface = true; break;
+      case 65: v_surfaceWidth = r.f64(); h_surfaceWidth = true; break;
+      case 73: v_surfaceHeight = r.f64(); h_surfaceHeight = true; break;
+      case 82: v_colors = r.bytes(); h_colors = true; break;
       default: r.skip(key);
     }
   }
@@ -15625,12 +15679,20 @@ function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrud
   if (!h_vertices) throw new DecodeError('RenderExtrudedMesh.vertices: missing', 'missingField');
   if (!h_indices) throw new DecodeError('RenderExtrudedMesh.indices: missing', 'missingField');
   if (!h_indexFormat) throw new DecodeError('RenderExtrudedMesh.indexFormat: missing', 'missingField');
+  if (!h_surface) throw new DecodeError('RenderExtrudedMesh.surface: missing', 'missingField');
+  if (!h_surfaceWidth) throw new DecodeError('RenderExtrudedMesh.surfaceWidth: missing', 'missingField');
+  if (!h_surfaceHeight) throw new DecodeError('RenderExtrudedMesh.surfaceHeight: missing', 'missingField');
+  if (!h_colors) throw new DecodeError('RenderExtrudedMesh.colors: missing', 'missingField');
   o.key = v_key;
   o.vertices = v_vertices;
   o.indices = v_indices;
   o.indexFormat = v_indexFormat;
   o.ranges = l_ranges;
   if (v_pbr !== undefined) o.pbr = v_pbr;
+  o.surface = v_surface;
+  o.surfaceWidth = v_surfaceWidth;
+  o.surfaceHeight = v_surfaceHeight;
+  o.colors = v_colors;
   return o;
 }
 function encS_RenderShade3D(w: Writer, v: T.RenderShade3D): void {
@@ -15650,6 +15712,7 @@ function encS_RenderShade3D(w: Writer, v: T.RenderShade3D): void {
   if (v.transparencyRolloff !== undefined) { w.byte(113); w.f64(v.transparencyRolloff); }
   if (v.ior !== undefined) { w.byte(121); w.f64(v.ior); }
   if (v.acceptsShadows !== undefined) { w.varint(128); w.bool(v.acceptsShadows); }
+  if (v.layerReflections !== undefined) { w.varint(136); w.bool(v.layerReflections); }
 }
 function decS_RenderShade3D(r: Reader, end: number, o: any): T.RenderShade3D {
   const l_quadGain: number[] = [];
@@ -15670,6 +15733,7 @@ function decS_RenderShade3D(r: Reader, end: number, o: any): T.RenderShade3D {
   let v_transparencyRolloff: number | undefined;
   let v_ior: number | undefined;
   let v_acceptsShadows: boolean | undefined;
+  let v_layerReflections: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -15689,6 +15753,7 @@ function decS_RenderShade3D(r: Reader, end: number, o: any): T.RenderShade3D {
       case 113: v_transparencyRolloff = r.f64(); break;
       case 121: v_ior = r.f64(); break;
       case 128: v_acceptsShadows = r.bool(); break;
+      case 136: v_layerReflections = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -15711,6 +15776,7 @@ function decS_RenderShade3D(r: Reader, end: number, o: any): T.RenderShade3D {
   if (v_transparencyRolloff !== undefined) o.transparencyRolloff = v_transparencyRolloff;
   if (v_ior !== undefined) o.ior = v_ior;
   if (v_acceptsShadows !== undefined) o.acceptsShadows = v_acceptsShadows;
+  if (v_layerReflections !== undefined) o.layerReflections = v_layerReflections;
   return o;
 }
 function encS_RenderThreeD(w: Writer, v: T.RenderThreeD): void {
@@ -15958,8 +16024,19 @@ function encS_RenderEnvMap(w: Writer, v: T.RenderEnvMap): void {
   w.byte(50); w.bytes(v.data);
   w.byte(57); w.f64(v.intensity);
   w.byte(65); w.f64(v.rotationDeg);
+  w.byte(72); w.varint(enc_RenderTextureFormat(v.format));
+  { const a = v.sh; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(88); w.bool(v.visibleSky);
+  w.byte(97); w.f64(v.skyBlur);
+  w.byte(105); w.f64(v.skyIntensity);
+  if (v.textureKey !== undefined) { w.byte(114); w.str(v.textureKey); }
+  { const a = v.shadowDir; if (a.length) { w.byte(122); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.varint(129); w.f64(v.shadowDarkness);
+  w.varint(137); w.f64(v.shadowSoftness);
 }
 function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
+  const l_sh: number[] = [];
+  const l_shadowDir: number[] = [];
   let h_id = false;
   let h_width = false;
   let h_height = false;
@@ -15968,6 +16045,12 @@ function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
   let h_data = false;
   let h_intensity = false;
   let h_rotationDeg = false;
+  let h_format = false;
+  let h_visibleSky = false;
+  let h_skyBlur = false;
+  let h_skyIntensity = false;
+  let h_shadowDarkness = false;
+  let h_shadowSoftness = false;
   let v_id: string | undefined;
   let v_width: number | undefined;
   let v_height: number | undefined;
@@ -15976,6 +16059,13 @@ function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
   let v_data: Uint8Array | undefined;
   let v_intensity: number | undefined;
   let v_rotationDeg: number | undefined;
+  let v_format: T.RenderTextureFormat | undefined;
+  let v_visibleSky: boolean | undefined;
+  let v_skyBlur: number | undefined;
+  let v_skyIntensity: number | undefined;
+  let v_textureKey: string | undefined;
+  let v_shadowDarkness: number | undefined;
+  let v_shadowSoftness: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -15987,6 +16077,15 @@ function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
       case 50: v_data = r.bytes(); h_data = true; break;
       case 57: v_intensity = r.f64(); h_intensity = true; break;
       case 65: v_rotationDeg = r.f64(); h_rotationDeg = true; break;
+      case 72: v_format = dec_RenderTextureFormat(r.varint()); h_format = true; break;
+      case 82: { const e = r.ldEnd(); while (r.pos < e) l_sh.push(r.f64()); r.expectAt(e); break; }
+      case 88: v_visibleSky = r.bool(); h_visibleSky = true; break;
+      case 97: v_skyBlur = r.f64(); h_skyBlur = true; break;
+      case 105: v_skyIntensity = r.f64(); h_skyIntensity = true; break;
+      case 114: v_textureKey = r.str(); break;
+      case 122: { const e = r.ldEnd(); while (r.pos < e) l_shadowDir.push(r.f64()); r.expectAt(e); break; }
+      case 129: v_shadowDarkness = r.f64(); h_shadowDarkness = true; break;
+      case 137: v_shadowSoftness = r.f64(); h_shadowSoftness = true; break;
       default: r.skip(key);
     }
   }
@@ -15999,6 +16098,12 @@ function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
   if (!h_data) throw new DecodeError('RenderEnvMap.data: missing', 'missingField');
   if (!h_intensity) throw new DecodeError('RenderEnvMap.intensity: missing', 'missingField');
   if (!h_rotationDeg) throw new DecodeError('RenderEnvMap.rotationDeg: missing', 'missingField');
+  if (!h_format) throw new DecodeError('RenderEnvMap.format: missing', 'missingField');
+  if (!h_visibleSky) throw new DecodeError('RenderEnvMap.visibleSky: missing', 'missingField');
+  if (!h_skyBlur) throw new DecodeError('RenderEnvMap.skyBlur: missing', 'missingField');
+  if (!h_skyIntensity) throw new DecodeError('RenderEnvMap.skyIntensity: missing', 'missingField');
+  if (!h_shadowDarkness) throw new DecodeError('RenderEnvMap.shadowDarkness: missing', 'missingField');
+  if (!h_shadowSoftness) throw new DecodeError('RenderEnvMap.shadowSoftness: missing', 'missingField');
   o.id = v_id;
   o.width = v_width;
   o.height = v_height;
@@ -16007,6 +16112,93 @@ function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
   o.data = v_data;
   o.intensity = v_intensity;
   o.rotationDeg = v_rotationDeg;
+  o.format = v_format;
+  o.sh = l_sh;
+  o.visibleSky = v_visibleSky;
+  o.skyBlur = v_skyBlur;
+  o.skyIntensity = v_skyIntensity;
+  if (v_textureKey !== undefined) o.textureKey = v_textureKey;
+  o.shadowDir = l_shadowDir;
+  o.shadowDarkness = v_shadowDarkness;
+  o.shadowSoftness = v_shadowSoftness;
+  return o;
+}
+function encS_RenderFog(w: Writer, v: T.RenderFog): void {
+  w.byte(8); w.varint(enc_RenderFogMode(v.mode));
+  w.byte(18); { const s = w.beginLd(); encS_Color(w, v.color); w.endLd(s); }
+  w.byte(25); w.f64(v.start);
+  w.byte(33); w.f64(v.end);
+  w.byte(41); w.f64(v.density);
+  w.byte(49); w.f64(v.maxOpacity);
+}
+function decS_RenderFog(r: Reader, end: number, o: any): T.RenderFog {
+  let h_mode = false;
+  let h_color = false;
+  let h_start = false;
+  let h_end = false;
+  let h_density = false;
+  let h_maxOpacity = false;
+  let v_mode: T.RenderFogMode | undefined;
+  let v_color: T.Color | undefined;
+  let v_start: number | undefined;
+  let v_end: number | undefined;
+  let v_density: number | undefined;
+  let v_maxOpacity: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_mode = dec_RenderFogMode(r.varint()); h_mode = true; break;
+      case 18: v_color = decS_Color(r, r.ldEnd(), {}); h_color = true; break;
+      case 25: v_start = r.f64(); h_start = true; break;
+      case 33: v_end = r.f64(); h_end = true; break;
+      case 41: v_density = r.f64(); h_density = true; break;
+      case 49: v_maxOpacity = r.f64(); h_maxOpacity = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_mode) throw new DecodeError('RenderFog.mode: missing', 'missingField');
+  if (!h_color) throw new DecodeError('RenderFog.color: missing', 'missingField');
+  if (!h_start) throw new DecodeError('RenderFog.start: missing', 'missingField');
+  if (!h_end) throw new DecodeError('RenderFog.end: missing', 'missingField');
+  if (!h_density) throw new DecodeError('RenderFog.density: missing', 'missingField');
+  if (!h_maxOpacity) throw new DecodeError('RenderFog.maxOpacity: missing', 'missingField');
+  o.mode = v_mode;
+  o.color = v_color;
+  o.start = v_start;
+  o.end = v_end;
+  o.density = v_density;
+  o.maxOpacity = v_maxOpacity;
+  return o;
+}
+function encS_RenderShadowCatcher(w: Writer, v: T.RenderShadowCatcher): void {
+  w.byte(9); w.f64(v.y);
+  w.byte(17); w.f64(v.opacity);
+  w.byte(25); w.f64(v.size);
+}
+function decS_RenderShadowCatcher(r: Reader, end: number, o: any): T.RenderShadowCatcher {
+  let h_y = false;
+  let h_opacity = false;
+  let h_size = false;
+  let v_y: number | undefined;
+  let v_opacity: number | undefined;
+  let v_size: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 9: v_y = r.f64(); h_y = true; break;
+      case 17: v_opacity = r.f64(); h_opacity = true; break;
+      case 25: v_size = r.f64(); h_size = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_y) throw new DecodeError('RenderShadowCatcher.y: missing', 'missingField');
+  if (!h_opacity) throw new DecodeError('RenderShadowCatcher.opacity: missing', 'missingField');
+  if (!h_size) throw new DecodeError('RenderShadowCatcher.size: missing', 'missingField');
+  o.y = v_y;
+  o.opacity = v_opacity;
+  o.size = v_size;
   return o;
 }
 function encS_RenderSsao(w: Writer, v: T.RenderSsao): void {
@@ -16051,6 +16243,7 @@ function encS_RenderPrecompFrame(w: Writer, v: T.RenderPrecompFrame): void {
   if (v.envMap !== undefined) { w.byte(26); { const s = w.beginLd(); encS_RenderEnvMap(w, v.envMap); w.endLd(s); } }
   if (v.flatWidth !== undefined) { w.byte(33); w.f64(v.flatWidth); }
   if (v.flatHeight !== undefined) { w.byte(41); w.f64(v.flatHeight); }
+  if (v.fog !== undefined) { w.byte(50); { const s = w.beginLd(); encS_RenderFog(w, v.fog); w.endLd(s); } }
 }
 function decS_RenderPrecompFrame(r: Reader, end: number, o: any): T.RenderPrecompFrame {
   const l_lights3d: T.RenderLight3D[] = [];
@@ -16058,6 +16251,7 @@ function decS_RenderPrecompFrame(r: Reader, end: number, o: any): T.RenderPrecom
   let v_envMap: T.RenderEnvMap | undefined;
   let v_flatWidth: number | undefined;
   let v_flatHeight: number | undefined;
+  let v_fog: T.RenderFog | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -16066,6 +16260,7 @@ function decS_RenderPrecompFrame(r: Reader, end: number, o: any): T.RenderPrecom
       case 26: v_envMap = decS_RenderEnvMap(r, r.ldEnd(), {}); break;
       case 33: v_flatWidth = r.f64(); break;
       case 41: v_flatHeight = r.f64(); break;
+      case 50: v_fog = decS_RenderFog(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -16075,6 +16270,7 @@ function decS_RenderPrecompFrame(r: Reader, end: number, o: any): T.RenderPrecom
   if (v_envMap !== undefined) o.envMap = v_envMap;
   if (v_flatWidth !== undefined) o.flatWidth = v_flatWidth;
   if (v_flatHeight !== undefined) o.flatHeight = v_flatHeight;
+  if (v_fog !== undefined) o.fog = v_fog;
   return o;
 }
 function encS_Renderable(w: Writer, v: T.Renderable): void {
@@ -16259,6 +16455,8 @@ function encS_RenderFrameScene(w: Writer, v: T.RenderFrameScene): void {
   { const a = v.lights3d; for (let i = 0; i < a.length; i++) { w.byte(74); { const s = w.beginLd(); encS_RenderLight3D(w, a[i]!); w.endLd(s); } } }
   if (v.envMap !== undefined) { w.byte(82); { const s = w.beginLd(); encS_RenderEnvMap(w, v.envMap); w.endLd(s); } }
   if (v.ssao !== undefined) { w.byte(90); { const s = w.beginLd(); encS_RenderSsao(w, v.ssao); w.endLd(s); } }
+  if (v.fog !== undefined) { w.byte(98); { const s = w.beginLd(); encS_RenderFog(w, v.fog); w.endLd(s); } }
+  if (v.shadowCatcher !== undefined) { w.byte(106); { const s = w.beginLd(); encS_RenderShadowCatcher(w, v.shadowCatcher); w.endLd(s); } }
 }
 function decS_RenderFrameScene(r: Reader, end: number, o: any): T.RenderFrameScene {
   const l_renderables: T.Renderable[] = [];
@@ -16276,6 +16474,8 @@ function decS_RenderFrameScene(r: Reader, end: number, o: any): T.RenderFrameSce
   let v_camera3d: T.RenderCamera3D | undefined;
   let v_envMap: T.RenderEnvMap | undefined;
   let v_ssao: T.RenderSsao | undefined;
+  let v_fog: T.RenderFog | undefined;
+  let v_shadowCatcher: T.RenderShadowCatcher | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -16290,6 +16490,8 @@ function decS_RenderFrameScene(r: Reader, end: number, o: any): T.RenderFrameSce
       case 74: l_lights3d.push(decS_RenderLight3D(r, r.ldEnd(), {})); break;
       case 82: v_envMap = decS_RenderEnvMap(r, r.ldEnd(), {}); break;
       case 90: v_ssao = decS_RenderSsao(r, r.ldEnd(), {}); break;
+      case 98: v_fog = decS_RenderFog(r, r.ldEnd(), {}); break;
+      case 106: v_shadowCatcher = decS_RenderShadowCatcher(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -16309,6 +16511,8 @@ function decS_RenderFrameScene(r: Reader, end: number, o: any): T.RenderFrameSce
   o.lights3d = l_lights3d;
   if (v_envMap !== undefined) o.envMap = v_envMap;
   if (v_ssao !== undefined) o.ssao = v_ssao;
+  if (v_fog !== undefined) o.fog = v_fog;
+  if (v_shadowCatcher !== undefined) o.shadowCatcher = v_shadowCatcher;
   return o;
 }
 function encS_RenderGuide(w: Writer, v: T.RenderGuide): void {
@@ -17008,6 +17212,7 @@ function encU_JobSpec(w: Writer, v: T.JobSpec): void {
     case 'particleBake': w.varint(13738); { const s = w.beginLd(); encS_ParticleBakeJob(w, v.value); w.endLd(s); } return;
     case 'cameraTrack': w.varint(13746); { const s = w.beginLd(); encS_CameraTrackJob(w, v.value); w.endLd(s); } return;
     case 'faceTrack': w.varint(13754); { const s = w.beginLd(); encS_FaceTrackJob(w, v.value); w.endLd(s); } return;
+    case 'modelImport': w.varint(13762); { const s = w.beginLd(); encS_ModelImportJob(w, v.value); w.endLd(s); } return;
     default: throw new RangeError('JobSpec: unknown kind ' + String((v as { kind?: unknown }).kind));
   }
 }
@@ -17038,6 +17243,7 @@ function decU_JobSpec(r: Reader, end: number): T.JobSpec {
       case 13738: out = { kind: 'particleBake', value: decS_ParticleBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13746: out = { kind: 'cameraTrack', value: decS_CameraTrackJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13754: out = { kind: 'faceTrack', value: decS_FaceTrackJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13762: out = { kind: 'modelImport', value: decS_ModelImportJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       default: r.skip(key);
     }
   }
@@ -18400,6 +18606,7 @@ export const codecs = {
   AudioGateJob: mk<T.AudioGateJob>(encS_AudioGateJob, (r, e) => decS_AudioGateJob(r, e, {})),
   ProxyJob: mk<T.ProxyJob>(encS_ProxyJob, (r, e) => decS_ProxyJob(r, e, {})),
   RenderJob: mk<T.RenderJob>(encS_RenderJob, (r, e) => decS_RenderJob(r, e, {})),
+  ModelImportJob: mk<T.ModelImportJob>(encS_ModelImportJob, (r, e) => decS_ModelImportJob(r, e, {})),
   PrerenderJob: mk<T.PrerenderJob>(encS_PrerenderJob, (r, e) => decS_PrerenderJob(r, e, {})),
   TrackSampleRow: mk<T.TrackSampleRow>(encS_TrackSampleRow, (r, e) => decS_TrackSampleRow(r, e, {})),
   TrackSeries: mk<T.TrackSeries>(encS_TrackSeries, (r, e) => decS_TrackSeries(r, e, {})),
@@ -18634,6 +18841,8 @@ export const codecs = {
   RenderCamera3D: mk<T.RenderCamera3D>(encS_RenderCamera3D, (r, e) => decS_RenderCamera3D(r, e, {})),
   RenderLight3D: mk<T.RenderLight3D>(encS_RenderLight3D, (r, e) => decS_RenderLight3D(r, e, {})),
   RenderEnvMap: mk<T.RenderEnvMap>(encS_RenderEnvMap, (r, e) => decS_RenderEnvMap(r, e, {})),
+  RenderFog: mk<T.RenderFog>(encS_RenderFog, (r, e) => decS_RenderFog(r, e, {})),
+  RenderShadowCatcher: mk<T.RenderShadowCatcher>(encS_RenderShadowCatcher, (r, e) => decS_RenderShadowCatcher(r, e, {})),
   RenderSsao: mk<T.RenderSsao>(encS_RenderSsao, (r, e) => decS_RenderSsao(r, e, {})),
   RenderPrecompFrame: mk<T.RenderPrecompFrame>(encS_RenderPrecompFrame, (r, e) => decS_RenderPrecompFrame(r, e, {})),
   Renderable: mk<T.Renderable>(encS_Renderable, (r, e) => decS_Renderable(r, e, {})),

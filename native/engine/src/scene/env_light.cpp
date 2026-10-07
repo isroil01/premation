@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstring>
 #include <cmath>
 #include <functional>
 #include <mutex>
@@ -377,6 +378,81 @@ EnvSpecularMap build_env_specular_atlas(const EnvPixels& base, std::string id) {
       out.data.push_back(255);
     }
   }
+  return out;
+}
+
+std::uint16_t float_to_half(float v) noexcept {
+  std::uint32_t x = 0;
+  std::memcpy(&x, &v, sizeof x);
+  const std::uint32_t sign = (x >> 16U) & 0x8000U;
+  const std::uint32_t exp = (x >> 23U) & 0xFFU;
+  std::uint32_t mant = x & 0x7FFFFFU;
+  if (exp == 0xFFU) return static_cast<std::uint16_t>(sign | 0x7C00U | (mant != 0 ? 0x200U : 0U));  // inf / NaN
+  const int e = static_cast<int>(exp) - 127 + 15;
+  if (e >= 31) return static_cast<std::uint16_t>(sign | 0x7C00U);  // overflow → inf
+  if (e <= 0) {
+    if (e < -10) return static_cast<std::uint16_t>(sign);  // underflow → ±0
+    mant |= 0x800000U;
+    const auto shift = static_cast<std::uint32_t>(14 - e);
+    std::uint32_t h = mant >> shift;
+    const std::uint32_t rem = mant & ((1U << shift) - 1U);
+    const std::uint32_t halfway = 1U << (shift - 1U);
+    if (rem > halfway || (rem == halfway && (h & 1U) != 0)) ++h;
+    return static_cast<std::uint16_t>(sign | h);
+  }
+  std::uint32_t h = (static_cast<std::uint32_t>(e) << 10U) | (mant >> 13U);
+  const std::uint32_t rem = mant & 0x1FFFU;
+  if (rem > 0x1000U || (rem == 0x1000U && (h & 1U) != 0)) ++h;  // may carry into the exponent: still correct
+  return static_cast<std::uint16_t>(sign | h);
+}
+
+EnvSpecularMap build_env_hdr_atlas(const EnvPixels& base, std::string id) {
+  const int w = base.width;
+  const int h = base.height;
+  EnvSpecularMap out;
+  out.id = std::move(id);
+  out.width = static_cast<std::uint32_t>(w);
+  out.height = static_cast<std::uint32_t>(h * kSpecLevels);
+  out.levels = kSpecLevels;
+  out.scale = 1;
+  out.half = true;
+  const std::size_t px = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+  out.data.reserve(px * kSpecLevels * 8);
+  const auto put = [&out](float v) {
+    const std::uint16_t hb = float_to_half(v);
+    out.data.push_back(static_cast<std::uint8_t>(hb & 0xFFU));
+    out.data.push_back(static_cast<std::uint8_t>(hb >> 8U));
+  };
+  for (int i = 0; i < kSpecLevels; ++i) {
+    const double r = static_cast<double>(i) / (kSpecLevels - 1);
+    const std::vector<float> lv = blur_equirect_angular(base.data, w, h, r * r);
+    for (std::size_t p = 0; p < px; ++p) {
+      for (std::size_t c = 0; c < 3; ++c) put(std::max(0.0F, lv[p * 3 + c]));
+      put(1.0F);
+    }
+  }
+  return out;
+}
+
+std::optional<EnvSpecularMap> environment_hdr_map(std::string_view sky) {
+  if (sky.starts_with("asset:")) return std::nullopt;
+  const std::string content(sky == "sky" || sky == "sunset" ? sky : std::string_view("studio"));
+  const std::string key = "hdr1|" + content + "|" + std::to_string(kEnvHdrWidth) + "x" + std::to_string(kEnvHdrHeight);
+  static std::mutex m;
+  static std::vector<EnvSpecularMap> cache;  // the three presets: deterministic, bounded
+  {
+    const std::scoped_lock lock(m);
+    for (const EnvSpecularMap& e : cache) {
+      if (e.id == key) return e;
+    }
+  }
+  EnvPixels base;
+  base.width = kEnvHdrWidth;
+  base.height = kEnvHdrHeight;
+  base.data = preset_pixels(content, kEnvHdrWidth, kEnvHdrHeight);
+  EnvSpecularMap out = build_env_hdr_atlas(base, key);
+  const std::scoped_lock lock(m);
+  cache.push_back(out);
   return out;
 }
 

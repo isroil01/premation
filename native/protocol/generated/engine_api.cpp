@@ -501,6 +501,7 @@ std::string_view to_string(MediaType v) noexcept {
     case MediaType::image: return "image";
     case MediaType::video: return "video";
     case MediaType::audio: return "audio";
+    case MediaType::model: return "model";
   }
   return {};
 }
@@ -510,6 +511,7 @@ bool from_u32(std::uint32_t n, MediaType& out) noexcept {
     case 1: out = MediaType::image; return true;
     case 2: out = MediaType::video; return true;
     case 3: out = MediaType::audio; return true;
+    case 4: out = MediaType::model; return true;
     default: return false;
   }
 }
@@ -1674,6 +1676,36 @@ bool from_u32(std::uint32_t n, RenderGuideAxis& out) noexcept {
   switch (n) {
     case 0: out = RenderGuideAxis::x; return true;
     case 1: out = RenderGuideAxis::y; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderMeshSurface v) noexcept {
+  switch (v) {
+    case RenderMeshSurface::layer: return "layer";
+    case RenderMeshSurface::uv: return "uv";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderMeshSurface& out) noexcept {
+  switch (n) {
+    case 0: out = RenderMeshSurface::layer; return true;
+    case 1: out = RenderMeshSurface::uv; return true;
+    default: return false;
+  }
+}
+std::string_view to_string(RenderFogMode v) noexcept {
+  switch (v) {
+    case RenderFogMode::linear: return "linear";
+    case RenderFogMode::exponential: return "exponential";
+    case RenderFogMode::exponential2: return "exponential2";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, RenderFogMode& out) noexcept {
+  switch (n) {
+    case 0: out = RenderFogMode::linear; return true;
+    case 1: out = RenderFogMode::exponential; return true;
+    case 2: out = RenderFogMode::exponential2; return true;
     default: return false;
   }
 }
@@ -12403,8 +12435,45 @@ Status decode(wire::Reader& r, FaceTrackJob& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const ModelImportJob& v) {
+  for (const auto& e : v.files) { w.varint(10U); w.str(e); }
+  w.varint(18U); w.str(v.output_folder);
+  if (v.name.has_value()) { w.varint(26U); w.str(*v.name); }
+}
+
+Status decode(wire::Reader& r, ModelImportJob& out) {
+  bool has_output_folder = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        auto& e = out.files.emplace_back();
+        if (!r.str(e)) return Status::truncated;
+        break;
+      }
+      case 18U: {
+        if (!r.str(out.output_folder)) return Status::truncated;
+        has_output_folder = true;
+        break;
+      }
+      case 26U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.name = std::move(e);
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_output_folder) return Status::missing_field;
+  return Status::ok;
+}
+
 JobSpec::Kind JobSpec::kind() const noexcept {
-  static constexpr std::array<Kind, 21> kKinds = {Kind::track_motion, Kind::stabilize, Kind::auto_trace, Kind::scene_detect, Kind::object_matte, Kind::transcribe, Kind::audio_analysis, Kind::render, Kind::prerender, Kind::proxy, Kind::audio_duck, Kind::audio_gate, Kind::track_apply, Kind::roto_brush, Kind::content_aware_fill, Kind::auto_reframe, Kind::rig_logo, Kind::physics_bake, Kind::particle_bake, Kind::camera_track, Kind::face_track};
+  static constexpr std::array<Kind, 22> kKinds = {Kind::track_motion, Kind::stabilize, Kind::auto_trace, Kind::scene_detect, Kind::object_matte, Kind::transcribe, Kind::audio_analysis, Kind::render, Kind::prerender, Kind::proxy, Kind::audio_duck, Kind::audio_gate, Kind::track_apply, Kind::roto_brush, Kind::content_aware_fill, Kind::auto_reframe, Kind::rig_logo, Kind::physics_bake, Kind::particle_bake, Kind::camera_track, Kind::face_track, Kind::model_import};
   return kKinds[v.index()];
 }
 
@@ -12431,6 +12500,7 @@ void encode(wire::Writer& w, const JobSpec& v) {
     case 18: w.varint(13738U); { const std::size_t s = w.begin_ld(); encode(w, std::get<18>(v.v)); w.end_ld(s); } return;
     case 19: w.varint(13746U); { const std::size_t s = w.begin_ld(); encode(w, std::get<19>(v.v)); w.end_ld(s); } return;
     case 20: w.varint(13754U); { const std::size_t s = w.begin_ld(); encode(w, std::get<20>(v.v)); w.end_ld(s); } return;
+    case 21: w.varint(13762U); { const std::size_t s = w.begin_ld(); encode(w, std::get<21>(v.v)); w.end_ld(s); } return;
     default: return;
   }
 }
@@ -12606,6 +12676,14 @@ Status decode(wire::Reader& r, JobSpec& out) {
         FaceTrackJob e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.v.emplace<20>(std::move(e));
+        seen = true;
+        break;
+      }
+      case 13762U: {
+        if (seen) return Status::multiple_variants;
+        ModelImportJob e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.v.emplace<21>(std::move(e));
         seen = true;
         break;
       }
@@ -27697,6 +27775,7 @@ Status decode(wire::Reader& r, RenderGlass& out) {
 void encode(wire::Writer& w, const RenderMotionSample& v) {
   if (!v.model_matrix.empty()) { w.varint(10U); const std::size_t s = w.begin_ld(); for (const auto& e : v.model_matrix) w.f64(e); w.end_ld(s); }
   w.varint(17U); w.f64(v.opacity);
+  if (!v.model3d.empty()) { w.varint(26U); const std::size_t s = w.begin_ld(); for (const auto& e : v.model3d) w.f64(e); w.end_ld(s); }
 }
 
 Status decode(wire::Reader& r, RenderMotionSample& out) {
@@ -27714,6 +27793,12 @@ Status decode(wire::Reader& r, RenderMotionSample& out) {
       case 17U: {
         if (!r.f64(out.opacity)) return Status::truncated;
         has_opacity = true;
+        break;
+      }
+      case 26U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.model3d.push_back(e); }
         break;
       }
       default:
@@ -28102,6 +28187,10 @@ void encode(wire::Writer& w, const RenderExtrudedMesh& v) {
   w.varint(32U); w.varint(static_cast<std::uint32_t>(v.index_format));
   for (const auto& e : v.ranges) { w.varint(42U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
   if (v.pbr.has_value()) { w.varint(50U); { const std::size_t s = w.begin_ld(); encode(w, *v.pbr); w.end_ld(s); } }
+  w.varint(56U); w.varint(static_cast<std::uint32_t>(v.surface));
+  w.varint(65U); w.f64(v.surface_width);
+  w.varint(73U); w.f64(v.surface_height);
+  w.varint(82U); w.bytes(v.colors);
 }
 
 Status decode(wire::Reader& r, RenderExtrudedMesh& out) {
@@ -28109,6 +28198,10 @@ Status decode(wire::Reader& r, RenderExtrudedMesh& out) {
   bool has_vertices = false;
   bool has_indices = false;
   bool has_index_format = false;
+  bool has_surface = false;
+  bool has_surface_width = false;
+  bool has_surface_height = false;
+  bool has_colors = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -28144,6 +28237,26 @@ Status decode(wire::Reader& r, RenderExtrudedMesh& out) {
         out.pbr = std::move(e);
         break;
       }
+      case 56U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.surface)) return Status::bad_enum; }
+        has_surface = true;
+        break;
+      }
+      case 65U: {
+        if (!r.f64(out.surface_width)) return Status::truncated;
+        has_surface_width = true;
+        break;
+      }
+      case 73U: {
+        if (!r.f64(out.surface_height)) return Status::truncated;
+        has_surface_height = true;
+        break;
+      }
+      case 82U: {
+        if (!r.bytes(out.colors)) return Status::truncated;
+        has_colors = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -28153,6 +28266,10 @@ Status decode(wire::Reader& r, RenderExtrudedMesh& out) {
   if (!has_vertices) return Status::missing_field;
   if (!has_indices) return Status::missing_field;
   if (!has_index_format) return Status::missing_field;
+  if (!has_surface) return Status::missing_field;
+  if (!has_surface_width) return Status::missing_field;
+  if (!has_surface_height) return Status::missing_field;
+  if (!has_colors) return Status::missing_field;
   return Status::ok;
 }
 
@@ -28173,6 +28290,7 @@ void encode(wire::Writer& w, const RenderShade3D& v) {
   if (v.transparency_rolloff.has_value()) { w.varint(113U); w.f64(*v.transparency_rolloff); }
   if (v.ior.has_value()) { w.varint(121U); w.f64(*v.ior); }
   if (v.accepts_shadows.has_value()) { w.varint(128U); w.boolean(*v.accepts_shadows); }
+  if (v.layer_reflections.has_value()) { w.varint(136U); w.boolean(*v.layer_reflections); }
 }
 
 Status decode(wire::Reader& r, RenderShade3D& out) {
@@ -28274,6 +28392,12 @@ Status decode(wire::Reader& r, RenderShade3D& out) {
         bool e = false;
         if (!r.boolean(e)) return Status::truncated;
         out.accepts_shadows = std::move(e);
+        break;
+      }
+      case 136U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.layer_reflections = std::move(e);
         break;
       }
       default:
@@ -28648,6 +28772,15 @@ void encode(wire::Writer& w, const RenderEnvMap& v) {
   w.varint(50U); w.bytes(v.data);
   w.varint(57U); w.f64(v.intensity);
   w.varint(65U); w.f64(v.rotation_deg);
+  w.varint(72U); w.varint(static_cast<std::uint32_t>(v.format));
+  if (!v.sh.empty()) { w.varint(82U); const std::size_t s = w.begin_ld(); for (const auto& e : v.sh) w.f64(e); w.end_ld(s); }
+  w.varint(88U); w.boolean(v.visible_sky);
+  w.varint(97U); w.f64(v.sky_blur);
+  w.varint(105U); w.f64(v.sky_intensity);
+  if (v.texture_key.has_value()) { w.varint(114U); w.str(*v.texture_key); }
+  if (!v.shadow_dir.empty()) { w.varint(122U); const std::size_t s = w.begin_ld(); for (const auto& e : v.shadow_dir) w.f64(e); w.end_ld(s); }
+  w.varint(129U); w.f64(v.shadow_darkness);
+  w.varint(137U); w.f64(v.shadow_softness);
 }
 
 Status decode(wire::Reader& r, RenderEnvMap& out) {
@@ -28659,6 +28792,12 @@ Status decode(wire::Reader& r, RenderEnvMap& out) {
   bool has_data = false;
   bool has_intensity = false;
   bool has_rotation_deg = false;
+  bool has_format = false;
+  bool has_visible_sky = false;
+  bool has_sky_blur = false;
+  bool has_sky_intensity = false;
+  bool has_shadow_darkness = false;
+  bool has_shadow_softness = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -28703,6 +28842,54 @@ Status decode(wire::Reader& r, RenderEnvMap& out) {
         has_rotation_deg = true;
         break;
       }
+      case 72U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.format)) return Status::bad_enum; }
+        has_format = true;
+        break;
+      }
+      case 82U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.sh.push_back(e); }
+        break;
+      }
+      case 88U: {
+        if (!r.boolean(out.visible_sky)) return Status::truncated;
+        has_visible_sky = true;
+        break;
+      }
+      case 97U: {
+        if (!r.f64(out.sky_blur)) return Status::truncated;
+        has_sky_blur = true;
+        break;
+      }
+      case 105U: {
+        if (!r.f64(out.sky_intensity)) return Status::truncated;
+        has_sky_intensity = true;
+        break;
+      }
+      case 114U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.texture_key = std::move(e);
+        break;
+      }
+      case 122U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.shadow_dir.push_back(e); }
+        break;
+      }
+      case 129U: {
+        if (!r.f64(out.shadow_darkness)) return Status::truncated;
+        has_shadow_darkness = true;
+        break;
+      }
+      case 137U: {
+        if (!r.f64(out.shadow_softness)) return Status::truncated;
+        has_shadow_softness = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -28716,6 +28903,116 @@ Status decode(wire::Reader& r, RenderEnvMap& out) {
   if (!has_data) return Status::missing_field;
   if (!has_intensity) return Status::missing_field;
   if (!has_rotation_deg) return Status::missing_field;
+  if (!has_format) return Status::missing_field;
+  if (!has_visible_sky) return Status::missing_field;
+  if (!has_sky_blur) return Status::missing_field;
+  if (!has_sky_intensity) return Status::missing_field;
+  if (!has_shadow_darkness) return Status::missing_field;
+  if (!has_shadow_softness) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderFog& v) {
+  w.varint(8U); w.varint(static_cast<std::uint32_t>(v.mode));
+  w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, v.color); w.end_ld(s); }
+  w.varint(25U); w.f64(v.start);
+  w.varint(33U); w.f64(v.end);
+  w.varint(41U); w.f64(v.density);
+  w.varint(49U); w.f64(v.max_opacity);
+}
+
+Status decode(wire::Reader& r, RenderFog& out) {
+  bool has_mode = false;
+  bool has_color = false;
+  bool has_start = false;
+  bool has_end = false;
+  bool has_density = false;
+  bool has_max_opacity = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 8U: {
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.mode)) return Status::bad_enum; }
+        has_mode = true;
+        break;
+      }
+      case 18U: {
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, out.color); st != Status::ok) return st; }
+        has_color = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.start)) return Status::truncated;
+        has_start = true;
+        break;
+      }
+      case 33U: {
+        if (!r.f64(out.end)) return Status::truncated;
+        has_end = true;
+        break;
+      }
+      case 41U: {
+        if (!r.f64(out.density)) return Status::truncated;
+        has_density = true;
+        break;
+      }
+      case 49U: {
+        if (!r.f64(out.max_opacity)) return Status::truncated;
+        has_max_opacity = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_mode) return Status::missing_field;
+  if (!has_color) return Status::missing_field;
+  if (!has_start) return Status::missing_field;
+  if (!has_end) return Status::missing_field;
+  if (!has_density) return Status::missing_field;
+  if (!has_max_opacity) return Status::missing_field;
+  return Status::ok;
+}
+
+void encode(wire::Writer& w, const RenderShadowCatcher& v) {
+  w.varint(9U); w.f64(v.y);
+  w.varint(17U); w.f64(v.opacity);
+  w.varint(25U); w.f64(v.size);
+}
+
+Status decode(wire::Reader& r, RenderShadowCatcher& out) {
+  bool has_y = false;
+  bool has_opacity = false;
+  bool has_size = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 9U: {
+        if (!r.f64(out.y)) return Status::truncated;
+        has_y = true;
+        break;
+      }
+      case 17U: {
+        if (!r.f64(out.opacity)) return Status::truncated;
+        has_opacity = true;
+        break;
+      }
+      case 25U: {
+        if (!r.f64(out.size)) return Status::truncated;
+        has_size = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_y) return Status::missing_field;
+  if (!has_opacity) return Status::missing_field;
+  if (!has_size) return Status::missing_field;
   return Status::ok;
 }
 
@@ -28773,6 +29070,7 @@ void encode(wire::Writer& w, const RenderPrecompFrame& v) {
   if (v.env_map.has_value()) { w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, *v.env_map); w.end_ld(s); } }
   if (v.flat_width.has_value()) { w.varint(33U); w.f64(*v.flat_width); }
   if (v.flat_height.has_value()) { w.varint(41U); w.f64(*v.flat_height); }
+  if (v.fog.has_value()) { w.varint(50U); { const std::size_t s = w.begin_ld(); encode(w, *v.fog); w.end_ld(s); } }
 }
 
 Status decode(wire::Reader& r, RenderPrecompFrame& out) {
@@ -28807,6 +29105,12 @@ Status decode(wire::Reader& r, RenderPrecompFrame& out) {
         double e = 0.0;
         if (!r.f64(e)) return Status::truncated;
         out.flat_height = std::move(e);
+        break;
+      }
+      case 50U: {
+        RenderFog e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.fog = std::move(e);
         break;
       }
       default:
@@ -29091,6 +29395,8 @@ void encode(wire::Writer& w, const RenderFrameScene& v) {
   for (const auto& e : v.lights3d) { w.varint(74U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
   if (v.env_map.has_value()) { w.varint(82U); { const std::size_t s = w.begin_ld(); encode(w, *v.env_map); w.end_ld(s); } }
   if (v.ssao.has_value()) { w.varint(90U); { const std::size_t s = w.begin_ld(); encode(w, *v.ssao); w.end_ld(s); } }
+  if (v.fog.has_value()) { w.varint(98U); { const std::size_t s = w.begin_ld(); encode(w, *v.fog); w.end_ld(s); } }
+  if (v.shadow_catcher.has_value()) { w.varint(106U); { const std::size_t s = w.begin_ld(); encode(w, *v.shadow_catcher); w.end_ld(s); } }
 }
 
 Status decode(wire::Reader& r, RenderFrameScene& out) {
@@ -29160,6 +29466,18 @@ Status decode(wire::Reader& r, RenderFrameScene& out) {
         RenderSsao e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.ssao = std::move(e);
+        break;
+      }
+      case 98U: {
+        RenderFog e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.fog = std::move(e);
+        break;
+      }
+      case 106U: {
+        RenderShadowCatcher e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.shadow_catcher = std::move(e);
         break;
       }
       default:
@@ -29930,7 +30248,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 525> kNames = {
+constexpr std::array<std::string_view, 528> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -30203,6 +30521,7 @@ constexpr std::array<std::string_view, 525> kNames = {
     "AudioGateJob",
     "ProxyJob",
     "RenderJob",
+    "ModelImportJob",
     "PrerenderJob",
     "TrackSampleRow",
     "TrackSeries",
@@ -30437,6 +30756,8 @@ constexpr std::array<std::string_view, 525> kNames = {
     "RenderCamera3D",
     "RenderLight3D",
     "RenderEnvMap",
+    "RenderFog",
+    "RenderShadowCatcher",
     "RenderSsao",
     "RenderPrecompFrame",
     "Renderable",
@@ -30734,6 +31055,7 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "AudioGateJob") return roundtrip<AudioGateJob>(bytes, out);
   if (type == "ProxyJob") return roundtrip<ProxyJob>(bytes, out);
   if (type == "RenderJob") return roundtrip<RenderJob>(bytes, out);
+  if (type == "ModelImportJob") return roundtrip<ModelImportJob>(bytes, out);
   if (type == "PrerenderJob") return roundtrip<PrerenderJob>(bytes, out);
   if (type == "TrackSampleRow") return roundtrip<TrackSampleRow>(bytes, out);
   if (type == "TrackSeries") return roundtrip<TrackSeries>(bytes, out);
@@ -30968,6 +31290,8 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "RenderCamera3D") return roundtrip<RenderCamera3D>(bytes, out);
   if (type == "RenderLight3D") return roundtrip<RenderLight3D>(bytes, out);
   if (type == "RenderEnvMap") return roundtrip<RenderEnvMap>(bytes, out);
+  if (type == "RenderFog") return roundtrip<RenderFog>(bytes, out);
+  if (type == "RenderShadowCatcher") return roundtrip<RenderShadowCatcher>(bytes, out);
   if (type == "RenderSsao") return roundtrip<RenderSsao>(bytes, out);
   if (type == "RenderPrecompFrame") return roundtrip<RenderPrecompFrame>(bytes, out);
   if (type == "Renderable") return roundtrip<Renderable>(bytes, out);

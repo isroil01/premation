@@ -284,6 +284,7 @@ std::optional<NestedComp> nested_comp_layers(const BuildContext& c, const Snapsh
     p.camera3d = std::move(*s.camera3d);
     p.lights3d = std::move(s.lights3d);
     p.envMap = std::move(s.envMap);
+    p.fog = std::move(s.fog);
     out.scene3d = std::move(p);
   }
   out.layers = std::move(s.layers);

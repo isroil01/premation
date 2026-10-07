@@ -1,33 +1,38 @@
 /**
- * AxisWidgetOverlay — persistent view-orientation indicator (AE/Blender-style).
+ * AxisWidgetOverlay — the 3D view cube (AE parity 4.6).
  *
- * A small fixed-size widget in the bottom-left of the viewport showing the
- * world X/Y/Z axes projected through the CURRENT scene camera (or the active
- * orthographic view), so the user always sees how the 3D scene is oriented.
+ * A fixed-size cube in the bottom-left of the viewport, turned by the CURRENT
+ * view (the scene camera, a custom view or the orthographic view), so the
+ * user always sees how the 3D scene is oriented. All six faces are buttons
+ * that snap to that orthographic view (clicking the face already shown goes
+ * back to the Active Camera); the house button resets to the Active Camera;
+ * dragging the cube orbits the view, exactly as the Orbit tool does (one undo
+ * entry for a scene camera, view state for custom / axis views).
  * Screen-fixed: unaffected by viewport pan/zoom. Rendered whenever the comp
  * has any 3D layer — the same rule that makes the 3D chrome relevant.
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { useCurrentTime } from '@stores/playbackClockStore';
-import { useGuidesStore } from '@stores/guidesStore';
+import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { useActiveCompRootId, useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { documentMirror } from '@stores/documentMirror';
 import { compHas3DContent } from '@core/mirror/compLayers';
 import { viewCameraOf } from '@core/mirror/viewGeometry';
 import { orthoViewOf } from '@core/scene/cameraViewMode';
 import { isCustomViewId } from '@core/workspace/customViews';
+import { orbitNavBy } from '@core/workspace/cameraNav';
+import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
 import { useOverlayRequest } from '@hooks/useOverlayRequest';
 import { MAIN_VIEWPORT, overlayView } from '@stores/overlayGeometry';
 import { secondsToFlicks } from '@motion/engine-api';
 import { Project3D, type Camera3D, type OrthoView, type Vec3 } from '@motion/scene';
+import { navTargetNow } from './viewNav';
 
 /**
  * Red=X, Green=Y, Blue=Z - the AE / Blender convention, through the TOKENS so
  * the colour-vision-deficiency preset (`[data-cvd]` in `tokens/domain.css`)
- * can swap the triple for an Okabe-Ito one. The literals these replaced
- * (`#ff3b30 / #34c759 / #007aff`) put a red-green pair on two of the three
- * axes, which a deuteranope cannot separate and had no way to change.
+ * can swap the triple for an Okabe-Ito one.
  *
  * Applied through `style`, not the `stroke`/`fill` ATTRIBUTE: a presentation
  * attribute takes a CSS value, but browsers vary on resolving `var()` inside
@@ -39,10 +44,27 @@ const AXIS_COLORS = {
   z: 'var(--color-axis-z)',
 } as const;
 
-const SIZE = 48;
+const SIZE = 96;
 const CENTER = SIZE / 2;
-const AXIS_PX = 16;
-const LABEL_PX = 21;
+/** Half the cube's edge on screen (px) for an axis facing the screen plane. */
+const HALF = 22;
+/** Pointer travel (px) that turns a press into an orbit drag instead of a click. */
+const DRAG_SLOP = 3;
+
+type FaceMode = Extract<Camera3dMode, 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom'>;
+
+/**
+ * The six faces: their outward normal in comp space (x right, y DOWN, z away
+ * from the default camera) and the orthographic view that looks at them.
+ */
+const FACES: ReadonlyArray<{ mode: FaceMode; label: string; n: Vec3; axis: 'x' | 'y' | 'z' }> = [
+  { mode: 'front', label: 'Front', n: { x: 0, y: 0, z: -1 }, axis: 'z' },
+  { mode: 'back', label: 'Back', n: { x: 0, y: 0, z: 1 }, axis: 'z' },
+  { mode: 'right', label: 'Right', n: { x: 1, y: 0, z: 0 }, axis: 'x' },
+  { mode: 'left', label: 'Left', n: { x: -1, y: 0, z: 0 }, axis: 'x' },
+  { mode: 'top', label: 'Top', n: { x: 0, y: -1, z: 0 }, axis: 'y' },
+  { mode: 'bottom', label: 'Bottom', n: { x: 0, y: 1, z: 0 }, axis: 'y' },
+];
 
 export const AxisWidgetOverlay: React.FC = () => {
   const sceneRev = useMirrorRevisionFrame();
@@ -53,6 +75,10 @@ export const AxisWidgetOverlay: React.FC = () => {
   const camera3dMode = useGuidesStore((s) => s.camera3dMode);
   const customViews = useGuidesStore((s) => s.customViews);
   const time = useCurrentTime();
+  /** A press on the cube: where it started, the last point, and whether it became an orbit. */
+  const press = useRef<{ x: number; y: number; lastX: number; lastY: number; orbiting: boolean; pointerId: number } | null>(null);
+  /** Swallow the click that follows an orbit drag's release. */
+  const swallowClick = useRef(false);
 
   // Visible only when the comp actually has 3D content.
   // Comp-scoped: another composition's 3D layers must not make THIS comp's
@@ -73,41 +99,124 @@ export const AxisWidgetOverlay: React.FC = () => {
   const camera: Camera3D = viewCameraOf(camera3dMode, view, customViews, compWidth, compHeight);
   const orthoView: OrthoView | null = orthoViewOf(camera3dMode);
 
-  const project = (p: Vec3): { x: number; y: number } =>
+  const project = (p: Vec3): Project3D.Projected =>
     orthoView ? Project3D.projectOrtho(p, orthoView, compWidth, compHeight) : Project3D.projectPoint(p, camera);
 
-  // Project the three world axes about the comp centre and normalise the
-  // longest to a fixed on-screen length (foreshortening preserved).
+  // Each world axis as seen from the view: its on-screen direction (normalised
+  // so the longest is 1, foreshortening kept) and whether it points away.
   const anchor: Vec3 = { x: compWidth / 2, y: compHeight / 2, z: 0 };
   const len = 200;
   const o = project(anchor);
-  const dirs: Array<{ key: 'x' | 'y' | 'z'; d: { x: number; y: number } }> = (
-    [
-      { key: 'x' as const, v: { x: 1, y: 0, z: 0 } },
-      { key: 'y' as const, v: { x: 0, y: 1, z: 0 } },
-      { key: 'z' as const, v: { x: 0, y: 0, z: 1 } },
-    ]
-  ).map(({ key, v }) => {
+  const raw = (v: Vec3): { x: number; y: number; depth: number } => {
     const p = project({ x: anchor.x + v.x * len, y: anchor.y + v.y * len, z: anchor.z + v.z * len });
-    return { key, d: { x: p.x - o.x, y: p.y - o.y } };
+    return { x: p.x - o.x, y: p.y - o.y, depth: p.depth - o.depth };
+  };
+  const ax = raw({ x: 1, y: 0, z: 0 });
+  const ay = raw({ x: 0, y: 1, z: 0 });
+  const az = raw({ x: 0, y: 0, z: 1 });
+  const maxLen = Math.max(1e-6, Math.hypot(ax.x, ax.y), Math.hypot(ay.x, ay.y), Math.hypot(az.x, az.y));
+  // The axis's depth component: what is left of a unit vector once its screen part is taken.
+  const depthOf = (a: { x: number; y: number; depth: number }): number => {
+    const sl = Math.min(1, Math.hypot(a.x, a.y) / maxLen);
+    return Math.sign(a.depth || 0) * Math.sqrt(Math.max(0, 1 - sl * sl));
+  };
+  const basis = {
+    x: { x: (ax.x / maxLen) * HALF, y: (ax.y / maxLen) * HALF, d: depthOf(ax) },
+    y: { x: (ay.x / maxLen) * HALF, y: (ay.y / maxLen) * HALF, d: depthOf(ay) },
+    z: { x: (az.x / maxLen) * HALF, y: (az.y / maxLen) * HALF, d: depthOf(az) },
+  };
+  const toScreen = (v: Vec3): { x: number; y: number; d: number } => ({
+    x: CENTER + v.x * basis.x.x + v.y * basis.y.x + v.z * basis.z.x,
+    y: CENTER + v.x * basis.x.y + v.y * basis.y.y + v.z * basis.z.y,
+    d: v.x * basis.x.d + v.y * basis.y.d + v.z * basis.z.d,
   });
 
-  const maxLen = Math.max(1e-6, ...dirs.map(({ d }) => Math.hypot(d.x, d.y)));
+  // A face is drawn when it faces the viewer (its normal points toward the
+  // camera: negative depth); far faces first so near ones paint over them.
+  const faces = FACES.map((f) => {
+    const n = f.n;
+    // Two in-face axes, orthogonal to the normal.
+    const u: Vec3 = n.x !== 0 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+    const w: Vec3 = n.z !== 0 ? { x: 0, y: 1, z: 0 } : { x: 0, y: 0, z: 1 };
+    const corner = (a: number, b: number): { x: number; y: number } => {
+      const p = toScreen({ x: n.x + u.x * a + w.x * b, y: n.y + u.y * a + w.y * b, z: n.z + u.z * a + w.z * b });
+      return { x: p.x, y: p.y };
+    };
+    const c = toScreen(n);
+    return { ...f, depth: c.d, center: { x: c.x, y: c.y }, pts: [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)] };
+  })
+    .filter((f) => f.depth < 0.02)
+    .sort((a, b) => b.depth - a.depth);
 
-  const handleAxisClick = (axisKey: 'x' | 'y' | 'z') => {
-    const setCamera3dMode = useGuidesStore.getState().setCamera3dMode;
-    if (axisKey === 'x') {
-      setCamera3dMode(camera3dMode === 'right' ? 'active' : 'right');
-    } else if (axisKey === 'y') {
-      setCamera3dMode(camera3dMode === 'top' ? 'active' : 'top');
-    } else if (axisKey === 'z') {
-      setCamera3dMode(camera3dMode === 'front' ? 'active' : 'front');
+  const snapTo = (mode: FaceMode): void => {
+    const g = useGuidesStore.getState();
+    g.setCamera3dMode(camera3dMode === mode ? 'active' : mode);
+  };
+  const handleHome = (): void => {
+    useGuidesStore.getState().setCamera3dMode('active');
+  };
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0) return;
+    press.current = { x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, orbiting: false, pointerId: e.pointerId };
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const p = press.current;
+    if (!p) return;
+    if (!p.orbiting) {
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_SLOP) return;
+      const target = navTargetNow();
+      if (!target) return;
+      p.orbiting = true;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* best-effort */
+      }
+      // One engine gesture for the whole orbit (a scene camera), as the Orbit tool's drag.
+      beginViewportGesture();
+    }
+    const dx = e.clientX - p.lastX;
+    const dy = e.clientY - p.lastY;
+    p.lastX = e.clientX;
+    p.lastY = e.clientY;
+    if (dx === 0 && dy === 0) return;
+    const target = navTargetNow();
+    if (target) orbitNavBy(target, dx, dy);
+  };
+  const endPress = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const p = press.current;
+    press.current = null;
+    if (!p?.orbiting) return;
+    swallowClick.current = true;
+    try {
+      e.currentTarget.releasePointerCapture(p.pointerId);
+    } catch {
+      /* best-effort */
+    }
+    endViewportGesture();
+  };
+  /** A face or the house: ignored right after an orbit drag (its release is not a click). */
+  const clickGuard = (run: () => void) => (e: React.MouseEvent): void => {
+    if (swallowClick.current) {
+      swallowClick.current = false;
+      e.preventDefault();
+      return;
+    }
+    run();
+  };
+  const keyActivate = (run: () => void) => (e: React.KeyboardEvent): void => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      run();
     }
   };
 
-  const handleCenterClick = () => {
-    useGuidesStore.getState().setCamera3dMode('active');
-  };
+  // The three positive axes as short lines from the cube centre, under the faces' labels.
+  const axisTips = (['x', 'y', 'z'] as const).map((k) => {
+    const t = toScreen(k === 'x' ? { x: 1.55, y: 0, z: 0 } : k === 'y' ? { x: 0, y: 1.55, z: 0 } : { x: 0, y: 0, z: 1.55 });
+    return { k, x: t.x, y: t.y, d: t.d };
+  });
 
   return (
     <div
@@ -119,108 +228,103 @@ export const AxisWidgetOverlay: React.FC = () => {
         zIndex: 21,
         width: SIZE,
         height: SIZE,
-        cursor: 'pointer',
+        cursor: 'grab',
+        touchAction: 'none',
       }}
-      title="3D View Cube — Click axes to snap orthographic camera views"
+      title="View cube — click a face for that view, drag to orbit"
       data-axis-widget=""
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endPress}
+      onPointerCancel={endPress}
     >
-      <svg
-        width={SIZE}
-        height={SIZE}
-        viewBox={`0 0 ${SIZE} ${SIZE}`}
-        style={{
-          opacity: 0.95,
-          cursor: 'pointer',
-        }}
-      >
+      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ opacity: 0.95 }}>
         <circle
           cx={CENTER}
           cy={CENTER}
           r={CENTER - 1}
-          style={{
-            fill: 'var(--color-overlay-panel-bg)',
-            stroke: 'var(--color-overlay-panel-border)',
-            cursor: 'pointer',
-          }}
+          style={{ fill: 'var(--color-overlay-panel-bg)', stroke: 'var(--color-overlay-panel-border)' }}
           strokeWidth={1}
-          role="button"
-          tabIndex={0}
-          aria-label="Reset to the Active Camera view"
-          onClick={handleCenterClick}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              handleCenterClick();
-            }
-          }}
-        >
-          <title>Reset to Active Camera View</title>
-        </circle>
-        {dirs.map(({ key, d }) => {
-          const nx = (d.x / maxLen) * AXIS_PX;
-          const ny = (d.y / maxLen) * AXIS_PX;
-          const frac = Math.hypot(d.x, d.y) / maxLen;
-          // A fully foreshortened axis (pointing at the camera) draws as a dot.
-          const lx = frac < 0.08 ? 0 : (d.x / maxLen) * LABEL_PX;
-          const ly = frac < 0.08 ? 0 : (d.y / maxLen) * LABEL_PX;
-          const isAxisActive =
-            (key === 'x' && camera3dMode === 'right') ||
-            (key === 'y' && camera3dMode === 'top') ||
-            (key === 'z' && camera3dMode === 'front');
-
+        />
+        {/* Axes that point away from the viewer, drawn under the faces. */}
+        {axisTips.filter((t) => t.d > 0).map((t) => (
+          <line key={t.k} x1={CENTER} y1={CENTER} x2={t.x} y2={t.y} style={{ stroke: AXIS_COLORS[t.k] }} strokeWidth={2} strokeLinecap="round" opacity={0.6} />
+        ))}
+        {faces.map((f) => {
+          const active = camera3dMode === f.mode;
           return (
             <g
-              key={key}
-              // A view-cube face is a BUTTON: it changes the camera. With no
-              // role and no tab stop it was reachable by mouse only, so a
-              // keyboard user could not snap the view at all.
+              key={f.mode}
+              // A view-cube face is a BUTTON: it changes the camera.
               role="button"
               tabIndex={0}
-              aria-label={`Snap the view to the ${key.toUpperCase()} axis (${key === 'x' ? 'Right' : key === 'y' ? 'Top' : 'Front'})`}
-              aria-pressed={isAxisActive}
-              onClick={() => handleAxisClick(key)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleAxisClick(key);
-                }
-              }}
+              aria-label={`${f.label} view`}
+              aria-pressed={active}
+              data-cube-face={f.mode}
+              onClick={clickGuard(() => snapTo(f.mode))}
+              onKeyDown={keyActivate(() => snapTo(f.mode))}
               style={{ cursor: 'pointer' }}
             >
-              <title>{`Snap view to ${key.toUpperCase()} axis (${key === 'x' ? 'Right' : key === 'y' ? 'Top' : 'Front'})`}</title>
-              <line
-                x1={CENTER}
-                y1={CENTER}
-                x2={CENTER + nx}
-                y2={CENTER + ny}
-                style={{ stroke: AXIS_COLORS[key] }}
-                strokeWidth={isAxisActive ? 3 : 2}
-                strokeLinecap="round"
+              <title>{active ? `${f.label} view (click for the Active Camera)` : `${f.label} view`}</title>
+              <polygon
+                points={f.pts.map((p) => `${p.x},${p.y}`).join(' ')}
+                style={{
+                  fill: active ? AXIS_COLORS[f.axis] : 'var(--color-overlay-panel-bg)',
+                  stroke: AXIS_COLORS[f.axis],
+                }}
+                fillOpacity={active ? 0.55 : 0.92}
+                strokeWidth={1.25}
+                strokeLinejoin="round"
               />
-              <circle
-                cx={CENTER + nx}
-                cy={CENTER + ny}
-                r={3}
-                style={{ fill: AXIS_COLORS[key] }}
-              />
-              <text
-                x={CENTER + lx}
-                y={CENTER + ly}
-                style={{ fill: isAxisActive ? 'var(--color-overlay-text)' : AXIS_COLORS[key] }}
-                fontSize={7.5}
-                fontWeight={700}
-                fontFamily="system-ui, sans-serif"
-                textAnchor="middle"
-                dominantBaseline="central"
-              >
-                {key.toUpperCase()}
-              </text>
+              {-f.depth > 0.35 && (
+                <text
+                  x={f.center.x}
+                  y={f.center.y}
+                  style={{ fill: 'var(--color-overlay-text)' }}
+                  fontSize={8.5}
+                  fontWeight={700}
+                  fontFamily="system-ui, sans-serif"
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  pointerEvents="none"
+                >
+                  {f.label}
+                </text>
+              )}
             </g>
           );
         })}
+        {/* Axes that point at the viewer, over the faces. */}
+        {axisTips.filter((t) => t.d <= 0).map((t) => (
+          <g key={t.k} pointerEvents="none">
+            <line x1={CENTER} y1={CENTER} x2={t.x} y2={t.y} style={{ stroke: AXIS_COLORS[t.k] }} strokeWidth={2} strokeLinecap="round" />
+            <text x={t.x} y={t.y} style={{ fill: AXIS_COLORS[t.k] }} fontSize={8} fontWeight={700} fontFamily="system-ui, sans-serif" textAnchor="middle" dominantBaseline="central">
+              {t.k.toUpperCase()}
+            </text>
+          </g>
+        ))}
+        {/* Home: back to the Active Camera. */}
+        <g
+          role="button"
+          tabIndex={0}
+          aria-label="Reset to the Active Camera view"
+          data-cube-home=""
+          onClick={clickGuard(handleHome)}
+          onKeyDown={keyActivate(handleHome)}
+          style={{ cursor: 'pointer' }}
+        >
+          <title>Active Camera view</title>
+          <circle cx={SIZE - 12} cy={12} r={8} style={{ fill: 'var(--color-overlay-panel-bg)', stroke: 'var(--color-overlay-panel-border)' }} strokeWidth={1} />
+          <path
+            d={`M ${SIZE - 16} ${13} L ${SIZE - 12} ${9} L ${SIZE - 8} ${13} M ${SIZE - 15} ${12.5} L ${SIZE - 15} ${16} L ${SIZE - 9} ${16} L ${SIZE - 9} ${12.5}`}
+            style={{ stroke: 'var(--color-overlay-text)' }}
+            fill="none"
+            strokeWidth={1.2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </g>
       </svg>
     </div>
   );
 };
-
-

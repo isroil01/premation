@@ -281,7 +281,7 @@ interface ViewContext {
   loaded: ReadonlySet<string>;
   compWidth: number;
   compHeight: number;
-  project: (p: { x: number; y: number; z: number }) => { x: number; y: number };
+  project: (p: { x: number; y: number; z: number }) => { x: number; y: number; depth: number };
   /** The camera layer this view looks through ('' = none). */
   lookedThrough: string;
 }
@@ -383,6 +383,26 @@ function workspaceNodeOf(id: string, zIndex: number, rec: OverlayLayer | undefin
     }
   }
 
+  // Depth-aware picking (AE parity 4.6): how far the layer's surface under a
+  // point is from the view, so the HitTester orders overlapping 3D layers
+  // nearest-first instead of by stacking order.
+  let pickDepthVal: ((p: { x: number; y: number }) => number | null) | undefined;
+  if (M3D) {
+    const m3 = M3D;
+    const wm = worldMatrixVal;
+    const det = wm.a * wm.d - wm.b * wm.c;
+    if (Math.abs(det) > 1e-12) {
+      pickDepthVal = (p) => {
+        const dx = p.x - wm.e;
+        const dy = p.y - wm.f;
+        const lx = (wm.d * dx - wm.c * dy) / det;
+        const ly = (-wm.b * dx + wm.a * dy) / det;
+        const d = ctx.project(Matrix4Math.transformPoint(m3, { x: lx, y: ly, z: 0 })).depth;
+        return Number.isFinite(d) ? d : null;
+      };
+    }
+  }
+
   const facts = treeFacts(id, ctx.time, ctx.loaded);
   return {
     id,
@@ -397,6 +417,7 @@ function workspaceNodeOf(id: string, zIndex: number, rec: OverlayLayer | undefin
     is3D,
     device,
     hitTestLocal: hitTestLocalVal,
+    ...(pickDepthVal ? { pickDepth: pickDepthVal } : {}),
     ...(facts.path ? { pathPoints: facts.path.points, pathClosed: facts.path.closed, pathRotoBezier: facts.path.rotoBezier } : {}),
     ...(facts.masks ? { maskPaths: facts.masks } : {}),
     anchor,

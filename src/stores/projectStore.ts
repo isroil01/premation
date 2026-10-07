@@ -155,13 +155,18 @@ export interface CompositionSettings {
    */
   groundLevel?: number;
   /**
-   * "Show sky as backdrop" — STORED ONLY. The environment probe is an
-   * irradiance field, not a reflection map, so there is nothing to draw behind
-   * the scene yet; the setting exists so a project can carry the intent (and so
-   * the control has a home) and the UI disables it and says so. No renderer
-   * reads this.
+   * "Show sky as backdrop" (AE parity 4.4): the comp's environment light is
+   * drawn behind every layer — its sky, rotation and blur. Same as an
+   * environment light's own "Show environment".
    */
   showSkyBackdrop?: boolean;
+  /** Distance fog / atmosphere over the 3D layers (AE parity 4.8). Absent = off. */
+  fog?: FogSettings;
+  /**
+   * Ground shadows (AE parity 4.3): an invisible floor at the ground level
+   * catches the mapped lights' shadows. Absent = off.
+   */
+  groundShadows?: GroundShadowSettings;
   /**
    * AMBIENT OCCLUSION — contact darkening for the comp's 3D runs.
    *
@@ -188,6 +193,64 @@ export interface SsaoSettings {
   /** Buffer resolution. 'half' is the default: AO is low-frequency and the
    *  shader magnifies it through a linear sampler on the way back. */
   quality: 'half' | 'full';
+}
+
+/** Composition Settings ▸ 3D ▸ Fog. */
+export interface FogSettings {
+  enabled: boolean;
+  mode: 'linear' | 'exponential' | 'exponential2';
+  /** CSS hex. */
+  color: string;
+  /** Linear: where fog starts and is complete, comp px from the camera. */
+  start: number;
+  end: number;
+  /** Exponential: density per 1000 px. */
+  density: number;
+  /** The most fog can hide, 0..100 %. */
+  maxOpacity: number;
+}
+
+export const DEFAULT_FOG: FogSettings = {
+  enabled: false,
+  mode: 'linear',
+  color: '#c8d0d8',
+  start: 1000,
+  end: 6000,
+  density: 0.5,
+  maxOpacity: 100,
+};
+
+export function resolveFog(comp: Pick<CompositionSettings, 'fog'> | undefined): FogSettings {
+  const f = comp?.fog;
+  if (!f) return DEFAULT_FOG;
+  const n = (v: unknown, fb: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : fb);
+  return {
+    enabled: f.enabled === true,
+    mode: f.mode === 'exponential' || f.mode === 'exponential2' ? f.mode : 'linear',
+    color: typeof f.color === 'string' && /^#[0-9a-f]{6}$/i.test(f.color) ? f.color : DEFAULT_FOG.color,
+    start: Math.max(0, n(f.start, DEFAULT_FOG.start)),
+    end: Math.max(1, n(f.end, DEFAULT_FOG.end)),
+    density: Math.max(0, n(f.density, DEFAULT_FOG.density)),
+    maxOpacity: Math.max(0, Math.min(100, n(f.maxOpacity, DEFAULT_FOG.maxOpacity))),
+  };
+}
+
+/** Composition Settings ▸ 3D ▸ Ground shadows. */
+export interface GroundShadowSettings {
+  enabled: boolean;
+  /** 0..100 %. */
+  opacity: number;
+}
+
+export const DEFAULT_GROUND_SHADOWS: GroundShadowSettings = { enabled: false, opacity: 60 };
+
+export function resolveGroundShadows(comp: Pick<CompositionSettings, 'groundShadows'> | undefined): GroundShadowSettings {
+  const g = comp?.groundShadows;
+  if (!g) return DEFAULT_GROUND_SHADOWS;
+  return {
+    enabled: g.enabled === true,
+    opacity: typeof g.opacity === 'number' && Number.isFinite(g.opacity) ? Math.max(0, Math.min(100, g.opacity)) : DEFAULT_GROUND_SHADOWS.opacity,
+  };
 }
 
 /** The values an absent `ssao` block means. */

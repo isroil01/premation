@@ -94,6 +94,10 @@ std::shared_ptr<const EnvAsset> exr_sky(const std::string& assetId, const std::s
                                            kEnvSpecHeight, true);
   out->sh = sh_project(base);
   out->specular = build_env_specular_atlas(base, env_atlas_key("asset:" + assetId + "#" + hash_env_pixels(base)));
+  // The HDR atlas from the same linear float planes, at the higher band size.
+  const EnvPixels hdr = resample_equirect(std::span<const float>(rgba->rgba), rgba->width, rgba->height, kEnvHdrWidth,
+                                          kEnvHdrHeight, true);
+  out->hdr = build_env_hdr_atlas(hdr, "hdr:asset:" + assetId + "#" + hash_env_pixels(hdr));
   const std::scoped_lock lock(cache().mu);
   return cache().skies.emplace(key, std::move(out)).first->second;
 }
@@ -203,6 +207,8 @@ std::shared_ptr<const EnvAsset> environment_asset(const doc::Document& d, std::s
   const EnvPixels base = resample_equirect(px, static_cast<int>(w), static_cast<int>(h), kEnvSpecWidth, kEnvSpecHeight, false);
   out->sh = sh_project(base);
   out->specular = build_env_specular_atlas(base, env_atlas_key("asset:" + assetId + "#" + hash_env_pixels(base)));
+  const EnvPixels hdr = resample_equirect(px, static_cast<int>(w), static_cast<int>(h), kEnvHdrWidth, kEnvHdrHeight, false);
+  out->hdr = build_env_hdr_atlas(hdr, "hdr:asset:" + assetId + "#" + hash_env_pixels(hdr));
   const std::scoped_lock lock(cache().mu);
   return cache().skies.emplace(key, std::move(out)).first->second;
 }

@@ -25,6 +25,21 @@ struct Object {
   shadow2Axis : vec4<f32>,
   shadow2Origin : vec4<f32>,
   shadow2Params : vec4<f32>,
+  shadow3Matrix : mat4x4<f32>,
+  shadow3Axis : vec4<f32>,
+  shadow3Origin : vec4<f32>,
+  shadow3Params : vec4<f32>,
+  shadow4Matrix : mat4x4<f32>,
+  shadow4Axis : vec4<f32>,
+  shadow4Origin : vec4<f32>,
+  shadow4Params : vec4<f32>,
+  envSh : array<vec4<f32>, 9>,
+  envShParams : vec4<f32>,
+  fogParams : vec4<f32>,
+  fogColor : vec4<f32>,
+  fogEye : vec4<f32>,
+  layerReflParams : vec4<f32>,
+  layerReflMatrix : mat4x4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 
@@ -41,6 +56,12 @@ struct Object {
 // The run's SECOND shadow map, 13/14 (plan B2) — same contract as 9/10.
 @group(0) @binding(13) var shadow2Tex : texture_2d<f32>;
 @group(0) @binding(14) var shadow2Smp : sampler;
+// AE parity 4.3: the run's third and fourth shadow-mapped lights, 16/17 — the
+// same contract as 9/10, sampled with the first map's nearest sampler.
+@group(0) @binding(16) var shadow3Tex : texture_2d<f32>;
+@group(0) @binding(17) var shadow4Tex : texture_2d<f32>;
+// AE parity 4.8: this surface's planar reflection of the run's other layers, 18.
+@group(0) @binding(18) var layerReflTex : texture_2d<f32>;
 
 // The run's ambient-occlusion buffer, 11/12. Its own sampler for the opposite
 // reason the shadow map has one: this one must be LINEAR (it is a half-res
@@ -58,6 +79,8 @@ struct VOut {
   @location(0) uv : vec2<f32>,
   @location(1) world : vec3<f32>,
   @location(2) nrm : vec3<f32>,
+  // AE parity 4.7: the vertex colour (glTF COLOR_0, linear rgba; white when the mesh has none).
+  @location(3) col : vec4<f32>,
 };
 
 // Inverse-transpose of the model's 3×3, so a non-uniformly scaled layer still
@@ -72,13 +95,14 @@ fn normalMatrix(m : mat3x3<f32>) -> mat3x3<f32> {
 }
 
 @vertex
-fn vs(@location(0) pos : vec3<f32>, @location(1) nrm : vec3<f32>, @location(2) uv : vec2<f32>) -> VOut {
+fn vs(@location(0) pos : vec3<f32>, @location(1) nrm : vec3<f32>, @location(2) uv : vec2<f32>, @location(3) col : vec4<f32>) -> VOut {
   var o : VOut;
   o.pos = obj.mvp * vec4<f32>(pos, 1.0);
   o.uv = obj.uvRect.xy + uv * obj.uvRect.zw;
   o.world = (obj.model * vec4<f32>(pos, 1.0)).xyz;
   let m = mat3x3<f32>(obj.model[0].xyz, obj.model[1].xyz, obj.model[2].xyz);
   o.nrm = normalMatrix(m) * nrm;
+  o.col = col;
   return o;
 }
 
@@ -119,8 +143,12 @@ fn envFetch(dir : vec3<f32>, level : f32) -> vec3<f32> {
   // conditional: WGSL's uniformity analysis rejects implicit derivatives
   // there, and there is nothing to derive from anyway.
   let c = textureSampleLevel(envTex, envSmp, envUv(dir, level), 0.0).rgb;
-  // sqrt transfer + one scale - see EnvSpecularMap's encoding note.
-  return c * c * obj.envParams.w;
+  // sqrt transfer + one scale - see EnvSpecularMap's encoding note. A
+  // NEGATIVE scale marks a linear float atlas (AE parity 4.4: an HDRI's
+  // rgba16float atlas, or a live comp / video environment prefiltered on the
+  // GPU): no transfer, scale -w.
+  let w = obj.envParams.w;
+  return select(c * c * w, c * -w, w < 0.0);
 }
 
 fn envSpecular(dir : vec3<f32>, roughness : f32) -> vec3<f32> {
@@ -167,7 +195,10 @@ fn envBRDF(NdotV : f32, roughness : f32) -> vec2<f32> {
   caster bounds could not cover, which is most of a comp.
 */
 fn unpackShadowDepth(c : vec4<f32>) -> f32 {
-  return dot(c.rgb, vec3<f32>(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+  // AE parity 4.3: float depth — the maps are rgba16float, r the distance
+  // rounded to half precision and g the remainder × 4096 (about 24 bits in
+  // all). A cleared map (1, 1) reads past the far plane: lit.
+  return c.r + c.g * (1.0 / 4096.0);
 }
 
 // One body for both maps: the block's four uniforms and the map's handles are
@@ -218,6 +249,91 @@ fn shadowFactor(world : vec3<f32>, n : vec3<f32>) -> f32 {
 fn shadowFactor2(world : vec3<f32>, n : vec3<f32>) -> f32 {
   if (obj.shadow2Params.x < 0.0005) { return 1.0; }
   return shadowTerm(world, n, obj.shadow2Matrix, obj.shadow2Axis, obj.shadow2Origin, obj.shadow2Params, shadow2Tex, shadow2Smp);
+}
+
+// AE parity 4.3: the third and fourth mapped lights — the same arithmetic.
+fn shadowFactor3(world : vec3<f32>, n : vec3<f32>) -> f32 {
+  if (obj.shadow3Params.x < 0.0005) { return 1.0; }
+  return shadowTerm(world, n, obj.shadow3Matrix, obj.shadow3Axis, obj.shadow3Origin, obj.shadow3Params, shadow3Tex, shadowSmp);
+}
+fn shadowFactor4(world : vec3<f32>, n : vec3<f32>) -> f32 {
+  if (obj.shadow4Params.x < 0.0005) { return 1.0; }
+  return shadowTerm(world, n, obj.shadow4Matrix, obj.shadow4Axis, obj.shadow4Origin, obj.shadow4Params, shadow4Tex, shadowSmp);
+}
+
+/*
+  AE parity 4.4: image-based DIFFUSE from the environment's band-2 SH probe —
+  irradiance (already × the band weights, the light's intensity and 1/π, see
+  threed.cpp) evaluated at the normal, so an environment light no longer
+  spends light slots on a derived rig. envShParams: x = on, y = the shadow
+  slot casting the environment's key shadow (−1 none), z = how much of the
+  irradiance that shadow can take, w = the environment rotation (radians).
+  Same basis and axes as env_light.cpp (−y is up).
+*/
+fn envIrradiance(nIn : vec3<f32>) -> vec3<f32> {
+  let a = -obj.envShParams.w;
+  let c = cos(a);
+  let s = sin(a);
+  let n = vec3<f32>(nIn.x * c + nIn.z * s, nIn.y, -nIn.x * s + nIn.z * c);
+  var r = obj.envSh[0].rgb * 0.282095;
+  r = r + obj.envSh[1].rgb * (0.488603 * n.y);
+  r = r + obj.envSh[2].rgb * (0.488603 * n.z);
+  r = r + obj.envSh[3].rgb * (0.488603 * n.x);
+  r = r + obj.envSh[4].rgb * (1.092548 * n.x * n.y);
+  r = r + obj.envSh[5].rgb * (1.092548 * n.y * n.z);
+  r = r + obj.envSh[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0));
+  r = r + obj.envSh[7].rgb * (1.092548 * n.x * n.z);
+  r = r + obj.envSh[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+  return max(r, vec3<f32>(0.0));
+}
+
+/*
+  AE parity 4.8: distance fog. fogParams: x = mode (0 off, 1 linear, 2
+  exponential, 3 exponential²), y = start, z = end (linear), w = density per
+  1000 px; fogColor: working-space rgb + the most fog can hide; fogEye: the
+  camera. Packed for unlit draws too — fog is not lighting.
+*/
+fn applyFog(world : vec3<f32>, rgb : vec3<f32>) -> vec3<f32> {
+  let mode = i32(obj.fogParams.x + 0.5);
+  if (mode == 0) { return rgb; }
+  let d = distance(world, obj.fogEye.xyz);
+  var f = 0.0;
+  if (mode == 1) {
+    f = clamp((d - obj.fogParams.y) / max(obj.fogParams.z - obj.fogParams.y, 1e-3), 0.0, 1.0);
+  } else {
+    let k = max(d - obj.fogParams.y, 0.0) * obj.fogParams.w * 0.001;
+    f = select(1.0 - exp(-k * k), 1.0 - exp(-k), mode == 2);
+  }
+  return mix(rgb, obj.fogColor.rgb, f * obj.fogColor.a);
+}
+
+/*
+  AE parity 4.8: layer-to-layer reflections. The run's other layers are drawn
+  mirrored about this surface through the same camera (threed.cpp) into 18,
+  and sampled here at this fragment's own screen position. layerReflParams:
+  x = strength (0 = off), y = blur radius in UV (from Reflection Sharpness),
+  z = 1 to flip v (WebGPU), w = Fresnel rolloff.
+*/
+fn layerReflection(world : vec3<f32>, n : vec3<f32>) -> vec3<f32> {
+  if (obj.layerReflParams.x < 0.0005) { return vec3<f32>(0.0); }
+  let clip = obj.layerReflMatrix * vec4<f32>(world, 1.0);
+  if (clip.w <= 1e-6) { return vec3<f32>(0.0); }
+  var uv = (clip.xy / clip.w) * 0.5 + vec2<f32>(0.5);
+  if (obj.layerReflParams.z > 0.5) { uv.y = 1.0 - uv.y; }
+  let b = obj.layerReflParams.y;
+  var acc = vec4<f32>(0.0);
+  for (var y = -1; y <= 1; y = y + 1) {
+    for (var x = -1; x <= 1; x = x + 1) {
+      let q = clamp(uv + vec2<f32>(f32(x), f32(y)) * b, vec2<f32>(0.0005), vec2<f32>(0.9995));
+      acc = acc + textureSampleLevel(layerReflTex, envSmp, q, 0.0);
+    }
+  }
+  let v = normalize(obj.eyeLit.xyz - world);
+  let ndv = clamp(abs(dot(n, v)), 0.0, 1.0);
+  let f0 = obj.reflParams.w;
+  let fres = f0 + (1.0 - f0) * pow(1.0 - ndv, 5.0);
+  // Premultiplied: where nothing is reflected the sum adds nothing.
+  return (acc.rgb / 9.0) * obj.layerReflParams.x * mix(1.0, fres, obj.layerReflParams.w);
 }
 
 /*
@@ -281,7 +397,7 @@ fn shadeAlpha3d(world : vec3<f32>) -> f32 {
 }
 
 fn shade3dN(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
-  if (obj.eyeLit.w < 0.5) { return baseRgb; }
+  if (obj.eyeLit.w < 0.5) { return applyFog(world, baseRgb); }
   /*
     Two-sided or one-sided, from the lit flag.
 
@@ -329,6 +445,13 @@ fn shade3dN(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f
   let shTerm2 = shadowFactor2(world, N);
   let shadow2Idx = i32(obj.shadow2Origin.w + 0.5);
   let shadow2On = obj.shadow2Params.x > 0.0005;
+  // The third and fourth mapped lights (AE parity 4.3).
+  let shTerm3 = shadowFactor3(world, N);
+  let shadow3Idx = i32(floor(obj.shadow3Origin.w + 0.5));
+  let shadow3On = obj.shadow3Params.x > 0.0005;
+  let shTerm4 = shadowFactor4(world, N);
+  let shadow4Idx = i32(floor(obj.shadow4Origin.w + 0.5));
+  let shadow4On = obj.shadow4Params.x > 0.0005;
   // Sampled once, beside the shadow term and for the same reasons: it is a fact
   // about this fragment, and a tap per light would be seven wasted.
   let aoTerm = aoFactor(world);
@@ -410,6 +533,8 @@ fn shade3dN(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f
     // means: this lamp cannot see you.
     if (shadowOn && shadowIdx == i) { atten = atten * shTerm; }
     if (shadow2On && shadow2Idx == i) { atten = atten * shTerm2; }
+    if (shadow3On && shadow3Idx == i) { atten = atten * shTerm3; }
+    if (shadow4On && shadow4Idx == i) { atten = atten * shTerm4; }
     let k = gain * lambert * atten;
     if (pbr) {
       // Cook-Torrance: D (GGX) · G (Smith-Schlick) · F (Schlick) / (4 N·L N·V),
@@ -438,6 +563,20 @@ fn shade3dN(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f
       let H = normalize(toLight + V);
       spec = spec + colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
     }
+  }
+  // Image-based diffuse (AE parity 4.4), under AO and the environment's own
+  // key shadow; a metal has no diffuse to light.
+  if (obj.envShParams.x > 0.5) {
+    let Vd = normalize(obj.eyeLit.xyz - world);
+    let Nd = select(N, -N, twoSided > 0.5 && dot(N, Vd) < 0.0);
+    var envShadow = 1.0;
+    if (obj.envShParams.y > -0.5) {
+      let es = i32(obj.envShParams.y + 0.5);
+      var t = shTerm;
+      if (es == 1) { t = shTerm2; } else if (es == 2) { t = shTerm3; } else if (es == 3) { t = shTerm4; }
+      envShadow = mix(1.0, t, obj.envShParams.z);
+    }
+    diff = diff + envIrradiance(Nd) * aoTerm * envShadow * select(1.0, 1.0 - metal, pbr);
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
   if (toonFlag) {
@@ -496,11 +635,11 @@ fn shade3dN(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f
   if (pbr) {
     // Diffuse is already Fresnel-weighted; the specular lobe is radiance, not
     // an intensity-scaled highlight, so specI does not apply.
-    return baseRgb * diff + clamp(spec, vec3<f32>(0.0), vec3<f32>(8.0));
+    return applyFog(world, baseRgb * diff + clamp(spec, vec3<f32>(0.0), vec3<f32>(8.0)) + layerReflection(world, N));
   }
   // Metal tints the highlight by the SURFACE colour rather than the light's:
   // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
-  return baseRgb * diff + spec * specI * mix(vec3<f32>(1.0), baseRgb, metal);
+  return applyFog(world, baseRgb * diff + spec * specI * mix(vec3<f32>(1.0), baseRgb, metal) + layerReflection(world, N));
 }
 
 fn unpremul(t : vec4<f32>) -> vec4<f32> {
@@ -603,11 +742,11 @@ fn workingToStorage(rgb : vec3<f32>) -> vec3<f32> { return rgb; }
 fn storageToWorking(rgb : vec3<f32>) -> vec3<f32> { return rgb; }
 
 @fragment
-fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>, @location(2) nrm : vec3<f32>) -> @location(0) vec4<f32> {
+fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>, @location(2) nrm : vec3<f32>, @location(3) col : vec4<f32>) -> @location(0) vec4<f32> {
   var c = unpremul(textureSample(tex, smp, uv)) * obj.tint;
   // Advanced-3D Transparency folds into the SOURCE alpha, so every later use
   // (premultiply, matte, the -linear rewrites) sees one consistent coverage.
-  c.a = c.a * shadeAlpha3d(world);
+  c.a = c.a * col.a * shadeAlpha3d(world);
   let lin = workingFromSample(c.rgb, 0.0);
   let ws = select(lin, linearSrgbToAcesCg(lin), obj.srcSpace.y > 0.5);
   let v = vec4<f32>(ws, 1.0);
@@ -616,7 +755,7 @@ fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>, @location(2) 
   let lutR = textureSample(lutTex, smp, vec2<f32>(lutIn.r, 0.5)).r;
   let lutG = textureSample(lutTex, smp, vec2<f32>(lutIn.g, 0.5)).g;
   let lutB = textureSample(lutTex, smp, vec2<f32>(lutIn.b, 0.5)).b;
-  let graded = srgbToLinearRgb(vec3<f32>(lutR, lutG, lutB));
+  let graded = srgbToLinearRgb(vec3<f32>(lutR, lutG, lutB)) * col.rgb;
   let lit = shade3dN(world, nrm, graded);
   return vec4<f32>(lit * c.a, c.a);
 }
