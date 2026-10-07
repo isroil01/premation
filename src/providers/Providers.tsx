@@ -2900,6 +2900,25 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
               getEventBus().emit('RevealAnimatedProps', { nodeIds: [...useSelectionStore.getState().ids], mode: 'modified' });
             },
           });
+          // AE's timeline chords (2026-10-07).
+          registry.register({
+            id: asCommandId('timeline.toggleSwitchesModes'), label: 'Toggle Switches / Modes', icon: 'layout',
+            shortcut: { key: 'F4' },
+            enabled: () => true,
+            execute: () => useUIStore.getState().cycleTimelineColumns(),
+          });
+          registry.register({
+            id: asCommandId('timeline.goToTime'), label: 'Go to Time…', icon: 'clock',
+            shortcut: { key: 'j', alt: true, shift: true },
+            enabled: () => true,
+            execute: () => getEventBus().emit('TimelineGoToTime', {}),
+          });
+          registry.register({
+            id: asCommandId('timeline.find'), label: 'Search Timeline', icon: 'search',
+            shortcut: { key: 'f', meta: true },
+            enabled: () => true,
+            execute: () => getEventBus().emit('TimelineFocusSearch', {}),
+          });
           getShortcutManager().rehydrateFromRegistry();
         } catch { /* ignore */ }
 

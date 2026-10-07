@@ -133,7 +133,8 @@ describe('one control, one home', () => {
     renderRows();
     expect(screen.getAllByRole('button', { name: 'Play' })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /^Preview resolution:/ })).toHaveLength(1);
-    expect(screen.queryAllByRole('button', { name: 'Hide Shy Layers' })).toHaveLength(0);
+    // AE's comp switch in the timeline header is the one Hide Shy control.
+    expect(screen.queryAllByRole('button', { name: 'Hide Shy Layers' }).length).toBeLessThanOrEqual(1);
     expect(screen.queryAllByRole('button', { name: 'View Options' })).toHaveLength(0);
     // The tour's anchors still resolve.
     expect(document.querySelector('[role="toolbar"][aria-label="Viewport transport and tools"]')).not.toBeNull();

@@ -169,16 +169,19 @@ describe('the two columns are the columns beneath them', () => {
   });
 });
 
-it('the seven small toggles are rows of the View menu, not buttons in the row', () => {
+it('the listing toggles are rows of the View menu; Hide Shy is AE\'s header switch', () => {
   const t = toolbar();
+  expect(within(t).getByRole('button', { name: 'Hide Shy Layers' })).toBeInTheDocument();
+  expect(within(t).getByRole('button', { name: 'Enable Motion Blur' })).toBeInTheDocument();
+  expect(within(t).getByRole('button', { name: 'Draft 3D' })).toBeInTheDocument();
   for (const name of [
-    'Hide Shy Layers', 'Proportional Scrubbing', 'Highlight what changed', 'Transcript lane',
+    'Proportional Scrubbing', 'Highlight what changed', 'Transcript lane',
     'Toggle Switches / Modes', 'Timeline columns', 'Change timeline row height',
   ]) {
     expect(within(t).queryByRole('button', { name })).toBeNull();
   }
   fireEvent.click(within(t).getByRole('button', { name: 'Timeline view options' }));
-  expect(screen.getByRole('menuitemcheckbox', { name: 'Hide Shy Layers' })).toBeInTheDocument();
+  expect(screen.queryByRole('menuitemcheckbox', { name: 'Hide Shy Layers' })).toBeNull();
   expect(screen.getByRole('menuitemcheckbox', { name: /^Proportional Scrubbing/ })).toBeInTheDocument();
   expect(screen.getByRole('menuitem', { name: /^Highlight what changed/ })).toBeInTheDocument();
   expect(screen.getByRole('menuitemcheckbox', { name: /^Transcript lane/ })).toBeInTheDocument();
@@ -193,9 +196,10 @@ it('the View menu rows write the same stores the buttons did', () => {
   const propBefore = usePropertySelectionStore.getState().proportional;
   // Checkbox rows keep the menu open (a checkbox that closed the menu would
   // make flipping two settings cost four clicks); a submenu row closes it.
-  fireEvent.click(within(t).getByRole('button', { name: 'Timeline view options' }));
-  fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Hide Shy Layers' }));
+  fireEvent.click(within(t).getByRole('button', { name: 'Hide Shy Layers' }));
   expect(useUIStore.getState().globalShy).toBe(!shyBefore);
+  useUIStore.getState().setGlobalShy(shyBefore);
+  fireEvent.click(within(t).getByRole('button', { name: 'Timeline view options' }));
   fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /^Proportional Scrubbing/ }));
   expect(usePropertySelectionStore.getState().proportional).toBe(!propBefore);
 
@@ -231,20 +235,18 @@ describe('the shed ladder', () => {
       expect(within(left).getByRole('button', { name: 'Toggle Graph Editor' })).toBeInTheDocument();
       expect(within(left).getByRole('button', { name: 'Snap in timeline' })).toBeInTheDocument();
       const more = within(left).getByRole('button', { name: 'More timeline tools' });
-      expect(within(left).getAllByRole('button')).toHaveLength(4); // timecode, snap, graph editor, ⋯
+      expect(within(left).getAllByRole('button')).toHaveLength(7); // timecode, snap, shy, motion blur, draft 3D, graph editor, ⋯
       // The navigator never leaves its own column.
       expect(within(navCol(t)).getByRole('scrollbar', { name: 'Time navigator' })).toBeInTheDocument();
 
       // View's rows are the ⋯'s rows, reaching the same stores.
       fireEvent.click(more);
       expect(screen.getByRole('menuitem', { name: /^Timeline tool:/ })).toBeInTheDocument();
-      expect(screen.getByRole('menuitemcheckbox', { name: 'Hide Shy Layers' })).toBeInTheDocument();
       expect(screen.getByRole('menuitem', { name: /^Row height/ })).toBeInTheDocument();
       expect(screen.getByRole('menuitem', { name: 'Preview cache' })).toBeInTheDocument();
-      const shyBefore = useUIStore.getState().globalShy;
-      fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Hide Shy Layers' }));
-      expect(useUIStore.getState().globalShy).toBe(!shyBefore);
-      useUIStore.getState().setGlobalShy(shyBefore);
+      const propBefore = usePropertySelectionStore.getState().proportional;
+      fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /^Proportional Scrubbing/ }));
+      expect(usePropertySelectionStore.getState().proportional).toBe(!propBefore);
     });
   });
 });

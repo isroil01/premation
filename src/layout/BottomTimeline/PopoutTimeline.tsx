@@ -10,6 +10,7 @@ import { useMemo, useRef, useState } from 'react';
 import { clampPps } from '@layout/Timeline/zoomAnchor';
 import { BottomTimeline } from './BottomTimeline';
 import { TransportBar } from '@layout/Workspace/TransportBar';
+import { TimelineZoom } from '@layout/StatusBar/TimelineZoom';
 import { useTimelinePixelsPerSecond, useTimelineRuler, useTimelineTracks } from '@layout/Timeline/useTimelineModel';
 import type { TimelineModel, TimelineTrack } from '@layout/Timeline';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
@@ -84,6 +85,11 @@ export function PopoutTimeline(): JSX.Element {
         setExpandedIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
       }}
     />
+      </div>
+      {/* The docked timeline's zoom is in the editor's status bar, which this
+          window does not have — so it gets its own, at the foot like AE's. */}
+      <div style={{ flex: 'none', display: 'flex', justifyContent: 'flex-end', padding: '2px 8px', borderTop: '1px solid var(--color-border-subtle)' }}>
+        <TimelineZoom />
       </div>
     </div>
   );

@@ -60,8 +60,10 @@ import { getTimelineViewport, scrollTimelineTo, subscribeTimelineViewport } from
 import { TIMELINE_LEFT_OFFSET, resolveTrackHeaderWidth } from '@layout/Timeline/timelineShared';
 import { navigatorColumnFor } from './toolbarGeometry';
 import { TimelineToolbarOverflow } from './TimelineToolbarOverflow';
+import { TimelineCompSwitches } from './TimelineCompSwitches';
 import { fitTimelineToComposition } from '@layout/Timeline/timelineFit';
 import { useTranscriptStore } from '@layout/Transcript';
+import { getEventBus } from '@core/events/EventBus';
 import styles from './BottomTimeline.module.css';
 
 export interface BottomTimelineProps extends Omit<TimelineProps, 'className'> {
@@ -186,7 +188,6 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const graphEditorOpen = useUIStore((s) => s.graphEditorOpen);
   const setGraphEditorOpen = useUIStore((s) => s.setGraphEditorOpen);
   const globalShy = useUIStore((s) => s.globalShy);
-  const setGlobalShy = useUIStore((s) => s.setGlobalShy);
   // AE's "Toggle Switches / Modes" — the switch column and the Mode/TrkMat/
   // Parent columns compete for the same width, and showing both needs a header
   // wider than any default panel. See `TimelineColumns`.
@@ -302,6 +303,18 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
 
   // ── Go-to-time, inline ────────────────────────────────────────────────────
   const [goToOpen, setGoToOpen] = useState(false);
+  // AE's Go to Time (Alt+Shift+J) opens the timecode field; Ctrl+F puts
+  // focus in the filter (registered commands, Providers).
+  useEffect(() => {
+    const bus = getEventBus();
+    const offGoTo = bus.on('TimelineGoToTime', () => setGoToOpen(true));
+    const offFind = bus.on('TimelineFocusSearch', () => {
+      const input = toolbarRef.current?.querySelector<HTMLInputElement>('input[aria-label="Search layers and properties"]');
+      input?.focus();
+      input?.select();
+    });
+    return () => { offGoTo.dispose(); offFind.dispose(); };
+  }, []);
   const goToRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     if (!goToOpen) return;
@@ -412,7 +425,6 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
         // The edit tools and Playhead Follow (AE's timeline has no tool row).
         ...timelineTools.items,
         { type: 'separator' },
-        { type: 'checkbox', id: 'tl-view-shy', label: 'Hide Shy Layers', checked: globalShy, onChange: setGlobalShy },
         {
           type: 'checkbox',
           id: 'tl-view-proportional',
@@ -743,6 +755,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
             />
 
             <div className={styles.timelineSwitchesGroup}>
+              <TimelineCompSwitches />
               {/*
                 The Graph Editor switch, with its NAME. It was a lone curve
                 glyph among a dozen icon toggles — the one mode switch on the

@@ -4,7 +4,7 @@
  * navigator) and a category accordion heading. Split out of `Timeline.tsx`.
  */
 
-import { memo, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { SelectModifiers } from './trackRangeSelect';
 import { cn } from '@utils/cn';
 import { Icon, type IconName } from '@components/Icon';
@@ -26,10 +26,10 @@ import { extraColumnValue, type TimelineExtraColumn } from './timelineColumns';
 import { mirrorStretchPercent } from '@core/mirror/motionAssist';
 import { useTimelineNameColumnStore } from '@stores/timelineNameColumnStore';
 import styles from './Timeline.module.css';
-import { ColorPicker } from '@components/ColorPicker';
 import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } from '@components/MatteControl/matteMenu';
 import { areRowPropsEqual } from './rowMemo';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
+import { LABEL_COLORS } from '@core/scene/labelColor';
 import {
   collapseSwitchKind,
   toggleCollapseSwitch,
@@ -100,6 +100,8 @@ export const TrackHeader = memo(function TrackHeader({
   onTrackColorChange,
   onExtraColumnEdit,
   startFrame = 0,
+  renameNonce,
+  onContextMenu,
   showSwitches = true,
   showModes = true,
   extraColumns,
@@ -145,6 +147,10 @@ export const TrackHeader = memo(function TrackHeader({
   onExtraColumnEdit?: (col: TimelineExtraColumn, value: number) => void;
   /** The comp's first frame number: In / Out read on the same axis as the timecode. */
   startFrame?: number;
+  /** Changes when the list asks this row to start a rename (AE's Enter). */
+  renameNonce?: number;
+  /** Right-click: the layer menu (AE's). */
+  onContextMenu?: (clientX: number, clientY: number) => void;
   /** AE's Toggle Switches / Modes — see `TimelineProps['columns']`. */
   showSwitches?: boolean;
   showModes?: boolean;
@@ -184,12 +190,21 @@ export const TrackHeader = memo(function TrackHeader({
   const [draft, setDraft] = useState(track.name);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const startRename = (e: React.MouseEvent): void => {
-    e.stopPropagation();
+  const beginRename = (): void => {
+    if (!onRename) return;
     setDraft(track.name);
     setEditing(true);
     setTimeout(() => { inputRef.current?.select(); }, 10);
   };
+  const startRename = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    beginRename();
+  };
+  // AE's Enter on the focused row (the list sends a fresh nonce).
+  useEffect(() => {
+    if (renameNonce !== undefined) beginRename();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new request starts a rename
+  }, [renameNonce]);
   const commitRename = (): void => {
     setEditing(false);
     const trimmed = draft.trim();
@@ -257,6 +272,11 @@ export const TrackHeader = memo(function TrackHeader({
       data-locked={locked || undefined}
       onClick={(e) => onClick({ shift: e.shiftKey, meta: e.ctrlKey || e.metaKey })}
       onDoubleClick={(e) => onActivate(e.altKey)}
+      onContextMenu={(e) => {
+        if (!onContextMenu) return;
+        e.preventDefault();
+        onContextMenu(e.clientX, e.clientY);
+      }}
       onFocus={onRowFocus}
       onKeyDown={(e) => {
         // Enter, Space and the arrows belong to the LISTBOX, which handles
@@ -272,7 +292,7 @@ export const TrackHeader = memo(function TrackHeader({
       tabIndex={active ? 0 : -1}
       aria-selected={selected}
       aria-label={track.name}
-      title="↑ ↓ to move · Enter to expand · Space to hide · F2 to focus"
+      title="↑ ↓ to move · → ← to twirl · Enter to rename · Space to hide · F2 to open · right-click for the layer menu"
     >
       <div className={styles.preInfoCol}>
         <button
@@ -349,28 +369,25 @@ export const TrackHeader = memo(function TrackHeader({
         </div>
         <span className={styles.trackIndex}>{index}</span>
         {typeof track.nodeColor === 'string' && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            // AE's label menu carries "Select Label Group"; the swatch's own
-            // picker is a colour field, so the verb lives on its right-click.
+          // AE's label: a swatch whose click opens the NAMED label menu (None,
+          // the palette, Select Label Group) — not a free colour field.
+          <button
+            type="button"
+            className={styles.labelSwatch}
+            style={{ background: track.nodeColor || 'transparent' }}
+            aria-label={`Label: ${labelNameOf(track.nodeColor)}`}
+            title={`Label: ${labelNameOf(track.nodeColor)} — click to change`}
+            onClick={(e) => {
+              e.stopPropagation();
+              const r = e.currentTarget.getBoundingClientRect();
+              openContextMenu(r.left, r.bottom, labelMenuItems(track.id, track.nodeColor, onTrackColorChange));
+            }}
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              openContextMenu(e.clientX, e.clientY, [
-                { id: 'select-label-group', label: 'Select Label Group', onSelect: () => { selectLabelGroup(track.id); } },
-              ]);
+              openContextMenu(e.clientX, e.clientY, labelMenuItems(track.id, track.nodeColor, onTrackColorChange));
             }}
-            title="Right-click: Select Label Group"
-            style={{ display: 'inline-flex', alignItems: 'center' }}
-          >
-            <ColorPicker
-              value={track.nodeColor || '#5282b8'}
-              onChange={(hex) => onTrackColorChange?.(track.id, hex)}
-              compact
-              alpha={false}
-              aria-label="Layer label color"
-            />
-          </div>
+          />
         )}
         <button
           type="button"
@@ -1042,4 +1059,33 @@ function sourceNameOf(layerId: string): string | null {
   const source = m.layer(layerId)?.source;
   if (!source) return null;
   return m.item(source)?.name ?? m.comp(source)?.settings.name ?? null;
+}
+
+/** The label's name, AE-style (a custom colour reads "Custom"). */
+function labelNameOf(color: string | undefined): string {
+  if (!color) return 'None';
+  return LABEL_COLORS.find((l) => l.color.toLowerCase() === color.toLowerCase())?.label ?? 'Custom';
+}
+
+/** AE's label menu: None, the named palette (the current one ticked), Select Label Group. */
+function labelMenuItems(
+  trackId: string,
+  current: string | undefined,
+  onTrackColorChange: ((trackId: string, color: string) => void) | undefined,
+): ContextMenuItem[] {
+  const isCurrent = (c: string): boolean => !!current && current.toLowerCase() === c.toLowerCase();
+  return [
+    ...LABEL_COLORS.map<ContextMenuItem>((l) => ({
+      id: `label-${l.id}`,
+      label: (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <span aria-hidden style={{ width: 10, height: 10, background: l.color, display: 'inline-block' }} />
+          {l.label}{isCurrent(l.color) ? '  ✓' : ''}
+        </span>
+      ),
+      onSelect: () => onTrackColorChange?.(trackId, l.color),
+    })),
+    { id: 'label-sep', separator: true },
+    { id: 'select-label-group', label: 'Select Label Group', onSelect: () => { selectLabelGroup(trackId); } },
+  ];
 }

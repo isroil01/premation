@@ -2486,3 +2486,18 @@
   pointer-events: none;
   z-index: 3;
 }
+
+/* The layer's label swatch (AE): a flat chip that opens the named label menu. */
+.labelSwatch {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--color-border-structural);
+  cursor: pointer;
+}
+
+.labelSwatch:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}

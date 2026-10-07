@@ -378,6 +378,8 @@ function Timeline({
   // narrowing it hides columns behind an edge you can scroll back — which is
   // the AE behaviour, and does not force the panel to a width the user did not
   // ask for. See `.colHeads` / `.trackHeaderScroller`.
+  /** AE's Enter-to-rename on the focused row: the row starts its own edit when its nonce changes. */
+  const [renameRequest, setRenameRequest] = useState<{ id: string; n: number } | null>(null);
   // AE's Layer Name / Source Name toggle (the name column's head).
   const nameColumn = useTimelineNameColumnStore((st) => st.mode);
   const toggleNameColumn = useTimelineNameColumnStore((st) => st.toggle);
@@ -943,7 +945,19 @@ function Timeline({
         case 'End':
           move(ids.length - 1);
           return;
+        // AE: Enter renames the layer (2026-10-07). Twirling is the tree
+        // keys: → opens the row, ← closes it (Alt: the layer and everything
+        // under it).
         case 'Enter': {
+          e.preventDefault();
+          e.stopPropagation();
+          setRenameRequest({ id: here, n: Date.now() });
+          return;
+        }
+        case 'ArrowRight':
+        case 'ArrowLeft': {
+          const open = expanded.has(here);
+          if ((e.key === 'ArrowRight') === open) return;
           e.preventDefault();
           e.stopPropagation();
           toggleExpandRow(here, e.altKey);
@@ -958,7 +972,7 @@ function Timeline({
         default:
       }
     },
-    [rows, trackHeight, onTrackToggleVisible, toggleExpandRow],
+    [rows, trackHeight, onTrackToggleVisible, toggleExpandRow, expanded],
   );
 
   // ── Derived geometry ───────────────────────────────────────────
@@ -1878,15 +1892,25 @@ function Timeline({
     if (!trim) return;
     onClipTrim?.(trim.edge === 'start' ? first.id : last.id, trim.edge, trim.time);
   };
+  /**
+   * AE: right-click a layer's row for the layer menu — the same menu its bar
+   * has (Split, trims, Time Stretch, Add Transition, delete …), anchored to
+   * the layer's first bar. A layer with no bar has no menu.
+   */
+  const openRowMenu = (trackId: string, x: number, y: number): void => {
+    const clips = model.tracks.find((t) => t.id === trackId)?.clips ?? [];
+    const first = clips.reduce<(typeof clips)[number] | undefined>((a, b) => (!a || b.start < a.start ? b : a), undefined);
+    if (first) onClipContextMenu?.(first.id, x, y);
+  };
   const latestRowCallbacks = useRef({
     toggleExpandRow, onTrackActivate, selectTrack, onTrackToggleVisible, onTrackToggleLock, onTrackToggleSolo,
     onClipMuteToggle, onTrackBlendModeChange, onTrackMatteChange, onTrackParentChange, onTrackToggleFlag,
-    onTrackRename, setActiveTrackId, onExtraColumnEdit,
+    onTrackRename, setActiveTrackId, onExtraColumnEdit, openRowMenu,
   });
   latestRowCallbacks.current = {
     toggleExpandRow, onTrackActivate, selectTrack, onTrackToggleVisible, onTrackToggleLock, onTrackToggleSolo,
     onClipMuteToggle, onTrackBlendModeChange, onTrackMatteChange, onTrackParentChange, onTrackToggleFlag,
-    onTrackRename, setActiveTrackId, onExtraColumnEdit,
+    onTrackRename, setActiveTrackId, onExtraColumnEdit, openRowMenu,
   };
   const rowRealIndex = useRef(new Map<string, number>());
   const rowHandlerCache = useRef(new Map<string, ReturnType<typeof makeRowHandlers>>());
@@ -1906,6 +1930,7 @@ function Timeline({
       onToggleFlag: (flag: Parameters<NonNullable<typeof onTrackToggleFlag>>[1]) => L.current.onTrackToggleFlag?.(id, flag),
       onRename: (name: string) => L.current.onTrackRename?.(id, name),
       onExtraColumnEdit: (col: TimelineExtraColumn, value: number) => L.current.onExtraColumnEdit(id, col, value),
+      onContextMenu: (x: number, y: number) => L.current.openRowMenu(id, x, y),
       onRowFocus: () => L.current.setActiveTrackId(id),
       onReorderStart: (e: ReactPointerEvent<HTMLDivElement>) => {
         const idx = rowRealIndex.current.get(id) ?? 0;
@@ -2053,11 +2078,20 @@ function Timeline({
   // comp zoomed in is thousands of ticks, almost all of them off-screen.
   const ticks = useMemo(() => cullTicks(allTicks, timeWindow, pps, TIMELINE_LEFT_OFFSET), [allTicks, timeWindow, pps]);
 
-  // Layer number column (AE-style) — index within the track order.
-  const trackIndexById = useMemo(
-    () => new Map(model.tracks.map((t, i) => [t.id, i + 1])),
-    [model.tracks],
-  );
+  // Layer number column (AE-style): a layer's position among its SIBLINGS —
+  // the rows of an expanded group's children no longer push the numbers of
+  // every layer below them (a comp's 3rd layer stays 3).
+  const trackIndexById = useMemo(() => {
+    const out = new Map<string, number>();
+    const counters: number[] = [];
+    for (const t of model.tracks) {
+      const depth = t.depth ?? 0;
+      counters.length = depth + 1;
+      counters[depth] = (counters[depth] ?? 0) + 1;
+      out.set(t.id, counters[depth]!);
+    }
+    return out;
+  }, [model.tracks]);
 
   /**
    * The category heading to pin while scrolled inside an expanded layer.
@@ -2336,6 +2370,8 @@ function Timeline({
                     onTrackColorChange={onTrackColorChange}
                     onExtraColumnEdit={h.onExtraColumnEdit}
                     startFrame={model.startFrame ?? 0}
+                    renameNonce={renameRequest?.id === row.track.id ? renameRequest.n : undefined}
+                    onContextMenu={h.onContextMenu}
                     showSwitches={showSwitches}
                     showModes={showModes}
                     extraColumns={extraColumns}

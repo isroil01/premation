@@ -1214,3 +1214,38 @@ button.play:hover {
   pointer-events: none;
   z-index: 50;
 }
+
+/* AE's composition switches in the timeline header: Shy, Motion Blur, Draft 3D. */
+.compSwitches {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.compSwitch {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.compSwitch:hover {
+  color: var(--color-text-primary);
+}
+
+.compSwitchOn {
+  color: var(--color-primary);
+  background: var(--color-surface-0);
+}
+
+.compSwitch:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}

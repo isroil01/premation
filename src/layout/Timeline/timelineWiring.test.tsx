@@ -187,21 +187,39 @@ describe('the layer rows as a listbox', () => {
     expect(onSelect).toHaveBeenLastCalledWith('a', false);
   });
 
-  it('Enter toggles the disclosure and Space the visibility', () => {
+  it('→ opens the disclosure, Space toggles visibility, Enter renames (AE)', () => {
     const onToggleExpand = jest.fn();
     const onToggleVisible = jest.fn();
+    const onRename = jest.fn();
     render(
       <Timeline
         model={MODEL}
         expandedTrackIds={[]}
         onTrackToggleExpand={onToggleExpand}
         onTrackToggleVisible={onToggleVisible}
+        onTrackRename={onRename}
       />,
     );
-    fireEvent.keyDown(rows()[0]!, { key: 'Enter' });
+    fireEvent.keyDown(rows()[0]!, { key: 'ArrowRight' });
     expect(onToggleExpand).toHaveBeenCalledWith('a');
+    // ← on a closed row does nothing.
+    fireEvent.keyDown(rows()[0]!, { key: 'ArrowLeft' });
+    expect(onToggleExpand).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(rows()[0]!, { key: ' ' });
     expect(onToggleVisible).toHaveBeenCalledWith('a');
+    expect(onToggleExpand).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(rows()[0]!, { key: 'Enter' });
+    const field = screen.getByDisplayValue('Layer A');
+    fireEvent.change(field, { target: { value: 'Hero' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(onRename).toHaveBeenCalledWith('a', 'Hero');
+  });
+
+  it('right-clicking a row opens the layer menu of its bar', () => {
+    const onClipContextMenu = jest.fn();
+    render(<Timeline model={MODEL} onClipContextMenu={onClipContextMenu} />);
+    fireEvent.contextMenu(rows()[0]!, { clientX: 10, clientY: 20 });
+    expect(onClipContextMenu).toHaveBeenCalledWith('la', 10, 20);
   });
 });
 
