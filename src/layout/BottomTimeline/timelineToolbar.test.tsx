@@ -2,10 +2,11 @@
  * The timeline panel's toolbar — ONE row between the comp tabs and the tracks,
  * in TWO columns that are the columns beneath it.
  *
- * The LEFT column is exactly the track-header column's width and holds every
- * button: the timecode, the edit tools, the transition chips, the filter, then
- * Graph Editor, a View menu that absorbed seven small toggles and the cache
- * actions. The RIGHT column is exactly the lanes and holds only the time
+ * The LEFT column is exactly the track-header column's width and holds After
+ * Effects' timeline header: the timecode, Snap, the filter, Graph Editor and a
+ * View menu that holds the timeline tool, playhead follow, the listing toggles
+ * and the preview cache (2026-10-07: no edit-tool row, no transition chips —
+ * transitions come from the Library). The RIGHT column is exactly the lanes and holds only the time
  * navigator. This pins that the row is the only tool row in the panel, that
  * the absorbed toggles still reach their stores from the menu, the two
  * columns' geometry, and the shed ladder that keeps the buttons on their side
@@ -15,7 +16,6 @@
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { BottomTimeline, TIMELINE_TOOLBAR_DEMOTE_ORDER, isToolbarShed } from './BottomTimeline';
 import { navigatorColumnFor } from './toolbarGeometry';
-import { Timeline } from '@layout/Timeline/Timeline';
 import type { TimelineModel } from '@layout/Timeline/TimelineModel';
 import { headerWidthFor, TIMELINE_LEFT_OFFSET } from '@layout/Timeline/timelineShared';
 import { setTimelineViewportWidth } from '@layout/Timeline/timelineViewport';
@@ -71,42 +71,42 @@ function cramped(run: () => void): void {
   }
 }
 
-it('is the only tool row in the panel — <Timeline> no longer carries one', () => {
+it('is the only tool row in the panel, with no edit-tool row or transition chips', () => {
   toolbar();
   expect(screen.getAllByRole('toolbar', { name: 'Timeline tools' })).toHaveLength(1);
-  expect(screen.getAllByRole('radiogroup', { name: 'Timeline edit tool' })).toHaveLength(1);
-});
-
-it('<Timeline> on its own renders no edit tools or transition chips', () => {
-  render(<Timeline model={MODEL} />);
   expect(screen.queryByRole('radiogroup', { name: 'Timeline edit tool' })).toBeNull();
   expect(screen.queryByRole('group', { name: 'Transitions' })).toBeNull();
+  expect(screen.queryAllByRole('button', { name: /transition$/ })).toHaveLength(0);
 });
 
-it('holds timecode · tools · chips · filter · graph editor · View · cache in the left column, the navigator in the right', () => {
+it('holds timecode · Snap · filter · Graph Editor · View in the left column, the navigator in the right', () => {
   const t = toolbar();
   const left = toolsCol(t);
   const order = [
     within(left).getByTitle(/^Current timecode/),
-    within(left).getByRole('radiogroup', { name: 'Timeline edit tool' }),
-    within(left).getByRole('group', { name: 'Transitions' }),
+    within(left).getByRole('button', { name: 'Snap in timeline' }),
     within(left).getByRole('searchbox', { name: 'Search layers and properties' }),
     within(left).getByRole('button', { name: 'Toggle Graph Editor' }),
     within(left).getByRole('button', { name: 'Timeline view options' }),
-    within(left).getByRole('group', { name: 'Preview cache' }),
   ];
   for (let i = 1; i < order.length; i++) {
     // DOCUMENT_POSITION_FOLLOWING: the previous element precedes this one.
     expect(order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   }
-  expect(within(left).getAllByRole('button', { name: /transition$/ })).toHaveLength(4);
-  expect(within(left).getByRole('button', { name: 'Snap in timeline' })).toBeInTheDocument();
-  expect(within(left).getByRole('button', { name: /^Playhead follow:/ })).toBeInTheDocument();
+  expect(within(left).queryByRole('group', { name: 'Preview cache' })).toBeNull();
   // The navigator is the right column's ONLY control, and no button is there.
   const right = navCol(t);
   expect(within(right).getByRole('scrollbar', { name: 'Time navigator' })).toBeInTheDocument();
   expect(within(right).queryAllByRole('button')).toHaveLength(0);
   expect(within(left).queryByRole('scrollbar')).toBeNull();
+});
+
+it('View holds the timeline tool, playhead follow and the preview cache', () => {
+  const t = toolbar();
+  fireEvent.click(within(t).getByRole('button', { name: 'Timeline view options' }));
+  expect(screen.getByRole('menuitem', { name: /^Timeline tool:/ })).toBeInTheDocument();
+  expect(screen.getByRole('menuitem', { name: /^Playhead follow:/ })).toBeInTheDocument();
+  expect(screen.getByRole('menuitem', { name: 'Preview cache' })).toBeInTheDocument();
 });
 
 describe('the two columns are the columns beneath them', () => {
@@ -214,41 +214,30 @@ it('keeps the Graph Editor toggle visible, with the label the tour anchors on', 
 });
 
 describe('the shed ladder', () => {
-  it('gives up the chips first, then the tools, then folds the rest into one ⋯', () => {
-    expect(TIMELINE_TOOLBAR_DEMOTE_ORDER).toEqual(['transitions', 'tools', 'more']);
-    expect(isToolbarShed('transitions', 0)).toBe(false);
-    expect(isToolbarShed('transitions', 1)).toBe(true);
-    expect(isToolbarShed('tools', 1)).toBe(false);
-    expect(isToolbarShed('tools', 2)).toBe(true);
-    expect(isToolbarShed('more', 2)).toBe(false);
-    expect(isToolbarShed('more', 3)).toBe(true);
+  it('has one rung: View folds into a ⋯', () => {
+    expect(TIMELINE_TOOLBAR_DEMOTE_ORDER).toEqual(['more']);
+    expect(isToolbarShed('more', 0)).toBe(false);
+    expect(isToolbarShed('more', 1)).toBe(true);
   });
 
-  it('when the header column is too narrow, the left column ends as timecode · filter · Graph Editor · ⋯ — nothing crosses the seam', () => {
+  it('when the header column is too narrow, the left column ends as timecode · Snap · filter · Graph Editor · ⋯ — nothing crosses the seam', () => {
     cramped(() => {
       const t = toolbar();
       const left = toolsCol(t);
-      // The buttons that left the row.
-      expect(within(left).queryByRole('radiogroup', { name: 'Timeline edit tool' })).toBeNull();
-      expect(within(left).queryByRole('group', { name: 'Transitions' })).toBeNull();
-      expect(within(left).queryByRole('button', { name: 'Transitions' })).toBeNull();
-      expect(within(left).queryByRole('button', { name: /^Timeline tools —/ })).toBeNull();
       expect(within(left).queryByRole('button', { name: 'Timeline view options' })).toBeNull();
-      expect(within(left).queryByRole('group', { name: 'Preview cache' })).toBeNull();
       // What stays, and the one trigger that holds the rest.
       expect(within(left).getByTitle(/^Current timecode/)).toBeInTheDocument();
       expect(within(left).getByRole('searchbox', { name: 'Search layers and properties' })).toBeInTheDocument();
       expect(within(left).getByRole('button', { name: 'Toggle Graph Editor' })).toBeInTheDocument();
+      expect(within(left).getByRole('button', { name: 'Snap in timeline' })).toBeInTheDocument();
       const more = within(left).getByRole('button', { name: 'More timeline tools' });
-      expect(within(left).getAllByRole('button')).toHaveLength(3); // timecode, graph editor, ⋯
+      expect(within(left).getAllByRole('button')).toHaveLength(4); // timecode, snap, graph editor, ⋯
       // The navigator never leaves its own column.
       expect(within(navCol(t)).getByRole('scrollbar', { name: 'Time navigator' })).toBeInTheDocument();
 
-      // Every shed control is a row of the ⋯, reaching the same stores.
+      // View's rows are the ⋯'s rows, reaching the same stores.
       fireEvent.click(more);
-      expect(screen.getByRole('menuitemcheckbox', { name: /^Razor/ })).toBeInTheDocument();
-      expect(screen.getByRole('menuitemcheckbox', { name: /^Snap in timeline/ })).toBeInTheDocument();
-      expect(screen.getByRole('menuitem', { name: 'Transitions' })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /^Timeline tool:/ })).toBeInTheDocument();
       expect(screen.getByRole('menuitemcheckbox', { name: 'Hide Shy Layers' })).toBeInTheDocument();
       expect(screen.getByRole('menuitem', { name: /^Row height/ })).toBeInTheDocument();
       expect(screen.getByRole('menuitem', { name: 'Preview cache' })).toBeInTheDocument();

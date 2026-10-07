@@ -1446,7 +1446,11 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       label: 'Delete Selected',
       icon: 'trash',
       shortcut: { key: 'Backspace' },
-      enabled: () => useSelectionStore.getState().count() > 0,
+      // Not while keyframes are selected: then Delete removes the KEYFRAMES
+      // (the timeline's listener), wherever focus is. Clicking a diamond also
+      // selects its layer, so this used to delete the whole layer when focus
+      // had left the timeline.
+      enabled: () => useSelectionStore.getState().count() > 0 && useKeyframeSelectionStore.getState().ids.size === 0,
       execute: () => {
         void deleteSelectedLayersEdit();
         notify('Deleted selected layers', 'info');
@@ -1456,7 +1460,11 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       id: asCommandId('edit.deleteSelected.del'),
       label: 'Delete Selected (Del key)',
       shortcut: { key: 'Delete' },
-      enabled: () => useSelectionStore.getState().count() > 0,
+      // Not while keyframes are selected: then Delete removes the KEYFRAMES
+      // (the timeline's listener), wherever focus is. Clicking a diamond also
+      // selects its layer, so this used to delete the whole layer when focus
+      // had left the timeline.
+      enabled: () => useSelectionStore.getState().count() > 0 && useKeyframeSelectionStore.getState().ids.size === 0,
       execute: () => {
         void deleteSelectedLayersEdit();
         notify('Deleted selected layers', 'info');
@@ -2791,10 +2799,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           registry.register({
             // WorkspaceController.fitSelection existed with ZERO consumers —
             // the port comment even said "retained for fit-to-selection".
-            // Shift+F, since bare letters are tool shortcuts in the viewport
-            // and AE itself never shipped this (its users lobby for it).
+            // Alt+/ — beside AE's Shift+/ (Fit Comp to Window). It was Shift+F,
+            // which swallowed AE's Shift+F (add Mask Feather to the reveal).
             id: asCommandId('view.fitSelection'), label: 'Fit Selection in View', icon: 'frame',
-            shortcut: { key: 'f', shift: true },
+            shortcut: { key: '/', alt: true },
             enabled: () => useSelectionStore.getState().ids.length > 0,
             execute: () => {
               getWorkspaceController().fitSelection();
@@ -2887,8 +2895,9 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             icon: 'keyframe',
             enabled: () => true,
             execute: () => {
-              // Empty nodeIds = every layer, per the listener's contract.
-              getEventBus().emit('RevealAnimatedProps', { nodeIds: [], mode: 'modified' });
+              // AE's UU acts on the SELECTED layers (all layers only when none
+              // is selected — empty nodeIds, per the listener's contract).
+              getEventBus().emit('RevealAnimatedProps', { nodeIds: [...useSelectionStore.getState().ids], mode: 'modified' });
             },
           });
           getShortcutManager().rehydrateFromRegistry();

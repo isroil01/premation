@@ -441,12 +441,15 @@ function EditorShellInner(): JSX.Element {
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
 
       // Alt+Shift+<prop> → add keyframe (checked before the reveal early-outs
-      // because reveal ignores modified chords entirely).
-      if (e.altKey && e.shiftKey && !e.metaKey && !e.ctrlKey && ADD_KEY_PROPS[key]) {
+      // because reveal ignores modified chords entirely). Read from the
+      // physical key: on macOS Option changes `e.key` ("π" for P), so the
+      // character never matched there.
+      const codeKey = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : key;
+      if (e.altKey && e.shiftKey && !e.metaKey && !e.ctrlKey && ADD_KEY_PROPS[codeKey]) {
         const sel = useSelectionStore.getState().ids;
         if (sel.length === 0) return;
         e.preventDefault();
-        addKeyframesFor(sel, ADD_KEY_PROPS[key]!);
+        addKeyframesFor(sel, ADD_KEY_PROPS[codeKey]!);
         // Reveal what was just keyed so the new diamond is visible.
         setRevealFilter(null);
         setExpandedIds((cur) => {
@@ -970,8 +973,9 @@ function EditorShellInner(): JSX.Element {
     const isHold = currentKf.easing === 'hold' || currentKf.easing === 'step';
     const isRoving = currentKf.roving;
 
-    // Easing entries act on the whole keyframe selection when the clicked
-    // keyframe is part of it (AE behavior), else on just this keyframe.
+    // Every entry acts on the whole keyframe selection when the clicked
+    // keyframe is part of it (AE behavior), else on just this keyframe — ease,
+    // interpolation, hold, roving, copy and delete alike.
     const selectedKfIds = useKeyframeSelectionStore.getState().ids;
     const easeTargets: string[] = selectedKfIds.has(kfId) ? [...selectedKfIds] : [kfId];
     // `updateKeyframes` through the engine (B3) — the whole key, as in AE.
@@ -988,14 +992,13 @@ function EditorShellInner(): JSX.Element {
      * keyframe would stop auto-adjusting to its neighbours.
      */
     const setInterp = (kind: EasingKind, label: string) => () => {
-      void setKeyInterpolationEdit(kfId, kind, label);
+      void setKeyInterpolationEdit(easeTargets, kind, label);
     };
 
     openContextMenu(x, y, [
       { id: 'easy-ease', label: 'Easy Ease', shortcut: 'F9', onSelect: ease('Ease') },
       { id: 'ease-in', label: 'Easy Ease In', shortcut: 'Shift+F9', onSelect: ease('EaseIn') },
       { id: 'ease-out', label: 'Easy Ease Out', shortcut: 'Ctrl+Shift+F9', onSelect: ease('EaseOut') },
-      { id: 'linear', label: 'Linear Interpolation', onSelect: ease('Linear') },
       {
         /**
          * AE's Keyframe Interpolation submenu. The inspector row menu has had
@@ -1037,7 +1040,7 @@ function EditorShellInner(): JSX.Element {
             label: isRoving ? 'Rove Across Time ✓' : 'Rove Across Time',
             onSelect: () => {
               // The engine re-times the roving run for constant speed.
-              void setKeyRovingEdit(kfId, !isRoving);
+              void setKeyRovingEdit(easeTargets, !isRoving);
             },
           },
         ],
@@ -1092,9 +1095,9 @@ function EditorShellInner(): JSX.Element {
       },
       {
         id: 'delete',
-        label: 'Delete keyframe',
+        label: `Delete Keyframe${easeTargets.length > 1 ? 's' : ''}`,
         danger: true,
-        onSelect: () => { void deleteKeyframesUi([kfId]); },
+        onSelect: () => { void deleteKeyframesUi(easeTargets); },
       },
     ]);
   };
@@ -1423,7 +1426,6 @@ function EditorShellInner(): JSX.Element {
         children: TIMELINE_EDIT_MODES.map((def) => ({
           id: `edit-mode-${def.mode}`,
           label: `${def.label}${getTimelineEditMode() === def.mode ? '  ✓' : ''}`,
-          shortcut: def.chord,
           onSelect: () => setTimelineEditMode(def.mode),
         })),
       },

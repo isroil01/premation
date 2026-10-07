@@ -339,14 +339,15 @@ export async function addKeyframesForSelectionEdit(nodeIds: readonly string[], t
  * Interpolation submenu). Hold goes through `easeKeyframes`, which spells it
  * the way the key's track stores it.
  */
-export function setKeyInterpolationEdit(uiId: string, kind: EasingKind, label: string): Promise<void> {
-  if (kind === 'hold') return easeKeyframes([uiId], { easing: 'hold' }, label);
-  return easeKindOnKeys([uiId], kind);
+export function setKeyInterpolationEdit(uiIds: string | ReadonlyArray<string>, kind: EasingKind, label: string): Promise<void> {
+  const ids = typeof uiIds === 'string' ? [uiIds] : [...uiIds];
+  if (kind === 'hold') return easeKeyframes(ids, { easing: 'hold' }, label);
+  return easeKindOnKeys(ids, kind);
 }
 
 /** Rove Across Time on one timeline key: the engine re-times the roving run for constant speed. */
-export function setKeyRovingEdit(uiId: string, roving: boolean): Promise<void> {
-  return setRovingOnKeys([uiId], roving);
+export function setKeyRovingEdit(uiIds: string | ReadonlyArray<string>, roving: boolean): Promise<void> {
+  return setRovingOnKeys(typeof uiIds === 'string' ? [uiIds] : [...uiIds], roving);
 }
 
 // ── The clip context menu ─────────────────────────────────────────────

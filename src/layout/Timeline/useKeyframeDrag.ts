@@ -202,9 +202,9 @@ export function useKeyframeDrag({
         if (onKeyframesMove) onKeyframesMove(moves);
         else for (const m of moves) onKeyframeMove?.(m.keyframeId, m.time);
       } else {
-        // Click without move → seek
-        const singleId = d.ids[0];
-        if (singleId) onKeyframeSeek?.(singleId);
+        // Click without move → seek to the key that was CLICKED (not the
+        // first of a multi-key selection).
+        onKeyframeSeek?.(d.grabbedId);
       }
       const emptyPreview = new Map<string, number>();
       kfPreviewRef.current = emptyPreview;

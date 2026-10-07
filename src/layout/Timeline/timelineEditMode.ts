@@ -67,25 +67,18 @@ export function setTimelineEditMode(mode: TimelineEditMode): void {
 }
 
 /**
- * The tool row's contents, in order — one source for the buttons, the command
- * palette entries and the shortcut bindings, so a mode cannot exist in one and
- * not the others.
+ * The edit tools, in order — one source for the menus (Layer ▸ Timeline Tool,
+ * the timeline's View ▾) and the command palette entries.
  *
- * ## The chords, and why they are not Premiere's bare letters
+ * ## No chords (2026-10-07)
  *
- * Premiere puts these on V / C / Y / U / N. Every one of those bare keys is
- * already claimed here, and taking one would break a working shortcut for a
- * tool the user can see:
- *
- *   V → Select Tool          C → Camera Tool (orbit/pan/dolly cycle)
- *   Y → Pan Behind Tool      U → Reveal Animated Properties (and UU → Modified)
- *   N → Set Work Area Out    (`useTimelineKeys`, beside B for the in-point)
- *
- * So the family moves up one modifier and keeps the letters, which is the part
- * muscle memory actually holds. Roll takes R rather than Premiere's N: N is
- * arbitrary even in Premiere, R is free at every modifier level here, and it is
- * the letter of the thing. All five chords were checked against the command
- * registry, `useTimelineKeys`, and `data-shortcut-claim` before being taken.
+ * These are Premiere's tools, which After Effects' timeline does not have, so
+ * they no longer sit in a toolbar row or own a shortcut. They first took Shift
+ * + S / C / Y / U / R, and three of those are AE's "add to the reveal" keys
+ * (Shift+S Scale, Shift+R Rotation, Shift+U animated properties): a capture-
+ * phase command swallowed them and AE's reveal stopped working. Slip and slide
+ * remain one modifier away on a plain drag (Alt / Alt+Shift); Escape still
+ * leaves an armed tool.
  */
 export interface TimelineEditModeDef {
   mode: TimelineEditMode;
@@ -93,9 +86,6 @@ export interface TimelineEditModeDef {
   /** What the mode does, for the tooltip and the palette. */
   description: string;
   icon: IconName;
-  /** Display form of the chord, for tooltips. */
-  chord: string;
-  key: string;
 }
 
 export const TIMELINE_EDIT_MODES: ReadonlyArray<TimelineEditModeDef> = [
@@ -104,40 +94,30 @@ export const TIMELINE_EDIT_MODES: ReadonlyArray<TimelineEditModeDef> = [
     label: 'Selection',
     description: 'Drag clip bars to move them; drag an edge to trim. Alt-drag still slips, Alt+Shift-drag still slides.',
     icon: 'select-arrow',
-    chord: 'Shift+S',
-    key: 's',
   },
   {
     mode: 'razor',
     label: 'Razor',
     description: 'Click a clip to split it at the pointer. Shift+click splits every clip on every track at that frame.',
     icon: 'scissors',
-    chord: 'Shift+C',
-    key: 'c',
   },
   {
     mode: 'slip',
     label: 'Slip',
     description: 'Drag a clip to move the source under a fixed bar — its position and length never change.',
     icon: 'grip-horizontal',
-    chord: 'Shift+Y',
-    key: 'y',
   },
   {
     mode: 'slide',
     label: 'Slide',
     description: 'Drag a clip to move the bar between its neighbours, trimming them so no gap opens.',
     icon: 'distribute-horizontal',
-    chord: 'Shift+U',
-    key: 'u',
   },
   {
     mode: 'roll',
     label: 'Roll',
     description: 'Drag a cut between two adjacent clips to move it — the out-point and the in-point travel together.',
     icon: 'grip-vertical',
-    chord: 'Shift+R',
-    key: 'r',
   },
 ];
 
@@ -149,7 +129,10 @@ export function buildTimelineEditModeCommands(): ReadonlyArray<Command> {
     label: `Timeline: ${def.label} Tool`,
     description: def.description,
     icon: def.icon,
-    shortcut: { key: def.key, shift: true },
+    // No chord (2026-10-07): Shift+S / Shift+R / Shift+U are AE's "add Scale
+    // / Rotation / animated properties to the reveal", and a capture-phase
+    // command here swallowed them. The tools are in Layer ▸ Timeline Tool and
+    // the command palette.
     enabled: () => true,
     // `isChecked` lights the row in the command palette and any menu that
     // renders these, so the palette agrees with the tool row about what is on.

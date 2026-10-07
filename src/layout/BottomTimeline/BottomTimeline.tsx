@@ -18,10 +18,9 @@ import { documentMirror } from '@stores/documentMirror';
 import { settingsStartFrame } from '@core/mirror/compFacts';
 import { framesToTimecode } from '@core/time/timecode';
 import { Timeline, type TimelineProps } from '@layout/Timeline';
-import { CacheActions } from '@layout/Timeline/CacheActions';
+import { previewCacheMenuItems, usePreviewCacheStats } from '@layout/Timeline/CacheActions';
 import { GraphEditor } from '@layout/Timeline/GraphEditor';
-import { TimelineTools, TimelineToolsMenu } from '@layout/Timeline/TimelineTools';
-import { TransitionPalette, TransitionsMenu } from '@layout/Timeline/transitionPalette';
+import { TimelineSnapButton, useTimelineToolsMenu } from '@layout/Timeline/TimelineTools';
 import { useTransportDemote } from '@layout/Workspace/useTransportDemote';
 import { cn } from '@utils/cn';
 import { useWorkspaceStore } from '@stores/projectStore';
@@ -81,24 +80,19 @@ const ZOOM_MIN = TIMELINE_PPS_MIN;
 const ZOOM_MAX = TIMELINE_PPS_MAX;
 
 /**
- * What the toolbar's LEFT column gives up when it runs short, in order.
+ * What the toolbar's LEFT column gives up when it runs short.
  *
- * The column is exactly the track-header column's width, and the header can
- * be dragged down to `TRACK_HEADER_MIN_WIDTH`, so the ladder has to reach a
- * form that fits there. The transition chips go first — they are the widest
- * group and every one of them has a command — then the edit tools, each
- * swapping for a one-trigger menu of the same rows (`TransitionsMenu`,
- * `TimelineToolsMenu`). Last, `more`: those two triggers, View and the cache
- * actions fold into a single `⋯` (`TimelineToolbarOverflow`), leaving the
- * timecode, the filter (at its floor) and Graph Editor — the tour's anchor.
+ * After Effects' timeline header holds a timecode, a search field and a few
+ * switches, and since 2026-10-07 so does this one: the Premiere-style edit
+ * tools, Playhead Follow and the preview-cache actions are rows of View ▾, and
+ * transitions are added from the Library (drag onto a cut or a layer's edge).
+ * What is left is timecode · Snap · filter · Graph Editor · View ▾, and the
+ * one rung folds View ▾ into a `⋯` when the header column is dragged narrow.
  *
  * Measured on the column itself (`useTransportDemote`), not a breakpoint: the
- * width is the user's drag, and the panel sits between two docks whose widths
- * the window knows nothing about. Nothing is ever clipped: the column has no
- * `overflow: hidden`, so a control that did not fit would visibly cross into
- * the navigator's column — which is exactly the deficit the ladder reads.
+ * width is the user's drag.
  */
-export const TIMELINE_TOOLBAR_DEMOTE_ORDER = ['transitions', 'tools', 'more'] as const;
+export const TIMELINE_TOOLBAR_DEMOTE_ORDER = ['more'] as const;
 export type TimelineToolbarGroup = (typeof TIMELINE_TOOLBAR_DEMOTE_ORDER)[number];
 export function isToolbarShed(group: TimelineToolbarGroup, level: number): boolean {
   return TIMELINE_TOOLBAR_DEMOTE_ORDER.indexOf(group) < level;
@@ -413,7 +407,12 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
    * here, once, so the View ▾ trigger and the `⋯` menu that replaces it at the
    * last rung list the very same rows.
    */
+  const timelineTools = useTimelineToolsMenu();
+  const previewCache = usePreviewCacheStats();
   const viewItems: DropdownItem[] = [
+        // The edit tools and Playhead Follow (AE's timeline has no tool row).
+        ...timelineTools.items,
+        { type: 'separator' },
         { type: 'checkbox', id: 'tl-view-shy', label: 'Hide Shy Layers', checked: globalShy, onChange: setGlobalShy },
         {
           type: 'checkbox',
@@ -492,6 +491,10 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
             onChange: () => setPref('timelineRowHeight', h),
           })),
         },
+        { type: 'separator' },
+        // The preview cache's state and actions (AE keeps these in the
+        // Composition / Edit ▸ Purge menus, not as timeline buttons).
+        { type: 'item', id: 'tl-view-cache', icon: 'refresh', label: 'Preview cache', submenu: previewCacheMenuItems(previewCache.stats, previewCache.refresh) },
       ];
 
   return (
@@ -649,13 +652,11 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
         ONE row between the comp tabs and the tracks, in TWO columns that are
         the columns beneath it.
 
-        LEFT, exactly the track-header column's width: timecode · edit tools ·
-        transition chips · filter · Graph Editor · View ▾ · cache actions —
-        every button the panel has. It never crosses the seam: when the header
-        is dragged narrow it sheds, right to left, into the Tools ▾ and
-        Transitions ▾ menus and finally one `⋯` (`useTransportDemote` on the
-        column, `TIMELINE_TOOLBAR_DEMOTE_ORDER`), with the filter giving up its
-        width first.
+        LEFT, exactly the track-header column's width: timecode · Snap ·
+        filter · Graph Editor · View ▾ — After Effects' timeline header. It
+        never crosses the seam: when the header is dragged narrow View ▾ folds
+        into one `⋯` (`useTransportDemote`, `TIMELINE_TOOLBAR_DEMOTE_ORDER`),
+        with the filter giving up its width first.
 
         RIGHT, exactly the lanes: the time navigator alone, placed from the
         lanes' own measurement so its left edge is the ruler's time origin and
@@ -733,20 +734,8 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               </span>
             </div>
 
-            {/* The edit tools (select / razor / slip / slide / roll), snap and
-                playhead follow — the TIMELINE's own tools, in the timeline's
-                own row — and beside them the transition chips: both are about
-                what an edit at a cut means, and separating them would put the
-                razor that makes a cut and the dissolve that softens it in two
-                different places. At the last rung both live in the `⋯`. */}
-            {!moreShed && (
-              <>
-                <span className={styles.toolbarDivider} aria-hidden="true" />
-                {isToolbarShed('tools', toolbarLevel) ? <TimelineToolsMenu /> : <TimelineTools />}
-                <span className={styles.toolbarDivider} aria-hidden="true" />
-                {isToolbarShed('transitions', toolbarLevel) ? <TransitionsMenu /> : <TransitionPalette />}
-              </>
-            )}
+            <span className={styles.toolbarDivider} aria-hidden="true" />
+            <TimelineSnapButton />
 
             <SearchField
               className={styles.searchContainer}
@@ -778,41 +767,27 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               </button>
 
               {moreShed ? (
-                /* The last rung: Tools, Transitions, View and the cache
-                   actions, one trigger. */
+                /* The one rung: View ▾ folds into a `⋯`. */
                 <TimelineToolbarOverflow viewItems={viewItems} />
               ) : (
-                <>
-                  {/*
-                    View ▾ — how the timeline LISTS layers. Seven toggles as
-                    menu rows: each is a store write, so the lane / column /
-                    row it drives reacts exactly as it did when the toggle was
-                    a button.
-                  */}
-                  <Dropdown
-                    placement="bottom-end"
-                    trigger={
-                      <button
-                        type="button"
-                        className={styles.toggleBtn}
-                        aria-label="Timeline view options"
-                        title="View — shy layers, proportional scrubbing, what changed, transcript lane, switches / modes, columns, row height"
-                      >
-                        View
-                        <Icon name="chevron-down" size="sm" className={styles.triggerChevron} />
-                      </button>
-                    }
-                    items={viewItems}
-                  />
-
-                  {/*
-                    The cache lanes' actions, at the end of the switch cluster
-                    — the row directly above the ruler the green and blue
-                    strips are painted on, and the closest a control can get
-                    to them without moving INSIDE the lane. See CacheActions.
-                  */}
-                  <CacheActions />
-                </>
+                /* View ▾ — how the timeline lists layers, the timeline tools
+                   and the preview cache. Each row is a store write or a
+                   registered command. */
+                <Dropdown
+                  placement="bottom-end"
+                  trigger={
+                    <button
+                      type="button"
+                      className={styles.toggleBtn}
+                      aria-label="Timeline view options"
+                      title="View — timeline tool, playhead follow, shy layers, switches / modes, columns, row height, preview cache"
+                    >
+                      View
+                      <Icon name="chevron-down" size="sm" className={styles.triggerChevron} />
+                    </button>
+                  }
+                  items={viewItems}
+                />
               )}
             </div>
           </div>

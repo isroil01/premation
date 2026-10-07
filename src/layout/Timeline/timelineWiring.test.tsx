@@ -142,15 +142,13 @@ describe('snap', () => {
 });
 
 describe('playhead follow', () => {
-  it('offers the three modes as one cycling control', () => {
+  it('offers the three modes in View ▾ ▸ Playhead follow', () => {
     usePreferenceStore.getState().set('timelineFollowMode', 'off');
     render(<BottomTimeline model={MODEL} />);
-    fireEvent.click(screen.getByLabelText('Playhead follow: Off'));
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline view options' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Playhead follow: Off' }));
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /^Page/ }));
     expect(usePreferenceStore.getState().timelineFollowMode).toBe('page');
-    fireEvent.click(screen.getByLabelText('Playhead follow: Page'));
-    expect(usePreferenceStore.getState().timelineFollowMode).toBe('continuous');
-    fireEvent.click(screen.getByLabelText('Playhead follow: Continuous'));
-    expect(usePreferenceStore.getState().timelineFollowMode).toBe('off');
   });
 });
 

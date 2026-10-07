@@ -60,12 +60,10 @@ function panel(): HTMLElement {
   return root;
 }
 
-it('mounts the edit tools in the panel toolbar, above the timeline', () => {
+it('has no edit-tool row: the tools are rows of View ▾ (AE has none in its timeline)', () => {
   panel();
-  // ONE row: the panel's toolbar. Not a second row inside <Timeline>.
   expect(screen.getAllByRole('toolbar', { name: 'Timeline tools' })).toHaveLength(1);
-  expect(screen.getByRole('radiogroup', { name: 'Timeline edit tool' })).toBeInTheDocument();
-  expect(screen.getAllByRole('radio')).toHaveLength(5);
+  expect(screen.queryByRole('radiogroup', { name: 'Timeline edit tool' })).toBeNull();
 });
 
 it('publishes the armed mode on the panel root, where the cursor rules read it', () => {
@@ -75,7 +73,9 @@ it('publishes the armed mode on the panel root, where the cursor rules read it',
   // and the pointer silently stops saying which one is armed.
   const root = panel();
   expect(root).toHaveAttribute('data-edit-mode', 'select');
-  fireEvent.click(screen.getByRole('radio', { name: 'Razor tool' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Timeline view options' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: /^Timeline tool:/ }));
+  fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /^Razor/ }));
   expect(root).toHaveAttribute('data-edit-mode', 'razor');
 });
 

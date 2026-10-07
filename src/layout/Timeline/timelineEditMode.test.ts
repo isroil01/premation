@@ -50,22 +50,14 @@ describe('the mode table', () => {
     expect(modes).toEqual(['select', 'razor', 'slip', 'slide', 'roll']);
   });
 
-  it('gives every mode a distinct chord', () => {
-    const chords = TIMELINE_EDIT_MODES.map((m) => m.chord);
-    expect(new Set(chords).size).toBe(chords.length);
-  });
-
-  it('the advertised chord and the bound chord are the same key', () => {
-    // The tooltip is the only place a user learns the shortcut. A `chord`
-    // string that drifts from the `key` actually registered is a lie the type
-    // system cannot see.
-    for (const def of TIMELINE_EDIT_MODES) {
-      expect(def.chord.toLowerCase()).toBe(`shift+${def.key}`);
-    }
-  });
 });
 
 describe('the commands', () => {
+  it('binds no chord to a mode — Shift+S / R / U are AE\'s add-to-reveal keys', () => {
+    const modes = buildTimelineEditModeCommands().filter((c) => String(c.id) !== 'timeline.editMode.exit');
+    for (const c of modes) expect(c.shortcut).toBeUndefined();
+  });
+
   it('registers one command per mode, plus the Escape exit', () => {
     const commands = buildTimelineEditModeCommands();
     expect(commands).toHaveLength(TIMELINE_EDIT_MODES.length + 1);
@@ -96,15 +88,6 @@ describe('the commands', () => {
     exit.execute({} as never);
     expect(getTimelineEditMode()).toBe('select');
     expect(exit.enabled?.()).toBe(false);
-  });
-
-  it('every mode chord is Shift+letter, never a bare key', () => {
-    // A bare V / C / Y / U / N would each shadow a working tool or reveal.
-    for (const cmd of buildTimelineEditModeCommands()) {
-      if (String(cmd.id) === 'timeline.editMode.exit') continue;
-      expect(cmd.shortcut).toMatchObject({ shift: true });
-      expect(cmd.shortcut?.key).toMatch(/^[a-z]$/);
-    }
   });
 
   it('takes no chord another command already holds', () => {
