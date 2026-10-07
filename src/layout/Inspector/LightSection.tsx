@@ -52,6 +52,7 @@ import {
   reportUnaddressed,
   useComponentProp,
 } from './useComponentProp';
+import { TwirlGroup } from './appearance/TwirlGroup';
 import styles from './TransformSection.module.css';
 import { KeyframeRow as KfRow } from './KeyframeRow';
 
@@ -94,6 +95,14 @@ function coerceLightType(v: unknown): LightType {
 /** The rows' components (Transform, the Style fill), resolved by the write seam when a row writes (the reads are the mirror's). */
 const TRANSFORM = { type: 'Transform' } as const;
 const STYLE = { type: 'Style' } as const;
+
+/** How a closed Falloff row names the model in force. */
+const FALLOFF_LABEL: Record<string, string> = {
+  none: 'None',
+  smooth: 'Smooth',
+  'inverse-square': 'Inverse Square Clamped',
+  legacy: 'Radius ramp',
+};
 
 export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   // The layer's header and the active comp from the document mirror (B4).
@@ -260,7 +269,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
             style={{
               margin: '0 0 6px',
               fontSize: 'var(--font-size-micro)',
-              color: 'var(--color-warning, #f5b84b)',
+              color: 'var(--color-warning)',
               lineHeight: 1.5,
             }}
           >
@@ -478,39 +487,6 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
             )}
           </>
         )}
-        {positional && (
-          <KfRow nodeId={nodeId} prop="radius" label="Radius" value={radius} unit="px" min={1} onStatic={(v) => setRadius(v)} />
-        )}
-        {positional && (
-          <>
-            <div className={styles.popoverRow}>
-              <span className={styles.popoverLabel}>Falloff</span>
-              <select
-                className={styles.select}
-                style={{ width: 110 }}
-                value={falloff}
-                onChange={(e) => setFalloff(e.target.value)}
-                aria-label="Falloff"
-              >
-                <option value="none">None</option>
-                <option value="smooth">Smooth</option>
-                <option value="inverse-square">Inverse Square Clamped</option>
-                <option value="legacy">Radius ramp (legacy)</option>
-              </select>
-            </div>
-            {(falloff === 'smooth' || falloff === 'inverse-square') && (
-              <KfRow
-                nodeId={nodeId}
-                prop="falloffDistance"
-                label="Falloff distance"
-                value={falloffDistance}
-                unit="px"
-                min={1}
-                onStatic={(v) => setFalloffDist(v)}
-              />
-            )}
-          </>
-        )}
         {aimable && !hasPOI && (
           <KfRow nodeId={nodeId} prop="lightAngle" label="Direction" value={angle} unit="°" onStatic={(v) => setAngle(v)} />
         )}
@@ -529,9 +505,97 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
             />
           </>
         )}
+        {positional && (
+          <TwirlGroup prefKey="light.falloff" label="Falloff" defaultOpen={falloff !== 'none'} summary={FALLOFF_LABEL[falloff] ?? falloff}>
+            <div className={styles.popoverRow}>
+              <span className={styles.popoverLabel}>Falloff</span>
+              <select
+                className={styles.select}
+                style={{ width: 110 }}
+                value={falloff}
+                onChange={(e) => setFalloff(e.target.value)}
+                aria-label="Falloff"
+              >
+                <option value="none">None</option>
+                <option value="smooth">Smooth</option>
+                <option value="inverse-square">Inverse Square Clamped</option>
+                <option value="legacy">Radius ramp (legacy)</option>
+              </select>
+            </div>
+            <KfRow nodeId={nodeId} prop="radius" label="Radius" value={radius} unit="px" min={1} onStatic={(v) => setRadius(v)} />
+            {(falloff === 'smooth' || falloff === 'inverse-square') && (
+              <KfRow
+                nodeId={nodeId}
+                prop="falloffDistance"
+                label="Falloff distance"
+                value={falloffDistance}
+                unit="px"
+                min={1}
+                onStatic={(v) => setFalloffDist(v)}
+              />
+            )}
+          </TwirlGroup>
+        )}
+        {positional && (
+          <TwirlGroup
+            prefKey="light.shadows"
+            label="Casts Shadows"
+            defaultOpen={castsShadows}
+            summary={castsShadows ? `On · ${darkness}%` : 'Off'}
+            trailing={(
+              <Checkbox
+                checked={castsShadows}
+                onChange={() => setShadows(castsShadows ? false : true)}
+                title="Content layers drop a soft shadow away from this light"
+                aria-label="Cast shadows"
+              />
+            )}
+          >
+            {castsShadows ? (
+              <>
+                <KfRow nodeId={nodeId} prop="shadowDarkness" label="Shadow darkness" value={darkness} unit="%" min={0} max={100} onStatic={(v) => setDarkness(v)} />
+                <KfRow nodeId={nodeId} prop="shadowDiffusion" label="Shadow diffusion" value={diffusion} unit="px" min={0} onStatic={(v) => setDiffusion(v)} />
+                {/*
+                  AE parity 4.3: every shadow-casting light renders a shadow MAP (up
+                  to four per 3D run) — geometry-aware, landing on floors and any
+                  surface at any angle, cast onto itself, across runs. Lights past
+                  the fourth fall back to a projected copy of the caster's
+                  silhouette, which Shadow diffusion above still shapes.
+                */}
+                <TwirlGroup prefKey="light.shadowMap" label="Shadow Map" defaultOpen={false} summary={`${mapSize}`}>
+                  <div className={styles.popoverRow}>
+                    <span className={styles.popoverLabel}>Map quality</span>
+                    <select
+                      className={styles.select}
+                      style={{ width: 110 }}
+                      value={String(mapSize)}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setMapSize(v === LIGHT_DEFAULTS.shadowMapSize ? undefined : v);
+                      }}
+                      aria-label="Map quality"
+                    >
+                      <option value="512">Draft (512)</option>
+                      <option value="1024">Standard (1024)</option>
+                      <option value="2048">High (2048)</option>
+                    </select>
+                  </div>
+                  {/* Bias trades the two failures against each other: too little
+                      and a lit surface stripes itself with its own depth
+                      quantization, too much and the shadow lifts off the foot of
+                      its caster. Both are visible, so this is a real control. */}
+                  <KfRow nodeId={nodeId} prop="shadowBias" label="Shadow bias" value={shadowBias} unit="px" min={0} onStatic={(v) => setShadowBias(v)} />
+                  <KfRow nodeId={nodeId} prop="shadowSoftness" label="Map softness" value={shadowSoftness} unit="tx" min={0} onStatic={(v) => setShadowSoft(v)} />
+                  <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+                    Shadows are depth-mapped (up to four lights per 3D scene); further lights project a soft copy.
+                  </p>
+                </TwirlGroup>
+              </>
+            ) : null}
+          </TwirlGroup>
+        )}
         {aimable && (
-          <>
-            <div className={styles.subhead} style={{ marginTop: 8 }}>Point of Interest</div>
+          <TwirlGroup prefKey="light.poi" label="Point of Interest" defaultOpen={hasPOI} summary={hasPOI ? 'Targeted' : 'Aimed by angle'}>
             {hasPOI ? (
               <>
                 <KfRow nodeId={nodeId} prop="poiX" label="Target X" value={num(poiXRaw, compWidth / 2)} unit="px" onStatic={(v) => setPoiX(v)} />
@@ -563,7 +627,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 </Button>
               </>
             )}
-          </>
+          </TwirlGroup>
         )}
         {type !== 'environment' && (
           <div className={styles.popoverRow}>
@@ -574,57 +638,6 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
               title="Also draw a soft bloom over the frame. It brightens everything beneath it, 2D layers included — leave off for lighting that only affects 3D layers"
             />
           </div>
-        )}
-        {positional && (
-          <div className={styles.popoverRow}>
-            <span className={styles.popoverLabel}>Cast shadows</span>
-            <Checkbox
-              checked={castsShadows}
-              onChange={() => setShadows(castsShadows ? false : true)}
-              title="Content layers drop a soft shadow away from this light"
-            />
-          </div>
-        )}
-        {positional && castsShadows && (
-          <>
-            <KfRow nodeId={nodeId} prop="shadowDarkness" label="Shadow darkness" value={darkness} unit="%" min={0} max={100} onStatic={(v) => setDarkness(v)} />
-            <KfRow nodeId={nodeId} prop="shadowDiffusion" label="Shadow diffusion" value={diffusion} unit="px" min={0} onStatic={(v) => setDiffusion(v)} />
-            {/*
-              AE parity 4.3: every shadow-casting light renders a shadow MAP (up
-              to four per 3D run) — geometry-aware, landing on floors and any
-              surface at any angle, cast onto itself, across runs. Lights past
-              the fourth fall back to a projected copy of the caster's
-              silhouette, which Shadow diffusion above still shapes.
-            */}
-            <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-              Shadows are depth-mapped (up to four lights per 3D scene); further lights project a soft copy.
-            </p>
-            <>
-                <div className={styles.popoverRow}>
-                  <span className={styles.popoverLabel}>Map quality</span>
-                  <select
-                    className={styles.select}
-                    style={{ width: 110 }}
-                    value={String(mapSize)}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      setMapSize(v === LIGHT_DEFAULTS.shadowMapSize ? undefined : v);
-                    }}
-                    aria-label="Map quality"
-                  >
-                    <option value="512">Draft (512)</option>
-                    <option value="1024">Standard (1024)</option>
-                    <option value="2048">High (2048)</option>
-                  </select>
-                </div>
-                {/* Bias trades the two failures against each other: too little
-                    and a lit surface stripes itself with its own depth
-                    quantization, too much and the shadow lifts off the foot of
-                    its caster. Both are visible, so this is a real control. */}
-                <KfRow nodeId={nodeId} prop="shadowBias" label="Shadow bias" value={shadowBias} unit="px" min={0} onStatic={(v) => setShadowBias(v)} />
-                <KfRow nodeId={nodeId} prop="shadowSoftness" label="Map softness" value={shadowSoftness} unit="tx" min={0} onStatic={(v) => setShadowSoft(v)} />
-            </>
-          </>
         )}
         <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           {type === 'ambient'

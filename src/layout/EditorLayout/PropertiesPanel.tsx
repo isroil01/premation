@@ -70,8 +70,10 @@ import { getEventBus } from '@core/events/EventBus';
 import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorLayersShapeWatch } from '@hooks/useMirror';
+import { useMirrorLayersShapeWatch, useMirrorLayersWatch } from '@hooks/useMirror';
+import { Segmented } from '@components/Segmented';
 import { InspectorContent } from '@layout/Inspector/InspectorContent';
+import { FilteredPropertyList, propertyCounts, type PropertyShow } from '@layout/Inspector/propertyShowFilter';
 import { InspectorSelectionProvider } from '@layout/Inspector/inspectorSelection';
 import {
   SelectionHeader,
@@ -157,6 +159,8 @@ export function PropertiesPanel(): JSX.Element {
   const primary = selected[0] ?? null;
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  // AE's U / UU for the inspector: the footer's Show filter (view state, not the document).
+  const [show, setShow] = useState<PropertyShow>('all');
   // The SELECTION's headers, tree SHAPES and `layer/*` records (which sections
   // exist: a cloner or physics record adds Effects), not the scene's and not
   // its other values — see the module note. The shell draws no property value
@@ -299,7 +303,9 @@ export function PropertiesPanel(): JSX.Element {
         <div className={styles.inspectorBody}>
           {liveCount > 1 && !searching && <SelectionAlignRow nodeIds={selected} />}
           <InspectorSelectionProvider nodeIds={selected}>
-            <InspectorContent nodeId={primary} nodeIds={selected} query={query} />
+            {show === 'all' || !hasLayer || !primary
+              ? <InspectorContent nodeId={primary} nodeIds={selected} query={query} />
+              : <FilteredPropertyList nodeId={primary} show={show} />}
           </InspectorSelectionProvider>
           {/* Not sections of the SELECTION: mograph parameters belong to the
               mograph player and template fields to the applied template, so
@@ -309,9 +315,38 @@ export function PropertiesPanel(): JSX.Element {
             <TemplateFieldsSection />
           </div>
         </div>
+        {hasLayer && primary && <PropertiesFooter nodeId={primary} show={show} onShow={setShow} />}
       </div>
     </Panel>
   );
 }
 
 export default PropertiesPanel;
+
+const SHOW_OPTIONS = [
+  { value: 'all' as const, label: 'All' },
+  { value: 'animated' as const, label: 'Animated' },
+  { value: 'modified' as const, label: 'Modified' },
+];
+
+/**
+ * The inspector's foot (2026-10-07): how many properties the layer has and how
+ * many are animated, and AE's U / UU as a Show filter.
+ */
+function PropertiesFooter({ nodeId, show, onShow }: { nodeId: string; show: PropertyShow; onShow: (v: PropertyShow) => void }): JSX.Element {
+  const watchIds = useMemo(() => [nodeId], [nodeId]);
+  useMirrorLayersWatch(watchIds);
+  const counts = propertyCounts(nodeId);
+  return (
+    <div className={styles.inspectorFooter}>
+      <span>{`${counts.total} properties · ${counts.animated} animated`}</span>
+      <Segmented
+        size="sm"
+        options={SHOW_OPTIONS}
+        value={show}
+        onChange={onShow}
+        aria-label="Show properties"
+      />
+    </div>
+  );
+}

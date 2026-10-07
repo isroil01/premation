@@ -19,6 +19,7 @@ import { canBe3DLayer, useActiveCompSize } from './inspectorMirror';
 import { ValueField } from '@components/ValueField';
 import { Button } from '@components/Button';
 import { Checkbox } from '@components/Checkbox';
+import { TwirlGroup } from './appearance/TwirlGroup';
 import styles from './TransformSection.module.css';
 import { KeyframeRow } from './KeyframeRow';
 
@@ -96,9 +97,18 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
     void setLayersSwitch(contentLayers.filter((l) => !l.switches.threeD).map((l) => l.id), { threeD: true }, 'Make All Layers 3D');
   };
 
+  const hasPOI = [poiXRaw, poiYRaw, poiZRaw].some((v) => typeof v === 'number');
+  const dofOn = typeof dofRaw === 'number' && dofRaw > 0;
+  const turned = [yawRaw, pitchRaw, oriXRaw, oriYRaw, rollRaw].some((v) => typeof v === 'number' && v !== 0);
+  const threeDStatus = threeDCount === 0
+    ? 'No 3D layers — the camera moves nothing yet'
+    : `${threeDCount} of ${contentLayers.length} layers are 3D`;
+
   return (
+    // AE's Camera Options order (2026-10-07): the lens first, then the point
+    // of interest, the orbit / in-place turns, depth of field and the comp's
+    // 3D status, each a twirl that says its state while closed.
     <div className={styles.section}>
-      <h4 className={styles.title}>Lens</h4>
       <div className={styles.inlineRows}>
         <div className={styles.popoverRow}>
           <span className={styles.popoverLabel}>Preset</span>
@@ -136,6 +146,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             aria-label="Angle of view"
           />
         </div>
+        <TwirlGroup prefKey="camera.film" label="Film Size" defaultOpen={false} summary={`${filmSize} mm · ${focalMm.toFixed(1)} mm lens`}>
         <div className={styles.popoverRow}>
           <span className={styles.popoverLabel}>Film size</span>
           <ValueField
@@ -157,35 +168,10 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           Film size is the virtual sensor width. It changes the millimetre
           reading only — the actual view is set by Zoom / Angle of View.
         </p>
-        <div className={styles.subhead} style={{ marginTop: 8 }}>Orbit</div>
-        <KeyframeRow nodeId={nodeId} prop="orbitYaw" label="Yaw" value={typeof yawRaw === 'number' ? yawRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setYaw(v)} />
-        <KeyframeRow nodeId={nodeId} prop="orbitPitch" label="Pitch" value={typeof pitchRaw === 'number' ? pitchRaw : 0} unit="°" min={-89} max={89} onStatic={(v) => setPitch(v)} />
-        <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          Swings the camera around its point of interest, keeping it framed.
-          On canvas: Alt+drag orbits, Shift+Alt+drag (or Alt+middle-drag)
-          tracks XY, Alt+wheel dollies. Tick a stopwatch to keyframe any of these.
-        </p>
+        </TwirlGroup>
 
-        {/* IN-PLACE rotation, kept in its own group and NOT mixed in with Orbit
-            above: the two look alike and do opposite things. Orbit moves the eye
-            along an arc around the target; these turn the camera where it
-            stands. Conflating them is what made a tripod pan unexpressible. */}
-        <div className={styles.subhead} style={{ marginTop: 8 }}>Rotation (in place)</div>
-        <KeyframeRow nodeId={nodeId} prop="orientationX" label="X Rotation" value={typeof oriXRaw === 'number' ? oriXRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setOriX(v)} />
-        <KeyframeRow nodeId={nodeId} prop="orientationY" label="Y Rotation" value={typeof oriYRaw === 'number' ? oriYRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setOriY(v)} />
-        {/* Roll spins the frame about the view axis (a dutch angle) without
-            re-aiming the camera — the third orientation axis, which the yaw +
-            pitch pair alone could not express. */}
-        <KeyframeRow nodeId={nodeId} prop="orientationZ" label="Z Rotation (roll)" value={typeof rollRaw === 'number' ? rollRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setRoll(v)} />
-        <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          Turns the camera on the spot without moving it — a tripod pan or tilt.
-          On a targeted camera these offset the tracked aim, so it keeps
-          following its Point of Interest while looking off to the side.
-        </p>
-
-        <div className={styles.subhead} style={{ marginTop: 8 }}>Point of Interest</div>
+        <TwirlGroup prefKey="camera.poi" label="Point of Interest" defaultOpen={hasPOI} summary={hasPOI ? 'Two-node' : 'One-node (free)'}>
         {(() => {
-          const hasPOI = [poiXRaw, poiYRaw, poiZRaw].some((v) => typeof v === 'number');
           if (!hasPOI) {
             return (
               <>
@@ -232,7 +218,50 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           );
         })()}
 
-        <div className={styles.subhead} style={{ marginTop: 8 }}>Depth of field</div>
+        </TwirlGroup>
+
+        <TwirlGroup prefKey="camera.orbit" label="Orbit and Rotation" defaultOpen={turned} summary={turned ? 'turned' : 'level'}>
+        <KeyframeRow nodeId={nodeId} prop="orbitYaw" label="Yaw" value={typeof yawRaw === 'number' ? yawRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setYaw(v)} />
+        <KeyframeRow nodeId={nodeId} prop="orbitPitch" label="Pitch" value={typeof pitchRaw === 'number' ? pitchRaw : 0} unit="°" min={-89} max={89} onStatic={(v) => setPitch(v)} />
+        <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+          Swings the camera around its point of interest, keeping it framed.
+          On canvas: Alt+drag orbits, Shift+Alt+drag (or Alt+middle-drag)
+          tracks XY, Alt+wheel dollies. Tick a stopwatch to keyframe any of these.
+        </p>
+
+        <div className={styles.subhead}>Rotation (in place)</div>
+        {/* IN-PLACE rotation, kept in its own group and NOT mixed in with Orbit
+            above: the two look alike and do opposite things. Orbit moves the eye
+            along an arc around the target; these turn the camera where it
+            stands. Conflating them is what made a tripod pan unexpressible. */}
+        <KeyframeRow nodeId={nodeId} prop="orientationX" label="X Rotation" value={typeof oriXRaw === 'number' ? oriXRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setOriX(v)} />
+        <KeyframeRow nodeId={nodeId} prop="orientationY" label="Y Rotation" value={typeof oriYRaw === 'number' ? oriYRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setOriY(v)} />
+        {/* Roll spins the frame about the view axis (a dutch angle) without
+            re-aiming the camera — the third orientation axis, which the yaw +
+            pitch pair alone could not express. */}
+        <KeyframeRow nodeId={nodeId} prop="orientationZ" label="Z Rotation (roll)" value={typeof rollRaw === 'number' ? rollRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setRoll(v)} />
+        <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+          Turns the camera on the spot without moving it — a tripod pan or tilt.
+          On a targeted camera these offset the tracked aim, so it keeps
+          following its Point of Interest while looking off to the side.
+        </p>
+
+        </TwirlGroup>
+
+        <TwirlGroup
+          prefKey="camera.dof"
+          label="Depth of Field"
+          defaultOpen={dofOn}
+          summary={dofOn ? 'On' : 'Off'}
+          trailing={(
+            <Checkbox
+              checked={dofOn}
+              onChange={() => setDofStrength(dofOn ? 0 : 20)}
+              title="Blur layers by their distance from the focus plane. Layers must be 3D."
+              aria-label="Depth of field"
+            />
+          )}
+        >
         {/*
           A real on/off. Depth of field used to be switched on by typing a
           number into "Blur strength" — nothing on screen said that was the
@@ -240,14 +269,6 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           On starts at a blur you can SEE (20px) focused on the comp plane; off
           is strength 0, which is what "off" has always meant to the renderer.
         */}
-        <div className={styles.popoverRow}>
-          <span className={styles.popoverLabel}>Enable</span>
-          <Checkbox
-            checked={typeof dofRaw === 'number' && dofRaw > 0}
-            onChange={() => setDofStrength(typeof dofRaw === 'number' && dofRaw > 0 ? 0 : 20)}
-            title="Blur layers by their distance from the focus plane. Layers must be 3D."
-          />
-        </div>
         <KeyframeRow nodeId={nodeId} prop="dofStrength" label="Blur strength" value={typeof dofRaw === 'number' ? dofRaw : 0} unit="px" min={0} max={60} onStatic={(v) => setDofStrength(v)} />
         {typeof dofRaw === 'number' && dofRaw > 0 && (
           <>
@@ -278,7 +299,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
               onStatic={(v) => setIrisBlades(v < 3 ? undefined : Math.round(v))}
             />
             {typeof irisBladesRaw === 'number' && irisBladesRaw >= 3 && (
-              <>
+              <TwirlGroup prefKey="camera.iris" label="Iris and highlights" defaultOpen={false} summary={`${Math.round(irisBladesRaw)} blades`}>
                 <KeyframeRow
                   nodeId={nodeId}
                   prop="irisRoundness"
@@ -352,7 +373,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                   speculars above the threshold, saturation keeps their colour, and
                   diffraction fringe brightens the bokeh rim.
                 </p>
-              </>
+              </TwirlGroup>
             )}
             {!(typeof irisBladesRaw === 'number' && irisBladesRaw >= 3) && (
               <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
@@ -362,6 +383,9 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           </>
         )}
 
+        </TwirlGroup>
+
+        <TwirlGroup prefKey="camera.view" label="View" defaultOpen={threeDCount < contentLayers.length && contentLayers.length > 0} summary={threeDStatus}>
         <div className={styles.popoverRow} style={{ marginTop: 4 }}>
           <span className={styles.popoverLabel}>View</span>
           <Button
@@ -377,15 +401,12 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           </Button>
         </div>
 
-        <div className={styles.subhead} style={{ marginTop: 8 }}>3D layers</div>
         <div className={styles.popoverRow}>
           <span
             className={styles.popoverLabel}
-            style={threeDCount === 0 ? { color: 'var(--color-warning, #f5b84b)' } : undefined}
+            style={threeDCount === 0 ? { color: 'var(--color-warning)' } : undefined}
           >
-            {threeDCount === 0
-              ? 'No 3D layers — the camera moves nothing yet'
-              : `${threeDCount} of ${contentLayers.length} layers are 3D`}
+            {threeDStatus}
           </span>
           {threeDCount < contentLayers.length && contentLayers.length > 0 && (
             <Button size="xs" variant="primary" onClick={enableAll3D} style={{ whiteSpace: 'nowrap' }}>
@@ -398,6 +419,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           the timeline's switch column). Position and Z live in Transform above;
           shorter focal length = wider, more dramatic perspective.
         </p>
+        </TwirlGroup>
       </div>
     </div>
   );
