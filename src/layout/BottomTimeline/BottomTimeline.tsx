@@ -225,11 +225,10 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const setPref = usePreferenceStore((s) => s.set);
   const prefHeaderWidth = usePreferenceStore((s) => s.timelineHeaderWidth);
   const extraColumnPref = usePreferenceStore((s) => s.timelineExtraColumns);
-  // Stretch is filtered out for want of a time-stretch API to drive it — the
-  // same filter <Timeline> applies, so the two cannot disagree about how many
-  // columns the header is sized for.
+  // The same parse <Timeline> applies, so the two cannot disagree about how
+  // many columns the header is sized for.
   const extraColumns = useMemo<TimelineExtraColumn[]>(
-    () => parseExtraColumns(extraColumnPref).filter((c) => c !== 'stretch'),
+    () => parseExtraColumns(extraColumnPref),
     [extraColumnPref],
   );
   // Compact (28px) is the default of the three sizes the button cycles. A
@@ -468,7 +467,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
           label: extraColumns.length > 0
             ? `Columns: ${extraColumns.map((c) => TIMELINE_EXTRA_COLUMNS.find((d) => d.id === c)?.label).join(', ')}`
             : 'Columns',
-          submenu: TIMELINE_EXTRA_COLUMNS.filter((c) => c.id !== 'stretch').map<DropdownItem>((c) => ({
+          submenu: TIMELINE_EXTRA_COLUMNS.map<DropdownItem>((c) => ({
             type: 'checkbox',
             id: `tl-view-col-${c.id}`,
             label: c.label,
@@ -520,13 +519,10 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               </button>
               <span className={styles.tabDivider} aria-hidden />
               {tabOrder.length === 0 ? (
-                <button
-                  type="button"
-                  className={cn(styles.tab, styles.tabActive)}
-                  title="Composition (none)"
-                >
+                // No composition is open: a label, not a button that does nothing.
+                <span className={cn(styles.tab, styles.tabActive)} title="No composition open">
                   <span>(none)</span>
-                </button>
+                </span>
               ) : (
                 tabOrder.map((tid) => {
                   const tab = projectTabs[tid];
@@ -730,7 +726,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 </button>
               )}
               <span className={styles.timecodeSub}>
-                {ws ? <LiveTimecode fps={fps} format="frames" /> : String(Math.round(playheadTime * fps)).padStart(5, '0')} ({fps.toFixed(2)} fps)
+                {ws ? <LiveTimecode fps={fps} startFrame={startFrame} format="frames" /> : String(Math.round(playheadTime * fps) + startFrame).padStart(5, '0')} ({fps.toFixed(2)} fps)
               </span>
             </div>
 

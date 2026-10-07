@@ -23,6 +23,8 @@ import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys, useMirrorLayer } from '@hooks/useMirror';
 import type { MenuSelectModifiers } from '@components/Menu';
 import { extraColumnValue, type TimelineExtraColumn } from './timelineColumns';
+import { mirrorStretchPercent } from '@core/mirror/motionAssist';
+import { useTimelineNameColumnStore } from '@stores/timelineNameColumnStore';
 import styles from './Timeline.module.css';
 import { ColorPicker } from '@components/ColorPicker';
 import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } from '@components/MatteControl/matteMenu';
@@ -96,9 +98,8 @@ export const TrackHeader = memo(function TrackHeader({
   onToggleFlag,
   onRename,
   onTrackColorChange,
-  switchesOnHover: _switchesOnHover = false,
-  switchesPinned: _switchesPinned = false,
-  onToggleSwitchPin: _onToggleSwitchPin,
+  onExtraColumnEdit,
+  startFrame = 0,
   showSwitches = true,
   showModes = true,
   extraColumns,
@@ -140,11 +141,10 @@ export const TrackHeader = memo(function TrackHeader({
   onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide' | 'preserveTransparency') => void;
   onRename?: (newName: string) => void;
   onTrackColorChange?: (trackId: string, color: string) => void;
-  /** Keep the seven AE switches quiet until the row is hovered. */
-  switchesOnHover?: boolean;
-  /** This row has pinned them open through its own control. */
-  switchesPinned?: boolean;
-  onToggleSwitchPin?: () => void;
+  /** A value typed into an In / Out / Duration (frames) or Stretch (%) cell. */
+  onExtraColumnEdit?: (col: TimelineExtraColumn, value: number) => void;
+  /** The comp's first frame number: In / Out read on the same axis as the timecode. */
+  startFrame?: number;
   /** AE's Toggle Switches / Modes — see `TimelineProps['columns']`. */
   showSwitches?: boolean;
   showModes?: boolean;
@@ -173,6 +173,12 @@ export const TrackHeader = memo(function TrackHeader({
     }
     return Number.isFinite(min) ? { start: min, duration: max - min } : undefined;
   }, [track.clips]);
+
+  // AE's Layer Name / Source Name column: a layer with a source item (footage,
+  // a comp) shows that item's name in Source Name mode; the rest keep theirs.
+  const nameColumn = useTimelineNameColumnStore((st) => st.mode);
+  const sourceName = nameColumn === 'source' ? sourceNameOf(track.id) : null;
+  const shownName = sourceName ?? track.name;
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(track.name);
@@ -275,7 +281,7 @@ export const TrackHeader = memo(function TrackHeader({
           data-kind="visible"
           data-on={!hidden || undefined}
           aria-label={hidden ? 'Show track' : 'Hide track'}
-          title={hidden ? 'Hide' : 'Show (Video)'}
+          title={hidden ? 'Show (Video)' : 'Hide (Video)'}
           onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
         >
           {!hidden ? <Icon name="eye" size="sm" /> : null}
@@ -306,6 +312,7 @@ export const TrackHeader = memo(function TrackHeader({
             tabIndex={-1}
             aria-hidden="true"
             title="Audio not available for this layer"
+            aria-label="Audio not available for this layer"
           />
         )}
         <button
@@ -406,10 +413,10 @@ export const TrackHeader = memo(function TrackHeader({
         ) : (
           <span
             className={styles.trackName}
-            title={`${track.name} — double-click to rename`}
+            title={`${shownName} — double-click to rename`}
             onDoubleClick={startRename}
           >
-            {track.name}
+            {shownName}
           </span>
         )}
       </div>
@@ -420,11 +427,12 @@ export const TrackHeader = memo(function TrackHeader({
             type="button"
             className={styles.trackAction}
             data-kind="shy"
-            data-on={(track as any).shy || undefined}
+            data-on={track.shy || undefined}
             title="Toggle Shy Layer"
+            aria-label="Toggle Shy Layer"
             onClick={(e) => { e.stopPropagation(); onToggleFlag?.('shy'); }}
           >
-            {(track as any).shy ? <Icon name="shy" size="sm" /> : null}
+            {track.shy ? <Icon name="shy" size="sm" /> : null}
           </button>
 
           {/* AE's sunburst: Collapse Transformations on a placed comp,
@@ -451,6 +459,7 @@ export const TrackHeader = memo(function TrackHeader({
               tabIndex={-1}
               aria-hidden="true"
               title="Not available for this layer"
+              aria-label="Not available for this layer"
             />
           )}
 
@@ -477,6 +486,7 @@ export const TrackHeader = memo(function TrackHeader({
               tabIndex={-1}
               aria-hidden="true"
               title="Quality not available for this layer"
+              aria-label="Quality not available for this layer"
             />
           )}
 
@@ -494,6 +504,7 @@ export const TrackHeader = memo(function TrackHeader({
               data-kind="fx"
               data-on={track.fxEnabled !== false || undefined}
               title="Toggle Effects (fx)"
+              aria-label="Toggle Effects (fx)"
               onClick={(e) => { e.stopPropagation(); onToggleFlag?.('fxEnabled'); }}
             >
               {track.fxEnabled !== false ? <span className={styles.fxText}>fx</span> : null}
@@ -507,6 +518,7 @@ export const TrackHeader = memo(function TrackHeader({
               tabIndex={-1}
               aria-hidden="true"
               title="No effects on this layer"
+              aria-label="No effects on this layer"
             />
           )}
 
@@ -532,6 +544,7 @@ export const TrackHeader = memo(function TrackHeader({
               tabIndex={-1}
               aria-hidden="true"
               title="Frame Blending not available for this layer"
+              aria-label="Frame Blending not available for this layer"
             />
           )}
 
@@ -541,6 +554,7 @@ export const TrackHeader = memo(function TrackHeader({
             data-kind="motionBlur"
             data-on={track.motionBlur || undefined}
             title="Toggle Motion Blur"
+            aria-label="Toggle Motion Blur"
             onClick={(e) => { e.stopPropagation(); onToggleFlag?.('motionBlur'); }}
           >
             {track.motionBlur ? <Icon name="motion-blur" size="sm" /> : null}
@@ -551,6 +565,7 @@ export const TrackHeader = memo(function TrackHeader({
             data-kind="adjustment"
             data-on={track.adjustment || undefined}
             title="Toggle Adjustment Layer"
+            aria-label="Toggle Adjustment Layer"
             onClick={(e) => { e.stopPropagation(); onToggleFlag?.('adjustment'); }}
           >
             {track.adjustment ? <Icon name="adjustment" size="sm" /> : null}
@@ -562,6 +577,7 @@ export const TrackHeader = memo(function TrackHeader({
             data-on={track.guide || undefined}
             aria-pressed={track.guide === true}
             title={track.guide ? 'Guide layer — not rendered on export' : 'Make Guide Layer'}
+            aria-label={track.guide ? 'Guide layer — not rendered on export' : 'Make Guide Layer'}
             onClick={(e) => { e.stopPropagation(); onToggleFlag?.('guide'); }}
           >
             {track.guide ? <Icon name="frame" size="sm" /> : null}
@@ -593,6 +609,7 @@ export const TrackHeader = memo(function TrackHeader({
               tabIndex={-1}
               aria-hidden="true"
               title="Cameras and lights are always 3D"
+              aria-label="Cameras and lights are always 3D"
             />
           ) : (
             <button
@@ -601,6 +618,7 @@ export const TrackHeader = memo(function TrackHeader({
               data-kind="threeD"
               data-on={track.threeD || undefined}
               title="Toggle 3D Layer"
+              aria-label="Toggle 3D Layer"
               onClick={(e) => { e.stopPropagation(); onToggleFlag?.('threeD'); }}
             >
               {track.threeD ? <Icon name="3d" size="sm" /> : null}
@@ -695,20 +713,27 @@ export const TrackHeader = memo(function TrackHeader({
       )}
 
       {/*
-        In / Out / Duration — AE's optional columns, off by default.
-
-        Read-outs, not fields: the numbers answer "where does this layer sit"
-        at a glance, which is the question the columns exist for, and the edit
-        that would follow (trimming a head to a typed frame) already has a
-        gesture on the bar itself. Shipping them as inputs whose commit path is
-        not wired would be worse than shipping them as the readout they are —
-        see the report for what a writable column needs.
+        In / Out / Duration / Stretch — AE's optional columns, off by default.
+        Editable as in AE (2026-10-07): In trims the head, Out and Duration the
+        tail, Stretch time-stretches from the in-point. In / Out read on the
+        comp's frame axis (its start frame included), like the timecode.
       */}
       {extraColumns.map((id) => {
-        const value = extraColumnValue(id, layerSpan, frameRate, 100);
+        const raw = id === 'stretch'
+          ? Math.round(mirrorStretchPercent(documentMirror(), track.id) * 10) / 10
+          : extraColumnValue(id, layerSpan, frameRate, 100);
+        const value = raw === null ? null : id === 'in' || id === 'out' ? raw + startFrame : raw;
+        const label = id === 'in' ? 'In' : id === 'out' ? 'Out' : id === 'duration' ? 'Duration' : 'Stretch';
         return (
-          <div key={id} className={styles.extraCol} data-col={id} title={`${id === 'in' ? 'In' : id === 'out' ? 'Out' : 'Duration'} (frames)`}>
-            {value === null ? '—' : value}
+          <div key={id} className={styles.extraCol} data-col={id} title={`${label} (${id === 'stretch' ? '%' : 'frames'}) — type a value and press Enter`}>
+            {value === null ? '—' : (
+              <ExtraColumnInput
+                value={value}
+                ariaLabel={`${label} of ${track.name}`}
+                disabled={!onExtraColumnEdit || track.locked === true}
+                onCommit={(v) => onExtraColumnEdit?.(id, v)}
+              />
+            )}
           </div>
         );
       })}
@@ -969,4 +994,52 @@ export function TrackCategoryHeader({
       <span className={styles.categoryBadge}>{count}</span>
     </div>
   );
+}
+
+/**
+ * One editable In / Out / Duration / Stretch cell: shows the number, commits a
+ * typed one on Enter or blur, Escape puts the shown value back. A plain input,
+ * not a scrubbing field: each commit is a trim (one undo entry), and a drag
+ * would be dozens of them.
+ */
+function ExtraColumnInput({ value, ariaLabel, disabled, onCommit }: {
+  value: number;
+  ariaLabel: string;
+  disabled: boolean;
+  onCommit: (value: number) => void;
+}): JSX.Element {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = (): void => {
+    if (draft === null) return;
+    const v = Number(draft);
+    setDraft(null);
+    if (Number.isFinite(v) && v !== value) onCommit(v);
+  };
+  return (
+    <input
+      className={styles.extraColInput}
+      type="text"
+      inputMode="decimal"
+      aria-label={ariaLabel}
+      disabled={disabled}
+      value={draft ?? String(value)}
+      onChange={(e) => setDraft(e.currentTarget.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={commit}
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { commit(); e.currentTarget.blur(); }
+        if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
+
+/** The name of a layer's source item (footage or composition), from the mirror. */
+function sourceNameOf(layerId: string): string | null {
+  const m = documentMirror();
+  const source = m.layer(layerId)?.source;
+  if (!source) return null;
+  return m.item(source)?.name ?? m.comp(source)?.settings.name ?? null;
 }

@@ -40,7 +40,7 @@ import { useTimelineEditModeStore } from './timelineEditMode';
 import { readTransitionDrag, isTransitionDrag } from './transitionPalette';
 import { hasCanvasDrag, readCanvasDrag } from '@core/dnd/canvasDrag';
 import { documentMirror } from '@stores/documentMirror';
-import { barOf, replaceSourceWithAsset, replaceTargetAt, splitLayersAt } from './timelineEdits';
+import { barOf, replaceSourceWithAsset, replaceTargetAt, splitLayersAt, timeStretchEdit } from './timelineEdits';
 import {
   layoutTransitions,
   durationFromEdgeDrag,
@@ -60,6 +60,7 @@ import { registerTimelineScroll, setTimelineLaneGeometry, setTimelineViewportWid
 import { zoomAroundTime, zoomStep } from './zoomAnchor';
 import { resolveTrackSelection, selectIntentFor, type SelectModifiers } from './trackRangeSelect';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { useTimelineNameColumnStore } from '@stores/timelineNameColumnStore';
 import { useResizeObserver } from '@hooks/useResizeObserver';
 import { clamp } from '@utils/lang';
 import type { TimelineModel, TimelinePropertyTrack, TimelineClip } from './TimelineModel';
@@ -73,7 +74,7 @@ import { flushRenderNow } from '@core/perf/framePump';
 import { installTimelineExpandCommands, recursiveTogglePlan, expandAllPlan, collapseAllPlan, registerTimelineExpansion } from './expandCollapse';
 import { registerTimelineFitSource } from './fitSelection';
 import { installTimelineSnapCommands, toggleTimelineSnap } from './snapCommands';
-import { TIMELINE_EXTRA_COLUMNS, parseExtraColumns, type TimelineExtraColumn } from './timelineColumns';
+import { TIMELINE_EXTRA_COLUMNS, extraColumnEdit, parseExtraColumns, type TimelineExtraColumn } from './timelineColumns';
 import styles from './Timeline.module.css';
 import { useUIStore } from '@stores/uiStore';
 import { MarkerLane } from './MarkerLane';
@@ -273,6 +274,21 @@ export interface TimelineProps {
   livePlayhead?: boolean;
 }
 
+/** Whether this is the popped-out timeline window (no second pop-out button there). */
+function inPopoutWindow(): boolean {
+  return typeof window !== 'undefined' && window.location.hash.startsWith('#/popout/');
+}
+
+/** Pop the timeline out through the app's window manager when it has one. */
+function popOutTimeline(): void {
+  if (window.motionEditor?.popout?.spawnWindow) {
+    window.motionEditor.popout.spawnWindow('timeline');
+    return;
+  }
+  const url = `${window.location.origin}${window.location.pathname}#/popout/timeline`;
+  window.open(url, 'popout-timeline', 'width=1280,height=500,resizable=yes');
+}
+
 function Timeline({
   model,
   onScrub,
@@ -356,13 +372,14 @@ function Timeline({
   // narrowing it hides columns behind an edge you can scroll back — which is
   // the AE behaviour, and does not force the panel to a width the user did not
   // ask for. See `.colHeads` / `.trackHeaderScroller`.
+  // AE's Layer Name / Source Name toggle (the name column's head).
+  const nameColumn = useTimelineNameColumnStore((st) => st.mode);
+  const toggleNameColumn = useTimelineNameColumnStore((st) => st.toggle);
+
   // ── Optional In / Out / Duration columns ───────────────────────
   const extraColumnPref = usePreferenceStore((s) => s.timelineExtraColumns);
   const extraColumns = useMemo<TimelineExtraColumn[]>(
-    // Stretch is offered only when there is a time-stretch API to drive it;
-    // there is none today (see the report), so it is filtered out rather than
-    // shipped as a column that shows 100% and refuses every edit.
-    () => parseExtraColumns(extraColumnPref).filter((c) => c !== 'stretch'),
+    () => parseExtraColumns(extraColumnPref),
     [extraColumnPref],
   );
 
@@ -595,32 +612,6 @@ function Timeline({
   // A switch, not only a held key. `S` is claimed by the root below, so the
   // global `S` (reveal Scale) keeps working everywhere outside this panel.
   const snapOn = usePreferenceStore((s) => s.timelineSnap);
-  /**
-   * The seven AE switches at rest.
-   *
-   * Hidden until hover by default (`timelineSwitchesOnHover`), because the
-   * switch block is seven glyphs per row that are OFF on almost every layer
-   * and read as noise at a glance — while the three things you actually scan a
-   * track list for (the eye, the solo dot, the lock) live in the gutter on the
-   * left and are always there. Hovering a row brings them back, and a row you
-   * are working on can PIN them through its own control; the global escape
-   * hatch is the Switches/Modes cycle button, which stays exactly as it was.
-   */
-  const switchesOnHover = usePreferenceStore((s) => s.timelineSwitchesOnHover);
-  /**
-   * Rows that have pinned their switches open. Session state, not a
-   * preference: it is a scratch note about the layer being worked on right
-   * now, and layer ids are not stable across a reload anyway.
-   */
-  const [pinnedSwitchRows, setPinnedSwitchRows] = useState<ReadonlySet<string>>(() => new Set());
-  const toggleSwitchPin = useCallback((trackId: string) => {
-    setPinnedSwitchRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(trackId)) next.delete(trackId);
-      else next.add(trackId);
-      return next;
-    });
-  }, []);
   useEffect(() => installTimelineSnapCommands(), []);
 
   const revealSet = useMemo(
@@ -1812,15 +1803,38 @@ function Timeline({
     callbacks through a ref, so they never go stale and never change identity.
     Row styles are cached by (top, height) for the same reason.
   */
+  /**
+   * An edit typed into the In / Out / Duration / Stretch columns (AE's): In
+   * trims the layer's first bar's head, Out and Duration its last bar's tail
+   * (through `onClipTrim`, one undo entry); Stretch is the shared time-stretch
+   * edit, anchored at the in-point as AE's column is. Frames are on the
+   * comp's own axis, so the shown start frame is taken off first.
+   */
+  const onExtraColumnEdit = (trackId: string, col: TimelineExtraColumn, value: number): void => {
+    if (!Number.isFinite(value)) return;
+    if (col === 'stretch') {
+      if (value !== 0 && Math.abs(value) <= 1000) void timeStretchEdit([trackId], value, 'in', 0);
+      return;
+    }
+    const clips = model.tracks.find((t) => t.id === trackId)?.clips ?? [];
+    if (clips.length === 0) return;
+    const first = clips.reduce((a, b) => (b.start < a.start ? b : a));
+    const last = clips.reduce((a, b) => (b.start + b.duration > a.start + a.duration ? b : a));
+    const span = { start: first.start, duration: last.start + last.duration - first.start };
+    const frames = col === 'duration' ? value : value - (model.startFrame ?? 0);
+    const trim = extraColumnEdit(col, span, frames, model.frameRate || 30);
+    if (!trim) return;
+    onClipTrim?.(trim.edge === 'start' ? first.id : last.id, trim.edge, trim.time);
+  };
   const latestRowCallbacks = useRef({
     toggleExpandRow, onTrackActivate, selectTrack, onTrackToggleVisible, onTrackToggleLock, onTrackToggleSolo,
     onClipMuteToggle, onTrackBlendModeChange, onTrackMatteChange, onTrackParentChange, onTrackToggleFlag,
-    onTrackRename, toggleSwitchPin, setActiveTrackId,
+    onTrackRename, setActiveTrackId, onExtraColumnEdit,
   });
   latestRowCallbacks.current = {
     toggleExpandRow, onTrackActivate, selectTrack, onTrackToggleVisible, onTrackToggleLock, onTrackToggleSolo,
     onClipMuteToggle, onTrackBlendModeChange, onTrackMatteChange, onTrackParentChange, onTrackToggleFlag,
-    onTrackRename, toggleSwitchPin, setActiveTrackId,
+    onTrackRename, setActiveTrackId, onExtraColumnEdit,
   };
   const rowRealIndex = useRef(new Map<string, number>());
   const rowHandlerCache = useRef(new Map<string, ReturnType<typeof makeRowHandlers>>());
@@ -1839,7 +1853,7 @@ function Timeline({
       onParentChange: (parentId: string | null, options?: { preserveWorld?: boolean; jump?: boolean }) => L.current.onTrackParentChange?.(id, parentId, options),
       onToggleFlag: (flag: Parameters<NonNullable<typeof onTrackToggleFlag>>[1]) => L.current.onTrackToggleFlag?.(id, flag),
       onRename: (name: string) => L.current.onTrackRename?.(id, name),
-      onToggleSwitchPin: () => L.current.toggleSwitchPin(id),
+      onExtraColumnEdit: (col: TimelineExtraColumn, value: number) => L.current.onExtraColumnEdit(id, col, value),
       onRowFocus: () => L.current.setActiveTrackId(id),
       onReorderStart: (e: ReactPointerEvent<HTMLDivElement>) => {
         const idx = rowRealIndex.current.get(id) ?? 0;
@@ -2160,19 +2174,26 @@ function Timeline({
             </div>
             <span className={styles.colHeadLayer}>
               <span className={styles.colHeadIndex} aria-hidden>#</span>
-              <span className={styles.colHeadLayerLabel}>Source Name</span>
+              {/* AE: click the head to switch Layer Name ⇄ Source Name. */}
               <button
                 type="button"
-                className={styles.colHeadPopOut}
-                onClick={() => {
-                  const url = `${window.location.origin}${window.location.pathname}#/popout/timeline`;
-                  window.open(url, 'popout-timeline', 'width=1280,height=500,resizable=yes');
-                }}
-                title="Pop Out Timeline into Separate Window"
-                aria-label="Pop out timeline into a separate window"
+                className={cn(styles.colHeadLayerLabel, styles.colHeadNameToggle)}
+                onClick={toggleNameColumn}
+                title={nameColumn === 'layer' ? 'Layer Name — click for Source Name' : 'Source Name — click for Layer Name'}
               >
-                <Icon name="export" size="sm" />
+                {nameColumn === 'layer' ? 'Layer Name' : 'Source Name'}
               </button>
+              {!inPopoutWindow() && (
+                <button
+                  type="button"
+                  className={styles.colHeadPopOut}
+                  onClick={popOutTimeline}
+                  title="Pop Out Timeline into Separate Window"
+                  aria-label="Pop out timeline into a separate window"
+                >
+                  <Icon name="pop-out" size="sm" />
+                </button>
+              )}
             </span>
             {/* Legend for the per-layer switch column below — one glyph per
                 switch that actually exists on the rows, in ROW ORDER. The
@@ -2261,9 +2282,8 @@ function Timeline({
                     onToggleFlag={h.onToggleFlag}
                     onRename={h.onRename}
                     onTrackColorChange={onTrackColorChange}
-                    switchesOnHover={switchesOnHover}
-                    switchesPinned={pinnedSwitchRows.has(row.track.id)}
-                    onToggleSwitchPin={h.onToggleSwitchPin}
+                    onExtraColumnEdit={h.onExtraColumnEdit}
+                    startFrame={model.startFrame ?? 0}
                     showSwitches={showSwitches}
                     showModes={showModes}
                     extraColumns={extraColumns}

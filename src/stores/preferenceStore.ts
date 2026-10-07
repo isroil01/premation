@@ -253,11 +253,6 @@ export interface Preferences {
   compLayerOpens: 'nested' | 'layer';
   /** Which of the optional In / Out / Duration / Stretch columns are shown. */
   timelineExtraColumns: string[];
-  /**
-   * Show the seven AE switches only on row hover (or when a row pins them),
-   * keeping the header column to eye / solo / lock / name at rest.
-   */
-  timelineSwitchesOnHover: boolean;
 }
 
 /** A floating dialog's remembered frame, CSS pixels relative to the viewport. */
@@ -323,7 +318,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
   footageLayerOpens: 'layer',
   compLayerOpens: 'nested',
   timelineExtraColumns: [],
-  timelineSwitchesOnHover: true,
 };
 
 /** Pluggable persistence backend. */

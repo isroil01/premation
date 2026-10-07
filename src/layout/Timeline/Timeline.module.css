@@ -1274,6 +1274,19 @@
   line-height: inherit;
 }
 
+.colHeadNameToggle {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.colHeadNameToggle:hover {
+  color: var(--color-text-primary);
+}
+
 .colHeadPopOut {
   background: transparent;
   border: none;
@@ -2436,4 +2449,28 @@
 
 .clip[data-narrow] .clipHandle::before {
   inset: 0;
+}
+
+/* An editable In / Out / Duration / Stretch cell: reads as text until focused. */
+.extraColInput {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: inherit;
+}
+
+.extraColInput:hover:not(:disabled) {
+  border-color: var(--color-field-border);
+}
+
+.extraColInput:focus {
+  outline: none;
+  border-color: var(--color-focus-ring);
+  background: var(--color-surface-1);
 }
