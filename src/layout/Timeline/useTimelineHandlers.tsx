@@ -91,7 +91,7 @@ import { customPrompt, customAlert } from '@components/Modal';
 
 import type { MutableRefObject } from 'react';
 import { applyTransitionEdit } from '@layout/EditorLayout/transitionInsertEdits';
-import { getTransitionItem } from '@core/library/transitionLibrary';
+import { TRANSITION_ITEMS, getTransitionItem } from '@core/library/transitionLibrary';
 
 /**
  * The value a property HAS at comp `seconds`: the evaluated value when the
@@ -819,9 +819,26 @@ export function useTimelineHandlers(tracksRef: MutableRefObject<ReadonlyArray<Ti
        * neighbour, rather than hidden — "why is there no transition command
        * here" is a question the greyed row answers and an absent one does not.
        */
+      /*
+       * The Library's layer transitions, on this layer's own edges — the same
+       * act as dropping a card on the bar's start or end. Solid-inserting
+       * recipes are left out: they never target a layer.
+       */
+      ...(['in', 'out'] as const).map((edge) => ({
+        id: `layer-transition-${edge}`,
+        label: edge === 'in' ? 'Transition In' : 'Transition Out',
+        disabled: !nodeId,
+        children: TRANSITION_ITEMS.filter((t) => !t.solidOnly).map((t) => ({
+          id: `layer-transition-${edge}-${t.id}`,
+          label: t.name,
+          onSelect: () => {
+            if (nodeId) handleLayerTransitionDrop(t.id, nodeId, edge);
+          },
+        })),
+      })),
       {
         id: 'add-transition',
-        label: 'Add Transition',
+        label: 'Transition at Cut',
         disabled: !cut,
         children: TRANSITION_KINDS.map((kind) => ({
           id: `add-transition-${kind}`,
@@ -883,13 +900,11 @@ export function useTimelineHandlers(tracksRef: MutableRefObject<ReadonlyArray<Ti
       /*
        * The five timeline edit tools, reachable from the menu too.
        *
-       * They already have a lit tool row and a Shift+letter chord each, and
-       * both of those still leave the same gap the row was built to close: you
-       * have to already know the family exists to look for it. A right-click on
-       * the very bar these gestures act on is where someone asks "can I move
-       * just the cut?", so the answer belongs there as well. `TIMELINE_EDIT_MODES`
-       * is the one source for the labels and chords, so a mode cannot exist in
-       * the row and not here.
+       * They have no chord (Shift+S / R / U are AE's add-to-reveal keys) and
+       * live in the timeline's View ▾ menu; a right-click on the very bar these
+       * gestures act on is where someone asks "can I move just the cut?", so
+       * the answer belongs here as well. `TIMELINE_EDIT_MODES` is the one
+       * source for the labels, so a mode cannot exist in one menu and not here.
        */
       {
         id: 'edit-mode',
