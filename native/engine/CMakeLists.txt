@@ -987,7 +987,9 @@ if(FFMPEG_FOUND)
   add_library(engine_audio STATIC src/audio/audio_decode_ffi.cpp src/audio/audio_system.cpp)
   target_include_directories(engine_audio SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
   target_link_directories(engine_audio PUBLIC ${FFMPEG_LIBRARY_DIRS})
-  target_link_libraries(engine_audio PUBLIC engine_audio_core ${FFMPEG_LIBRARIES} PRIVATE motion::options)
+  # ZLIB: the static ffmpeg's PNG / APNG / EXR decoders need it; the other
+  # ffmpeg users get it through engine_core, the audio tools do not link that.
+  target_link_libraries(engine_audio PUBLIC engine_audio_core ${FFMPEG_LIBRARIES} ZLIB::ZLIB PRIVATE motion::options)
   find_path(PREMATION_MINIAUDIO_INCLUDE miniaudio.h)
   if(PREMATION_MINIAUDIO_INCLUDE)
     target_sources(engine_audio PRIVATE src/audio/device_ffi.cpp)
